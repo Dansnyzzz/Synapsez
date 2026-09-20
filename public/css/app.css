@@ -1984,7 +1984,8 @@ textarea {
   opacity: 0;
   transition: opacity 0.14s ease;
 }
-.msg--user:hover .msg__actions {
+.msg--user:hover .msg__actions,
+.msg--assistant:hover .msg__actions {
   opacity: 1;
 }
 /*
@@ -1996,7 +1997,8 @@ textarea {
  * is the distinction the browser already draws between "I tabbed here" and "I
  * clicked here", which is exactly the one wanted.
  */
-.msg--user:has(.msg__action:focus-visible) .msg__actions {
+.msg--user:has(.msg__action:focus-visible) .msg__actions,
+.msg--assistant:has(.msg__action:focus-visible) .msg__actions {
   opacity: 1;
 }
 .msg--user.is-editing .msg__actions { visibility: hidden; }

@@ -3,6 +3,7 @@ import { follow } from './mirror.js';
 import { createRuns } from './runs.js';
 import { makeResizable } from './resize.js';
 import { wireCopyButtons, escapeHtml } from './markdown.js';
+import { cleanHtml, writeRich } from './clipboard.js';
 import {
   assistantMessage,
   userMessage,
@@ -12,6 +13,7 @@ import {
   revealInStrip,
   summaryDivider,
   stopNote,
+  markdownOf,
 } from './render.js';
 import { createModelBrowser } from './models.js';
 import { createScreen } from './screen.js';
@@ -2112,19 +2114,42 @@ $('messages').addEventListener('click', async (event) => {
 
   const button = event.target.closest('.msg__action');
   if (!button) return;
-  const message = button.closest('.msg--user');
-  const text = message?.querySelector('.bubble__text')?.textContent ?? '';
 
   // A button clicked with the pointer keeps focus, which used to leave the row
   // lit after the mouse had gone. `detail` is 0 when the click came from the
   // keyboard, and those want their focus kept — that is how they got here.
   if (event.detail > 0) button.blur();
 
+  const done = () => {
+    button.classList.add('is-done');
+    setTimeout(() => button.classList.remove('is-done'), 1200);
+  };
+
+  /**
+   * The assistant's answer, as a document rather than as a screenshot of one.
+   *
+   * Both flavours go on: a word processor takes the HTML — stripped of this
+   * app's dark theme, which is the whole bug — and an editor takes the
+   * Markdown the answer was written in.
+   */
+  const assistant = button.closest('.msg--assistant');
+  if (assistant) {
+    const wrote = await writeRich({
+      html: cleanHtml(assistant.querySelector('.prose')),
+      text: markdownOf(assistant),
+    });
+    if (wrote) done();
+    else toast(t('clipboard.failed'), 'error');
+    return;
+  }
+
+  const message = button.closest('.msg--user');
+  const text = message?.querySelector('.bubble__text')?.textContent ?? '';
+
   if (button.dataset.act === 'copy') {
     try {
       await navigator.clipboard.writeText(text);
-      button.classList.add('is-done');
-      setTimeout(() => button.classList.remove('is-done'), 1200);
+      done();
     } catch {
       // Denied permission, or an insecure origin. Selecting it is the fallback
       // every browser still allows.

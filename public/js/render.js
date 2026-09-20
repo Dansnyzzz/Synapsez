@@ -3,6 +3,20 @@ import { t } from './i18n.js';
 import { humanSize } from './format.js';
 
 /**
+ * The Markdown behind each assistant turn, keyed by the turn's own node.
+ *
+ * The copy button is served by one delegated listener on the whole transcript,
+ * so it has a DOM node and needs the source that produced it. A WeakMap rather
+ * than a `data-` attribute: an answer runs to tens of thousands of characters,
+ * and a second copy of every one of them in the DOM is memory spent for
+ * nothing. It also lets go by itself when a transcript is rebuilt.
+ */
+const RAW = new WeakMap();
+
+/** The Markdown an assistant turn was rendered from. */
+export const markdownOf = (node) => RAW.get(node) ?? '';
+
+/**
  * One repaint per frame, and a real fallback when there are no frames.
  *
  * A backgrounded tab does not run `requestAnimationFrame` at all, so a reply
@@ -685,6 +699,21 @@ export function fileCard(file) {
   return card;
 }
 
+/**
+ * The copy button, in the one shape both sides of the conversation use.
+ *
+ * Written once rather than twice: what you press to take a message away should
+ * not depend on who wrote it, and two copies of the same markup drift.
+ */
+function copyButton() {
+  return (
+    `<button class="msg__action" type="button" data-act="copy" title="${escapeHtml(t('chat.copy'))}" aria-label="${escapeHtml(t('chat.copy'))}">` +
+    '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6">' +
+    '<rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 4.5H5.5A1.5 1.5 0 0 0 4 6v7.5" />' +
+    '</svg></button>'
+  );
+}
+
 export function userMessage(text, files = [], id = null) {
   const wrap = el('div', 'msg msg--user');
   if (id) wrap.dataset.messageId = id;
@@ -710,10 +739,7 @@ export function userMessage(text, files = [], id = null) {
    */
   const actions = el('div', 'msg__actions');
   actions.innerHTML =
-    `<button class="msg__action" type="button" data-act="copy" title="${escapeHtml(t('chat.copy'))}" aria-label="${escapeHtml(t('chat.copy'))}">` +
-    '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6">' +
-    '<rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 4.5H5.5A1.5 1.5 0 0 0 4 6v7.5" />' +
-    '</svg></button>' +
+    copyButton() +
     `<button class="msg__action" type="button" data-act="edit" title="${escapeHtml(t('chat.edit'))}" aria-label="${escapeHtml(t('chat.edit'))}">` +
     '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M13.5 2.9a1.9 1.9 0 0 1 2.7 2.7L7.8 14 4 15l1-3.8Z" />' +
@@ -886,6 +912,20 @@ export function assistantMessage() {
     return group;
   }
 
+  /**
+   * The copy button, added the moment there is prose worth copying.
+   *
+   * Not drawn up front: a turn that only ran tools has nothing to put on the
+   * clipboard, and a button that copies an empty string is worse than no
+   * button. Added once — `appendText` runs per delta.
+   */
+  function ensureActions() {
+    if (wrap.querySelector(':scope > .msg__actions')) return;
+    const actions = el('div', 'msg__actions');
+    actions.innerHTML = copyButton();
+    wrap.append(actions);
+  }
+
   const api = {
     node: wrap,
 
@@ -959,6 +999,7 @@ export function assistantMessage() {
      */
     appendText(delta) {
       rawText += delta;
+      RAW.set(wrap, rawText);
       if (!prose) {
         // Prose is the natural boundary between two pieces of work: the
         // assistant stopped acting and said something. Folding the steps either
@@ -966,6 +1007,7 @@ export function assistantMessage() {
         closeGroup();
         prose = el('div', 'prose');
         body.append(prose);
+        ensureActions();
       }
       if (paintQueued) return;
       paintQueued = true;
@@ -995,6 +1037,7 @@ export function assistantMessage() {
      */
     resetText() {
       rawText = '';
+      RAW.delete(wrap);
       // A restarted reply restarts its reasoning too. Both callers are `retry`
       // handlers, and keeping the abandoned attempt's thinking showed one trace
       // that contradicts itself partway through — the server now discards it
@@ -1012,6 +1055,7 @@ export function assistantMessage() {
       if (prose) {
         prose.remove();
         prose = null;
+        wrap.querySelector(':scope > .msg__actions')?.remove();
       }
     },
 
