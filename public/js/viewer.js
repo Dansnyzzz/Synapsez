@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { t, currentLanguage } from './i18n.js';
 import { escapeHtml, renderMarkdown, wireCopyButtons } from './markdown.js';
+import { MONO, TABLE, CELL, HEAD, writeRich } from './clipboard.js';
 import { openMenu } from './menu.js';
 import { toast } from './render.js';
 import { humanSize } from './format.js';
@@ -622,32 +623,6 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
     }
   }
 
-  const MONO = 'font-family:Consolas,monospace;font-size:10pt;white-space:pre-wrap';
-  const TABLE = 'border-collapse:collapse;font-family:Calibri,sans-serif;font-size:11pt';
-  const CELL = 'border:1px solid #999;padding:4px 8px;';
-  const HEAD = 'background:#f0f0f0;font-weight:bold;text-align:left';
-
-  /**
-   * A whole HTML document, not a fragment.
-   *
-   * Word decides the encoding from the clipboard payload, and a bare fragment
-   * with no charset arrives as Latin-1 — which turns every Vietnamese
-   * diacritic into mojibake. The style block carries the parts of the page's
-   * look that survive a paste; anything structural is already inline, because
-   * Word ignores a stylesheet it cannot resolve.
-   */
-  const forWord = (html) =>
-    '<html><head><meta charset="utf-8"><style>' +
-    'body{font-family:Calibri,sans-serif;font-size:11pt;color:#000}' +
-    'h1{font-size:20pt}h2{font-size:16pt}h3{font-size:13pt}' +
-    'h1,h2,h3,h4{font-family:Calibri,sans-serif;color:#000;margin:12pt 0 6pt}' +
-    `table{${TABLE}}th,td{${CELL}}th{${HEAD}}` +
-    'blockquote{border-left:3px solid #ccc;margin-left:0;padding-left:12pt;color:#444}' +
-    `pre,code{${MONO}}` +
-    '</style></head><body>' +
-    html +
-    '</body></html>';
-
   async function copyRich() {
     // A picture has no text in it. Copying the image itself is what somebody
     // pressing Copy on a photograph meant.
@@ -656,25 +631,10 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
     const { html, text } = copyPayload();
     if (!text && !html) return toast(t('viewer.nothingToCopy'), 'error');
 
-    try {
-      if (html && window.ClipboardItem && navigator.clipboard?.write) {
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            'text/html': new Blob([forWord(html)], { type: 'text/html' }),
-            'text/plain': new Blob([text], { type: 'text/plain' }),
-          }),
-        ]);
-        toast(t('viewer.copiedRich'));
-        return;
-      }
-      await navigator.clipboard.writeText(text);
-      toast(t('viewer.copied'));
-    } catch {
-      // Older browsers, and any refusal of the async clipboard. Selecting real
-      // nodes and letting the browser do the copy carries the formatting too.
-      if (legacyCopy(html, text)) toast(t('viewer.copiedRich'));
-      else toast(t('viewer.copyRefused'), 'error');
-    }
+    const wrote = await writeRich({ html, text });
+    if (wrote === 'rich') toast(t('viewer.copiedRich'));
+    else if (wrote === 'plain') toast(t('viewer.copied'));
+    else toast(t('viewer.copyRefused'), 'error');
   }
 
   async function copyImage() {
@@ -708,33 +668,6 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
       };
       img.src = url;
     });
-  }
-
-  /** Select real nodes off-screen and let the browser copy them. */
-  function legacyCopy(html, text) {
-    const host = document.createElement('div');
-    host.setAttribute('contenteditable', 'true');
-    // Off-screen rather than hidden: `display:none` cannot be selected.
-    host.style.cssText = 'position:fixed;left:-9999px;top:0;white-space:pre-wrap';
-    if (html) host.innerHTML = html;
-    else host.textContent = text;
-    document.body.appendChild(host);
-
-    const range = document.createRange();
-    range.selectNodeContents(host);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    let ok = false;
-    try {
-      ok = document.execCommand('copy');
-    } catch {
-      ok = false;
-    }
-    selection.removeAllRanges();
-    host.remove();
-    return ok;
   }
 
   async function openOnMachine(how) {
