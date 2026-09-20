@@ -22,7 +22,37 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
   api.get(
     '/chats',
     wrap(async (req, res) => {
-      res.json({ chats: await getStore().listChats(req.user.id) });
+      const store = getStore();
+      /**
+       * The sidebar's whole picture in one request.
+       *
+       * It lists a project's conversations under the project rather than mixed
+       * into one flat list, so it needs the projects as well — and the groups,
+       * which are only the distinct names in use. Three round trips for one
+       * list that is fetched on every load, and on a poll while anything runs,
+       * is the kind of cost that is invisible until the bill.
+       */
+      /**
+       * Sequential, deliberately.
+       *
+       * `Promise.all` reads as the obvious thing and is wrong here: the local
+       * store is PGlite, which is one connection, and three statements issued
+       * at once against it come back as `could not open file`. The saving it
+       * would buy is not the database's time anyway — it is the HTTP hop to a
+       * hosted Postgres, and that is already paid once for the whole request
+       * rather than once per query.
+       */
+      const chats = await store.listChats(req.user.id);
+      const projects = await store.listProjects(req.user.id);
+      const groups = await store.listChatGroups(req.user.id);
+      res.json({
+        chats,
+        // Only what a sidebar heading needs. The shelf has its own route for
+        // the rest, and sending file counts and instructions here would be
+        // paying for them on every poll.
+        projects: projects.map((p) => ({ id: p.id, name: p.name, pinned: p.pinned })),
+        groups,
+      });
     }),
   );
 
@@ -138,10 +168,38 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
   api.patch(
     '/chats/:id',
     wrap(async (req, res) => {
+      const store = getStore();
       const patch = {};
-      for (const key of ['title', 'model', 'pinned']) if (key in (req.body || {})) patch[key] = req.body[key];
+      for (const key of ['title', 'model', 'pinned', 'unread']) {
+        if (key in (req.body || {})) patch[key] = req.body[key];
+      }
+      if ('archived' in (req.body || {})) patch.archived = !!req.body.archived;
 
-      const chat = await getStore().updateChat(req.user.id, req.params.id, patch);
+      /**
+       * Moving a conversation into a project, or out of one.
+       *
+       * `null` is meaningful — it is "Remove from project" — so this is checked
+       * for presence rather than truthiness. A project id is verified against
+       * this account before it is written: without that, a conversation could
+       * be filed under somebody else's shelf and would then be answered from
+       * their sources.
+       */
+      if ('projectId' in (req.body || {})) {
+        const projectId = req.body.projectId ? String(req.body.projectId) : null;
+        if (projectId && !(await store.getProject(req.user.id, projectId))) {
+          return res.status(404).json({ error: 'No such project.' });
+        }
+        patch.projectId = projectId;
+      }
+
+      // A group is a name somebody invented, so it is trimmed and bounded and
+      // otherwise taken as written. Empty means "no group".
+      if ('group' in (req.body || {})) {
+        const name = String(req.body.group ?? '').trim().slice(0, 80);
+        patch.group = name || null;
+      }
+
+      const chat = await store.updateChat(req.user.id, req.params.id, patch);
       if (!chat) return res.status(404).json({ error: 'Chat not found' });
       res.json({ chat });
     }),

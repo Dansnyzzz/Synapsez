@@ -23,6 +23,18 @@ const el = (tag, className, html) => {
 
 const ms = (n) => (n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`);
 
+/**
+ * The mark at the head of a card: waiting, or done.
+ *
+ * A fixed-width slot in both states, so the title does not jump sideways when
+ * the tick lands. Pending is a hollow ring rather than a spinning one — see the
+ * note in `appendThinking`: the turn already has one moving indicator, the
+ * status line under the transcript, and four more of them spinning in four
+ * different places is noise rather than information.
+ */
+const MARK_PENDING = '<span class="mark mark--pending" aria-hidden="true"></span>';
+const MARK_DONE = '<span class="mark">✓</span>';
+
 /** The nearest ancestor that actually scrolls sideways, if there is one. */
 function sidewaysScroller(node) {
   for (let el = node.parentElement; el; el = el.parentElement) {
@@ -112,10 +124,106 @@ export function summariseToolInput(name, input = {}) {
  * `browser_click {"ref":"7"}` — technically complete, and unreadable at the
  * speed the steps go past.
  *
- * Anything not listed falls through to the old behaviour, so a tool added later
- * is plain rather than broken.
+ * It began as the two families that come in long runs and now covers the whole
+ * catalogue, because the argument was never about browsers: `skill_read
+ * {"name":"Writing a Word document"}` is a function signature printed at
+ * somebody who asked a question, and a transcript full of them reads as machine
+ * output rather than as an account of what was done. The name of the function
+ * is not a secret — it is one click away, inside the card, with the arguments
+ * and the result. It is simply not the headline.
+ *
+ * Anything not listed still falls through to the raw name, so a tool added
+ * later is plain rather than broken — and `test/i18n.test.mjs` fails the build
+ * when a tool is added without a verb, so "later" is short.
  */
 const STEP_VERBS = {
+  /* ── files and the workspace ── */
+  list_dir: 'step.list_dir',
+  read_file: 'step.read_file',
+  write_file: 'step.write_file',
+  edit_file: 'step.edit_file',
+  multi_edit: 'step.multi_edit',
+  delete_file: 'step.delete_file',
+  move_file: 'step.move_file',
+  glob: 'step.glob',
+  grep: 'step.grep',
+  set_workspace: 'step.set_workspace',
+  download_file: 'step.download_file',
+  export_pdf: 'step.export_pdf',
+  edit_image: 'step.edit_image',
+  open_url: 'step.open_url',
+  index_folder: 'step.index_folder',
+  fs_search: 'step.fs_search',
+  fs_browse: 'step.fs_browse',
+  fs_read_text: 'step.fs_read_text',
+  fs_reveal: 'step.fs_reveal',
+  fs_describe: 'step.fs_describe',
+
+  /* ── commands ── */
+  run_command: 'step.run_command',
+  run_background: 'step.run_background',
+  run_background_logs: 'step.run_background_logs',
+  run_background_stop: 'step.run_background_stop',
+
+  /* ── the machine itself ── */
+  clipboard_read: 'step.clipboard_read',
+  clipboard_write: 'step.clipboard_write',
+  notify: 'step.notify',
+  system_stats: 'step.system_stats',
+  process_list: 'step.process_list',
+  process_kill: 'step.process_kill',
+  launch_app: 'step.launch_app',
+
+  /* ── the web ── */
+  web_search: 'step.web_search',
+  web_fetch: 'step.web_fetch',
+  deep_research: 'step.deep_research',
+  extract: 'step.extract',
+
+  /* ── documents it writes ── */
+  create_file: 'step.create_file',
+  update_file: 'step.update_file',
+  read_generated_file: 'step.read_generated_file',
+  file_versions: 'step.file_versions',
+  generate_image: 'step.generate_image',
+  show_widget: 'step.show_widget',
+  chart: 'step.chart',
+  calculate: 'step.calculate',
+
+  /* ── what it remembers, and what it knows how to do ── */
+  memory_write: 'step.memory_write',
+  memory_append: 'step.memory_append',
+  memory_edit: 'step.memory_edit',
+  memory_read: 'step.memory_read',
+  memory_delete: 'step.memory_delete',
+  skill_read: 'step.skill_read',
+  skill_write: 'step.skill_write',
+  load_tools: 'step.load_tools',
+  update_plan: 'step.update_plan',
+
+  /* ── work that outlives the turn ── */
+  run_parallel: 'step.run_parallel',
+  schedule_task: 'step.schedule_task',
+  workflow_write: 'step.workflow_write',
+  workflow_status: 'step.workflow_status',
+  list_tasks: 'step.list_tasks',
+  cancel_task: 'step.cancel_task',
+
+  /* ── the shelf of sources ── */
+  search_docs: 'step.search_docs',
+  list_indexed: 'step.list_indexed',
+  forget_docs: 'step.forget_docs',
+
+  /* ── other people's systems ── */
+  github: 'step.github',
+  github_write: 'step.github_write',
+  notion_search: 'step.notion_search',
+  telegram_send: 'step.telegram_send',
+  meta_page_post: 'step.meta_page_post',
+  slack_post: 'step.slack_post',
+  send_email: 'step.send_email',
+
+  /* ── the browser and the desktop, where this started ── */
   browser_open: 'step.browser.open',
   browser_tabs: 'step.browser.tabs',
   browser_switch: 'step.browser.switchTab',
@@ -162,44 +270,181 @@ const clip = (text, max = 60) => {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 };
 
+/**
+ * A path, clipped from the *front*.
+ *
+ * `clip` keeps the beginning, which for a path is the half that says nothing:
+ * every file under a deep workspace starts the same way and the filename — the
+ * only part anybody is reading for — is what falls off the end.
+ */
+const tailPath = (raw, max = 52) => {
+  const s = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  return s.length > max ? `…${s.slice(s.length - max)}` : s;
+};
+
+const seconds = (n) => t('step.seconds').replace('{n}', String(Number(n) || 0));
+const count = (n) => t('steps.count').replace('{n}', String(Number(n) || 0));
+
+/**
+ * What to show beside the verb, per tool.
+ *
+ * Only where the arguments say something a person wants at a glance. A tool
+ * whose interesting part is its *result* — `system_stats`, `list_tasks` — is
+ * deliberately absent: repeating "no arguments" as an empty detail is noise,
+ * and the result is one click away.
+ */
+const STEP_DETAILS = {
+  /* files and the workspace */
+  list_dir: (i) => tailPath(i.path),
+  read_file: (i) => tailPath(i.path),
+  write_file: (i) => tailPath(i.path),
+  edit_file: (i) => tailPath(i.path),
+  multi_edit: (i) => tailPath(i.path),
+  delete_file: (i) => tailPath(i.path),
+  move_file: (i) => `${tailPath(i.from, 24)} → ${tailPath(i.to, 24)}`,
+  glob: (i) => clip(i.pattern),
+  grep: (i) => `/${clip(i.pattern, 40)}/${i.path ? ` — ${tailPath(i.path, 24)}` : ''}`,
+  set_workspace: (i) => tailPath(i.path),
+  download_file: (i) => readableUrl(i.url),
+  export_pdf: (i) => tailPath(i.path || i.url || ''),
+  edit_image: (i) => tailPath(i.path),
+  open_url: (i) => readableUrl(i.target) || tailPath(i.target),
+  index_folder: (i) => tailPath(i.path),
+  fs_search: (i) => clip(i.query),
+  fs_browse: (i) => tailPath(i.path),
+  fs_read_text: (i) => tailPath(i.path),
+  fs_reveal: (i) => clip(i.name),
+  fs_describe: (i) => clip(i.name),
+
+  /* commands */
+  run_command: (i) => clip(i.command, 72),
+  run_background: (i) => clip(i.name || i.command, 72),
+  run_background_logs: (i) => clip(i.id, 24),
+  run_background_stop: (i) => clip(i.id, 24),
+
+  /* the machine itself */
+  clipboard_write: (i) => clip(i.text, 48),
+  notify: (i) => clip(i.title || i.body),
+  process_list: (i) => clip(i.filter || ''),
+  process_kill: (i) => clip(i.name || (i.pid != null ? `PID ${i.pid}` : '')),
+  launch_app: (i) => clip(i.app),
+
+  /* the web */
+  web_search: (i) => clip(i.query),
+  web_fetch: (i) => readableUrl(i.url),
+  deep_research: (i) => clip(i.question, 72),
+  extract: (i) => `${readableUrl(i.url)}${i.what ? ` — ${clip(i.what, 32)}` : ''}`,
+
+  /* documents it writes */
+  create_file: (i) => `${clip(i.name || i.title || '')}${i.format ? ` (${i.format})` : ''}`,
+  update_file: (i) => clip(i.name || i.file_id || ''),
+  read_generated_file: (i) => clip(i.file_id, 24),
+  file_versions: (i) => clip(i.file_id, 24),
+  generate_image: (i) => clip(i.prompt, 64),
+  show_widget: (i) => clip(i.title),
+  chart: (i) => `${clip(i.title)}${i.type ? ` (${i.type})` : ''}`,
+  calculate: (i) => clip(i.expression, 64),
+
+  /* what it remembers, and what it knows how to do */
+  memory_write: (i) => clip(i.key),
+  memory_append: (i) => clip(i.key),
+  memory_edit: (i) => clip(i.key),
+  memory_read: (i) => clip(i.key) || t('tool.arg.allNotes'),
+  memory_delete: (i) => clip(i.key),
+  skill_read: (i) => clip(i.name),
+  skill_write: (i) => clip(i.name),
+  load_tools: (i) => (Array.isArray(i.names) ? clip(i.names.join(', ')) : clip(i.names)),
+  update_plan: (i) => count((i.steps || []).length),
+
+  /* work that outlives the turn */
+  run_parallel: (i) => count((i.tasks || []).length),
+  schedule_task: (i) => `${clip(i.title, 40)}${i.when ? ` — ${clip(i.when, 24)}` : ''}`,
+  workflow_write: (i) => clip(i.title || i.id || i.action || ''),
+  workflow_status: (i) => clip(i.id, 24),
+  cancel_task: (i) => clip(i.id, 24),
+
+  /* the shelf of sources */
+  search_docs: (i) => clip(i.query),
+  forget_docs: (i) => clip(i.source),
+
+  /* other people's systems */
+  github: (i) => clip(i.path, 56),
+  github_write: (i) => `${String(i.method || 'POST').toUpperCase()} ${clip(i.path, 48)}`,
+  notion_search: (i) => clip(i.query),
+  telegram_send: (i) => clip(i.text, 48),
+  meta_page_post: (i) => clip(i.message, 48),
+  slack_post: (i) => `${clip(i.channel, 20)} — ${clip(i.text, 40)}`,
+  send_email: (i) => `${clip(i.to, 32)}${i.subject ? ` — ${clip(i.subject, 32)}` : ''}`,
+
+  /* the browser and the desktop */
+  browser_open: (i) => readableUrl(i.url),
+  // The model's own description of what it is clicking beats a reference
+  // number, which means nothing to the person reading.
+  browser_click: (i) => clip(i.description || (i.ref != null ? `[${i.ref}]` : '')),
+  browser_hover: (i) => clip(i.description || (i.ref != null ? `[${i.ref}]` : '')),
+  browser_type: (i) => clip(i.text, 48),
+  desktop_type: (i) => clip(i.text, 48),
+  browser_press: (i) => clip(i.key),
+  desktop_key: (i) => clip(i.key),
+  browser_select: (i) => clip(i.value),
+  browser_scroll: (i) => clip(i.direction || 'down'),
+  desktop_scroll: (i) => clip(i.direction || 'down'),
+  browser_wait: (i) => seconds(i.seconds ?? 3),
+  desktop_wait: (i) => seconds(i.seconds ?? 3),
+  browser_switch: (i) => (i.tab != null ? String(i.tab) : ''),
+  browser_close_tab: (i) => (i.tab != null ? String(i.tab) : ''),
+  desktop_launch: (i) => clip(i.app || i.path || ''),
+  desktop_focus: (i) => clip(i.title || i.window || ''),
+  desktop_close: (i) => clip(i.title || i.window || ''),
+};
+
+/**
+ * The call itself, for whoever opens the card.
+ *
+ * The headline says what was done in words; this is the other half of the
+ * bargain. Replacing `skill_read {"name":"…"}` in the summary with "Read a
+ * skill" would be a downgrade if the exact call then existed nowhere — the
+ * function name and its arguments are what you need to say "it passed the wrong
+ * path" or to reproduce a step outside the app. So it moves inside rather than
+ * going away.
+ *
+ * Text nodes, never `innerHTML`: every value here was chosen by a model, and
+ * some of them are quoting a web page back.
+ */
+function toolCallDetail(call) {
+  const node = el('div', 'tool__call');
+
+  const name = el('code', 'tool__fn');
+  name.textContent = call.name;
+  node.append(name);
+
+  const args = call.input && Object.keys(call.input).length ? call.input : null;
+  if (args) {
+    const pre = el('pre', 'tool__args');
+    try {
+      pre.textContent = JSON.stringify(args, null, 2);
+    } catch {
+      // A circular or otherwise unserialisable argument is still worth showing
+      // the shape of, and is not a reason to draw no card at all.
+      pre.textContent = String(args);
+    }
+    node.append(pre);
+  }
+  return node;
+}
+
 export function describeStep(name, input = {}) {
   const key = STEP_VERBS[name];
   if (!key) return { verb: name, detail: summariseToolInput(name, input) };
 
-  const seconds = (n) => t('step.seconds').replace('{n}', String(Number(n) || 0));
-
-  switch (name) {
-    case 'browser_open':
-      return { verb: t(key), detail: readableUrl(input.url) };
-    case 'browser_click':
-    case 'browser_hover':
-      // The model's own description of what it is clicking beats a reference
-      // number, which means nothing to the person reading.
-      return { verb: t(key), detail: clip(input.description || (input.ref != null ? `[${input.ref}]` : '')) };
-    case 'browser_type':
-    case 'desktop_type':
-      return { verb: t(key), detail: clip(input.text, 48) };
-    case 'browser_press':
-    case 'desktop_key':
-      return { verb: t(key), detail: clip(input.key) };
-    case 'browser_select':
-      return { verb: t(key), detail: clip(input.value) };
-    case 'browser_scroll':
-    case 'desktop_scroll':
-      return { verb: t(key), detail: clip(input.direction || 'down') };
-    case 'browser_wait':
-    case 'desktop_wait':
-      return { verb: t(key), detail: seconds(input.seconds ?? 3) };
-    case 'browser_switch':
-    case 'browser_close_tab':
-      return { verb: t(key), detail: input.tab != null ? String(input.tab) : '' };
-    case 'desktop_launch':
-      return { verb: t(key), detail: clip(input.app || input.path || '') };
-    case 'desktop_focus':
-    case 'desktop_close':
-      return { verb: t(key), detail: clip(input.title || input.window || '') };
-    default:
-      return { verb: t(key), detail: '' };
+  const detail = STEP_DETAILS[name];
+  // A detail function that throws on an argument shaped unexpectedly must not
+  // take the whole transcript down with it: this runs on every step of every
+  // turn, and the model is the one choosing the arguments.
+  try {
+    return { verb: t(key), detail: detail ? detail(input) || '' : '' };
+  } catch {
+    return { verb: t(key), detail: '' };
   }
 }
 
@@ -513,7 +758,9 @@ export function assistantMessage() {
 
   function closeGroup() {
     if (!group) return;
-    group.node.querySelector('.spinner')?.remove();
+    // The run is history now: swap the waiting mark for a tick and fold it up.
+    const mark = group.node.querySelector(':scope > summary > .mark');
+    if (mark) mark.outerHTML = MARK_DONE;
     group.node.open = false;
     group = null;
   }
@@ -595,6 +842,10 @@ export function assistantMessage() {
         const out = el('details', 'step__out');
         out.open = !!result.isError;
         out.append(el('summary', null, escapeHtml(t('step.output'))));
+        // The call that produced it, above the result it produced — the same
+        // bargain the standalone cards make: plain words outside, the exact
+        // call and its arguments for whoever opens it.
+        out.append(toolCallDetail(call));
         const pre = el('pre');
         pre.textContent = result.content || t('chat.noOutput');
         out.append(pre);
@@ -621,7 +872,7 @@ export function assistantMessage() {
     const node = el('details', 'block steps');
     node.open = true;
     const summary = el('summary');
-    summary.innerHTML = '<span class="spinner"></span>';
+    summary.innerHTML = MARK_PENDING;
     const title = el('span', 'steps__title');
     const tally = el('span', 'steps__tally');
     summary.append(title, tally);
@@ -641,9 +892,17 @@ export function assistantMessage() {
     appendThinking(delta) {
       if (!thinkingBlock) {
         thinkingBlock = el('details', 'block');
-        thinkingBlock.append(
-          el('summary', null, `<span class="spinner"></span> ${escapeHtml(t('chat.reasoning'))}`),
-        );
+        /**
+         * No spinner here, and none on the cards below.
+         *
+         * One turn draws a status line under the transcript that says what is
+         * happening by name — "Running deep_research…", "Thinking…" — and every
+         * card that had not finished drew its own spinning ring as well. Three
+         * or four of them at once, in different places, all saying the thing
+         * the one line at the bottom already said. A card that is still working
+         * is the one with no tick, which is quieter and just as clear.
+         */
+        thinkingBlock.append(el('summary', null, `${MARK_PENDING} ${escapeHtml(t('chat.reasoning'))}`));
         thinkingBody = el('div', 'block__body');
         thinkingBody.append(el('pre'));
         thinkingBlock.append(thinkingBody);
@@ -654,8 +913,26 @@ export function assistantMessage() {
 
     finishThinking() {
       if (thinkingBlock) {
-        thinkingBlock.querySelector('summary').innerHTML = escapeHtml(t('chat.reasoning'));
+        thinkingBlock.querySelector('summary').innerHTML = `${MARK_DONE} ${escapeHtml(t('chat.reasoning'))}`;
       }
+    },
+
+    /**
+     * The reasoning turned out to be the whole answer — show it as one.
+     *
+     * The server decided this (see `reasonedAloud` in `server/agent.js`) and
+     * stored the turn with the words as its reply, so a reload already shows it
+     * correctly. This is the live view catching up: without it the person who
+     * watched the turn arrive still sees an empty bubble until they refresh,
+     * and the two views of the same turn disagree.
+     */
+    adoptThinkingAsReply(text) {
+      if (prose || !thinkingBlock) return;
+      thinkingBlock.remove();
+      thinkingBlock = null;
+      thinkingBody = null;
+      api.appendText(text);
+      api.flushText();
     },
 
     /**
@@ -784,16 +1061,25 @@ export function assistantMessage() {
       // `read_file` between two browser actions really is a change of activity.
       closeGroup();
 
+      // The headline is what was done; the function name and its arguments are
+      // inside, one click away, for whoever wants them.
+      const { verb, detail } = describeStep(call.name, call.input);
+      const head = (mark) =>
+        `${mark}<span class="tool__name">${escapeHtml(verb)}</span>` +
+        (detail ? `<span class="tool__arg">${escapeHtml(detail)}</span>` : '');
+
       const block = el('details', 'block tool');
       const summary = el('summary');
-      summary.innerHTML =
-        `<span class="spinner"></span>` +
-        `<span class="tool__name">${escapeHtml(call.name)}</span>` +
-        `<span class="tool__arg">${escapeHtml(summariseToolInput(call.name, call.input))}</span>`;
+      summary.innerHTML = head(MARK_PENDING);
       block.append(summary);
 
       const inner = el('div', 'block__body');
-      inner.append(el('pre'));
+      inner.append(toolCallDetail(call));
+      // Held rather than looked up: the arguments are a `pre` too, and they now
+      // come first, so `querySelector('pre')` finds the call and the result
+      // overwrites what it was called with.
+      const output = el('pre');
+      inner.append(output);
       block.append(inner);
       body.append(block);
 
@@ -801,11 +1087,9 @@ export function assistantMessage() {
         complete(result) {
           block.classList.toggle('tool--error', !!result.isError);
           summary.innerHTML =
-            `<span>${result.isError ? '✗' : '✓'}</span>` +
-            `<span class="tool__name">${escapeHtml(call.name)}</span>` +
-            `<span class="tool__arg">${escapeHtml(summariseToolInput(call.name, call.input))}</span>` +
+            head(`<span class="mark">${result.isError ? '✗' : '✓'}</span>`) +
             (result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '');
-          inner.querySelector('pre').textContent = result.content || t('chat.noOutput');
+          output.textContent = result.content || t('chat.noOutput');
 
           /**
            * A document came out of this call.

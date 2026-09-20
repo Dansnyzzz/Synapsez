@@ -779,6 +779,11 @@ loaded only when a document actually needs reading, and the result is cached per
 a conversation is re-read on every step and parsing the same file forty times to send the same
 characters is pure cost.
 
+A document **linked on a page** goes through the same two readers: `web_fetch` on a URL ending in a
+PDF, `.docx`, `.xlsx` or `.pptx` opens it and returns its text, rather than the bytes decoded as if
+they were prose. So a past exam paper or an annual report published as a PDF can be quoted directly,
+and the tool says plainly when what came back is a picture rather than pasting it in.
+
 Office documents are read by a reader written for this project — no dependency, and the same code
 draws the preview. That last part is deliberate: **what you see and what the assistant answered from
 are the same reading**, so the two cannot quietly disagree. A preview generated some other way would

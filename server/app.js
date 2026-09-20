@@ -46,8 +46,10 @@ import { saveSkill } from './skills.js';
 import { addSource } from './projects.js';
 import {
   parseSchedule,
+  fromFrequency,
   runDueTasks,
   runDueTasksForUser,
+  runTaskNow,
   validZone,
   sweep,
 } from './scheduler.js';
@@ -227,6 +229,17 @@ export function createApp() {
    */
   const isRunning = (chat) =>
     !!chat?.run_lock_at && Date.now() - new Date(chat.run_lock_at).getTime() < RUN_LEASE_STALE_MS;
+
+  /**
+   * What a scheduled run may do without being asked.
+   *
+   * The same three words the loop already understands, narrowed to the ones a
+   * task can sensibly choose: a run at 3am cannot be asked anything, so `ask`
+   * means "stop at the first risky step" rather than "prompt", and the form
+   * says exactly that. Anything else is ignored and the account default wins,
+   * which is the safe direction to fail in.
+   */
+  const TASK_POLICIES = new Set(['ask', 'guarded', 'auto']);
 
   /** `req.body` is undefined in Express 5 when no JSON arrived — never assume it. */
   const body = (req) => req.body || {};
@@ -1227,9 +1240,11 @@ export function createApp() {
       const store = getStore();
       const project = await store.getProject(req.user.id, req.params.id);
       if (!project) return res.status(404).json({ error: 'No such project.' });
-      const [files, chats] = await Promise.all([
+      const [files, chats, tasks] = await Promise.all([
         store.listProjectFiles(req.user.id, project.id),
         store.listProjectChats(req.user.id, project.id),
+        // The work this project does on its own, for its Scheduled list.
+        store.listProjectTasks(req.user.id, project.id),
       ]);
       /**
        * The notes the assistant has saved for this account.
@@ -1246,7 +1261,7 @@ export function createApp() {
         .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
         .slice(0, 12);
 
-      res.json({ project, files, chats, memory });
+      res.json({ project, files, chats, memory, tasks });
     }),
   );
 
@@ -1383,10 +1398,31 @@ export function createApp() {
         // o'clock. Without it the server's clock decided, which on a deployment
         // is UTC — seven hours out for anyone in Vietnam, silently.
         const tz = validZone(req.body?.tz) ? req.body.tz : null;
-        const { cron, nextRunAt } = parseSchedule(req.body?.when, {
-          once: req.body?.repeat === false,
-          tz,
-        });
+
+        /**
+         * Two ways in, because there are two callers.
+         *
+         * `frequency` is the menu the form offers — manual, hourly, daily,
+         * weekdays, weekly, monthly — and is what a person picks. `when` is the
+         * written form, which the agent's own `schedule_task` tool uses and
+         * which can say things a menu cannot ("fri 16:00"). Neither is going
+         * away; a menu that could only express a third of the schedules would
+         * be a worse tool, and a text field is a worse form.
+         */
+        const { cron, nextRunAt } = req.body?.frequency
+          ? fromFrequency(req.body.frequency, { tz })
+          : parseSchedule(req.body?.when, { once: req.body?.repeat === false, tz });
+
+        // A task filed under a project runs inside it. Checked, so an id from
+        // another account cannot attach a run to a shelf it does not own.
+        const projectId = req.body?.projectId ? String(req.body.projectId) : null;
+        if (projectId && !(await getStore().getProject(req.user.id, projectId))) {
+          return res.status(404).json({ error: 'No such project.' });
+        }
+
+        // What it may do with nobody watching. Null means the account default.
+        const policy = TASK_POLICIES.has(String(req.body?.policy)) ? String(req.body.policy) : null;
+
         const prefs = await getPrefs(req.user.id);
         const task = await getStore().createTask(req.user.id, {
           id: crypto.randomUUID(),
@@ -1396,11 +1432,25 @@ export function createApp() {
           cron,
           nextRunAt,
           tz,
+          projectId,
+          policy,
         });
         res.status(201).json({ task });
       } catch (err) {
         res.status(400).json({ error: err.message });
       }
+    }),
+  );
+
+  api.get(
+    '/tasks/:id',
+    wrap(async (req, res) => {
+      const task = await getStore().getTask(req.user.id, req.params.id);
+      if (!task) return res.status(404).json({ error: 'Task not found' });
+      // The project by name, because the page shows which shelf it answers
+      // from and an id tells nobody that.
+      const project = task.project_id ? await getStore().getProject(req.user.id, task.project_id) : null;
+      res.json({ task, project: project ? { id: project.id, name: project.name } : null });
     }),
   );
 
@@ -1410,6 +1460,24 @@ export function createApp() {
       const task = await getStore().setTaskEnabled(req.user.id, req.params.id, !!req.body?.enabled);
       if (!task) return res.status(404).json({ error: 'Task not found' });
       res.json({ task });
+    }),
+  );
+
+  /**
+   * Run one task now, whatever its schedule says.
+   *
+   * The only way a manual task ever runs, and the way anybody checks that a
+   * scheduled one does what they meant before waiting until morning for it.
+   * Held open like `/tasks/run-due`, for the same reason: returning early is
+   * what lets a serverless host freeze the instance mid-run.
+   */
+  api.post(
+    '/tasks/:id/run',
+    wrap(async (req, res) => {
+      const task = await getStore().getTask(req.user.id, req.params.id);
+      if (!task) return res.status(404).json({ error: 'Task not found' });
+      const result = await runTaskNow(task);
+      res.json(result);
     }),
   );
 

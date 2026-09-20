@@ -978,7 +978,26 @@ section('a project can be built on Office documents');
     mime: 'image/png',
     data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   });
-  check('a picture is still refused, with a reason', image.status === 400 && /quote/.test(image.json?.error || ''), image.json?.error);
+  /*
+   * A picture is a source too now, and a different kind of one: it carries no
+   * text, so it never competes for the passage budget the quotable sources
+   * share, and it rides on the question as a real picture instead. A model
+   * that cannot see is told there was one rather than left to answer as though
+   * the shelf were empty.
+   */
+  check('a picture is taken as well', image.status === 201, `${image.status} ${image.json?.error || ''}`);
+  check('with no text to rank', image.json?.file?.chars === 0, `${image.json?.file?.chars}`);
+
+  // And it stays out of the ranking. `projectPrompt` hands `selectSources` only
+  // the sources that have text; a row with none would score nothing against
+  // every question and still take a place in the shortlist.
+  const withImage = await store.readProjectFiles((await store.getUserByEmail('alice@example.com')).id, project.id);
+  const quotable = withImage.filter((f) => f.kind !== 'image');
+  check('the shelf now holds both kinds', withImage.length === quotable.length + 1, `${withImage.length}`);
+  check(
+    'and only the quotable one is ranked',
+    selectSources(quotable, 'giá cáp điện').sources.every((src) => src.kind !== 'image'),
+  );
 }
 
 section('a document that cannot be read says so');

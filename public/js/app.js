@@ -1,5 +1,7 @@
 import { api, runAgent } from './api.js';
 import { follow } from './mirror.js';
+import { createRuns } from './runs.js';
+import { makeResizable } from './resize.js';
 import { wireCopyButtons, escapeHtml } from './markdown.js';
 import {
   assistantMessage,
@@ -17,7 +19,7 @@ import { createViewer } from './viewer.js';
 import { shouldAutoPreview } from './autopreview.js';
 import { createWorkspace } from './workspace.js';
 import { createPages } from './pages.js';
-import { createProjectPage } from './project-page.js';
+import { createProjectPage, repeatsAs } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
 import { humanSize, counted } from './format.js';
@@ -114,37 +116,23 @@ const state = {
   model: null,
   /** The project this conversation belongs to, when it belongs to one. */
   project: null,
-  running: false,
-  abort: null,
-  /** Stable for one run, across every reconnect it takes. See stream(). */
-  runId: null,
   /** How full the model's window is, as last measured by the server. */
   context: null,
   /** Documents the assistant has made in this conversation, newest first. */
   files: [],
-  /** Typed while a turn was running, waiting for it to end. See renderQueue(). */
-  queue: [],
-  /** The assistant block currently being streamed into. */
-  turn: null,
-  /**
-   * True once the current block has been persisted. Tool cards still belong to
-   * it — they are the calls it made — but the next prose starts a fresh block.
-   */
-  sealed: false,
-  toolHandles: new Map(),
-  /**
-   * The last "why this reply stopped" notice drawn, so one outcome is not
-   * announced twice.
-   *
-   * A truncated turn can report itself twice in one run — once on the path that
-   * still has tool calls to make, and again on the way out — and two identical
-   * warnings side by side read as two separate failures. Cleared when a run
-   * ends, because the *next* turn being truncated as well is news, not a
-   * repeat: suppressing that would silently hide exactly the thing this whole
-   * mechanism exists to surface.
-   */
-  lastStopNote: null,
 };
+
+/**
+ * Every conversation this tab is answering. See `public/js/runs.js` for why
+ * this is a registry rather than a few fields on `state`.
+ */
+const runs = createRuns({ currentChatId: () => state.chatId });
+
+/** The run for the conversation on screen, if it has one. */
+const runHere = () => runs.here();
+
+/** Whether this run's conversation is the one being looked at right now. */
+const onScreen = (run) => runs.onScreen(run);
 
 /**
  * The modes, in the order they are offered: from the one that gets on with it
@@ -509,6 +497,9 @@ async function start() {
   setEmpty(true);
 
   await refreshChats();
+  // Never fatal: a sidebar section that could not load is a missing list, not
+  // a broken app, and throwing here would take the conversations with it.
+  await refreshTasks().catch(() => {});
 
   /**
    * Keep the worker indicator honest without a websocket.
@@ -536,8 +527,34 @@ async function start() {
    * halfway through, having already spent the tokens.
    */
   if (state.boot.runtime?.serverless) {
-    api.runDueTasks().catch(() => {
-      /* best-effort; the daily cron is the guarantee */
+    /**
+     * On a timer, not only once at startup.
+     *
+     * This used to fire exactly once, when the page loaded, and the only other
+     * trigger was the daily cron — which on the free plan is all a deployment
+     * gets, one tick a day. So a task set for 07:30 ran at 07:30 only if
+     * somebody happened to open the app at 07:30; otherwise it waited for the
+     * cron, which is what "it only runs again after 24 hours" was.
+     *
+     * A minute is the resolution a schedule is written at, so it is the
+     * resolution worth checking at. The request is cheap when nothing is due —
+     * one indexed lookup that returns nothing — and it is skipped entirely
+     * while the tab is hidden, because a background tab is not a cron job and
+     * pretending otherwise is how a laptop stays warm all night.
+     */
+    const sweep = () => {
+      if (document.hidden) return;
+      api.runDueTasks().catch(() => {
+        /* best-effort; the daily cron is still the backstop */
+      });
+    };
+    sweep();
+    setInterval(sweep, 60_000);
+    // And on return, because a tab left closed all morning has a schedule to
+    // catch up on and waiting up to a minute to notice reads as nothing
+    // happening.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) sweep();
     });
   }
 
@@ -604,80 +621,309 @@ function scheduleChatRefresh() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && state.boot) refreshChats({ background: true }).catch(() => {});
+  if (document.hidden || !state.boot) return;
+  refreshChats({ background: true }).catch(() => {});
+  /**
+   * The scheduled list too, on the same moment rather than on a timer of its
+   * own.
+   *
+   * A task is not only made from the form: the assistant schedules its own with
+   * `schedule_task`, and a phone can make one while this tab sits open. Both
+   * are "created elsewhere" as far as this window is concerned, and coming back
+   * to the tab is the cheapest honest moment to find out — a second poll beside
+   * the conversations would double the request traffic to keep a short list
+   * fresh that nobody is watching while the tab is hidden.
+   */
+  refreshTasks().catch(() => {});
 });
+
+/**
+ * Both side panels can be dragged, and put back with a double-click.
+ *
+ * Wired here rather than in `resize.js` so the module stays about one thing:
+ * the behaviour of a handle, not which handles this app happens to have.
+ */
+makeResizable('sidebar', $('sidebar-grip'));
+makeResizable('detail', $('detail-grip'));
 
 const busyWithList = () => !!document.querySelector('#chat-list .chat-item--editing') || !$('row-menu').hidden;
 
+/**
+ * The work that runs on its own, listed above the conversations.
+ *
+ * Its own section because a scheduled task is not a conversation you had: it is
+ * something that will happen, and the one thing worth seeing at a glance in a
+ * sidebar is what the app is going to do without you. Drawn only when there is
+ * at least one, so nobody is shown a heading over nothing.
+ *
+ * Never fatal. A sidebar section that could not load is a missing list, not a
+ * broken app, and throwing here would take the conversations down with it.
+ */
+async function refreshTasks() {
+  const host = $('sidebar-tasks');
+  const { tasks } = await api.tasks();
+  host.innerHTML = '';
+  if (!tasks.length) return;
+
+  host.append(Object.assign(document.createElement('div'), {
+    className: 'chats__label',
+    textContent: t('nav.scheduled'),
+  }));
+
+  for (const task of tasks) {
+    const row = document.createElement('div');
+    row.className = `chat-row${task.enabled ? '' : ' is-muted'}`;
+
+    const btn = document.createElement('button');
+    btn.className = 'chat-item';
+    btn.textContent = task.title;
+    btn.title = task.title;
+    btn.addEventListener('click', () => {
+      leavePages();
+      pages.showTask(task.id).catch((err) => toast(err.message, 'error'));
+    });
+
+    // How often, rather than when next: a list is read for "what is set up
+    // here", and the exact next timestamp is on the task's own page.
+    const when = document.createElement('span');
+    when.className = 'chat-row__when';
+    when.textContent = repeatsAs(task);
+
+    row.append(btn, when);
+    host.append(row);
+  }
+}
+
+/**
+ * One conversation, as a row.
+ *
+ * The same row whether it is loose in the list or nested under a project, so
+ * the two can never drift into looking like different kinds of thing — which
+ * they are not. `nested` only indents it.
+ */
+function chatRow(chat, { nested = false } = {}) {
+  const row = document.createElement('div');
+  row.className = `chat-row${chat.id === state.chatId ? ' is-active' : ''}${nested ? ' chat-row--nested' : ''}`;
+  // The row says which conversation it is. Nothing in the app needs it yet;
+  // everything that wants to find one particular row does — and "the first
+  // `.chat-row`" stopped meaning anything the moment projects came first.
+  row.dataset.chat = chat.id;
+
+  const btn = document.createElement('button');
+  btn.className = 'chat-item';
+  btn.textContent = chat.title || t('chat.untitled');
+  btn.title = chat.title || t('chat.untitled');
+  btn.addEventListener('click', () => openChat(chat.id));
+
+  if (chat.pinned) {
+    const pin = document.createElement('span');
+    pin.className = 'chat-row__pin';
+    pin.textContent = '📌';
+    pin.title = t('chat.pinned');
+    row.append(pin);
+  }
+
+  // A note to yourself that this one is not finished with. Nothing sets it
+  // automatically — opening the conversation is what clears it.
+  if (chat.unread) {
+    const dot = document.createElement('span');
+    dot.className = 'chat-row__unread';
+    dot.setAttribute('role', 'img');
+    dot.setAttribute('aria-label', t('chat.unreadAria'));
+    dot.title = t('chat.unreadAria');
+    row.append(dot);
+  }
+
+  // Work happening in here is still tracked — `chat.running` keeps the list
+  // refreshing quickly so a title appears as soon as it is written — but it
+  // is no longer drawn. A pulsing dot beside a row the green bar had already
+  // marked as the open one said nothing the composer's own spinner did not.
+  if (chat.running) row.classList.add('is-running');
+
+  const menu = document.createElement('button');
+  menu.className = 'chat-row__menu';
+  menu.type = 'button';
+  menu.textContent = '⋮';
+  menu.title = t('chat.more');
+  menu.setAttribute('aria-label', t('chat.more'));
+  menu.setAttribute('aria-haspopup', 'menu');
+  menu.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openRowMenu(chat, menu, btn);
+  });
+
+  row.append(btn, menu);
+  return row;
+}
+
+/** A heading in the sidebar. */
+const sidebarLabel = (text) =>
+  Object.assign(document.createElement('div'), { className: 'chats__label', textContent: text });
+
+/**
+ * Which projects somebody has folded shut.
+ *
+ * Collapsed rather than open is the thing worth recording, because open is the
+ * default: a sidebar that hides conversations until you find the right heading
+ * to click is a sidebar that has lost the list it exists to be. Folding one is
+ * a deliberate act; the rest stay where you can see them.
+ *
+ * Remembered across refreshes — the list is redrawn on a poll, and a section
+ * that reopened itself every thirty seconds would be unusable. In memory rather
+ * than stored: it is where you are, not a setting.
+ */
+const shutProjects = new Set();
+
+/**
+ * How many loose conversations the sidebar shows before offering the rest.
+ *
+ * Twenty is where a list you glance at becomes a list you scroll. Everything
+ * past it is one press away, and in search and the Projects shelf regardless.
+ */
+const SIDEBAR_CHATS = 20;
+let showingAllChats = false;
+
 async function refreshChats({ background = false } = {}) {
   if (background && busyWithList()) return scheduleChatRefresh();
-  const { chats } = await api.chats();
+  const { chats, projects = [], groups = [] } = await api.chats();
   state.chats = chats;
+  state.projects = projects;
+  state.groups = groups;
   scheduleChatRefresh();
 
-  const signature = JSON.stringify([state.chatId, currentLanguage(), chats.map((c) => [c.id, c.title, c.pinned, c.running])]);
+  const signature = JSON.stringify([
+    state.chatId,
+    currentLanguage(),
+    [...shutProjects].sort(),
+    showingAllChats,
+    projects.map((p) => [p.id, p.name]),
+    chats.map((c) => [c.id, c.title, c.pinned, c.running, c.project_id, c.unread, c.chat_group]),
+  ]);
   if (background && signature === chatSignature) return;
   chatSignature = signature;
 
   const list = $('chat-list');
   list.innerHTML = '';
 
-  if (!chats.length) {
-    list.append(Object.assign(document.createElement('div'), {
-      className: 'chats__label',
-      textContent: t('nav.noConversations'),
-    }));
+  /**
+   * A project's conversations live under the project, not in the flat list.
+   *
+   * Mixed together, a project was a folder you could put things in and then
+   * never see the inside of: the shelf knew what was filed where and the
+   * sidebar — the thing actually used to move between conversations — did not.
+   * So the projects come first, each a heading you can fold, and what is left
+   * is everything that belongs to no project.
+   */
+  const byProject = new Map();
+  for (const chat of chats) {
+    if (!chat.project_id) continue;
+    if (!byProject.has(chat.project_id)) byProject.set(chat.project_id, []);
+    byProject.get(chat.project_id).push(chat);
+  }
+
+  // Only projects that have something in them. A column of empty headings is
+  // the shelf's job, not the sidebar's.
+  const filed = projects.filter((project) => byProject.has(project.id));
+  if (filed.length) {
+    list.append(sidebarLabel(t('nav.projects')));
+    for (const project of filed) {
+      const open = !shutProjects.has(project.id);
+      const head = document.createElement('div');
+      head.className = `proj-row${open ? ' is-open' : ''}`;
+
+      const toggle = document.createElement('button');
+      toggle.className = 'proj-row__name';
+      toggle.type = 'button';
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.innerHTML =
+        '<span class="proj-row__mark" aria-hidden="true">' +
+        '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">' +
+        '<path d="M2.5 6a1.5 1.5 0 0 1 1.5-1.5h3.2l1.5 1.8H16a1.5 1.5 0 0 1 1.5 1.5v6.7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5Z"/></svg></span>';
+      toggle.append(Object.assign(document.createElement('span'), { textContent: project.name }));
+      toggle.title = project.name;
+      toggle.addEventListener('click', () => {
+        if (shutProjects.has(project.id)) shutProjects.delete(project.id);
+        else shutProjects.add(project.id);
+        refreshChats().catch(() => {});
+      });
+
+      // The heading opens the project's own page, which is where its
+      // instructions, sources and scheduled work are.
+      const go = document.createElement('button');
+      go.className = 'proj-row__open';
+      go.type = 'button';
+      go.textContent = '⋮';
+      go.title = t('proj.openPage');
+      go.setAttribute('aria-label', t('proj.openPage'));
+      go.addEventListener('click', (event) => {
+        event.stopPropagation();
+        leavePages();
+        projectPage.open(project.id);
+      });
+
+      head.append(toggle, go);
+      list.append(head);
+
+      if (open) for (const chat of byProject.get(project.id)) list.append(chatRow(chat, { nested: true }));
+    }
+  }
+
+  const loose = chats.filter((chat) => !chat.project_id);
+  if (!loose.length && !filed.length) {
+    list.append(sidebarLabel(t('nav.noConversations')));
     return;
   }
 
-  list.append(Object.assign(document.createElement('div'), {
-    className: 'chats__label',
-    textContent: t('nav.conversationsLabel'),
-  }));
+  if (loose.length) {
+    list.append(sidebarLabel(t('nav.conversationsLabel')));
 
-  for (const chat of chats) {
-    const row = document.createElement('div');
-    row.className = `chat-row${chat.id === state.chatId ? ' is-active' : ''}`;
-
-    const btn = document.createElement('button');
-    btn.className = 'chat-item';
-    btn.textContent = chat.title || t('chat.untitled');
-    btn.title = chat.title || t('chat.untitled');
-    btn.addEventListener('click', () => openChat(chat.id));
-
-    if (chat.pinned) {
-      const pin = document.createElement('span');
-      pin.className = 'chat-row__pin';
-      pin.textContent = '📌';
-      pin.title = t('chat.pinned');
-      row.append(pin);
+    /**
+     * Groups, where somebody has made one.
+     *
+     * A group is a name a person invented, so the set of them is whatever is
+     * in use. Ungrouped conversations follow, without a heading of their own —
+     * "Ungrouped" over the majority of the list is a label that says nothing.
+     */
+    const grouped = new Map();
+    for (const chat of loose) {
+      if (!chat.chat_group) continue;
+      if (!grouped.has(chat.chat_group)) grouped.set(chat.chat_group, []);
+      grouped.get(chat.chat_group).push(chat);
+    }
+    for (const name of [...grouped.keys()].sort()) {
+      list.append(sidebarLabel(name));
+      for (const chat of grouped.get(name)) list.append(chatRow(chat, { nested: true }));
     }
 
-    // Work is happening in here right now — a workflow, a scheduled task, a turn.
-    if (chat.running) {
-      row.classList.add('is-running');
-      const live = document.createElement('span');
-      live.className = 'chat-row__live';
-      live.setAttribute('role', 'img');
-      live.setAttribute('aria-label', t('chat.running'));
-      live.title = t('chat.running');
-      row.append(live);
+    /**
+     * The twenty most recent, and a way to the rest.
+     *
+     * A sidebar is for getting back to what you were just doing, and past about
+     * twenty rows it stops doing that — it becomes a list you scroll rather
+     * than a place you glance. The order is by when something was last *said*:
+     * pinning, archiving and grouping deliberately do not move a conversation
+     * (see `updateChat`), because none of those mean the conversation moved on.
+     *
+     * Nothing is hidden — "show all" is one press, and everything is in the
+     * Projects shelf and in search either way.
+     */
+    const flat = loose.filter((chat) => !chat.chat_group);
+    const shown = showingAllChats ? flat : flat.slice(0, SIDEBAR_CHATS);
+    for (const chat of shown) list.append(chatRow(chat));
+
+    if (flat.length > SIDEBAR_CHATS) {
+      const more = document.createElement('button');
+      more.className = 'chats__more';
+      more.type = 'button';
+      more.textContent = showingAllChats
+        ? t('nav.showFewer')
+        : t('nav.showAll').replace('{n}', String(flat.length - SIDEBAR_CHATS));
+      more.addEventListener('click', () => {
+        showingAllChats = !showingAllChats;
+        refreshChats().catch(() => {});
+      });
+      list.append(more);
     }
-
-    const menu = document.createElement('button');
-    menu.className = 'chat-row__menu';
-    menu.type = 'button';
-    menu.textContent = '⋯';
-    menu.title = t('chat.more');
-    menu.setAttribute('aria-label', t('chat.more'));
-    menu.setAttribute('aria-haspopup', 'menu');
-    menu.addEventListener('click', (event) => {
-      event.stopPropagation();
-      openRowMenu(chat, menu, btn);
-    });
-
-    row.append(btn, menu);
-    list.append(row);
   }
 }
 
@@ -686,10 +932,19 @@ async function refreshChats({ background = false } = {}) {
 const rowMenu = $('row-menu');
 let closeRowMenu = () => {};
 
+/* `svg` is the one defined near the top of this file — these are the same
+   16×16 line drawings the policy chips use, at the same weight. */
 const ICON = {
-  pin: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 2.5 17.5 7.5l-2.6 1.2-3.4 3.4-.5 3.4-5.5-5.5 3.4-.5 3.4-3.4Z"/><line x1="7" y1="13" x2="3" y2="17"/></svg>',
-  rename: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 2.9a1.9 1.9 0 0 1 2.7 2.7L7.8 14 4 15l1-3.8Z"/></svg>',
-  trash: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5h13M8 5.5V3.5h4v2M5.5 5.5 6 16.5h8l.5-11"/></svg>',
+  pin: svg('<path d="M12.5 2.5 17.5 7.5l-2.6 1.2-3.4 3.4-.5 3.4-5.5-5.5 3.4-.5 3.4-3.4Z"/><line x1="7" y1="13" x2="3" y2="17"/>'),
+  rename: svg('<path d="M13.5 2.9a1.9 1.9 0 0 1 2.7 2.7L7.8 14 4 15l1-3.8Z"/>'),
+  trash: svg('<path d="M3.5 5.5h13M8 5.5V3.5h4v2M5.5 5.5 6 16.5h8l.5-11"/>'),
+  copy: svg('<rect x="7" y="7" width="9.5" height="9.5" rx="1.8"/><path d="M13 4.5H5.3A1.8 1.8 0 0 0 3.5 6.3V14"/>'),
+  unread: svg('<path d="M2.5 10s3-5 7.5-5 7.5 5 7.5 5-3 5-7.5 5S2.5 10 2.5 10Z"/><circle cx="10" cy="10" r="2"/><line x1="3.5" y1="16.5" x2="16.5" y2="3.5"/>'),
+  folder: svg('<path d="M2.5 6a1.5 1.5 0 0 1 1.5-1.5h3.2l1.5 1.8H16a1.5 1.5 0 0 1 1.5 1.5v6.7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5Z"/>'),
+  unfile: svg('<path d="M2.5 6a1.5 1.5 0 0 1 1.5-1.5h3.2l1.5 1.8H16a1.5 1.5 0 0 1 1.5 1.5v6.7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5Z"/><line x1="4" y1="16" x2="16" y2="4"/>'),
+  archive: svg('<rect x="3" y="4" width="14" height="4" rx="1"/><path d="M4.5 8v7A1.5 1.5 0 0 0 6 16.5h8A1.5 1.5 0 0 0 15.5 15V8"/><line x1="8.5" y1="11" x2="11.5" y2="11"/>'),
+  window: svg('<rect x="3" y="4.5" width="14" height="11" rx="1.8"/><path d="M3 8h14"/>'),
+  clock: svg('<circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.6 1.6"/>'),
 };
 
 /**
@@ -701,53 +956,162 @@ const ICON = {
  * second click on the menu item itself, so nothing here depends on the browser
  * agreeing to show a dialog.
  */
-function openRowMenu(chat, anchor, titleButton) {
-  closeRowMenu();
-
-  const item = (label, icon, key, onPick, danger) => {
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = `menu__item${danger ? ' menu__item--danger' : ''}`;
-    el.setAttribute('role', 'menuitem');
-    el.innerHTML = `${icon}<span>${escapeHtml(label)}</span><span class="menu__key">${key}</span>`;
-    el.addEventListener('click', (event) => {
-      event.stopPropagation();
-      onPick(el);
-    });
-    return el;
+/**
+ * Everything you can do to one conversation, in one place.
+ *
+ * Built from a description rather than by hand for each of the two callers —
+ * the ⋮ on a sidebar row, and the chevron beside the title — because they are
+ * the same list of things and two hand-written copies is how one of them ends
+ * up missing "Remove from project" for a year.
+ *
+ * Whether a conversation is filed under a project decides three of the entries,
+ * and that is the only difference between the two menus.
+ */
+function chatMenuItems(chat, { titleButton = null, onDone = async () => refreshChats() } = {}) {
+  const patch = async (body, said) => {
+    closeRowMenu();
+    try {
+      await api.updateChat(chat.id, body);
+      await onDone();
+      if (said) toast(said);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
   };
 
-  rowMenu.innerHTML = '';
-  rowMenu.append(
-    item(chat.pinned ? t('chat.unpin') : t('chat.pin'), ICON.pin, 'P', async () => {
+  const items = [];
+
+  if (titleButton === null) {
+    // From the title chevron: the conversation is already open, so "schedule
+    // something like this" is the useful thing to offer and "rename" reaches
+    // the title in place.
+    items.push({
+      label: t('chat.schedule'),
+      icon: ICON.clock,
+      run: () => {
+        closeRowMenu();
+        leavePages();
+        pages.newTask({
+          project: chat.project_id ? state.projects?.find((p) => p.id === chat.project_id) : null,
+          after: async () => refreshTasks().catch(() => {}),
+        });
+      },
+    });
+  } else {
+    /**
+     * A second window on the same conversation.
+     *
+     * Claude's desktop app offers this and it is genuinely useful here for the
+     * same reason: two conversations side by side. It is a real second tab, so
+     * the run lease keeps them honest — one drives, the other mirrors.
+     */
+    items.push({
+      label: t('chat.openWindow'),
+      icon: ICON.window,
+      run: () => {
+        closeRowMenu();
+        window.open(`${location.pathname}?chat=${encodeURIComponent(chat.id)}`, '_blank', 'noopener');
+      },
+    });
+  }
+
+  items.push({
+    label: t('chat.copyId'),
+    icon: ICON.copy,
+    run: async () => {
       closeRowMenu();
       try {
-        await api.updateChat(chat.id, { pinned: !chat.pinned });
-        await refreshChats();
-      } catch (err) {
-        toast(err.message, 'error');
+        await navigator.clipboard.writeText(chat.id);
+        toast(t('chat.idCopied'));
+      } catch {
+        // A browser that refuses the clipboard without a gesture it recognises.
+        // Showing the id is a worse answer than nothing at all is.
+        toast(chat.id);
       }
-    }),
-    item(t('chat.rename'), ICON.rename, 'R', () => {
-      closeRowMenu();
-      startRename(chat, titleButton);
-    }),
-  );
+    },
+  });
 
-  const separator = document.createElement('div');
-  separator.className = 'menu__sep';
-  rowMenu.append(separator);
+  items.push({ separator: true });
 
-  // Two clicks rather than a confirm() the browser might swallow. The label
-  // changing in place is also a clearer warning than a dialog you dismiss.
-  let armed = false;
-  rowMenu.append(
-    item(t('chat.delete'), ICON.trash, 'D', async (el) => {
-      if (!armed) {
-        armed = true;
-        el.querySelector('span').textContent = t('action.reallyDelete');
-        return;
-      }
+  items.push({
+    label: chat.pinned ? t('chat.unpin') : t('chat.pin'),
+    icon: ICON.pin,
+    key: 'P',
+    run: () => patch({ pinned: !chat.pinned }),
+  });
+
+  if (titleButton !== null) {
+    items.push({
+      label: t('chat.markUnread'),
+      icon: ICON.unread,
+      key: 'U',
+      run: () => patch({ unread: !chat.unread }),
+    });
+    items.push({
+      label: t('chat.rename'),
+      icon: ICON.rename,
+      key: 'R',
+      run: () => {
+        closeRowMenu();
+        startRename(chat, titleButton);
+      },
+    });
+  } else {
+    items.push({
+      label: t('chat.rename'),
+      icon: ICON.rename,
+      key: 'R',
+      run: () => {
+        closeRowMenu();
+        renameFromTitle(chat);
+      },
+    });
+  }
+
+  items.push({
+    label: t('chat.changeProject'),
+    icon: ICON.folder,
+    submenu: 'project',
+    run: () => {},
+  });
+
+  // Only offered when there is something to remove it from. An entry that does
+  // nothing is worse than an absent one: it is a thing you try and learn from.
+  if (chat.project_id) {
+    items.push({
+      label: t('chat.removeFromProject'),
+      icon: ICON.unfile,
+      run: () => patch({ projectId: null }, t('chat.removedFromProject')),
+    });
+  }
+
+  if (titleButton !== null) {
+    items.push({ label: t('chat.moveToGroup'), icon: ICON.folder, submenu: 'group', run: () => {} });
+  }
+
+  items.push({ separator: true });
+
+  /**
+   * Archive before Delete, and they are different things.
+   *
+   * The distinction matters precisely because they sit together: archiving is
+   * what somebody reaches for when they are not sure, and it has to genuinely
+   * be reversible or the pair is a trap.
+   */
+  items.push({
+    label: t('chat.archive'),
+    icon: ICON.archive,
+    key: 'A',
+    run: () => patch({ archived: true }, t('chat.archived')),
+  });
+
+  items.push({
+    label: t('chat.delete'),
+    icon: ICON.trash,
+    key: 'D',
+    danger: true,
+    arm: t('action.reallyDelete'),
+    run: async () => {
       closeRowMenu();
       try {
         await api.deleteChat(chat.id);
@@ -763,8 +1127,277 @@ function openRowMenu(chat, anchor, titleButton) {
       } catch (err) {
         toast(err.message, 'error');
       }
-    }, true),
-  );
+    },
+  });
+
+  return items;
+}
+
+/**
+ * A second panel beside the menu, for the two entries that open one.
+ *
+ * Its own element rather than replacing the menu's contents, because both are
+ * on screen at once in the design this follows — you can see which project you
+ * are moving out of while you choose the one to move into.
+ */
+const subMenu = (() => {
+  const node = document.createElement('div');
+  node.className = 'menu menu--sub';
+  node.hidden = true;
+  node.setAttribute('role', 'menu');
+  document.body.append(node);
+  return node;
+})();
+
+function closeSubMenu() {
+  subMenu.hidden = true;
+  subMenu.innerHTML = '';
+}
+
+/** Put the panel beside the item that opened it, and inside the window. */
+function placeSubMenu(anchor) {
+  subMenu.hidden = false;
+  const box = anchor.getBoundingClientRect();
+  const size = subMenu.getBoundingClientRect();
+  // Beside the menu if it fits, and flipped to its left if it does not — a
+  // panel half off the right edge is how this looks broken on a laptop.
+  const right = box.right + 4;
+  const left = right + size.width > window.innerWidth - 8 ? box.left - size.width - 4 : right;
+  const top = Math.min(box.top, window.innerHeight - size.height - 8);
+  subMenu.style.left = `${Math.max(8, left)}px`;
+  subMenu.style.top = `${Math.max(8, top)}px`;
+}
+
+/**
+ * Which project this conversation belongs to.
+ *
+ * Searchable, and the search doubles as the way to make a new one: typing a
+ * name nothing matches offers to create it. That is the whole reason the field
+ * says "Search or create" — a separate "New project" entry would be a second
+ * road to the same place, and the one nobody uses goes stale.
+ */
+function openProjectPicker(chat, anchor) {
+  closeSubMenu();
+  subMenu.innerHTML = '';
+
+  const find = document.createElement('input');
+  find.type = 'text';
+  find.className = 'menu__find';
+  find.placeholder = t('chat.searchOrCreateProject');
+  find.setAttribute('aria-label', t('chat.searchOrCreateProject'));
+  subMenu.append(find);
+
+  const list = document.createElement('div');
+  list.className = 'menu__list';
+  subMenu.append(list);
+
+  const move = async (projectId, said) => {
+    closeSubMenu();
+    closeRowMenu();
+    try {
+      await api.updateChat(chat.id, { projectId });
+      // If that project was folded shut, open it — otherwise the conversation
+      // appears to have vanished rather than moved.
+      if (projectId) shutProjects.delete(projectId);
+      await refreshChats();
+      // The open conversation's own header names its project.
+      if (chat.id === state.chatId) await openChat(chat.id);
+      toast(said);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
+
+  const paint = () => {
+    const needle = find.value.trim();
+    const lower = needle.toLowerCase();
+    const shown = (state.projects || []).filter((p) => !lower || p.name.toLowerCase().includes(lower));
+    list.innerHTML = '';
+
+    for (const project of shown) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'menu__item';
+      row.setAttribute('role', 'menuitemradio');
+      row.setAttribute('aria-checked', String(project.id === chat.project_id));
+      row.innerHTML =
+        `<span>${escapeHtml(project.name)}</span>` +
+        (project.id === chat.project_id ? '<span class="menu__tick">✓</span>' : '');
+      row.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (project.id === chat.project_id) return closeSubMenu();
+        move(project.id, t('chat.movedToProject').replace('{name}', project.name));
+      });
+      list.append(row);
+    }
+
+    // Nothing matched what was typed, so offer to make it. Never for an empty
+    // box: "create" with no name is a project called nothing.
+    const exact = (state.projects || []).some((p) => p.name.toLowerCase() === lower);
+    if (needle && !exact) {
+      const make = document.createElement('button');
+      make.type = 'button';
+      make.className = 'menu__item menu__item--make';
+      make.innerHTML = `<span>${escapeHtml(t('chat.createProject').replace('{name}', needle))}</span>`;
+      make.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        try {
+          const { project } = await api.createProject({ name: needle });
+          await move(project.id, t('chat.movedToProject').replace('{name}', project.name));
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+      list.append(make);
+    }
+
+    if (!shown.length && !needle) {
+      list.append(Object.assign(document.createElement('p'), {
+        className: 'menu__empty',
+        textContent: t('chat.noProjects'),
+      }));
+    }
+  };
+
+  paint();
+  find.addEventListener('input', paint);
+  find.addEventListener('click', (event) => event.stopPropagation());
+  find.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      closeSubMenu();
+    }
+  });
+
+  placeSubMenu(anchor);
+  find.focus();
+}
+
+/**
+ * Which group this conversation sits under.
+ *
+ * A group is a name somebody invented, and the set of them is whatever is in
+ * use — so this lists what exists and offers to start a new one. There is no
+ * empty group to clean up because there is no such thing: moving the last
+ * conversation out of a group is what ends it.
+ */
+function openGroupPicker(chat, anchor) {
+  closeSubMenu();
+  subMenu.innerHTML = '';
+
+  const list = document.createElement('div');
+  list.className = 'menu__list';
+  subMenu.append(list);
+
+  const move = async (name) => {
+    closeSubMenu();
+    closeRowMenu();
+    try {
+      await api.updateChat(chat.id, { group: name });
+      await refreshChats();
+      toast(name ? t('chat.movedToGroup').replace('{name}', name) : t('chat.leftGroup'));
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
+
+  for (const name of state.groups || []) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'menu__item';
+    row.setAttribute('role', 'menuitemradio');
+    row.setAttribute('aria-checked', String(name === chat.chat_group));
+    row.innerHTML = `<span>${escapeHtml(name)}</span>${name === chat.chat_group ? '<span class="menu__tick">✓</span>' : ''}`;
+    row.addEventListener('click', (event) => {
+      event.stopPropagation();
+      move(name === chat.chat_group ? null : name);
+    });
+    list.append(row);
+  }
+
+  const make = document.createElement('button');
+  make.type = 'button';
+  make.className = 'menu__item menu__item--make';
+  make.innerHTML = `<span>${escapeHtml(t('chat.newGroup'))}</span>`;
+  make.addEventListener('click', (event) => {
+    event.stopPropagation();
+    // Typed in place rather than in a dialog: this is one short name, and a
+    // modal for it would be heavier than the thing it is asking for.
+    make.innerHTML = '';
+    const field = document.createElement('input');
+    field.type = 'text';
+    field.className = 'menu__find';
+    field.placeholder = t('chat.groupName');
+    field.setAttribute('aria-label', t('chat.groupName'));
+    field.addEventListener('click', (e) => e.stopPropagation());
+    field.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && field.value.trim()) move(field.value.trim());
+      if (e.key === 'Escape') closeSubMenu();
+    });
+    make.append(field);
+    field.focus();
+  });
+  list.append(make);
+
+  placeSubMenu(anchor);
+  /** @type {HTMLElement} */ (list.firstElementChild)?.focus();
+}
+
+/** Rename from the title chevron, where there is no row input to grow. */
+function renameFromTitle(chat) {
+  const next = window.prompt(t('chat.rename'), chat.title || '');
+  if (next === null) return;
+  const title = next.trim();
+  if (!title || title === chat.title) return;
+  api
+    .updateChat(chat.id, { title })
+    .then(async () => {
+      if (chat.id === state.chatId) $('chat-title').textContent = title;
+      await refreshChats();
+    })
+    .catch((err) => toast(err.message, 'error'));
+}
+
+function openRowMenu(chat, anchor, titleButton) {
+  closeRowMenu();
+
+  const item = (spec) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = `menu__item${spec.danger ? ' menu__item--danger' : ''}`;
+    el.setAttribute('role', 'menuitem');
+    el.innerHTML =
+      `${spec.icon || ''}<span>${escapeHtml(spec.label)}</span>` +
+      (spec.submenu ? '<span class="menu__more" aria-hidden="true">›</span>' : '') +
+      (spec.key ? `<span class="menu__key">${spec.key}</span>` : '');
+    if (spec.submenu) el.setAttribute('aria-haspopup', 'menu');
+
+    let armed = false;
+    el.addEventListener('click', (event) => {
+      event.stopPropagation();
+      // Two clicks rather than a confirm() the browser might swallow. The label
+      // changing in place is also a clearer warning than a dialog you dismiss.
+      if (spec.arm && !armed) {
+        armed = true;
+        el.querySelector('span').textContent = spec.arm;
+        return;
+      }
+      if (spec.submenu === 'project') return openProjectPicker(chat, el);
+      if (spec.submenu === 'group') return openGroupPicker(chat, el);
+      spec.run(el);
+    });
+    return el;
+  };
+
+  rowMenu.innerHTML = '';
+  for (const spec of chatMenuItems(chat, { titleButton })) {
+    if (spec.separator) {
+      rowMenu.append(Object.assign(document.createElement('div'), { className: 'menu__sep' }));
+      continue;
+    }
+    rowMenu.append(item(spec));
+  }
 
   // Place it beside the button, then pull it back inside the viewport rather
   // than letting it hang off the edge on a short window or a phone.
@@ -795,17 +1428,30 @@ function openRowMenu(chat, anchor, titleButton) {
       /** @type {HTMLElement} */ (items[(at + step + items.length) % items.length]).focus();
       return;
     }
-    const shortcut = { p: 0, r: 1, d: 3 }[key];
-    if (shortcut === undefined || event.metaKey || event.ctrlKey) return;
+    /**
+     * The letters, matched against what each item says it answers to.
+     *
+     * This was a map of fixed positions — `{ p: 0, r: 1, d: 3 }` — which was
+     * right for a three-item menu and silently wrong the moment the menu grew:
+     * `d` stopped meaning Delete and started meaning whatever had landed in
+     * slot three. Reading the key off the item itself cannot drift.
+     */
+    if (event.metaKey || event.ctrlKey) return;
+    const hit = [...rowMenu.querySelectorAll('.menu__item')].find(
+      (el) => el.querySelector('.menu__key')?.textContent?.toLowerCase() === key,
+    );
+    if (!hit) return;
     event.preventDefault();
-    rowMenu.children[shortcut]?.click();
+    /** @type {HTMLElement} */ (hit).click();
   };
-  // Capture, so a click on the menu itself does not immediately close it.
+  // Capture, so a click on the menu itself does not immediately close it. The
+  // panel beside it counts as inside: choosing a project is not leaving.
   const onOutside = (event) => {
-    if (!rowMenu.contains(event.target)) closeRowMenu();
+    if (!rowMenu.contains(event.target) && !subMenu.contains(event.target)) closeRowMenu();
   };
 
   closeRowMenu = () => {
+    closeSubMenu();
     rowMenu.hidden = true;
     anchor.setAttribute('aria-expanded', 'false');
     document.removeEventListener('keydown', onKey);
@@ -933,27 +1579,35 @@ function gotoShelf(which) {
 }
 
 /**
- * Stop listening to the run before leaving the conversation it belongs to.
+ * Take the run off screen without touching it.
  *
- * Navigating away used to leave the stream running while `state.chatId` moved
- * underneath it, and the handlers append to `$('messages')` by name rather than
- * to the transcript they came from. So the old run's prose, its stop notes, its
- * compaction dividers and its tool cards were grafted into whichever
- * conversation was now on screen — and `noteFile` lit the wrong file chip and
- * auto-opened a document from a chat the user had left. `beginEdit` already
- * guards on `state.running`; navigation never did.
+ * Navigating away used to *abort* the stream. That was the right fix for a real
+ * bug — the handlers appended to `#messages` by name, so the old run's prose,
+ * its stop notes, its compaction dividers and its tool cards were grafted into
+ * whichever conversation was now on screen — and the wrong shape for the app.
+ * Aborting closes the socket, the server sees `res.on('close')` and ends the
+ * run, so glancing at another conversation killed the work. What the person saw
+ * on their return was a transcript frozen mid-thought, no sign of whether
+ * anything was still happening, and then the whole finished answer appearing at
+ * once minutes later when something happened to reload it.
  *
- * Deliberately *not* `api.stopChat`. The run holds a lease and every turn is
- * persisted server-side, so the work carries on and is waiting, complete, when
- * they come back. Only this tab's attention moves.
+ * Now a run owns its own `stage` and every handler draws into that. Detaching
+ * the stage removes it from the page and changes nothing else: the fetch stays
+ * open, the lease stays held, the model keeps working, and `showStage` puts it
+ * back — mid-sentence, still streaming — when they return. Two conversations
+ * can be working at once because neither can reach the other's nodes.
  */
-function detachRun() {
-  if (!state.running) return;
-  state.abort?.abort();
+function hideRun() {
+  runs.hide(runHere());
+}
+
+/** Put a run's nodes on screen, if its conversation is the one being shown. */
+function showStage(run) {
+  runs.show(run, $('messages'));
 }
 
 async function openChat(id) {
-  detachRun();
+  hideRun();
   closeSidebar();
   // A conversation replaces whichever shelf was on screen.
   leavePages();
@@ -969,10 +1623,16 @@ async function openChat(id) {
   state.project = project || null;
   state.files = files || [];
   renderFilesChip();
-  clearQueue();
-  // Belt to the run-detach braces: a stop note left over from another
-  // conversation must never dedupe away the first one in this conversation.
-  state.lastStopNote = null;
+  /**
+   * Deliberately no `clearQueue()` here.
+   *
+   * The queue used to be one list on `state`, so arriving in a conversation had
+   * to wipe whatever was typed into the last one. It now belongs to the run it
+   * was typed into, which is both more correct and the only thing that works
+   * with two conversations answering at once: a line queued in one must still
+   * be there, and still be deliverable, after a glance at the other.
+   * `renderQueue()` below draws whichever list belongs to this conversation.
+   */
   // Opening a stored conversation abandons the blank one you were sitting in.
   state.pendingProject = null;
   refreshModelFacts();
@@ -1012,9 +1672,38 @@ async function openChat(id) {
     else if (m.role === 'assistant') host.append(assistantMessage().hydrate(m, resultsByCallId).node);
   }
 
+  /**
+   * If this conversation is mid-answer in this tab, its live nodes go back on
+   * the end — still streaming, exactly where they were.
+   *
+   * This is what makes leaving and coming back free. The run never stopped; its
+   * stage was simply not in the document. Appended *after* the stored
+   * transcript because that is where it belongs: the turn in flight is the last
+   * thing in the conversation.
+   *
+   * The stored messages above may already include turns this run has finished
+   * and persisted — `message` events seal a block and the server writes it — so
+   * the stage is pruned of anything now duplicated by the database before it
+   * goes back up. Whatever is still streaming has no stored copy yet and stays.
+   */
+  const live = runs.get(id);
+  if (live) {
+    for (const node of [...live.stage.children]) {
+      if (node !== live.turn?.node) node.remove();
+    }
+    showStage(live);
+  }
+
   // Built. Anything appended from here — a streaming reply — is announced
   // normally, which is what the live region exists for.
   host.setAttribute('aria-busy', 'false');
+
+  // The composer, the stop button and the status line all describe whatever is
+  // happening in *this* conversation, which may be nothing or may be a turn
+  // that has been running since before you left.
+  setRunning(!!live);
+  setStatus(live ? live.status : null);
+  renderQueue();
 
   // Whether this conversation is actually waiting on a yes is a question about
   // the risk rules and the account's policy, both of which live on the server —
@@ -1050,9 +1739,11 @@ async function openChat(id) {
  * so this is the same road for every one after it.
  */
 function startBlankChat(project = null) {
-  // Same reason as `openChat`: the run keeps going server-side, but its events
-  // must not be drawn into the blank conversation now on screen.
-  detachRun();
+  // Same reason as `openChat`: the run carries on, but its nodes come off the
+  // page so they are not sitting in the blank conversation now on screen.
+  hideRun();
+  setRunning(false);
+  setStatus(null);
   leavePages();
   clearStaged();
   state.chatId = null;
@@ -1062,8 +1753,9 @@ function startBlankChat(project = null) {
   renderContext(null);
   renderProjectChip();
   renderFilesChip();
-  clearQueue();
-  state.lastStopNote = null;
+  // A conversation that does not exist yet cannot have a run, so there is no
+  // queue to draw — but the composer may still be showing the last one's.
+  renderQueue();
 
   /**
    * Everything that described the last conversation, cleared.
@@ -1285,6 +1977,9 @@ const pages = createPages({
   openChat: (id) => openChat(id),
   onLeave: () => leavePages(),
   onNewProject: () => openProjectForm(),
+  // The sidebar keeps its own short list of scheduled work; a task written
+  // anywhere has to reach it.
+  onTasksChanged: () => refreshTasks().catch(() => {}),
 });
 
 /**
@@ -1297,6 +1992,12 @@ const pages = createPages({
 const projectPage = createProjectPage({
   openChat: (id) => openChat(id),
   onBack: () => gotoShelf('projects'),
+  // The one form, shared. A second copy on the project page would drift from
+  // this one, and the half that drifts is the half nobody is looking at.
+  newTask: (options) => pages.newTask(options),
+  openTask: (id) => {
+    pages.showTask(id).catch((err) => toast(err.message, 'error'));
+  },
   startChat: async (project, text) => {
     await newChatInProject(project);
     // Through the same path as everything else that fills the box. This one
@@ -1445,7 +2146,7 @@ $('messages').addEventListener('click', async (event) => {
  * edited at all.
  */
 function beginEdit(message, text) {
-  if (state.running) {
+  if (runHere()) {
     toast(t('chat.stopBeforeEdit'), 'error');
     return;
   }
@@ -1566,8 +2267,9 @@ $('composer').addEventListener('submit', async (event) => {
    * it before it goes. "Send now" skips the wait entirely when the step in
    * progress is a slow one.
    */
-  if (state.running) {
-    state.queue.push({ text, files: sending, ids });
+  const queueing = runHere();
+  if (queueing) {
+    queueing.queue.push({ text, files: sending, ids });
     renderQueue();
     scrollToEnd();
     return;
@@ -1609,9 +2311,10 @@ $('composer').addEventListener('submit', async (event) => {
  */
 function renderQueue() {
   const host = $('queue');
-  host.hidden = state.queue.length === 0;
+  const queue = runHere()?.queue || [];
+  host.hidden = queue.length === 0;
 
-  host.innerHTML = state.queue
+  host.innerHTML = queue
     .map(
       (item, i) => `
       <div class="queue__item${item.open ? ' is-open' : ''}">
@@ -1647,7 +2350,7 @@ function renderQueue() {
    * honest test is whether the clamped box is actually shorter than its content.
    */
   for (const button of host.querySelectorAll('[data-more]')) {
-    const item = state.queue[Number(button.dataset.more)];
+    const item = (runHere()?.queue || [])[Number(button.dataset.more)];
     const text = host.querySelector(`#queue-text-${button.dataset.more}`);
     if (!text) continue;
     button.hidden = !item?.open && text.scrollHeight <= text.clientHeight + 1;
@@ -1659,50 +2362,47 @@ function renderQueue() {
 
   for (const button of host.querySelectorAll('[data-drop]')) {
     button.addEventListener('click', () => {
-      const [gone] = state.queue.splice(Number(button.dataset.drop), 1);
+      const [gone] = (runHere()?.queue || []).splice(Number(button.dataset.drop), 1);
       for (const file of gone?.files || []) if (file.preview) URL.revokeObjectURL(file.preview);
       renderQueue();
     });
   }
   for (const button of host.querySelectorAll('[data-now]')) {
     button.addEventListener('click', async () => {
-      const [item] = state.queue.splice(Number(button.dataset.now), 1);
+      const here = runHere();
+      const [item] = (here?.queue || []).splice(Number(button.dataset.now), 1);
       renderQueue();
-      if (item) await deliver(item, { interrupting: true });
+      if (item) await deliver(item, { interrupting: true, run: here });
     });
   }
 }
 
 /**
- * Drop what was waiting.
+ * Put one queued message into the conversation it was typed into.
  *
- * A queued message belongs to the conversation it was typed in; carrying it
- * into the next one would deliver a half-thought into an unrelated chat.
+ * `run` is the run it is being handed to, when there is one. The bubble goes
+ * into that run's stage rather than into `#messages`, because a message handed
+ * over mid-run belongs to its own conversation even when the person has since
+ * navigated to another — appending it by name would drop somebody's question
+ * into a transcript it was never part of.
  */
-function clearQueue() {
-  for (const item of state.queue) {
-    for (const file of item.files || []) if (file.preview) URL.revokeObjectURL(file.preview);
-  }
-  state.queue.length = 0;
-  renderQueue();
-}
-
-/** Put one queued message into the conversation. */
-async function deliver(item, { interrupting = false } = {}) {
+async function deliver(item, { interrupting = false, run = null, chatId = null } = {}) {
+  const target = chatId || run?.chatId || state.chatId;
   const node = userMessage(item.text, item.files);
-  $('messages').append(node);
-  scrollToEnd();
+  if (run) run.stage.append(node);
+  else $('messages').append(node);
+  if (!run || onScreen(run)) scrollToEnd();
   try {
-    const { message } = await api.sendMessage(state.chatId, item.text, item.ids);
+    const { message } = await api.sendMessage(target, item.text, item.ids);
     // Stamped after the fact: the id only exists once the server has it, and
     // without it the bubble has nothing to edit.
     if (message?.id) node.dataset.messageId = message.id;
     settleAttachments(node, item.files || [], item.ids || []);
-    if (interrupting) toast(t('status.queued'));
+    if (interrupting && (!run || onScreen(run))) toast(t('status.queued'));
     return true;
   } catch (err) {
     node.remove();
-    toast(err.message, 'error');
+    if (!run || onScreen(run)) toast(err.message, 'error');
     return false;
   }
 }
@@ -1727,19 +2427,24 @@ async function deliver(item, { interrupting = false } = {}) {
  * it the nested call returns immediately and the outer loop stays flat.
  */
 let flushing = false;
-async function flushQueue() {
-  if (flushing || !state.queue.length || state.running || !state.chatId) return;
+/**
+ * @param queue  the waiting messages — a run's own, so draining one
+ *   conversation's queue can never fire it into another.
+ * @param chatId the conversation they were typed into.
+ */
+async function flushQueue(queue, chatId) {
+  if (flushing || !queue.length || runs.has(chatId) || state.chatId !== chatId) return;
   flushing = true;
   try {
     // Re-checked every pass rather than snapshotted: an answer can arrive while
     // this is working, the user can delete a queued line, and a stop mid-drain
     // must leave the rest of the queue alone rather than firing it anyway.
-    while (state.queue.length && !state.running && state.chatId) {
-      const [item] = state.queue.splice(0, 1);
+    while (queue.length && !runs.has(chatId) && state.chatId === chatId) {
+      const [item] = queue.splice(0, 1);
       renderQueue();
       // A message that could not be sent has already told the user why. Carry on
       // to the next rather than stranding the whole queue behind it.
-      if (!(await deliver(item))) continue;
+      if (!(await deliver(item, { chatId }))) continue;
       await refreshChats();
       await stream();
     }
@@ -1765,8 +2470,8 @@ async function flushQueue() {
  * rather than sent instantly.
  */
 let handingOver = false;
-async function handOverMidRun() {
-  if (handingOver || !state.queue.length || !state.running || !state.chatId) return;
+async function handOverMidRun(run) {
+  if (handingOver || !run.queue.length || !runs.has(run.chatId)) return;
   handingOver = true;
   try {
     /**
@@ -1782,12 +2487,12 @@ async function handOverMidRun() {
      * still deletable right up until its own turn, which is the whole reason the
      * queue is shown rather than sent.
      */
-    const [item] = state.queue.splice(0, 1);
+    const [item] = run.queue.splice(0, 1);
     renderQueue();
     // No `stream()` here, unlike `flushQueue`: a run is already going, and
     // starting a second one against the same conversation is what the 409 lock
     // exists to refuse.
-    await deliver(item, { interrupting: true });
+    await deliver(item, { interrupting: true, run });
   } finally {
     handingOver = false;
   }
@@ -1813,15 +2518,16 @@ async function handOverMidRun() {
  */
 const MIRROR_TIMEOUT_MS = 10 * 60_000;
 
-async function mirrorRun() {
-  const chatId = state.chatId;
+async function mirrorRun(run) {
+  const chatId = run.chatId;
   if (!chatId) return;
 
-  setStatus(t('mirror.watching'));
-  state.turn = assistantMessage();
-  state.sealed = false;
-  $('messages').append(state.turn.node);
-  scrollToEnd();
+  setStatus(t('mirror.watching'), run);
+  run.turn = assistantMessage();
+  run.sealed = false;
+  run.stage.append(run.turn.node);
+  showStage(run);
+  if (onScreen(run)) scrollToEnd();
 
   // Resolves with a value rather than nothing, purely so the type of `resolve`
   // is inferable — a bare `new Promise((resolve) => …)` needs a JSDoc hint that
@@ -1842,10 +2548,10 @@ async function mirrorRun() {
       // tab that can actually answer them, and half-drawing them here would
       // offer buttons that do nothing.
       if (event === 'text') {
-        const turn = nextBlock();
+        const turn = nextBlock(run);
         turn.finishThinking();
         turn.appendText(data?.delta || '');
-        maybeScroll();
+        maybeScroll(run);
       } else if (event === 'message') {
         /**
          * The turn was persisted, so the next prose is a new block.
@@ -1856,15 +2562,15 @@ async function mirrorRun() {
          * corrected itself minutes later on the reload below. Cheap to handle,
          * and the difference between watching a run and watching a smear.
          */
-        state.turn?.finishThinking();
-        state.sealed = true;
+        run.turn?.finishThinking();
+        run.sealed = true;
       } else if (event === 'retry') {
         // The provider is restarting this reply on another key: what was shown
         // is being replaced, not continued. A follower that kept the abandoned
         // half would show a duplicated paragraph with no way to tell.
-        nextBlock().resetText();
+        nextBlock(run).resetText();
       } else if (event === 'status' && data?.phase === 'thinking') {
-        setStatus(t('mirror.watching'));
+        setStatus(t('mirror.watching'), run);
       } else if (event === 'done' || event === 'error') {
         finish();
       }
@@ -1873,7 +2579,7 @@ async function mirrorRun() {
 
   // The database is the truth again, and it has the turn the other tab wrote —
   // properly, with its tool cards and its message ids.
-  setStatus(null);
+  setStatus(null, run);
   if (state.chatId === chatId) await openChat(chatId);
 }
 
@@ -1881,37 +2587,43 @@ async function mirrorRun() {
 const MAX_RESUMES = 25;
 
 async function stream(decision) {
-  if (state.running) return;
-  state.running = true;
-  state.abort = new AbortController();
-  // One id for the whole run, including every reconnect below. See api.js.
-  state.runId = crypto.randomUUID();
+  const chatId = state.chatId;
+  if (!chatId) return;
+
+  const run = runs.start(chatId, {
+    abort: new AbortController(),
+    // One id for the whole run, including every reconnect below. See api.js.
+    runId: crypto.randomUUID(),
+  });
+  if (!run) return;
   setRunning(true);
   hideApproval();
   // A new turn earns one automatic preview. Whatever the last one did — opened
   // a document, or was closed and told not to — has no say over this one.
   resetAutoPreview();
 
-  state.turn = assistantMessage();
-  state.sealed = false;
-  $('messages').append(state.turn.node);
-  setStatus(t('status.thinking'));
+  run.turn = assistantMessage();
+  run.stage.append(run.turn.node);
+  // The stage goes on screen only if this is the conversation being looked at.
+  // Starting a run always is; it stops being so the moment they navigate.
+  showStage(run);
+  setStatus(t('status.thinking'), run);
   scrollToEnd();
 
   try {
     for (let resume = 0; resume <= MAX_RESUMES; resume += 1) {
-      const outcome = await streamOnce(resume === 0 ? decision : undefined);
+      const outcome = await streamOnce(run, resume === 0 ? decision : undefined);
 
       // A clean finish, a question for the user, or a deliberate stop.
       if (outcome !== 'cut') break;
 
       if (resume === MAX_RESUMES) {
-        toast(t('status.paused'));
+        if (onScreen(run)) toast(t('status.paused'));
         break;
       }
       // The host closed the connection mid-run. Every step is already saved,
       // so reconnecting continues from exactly where it stopped.
-      setStatus(t('status.reconnecting'));
+      setStatus(t('status.reconnecting'), run);
     }
   } catch (err) {
     // 409 means another tab holds this conversation. That is the lock doing its
@@ -1920,29 +2632,35 @@ async function stream(decision) {
       // Refused because another tab holds the lease — which is the lock doing
       // its job. Rather than sitting silent, watch that tab's run and redraw it
       // here. See mirror.js and `mirrorRun`.
-      await mirrorRun();
-    } else if (err.name !== 'AbortError') {
+      await mirrorRun(run);
+    } else if (err.name !== 'AbortError' && onScreen(run)) {
       toast(err.message || t('status.streamFailed'), 'error');
     }
   } finally {
-    state.running = false;
-    setRunning(false);
-    setStatus(null);
+    runs.finish(chatId);
+    setStatus(null, run);
+    if (onScreen(run)) setRunning(false);
     // Drop the trailing empty block created by the last `message` event.
-    if (state.turn && !state.turn.node.querySelector('.prose, .block, .plan')) state.turn.node.remove();
-    state.turn = null;
-    state.toolHandles.clear();
-    // See the note on `lastStopNote`: the dedupe is per run, not for the life
-    // of the conversation. A second truncated turn has to be able to say so.
-    state.lastStopNote = null;
+    if (run.turn && !run.turn.node.querySelector('.prose, .block, .plan')) run.turn.node.remove();
+    run.turn = null;
+    run.toolHandles.clear();
     // The assistant has stopped touching the screen, so stop shipping frames of
     // it. Leaves a panel the user opened, or is driving, alone.
-    screenPanel.restIfIdle();
+    if (onScreen(run)) screenPanel.restIfIdle();
     await refreshChats();
+
+    /**
+     * The stage stays where it is.
+     *
+     * Its nodes are the turn that just finished, and they are correct — the
+     * next `openChat` rebuilds the transcript from the database and throws them
+     * away. Removing them here instead would blank the answer the person is
+     * reading the instant it arrives.
+     */
 
     // Whatever was typed while this was running goes now — including after a
     // stop, which is the other moment somebody means "right, my turn".
-    if (state.queue.length) await flushQueue();
+    if (run.queue.length) await flushQueue(run.queue, chatId);
   }
 }
 
@@ -1950,22 +2668,28 @@ async function stream(decision) {
  * One request against the agent endpoint.
  * @returns 'done' · 'waiting' (approval needed) · 'cut' (connection dropped mid-run)
  */
-async function streamOnce(decision) {
+async function streamOnce(run, decision) {
   let outcome = 'cut';
+  // Every handler below is scoped to `run`, not to whatever is on screen: this
+  // stream keeps arriving after the person has navigated to another
+  // conversation, and drawing it into that one is the bug this shape exists to
+  // make impossible. `setStatus`, `noteStop` and `maybeScroll` take the run and
+  // do nothing visible when it is not the conversation being looked at.
+  const block = () => nextBlock(run);
 
   await runAgent({
-      chatId: state.chatId,
+      chatId: run.chatId,
       model: state.model,
       decision,
       // The calls the prompt named. Only sent with a decision, because only a
       // decision is about a specific batch. See `approvalFor`.
       decisionFor: decision ? approvalFor : undefined,
-      runId: state.runId,
-      signal: state.abort.signal,
+      runId: run.runId,
+      signal: run.abort.signal,
       handlers: {
         status: ({ phase, name, message, seconds, model, free, stop }) => {
-          if (phase === 'compacting') setStatus(t('status.compacting'));
-          else if (phase === 'thinking') setStatus(t('status.thinking'));
+          if (phase === 'compacting') setStatus(t('status.compacting'), run);
+          else if (phase === 'thinking') setStatus(t('status.thinking'), run);
           /**
            * The provider has not answered yet, and that is worth saying.
            *
@@ -1984,73 +2708,82 @@ async function streamOnce(decision) {
               t(free ? 'status.waitingFree' : 'status.waiting')
                 .replace('{model}', model || '')
                 .replace('{n}', String(seconds ?? 0)),
+              run,
             );
-          } else if (phase === 'tool') setStatus(t('status.tool').replace('{name}', name));
+          } else if (phase === 'tool') setStatus(t('status.tool').replace('{name}', name), run);
           // A turn that stopped badly but still asked for tools — truncated
           // part-way through writing a call, most often. Drawn into the
           // transcript rather than toasted, because the loop carries on and a
           // toast would be gone before the consequences arrived.
-          else if (stop) noteStop({ kind: stop, message });
-          else if (message) toast(message);
+          else if (stop) noteStop({ kind: stop, message }, run);
+          else if (message && onScreen(run)) toast(message);
         },
         thinking: ({ delta }) => {
-          nextBlock().appendThinking(delta);
-          maybeScroll();
+          block().appendThinking(delta);
+          maybeScroll(run);
         },
         text: ({ delta }) => {
-          const turn = nextBlock();
+          const turn = block();
           turn.finishThinking();
           turn.appendText(delta);
-          maybeScroll();
+          maybeScroll(run);
         },
         // A key gave out mid-answer and another one is picking the reply up
         // from the start. Clear what was written rather than letting the second
         // attempt run on from the tail of the first.
         retry: ({ reason }) => {
-          nextBlock().resetText();
-          if (reason) toast(reason);
-          setStatus(t('status.restarting'));
-          maybeScroll();
+          block().resetText();
+          if (reason && onScreen(run)) toast(reason);
+          setStatus(t('status.restarting'), run);
+          maybeScroll(run);
         },
         plan: ({ steps }) => {
-          state.turn.setPlan(steps);
-          renderProgress(steps);
+          run.turn.setPlan(steps);
+          if (onScreen(run)) renderProgress(steps);
         },
         tool_call: (call) => {
-          // Deliberately not `nextBlock()`: the card belongs to the turn that
-          // asked for it, even though that turn is already persisted.
-          state.turn.finishThinking();
-          state.toolHandles.set(call.id, state.turn.startTool(call));
-          setStatus(t('status.tool').replace('{name}', call.name));
+          // Deliberately not `block()`: the card belongs to the turn that asked
+          // for it, even though that turn is already persisted.
+          run.turn.finishThinking();
+          run.toolHandles.set(call.id, run.turn.startTool(call));
+          setStatus(t('status.tool').replace('{name}', call.name), run);
           // Show the screen the moment the assistant touches the browser or the
-          // desktop, rather than making the user go looking for it.
-          if (call.name.startsWith('browser_') || call.name.startsWith('desktop_')) {
+          // desktop, rather than making the user go looking for it — but only
+          // for the conversation they are actually watching.
+          if (onScreen(run) && (call.name.startsWith('browser_') || call.name.startsWith('desktop_'))) {
             setDetail(true);
             screenPanel.wake();
           }
-          maybeScroll();
+          maybeScroll(run);
         },
         tool_result: (result) => {
-          state.toolHandles.get(result.toolCallId)?.complete(result);
-          state.toolHandles.delete(result.toolCallId);
-          if (result.file) noteFile(result.file);
-          maybeScroll();
+          run.toolHandles.get(result.toolCallId)?.complete(result);
+          run.toolHandles.delete(result.toolCallId);
+          if (result.file && onScreen(run)) noteFile(result.file);
+          maybeScroll(run);
           // A step just finished, which is the earliest point the loop can read
           // something new without landing it mid-thought. Deliberately not
           // awaited: this handler drives the transcript, and it must not stall
           // on a network round trip.
-          handOverMidRun();
+          handOverMidRun(run);
+        },
+        // The model put its whole answer on the reasoning channel and left the
+        // reply empty. The server has already moved it; this moves the live
+        // view to match, so nobody has to reload to see what was said.
+        reasoning_was_reply: ({ text }) => {
+          block().adoptThinkingAsReply(text);
+          maybeScroll(run);
         },
         message: () => {
-          state.turn.finishThinking();
-          state.sealed = true;
+          run.turn.finishThinking();
+          run.sealed = true;
         },
         steer: ({ text }) => {
-          setStatus(null);
-          toast(t('status.pickedUp').replace('{text}', `${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`));
+          setStatus(null, run);
+          if (onScreen(run)) toast(t('status.pickedUp').replace('{text}', `${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`));
         },
-        usage: (totals) => renderUsage(totals),
-        context: (info) => renderContext(info),
+        usage: (totals) => { if (onScreen(run)) renderUsage(totals); },
+        context: (info) => { if (onScreen(run)) renderContext(info); },
         compacted: ({ replaced, text }) => {
           // Said out loud, because the transcript the model sees has just
           // changed and that is not something to do silently.
@@ -2060,23 +2793,26 @@ async function streamOnce(decision) {
           // Dropping it here made the summary visible after a reload and
           // invisible at the moment it happened — which is exactly when
           // somebody wants to check what was folded away.
-          $('messages').append(summaryDivider(replaced, text));
-          maybeScroll();
+          run.stage.append(summaryDivider(replaced, text));
+          maybeScroll(run);
         },
         approval_required: ({ toolCalls }) => {
           outcome = 'waiting';
-          showApproval(toolCalls);
+          // A run waiting in a conversation you are not looking at must not
+          // interrupt you. The pending batch is persisted server-side, so
+          // `openChat` puts the prompt back up the moment you return to it.
+          if (onScreen(run)) showApproval(toolCalls);
         },
         error: ({ message }) => {
           outcome = 'done';
-          state.turn?.finish();
-          toast(message, 'error');
+          run.turn?.finish();
+          if (onScreen(run)) toast(message, 'error');
         },
         done: ({ stop }) => {
           outcome = 'done';
           // Collapse any run of steps still drawn as in progress. Without this a
           // finished turn keeps a spinner for the rest of the conversation.
-          state.turn?.finish();
+          run.turn?.finish();
           /**
            * Say when the reply is not actually an answer.
            *
@@ -2091,12 +2827,12 @@ async function streamOnce(decision) {
            * English, and the server's own sentence is the fallback for a kind
            * this build has no string for yet.
            */
-          if (stop?.message) noteStop(stop);
+          if (stop?.message) noteStop(stop, run);
         },
       },
     });
 
-  return state.abort.signal.aborted ? 'done' : outcome;
+  return run.abort.signal.aborted ? 'done' : outcome;
 }
 
 /**
@@ -2112,7 +2848,7 @@ async function streamOnce(decision) {
  * and again on the way out, and two identical notices side by side read as two
  * separate failures.
  */
-function noteStop({ kind, message, detail }) {
+function noteStop({ kind, message, detail }, run) {
   // `t` returns the key itself for a string it does not have — see i18n.js,
   // where that is deliberate so a gap is loud rather than silently English.
   // Here it is the signal to fall back to what the server wrote.
@@ -2124,20 +2860,20 @@ function noteStop({ kind, message, detail }) {
   // this the refusal category never reached anybody.
   const sentence = translated === key ? message : translated;
   const body = sentence && detail ? `${sentence} (${detail})` : sentence;
-  if (!body || state.lastStopNote === `${kind}:${body}`) return;
-  state.lastStopNote = `${kind}:${body}`;
-  $('messages').append(stopNote(kind, body));
-  maybeScroll();
+  if (!body || run.lastStopNote === `${kind}:${body}`) return;
+  run.lastStopNote = `${kind}:${body}`;
+  run.stage.append(stopNote(kind, body));
+  maybeScroll(run);
 }
 
 /** The block new prose should go into, starting a fresh one after a save. */
-function nextBlock() {
-  if (state.sealed) {
-    state.turn = assistantMessage();
-    state.sealed = false;
-    $('messages').append(state.turn.node);
+function nextBlock(run) {
+  if (run.sealed) {
+    run.turn = assistantMessage();
+    run.sealed = false;
+    run.stage.append(run.turn.node);
   }
-  return state.turn;
+  return run.turn;
 }
 
 /**
@@ -2154,8 +2890,13 @@ function nextBlock() {
  * visibly stopped is worse than one that quietly did the belt-and-braces half.
  */
 $('stop').addEventListener('click', () => {
-  state.abort?.abort();
-  if (state.chatId) api.stopChat(state.chatId).catch(() => {});
+  // The conversation on screen, not "the run": stop is a button in front of one
+  // transcript, and with work possible in several at once it must never reach
+  // into a conversation the person is not looking at.
+  const run = runHere();
+  if (!run) return;
+  run.abort.abort();
+  api.stopChat(run.chatId).catch(() => {});
   toast(t('composer.stopped'));
 });
 
@@ -2215,6 +2956,25 @@ $('deny').addEventListener('click', () => stream('deny'));
 /* ── topbar, status, worker ────────────────────────────────────── */
 
 function renderTopbar() {
+  /**
+   * The chevron, and the project it belongs to.
+   *
+   * Both hidden until there is a stored conversation to act on: a blank one has
+   * no id, so pinning or archiving it would be a menu of things that cannot
+   * happen.
+   */
+  const open = state.chats?.find((c) => c.id === state.chatId) || null;
+  const chev = $('chat-menu');
+  chev.hidden = !open;
+
+  const crumb = $('chat-project');
+  const project = open?.project_id ? state.projects?.find((p) => p.id === open.project_id) : null;
+  crumb.hidden = !project;
+  if (project) {
+    crumb.textContent = project.name;
+    crumb.title = project.name;
+  }
+
   // The id's last segment reads better than the whole path in a narrow chip.
   const chip = $('model-chip');
   chip.textContent = state.model === 'auto' ? 'Auto' : String(state.model || '').split('/').pop();
@@ -2232,6 +2992,21 @@ function renderTopbar() {
   chip.title = attachments.isFree() ? t('model.free.tooltip', { model: state.model }) : state.model;
   renderPolicy();
 }
+
+$('chat-menu').addEventListener('click', (event) => {
+  event.stopPropagation();
+  const chat = state.chats?.find((c) => c.id === state.chatId);
+  // `null` for the title button is what tells `chatMenuItems` this is the
+  // chevron rather than a sidebar row — see the two branches there.
+  if (chat) openRowMenu(chat, $('chat-menu'), null);
+});
+
+$('chat-project').addEventListener('click', () => {
+  const chat = state.chats?.find((c) => c.id === state.chatId);
+  if (!chat?.project_id) return;
+  leavePages();
+  projectPage.open(chat.project_id);
+});
 
 /**
  * Show or hide the opening screen — and with it, the sky behind it.
@@ -2269,7 +3044,24 @@ function renderPolicy() {
 }
 
 /** Lives in its own container after the transcript, so it is always last. */
-function setStatus(text) {
+/**
+ * Say what is happening, under the transcript.
+ *
+ * Takes the run it is speaking for. There is one status line and there can be
+ * several runs, so a run narrates only while its own conversation is the one on
+ * screen — otherwise a tool call in a conversation you left would overwrite the
+ * line belonging to the one you are reading. The text is remembered on the run
+ * either way, so returning to a conversation restores the line it was showing
+ * rather than a blank strip under a transcript that is plainly still working.
+ *
+ * Called with no run for the plain cases — a toast-like notice about the
+ * conversation on screen — which always draw.
+ */
+function setStatus(text, run = null) {
+  if (run) {
+    run.status = text;
+    if (!onScreen(run)) return;
+  }
   const host = $('status-host');
   host.innerHTML = '';
   if (text) host.append(statusLine(text));
@@ -3769,7 +4561,7 @@ function autosize(node) {
  */
 function refreshSendState() {
   const ready = input.value.trim().length > 0 || staged.some((f) => f.id);
-  const running = !!state.running;
+  const running = !!runHere();
 
   // Empty and working: the button in that corner is stop. Anything else: send.
   const showStop = running && !ready;
@@ -3842,13 +4634,34 @@ thread.addEventListener('scroll', () => {
 {
   const dock = $('dock');
   const main = document.querySelector('.main');
+
+  /**
+   * How wide this browser's scrollbar is, so the dock can stop short of it.
+   *
+   * The dock is painted over the transcript and a classic scrollbar lives
+   * inside the transcript's own box, so a dock reaching the right edge covers
+   * the thumb — most visibly when the conversation is long, the thumb is short
+   * and it is sitting at the bottom, which is precisely when somebody is
+   * looking for it. Zero on the overlay scrollbars macOS and phones use, so
+   * there is nothing to subtract there and nothing to look wrong.
+   */
+  const measureScrollbar = () => {
+    const width = Math.max(0, Math.round(thread.offsetWidth - thread.clientWidth));
+    main.style.setProperty('--sb-w', `${width}px`);
+  };
+
   const observer = new ResizeObserver(() => {
     const follow = pinned;
     main.style.setProperty('--dock-h', `${Math.round(dock.offsetHeight)}px`);
+    measureScrollbar();
     // Growing the padding pushes content up; stay at the end if we were there.
     if (follow) thread.scrollTop = thread.scrollHeight;
   });
   observer.observe(dock);
+  // And on the thread itself: a conversation that grows past one screen gains a
+  // scrollbar, which is a change in width nothing else would notice.
+  observer.observe(thread);
+  measureScrollbar();
 }
 function scrollToEnd() {
   pinned = true;
@@ -3868,17 +4681,21 @@ function scrollToEnd() {
  * after the DOM has settled, instead of once per token before it has.
  */
 let scrollQueued = false;
-function maybeScroll() {
+function maybeScroll(run = null) {
+  // A run drawing into a detached stage has nothing to scroll to, and stealing
+  // the view for a conversation that is not on screen would be worse than not
+  // following at all.
+  if (run && !onScreen(run)) return;
   if (!pinned || scrollQueued) return;
   scrollQueued = true;
-  const run = () => {
+  const apply = () => {
     scrollQueued = false;
     // Re-checked: the user may have scrolled up in the meantime, and stealing
     // the view back from somebody reading is worse than not following.
     if (pinned) thread.scrollTop = thread.scrollHeight;
   };
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
-  else setTimeout(run, 16);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(apply);
+  else setTimeout(apply, 16);
 }
 
 /* ── the detail rail ───────────────────────────────────────────── */

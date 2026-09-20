@@ -95,8 +95,117 @@ function instantOf({ year, month, day, hour, minute }, tz) {
  * @returns {{ cron: string|null, nextRunAt: string }} cron is null for a
  *   one-off, which is what makes it retire after running.
  */
+/**
+ * The repeats a person picks from a list, rather than types.
+ *
+ * The form used to ask for a time in words — "08:00, or fri 16:00" — which is
+ * precise, learnable, and something most people get wrong once and then avoid.
+ * A menu of six is what anybody expects to choose from, and each of them still
+ * has to become a real recurrence: the words below are what `cron` holds, and
+ * `parseSchedule` reads them back to work out when the next run is.
+ *
+ * `manual` is the one that is not a recurrence at all. It stores no cron and no
+ * next run, so the due query — `enabled AND next_run_at <= now()` — never
+ * matches it, and the task waits for the Run now button.
+ */
+export const FREQUENCIES = ['manual', 'hourly', 'daily', 'weekdays', 'weekly', 'monthly'];
+
+/**
+ * Turn a chosen frequency into the schedule the store keeps.
+ *
+ * The time of day comes from *now*, in the person's own zone, because that is
+ * what choosing "Daily" at nine in the morning means. Asking for a time as well
+ * would be a second decision for a menu whose whole point is not making one.
+ *
+ * @returns `{ cron, nextRunAt }` — both null for `manual`.
+ */
+export function fromFrequency(frequency, { from = new Date(), tz = null } = {}) {
+  const choice = String(frequency || '').trim().toLowerCase();
+  if (!FREQUENCIES.includes(choice)) {
+    throw new Error(`"${frequency}" is not a frequency. Pick one of: ${FREQUENCIES.join(', ')}.`);
+  }
+  if (choice === 'manual') return { cron: null, nextRunAt: null };
+
+  const zone = validZone(tz) ? tz : null;
+  const now = zone ? partsIn(from, zone) : { hour: from.getHours(), minute: from.getMinutes(), day: from.getDate() };
+  const hh = String(now.hour).padStart(2, '0');
+  const mm = String(now.minute).padStart(2, '0');
+
+  const cron =
+    choice === 'hourly'
+      ? `hourly :${mm}`
+      : choice === 'daily'
+        ? `${hh}:${mm}`
+        : choice === 'weekdays'
+          ? `weekdays ${hh}:${mm}`
+          : choice === 'weekly'
+            ? `${WEEKDAYS[zone ? weekdayIn(from, zone) : from.getDay()]} ${hh}:${mm}`
+            : `monthly ${now.day} ${hh}:${mm}`;
+
+  return { cron, nextRunAt: parseSchedule(cron, { from, tz }).nextRunAt };
+}
+
+/** Which day of the week an instant falls on, in a given zone. */
+function weekdayIn(date, tz) {
+  const { year, month, day } = partsIn(date, tz);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
 export function parseSchedule(input, { once = false, from = new Date(), tz = null } = {}) {
   const text = String(input || '').trim().toLowerCase();
+
+  /**
+   * The menu's own vocabulary, read back.
+   *
+   * `advance` re-parses whatever is in `cron` to find the next run, so every
+   * word `fromFrequency` can write has to be understood here — otherwise a
+   * task fires once and then throws in the scheduler, where nobody sees it.
+   */
+  const hourly = /^hourly\s*:?([0-5]\d)$/.exec(text);
+  if (hourly) {
+    const minute = Number(hourly[1]);
+    const next = new Date(from);
+    next.setSeconds(0, 0);
+    next.setMinutes(minute);
+    // Minutes and hours are the same length in every zone, so this one needs no
+    // calendar walk: the next occurrence is at most an hour away.
+    if (next <= from) next.setTime(next.getTime() + 3_600_000);
+    return { cron: `hourly :${hourly[1]}`, nextRunAt: next.toISOString() };
+  }
+
+  const monthly = /^monthly\s+(\d{1,2})\s+(.+)$/.exec(text);
+  if (monthly) {
+    const wanted = Math.min(31, Math.max(1, Number(monthly[1])));
+    const at = TIME.exec(monthly[2].trim());
+    if (!at) throw new Error('A monthly task needs a time as HH:MM — "monthly 1 08:00".');
+    const zone = validZone(tz) ? tz : null;
+    const today = zone ? partsIn(from, zone) : { year: from.getFullYear(), month: from.getMonth() + 1, day: from.getDate() };
+
+    // Up to fourteen months, because a task asking for the 31st skips the
+    // months that do not have one rather than firing on the 1st of the next.
+    for (let ahead = 0; ahead < 14; ahead += 1) {
+      const month = today.month - 1 + ahead;
+      const year = today.year + Math.floor(month / 12);
+      const m = ((month % 12) + 12) % 12;
+      // Day 0 of the following month is the last day of this one.
+      if (wanted > new Date(Date.UTC(year, m + 1, 0)).getUTCDate()) continue;
+      const when = { year, month: m + 1, day: wanted, hour: Number(at[1]), minute: Number(at[2]) };
+      const instant = zone ? new Date(instantOf(when, zone)) : new Date(year, m, wanted, when.hour, when.minute, 0, 0);
+      if (instant > from) return { cron: `monthly ${wanted} ${at[0]}`, nextRunAt: instant.toISOString() };
+    }
+    throw new Error(`Could not find a day ${wanted} in the next year.`);
+  }
+
+  // Monday to Friday at a fixed time: five weekly rules, so take the soonest.
+  const weekdays = /^weekdays\s+(.+)$/.exec(text);
+  if (weekdays) {
+    const at = weekdays[1].trim();
+    if (!TIME.test(at)) throw new Error('A weekdays task needs a time as HH:MM — "weekdays 08:00".');
+    const soonest = ['mon', 'tue', 'wed', 'thu', 'fri']
+      .map((day) => parseSchedule(`${day} ${at}`, { from, tz }).nextRunAt)
+      .sort()[0];
+    return { cron: `weekdays ${at}`, nextRunAt: soonest };
+  }
 
   const parts = text.split(/\s+/);
   const time = parts.pop() || '';
@@ -226,6 +335,11 @@ async function runTask(task) {
       id: chatId,
       title: deriveTitle(task.title) || task.title,
       model: task.model || prefs.defaultModel,
+      // A task made inside a project runs inside it: same standing
+      // instructions, same shelf. Without this, "summarise this week's filings"
+      // answered from nothing at all — which is worse than failing, because it
+      // looks like it worked.
+      projectId: task.project_id || null,
     });
     await store.appendMessage(user.id, chatId, {
       id: crypto.randomUUID(),
@@ -242,6 +356,9 @@ async function runTask(task) {
       user,
       chatId,
       modelId: task.model || prefs.defaultModel,
+      // What this run may do unwatched. The task's own choice where it made
+      // one, the account's default otherwise — see `policyFor` in the loop.
+      policy: task.policy || null,
       emit(event, data) {
         // Stored in last_status and shown in the interface, so a key quoted
         // back by a provider must not survive the trip.
@@ -260,6 +377,32 @@ async function runTask(task) {
 
   await store.finishTask(task.id, { status, chatId, nextRunAt: advance(task.cron, new Date(), task.tz) });
   return { taskId: task.id, status, chatId };
+}
+
+/**
+ * Run one task immediately, regardless of when it was next due.
+ *
+ * The only way a manual task ever runs, and how anybody checks a scheduled one
+ * does what they meant without waiting until morning. It goes through the same
+ * `runTask` as the scheduler so there is exactly one description of what a run
+ * is — a second path would drift, and the one that drifts is always the one
+ * nobody is watching.
+ */
+export async function runTaskNow(task) {
+  /**
+   * A run by hand does not make the schedule fire again a moment later.
+   *
+   * `next_run_at` is very often already in the past — that is what being due
+   * means — and `runTask` sets it forward from *now* when it finishes, so this
+   * mostly sorts itself out. Mostly is not good enough: if the manual run fails
+   * before it gets there, the old, passed time is still sitting in the row and
+   * the next sweep starts the whole thing again automatically. Moving it first
+   * means the worst case is a skipped occurrence rather than a surprise repeat
+   * of a job that sends email.
+   */
+  const next = advance(task.cron, new Date(), task.tz);
+  if (next) await getStore().finishTask(task.id, { status: task.last_status ?? null, chatId: task.last_chat ?? null, nextRunAt: next });
+  return runTask(task);
 }
 
 /**

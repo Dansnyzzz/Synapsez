@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
-import { classify } from './attachments.js';
+import { classify, saveUpload } from './attachments.js';
 import { extractPdfText } from './pdf.js';
 import { isLegacyOffice, officeFormat, readOffice } from './office/index.js';
 
@@ -53,7 +53,7 @@ const MAX_SHELF_CHARS = 4_000_000;
  * the alternative is a file that sits in the list looking like knowledge and is
  * never once consulted.
  */
-export async function addSource(userId, projectId, { name, mime, data }) {
+export async function addSource(userId, projectId, { name, mime, data, thumb }) {
   const store = getStore();
   const project = await store.getProject(userId, projectId);
   if (!project) throw Object.assign(new Error('No such project.'), { status: 404 });
@@ -63,12 +63,6 @@ export async function addSource(userId, projectId, { name, mime, data }) {
   if (!base64) throw new Error(`${filename} is empty.`);
 
   const kind = classify(filename, mime);
-  if (kind === 'image') {
-    throw new Error(
-      `${filename} is an image. A source has to be something the assistant can quote — ` +
-        'send pictures in a message instead, where it can look at them.',
-    );
-  }
   if (!kind) {
     throw new Error(
       isLegacyOffice(filename, mime)
@@ -80,6 +74,34 @@ export async function addSource(userId, projectId, { name, mime, data }) {
   const bytes = Buffer.byteLength(base64, 'base64');
   let text = '';
   let pages = null;
+
+  /**
+   * A picture on the shelf is looked at, not quoted.
+   *
+   * This used to be refused, and the reasoning was sound as far as it went: a
+   * source is something an answer can cite, and there is no text in a
+   * photograph to cite. What the refusal missed is that half the library can
+   * *see* — and for those models a diagram on the shelf is worth more than the
+   * paragraph describing it. So it is taken, carried into the turn as a real
+   * picture (see `projectImages`), and on a model with no eyes the prompt says
+   * plainly that there are pictures it cannot see rather than ignoring them.
+   *
+   * No text, therefore no passages, therefore it never competes for the
+   * passage budget that the quotable sources share.
+   */
+  if (kind === 'image') {
+    const stored = await saveUpload(userId, { name: filename, mime, data: base64 });
+    return store.addProjectFile(userId, projectId, {
+      id: crypto.randomUUID(),
+      name: filename,
+      mime: stored.mime,
+      kind,
+      bytes,
+      text: '',
+      attachmentId: stored.id,
+      thumb: cleanThumb(thumb),
+    });
+  }
 
   if (kind === 'office') {
     // The same reader the chat uses, so a contract on a project's shelf and the
@@ -125,14 +147,51 @@ export async function addSource(userId, projectId, { name, mime, data }) {
     throw new Error('This project has as much source text as it can hold. Remove something first.');
   }
 
+  /**
+   * The original is kept as well as the text read out of it.
+   *
+   * It used to be read once and dropped, which made the shelf a list of names:
+   * nothing to look at, nothing to open, and no way to get back the file you
+   * uploaded. Stored in the attachments table because that is where uploaded
+   * bytes already live, with the sweep and the serving route they already have.
+   *
+   * Never fatal. A source whose text was read and whose original could not be
+   * stored is still a working source — it answers questions, it just cannot be
+   * downloaded — and refusing the whole upload over it would be trading the
+   * thing that matters for the thing that is nice to have.
+   */
+  const stored = await saveUpload(userId, { name: filename, mime, data: base64 }).catch(() => null);
+
   return store.addProjectFile(userId, projectId, {
     id: crypto.randomUUID(),
     name: filename,
     mime: String(mime || '').slice(0, 120) || 'text/plain',
+    kind,
     bytes,
     pages,
     text,
+    attachmentId: stored?.id ?? null,
+    thumb: cleanThumb(thumb),
   });
+}
+
+/**
+ * The little picture the shelf draws, if the browser sent a usable one.
+ *
+ * Rendered by the browser that uploaded the file — a PDF's first page, or the
+ * image scaled down — because doing it here would mean a canvas, which means a
+ * native module, which is the one thing a free serverless deployment cannot
+ * have. That it comes from the client is exactly why it is bounded and checked
+ * here: a data URL of a known image type, and small enough that it belongs in
+ * the row rather than in a file of its own.
+ */
+const MAX_THUMB_CHARS = 200_000;
+
+function cleanThumb(thumb) {
+  const value = String(thumb || '');
+  if (!value) return null;
+  if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) return null;
+  return value.length > MAX_THUMB_CHARS ? null : value;
 }
 
 /* ── finding the part that answers the question ────────────────── */
@@ -350,7 +409,7 @@ export function selectSources(files, question, budget = CONTEXT_CHARS) {
  * be careful. "Say the sources do not cover it" is a specific, achievable
  * action; "be accurate" is a mood.
  */
-export function renderProject({ project, sources, whole, truncated, names }) {
+export function renderProject({ project, sources, whole, truncated, names, images = [] }) {
   const lines = ['', `# Project: ${project.name}`];
 
   if (project.instructions?.trim()) {
@@ -452,10 +511,43 @@ export async function projectPrompt(userId, chat, question) {
 
   const files = await store.readProjectFiles(userId, project.id);
   const names = files.map((f) => f.name);
-  const picked = files.length
-    ? selectSources(files, question)
+
+  /**
+   * Pictures are carried, not quoted.
+   *
+   * They have no text, so they are kept out of `selectSources` entirely — a
+   * source with nothing to rank would only dilute the passage budget the
+   * quotable ones are competing for. Instead they ride on the question as real
+   * attachments, which means `toParts` decides what to do with them: shown to a
+   * model that can see, and to one that cannot, replaced by a sentence saying
+   * so. That last part is why this is worth doing properly rather than
+   * silently dropping them.
+   *
+   * Bounded, because a shelf can hold a lot of them and each one is a real
+   * image in every turn of the conversation. The newest win: on a shelf that
+   * has outgrown the limit, the picture added most recently is the one the
+   * question is most likely about.
+   */
+  const images = files
+    .filter((f) => f.kind === 'image' && f.attachment_id)
+    .slice(-MAX_PROJECT_IMAGES)
+    .map((f) => ({ id: f.attachment_id, name: f.name, kind: 'image' }));
+
+  const readable = files.filter((f) => f.kind !== 'image');
+  const picked = readable.length
+    ? selectSources(readable, question)
     : { whole: true, truncated: false, sources: [] };
 
-  const { briefing, passages } = renderProject({ project, names, ...picked });
-  return { project, briefing, passages, fileCount: files.length };
+  const { briefing, passages } = renderProject({ project, names, images, ...picked });
+  return { project, briefing, passages, images, fileCount: files.length };
 }
+
+/**
+ * How many of a shelf's pictures ride along with a question.
+ *
+ * Each one is sent in full on every step of every turn, so this is the single
+ * most expensive thing a project can carry. Four is enough to hold a diagram
+ * and the pages around it, and small enough that a shelf of forty screenshots
+ * does not quietly make every turn cost a fortune.
+ */
+const MAX_PROJECT_IMAGES = 4;

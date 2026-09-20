@@ -140,7 +140,7 @@ section('the strings the script builds are defined too');
  * fallback is deliberate, so it does not throw, and it looks fine to whoever
  * added the tool because they know what it means.
  */
-section('every browser and desktop step reads as a sentence');
+section('every step reads as a sentence');
 {
   const render = fs.readFileSync(path.join(import.meta.dirname, '..', 'public', 'js', 'render.js'), 'utf8');
   const definitions = fs.readFileSync(
@@ -148,19 +148,25 @@ section('every browser and desktop step reads as a sentence');
     'utf8',
   );
 
-  const described = new Set(
-    [...render.matchAll(/^\s{2}(browser_\w+|desktop_\w+):\s*'([^']+)'/gm)].map((m) => m[1]),
-  );
-  const tools = [...definitions.matchAll(/name: '((?:browser|desktop)_\w+)'/g)].map((m) => m[1]);
+  const described = new Set([...render.matchAll(/^ {2}(\w+): '(step\.[\w.]+)',$/gm)].map((m) => m[1]));
+  const tools = [...definitions.matchAll(/^ {4}name: '(\w+)',$/gm)].map((m) => m[1]);
 
-  check('the tools were found at all', tools.length > 10, `${tools.length} tools`);
+  check('the tools were found at all', tools.length > 50, `${tools.length} tools`);
 
+  /**
+   * Every tool, not only the browser and desktop families this began with.
+   *
+   * A tool with no verb falls back to its own function name, so the transcript
+   * shows `skill_read {"name":"…"}` where the rest of the turn is in words. It
+   * does not throw, it looks fine to whoever added the tool because they know
+   * what it means, and nobody notices until a screenshot of it arrives.
+   */
   const undescribed = tools.filter((name) => !described.has(name));
   check('every one of them has a verb', undescribed.length === 0, undescribed.join(', '));
 
   // And the verbs themselves are real strings in both languages. Covered by the
   // sweep above too, but named here so a failure says which half is missing.
-  const keys = [...render.matchAll(/'(step\.(?:browser|desktop)\.\w+)'/g)].map((m) => m[1]);
+  const keys = [...render.matchAll(/'(step\.[\w.]+)'/g)].map((m) => m[1]);
   const untranslated = [...new Set(keys)].filter((k) => !(k in vi) || !(k in en));
   check('and a translation on both sides', untranslated.length === 0, untranslated.join(', '));
 

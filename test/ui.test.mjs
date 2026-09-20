@@ -77,6 +77,22 @@ if (!browser) {
 
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
 
+/**
+ * Open a project by name, from the Projects shelf.
+ *
+ * Tests add projects of their own, so "the first card" stopped identifying
+ * anything in particular the moment a second section did.
+ */
+const openProjectNamed = async (name) => {
+  await page.evaluate((wanted) => {
+    const card = [...document.querySelectorAll('#page-body [data-project]')].find((c) =>
+      c.textContent.includes(wanted),
+    );
+    /** @type {HTMLElement} */ (card)?.click();
+  }, name);
+  await page.waitForTimeout(1200);
+};
+
 let failures = 0;
 const section = (name) => realLog(`\n\x1b[1m${name}\x1b[0m`);
 const check = (label, ok, detail = '') => {
@@ -812,7 +828,7 @@ section('projects: instructions and sources a conversation inherits');
   check('with a composer, not a form', opened.asks === 'How can I help you today?', opened.asks);
   check(
     'and what it knows down the side',
-    JSON.stringify(opened.cards) === JSON.stringify(['Instructions', 'Memory', 'Context']),
+    JSON.stringify(opened.cards) === JSON.stringify(['Instructions', 'Memory', 'Context', 'Scheduled']),
     JSON.stringify(opened.cards),
   );
 
@@ -854,12 +870,26 @@ section('projects: instructions and sources a conversation inherits');
       }).then(async (r) => ({ status: r.status, body: await r.json() }));
 
     const text = await post({ name: 'rules.md', mime: 'text/markdown', data: b64('The pass mark is 5.0.') });
-    const image = await post({ name: 'photo.png', mime: 'image/png', data: b64('nope') });
-    return { text: text.status, image: image.status, why: image.body.error };
+    // A tiny 1×1 GIF, so the shelf has a real picture with a real thumbnail.
+    const image = await post({
+      name: 'photo.gif',
+      mime: 'image/gif',
+      data: 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+      thumb: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==',
+    });
+    const junk = await post({ name: 'archive.zip', mime: 'application/zip', data: b64('PK') });
+    return { text: text.status, image: image.status, file: image.body.file, junk: junk.status };
   });
   check('a text source is taken', added.text === 201, `${added.text}`);
-  check('a picture is not', added.image === 400, `${added.image}`);
-  check('because a source has to be quotable', /quote/i.test(added.why || ''), added.why);
+  // A picture used to be refused here. It is kept now — half the library can
+  // see, and a diagram on the shelf is worth more to those models than the
+  // paragraph describing it. It carries no text, so it never competes for the
+  // passage budget the quotable sources share.
+  check('and so is a picture', added.image === 201, `${added.image}`);
+  check('marked as one', added.file?.kind === 'image', added.file?.kind);
+  check('keeping the file it came from, so it can be opened and downloaded', !!added.file?.attachment_id);
+  check('and the picture the browser drew of it', /^data:image\//.test(added.file?.thumb || ''), added.file?.thumb?.slice(0, 24));
+  check('a kind nothing can read is still refused', added.junk === 400, `${added.junk}`);
 
   // Typing into the composer starts the conversation, carrying the first
   // message with it — nothing exists until it is sent.
@@ -885,7 +915,9 @@ section('projects: instructions and sources a conversation inherits');
   // header is the one place the difference can live.
   check('a chat started in a project says so', chip.shown && chip.text === 'UI project', JSON.stringify(chip));
   check('and that it is held to the sources', chip.grounded);
-  check('with how many there are', /1 source/.test(chip.title || ''), chip.title);
+  // Two: the rules file and the picture. Both are sources on the shelf, which
+  // is what the header counts, even though only one of them can be quoted.
+  check('with how many there are', /2 sources/.test(chip.title || ''), chip.title);
 
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
@@ -1368,8 +1400,21 @@ const menu = await page.evaluate(() => {
   };
 });
 check('the menu opens', menu.open);
-check('it offers pin, rename and delete', menu.items.join(',') === 'Pin,Rename,Delete', menu.items.join(' '));
-check('with shortcut letters', menu.keys.join('') === 'PRD', menu.keys.join(''));
+/*
+ * The menu grew from three entries to everything you can do to one
+ * conversation — the same list the chevron beside the title offers, built from
+ * one description so the two cannot drift apart. "Remove from project" is here
+ * because this conversation is filed under one; it is left out entirely when
+ * there is nothing to remove it from, since an entry that does nothing is
+ * worse than an absent one — it is a thing you try and learn from.
+ */
+check(
+  'it offers everything you can do to a conversation',
+  menu.items.join(',') ===
+    'Open in new window,Copy session ID,Pin,Mark as unread,Rename,Change project,Remove from project,Move to group,Archive,Delete',
+  menu.items.join(' '),
+);
+check('with shortcut letters on the ones that have them', menu.keys.join('') === 'PURAD', menu.keys.join(''));
 check('it stays on screen', menu.onScreen);
 check('no browser dialog was used', !menu.usedBrowserDialog);
 
@@ -1386,10 +1431,17 @@ await page.keyboard.press('Escape');
 await page.waitForTimeout(200);
 check('Escape closes it', await page.evaluate(() => document.getElementById('row-menu').hidden));
 
-// Renaming happens in the row itself.
+// Renaming happens in the row itself. Picked by what it says rather than by
+// position: the menu has grown once already, and a fixed index is how a test
+// starts silently exercising whatever landed in that slot.
 await page.click('.chat-row__menu');
 await page.waitForTimeout(250);
-await page.click('#row-menu .menu__item:nth-child(2)');
+await page.evaluate(() => {
+  const hit = [...document.querySelectorAll('#row-menu .menu__item')].find(
+    (el) => el.querySelector('span')?.textContent === 'Rename',
+  );
+  hit?.click();
+});
 await page.waitForTimeout(250);
 check('rename edits in place', !!(await page.$('.chat-item--editing')));
 await page.fill('.chat-item--editing', 'Renamed by the test');
@@ -2429,11 +2481,34 @@ section('the shelves');
   await page.waitForTimeout(500);
   const form = await page.evaluate(() => ({
     open: document.getElementById('task-form').open,
-    fields: ['task-form-name', 'task-form-prompt', 'task-form-when', 'task-form-repeat'].every((id) =>
+    // `when` is gone: a time typed in words is precise, learnable, and
+    // something most people get wrong once and then avoid. The frequency and
+    // the permissions are menus now, and each says what it does at 3am.
+    fields: ['task-form-name', 'task-form-prompt', 'task-form-repeat', 'task-form-policy'].every((id) =>
       document.getElementById(id),
     ),
+    gone: !document.getElementById('task-form-when'),
+    frequencies: [...document.querySelectorAll('#task-form-repeat option')].map((o) => o.value),
+    policies: [...document.querySelectorAll('#task-form-policy option')].map((o) => o.value),
+    // Manual to begin with: the one choice that cannot surprise somebody at
+    // three in the morning.
+    starts: document.getElementById('task-form-repeat').value,
+    says: document.getElementById('task-form-freq-say').textContent.trim(),
   }));
   check('and the form opens with what it needs', form.open && form.fields);
+  check('the written time field is gone', form.gone);
+  check(
+    'six frequencies, manual among them',
+    JSON.stringify(form.frequencies) === JSON.stringify(['manual', 'hourly', 'daily', 'weekdays', 'weekly', 'monthly']),
+    form.frequencies.join(','),
+  );
+  check(
+    'and three things a run may be allowed to do',
+    JSON.stringify(form.policies) === JSON.stringify(['ask', 'guarded', 'auto']),
+    form.policies.join(','),
+  );
+  check('it starts manual', form.starts === 'manual', form.starts);
+  check('and says what that means', /Run now/.test(form.says), form.says);
   await page.evaluate(() => document.getElementById('task-form').close());
 
   // A suggestion fills the form in rather than making an empty one.
@@ -2837,7 +2912,9 @@ section('the file viewer');
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(900);
-  await page.click('.chat-row');
+  // By id rather than "the first row": projects are listed above the loose
+  // conversations now, so the first one is whichever happens to sort there.
+  await page.click(`.chat-row[data-chat="${made.chat}"]`);
   await page.waitForTimeout(700);
 
   const chips = await page.$$('.bubble__file');
@@ -3314,21 +3391,953 @@ section('work running in the background shows up in the conversation list');
   await page.waitForTimeout(2000);
   const shown = await page.evaluate(() => {
     const row = [...document.querySelectorAll('#chat-list .chat-row')].find((r) => r.textContent.includes('Chuỗi việc nền'));
-    return { listed: !!row, live: !!row?.querySelector('.chat-row__live'), label: row?.querySelector('.chat-row__live')?.getAttribute('aria-label') };
+    return { listed: !!row, running: !!row?.classList.contains('is-running'), dot: !!row?.querySelector('.chat-row__live') };
   });
   check('the conversation a run just opened is listed', shown.listed);
-  check('marked as running', shown.live, shown.label);
-  check('with a name a screen reader can say', !!shown.label && !/^chat\./.test(shown.label), shown.label);
+  check('and the page knows it is running', shown.running);
+  // The dot this used to draw was removed: it sat beside the bar that already
+  // marks the open row, and duplicated the composer's own spinner.
+  check('without drawing a second indicator beside the row', !shown.dot);
 
-  // While something runs, the list checks again within seconds on its own.
+  // While something runs, the list checks again within seconds on its own —
+  // that faster poll is what the flag is still for, so a title written by a
+  // background run appears without anyone reloading.
   await store.saveWorkflowRun('r-live', { status: 'done', finished: true });
   await store.appendMessage(user.id, 'c-live', { id: 'm-live', role: 'user', text: 'a' });
   await page.waitForTimeout(7000);
   const after = await page.evaluate(() => {
     const row = [...document.querySelectorAll('#chat-list .chat-row')].find((r) => r.textContent.includes('Chuỗi việc nền'));
-    return { listed: !!row, live: !!row?.querySelector('.chat-row__live') };
+    return { listed: !!row, running: !!row?.classList.contains('is-running') };
   });
-  check('when the run finishes the mark goes, by itself', after.listed && !after.live, JSON.stringify(after));
+  check('when the run finishes the mark goes, by itself', after.listed && !after.running, JSON.stringify(after));
+}
+
+/**
+ * A step says what it did, and keeps the exact call for whoever opens it.
+ *
+ * Every tool outside the browser and desktop families used to draw its own
+ * function name and a blob of JSON — `skill_read {"name":"Writing a Word
+ * document"}` — in the middle of a transcript that is otherwise in sentences.
+ * `test/i18n.test.mjs` proves every tool in the catalogue now has a verb; this
+ * proves the words come out right for the arguments a model actually sends,
+ * including the ones it gets wrong, and that nothing was lost in the move.
+ */
+section('a tool step reads as a sentence, with the call still inside it');
+{
+  const words = await page.evaluate(async () => {
+    const { describeStep } = await import('/js/render.js');
+    const said = (name, input) => describeStep(name, input);
+    return {
+      skill: said('skill_read', { name: 'Writing a Word document' }),
+      command: said('run_command', { command: 'npm test' }).detail,
+      page: said('web_fetch', { url: 'https://www.pv-magazine.com/2026/04/23/eu-moves' }).detail,
+      query: said('web_search', { query: 'luật thương mại quốc tế' }).detail,
+      deep: said('read_file', { path: 'a/very/long/workspace/path/that/goes/on/and/on/and/on/report-final.docx' }).detail,
+      missing: said('read_file', {}).detail,
+      mistyped: said('load_tools', { names: 'web_fetch' }).verb,
+      nulled: said('grep', { pattern: null }).verb,
+      unknown: said('invented_tool', { a: 1 }).verb,
+    };
+  });
+
+  check('a skill read is "Read a guide", not "skill_read"', words.skill.verb === 'Read a guide', words.skill.verb);
+  check('and the skill it read is the detail', words.skill.detail === 'Writing a Word document', words.skill.detail);
+  check('a command shows the command', words.command === 'npm test', words.command);
+  check('a page shows its host and path, not the scheme', words.page === 'pv-magazine.com/2026/04/23/eu-moves', words.page);
+  check('a search shows the query, Vietnamese intact', words.query === 'luật thương mại quốc tế', words.query);
+  // A long path is clipped from the front: the filename is the half anybody is
+  // reading for, and clipping from the end is what removes it.
+  check('a long path keeps its filename', /report-final\.docx$/.test(words.deep), words.deep);
+  check('and says it was clipped', words.deep.startsWith('…'), words.deep);
+  // The model chooses these arguments, so every shape it can get wrong has to
+  // land somewhere sane rather than throwing inside the transcript renderer.
+  check('a missing argument is blank, not "undefined"', words.missing === '', words.missing);
+  check('a wrongly-typed argument does not throw', words.mistyped === 'Loaded more tools', words.mistyped);
+  check('and neither does a null one', words.nulled === 'Searched in files', words.nulled);
+  check('a tool nobody has named yet still renders', words.unknown === 'invented_tool', words.unknown);
+
+  // The other half of the bargain: the function name and its arguments moved
+  // inside the card rather than going away.
+  const card = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    const host = turn.node;
+    document.body.append(host);
+    const handle = turn.startTool({ id: 'c1', name: 'skill_read', input: { name: 'Writing a Word document' } });
+    handle.complete({ content: 'the guide', ms: 2 });
+    const block = host.querySelector('.block.tool');
+    const out = {
+      headline: block?.querySelector('.tool__name')?.textContent,
+      fn: block?.querySelector('.tool__fn')?.textContent,
+      args: block?.querySelector('.tool__args')?.textContent,
+      result: block?.querySelector('.block__body > pre')?.textContent,
+    };
+    host.remove();
+    return out;
+  });
+
+  check('the card is headlined in words', card.headline === 'Read a guide', card.headline);
+  check('the real tool name is inside it', card.fn === 'skill_read', card.fn);
+  check('with the arguments it was given', /Writing a Word document/.test(card.args || ''), card.args);
+  check('and the result is still there', card.result === 'the guide', card.result);
+}
+
+/**
+ * The whole answer arrived on the reasoning channel. `server/agent.js` moves it
+ * before storing, so a reload is already right; this is the live view catching
+ * up, which is what the person watching the turn actually sees.
+ */
+section('an answer that arrived as reasoning is shown as the answer');
+{
+  const shown = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    const host = turn.node;
+    document.body.append(host);
+    turn.appendThinking('Không, tôi không thể tạo 100 câu.');
+    const hadBlock = !!host.querySelector('details.block');
+    turn.adoptThinkingAsReply('Không, tôi không thể tạo 100 câu.');
+    const out = {
+      hadBlock,
+      stillFolded: !!host.querySelector('details.block'),
+      prose: host.querySelector('.prose')?.textContent?.trim(),
+    };
+    host.remove();
+    return out;
+  });
+
+  check('it started out folded into the reasoning block', shown.hadBlock);
+  check('the block is gone afterwards', !shown.stillFolded);
+  check('and the answer is the reply', shown.prose === 'Không, tôi không thể tạo 100 câu.', shown.prose);
+}
+
+/**
+ * Two conversations can answer at once, and leaving one does not kill it.
+ *
+ * Switching conversation used to abort the stream — which closes the socket,
+ * which the server takes as "stop this run". So a glance at another chat killed
+ * the work, and coming back showed a transcript frozen mid-thought that lurched
+ * to the finished answer minutes later when something happened to reload it.
+ *
+ * A run now owns its own `stage` and every handler draws into that, so going
+ * elsewhere only detaches an element. These checks are against the registry
+ * that holds them, which is where the rule lives.
+ */
+/**
+ * A project's shelf shows what is on it.
+ *
+ * It used to be a list of filenames: a project with four PDFs told you it had
+ * four PDFs and nothing about which was the rubric. Every source now keeps the
+ * file it came from — the bytes used to be read once and dropped — so a card
+ * can show a picture, a press can open it, and the original can be handed back.
+ */
+section('a project source is a card you can open');
+{
+  /*
+   * Its own project, on whichever account is signed in by now — an earlier
+   * section switches accounts, and another account's project is rightly
+   * invisible here.
+   */
+  await page.evaluate(async () => {
+    const made = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Shelf project' }),
+    }).then((r) => r.json());
+    const id = made.project.id;
+    const post = (body) =>
+      fetch(`/api/projects/${id}/files`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    await post({ name: 'rules.md', mime: 'text/markdown', data: btoa('The pass mark is 5.0.') });
+    await post({
+      name: 'diagram.gif',
+      mime: 'image/gif',
+      data: 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+      // What `thumbnail.js` would have drawn, standing in for it: this is a
+      // real browser, but Playwright cannot put a file through the picker here.
+      thumb:
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    });
+  });
+
+  // Through the interface rather than by calling `open()` directly: the shelf
+  // is drawn when a project page opens, and that is the path being tested.
+  await page.click('#open-projects');
+  await page.waitForTimeout(900);
+  await openProjectNamed('Shelf project');
+
+  const drawn = await page.evaluate(async () => {
+    const cards = [...document.querySelectorAll('.shelf .card')];
+    return {
+      cards: cards.length,
+      withPictures: cards.filter((c) => c.querySelector('.card__shot img')).length,
+      badges: cards.map((c) => c.querySelector('.card__badge')?.textContent).filter(Boolean),
+      // Nothing is selectable until somebody asks for it.
+      barBeforePicking: !!document.querySelector('.shelf__bar'),
+    };
+  });
+
+  check('every source on the shelf is a card', drawn.cards >= 2, JSON.stringify(drawn));
+  check('the picture shows its picture', drawn.withPictures >= 1, `${drawn.withPictures}`);
+  check('and every card says what kind it is', drawn.badges.length === drawn.cards, drawn.badges.join(','));
+  // A row of checkboxes standing over a shelf nobody is editing is a hazard
+  // offered to somebody who came to read.
+  check('nothing offers to delete until asked', !drawn.barBeforePicking);
+
+  const picking = await page.evaluate(async () => {
+    const tick = document.querySelector('.shelf .card .card__tick');
+    tick?.click();
+    await new Promise((r) => setTimeout(r, 250));
+    const bar = document.querySelector('.shelf__bar');
+    const one = {
+      bar: !!bar,
+      count: bar?.querySelector('.shelf__count')?.textContent?.trim(),
+      picked: document.querySelectorAll('.shelf .card.is-picked').length,
+    };
+
+    document.getElementById('pp-select-all')?.click();
+    await new Promise((r) => setTimeout(r, 250));
+    const all = {
+      count: document.querySelector('.shelf__count')?.textContent?.trim(),
+      picked: document.querySelectorAll('.shelf .card.is-picked').length,
+      cards: document.querySelectorAll('.shelf .card').length,
+    };
+
+    document.getElementById('pp-end-select')?.click();
+    await new Promise((r) => setTimeout(r, 250));
+    return { one, all, closed: !document.querySelector('.shelf__bar') };
+  });
+
+  check('ticking one starts a selection', picking.one.bar && picking.one.picked === 1, JSON.stringify(picking.one));
+  check('and the bar counts it', /1/.test(picking.one.count || ''), picking.one.count);
+  check('select-all takes the whole shelf', picking.all.picked === picking.all.cards, JSON.stringify(picking.all));
+  check('and closing puts it away without deleting anything', picking.closed);
+
+  const preview = await page.evaluate(async () => {
+    const card = [...document.querySelectorAll('.shelf .card')].find((c) => c.querySelector('.card__shot img'));
+    card?.querySelector('.card__open')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const dialog = document.getElementById('source-view');
+    const out = {
+      open: dialog?.open === true,
+      name: document.getElementById('source-view-name')?.textContent,
+      big: !!dialog?.querySelector('.sourceview__figure img'),
+      // The download is a real link with `download`, so the browser saves the
+      // file instead of navigating away from the project.
+      href: dialog?.querySelector('.sourceview__get')?.getAttribute('href'),
+      saves: dialog?.querySelector('.sourceview__get')?.hasAttribute('download'),
+    };
+    dialog?.close();
+    return out;
+  });
+
+  check('pressing a card opens it large', preview.open && preview.big, JSON.stringify(preview));
+  check('titled with the file name', !!preview.name, preview.name);
+  check('and the original is one press away', /^\/api\/attachments\//.test(preview.href || ''), preview.href);
+  check('as a download rather than a navigation', preview.saves);
+}
+
+/**
+ * A project's own scheduled work, and its file browser.
+ *
+ * Both hang off the project page built in the section above, which has already
+ * created "Shelf project" on whichever account is signed in by now.
+ */
+/**
+ * A project's conversations live under the project.
+ *
+ * Mixed into one flat list, a project was a folder you could put things in and
+ * then never see the inside of: the shelf knew what was filed where, and the
+ * sidebar — the thing actually used to move between conversations — did not.
+ */
+/**
+ * A sidebar you glance at, and a scrollbar you can see.
+ *
+ * Two things that only go wrong once there is enough in the app to go wrong
+ * with: a conversation list past about twenty rows stops being something you
+ * glance at, and the dock painted over the transcript covered the one thing
+ * that says where you are in a long one.
+ */
+/**
+ * A file too big to send is shrunk rather than refused.
+ *
+ * There are two ceilings and only one is ours: the host refuses a request body
+ * over about 4.5MB at the edge, before any of our code runs, with a plain-text
+ * `Request Entity Too Large`. Base64 inflates bytes by a third on the way out,
+ * so the real ceiling on a file was never the number the app printed — and what
+ * reached the person was `Unexpected token 'R', "Request En"... is not valid
+ * JSON`, which says nothing about the file they picked.
+ */
+/**
+ * Both side panels can be dragged, and put back.
+ *
+ * A panel you can drag is a panel you can drag somewhere useless, so the way
+ * back has to be as easy as the way out — hunting for the original width by eye
+ * is a worse problem than the one dragging solved.
+ */
+section('the side panels can be dragged, and double-clicked back');
+{
+  const app = '.app';
+  const widthOf = (name) =>
+    page.evaluate(
+      (n) => parseFloat(getComputedStyle(document.querySelector('.app')).getPropertyValue(n)),
+      name === 'sidebar' ? '--sidebar-w' : '--detail-w',
+    );
+
+  const before = await widthOf('sidebar');
+  check('the sidebar starts at its default', before === 288, `${before}`);
+
+  const grip = await page.$('#sidebar-grip');
+  const box = await grip.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+
+  const dragged = await widthOf('sidebar');
+  check('dragging its edge makes it wider', dragged > before + 60, `${before} → ${dragged}`);
+
+  // And it is remembered, because somebody who widened it meant to.
+  const saved = await page.evaluate(() => {
+    try {
+      return JSON.parse(localStorage.getItem('ai-remote:panel-widths') || '{}');
+    } catch {
+      return {};
+    }
+  });
+  check('and remembered for next time', Math.round(saved.sidebar || 0) === Math.round(dragged), JSON.stringify(saved));
+
+  await page.dblclick('#sidebar-grip');
+  await page.waitForTimeout(250);
+  const reset = await widthOf('sidebar');
+  check('double-clicking puts it back', reset === 288, `${reset}`);
+
+  // It cannot be dragged to nothing, or to swallow the window.
+  const clamped = await page.evaluate(() => {
+    const el = document.querySelector('.app');
+    const grip = document.getElementById('sidebar-grip');
+    const rect = grip.getBoundingClientRect();
+    const send = (type, x) =>
+      grip.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: rect.top + 10, button: 0, pointerId: 1 }));
+    send('pointerdown', rect.left);
+    send('pointermove', rect.left - 4000);
+    send('pointerup', rect.left - 4000);
+    return parseFloat(getComputedStyle(el).getPropertyValue('--sidebar-w'));
+  });
+  check('and never past its minimum', clamped >= 180, `${clamped}`);
+
+  await page.dblclick('#sidebar-grip');
+  await page.waitForTimeout(200);
+
+  // A separator a keyboard cannot reach is one more thing that works for most
+  // people rather than everybody.
+  const reachable = await page.evaluate(() => {
+    const grip = document.getElementById('sidebar-grip');
+    return { role: grip.getAttribute('role'), focusable: grip.tabIndex >= 0, labelled: !!grip.getAttribute('aria-label') };
+  });
+  check('the handle is a separator a keyboard can reach', reachable.role === 'separator' && reachable.focusable, JSON.stringify(reachable));
+  check('and it says what it is', reachable.labelled);
+
+  void app;
+}
+
+/**
+ * The accent moved from one flat green to a gradient that drifts.
+ *
+ * One line kept its old colours on purpose — the opening question is the first
+ * thing anybody sees and it was already right — so it is held in tokens of its
+ * own, where a future change to the accent cannot drag it along by accident.
+ */
+section('the accent is a galaxy, except where it should not be');
+{
+  const paint = await page.evaluate(() => {
+    const root = getComputedStyle(document.documentElement);
+    const heading = document.querySelector('.empty h2');
+    return {
+      accent: root.getPropertyValue('--accent').trim(),
+      galaxy: root.getPropertyValue('--galaxy').trim(),
+      welcome: root.getPropertyValue('--welcome-1').trim(),
+      headingPaint: heading ? getComputedStyle(heading).backgroundImage : '',
+    };
+  });
+
+  // The two greens the accent used to be — one per theme. Which of them is in
+  // play depends on the browser's own setting, which the suite does not fix.
+  const OLD_GREENS = { '#5ee6a8': '94, 230, 168', '#10855a': '16, 133, 90' };
+
+  check('there is a gradient to wear', /linear-gradient/.test(paint.galaxy), paint.galaxy.slice(0, 60));
+  check('and the flat accent is no longer the old green', !(paint.accent in OLD_GREENS), paint.accent);
+  check('the welcome keeps the colour it had', paint.welcome in OLD_GREENS, paint.welcome);
+  // Read off the element rather than the token: what matters is that the
+  // heading is still painted in the old green, however that is arranged.
+  check(
+    'and is still painted with it',
+    paint.headingPaint.includes(OLD_GREENS[paint.welcome] || '\u0000'),
+    paint.headingPaint.slice(0, 90),
+  );
+
+  /*
+   * One ring on the composer, not two. Focus landed on the textarea, which took
+   * the global `:focus-visible` outline — a hard rectangle inside the rounded
+   * box that already had a glow of its own.
+   */
+  // Focused directly rather than clicked: by this point in the suite a sheet
+  // or a shelf may be over the composer, and what is being checked is the focus
+  // styling, not whether the box is reachable by pointer right now.
+  await page.evaluate(() => document.getElementById('input')?.focus());
+  await page.waitForTimeout(200);
+  const rings = await page.evaluate(() => {
+    const field = document.getElementById('input');
+    const box = field.closest('.composer__box');
+    return {
+      focused: document.activeElement === field,
+      outline: getComputedStyle(field).outlineStyle,
+      boxPaint: getComputedStyle(box).backgroundImage,
+      // The rule itself, for the case where focus cannot land here because a
+      // sheet from an earlier section is over the composer.
+      rule: [...document.styleSheets]
+        .flatMap((sheet) => {
+          try {
+            return [...sheet.cssRules];
+          } catch {
+            return [];
+          }
+        })
+        .filter((r) => r.selectorText === '.composer__box:focus-within')
+        .map((r) => r.style.backgroundImage)
+        .join(''),
+    };
+  });
+  check('the field inside draws no second outline', rings.outline === 'none', rings.outline);
+  check(
+    'while the rounded box wears the gradient',
+    rings.focused ? /linear-gradient/.test(rings.boxPaint) : /var\(--galaxy\)|linear-gradient/.test(rings.rule),
+    rings.focused ? rings.boxPaint.slice(0, 60) : `not focused; rule says ${rings.rule.slice(0, 60)}`,
+  );
+}
+
+section('an oversized upload is made to fit, or refused in words');
+{
+  const out = await page.evaluate(async () => {
+    const { prepareUpload, MAX_UPLOAD_BYTES } = await import('/js/shrink.js');
+
+    /** A real JPEG of a given pixel size, as a File. */
+    const photo = async (edge) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = edge;
+      canvas.height = edge;
+      const ctx = canvas.getContext('2d');
+      // Noise rather than a flat fill: a solid colour compresses to nothing and
+      // would never exercise the size path at all.
+      const image = ctx.createImageData(edge, edge);
+      for (let i = 0; i < image.data.length; i += 4) {
+        image.data[i] = Math.random() * 255;
+        image.data[i + 1] = Math.random() * 255;
+        image.data[i + 2] = Math.random() * 255;
+        image.data[i + 3] = 255;
+      }
+      ctx.putImageData(image, 0, 0);
+      const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 1));
+      return new File([blob], 'photo.jpg', { type: 'image/jpeg' });
+    };
+
+    const small = new File([new Uint8Array(1024)], 'notes.txt', { type: 'text/plain' });
+    const untouched = await prepareUpload(small);
+
+    const big = await photo(4000);
+    const shrunk = big.size > MAX_UPLOAD_BYTES ? await prepareUpload(big) : null;
+
+    // Something nothing can shrink honestly: a .pptx is already a zip.
+    const deck = new File([new Uint8Array(MAX_UPLOAD_BYTES + 1024)], 'slides.pptx', {
+      type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    });
+    let refused = null;
+    try {
+      await prepareUpload(deck);
+    } catch (err) {
+      refused = err.message;
+    }
+
+    const bytesOf = (b64) => Math.floor((b64.length * 3) / 4);
+    return {
+      limit: MAX_UPLOAD_BYTES,
+      // A small file is passed through: nothing is re-encoded for the sake of
+      // it, because a 200KB PNG through a JPEG round trip comes out worse.
+      untouchedName: untouched.name,
+      untouchedNote: untouched.note,
+      bigBytes: big.size,
+      shrunkTo: shrunk ? bytesOf(shrunk.data) : null,
+      shrunkName: shrunk?.name,
+      shrunkKind: shrunk?.note?.kind,
+      refused,
+    };
+  });
+
+  check('a file that already fits is passed through', out.untouchedName === 'notes.txt' && out.untouchedNote === null, out.untouchedName);
+  check('the test photo really is over the limit', out.bigBytes > out.limit, `${out.bigBytes} > ${out.limit}`);
+  check('an oversized photo is re-encoded to fit', out.shrunkTo !== null && out.shrunkTo <= out.limit, `${out.shrunkTo}`);
+  check('and says it was resized', out.shrunkKind === 'image', String(out.shrunkKind));
+  check('under a name that matches what was sent', out.shrunkName === 'photo.jpg', out.shrunkName);
+  // Nothing can shrink a deck honestly, so the refusal names the file, its
+  // size, what fits, and what to do — rather than a JSON parse error.
+  check('what cannot be shrunk is refused in words', /slides\.pptx/.test(out.refused || ''), out.refused);
+  check('naming the limit', /MB/.test(out.refused || ''), out.refused);
+
+  /*
+   * And a non-JSON error from the edge reads as what it is. This is the exact
+   * body a host returns when it refuses an oversized request.
+   */
+  const spoken = await page.evaluate(async () => {
+    const real = window.fetch;
+    window.fetch = async () => new Response('Request Entity Too Large', { status: 413 });
+    try {
+      const { api } = await import('/js/api.js');
+      await api.chats();
+      return 'no error at all';
+    } catch (err) {
+      return err.message;
+    } finally {
+      window.fetch = real;
+    }
+  });
+  check('a plain-text 413 is not a JSON parse error', !/JSON/.test(spoken), spoken);
+  check('it says the request was too large', /too large/i.test(spoken), spoken);
+}
+
+section('the sidebar stays a list you can glance at');
+{
+  // Twenty-five loose conversations, which is past where a list stops being
+  // scannable and starts being something you scroll.
+  await page.evaluate(async () => {
+    const post = (url, body) =>
+      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(
+        (r) => r.json(),
+      );
+    for (let i = 0; i < 25; i += 1) {
+      const { chat } = await post('/api/chats', {});
+      await post(`/api/chats/${chat.id}/messages`, { text: `filler ${i}` });
+    }
+  });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1600);
+
+  const list = await page.evaluate(() => {
+    const el = document.getElementById('chat-list');
+    const label = el.querySelector('.chats__label');
+    const style = label ? getComputedStyle(label) : null;
+    return {
+      rows: el.querySelectorAll('.chat-row').length,
+      more: el.querySelector('.chats__more')?.textContent,
+      scrolls: el.scrollHeight > el.clientHeight + 1,
+      // The heading stays put while its own section scrolls past it —
+      // otherwise a list scrolled into the middle has nothing saying whether
+      // you are inside a project, a group, or the ordinary list.
+      sticky: style?.position,
+      // And it is opaque enough that rows do not show through it.
+      opaque: style?.backgroundColor !== 'rgba(0, 0, 0, 0)',
+    };
+  });
+
+  check('it scrolls once there is more than fits', list.scrolls);
+  check('the headings stay put while it does', list.sticky === 'sticky', String(list.sticky));
+  check('and rows do not show through them', list.opaque);
+  // Twenty of the loose ones, plus whatever is nested under a project — those
+  // are not part of the flat list this caps.
+  check('at most twenty loose conversations are listed', list.rows <= 24, `${list.rows}`);
+  check('with a way to the rest', /View all/.test(list.more || ''), list.more);
+
+  const all = await page.evaluate(async () => {
+    document.querySelector('.chats__more')?.click();
+    await new Promise((r) => setTimeout(r, 700));
+    const el = document.getElementById('chat-list');
+    return { rows: el.querySelectorAll('.chat-row').length, more: el.querySelector('.chats__more')?.textContent };
+  });
+  check('which shows them all', all.rows > list.rows, `${list.rows} → ${all.rows}`);
+  check('and offers to fold them back', /fewer/i.test(all.more || ''), all.more);
+
+  /*
+   * The transcript's scrollbar is not covered by the composer's gradient.
+   *
+   * The dock is painted over the thread and a classic scrollbar lives inside
+   * the thread's own box, so a dock reaching the right edge hid the thumb —
+   * most visibly when the conversation is long and the thumb is short and
+   * sitting at the bottom, which is exactly when somebody looks for it.
+   */
+  const gap = await page.evaluate(() => {
+    const thread = document.getElementById('thread');
+    const dock = document.getElementById('dock');
+    const bar = Math.round(thread.offsetWidth - thread.clientWidth);
+    return {
+      bar,
+      // Zero on the overlay scrollbars macOS and phones use, where there is
+      // nothing to uncover and nothing to inset.
+      clear: bar === 0 || Math.round(thread.getBoundingClientRect().right - dock.getBoundingClientRect().right) >= bar,
+    };
+  });
+  check('the dock stops short of the transcript scrollbar', gap.clear, `scrollbar ${gap.bar}px`);
+}
+
+section('the sidebar files a project\'s conversations under it');
+{
+  const made = await page.evaluate(async () => {
+    const post = (url, body) =>
+      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) =>
+        r.json(),
+      );
+    const { project } = await post('/api/projects', { name: 'Filed work' });
+    const { chat } = await post('/api/chats', { projectId: project.id });
+    await post(`/api/chats/${chat.id}/messages`, { text: 'inside the project' });
+    const { chat: loose } = await post('/api/chats', {});
+    await post(`/api/chats/${loose.id}/messages`, { text: 'outside any project' });
+    return { project: project.id, name: project.name, filed: chat.id, loose: loose.id };
+  });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1400);
+
+  const shelf = await page.evaluate((ids) => {
+    const list = document.getElementById('chat-list');
+    const headings = [...list.querySelectorAll('.chats__label')].map((n) => n.textContent);
+    const projectRow = [...list.querySelectorAll('.proj-row__name')].map((n) => n.textContent.trim());
+    const filed = list.querySelector(`.chat-row[data-chat="${ids.filed}"]`);
+    const loose = list.querySelector(`.chat-row[data-chat="${ids.loose}"]`);
+    return {
+      headings,
+      projectRow,
+      // The filed one is nested under its project heading; the loose one is not.
+      filedNested: filed?.classList.contains('chat-row--nested'),
+      looseNested: loose?.classList.contains('chat-row--nested'),
+      // Open by default: a sidebar that hides conversations until you find the
+      // right heading to click has lost the list it exists to be.
+      filedVisible: !!filed,
+      // And the project's heading comes before the ordinary conversations.
+      projectFirst: headings.indexOf('Projects') < headings.indexOf('Conversations'),
+    };
+  }, made);
+
+  check('projects get their own heading', shelf.headings.includes('Projects'), shelf.headings.join(','));
+  check('above the ordinary conversations', shelf.projectFirst, shelf.headings.join(','));
+  check('the project is listed by name', shelf.projectRow.includes('Filed work'), shelf.projectRow.join(','));
+  check('its conversation is open by default', shelf.filedVisible);
+  check('and nested under it', shelf.filedNested === true);
+  check('while one in no project is not', shelf.looseNested === false);
+
+  // Folding a project shut is a deliberate act, and it sticks across a refresh.
+  await page.evaluate(() => document.querySelector('.proj-row__name')?.click());
+  await page.waitForTimeout(600);
+  const folded = await page.evaluate(
+    (ids) => ({
+      gone: !document.querySelector(`.chat-row[data-chat="${ids.filed}"]`),
+      stillListed: !!document.querySelector('.proj-row'),
+      said: document.querySelector('.proj-row__name')?.getAttribute('aria-expanded'),
+    }),
+    made,
+  );
+  check('folding a project hides its conversations', folded.gone);
+  check('without hiding the project', folded.stillListed);
+  check('and says so for a screen reader', folded.said === 'false', folded.said);
+
+  await page.evaluate(() => document.querySelector('.proj-row__name')?.click());
+  await page.waitForTimeout(600);
+
+  /*
+   * The chevron beside the title offers the same list as the row's ⋮, built
+   * from one description — two hand-written copies is how one of them ends up
+   * missing "Remove from project" for a year.
+   */
+  await page.evaluate((ids) => document.querySelector(`.chat-row[data-chat="${ids.filed}"] .chat-item`)?.click(), made);
+  await page.waitForTimeout(900);
+
+  const header = await page.evaluate(() => ({
+    crumb: document.getElementById('chat-project')?.textContent,
+    crumbShown: document.getElementById('chat-project')?.hidden === false,
+    chevron: document.getElementById('chat-menu')?.hidden === false,
+  }));
+  check('an open project conversation names its project in the header', header.crumbShown && header.crumb === 'Filed work', header.crumb);
+  check('and offers a menu beside the title', header.chevron);
+
+  await page.click('#chat-menu');
+  await page.waitForTimeout(350);
+  const chev = await page.evaluate(() => ({
+    items: [...document.querySelectorAll('#row-menu .menu__item span:first-of-type')].map((n) => n.textContent),
+  }));
+  // Schedule rather than "Open in new window": the conversation is already
+  // open, so the useful offer is work like this, later.
+  check('the title menu leads with Schedule', chev.items[0] === 'Schedule', chev.items.join(' '));
+  check('and can take it out of its project', chev.items.includes('Remove from project'), chev.items.join(' '));
+
+  // Change project opens a searchable panel beside the menu, with a tick on
+  // the one it is already in.
+  await page.evaluate(() => {
+    const hit = [...document.querySelectorAll('#row-menu .menu__item')].find(
+      (el) => el.querySelector('span')?.textContent === 'Change project',
+    );
+    hit?.click();
+  });
+  await page.waitForTimeout(400);
+
+  const picker = await page.evaluate(() => {
+    const sub = document.querySelector('.menu--sub');
+    const rows = [...(sub?.querySelectorAll('.menu__item') || [])].map((el) => el.querySelector('span')?.textContent);
+    const find = sub?.querySelector('.menu__find');
+    return {
+      open: sub && !sub.hidden,
+      rows,
+      placeholder: find?.getAttribute('placeholder'),
+      ticked: [...(sub?.querySelectorAll('.menu__item') || [])]
+        .filter((el) => el.getAttribute('aria-checked') === 'true')
+        .map((el) => el.querySelector('span')?.textContent),
+    };
+  });
+  check('Change project opens a panel beside the menu', picker.open);
+  check('listing the projects', picker.rows.includes('Filed work'), picker.rows.join(','));
+  check('with a tick on the one it is in', picker.ticked.join(',') === 'Filed work', picker.ticked.join(','));
+  check('and a box that searches or creates', /create/i.test(picker.placeholder || ''), picker.placeholder);
+
+  // Typing a name nothing matches offers to make it — one road to a new
+  // project rather than two, so neither goes stale.
+  const offered = await page.evaluate(async () => {
+    const find = document.querySelector('.menu--sub .menu__find');
+    find.value = 'Somewhere else';
+    find.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 200));
+    return [...document.querySelectorAll('.menu--sub .menu__item span:first-of-type')].map((n) => n.textContent);
+  });
+  check('a name nothing matches offers to create it', offered.some((n) => /Somewhere else/.test(n)), offered.join(' | '));
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+}
+
+section('a project schedules its own work, and can find its own files');
+{
+  const made = await page.evaluate(async () => {
+    const projects = (await (await fetch('/api/projects')).json()).projects;
+    const project = projects.find((p) => p.name === 'Shelf project') || projects[0];
+    const res = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Daily digest',
+        prompt: 'Say what changed.',
+        frequency: 'manual',
+        policy: 'ask',
+        projectId: project.id,
+        tz: 'Asia/Ho_Chi_Minh',
+      }),
+    });
+    return { ok: res.status === 201, id: (await res.json()).task?.id, project: project.id };
+  });
+  check('a task can be filed under the project', made.ok);
+
+  // Re-open the project so its Scheduled section is drawn with the new task.
+  await page.click('#open-projects');
+  await page.waitForTimeout(700);
+  await openProjectNamed('Shelf project');
+
+  const side = await page.evaluate(() => ({
+    cards: [...document.querySelectorAll('#project-page-side .panel-card__name')].map((n) => n.textContent),
+    rows: [...document.querySelectorAll('.ptask')].map((r) => ({
+      name: r.querySelector('.ptask__name')?.textContent,
+      when: r.querySelector('.ptask__when')?.textContent,
+      state: r.querySelector('.ptask__state')?.textContent,
+    })),
+    finder: !!document.getElementById('pp-find-source'),
+    add: !!document.getElementById('pp-add-task'),
+  }));
+
+  check('the project has a Scheduled section', side.cards.includes('Scheduled'), side.cards.join(','));
+  check('with the task in it', side.rows[0]?.name === 'Daily digest', JSON.stringify(side.rows));
+  // "Manual only" is a real answer rather than a blank: nothing happens until
+  // somebody presses Run now.
+  check('saying it only runs by hand', side.rows[0]?.when === 'Manual only', side.rows[0]?.when);
+  check('and that it is on', side.rows[0]?.state === 'Active', side.rows[0]?.state);
+  check('there is a way to add another', side.add);
+
+  // Pressing it opens the task on its own page.
+  await page.click('.ptask');
+  await page.waitForTimeout(900);
+  const detail = await page.evaluate(() => ({
+    title: document.getElementById('page-title')?.textContent,
+    state: document.querySelector('.taskpage__state')?.textContent?.trim(),
+    run: !!document.getElementById('task-run'),
+    drop: !!document.getElementById('task-drop'),
+    labels: [...document.querySelectorAll('.taskpage__facts dt')].map((d) => d.textContent),
+    prompt: document.querySelector('.taskpage__prompt')?.textContent,
+    project: document.getElementById('task-project')?.textContent,
+    // A page about one thing has nothing to sort and no second one to make.
+    quiet: document.getElementById('page-new')?.hidden === true,
+  }));
+
+  check('a task opens on its own page', detail.title === 'Daily digest', detail.title);
+  check('marked active', detail.state === 'Active', detail.state);
+  check('with the instructions it will follow', detail.prompt === 'Say what changed.', detail.prompt);
+  check('the project it answers from', detail.project === 'Shelf project', detail.project);
+  check('how often it repeats and what it may do', detail.labels.includes('Repeats') && detail.labels.includes('Permissions'), detail.labels.join(','));
+  check('a way to run it now', detail.run);
+  check('a way to delete it', detail.drop);
+  check('and no shelf furniture on a page about one thing', detail.quiet);
+
+  /*
+   * The sidebar keeps its own list of what will happen without you. This task
+   * was made by a direct request rather than through the form, which is the
+   * same situation as one the assistant scheduled itself or a phone added — so
+   * the refresh comes from returning to the tab, which is when the app looks.
+   */
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.waitForTimeout(900);
+  const rail = await page.evaluate(() => ({
+    label: document.querySelector('#sidebar-tasks .chats__label')?.textContent,
+    names: [...document.querySelectorAll('#sidebar-tasks .chat-item')].map((b) => b.textContent),
+    when: document.querySelector('#sidebar-tasks .chat-row__when')?.textContent,
+  }));
+  check('the sidebar lists scheduled work of its own', rail.names.includes('Daily digest'), rail.names.join(','));
+  check('under its own heading', rail.label === 'Scheduled', rail.label);
+  check('with how often each repeats', rail.when === 'Manual only', rail.when);
+
+  // And the shelf can be searched when it has outgrown being browsed.
+  await page.click('#open-projects');
+  await page.waitForTimeout(700);
+  await openProjectNamed('Shelf project');
+  await page.click('#pp-find-source');
+  await page.waitForTimeout(500);
+
+  const browse = await page.evaluate(async () => {
+    const dialog = document.getElementById('context-browse');
+    const rows = () => [...document.querySelectorAll('.browse__row')].map((r) => r.textContent);
+    const before = rows();
+
+    const find = document.getElementById('context-browse-find');
+    find.value = 'diagram';
+    find.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 200));
+    const filtered = rows();
+
+    document.querySelector('.browse__row')?.click();
+    await new Promise((r) => setTimeout(r, 200));
+    const view = {
+      name: document.querySelector('.browse__name')?.textContent,
+      picture: !!document.querySelector('.browse__figure img'),
+      href: document.querySelector('.browse__view a')?.getAttribute('href'),
+      saves: document.querySelector('.browse__view a')?.hasAttribute('download'),
+    };
+
+    const out = { open: dialog?.open === true, before, filtered, view, count: document.getElementById('context-browse-count')?.textContent };
+    dialog?.close();
+    return out;
+  });
+
+  check('the magnifier opens a searchable list', browse.open && browse.before.length >= 2, JSON.stringify(browse.before));
+  check('counting what is on the shelf', /item/.test(browse.count || ''), browse.count);
+  check('typing narrows it', browse.filtered.length === 1 && /diagram/.test(browse.filtered[0]), browse.filtered.join(','));
+  check('choosing one shows it', browse.view.name === 'diagram.gif' && browse.view.picture, JSON.stringify(browse.view));
+  check('with the original one press away', /^\/api\/attachments\//.test(browse.view.href || '') && browse.view.saves, browse.view.href);
+}
+
+section('a run survives leaving its conversation, and two can run at once');
+{
+  const out = await page.evaluate(async () => {
+    const { createRuns } = await import('/js/runs.js');
+    let open = 'a';
+    const runs = createRuns({ currentChatId: () => open });
+    const host = document.createElement('div');
+    document.body.append(host);
+
+    const a = runs.start('a');
+    a.stage.append(Object.assign(document.createElement('p'), { textContent: 'half an answer' }));
+    runs.show(a, host);
+    const drawnWhileOpen = host.textContent;
+
+    // Look at another conversation. The run carries on; only its nodes leave.
+    runs.hide(a);
+    open = 'b';
+    const afterLeaving = { inHost: host.textContent, stillRunning: runs.has('a') };
+
+    // And a second conversation starts answering while the first still is.
+    const b = runs.start('b');
+    b.stage.append(Object.assign(document.createElement('p'), { textContent: 'a different answer' }));
+    runs.show(b, host);
+    const both = { count: runs.size, shown: host.textContent };
+
+    // The first run kept streaming into its own stage the whole time.
+    a.stage.append(Object.assign(document.createElement('p'), { textContent: ' and the rest' }));
+    const leakedIntoB = host.textContent.includes('and the rest');
+
+    // Come back to it.
+    runs.hide(b);
+    open = 'a';
+    runs.show(runs.get('a'), host);
+
+    const result = {
+      drawnWhileOpen,
+      afterLeaving,
+      both,
+      leakedIntoB,
+      onReturn: host.textContent,
+      queuesAreSeparate: runs.get('a').queue !== runs.get('b').queue,
+      secondRunRefused: runs.start('a') === null,
+    };
+    host.remove();
+    return result;
+  });
+
+  check('a running conversation draws while it is on screen', out.drawnWhileOpen === 'half an answer', out.drawnWhileOpen);
+  check('leaving takes its nodes off the page', out.afterLeaving.inHost === '', out.afterLeaving.inHost);
+  check('but the run is still going', out.afterLeaving.stillRunning);
+  check('a second conversation can answer at the same time', out.both.count === 2, String(out.both.count));
+  check('and only its own words are on screen', out.both.shown === 'a different answer', out.both.shown);
+  // The bug this whole shape exists to prevent: one conversation's stream
+  // appending into the transcript of another.
+  check('what the first run kept writing never reached the second', !out.leakedIntoB);
+  check('coming back shows everything it wrote while away', out.onReturn === 'half an answer and the rest', out.onReturn);
+  check('each conversation keeps its own queue', out.queuesAreSeparate);
+  // Within one conversation there is still exactly one loop; the caller queues.
+  check('a second run in the same conversation is refused', out.secondRunRefused);
+}
+
+/**
+ * One moving indicator per turn, not four.
+ *
+ * A turn can have a reasoning block, a run of steps and two tool cards open at
+ * once, and each drew its own spinning ring while the status line under the
+ * transcript was already saying, in words, which one was working.
+ */
+section('a working card is marked, not animated');
+{
+  const marks = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.body.append(turn.node);
+
+    turn.appendThinking('mulling it over');
+    const handle = turn.startTool({ id: 'c1', name: 'deep_research', input: { question: 'why' } });
+
+    const working = {
+      spinners: turn.node.querySelectorAll('.spinner').length,
+      pending: turn.node.querySelectorAll('.mark--pending').length,
+    };
+
+    handle.complete({ content: 'found it', ms: 10 });
+    turn.finishThinking();
+    const done = {
+      spinners: turn.node.querySelectorAll('.spinner').length,
+      pending: turn.node.querySelectorAll('.mark--pending').length,
+      ticks: [...turn.node.querySelectorAll('.mark')].filter((m) => m.textContent === '✓').length,
+    };
+
+    turn.node.remove();
+    return { working, done };
+  });
+
+  check('a card in progress spins nothing', marks.working.spinners === 0, String(marks.working.spinners));
+  check('it is marked as waiting instead', marks.working.pending === 2, String(marks.working.pending));
+  check('finishing turns both marks into ticks', marks.done.ticks === 2, JSON.stringify(marks.done));
+  check('and leaves nothing waiting', marks.done.pending === 0, String(marks.done.pending));
 }
 
 section('mathematics in a reply is drawn as mathematics');

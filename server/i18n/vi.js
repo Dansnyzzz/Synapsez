@@ -72,6 +72,12 @@ export const vi = {
   '"{0}" is not a weekday. Use mon, tue, wed, thu, fri, sat or sun.':
     '"{0}" không phải thứ trong tuần. Dùng mon, tue, wed, thu, fri, sat hoặc sun.',
   'Could not find a time matching "{0}" in {1}.': 'Không tìm được thời điểm khớp "{0}" trong {1}.',
+  '"{0}" is not a frequency. Pick one of: {1}.': '"{0}" không phải tần suất hợp lệ. Chọn một trong: {1}.',
+  'A monthly task needs a time as HH:MM — "monthly 1 08:00".':
+    'Việc chạy hằng tháng cần giờ dạng HH:MM — "monthly 1 08:00".',
+  'A weekdays task needs a time as HH:MM — "weekdays 08:00".':
+    'Việc chạy các ngày trong tuần cần giờ dạng HH:MM — "weekdays 08:00".',
+  'Could not find a day {0} in the next year.': 'Không tìm được ngày {0} trong vòng một năm tới.',
 
   /* ── tài khoản & đăng nhập ─────────────────────────────────────── */
   'Wrong email or password.': 'Sai email hoặc mật khẩu.',
@@ -350,6 +356,13 @@ export const vi = {
   '"{0}" is not a valid URL.': '"{0}" không phải URL hợp lệ.',
   '{0} returned HTTP {1} {2}': '{0} trả về HTTP {1} {2}',
   '{0} returned {1} bytes, which is too large to read.': '{0} trả về {1} byte, quá lớn để đọc.',
+  '{0} returned a PDF with no text in it — it is a scan or photographs of pages, so there is nothing to read.':
+    '{0} trả về một PDF không có chữ — đây là bản scan hoặc ảnh chụp các trang, nên không có gì để đọc.',
+  '{0} returned a {1} with no text in it.': '{0} trả về một tệp {1} không có chữ nào bên trong.',
+  '{0} returned a file of type {1}, which is not text and not a document that can be read. Use download_file if the bytes themselves are wanted.':
+    '{0} trả về tệp kiểu {1}, không phải văn bản và cũng không phải tài liệu đọc được. Dùng download_file nếu cần chính các byte đó.',
+  '{0} sent more than {1}MB without saying how much was coming, and half a document cannot be opened.':
+    '{0} gửi hơn {1}MB mà không báo trước dung lượng, và một tài liệu chỉ có một nửa thì không mở được.',
   'There is no file with the id {0} on this account.': 'Tài khoản này không có tệp nào với id {0}.',
   '{0} was uploaded by the user, not written by you, so it cannot be rewritten.':
     '{0} do người dùng tải lên, không phải do trợ lý viết, nên không viết lại được.',

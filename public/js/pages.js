@@ -2,7 +2,9 @@ import { api } from './api.js';
 import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { openMenu } from './menu.js';
-import { editProjectDetails, projectMenuItems } from './project-page.js';
+// `repeatsAs` is imported rather than copied: one description of what a cron
+// string means, shared with the page that also shows one.
+import { editProjectDetails, projectMenuItems, repeatsAs } from './project-page.js';
 import { workflowsView, workflowForm } from './workflows.js';
 import { toast } from './render.js';
 import { humanSize, counted } from './format.js';
@@ -85,7 +87,16 @@ function armed(button, warning, run) {
  * @param openChat     open a conversation, which closes the shelf
  * @param onLeave      restore the conversation view
  */
-export function createPages({ openProject, openViewer, openChat, onLeave, onNewProject, onRunStarted = () => {} }) {
+export function createPages({
+  openProject,
+  openViewer,
+  openChat,
+  onLeave,
+  onNewProject,
+  onRunStarted = () => {},
+  /** The sidebar keeps its own list of scheduled tasks; tell it when one changes. */
+  onTasksChanged = () => {},
+}) {
   const page = $('page');
   const title = $('page-title');
   const lede = $('page-lede');
@@ -639,16 +650,61 @@ export function createPages({ openProject, openViewer, openChat, onLeave, onNewP
 
   /* ── the create-a-task form ───────────────────────────────────── */
 
-  function openTaskForm(idea = null) {
+  /**
+   * The project a task being written belongs to, or null.
+   *
+   * Held here rather than passed through the save handler because the handler
+   * is wired once, at module load, and the form can be opened from two places.
+   */
+  /** A `<select>`, typed, so reading `.value` is not a new line of type debt. */
+  const sel = (id) => /** @type {HTMLSelectElement} */ ($(id));
+
+  let formProject = null;
+  /** What to do once a task is saved — the list that is looking at it reloads. */
+  let formDone = null;
+
+  function openTaskForm(idea = null, { project = null, after = null } = {}) {
     const sheet = $('task-form');
+    formProject = project;
+    formDone = after;
+
     $('task-form-name').value = idea?.name || '';
     $('task-form-prompt').value = idea?.prompt || '';
-    $('task-form-when').value = idea?.cron || '08:00';
-    $('task-form-repeat').value = idea ? 'repeat' : 'repeat';
+    // An idea from the list comes with a time, which means it means to repeat;
+    // a task somebody is writing themselves starts manual, because that is the
+    // one choice that cannot surprise them at three in the morning.
+    sel('task-form-repeat').value = idea?.cron ? 'daily' : 'manual';
+    sel('task-form-policy').value = 'ask';
+    sayFrequency();
+    sayPolicy();
+
+    const where = $('task-form-project');
+    where.hidden = !project;
+    if (project) where.textContent = t('taskForm.inProject').replace('{name}', project.name);
+
     $('task-form-error').textContent = '';
     sheet.showModal();
     $('task-form-name').focus();
   }
+
+  /**
+   * Say what the choice actually means, under the menu.
+   *
+   * Six words in a dropdown are not self-explanatory — "Hourly" at 09:30 means
+   * half past every hour, not on the hour — and a person setting something to
+   * run unwatched deserves to know which before they close the dialog.
+   */
+  function sayFrequency() {
+    $('task-form-freq-say').textContent = t(`freq.${sel('task-form-repeat').value}Say`);
+  }
+
+  function sayPolicy() {
+    const which = { ask: 'Ask', guarded: 'Guarded', auto: 'Skip' }[sel('task-form-policy').value] || 'Ask';
+    $('task-form-policy-say').textContent = t(`taskForm.policy${which}Say`);
+  }
+
+  $('task-form-repeat').addEventListener('change', sayFrequency);
+  $('task-form-policy').addEventListener('change', sayPolicy);
 
   $('task-form-save').addEventListener('click', async () => {
     const button = $('task-form-save');
@@ -658,12 +714,17 @@ export function createPages({ openProject, openViewer, openChat, onLeave, onNewP
       await api.createTask({
         title: $('task-form-name').value.trim(),
         prompt: $('task-form-prompt').value.trim(),
-        when: $('task-form-when').value.trim(),
-        repeat: $('task-form-repeat').value === 'repeat',
+        frequency: sel('task-form-repeat').value,
+        policy: sel('task-form-policy').value,
+        projectId: formProject?.id || undefined,
       });
       $('task-form').close();
       toast(t('pages.tasks.scheduled'));
-      if (showing === 'scheduled') load();
+      // Whoever opened the form says what to refresh. The global list reloads
+      // itself; a project page reloads its own Scheduled section.
+      if (formDone) await formDone();
+      else if (showing === 'scheduled') load();
+      onTasksChanged();
     } catch (err) {
       error.textContent = err.message;
     } finally {
@@ -687,9 +748,178 @@ export function createPages({ openProject, openViewer, openChat, onLeave, onNewP
   const artifactMark =
     '<svg viewBox="0 0 40 40" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M23 5H11a3 3 0 0 0-3 3v24a3 3 0 0 0 3 3h18a3 3 0 0 0 3-3V14Z"/><path d="M23 5v9h9"/><path d="m16 21-3 3 3 3M24 21l3 3-3 3" stroke-linecap="round"/></svg>';
 
+  /* ── one task, on its own ─────────────────────────────────────── */
+
+  /**
+   * A scheduled task is a thing that will happen, so it gets a page.
+   *
+   * The list can only say how often it repeats; this is where the instructions
+   * it will follow, the project it answers from, and the button that runs it
+   * right now all live. The last of those is the only way a manual task ever
+   * runs at all, and the fastest way to find out whether a scheduled one does
+   * what you meant without waiting until morning.
+   */
+  async function showTask(id) {
+    const { task, project } = await api.task(id);
+
+    showing = 'scheduled';
+    query = '';
+    search.value = '';
+    searchBox.hidden = true;
+    closeMenus();
+
+    page.hidden = false;
+    $('thread').hidden = true;
+    $('dock').hidden = true;
+    page.scrollTop = 0;
+
+    // The shelf's own furniture does not apply to one item: there is nothing
+    // to sort, nothing to search, and "New" here would make a second task.
+    title.textContent = task.title;
+    lede.hidden = true;
+    sortPill.hidden = true;
+    newButton.hidden = true;
+    $('page-search-open').hidden = true;
+
+    body.innerHTML = `
+      <div class="taskpage">
+        <div class="taskpage__head">
+          <span class="taskpage__state${task.enabled ? '' : ' is-off'}">${escapeHtml(
+            task.enabled ? t('pages.tasks.active') : t('pages.tasks.paused'),
+          )}</span>
+          <div class="taskpage__acts">
+            <button class="icon-btn" id="task-toggle" type="button"
+                    title="${escapeHtml(task.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}"
+                    aria-label="${escapeHtml(task.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}">${
+                      task.enabled ? '⏸' : '▶'
+                    }</button>
+            <button class="icon-btn" id="task-drop" type="button"
+                    title="${escapeHtml(t('pages.tasks.remove'))}"
+                    aria-label="${escapeHtml(t('pages.tasks.remove'))}">🗑</button>
+            <button class="btn btn--primary" id="task-run" type="button">${escapeHtml(t('pages.tasks.runNow'))}</button>
+          </div>
+        </div>
+
+        <dl class="taskpage__facts">
+          <dt>${escapeHtml(t('taskForm.prompt'))}</dt>
+          <dd class="taskpage__prompt">${escapeHtml(task.prompt || '')}</dd>
+
+          ${
+            project
+              ? `<dt>${escapeHtml(t('proj.one'))}</dt>
+                 <dd><button class="taskpage__project" type="button" id="task-project">${escapeHtml(
+                   project.name,
+                 )}</button></dd>`
+              : ''
+          }
+
+          <dt>${escapeHtml(t('pages.tasks.repeats'))}</dt>
+          <dd><strong>${escapeHtml(repeatsAs(task))}</strong></dd>
+
+          <dt>${escapeHtml(t('taskForm.permissions'))}</dt>
+          <dd>${escapeHtml(policyAs(task.policy))}</dd>
+
+          ${
+            task.last_status
+              ? `<dt>${escapeHtml(t('pages.tasks.lastRun'))}</dt>
+                 <dd>${escapeHtml(String(task.last_status).slice(0, 200))}${
+                   task.last_chat
+                     ? ` — <button class="taskpage__project" type="button" id="task-chat">${escapeHtml(
+                         t('pages.tasks.openResult'),
+                       )}</button>`
+                     : ''
+                 }</dd>`
+              : ''
+          }
+        </dl>
+      </div>`;
+
+    $('task-run').addEventListener('click', async () => {
+      const button = /** @type {HTMLButtonElement} */ ($('task-run'));
+      button.disabled = true;
+      button.textContent = t('pages.tasks.running');
+      try {
+        const result = await api.runTask(id);
+        toast(t('pages.tasks.ranNow'));
+        // Straight into the conversation it wrote: that is the output, and
+        // making somebody go looking for it is the whole failure of a run
+        // nobody watched.
+        if (result?.chatId) {
+          onLeave();
+          openChat(result.chatId);
+          return;
+        }
+        await showTask(id);
+      } catch (err) {
+        toast(err.message, 'error');
+        button.disabled = false;
+        button.textContent = t('pages.tasks.runNow');
+      }
+    });
+
+    $('task-toggle').addEventListener('click', async () => {
+      await api.setTaskEnabled(id, !task.enabled);
+      onTasksChanged();
+      await showTask(id);
+    });
+
+    armed($('task-drop'), t('pages.tasks.removeConfirm'), async () => {
+      await api.deleteTask(id);
+      onTasksChanged();
+      await showShelf('scheduled');
+    });
+
+    $('task-project')?.addEventListener('click', () => {
+      onLeave();
+      openProject(project.id);
+    });
+    $('task-chat')?.addEventListener('click', () => {
+      onLeave();
+      openChat(task.last_chat);
+    });
+  }
+
+  /** What a task's permission setting means, in the words the form used. */
+  function policyAs(policy) {
+    if (policy === 'auto') return t('taskForm.policySkip');
+    if (policy === 'guarded') return t('taskForm.policyGuarded');
+    if (policy === 'ask') return t('taskForm.policyAsk');
+    return t('taskForm.policyDefault');
+  }
+
   /* ── the way in ───────────────────────────────────────────────── */
 
   const state = { localOnly: false };
+
+  /**
+   * A named function rather than only a method, because the detail page above
+   * has to come back here after deleting the task it was showing.
+   */
+  async function showShelf(which) {
+    if (!views[which]) return;
+    // A shelf may have left something running — a poll, a timer. Switching
+    // between shelves has to end it, or it outlives the page it belongs to.
+    if (showing && showing !== which) views[showing]?.onHide?.();
+    showing = which;
+    query = '';
+    order = views[which].orders?.[0]?.id || 'all';
+    search.value = '';
+    searchBox.hidden = true;
+    $('page-search-open').hidden = false;
+    search.placeholder = t('pages.searchNamed', { name: views[which].title.toLowerCase() });
+    closeMenus();
+
+    page.hidden = false;
+    $('thread').hidden = true;
+    $('dock').hidden = true;
+    page.scrollTop = 0;
+
+    // Restored, because `showTask` hides them for a page that has one item.
+    newButton.hidden = false;
+    $('page-search-open').hidden = false;
+    renderTools();
+    await load();
+  }
 
   return {
     /** Called once at boot so the notice can say where tasks actually run. */
@@ -697,28 +927,7 @@ export function createPages({ openProject, openViewer, openChat, onLeave, onNewP
       state.localOnly = !!localMachine;
     },
 
-    async show(which) {
-      if (!views[which]) return;
-      // A shelf may have left something running — a poll, a timer. Switching
-      // between shelves has to end it, or it outlives the page it belongs to.
-      if (showing && showing !== which) views[showing]?.onHide?.();
-      showing = which;
-      query = '';
-      order = views[which].orders?.[0]?.id || 'all';
-      search.value = '';
-      searchBox.hidden = true;
-      $('page-search-open').hidden = false;
-      search.placeholder = t('pages.searchNamed', { name: views[which].title.toLowerCase() });
-      closeMenus();
-
-      page.hidden = false;
-      $('thread').hidden = true;
-      $('dock').hidden = true;
-      page.scrollTop = 0;
-
-      renderTools();
-      await load();
-    },
+    show: showShelf,
 
     /** Back to the conversation. */
     hide() {
@@ -733,5 +942,18 @@ export function createPages({ openProject, openViewer, openChat, onLeave, onNewP
     showing: () => showing,
     /** Reload the shelf on screen, if it is one of these. */
     refresh: () => (showing ? load() : null),
+
+    /**
+     * Write a scheduled task from somewhere else — a project page, today.
+     *
+     * Exposed rather than copied, because the form is the decision: what a
+     * frequency means, which permissions a run may have, what each one does at
+     * 3am. A second copy of that on the project page would drift from this one,
+     * and the half that drifts is the half nobody is looking at.
+     */
+    newTask: (options) => openTaskForm(null, options),
+
+    /** One scheduled task, on its own page. */
+    showTask,
   };
 }

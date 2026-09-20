@@ -109,6 +109,10 @@ section('a database from an earlier release is brought up to date');
   // Wind it back: an older stamp, and the newest things gone. This is the state
   // of a machine that was running the app before those were written.
   await driver.query('ALTER TABLE chats DROP COLUMN IF EXISTS project_id');
+  // A release from before projects existed has nothing pointing at them, which
+  // is also what lets the table go: the reference from `scheduled_tasks`
+  // (schema 20) would otherwise refuse the drop below.
+  await driver.query('ALTER TABLE scheduled_tasks DROP COLUMN IF EXISTS project_id');
   await driver.query('DROP TABLE IF EXISTS project_files');
   await driver.query('DROP TABLE IF EXISTS projects');
   await driver.query('DROP TABLE IF EXISTS doc_chunks');
@@ -211,10 +215,12 @@ section('schema.sql and SCHEMA_VERSION move together');
   const fingerprint = crypto.createHash('sha256').update(source).digest('hex').slice(0, 16);
 
   /** Update BOTH of these, together, whenever schema.sql changes. */
-  // 18: chats.next_seq, the per-conversation counter (ARCH-007). The failure
-  // message suggested 19 because it assumes the version was not bumped; it was,
-  // in the same change as the schema, so 18 is the version that owns this file.
-  const STAMPED = { version: 18, fingerprint: '5d014080351c633d' };
+  // 21: chats.archived_at/.unread/.chat_group — a conversation filed under a
+  // project can be put away, flagged as unfinished, or gathered under a name.
+  // The failure message suggests the next number up because it assumes the
+  // version was not bumped; it was, in the same change as the schema, so 21 is
+  // the version that owns this file.
+  const STAMPED = { version: 21, fingerprint: '568b80d3b14c52be' };
 
   check(
     'the recorded version matches the code',

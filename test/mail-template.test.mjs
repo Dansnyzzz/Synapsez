@@ -218,5 +218,34 @@ section('the reset email shares the layout');
   check('and nothing is loaded but the embedded logo', !/<link|<script/i.test(html) && [...html.matchAll(/\ssrc="([^"]*)"/g)].every((m) => m[1] === 'cid:brand-logo@mail'));
 }
 
+section('a sources line cites the article, not the front page');
+{
+  /*
+   * The whole purpose of citing a source is being able to go and read the thing
+   * a claim came from. A link that lands on a newspaper's front page has cited
+   * nothing — so the outlet name is the *label* and the article is the href.
+   */
+  const md = [
+    'VN-Index giam 6,98 diem.',
+    '',
+    'Nguồn: https://nhandan.vn/kinh-te/vn-index-giam-abc-123.html https://dnse.com.vn/tin-tuc/phien-xyz',
+    '',
+    'Doc them tai https://phs.vn/bao-cao/quy-3.html trong bai.',
+  ].join('\n');
+
+  const html = String(composeMessage({ subject: 'Test', markdown: md, language: 'vi' }).html);
+  const links = [...html.matchAll(/<a href="([^"]+)"[^>]*>([^<]+)<\/a>/g)].map((m) => ({ href: m[1], label: m[2] }));
+
+  const sources = links.filter((l) => /nhandan|dnse/.test(l.href));
+  check('each source is labelled with its outlet alone', sources.map((l) => l.label).join(',') === 'nhandan.vn,dnse.com.vn', sources.map((l) => l.label).join(','));
+  check('and points at the article itself', sources.every((l) => l.href.split('/').length > 3), sources.map((l) => l.href).join(' '));
+
+  // Outside a sources line the path stays: a link in the middle of a sentence
+  // is usually the point of the sentence, and two articles from one site would
+  // otherwise look like the same link.
+  const inBody = links.find((l) => /phs\.vn/.test(l.href));
+  check('a link in prose keeps its path', inBody?.label === 'phs.vn/bao-cao/quy-3.html', inBody?.label);
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll mail template checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

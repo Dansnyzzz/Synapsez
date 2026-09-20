@@ -178,6 +178,11 @@
       <div class="scrim" id="scrim" hidden></div>
 
       <aside class="sidebar" id="sidebar">
+        <!-- Drag to resize, double-click to put it back. A panel you can drag
+             is a panel you can drag somewhere useless, and hunting for the
+             original width by eye is worse than the problem dragging solved. -->
+        <div class="grip grip--right" id="sidebar-grip" title="Drag to resize · double-click to reset"
+             data-i18n-title="panel.resize" aria-label="Resize the sidebar" data-i18n-aria-label="panel.resizeSidebar"></div>
         <header class="sidebar__head">
           <!-- Open, the logo is only a logo and the control that closes the menu
                sits at the far right of its own header, where every panel puts
@@ -274,6 +279,13 @@
           </button>
         </nav>
 
+        <!-- The work that runs on its own, above the conversations. Its own
+             section because a scheduled task is not a conversation you had:
+             it is a thing that will happen, and it belongs where you can see
+             at a glance what the app is going to do without you. Empty until
+             there is one, so nobody is shown a heading over nothing. -->
+        <nav class="chats scroll-quiet" id="sidebar-tasks" aria-label="Scheduled" data-i18n-aria-label="nav.scheduled"></nav>
+
         <nav class="chats scroll-quiet" id="chat-list" aria-label="Conversations" data-i18n-aria-label="nav.conversationsLabel"></nav>
 
         <!-- No computer status here. It is in the header beside the model and
@@ -293,7 +305,18 @@
       <main class="main" id="main">
         <header class="topbar">
           <button class="icon-btn topbar__menu" id="sidebar-open" aria-label="Open menu" data-i18n-aria-label="nav.openMenu">☰</button>
+          <!-- The project this conversation is filed under, when it is filed
+               under one. A breadcrumb rather than a label: it goes there. -->
+          <button class="topbar__crumb" id="chat-project" type="button" hidden></button>
           <h1 class="topbar__title" id="chat-title" data-i18n-js>New chat</h1>
+          <!-- Everything you can do to the conversation you are reading. The
+               same list the ⋮ on its sidebar row offers, built from one
+               description so the two cannot drift apart. -->
+          <button class="topbar__chev" id="chat-menu" type="button" hidden
+                  aria-haspopup="menu" aria-expanded="false"
+                  aria-label="Conversation options" data-i18n-aria-label="chat.more">
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 8 4.5 4.5L14.5 8"/></svg>
+          </button>
           <div class="topbar__right">
             <!-- Ahead of the policy and model chips, because connecting a
                  computer is the thing somebody does once and cannot find. -->
@@ -546,6 +569,8 @@
            shoved above it: the plan it is working through, and the live screen
            when there is one. -->
       <aside class="detail" id="detail">
+        <div class="grip grip--left" id="detail-grip" title="Drag to resize · double-click to reset"
+             data-i18n-title="panel.resize" aria-label="Resize the progress panel" data-i18n-aria-label="panel.resizeDetail"></div>
         <header class="detail__head">
           <span class="detail__title" data-i18n="detail.progress">Progress</span>
           <span class="detail__count" id="progress-count"></span>
@@ -921,6 +946,46 @@
       </div>
     </dialog>
 
+    <!-- ── Every source in a project, searchable ───────────────────────
+         The shelf shows cards, which is right for twenty and wrong for two
+         hundred: at that size the only question is "where is the one called
+         X". A list, a search box, and the file itself beside them. -->
+    <dialog id="context-browse" class="sheet sheet--tall sheet--browse" aria-labelledby="context-browse-title">
+      <form method="dialog" class="sheet__head">
+        <div>
+          <h2 id="context-browse-title" data-i18n="proj.context">Context</h2>
+          <p class="sheet__say" id="context-browse-count"></p>
+        </div>
+        <button class="icon-btn" value="close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
+      </form>
+      <div class="browse">
+        <div class="browse__side">
+          <div class="find">
+            <span class="find__mark" aria-hidden="true">
+              <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3 3"/></svg>
+            </span>
+            <input id="context-browse-find" type="text" placeholder="Search files" autocomplete="off"
+                   data-i18n-placeholder="proj.searchFiles" aria-label="Search files" data-i18n-aria-label="proj.searchFiles" />
+          </div>
+          <div class="browse__list" id="context-browse-list" role="listbox" aria-label="Files" data-i18n-aria-label="proj.filesAria"></div>
+        </div>
+        <div class="browse__view" id="context-browse-view"></div>
+      </div>
+    </dialog>
+
+    <!-- ── One source, large ───────────────────────────────────────────
+         The shelf draws a small picture of each source; this is what a press
+         on one opens. An image at a size you can read, a PDF as its first page
+         with how many there are, and the original one press away — it is kept
+         precisely so that it can be handed back. -->
+    <dialog id="source-view" class="sheet sheet--view" aria-labelledby="source-view-name">
+      <form method="dialog" class="sheet__head">
+        <h2 id="source-view-name"></h2>
+        <button class="icon-btn" value="close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
+      </form>
+      <div class="sheet__body" id="source-view-body"></div>
+    </dialog>
+
     <!-- ── Rename a project, or change what it stands for ──────────────
          The same two fields the create form asks for, because "Edit details"
          should not be a different, smaller idea of what a project is. -->
@@ -1016,23 +1081,42 @@
             one turn of a new conversation, with the same tools and the same permissions.
           </p>
         </div>
-        <div class="form__row">
-          <div class="form__group">
-            <label class="form__label" for="task-form-when" data-i18n="form.when">When</label>
-            <input id="task-form-when" type="text" placeholder="08:00, or fri 16:00" data-i18n-placeholder="taskForm.whenPlaceholder" />
-          </div>
-          <div class="form__group">
-            <label class="form__label" for="task-form-repeat" data-i18n="form.frequency">Frequency</label>
-            <select id="task-form-repeat">
-              <option value="repeat" data-i18n="taskForm.repeat">Every day at that time</option>
-              <option value="once" data-i18n="form.once">Once, then stop</option>
-            </select>
-          </div>
+        <!-- A menu of six rather than a time typed in words. The written form
+             is precise and learnable and something most people get wrong once
+             and then avoid; the agent's own `schedule_task` tool still speaks
+             it, which is where that precision actually earns its keep. -->
+        <div class="taskform__row">
+          <label class="taskform__label" for="task-form-repeat" data-i18n="form.frequency">Frequency</label>
+          <select id="task-form-repeat" class="taskform__pick">
+            <option value="manual" data-i18n="freq.manual">Manual</option>
+            <option value="hourly" data-i18n="freq.hourly">Hourly</option>
+            <option value="daily" data-i18n="freq.daily">Daily</option>
+            <option value="weekdays" data-i18n="freq.weekdays">Weekdays</option>
+            <option value="weekly" data-i18n="freq.weekly">Weekly</option>
+            <option value="monthly" data-i18n="freq.monthly">Monthly</option>
+          </select>
         </div>
-        <p class="form__aside" data-i18n-html="taskForm.weekdayHint">
-          A weekday in front makes it weekly — <code>fri 16:00</code>. Times are read in this
-          browser's own zone.
+        <!-- A run happens with nobody watching, so "pause and ask" and "never
+             pause" are genuinely different decisions rather than a preference.
+             Each option says what it actually does at 3am. -->
+        <div class="taskform__row">
+          <label class="taskform__label" for="task-form-policy" data-i18n="taskForm.permissions">Permissions</label>
+          <select id="task-form-policy" class="taskform__pick">
+            <option value="ask" data-i18n="taskForm.policyAsk">Manually approve</option>
+            <option value="guarded" data-i18n="taskForm.policyGuarded">Automatically approve</option>
+            <option value="auto" data-i18n="taskForm.policySkip">Skip all approvals</option>
+          </select>
+        </div>
+        <p class="form__aside" id="task-form-policy-say" data-i18n="taskForm.policyAskSay">
+          It pauses at anything risky. Nobody is watching a run at 3am, so it stops there until you look.
         </p>
+        <p class="form__aside" id="task-form-freq-say" data-i18n="freq.manualSay">
+          It never runs on its own — only when you press Run now.
+        </p>
+        <!-- Shown only when the form was opened from a project, because that
+             is the only time the answer is not "nowhere". A task filed under a
+             project runs inside it: same instructions, same shelf. -->
+        <p class="form__aside" id="task-form-project" hidden></p>
         <p class="hint" id="task-form-error"></p>
         <div class="form__foot">
           <button class="btn btn--ghost" id="task-form-cancel" type="button" data-i18n="action.cancel">Cancel</button>

@@ -3,7 +3,9 @@ import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { openMenu } from './menu.js';
 import { toast } from './render.js';
-import { readAsBase64, counted } from './format.js';
+import { counted } from './format.js';
+import { prepareUpload } from './shrink.js';
+import { thumbnailFor } from './thumbnail.js';
 
 /**
  * One project, opened.
@@ -28,6 +30,36 @@ const $ = (id) => document.getElementById(id);
  * replaced: Vietnamese does not inflect the noun, so the translation has to own
  * the entire phrase rather than a stem the formatter adds an `s` to.
  */
+
+/** A file's size, for a card. The chars count means nothing for a picture. */
+const fmtBytes = (n) => {
+  const bytes = Number(n) || 0;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}kB`;
+  return `${bytes}B`;
+};
+
+/**
+ * A task's recurrence, in words.
+ *
+ * The `cron` column holds what the scheduler reads — `hourly :30`, `weekdays
+ * 09:00`, `mon 16:00` — which is exactly the vocabulary a person should never
+ * be shown. Null is not "unknown": it is a task that only ever runs when the
+ * button is pressed, and saying so is the whole point of the manual option.
+ */
+export function repeatsAs(task) {
+  const cron = String(task?.cron || '').trim();
+  if (!cron) return t('freq.manualOnly');
+  const hourly = /^hourly\s*:?(\d\d)$/.exec(cron);
+  if (hourly) return t('freq.everyHourAt').replace('{m}', hourly[1]);
+  const weekdays = /^weekdays\s+(.+)$/.exec(cron);
+  if (weekdays) return t('freq.everyWeekdayAt').replace('{time}', weekdays[1]);
+  const monthly = /^monthly\s+(\d{1,2})\s+(.+)$/.exec(cron);
+  if (monthly) return t('freq.everyMonthOn').replace('{day}', monthly[1]).replace('{time}', monthly[2]);
+  const weekly = /^([a-z]{3})\s+(.+)$/.exec(cron);
+  if (weekly) return t('freq.everyWeekOn').replace('{day}', t(`day.${weekly[1]}`)).replace('{time}', weekly[2]);
+  return t('freq.everyDayAt').replace('{time}', cron);
+}
 
 const fmtChars = (n) => {
   const say = (key, value) => t(key).replace('{n}', String(value));
@@ -185,7 +217,15 @@ export function editProjectDetails(project) {
  * @param startChat  begin a new conversation in this project, carrying the first message
  * @param onBack     return to the Projects shelf
  */
-export function createProjectPage({ openChat, startChat, onBack }) {
+export function createProjectPage({
+  openChat,
+  startChat,
+  onBack,
+  /** Open the shared task form, so the project page never grows a second copy. */
+  newTask = (/** @type {{ project: { id: string, name: string }, after: () => Promise<void> }} */ _options) => {},
+  /** Show one task on its own page. */
+  openTask = (/** @type {string} */ _id) => {},
+}) {
   const page = $('project-page');
   const nameEl = $('project-page-name');
   const crumb = $('project-page-crumb');
@@ -201,11 +241,22 @@ export function createProjectPage({ openChat, startChat, onBack }) {
   let data = null;
   /** True while the instructions card is a textarea rather than a paragraph. */
   let editingInstructions = false;
+  /**
+   * Picking sources to remove.
+   *
+   * Off until somebody long-presses a card or ticks one, because a shelf is
+   * mostly read rather than edited and a row of checkboxes over it is clutter
+   * offered to everybody for the sake of the rare deletion. `selected` holds
+   * ids rather than indexes: the list is reloaded after every change, and an
+   * index would quietly come to mean a different file.
+   */
+  let selecting = false;
+  const selected = new Set();
 
   /* ── the page ─────────────────────────────────────────────────── */
 
   function draw() {
-    const { project, files, chats, memory } = data;
+    const { project, files, chats, memory, tasks = [] } = data;
 
     crumb.textContent = project.name;
     nameEl.textContent = project.name;
@@ -223,7 +274,7 @@ export function createProjectPage({ openChat, startChat, onBack }) {
       : t('proj.noSources');
 
     drawChats(chats);
-    drawSide(project, files, memory);
+    drawSide(project, files, memory, tasks);
   }
 
   function drawChats(chats) {
@@ -256,7 +307,29 @@ export function createProjectPage({ openChat, startChat, onBack }) {
     }
   }
 
-  function drawSide(project, files, memory) {
+  /**
+   * One scheduled task, in the project that owns it.
+   *
+   * Says whether it is on and how often it repeats, because those are the two
+   * things you check when you glance at a list of things running unattended.
+   * "Manual only" is a real answer here rather than a blank: it means nothing
+   * happens until somebody presses Run now.
+   */
+  function taskRow(task) {
+    return `
+      <button class="ptask${task.enabled ? '' : ' ptask--off'}" type="button" data-task="${escapeHtml(task.id)}">
+        <span class="ptask__mark" aria-hidden="true">
+          <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.6 1.6"/></svg>
+        </span>
+        <span class="ptask__body">
+          <span class="ptask__name">${escapeHtml(task.title)}</span>
+          <span class="ptask__when">${escapeHtml(repeatsAs(task))}</span>
+        </span>
+        <span class="ptask__state">${escapeHtml(task.enabled ? t('proj.taskActive') : t('proj.taskPaused'))}</span>
+      </button>`;
+  }
+
+  function drawSide(project, files, memory, tasks = []) {
     side.innerHTML = `
       <section class="panel-card">
         <div class="panel-card__head">
@@ -306,42 +379,116 @@ export function createProjectPage({ openChat, startChat, onBack }) {
       <section class="panel-card">
         <div class="panel-card__head">
           <span class="panel-card__name">${escapeHtml(t('proj.context'))}</span>
+          <!-- Cards are right for twenty sources and wrong for two hundred: at
+               that size the only question is "where is the one called X". -->
+          <button class="panel-card__add" id="pp-find-source" type="button"
+                  aria-label="${escapeHtml(t('proj.searchFiles'))}"
+                  title="${escapeHtml(t('proj.searchFiles'))}">
+            <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor"
+                 stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3 3"/></svg>
+          </button>
           <button class="panel-card__add" id="pp-add-source" type="button"
                   aria-haspopup="menu" aria-label="${escapeHtml(t('proj.addContext'))}">+</button>
         </div>
-        ${
-          files.length
-            ? files
-                .map(
-                  (file) => `
-              <div class="source">
-                <span class="source__name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
-                <span class="source__size">${escapeHtml(
-                  [file.pages ? counted(file.pages, 'count.pages') : null, fmtChars(file.chars)].filter(Boolean).join(' · '),
-                )}</span>
-                <button class="source__drop" type="button" data-drop="${escapeHtml(
-                  file.id,
-                )}" aria-label="${escapeHtml(t('proj.removeAria').replace('{name}', file.name))}">✕</button>
-              </div>`,
-                )
-                .join('')
-            : ''
-        }
+        ${files.length ? shelfBar(files) : ''}
+        ${files.length ? `<div class="shelf">${files.map(sourceCard).join('')}</div>` : ''}
         <div class="dropzone" id="pp-dropzone" tabindex="0" role="button">
           <span>${uploadMark}</span>
           <span>${escapeHtml(t('proj.dropHere'))}</span>
           <span style="font-size:11.5px">${escapeHtml(t('proj.dropKinds'))}</span>
         </div>
         <p class="panel-card__say" style="margin-top:10px">${escapeHtml(t('proj.sourcesAsText'))}</p>
+      </section>
+
+      <!-- The work this project does on its own. Filed here rather than only in
+           the global list because a task made from a project runs inside it —
+           same instructions, same shelf — and that is a property of the
+           project, not of the scheduler. -->
+      <section class="panel-card">
+        <div class="panel-card__head">
+          <span class="panel-card__name">${escapeHtml(t('proj.scheduled'))}</span>
+          <button class="panel-card__add" id="pp-add-task" type="button"
+                  aria-label="${escapeHtml(t('proj.addTask'))}">+</button>
+        </div>
+        ${
+          tasks.length
+            ? tasks.map(taskRow).join('')
+            : `<p class="panel-card__say">${escapeHtml(t('proj.noTasks'))}</p>`
+        }
       </section>`;
 
     wireSide();
   }
 
+  /**
+   * The bar above the shelf, once anything is selected.
+   *
+   * Hidden until then. A row of checkboxes and a delete button standing over a
+   * shelf nobody is editing is a hazard offered to somebody who came to read.
+   */
+  function shelfBar(files) {
+    if (!selecting) return '';
+    const all = files.length > 0 && selected.size === files.length;
+    return `
+      <div class="shelf__bar">
+        <button class="shelf__all${selected.size ? ' is-on' : ''}" id="pp-select-all" type="button"
+                role="checkbox" aria-checked="${all ? 'true' : selected.size ? 'mixed' : 'false'}"
+                aria-label="${escapeHtml(t('proj.selectAll'))}">${all ? '✓' : selected.size ? '–' : ''}</button>
+        <span class="shelf__count">${escapeHtml(t('proj.nSelected').replace('{n}', String(selected.size)))}</span>
+        <button class="shelf__del" id="pp-delete-selected" type="button"
+                ${selected.size ? '' : 'disabled'}
+                aria-label="${escapeHtml(t('proj.removeSelected'))}"
+                title="${escapeHtml(t('proj.removeSelected'))}">🗑</button>
+        <button class="shelf__done" id="pp-end-select" type="button"
+                aria-label="${escapeHtml(t('action.cancel'))}" title="${escapeHtml(t('action.cancel'))}">✕</button>
+      </div>`;
+  }
+
+  /**
+   * One source, as a card.
+   *
+   * The picture is the point. A shelf of names told you a project had four
+   * PDFs and nothing about which was the rubric; a first page tells you at a
+   * glance. Where there is nothing to draw — a .docx, a text file, and anything
+   * added before the originals were kept — the card falls back to its name and
+   * a type badge, which is what the whole shelf used to be.
+   */
+  function sourceCard(file) {
+    const badge = (file.name.split('.').pop() || '').slice(0, 4).toUpperCase();
+    const facts = [
+      file.pages ? counted(file.pages, 'count.pages') : null,
+      file.kind === 'image' ? fmtBytes(file.bytes) : fmtChars(file.chars),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+
+    return `
+      <div class="card${selected.has(file.id) ? ' is-picked' : ''}" data-file="${escapeHtml(file.id)}">
+        <button class="card__open" type="button" data-open="${escapeHtml(file.id)}"
+                aria-label="${escapeHtml(file.name)}">
+          ${
+            file.thumb
+              ? `<span class="card__shot"><img src="${escapeHtml(file.thumb)}" alt="" loading="lazy"></span>`
+              : `<span class="card__name">${escapeHtml(file.name)}</span>`
+          }
+          <span class="card__foot">
+            <span class="card__badge">${escapeHtml(badge)}</span>
+            ${facts ? `<span class="card__facts">${escapeHtml(facts)}</span>` : ''}
+          </span>
+        </button>
+        <button class="card__tick${selected.has(file.id) ? ' is-on' : ''}" type="button"
+                role="checkbox" aria-checked="${selected.has(file.id) ? 'true' : 'false'}"
+                data-pick="${escapeHtml(file.id)}"
+                aria-label="${escapeHtml(t('proj.selectAria').replace('{name}', file.name))}">${
+                  selected.has(file.id) ? '✓' : ''
+                }</button>
+      </div>`;
+  }
+
   function wireSide() {
     $('pp-edit-instructions').addEventListener('click', () => {
       editingInstructions = !editingInstructions;
-      drawSide(data.project, data.files, data.memory);
+      drawSide(data.project, data.files, data.memory, data.tasks || []);
       if (editingInstructions) $('pp-instructions').focus();
     });
 
@@ -362,18 +509,72 @@ export function createProjectPage({ openChat, startChat, onBack }) {
       }
     });
 
-    for (const button of side.querySelectorAll('[data-drop]')) {
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        try {
-          await api.deleteProjectFile(data.project.id, button.dataset.drop);
-          await reload();
-        } catch (err) {
-          toast(err.message, 'error');
-          button.disabled = false;
-        }
+    for (const button of side.querySelectorAll('[data-open]')) {
+      button.addEventListener('click', () => {
+        // While picking, the card is a checkbox rather than a door: opening a
+        // preview under somebody mid-selection loses what they had ticked.
+        const file = data.files.find((f) => f.id === button.dataset.open);
+        if (!file) return;
+        if (selecting) togglePick(file.id);
+        else showSource(file);
       });
     }
+
+    for (const button of side.querySelectorAll('[data-pick]')) {
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        selecting = true;
+        togglePick(button.dataset.pick);
+      });
+    }
+
+    $('pp-find-source')?.addEventListener('click', () => browseSources());
+
+    $('pp-add-task')?.addEventListener('click', () =>
+      newTask({ project: { id: data.project.id, name: data.project.name }, after: reload }),
+    );
+
+    for (const button of /** @type {NodeListOf<HTMLElement>} */ (side.querySelectorAll('[data-task]'))) {
+      button.addEventListener('click', () => openTask(button.dataset.task));
+    }
+
+    $('pp-select-all')?.addEventListener('click', () => {
+      if (selected.size === data.files.length) selected.clear();
+      else for (const file of data.files) selected.add(file.id);
+      drawSide(data.project, data.files, data.memory, data.tasks || []);
+    });
+
+    $('pp-end-select')?.addEventListener('click', () => {
+      selecting = false;
+      selected.clear();
+      drawSide(data.project, data.files, data.memory, data.tasks || []);
+    });
+
+    $('pp-delete-selected')?.addEventListener('click', async () => {
+      const going = [...selected];
+      if (!going.length) return;
+      $('pp-delete-selected').disabled = true;
+      /**
+       * One at a time, and a failure does not strand the rest.
+       *
+       * There is no bulk endpoint and there does not need to be: removing four
+       * sources is four small deletes, and doing them in sequence means a
+       * failure names the one file it happened to rather than abandoning the
+       * whole batch in an unknown state.
+       */
+      const failed = [];
+      for (const id of going) {
+        try {
+          await api.deleteProjectFile(data.project.id, id);
+          selected.delete(id);
+        } catch (err) {
+          failed.push(err.message);
+        }
+      }
+      if (failed.length) toast(failed[0], 'error');
+      selecting = selected.size > 0;
+      await reload();
+    });
 
     /**
      * What can actually be added, and nothing else.
@@ -410,6 +611,200 @@ export function createProjectPage({ openChat, startChat, onBack }) {
     });
   }
 
+  function togglePick(id) {
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    // Ticking the last one off leaves the bar up rather than snapping out of
+    // selection: somebody clearing a mistake is usually about to tick another.
+    drawSide(data.project, data.files, data.memory, data.tasks || []);
+  }
+
+  /* ── looking at one source ────────────────────────────────────── */
+
+  /**
+   * A source, large.
+   *
+   * An image is shown as an image and a PDF as its first page with a count of
+   * how many there are, because that is the difference between "which file is
+   * this" and "is this the right file". The original is one press away for
+   * both — it was kept precisely so that it could be.
+   *
+   * A source with no picture — a .docx, a text file, anything added before the
+   * originals were kept — gets the same sheet without one. That is still worth
+   * opening: it is where the download lives.
+   */
+  function showSource(file) {
+    const dialog = /** @type {HTMLDialogElement} */ ($('source-view'));
+    const title = $('source-view-name');
+    const body = $('source-view-body');
+
+    title.textContent = file.name;
+    body.innerHTML = '';
+
+    const canGet = !!file.attachment_id;
+    const href = canGet ? `/api/attachments/${encodeURIComponent(file.attachment_id)}` : null;
+
+    if (file.thumb) {
+      const figure = document.createElement('div');
+      figure.className = `sourceview__figure${file.kind === 'document' ? ' is-paper' : ''}`;
+      const img = document.createElement('img');
+      img.src = file.thumb;
+      img.alt = file.name;
+      figure.append(img);
+
+      /**
+       * The download lives on the picture, revealed by hovering it.
+       *
+       * On the picture rather than beside it because that is the thing being
+       * offered, and hidden until wanted because the page is a preview rather
+       * than a toolbar. It is a real link with `download`, so the browser saves
+       * the file it was given instead of navigating away from the project.
+       */
+      if (href) {
+        const get = document.createElement('a');
+        get.className = 'sourceview__get';
+        get.href = href;
+        get.download = file.name;
+        get.textContent = t('proj.download');
+        figure.append(get);
+      }
+      body.append(figure);
+    }
+
+    const foot = document.createElement('p');
+    foot.className = 'sourceview__facts';
+    foot.textContent = [
+      file.pages ? counted(file.pages, 'count.pages') : null,
+      file.kind === 'image' ? fmtBytes(file.bytes) : fmtChars(file.chars),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    body.append(foot);
+
+    // Without a thumbnail there is nothing to hover, so the download is its own
+    // button rather than something nobody would find.
+    if (href && !file.thumb) {
+      const get = document.createElement('a');
+      get.className = 'btn btn--primary sourceview__plainget';
+      get.href = href;
+      get.download = file.name;
+      get.textContent = t('proj.download');
+      body.append(get);
+    }
+    if (!href) {
+      const note = document.createElement('p');
+      note.className = 'panel-card__say';
+      note.textContent = t('proj.noOriginal');
+      body.append(note);
+    }
+
+    if (!dialog.open) dialog.showModal();
+  }
+
+  /* ── every source, searchable ─────────────────────────────────── */
+
+  /**
+   * The shelf as a list, with the file itself beside it.
+   *
+   * The cards are right up to about twenty sources and wrong after that: past
+   * that point nobody is browsing, they are looking for the one called
+   * something. So: a search box, a list, and a preview that fills the rest —
+   * and the same download the card preview offers, because having found the
+   * file you usually want it.
+   */
+  function browseSources() {
+    const dialog = /** @type {HTMLDialogElement} */ ($('context-browse'));
+    const find = /** @type {HTMLInputElement} */ ($('context-browse-find'));
+    const list = $('context-browse-list');
+    const view = $('context-browse-view');
+    let chosen = null;
+
+    $('context-browse-count').textContent = counted(data.files.length, 'count.items');
+
+    const show = (file) => {
+      chosen = file?.id || null;
+      view.innerHTML = '';
+      if (!file) {
+        const say = document.createElement('p');
+        say.className = 'browse__empty';
+        say.textContent = t('proj.pickAFile');
+        view.append(say);
+        return;
+      }
+
+      const head = document.createElement('div');
+      head.className = 'browse__head';
+      const name = document.createElement('span');
+      name.className = 'browse__name';
+      name.textContent = file.name;
+      head.append(name);
+      if (file.attachment_id) {
+        const get = document.createElement('a');
+        get.className = 'btn btn--tiny';
+        get.href = `/api/attachments/${encodeURIComponent(file.attachment_id)}`;
+        get.download = file.name;
+        get.textContent = t('proj.download');
+        head.append(get);
+      }
+      view.append(head);
+
+      if (file.thumb) {
+        const figure = document.createElement('div');
+        figure.className = `browse__figure${file.kind === 'document' ? ' is-paper' : ''}`;
+        const img = document.createElement('img');
+        img.src = file.thumb;
+        img.alt = file.name;
+        figure.append(img);
+        view.append(figure);
+      }
+
+      const facts = document.createElement('p');
+      facts.className = 'browse__facts';
+      facts.textContent = [
+        file.pages ? counted(file.pages, 'count.pages') : null,
+        file.kind === 'image' ? fmtBytes(file.bytes) : fmtChars(file.chars),
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      view.append(facts);
+    };
+
+    const paint = () => {
+      const needle = find.value.trim().toLowerCase();
+      // Plain substring matching on the name, because that is what somebody
+      // typing three letters of a filename means. Nothing here searches the
+      // text inside a source — `search_docs` is the tool for that.
+      const shown = needle ? data.files.filter((f) => f.name.toLowerCase().includes(needle)) : data.files;
+      list.innerHTML = '';
+      for (const file of shown) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = `browse__row${file.id === chosen ? ' is-on' : ''}`;
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', String(file.id === chosen));
+        row.textContent = file.name;
+        row.addEventListener('click', () => {
+          show(file);
+          paint();
+        });
+        list.append(row);
+      }
+      if (!shown.length) {
+        const none = document.createElement('p');
+        none.className = 'browse__empty';
+        none.textContent = t('proj.noMatch');
+        list.append(none);
+      }
+    };
+
+    find.value = '';
+    show(null);
+    paint();
+    find.oninput = paint;
+    if (!dialog.open) dialog.showModal();
+    find.focus();
+  }
+
   /* ── adding sources ───────────────────────────────────────────── */
 
   const filePicker = document.createElement('input');
@@ -433,11 +828,16 @@ export function createProjectPage({ openChat, startChat, onBack }) {
     for (const [i, file] of files.entries()) {
       if (zone) zone.lastElementChild.textContent = t('proj.reading', { name: file.name, n: i + 1, total: files.length });
       try {
-        await api.addProjectFile(data.project.id, {
-          name: file.name,
-          mime: file.type,
-          data: await readAsBase64(file),
-        });
+        // Drawn here, before the upload, because pdfjs runs in a browser and
+        // not on a serverless function — see public/js/thumbnail.js. Never
+        // fatal: a file whose picture could not be drawn still becomes a
+        // source, and its card shows a type badge instead.
+        const { thumb } = await thumbnailFor(file);
+        // The same preparation the composer does: a big photo is re-encoded, a
+        // big PDF is sent as its text. Without it the host refuses the request
+        // at the edge and the shelf reports a JSON parse error.
+        const ready = await prepareUpload(file);
+        await api.addProjectFile(data.project.id, { ...ready, thumb });
         added += 1;
       } catch (err) {
         // Named, one at a time. "Some files failed" tells nobody which one to
@@ -566,7 +966,7 @@ export function createProjectPage({ openChat, startChat, onBack }) {
 
   async function reload() {
     const fresh = await api.project(data.project.id);
-    data = { ...fresh, memory: fresh.memory || [] };
+    data = { ...fresh, memory: fresh.memory || [], tasks: fresh.tasks || [] };
     draw();
   }
 

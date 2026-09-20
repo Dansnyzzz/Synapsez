@@ -16,7 +16,8 @@ import { sendEmail, emailBackend, senderName } from '../email.js';
 import { composeMessage, KIND_NAMES } from '../mailTemplate.js';
 import { safeFetch } from '../util/safeFetch.js';
 import { searchDocs, listSources, forgetSource } from '../rag.js';
-import { createDocument, extensionOf } from '../office/index.js';
+import { createDocument, extensionOf, readOffice } from '../office/index.js';
+import { extractPdfText } from '../pdf.js';
 import { saveGenerated } from '../attachments.js';
 import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
@@ -48,48 +49,136 @@ function htmlToText(html) {
     .trim();
 }
 
-/** Refuse a response too large to hold in memory before reading a byte of it. */
+/**
+ * How much of a response is worth holding in memory — two numbers, because the
+ * two kinds of response fail differently.
+ *
+ * A page can be cut anywhere: the first megabyte of HTML is still a page, and
+ * `max_chars` clips it further anyway. A PDF or a .docx cannot be cut at all —
+ * each is a container whose index lives at the end, so half a file is not half
+ * a document, it is no document. Those have to arrive whole or not at all, and
+ * an 8MB ceiling was refusing perfectly ordinary ones: a scanned exam paper or
+ * a photo-heavy report is routinely ten or twenty.
+ */
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_DOC_BYTES = 32 * 1024 * 1024;
 
 /**
- * Read a response, and stop reading at the cap.
+ * Formats that are worth downloading whole because there is real text inside.
  *
- * The `content-length` check above only catches a server that *says* how much it
- * is about to send. A chunked response declares nothing, and `res.text()` will
- * happily read gigabytes into memory before `max_chars` ever gets a chance to
- * clip it — so the limit that exists to protect the process was skipped by
+ * The extension is checked as well as the declared type because servers hand
+ * out `application/octet-stream` for these constantly — the WordPress upload
+ * directory this was first found failing on does exactly that.
+ */
+const READABLE_DOCS = [
+  { format: 'pdf', byType: /\bpdf\b/, byPath: /\.pdf$/ },
+  { format: 'docx', byType: /wordprocessingml/, byPath: /\.docx$/ },
+  { format: 'xlsx', byType: /spreadsheetml/, byPath: /\.xlsx$/ },
+  { format: 'pptx', byType: /presentationml/, byPath: /\.pptx$/ },
+];
+
+const documentFormat = (type, pathname) =>
+  READABLE_DOCS.find((doc) => doc.byType.test(type) || doc.byPath.test(pathname))?.format || null;
+
+/** What the bytes actually are, whatever the URL and the headers claimed. */
+function sniff(buffer) {
+  if (buffer.subarray(0, 5).toString('latin1') === '%PDF-') return 'pdf';
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b) return 'zip';
+  return null;
+}
+
+/**
+ * Bytes that are plainly not text. One NUL settles it — no encoding this could
+ * plausibly be puts a zero byte in the first few kilobytes of prose.
+ */
+const looksBinary = (buffer) => buffer.subarray(0, 8192).includes(0);
+
+/**
+ * Read a response into memory, and stop reading at the cap.
+ *
+ * The `content-length` check at the call site only catches a server that *says*
+ * how much it is about to send. A chunked response declares nothing, and
+ * `res.text()` will happily read gigabytes before `max_chars` ever gets a chance
+ * to clip it — so the limit that exists to protect the process was skipped by
  * precisely the responses most likely to need it. A model can be talked into
  * fetching any URL by the page it is reading, which makes this reachable rather
  * than theoretical.
  *
- * Truncating rather than throwing: most of a very long page is still a useful
- * answer, and `web_fetch` clips its output anyway.
+ * Bytes rather than a decoded string, because the caller does not yet know
+ * whether it is holding prose or a ZIP; and `Buffer.concat` at the end rather
+ * than decoding per chunk, because a UTF-8 character split across two chunks is
+ * how Vietnamese text acquires replacement characters.
  */
-async function readCapped(res, host) {
-  if (!res.body) return res.text();
+async function readCapped(res, cap) {
+  if (!res.body) return { buffer: Buffer.from(await res.text(), 'utf8'), truncated: false };
 
-  const decoder = new TextDecoder('utf-8');
+  const chunks = [];
   let read = 0;
-  let text = '';
+  let truncated = false;
   try {
     for await (const chunk of res.body) {
-      read += chunk.length;
-      if (read > MAX_BODY_BYTES) {
-        text += decoder.decode(chunk.subarray(0, chunk.length - (read - MAX_BODY_BYTES)));
-        text += `\n\n[stopped reading — ${host} sent more than ${Math.round(MAX_BODY_BYTES / 1024 / 1024)}MB]`;
+      if (read + chunk.length > cap) {
+        chunks.push(chunk.subarray(0, cap - read));
+        truncated = true;
         break;
       }
-      text += decoder.decode(chunk, { stream: true });
+      chunks.push(chunk);
+      read += chunk.length;
     }
   } finally {
     // Let go of the connection rather than leaving it draining in the
     // background after we have stopped caring about it.
     res.body.destroy?.();
   }
-  return text;
+  return { buffer: Buffer.concat(chunks), truncated };
 }
 
-async function webFetch({ url, max_chars = 20000 }) {
+/**
+ * Turn a fetched response into text a model can read.
+ *
+ * @returns `{ text, note }` — `note` is what the thing was, for the header, so
+ *   the model knows it is reading a 40-page PDF and not a web page.
+ */
+async function readBody(buffer, { format, type, host }) {
+  const actual = sniff(buffer);
+
+  if (format === 'pdf' || actual === 'pdf') {
+    const read = await extractPdfText(buffer);
+    if (!read) {
+      throw new Error(
+        `${host} returned a PDF with no text in it — it is a scan or photographs of pages, so there is nothing to read.`,
+      );
+    }
+    return {
+      text: read.text,
+      note: `PDF, ${read.pages} page${read.pages === 1 ? '' : 's'}${read.truncated ? ', read in part' : ''}`,
+    };
+  }
+
+  if (format && actual === 'zip') {
+    // The same reader the chat and a project's shelf use, so a .docx linked on
+    // a page and the same .docx attached to a message read identically.
+    const read = readOffice(format, buffer);
+    if (!read.text?.trim()) throw new Error(`${host} returned a ${format} with no text in it.`);
+    return { text: read.text, note: format };
+  }
+
+  if (looksBinary(buffer)) {
+    throw new Error(
+      `${host} returned a file of type ${type || 'unknown'}, which is not text and not a document that can be read. ` +
+        'Use download_file if the bytes themselves are wanted.',
+    );
+  }
+
+  const body = buffer.toString('utf8');
+  return { text: /html|xml/i.test(type) || /^\s*<(!doctype|html)\b/i.test(body) ? htmlToText(body) : body, note: '' };
+}
+
+/** Page default, and the larger one a parsed document gets — see `webFetch`. */
+const PAGE_CHARS = 20_000;
+const DOC_CHARS = 60_000;
+
+async function webFetch({ url, max_chars: maxChars }) {
   let parsed;
   try {
     parsed = new URL(url);
@@ -102,28 +191,58 @@ async function webFetch({ url, max_chars = 20000 }) {
   // against the private address ranges — cloud metadata and the local network
   // are not things this tool is for.
   const res = await safeFetch(parsed, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AI-Remote/1.0)', Accept: 'text/html,*/*' },
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; AI-Remote/1.0)',
+      Accept: 'text/html,application/pdf,*/*',
+    },
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) throw new Error(`${parsed.host} returned HTTP ${res.status} ${res.statusText}`);
 
+  const type = (res.headers.get('content-type') || '').toLowerCase();
+  const format = documentFormat(type, parsed.pathname.toLowerCase());
+  const cap = format ? MAX_DOC_BYTES : MAX_BODY_BYTES;
+
   const declared = Number(res.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+  if (Number.isFinite(declared) && declared > cap) {
+    // Nothing will read this body; leaving it unread holds the socket open.
+    res.body?.destroy?.();
     throw new Error(`${parsed.host} returned ${declared} bytes, which is too large to read.`);
   }
 
-  const type = res.headers.get('content-type') || '';
-  const body = await readCapped(res, parsed.host);
-  const text = /html/i.test(type) ? htmlToText(body) : body;
-  const limit = Math.min(Math.max(Number(max_chars) || 20000, 500), 200_000);
+  const { buffer, truncated } = await readCapped(res, cap);
+  if (truncated && format) {
+    throw new Error(
+      `${parsed.host} sent more than ${Math.round(cap / 1024 / 1024)}MB without saying how much was coming, ` +
+        'and half a document cannot be opened.',
+    );
+  }
+
+  const { text, note } = await readBody(buffer, { format, type, host: parsed.host });
+
+  // A document gets a larger default than a page. 20,000 characters is a
+  // generous slice of an article and a third of an exam paper, and a model that
+  // silently answers from a third of a document is the failure this tool exists
+  // to prevent. An explicit `max_chars` still wins, either way.
+  const limit = Math.min(Math.max(Number(maxChars) || (note ? DOC_CHARS : PAGE_CHARS), 500), 200_000);
   const clipped = text.slice(0, limit);
 
+  // Both notes go after the clip, never inside the text. Appended to the body
+  // they were simply sliced off again — an 8MB page cut at 20,000 characters
+  // lost the sentence explaining that it had been cut, which is the one part of
+  // it that mattered.
+  const notes = [];
+  if (text.length > limit) {
+    notes.push(`truncated — ${text.length - limit} more characters. Call web_fetch again with a larger max_chars to read the rest.`);
+  }
+  if (truncated) notes.push(`${parsed.host} kept sending past ${Math.round(cap / 1024 / 1024)}MB, so the rest was never read.`);
+
   return (
-    `# ${parsed.href}\n\n` +
+    `# ${parsed.href}${note ? ` (${note})` : ''}\n\n` +
     // Wrapped, because this is the single most likely place for an instruction
     // aimed at the model to enter the conversation. See server/tools/untrusted.js.
     untrusted(parsed.href, clipped) +
-    (text.length > limit ? `\n\n[truncated — ${text.length - limit} more characters]` : '')
+    notes.map((line) => `\n\n[${line}]`).join('')
   );
 }
 

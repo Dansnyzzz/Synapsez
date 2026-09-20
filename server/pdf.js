@@ -33,8 +33,33 @@ let pdfjs = null;
  */
 async function engine() {
   if (!pdfjs) {
-    // The legacy build is the one that runs outside a browser.
-    pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    /**
+     * The worker is loaded here, by name, on purpose.
+     *
+     * pdfjs does its own parsing in a worker and falls back to a "fake worker"
+     * — the same code on this thread — when there is no `Worker`, which in Node
+     * is always. That fallback reaches the worker module with
+     * `import(this.workerSrc)`: a *variable* specifier, which no bundler can
+     * follow. Vercel's tracer therefore shipped `pdf.mjs` and not
+     * `pdf.worker.mjs`, and every PDF on the deployment failed with
+     *
+     *   Setting up fake worker failed: "Cannot find module
+     *   '/var/task/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'"
+     *
+     * while working perfectly on a laptop, where the whole package is on disk.
+     *
+     * `globalThis.pdfjsWorker` is the documented way in: pdfjs checks it before
+     * trying to import anything, so handing it the module we imported ourselves
+     * — by a literal path the tracer can see — both bundles the file and skips
+     * the dynamic import entirely. The legacy build is the one that runs
+     * outside a browser.
+     */
+    const [core, worker] = await Promise.all([
+      import('pdfjs-dist/legacy/build/pdf.mjs'),
+      import('pdfjs-dist/legacy/build/pdf.worker.mjs'),
+    ]);
+    globalThis.pdfjsWorker ??= worker;
+    pdfjs = core;
   }
   return pdfjs;
 }
@@ -42,16 +67,21 @@ async function engine() {
 /**
  * Pull the text out of a PDF.
  *
- * @param base64 the file, as stored
+ * @param file the bytes, either as the base64 an attachment is stored as or as
+ *   a `Buffer` — `web_fetch` has just downloaded one and encoding 30MB to
+ *   base64 only for this to decode it again is a copy nobody needs.
  * @returns `{ text, pages, truncated }`, or null when there is no text to be
  *   had — a scan, a poster, anything that is pictures all the way down. Null is
  *   a real answer here: it means "say you could not read it", not "try harder".
  */
-export async function extractPdfText(base64) {
+export async function extractPdfText(file) {
   const { getDocument } = await engine();
+  const bytes = Buffer.isBuffer(file) ? file : Buffer.from(String(file || ''), 'base64');
 
   const task = getDocument({
-    data: Uint8Array.from(Buffer.from(String(base64 || ''), 'base64')),
+    // Copied rather than handed over: pdfjs takes ownership of the array it is
+    // given, and a `Buffer` off the pool shares its memory with other Buffers.
+    data: Uint8Array.from(bytes),
     // Nothing here should reach the network or the filesystem for fonts and
     // character maps: a document that renders differently because a CDN was
     // reachable is not a document you can reason about.

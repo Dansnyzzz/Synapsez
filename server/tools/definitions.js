@@ -928,12 +928,20 @@ export const TOOLS = [
     name: 'web_fetch',
     scope: 'cloud',
     readOnly: true,
-    description: 'Fetch a URL and return its readable text content, with HTML markup stripped.',
+    description:
+      'Fetch a URL and return its readable text. HTML markup is stripped, and a link to a PDF, .docx, ' +
+      '.xlsx or .pptx is opened and read as text rather than returned as bytes — so a paper, a report or ' +
+      'a spreadsheet published on the web can be quoted directly.',
     parameters: {
       type: 'object',
       properties: {
         url: { type: 'string', description: 'Absolute http(s) URL.' },
-        max_chars: { type: 'integer', description: 'Truncate the result to this many characters. Default 20000.' },
+        max_chars: {
+          type: 'integer',
+          description:
+            'Truncate the result to this many characters. Default 20000 for a page, 60000 for a document; ' +
+            'raise it up to 200000 when the whole thing is needed.',
+        },
       },
       required: ['url'],
     },
@@ -1589,7 +1597,10 @@ export const TOOLS = [
       'address); otherwise use exactly the address or addresses they gave. ' +
       'It leaves immediately and cannot be recalled, so read the recipient, the subject and the body back to the user ' +
       'and wait for a yes unless they asked for exactly this. ' +
-      'If no mail provider is configured this fails and says so — never tell the user something was sent when it was not.',
+      'If no mail provider is configured this fails and says so — never tell the user something was sent when it was not. ' +
+      'When a briefing cites sources, write the **full article URL** on a line beginning "Sources:" or "Nguồn:" — ' +
+      'the template shows those as the outlet name and links them to the page itself, so a bare domain becomes a ' +
+      'link to a front page, which cites nothing.',
     parameters: {
       type: 'object',
       properties: {

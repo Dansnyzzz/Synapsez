@@ -18,15 +18,59 @@ async function request(method, path, body) {
     throw new Error(t('session.expired'));
   }
   const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
+
+  /**
+   * Not everything that answers this app speaks JSON.
+   *
+   * The platform in front of it does not: an upload over the host's request
+   * limit is refused by the edge with a plain-text `Request Entity Too Large`,
+   * before any of our code runs. `JSON.parse` then threw, and what reached the
+   * person was `Unexpected token 'R', "Request En"... is not valid JSON` —
+   * which says nothing about the file they were trying to send. A proxy error
+   * page and a gateway timeout arrive the same way.
+   */
+  // `any`, because every caller reads a shape of its own off this and the
+  // alternative is a type per endpoint for a function that is one `fetch`.
+  /** @type {any} */
+  let json = {};
+  let unparsed = null;
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      unparsed = text;
+    }
+  }
+
   if (!res.ok) {
-    const err = new Error(json.error || `HTTP ${res.status}`);
+    const err = new Error(json.error || messageFor(res.status, unparsed));
     // Callers branch on this — e.g. 'totp_required' is a step, not a failure.
     err.code = json.code;
     err.status = res.status;
     throw err;
   }
+  if (unparsed) {
+    // A 200 that is not JSON is a proxy answering instead of the app. Saying
+    // so is better than handing the caller an empty object to misread.
+    throw Object.assign(new Error(t('error.notTheApp')), { status: res.status });
+  }
   return json;
+}
+
+/**
+ * What to say when the answer did not come from the app.
+ *
+ * Each of these is a thing the host or a proxy does on its own, and each has a
+ * different fix — so the sentence names the fix rather than the status code.
+ */
+function messageFor(status, body) {
+  if (status === 413) return t('error.tooLargeForHost');
+  if (status === 504 || status === 524) return t('error.hostTimedOut');
+  if (status === 502 || status === 503) return t('error.hostUnavailable');
+  // Anything else: the status, plus the first line of whatever answered, which
+  // is usually the only clue there is.
+  const first = String(body || '').trim().split(/\r?\n/)[0].slice(0, 120);
+  return first ? `HTTP ${status} — ${first}` : `HTTP ${status}`;
 }
 
 /** Drop empty query params so the URL stays readable. */
@@ -77,6 +121,15 @@ export const api = {
   runDueTasks: () => request('POST', '/api/tasks/run-due'),
   setTaskEnabled: (id, enabled) => request('PATCH', `/api/tasks/${id}`, { enabled }),
   deleteTask: (id) => request('DELETE', `/api/tasks/${id}`),
+  task: (id) => request('GET', `/api/tasks/${id}`),
+  /**
+   * Run one now, whatever its schedule says.
+   *
+   * The only way a manual task ever runs, and how anybody checks a scheduled
+   * one before waiting until morning for it. Slow by nature — it is a whole
+   * agent turn — so callers show that something is happening.
+   */
+  runTask: (id) => request('POST', `/api/tasks/${id}/run`),
 
   workflows: () => request('GET', '/api/workflows'),
   workflow: (id) => request('GET', `/api/workflows/${id}`),

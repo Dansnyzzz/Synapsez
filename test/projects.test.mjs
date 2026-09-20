@@ -32,6 +32,9 @@ const server = createApp().listen(PORT);
 await new Promise((r) => server.once('listening', r));
 const base = `http://127.0.0.1:${PORT}`;
 
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+
 let failures = 0;
 const section = (name) => console.log(`\n\x1b[1m${name}\x1b[0m`);
 const check = (label, pass, detail = '') => {
@@ -68,10 +71,17 @@ function jar() {
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 
 const alice = jar();
+/** A second account, for every "one account cannot touch another's" check. */
+const carol2 = jar();
 await alice.call('POST', '/api/register', {
   name: 'Alice',
   email: 'alice@projects.test',
   password: 'a-long-enough-password',
+});
+await carol2.call('POST', '/api/register', {
+  name: 'Carol',
+  email: 'carol@projects.test',
+  password: 'another-long-password',
 });
 
 /* ── the shelf ─────────────────────────────────────────────────── */
@@ -108,15 +118,28 @@ section('what may go on the shelf');
   check('a text file is read', text.status === 201, `${text.status}`);
   check('and its length recorded', text.body?.file?.chars > 10, `${text.body?.file?.chars}`);
 
+  /**
+   * A picture is taken now, and it is a different kind of source.
+   *
+   * This used to be refused, on the reasoning that a source is something an
+   * answer can cite and there is no text in a photograph to cite. What that
+   * missed is that half the library can *see*: a diagram on the shelf is worth
+   * more to those models than the paragraph describing it. So it is kept, it
+   * carries no text — so it never competes for the passage budget — and it
+   * rides on the question as a real picture. A model with no eyes is told
+   * plainly that there was one, which is what `toParts` has always done.
+   */
   const image = await alice.call('POST', `/api/projects/${projectId}/files`, {
     name: 'diagram.png',
     mime: 'image/png',
     data: b64('not really a png'),
   });
-  // A picture cannot be quoted, and a source that is never consulted is worse
-  // than no source at all — it looks like knowledge.
-  check('an image is refused', image.status === 400, `${image.status}`);
-  check('and says why', /quote/i.test(image.body?.error || ''), image.body?.error);
+  check('an image is taken', image.status === 201, `${image.status} ${image.body?.error || ''}`);
+  check('marked as a picture', image.body?.file?.kind === 'image', image.body?.file?.kind);
+  check('with no text to compete for the passage budget', image.body?.file?.chars === 0, `${image.body?.file?.chars}`);
+  // The original is kept, which is what makes the shelf openable and
+  // downloadable — the bytes used to be read once and dropped.
+  check('and the file it came from is kept', !!image.body?.file?.attachment_id, JSON.stringify(image.body?.file));
 
   const junk = await alice.call('POST', `/api/projects/${projectId}/files`, {
     name: 'archive.zip',
@@ -309,7 +332,9 @@ section('a conversation inherits its project');
 
   const opened = await alice.call('GET', `/api/chats/${chatId}`);
   check('and says so when opened', opened.body?.project?.id === projectId);
-  check('with its source count, for the header', opened.body?.project?.files === 1, `${opened.body?.project?.files}`);
+  // Two: the text file and the diagram. A picture is a source on the shelf even
+  // though it carries no text, which is what the header is counting.
+  check('with its source count, for the header', opened.body?.project?.files === 2, `${opened.body?.project?.files}`);
 
   // Blank until somebody speaks: the same rule as the sidebar, so a project
   // does not accumulate a list of conversations that never happened.
@@ -421,7 +446,145 @@ section('one account cannot read another account\'s shelf');
   check('and signed out reaches nothing at all', anonymous.status === 401, `${anonymous.status}`);
 }
 
+section('a project can have work that runs on its own');
+{
+  /*
+   * A task made inside a project runs inside it: same standing instructions,
+   * same shelf. Without that, "summarise this week's filings" answered from
+   * nothing at all — which is worse than failing, because it looks like it
+   * worked.
+   */
+  const made = await alice.call('POST', `/api/tasks`, {
+    title: 'Weekly digest',
+    prompt: 'Summarise what changed.',
+    frequency: 'manual',
+    policy: 'ask',
+    projectId,
+    tz: 'Asia/Ho_Chi_Minh',
+  });
+  check('a task can be filed under a project', made.status === 201, `${made.status} ${made.body?.error || ''}`);
+  check('and says which one', made.body?.task?.project_id === projectId, made.body?.task?.project_id);
+  check('carrying what it may do unwatched', made.body?.task?.policy === 'ask', made.body?.task?.policy);
+  /*
+   * Manual is a real option rather than a repeat scheduled so far ahead it
+   * never fires: no cron, no next run, and the due query — `enabled AND
+   * next_run_at <= now()` — matches neither.
+   */
+  check('a manual task has no schedule at all', made.body?.task?.cron === null, made.body?.task?.cron);
+  check('and is never due', made.body?.task?.next_run_at === null, String(made.body?.task?.next_run_at));
+
+  const repeating = await alice.call('POST', '/api/tasks', {
+    title: 'Every weekday',
+    prompt: 'Check the queue.',
+    frequency: 'weekdays',
+    projectId,
+    tz: 'Asia/Ho_Chi_Minh',
+  });
+  check('a repeating one gets a real recurrence', /^weekdays \d\d:\d\d$/.test(repeating.body?.task?.cron || ''), repeating.body?.task?.cron);
+  check('and a time it will next run', !!repeating.body?.task?.next_run_at, String(repeating.body?.task?.next_run_at));
+
+  const onProject = await alice.call('GET', `/api/projects/${projectId}`);
+  check('the project lists them', (onProject.body?.tasks || []).length === 2, `${(onProject.body?.tasks || []).length}`);
+
+  const one = await alice.call('GET', `/api/tasks/${made.body.task.id}`);
+  check('one can be opened on its own', one.status === 200 && one.body?.task?.title === 'Weekly digest', one.body?.task?.title);
+  // By name, because the page shows which shelf it answers from and an id
+  // tells nobody that.
+  check('and names the project it answers from', one.body?.project?.id === projectId, JSON.stringify(one.body?.project));
+
+  const strange = await alice.call('POST', '/api/tasks', {
+    title: 'Nope',
+    prompt: 'x',
+    frequency: 'fortnightly',
+  });
+  check('a frequency nobody offers is refused', strange.status === 400, `${strange.status}`);
+  check('and says what the choices are', /manual/.test(strange.body?.error || ''), strange.body?.error);
+
+  // A project id from another account must not attach a run to a shelf it does
+  // not own — the task would then read somebody else's sources on every run.
+  const carol = carol2;
+  const stolen = await carol.call('POST', '/api/tasks', {
+    title: 'Theirs',
+    prompt: 'x',
+    frequency: 'manual',
+    projectId,
+  });
+  check("another account cannot file a task in someone else's project", stolen.status === 404, `${stolen.status}`);
+}
+
+section('a conversation can be filed, archived, grouped');
+{
+  const made = await alice.call('POST', '/api/chats', {});
+  const chatId = made.body?.chat?.id;
+  await alice.call('POST', `/api/chats/${chatId}/messages`, { text: 'hello' });
+
+  const filed = await alice.call('PATCH', `/api/chats/${chatId}`, { projectId });
+  check('it can be moved into a project', filed.body?.chat?.project_id === projectId, filed.body?.chat?.project_id);
+
+  // `null` is meaningful here — it is "Remove from project" — so the route has
+  // to check for presence rather than truthiness.
+  const out = await alice.call('PATCH', `/api/chats/${chatId}`, { projectId: null });
+  check('and back out again', out.body?.chat?.project_id === null, String(out.body?.chat?.project_id));
+
+  const stolen = await carol2.call('PATCH', `/api/chats/${chatId}`, { projectId });
+  check("another account cannot touch it at all", stolen.status === 404, `${stolen.status}`);
+
+  const grouped = await alice.call('PATCH', `/api/chats/${chatId}`, { group: '  Reading  ' });
+  check('a group name is trimmed', grouped.body?.chat?.chat_group === 'Reading', grouped.body?.chat?.chat_group);
+
+  const listed = await alice.call('GET', '/api/chats');
+  check('and offered back as a group to move into', (listed.body?.groups || []).includes('Reading'), JSON.stringify(listed.body?.groups));
+  check('the list carries the projects the sidebar needs', Array.isArray(listed.body?.projects) && listed.body.projects.length > 0);
+
+  const ungrouped = await alice.call('PATCH', `/api/chats/${chatId}`, { group: '' });
+  check('an empty name takes it out of the group', ungrouped.body?.chat?.chat_group === null, String(ungrouped.body?.chat?.chat_group));
+
+  const unread = await alice.call('PATCH', `/api/chats/${chatId}`, { unread: true });
+  check('it can be marked unread', unread.body?.chat?.unread === true, String(unread.body?.chat?.unread));
+
+  /*
+   * Archiving is not deleting, and the pair sit together in the same menu — so
+   * the difference has to be real. It leaves the list and the row survives.
+   */
+  const archived = await alice.call('PATCH', `/api/chats/${chatId}`, { archived: true });
+  check('archiving stamps a time rather than destroying it', !!archived.body?.chat?.archived_at, String(archived.body?.chat?.archived_at));
+  const after = await alice.call('GET', '/api/chats');
+  check('and it leaves the list', !(after.body?.chats || []).some((c) => c.id === chatId));
+  const back = await alice.call('PATCH', `/api/chats/${chatId}`, { archived: false });
+  check('un-archiving brings it back', back.body?.chat?.archived_at === null, String(back.body?.chat?.archived_at));
+  const restored = await alice.call('GET', '/api/chats');
+  check('to the list it left', (restored.body?.chats || []).some((c) => c.id === chatId));
+}
+
 removeTemp(process.env.DATA_DIR);
+section('the vendored pdf.js is the installed one');
+{
+  /*
+   * The browser draws a PDF's first page so the shelf has something to show,
+   * and it does that with a copy of pdfjs under `public/vendor` — the page has
+   * no build step, a CSP of `script-src 'self'`, and on Vercel `node_modules`
+   * is not served at all. A copy is a thing that goes stale silently: the
+   * package is upgraded, the copy is not, and the two drift until something
+   * fails in a browser nobody is watching.
+   */
+  const require = createRequire(import.meta.url);
+  const installed = JSON.parse(fs.readFileSync(require.resolve('pdfjs-dist/package.json'), 'utf8')).version;
+  const root = path.join(import.meta.dirname, '..', 'public', 'vendor', 'pdfjs');
+  const vendored = fs.existsSync(path.join(root, 'VERSION'))
+    ? fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim()
+    : '';
+  check(
+    'public/vendor/pdfjs matches package.json — run scripts/vendor-pdfjs.js after an upgrade',
+    vendored === installed,
+    `${vendored} vs ${installed}`,
+  );
+  // The worker especially: pdfjs fetches it by path at runtime, so a missing
+  // one is a failure in the browser rather than a failure here.
+  for (const file of ['pdf.min.mjs', 'pdf.worker.min.mjs']) {
+    check(`${file} is there`, fs.existsSync(path.join(root, file)));
+  }
+}
+
 console.log(
   failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll project checks passed.\x1b[0m\n',
 );

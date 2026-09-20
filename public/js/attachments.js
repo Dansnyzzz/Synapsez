@@ -15,7 +15,8 @@ import { api } from './api.js';
 import { escapeHtml } from './markdown.js';
 import { toast } from './render.js';
 import { t } from './i18n.js';
-import { humanSize, readAsBase64 } from './format.js';
+import { humanSize } from './format.js';
+import { prepareUpload } from './shrink.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -59,6 +60,21 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
    */
   let modelIsFree = false;
 
+  /**
+   * What was done to a file on the way out, in one line.
+   *
+   * Shown because it changes what the assistant is looking at: a PDF sent as
+   * text has no layout and no pictures, and somebody asking "what does the
+   * chart on page 4 show" deserves to know that before they ask.
+   */
+  function describeShrink(note) {
+    const mb = (n) => `${(n / 1024 / 1024).toFixed(1)}MB`;
+    if (note.kind === 'pdf-text') {
+      return t('upload.sentAsText').replace('{pages}', String(note.pages)).replace('{size}', mb(note.from));
+    }
+    return t('upload.resized').replace('{from}', mb(note.from)).replace('{to}', mb(note.to));
+  }
+
   function renderStaged() {
     const host = $('attachments');
     host.hidden = staged.length === 0;
@@ -78,7 +94,8 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
             file.failed
               ? escapeHtml(file.failed)
               : file.id
-                ? escapeHtml(humanSize(file.size))
+                // What was actually sent, when that is not what was picked.
+                ? escapeHtml(file.note || humanSize(file.size))
                 : escapeHtml(t('attachment.uploading'))
           }</span>
         </span>
@@ -131,12 +148,23 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       renderVisionWarning();
 
       try {
-        const { attachment } = await api.uploadAttachment({
-          name: file.name,
-          mime: file.type,
-          data: await readAsBase64(file),
-        });
+        /**
+         * Shrunk first, where shrinking is honest.
+         *
+         * A photo off a phone is eight megapixels that no model reads at that
+         * resolution, and an oversized PDF can be sent as the text inside it —
+         * which is what most of the library would have been given anyway. What
+         * this replaces is a request the host refused at the edge, with a
+         * plain-text error that never mentioned the file. See shrink.js.
+         */
+        const ready = await prepareUpload(file);
+        const { attachment } = await api.uploadAttachment(ready);
         entry.id = attachment.id;
+        entry.name = ready.name;
+        // Said out loud rather than done quietly: what was sent is not quite
+        // what was picked, and a person answering questions about a document
+        // needs to know it went as text.
+        if (ready.note) entry.note = describeShrink(ready.note);
       } catch (err) {
         entry.failed = err.message;
       }

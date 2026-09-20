@@ -19,9 +19,27 @@
      the one that earns an exemption. Still clearly fainter than --text-dim. */
   --text-faint: #78868f;
 
-  --accent: #5ee6a8;
-  --accent-dim: #2f7f5f;
-  --accent-glow: rgba(94, 230, 168, 0.14);
+  /**
+   * The accent, and the gradient it is the average of.
+   *
+   * The single green was legible and it was also the whole personality of the
+   * app: one flat neon on every focused control, every active row, every
+   * primary button. `--accent` stays a solid colour because a great many
+   * things need one — an SVG stroke, a border, a caret — and a gradient cannot
+   * be any of those. `--galaxy` is the same identity as a moving surface, for
+   * the places that are big enough to show it.
+   *
+   * Violet through magenta to cyan: far enough around the wheel to read as a
+   * sky rather than a tint, and all three light enough to carry text.
+   */
+  --accent: #a78bfa;
+  --accent-dim: #6d5bc4;
+  --accent-glow: rgba(167, 139, 250, 0.18);
+  --galaxy: linear-gradient(115deg, #7c5cff 0%, #b06aff 22%, #ff6ec7 45%, #6ee7ff 68%, #7c5cff 100%);
+  /* The green the app used to be, kept for the one thing that should not
+     change: the opening line. See `.empty h2`. */
+  --welcome-1: #5ee6a8;
+  --welcome-2: #6cb6ff;
   --warn: #ffb454;
   --danger: #ff6b6b;
   --info: #6cb6ff;
@@ -108,9 +126,12 @@
   /* 4.7:1 on --bg. Was #74828f — 3.7:1. See the note in the dark palette. */
   --text-faint: #66727e;
 
-  --accent: #10855a;
-  --accent-dim: #7fd3ae;
-  --accent-glow: rgba(16, 133, 90, 0.12);
+  --accent: #6d4ae0;
+  --accent-dim: #b9a6ff;
+  --accent-glow: rgba(109, 74, 224, 0.14);
+  --galaxy: linear-gradient(115deg, #5b3fd6 0%, #8a4fd8 22%, #d24aa0 45%, #2b9fc4 68%, #5b3fd6 100%);
+  --welcome-1: #10855a;
+  --welcome-2: #2a72c9;
   /* 5.1:1 on --bg. Was #b06a00 — 4.05:1, and it carries warnings. */
   --warn: #9a5d00;
   --danger: #c3352f;
@@ -154,9 +175,12 @@
     /* 4.7:1 on --bg. Was #74828f — 3.7:1. See the note in the dark palette. */
   --text-faint: #66727e;
 
-    --accent: #10855a;
-    --accent-dim: #7fd3ae;
-    --accent-glow: rgba(16, 133, 90, 0.12);
+    --accent: #6d4ae0;
+    --accent-dim: #b9a6ff;
+    --accent-glow: rgba(109, 74, 224, 0.14);
+    --galaxy: linear-gradient(115deg, #5b3fd6 0%, #8a4fd8 22%, #d24aa0 45%, #2b9fc4 68%, #5b3fd6 100%);
+    --welcome-1: #10855a;
+    --welcome-2: #2a72c9;
     /* 5.1:1 on --bg. Was #b06a00 — 4.05:1, and it carries warnings. */
   --warn: #9a5d00;
     --danger: #c3352f;
@@ -253,12 +277,23 @@ textarea {
 .btn:hover { background: #222c35; }
 .btn:active { transform: translateY(1px); }
 .btn--block { width: 100%; }
+/**
+ * The one button on a screen that is the thing to press.
+ *
+ * On the gradient rather than a flat fill, because this is the largest accented
+ * surface in the app and the only one big enough for the colour to actually
+ * travel across. White text: the gradient runs from violet to cyan and there is
+ * no single dark ink that stays legible over all of it.
+ */
 .btn--primary {
-  background: var(--accent);
-  color: #06231a;
+  background-image: var(--galaxy);
+  background-size: 300% 100%;
+  color: #fff;
   font-weight: 600;
+  border-color: transparent;
+  animation: galaxy-drift 14s linear infinite;
 }
-.btn--primary:hover { background: #74f0b8; }
+.btn--primary:hover { filter: brightness(1.12); }
 .btn--ghost {
   background: transparent;
   border-color: var(--line);
@@ -1021,12 +1056,44 @@ textarea {
   transform: translate(-50%, -50%) scaleX(-1);
 }
 
+/**
+ * The conversation list scrolls; nothing above it does.
+ *
+ * There are two of these now — scheduled work and conversations — and both
+ * claiming `flex: 1` split the sidebar between them, so a long list of
+ * conversations squeezed itself into half the height while the other half sat
+ * empty. The scheduled list is short by nature and sizes to its content; the
+ * conversations take what is left.
+ */
 .chats {
-  flex: 1;
   min-height: 0;
   overflow-y: auto;
   margin: 2px -6px;
   padding: 0 6px;
+}
+#sidebar-tasks {
+  flex: none;
+  /* Bounded anyway: somebody with thirty scheduled tasks must not lose the
+     conversation list to them. */
+  max-height: 32vh;
+}
+#chat-list { flex: 1; }
+
+/**
+ * A section heading stays put while its own section scrolls past it.
+ *
+ * Scrolling into the middle of a long list left you looking at rows with no
+ * way to tell whether you were inside a project, inside a group, or in the
+ * ordinary list — which is the one question a heading exists to answer.
+ */
+.chats__label {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  /* The sidebar has no pane of its own, so the heading needs enough of one to
+     stop rows showing through it as they pass underneath. */
+  background: var(--glass-solid);
+  backdrop-filter: var(--blur);
 }
 .chat-row {
   display: flex;
@@ -1037,8 +1104,22 @@ textarea {
 }
 .chat-row:hover { background: var(--tint); }
 .chat-row.is-active {
+  position: relative;
   background: var(--tint-2);
-  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* The bar that marks the open conversation, drawn as an element rather than an
+   inset shadow so it can carry the gradient — a shadow can only be one colour. */
+.chat-row.is-active::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background-image: var(--galaxy);
+  background-size: 100% 400%;
+  animation: galaxy-drift 14s linear infinite;
 }
 .chat-row.is-active .chat-item { color: var(--text); }
 
@@ -1156,25 +1237,10 @@ textarea {
   font-size: 11px;
 }
 
-/* Something is running in this conversation — a workflow, a task, a turn. */
-.chat-row__live {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  margin: 0 4px 0 2px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 0 var(--accent-glow);
-  animation: chat-live 1.6s ease-out infinite;
-}
-@keyframes chat-live {
-  0% { box-shadow: 0 0 0 0 var(--accent-glow); opacity: 1; }
-  70% { box-shadow: 0 0 0 7px transparent; opacity: 0.75; }
-  100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chat-row__live { animation: none; }
-}
+/* `.chat-row.is-running` is set while work is happening in a conversation but
+   deliberately draws nothing: the dot that used to sit here duplicated the
+   active-row bar beside it and the composer's spinner inside it. The class
+   stays as the hook for whatever replaces it. */
 
 .chats__label {
   padding: 12px 11px 5px;
@@ -1238,12 +1304,20 @@ textarea {
  */
 .dock {
   position: absolute;
-  right: 0;
+  /* Stops short of the transcript's scrollbar.
+     The dock is painted over the thread, and a classic scrollbar lives *inside*
+     the thread's box — so a dock reaching the right edge covered the one thing
+     you need to see to know where you are in a long conversation, exactly when
+     the thumb is short and sitting at the bottom. `--sb-w` is measured in JS
+     because it is 0 on overlay scrollbars and about 12–17px on the rest, and
+     guessing either way is wrong on half the machines. */
+  right: var(--sb-w, 0px);
   bottom: 0;
   left: 0;
   z-index: 4;
   pointer-events: none;
-  background: linear-gradient(180deg, transparent, var(--bg) 42%);
+  /* Solid later, so less of the last message is under the fade. */
+  background: linear-gradient(180deg, transparent, var(--bg) 58%);
 }
 .dock > * {
   pointer-events: auto;
@@ -1834,9 +1908,12 @@ textarea {
   margin: 0 0 10px;
   font-size: clamp(24px, 4.4vw, 34px);
   letter-spacing: -0.03em;
-  /* Lit from the accent rather than painted flat — it picks up the sky behind
-     it without needing a second colour that only works in one theme. */
-  background: linear-gradient(96deg, var(--text) 18%, var(--accent) 62%, var(--info));
+  /* Deliberately *not* on the accent.
+     Everything else moved to the galaxy palette; this line did not, because it
+     is the first thing anybody sees and it was already right. Its two colours
+     are held in their own tokens so a future change to the accent cannot drag
+     the welcome along with it by accident. */
+  background: linear-gradient(96deg, var(--text) 18%, var(--welcome-1) 62%, var(--welcome-2));
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
@@ -2127,12 +2204,24 @@ details.block pre {
   word-break: break-word;
 }
 
+/* The headline of a tool card: what was done, in words. Deliberately not
+   monospace any more — it stopped being a function name and became a sentence,
+   and setting a sentence in a code face is what made the transcript read as a
+   log file. The colour stays: it is how the eye finds the actions in a turn. */
 .tool__name {
+  flex: none;
   color: var(--warn);
-  font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 13px;
 }
+/* The argument that matters — a path, a URL, a query. Still monospace, because
+   this half really is a literal value and the difference between `l` and `1` in
+   a path is worth being able to see.
+
+   `min-width: 0` is what makes the ellipsis work at all: a flex item will not
+   shrink below its content, so without it a long path widens the row instead of
+   being cut, and on a phone the chevron leaves the screen. */
 .tool__arg {
+  min-width: 0;
   color: var(--text-faint);
   font-family: var(--mono);
   font-size: 12px;
@@ -2142,6 +2231,29 @@ details.block pre {
 }
 .tool__time { color: var(--text-faint); font-size: 11.5px; }
 .tool--error .tool__name { color: var(--danger); }
+.tool--error .mark { color: var(--danger); }
+
+/* The exact call, inside the card. Everything the summary stopped showing is
+   here: the function's real name and every argument it was given. */
+.tool__call { margin-bottom: 8px; }
+.tool__fn {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--tint);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+/* Two classes deep on purpose: `details.block pre` and `.step__out pre` both
+   set a size, and this has to outrank them without reaching for `!important`. */
+.block .tool__args,
+.step__out .tool__args {
+  margin: 6px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 11.5px;
+}
 
 /* ── a run of steps ──────────────────────────────────────────────────
  *
@@ -2276,6 +2388,28 @@ details.block pre {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* The mark at the head of a card. One turn can have four cards open at once —
+   a reasoning block, a run of steps, two tool calls — and each used to spin its
+   own ring while the status line under the transcript was already saying, in
+   words, which one was working. A card still in progress is now simply the one
+   with no tick: a hollow ring, the same size as the tick so nothing shifts when
+   it arrives, and nothing moving. */
+.mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1;
+}
+.mark--pending {
+  border: 2px solid var(--line);
+  border-radius: 50%;
+}
+
 .plan {
   margin: 0 0 14px;
   padding: 13px 15px;
@@ -2360,9 +2494,46 @@ details.block pre {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   transition: border-color 0.15s;
 }
+/**
+ * One ring, on the rounded box, and nothing on the field inside it.
+ *
+ * Focus landed on the `textarea`, which took the global `:focus-visible`
+ * outline — a hard rectangle *inside* the rounded box that already had a glow
+ * of its own. Two rings, one round and one square, around the same thing.
+ *
+ * The rectangle is the one that goes: the box is what a person is looking at,
+ * and the field fills it. The outline is suppressed for this textarea only, so
+ * every other control in the app keeps the focus ring it needs.
+ */
 .composer__box:focus-within {
-  border-color: var(--accent-dim);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  border-color: transparent;
+  background-image: var(--galaxy), linear-gradient(var(--surface), var(--surface));
+  background-origin: border-box;
+  background-clip: border-box, padding-box;
+  background-size: 300% 100%, auto;
+  box-shadow: 0 0 0 4px var(--accent-glow), 0 6px 24px rgba(0, 0, 0, 0.35);
+  animation: galaxy-drift 14s linear infinite;
+}
+.composer textarea:focus,
+.composer textarea:focus-visible {
+  outline: none;
+}
+
+/**
+ * The sky, moving.
+ *
+ * One keyframe reused by everything that wears the gradient, so the whole app
+ * drifts in step rather than each piece running its own clock. Slow on purpose:
+ * this is a surface with weather, not an animation anybody should notice.
+ */
+@keyframes galaxy-drift {
+  to { background-position: 300% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Still a gradient, just a still one. */
+  .composer__box:focus-within,
+  .btn--primary,
+  .chat-row.is-active::before { animation: none; }
 }
 .composer textarea {
   flex: 1;
@@ -5458,19 +5629,227 @@ details.block pre {
   white-space: nowrap;
 }
 .source__size { flex: none; color: var(--text-faint); font-size: 11.5px; }
-.source__drop {
+
+/* ── a project's shelf ────────────────────────────────────────────────
+ *
+ * Cards rather than rows. A list of filenames told you a project had four PDFs
+ * and nothing about which one was the rubric; a first page tells you at a
+ * glance, and that is the whole argument for the extra space it costs.
+ *
+ * Two columns, and two at every width: the panel is narrow to begin with, and
+ * a single column of cards is the row list again with more scrolling. */
+.shelf {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.card {
+  position: relative;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: var(--surface-2);
+  overflow: hidden;
+  transition: border-color 0.12s;
+}
+.card:hover { border-color: var(--line); }
+.card.is-picked { border-color: var(--accent); }
+
+/* The whole card is the button. A card with a small target somewhere inside it
+   is a card people click and nothing happens. */
+.card__open {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 132px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.card__shot {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  /* White, because a page and a scanned photograph are both drawn on paper and
+     a dark strip around them reads as part of the document. */
+  background: #fff;
+  overflow: hidden;
+}
+.card__shot img {
+  display: block;
+  width: 100%;
+  height: 118px;
+  /* `cover` from the top: the first thing on a page is its title, and letting
+     the bottom fall away keeps that visible at this size. */
+  object-fit: cover;
+  object-position: top center;
+}
+
+/* A source with nothing to draw — a .docx, a text file — keeps the name it
+   always had, which is what the whole shelf used to be. */
+.card__name {
+  flex: 1;
+  padding: 12px 12px 0;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.card__foot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+}
+.card__badge {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--tint);
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.card__facts {
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The tick sits on the card and stays out of the way until it is wanted: shown
+   on hover, on focus, and always once anything is selected. */
+.card__tick {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1.5px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.card:hover .card__tick,
+.card__tick:focus-visible,
+.card__tick.is-on { opacity: 1; }
+.card__tick.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent, #05140c);
+}
+
+.shelf__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.shelf__all {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1.5px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.shelf__all.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent, #05140c);
+}
+.shelf__count { flex: 1; color: var(--text-dim); font-size: 12.5px; }
+.shelf__del,
+.shelf__done {
   flex: none;
   width: 26px;
   height: 26px;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: 7px;
   background: none;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
-.source__drop:hover { background: var(--surface-2); color: var(--danger); }
+.shelf__del:hover:not(:disabled) { background: var(--surface-2); color: var(--danger); }
+.shelf__done:hover { background: var(--surface-2); color: var(--text); }
+.shelf__del:disabled { opacity: 0.4; cursor: default; }
+
+/* ── one source, large ──────────────────────────────────────────────── */
+.sheet--view .sheet__body { display: grid; gap: 12px; justify-items: center; }
+
+.sourceview__figure {
+  position: relative;
+  max-width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  line-height: 0;
+}
+/* A page gets the paper edge a photograph does not want. */
+.sourceview__figure.is-paper { box-shadow: 0 6px 22px rgb(0 0 0 / 0.45); }
+.sourceview__figure img {
+  display: block;
+  max-width: 100%;
+  max-height: 58vh;
+  width: auto;
+  height: auto;
+}
+
+/* The download is on the picture and appears when the pointer is. The page is
+   a preview rather than a toolbar, so the action waits to be looked for —
+   but never for a keyboard, which cannot hover and gets it on focus. */
+.sourceview__get {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.78), transparent);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+.sourceview__figure:hover .sourceview__get,
+.sourceview__get:focus-visible { opacity: 1; }
+@media (hover: none) {
+  /* Nothing hovers on a phone, so an action that waits for a pointer is an
+     action that does not exist there. */
+  .sourceview__get { opacity: 1; }
+}
+
+.sourceview__facts { margin: 0; color: var(--text-faint); font-size: 12px; }
+.sourceview__plainget { text-decoration: none; }
 
 .dropzone {
   display: grid;
@@ -5743,4 +6122,435 @@ details.block pre {
 :focus-visible {
   outline: 2px solid var(--accent) !important;
   outline-offset: 2px;
+}
+
+/* ── a scheduled task: the form, the rows, the page ───────────────────
+ *
+ * The form asks two questions with menus rather than with a time typed in
+ * words. A label on the left and the menu on the right, because each is one
+ * decision and stacking a label above a 140px dropdown wastes the whole row. */
+.taskform__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 12px;
+}
+.taskform__label {
+  flex: none;
+  width: 108px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.taskform__pick {
+  flex: none;
+  min-width: 190px;
+  max-width: 100%;
+}
+
+/* One task in the project that owns it. A whole-row button, because a card
+   with a small target somewhere inside it is a card people click at and
+   nothing happens. */
+.ptask {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ptask:hover { background: var(--tint); border-color: var(--line); }
+.ptask__mark { flex: none; color: var(--accent); line-height: 0; }
+.ptask--off .ptask__mark { color: var(--text-faint); }
+.ptask__body { flex: 1; min-width: 0; }
+.ptask__name {
+  display: block;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ptask__when { display: block; color: var(--text-faint); font-size: 11.5px; }
+.ptask__state {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  font-size: 10.5px;
+}
+.ptask--off .ptask__state { border-color: var(--line); color: var(--text-faint); }
+
+/* The sidebar's own list. `chat-row` already draws the shape; this only adds
+   how often it repeats, and dims one that is paused. */
+.chat-row__when {
+  flex: none;
+  padding-right: 9px;
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.chat-row.is-muted .chat-item { color: var(--text-faint); }
+
+/* One task, on its own page. */
+.taskpage { max-width: 760px; }
+.taskpage__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 18px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.taskpage__state {
+  flex: 1;
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  padding: 3px 11px;
+  flex-grow: 0;
+  border-radius: 999px;
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  font-size: 12px;
+}
+.taskpage__state.is-off { border-color: var(--line); color: var(--text-faint); }
+.taskpage__acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* A description list, because that is what this is: a fixed set of facts about
+   one thing. The label above its value rather than beside it — the values are
+   whole sentences and a two-column grid would leave the prompt in a gutter. */
+.taskpage__facts { margin: 0; display: grid; gap: 4px; }
+.taskpage__facts dt {
+  margin-top: 22px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.taskpage__facts dt:first-child { margin-top: 0; }
+.taskpage__facts dd { margin: 0; color: var(--text); font-size: 14px; }
+.taskpage__prompt { white-space: pre-wrap; line-height: 1.55; }
+.taskpage__project {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ── every source in a project, searchable ───────────────────────────
+ *
+ * A list on the left and the file on the right. The cards are right up to
+ * about twenty sources and wrong after that: past that point nobody is
+ * browsing, they are looking for the one called something. */
+.sheet--browse { width: min(1100px, 94vw); }
+.browse {
+  display: grid;
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 0 18px 18px;
+  min-height: min(620px, 70vh);
+}
+.browse__side { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.browse__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.browse__row {
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browse__row:hover { background: var(--tint); color: var(--text); }
+.browse__row.is-on { background: var(--tint-2); color: var(--text); }
+
+.browse__view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: var(--surface-2);
+  overflow-y: auto;
+}
+.browse__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.browse__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browse__figure { max-width: 100%; border-radius: 8px; overflow: hidden; line-height: 0; }
+.browse__figure.is-paper { box-shadow: 0 6px 22px rgb(0 0 0 / 0.45); }
+.browse__figure img { display: block; max-width: 100%; max-height: 46vh; width: auto; height: auto; }
+.browse__facts { margin: 0; color: var(--text-faint); font-size: 12px; }
+.browse__empty {
+  margin: auto;
+  color: var(--text-faint);
+  font-size: 13px;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  /* One column on a phone: the list first, then whatever is chosen. Side by
+     side at this width gives neither half enough room to be read. */
+  .browse { grid-template-columns: minmax(0, 1fr); }
+  .browse__list { max-height: 34vh; }
+}
+
+/* ── a project, in the sidebar ────────────────────────────────────────
+ *
+ * A project's conversations sit under the project rather than mixed into one
+ * flat list. Mixed together, a project was a folder you could put things in
+ * and never see the inside of: the shelf knew what was filed where, and the
+ * sidebar — the thing actually used to move between conversations — did not. */
+.proj-row {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+.proj-row:hover { background: var(--tint); }
+.proj-row__name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 4px 7px 9px;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.proj-row__name > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proj-row:hover .proj-row__name { color: var(--text); }
+.proj-row__mark { flex: none; line-height: 0; color: var(--text-faint); }
+.proj-row.is-open .proj-row__mark { color: var(--accent); }
+
+.proj-row__open {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-right: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-faint);
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0;
+}
+.proj-row:hover .proj-row__open,
+.proj-row__open:focus-visible { opacity: 1; }
+.proj-row__open:hover { background: var(--tint-2); color: var(--text); }
+
+/* A conversation inside a project, or inside a group. Indented, and with the
+   hairline that makes the nesting readable rather than merely implied. */
+.chat-row--nested { padding-left: 14px; }
+.chat-row--nested::before {
+  content: '';
+  flex: none;
+  width: 0;
+  align-self: stretch;
+  margin: 4px 8px 4px 0;
+  border-left: 1px solid var(--line-soft);
+}
+
+/* Not finished with. Nothing sets it automatically — opening the conversation
+   is what clears it — so it is a note somebody left themselves. */
+.chat-row__unread {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ── the conversation's own menu, in the header ─────────────────────── */
+.topbar__crumb {
+  flex: none;
+  max-width: 180px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--tint);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topbar__crumb:hover { background: var(--tint-2); color: var(--text); }
+
+.topbar__chev {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.topbar__chev:hover { background: var(--tint); color: var(--text); }
+.topbar__chev[aria-expanded='true'] { background: var(--tint-2); color: var(--text); }
+
+/* ── the panel a menu entry opens beside itself ─────────────────────── */
+.menu--sub {
+  position: fixed;
+  z-index: 60;
+  width: 260px;
+  max-height: min(420px, 70vh);
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+}
+.menu__more { margin-left: auto; color: var(--text-faint); }
+/* The chevron takes the slot the keyboard hint would have used, so an item
+   with both would push its own label out of the row. */
+.menu__more + .menu__key { display: none; }
+.menu__tick { margin-left: auto; color: var(--accent); }
+
+.menu__find {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.menu__find:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.menu__list { flex: 1; min-height: 0; overflow-y: auto; }
+.menu__item--make { color: var(--accent); }
+.menu__empty { margin: 8px 9px; color: var(--text-faint); font-size: 12.5px; }
+
+/* "View all", at the foot of the conversation list.
+   The sidebar shows the twenty most recent because past that it stops being a
+   thing you glance at; the rest are one press away rather than hidden. */
+.chats__more {
+  display: block;
+  width: 100%;
+  margin: 4px 0 2px;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.chats__more:hover { background: var(--tint); color: var(--text-dim); }
+
+/* ── dragging a panel wider ───────────────────────────────────────────
+ *
+ * A four-pixel target on the panel's own edge, invisible until the pointer is
+ * near it. Wider than it looks — the visible line is one pixel and the thing
+ * you have to hit is not, because a one-pixel drag target is a thing people
+ * miss three times before they find it.
+ *
+ * Double-click puts the panel back; see public/js/resize.js. */
+.grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  z-index: 20;
+  cursor: col-resize;
+  /* The panel it belongs to has its own padding; this sits over the edge. */
+  touch-action: none;
+}
+.grip--right { right: -4px; }
+.grip--left { left: -4px; }
+
+/* The line itself: centred in the target, and only visible once wanted. */
+.grip::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background-image: var(--galaxy);
+  background-size: 100% 400%;
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+.grip:hover::after,
+.grip:focus-visible::after,
+.is-resizing .grip::after {
+  opacity: 1;
+  animation: galaxy-drift 14s linear infinite;
+}
+.grip:focus-visible {
+  outline: none;
+}
+
+/* While dragging: no transition on the grid, or the panel lags a frame behind
+   the cursor and feels broken; and no text selection anywhere, because a drag
+   across a transcript otherwise highlights the whole conversation. */
+.app.is-resizing {
+  transition: none;
+  user-select: none;
+  cursor: col-resize;
+}
+
+@media (max-width: 900px) {
+  /* The sidebar is a sheet at this width and the detail rail is not shown, so
+     neither has an edge to drag. */
+  .grip { display: none; }
 }

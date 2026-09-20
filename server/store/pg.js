@@ -190,8 +190,17 @@ export function splitStatements(sql) {
  *      from the messages already there before its default is set. Deliberately
  *      not a unique (chat_id, seq) — that needs existing collisions renumbered,
  *      and renumbering would move the seq a summary's `covers` points at
+ *  19  project_files.kind, .attachment_id and .thumb — a source keeps the file
+ *      it came from, so the shelf can show it, open it and give it back,
+ *      rather than keeping only the text that was read out of it
+ *  20  scheduled_tasks.project_id and .policy, and a nullable next_run_at — a
+ *      task can belong to a project, can say what it may do unwatched, and can
+ *      be manual-only rather than scheduled so far ahead it never fires
+ *  21  chats.archived_at, .unread and .chat_group — a conversation filed under
+ *      a project can be put away without being destroyed, flagged as not
+ *      finished with, and gathered under a name somebody invented
  */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 21;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -780,6 +789,7 @@ export function createPgStore(connectionString) {
                 SELECT last_chat FROM scheduled_tasks WHERE user_id = $1 AND run_state = 'running' AND last_chat IS NOT NULL
          )
          SELECT c.id, c.title, c.model, c.pinned, c.created_at, c.updated_at, m.message_count,
+                c.project_id, c.unread, c.chat_group,
                 (l.chat_id IS NOT NULL
                   OR (c.run_lock_at IS NOT NULL AND c.run_lock_at > NOW() - make_interval(secs => $2))) AS running
            FROM chats c
@@ -787,7 +797,10 @@ export function createPgStore(connectionString) {
                 SELECT COUNT(*)::int AS message_count FROM messages m WHERE m.chat_id = c.id
            ) m ON TRUE
            LEFT JOIN live l ON l.chat_id = c.id
-          WHERE c.user_id = $1 AND (m.message_count > 0 OR l.chat_id IS NOT NULL)
+          -- Archived conversations are not gone, they are put away. The one
+          -- place they still appear is the Projects shelf's archived filter.
+          WHERE c.user_id = $1 AND c.archived_at IS NULL
+            AND (m.message_count > 0 OR l.chat_id IS NOT NULL)
           ORDER BY c.pinned DESC, c.updated_at DESC
           LIMIT 200`,
         [userId, RUN_LEASE_STALE_MS / 1000],
@@ -851,23 +864,63 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT * FROM chats WHERE id = $1 AND user_id = $2', [id, userId]);
       return rows[0] ?? null;
     },
+    /**
+     * Change one conversation.
+     *
+     * The allow-list is the security boundary, not a formality: the patch comes
+     * straight from a request body, and anything not named here — `user_id`
+     * first among them — must never reach the UPDATE.
+     *
+     * `archived` is a boolean on the way in and a timestamp in the table, so it
+     * gets its own translation rather than a column the caller can set to any
+     * value it likes.
+     */
     async updateChat(userId, id, patch) {
       const fields = [];
       const values = [];
+      const COLUMNS = { title: 'title', model: 'model', pinned: 'pinned', projectId: 'project_id', unread: 'unread', group: 'chat_group' };
       for (const [k, v] of Object.entries(patch)) {
-        if (!['title', 'model', 'pinned'].includes(k)) continue;
+        if (k === 'archived') {
+          values.push(v ? new Date().toISOString() : null);
+          fields.push(`archived_at = $${values.length}`);
+          continue;
+        }
+        const column = COLUMNS[k];
+        if (!column) continue;
         values.push(v);
-        fields.push(`${k} = $${values.length}`);
+        fields.push(`${column} = $${values.length}`);
       }
       if (fields.length) {
         values.push(id, userId);
+        /**
+         * `updated_at` is deliberately left alone.
+         *
+         * The sidebar orders by it, so bumping it on every change would send a
+         * conversation to the top of the list because somebody archived it or
+         * marked it unread — which is the opposite of what those two mean. Only
+         * a rename says the conversation itself moved on, and even that is
+         * arguable; it is kept for a title because that is the behaviour people
+         * already have.
+         */
+        const touch = 'title' in patch ? ', updated_at = NOW()' : '';
         await q(
-          `UPDATE chats SET ${fields.join(', ')}, updated_at = NOW()
+          `UPDATE chats SET ${fields.join(', ')}${touch}
             WHERE id = $${values.length - 1} AND user_id = $${values.length}`,
           values,
         );
       }
       return this.getChat(userId, id);
+    },
+
+    /** The names a person has invented, for the "Move to group" menu. */
+    async listChatGroups(userId) {
+      const rows = await q(
+        `SELECT DISTINCT chat_group FROM chats
+          WHERE user_id = $1 AND chat_group IS NOT NULL AND chat_group <> ''
+          ORDER BY chat_group`,
+        [userId],
+      );
+      return rows.map((row) => row.chat_group);
     },
     async touchChat(userId, id) {
       await q('UPDATE chats SET updated_at = NOW() WHERE id = $1 AND user_id = $2', [id, userId]);
@@ -1755,7 +1808,7 @@ export function createPgStore(connectionString) {
     /** Metadata only. The text is the big column and is rarely what a list wants. */
     async listProjectFiles(userId, projectId) {
       return q(
-        `SELECT id, name, mime, bytes, pages, chars, created_at
+        `SELECT id, name, mime, kind, bytes, pages, chars, attachment_id, thumb, created_at
            FROM project_files WHERE user_id = $1 AND project_id = $2
           ORDER BY created_at`,
         [userId, projectId],
@@ -1778,7 +1831,7 @@ export function createPgStore(connectionString) {
      */
     async readProjectFiles(userId, projectId, limit = 100) {
       return q(
-        `SELECT id, name, mime, pages, chars, text
+        `SELECT id, name, mime, kind, pages, chars, text, attachment_id
            FROM project_files WHERE user_id = $1 AND project_id = $2
           ORDER BY created_at
           LIMIT $3`,
@@ -1787,10 +1840,23 @@ export function createPgStore(connectionString) {
     },
     async addProjectFile(userId, projectId, file) {
       const rows = await q(
-        `INSERT INTO project_files (id, project_id, user_id, name, mime, bytes, pages, text, chars)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING id, name, mime, bytes, pages, chars, created_at`,
-        [file.id, projectId, userId, file.name, file.mime, file.bytes, file.pages ?? null, file.text, file.text.length],
+        `INSERT INTO project_files (id, project_id, user_id, name, mime, kind, bytes, pages, text, chars, attachment_id, thumb)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING id, name, mime, kind, bytes, pages, chars, attachment_id, thumb, created_at`,
+        [
+          file.id,
+          projectId,
+          userId,
+          file.name,
+          file.mime,
+          file.kind ?? null,
+          file.bytes,
+          file.pages ?? null,
+          file.text,
+          file.text.length,
+          file.attachmentId ?? null,
+          file.thumb ?? null,
+        ],
       );
       // `AND user_id` because this one had no ownership test at all — not in the
       // statement and not above it. The INSERT before it carries user_id, so a
@@ -1799,8 +1865,21 @@ export function createPgStore(connectionString) {
       await q('UPDATE projects SET updated_at = NOW() WHERE id = $1 AND user_id = $2', [projectId, userId]);
       return rows[0];
     },
+    /**
+     * Remove a source, and the original it kept.
+     *
+     * The attachment goes too. It was stored for this source and nothing else
+     * points at it, so leaving it behind is a file nobody can reach, counting
+     * against the account's storage forever — which on a free tier is the kind
+     * of leak that is invisible until the database is full.
+     */
     async deleteProjectFile(userId, id) {
-      await q('DELETE FROM project_files WHERE user_id = $1 AND id = $2', [userId, id]);
+      const rows = await q(
+        'DELETE FROM project_files WHERE user_id = $1 AND id = $2 RETURNING attachment_id',
+        [userId, id],
+      );
+      const attachmentId = rows[0]?.attachment_id;
+      if (attachmentId) await q('DELETE FROM attachments WHERE user_id = $1 AND id = $2', [userId, attachmentId]);
     },
 
     /** The conversations belonging to one project, newest first. */
@@ -2137,8 +2216,8 @@ export function createPgStore(connectionString) {
     },
     async createTask(userId, task) {
       const rows = await q(
-        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz, project_id, policy)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [
           task.id,
           userId,
@@ -2146,11 +2225,31 @@ export function createPgStore(connectionString) {
           task.prompt,
           task.model ?? null,
           task.cron ?? null,
-          task.nextRunAt,
+          // Null for a manual task: the due query compares against it, and
+          // NULL matches neither side, so it is simply never due.
+          task.nextRunAt ?? null,
           task.tz ?? null,
+          task.projectId ?? null,
+          task.policy ?? null,
         ],
       );
       return rows[0];
+    },
+
+    /** One task, by id, for the page that shows it on its own. */
+    async getTask(userId, id) {
+      const rows = await q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND id = $2', [userId, id]);
+      return rows[0] ?? null;
+    },
+
+    /** The tasks filed under one project, for its own Scheduled list. */
+    async listProjectTasks(userId, projectId) {
+      return q(
+        `SELECT * FROM scheduled_tasks
+          WHERE user_id = $1 AND project_id = $2
+          ORDER BY created_at DESC`,
+        [userId, projectId],
+      );
     },
     async setTaskEnabled(userId, id, enabled) {
       const rows = await q(

@@ -415,15 +415,28 @@ function withAttachments(messages, loaded, entry) {
  * because this is a wire detail and writing it into the transcript would send it
  * again next turn, in the wrong place, with the wrong passages.
  */
-export function withProjectSources(messages, passages) {
-  if (!passages?.trim()) return messages;
+export function withProjectSources(messages, passages, images = []) {
+  const hasPassages = !!passages?.trim();
+  if (!hasPassages && !images.length) return messages;
 
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i].role !== 'user') continue;
     const copy = [...messages];
     copy[i] = {
       ...messages[i],
-      text: `${passages}\n\n---\n\n${messages[i].text || ''}`,
+      text: hasPassages ? `${passages}\n\n---\n\n${messages[i].text || ''}` : messages[i].text,
+      /**
+       * The shelf's pictures travel as attachments on this turn.
+       *
+       * Ahead of the message's own files rather than after them, because
+       * `loadForTranscript` keeps the *last* so many and the person's own
+       * screenshot is the one they are asking about — a shelf of four diagrams
+       * must not push it out of the budget.
+       *
+       * Non-destructive, like the passages above: the stored message is never
+       * touched, so nothing is sent twice or sent again next turn.
+       */
+      attachments: images.length ? [...images, ...(messages[i].attachments || [])] : messages[i].attachments,
     };
     return copy;
   }
@@ -553,6 +566,40 @@ export function needsApproval(toolCalls, policy) {
     if (risk === 'safe') return false;
     return policy === 'ask' ? true : risk === 'sensitive';
   });
+}
+
+/**
+ * A reply that arrived entirely as reasoning is still the reply.
+ *
+ * Some models — the free reasoning ones on OpenRouter especially — put
+ * everything on the non-standard `reasoning` field and leave `content` empty.
+ * The turn then ends with a full, correct answer folded inside a collapsed
+ * "Reasoning" block and an empty bubble beside it, which reads as the assistant
+ * having said nothing at all. People reasonably conclude the app is broken; the
+ * answer was there the whole time, one disclosure triangle away.
+ *
+ * Only when there is nothing else. A turn with prose has said its piece, and a
+ * turn whose point was a tool call is *supposed* to look like thinking followed
+ * by an action — promoting that one would paste a private deliberation into the
+ * conversation as though it had been addressed to the user. The narrowness is
+ * the whole safety of this: it fires exactly when the alternative is showing
+ * nothing.
+ *
+ * `thinking` is cleared rather than copied, so the same words are never shown
+ * twice under two headings, and `reasonedAloud` records that this happened —
+ * the turn did not come back the way it was written down.
+ *
+ * @returns whether the promotion happened, so the caller can tell the browser.
+ */
+export function promoteReasoning(assistant) {
+  if (!assistant || String(assistant.text || '').trim()) return false;
+  if (assistant.toolCalls?.length) return false;
+  if (!String(assistant.thinking || '').trim()) return false;
+
+  assistant.text = assistant.thinking;
+  assistant.thinking = '';
+  assistant.reasonedAloud = true;
+  return true;
 }
 
 /**
@@ -737,7 +784,7 @@ export function applyStreamEvent(ev, assistant, emit) {
   return ev;
 }
 
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, emit, signal, deviceHint }) {
+export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, emit, signal, deviceHint, policy: policyOverride = null }) {
   const store = getStore();
   const prefs = await getPrefs(userId);
 
@@ -813,7 +860,15 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     mcpTools(userId).catch(() => ({ tools: [], servers: [] })),
   ]);
   const workerOnline = worker.online;
-  const policy = prefs.toolPolicy;
+  /**
+   * The account's setting, unless this particular run was given one.
+   *
+   * A scheduled task carries its own: it runs with nobody watching, so "pause
+   * and ask" and "never pause" are genuinely different decisions and the person
+   * who made the task is the one who should make them. Interactive turns pass
+   * nothing and keep the account default, exactly as before.
+   */
+  const policy = policyOverride || prefs.toolPolicy;
 
   // Every line this turn logs from here on carries the prompt version, so a
   // change to the prompt can be measured by filtering on it. See `promptVersion`.
@@ -1100,7 +1155,20 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       // a conversation is re-read on every step, and dragging megabytes of
       // base64 through each one to send them once is pure cost. Older files fall
       // out of the budget and become a line of prose naming them.
-      const loaded = await loadForTranscript(userId, messages, {
+      /**
+       * The transcript the model will actually be sent, built before the bytes
+       * are fetched rather than after.
+       *
+       * A project's pictures are attached here, and `loadForTranscript` has to
+       * see them to fetch them — it reads `message.attachments`, so attaching
+       * them afterwards meant asking for images nobody had loaded.
+       */
+      const grounded = withProjectSources(
+        activeTranscript(normaliseOrder(messages)),
+        project?.passages,
+        project?.images,
+      );
+      const loaded = await loadForTranscript(userId, grounded, {
         // Only worth parsing when the model cannot be shown the file itself.
         extractText: !readsPdfNatively(entry),
       });
@@ -1114,13 +1182,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         // `activeTranscript` is what makes a folded conversation smaller: the
         // page still holds every turn, and only the summary plus what followed
         // it is sent.
-        messages: withAttachments(
-          // The project's passages ride on the question they were chosen for,
-          // rather than in the cached system block that they used to invalidate.
-          withProjectSources(activeTranscript(normaliseOrder(messages)), project?.passages),
-          loaded,
-          entry,
-        ),
+        // The project's passages and pictures ride on the question they were
+        // chosen for, rather than in the cached system block they used to
+        // invalidate. `activeTranscript` is what makes a folded conversation
+        // smaller: the page still holds every turn, and only the summary plus
+        // what followed it is sent.
+        messages: withAttachments(grounded, loaded, entry),
         // Rebuilt per step: anything `load_tools` activated last step is in it
         // now. On a turn that activates nothing this returns the same list every
         // time, so the cached prefix is undisturbed.
@@ -1191,6 +1258,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
     assistant.toolCalls = done?.toolCalls || [];
     if (done?.raw) assistant.raw = done.raw;
+
+    if (promoteReasoning(assistant)) emit('reasoning_was_reply', { text: assistant.text });
     if (done?.usage) {
       assistant.usage = done.usage;
       totals.input += done.usage.input || 0;

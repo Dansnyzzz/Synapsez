@@ -1,5 +1,252 @@
 # Changelog
 
+## 2026-09-21 — a galaxy instead of a green, and a schedule that keeps its time
+
+Branch `fix/web-fetch-documents`.
+
+### Fixed
+
+- **A scheduled task or workflow only ran again the next day, whatever time it was set for.** The
+  overdue sweep fired exactly once, when the page loaded, and the only other trigger is the cron —
+  which on the free plan is one tick a day. So a task set for 07:30 ran at 07:30 only if somebody
+  happened to open the app at 07:30. It now sweeps every minute while the tab is visible, and on
+  returning to the tab; the daily cron stays as the backstop. Skipped entirely while hidden, because
+  a background tab is not a cron job.
+- **Running one by hand could make it run again automatically a moment later.** `next_run_at` is
+  usually already in the past when you press Run now, so the next sweep saw it as due. Both Run now
+  paths move the schedule forward before starting, so the worst case is a skipped occurrence rather
+  than a surprise repeat of a job that sends email.
+- **The composer drew two focus rings** — the rounded box's own glow, and the global
+  `:focus-visible` outline landing on the textarea as a hard rectangle inside it. The rectangle is
+  gone; every other control keeps its focus ring.
+- **A sources line linked to the front page, not the article.** In a "Sources:" / "Nguồn:" line a URL
+  now reads as the outlet alone — `nhandan.vn` — while still pointing at the page it came from,
+  which is the entire purpose of citing one. Elsewhere a link keeps its path, because a link in the
+  middle of a sentence is usually the point of the sentence. `send_email` now tells the model to
+  write full article URLs there.
+
+### Changed
+
+- **Both side panels can be dragged, and double-clicked back to their default.** The width is
+  remembered, the handle is a real `separator` a keyboard can move with the arrow keys, and Home
+  resets it. Bounded at both ends, so a panel cannot be dragged to nothing or made to swallow the
+  window.
+- **The accent is a galaxy gradient that drifts** — violet through magenta to cyan — on the primary
+  button, the composer's focus ring, the active conversation's bar and the panel handles. `--accent`
+  stays a solid colour for the many things that need one; `--galaxy` is the same identity as a
+  moving surface, for the places big enough to show it. Still gradient, but still, under
+  `prefers-reduced-motion`.
+- **The opening question keeps the colour it had.** It is the first thing anybody sees and it was
+  already right, so its two colours live in tokens of their own where a future change to the accent
+  cannot drag it along by accident.
+
+## 2026-09-20 — a big file is shrunk rather than refused
+
+Branch `fix/web-fetch-documents`.
+
+### Fixed
+
+- **`Unexpected token 'R', "Request En"... is not valid JSON`** on any upload over about 3MB. That
+  was the *host* refusing the request body at the edge, before a line of this app's code ran, with a
+  plain-text `Request Entity Too Large` that `JSON.parse` then choked on. Errors that are not JSON —
+  an edge refusal, a gateway timeout, a proxy error page — now read as what they are.
+- **The declared 5MB limit was never reachable on the deployment.** Base64 inflates bytes by a third
+  on the way out, so a 5MB file is a 6.7MB body and the host's ceiling is ~4.5MB. The browser now
+  holds files to 3MB of *file*, which is what actually survives the trip.
+- **An oversized file is made to fit instead of refused.** A photo is re-encoded at 1600px — more
+  than any vision model reads, and routinely 44MB → 0.9MB. An oversized PDF is sent as the text
+  inside it, read by the pdfjs already here for thumbnails; that is what every model on the OpenAI
+  wire format would have been given anyway, so for most of the library nothing is lost but the
+  layout — and the chip says so rather than leaving somebody to wonder. What genuinely cannot be
+  shrunk, like a .pptx, is refused with its size, the limit, and what to do.
+- **The composer's gradient covered the transcript's scrollbar** — most visibly when the
+  conversation is long, the thumb is short and sitting at the bottom, which is exactly when somebody
+  looks for it. The dock now stops short of it by the scrollbar's measured width (zero on the
+  overlay scrollbars macOS and phones use), and its fade turns solid later.
+- **The sidebar's two lists both claimed the free space**, so a long conversation list squeezed
+  itself into half the height while the scheduled list sat empty above it. Scheduled work sizes to
+  its content and is capped; the conversations take what is left.
+
+### Changed
+
+- **Section headings stay put while their own section scrolls.** Scrolling into the middle of a long
+  list left you looking at rows with no way to tell whether you were inside a project, inside a
+  group, or in the ordinary list — the one question a heading exists to answer.
+- **The sidebar lists the twenty most recent conversations**, with "View all" for the rest. Past
+  about twenty it stops being something you glance at. The order is by when something was last
+  *said*: pinning, archiving and grouping deliberately do not move a conversation, because none of
+  them mean it moved on.
+
+## 2026-09-20 — a project's conversations live under the project
+
+Branch `fix/web-fetch-documents`. Schema 21.
+
+### Added
+
+- **The sidebar files a project's conversations under it**, above the ordinary list, each project a
+  heading you can fold. Mixed into one flat list, a project was a folder you could put things in and
+  then never see the inside of: the shelf knew what was filed where, and the sidebar — the thing
+  actually used to move between conversations — did not. Sections are open by default, because a
+  sidebar that hides conversations until you find the right heading to click has lost the list it
+  exists to be; folding one is a deliberate act and it sticks.
+- **One menu of everything you can do to a conversation**, offered from two places: the ⋮ on its
+  sidebar row, and a new chevron beside the title. Built from one description rather than written
+  twice — two hand-written copies is how one of them ends up missing "Remove from project" for a
+  year. The row leads with "Open in new window"; the title leads with "Schedule", because the
+  conversation is already open and the useful offer is work like this, later.
+- **Change project** opens a searchable panel beside the menu, ticking the one it is already in. The
+  search doubles as the way to make a new one: a separate "New project" entry would be a second road
+  to the same place, and the one nobody uses goes stale.
+- **Move to group.** A group is a name somebody invents; the set of groups is the distinct set of
+  names in use. The consequence is deliberate — moving the last conversation out of a group is what
+  ends it — because a table would buy empty groups and a lifecycle to manage them, for a feature
+  whose entire job is putting a few rows under a heading.
+- **Archive, and mark as unread.** Archiving is not deleting, and the distinction matters precisely
+  because they sit together in the same menu: it is what somebody reaches for when they are not
+  sure, so it is genuinely reversible. "Mark as unread" is a note to yourself that a conversation is
+  not finished with; nothing sets it automatically.
+- The conversation header names the project it is filed under, and goes there.
+
+### Fixed
+
+- **The row menu's keyboard shortcuts were positions, not letters** — `{ p: 0, r: 1, d: 3 }` — which
+  was right for a three-item menu and silently wrong the moment it grew: `d` would have stopped
+  meaning Delete and started meaning whatever landed in slot three. They are read off each item now.
+- **`updated_at` no longer moves when a conversation is archived, grouped or marked unread.** The
+  sidebar orders by it, so those actions sent a conversation to the top of the list — the opposite
+  of what all three mean.
+
+## 2026-09-20 — a project schedules its own work
+
+Branch `fix/web-fetch-documents`. Schema 20.
+
+### Added
+
+- **A project has its own Scheduled section.** A task made there runs *inside* the project — same
+  standing instructions, same shelf of sources. Without that, "summarise this week's filings" set up
+  from a project answered from nothing at all, which is worse than failing because it looks like it
+  worked. `ON DELETE SET NULL`, so deleting a project leaves its tasks running as ordinary ones
+  rather than silently taking them with it.
+- **The task form asks with menus instead of a typed time.** Frequency is Manual, Hourly, Daily,
+  Weekdays, Weekly or Monthly, and each says underneath what it actually means — "Hourly" chosen at
+  09:30 means half past every hour, which a dropdown alone does not tell anybody. The written form
+  (`fri 16:00`) is still what the agent's own `schedule_task` tool speaks, because a menu that could
+  only express a third of the schedules would be a worse tool.
+- **Manual is a real option**, not a repeat scheduled so far ahead it never fires. It stores no cron
+  and no next run, and the due query — `enabled AND next_run_at <= now()` — matches neither, so it
+  waits for Run now and nothing else.
+- **Permissions, per task.** A run happens with nobody watching, so "pause and ask", "stop only at
+  something that could do real harm" and "never pause" are genuinely different decisions rather than
+  a preference. Each option says what it does at 3am. Unset means the account's own default.
+- **A task has its own page** — the instructions it will follow, the project it answers from, how
+  often it repeats, what it may do, its last run — with Run now, pause and delete. Run now is the
+  only way a manual task ever runs, and the fastest way to find out whether a scheduled one does
+  what you meant without waiting until morning. It opens the conversation the run wrote, because
+  that is the output.
+- **The sidebar lists scheduled work of its own**, above the conversations: a scheduled task is not
+  a conversation you had, it is something that will happen. It refreshes on returning to the tab, so
+  a task the assistant scheduled itself, or one added from a phone, appears without a reload.
+- **A magnifier on a project's Context.** Cards are right for twenty sources and wrong for two
+  hundred; past that the only question is "where is the one called X". A search box, a list, and the
+  file itself beside them with the same download the card preview offers.
+
+## 2026-09-20 — a project's shelf shows what is on it
+
+Branch `fix/web-fetch-documents`. Schema 19.
+
+### Added
+
+- **A project source keeps the file it came from.** The bytes used to be read once for their text
+  and dropped, which made the shelf a list of filenames: nothing to look at, nothing to open, and no
+  way to get back what you uploaded. The original is now stored in the attachments table — the one
+  that already has a sweep and a route that serves under `default-src 'none'` — and a source is
+  drawn as a card with a picture of itself: an image scaled down, or a PDF's first page. Pressing
+  one opens it large, and the original is one press away from there.
+- **A picture can be a project source.** It used to be refused, on the reasoning that a source is
+  something an answer can cite. What that missed is that half the library can *see*, and a diagram
+  on the shelf is worth more to those models than the paragraph describing it. An image carries no
+  text, so it never competes for the passage budget the quotable sources share; it rides on the
+  question as a real picture instead, capped at four so a shelf of screenshots cannot quietly make
+  every turn expensive. A model with no eyes is told there was a picture rather than left to answer
+  as though the shelf were empty.
+- **Sources can be selected and removed together.** Ticking one opens a bar with a count, a
+  select-all and a delete; nothing offers to delete until asked, because a shelf is mostly read.
+  Removing a source now also removes the original it kept, which would otherwise be a file nobody
+  can reach counting against storage forever.
+- `scripts/vendor-pdfjs.js`, and `public/vendor/pdfjs` — 1.7MB of pdfjs loaded **only** by someone
+  adding a PDF to a project, to draw its first page once at upload. In the browser because pdfjs
+  renders to a canvas and a canvas in Node is a native module, which a free serverless deployment
+  cannot have. `test/projects.test.mjs` fails when the copy drifts from the installed package.
+
+## 2026-09-20 — runs survive leaving, PDFs are read, steps read as sentences
+
+Branch `fix/web-fetch-documents`.
+
+### Fixed
+
+- **Leaving a conversation mid-answer killed the answer.** Switching chats aborted the stream, which
+  closes the socket, which the server takes as "stop this run" — so a glance at another conversation
+  ended the work. Coming back showed a transcript frozen mid-thought with no sign of whether
+  anything was still happening, then the whole finished reply appearing at once some minutes later.
+  A run now owns its own element and every handler draws into that, so navigating away merely
+  detaches it: the fetch stays open, the lease stays held, the model keeps working, and returning
+  re-attaches it mid-sentence. The composer, the stop button, the status line and the queue all
+  follow the conversation you are looking at.
+- **Two conversations can now answer at once.** They cannot reach each other's nodes, so the bug
+  that made aborting necessary — one run's prose grafted into another's transcript — is not
+  reachable by construction. Within a single conversation there is still exactly one loop, enforced
+  by the server's lease; anything typed meanwhile queues, per conversation, as before.
+- **A PDF could not be read on the deployment at all.** `Setting up fake worker failed: "Cannot find
+  module '/var/task/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'"`. pdfjs reaches its worker
+  with `import(this.workerSrc)` — a variable specifier no bundler can follow — so Vercel traced
+  `pdf.mjs` and shipped it without the worker beside it, while a laptop with the whole package on
+  disk worked perfectly. The worker is now imported by name, which both traces the file and hands it
+  over through `globalThis.pdfjsWorker` so the dynamic import is never reached.
+- **Four spinners said what one status line already said.** A turn with a reasoning block, a run of
+  steps and two tool calls open spun a ring in each of them while the line under the transcript
+  named the tool that was working. A card in progress is now the one with no tick — a hollow ring
+  the same size, so nothing shifts when the tick lands, and nothing moving.
+
+- **An answer that arrived as reasoning was hidden inside "Reasoning".** Some models — the free
+  reasoning ones on OpenRouter especially — put the whole reply on the non-standard `reasoning`
+  field and leave `content` empty. The turn ended with a correct, complete answer folded into a
+  collapsed block and an empty bubble beside it, which reads as the assistant having said nothing.
+  When a turn has no prose and called no tool, its reasoning is now the reply — stored that way, so
+  a reload agrees, and moved in the live view too. A turn that said something, or whose point was a
+  tool call, is untouched: promoting that one would paste a private deliberation into the
+  conversation as though it had been addressed to the user.
+- **Every tool outside the browser and desktop families printed its own function name.**
+  `skill_read {"name":"Writing a Word document"}` sat in the middle of a transcript otherwise
+  written in sentences. All 93 tools now have a verb in both languages — "Read a guide", "Ran
+  command", "Searched the web" — and `test/i18n.test.mjs` fails the build when a tool is added
+  without one. The exact call and its arguments moved *inside* the card rather than going away, so
+  "it passed the wrong path" is still something you can see.
+- **`web_fetch failed: fdvn.vn returned 11014847 bytes, which is too large to read.`** An 11MB PDF
+  was refused before a byte of it was read. The 8MB ceiling that stops a runaway page from filling
+  the process was also the ceiling on a document, and the two are not the same problem: a page can
+  be cut anywhere, a PDF cannot be cut at all. Documents now have their own 32MB ceiling and are
+  read whole.
+- **A fetched PDF or Word file came back as mojibake.** Anything that was not HTML was decoded as
+  UTF-8 and pasted in, so the model paid for several thousand characters of binary in every
+  following turn and could not read a word of it. `web_fetch` now opens a PDF, `.docx`, `.xlsx` or
+  `.pptx` with the same readers an attachment goes through, and refuses bytes that are neither text
+  nor a readable document instead of inlining them.
+- **A page cut at the byte ceiling lost the sentence saying so.** The note was appended to the body
+  and then sliced off again by `max_chars`. Both notes now go after the clip, and the truncation
+  note says that calling again with a larger `max_chars` reads the rest.
+
+### Changed
+
+- `web_fetch` defaults to 60,000 characters for a parsed document and stays at 20,000 for a page:
+  answering from the first third of an exam paper is the failure the tool exists to prevent. An
+  explicit `max_chars` still wins, up to 200,000.
+- The pulsing dot beside a running conversation in the sidebar is gone. It sat next to the bar that
+  already marks the open row and duplicated the composer's own spinner. The list still knows what is
+  running — it keeps refreshing every 5 seconds so a background run's title appears by itself.
+- `extractPdfText` takes a `Buffer` as well as base64, so a freshly downloaded 30MB document is not
+  encoded to base64 only to be decoded straight back.
+
+
 ## 2026-09-16 — background runs appear in the conversation list at once
 
 Branch `feat/live-run-conversations`.

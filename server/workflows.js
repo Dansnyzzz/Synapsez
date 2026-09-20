@@ -386,6 +386,15 @@ export async function runWorkflowNow(userId, workflowId, { budgetMs = START_BUDG
     throw err;
   }
 
+  /**
+   * Same reasoning as `runTaskNow`: a run by hand must not leave a passed
+   * `next_run_at` behind for the next sweep to fire automatically. A workflow
+   * sends email and posts to Slack; a surprise second run of one is worse than
+   * a skipped occurrence.
+   */
+  const next = advance(workflow.cron, new Date(), workflow.tz);
+  if (next) await store.updateWorkflow(userId, workflow.id, { nextRunAt: next });
+
   const run = await startRun(userId, workflow);
   const claimed = await store.claimWorkflowRun({
     now: nowIso(),

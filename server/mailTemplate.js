@@ -215,7 +215,28 @@ const MARK = String.fromCharCode(0xe000);
 const SLOT = new RegExp(`${MARK}(\\d+)${MARK}`, 'g');
 const BARE_URL = new RegExp(`(^|[\\s(])(https?:\\/\\/[^\\s<)${MARK}]+)`, 'g');
 
-function inline(text, theme) {
+/**
+ * What a bare URL should read as.
+ *
+ * Everywhere but a source line, the host *and* the path: a link in the middle
+ * of a sentence is usually the point of the sentence, and hiding the path makes
+ * two different articles from one site look like the same link.
+ *
+ * In a source line it is the outlet alone — "nhandan.vn" — because that line is
+ * a row of four or five attributions and the paths turn it into a wall. What
+ * matters there is that the *href* is still the article: the whole purpose of
+ * citing a source is being able to go and read the thing the claim came from,
+ * and a link that lands on a newspaper's front page has cited nothing.
+ */
+function labelFor(url, sourceLine) {
+  const bare = String(url).replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+  if (!sourceLine) return bare;
+  // Up to the first slash, so `nhandan.vn/kinh-te/abc-123.html` reads as
+  // `nhandan.vn` while still pointing at the article.
+  return bare.split('/')[0];
+}
+
+function inline(text, theme, { sourceLine = false } = {}) {
   const slots = [];
   const hold = (html) => `${MARK}${slots.push(html) - 1}${MARK}`;
   let out = String(text)
@@ -230,8 +251,8 @@ function inline(text, theme) {
   out = escapeHtml(out)
     .replace(/\*\*(.+?)\*\*/g, `<strong style="font-weight:600;color:${BASE.text}">$1</strong>`)
     .replace(/(^|[^*\w])\*(?!\s)(.+?)(?<!\s)\*(?!\w)/g, '$1<em>$2</em>')
-    // A bare link reads as its site — "nhandan.vn", not "https://nhandan.vn/".
-    .replace(BARE_URL, (whole, lead, url) => `${lead}${link(url, url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''), theme)}`);
+    // A bare link reads as its site rather than as a URL. See `labelFor`.
+    .replace(BARE_URL, (whole, lead, url) => `${lead}${link(url, labelFor(url, sourceLine), theme)}`);
   return out.replace(SLOT, (whole, i) => slots[Number(i)] ?? '');
 }
 
@@ -472,7 +493,10 @@ export function renderEmailBody(markdown, theme = KINDS.letter) {
     }
     const text = para.join('\n');
     if (SOURCE_LINE.test(text)) {
-      out.push(`<p class="sx-quiet" style="margin:-6px 0 16px;font-size:12.5px;line-height:1.6;color:${BASE.faint};${WRAP}">${inline(text, theme).replace(/\n/g, '<br>')}</p>`);
+      out.push(
+        `<p class="sx-quiet" style="margin:-6px 0 16px;font-size:12.5px;line-height:1.6;color:${BASE.faint};${WRAP}">` +
+          `${inline(text, theme, { sourceLine: true }).replace(/\n/g, '<br>')}</p>`,
+      );
     } else if (LONE_LINK.test(text)) {
       const [, label, url] = text.match(LONE_LINK);
       out.push(button(url, label, theme));

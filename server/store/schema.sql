@@ -722,3 +722,99 @@ UPDATE chats c
 -- would fill every existing row with 0 at once, the backfill above would find
 -- nothing NULL, and every old conversation would start issuing seq 0 again.
 ALTER TABLE chats ALTER COLUMN next_seq SET DEFAULT 0;
+
+-- ── 19: a project source keeps its original, and something to show ──────────
+-- `project_files` stored the extracted *text* and nothing else, which is all a
+-- grounded answer needs and not enough for anything a person does with a shelf.
+-- There was no way to show what a source looks like, no way to open one, and no
+-- way to get back the file that was uploaded — the bytes were read once and
+-- dropped.
+--
+-- `attachment_id` points at the original, stored in the table that already
+-- holds uploaded bytes and already has a route that serves them under a
+-- `default-src 'none'` policy. Reusing it rather than adding a second blob
+-- column means one place where uploads are stored, swept and served, and no
+-- second opinion about which content types are safe to hand back.
+--
+-- `thumb` is a small picture of the source — an image scaled down, or a PDF's
+-- first page — rendered once by the browser that uploaded it. Inline rather
+-- than a second attachment row because it is a few kilobytes that the shelf
+-- listing always wants; a join per card to fetch one would be the slower half
+-- of drawing the page.
+--
+-- `kind` is what the UI draws. Derivable from `mime`, and stored anyway: the
+-- classification lives in one function on the server and a copy of it in the
+-- browser would be a second opinion about what a file is.
+ALTER TABLE project_files ADD COLUMN IF NOT EXISTS kind          TEXT;
+ALTER TABLE project_files ADD COLUMN IF NOT EXISTS attachment_id TEXT REFERENCES attachments(id) ON DELETE SET NULL;
+ALTER TABLE project_files ADD COLUMN IF NOT EXISTS thumb         TEXT;
+
+-- Sources added before this have no original and no picture, and that is what
+-- they will stay: the bytes are gone. Giving them a kind at least lets the
+-- shelf draw them as something rather than as nothing.
+UPDATE project_files
+   SET kind = CASE
+                WHEN mime LIKE 'image/%'                          THEN 'image'
+                WHEN mime = 'application/pdf'                     THEN 'document'
+                WHEN mime LIKE '%wordprocessingml%'
+                  OR mime LIKE '%spreadsheetml%'
+                  OR mime LIKE '%presentationml%'                 THEN 'office'
+                ELSE 'text'
+              END
+ WHERE kind IS NULL;
+
+-- ── 20: a scheduled task belongs somewhere, and need not repeat ─────────────
+-- Three gaps, all of which show up the moment tasks are made from a project
+-- rather than from the global list.
+--
+-- `project_id` — a task made inside a project runs inside it: same standing
+-- instructions, same shelf of sources. Without this a "summarise this week's
+-- filings" task made in a project answered from nothing at all, which is the
+-- worst kind of wrong because it looks like it worked. ON DELETE SET NULL, so
+-- deleting a project leaves its tasks running as ordinary ones rather than
+-- silently taking them with it.
+--
+-- `policy` — what a run is allowed to do without being asked. A task runs at
+-- 3am with nobody watching, so "pause and ask" and "never pause" are genuinely
+-- different settings and the choice has to be the person's. Null means the
+-- account's own default, which is what every task made before this used.
+--
+-- `next_run_at` becomes nullable, which is what makes "manual only" a real
+-- option rather than a repeat scheduled so far ahead it never fires. The due
+-- query is `enabled AND next_run_at <= now()`, and NULL satisfies neither
+-- comparison, so a manual task is simply never due — it runs when the Run now
+-- button is pressed and at no other time.
+ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;
+ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS policy     TEXT;
+ALTER TABLE scheduled_tasks ALTER COLUMN next_run_at DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS scheduled_project_idx ON scheduled_tasks (project_id, created_at);
+
+-- ── 21: a conversation can be filed, archived, or marked unread ─────────────
+-- The sidebar lists a project's conversations under the project rather than
+-- mixed into one flat list, and the menus on those rows offer what you would
+-- expect to be able to do with a filed thing. Three of those had nowhere to be
+-- recorded.
+--
+-- `archived_at` — out of the list without being destroyed. The distinction
+-- matters precisely because Delete is next to it in the same menu: archiving is
+-- what somebody reaches for when they are not sure, and a feature that silently
+-- means "delete" is the worst possible answer to that.
+--
+-- `unread` — "mark as unread" is a note to yourself that a conversation is not
+-- finished with. Nothing sets it automatically; it is a flag a person raises
+-- and lowers by opening the conversation, which is why it is a boolean rather
+-- than a read timestamp compared against the last message.
+--
+-- `chat_group` — a name, not a table. A group is a label a person invents in
+-- the "Move to group" menu, and the set of groups is the distinct set of names
+-- in use. The consequence is deliberate: a group whose last conversation leaves
+-- it stops existing, which is what somebody means by moving the last one out.
+-- A table would buy empty groups and a lifecycle to manage them, for a feature
+-- whose entire job is putting a few rows under a heading.
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS unread      BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS chat_group  TEXT;
+
+-- The sidebar reads "not archived, newest first" on every load, and the project
+-- sections read the same thing per project.
+CREATE INDEX IF NOT EXISTS chats_live_idx ON chats (user_id, archived_at, pinned, updated_at DESC);
