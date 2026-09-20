@@ -3,7 +3,7 @@ import { follow } from './mirror.js';
 import { createRuns } from './runs.js';
 import { makeResizable } from './resize.js';
 import { wireCopyButtons, escapeHtml } from './markdown.js';
-import { cleanHtml, writeRich } from './clipboard.js';
+import { cleanHtml, forWord, writeRich } from './clipboard.js';
 import {
   assistantMessage,
   userMessage,
@@ -2159,6 +2159,41 @@ $('messages').addEventListener('click', async (event) => {
   }
 
   if (button.dataset.act === 'edit') beginEdit(message, text);
+});
+
+/**
+ * Dragging across an answer and pressing Ctrl+C.
+ *
+ * This is how people actually copy — the button is the deliberate path, this
+ * is the reflex — and left alone it is the bug: the browser builds `text/html`
+ * from the *computed* style of the selection, so a transcript drawn on a dark
+ * page pastes into Google Docs as a black block with light text. Typing into
+ * it then produces light text on a light background, which reads as a document
+ * that cannot be edited.
+ *
+ * So the clipboard is written here instead, from the same stripped HTML the
+ * copy button uses. The plain flavour is the browser's own `toString()`, which
+ * is exactly what was selected.
+ */
+$('messages').addEventListener('copy', (event) => {
+  // Copying out of a message being rewritten is the browser's business.
+  if (event.target instanceof Element && event.target.closest('input, textarea, [contenteditable]')) return;
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+
+  const range = selection.getRangeAt(0);
+  if (!$('messages').contains(range.commonAncestorContainer)) return;
+
+  // `cloneContents` gives a fragment; `cleanHtml` wants an element to clone.
+  const holder = document.createElement('div');
+  holder.append(range.cloneContents());
+  const html = cleanHtml(holder);
+  if (!html) return;
+
+  event.clipboardData?.setData('text/html', forWord(html));
+  event.clipboardData?.setData('text/plain', selection.toString());
+  event.preventDefault();
 });
 
 /**
