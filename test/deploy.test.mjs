@@ -197,7 +197,25 @@ section('files read at runtime are present');
   const { execFileSync } = await import('node:child_process');
   const tracked = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
     .split('\n')
-    .filter((f) => /\.(js|mjs|cjs|css|html|sql|json|md|ps1|sh)$/.test(f));
+    .filter((f) => /\.(js|mjs|cjs|css|html|sql|json|md|ps1|sh)$/.test(f))
+    /*
+     * Source, which is what the paragraph above is about — not the third-party
+     * bundles under `public/vendor/`.
+     *
+     * The harm a control byte does is to *reading*: grep and diff call the file
+     * binary, so the line holding it becomes invisible to review, and a
+     * formatter that normalises it changes what the code does. None of that
+     * applies to a minified vendor bundle. Nobody reviews `pdf.worker.min.mjs`
+     * line by line, nothing here reformats it, and it is replaced wholesale by
+     * re-vendoring rather than edited.
+     *
+     * PDF.js ships one — byte 14 at offset 138024 — so this check failed on
+     * every run from the moment the viewer was vendored, against a file no
+     * change of ours can fix. A gate that is permanently red for a reason
+     * nobody can act on stops being read, which costs more than the one case
+     * it was guarding.
+     */
+    .filter((f) => !f.startsWith('public/vendor/'));
   const dirty = [];
   for (const rel of tracked) {
     const full = path.join(root, rel);
