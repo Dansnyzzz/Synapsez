@@ -31,7 +31,8 @@ const store = await initStore();
 
 const { hashPassword } = await import('../server/crypto.js');
 const { runParallel } = await import('../server/subagents.js');
-const { normaliseOrder, needsApproval } = await import('../server/agent.js');
+const { normaliseOrder, needsApproval, runAgent } = await import('../server/agent.js');
+const { setPrefs } = await import('../server/settings.js');
 
 let failures = 0;
 const section = (name) => console.log(`\n[1m${name}[0m`);
@@ -1300,6 +1301,133 @@ section('the modules in an import cycle can each be loaded first');
       run.status === 0,
       String(run.stderr || '').trim().split('\n').slice(-2).join(' ').slice(0, 160),
     );
+  }
+}
+
+// ── the step ceiling actually reaches the browser ────────────────────
+//
+// Both budget exits in the step loop build a `stop` descriptor with
+// `budgetStop` (server/providers/stop.js) and put it on the `done` event —
+// but until now nothing drove the *real* loop to either ceiling and looked at
+// what came out the other end. `runAgent` never took an injectable provider
+// the way `compact()` and `runParallel` already do, so it could not be driven
+// without a live key; the seam is added in server/agent.js alongside this
+// test so the wiring itself — not just the descriptor — is what is checked.
+section('the step ceiling reaches the browser, not just the descriptor');
+{
+  const stepUser = await store.createUser({
+    id: 'u-steps',
+    email: 'steps@example.com',
+    name: 'Steps',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'admin',
+  });
+
+  await setPrefs(stepUser.id, { maxSteps: 3 });
+  const chat = await store.createChat(stepUser.id, { id: 'c-steps', title: 'Loops forever' });
+  await store.appendMessage(stepUser.id, chat.id, {
+    id: 'm-steps-1',
+    role: 'user',
+    text: 'Keep going until you are told to stop.',
+  });
+
+  // Never answers with prose or stops on its own — always another safe,
+  // no-op tool call — so nothing but the step ceiling can end this turn.
+  let calls = 0;
+  const neverStops = async function* fake() {
+    calls += 1;
+    yield {
+      type: 'done',
+      stopReason: 'tool_use',
+      toolCalls: [{
+        id: `t${calls}`,
+        name: 'update_plan',
+        input: { steps: [{ title: 'a', status: 'pending' }, { title: 'b', status: 'pending' }] },
+      }],
+      usage: { input: 10, output: 5 },
+    };
+  };
+
+  const events = [];
+  await runAgent({
+    userId: stepUser.id,
+    user: stepUser,
+    chatId: chat.id,
+    emit: (type, payload) => events.push({ type, payload }),
+    stream: neverStops,
+  });
+
+  check('the provider was actually driven to the ceiling', calls === 3, `${calls} calls`);
+  const doneEvents = events.filter((e) => e.type === 'done');
+  check('exactly one done event closes the turn', doneEvents.length === 1, `${doneEvents.length}`);
+  const { stopReason, stop } = doneEvents[0]?.payload || {};
+  check('done carries stopReason max_steps', stopReason === 'max_steps', String(stopReason));
+  check('  and a stop descriptor of the same kind', stop?.kind === 'max_steps', JSON.stringify(stop));
+  check('  marked resumable, so the browser can offer Continue', stop?.resumable === true, JSON.stringify(stop));
+  check('  naming the configured ceiling', /3 steps/.test(stop?.message || ''), stop?.message);
+}
+
+// ── the token-budget exit, the same wiring ────────────────────────────
+section('the turn-token ceiling reaches the browser too');
+{
+  const tokenUser = await store.createUser({
+    id: 'u-tokens',
+    email: 'tokens@example.com',
+    name: 'Tokens',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'admin',
+  });
+
+  const chat = await store.createChat(tokenUser.id, { id: 'c-tokens', title: 'Burns tokens' });
+  await store.appendMessage(tokenUser.id, chat.id, { id: 'm-tokens-1', role: 'user', text: 'Go on.' });
+
+  // MAX_TURN_TOKENS overrides turnTokenLimit's usual "only over the shared
+  // key" rule — see server/usage.js — which is what makes this branch
+  // reachable in a test with no shared key configured at all.
+  const priorLimit = process.env.MAX_TURN_TOKENS;
+  process.env.MAX_TURN_TOKENS = '50';
+  try {
+    let calls = 0;
+    // One reply of 55 tokens (comfortably over the 50-token cap) with a tool
+    // call attached, so the loop is not done on its own terms — it is the
+    // pre-flight check at the top of the *next* step that has to catch it.
+    const oneReplyThenOver = async function* fake() {
+      calls += 1;
+      yield { type: 'text', delta: 'Partial answer.' };
+      yield {
+        type: 'done',
+        stopReason: 'tool_use',
+        toolCalls: [{
+          id: 't1',
+          name: 'update_plan',
+          input: { steps: [{ title: 'a', status: 'pending' }, { title: 'b', status: 'pending' }] },
+        }],
+        usage: { input: 30, output: 25 },
+      };
+    };
+
+    const events = [];
+    await runAgent({
+      userId: tokenUser.id,
+      user: tokenUser,
+      chatId: chat.id,
+      emit: (type, payload) => events.push({ type, payload }),
+      stream: oneReplyThenOver,
+    });
+
+    check(
+      'the provider answered once, then the cap stopped a second request',
+      calls === 1,
+      `${calls} calls`,
+    );
+    const doneEvents = events.filter((e) => e.type === 'done');
+    const { stopReason, stop } = doneEvents[0]?.payload || {};
+    check('done carries stopReason token_limit', stopReason === 'token_limit', String(stopReason));
+    check('  and a stop descriptor of the same kind', stop?.kind === 'token_limit', JSON.stringify(stop));
+    check('  marked resumable', stop?.resumable === true, JSON.stringify(stop));
+  } finally {
+    if (priorLimit === undefined) delete process.env.MAX_TURN_TOKENS;
+    else process.env.MAX_TURN_TOKENS = priorLimit;
   }
 }
 

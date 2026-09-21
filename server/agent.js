@@ -785,7 +785,12 @@ export function applyStreamEvent(ev, assistant, emit) {
   return ev;
 }
 
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, emit, signal, deviceHint, policy: policyOverride = null }) {
+/**
+ * @param stream  the provider call, injectable so the loop can be driven in a
+ *   test with no network — see `compact()` and `runParallel` for the same seam.
+ *   Defaults to the real `streamCompletion`.
+ */
+export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, emit, signal, deviceHint, policy: policyOverride = null, stream = streamCompletion }) {
   const store = getStore();
   const prefs = await getPrefs(userId);
 
@@ -1182,7 +1187,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         extractText: !readsPdfNatively(entry),
       });
 
-      for await (const ev of streamCompletion({
+      for await (const ev of stream({
         userId,
         entry,
         system,
