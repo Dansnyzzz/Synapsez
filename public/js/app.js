@@ -2133,7 +2133,7 @@ $('messages').addEventListener('click', async (event) => {
    * Markdown the answer was written in.
    */
   const assistant = button.closest('.msg--assistant');
-  if (assistant) {
+  if (assistant && button.dataset.act === 'copy') {
     const wrote = await writeRich({
       html: cleanHtml(assistant.querySelector('.prose')),
       text: markdownOf(assistant),
@@ -2656,6 +2656,17 @@ async function stream(decision) {
     runId: crypto.randomUUID(),
   });
   if (!run) return;
+  /**
+   * A stop note from an earlier turn in this same conversation may still be on
+   * screen — the user ignored it and sent something else instead of pressing
+   * Continue. Its sentence stays; it is still a true record of what happened.
+   * Its button does not: pressing it now would start this new run over again
+   * from the conversation's *current* end, nowhere near where the button
+   * sits. `openChat` already clears the note itself when leaving the
+   * conversation entirely (`host.innerHTML = ''`) — this is the case that
+   * left: staying put and simply carrying on.
+   */
+  for (const stale of $('messages').querySelectorAll('.stopnote__go')) stale.remove();
   setRunning(true);
   hideApproval();
   // A new turn earns one automatic preview. Whatever the last one did — opened
