@@ -72,8 +72,9 @@ export const isChromeAttribute = (name) => name === 'class' || name === 'style' 
  * Works on a clone, so nothing on screen is touched — the node being copied is
  * usually the answer the person is still reading.
  *
- * Nodes go before attributes: the selector above matches on `class`, so
- * removing attributes first would leave nothing to find the buttons by.
+ * Nodes go before attributes: the selector above matches on `class`, and so
+ * does the formula rewrite below it, so removing attributes first would leave
+ * nothing to find either of them by.
  *
  * @param {Element|null} node
  * @returns {string}
@@ -84,9 +85,52 @@ export function cleanHtml(node) {
 
   for (const junk of clone.querySelectorAll(CHROME_SELECTOR)) junk.remove();
 
+  /**
+   * A formula, as the source that produced it.
+   *
+   * KaTeX renders every formula twice — a MathML copy for screen readers and a
+   * pile of positioned glyph spans for the eye — and hides the first with
+   * nothing but a class. Strip the classes and both become visible: the answer
+   * arrives in the document as raw TeX followed by its own characters in the
+   * wrong order.
+   *
+   * The TeX is what survives a paste with its meaning intact. MathML would
+   * render as a real equation in Word, but Google Docs — which is where these
+   * answers actually go — discards it, and a formula that silently vanishes is
+   * worse than one written out.
+   *
+   * Before the attribute sweep, because the sweep removes the classes these are
+   * found by.
+   */
+  for (const math of clone.querySelectorAll('.katex')) {
+    const tex = math.querySelector('annotation[encoding="application/x-tex"]')?.textContent ?? math.textContent;
+    const display = !!math.closest('.katex-display');
+    math.replaceWith(document.createTextNode(display ? `$$${tex}$$` : `$${tex}$`));
+  }
+
   for (const element of [clone, ...clone.querySelectorAll('*')]) {
     for (const name of element.getAttributeNames()) {
       if (isChromeAttribute(name)) element.removeAttribute(name);
+    }
+
+    /**
+     * This app's own links, as links that work from anywhere.
+     *
+     * `href` and `src` are kept because they are content — but the transcript's
+     * are root-relative (`/api/attachments/…`), and a document is read
+     * somewhere that has no idea what this app's origin is. The browser's own
+     * serialiser absolutised them; this one has to do it itself, or a pasted
+     * attachment link points at nothing. The target is behind a login, which is
+     * a far better answer than a dead link.
+     */
+    for (const name of ['href', 'src']) {
+      const value = element.getAttribute(name);
+      if (!value) continue;
+      try {
+        element.setAttribute(name, new URL(value, location.href).href);
+      } catch {
+        // A value no URL parser accepts is left exactly as it was found.
+      }
     }
   }
 

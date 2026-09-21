@@ -4382,7 +4382,7 @@ section('copying an answer out does not carry the dark theme with it');
 {
   // The stripper, against the exact shapes the transcript produces: a code
   // block with its Copy button, a table, a heading with a class on it.
-  const stripped = await page.evaluate(async () => {
+  const { stripped, origin } = await page.evaluate(async () => {
     const { cleanHtml } = await import('/js/clipboard.js');
     const host = document.createElement('div');
     host.innerHTML =
@@ -4390,10 +4390,11 @@ section('copying an answer out does not carry the dark theme with it');
       '<h2 class="h" style="background:#111;color:#eee">Chênh lệch lãi suất</h2>' +
       '<table><tr><th>Năm</th><td>2026</td></tr></table>' +
       '<p>Xem <a href="https://example.com/a">nguồn</a>.</p>' +
+      '<p>Tệp <a href="/api/attachments/f1?download=1">báo cáo.xlsx</a>.</p>' +
       '<div class="codeblock"><div class="codeblock__bar"><span>js</span>' +
       '<button class="copy-btn" data-copy>Copy</button></div><pre><code>x=1</code></pre></div>' +
       '</div>';
-    return cleanHtml(host);
+    return { stripped: cleanHtml(host), origin: location.origin };
   });
 
   check('no class survives', !stripped.includes('class='), stripped.slice(0, 160));
@@ -4404,6 +4405,60 @@ section('copying an answer out does not carry the dark theme with it');
   check('the table is still a table', stripped.includes('<th>Năm</th>') && stripped.includes('<td>2026</td>'));
   check('the source link survives', stripped.includes('href="https://example.com/a"'));
   check('the code is still there', stripped.includes('x=1'));
+  // The browser's own serialiser absolutised these; ours has to, or the
+  // attachment link in a pasted report points at whatever host opens it.
+  check(
+    'this app’s own link is made absolute, not left root-relative',
+    stripped.includes(`href="${origin}/api/attachments/f1?download=1"`),
+    stripped.slice(0, 400),
+  );
+}
+
+section('a formula travels as its source, not as both halves of KaTeX');
+{
+  /**
+   * KaTeX draws every formula twice — a MathML copy for screen readers, a pile
+   * of positioned glyph spans for the eye — and hides the first with a class
+   * and nothing else. `cleanHtml` strips classes, so without a deliberate
+   * rewrite a pasted answer carries the TeX *and* the glyphs, in that order,
+   * the second lot scrambled because their layout was class-driven too. This
+   * is the one content type the whole branch exists to carry into a report.
+   */
+  const maths = await page.evaluate(async () => {
+    const { renderMarkdown } = await import('/js/markdown.js');
+    const { loadMath } = await import('/js/math.js');
+    const { cleanHtml } = await import('/js/clipboard.js');
+    await loadMath();
+
+    const host = document.createElement('div');
+    host.className = 'prose';
+    host.innerHTML = renderMarkdown(
+      'Giá trị hiện tại của một dòng tiền là $PV = \\frac{CF}{1+r}$, nên cả dự án là\n\n' +
+      '$$NPV = \\sum_{t=1}^{n} PV_t - I_0$$\n\nvới $I_0$ là vốn bỏ ra ban đầu.',
+    );
+    document.body.append(host);
+    const typeset = host.querySelectorAll('.katex').length;
+    const out = cleanHtml(host);
+    host.remove();
+    return { out, typeset };
+  });
+
+  const count = (hay, needle) => hay.split(needle).length - 1;
+
+  check('the fixture really was typeset by KaTeX', maths.typeset === 3, String(maths.typeset));
+  check(
+    'the inline formula arrives once, as its TeX',
+    count(maths.out, 'PV = \\frac{CF}{1+r}') === 1,
+    maths.out.slice(0, 200),
+  );
+  check(
+    'the display formula arrives once, marked as display',
+    count(maths.out, '$$NPV = \\sum_{t=1}^{n} PV_t - I_0$$') === 1,
+    maths.out.slice(0, 300),
+  );
+  check('no MathML goes with it — Google Docs drops it', !maths.out.includes('<math'), maths.out.slice(0, 200));
+  check('and no annotation element is left behind', !maths.out.includes('annotation'), maths.out.slice(0, 200));
+  check('the Vietnamese prose around it is intact', maths.out.includes('vốn bỏ ra ban đầu'), maths.out.slice(0, 200));
 }
 
 section('the assistant’s answer has a copy button');
