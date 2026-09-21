@@ -25,7 +25,7 @@ import { limit as rateLimit, forgive } from './ratelimit.js';
 import { publicUrlFor } from './util/net.js';
 import { emailBackend } from './email.js';
 import { summary as usageSummary, limitFor } from './usage.js';
-import { getPrefs, setPrefs, setApiKey, addApiKey, removeApiKey, providerStatus } from './settings.js';
+import { getPrefs, setPrefs, setApiKey, addApiKey, removeApiKey, providerStatus, DEFAULT_PREFS } from './settings.js';
 import { getStore, initStore, isServerless } from './store/index.js';
 import { RUN_LEASE_STALE_MS } from './store/pg.js';
 import { workerStatus, usesInProcessTools, handleIndexPayload } from './localTools.js';
@@ -753,7 +753,19 @@ export function createApp() {
       const patch = {};
       for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
       if ('autoPreview' in patch) patch.autoPreview = !!patch.autoPreview;
-      if (patch.maxSteps != null) patch.maxSteps = Math.min(Math.max(Number(patch.maxSteps) || 30, 1), 100);
+      /**
+       * Clearing the box means "whatever the default is", not "thirty".
+       *
+       * An empty Max-steps field sends `''`, `Number('') === 0` is falsy, and
+       * the `||` falls through — so the number written to the account is
+       * whatever this literal says. It said 30 long after 30 stopped being the
+       * default, which silently halved the ceiling for anyone who cleared it.
+       * Taken from `DEFAULT_PREFS` so the two cannot drift again. The 100 is
+       * this route's own hard cap and is deliberately a literal.
+       */
+      if (patch.maxSteps != null) {
+        patch.maxSteps = Math.min(Math.max(Number(patch.maxSteps) || DEFAULT_PREFS.maxSteps, 1), 100);
+      }
       try {
         res.json(await setPrefs(req.user.id, patch));
       } catch (err) {

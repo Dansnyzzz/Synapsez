@@ -5,7 +5,7 @@ import { CATALOG } from './providers/catalog.js';
 const PREFS_KEY = 'prefs';
 const KEYS_KEY = 'providerKeys';
 
-const DEFAULT_PREFS = {
+export const DEFAULT_PREFS = {
   defaultModel: 'anthropic/claude-opus-5',
   effort: 'high',
   /**
