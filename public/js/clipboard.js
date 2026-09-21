@@ -122,12 +122,23 @@ export function cleanHtml(node) {
      * serialiser absolutised them; this one has to do it itself, or a pasted
      * attachment link points at nothing. The target is behind a login, which is
      * a far better answer than a dead link.
+     *
+     * Resolved against `location.origin` rather than the current page's full
+     * URL, so this never drags the SPA's own route or query string into a link
+     * that never had one — a root-relative path only ever meant "this origin".
+     *
+     * An in-page anchor (`#section`) is left alone: rewritten against the
+     * origin it would become a link back to this app's current route, which is
+     * a worse answer than the bare fragment a reader can at least recognise as
+     * unresolved. `mailto:` and `data:` need no guard of their own — `URL`
+     * already treats a value with its own scheme as absolute and passes it
+     * through untouched.
      */
     for (const name of ['href', 'src']) {
       const value = element.getAttribute(name);
-      if (!value) continue;
+      if (!value || value.startsWith('#')) continue;
       try {
-        element.setAttribute(name, new URL(value, location.href).href);
+        element.setAttribute(name, new URL(value, location.origin).href);
       } catch {
         // A value no URL parser accepts is left exactly as it was found.
       }

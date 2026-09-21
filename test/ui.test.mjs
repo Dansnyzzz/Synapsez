@@ -4391,6 +4391,7 @@ section('copying an answer out does not carry the dark theme with it');
       '<table><tr><th>Năm</th><td>2026</td></tr></table>' +
       '<p>Xem <a href="https://example.com/a">nguồn</a>.</p>' +
       '<p>Tệp <a href="/api/attachments/f1?download=1">báo cáo.xlsx</a>.</p>' +
+      '<p>Xem <a href="#section-2">mục 2</a> và <a href="mailto:a@b.com">liên hệ</a>.</p>' +
       '<div class="codeblock"><div class="codeblock__bar"><span>js</span>' +
       '<button class="copy-btn" data-copy>Copy</button></div><pre><code>x=1</code></pre></div>' +
       '</div>';
@@ -4412,6 +4413,11 @@ section('copying an answer out does not carry the dark theme with it');
     stripped.includes(`href="${origin}/api/attachments/f1?download=1"`),
     stripped.slice(0, 400),
   );
+  // Rewriting these against the origin would turn a harmless in-page anchor
+  // into a link back at this app's current route, and would be a no-op on the
+  // scheme-carrying ones anyway — both are left exactly as written.
+  check('an in-page anchor is left alone, not turned into a link back at this app', stripped.includes('href="#section-2"'), stripped.slice(0, 400));
+  check('a mailto: link is untouched', stripped.includes('href="mailto:a@b.com"'), stripped.slice(0, 400));
 }
 
 section('a formula travels as its source, not as both halves of KaTeX');
@@ -4488,6 +4494,56 @@ section('the assistant’s answer has a copy button');
   check('and it rendered as a heading', state.rendered.includes('<h2>'), state.rendered.slice(0, 120));
 }
 
+section('an assistant action only copies when it actually is the copy button');
+{
+  /**
+   * The user branch of this same click handler has always checked
+   * `dataset.act === 'copy'` before writing to the clipboard; the assistant
+   * branch treated *any* `.msg__action` inside `.msg--assistant` as one. Only
+   * a copy button is ever rendered there today, so nothing has broken yet —
+   * this pins the guard so a second assistant action, whenever one is added,
+   * cannot copy by accident just for sitting in the same row.
+   */
+  const result = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    turn.appendText('some prose to copy');
+    turn.flushText();
+
+    // A hypothetical second action beside the real copy button.
+    const actions = turn.node.querySelector('.msg__actions');
+    const decoy = document.createElement('button');
+    decoy.className = 'msg__action';
+    decoy.type = 'button';
+    decoy.dataset.act = 'bogus';
+    actions.append(decoy);
+
+    let calls = 0;
+    const realWrite = navigator.clipboard.write?.bind(navigator.clipboard);
+    const realWriteText = navigator.clipboard.writeText?.bind(navigator.clipboard);
+    navigator.clipboard.write = async () => { calls += 1; };
+    navigator.clipboard.writeText = async () => { calls += 1; };
+
+    decoy.click();
+    await new Promise((r) => setTimeout(r, 80));
+    const afterDecoy = calls;
+
+    turn.node.querySelector('.msg__action[data-act="copy"]').click();
+    await new Promise((r) => setTimeout(r, 80));
+    const afterCopy = calls;
+
+    navigator.clipboard.write = realWrite;
+    navigator.clipboard.writeText = realWriteText;
+    turn.node.remove();
+
+    return { afterDecoy, afterCopy };
+  });
+
+  check('a non-copy action on an assistant turn never touches the clipboard', result.afterDecoy === 0, String(result.afterDecoy));
+  check('while the real copy button still does', result.afterCopy > 0, String(result.afterCopy));
+}
+
 section('a turn that ran out of room says so, and offers the way on');
 {
   const note = await page.evaluate(async () => {
@@ -4508,6 +4564,59 @@ section('a turn that ran out of room says so, and offers the way on');
   check('a refusal does not', note.refusedHasButton === false);
   // A second press would start a second run and be refused by the run lock.
   check('and the note goes once it is pressed', note.goneAfterPress);
+}
+
+section('a stale Continue button does not outlive the note it belongs to');
+{
+  /**
+   * The case the section above does not cover: the user hits the step
+   * ceiling, gets the note with its button, and instead of pressing it types
+   * something else. Two more turns finish. The old note is still sitting
+   * mid-transcript with a live button whose sentence says "carry on from
+   * exactly here" — and pressing it now would start a run from the
+   * conversation's *current* end, far from where the button sits.
+   *
+   * `openChat` already handles leaving the conversation entirely — it rebuilds
+   * `#messages` from scratch. What is new here is staying put: `stream()`
+   * itself has to clear a stale button the moment a fresh run starts, while
+   * leaving the note's sentence in place as a true record of what happened.
+   */
+  const made = await page.evaluate(async () => {
+    const post = (url, body) =>
+      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(
+        (r) => r.json(),
+      );
+    const { chat } = await post('/api/chats', {});
+    await post(`/api/chats/${chat.id}/messages`, { text: 'first question' });
+    return chat.id;
+  });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(900);
+  await page.click(`.chat-row[data-chat="${made}"]`);
+  await page.waitForTimeout(500);
+
+  // Stand in for the note a finished run would have left behind.
+  await page.evaluate(async () => {
+    const { stopNote } = await import('/js/render.js');
+    document
+      .getElementById('messages')
+      .append(stopNote('max_steps', 'Dừng ở đây vì hết bước.', () => {}));
+  });
+
+  await page.fill('#input', 'keep going anyway');
+  await page.click('#send');
+  await page.waitForTimeout(600);
+
+  const after = await page.evaluate(() => ({
+    lineStillThere: [...document.querySelectorAll('.stopnote__line')].some(
+      (l) => l.textContent === 'Dừng ở đây vì hết bước.',
+    ),
+    buttonGone: !document.querySelector('.stopnote__go'),
+  }));
+
+  check('the note itself is kept — it is still a true record of what happened', after.lineStillThere);
+  check('but its Continue button is cleared the moment a new run starts', after.buttonGone);
 }
 
 section('the Ctrl+C path itself produces a clean payload, not just cleanHtml in isolation');
