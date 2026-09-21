@@ -97,6 +97,7 @@ export const en = {
   'chat.openNamed': 'Open {name}',
   'chat.copy': 'Copy',
   'chat.edit': 'Edit',
+  'chat.continue': 'Continue',
   'chat.summaryFold': 'Read the summary',
   'chat.compacted': '{n} earlier messages summarised to free up room',
   'chat.compactedOne': '1 earlier message summarised to free up room',

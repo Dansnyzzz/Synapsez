@@ -1244,12 +1244,35 @@ export function summaryDivider(replaced, text) {
  * `role="status"` rather than `alert`: it is worth announcing to a screen reader
  * when it appears, and it is not an interruption.
  */
-export function stopNote(kind, text) {
+export function stopNote(kind, text, onContinue = null) {
   const wrap = el('div', `stopnote stopnote--${kind || 'unknown'}`);
   wrap.setAttribute('role', 'status');
   const line = el('div', 'stopnote__line');
   line.textContent = text;
   wrap.append(line);
+
+  /**
+   * The way on, where the explanation is.
+   *
+   * Only for the stops that really can carry on — see `isResumable` on the
+   * server. Offering it on a refusal would be a button that reproduces the
+   * refusal, which is worse than no button.
+   *
+   * It removes itself before handing over: a second press would start a second
+   * run against the same conversation, which the run lock refuses with a 409
+   * and which reads as the button being broken.
+   */
+  if (onContinue) {
+    const go = el('button', 'stopnote__go');
+    go.type = 'button';
+    go.textContent = t('chat.continue');
+    go.addEventListener('click', () => {
+      wrap.remove();
+      onContinue();
+    });
+    wrap.append(go);
+  }
+
   return wrap;
 }
 

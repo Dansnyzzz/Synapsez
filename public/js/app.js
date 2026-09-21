@@ -2908,7 +2908,7 @@ async function streamOnce(run, decision) {
  * and again on the way out, and two identical notices side by side read as two
  * separate failures.
  */
-function noteStop({ kind, message, detail }, run) {
+function noteStop({ kind, message, detail, resumable }, run) {
   // `t` returns the key itself for a string it does not have — see i18n.js,
   // where that is deliberate so a gap is loud rather than silently English.
   // Here it is the signal to fall back to what the server wrote.
@@ -2922,7 +2922,9 @@ function noteStop({ kind, message, detail }, run) {
   const body = sentence && detail ? `${sentence} (${detail})` : sentence;
   if (!body || run.lastStopNote === `${kind}:${body}`) return;
   run.lastStopNote = `${kind}:${body}`;
-  run.stage.append(stopNote(kind, body));
+  run.stage.append(
+    stopNote(kind, body, resumable && onScreen(run) ? () => { void stream(); } : null),
+  );
   maybeScroll(run);
 }
 

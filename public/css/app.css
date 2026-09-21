@@ -3832,6 +3832,24 @@ details.block pre {
   line-height: 1.5;
   color: var(--text);
 }
+/* The way on, where the explanation is — see stopNote(). */
+.stopnote__go {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s;
+}
+.stopnote__go:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
 
 /* ─────────────────────────────────────────────────────────────
    Documents: the cards, and the viewer that opens them

@@ -225,6 +225,7 @@ export const vi = {
   'chat.openNamed': 'Mở {name}',
   'chat.copy': 'Sao chép',
   'chat.edit': 'Sửa',
+  'chat.continue': 'Tiếp tục',
   'chat.summaryFold': 'Đọc bản tóm tắt',
   'chat.compacted': 'Đã tóm tắt {n} tin nhắn cũ để lấy thêm chỗ',
   'chat.compactedOne': 'Đã tóm tắt 1 tin nhắn cũ để lấy thêm chỗ',
