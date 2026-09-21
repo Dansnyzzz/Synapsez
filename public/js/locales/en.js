@@ -73,7 +73,7 @@ export const en = {
   'stop.max_steps':
     'Stopped here because this turn used all the tool steps it is allowed. Nothing went wrong — press Continue to carry on from exactly here, or raise the limit in Settings → Behaviour.',
   'stop.token_limit':
-    'Stopped here because this turn used all the tokens it is allowed. Nothing went wrong — press Continue to carry on from exactly here, or raise the limit in Settings → Behaviour.',
+    'Stopped here because this turn used all the tokens it is allowed. Nothing went wrong — press Continue to carry on from exactly here.',
 
   // The run has stopped and is waiting on a person — see the alertdialog in
   // index.html. It was the one heading in the composer never translated.

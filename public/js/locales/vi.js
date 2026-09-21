@@ -205,7 +205,7 @@ export const vi = {
   'stop.max_steps':
     'Dừng ở đây vì lượt này đã dùng hết số bước công cụ được phép. Không có gì hỏng — bấm Tiếp tục để chạy tiếp từ đúng chỗ này, hoặc nâng giới hạn trong Cài đặt → Hành vi.',
   'stop.token_limit':
-    'Dừng ở đây vì lượt này đã dùng hết số token được phép. Không có gì hỏng — bấm Tiếp tục để chạy tiếp từ đúng chỗ này, hoặc nâng giới hạn trong Cài đặt → Hành vi.',
+    'Dừng ở đây vì lượt này đã dùng hết số token được phép. Không có gì hỏng — bấm Tiếp tục để chạy tiếp từ đúng chỗ này.',
 
   'approval.title': 'Duyệt các hành động này?',
   'composer.label': 'Tin nhắn',
