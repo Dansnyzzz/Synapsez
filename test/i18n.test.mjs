@@ -189,6 +189,32 @@ section('the onboarding steps are all present');
   check('the step counter names both numbers', /\{n\}/.test(vi['onb.step']) && /\{total\}/.test(vi['onb.step']), vi['onb.step']);
 }
 
+/**
+ * Every reason a reply can stop short has a sentence in both languages.
+ *
+ * `noteStop` in app.js looks up `stop.<kind>` with the kind computed at
+ * runtime, so the "strings the script builds" section above cannot see it — a
+ * computed key is skipped rather than guessed at. Without this check a new
+ * stop kind reaches the transcript as the literal text `stop.max_steps`.
+ *
+ * Only the kinds that mean the reply is *not* finished: `end_turn`,
+ * `tool_use` and `stop_sequence` are never drawn.
+ */
+section('every way a reply can stop short has a sentence');
+{
+  const { STOP_KINDS, isComplete } = await import('../server/providers/stop.js');
+  const shown = STOP_KINDS.filter((kind) => !isComplete(kind));
+
+  check('there are kinds to check', shown.length > 0, shown.join(', '));
+  const missing = shown.filter((kind) => !(`stop.${kind}` in vi) || !(`stop.${kind}` in en));
+  check('and each one has a string in both languages', missing.length === 0, missing.join(', '));
+
+  // The two budget exits are the ones a person can act on, so they must exist
+  // as kinds at all — a typo here would silently fall back to `stop.unknown`.
+  check('running out of steps is one of them', shown.includes('max_steps'));
+  check('running out of tokens is another', shown.includes('token_limit'));
+}
+
 console.log(
   failures === 0
     ? '\n\x1b[32mAll i18n checks passed.\x1b[0m\n'

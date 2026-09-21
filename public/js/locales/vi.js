@@ -202,6 +202,10 @@ export const vi = {
   'stop.recitation':
     'Dừng lại vì câu trả lời đang chép lại tài liệu nguồn quá sát. Hỏi lại bằng lời của bạn thì thường sẽ qua.',
   'stop.unknown': 'Nhà cung cấp kết thúc câu trả lời này mà không nói lý do.',
+  'stop.max_steps':
+    'Dừng ở đây vì lượt này đã dùng hết số bước công cụ được phép. Không có gì hỏng — bấm Tiếp tục để chạy tiếp từ đúng chỗ này, hoặc nâng giới hạn trong Cài đặt → Hành vi.',
+  'stop.token_limit':
+    'Dừng ở đây vì lượt này đã dùng hết số token được phép. Không có gì hỏng — bấm Tiếp tục để chạy tiếp từ đúng chỗ này, hoặc nâng giới hạn trong Cài đặt → Hành vi.',
 
   'approval.title': 'Duyệt các hành động này?',
   'composer.label': 'Tin nhắn',

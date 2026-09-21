@@ -8,7 +8,20 @@ const KEYS_KEY = 'providerKeys';
 const DEFAULT_PREFS = {
   defaultModel: 'anthropic/claude-opus-5',
   effort: 'high',
-  maxSteps: 30,
+  /**
+   * How many tool steps one turn may take.
+   *
+   * Thirty was a guess made before anything used the research tools, and a
+   * real question — "look into this project and tell me what you find" — burns
+   * fifteen to twenty-five searches and fetches before it has anything to say.
+   * Hitting the ceiling mid-answer was the single most common way a turn
+   * ended. Sixty covers that work; the hard cap in `server/app.js` is 100 for
+   * anyone who wants more.
+   *
+   * This is the default for a *new* account. An account that already has prefs
+   * stored keeps the number it has — Settings → Behaviour is where it changes.
+   */
+  maxSteps: 60,
   // Ordinary work proceeds; only the irreversible stops for a yes. Asking about
   // everything trains people to click through without reading, which protects
   // nobody.

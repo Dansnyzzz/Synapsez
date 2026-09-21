@@ -3,6 +3,7 @@ import { getStore } from './store/index.js';
 import { getPrefs, usesSharedKey, providerStatus } from './settings.js';
 import { checkQuota, record as recordUsage, turnTokenLimit } from './usage.js';
 import { streamCompletion } from './providers/index.js';
+import { budgetStop } from './providers/stop.js';
 import { resolve as resolveModelId } from './models.js';
 import { isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
 import { availableTools, assessRisk, riskReason, TOOLS_BY_NAME } from './tools/definitions.js';
@@ -1076,11 +1077,19 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
     // Checked before the next request, not after: the point is not to send it.
     if (turnLimit && turnTokens >= turnLimit) {
-      emit('status', {
-        phase: 'token_limit',
-        message: `Stopped after ${turnTokens.toLocaleString()} tokens in this turn. Send a message to continue.`,
-      });
-      emit('done', { stopReason: 'token_limit' });
+      /**
+       * Said on `done`, not as a passing status line.
+       *
+       * It used to be a `status` event, which the browser shows as a toast —
+       * gone in three seconds, leaving a turn that appears to have stopped for
+       * no reason. It is the opposite of passing information: the one thing
+       * somebody needs to know about this turn is why it is not finished.
+       */
+      const stop = budgetStop(
+        'token_limit',
+        `Stopped after ${turnTokens.toLocaleString()} tokens in this turn. Send a message to continue.`,
+      );
+      emit('done', { stopReason: 'token_limit', stop });
       return;
     }
 
@@ -1365,11 +1374,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     messages.push(await store.appendMessage(userId, chatId, toolMessage));
   }
 
-  emit('status', {
-    phase: 'step_limit',
-    message: `Stopped after ${prefs.maxSteps} steps. Send a message to continue.`,
-  });
-  emit('done', { stopReason: 'max_steps' });
+  // `stopReason` keeps its value: server/workflows.js reads it to fail a step
+  // that ran out of room, and the browser reads `stop` to offer the way on.
+  const stop = budgetStop('max_steps', `Stopped after ${prefs.maxSteps} steps. Send a message to continue.`);
+  emit('done', { stopReason: 'max_steps', stop });
 }
 
 /** Cheap, free title from the opening message — the user can always rename. */

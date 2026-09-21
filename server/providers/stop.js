@@ -49,6 +49,8 @@ export const STOP_KINDS = [
   'filtered',
   'recitation',
   'stop_sequence',
+  'max_steps',
+  'token_limit',
   'unknown',
 ];
 
@@ -57,6 +59,30 @@ const COMPLETE = new Set(['end_turn', 'tool_use', 'stop_sequence']);
 
 /** Whether this outcome left the user with a finished answer. */
 export const isComplete = (kind) => COMPLETE.has(kind);
+
+/**
+ * The kinds that stopped for want of budget rather than because anything went
+ * wrong — so the same turn, unchanged, carries on if it is asked to.
+ *
+ * This is the distinction the interface needs to decide whether offering a
+ * Continue button is honest. A reply blocked by a content filter must not get
+ * one: pressing it would produce the same refusal.
+ */
+const RESUMABLE = new Set(['max_steps', 'token_limit']);
+
+/** Whether a turn that stopped this way can simply be told to carry on. */
+export const isResumable = (kind) => RESUMABLE.has(kind);
+
+/**
+ * The `stop` descriptor for a turn that ran out of a budget.
+ *
+ * Shaped exactly like `normaliseStop`'s result so the browser has one thing to
+ * read, with `resumable` added. These do not come from a provider — they are
+ * this server's own limits — so `raw` is the kind itself.
+ */
+export function budgetStop(kind, message) {
+  return { kind, raw: kind, message, detail: null, resumable: isResumable(kind) };
+}
 
 /**
  * Provider wording → our vocabulary.
