@@ -4378,6 +4378,217 @@ section('mathematics in a reply is drawn as mathematics');
   check('nothing under /vendor/katex failed to load', failed.length === 0, failed.join(' '));
 }
 
+section('copying an answer out does not carry the dark theme with it');
+{
+  // The stripper, against the exact shapes the transcript produces: a code
+  // block with its Copy button, a table, a heading with a class on it.
+  const stripped = await page.evaluate(async () => {
+    const { cleanHtml } = await import('/js/clipboard.js');
+    const host = document.createElement('div');
+    host.innerHTML =
+      '<div class="prose" data-message-id="m1">' +
+      '<h2 class="h" style="background:#111;color:#eee">Chênh lệch lãi suất</h2>' +
+      '<table><tr><th>Năm</th><td>2026</td></tr></table>' +
+      '<p>Xem <a href="https://example.com/a">nguồn</a>.</p>' +
+      '<div class="codeblock"><div class="codeblock__bar"><span>js</span>' +
+      '<button class="copy-btn" data-copy>Copy</button></div><pre><code>x=1</code></pre></div>' +
+      '</div>';
+    return cleanHtml(host);
+  });
+
+  check('no class survives', !stripped.includes('class='), stripped.slice(0, 160));
+  check('no inline style survives', !stripped.includes('style='), stripped.slice(0, 160));
+  check('no data- attribute survives', !stripped.includes('data-'), stripped.slice(0, 160));
+  check('the Copy button is gone', !stripped.includes('Copy</button>'));
+  check('the heading is still a heading', stripped.includes('<h2>Chênh lệch lãi suất</h2>'));
+  check('the table is still a table', stripped.includes('<th>Năm</th>') && stripped.includes('<td>2026</td>'));
+  check('the source link survives', stripped.includes('href="https://example.com/a"'));
+  check('the code is still there', stripped.includes('x=1'));
+}
+
+section('the assistant’s answer has a copy button');
+{
+  const state = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+
+    const before = !!turn.node.querySelector('.msg__actions');
+    turn.appendText('## Kết luận\n\nUSD giảm giá so với EUR.');
+    turn.flushText();
+
+    const { markdownOf } = await import('/js/render.js');
+    return {
+      before,
+      after: !!turn.node.querySelector('.msg__action[data-act="copy"]'),
+      markdown: markdownOf(turn.node),
+      rendered: turn.node.querySelector('.prose')?.innerHTML ?? '',
+    };
+  });
+
+  // A turn that only ran tools has nothing to copy, so it gets no button.
+  check('no button before there is prose', state.before === false);
+  check('a copy button once there is', state.after);
+  check('the Markdown behind it is kept', state.markdown.includes('## Kết luận'), state.markdown);
+  check('and it rendered as a heading', state.rendered.includes('<h2>'), state.rendered.slice(0, 120));
+}
+
+section('a turn that ran out of room says so, and offers the way on');
+{
+  const note = await page.evaluate(async () => {
+    const { stopNote } = await import('/js/render.js');
+    let pressed = 0;
+    const resumable = stopNote('max_steps', 'Dừng ở đây vì…', () => { pressed += 1; });
+    const refused = stopNote('refused', 'Từ chối.');
+    document.body.append(resumable, refused);
+    resumable.querySelector('.stopnote__go')?.click();
+    return {
+      refusedHasButton: !!refused.querySelector('button'),
+      pressed,
+      goneAfterPress: !resumable.isConnected,
+    };
+  });
+
+  check('a budget stop offers Continue', note.pressed === 1);
+  check('a refusal does not', note.refusedHasButton === false);
+  // A second press would start a second run and be refused by the run lock.
+  check('and the note goes once it is pressed', note.goneAfterPress);
+}
+
+section('the Ctrl+C path itself produces a clean payload, not just cleanHtml in isolation');
+{
+  // The plan's sections above cover `cleanHtml` directly but never exercise the
+  // `copy` listener in app.js. Build a real selection across an assistant
+  // turn's prose inside #messages, then drive the handler with a real event
+  // carrying a real DataTransfer — the way a person pressing Ctrl+C actually does.
+  //
+  // `Selection.toString()` only returns rendered text, so this needs the
+  // transcript actually on screen — a page left showing Projects or Settings
+  // by an earlier section would make the selection read as empty regardless of
+  // what the listener does, which would be testing the harness, not the app.
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await page.click('#new-chat');
+  await page.waitForTimeout(500);
+
+  const result = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    turn.appendText('## Kết luận\n\nUSD giảm giá so với EUR, theo dữ liệu quý này.');
+    turn.flushText();
+
+    const prose = turn.node.querySelector('.prose');
+    const range = document.createRange();
+    range.selectNodeContents(prose);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const selectedText = selection.toString();
+
+    // The event must be dispatched on a node INSIDE #messages so it bubbles to
+    // the delegated listener there.
+    const dt = new window.DataTransfer();
+    const event = new window.ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true });
+    prose.dispatchEvent(event);
+
+    const html = dt.getData('text/html');
+    const text = dt.getData('text/plain');
+    selection.removeAllRanges();
+    turn.node.remove();
+    return { html, text, selectedText, defaultPrevented: event.defaultPrevented };
+  });
+
+  check('the payload carries the charset meta Word needs', result.html.includes('<meta charset="utf-8">'), result.html.slice(0, 140));
+  check('no class attribute survives the real listener', !result.html.includes('class='), result.html.slice(0, 200));
+  check('no inline style survives it either', !result.html.includes('style='), result.html.slice(0, 200));
+  check('the Vietnamese text is carried across intact', result.html.includes('USD giảm giá so với EUR'), result.html.slice(0, 240));
+  check('the plain-text flavour is exactly what was selected', result.text === result.selectedText && result.text.length > 0, result.text.slice(0, 120));
+  check('the default copy was suppressed in favour of the rewritten one', result.defaultPrevented === true);
+}
+
+section('copying out of a message being edited is not intercepted');
+{
+  // `beginEdit` turns a user bubble into a box matching input, textarea or
+  // [contenteditable]. The listener has to recognise that shape and get out of
+  // the way, or editing breaks in a way nobody would connect back to this change.
+  const result = await page.evaluate(() => {
+    const host = document.createElement('div');
+    host.className = 'msg msg--user is-editing';
+    const box = document.createElement('textarea');
+    box.className = 'bubble__edit';
+    box.value = 'nội dung đang sửa dở';
+    host.append(box);
+    document.getElementById('messages').append(host);
+
+    box.focus();
+    box.setSelectionRange(0, box.value.length);
+
+    const dt = new window.DataTransfer();
+    const event = new window.ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true });
+    box.dispatchEvent(event);
+
+    const html = dt.getData('text/html');
+    const defaultPrevented = event.defaultPrevented;
+    host.remove();
+    return { html, defaultPrevented };
+  });
+
+  check('the handler puts nothing of its own on the clipboard', result.html === '', JSON.stringify(result));
+  check('and leaves the browser free to do its own thing', result.defaultPrevented === false);
+}
+
+section('an abandoned draft cannot be handed to the copy button');
+{
+  // A provider that restarts a reply on another key calls resetText(), and the
+  // turn's Markdown lives in a WeakMap. If a stale entry survived, the copy
+  // button would hand someone a paragraph the model abandoned, with nothing on
+  // screen to say so.
+  const result = await page.evaluate(async () => {
+    const { assistantMessage, markdownOf } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+
+    turn.appendText('first draft');
+    turn.flushText();
+    const afterFirst = {
+      markdown: markdownOf(turn.node),
+      hasButton: !!turn.node.querySelector('.msg__actions'),
+    };
+
+    turn.resetText();
+    const afterReset = {
+      markdown: markdownOf(turn.node),
+      hasButton: !!turn.node.querySelector('.msg__actions'),
+    };
+
+    turn.appendText('second draft');
+    turn.flushText();
+    const afterSecond = {
+      markdown: markdownOf(turn.node),
+      hasButton: !!turn.node.querySelector('.msg__actions'),
+    };
+
+    turn.node.remove();
+    return { afterFirst, afterReset, afterSecond };
+  });
+
+  check(
+    'the first draft is kept, with a copy button',
+    result.afterFirst.markdown.includes('first draft') && result.afterFirst.hasButton,
+    JSON.stringify(result.afterFirst),
+  );
+  check('resetting clears the Markdown behind it', result.afterReset.markdown === '', result.afterReset.markdown);
+  check('and takes the copy button with it', result.afterReset.hasButton === false);
+  check(
+    'the second draft replaces it rather than piling on top',
+    result.afterSecond.markdown.includes('second draft') && !result.afterSecond.markdown.includes('first draft'),
+    result.afterSecond.markdown,
+  );
+  check('and the copy button is back', result.afterSecond.hasButton === true);
+}
+
 await browser.close();
 server.close();
 removeTemp(process.env.DATA_DIR);
