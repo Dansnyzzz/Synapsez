@@ -3934,18 +3934,35 @@ section('the sidebar stays a list you can glance at');
       rows: el.querySelectorAll('.chat-row').length,
       more: el.querySelector('.chats__more')?.textContent,
       scrolls: el.scrollHeight > el.clientHeight + 1,
-      // The heading stays put while its own section scrolls past it —
-      // otherwise a list scrolled into the middle has nothing saying whether
-      // you are inside a project, a group, or the ordinary list.
+      /**
+       * The heading scrolls away with its own section, and paints nothing.
+       *
+       * This pair used to assert the opposite: `position: sticky` plus a
+       * background opaque enough that rows could not be read through the
+       * letters as they passed underneath. That was right while the sidebar
+       * had a surface of its own.
+       *
+       * It does not any more — the galaxy is behind it — so the background the
+       * stickiness required was a band of flat colour laid over the sky, there
+       * at rest, when there was nothing underneath to hide. Translucent made it
+       * grey, opaque made it black, and both were a stripe the owner could see
+       * and did not want.
+       *
+       * So the stickiness went, which removes the reason for the background
+       * rather than hunting for a colour that disappears. The cost was named
+       * and accepted: scrolled deep into a long list there is no heading
+       * pinned above you saying which section you are in. These two checks now
+       * hold that decision in place — if either starts failing, someone has
+       * put the band back.
+       */
       sticky: style?.position,
-      // And it is opaque enough that rows do not show through it.
-      opaque: style?.backgroundColor !== 'rgba(0, 0, 0, 0)',
+      transparent: style?.backgroundColor === 'rgba(0, 0, 0, 0)',
     };
   });
 
   check('it scrolls once there is more than fits', list.scrolls);
-  check('the headings stay put while it does', list.sticky === 'sticky', String(list.sticky));
-  check('and rows do not show through them', list.opaque);
+  check('the headings scroll away with their section', list.sticky !== 'sticky', String(list.sticky));
+  check('and paint no band over the galaxy behind them', list.transparent, String(list.sticky));
   // Twenty of the loose ones, plus whatever is nested under a project — those
   // are not part of the flat list this caps.
   check('at most twenty loose conversations are listed', list.rows <= 24, `${list.rows}`);

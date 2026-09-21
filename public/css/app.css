@@ -1108,20 +1108,22 @@ textarea {
  * way to tell whether you were inside a project, inside a group, or in the
  * ordinary list — which is the one question a heading exists to answer.
  */
-.chats__label {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  /* The sidebar has no pane of its own, so the heading needs enough of one to
-     stop rows showing through it as they pass underneath.
-
-     The page's own background rather than the glass token: `--glass-solid` is
-     translucent, so over `--bg` it read as a grey band sitting behind every
-     heading — visible at rest, when there is nothing underneath to hide. This
-     is invisible while the list is still and still opaque while it moves,
-     which is the whole of what the heading needed. */
-  background: var(--bg);
-}
+/**
+ * The heading scrolls away with its own section, and wears nothing.
+ *
+ * It used to stick to the top of the list, which is why it needed a background
+ * at all: rows passing underneath would otherwise be read through the letters.
+ * But the sidebar is transparent on purpose — the galaxy is behind it — so any
+ * background the heading painted was a band of flat colour laid over the sky,
+ * visible at rest, when there was nothing underneath to hide in the first
+ * place. Translucent made it grey; opaque made it black; both were a stripe.
+ *
+ * Dropping the stickiness removes the reason for the background rather than
+ * hunting for a colour that disappears, and nothing can overlap the heading
+ * any more. The cost is real and was accepted: scrolled deep into a long list
+ * you no longer have a heading pinned above you saying which section you are
+ * in — the list order and the project rows are what tell you now.
+ */
 .chat-row {
   display: flex;
   align-items: center;
@@ -2476,6 +2478,41 @@ details.block pre {
   font-size: 13px;
 }
 .status-line .spinner { border-top-color: var(--accent); }
+/**
+ * The travelling stripe, for work with no countable steps.
+ *
+ * Indeterminate on purpose — see `statusLine`. It says "this is running and
+ * has not hung", which is the true and useful half of what a progress bar
+ * usually claims, without the half that would have to be made up.
+ */
+.status-line__bar {
+  position: relative;
+  flex: 1;
+  min-width: 60px;
+  max-width: 220px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line);
+}
+.status-line__bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 38%;
+  border-radius: 2px;
+  background-image: var(--galaxy);
+  background-size: 300% 100%;
+  animation: status-sweep 1.5s ease-in-out infinite, galaxy-drift 14s linear infinite;
+}
+@keyframes status-sweep {
+  from { left: -40%; }
+  to { left: 102%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Still there, still says "running", just not travelling. */
+  .status-line__bar i { animation: none; left: 0; width: 100%; opacity: 0.5; }
+}
 
 /* ── Approval ────────────────────────────────────────────────── */
 
@@ -3459,6 +3496,15 @@ details.block pre {
 }
 
 .bubble__text { white-space: pre-wrap; word-break: break-word; }
+/* An address you typed, inside your own bubble. It keeps the bubble's text
+   colour rather than taking the accent the way a link in a reply does: the
+   bubble has a surface of its own, and a violet line on it reads as something
+   the assistant wrote. The underline is what says it can be pressed. */
+.bubble__text a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+.bubble__text a:hover { color: var(--accent); }
 
 /* ── the Computers chip and its sheet ──────────────────────── */
 
@@ -6214,6 +6260,26 @@ details.block pre {
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
+  outline: none !important;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   And not on a container that is only focusable so code can put
+   the caret in it.
+
+   `#thread` carries `tabindex="-1"` so the transcript can be
+   scrolled and focused programmatically. A negative tabindex is
+   not reachable by tabbing, so a ring drawn on it points at
+   nothing a keyboard user can act on — but the guarantee above
+   is `!important`, so once the browser was in keyboard mode and
+   focus landed there, a 2px violet rectangle was drawn around
+   the entire conversation. Reproduced directly: focus `#thread`
+   after any key press and the whole column lights up.
+
+   This is not the trade-off above. Nothing that a person can tab
+   to loses its ring here.
+   ───────────────────────────────────────────────────────────── */
+[tabindex="-1"]:focus-visible {
   outline: none !important;
 }
 

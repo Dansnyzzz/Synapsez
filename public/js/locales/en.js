@@ -46,6 +46,7 @@ export const en = {
   /* What the assistant is doing, in the line above the composer. */
   'status.thinking': 'Thinking…',
   'status.compacting': 'Summarising the earlier turns…',
+  'status.compactingN': 'Folding {n} earlier turns into a summary so the conversation can carry on…',
   'status.tool': 'Running {name}…',
   // Not the same thing as thinking, and the difference is the point: the
   // provider has not started answering. The count moves, because a number that

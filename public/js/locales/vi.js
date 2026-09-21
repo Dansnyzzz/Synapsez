@@ -179,6 +179,7 @@ export const vi = {
   /* Trợ lý đang làm gì, ở dòng ngay trên khung soạn. */
   'status.thinking': 'Đang suy nghĩ…',
   'status.compacting': 'Đang tóm tắt các lượt cũ…',
+  'status.compactingN': 'Đang gộp {n} lượt cũ thành bản tóm tắt để cuộc trò chuyện chạy tiếp…',
   'status.tool': 'Đang chạy {name}…',
   // Khác hẳn với suy nghĩ, và chính chỗ khác đó mới đáng nói: nhà cung cấp
   // chưa bắt đầu trả lời. Số giây tăng dần, vì một con số biết nhúc nhích là

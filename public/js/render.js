@@ -714,6 +714,46 @@ function copyButton() {
   );
 }
 
+/**
+ * A web address, as written, with the punctuation that ends a sentence left
+ * outside it. `http` and `https` only — a `javascript:` or `data:` URL typed
+ * into the composer stays what it is, words, rather than becoming something
+ * that can be pressed.
+ */
+const URL_IN_TEXT = /https?:\/\/[^\s<>()[\]]+[^\s<>()[\].,;:!?'"]/g;
+
+/**
+ * What you typed, with its links pressable.
+ *
+ * A pasted URL sat in the bubble as plain text — you could see it, select it
+ * and copy it, but not open it, which is the one thing a link is for. The
+ * commonest shape of message in this app is an address plus a sentence about
+ * what to do with it, so that was a dead end on most turns.
+ *
+ * Built as DOM nodes and never as `innerHTML`. This is text a person typed,
+ * and the only way to be certain it is never parsed as markup is to hand the
+ * browser text nodes. The regex picks out the addresses; every character
+ * between them stays exactly as written.
+ */
+function withLinks(text) {
+  const frag = document.createDocumentFragment();
+  const source = String(text);
+  let last = 0;
+  for (const match of source.matchAll(URL_IN_TEXT)) {
+    const at = match.index ?? 0;
+    if (at > last) frag.append(document.createTextNode(source.slice(last, at)));
+    const link = document.createElement('a');
+    link.href = match[0];
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = match[0];
+    frag.append(link);
+    last = at + match[0].length;
+  }
+  if (last < source.length) frag.append(document.createTextNode(source.slice(last)));
+  return frag;
+}
+
 export function userMessage(text, files = [], id = null) {
   const wrap = el('div', 'msg msg--user');
   if (id) wrap.dataset.messageId = id;
@@ -723,7 +763,9 @@ export function userMessage(text, files = [], id = null) {
 
   if (text) {
     const body = el('div', 'bubble__text');
-    body.textContent = text;
+    // `textContent` still reads back the message exactly as typed — an anchor
+    // contributes its own text — so copying and editing a bubble are unchanged.
+    body.append(withLinks(text));
     bubble.append(body);
   }
 
@@ -1276,9 +1318,21 @@ export function stopNote(kind, text, onContinue = null) {
   return wrap;
 }
 
-export function statusLine(text) {
+/**
+ * What is happening right now, under the transcript.
+ *
+ * `bar` adds an indeterminate progress track — a stripe that travels, with no
+ * percentage on it. That is deliberate and it is the honest shape for the one
+ * thing that uses it: folding the earlier turns is a single request to a
+ * model, so there are no steps to count and nothing to be a fraction of. A
+ * number here would have to be invented, and an invented number is worse than
+ * no number, because it is believed.
+ */
+export function statusLine(text, { bar = false } = {}) {
   const node = el('div', 'status-line');
-  node.innerHTML = `<span class="spinner"></span><span>${escapeHtml(text)}</span>`;
+  node.innerHTML =
+    `<span class="spinner"></span><span>${escapeHtml(text)}</span>` +
+    (bar ? '<span class="status-line__bar" role="presentation"><i></i></span>' : '');
   return node;
 }
 

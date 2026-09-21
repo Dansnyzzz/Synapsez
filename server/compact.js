@@ -228,19 +228,30 @@ const SYSTEM = [
  *   userId: string, chatId: string, entry: any, prefs: any, messages: any[],
  *   signal?: AbortSignal,
  *   stream?: (opts: any) => AsyncGenerator<any, void, unknown>,
+ *   onProgress?: (p: { folding: number }) => void,
  * }} args
  *
  *  is optional and was not marked so: the agent loop passes one because
  * a turn can be stopped, and the chat route does not because a compaction the
  * user asked for by pressing a button has nothing to cancel it.
  */
-export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion }) {
+export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion, onProgress }) {
   const store = getStore();
   const live = activeTranscript(messages);
   const start = tailStart(live);
   if (start < 1) return null;
 
   const older = live.slice(0, start);
+  /**
+   * How many turns are about to be folded, said before the work begins.
+   *
+   * The only number about a compaction that is known and true. What follows is
+   * a single request to a model, so there is no second, third or ninetieth
+   * step to count off — a percentage here would be an animation wearing the
+   * costume of a measurement. The interface shows this count and an
+   * indeterminate bar, which is exactly as much as is actually known.
+   */
+  onProgress?.({ folding: older.length });
   const transcript = older
     .map((m) => {
       if (m.role === 'user') return `USER: ${m.text || '(files only)'}`;

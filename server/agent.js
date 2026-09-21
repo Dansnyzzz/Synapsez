@@ -1111,7 +1111,18 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     if (prefs.autoCompact !== false && shouldCompact(messages, entry)) {
       emit('status', { phase: 'compacting' });
       try {
-        const summary = await compact({ userId, chatId, entry, prefs, messages, signal });
+        const summary = await compact({
+          userId,
+          chatId,
+          entry,
+          prefs,
+          messages,
+          signal,
+          // Said as soon as the count is known, which is before the request
+          // goes out: "folding 24 earlier turns" is a great deal more settling
+          // than a spinner while the conversation appears to stall.
+          onProgress: (p) => emit('status', { phase: 'compacting', ...p }),
+        });
         if (summary) {
           messages.push(summary);
           emit('compacted', { replaced: summary.replaced, text: summary.text });

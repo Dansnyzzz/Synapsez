@@ -2758,8 +2758,17 @@ async function streamOnce(run, decision) {
       runId: run.runId,
       signal: run.abort.signal,
       handlers: {
-        status: ({ phase, name, message, seconds, model, free, stop }) => {
-          if (phase === 'compacting') setStatus(t('status.compacting'), run);
+        status: ({ phase, name, message, seconds, model, free, stop, folding }) => {
+          // The count arrives a moment after the phase does — the server says
+          // "compacting" before it knows how much, then says how much. Both
+          // land here, and the second draws the same line with the number in.
+          if (phase === 'compacting') {
+            setStatus(
+              folding ? t('status.compactingN').replace('{n}', String(folding)) : t('status.compacting'),
+              run,
+              { bar: true },
+            );
+          }
           else if (phase === 'thinking') setStatus(t('status.thinking'), run);
           /**
            * The provider has not answered yet, and that is worth saying.
@@ -3130,14 +3139,15 @@ function renderPolicy() {
  * Called with no run for the plain cases — a toast-like notice about the
  * conversation on screen — which always draw.
  */
-function setStatus(text, run = null) {
+function setStatus(text, run = null, options = undefined) {
   if (run) {
     run.status = text;
+    run.statusOptions = options;
     if (!onScreen(run)) return;
   }
   const host = $('status-host');
   host.innerHTML = '';
-  if (text) host.append(statusLine(text));
+  if (text) host.append(statusLine(text, options));
 }
 
 function renderUsage({ input, output, cost, priced, estimated, cacheRead }) {
