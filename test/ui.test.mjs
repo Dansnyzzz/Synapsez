@@ -4513,30 +4513,72 @@ section('copying out of a message being edited is not intercepted');
   // `beginEdit` turns a user bubble into a box matching input, textarea or
   // [contenteditable]. The listener has to recognise that shape and get out of
   // the way, or editing breaks in a way nobody would connect back to this change.
+  //
+  // The two checks below only mean something if the *only* variable between
+  // them is where the event is dispatched — so both fire against one real
+  // Selection over real prose inside #messages, built the same way section (a)
+  // above builds one. A textarea's own internal selection is a separate model
+  // that `window.getSelection()` never sees, so setting it here would leave
+  // this passing for the wrong reason (nothing selected) rather than the right
+  // one (the guard fired) — a bug this section shipped with once already.
   const result = await page.evaluate(() => {
     const host = document.createElement('div');
     host.className = 'msg msg--user is-editing';
+
+    const prose = document.createElement('div');
+    prose.className = 'prose';
+    prose.textContent = 'nội dung đã gửi, còn nguyên trên màn hình trong khi ô sửa đang mở';
+    host.append(prose);
+
     const box = document.createElement('textarea');
     box.className = 'bubble__edit';
     box.value = 'nội dung đang sửa dở';
     host.append(box);
+
     document.getElementById('messages').append(host);
 
-    box.focus();
-    box.setSelectionRange(0, box.value.length);
+    const range = document.createRange();
+    range.selectNodeContents(prose);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
 
-    const dt = new window.DataTransfer();
-    const event = new window.ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true });
-    box.dispatchEvent(event);
+    const fire = (target) => {
+      const dt = new window.DataTransfer();
+      const event = new window.ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return { html: dt.getData('text/html'), defaultPrevented: event.defaultPrevented };
+    };
 
-    const html = dt.getData('text/html');
-    const defaultPrevented = event.defaultPrevented;
+    // The guard under test: the same selection, dispatched from inside the
+    // editing box. Guard A — `event.target.closest('input, textarea,
+    // [contenteditable]')` — is the only thing that can make this come back
+    // empty, because the selection itself is real and non-collapsed.
+    const fromBox = fire(box);
+    // The control, with nothing changed but the target: the exact same
+    // selection, dispatched from the prose that is *not* being edited. If this
+    // one also came back empty, the pair would prove nothing about the guard —
+    // it would only mean the selection itself was empty.
+    const fromProse = fire(prose);
+
     host.remove();
-    return { html, defaultPrevented };
+    selection.removeAllRanges();
+    return { fromBox, fromProse };
   });
 
-  check('the handler puts nothing of its own on the clipboard', result.html === '', JSON.stringify(result));
-  check('and leaves the browser free to do its own thing', result.defaultPrevented === false);
+  check(
+    'firing from inside the editing box, the handler puts nothing of its own on the clipboard',
+    result.fromBox.html === '',
+    JSON.stringify(result.fromBox),
+  );
+  check('and leaves the browser free to do its own thing there', result.fromBox.defaultPrevented === false);
+  // The control: same selection, fired outside the box — this has to produce a
+  // real payload, or the two checks above are not testing the guard at all.
+  check(
+    'control — the identical selection, fired outside the box, is not swallowed the same way',
+    result.fromProse.html !== '' && result.fromProse.defaultPrevented === true,
+    JSON.stringify(result.fromProse),
+  );
 }
 
 section('an abandoned draft cannot be handed to the copy button');
