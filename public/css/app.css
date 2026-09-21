@@ -50,7 +50,11 @@
      A token because the ring has to be exactly as tall as it is wide to be a
      circle, and two hardcoded 38s are two numbers that can drift apart. */
   --control-h: 38px;
-  --sidebar-w: 288px;
+  /* What the sidebar is when it is open — the number the drag handle writes,
+     inline, on `.app`. `--sidebar-w` is what the grid actually uses, and the
+     rail redefines it; keeping them apart is what lets a collapsed sidebar
+     beat a remembered drag. See `resize.js`. */
+  --sidebar-w-open: 288px;
   --detail-w: 340px;
 
   /* System first, so nothing is fetched and nothing is render-blocked. The
@@ -574,7 +578,6 @@ textarea {
 }
 .search input:focus {
   border-color: var(--accent-dim);
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .search input::-webkit-search-cancel-button { display: none; }
 .search__clear {
@@ -839,6 +842,19 @@ textarea {
   position: relative;
   z-index: 1;
   display: grid;
+  /**
+   * Declared here, on the element the drag handle writes to, and not on
+   * `:root`.
+   *
+   * A `var()` is substituted where the property is *declared*, not where it is
+   * used. Written at `:root`, this would resolve against `:root`'s own
+   * `--sidebar-w-open` and the descendants would inherit that one finished
+   * number — so the inline width `resize.js` sets on `.app` would be read by
+   * nothing and the sidebar would stop being resizable at all. On `.app` the
+   * substitution sees the inline value, and `.app.is-rail` still wins over it
+   * on specificity, which is the whole point of splitting the two.
+   */
+  --sidebar-w: var(--sidebar-w-open);
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 0;
   height: 100dvh;
   overflow: hidden;
@@ -1028,6 +1044,12 @@ textarea {
 .app.is-rail {
   --sidebar-w: 68px;
 }
+/* Nothing to drag while it is a rail: the handle would write a new open width
+   without anything on screen moving, so the sidebar would spring to an
+   unexpected size the next time it was opened. */
+.app.is-rail #sidebar-grip {
+  display: none;
+}
 /* Hidden outright rather than faded: a label that is still laid out while the
    column narrows wraps into two lines on the way, which looks like a glitch
    rather than a transition. */
@@ -1091,9 +1113,14 @@ textarea {
   top: 0;
   z-index: 2;
   /* The sidebar has no pane of its own, so the heading needs enough of one to
-     stop rows showing through it as they pass underneath. */
-  background: var(--glass-solid);
-  backdrop-filter: var(--blur);
+     stop rows showing through it as they pass underneath.
+
+     The page's own background rather than the glass token: `--glass-solid` is
+     translucent, so over `--bg` it read as a grey band sitting behind every
+     heading — visible at rest, when there is nothing underneath to hide. This
+     is invisible while the list is still and still opaque while it moves,
+     which is the whole of what the heading needed. */
+  background: var(--bg);
 }
 .chat-row {
   display: flex;
@@ -2489,7 +2516,11 @@ details.block pre {
   margin: 0 auto;
   /* Even on both sides now that the left holds two controls rather than one. */
   padding: 8px;
-  border: 1px solid var(--line);
+  /* Transparent, not absent, and the same width it has when focused.
+     A grey ring read as a second, squarer edge around a shape that is already
+     drawn by its own surface and shadow; reserving the two pixels here is what
+     stops the box jumping when the galaxy ring arrives. */
+  border: 2px solid transparent;
   border-radius: 26px;
   /* Opaque, because the transcript now scrolls behind it. */
   background: var(--surface);
@@ -2497,29 +2528,28 @@ details.block pre {
   transition: border-color 0.15s;
 }
 /**
- * One ring, on the rounded box, and nothing on the field inside it.
+ * The ring is the galaxy; the inside stays the surface.
  *
- * Focus landed on the `textarea`, which took the global `:focus-visible`
- * outline — a hard rectangle *inside* the rounded box that already had a glow
- * of its own. Two rings, one round and one square, around the same thing.
- *
- * The rectangle is the one that goes: the box is what a person is looking at,
- * and the field fills it. The outline is suppressed for this textarea only, so
- * every other control in the app keeps the focus ring it needs.
+ * The first entry in `background-image` is the *topmost* layer, and the galaxy
+ * was written first — so it was painted over the surface beneath it and filled
+ * the whole box, gradient from edge to edge, instead of showing only in the
+ * two pixels of border the surface does not cover. Surface on top, clipped to
+ * the padding box; galaxy underneath, clipped to the border box. The sizes
+ * follow the same order.
  */
 .composer__box:focus-within {
   border-color: transparent;
-  background-image: var(--galaxy), linear-gradient(var(--surface), var(--surface));
+  background-image: linear-gradient(var(--surface), var(--surface)), var(--galaxy);
   background-origin: border-box;
-  background-clip: border-box, padding-box;
-  background-size: 300% 100%, auto;
+  background-clip: padding-box, border-box;
+  background-size: auto, 300% 100%;
   box-shadow: 0 0 0 4px var(--accent-glow), 0 6px 24px rgba(0, 0, 0, 0.35);
   animation: galaxy-drift 14s linear infinite;
 }
-.composer textarea:focus,
-.composer textarea:focus-visible {
-  outline: none;
-}
+/* The textarea's own ring is off at the foot of this file, with every other
+   text field and with the reasoning. It used to be turned off here, which did
+   nothing: the guarantee down there is `!important` and won regardless, so the
+   hard rectangle inside the rounded box was drawn anyway for years. */
 
 /**
  * The sky, moving.
@@ -3053,7 +3083,12 @@ details.block pre {
     top: 0;
     bottom: 0;
     left: 0;
-    width: min(84vw, var(--sidebar-w));
+    /* The open width, not the width in force: here the sidebar is a drawer
+       that slides over the conversation, so there is no column to collapse and
+       the rail means nothing. Reading `--sidebar-w` would hand a phone a 68px
+       drawer whenever the rail had been left on from a desktop, because the
+       setting is remembered per account rather than per screen. */
+    width: min(84vw, var(--sidebar-w-open));
     /* Opaque here, unlike the docked column. On a phone the drawer slides over
        the conversation rather than sitting beside it, and a transparent panel
        with a transcript legible through it is not a panel. */
@@ -5355,9 +5390,17 @@ details.block pre {
   gap: 9px;
   width: min(320px, 42vw);
   padding: 0 12px;
-  border: 1px solid var(--accent-dim);
+  /* The ordinary line at rest, the accent only while you are typing in it.
+     This wore the accent permanently, so every page carried a violet box that
+     looked focused when nothing was — and when focus did land there was
+     nothing left for it to change. */
+  border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
+  transition: border-color 0.15s;
+}
+.find:focus-within {
+  border-color: var(--accent-dim);
 }
 .find__mark { flex: none; color: var(--text-faint); }
 .find input {
@@ -6142,6 +6185,36 @@ details.block pre {
 :focus-visible {
   outline: 2px solid var(--accent) !important;
   outline-offset: 2px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Except where you are typing. This is a deliberate exception to
+   the guarantee directly above, made by the owner of this app
+   after being shown what the rule is for and why it was written.
+   It is not an oversight, and it should not be "fixed" by
+   deleting it.
+
+   What was traded away: a browser treats a text field as
+   `:focus-visible` however it was focused — clicking counts, not
+   just tabbing — so this ring appeared for everyone, on every
+   search box, every time. The comment above claims a mouse click
+   leaves no ring; for text fields that has never been true, and
+   that is the thing that made it read as noise rather than help.
+
+   What is left in its place, per field:
+     · the composer — a 2px galaxy ring on the rounded box plus a
+       4px glow, ~9:1 on the dark theme. A real indicator.
+     · search boxes, form fields, the gate, the find box — their
+       border turns `--accent-dim`. Visible, but about 1.8:1,
+       which is under the 3:1 WCAG asks of a focus indicator.
+
+   So keyboard-only users are worse off here than they were, on
+   every field in the second group. That is the known cost.
+   ───────────────────────────────────────────────────────────── */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none !important;
 }
 
 /* ── a scheduled task: the form, the rows, the page ───────────────────

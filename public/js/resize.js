@@ -25,7 +25,18 @@
 
 /** Where each panel starts, and how far it may be taken. */
 const PANELS = {
-  sidebar: { variable: '--sidebar-w', min: 180, max: 520, fallback: 288, side: 'right' },
+  /**
+   * The sidebar writes its *open* width, not the width in force.
+   *
+   * These are applied as inline custom properties on `.app`, and an inline
+   * declaration beats any rule written in a stylesheet. Writing `--sidebar-w`
+   * here meant `.app.is-rail { --sidebar-w: 68px }` could never win, so once
+   * somebody had dragged the sidebar even once — the width is restored from
+   * storage on every load — collapsing it hid the labels and left the column
+   * exactly as wide as before. `--sidebar-w` is derived from this in the
+   * stylesheet, which puts the two states back in the cascade's hands.
+   */
+  sidebar: { variable: '--sidebar-w-open', min: 180, max: 520, fallback: 288, side: 'right' },
   detail: { variable: '--detail-w', min: 240, max: 640, fallback: 340, side: 'left' },
 };
 
