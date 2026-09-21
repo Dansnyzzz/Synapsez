@@ -18,6 +18,18 @@ export const vi = {
   'Stopped after {0} tokens in this turn. Send a message to continue.':
     'Đã dừng sau {0} token trong lượt này. Gửi một tin nhắn để tiếp tục.',
   'Stopped after {0} steps. Send a message to continue.': 'Đã dừng sau {0} bước. Gửi một tin nhắn để tiếp tục.',
+
+  /* ── reading a video ── */
+  '"{0}" is not a YouTube video. Pass a watch, share, Shorts or embed link, or the 11-character video id.':
+    '"{0}" không phải video YouTube. Hãy đưa link watch, link chia sẻ, link Shorts hoặc link nhúng, hoặc mã video 11 ký tự.',
+  'supadata.ai → sign up → Dashboard → API key. The free plan is 100 transcripts a month and takes no card. Only needed to read videos; everything else works without it.':
+    'supadata.ai → đăng ký → Dashboard → API key. Gói miễn phí được 100 phụ đề mỗi tháng và không cần thẻ. Chỉ cần cho việc đọc video; mọi thứ khác vẫn chạy mà không có nó.',
+  'Supadata rejected that key (HTTP {0}).': 'Supadata từ chối key đó (HTTP {0}).',
+  'Supadata could not read that video: {0}': 'Supadata không đọc được video đó: {0}',
+  'Supadata queued video {0} as a background job rather than answering, which this tool cannot wait for. Try a shorter video.':
+    'Supadata xếp video {0} vào hàng đợi xử lý nền thay vì trả lời ngay, và công cụ này không chờ được. Hãy thử video ngắn hơn.',
+  'Supadata returned no captions for video {0}. The video probably has none — say so rather than retrying.':
+    'Supadata không trả về phụ đề nào cho video {0}. Nhiều khả năng video không có phụ đề — hãy nói thẳng ra thay vì thử lại.',
   'This conversation is already running somewhere else. Wait for it, or stop it there.':
     'Cuộc trò chuyện này đang chạy ở nơi khác. Hãy đợi, hoặc dừng nó ở đó.',
   'Type something, or attach a file.': 'Hãy gõ gì đó, hoặc đính kèm một tệp.',

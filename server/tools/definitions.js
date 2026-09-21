@@ -947,6 +947,47 @@ export const TOOLS = [
     },
   },
   {
+    name: 'youtube_transcript',
+    scope: 'cloud',
+    readOnly: true,
+    /**
+     * Hidden unless the account has linked Supadata.
+     *
+     * This is the whole reason it is a connector. YouTube's own caption
+     * endpoint stopped serving servers — the page still lists the tracks and
+     * fetching one returns an empty body — so without a key there is no way at
+     * all to read a video, and a tool offered in that state could only promise
+     * and fail. See `SERVICES.supadata` in server/connectors.js.
+     */
+    needs: 'supadata',
+    // Specialised: most turns never touch a video, and on a small window the
+    // core loop matters more than this does.
+    secondary: true,
+    description:
+      'Read a YouTube video as text: returns its captions with timestamps, so the speech can be quoted ' +
+      'and cited. Takes a watch, share, Shorts or embed link, or the bare video id. A video with no ' +
+      'captions cannot be read at all — say so rather than retrying.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'A YouTube link in any shape, or the bare 11-character video id.',
+        },
+        lang: {
+          type: 'string',
+          description:
+            'Preferred caption language as a code — "vi", "en". Falls back to the video\'s own captions.',
+        },
+        max_chars: {
+          type: 'integer',
+          description: 'Truncate the transcript to this many characters. Default 30000, up to 200000.',
+        },
+      },
+      required: ['url'],
+    },
+  },
+  {
     name: 'deep_research',
     scope: 'cloud',
     readOnly: true,
@@ -2240,6 +2281,9 @@ const DEFERRABLE = new Set([
   'schedule_task', 'list_tasks', 'cancel_task',
   // Composite fan-outs. Expensive to run and never the first thing tried.
   'deep_research', 'run_parallel',
+  // Reading a video. A real job and a rare one — most turns never see a link
+  // to one, and the schema is pure cost on all of them.
+  'youtube_transcript',
   // Indexing and its housekeeping. Searching stays loaded; building the index
   // is a deliberate act somebody asks for by name.
   'index_folder', 'list_indexed', 'forget_docs',

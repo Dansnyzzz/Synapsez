@@ -191,6 +191,7 @@ const STEP_VERBS = {
   /* ── the web ── */
   web_search: 'step.web_search',
   web_fetch: 'step.web_fetch',
+  youtube_transcript: 'step.youtube_transcript',
   deep_research: 'step.deep_research',
   extract: 'step.extract',
 

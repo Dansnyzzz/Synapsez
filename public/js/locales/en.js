@@ -528,6 +528,7 @@ export const en = {
   'step.launch_app': 'Opened app',
   'step.web_search': 'Searched the web',
   'step.web_fetch': 'Read page',
+  'step.youtube_transcript': 'Read video captions',
   'step.deep_research': 'Researched',
   'step.extract': 'Pulled facts from a page',
   'step.create_file': 'Created',

@@ -246,6 +246,147 @@ async function webFetch({ url, max_chars: maxChars }) {
   );
 }
 
+/* ── A video, as words ───────────────────────────────────────────
+ *
+ * `web_fetch` on a YouTube link returns the chrome of the page and none of the
+ * speech: the words are in a caption track the player loads separately, so the
+ * honest answer used to be "I cannot watch videos — paste the transcript
+ * yourself", which is a chore handed back to the person who asked.
+ *
+ * This reads the track. It is the page's own data, not a private API, but it is
+ * also not a documented one — YouTube can change the shape of it, and when that
+ * happens this must fail with a sentence rather than silently return nothing.
+ * ─────────────────────────────────────────────────────────────── */
+
+/**
+ * The video id, out of whatever shape the address arrived in.
+ *
+ * A watch URL, a share link, a Shorts link, an embed, or the bare id — people
+ * paste all five, and a tool that only understands the first fails on the input
+ * somebody actually has in their clipboard.
+ */
+export function youtubeId(input) {
+  const raw = String(input || '').trim();
+  if (/^[\w-]{11}$/.test(raw)) return raw;
+
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+
+  const host = url.hostname.replace(/^www\./, '').toLowerCase();
+  if (host === 'youtu.be') {
+    const id = url.pathname.slice(1).split('/')[0];
+    return /^[\w-]{11}$/.test(id) ? id : null;
+  }
+  if (host !== 'youtube.com' && host !== 'm.youtube.com' && host !== 'youtube-nocookie.com') return null;
+
+  const v = url.searchParams.get('v');
+  if (v && /^[\w-]{11}$/.test(v)) return v;
+  const path = url.pathname.match(/^\/(?:shorts|embed|live|v)\/([\w-]{11})/);
+  return path ? path[1] : null;
+}
+/** `184500` ms → `3:04`. Hours only when there are hours. */
+function stamp(ms) {
+  const total = Math.max(0, Math.floor(Number(ms) || 0) / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = Math.floor(total % 60);
+  return h
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/** How often a `[mm:ss]` marker is dropped into the running text, in ms. */
+const STAMP_EVERY_MS = 45_000;
+
+/**
+ * Caption segments, as readable prose with positions in it.
+ *
+ * Its own function because it is the part that decides whether a transcript is
+ * usable, and the only part that can be checked without a key: a transcript
+ * with no positions cannot be cited — "he says it around 3:04" is most of what
+ * makes a video quotable — while one with a position on every segment is twice
+ * the size and reads like a subtitle file rather than like speech.
+ *
+ * Segments arrive in milliseconds on `offset`, which is Supadata's shape.
+ */
+export function transcriptFromSegments(content) {
+  const parts = [];
+  let nextStamp = 0;
+  for (const seg of Array.isArray(content) ? content : []) {
+    const said = String(seg?.text ?? '').replace(/\s+/g, ' ').trim();
+    if (!said) continue;
+    const at = Number(seg?.offset) || 0;
+    if (at >= nextStamp) {
+      parts.push(`\n[${stamp(at)}] `);
+      nextStamp = at + STAMP_EVERY_MS;
+    }
+    parts.push(`${said} `);
+  }
+  return parts.join('').replace(/[ \t]+\n/g, '\n').trim();
+}
+
+async function youtubeTranscript({ url, lang, max_chars: maxChars }, { userId }) {
+  const id = youtubeId(url);
+  if (!id) {
+    throw new Error(
+      `"${url}" is not a YouTube video. Pass a watch, share, Shorts or embed link, or the 11-character video id.`,
+    );
+  }
+
+  const watch = `https://www.youtube.com/watch?v=${id}`;
+  const body = await CONNECTOR_CALLS.supadataTranscript(userId, watch, lang);
+
+  /**
+   * A job id instead of words.
+   *
+   * Supadata answers a long video asynchronously, and the async result is a
+   * different shape with a different endpoint behind it. Rather than poll — an
+   * agent step that sleeps is an agent step nobody can interrupt — this says
+   * what happened and stops, which the model can pass on as a fact.
+   */
+  if (body?.jobId && !body?.content) {
+    throw new Error(
+      `Supadata queued video ${id} as a background job rather than answering, which this tool cannot wait for. ` +
+        'Try a shorter video.',
+    );
+  }
+
+  const text = transcriptFromSegments(body?.content);
+  if (!text) {
+    throw new Error(
+      `Supadata returned no captions for video ${id}. The video probably has none — say so rather than retrying.`,
+    );
+  }
+
+  const limit = Math.min(Math.max(Number(maxChars) || 30_000, 500), 200_000);
+  const clipped = text.slice(0, limit);
+
+  const spoken = body?.lang ? `captions: ${body.lang}` : 'captions';
+  const notes = [];
+  if (text.length > limit) {
+    notes.push(
+      `truncated — ${text.length - limit} more characters. Call youtube_transcript again with a larger max_chars to read the rest.`,
+    );
+  }
+  if (lang && body?.lang && !String(body.lang).toLowerCase().startsWith(String(lang).toLowerCase().split('-')[0])) {
+    notes.push(`no "${lang}" track on this video; this is ${body.lang}.`);
+  }
+
+  return (
+    `# ${watch}\n${spoken}\n\n` +
+    // Wrapped for the same reason a fetched page is: these are somebody else's
+    // words arriving in the middle of a conversation, and a video can be
+    // scripted to be read by a model rather than by a person.
+    untrusted(watch, clipped) +
+    notes.map((line) => `\n\n[${line}]`).join('')
+  );
+}
+
 /**
  * Search, through the chain in `server/search.js`.
  *
@@ -1364,6 +1505,7 @@ export const CLOUD_IMPLEMENTATIONS = {
   read_generated_file: readGeneratedFileTool,
   file_versions: fileVersionsTool,
   web_fetch: webFetch,
+  youtube_transcript: youtubeTranscript,
   load_tools: loadToolsTool,
   web_search: webSearch,
   show_widget: showWidgetTool,

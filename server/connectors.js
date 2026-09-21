@@ -72,6 +72,56 @@ export const SERVICES = {
    * audience it is also the messaging platform that will actually answer, which
    * is the only test that matters for a connector.
    */
+  /**
+   * Reading a YouTube video as words.
+   *
+   * A connector rather than something built in, and the reason is worth
+   * recording: YouTube's own caption endpoint no longer serves a server. The
+   * page still lists the tracks, and fetching one returns HTTP 200 with an
+   * empty body — verified against three videos, including manually captioned
+   * ones, from a residential address as well as a datacentre. The open-source
+   * front-ends that used to proxy it (Invidious, Piped) are blocked too; every
+   * public instance tried answered 500, 403, or an HTML error page.
+   *
+   * So the words have to be bought from somebody who solves that problem, and
+   * that means a key, and a key means this is a connector — which also buys the
+   * property that matters most: `youtube_transcript` carries `needs:
+   * 'supadata'`, so an account without a key is never shown the tool at all.
+   * It cannot promise a video summary it has no way to produce.
+   */
+  supadata: {
+    label: 'YouTube transcripts (Supadata)',
+    help:
+      'supadata.ai → sign up → Dashboard → API key. The free plan is 100 transcripts a month and takes no card. ' +
+      'Only needed to read videos; everything else works without it.',
+    placeholder: 'sd_…',
+    async verify(token) {
+      /**
+       * Asked with a URL that is deliberately not a video.
+       *
+       * There is no documented endpoint for "is this key good", and the
+       * transcript endpoint costs a credit — spending one of a hundred to
+       * check a key somebody just pasted is a poor trade. A bad request with
+       * a good key and a bad request with a bad key come back differently,
+       * and that difference is the whole test: 401 and 403 are the key, and
+       * anything else means the key got far enough to be told the URL was
+       * wrong.
+       *
+       * Deliberately forgiving in the other direction. If Supadata changes
+       * what it answers here, the failure mode is a key accepted that later
+       * turns out to be wrong — which the tool reports in full when it is
+       * used — rather than a good key refused at the door with no way past.
+       */
+      const res = await fetch('https://api.supadata.ai/v1/transcript?url=not-a-video', {
+        headers: { 'x-api-key': token },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(`Supadata rejected that key (HTTP ${res.status}).`);
+      }
+      return 'Supadata';
+    },
+  },
   telegram: {
     label: 'Telegram',
     help: 'Message @BotFather on Telegram → /newbot → it gives you a token. Then message your bot once, or add it to a group, so it has somewhere to post.',
@@ -385,5 +435,43 @@ async function metaPagePost(userId, message, link) {
   return `Posted to the Page. Post id ${body.id}. This is public — say what was posted.`;
 }
 
-export const CONNECTOR_CALLS = { githubCall, githubWrite, notionSearch, slackPost, telegramSend, metaPagePost };
+/**
+ * A video's captions, from Supadata.
+ *
+ * Returns the raw segments — `{ text, offset, duration, lang }`, offsets in
+ * milliseconds — and leaves the shaping to the tool. The split is deliberate:
+ * this file owns the credential and the request, and `cloud.js` owns what a
+ * transcript should look like when a model reads it.
+ */
+async function supadataTranscript(userId, url, lang) {
+  const token = await tokenFor(userId, 'supadata');
+  const ask = new URL('https://api.supadata.ai/v1/transcript');
+  ask.searchParams.set('url', String(url ?? ''));
+  if (lang) ask.searchParams.set('lang', String(lang));
+
+  const res = await fetch(ask, {
+    headers: { 'x-api-key': token },
+    signal: AbortSignal.timeout(60_000),
+  });
+  const body = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    // Supadata's own sentence, not a code. "This video has no transcript" and
+    // "you are out of credits" need different things from the person reading,
+    // and a bare HTTP 4xx tells them neither.
+    const said = body?.message || body?.error || `HTTP ${res.status}`;
+    throw new Error(`Supadata could not read that video: ${said}`);
+  }
+  return body;
+}
+
+export const CONNECTOR_CALLS = {
+  githubCall,
+  githubWrite,
+  notionSearch,
+  slackPost,
+  telegramSend,
+  metaPagePost,
+  supadataTranscript,
+};
 export const __testing = { githubUrl, WRITE_METHODS };

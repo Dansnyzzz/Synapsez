@@ -192,6 +192,87 @@ try {
   server.close();
 }
 
+/* ── youtube_transcript: the parts that need no network ─────────
+ *
+ * `web_fetch` on a YouTube link returns the page's chrome and none of the
+ * speech, so the assistant's honest answer was "paste the transcript yourself".
+ * The new tool reads the caption track instead. Its three risky pieces are pure
+ * functions on purpose, so they can be checked here against the exact shapes
+ * YouTube actually serves rather than against a mock of them.
+ * ─────────────────────────────────────────────────────────────── */
+
+const { youtubeId, transcriptFromSegments } = await import('../server/tools/cloud.js');
+
+section('the video id, out of whatever was pasted');
+{
+  const id = 'dQw4w9WgXcQ';
+  check('a watch URL', youtubeId(`https://www.youtube.com/watch?v=${id}`) === id);
+  check('with other parameters on it', youtubeId(`https://www.youtube.com/watch?v=${id}&t=42s&list=PL1`) === id);
+  check('a share link', youtubeId(`https://youtu.be/${id}?si=abc`) === id);
+  check('a Shorts link', youtubeId(`https://www.youtube.com/shorts/${id}`) === id);
+  check('an embed', youtubeId(`https://www.youtube-nocookie.com/embed/${id}`) === id);
+  check('the phone host', youtubeId(`https://m.youtube.com/watch?v=${id}`) === id);
+  check('the bare id, which is what people paste after being asked once', youtubeId(id) === id);
+
+  // Refusing clearly matters as much as parsing: the tool's error names what a
+  // usable input looks like, and it can only do that if it knows it has one.
+  check('not a Vimeo link', youtubeId('https://vimeo.com/123456') === null);
+  check('not a lookalike host', youtubeId('https://notyoutube.com/watch?v=dQw4w9WgXcQ') === null);
+  check('not a javascript: URL', youtubeId('javascript:alert(1)') === null);
+  check('not prose', youtubeId('summarise that video for me') === null);
+  check('and an id of the wrong length is not one', youtubeId('https://youtu.be/tooshort') === null);
+}
+
+section('caption segments, as prose with positions in it');
+{
+  // Supadata's shape: offsets in milliseconds, one segment per spoken chunk.
+  const out = transcriptFromSegments([
+    { text: 'chênh lệch lãi suất', offset: 0, duration: 3000 },
+    { text: 'and inflation', offset: 3500, duration: 3000 },
+    { text: '   ', offset: 50_200, duration: 3000 },
+    { text: 'much later', offset: 61_700, duration: 3000 },
+    { text: 'later still', offset: 200_000, duration: 3000 },
+  ]);
+
+  check('Vietnamese comes through untouched', out.includes('chênh lệch lãi suất'), out);
+  check('the first segment is stamped', out.startsWith('[0:00]'), out.slice(0, 20));
+  // Not one stamp per segment — that doubles the size of a transcript and makes
+  // it read as a subtitle file — but often enough that a claim can be pointed at.
+  check('a segment moments later shares that stamp', !out.includes('[0:03]'), out);
+  check('a segment a minute on gets its own', out.includes('[1:01]'), out);
+  check('and minutes past the hour mark read as minutes', out.includes('[3:20]'), out);
+  check('an empty segment contributes nothing', !/\[0:50\]/.test(out), out);
+
+  // The shapes an API returns on a bad day. None of them should produce a
+  // transcript-looking string, because the tool reads emptiness as "this video
+  // has no captions" and says so instead of retrying.
+  check('no segments yields nothing', transcriptFromSegments([]) === '');
+  check('null yields nothing', transcriptFromSegments(null) === '');
+  check('and a segment with no text yields nothing', transcriptFromSegments([{ offset: 0 }]) === '');
+}
+
+section('the video tool is hidden until Supadata is linked');
+{
+  const { availableTools } = await import('../server/tools/definitions.js');
+  const named = (list) => list.some((t) => t.name === 'youtube_transcript');
+
+  // The point of the connector. YouTube's own endpoint serves a server an empty
+  // body, so an account with no key has no way at all to read a video — and a
+  // tool offered in that state could only promise and fail.
+  check(
+    'an account with no connectors is not offered it',
+    !named(availableTools({ context: 200_000, connected: [] })),
+  );
+  check(
+    'an account with other connectors is not offered it either',
+    !named(availableTools({ context: 200_000, connected: ['github', 'slack'] })),
+  );
+  check(
+    'and linking Supadata is what reveals it',
+    named(availableTools({ context: 200_000, connected: ['supadata'] })),
+  );
+}
+
 console.log(
   failures === 0 ? '\n\x1b[32mweb_fetch reads pages and documents.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`,
 );

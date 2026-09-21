@@ -87,6 +87,7 @@ export const vi = {
   'step.launch_app': 'Mở ứng dụng',
   'step.web_search': 'Tìm trên web',
   'step.web_fetch': 'Đọc trang',
+  'step.youtube_transcript': 'Đọc phụ đề video',
   'step.deep_research': 'Nghiên cứu sâu',
   'step.extract': 'Rút thông tin từ trang',
   'step.create_file': 'Tạo tệp',
