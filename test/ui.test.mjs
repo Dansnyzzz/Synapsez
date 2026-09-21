@@ -812,29 +812,8 @@ section('projects: instructions and sources a conversation inherits');
   await page.click('#project-form-save');
   await page.waitForTimeout(1200);
 
-  /**
-   * Pinned, because that is now what puts a project in the sidebar.
-   *
-   * Every project with a conversation in it used to appear there, which grew a
-   * second copy of the Projects page above the list the sidebar exists to be.
-   * Pinning is the existing way of saying "this is what I am working on", so it
-   * decides this too — and the checks further down that reach for this project
-   * *through* the sidebar need it to be there.
-   */
-  const pinnedIt = await page.evaluate(async () => {
-    const { projects } = await (await fetch('/api/projects')).json();
-    const mine = projects.find((p) => p.name === 'UI project');
-    if (!mine) return { found: false };
-    const res = await fetch(`/api/projects/${mine.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pinned: true }),
-    });
-    const after = await (await fetch('/api/projects')).json();
-    return { found: true, status: res.status, pinned: !!after.projects.find((p) => p.id === mine.id)?.pinned };
-  });
-  check('the test project is pinned, which is what puts it in the sidebar', pinnedIt.pinned === true, JSON.stringify(pinnedIt));
-  await page.waitForTimeout(600);
+  // Left unpinned for now. The header-chip checks below need a project the
+  // sidebar is *not* naming, and pinning happens there once they are done.
 
   // Creating one lands *in* it, on its own page — you named it because you were
   // about to use it, not to admire it on a shelf.
@@ -935,13 +914,56 @@ section('projects: instructions and sources a conversation inherits');
       title: el.title,
     };
   });
-  // A grounded answer and an ordinary one look identical on the page, so the
-  // header is the one place the difference can live.
+  /**
+   * Unpinned, the header chip is the one place the project is named.
+   *
+   * A grounded answer and an ordinary one look identical on the page, so the
+   * header is where that difference can live — and an unpinned project is not
+   * in the sidebar at all, so nothing else on screen says either the name or
+   * how many sources are behind the answer.
+   */
   check('a chat started in a project says so', chip.shown && chip.text === 'UI project', JSON.stringify(chip));
   check('and that it is held to the sources', chip.grounded);
   // Two: the rules file and the picture. Both are sources on the shelf, which
   // is what the header counts, even though only one of them can be quoted.
   check('with how many there are', /2 sources/.test(chip.title || ''), chip.title);
+
+  /**
+   * Pinned, it steps aside, because the sidebar has taken the job over.
+   *
+   * Pinning is also what the rest of this suite needs — the sidebar sections
+   * further down reach this project through the tree on the left — so it goes
+   * on here and stays on.
+   */
+  const pinnedIt = await page.evaluate(async () => {
+    const { projects } = await (await fetch('/api/projects')).json();
+    const mine = projects.find((p) => p.name === 'UI project');
+    if (!mine) return { found: false };
+    const res = await fetch(`/api/projects/${mine.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned: true }),
+    });
+    const after = await (await fetch('/api/projects')).json();
+    return { found: true, status: res.status, pinned: !!after.projects.find((p) => p.id === mine.id)?.pinned };
+  });
+  check('pinning it works at all', pinnedIt.pinned === true, JSON.stringify(pinnedIt));
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1600);
+  const reopened = await page.evaluate(async (name) => {
+    // Back into the project's conversation, which is now filed under it in the
+    // sidebar — the only way in, and the thing being tested. The project row is
+    // open already, so it is deliberately not clicked: that toggles, and
+    // folding it would hide the very conversation being reached for.
+    const row = [...document.querySelectorAll('.proj-row__name')].find((n) => n.textContent.includes(name));
+    document.querySelector('.chat-row--nested .chat-item')?.click();
+    await new Promise((r) => setTimeout(r, 900));
+    const el = document.getElementById('project-chip');
+    return { inSidebar: !!row, chipShown: !el.hidden };
+  }, 'UI project');
+  check('a pinned project is in the sidebar', reopened.inSidebar);
+  check('and is not named a second time on the header', reopened.chipShown === false, JSON.stringify(reopened));
 
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();

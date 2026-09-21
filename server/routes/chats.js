@@ -141,7 +141,16 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         const found = await store.getProject(req.user.id, chat.project_id);
         if (found) {
           const files = await store.listProjectFiles(req.user.id, found.id);
-          project = { id: found.id, name: found.name, grounded: found.grounded, files: files.length };
+          // `pinned` travels because the header chip uses it to decide whether
+          // to draw at all: a pinned project is already named in the sidebar,
+          // and two buttons carrying the same word is one too many.
+          project = {
+            id: found.id,
+            name: found.name,
+            grounded: found.grounded,
+            pinned: !!found.pinned,
+            files: files.length,
+          };
         }
       }
 

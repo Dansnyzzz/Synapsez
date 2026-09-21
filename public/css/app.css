@@ -2622,7 +2622,18 @@ details.block pre {
   background-origin: border-box;
   background-clip: padding-box, border-box;
   background-size: auto, 300% 100%;
-  box-shadow: 0 0 0 4px var(--accent-glow), 0 6px 24px rgba(0, 0, 0, 0.35);
+  /**
+   * The ring, and nothing around the ring.
+   *
+   * There used to be a 4px accent halo outside the border as well. Two rings
+   * around one box, in two different colours, and the outer one was wide and
+   * faint enough to read as the frame — which made the bright galaxy line look
+   * like it had come loose and was floating inside it with a gap.
+   *
+   * The drop shadow stays: it lifts the composer off the transcript scrolling
+   * behind it, which is a different job and is not drawn as an edge.
+   */
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   animation: galaxy-drift 14s linear infinite;
 }
 /* The textarea's own ring is off at the foot of this file, with every other

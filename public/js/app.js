@@ -1826,8 +1826,21 @@ $('new-chat').addEventListener('click', () => {
 function renderProjectChip() {
   const chip = $('project-chip');
   const project = state.project;
-  chip.hidden = !project;
-  if (!project) return;
+  /**
+   * Not when the sidebar is already saying it.
+   *
+   * The sidebar lists pinned projects and files their conversations under
+   * them, so for a pinned project the name appeared twice on screen at once —
+   * once in the tree on the left and once as a button in the header, a step
+   * apart and identical.
+   *
+   * It stays for an unpinned one, where it is the only place the project is
+   * named at all, and where the tooltip's source count is the only answer to
+   * "is this grounded in anything?". Redundant was the complaint; this is the
+   * shape that stops being redundant without also stopping being useful.
+   */
+  chip.hidden = !project || !!project.pinned;
+  if (chip.hidden) return;
 
   chip.textContent = project.name;
   chip.classList.toggle('is-grounded', !!project.grounded);
@@ -2104,6 +2117,11 @@ async function newChatInProject(project) {
       id: fresh.project.id,
       name: fresh.project.name,
       grounded: fresh.project.grounded,
+      // Carried for the same reason `openChat`'s copy carries it: the header
+      // chip hides itself when the sidebar is already naming this project.
+      // Without it here, a conversation started from inside a project showed
+      // the duplicate that every other path had stopped showing.
+      pinned: !!fresh.project.pinned,
       files: fresh.files.length,
     };
   } catch {
