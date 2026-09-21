@@ -23,6 +23,7 @@ import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
 import { search, formatResults } from '../search.js';
 import { untrusted } from './untrusted.js';
+import { normaliseQuestions, answerText } from './askOptions.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
 
@@ -259,6 +260,30 @@ async function webFetch({ url, max_chars: maxChars }) {
     untrusted(parsed.href, clipped) +
     notes.map((line) => `\n\n[${line}]`).join('')
   );
+}
+
+/**
+ * A question with buttons on it, answered by the person.
+ *
+ * The shape here is unusual and worth saying out loud: this implementation
+ * never runs on the way *out*. The loop sees `ask_options` in a batch, pauses
+ * the turn and asks the browser to draw the card — so by the time anything
+ * calls this, somebody has pressed something and the answer is in hand.
+ *
+ * It still validates the questions a second time, and that is deliberate: it is
+ * what turns a malformed call into an ordinary tool error the model can read
+ * and correct, rather than a pause waiting for an answer to a question that
+ * could not be drawn.
+ */
+async function askOptionsTool(input, { answers }) {
+  const questions = normaliseQuestions(input);
+  if (!answers) {
+    throw new Error(
+      'ask_options ran without the user having answered, which should not happen. ' +
+        'Do not retry it; ask in prose instead.',
+    );
+  }
+  return answerText(questions, answers);
 }
 
 /* ── A video, as words ───────────────────────────────────────────
@@ -1520,6 +1545,7 @@ export const CLOUD_IMPLEMENTATIONS = {
   read_generated_file: readGeneratedFileTool,
   file_versions: fileVersionsTool,
   web_fetch: webFetch,
+  ask_options: askOptionsTool,
   youtube_transcript: youtubeTranscript,
   load_tools: loadToolsTool,
   web_search: webSearch,

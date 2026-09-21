@@ -4,6 +4,7 @@ import { createRuns } from './runs.js';
 import { makeResizable } from './resize.js';
 import { wireCopyButtons, escapeHtml } from './markdown.js';
 import { cleanHtml, forWord, writeRich } from './clipboard.js';
+import { createQuestionCard } from './question.js';
 import {
   assistantMessage,
   userMessage,
@@ -2699,7 +2700,7 @@ async function mirrorRun(run) {
 /** Hosts cap how long one request may run; the agent loop is resumable. */
 const MAX_RESUMES = 25;
 
-async function stream(decision) {
+async function stream(decision, answers) {
   const chatId = state.chatId;
   if (!chatId) return;
 
@@ -2736,7 +2737,9 @@ async function stream(decision) {
 
   try {
     for (let resume = 0; resume <= MAX_RESUMES; resume += 1) {
-      const outcome = await streamOnce(run, resume === 0 ? decision : undefined);
+      // A decision and an answer both belong to the batch that was paused, so
+      // neither is resent on a reconnect — the server already has them.
+      const outcome = await streamOnce(run, resume === 0 ? decision : undefined, resume === 0 ? answers : undefined);
 
       // A clean finish, a question for the user, or a deliberate stop.
       if (outcome !== 'cut') break;
@@ -2792,7 +2795,7 @@ async function stream(decision) {
  * One request against the agent endpoint.
  * @returns 'done' · 'waiting' (approval needed) · 'cut' (connection dropped mid-run)
  */
-async function streamOnce(run, decision) {
+async function streamOnce(run, decision, answers) {
   let outcome = 'cut';
   // Every handler below is scoped to `run`, not to whatever is on screen: this
   // stream keeps arriving after the person has navigated to another
@@ -2808,6 +2811,9 @@ async function streamOnce(run, decision) {
       // The calls the prompt named. Only sent with a decision, because only a
       // decision is about a specific batch. See `approvalFor`.
       decisionFor: decision ? approvalFor : undefined,
+      // What was pressed on a question card, when this call is the one
+      // resuming a paused question.
+      answers,
       runId: run.runId,
       signal: run.abort.signal,
       handlers: {
@@ -2928,6 +2934,19 @@ async function streamOnce(run, decision) {
           // somebody wants to check what was folded away.
           run.stage.append(summaryDivider(replaced, text));
           maybeScroll(run);
+        },
+        /**
+         * The turn has stopped to ask you something.
+         *
+         * Treated as `waiting`, the same outcome as an approval: the run is
+         * alive and holding its lease, and nothing more arrives until somebody
+         * answers. Drawn only in the conversation being looked at — the card is
+         * persisted server-side as an outstanding tool call, so coming back to
+         * this conversation puts the question up again.
+         */
+        question_required: (payload) => {
+          outcome = 'waiting';
+          if (onScreen(run)) questionCard.show(payload);
         },
         approval_required: ({ toolCalls }) => {
           outcome = 'waiting';
@@ -3080,12 +3099,28 @@ function showApproval(toolCalls) {
   $('deny').focus();
 }
 
+/**
+ * The question card, wired to this app's two facts about it: how to resume the
+ * turn once it is answered, and how to keep the transcript scrolled to it.
+ */
+const questionCard = createQuestionCard({
+  onAnswer: (answers) => {
+    void stream(undefined, answers);
+  },
+  scrollToEnd,
+});
+
 function hideApproval() {
   $('approval').hidden = true;
+  // The question card lives on the same shelf and stops being true at all the
+  // same moments — a new run, a different conversation, a fresh chat. Taken
+  // down here rather than at four call sites that would drift apart.
+  questionCard.hide();
 }
 
 $('allow').addEventListener('click', () => stream('allow'));
 $('deny').addEventListener('click', () => stream('deny'));
+
 
 
 /* ── topbar, status, worker ────────────────────────────────────── */

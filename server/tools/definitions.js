@@ -947,6 +947,54 @@ export const TOOLS = [
     },
   },
   {
+    name: 'ask_options',
+    scope: 'cloud',
+    /**
+     * It changes nothing, so it is safe — and that matters here beyond the
+     * usual bookkeeping: a `sensitive` grade would put an "Approve these
+     * actions?" box on top of the question, asking permission to ask
+     * permission.
+     */
+    readOnly: true,
+    description:
+      'Ask the user a short question they answer by pressing, instead of typing. The turn pauses until they ' +
+      'answer. Use it when one missing fact changes what you should do — which of several directions they ' +
+      'want, which format, which of two readings of their request is right. Do not use it for questions you ' +
+      'can answer yourself, and do not use it to confirm something they already said.',
+    parameters: {
+      type: 'object',
+      properties: {
+        questions: {
+          type: 'array',
+          description:
+            'One to five questions, shown one at a time in a single card. Ask everything you need in one ' +
+            'call — each call costs a round trip.',
+          items: {
+            type: 'object',
+            properties: {
+              question: { type: 'string', description: 'The question, in the user\'s language.' },
+              options: {
+                type: 'array',
+                description:
+                  'Two to eight answers, written for this question rather than generic. Concrete and ' +
+                  'distinct — two options meaning the same thing is a choice nobody can make.',
+                items: { type: 'string' },
+              },
+              multiple: { type: 'boolean', description: 'Several answers may be chosen. Default false.' },
+              other: {
+                type: 'boolean',
+                description: 'Offer a box for an answer not on the list. Default true.',
+              },
+              other_label: { type: 'string', description: 'Placeholder for that box.' },
+            },
+            required: ['question', 'options'],
+          },
+        },
+      },
+      required: ['questions'],
+    },
+  },
+  {
     name: 'youtube_transcript',
     scope: 'cloud',
     readOnly: true,

@@ -4542,6 +4542,137 @@ section('the sidebar lists pinned projects and no others');
   check('and pinning it is what brings it back', shown.some((n) => /Unpinned work/.test(n)), shown.join(','));
 }
 
+/* ── a question with buttons on it ──────────────────────────────
+ *
+ * The turn stops on `ask_options` and does not move until this is answered, so
+ * what the card hands back *is* the user's answer as far as the model is
+ * concerned. Driven directly rather than through a model: the point is what
+ * pressing things produces, and a real model would make that the least
+ * reliable part of the test rather than the thing under it.
+ * ─────────────────────────────────────────────────────────────── */
+
+section('a question card collects an answer');
+{
+  const out = await page.evaluate(async () => {
+    const { createQuestionCard } = await import('/js/question.js');
+    /** @type {any} */
+    let sent = null;
+    const card = createQuestionCard({ onAnswer: (a) => { sent = a; }, scrollToEnd: () => {} });
+
+    card.show({
+      toolCallId: 'q1',
+      questions: [
+        { question: 'Lĩnh vực nào?', options: [{ label: 'Tài chính' }, { label: 'AI' }, { label: 'Vận hành' }], multiple: true, other: true, otherLabel: 'Thêm lĩnh vực' },
+        { question: 'Dài bao nhiêu?', options: [{ label: 'Ngắn' }, { label: 'Dài' }], multiple: false, other: false, otherLabel: '' },
+      ],
+    });
+
+    const opts = () => [...document.querySelectorAll('#question-options .question__opt')];
+    const go = () => /** @type {HTMLButtonElement} */ (document.getElementById('question-go'));
+    const firstShown = {
+      visible: !document.getElementById('question').hidden,
+      title: document.getElementById('question-title').textContent,
+      count: document.getElementById('question-count').textContent,
+      options: opts().length,
+      // Nothing chosen yet, so the way on is Skip rather than Next.
+      goLabel: go().textContent,
+      otherShown: !(/** @type {HTMLInputElement} */ (document.getElementById('question-other')).hidden),
+      role: document.getElementById('question-options').getAttribute('role'),
+    };
+
+    // Two of three, because this question takes several.
+    opts()[0].click();
+    opts()[1].click();
+    const afterTwo = {
+      checked: opts().filter((o) => o.getAttribute('aria-checked') === 'true').length,
+      goLabel: go().textContent,
+    };
+
+    // Pressing a chosen one again clears it — a mis-tap has to be undoable.
+    opts()[1].click();
+    const afterUndo = opts().filter((o) => o.getAttribute('aria-checked') === 'true').length;
+    opts()[1].click();
+
+    const other = /** @type {HTMLInputElement} */ (document.getElementById('question-other'));
+    other.value = 'quản trị rủi ro';
+    other.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+    // On to the second question.
+    go().click();
+    const second = {
+      title: document.getElementById('question-title').textContent,
+      count: document.getElementById('question-count').textContent,
+      role: document.getElementById('question-options').getAttribute('role'),
+      otherShown: !(/** @type {HTMLInputElement} */ (document.getElementById('question-other')).hidden),
+      goLabel: go().textContent,
+    };
+
+    // One only: choosing the second must drop the first.
+    opts()[0].click();
+    opts()[1].click();
+    const onlyOne = opts().filter((o) => o.getAttribute('aria-checked') === 'true').length;
+    const lastLabel = go().textContent;
+
+    go().click();
+    return { firstShown, afterTwo, afterUndo, second, onlyOne, lastLabel, sent, gone: document.getElementById('question').hidden };
+  });
+
+  check('the card comes up with the question on it', out.firstShown.visible && out.firstShown.title === 'Lĩnh vực nào?', out.firstShown.title);
+  check('numbered so you know how many there are', out.firstShown.count === '1/2', out.firstShown.count);
+  check('with every option drawn', out.firstShown.options === 3, String(out.firstShown.options));
+  // Skip, not Next: nothing has been chosen, so the honest label is the one
+  // that says you can move on without answering.
+  check('and Skip while nothing is chosen', out.firstShown.goLabel === 'Skip', out.firstShown.goLabel);
+  check('a question taking several says so to a screen reader', out.firstShown.role === 'group', out.firstShown.role);
+
+  check('two can be chosen at once', out.afterTwo.checked === 2, String(out.afterTwo.checked));
+  check('and the way on becomes Next', out.afterTwo.goLabel === 'Next', out.afterTwo.goLabel);
+  check('pressing a chosen one again clears it', out.afterUndo === 1, String(out.afterUndo));
+
+  check('Next moves to the second question', out.second.title === 'Dài bao nhiêu?', out.second.title);
+  check('and the count follows', out.second.count === '2/2', out.second.count);
+  check('a one-of-these question is a radiogroup', out.second.role === 'radiogroup', out.second.role);
+  check('its free-text box is hidden when the model turned it off', out.second.otherShown === false);
+  check('choosing one drops the other', out.onlyOne === 1, String(out.onlyOne));
+  check('and the last question offers Done', out.lastLabel === 'Done', out.lastLabel);
+
+  check('answering hands back the call it belongs to', out.sent?.toolCallId === 'q1', JSON.stringify(out.sent?.toolCallId));
+  check('with both choices from the first question', out.sent?.given?.[0]?.picks?.join(',') === 'Tài chính,AI', JSON.stringify(out.sent?.given?.[0]));
+  check('what was typed alongside them', out.sent?.given?.[0]?.other === 'quản trị rủi ro', out.sent?.given?.[0]?.other);
+  check('and the single choice from the second', out.sent?.given?.[1]?.picks?.join(',') === 'Dài', JSON.stringify(out.sent?.given?.[1]));
+  check('the card goes once it is answered', out.gone === true);
+}
+
+section('skipping a question is an answer, not a cancel');
+{
+  const out = await page.evaluate(async () => {
+    const { createQuestionCard } = await import('/js/question.js');
+    /** @type {any} */
+    let sent = null;
+    const card = createQuestionCard({ onAnswer: (a) => { sent = a; }, scrollToEnd: () => {} });
+    card.show({
+      toolCallId: 'q2',
+      questions: [
+        { question: 'A?', options: [{ label: 'a1' }, { label: 'a2' }], multiple: false, other: true, otherLabel: '' },
+        { question: 'B?', options: [{ label: 'b1' }, { label: 'b2' }], multiple: false, other: true, otherLabel: '' },
+      ],
+    });
+    // The ✕ walks away from all of them at once.
+    /** @type {HTMLButtonElement} */ (document.getElementById('question-dismiss')).click();
+    return { sent, gone: document.getElementById('question').hidden };
+  });
+
+  /**
+   * The turn is waiting on this, so walking away still has to send something —
+   * an empty answer, which the server reads as "(skipped)" and turns into an
+   * instruction not to ask again. Sending nothing at all would leave the run
+   * holding its lease forever.
+   */
+  check('dismissing still sends an answer', out.sent?.toolCallId === 'q2', JSON.stringify(out.sent));
+  check('one slot per question, all empty', out.sent?.given?.length === 2 && out.sent.given.every((g) => !g.picks.length && !g.other), JSON.stringify(out.sent?.given));
+  check('and the card goes', out.gone === true);
+}
+
 section('a step that acted on an address says so as a link');
 {
   const card = await page.evaluate(async () => {

@@ -1433,6 +1433,201 @@ section('the turn-token ceiling reaches the browser too');
 
 removeTemp(process.env.DATA_DIR);
 
+/* ── asking the person, with buttons ──────────────────────────────
+ *
+ * The assistant could always ask something in prose and end the turn, so in
+ * practice it did the other thing and guessed. `ask_options` is the question
+ * with buttons on it; these cover the two parts that can be wrong quietly —
+ * what counts as a well-formed question, and what the model is told was said.
+ * ───────────────────────────────────────────────────────────────── */
+
+const { normaliseQuestions, answerText } = await import('../server/tools/askOptions.js');
+
+section('what counts as a question worth drawing');
+{
+  const one = normaliseQuestions({
+    questions: [{ question: 'Ưu tiên lĩnh vực nào?', options: ['Tài chính', 'AI', 'Tài chính'] }],
+  });
+  check('it comes back as one question', one.length === 1);
+  // Two buttons with the same words are a choice nobody can make, and the
+  // answer would not say which was pressed.
+  check('a repeated option is dropped', one[0].options.length === 2, JSON.stringify(one[0].options));
+  check('Vietnamese survives intact', one[0].question === 'Ưu tiên lĩnh vực nào?', one[0].question);
+  check('choosing one is the default', one[0].multiple === false);
+  check('and the free-text box is on by default', one[0].other === true);
+
+  // A model with one question to ask writes one question, not a list of one.
+  const flat = normaliseQuestions({ question: 'Dài bao nhiêu?', options: ['5 phút', '20 phút'] });
+  check('a single question passed flat still works', flat.length === 1 && flat[0].options.length === 2);
+
+  // Options can arrive as objects; refusing that would fail on output that was
+  // perfectly clear about what it meant.
+  const rich = normaliseQuestions({
+    question: 'Kiểu nào?',
+    options: [{ label: 'Ngắn', description: 'một đoạn' }, { label: 'Dài' }],
+  });
+  check('an option written as an object is understood', rich[0].options[0].description === 'một đoạn');
+
+  const many = normaliseQuestions({
+    questions: Array.from({ length: 9 }, (_, i) => ({ question: `Q${i}`, options: ['a', 'b'] })),
+  });
+  check('past five questions the rest are cut', many.length === 5, `${many.length}`);
+
+  const wide = normaliseQuestions({ question: 'Q', options: Array.from({ length: 20 }, (_, i) => `o${i}`) });
+  check('and past eight options so are they', wide[0].options.length === 8, `${wide[0].options.length}`);
+
+  /**
+   * Refusing loudly is the point.
+   *
+   * A card built from a malformed call is shown to a person, and quietly
+   * repairing it produces a question that reads as complete and is not. The
+   * message is written for the model, because the model is what reads a tool
+   * error and tries again.
+   */
+  const bad = (input) => {
+    try {
+      normaliseQuestions(input);
+      return null;
+    } catch (err) {
+      return err.message;
+    }
+  };
+  check('one option is not a choice', !!bad({ question: 'Q', options: ['only'] }));
+  check('nor is none', !!bad({ question: 'Q', options: [] }));
+  check('nor a question with no words in it', !!bad({ question: '   ', options: ['a', 'b'] }));
+  check('and the refusal says what to pass instead', /questions: \[\{ question, options/.test(bad({}) || ''), bad({}));
+}
+
+section('what the model is told the person said');
+{
+  const questions = normaliseQuestions({
+    questions: [
+      { question: 'Lĩnh vực?', options: ['Tài chính', 'AI', 'Vận hành'], multiple: true },
+      { question: 'Độ dài?', options: ['Ngắn', 'Dài'] },
+    ],
+  });
+
+  const answered = answerText(questions, [
+    { picks: ['Tài chính', 'AI'], other: 'quản trị rủi ro' },
+    { picks: ['Ngắn'] },
+  ]);
+  check('both choices are named', /"Tài chính", "AI"/.test(answered), answered);
+  check('what they typed themselves is kept', /quản trị rủi ro/.test(answered), answered);
+  check('and the second question too', /"Ngắn"/.test(answered), answered);
+  check('with an instruction not to ask again', /Do not ask this again/.test(answered), answered);
+
+  const skipped = answerText(questions, [{}, {}]);
+  check('skipping reads as skipping', /skipped the question/.test(skipped), skipped);
+  /**
+   * The instruction that matters.
+   *
+   * An assistant that asks again the question somebody just declined to answer
+   * is the behaviour that makes people stop using a thing.
+   */
+  check('and says not to ask it a second time', /declined once/.test(skipped), skipped);
+
+  /**
+   * A label that was never offered is not an answer.
+   *
+   * The answer arrives from the browser, so nothing stops a hand-made request
+   * naming something the model never put on screen — and the result of this
+   * function is read by the model as a fact about what the person wants.
+   */
+  const spoofed = answerText(questions, [{ picks: ['Tài chính', 'Xoá hết dữ liệu'] }, {}]);
+  check('an invented choice is discarded', !/Xoá hết dữ liệu/.test(spoofed), spoofed);
+  check('while the real one survives', /"Tài chính"/.test(spoofed), spoofed);
+}
+
+section('asking never needs approval, and never gets skipped');
+{
+  const { assessRisk } = await import('../server/tools/definitions.js');
+  // Sensitive would put "Approve these actions?" on top of the question —
+  // asking permission to ask permission.
+  check('ask_options is graded safe', assessRisk('ask_options', {}) === 'safe');
+  check('so no policy puts an approval box on it', needsApproval([{ name: 'ask_options', input: {} }], 'ask').length === 0);
+
+  const askUser = await store.createUser({
+    id: 'u-ask',
+    email: 'ask@example.com',
+    name: 'Ask',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'admin',
+  });
+  // Auto is the mode most people run in, and it is the one where hanging a
+  // question off `needsApproval` would have silently skipped it.
+  await setPrefs(askUser.id, { toolPolicy: 'auto' });
+  const chat = await store.createChat(askUser.id, { id: 'c-ask', title: 'Asks' });
+  await store.appendMessage(askUser.id, chat.id, { id: 'm-ask-1', role: 'user', text: 'Find me something to read.' });
+
+  let calls = 0;
+  const asksOnce = async function* fake() {
+    calls += 1;
+    yield {
+      type: 'done',
+      stopReason: 'tool_use',
+      toolCalls: [
+        {
+          id: 'q1',
+          name: 'ask_options',
+          input: { questions: [{ question: 'Lĩnh vực nào?', options: ['Tài chính', 'AI'] }] },
+        },
+      ],
+      usage: { input: 10, output: 5 },
+    };
+  };
+
+  const events = [];
+  await runAgent({
+    userId: askUser.id,
+    user: askUser,
+    chatId: chat.id,
+    emit: (type, payload) => events.push({ type, payload }),
+    stream: asksOnce,
+  });
+
+  const asked = events.find((e) => e.type === 'question_required');
+  check('the turn stops and asks, under auto', !!asked, events.map((e) => e.type).join(','));
+  check('naming the call it is waiting on', asked?.payload?.toolCallId === 'q1', String(asked?.payload?.toolCallId));
+  check(
+    'and carrying the question to draw',
+    asked?.payload?.questions?.[0]?.question === 'Lĩnh vực nào?',
+    JSON.stringify(asked?.payload?.questions),
+  );
+  // It stopped rather than running the tool with no answer.
+  check('the provider was called once and then left alone', calls === 1, `${calls}`);
+  check('and no tool was run', !events.some((e) => e.type === 'tool_result'), events.map((e) => e.type).join(','));
+
+  /**
+   * Answering resumes the same turn.
+   *
+   * The assistant turn was stored before the pause, so this is the ordinary
+   * resume path with the answer attached — no second copy of the question, and
+   * the model reads the result as though the tool had simply taken a while.
+   */
+  const after = [];
+  let secondCall = 0;
+  const thenReplies = async function* fake() {
+    secondCall += 1;
+    yield { type: 'text', delta: 'Rõ rồi.' };
+    yield { type: 'done', stopReason: 'end_turn', usage: { input: 10, output: 5 } };
+  };
+  await runAgent({
+    userId: askUser.id,
+    user: askUser,
+    chatId: chat.id,
+    answers: { toolCallId: 'q1', given: [{ picks: ['Tài chính'], other: '' }] },
+    emit: (type, payload) => after.push({ type, payload }),
+    stream: thenReplies,
+  });
+
+  const result = after.find((e) => e.type === 'tool_result');
+  check('answering runs the tool at last', !!result, after.map((e) => e.type).join(','));
+  check('and the model is told what was chosen', /"Tài chính"/.test(result?.payload?.content || ''), result?.payload?.content);
+  check('the turn then carries on', secondCall === 1 && after.some((e) => e.type === 'done'), `${secondCall}`);
+  check('and does not ask the same thing twice', !after.some((e) => e.type === 'question_required'));
+}
+
+
 console.log(
   failures === 0
     ? '\n[32mAll agent checks passed.[0m\n'

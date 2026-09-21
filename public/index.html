@@ -59,6 +59,7 @@
     <link rel="modulepreload" href="/js/api.js" />
     <link rel="modulepreload" href="/js/markdown.js" />
     <link rel="modulepreload" href="/js/clipboard.js" />
+    <link rel="modulepreload" href="/js/question.js" />
     <link rel="modulepreload" href="/js/menu.js" />
     <link rel="modulepreload" href="/js/render.js" />
     <link rel="modulepreload" href="/js/models.js" />
@@ -471,6 +472,34 @@
             <div class="approval__actions">
               <button class="btn btn--ghost" id="deny" data-i18n="approval.deny">Deny</button>
               <button class="btn btn--primary" id="allow" data-i18n="approval.allow">Allow &amp; run</button>
+            </div>
+          </div>
+
+          <!--
+            A question the assistant is waiting on, with buttons instead of a
+            blank line to type into. Sits where the approval box sits, for the
+            same reason: the turn has stopped and nothing happens until you
+            answer, so it belongs between the transcript and the composer where
+            your eye already is.
+
+            `group` rather than `alertdialog`: this is not an alarm and it does
+            not trap focus — you are free to ignore it and type something else,
+            and the card says so by offering Skip.
+          -->
+          <div class="question" id="question" role="group" aria-labelledby="question-title" hidden>
+            <div class="question__head">
+              <strong class="question__title" id="question-title"></strong>
+              <div class="question__nav" id="question-nav" hidden>
+                <button class="icon-btn icon-btn--tiny" id="question-prev" type="button" data-i18n-aria-label="question.prevAria" aria-label="Previous question">‹</button>
+                <span class="question__count" id="question-count"></span>
+                <button class="icon-btn icon-btn--tiny" id="question-next" type="button" data-i18n-aria-label="question.nextAria" aria-label="Next question">›</button>
+              </div>
+              <button class="icon-btn icon-btn--tiny" id="question-dismiss" type="button" data-i18n-aria-label="question.dismissAria" aria-label="Skip all of these">✕</button>
+            </div>
+            <div class="question__options" id="question-options" role="group"></div>
+            <div class="question__foot">
+              <input id="question-other" type="text" autocomplete="off" data-i18n-placeholder="question.other" placeholder="Something else…" />
+              <button class="btn btn--primary" id="question-go" type="button"></button>
             </div>
           </div>
 

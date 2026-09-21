@@ -19,6 +19,12 @@ export const vi = {
     'Đã dừng sau {0} token trong lượt này. Gửi một tin nhắn để tiếp tục.',
   'Stopped after {0} steps. Send a message to continue.': 'Đã dừng sau {0} bước. Gửi một tin nhắn để tiếp tục.',
 
+  /* ── hỏi người dùng bằng nút bấm ── */
+  'ask_options needs at least one question with two or more distinct options. Pass questions: [{ question, options: ["…", "…"] }].':
+    'ask_options cần ít nhất một câu hỏi kèm từ hai lựa chọn khác nhau trở lên. Hãy truyền questions: [{ question, options: ["…", "…"] }].',
+  'ask_options ran without the user having answered, which should not happen. Do not retry it; ask in prose instead.':
+    'ask_options chạy khi người dùng chưa trả lời, đây là chuyện không nên xảy ra. Đừng thử lại; hãy hỏi bằng lời thường.',
+
   /* ── reading a video ── */
   '"{0}" is not a YouTube video. Pass a watch, share, Shorts or embed link, or the 11-character video id.':
     '"{0}" không phải video YouTube. Hãy đưa link watch, link chia sẻ, link Shorts hoặc link nhúng, hoặc mã video 11 ký tự.',

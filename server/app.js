@@ -1669,6 +1669,17 @@ export function createApp() {
           // decision is about a specific batch, and until this was sent the
           // server had no way to know whether it still was. See `runAgent`.
           decisionFor: req.body?.decisionFor,
+          /**
+           * What the person pressed on a question card, if this call is the one
+           * resuming a paused question.
+           *
+           * `{ toolCallId, given: [{ picks, other }] }` — the id is what stops a
+           * stale answer from an earlier pause being read as this one's. The
+           * labels are checked against the options the model actually offered
+           * (see `answerText`), so a hand-made request cannot put words in the
+           * user's mouth.
+           */
+          answers: req.body?.answers,
           // Which computer the browser is sitting at, learned from the worker on
           // that machine. Per request rather than stored: preferences belong to
           // the account, so two machines with the app open would take turns

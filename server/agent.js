@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { getPrefs, usesSharedKey, providerStatus } from './settings.js';
 import { checkQuota, record as recordUsage, turnTokenLimit } from './usage.js';
+import { normaliseQuestions } from './tools/askOptions.js';
 import { streamCompletion } from './providers/index.js';
 import { budgetStop } from './providers/stop.js';
 import { resolve as resolveModelId } from './models.js';
@@ -675,7 +676,7 @@ export function resumableCalls(toolCalls, startedIds = []) {
   return { run, skipped };
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent }) {
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, answers }) {
   const results = await mapWithLimit(
     toolCalls,
     MAX_PARALLEL_TOOLS,
@@ -699,6 +700,10 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         // So `load_tools` can refuse to promise a tool this account cannot be
         // given, instead of reporting it loaded and never delivering it.
         deliverable,
+        // What the person pressed, for the one tool whose result is their
+        // answer rather than something the server worked out. Keyed by call so
+        // a batch holding a question and an action gives each the right thing.
+        answers: answers?.get(call.id),
       });
       const result = {
         toolCallId: call.id,
@@ -790,7 +795,7 @@ export function applyStreamEvent(ev, assistant, emit) {
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, emit, signal, deviceHint, policy: policyOverride = null, stream = streamCompletion }) {
+export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, policy: policyOverride = null, stream = streamCompletion }) {
   const store = getStore();
   const prefs = await getPrefs(userId);
 
@@ -980,6 +985,29 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // cut short before it could ask must still ask on resume.
     const stillPending = needsApproval(last.toolCalls, policy);
 
+    /**
+     * A question still waiting for its answer.
+     *
+     * Checked before approval, and on the same principle as the outbound side:
+     * a run cut short before the person could answer must ask again rather than
+     * run the tool with nothing. `answers` is keyed by call id, so a stale
+     * answer from a different pause cannot be mistaken for this one's.
+     */
+    const asking = last.toolCalls.find((c) => c.name === 'ask_options');
+    const answered = asking && answers?.toolCallId === asking.id ? new Map([[asking.id, answers.given]]) : null;
+    if (asking && !answered) {
+      let questions = null;
+      try {
+        questions = normaliseQuestions(asking.input);
+      } catch {
+        /* malformed: fall through and let the tool path report it */
+      }
+      if (questions) {
+        emit('question_required', { toolCallId: asking.id, questions });
+        return;
+      }
+    }
+
     const answersThis = answersTheseCalls(last.toolCalls, decisionFor);
 
     if (stillPending.length && !(answersThis && (decision === 'allow' || decision === 'deny'))) {
@@ -1017,7 +1045,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, answers: answered })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -1363,6 +1391,35 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
      */
     if (done?.stop?.message) emit('status', { message: done.stop.message, stop: done.stop.kind });
 
+    /**
+     * A question for the person, which no policy waives.
+     *
+     * Deliberately not routed through `needsApproval`. That returns nothing
+     * under `auto`, `readonly` and `plan` — so a question hung on it would be
+     * skipped in exactly the mode most people run in, and the assistant would
+     * carry on having asked nothing and heard nothing. Approval asks "may this
+     * run"; this asks "which way do you want it". Different questions, so a
+     * different gate.
+     *
+     * Only when the call is well formed. A malformed one falls through to the
+     * ordinary tool path, where the implementation throws the same message and
+     * the model gets an error it can read and correct — better than pausing the
+     * turn on a card that cannot be drawn.
+     */
+    const asking = assistant.toolCalls.find((c) => c.name === 'ask_options');
+    if (asking) {
+      let questions = null;
+      try {
+        questions = normaliseQuestions(asking.input);
+      } catch {
+        /* falls through to the tool path, which reports it properly */
+      }
+      if (questions) {
+        emit('question_required', { toolCallId: asking.id, questions });
+        return; // The browser resumes by calling back with the answers.
+      }
+    }
+
     const pending = needsApproval(assistant.toolCalls, policy);
     if (pending.length) {
       emit('approval_required', {
@@ -1380,7 +1437,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // Marked before anything runs, so a run killed mid-execution leaves a record
     // that these calls began — which is what stops a resume repeating them.
     await store.markToolCallsStarted(userId, chatId, assistant.id, assistant.toolCalls.map((c) => c.id));
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent });
+    // No answers on this path: a well-formed question pauses above rather than
+    // reaching here, so anything named `ask_options` that gets this far is a
+    // malformed call on its way to becoming a tool error.
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, answers: null });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {
