@@ -448,6 +448,50 @@ function toolCallDetail(call) {
   return node;
 }
 
+/**
+ * The address a step acted on, when it is one you could open yourself.
+ *
+ * Read off `input.url` rather than from a list of tool names, because every
+ * tool that works on a page already takes it under that name — `web_fetch`,
+ * `extract`, `youtube_transcript`, `open_url`, the browser family — so one
+ * added tomorrow that follows the same convention gets this without anybody
+ * remembering to come back here.
+ *
+ * `http(s)` only. A `file:` or `javascript:` argument stays text: the model
+ * chooses these, and a model reads pages that can tell it what to write next.
+ */
+export function stepLink(input = {}) {
+  const raw = String(input?.url ?? '');
+  return /^https?:\/\//i.test(raw) ? raw : '';
+}
+
+/**
+ * The detail beside a step's verb, as a link when there is one to follow.
+ *
+ * The URL was already printed there, shortened for reading — but only as text,
+ * so seeing where a fetch went and going there yourself were different things,
+ * and the second one meant opening the card and reading a JSON argument.
+ */
+function detailNode(className, detail, href) {
+  if (!href) {
+    const plain = el('span', className);
+    plain.textContent = detail;
+    return plain;
+  }
+  const link = document.createElement('a');
+  link.className = `${className} step__link`;
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  // The shortened form is what reads; the whole address is what you hover for.
+  link.title = href;
+  link.textContent = detail;
+  // The card underneath opens on click. Without this, following the link also
+  // unfolds the raw call and result you were trying not to have to read.
+  link.addEventListener('click', (event) => event.stopPropagation());
+  return link;
+}
+
 export function describeStep(name, input = {}) {
   const key = STEP_VERBS[name];
   if (!key) return { verb: name, detail: summariseToolInput(name, input) };
@@ -736,7 +780,7 @@ const URL_IN_TEXT = /https?:\/\/[^\s<>()[\]]+[^\s<>()[\].,;:!?'"]/g;
  * browser text nodes. The regex picks out the addresses; every character
  * between them stays exactly as written.
  */
-function withLinks(text) {
+export function withLinks(text) {
   const frag = document.createDocumentFragment();
   const source = String(text);
   let last = 0;
@@ -858,6 +902,7 @@ export function assistantMessage() {
     paintGroupSummary();
 
     const { verb, detail } = describeStep(call.name, call.input);
+    const href = stepLink(call.input);
 
     const item = el('li', 'step');
     const mark = el('span', 'step__mark', '<span class="spinner"></span>');
@@ -865,11 +910,7 @@ export function assistantMessage() {
     const verbNode = el('span', 'step__verb');
     verbNode.textContent = verb;
     label.append(verbNode);
-    if (detail) {
-      const detailNode = el('span', 'step__detail');
-      detailNode.textContent = detail;
-      label.append(detailNode);
-    }
+    if (detail) label.append(detailNode('step__detail', detail, href));
     const time = el('span', 'step__time');
     item.append(mark, label, time);
     run.list.append(item);
@@ -1151,13 +1192,21 @@ export function assistantMessage() {
       // The headline is what was done; the function name and its arguments are
       // inside, one click away, for whoever wants them.
       const { verb, detail } = describeStep(call.name, call.input);
-      const head = (mark) =>
-        `${mark}<span class="tool__name">${escapeHtml(verb)}</span>` +
-        (detail ? `<span class="tool__arg">${escapeHtml(detail)}</span>` : '');
+      const href = stepLink(call.input);
+      /**
+       * Drawn in two halves: markup for the parts that are markup, and a real
+       * node for the argument, because when the argument is an address it is
+       * an anchor with a listener on it and `innerHTML` cannot carry either.
+       */
+      const paintHead = (mark, trailing = '') => {
+        summary.innerHTML = `${mark}<span class="tool__name">${escapeHtml(verb)}</span>`;
+        if (detail) summary.append(detailNode('tool__arg', detail, href));
+        if (trailing) summary.insertAdjacentHTML('beforeend', trailing);
+      };
 
       const block = el('details', 'block tool');
       const summary = el('summary');
-      summary.innerHTML = head(MARK_PENDING);
+      paintHead(MARK_PENDING);
       block.append(summary);
 
       const inner = el('div', 'block__body');
@@ -1173,9 +1222,10 @@ export function assistantMessage() {
       return {
         complete(result) {
           block.classList.toggle('tool--error', !!result.isError);
-          summary.innerHTML =
-            head(`<span class="mark">${result.isError ? '✗' : '✓'}</span>`) +
-            (result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '');
+          paintHead(
+            `<span class="mark">${result.isError ? '✗' : '✓'}</span>`,
+            result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '',
+          );
           output.textContent = result.content || t('chat.noOutput');
 
           /**

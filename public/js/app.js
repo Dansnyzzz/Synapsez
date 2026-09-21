@@ -14,6 +14,7 @@ import {
   summaryDivider,
   stopNote,
   markdownOf,
+  withLinks,
 } from './render.js';
 import { createModelBrowser } from './models.js';
 import { createScreen } from './screen.js';
@@ -2136,7 +2137,10 @@ $('messages').addEventListener('click', async (event) => {
   if (assistant && button.dataset.act === 'copy') {
     const wrote = await writeRich({
       html: cleanHtml(assistant.querySelector('.prose')),
-      text: markdownOf(assistant),
+      // Trimmed: a model that ends its reply with a couple of newlines was
+      // pasting them too, and in a box that grows to fit its content that is a
+      // screen of empty space under two lines of text.
+      text: markdownOf(assistant).trim(),
     });
     if (wrote) done();
     else toast(t('clipboard.failed'), 'error');
@@ -2192,7 +2196,10 @@ $('messages').addEventListener('copy', (event) => {
   if (!html) return;
 
   event.clipboardData?.setData('text/html', forWord(html));
-  event.clipboardData?.setData('text/plain', selection.toString());
+  // Trimmed for the same reason the button's copy is: a drag that overshoots
+  // the last line picks up the empty space below it, and that space is what
+  // lands in whatever it is pasted into.
+  event.clipboardData?.setData('text/plain', selection.toString().trim());
   event.preventDefault();
 });
 
@@ -2261,7 +2268,11 @@ function beginEdit(message, text) {
     bubble.innerHTML = '';
     const body = document.createElement('div');
     body.className = 'bubble__text';
-    body.textContent = next;
+    // The same treatment the bubble had before it was opened for editing.
+    // Rebuilt with `textContent`, a rewritten message lost every link in it —
+    // and the commonest edit is fixing a typo in the sentence *around* a link,
+    // so saving a correction was how you broke the address you had just pasted.
+    body.append(withLinks(next));
     bubble.append(body);
 
     await stream();

@@ -45,6 +45,21 @@ function htmlToText(html) {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/[ \t]+/g, ' ')
+    /**
+     * No spaces hugging a newline, and this line is the whole point.
+     *
+     * The collapse below it looks for `\n{3,}`, and it was finding almost
+     * none — because the rule above turns a blank line's worth of markup into
+     * a single space, so a run of empty block elements leaves `\n \n \n \n`
+     * rather than `\n\n\n\n`. Every one of those spaces stopped the match, and
+     * a page whose layout is built from empty divs — most of them — arrived
+     * with hundreds of blank lines intact.
+     *
+     * They were charged for. This is the text that goes into the prompt, so
+     * that whitespace was paid for on the fetch and again on every later step
+     * of the turn, and it made the tool card on screen a column of nothing.
+     */
+    .replace(/[ \t]*\n[ \t]*/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

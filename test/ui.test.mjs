@@ -1008,21 +1008,34 @@ section('copying and editing what you said');
   check('editing opens a box holding what you wrote', editing.open && editing.value === 'the question as first asked', editing.value);
   check('with a way out and a way on', editing.buttons === 2);
 
-  await page.fill(`${bubble} .bubble__edit`, 'the question as it should have been');
+  // With an address in it, because the commonest edit is fixing the sentence
+  // *around* a link — and the rebuilt bubble used to come back as plain text,
+  // so saving a correction was how you broke the URL you had just pasted.
+  const rewritten = 'see https://example.com/paper.pdf as it should have been';
+  await page.fill(`${bubble} .bubble__edit`, rewritten);
   await page.click('[data-edit="save"]');
   await page.waitForTimeout(2500);
 
   const after = await page.evaluate(async () => {
     const { chats } = await (await fetch('/api/chats')).json();
     const full = await (await fetch(`/api/chats/${chats[0].id}`)).json();
+    const body = document.querySelector('#messages .msg--user .bubble__text');
+    const link = body?.querySelector('a');
     return {
-      onScreen: document.querySelector('#messages .msg--user .bubble__text')?.textContent,
+      onScreen: body?.textContent,
+      href: link?.getAttribute('href') || '',
+      target: link?.getAttribute('target') || '',
       stored: full.messages.filter((m) => m.role === 'user').map((m) => m.text),
       total: full.messages.length,
     };
   });
-  check('saving rewrites the message', after.onScreen === 'the question as it should have been', after.onScreen);
-  check('and stores the new wording', after.stored.join('|') === 'the question as it should have been', after.stored.join('|'));
+  check('saving rewrites the message', after.onScreen === rewritten, after.onScreen);
+  check('and stores the new wording', after.stored.join('|') === rewritten, after.stored.join('|'));
+  check('the address in it is still a link afterwards', after.href === 'https://example.com/paper.pdf', after.href);
+  check('and still opens away from the conversation', after.target === '_blank', after.target);
+  // `textContent` has to read back exactly what was typed, or copying and
+  // re-editing the bubble would hand back something the person did not write.
+  check('while the text reads back unchanged', after.onScreen === rewritten);
   // Everything after it was a reply to a question that has been withdrawn.
   check('with everything that followed dropped', after.total === 1, `${after.total} messages left`);
 
@@ -4395,6 +4408,66 @@ section('mathematics in a reply is drawn as mathematics');
   check('nothing under /vendor/katex failed to load', failed.length === 0, failed.join(' '));
 }
 
+section('a step that acted on an address says so as a link');
+{
+  const card = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    const handle = turn.startTool({
+      id: 'c1',
+      name: 'web_fetch',
+      input: { url: 'https://edenai.co/post/top-free-image-generation-tools?utm=1' },
+    });
+
+    const summary = turn.node.querySelector('.tool summary');
+    const link = summary?.querySelector('a.tool__arg');
+    const before = { href: link?.getAttribute('href') || '', shown: link?.textContent || '' };
+
+    // Following the link must not also unfold the card: the whole point is to
+    // get to the page without reading the raw call and result.
+    const details = turn.node.querySelector('details.tool');
+    link?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    const openedByLink = details.open;
+
+    // And the link survives the card being redrawn when the call finishes.
+    handle.complete({ content: 'ok', ms: 57, isError: false });
+    const after = turn.node.querySelector('.tool summary a.tool__arg');
+    const out = {
+      ...before,
+      openedByLink,
+      afterHref: after?.getAttribute('href') || '',
+      tick: turn.node.querySelector('.tool summary .mark')?.textContent || '',
+    };
+    turn.node.remove();
+    return out;
+  });
+
+  check('the whole address is the target', card.href === 'https://edenai.co/post/top-free-image-generation-tools?utm=1', card.href);
+  // Shortened for reading — the full thing is on the hover title.
+  check('a readable form of it is what shows', card.shown.length > 0 && !card.shown.startsWith('https://'), card.shown);
+  check('clicking it does not unfold the card', card.openedByLink === false);
+  check('and it is still a link once the call finishes', card.afterHref === card.href, card.afterHref);
+  check('with the tick beside it', card.tick === '✓', card.tick);
+}
+
+section('a query is not pretending to be a link');
+{
+  const search = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    turn.startTool({ id: 'c2', name: 'web_search', input: { query: 'best free image API' } });
+    const summary = turn.node.querySelector('.tool summary');
+    const out = { anchors: summary.querySelectorAll('a').length, arg: summary.querySelector('.tool__arg')?.textContent || '' };
+    turn.node.remove();
+    return out;
+  });
+  // There is no single page a search went to, so there is nothing to follow.
+  check('a search step has no link on it', search.anchors === 0, String(search.anchors));
+  check('but still says what was searched for', search.arg.includes('best free image API'), search.arg);
+}
+
 section('copying an answer out does not carry the dark theme with it');
 {
   // The stripper, against the exact shapes the transcript produces: a code
@@ -4422,6 +4495,30 @@ section('copying an answer out does not carry the dark theme with it');
   check('the heading is still a heading', stripped.includes('<h2>Chênh lệch lãi suất</h2>'));
   check('the table is still a table', stripped.includes('<th>Năm</th>') && stripped.includes('<td>2026</td>'));
   check('the source link survives', stripped.includes('href="https://example.com/a"'));
+
+  /**
+   * Nothing empty hanging off either end.
+   *
+   * A reply that finishes with a blank paragraph, or a selection dragged past
+   * the last line, pasted a run of empty blocks under the text — which in a
+   * document is a page of whitespace and in a box that grows to fit its
+   * content is a screen-high empty composer with two lines at the top.
+   */
+  const edges = await page.evaluate(async () => {
+    const { cleanHtml } = await import('/js/clipboard.js');
+    const host = document.createElement('div');
+    host.innerHTML = '<p> </p><p></p><h2>Kết luận</h2><p>Giữa</p><p></p><p>Cuối</p><p>  </p><div></div>';
+    const withTable = document.createElement('div');
+    withTable.innerHTML = '<p>Có bảng</p><table><tr><td></td></tr></table>';
+    return { trimmed: cleanHtml(host), table: cleanHtml(withTable) };
+  });
+
+  check('no empty block at the start', edges.trimmed.startsWith('<h2>'), edges.trimmed.slice(0, 60));
+  check('none at the end either', edges.trimmed.endsWith('Cuối</p>'), edges.trimmed.slice(-60));
+  // Only the edges: a blank line the author put between two paragraphs is
+  // their spacing, and none of this function's business.
+  check('but one in the middle is left alone', edges.trimmed.includes('<p></p>'), edges.trimmed);
+  check('and an empty table is content, not padding', edges.table.includes('<table>'), edges.table);
   check('the code is still there', stripped.includes('x=1'));
   // The browser's own serialiser absolutised these; ours has to, or the
   // attachment link in a pasted report points at whatever host opens it.

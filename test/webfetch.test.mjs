@@ -95,6 +95,18 @@ const routes = {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end('<html><head><style>b{}</style></head><body><h1>Tiêu đề</h1><p>Nội dung thật.</p></body></html>');
   },
+  '/spacer.html': (res) => {
+    // How most of the web is actually built: content separated by runs of empty
+    // block elements doing the job of margins.
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(
+      '<html><body><h1>Tiêu đề</h1>' +
+        '<div> </div>'.repeat(40) +
+        '<p>Nội dung thật.</p>' +
+        '<div></div><div>\n</div><div>\t</div>'.repeat(20) +
+        '<p>Đoạn cuối.</p></body></html>',
+    );
+  },
   '/huge.pdf': (res) => {
     // Declares far more than any document ceiling and sends nothing: the refusal
     // must happen on the header, before a byte is read.
@@ -187,6 +199,31 @@ try {
     // A bare "[truncated]" left the model with no idea that asking again would
     // get it more, so it answered from the first slice or gave up.
     check('and how to read the rest', /larger max_chars/.test(out), out.slice(-160));
+  }
+  section('a page built out of empty divs does not arrive as empty lines');
+  {
+    const out = await webFetch({ url: `${base}/spacer.html` });
+    const body = out.slice(out.indexOf('<untrusted'));
+    const lines = body.split('\n');
+    const blanks = lines.filter((line) => !line.trim()).length;
+
+    check('the words are all there', /Tiêu đề[\s\S]*Nội dung thật[\s\S]*Đoạn cuối/.test(body), body.slice(0, 120));
+
+    /**
+     * The bug this is here for.
+     *
+     * `[ \t]+ → ' '` ran before `\n{3,} → '\n\n'`, so a blank line's worth of
+     * markup became `\n \n` — a space between the newlines, which is exactly
+     * what stopped the collapse matching. Sixty empty divs came through as
+     * sixty blank lines, into the prompt, charged on the fetch and again on
+     * every later step of the turn.
+     */
+    check('no line is whitespace pretending to be content', !/\n[ \t]+\n/.test(body), JSON.stringify(body.slice(0, 200)));
+    check('and at most one blank line separates paragraphs', blanks <= 3, `${blanks} blank lines of ${lines.length}`);
+
+    // Sixty empty divs is about 700 characters of markup. What survives should
+    // be the three sentences and their separators, and nothing else.
+    check('so the whole thing is short', body.length < 260, `${body.length} chars`);
   }
 } finally {
   server.close();

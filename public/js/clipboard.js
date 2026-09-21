@@ -145,7 +145,34 @@ export function cleanHtml(node) {
     }
   }
 
-  return clone.innerHTML;
+  /**
+   * Trailing emptiness travels, and it is the part people notice.
+   *
+   * A reply that ends with a blank paragraph, a tool card stripped down to
+   * nothing, or a selection dragged past the last line, all paste a run of
+   * empty blocks under the text. In a document that shows as a page of
+   * whitespace; in a composer that grows to fit, it shows as a screen-high
+   * empty box with two lines at the top of it.
+   *
+   * Only the edges. An empty paragraph between two others is the author's
+   * spacing and stays exactly where it is; `<img>`, `<hr>`, `<br>` and a table
+   * are content even with no text in them, so a node holding one is never
+   * blank.
+   */
+  /**
+   * Things that are content even with no text in them.
+   *
+   * `matches` as well as `querySelector`, because a node has to be able to
+   * recognise *itself*: `querySelector` only looks at descendants, so a table
+   * sitting at the end of a reply found no table inside it and was thrown away
+   * as padding.
+   */
+  const KEEP = 'img, hr, br, table, svg, video, audio, iframe, canvas';
+  const blank = (node) => !node.textContent.trim() && !node.matches(KEEP) && !node.querySelector(KEEP);
+  while (clone.firstElementChild && blank(clone.firstElementChild)) clone.firstElementChild.remove();
+  while (clone.lastElementChild && blank(clone.lastElementChild)) clone.lastElementChild.remove();
+
+  return clone.innerHTML.trim();
 }
 
 /* ── putting it there ──────────────────────────────────────────── */
