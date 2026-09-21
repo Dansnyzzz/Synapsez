@@ -321,8 +321,10 @@
           <div class="topbar__right">
             <!-- Ahead of the policy and model chips, because connecting a
                  computer is the thing somebody does once and cannot find. -->
+            <!-- No status dot. The label is the status: it reads "Add a
+                 computer" with none connected and names the machine when one
+                 is, so the dot beside it said the same thing a second time. -->
             <button class="chip chip--pair" id="pair-chip" data-i18n-js title="Pair a computer">
-              <span class="dot" id="pair-dot"></span>
               <span id="pair-chip-label" data-i18n="topbar.computers">Computers</span>
             </button>
             <!-- Only present when this conversation belongs to a project: the

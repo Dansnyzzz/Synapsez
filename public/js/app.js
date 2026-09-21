@@ -824,9 +824,21 @@ async function refreshChats({ background = false } = {}) {
     byProject.get(chat.project_id).push(chat);
   }
 
-  // Only projects that have something in them. A column of empty headings is
-  // the shelf's job, not the sidebar's.
-  const filed = projects.filter((project) => byProject.has(project.id));
+  /**
+   * Pinned projects only, and only those with something in them.
+   *
+   * A column of empty headings is the shelf's job, not the sidebar's — and so,
+   * it turns out, is a column of full ones. Every project with a conversation
+   * in it appeared here, so the sidebar grew a second copy of the Projects
+   * page above the list it exists to be, and the conversations underneath
+   * pushed the recent ones off the screen.
+   *
+   * Pinning is the existing way of saying "this is what I am working on" — it
+   * already sorts the shelf and marks the card — so it decides this too. A
+   * project that is not pinned is one click away on the shelf, exactly where
+   * the rest of them are.
+   */
+  const filed = projects.filter((project) => project.pinned && byProject.has(project.id));
   if (filed.length) {
     list.append(sidebarLabel(t('nav.projects')));
     for (const project of filed) {
@@ -1573,13 +1585,25 @@ function startRename(chat, titleButton) {
 function leavePages() {
   projectPage.hide();
   pages.hide();
+  onPage(false);
 }
 
 /** The reverse: a shelf or a project page takes the conversation's place. */
 function gotoShelf(which) {
   projectPage.hide();
   pages.show(which);
+  onPage(true);
 }
+
+/**
+ * Whether a shelf or a project page currently has the screen.
+ *
+ * Only the sidebar reads it, and only to stop marking a conversation as the
+ * open one while you are not looking at any conversation at all — see
+ * `.app.is-on-page` in the stylesheet. A class rather than a re-render: the
+ * row keeps its place and its identity, so going back is one click.
+ */
+const onPage = (yes) => $('app').classList.toggle('is-on-page', yes);
 
 /**
  * Take the run off screen without touching it.

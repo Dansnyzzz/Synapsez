@@ -979,6 +979,8 @@ export function createProjectPage({
     /** Show the page for one project. Rejects nothing — it says so on screen. */
     async open(id) {
       page.hidden = false;
+      // No conversation is "the open one" while this page has the screen.
+      document.getElementById("app")?.classList.add("is-on-page");
       $('page').hidden = true;
       $('thread').hidden = true;
       $('dock').hidden = true;

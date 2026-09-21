@@ -812,6 +812,30 @@ section('projects: instructions and sources a conversation inherits');
   await page.click('#project-form-save');
   await page.waitForTimeout(1200);
 
+  /**
+   * Pinned, because that is now what puts a project in the sidebar.
+   *
+   * Every project with a conversation in it used to appear there, which grew a
+   * second copy of the Projects page above the list the sidebar exists to be.
+   * Pinning is the existing way of saying "this is what I am working on", so it
+   * decides this too — and the checks further down that reach for this project
+   * *through* the sidebar need it to be there.
+   */
+  const pinnedIt = await page.evaluate(async () => {
+    const { projects } = await (await fetch('/api/projects')).json();
+    const mine = projects.find((p) => p.name === 'UI project');
+    if (!mine) return { found: false };
+    const res = await fetch(`/api/projects/${mine.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned: true }),
+    });
+    const after = await (await fetch('/api/projects')).json();
+    return { found: true, status: res.status, pinned: !!after.projects.find((p) => p.id === mine.id)?.pinned };
+  });
+  check('the test project is pinned, which is what puts it in the sidebar', pinnedIt.pinned === true, JSON.stringify(pinnedIt));
+  await page.waitForTimeout(600);
+
   // Creating one lands *in* it, on its own page — you named it because you were
   // about to use it, not to admire it on a shelf.
   const opened = await page.evaluate(() => ({
@@ -2688,7 +2712,10 @@ section('a shelf is searched from one field, not two');
   const items = await page.evaluate(() =>
     [...document.querySelectorAll('.cardmenu button')].map((b) => b.dataset.label),
   );
-  check('it offers Pin', items.includes('Pin'), items.join(' / '));
+  // Pinning is what puts a project in the sidebar, and this one was pinned at
+  // the top of the suite so the sidebar checks have something to find — so the
+  // menu offers the way back out. Either word proves the toggle is on the menu.
+  check('it offers the pin toggle', items.includes('Pin') || items.includes('Unpin'), items.join(' / '));
   check('  Edit details', items.includes('Edit details'));
   check('  Archive', items.includes('Archive'));
   check('  and Delete', items.includes('Delete'));
@@ -2702,7 +2729,25 @@ section('a shelf is searched from one field, not two');
     'absolute inside a card gets clipped by it',
   );
 
-  // Pinning, and what a pin is for: first place, whatever the ordering.
+  /**
+   * Pinning, and what a pin is for: first place, whatever the ordering — and
+   * now also a row in the sidebar.
+   *
+   * This project arrives already pinned, because the sidebar checks earlier in
+   * the suite need it there. So the toggle is exercised from where it actually
+   * is: off, then on again. Both directions, which is more than this covered
+   * before.
+   */
+  await page.click('.cardmenu [data-label="Unpin"]');
+  await page.waitForTimeout(900);
+  check(
+    'unpinning clears the mark',
+    await page.evaluate(() => !document.querySelector('.card__pin')),
+  );
+
+  await page.hover('[data-project]');
+  await page.click('[data-more]');
+  await page.waitForTimeout(300);
   await page.click('.cardmenu [data-label="Pin"]');
   await page.waitForTimeout(900);
   check(
@@ -4020,6 +4065,15 @@ section('the sidebar files a project\'s conversations under it');
         r.json(),
       );
     const { project } = await post('/api/projects', { name: 'Filed work' });
+    // Pinned, because that is what puts a project in the sidebar now — an
+    // unpinned one lives on the Projects shelf and nowhere else. This whole
+    // section is about how the sidebar files conversations under a project, so
+    // it needs one that is actually there.
+    await fetch(`/api/projects/${project.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned: true }),
+    });
     const { chat } = await post('/api/chats', { projectId: project.id });
     await post(`/api/chats/${chat.id}/messages`, { text: 'inside the project' });
     const { chat: loose } = await post('/api/chats', {});
@@ -4406,6 +4460,64 @@ section('mathematics in a reply is drawn as mathematics');
   check('the $$ formula is a display formula', math.display === 1, `${math.display}`);
   check('its fonts load', math.fonts === true);
   check('nothing under /vendor/katex failed to load', failed.length === 0, failed.join(' '));
+}
+
+section('the sidebar lists pinned projects and no others');
+{
+  const made = await page.evaluate(async () => {
+    const post = (url, body) =>
+      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(
+        (r) => r.json(),
+      );
+    // A project with a real conversation in it, left unpinned.
+    const { project } = await post('/api/projects', { name: 'Unpinned work' });
+    const { chat } = await post('/api/chats', { projectId: project.id });
+    await post(`/api/chats/${chat.id}/messages`, { text: 'filed but not pinned' });
+    return { project: project.id, chat: chat.id };
+  });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1400);
+
+  const hidden = await page.evaluate(
+    (ids) => ({
+      named: [...document.querySelectorAll('.proj-row__name')].map((n) => n.textContent),
+      row: !!document.querySelector(`.chat-row[data-chat="${ids.chat}"]`),
+    }),
+    made,
+  );
+
+  /**
+   * The rule this section exists for.
+   *
+   * Every project holding a conversation used to be listed here, so the
+   * sidebar grew a second copy of the Projects page above the list it exists
+   * to be — and the conversations underneath pushed the recent ones off the
+   * screen. Pinning already means "this is what I am working on"; it decides
+   * this too.
+   */
+  check('an unpinned project is not in the sidebar', !hidden.named.some((n) => /Unpinned work/.test(n)), hidden.named.join(','));
+  // The honest cost, asserted rather than left for somebody to discover: its
+  // conversations are not in the sidebar either. They are on the project page.
+  check('nor are the conversations inside it', hidden.row === false);
+  // And the pinned one from earlier is still there, so this is a filter and
+  // not the section quietly disappearing.
+  check('while a pinned one still is', hidden.named.some((n) => /Filed work/.test(n)), hidden.named.join(','));
+
+  // Pinning it puts it there, which is the way back for anyone who wants it.
+  await page.evaluate(
+    (ids) =>
+      fetch(`/api/projects/${ids.project}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pinned: true }),
+      }),
+    made,
+  );
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1400);
+  const shown = await page.evaluate(() => [...document.querySelectorAll('.proj-row__name')].map((n) => n.textContent));
+  check('and pinning it is what brings it back', shown.some((n) => /Unpinned work/.test(n)), shown.join(','));
 }
 
 section('a step that acted on an address says so as a link');

@@ -351,16 +351,15 @@ textarea {
  * A new account starts on one without having chosen it, and the way a free model
  * fails — rate-limited partway through a long job — is indistinguishable from
  * the app being broken unless something says which kind of model is answering.
- * A dot rather than the word, because the chip is already narrow on a phone; the
- * tooltip and the onboarding step carry the sentence. */
-.chip--free::after {
-  content: '';
-  flex: none;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-glow);
+ *
+ * Said in the chip's own colour rather than with a dot beside it. The dot was
+ * a second mark on a row that already has one for the paired computer, and two
+ * small glowing circles side by side read as decoration rather than as two
+ * different facts. Colour costs no width — which was the reason for a dot in
+ * the first place — and the tooltip still carries the sentence. */
+.chip--free {
+  color: var(--accent);
+  border-color: var(--accent-dim);
 }
 
 /* ── Gate ────────────────────────────────────────────────────── */
@@ -1151,6 +1150,21 @@ textarea {
   animation: galaxy-drift 14s linear infinite;
 }
 .chat-row.is-active .chat-item { color: var(--text); }
+/**
+ * Nothing is the open conversation while a shelf has the screen.
+ *
+ * The mark means "this is what you are looking at", and on the Projects page or
+ * the files shelf you are not looking at any conversation — the transcript is
+ * not even on screen. Left lit, it claimed a place the app was not in, and the
+ * brightest thing in the sidebar pointed at somewhere you had navigated away
+ * from.
+ *
+ * The row keeps its identity so returning to it is one click and nothing has
+ * moved; only the claim goes.
+ */
+.app.is-on-page .chat-row.is-active { background: transparent; }
+.app.is-on-page .chat-row.is-active::before { display: none; }
+.app.is-on-page .chat-row.is-active .chat-item { color: var(--text-dim); }
 
 .chat-item {
   flex: 1;
@@ -2017,6 +2031,12 @@ textarea {
 .msg--assistant:hover .msg__actions {
   opacity: 1;
 }
+/* Hard against the right edge, where the user's own copy button already is.
+   Under the left edge of a reply it was the furthest point on the row from
+   where the pointer has just been — you finish reading at the right. */
+.msg--assistant .msg__actions {
+  justify-content: flex-end;
+}
 /*
  * Keyboard focus reveals them too — but only keyboard focus.
  *
@@ -2572,9 +2592,14 @@ details.block pre {
   padding: 8px;
   /* Transparent, not absent, and the same width it has when focused.
      A grey ring read as a second, squarer edge around a shape that is already
-     drawn by its own surface and shadow; reserving the two pixels here is what
-     stops the box jumping when the galaxy ring arrives. */
-  border: 2px solid transparent;
+     drawn by its own surface and shadow; reserving the pixel here is what
+     stops the box jumping when the galaxy ring arrives.
+
+     One pixel, not two. At two the lit ring was thick enough to read as a
+     frame around the field rather than as an edge on it — the eye kept
+     catching on it while typing, which is the one place in this app where
+     nothing should be competing for attention. */
+  border: 1px solid transparent;
   border-radius: 26px;
   /* Opaque, because the transcript now scrolls behind it. */
   background: var(--surface);
@@ -5020,7 +5045,12 @@ details.block pre {
   padding: 22px 24px;
   border: 1px solid var(--line-soft);
   border-radius: 16px;
-  background: var(--surface);
+  /* Drawn by its edge, not by a fill. A shelf of filled tiles sits on top of
+     the page as a second surface; an outline lets the galaxy behind it stay
+     the background of the whole app, and the border is enough to say where one
+     card ends and the next begins. The hover fill below is what makes a card
+     feel like something you can press. */
+  background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;

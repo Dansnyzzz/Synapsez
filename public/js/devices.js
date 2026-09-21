@@ -56,7 +56,9 @@ export function createDevices({ state, refreshWorker, armed }) {
     else if (count > 1) label = t('devices.countComputers', { count });
     else label = worker.activeName || t('devices.computer');
 
-    $('pair-dot').className = `dot ${online ? 'is-online' : 'is-offline'}`;
+    // The chip carries no dot: the label above already says whether anything
+    // is connected, and by name when something is.
+    $('pair-chip').classList.toggle('is-online', online);
     $('pair-chip-label').textContent = label;
     $('pair-chip').title = online ? t('devices.yours') : t('devices.none');
   }
