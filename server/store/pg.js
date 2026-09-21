@@ -1088,8 +1088,8 @@ export function createPgStore(connectionString) {
      * new while it was working. It used to answer that by re-reading the
      * *entire* transcript — every JSONB message body, including the tool
      * results and the base64 that never shrinks — and then discarding all but
-     * the new rows. At `maxSteps` of 30 that is the whole conversation pulled
-     * over the wire thirty times in a single turn, and compaction does not help
+     * the new rows. At `maxSteps` of 60 that is the whole conversation pulled
+     * over the wire sixty times in a single turn, and compaction does not help
      * because it trims in memory, after the read.
      *
      * `messages_chat_seq_idx (chat_id, seq)` covers this exactly, so it costs

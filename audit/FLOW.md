@@ -18,7 +18,7 @@ Browser: POST /api/chats/:id/messages          public/js/api.js → server/app.j
         ├─[seq] buildSystemPrompt  ≈1.8k–3.6k tok                agent.js:32-330
         ├─[seq] availableTools  → 48 of 93 ≈ 6.9k tok            tools/definitions.js
         │
-        └── LOOP  step = 0 … prefs.maxSteps (default 30)         agent.js:775
+        └── LOOP  step = 0 … prefs.maxSteps (default 60)         agent.js:775
               │
               ├─[seq] absorbNewMessages()  ← user can steer mid-run   agent.js:741
               ├─[seq] shouldCompact? → compact()               [llm] compact.js
@@ -46,7 +46,7 @@ Browser: POST /api/chats/:id/messages          public/js/api.js → server/app.j
 | ~~`connectors.js` verify path~~ | ~~3 fetches with no timeout~~ — **closed.** Re-scanned 2026-09-09: 30 `fetch(` sites across `server/ api/ worker/`, **0** without an abort signal | AUTO-002 (FIXED `2fc370d`) |
 | Loop entry | ~10.5k tokens of tools+prompt on **every** turn — 6.9k catalogue after deferral + 3.6k prompt. Corrected 2026-09-09; the earlier 16.9k figure sized the whole `TOOLS` array rather than what a turn sends | PERF-002 (DOWNGRADED) |
 | `checkQuota` | returns allowed with no ceiling when `DEFAULT_MONTHLY_TOKEN_LIMIT` is unset | PERF-001 |
-| Loop | step budget (30) is a *count*, not a token or cost budget — 30 steps of a large model has no spend ceiling | PERF-001 |
+| Loop | step budget (60) is a *count*, not a token or cost budget — 60 steps of a large model has no spend ceiling | PERF-001 |
 | `initStore()` per request | necessary on serverless cold starts, but it is on the hot path of every call | — noted, not a defect |
 
 ## What is genuinely well built here
