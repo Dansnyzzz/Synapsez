@@ -1,5 +1,70 @@
 # Changelog
 
+## 2026-09-22 — a turn that survives a refresh, and a project that remembers its own way of working
+
+Branch `fix/run-survives-refresh`.
+
+### Fixed
+
+- **Refreshing the page mid-answer threw the answer away, and sending again was refused.** A closed
+  socket was read as "stop", so a reload, a locked phone or a shut laptop lid killed work that was
+  minutes in; what came back was a transcript frozen at the last saved step, with no spinner and
+  nothing saying whether anything was still happening. It now asks the run's lease instead of
+  assuming: the lease cleared means somebody pressed stop and the run ends at once; the lease still
+  held means the browser simply left, and the loop carries on writing steps. Reopening the
+  conversation is told the run id it needs to walk back into that same turn, so the rest of it
+  arrives live and step by step rather than in one lump at the end. A tab of the same browser that
+  is already narrating the run is followed rather than superseded, so a second tab cannot stop an
+  answer somebody is reading.
+- **A model withdrawn by its provider stayed in the picker for ever, and an account pinned to one
+  could not send anything at all.** The library only ever grew. A refresh now forgets what its
+  source has stopped listing — per provider, and only for a source that actually answered, so an
+  outage cannot empty the library. The failure itself reads as a sentence too: aggregators announce
+  a withdrawal in the *body* of a 404, chattily ("Thank you for participating in the Stealth Ox
+  Alpha testing period…"), and that reached the transcript verbatim, in English, on every attempt.
+  It now says which model went, that nothing the user did caused it, the successor the provider
+  names, and where to change it — in Vietnamese for a Vietnamese account.
+- **Vietnamese was drawn wrong on the project and shelf titles.** They were the only serif in the
+  app, set in Georgia, which stops at Latin Extended-A — so every letter carrying a Vietnamese tone
+  mark fell out of the font and was drawn by whatever the browser found next. "luật thương mại quốc
+  tế" rendered with five letters in a different typeface, off the baseline. The stack is now one
+  that covers Vietnamese.
+- **A conversation filed under an unpinned project appeared nowhere in the sidebar.** The project
+  section lists only pinned projects and the conversation list took only chats with no project at
+  all, so anything in between fell through both. Filing something is not hiding it: the heading is
+  filtered, the work is not.
+- **The four openers on a blank screen stayed in the old language until a reload.** They were
+  evaluated once at import time. They are read from the dictionary when they are drawn now — which
+  matters because a blank screen is what somebody is most likely to be looking at while changing
+  the language.
+
+### Changed
+
+- **A project keeps its own memory, underneath the account's.** "Cite the article number" is true of
+  a law project and false of the deck beside it; pooled into one account-wide list those contradict
+  each other. A note learned inside a project is filed under it and read back by its conversations;
+  the account's notes still apply everywhere, including inside. A name in both is the project's —
+  the narrower context is the more specific instruction. `scope: "account"` files a genuinely
+  general fact from inside a project. The project page marks each note with where it lives.
+- **A project page shows what the project produced.** The shelf listed the documents put *in* and
+  nothing of what came out, so last Tuesday's report lived only in the transcript that wrote it.
+  Pressing one opens it in the same panel the transcript's own file cards use.
+- **A conversation row in a project says when it was last spoken in, not how many messages it
+  holds.** Scanning a project is a search through time; a count sorts you nowhere.
+- **Asking twice for the same scheduled task or workflow no longer makes a second one.** Two jobs
+  doing the same work arrive twice, and cancelling one leaves the other running. The tool declines,
+  shows what is already there, and asks with buttons — keep it, change it, add a second anyway, or
+  cancel. Nothing is decided for the user, and a second one is still available to anyone who wants
+  it.
+- **Two chips left the header.** "Add a computer" was a permanent invitation to a thing most
+  accounts do once or never, and the project chip named the project a second time — both in the one
+  row that also has to hold the conversation's title, which they overran on a narrow window.
+  Pairing lives in Settings → Computers, where somebody looks for it; the breadcrumb left of the
+  title is the project, and goes there.
+- **The four openers are glass on the accent rather than grey tiles**, and they say what most people
+  actually open this for: research that keeps its citations, a file read and charted, the working
+  folder on your own machine, and work that runs on a clock without you.
+
 ## 2026-09-21 — a galaxy instead of a green, and a schedule that keeps its time
 
 Branch `fix/web-fetch-documents`.

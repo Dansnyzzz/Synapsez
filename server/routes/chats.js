@@ -159,7 +159,24 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       // transcript at the point they were written.
       const files = await store.listGeneratedFiles(req.user.id, req.params.id);
 
-      res.json({ chat, messages, pendingApproval: pending, context, project, files });
+      /**
+       * Whether a turn is still going in this conversation, and under which id.
+       *
+       * The id is the part that matters. A run holds a lease keyed by it, and a
+       * request carrying the same id is let back into that lease rather than
+       * refused by it — which is how a turn survives the function timeout on a
+       * hosted deployment. The browser knew its own id for as long as the tab
+       * lived and lost it on reload, so after a refresh there was no way to
+       * rejoin: the work went on writing steps into the database and the page
+       * sat there blank, looking broken.
+       *
+       * Handing it back closes that gap. The page reopens, sees a live run,
+       * reconnects with its id, and carries on watching the same turn — steps
+       * and all — rather than starting a second one or showing nothing.
+       */
+      const running = isRunning(chat) ? { runId: chat.run_lock_by } : null;
+
+      res.json({ chat, messages, pendingApproval: pending, context, project, files, running });
     }),
   );
 

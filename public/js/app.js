@@ -1,5 +1,5 @@
 import { api, runAgent } from './api.js';
-import { follow } from './mirror.js';
+import { follow, answerOwnership, someoneElseIsRunning } from './mirror.js';
 import { createRuns } from './runs.js';
 import { makeResizable } from './resize.js';
 import { wireCopyButtons, escapeHtml } from './markdown.js';
@@ -26,7 +26,7 @@ import { createPages } from './pages.js';
 import { createProjectPage, repeatsAs } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
-import { humanSize, counted } from './format.js';
+import { humanSize } from './format.js';
 import { createAttachments } from './attachments.js';
 import { createModelNews } from './model-news.js';
 import { createDevices } from './devices.js';
@@ -198,11 +198,27 @@ const EFFORT_IDS = ['low', 'medium', 'high', 'xhigh', 'max'];
 /** `[id, label]` pairs, translated on every read — see POLICY_LABEL above. */
 const efforts = () => EFFORT_IDS.map((id) => [id, t(`effort.${id}`)]);
 
-const SUGGESTIONS = [
+/**
+ * The four openers on the blank screen.
+ *
+ * A function, not an array. It used to be a `const` of four `t()` calls
+ * evaluated at import time, which froze them in whichever language the page
+ * loaded in: switching language repainted every other string on screen and left
+ * these four in the old one until a reload. Read on every render instead — see
+ * `renderSuggestions`, which the language handler now calls.
+ *
+ * What they say changed too. They were four developer errands — TODOs, the test
+ * suite, a library changelog — which describe about a tenth of what this can do
+ * and none of what most people open it for. These four are the ordinary asks,
+ * and each one reaches a different part of the app: research that cites its
+ * sources, a file read and charted, the working folder on your own machine, and
+ * work that runs on a clock without you.
+ */
+const suggestions = () => [
+  t('suggest.research'),
+  t('suggest.data'),
   t('suggest.workspace'),
-  t('suggest.library'),
-  t('suggest.todos'),
-  t('suggest.tests'),
+  t('suggest.schedule'),
 ];
 
 /* ── boot ──────────────────────────────────────────────────────── */
@@ -884,7 +900,23 @@ async function refreshChats({ background = false } = {}) {
     }
   }
 
-  const loose = chats.filter((chat) => !chat.project_id);
+  /**
+   * Everything not already shown under a project heading.
+   *
+   * This used to be `!chat.project_id`, and the two rules together lost
+   * conversations entirely: the section above lists only *pinned* projects, so
+   * a conversation filed under an unpinned one was excluded from that list for
+   * not being pinned and from this one for having a project — and appeared
+   * nowhere in the sidebar at all. The only way back to it was through the
+   * Projects shelf, into the project, and down its list of conversations, which
+   * is not something anybody would think to do to find a chat from this morning.
+   *
+   * Filing something is not hiding it. A project that is pinned gets a heading
+   * of its own and its conversations sit under it; everything else, filed or
+   * not, belongs in the list of conversations, which is what that list is for.
+   */
+  const undershown = new Set(filed.map((project) => project.id));
+  const loose = chats.filter((chat) => !chat.project_id || !undershown.has(chat.project_id));
   if (!loose.length && !filed.length) {
     list.append(sidebarLabel(t('nav.noConversations')));
     return;
@@ -1642,7 +1674,7 @@ async function openChat(id) {
   // Files were staged for the conversation you were in, not this one. Carrying
   // them across would attach a screenshot to a completely unrelated question.
   clearStaged();
-  const { chat, messages, pendingApproval, context, project, files } = await api.chat(id);
+  const { chat, messages, pendingApproval, context, project, files, running } = await api.chat(id);
   state.chatId = id;
   // Not `chat.model`. There is one model for the whole app, so a conversation
   // opened today runs on whatever is chosen today — the stored value is history
@@ -1664,7 +1696,6 @@ async function openChat(id) {
   // Opening a stored conversation abandons the blank one you were sitting in.
   state.pendingProject = null;
   refreshModelFacts();
-  renderProjectChip();
 
   $('chat-title').textContent = chat.title || t('chat.untitled');
   setEmpty(messages.length === 0);
@@ -1729,8 +1760,8 @@ async function openChat(id) {
   // The composer, the stop button and the status line all describe whatever is
   // happening in *this* conversation, which may be nothing or may be a turn
   // that has been running since before you left.
-  setRunning(!!live);
-  setStatus(live ? live.status : null);
+  setRunning(!!live || !!running);
+  setStatus(live ? live.status : running ? t('status.reconnecting') : null);
   renderQueue();
 
   // Whether this conversation is actually waiting on a yes is a question about
@@ -1755,6 +1786,63 @@ async function openChat(id) {
 
   await refreshChats();
   scrollToEnd();
+
+  /**
+   * Still answering, and this tab was not the one asking.
+   *
+   * Reload the page mid-turn, or open the conversation on a second device, and
+   * the work is genuinely still going: the server keeps the loop alive when the
+   * browser leaves, and every step it takes is written down as it happens. What
+   * was missing was any way back in. The transcript above is rebuilt from those
+   * saved steps, so the progress so far is already on screen; this walks back
+   * into the run itself, so the rest of it arrives live rather than in one lump
+   * when the turn finally ends.
+   *
+   * `live` first, because a run this tab already owns needs none of it — its
+   * stage went back on the page a few lines above, still streaming.
+   *
+   * Not awaited: a turn can run for minutes and `openChat` is what the interface
+   * waits on before it considers the conversation open.
+   */
+  if (!live && running?.runId) {
+    someoneElseIsRunning(id)
+      .then(async (taken) => {
+        // They navigated somewhere else while we were asking. Whatever the
+        // answer was, it is about a conversation that is no longer on screen.
+        if (state.chatId !== id) return;
+
+        // Nobody else is on it: walk back into the run itself.
+        if (!taken) return stream(undefined, undefined, { rejoin: running.runId });
+
+        /**
+         * A tab of this browser is narrating it, so follow rather than rejoin.
+         *
+         * Rejoining would claim the lease, supersede that tab mid-sentence, and
+         * blank an answer somebody is reading. `following` marks this run as a
+         * spectator: it draws, it never sends, and it must not answer the
+         * ownership question for anyone else — see `answerOwnership`.
+         */
+        const run = runs.start(id, {
+          abort: new AbortController(),
+          runId: running.runId,
+          following: true,
+        });
+        if (!run) return;
+        showStage(run);
+        setRunning(true);
+        try {
+          await mirrorRun(run);
+        } finally {
+          // Or this tab keeps claiming to own a run that finished, and the next
+          // conversation opened here follows a ghost instead of rejoining.
+          runs.finish(id);
+          if (state.chatId === id) setRunning(false);
+        }
+      })
+      .catch(() => {
+        /* `stream` reports its own failures; a lost race with another tab is not one */
+      });
+  }
 }
 
 /**
@@ -1779,8 +1867,11 @@ function startBlankChat(project = null) {
   state.project = project;
   state.files = [];
   renderContext(null);
-  renderProjectChip();
   renderFilesChip();
+  // The header describes the conversation, and this is a different one — so the
+  // breadcrumb has to let go of the last conversation's project, or a blank
+  // chat keeps claiming to be filed under whatever you were just reading.
+  renderTopbar();
   // A conversation that does not exist yet cannot have a run, so there is no
   // queue to draw — but the composer may still be showing the last one's.
   renderQueue();
@@ -1816,47 +1907,15 @@ $('new-chat').addEventListener('click', () => {
   startBlankChat();
 });
 
-/**
- * Say which project this conversation answers under.
+/*
+ * The project chip is gone.
  *
- * A grounded answer and an ordinary one look identical on the page, so the one
- * place the difference can live is the header. The count is the useful part:
- * "0 sources" explains an assistant that says it has nothing to go on far
- * better than any error message would.
+ * It named the project a second time, in the one row that also has to hold the
+ * conversation's title: for a pinned project the sidebar was already saying it,
+ * and for an unpinned one the breadcrumb left of the title says it and goes
+ * there when pressed. Two buttons carrying the same word, one of them pushing
+ * the title into the chips beside it. `#chat-project` is the one that stayed.
  */
-function renderProjectChip() {
-  const chip = $('project-chip');
-  const project = state.project;
-  /**
-   * Not when the sidebar is already saying it.
-   *
-   * The sidebar lists pinned projects and files their conversations under
-   * them, so for a pinned project the name appeared twice on screen at once —
-   * once in the tree on the left and once as a button in the header, a step
-   * apart and identical.
-   *
-   * It stays for an unpinned one, where it is the only place the project is
-   * named at all, and where the tooltip's source count is the only answer to
-   * "is this grounded in anything?". Redundant was the complaint; this is the
-   * shape that stops being redundant without also stopping being useful.
-   */
-  chip.hidden = !project || !!project.pinned;
-  if (chip.hidden) return;
-
-  chip.textContent = project.name;
-  chip.classList.toggle('is-grounded', !!project.grounded);
-  chip.title = project.files
-    ? t('chat.sourceCount', {
-        how: project.grounded ? t('chat.answersFrom') : t('chat.answersFirstFrom'),
-        sources: counted(project.files, 'chat.sources'),
-        project: project.name,
-      })
-    : t('chat.noSources', { project: project.name });
-}
-
-$('project-chip').addEventListener('click', () => {
-  if (state.project) projectPage.open(state.project.id);
-});
 
 /**
  * The documents made in this conversation.
@@ -2033,6 +2092,10 @@ const pages = createPages({
 const projectPage = createProjectPage({
   openChat: (id) => openChat(id),
   onBack: () => gotoShelf('projects'),
+  // The same panel a file card in a transcript opens, so a project's output
+  // shelf reads its documents exactly the way the conversation that made them
+  // does — one viewer, not two that drift.
+  openFile: (file) => viewer.open(file),
   // The one form, shared. A second copy on the project page would drift from
   // this one, and the half that drifts is the half nobody is looking at.
   newTask: (options) => pages.newTask(options),
@@ -2700,14 +2763,30 @@ async function mirrorRun(run) {
 /** Hosts cap how long one request may run; the agent loop is resumable. */
 const MAX_RESUMES = 25;
 
-async function stream(decision, answers) {
+/**
+ * Answer in the conversation on screen.
+ *
+ * `rejoin` is the one that is not a new turn. A run holds a lease on the server
+ * keyed by a run id, and a request carrying that same id is let back into it
+ * rather than refused — the mechanism that already let a turn survive a hosted
+ * function timing out mid-answer. Reopening a conversation that is still
+ * answering is the same situation arriving by a different door: the work never
+ * stopped, this tab simply has no idea what it was. So it is handed the id the
+ * server is holding and walks back into the run, steps and all, instead of
+ * starting a second one or showing a blank page under a spinner.
+ *
+ * Nothing else differs. A rejoining request carries no decision and no answers —
+ * it is not answering a question, it is catching up — and everything below, the
+ * resume loop included, behaves exactly as it does for a turn started here.
+ */
+async function stream(decision, answers, { rejoin = null } = {}) {
   const chatId = state.chatId;
   if (!chatId) return;
 
   const run = runs.start(chatId, {
     abort: new AbortController(),
     // One id for the whole run, including every reconnect below. See api.js.
-    runId: crypto.randomUUID(),
+    runId: rejoin || crypto.randomUUID(),
   });
   if (!run) return;
   /**
@@ -3137,8 +3216,23 @@ function renderTopbar() {
   const chev = $('chat-menu');
   chev.hidden = !open;
 
+  /**
+   * The project this conversation is filed under — now the only thing that says
+   * so, since the chip that repeated it on the right was removed.
+   *
+   * `state.project` is asked first, and that is the fix rather than a tidy-up.
+   * The sidebar's copy of the conversation is what `open` reads, and that list
+   * is refreshed *after* a conversation is opened or created — so for the first
+   * second of a brand-new conversation inside a project, and for the whole of
+   * one whose project is not pinned, `open.project_id` finds nothing and the
+   * breadcrumb stayed blank. `state.project` is what the conversation itself
+   * reported when it opened, which is both authoritative and there immediately.
+   */
   const crumb = $('chat-project');
-  const project = open?.project_id ? state.projects?.find((p) => p.id === open.project_id) : null;
+  const project =
+    state.project ||
+    state.pendingProject ||
+    (open?.project_id ? state.projects?.find((p) => p.id === open.project_id) : null);
   crumb.hidden = !project;
   if (project) {
     crumb.textContent = project.name;
@@ -3413,10 +3507,6 @@ document.addEventListener('click', async (event) => {
 function renderWorker() {
   const { worker } = state.boot;
   renderConnectSteps();
-  // One place says whether a computer is connected: the chip in the header. The
-  // sidebar used to say it too, which meant two things to keep in step and a
-  // status nobody could see without opening the menu.
-  renderPairChip();
 
   const card = $('worker-status-card');
   if (card) {
@@ -3468,6 +3558,10 @@ $('language').addEventListener('change', async (event) => {
   // nodes, so `applyI18n` cannot reach them.
   renderTopbar();
   renderPolicy();
+  // The four openers are read from the dictionary when they are drawn, so they
+  // need drawing again — this is the screen somebody is most likely to be
+  // looking at when they change the language, being the one with nothing on it.
+  renderSuggestions();
   onboarding.refresh();
   try {
     state.boot.prefs = await api.savePrefs({ language });
@@ -4425,6 +4519,21 @@ $('save-behaviour').addEventListener('click', async () => {
 });
 
 
+/**
+ * Answer another tab asking whether this one is running a conversation.
+ *
+ * The asker is a tab that has just opened a conversation the server says is
+ * still answering, and is deciding whether to walk back into that run or to
+ * watch it from outside. Only a tab that genuinely owns the run replies, and
+ * `runs.has` is exactly that fact: a run is in the map from the moment it
+ * starts until the moment it finishes. A tab merely *mirroring* the run is not
+ * in it, which is right — it is not the one that would be interrupted.
+ */
+answerOwnership((chatId) => {
+  const run = runs.get(chatId);
+  return !!run && !run.following;
+});
+
 /* ── your computers ────────────────────────────────────────────── */
 
 const devices = createDevices({
@@ -4432,7 +4541,7 @@ const devices = createDevices({
   refreshWorker: () => refreshWorker(),
   armed,
 });
-const { renderPairChip, loadDevices } = devices;
+const { loadDevices } = devices;
 
 /* ── a new model has arrived ───────────────────────────────────── */
 
@@ -4692,7 +4801,7 @@ $('theme').addEventListener('change', (event) => applyTheme(event.target.value))
 
 function renderSuggestions() {
   $('suggestions').innerHTML = '';
-  for (const text of SUGGESTIONS) {
+  for (const text of suggestions()) {
     const btn = document.createElement('button');
     btn.className = 'suggestion';
     btn.type = 'button';

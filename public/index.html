@@ -320,20 +320,13 @@
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 8 4.5 4.5L14.5 8"/></svg>
           </button>
           <div class="topbar__right">
-            <!-- Ahead of the policy and model chips, because connecting a
-                 computer is the thing somebody does once and cannot find. -->
-            <!-- No status dot. The label is the status: it reads "Add a
-                 computer" with none connected and names the machine when one
-                 is, so the dot beside it said the same thing a second time. -->
-            <button class="chip chip--pair" id="pair-chip" data-i18n-js title="Pair a computer">
-              <span id="pair-chip-label" data-i18n="topbar.computers">Computers</span>
-            </button>
-            <!-- Only present when this conversation belongs to a project: the
-                 difference between an answer from documents and an answer from
-                 memory is worth being able to see. Behind the pairing chip,
-                 which keeps the front of the row — connecting a computer is the
-                 thing somebody does once and cannot find. -->
-            <button class="chip chip--project" id="project-chip" type="button" hidden></button>
+            <!-- Two chips used to sit ahead of these: one naming the paired
+                 computer, one naming the project. Both repeated something the
+                 window already said — the machines are listed in Settings, and
+                 the breadcrumb left of the title *is* the project and goes
+                 there — and on a narrow window the row of four overran the
+                 title. Pairing lives in Settings now, where somebody looks for
+                 it. -->
             <!-- What was made here. Hidden until there is something in it, so
                  an ordinary conversation carries no extra furniture. -->
             <button class="chip chip--files" id="files-chip" type="button" hidden></button>

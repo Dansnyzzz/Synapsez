@@ -237,7 +237,10 @@ section('the manual token path is gone');
   const html = await (await fetch(`${base}/index.html`)).text();
   check('and the button is out of the interface', !/gen-worker-token/.test(html));
   check('replaced by a pairing sheet', /id="pair"/.test(html));
-  check('reachable from the header', /id="pair-chip"/.test(html));
+  // Settings, not the header. The chip there was a standing invitation to a
+  // thing most accounts do once, in the row that carries the conversation title.
+  check('reachable from Settings', /id="open-pair"/.test(html));
+  check('and no longer from the header', !/id="pair-chip"/.test(html));
   check('with a copy button for the code', /id="pair-copy"/.test(html));
 }
 

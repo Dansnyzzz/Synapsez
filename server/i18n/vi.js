@@ -49,6 +49,11 @@ export const vi = {
   "Auto uses OpenRouter's free router, so it needs an OpenRouter key. Add one in Settings → Providers, or pick a specific model.":
     'Auto dùng bộ định tuyến miễn phí của OpenRouter, nên cần một key OpenRouter. Thêm key trong Cài đặt → Nhà cung cấp, hoặc chọn một model cụ thể.',
   '{0} — pick another model from the picker.': '{0} — hãy chọn model khác trong bộ chọn model.',
+  'The model this account uses': 'Model tài khoản này đang dùng',
+  '{0} is no longer available — whoever was serving it withdrew it, and nothing you did caused this. Its provider names "{1}" as the replacement. Pick another model from the chip in the header.':
+    '{0} không còn được cung cấp nữa — bên phục vụ model đã ngừng nó, và đây không phải lỗi của bạn. Nhà cung cấp chỉ định "{1}" là bản thay thế. Hãy chọn model khác ở chip trên thanh đầu trang.',
+  '{0} is no longer available — whoever was serving it withdrew it, and nothing you did caused this. Pick another model from the chip in the header.':
+    '{0} không còn được cung cấp nữa — bên phục vụ model đã ngừng nó, và đây không phải lỗi của bạn. Hãy chọn model khác ở chip trên thanh đầu trang.',
 
   /* ── chung ─────────────────────────────────────────────────────── */
   'workerId is required': 'Thiếu workerId',
@@ -541,6 +546,12 @@ export const vi = {
     'Không có ghi chú nào tên "{0}". Các ghi chú trong tài khoản này: {1}.',
   'No note saved under "{0}" — there are no notes on this account at all.':
     'Không có ghi chú nào tên "{0}" — tài khoản này chưa có ghi chú nào.',
+  /* "Trong tầm với" vì trong một dự án, những ghi chú đọc được gồm cả của dự án
+     lẫn của tài khoản — nói "tài khoản" ở đây là nói thiếu một nửa. */
+  'No note saved under "{0}". The notes in reach here are: {1}.':
+    'Không có ghi chú nào tên "{0}". Những ghi chú dùng được ở đây: {1}.',
+  'No note saved under "{0}" — there are no notes in reach here at all.':
+    'Không có ghi chú nào tên "{0}" — ở đây chưa có ghi chú nào dùng được.',
   'There is no scheduled task with the id "{0}". Call list_tasks to see what is there.':
     'Không có tác vụ theo giờ nào với id "{0}". Gọi list_tasks để xem danh sách.',
   'There is nothing scheduled on this account to cancel.':

@@ -119,4 +119,62 @@ export function follow(chatId, onEvent) {
   return () => bus.removeEventListener('message', listener);
 }
 
+/**
+ * Is another tab in this browser already running this conversation?
+ *
+ * Reopening a conversation that is still answering now walks back into the run
+ * rather than watching it from outside, which is right when the tab that
+ * started it has gone — a reload, a closed window, another device. It is wrong
+ * when that tab is sitting right there: rejoining claims the lease, the live
+ * tab is superseded mid-sentence, and the person watching it sees their answer
+ * stop for no reason they can see.
+ *
+ * So ask first. An owner answers, a browser with no other tab open does not,
+ * and the wait is short enough that nobody notices it when nothing replies —
+ * `postMessage` between tabs is same-process and arrives in a tick or two.
+ *
+ * Only tabs of this browser can answer, which is exactly the set that needs to
+ * be asked: a phone and a laptop cannot supersede each other into a visible
+ * mess, because neither is on screen where the other is.
+ */
+const ASK = 'who-owns';
+const OWN = 'owned';
+
+/** Answer "yes, me" while `isOwner(chatId)` says this tab is running it. */
+export function answerOwnership(isOwner) {
+  const bus = open();
+  if (!bus) return () => {};
+  const listener = (message) => {
+    const frame = message?.data;
+    if (frame?.event !== ASK || !frame.chatId) return;
+    if (isOwner(frame.chatId)) post(bus, { chatId: frame.chatId, event: OWN });
+  };
+  bus.addEventListener('message', listener);
+  return () => bus.removeEventListener('message', listener);
+}
+
+/** @returns whether some other tab said it is running this conversation. */
+export function someoneElseIsRunning(chatId, waitMs = 250) {
+  const bus = open();
+  if (!bus || !chatId) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (answer) => {
+      if (done) return;
+      done = true;
+      bus.removeEventListener('message', listener);
+      clearTimeout(timer);
+      resolve(answer);
+    };
+    const listener = (message) => {
+      const frame = message?.data;
+      if (frame?.event === OWN && frame.chatId === chatId) finish(true);
+    };
+    const timer = setTimeout(() => finish(false), waitMs);
+    bus.addEventListener('message', listener);
+    post(bus, { chatId, event: ASK });
+  });
+}
+
 export const __testing = { CHANNEL, supported };

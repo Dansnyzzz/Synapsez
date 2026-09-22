@@ -114,6 +114,18 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  * to memory writes, which is the one place a secret was *expected* to appear.
  * This is the place it appears by accident, which is the worse one.
  */
+/**
+ * A failure that means "this model is not there any more".
+ *
+ * Deliberately wider than a status code. A provider that has retired a model
+ * answers 404 with prose — a thank-you for taking part in a preview, a pointer
+ * at the successor — and none of it parses as an error; `deprecat` and
+ * `retired` and `testing period` are the words those notices actually use.
+ * Everything here has been seen in the wild from Google, OpenAI or OpenRouter.
+ */
+const MODEL_GONE =
+  /no longer available|is not found|not found for api version|does not exist|no longer supported|has been (?:retired|deprecated|shut down)|deprecat\w*|testing period/i;
+
 export function readableFailure(error) {
   let message = redactSecrets(String(error?.message || error || 'Something went wrong.')).text;
 
@@ -136,12 +148,34 @@ export function readableFailure(error) {
 
   // The one failure worth rewriting: a model that is gone reads as a mistake
   // the user made, and it is not — it is a catalogue entry that expired.
-  if (/no longer available|is not found|not found for api version|does not exist/i.test(message)) {
+  if (MODEL_GONE.test(message)) {
     const model = /models\/([\w.-]+)/.exec(message)?.[1];
-    return (
-      `${model ? `The model "${model}"` : 'That model'} is not available on this key. ` +
-      `${message} — pick another model from the picker.`
-    );
+    /**
+     * Aggregators announce a withdrawal in the body of the 404 rather than in
+     * its status, and they do it chattily: "Thank you for participating in the
+     * Stealth Ox Alpha testing period. This model was ZAI's GLM-5.3 Flash. Use
+     * it now: https://openrouter.ai/z-ai/glm-5.3-flash". That arrived on screen
+     * as a red box, verbatim, in English, in front of somebody who had done
+     * nothing but press send — and it repeated on every attempt, because the
+     * model is stored on the account and nothing about the message said so.
+     *
+     * The successor is worth keeping when the notice names one: it is the whole
+     * of the useful content, and "pick another model" without it means reading a
+     * list of four hundred.
+     */
+    const successor = /https?:\/\/openrouter\.ai\/(?:models\/)?([\w.\-/:]+)/i.exec(message)?.[1];
+    /*
+     * Two whole sentences rather than one assembled from parts, because these
+     * are read by somebody who may not read English. `server/i18n` matches a
+     * message against known shapes, and a shape is a literal with `{0}` holes in
+     * it — a sentence built with `.join(' ')` matches nothing and arrives in
+     * English. Both shapes below have an entry in `server/i18n/vi.js`.
+     */
+    const named = model ? `"${model}"` : 'The model this account uses';
+    if (successor) {
+      return `${named} is no longer available — whoever was serving it withdrew it, and nothing you did caused this. Its provider names "${successor}" as the replacement. Pick another model from the chip in the header.`;
+    }
+    return `${named} is no longer available — whoever was serving it withdrew it, and nothing you did caused this. Pick another model from the chip in the header.`;
   }
 
   return message;
@@ -1252,28 +1286,47 @@ export function createApp() {
       const store = getStore();
       const project = await store.getProject(req.user.id, req.params.id);
       if (!project) return res.status(404).json({ error: 'No such project.' });
-      const [files, chats, tasks] = await Promise.all([
+      const [files, chats, tasks, outputs] = await Promise.all([
         store.listProjectFiles(req.user.id, project.id),
         store.listProjectChats(req.user.id, project.id),
         // The work this project does on its own, for its Scheduled list.
         store.listProjectTasks(req.user.id, project.id),
+        // And what came out of it: the documents its conversations produced.
+        store.listProjectOutputs(req.user.id, project.id),
       ]);
+
       /**
-       * The notes the assistant has saved for this account.
+       * What the assistant has learned here, and what it knows anywhere.
        *
-       * Shown on a project page, and labelled as what it is: memory here is
-       * per *account*, not per project — one set of durable notes that every
-       * conversation reads, whichever project it belongs to. A card promising
-       * project memory that quietly showed account memory would be the kind of
-       * small lie nobody catches until it matters.
+       * This card used to show the account's notes under the honest but
+       * unhelpful label "account-wide" — honest because that was all there was,
+       * unhelpful because a project is exactly the scale at which a preference
+       * means something. "Cite the article number" is true of a law project and
+       * false of the slide deck next to it.
+       *
+       * Both are sent, each marked with where it lives, so the page can say
+       * which of these the assistant picked up in *this* room. A project note
+       * shadows an account note of the same name — the narrower context wins,
+       * the same rule the tools apply — so the list never shows one fact twice
+       * with two different bodies.
        */
-      const notes = (await store.getUserSetting(req.user.id, 'memory')) || {};
-      const memory = Object.entries(notes)
-        .map(([key, note]) => ({ key, content: String(note?.content ?? ''), updatedAt: note?.updatedAt || null }))
+      const read = async (key, scope) =>
+        Object.entries((await store.getUserSetting(req.user.id, key)) || {}).map(([name, note]) => ({
+          key: name,
+          scope,
+          content: String(note?.content ?? ''),
+          updatedAt: note?.updatedAt || null,
+        }));
+      const [accountNotes, projectNotes] = await Promise.all([
+        read('memory', 'account'),
+        read(`memory:${project.id}`, 'project'),
+      ]);
+      const shadowed = new Set(projectNotes.map((note) => note.key));
+      const memory = [...projectNotes, ...accountNotes.filter((note) => !shadowed.has(note.key))]
         .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
         .slice(0, 12);
 
-      res.json({ project, files, chats, memory, tasks });
+      res.json({ project, files, chats, memory, tasks, outputs });
     }),
   );
 
@@ -1597,18 +1650,71 @@ export function createApp() {
         'X-Accel-Buffering': 'no',
       });
 
-      // Watch the *response* for close, not the request: `req` emits 'close'
-      // as soon as its body has been consumed, which would abort every run
-      // the moment it started.
+      /**
+       * Losing the browser is not the same as being told to stop.
+       *
+       * This used to abort the run the moment the socket closed, which made a
+       * refresh — or a phone locking itself, or a laptop lid — destroy work that
+       * was minutes in. Every step is already written to the database as it
+       * happens, so there was never anything technical stopping the loop from
+       * finishing; the connection was simply being read as consent to stop, and
+       * what came back on return was a conversation frozen mid-thought.
+       *
+       * The lease is what actually says whether this run is still wanted.
+       * `/stop` clears it, and so does another connection claiming it. So a
+       * closed socket now asks that question instead of assuming the answer:
+       *
+       *   - lease gone      → somebody pressed stop. Abort, immediately.
+       *   - lease still ours → they navigated away, or the tab died. Keep going,
+       *     keep writing steps, and let the heartbeat notice if that changes.
+       *   - lease taken      → a reconnection has superseded this invocation.
+       *     Abort, and discard the partial text, which is what 'superseded'
+       *     means to the loop.
+       *
+       * The grace window exists because the browser aborts its own fetch
+       * *before* it calls `/stop` — deliberately, so the button feels instant —
+       * so at the moment this fires the lease is usually still held by a run
+       * that is about to be stopped a few milliseconds later.
+       */
+      const GRACE_AFTER_CLOSE_MS = 2_000;
       const controller = new AbortController();
-      res.on('close', () => controller.abort());
+      res.on('close', () => {
+        if (res.writableEnded) return;
+        setTimeout(async () => {
+          if (controller.signal.aborted) return;
+          const chat = await store.getChat(req.user.id, chatId).catch(() => null);
+          if (!chat) return controller.abort('stopped');
+          // Ours still, under this sequence: nobody has stopped it and nobody
+          // has taken it over. Carry on into a socket nobody is reading; the
+          // transcript is the output that matters.
+          if (chat.run_lock_by === runId && Number(chat.run_lock_seq) === runSeq) {
+            log.info('client left, run continues', { runId });
+            return;
+          }
+          controller.abort(chat.run_lock_by ? 'superseded' : 'stopped');
+        }, GRACE_AFTER_CLOSE_MS).unref?.();
+      });
 
       // The stream's sentences — errors, status lines, a retry's reason — in
       // the language the browser asked for. See server/i18n.
       const language = languageOf(req);
+      /**
+       * A line of the stream, or nothing if there is nobody to hear it.
+       *
+       * `writableEnded` alone was enough while a closed socket ended the run.
+       * Now that it does not, this function is called for the whole rest of a
+       * turn whose reader has gone — and writing to a destroyed socket throws
+       * `ERR_STREAM_DESTROYED`, from inside the agent loop, which would turn a
+       * refresh into a failed turn. The two extra checks are the ones that
+       * describe a connection the client dropped rather than one we closed.
+       */
       const emit = (event, data) => {
-        if (res.writableEnded) return;
-        res.write(`event: ${event}\ndata: ${JSON.stringify(translateEvent(data, language) ?? {})}\n\n`);
+        if (res.writableEnded || res.destroyed || res.closed) return;
+        try {
+          res.write(`event: ${event}\ndata: ${JSON.stringify(translateEvent(data, language) ?? {})}\n\n`);
+        } catch {
+          /* the socket went between the check and the write; the step is saved anyway */
+        }
       };
 
       /**

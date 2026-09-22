@@ -465,6 +465,87 @@ section('finished runs are eventually swept, unfinished ones never');
   check('and one still going is kept', (await store.getWorkflowRun(aliceId, 'sweep-running')) !== null);
 }
 
+/* ── asking twice ──────────────────────────────────────────────── */
+
+/**
+ * Standing work asked for a second time.
+ *
+ * This is an ordinary mistake rather than a rare one: you set something up
+ * three weeks ago, you have forgotten, and you ask again. Creating a second
+ * copy is the worst of the available answers — the job runs twice, cancelling
+ * one leaves the other going, and nothing on screen says there are two. So the
+ * tools refuse, hand the model what is already there, and tell it to put the
+ * choice in front of the user as buttons.
+ */
+section('work that already exists is not quietly duplicated');
+{
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  const scheduleTask = CLOUD_IMPLEMENTATIONS.schedule_task;
+  const workflowWrite = CLOUD_IMPLEMENTATIONS.workflow_write;
+  const ctx = { userId: aliceId };
+
+  const first = await scheduleTask(
+    { title: 'Monday news summary', prompt: 'Summarise the news', when: 'mon 08:00' },
+    ctx,
+  );
+  check('the first one is created', /Scheduled/.test(first), first.slice(0, 60));
+
+  // The same job, described at a different length — which is how somebody
+  // actually asks for it the second time, and what a title match on equality
+  // would sail straight past.
+  const again = await scheduleTask(
+    { title: 'Monday news summary for my field', prompt: 'Summarise the news', when: 'mon 09:00' },
+    ctx,
+  );
+  check('asking again creates nothing', /already exists, so nothing was created/.test(again), again.slice(0, 80));
+  check('and shows the user what is already there', /Monday news summary/.test(again));
+  check('with the schedule it runs on', /repeats mon 08:00/.test(again), again);
+  check('and asks rather than deciding', /call ask_options/.test(again));
+  check('offering to keep it', /keep it as it is/.test(again));
+  check('to change it', /change this one/.test(again));
+  check('to have both', /create a second scheduled task as well/.test(again));
+  check('or to drop it', /cancel/.test(again));
+
+  const tasksNow = await store.listTasks(aliceId);
+  check('nothing was written', tasksNow.filter((t) => /Monday news/.test(t.title)).length === 1, `${tasksNow.length}`);
+
+  // Something genuinely different is not a duplicate, and must not be treated
+  // as one — a guard that fires on unrelated work is worse than none.
+  const different = await scheduleTask(
+    { title: 'Invoice chase', prompt: 'Chase unpaid invoices', when: 'fri 17:00' },
+    ctx,
+  );
+  check('unrelated work is created as normal', /Scheduled/.test(different), different.slice(0, 60));
+
+  // And the user is allowed to want two. `confirmed` is the model reporting
+  // that it asked and was told to go ahead.
+  const both = await scheduleTask(
+    { title: 'Monday news summary', prompt: 'Summarise the news', when: 'mon 17:00', confirmed: true },
+    ctx,
+  );
+  check('a second one is created once the user has chosen it', /Scheduled/.test(both), both.slice(0, 60));
+  check(
+    'and there are now two',
+    (await store.listTasks(aliceId)).filter((t) => /Monday news summary$/.test(t.title)).length === 2,
+  );
+
+  // The same guard on the other tool.
+  await workflowWrite({ action: 'create', title: 'Quarterly board pack', steps: ['Pull the numbers'] }, ctx);
+  const wfAgain = await workflowWrite(
+    { action: 'create', title: 'Quarterly board pack', steps: ['Pull the numbers', 'Chart them'] },
+    ctx,
+  );
+  check('a repeated workflow is refused too', /already exists, so nothing was created/.test(wfAgain), wfAgain.slice(0, 80));
+  check('naming the one that is there', /Quarterly board pack/.test(wfAgain));
+  check('and pointing at update rather than a second create', /action: "update"/.test(wfAgain));
+
+  // Updating an existing workflow is not a create and must never be blocked by
+  // this: the guard sits after the delete and update branches for that reason.
+  const existing = (await store.listWorkflows(aliceId)).find((w) => w.title === 'Quarterly board pack');
+  const updated = await workflowWrite({ action: 'update', id: existing.id, title: 'Quarterly board pack' }, ctx);
+  check('updating one is untouched by the guard', /^Updated/.test(updated), updated.slice(0, 60));
+}
+
 section('deleting');
 {
   const gone = await alice.call('DELETE', `/api/workflows/${workflowId}`);

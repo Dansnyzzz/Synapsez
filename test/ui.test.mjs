@@ -728,14 +728,63 @@ section('the panels move rather than snap');
   check('over a real duration', parseFloat(eased.duration) > 0.1, eased.duration);
 }
 
-section('computer status is not said twice');
+section('pairing is a settings job, not a permanent header button');
 {
   const said = await page.evaluate(() => ({
     inSidebar: !!document.getElementById('worker-pill'),
     inHeader: !!document.getElementById('pair-chip'),
+    inSettings: !!document.getElementById('open-pair'),
   }));
-  check('the sidebar no longer carries a worker pill', !said.inSidebar);
-  check('the header chip is the one place it is said', said.inHeader);
+  check('the sidebar carries no worker pill', !said.inSidebar);
+  // "Add a computer" sat permanently in the row that also holds the
+  // conversation's title, and pushed it into the chips beside it.
+  check('and the header carries no pairing chip', !said.inHeader);
+  check('Settings is where it is reached', said.inSettings);
+}
+
+/**
+ * The openers are glass on the accent, not four grey tiles.
+ *
+ * They sit on the one screen in the app with something behind it — a violet
+ * sky — and were painted with a named surface colour thinned to 62%, which is
+ * an opaque grey made paler: still grey, and still flat against the thing it
+ * was covering. Glass is a wash you see through, a blur so what is behind it is
+ * actually there, and a lit edge.
+ */
+section('the openers on a blank screen are glass with a lit edge');
+{
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await page.click('#new-chat');
+  await page.waitForTimeout(600);
+
+  const look = await page.evaluate(() => {
+    const el = document.querySelector('#suggestions .suggestion');
+    if (!el) return null;
+    const s = getComputedStyle(el);
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-dim').trim();
+    return {
+      count: document.querySelectorAll('#suggestions .suggestion').length,
+      background: s.backgroundColor,
+      backgroundImage: s.backgroundImage,
+      blur: s.backdropFilter || s.webkitBackdropFilter,
+      borderColor: s.borderColor,
+      accent,
+    };
+  });
+  check('there are four of them', look?.count === 4, `${look?.count}`);
+  // A background you can see through: an alpha channel, not a solid.
+  check(
+    'the pane is translucent rather than painted',
+    /rgba\([^)]+,\s*0?\.\d+\)/.test(look.background),
+    look.background,
+  );
+  check('with a real blur behind it', /blur\(/.test(look.blur || ''), look.blur);
+  // The lit edge along the cut, which is what stops translucency reading as a
+  // washed-out rectangle.
+  check('and a highlight along the top edge', /gradient/.test(look.backgroundImage || ''), look.backgroundImage);
+  check('the ring is on the accent, not the plain line colour', look.borderColor !== 'rgb(35, 45, 54)', look.borderColor);
 }
 
 section('the opening screen has a sky, and only the opening screen');
@@ -831,20 +880,42 @@ section('projects: instructions and sources a conversation inherits');
   check('with a composer, not a form', opened.asks === 'How can I help you today?', opened.asks);
   check(
     'and what it knows down the side',
-    JSON.stringify(opened.cards) === JSON.stringify(['Instructions', 'Memory', 'Context', 'Scheduled']),
+    JSON.stringify(opened.cards) === JSON.stringify(['Instructions', 'Memory', 'Output', 'Context', 'Scheduled']),
     JSON.stringify(opened.cards),
   );
 
-  // Memory in this application is per *account*. A card headed "Memory" on a
-  // project page has to say so, or it is a quiet lie that nobody catches until
-  // they wonder why another project knows the same thing.
+  /**
+   * Memory belongs to the project now, with the account's underneath it.
+   *
+   * It used to be one flat set per account, and the card said so — honest, and
+   * useless, because a project is exactly the scale at which a preference means
+   * anything: "cite the article number" is true of a law project and false of
+   * the deck beside it. Pooled together they contradict each other. The card
+   * has to say which of these was learned *here*, or the split is invisible and
+   * might as well not exist.
+   */
   const honest = await page.evaluate(() => {
     const cards = [...document.querySelectorAll('#project-page-side .panel-card')];
     const memory = cards.find((c) => c.querySelector('.panel-card__name')?.textContent === 'Memory');
     return { tag: memory?.querySelector('.panel-card__tag')?.textContent, say: memory?.textContent || '' };
   });
-  check('the memory card admits it is account-wide', honest.tag === 'account-wide', honest.tag);
-  check('and says so in words too', /every project/i.test(honest.say), honest.say.slice(0, 120));
+  check('the memory card is scoped to this project', honest.tag === 'this project', honest.tag);
+  check('and the empty state says what it will learn here', /this project/i.test(honest.say), honest.say.slice(0, 140));
+
+  /**
+   * And what the project has produced.
+   *
+   * A shelf listed the documents put *in* and nothing of what came out, so a
+   * report written last Tuesday lived only in the transcript of whichever
+   * conversation wrote it.
+   */
+  const output = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('#project-page-side .panel-card')];
+    const made = cards.find((c) => c.querySelector('.panel-card__name')?.textContent === 'Output');
+    return { there: !!made, say: made?.textContent || '' };
+  });
+  check('there is somewhere for what the project made', output.there);
+  check('with an empty state rather than a blank box', /Nothing made here yet/i.test(output.say), output.say.slice(0, 120));
 
   // The Context menu offers only what exists here. Claude's has GitHub and
   // Drive; an entry that opens an apology is worse than no entry.
@@ -905,35 +976,25 @@ section('projects: instructions and sources a conversation inherits');
   await page.click('#project-page-send');
   await page.waitForTimeout(2500);
 
-  const chip = await page.evaluate(() => {
-    const el = document.getElementById('project-chip');
-    return {
-      shown: !el.hidden,
-      text: el.textContent,
-      grounded: el.classList.contains('is-grounded'),
-      title: el.title,
-    };
-  });
   /**
-   * Unpinned, the header chip is the one place the project is named.
+   * One name for the project, and it is the breadcrumb.
    *
-   * A grounded answer and an ordinary one look identical on the page, so the
-   * header is where that difference can live — and an unpinned project is not
-   * in the sidebar at all, so nothing else on screen says either the name or
-   * how many sources are behind the answer.
+   * There used to be a chip on the right of the header as well. For a pinned
+   * project the sidebar already said the name; for an unpinned one the
+   * breadcrumb already said it — and being a breadcrumb, it also goes there.
+   * Two buttons carrying the same word, in the row that has to hold the title.
    */
-  check('a chat started in a project says so', chip.shown && chip.text === 'UI project', JSON.stringify(chip));
-  check('and that it is held to the sources', chip.grounded);
-  // Two: the rules file and the picture. Both are sources on the shelf, which
-  // is what the header counts, even though only one of them can be quoted.
-  check('with how many there are', /2 sources/.test(chip.title || ''), chip.title);
+  const crumb = await page.evaluate(() => {
+    const el = document.getElementById('chat-project');
+    return { shown: !el.hidden, text: el.textContent, chipGone: !document.getElementById('project-chip') };
+  });
+  check('a chat started in a project says so', crumb.shown && crumb.text === 'UI project', JSON.stringify(crumb));
+  check('and says it once', crumb.chipGone, JSON.stringify(crumb));
 
   /**
-   * Pinned, it steps aside, because the sidebar has taken the job over.
-   *
-   * Pinning is also what the rest of this suite needs — the sidebar sections
-   * further down reach this project through the tree on the left — so it goes
-   * on here and stays on.
+   * Pinning is what the rest of this suite needs — the sidebar sections further
+   * down reach this project through the tree on the left — so it goes on here
+   * and stays on.
    */
   const pinnedIt = await page.evaluate(async () => {
     const { projects } = await (await fetch('/api/projects')).json();
@@ -959,11 +1020,10 @@ section('projects: instructions and sources a conversation inherits');
     const row = [...document.querySelectorAll('.proj-row__name')].find((n) => n.textContent.includes(name));
     document.querySelector('.chat-row--nested .chat-item')?.click();
     await new Promise((r) => setTimeout(r, 900));
-    const el = document.getElementById('project-chip');
-    return { inSidebar: !!row, chipShown: !el.hidden };
+    return { inSidebar: !!row, crumb: document.getElementById('chat-project').textContent };
   }, 'UI project');
   check('a pinned project is in the sidebar', reopened.inSidebar);
-  check('and is not named a second time on the header', reopened.chipShown === false, JSON.stringify(reopened));
+  check('and the breadcrumb still names it', reopened.crumb === 'UI project', JSON.stringify(reopened));
 
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
@@ -972,7 +1032,7 @@ section('projects: instructions and sources a conversation inherits');
   await page.waitForTimeout(1200);
   check(
     'an ordinary conversation carries no such claim',
-    await page.evaluate(() => document.getElementById('project-chip').hidden),
+    await page.evaluate(() => document.getElementById('chat-project').hidden),
   );
 }
 
@@ -1975,6 +2035,23 @@ section('the interface speaks Vietnamese');
   check('the document language is stamped', after.lang === 'vi', after.lang);
   check('no untranslated key leaked through', !/^[a-z]+\.[a-z]+/i.test(after.newChat), after.newChat);
 
+  /**
+   * The four openers on the blank screen change with everything else.
+   *
+   * They were a module-level `const` of four `t()` calls, evaluated once at
+   * import time — so they froze in whichever language the page loaded in, and
+   * switching language repainted the whole interface around four English
+   * sentences that only corrected themselves on a reload. That is also the
+   * screen somebody is most likely to be looking at while changing it, being
+   * the one with nothing else on it.
+   */
+  const openers = await page.evaluate(() =>
+    [...document.querySelectorAll('#suggestions .suggestion')].map((b) => b.textContent.trim()),
+  );
+  check('there are four openers', openers.length === 4, `${openers.length}`);
+  check('and they are Vietnamese now, without a reload', openers.every((s) => /[àáâãèéêìíòóôõùúýăđĩũơưạảấầẩậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i.test(s)), openers.join(' | '));
+  check('none is a leaked key', !openers.some((s) => /^suggest\./.test(s)), openers.join(' | '));
+
   // It has to survive a reload — that is what "per account" means.
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
@@ -2114,31 +2191,26 @@ section('pairing a computer');
   });
   await page.waitForTimeout(300);
 
-  // The control lives in the header now, beside the model and policy chips,
-  // because connecting a computer is the thing people do once and cannot find.
-  const chip = await page.evaluate(() => {
-    const pair = document.getElementById('pair-chip');
-    const right = document.querySelector('.topbar__right');
-    const order = [...right.children].map((c) => c.id);
-    return {
-      exists: !!pair,
-      label: pair?.textContent.trim(),
-      firstInTheRow: order[0] === 'pair-chip',
-      order,
-    };
-  });
-  check('there is a Computers chip in the header', chip.exists, chip.label);
-  check('ahead of the policy and model chips', chip.firstInTheRow, chip.order.join(', '));
-  // This suite runs the app on the machine it works on, so the honest label is
-  // "This computer" — there is nothing to pair for this account. What matters is
-  // that it says *something* about the state rather than a static word.
-  check(
-    'and it names the state rather than sitting there inert',
-    /this computer|add a computer|computers?$/i.test(chip.label || ''),
-    chip.label,
-  );
+  /**
+   * The way in is Settings → Computers.
+   *
+   * It used to be a chip in the header, first in the row, reading "Add a
+   * computer" for every account that had not paired one — a permanent
+   * advertisement for a once-in-a-lifetime action, in the row that also has to
+   * fit the conversation's title. The header row is for what changes with the
+   * conversation; this does not.
+   */
+  const row = await page.evaluate(() => ({
+    order: [...document.querySelector('.topbar__right').children].map((c) => c.id),
+  }));
+  check('the header row carries no pairing chip', !row.order.includes('pair-chip'), row.order.join(', '));
+  check('nor a second name for the project', !row.order.includes('project-chip'), row.order.join(', '));
 
-  await page.click('#pair-chip');
+  await page.click('#open-settings');
+  await page.waitForTimeout(400);
+  await page.click('.tab[data-tab="worker"]');
+  await page.waitForTimeout(300);
+  await page.click('#open-pair');
   await page.waitForTimeout(500);
   const sheet = await page.evaluate(() => {
     const d = document.getElementById('pair');
@@ -2153,7 +2225,7 @@ section('pairing a computer');
       offerHidden: document.getElementById('pair-offer').hidden,
     };
   });
-  check('the chip opens the pairing sheet', sheet.open);
+  check('Settings opens the pairing sheet', sheet.open);
   check('centred', sheet.centred);
   check('with a code box', sheet.hasInput);
   check('a Pair button', sheet.hasButton);
@@ -3493,6 +3565,100 @@ section('work running in the background shows up in the conversation list');
 }
 
 /**
+ * Reloading mid-answer no longer throws the answer away.
+ *
+ * What used to happen, and what the report was: a turn was running, the page
+ * was refreshed — or the conversation was left and reopened — and everything
+ * vanished. The transcript came back frozen at the last saved step with no
+ * spinner, no progress and nothing saying whether anything was still
+ * happening, so it read as a crash; and sending again was refused, because the
+ * lease was still held by a run the page could no longer see.
+ *
+ * Both halves are fixed. The server keeps working when the browser leaves — a
+ * closed socket now asks the lease whether the run is still wanted instead of
+ * assuming it is not — and the page, on opening a conversation, is told the run
+ * id it needs to walk back into that same run rather than starting a second.
+ *
+ * The run here is planted in the store, the way the previous section plants a
+ * workflow: a real turn needs a provider key, and what is on trial is the
+ * page's behaviour when it meets one, not the model's.
+ */
+section('reopening a conversation mid-answer rejoins it rather than blanking');
+{
+  const store = await initStore();
+  const signedIn = await page.evaluate(async () => (await (await fetch('/api/session')).json()).user);
+  const user = await store.getUserByEmail(signedIn.email);
+
+  await store.createChat(user.id, { id: 'c-midrun', title: 'Đang trả lời dở', model: 'm' });
+  await store.appendMessage(user.id, 'c-midrun', { id: 'm-midrun', role: 'user', text: 'a long question' });
+  // The turn the closed tab left behind, still holding its lease.
+  const runId = 'cccccccc-dddd-eeee-ffff-000000000000';
+  await store.claimChatRun(user.id, 'c-midrun', runId);
+
+  const told = await page.evaluate(async () => {
+    const res = await fetch('/api/chats/c-midrun');
+    return (await res.json()).running;
+  });
+  check('the page can find out a conversation is still answering', !!told, JSON.stringify(told));
+  check('and is given the id it needs to rejoin', told?.runId === 'cccccccc-dddd-eeee-ffff-000000000000', JSON.stringify(told));
+
+  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  /**
+   * What is asserted is the request, not the spinner.
+   *
+   * With no provider key configured the rejoined turn fails within a few
+   * milliseconds, so anything read off the DOM a moment later has already
+   * settled back to idle — a test of how fast the failure was, not of whether
+   * the page rejoined. The run id on the wire is the thing that cannot be
+   * faked: it was planted in the store, the page was never told it by anything
+   * but the server, and sending it is precisely what re-enters the lease rather
+   * than starting a second turn.
+   */
+  const opened = await page.evaluate(async () => {
+    const seen = [];
+    const realFetch = window.fetch;
+    window.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input?.url || '';
+      if (/\/run$/.test(url) && init?.body) {
+        try {
+          seen.push({ url, runId: JSON.parse(init.body).runId });
+        } catch {
+          /* a body that is not JSON is not the call being watched for */
+        }
+      }
+      return realFetch(input, init);
+    };
+
+    const row = [...document.querySelectorAll('#chat-list .chat-row')].find((r) => r.textContent.includes('Đang trả lời dở'));
+    row?.querySelector('.chat-item')?.click();
+    await new Promise((r) => setTimeout(r, 2500));
+    window.fetch = realFetch;
+    return {
+      found: !!row,
+      // What the question already produced is on screen, rebuilt from the saved
+      // transcript — not a blank page under a spinner, which is what this used
+      // to be while the run went on writing steps nobody could see.
+      said: document.querySelector('#messages .msg--user')?.textContent?.includes('a long question'),
+      runs: seen,
+    };
+  });
+  check('the conversation is reachable from the sidebar', opened.found);
+  check('what was already said is on screen', opened.said === true, JSON.stringify(opened.runs));
+  check('opening it rejoins the turn rather than leaving it stranded', opened.runs.length === 1, JSON.stringify(opened.runs));
+  check(
+    'and it rejoins the run that was already going, not a new one',
+    opened.runs[0]?.runId === 'cccccccc-dddd-eeee-ffff-000000000000',
+    JSON.stringify(opened.runs),
+  );
+
+  await store.stopChatRun(user.id, 'c-midrun');
+}
+
+/**
  * A step says what it did, and keeps the exact call for whoever opens it.
  *
  * Every tool outside the browser and desktop families used to draw its own
@@ -4505,6 +4671,7 @@ section('the sidebar lists pinned projects and no others');
     (ids) => ({
       named: [...document.querySelectorAll('.proj-row__name')].map((n) => n.textContent),
       row: !!document.querySelector(`.chat-row[data-chat="${ids.chat}"]`),
+      nested: !!document.querySelector(`.chat-row[data-chat="${ids.chat}"]`)?.classList.contains('chat-row--nested'),
     }),
     made,
   );
@@ -4519,9 +4686,21 @@ section('the sidebar lists pinned projects and no others');
    * this too.
    */
   check('an unpinned project is not in the sidebar', !hidden.named.some((n) => /Unpinned work/.test(n)), hidden.named.join(','));
-  // The honest cost, asserted rather than left for somebody to discover: its
-  // conversations are not in the sidebar either. They are on the project page.
-  check('nor are the conversations inside it', hidden.row === false);
+  /**
+   * Its conversations still are, though — and that is the correction.
+   *
+   * The heading is filtered, not the work. This section used to assert the
+   * opposite, and the two rules together lost conversations outright: the
+   * heading list takes only pinned projects, the conversation list took only
+   * chats with no project at all, and a conversation filed under an unpinned
+   * project fell between them and appeared nowhere in the sidebar. The only
+   * route back to it was Projects → the project → its list, which is not
+   * something anybody would think to do to find a chat from this morning.
+   *
+   * Filing something is not hiding it.
+   */
+  check('but its conversations are, in the ordinary list', hidden.row === true);
+  check('unnested, because no heading above them claims them', hidden.nested === false);
   // And the pinned one from earlier is still there, so this is a filter and
   // not the section quietly disappearing.
   check('while a pinned one still is', hidden.named.some((n) => /Filed work/.test(n)), hidden.named.join(','));

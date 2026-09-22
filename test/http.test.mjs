@@ -311,8 +311,39 @@ section('a dead model reads as a sentence, not as JSON');
 
   check('the nesting is unwrapped', !said.startsWith('{'), said.slice(0, 60));
   check('the model is named', /gemini-2\.5-flash/.test(said), said.slice(0, 80));
-  check('and it says what to do', /pick another model/.test(said), said.slice(-60));
+  check('and it says what to do', /pick another model/i.test(said), said.slice(-60));
+  // The sentence also has to say whose fault it is. This arrives in front of
+  // somebody who pressed send and got a red box, and "not found" reads as
+  // something they typed wrong when it is a catalogue entry that expired.
+  check('and that it was not the user', /nothing you did/i.test(said), said.slice(0, 120));
   check('an ordinary error is left alone', readableFailure(new Error('Connection reset')) === 'Connection reset');
+
+  /**
+   * The one that was actually on screen.
+   *
+   * An aggregator announcing a withdrawal does it in the body of a 404, in
+   * prose, cheerfully: "Thank you for participating in the Stealth Ox Alpha
+   * testing period. This model was ZAI's GLM-5.3 Flash. Use it now: <url>".
+   * None of that parses as an error and none of the old patterns matched it, so
+   * it reached the transcript verbatim — in English, in red, on every attempt,
+   * with nothing saying the model was the problem.
+   */
+  const retired = readableFailure(
+    new Error(
+      '404 Thank you for participating in the Stealth Ox Alpha testing period. ' +
+        "This model was ZAI's GLM-5.3 Flash. Use it now: https://openrouter.ai/z-ai/glm-5.3-flash",
+    ),
+  );
+  check('a chatty withdrawal notice is recognised', /no longer available/.test(retired), retired.slice(0, 80));
+  check('and the successor it names is kept', /z-ai\/glm-5\.3-flash/.test(retired), retired);
+  check('with somewhere to go next', /chip in the header/.test(retired), retired.slice(-60));
+
+  const { translateMessage } = await import('../server/i18n/index.js');
+  check(
+    'and a Vietnamese account reads it in Vietnamese',
+    /không còn được cung cấp/.test(translateMessage(retired, 'vi')),
+    translateMessage(retired, 'vi').slice(0, 80),
+  );
 
   /**
    * The log line has to be as careful as the reply.
@@ -609,6 +640,60 @@ section('a conversation runs in one place at a time');
 }
 
 // ── throttling ──────────────────────────────────────────────────────
+/* ── coming back to a turn that never stopped ──────────────────── */
+
+/**
+ * Reload the page mid-answer and the work carries on; the page has to be able
+ * to find its way back into it.
+ *
+ * What used to happen: the browser's fetch closed, the server read that as a
+ * stop and aborted the turn, and the conversation was left frozen mid-thought
+ * with nothing on screen saying whether anything was still happening. Sending
+ * again was the only way on.
+ *
+ * Two halves fix it, and this is the server's. A run holds a lease keyed by a
+ * run id, and a request carrying that same id is let back into the lease rather
+ * than refused by it — the mechanism that already let a turn survive a hosted
+ * function timing out. The browser knew its own id for as long as the tab lived
+ * and lost it on reload, so opening the conversation now asks the server for it.
+ *
+ * The browser's half — actually rejoining and drawing the rest of the turn —
+ * is in the UI suite.
+ */
+section('reopening a conversation says whether it is still answering');
+{
+  const made = await alice.call('POST', '/api/chats', { model: 'anthropic/claude-opus-5' });
+  const chatId = made.json.chat.id;
+  await alice.call('POST', `/api/chats/${chatId}/messages`, { text: 'a long question' });
+  const aliceId = (await store.getUserByEmail('alice@example.com')).id;
+
+  const quiet = await alice.call('GET', `/api/chats/${chatId}`);
+  check('a conversation nothing is working in says so', quiet.json?.running === null, JSON.stringify(quiet.json?.running));
+
+  // The turn the closed tab left behind, still holding its lease.
+  const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  await store.claimChatRun(aliceId, chatId, runId);
+
+  const reopened = await alice.call('GET', `/api/chats/${chatId}`);
+  check('one that is answering says so', !!reopened.json?.running, JSON.stringify(reopened.json?.running));
+  // The id is the whole point: without it the page can only start a second run
+  // or sit there watching nothing.
+  check('and hands back the id needed to rejoin it', reopened.json?.running?.runId === runId, JSON.stringify(reopened.json?.running));
+
+  // And that id does let it back in, which is what makes the answer above worth
+  // anything. A different one is still refused.
+  const stranger = await alice.call('POST', `/api/chats/${chatId}/run`, { runId: '99999999-8888-7777-6666-555555555555' });
+  check('a stranger is still kept out', stranger.status === 409, `${stranger.status}`);
+
+  await store.stopChatRun(aliceId, chatId);
+  const stopped = await alice.call('GET', `/api/chats/${chatId}`);
+  check('a stopped run is no longer reported as running', stopped.json?.running === null, JSON.stringify(stopped.json?.running));
+
+
+  const notTheirs = await bob.call('GET', `/api/chats/${chatId}`);
+  check('and another account learns nothing about it', notTheirs.status === 404, `${notTheirs.status}`);
+}
+
 section('login throttling');
 {
   const attacker = jar();

@@ -1153,12 +1153,18 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: false,
     description:
-      'Save a durable note that persists across every conversation. Use it for user preferences, project facts, and lessons learned — not for scratch state within one task.',
+      'Save a durable note that persists across conversations. Use it for user preferences, project facts, and lessons learned — not for scratch state within one task. Inside a project the note is filed under that project and read back by its conversations only; outside one it is filed against the account and read everywhere.',
     parameters: {
       type: 'object',
       properties: {
         key: { type: 'string', description: 'Short kebab-case identifier, e.g. "deploy-process".' },
         content: { type: 'string', description: 'The note. Replaces any existing note with the same key.' },
+        scope: {
+          type: 'string',
+          enum: ['project', 'account'],
+          description:
+            'Where the note belongs. Omit it inside a project and the note is that project’s, which is nearly always right — its conventions, its people, its house style. Pass "account" only for something true of the user everywhere, such as the language they want answers in.',
+        },
       },
       required: ['key', 'content'],
     },
@@ -1299,6 +1305,12 @@ export const TOOLS = [
       properties: {
         key: { type: 'string', description: 'The note to add to, e.g. "project-decisions".' },
         content: { type: 'string', description: 'What to add. It goes after a blank line.' },
+        scope: {
+          type: 'string',
+          enum: ['project', 'account'],
+          description:
+            'Where the note belongs. Omit it inside a project and the note is that project’s, which is nearly always right — its conventions, its people, its house style. Pass "account" only for something true of the user everywhere, such as the language they want answers in.',
+        },
       },
       required: ['key', 'content'],
     },
@@ -1325,7 +1337,8 @@ export const TOOLS = [
     name: 'memory_read',
     scope: 'cloud',
     readOnly: true,
-    description: 'List saved notes, or read one by key.',
+    description:
+      'List saved notes, or read one by key. Inside a project this lists that project’s notes and the account’s together, the project ones first; where both use the same name, the project one is what applies.',
     parameters: {
       type: 'object',
       properties: { key: { type: 'string', description: 'Omit to list every note.' } },
@@ -1457,6 +1470,11 @@ export const TOOLS = [
           description: 'Time of day as "17:00", or a weekday and time as "fri 17:00".',
         },
         repeat: { type: 'boolean', description: 'True to repeat daily or weekly; false to run once. Defaults to true.' },
+        confirmed: {
+          type: 'boolean',
+          description:
+            'Only after the user has been shown an existing one that looks the same and has explicitly chosen to have a second alongside it. Never set it to get past the check without asking.',
+        },
       },
       required: ['title', 'prompt', 'when'],
     },
@@ -1505,6 +1523,11 @@ export const TOOLS = [
         },
         repeat: { type: 'boolean', description: 'True to repeat daily or weekly; false to run once. Defaults to true.' },
         enabled: { type: 'boolean', description: 'Set false to pause without deleting.' },
+        confirmed: {
+          type: 'boolean',
+          description:
+            'Only after the user has been shown an existing one that looks the same and has explicitly chosen to have a second alongside it. Never set it to get past the check without asking.',
+        },
       },
       required: ['action'],
     },

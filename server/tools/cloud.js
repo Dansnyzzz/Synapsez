@@ -29,6 +29,61 @@ import { TOOLS_BY_NAME } from './definitions.js';
 
 const MEMORY_KEY = 'memory';
 
+/**
+ * Which set of notes this conversation is talking about.
+ *
+ * Memory used to be one flat set per account, and that was wrong in a way that
+ * got worse the more somebody used the app. A project *is* a working context:
+ * how this client wants their reports laid out, which court a case is in, the
+ * house style for these slides. Those are facts about the project, not about
+ * the person — and pooled into one account-wide list they contradict each
+ * other, so the assistant either applies the wrong project's conventions or
+ * learns nothing rather than risk it.
+ *
+ * So: a project keeps its own notes, in its own row, named after it. A
+ * conversation outside every project uses the account's, as before.
+ *
+ * The account's notes are not *replaced* by a project's, they are underneath
+ * them — this is a sub-set, not a separate world. Reads return both, the
+ * project's first and marked as such, so "always answer in Vietnamese" learned
+ * once still holds inside every project. A name in both is the project's: the
+ * narrower context is the more specific instruction, which is the whole reason
+ * for having one.
+ *
+ * Writes go to the narrower of the two, because that is the side that is safe
+ * to be wrong about. A project fact saved account-wide leaks into unrelated
+ * work; an account fact saved into a project is merely learned again elsewhere.
+ * `scope: 'account'` overrides it for the model that knows it has a genuinely
+ * general fact in hand.
+ */
+const projectMemoryKey = (projectId) => `${MEMORY_KEY}:${projectId}`;
+
+async function memoryScope({ userId, chatId, scope = null }) {
+  const account = { key: MEMORY_KEY, projectId: null, where: 'this account' };
+  if (scope === 'account' || !chatId) return account;
+
+  const chat = await getStore().getChat(userId, chatId).catch(() => null);
+  const projectId = chat?.project_id || null;
+  if (!projectId) return account;
+
+  const project = await getStore().getProject(userId, projectId).catch(() => null);
+  return {
+    key: projectMemoryKey(projectId),
+    projectId,
+    where: project?.name ? `the project "${project.name}"` : 'this project',
+  };
+}
+
+/** Both sets, with the narrower one winning a clash. */
+async function readBothScopes({ userId, chatId }) {
+  const store = getStore();
+  const here = await memoryScope({ userId, chatId });
+  const account = (await store.getUserSetting(userId, MEMORY_KEY)) || {};
+  if (!here.projectId) return { here, account, project: {}, merged: account };
+  const project = (await store.getUserSetting(userId, here.key)) || {};
+  return { here, account, project, merged: { ...account, ...project } };
+}
+
 /** Crude but dependency-free HTML → text. Good enough to feed a model. */
 function htmlToText(html) {
   return html
@@ -609,8 +664,9 @@ function noteName(key) {
   return name;
 }
 
-async function memoryWrite({ key, content }, { userId }) {
+async function memoryWrite({ key, content, scope }, { userId, chatId }) {
   const store = getStore();
+  const where = await memoryScope({ userId, chatId, scope });
 
   // A note outlives the conversation it came from and is read back into every
   // future one, so a credential that lands here keeps escaping. Strip them on
@@ -634,26 +690,55 @@ async function memoryWrite({ key, content }, { userId }) {
    * note, which then vanishes on serialisation while the tool reports it saved.
    */
   const name = noteName(key);
-  await store.mergeUserSetting(userId, MEMORY_KEY, {
+  await store.mergeUserSetting(userId, where.key, {
     [name]: { content: text, updatedAt: new Date().toISOString() },
   });
 
-  if (!found.length) return `Saved note "${name}".`;
+  if (!found.length) return `Saved note "${name}" for ${where.where}.`;
   return (
-    `Saved note "${name}", with ${found.join(' and ')} removed first — notes are long-lived and ` +
-    'credentials do not belong in them. Tell the user plainly that this was left out.'
+    `Saved note "${name}" for ${where.where}, with ${found.join(' and ')} removed first — notes ` +
+    'are long-lived and credentials do not belong in them. Tell the user plainly that this was left out.'
   );
 }
 
-async function memoryRead({ key }, { userId }) {
-  const memory = (await getStore().getUserSetting(userId, MEMORY_KEY)) || {};
+/**
+ * Read one note, or list what there is.
+ *
+ * Inside a project the listing is both sets, the project's first and labelled,
+ * so the model can see which conventions are local to this work and which are
+ * the person's everywhere. A single merged list would hide exactly the
+ * distinction the split exists to make.
+ */
+async function memoryRead({ key }, { userId, chatId }) {
+  const { here, account, project, merged } = await readBothScopes({ userId, chatId });
+
   if (key) {
-    const note = memory[key];
+    const note = merged[key];
     return note ? note.content : `No note saved under "${key}".`;
   }
-  const keys = Object.keys(memory);
-  if (!keys.length) return 'No notes saved yet.';
-  return keys.map((k) => `- ${k}: ${memory[k].content.slice(0, 120)}`).join('\n');
+
+  const line = (notes, k) => `- ${k}: ${notes[k].content.slice(0, 120)}`;
+  if (!here.projectId) {
+    const all = Object.keys(account).map((k) => line(account, k));
+    return all.length ? all.join('\n') : 'No notes saved yet.';
+  }
+
+  const mine = Object.keys(project).map((k) => line(project, k));
+  // Only the account notes a project note has not overridden, or the same name
+  // appears twice with two bodies and nothing says which one applies.
+  const rest = Object.keys(account)
+    .filter((k) => !(k in project))
+    .map((k) => line(account, k));
+
+  if (!mine.length && !rest.length) return 'No notes saved yet.';
+  return [
+    mine.length ? `Notes for ${here.where} — these win where they disagree:` : null,
+    ...mine,
+    rest.length ? `${mine.length ? '\n' : ''}Notes for this account, which apply everywhere:` : null,
+    ...rest,
+  ]
+    .filter((entry) => entry !== null)
+    .join('\n');
 }
 
 /**
@@ -846,13 +931,14 @@ async function chartTool({ title, type, data, format }) {
   };
 }
 
-async function memoryAppend({ key: rawKey, content }, { userId }) {
+async function memoryAppend({ key: rawKey, content, scope }, { userId, chatId }) {
   const key = noteName(rawKey);
   const store = getStore();
+  const where = await memoryScope({ userId, chatId, scope });
   const { text, found } = redactSecrets(content);
   if (!String(text || '').trim()) throw new Error('There is nothing to append.');
 
-  const memory = (await store.getUserSetting(userId, MEMORY_KEY)) || {};
+  const memory = (await store.getUserSetting(userId, where.key)) || {};
   const existing = memory[key]?.content || '';
   // A blank line between entries, so an appended list stays readable rather than
   // running together into one paragraph.
@@ -864,9 +950,9 @@ async function memoryAppend({ key: rawKey, content }, { userId }) {
   // two memory writes in one step both read the same object and a whole-value
   // write meant the second silently erased the first — while both reported
   // success, so the model told the user two notes were saved when one was gone.
-  await store.mergeUserSetting(userId, MEMORY_KEY, { [key]: memory[key] });
+  await store.mergeUserSetting(userId, where.key, { [key]: memory[key] });
 
-  const created = existing ? '' : ' (the note did not exist, so it was created)';
+  const created = existing ? '' : ` (the note did not exist in ${where.where}, so it was created)`;
   if (!found.length) return `Appended to "${key}"${created}.`;
   return (
     `Appended to "${key}"${created}, with ${found.join(' and ')} removed first. ` +
@@ -881,13 +967,25 @@ async function memoryAppend({ key: rawKey, content }, { userId }) {
  * in a page of project notes should not mean re-sending the page, and re-sending it
  * from memory is how the other nine facts get subtly rewritten.
  */
-async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newString }, { userId }) {
+async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newString }, { userId, chatId }) {
   const key = noteName(rawKey);
   const store = getStore();
-  const memory = (await store.getUserSetting(userId, MEMORY_KEY)) || {};
+  /*
+   * Edited where it lives, which is not always where a write would land.
+   *
+   * A project conversation writes into the project's notes, but it can perfectly
+   * well be correcting an account-wide one it just read back — `memory_read`
+   * hands it both. Looking only in the project's would report "no such note" for
+   * a note the model is quoting, so the search widens and the write follows the
+   * note rather than the caller.
+   */
+  const { here, account, project } = await readBothScopes({ userId, chatId });
+  const inProject = here.projectId && key in project;
+  const target = inProject ? here.key : MEMORY_KEY;
+  const memory = inProject ? project : account;
   const note = memory[key];
   if (!note) {
-    const keys = Object.keys(memory);
+    const keys = [...new Set([...Object.keys(project), ...Object.keys(account)])];
     throw new Error(
       keys.length ? `No note saved under "${key}". There is: ${keys.join(', ')}.` : `No notes are saved on this account.`,
     );
@@ -910,29 +1008,32 @@ async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newS
   const { text, found } = redactSecrets(String(newString ?? ''));
   memory[key] = { content: note.content.replace(find, text), updatedAt: new Date().toISOString() };
   // Only this note, so a concurrent write to a different one is not undone.
-  await store.mergeUserSetting(userId, MEMORY_KEY, { [key]: memory[key] });
+  await store.mergeUserSetting(userId, target, { [key]: memory[key] });
 
   return found.length
     ? `Updated "${key}", with ${found.join(' and ')} removed from the replacement. Say so.`
     : `Updated "${key}".`;
 }
 
-async function memoryDelete({ key }, { userId }) {
+async function memoryDelete({ key }, { userId, chatId }) {
   const store = getStore();
-  const memory = (await store.getUserSetting(userId, MEMORY_KEY)) || {};
-  if (!(key in memory)) {
-    const keys = Object.keys(memory);
+  // Same reasoning as `memoryEdit`: the note is deleted where it actually is.
+  const { here, account, project } = await readBothScopes({ userId, chatId });
+  const inProject = here.projectId && key in project;
+  if (!inProject && !(key in account)) {
+    const keys = [...new Set([...Object.keys(project), ...Object.keys(account)])];
     throw new Error(
       keys.length
-        ? `No note saved under "${key}". The notes on this account are: ${keys.join(', ')}.`
-        : `No note saved under "${key}" — there are no notes on this account at all.`,
+        ? `No note saved under "${key}". The notes in reach here are: ${keys.join(', ')}.`
+        : `No note saved under "${key}" — there are no notes in reach here at all.`,
     );
   }
 
   // Removes the one entry in SQL rather than writing back a copy of the object
   // that happens to be missing it — which would undo anything saved meanwhile.
-  await store.removeUserSettingKey(userId, MEMORY_KEY, key);
-  return `Deleted the note "${key}". It will not be read into future conversations any more.`;
+  await store.removeUserSettingKey(userId, inProject ? here.key : MEMORY_KEY, key);
+  const scope = inProject ? ` from ${here.where}` : '';
+  return `Deleted the note "${key}"${scope}. It will not be read into future conversations any more.`;
 }
 
 /**
@@ -1043,6 +1144,78 @@ async function deepResearchTool({ question }, { userId, user, chatId, signal }) 
   return content;
 }
 
+/* ── work that already exists ───────────────────────────────────────
+ *
+ * Asking twice for the same standing job is an ordinary thing to do. You set up
+ * a Monday summary three weeks ago, you have forgotten, and you ask again — or
+ * you ask for "the same but at eight", which reads to a model as a fresh
+ * request. Both used to produce a second job beside the first, and two jobs
+ * doing the same work are worse than one in every way that shows up later: the
+ * summary arrives twice, cancelling one leaves the other running, and neither
+ * the user nor the model can tell which is which.
+ *
+ * Nothing here decides anything. It finds the near-match, declines to create the
+ * duplicate, and hands the model what is already there together with an
+ * instruction to put the choice in front of the user as buttons — keep it,
+ * change it, add a second one anyway, or drop the idea. A duplicate is sometimes
+ * genuinely wanted; what is never wanted is one made silently.
+ */
+
+/** Words that carry meaning, for comparing two titles somebody wrote by hand. */
+const titleWords = (value) =>
+  new Set(
+    String(value || '')
+      .toLowerCase()
+      .replace(/[^\p{Letter}\p{Number}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter((word) => word.length > 1),
+  );
+
+/**
+ * How alike two titles are, 0 to 1 — shared words over the smaller set.
+ *
+ * Against the smaller rather than the union, so "Monday summary" scores 1
+ * against "Monday summary of my field": the same job described at two lengths,
+ * which is the case this exists to catch.
+ */
+function titleOverlap(a, b) {
+  const left = titleWords(a);
+  const right = titleWords(b);
+  if (!left.size || !right.size) return 0;
+  let shared = 0;
+  for (const word of left) if (right.has(word)) shared += 1;
+  return shared / Math.min(left.size, right.size);
+}
+
+/** Alike enough that a second one is more likely a mistake than a plan. */
+const LOOKS_DUPLICATE = 0.7;
+
+const findDuplicate = (existing, title, describe) =>
+  existing
+    .map((row) => ({ row, score: titleOverlap(title, describe(row)) }))
+    .filter((hit) => hit.score >= LOOKS_DUPLICATE)
+    .sort((a, b) => b.score - a.score)[0]?.row || null;
+
+/**
+ * What the model is told when it has asked for something that already exists.
+ *
+ * Written at the model, because the model is the only reader: it says what was
+ * found, that nothing was created, and exactly what to do next. The four answers
+ * are spelled out so that four different models produce the same four buttons
+ * rather than each inventing its own set.
+ */
+const askBeforeDuplicating = (kind, summary) =>
+  [
+    'This already exists, so nothing was created. Here is what is already set up:',
+    '',
+    summary,
+    '',
+    'Show the user what is there — its title, when it runs, and what it does — then call ask_options with ' +
+      'exactly these four answers, written in their language: keep it as it is; change this one to what they ' +
+      `just asked for; create a second ${kind} as well; cancel. Do not choose for them, and do not create ` +
+      'anything until they have pressed one.',
+  ].join('\n');
+
 /**
  * "17:00" means the user's five o'clock, not the server's.
  *
@@ -1056,12 +1229,40 @@ async function deepResearchTool({ question }, { userId, user, chatId, signal }) 
  * server's, so it stated a time that was not the one that would fire — which is
  * worse than saying nothing, because it looks like it has been checked.
  */
-async function scheduleTaskTool({ title, prompt, when, repeat = true }, { userId }) {
+async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed }, { userId }) {
+  const store = getStore();
+
+  /*
+   * Already set up? Then say so rather than setting it up twice.
+   *
+   * `confirmed` is how the model gets past this after the user has pressed
+   * "create a second one as well" — a flag it may only set having actually
+   * asked, which is why the message above tells it so in those words.
+   */
+  if (!confirmed) {
+    const clash = findDuplicate(await store.listTasks(userId), title, (task) => task.title);
+    if (clash) {
+      const when_ = clash.cron ? `repeats ${clash.cron}` : 'runs once';
+      const next = clash.next_run_at ? new Date(clash.next_run_at).toISOString() : 'unknown';
+      return askBeforeDuplicating(
+        'scheduled task',
+        [
+          `- "${clash.title}" — id ${clash.id}`,
+          `    ${when_}${clash.enabled ? '' : ' (paused)'}, next run ${next}`,
+          `    it asks: ${String(clash.prompt || '').replace(/\s+/g, ' ').slice(0, 200)}`,
+          '',
+          'To change it rather than add another, call cancel_task with that id and schedule_task again, or',
+          'leave it alone entirely. To add a second one, call schedule_task again with confirmed: true.',
+        ].join('\n'),
+      );
+    }
+  }
+
   const prefs = await getPrefs(userId);
   const tz = prefs.timezone || null;
   const { cron, nextRunAt } = parseSchedule(when, { once: repeat === false, tz });
 
-  const task = await getStore().createTask(userId, {
+  const task = await store.createTask(userId, {
     id: crypto.randomUUID(),
     title,
     prompt,
@@ -1127,7 +1328,7 @@ async function cancelTaskTool({ id }, { userId }) {
  * One tool for three verbs because the catalogue is charged against every
  * request's context window; see the note beside the definition.
  */
-async function workflowWriteTool({ action, id, title, steps, when, repeat, enabled }, { userId }) {
+async function workflowWriteTool({ action, id, title, steps, when, repeat, enabled, confirmed }, { userId }) {
   const store = getStore();
 
   if (action === 'delete') {
@@ -1156,6 +1357,30 @@ async function workflowWriteTool({ action, id, title, steps, when, repeat, enabl
     const updated = await store.updateWorkflow(userId, id, patch);
     const schedule = updated.cron ? `repeats ${updated.cron}` : 'runs by hand';
     return `Updated "${updated.title}" — ${updated.steps.length} step(s), ${schedule}${updated.enabled ? '' : ', paused'}.`;
+  }
+
+  /*
+   * The same guard as `schedule_task`, for the same reason: a workflow asked
+   * for twice runs its steps twice, and two copies of a job that files
+   * documents or sends mail is the kind of duplicate somebody discovers from
+   * the other end.
+   */
+  if (!confirmed) {
+    const clash = findDuplicate(await store.listWorkflows(userId), title, (row) => row.title);
+    if (clash) {
+      const steps = Array.isArray(clash.steps) ? clash.steps : [];
+      return askBeforeDuplicating(
+        'workflow',
+        [
+          `- "${clash.title}" — id ${clash.id}`,
+          `    ${clash.cron ? `repeats ${clash.cron}` : 'runs by hand'}${clash.enabled ? '' : ' (paused)'}, ${steps.length} step(s)`,
+          ...steps.slice(0, 6).map((step, i) => `    ${i + 1}. ${String(step?.prompt || step || '').replace(/\s+/g, ' ').slice(0, 120)}`),
+          '',
+          'To change it rather than add another, call workflow_write with action: "update" and that id.',
+          'To add a second one, call workflow_write again with confirmed: true.',
+        ].join('\n'),
+      );
+    }
   }
 
   const ordered = normaliseSteps(steps);

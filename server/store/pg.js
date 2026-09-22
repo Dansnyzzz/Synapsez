@@ -1882,6 +1882,32 @@ export function createPgStore(connectionString) {
       if (attachmentId) await q('DELETE FROM attachments WHERE user_id = $1 AND id = $2', [userId, attachmentId]);
     },
 
+    /**
+     * Everything the assistant made inside one project, newest first.
+     *
+     * A project's shelf held the documents put *in* — the sources — and nothing
+     * at all of what came *out*. So the report written last Tuesday lived only
+     * in the transcript of the conversation that produced it, and finding it
+     * again meant remembering which conversation that was. The artifacts page
+     * lists the account's, which is the wrong grain: somebody looking for the
+     * output of this project does not want the other five projects' as well.
+     *
+     * Reached through the conversation, because that is where the link already
+     * is: an attachment knows its chat, and a chat knows its project.
+     */
+    async listProjectOutputs(userId, projectId, limit = 60) {
+      return q(
+        `SELECT a.id, a.name, a.mime, a.kind, a.bytes, a.chat_id, a.created_at,
+                c.title AS chat_title
+           FROM attachments a
+           JOIN chats c ON c.id = a.chat_id
+          WHERE a.user_id = $1 AND a.origin = 'generated' AND c.project_id = $2
+       ORDER BY a.created_at DESC
+          LIMIT $3`,
+        [userId, projectId, Math.min(Math.max(Number(limit) || 60, 1), 200)],
+      );
+    },
+
     /** The conversations belonging to one project, newest first. */
     async listProjectChats(userId, projectId) {
       return q(
@@ -2810,6 +2836,40 @@ export function createPgStore(connectionString) {
 
 
     /** Drives the "is the library stale?" check and the freshness label. */
+    /**
+     * Forget the models a source has stopped listing.
+     *
+     * The library only ever grew. A model that OpenRouter withdrew — a stealth
+     * preview ending, a free tier closing, a provider pulling a weight release —
+     * kept its row for ever, kept appearing in the picker, and kept being picked;
+     * and an account whose default model was one of them could not send anything
+     * at all, because every request came back as the provider's own 404. The one
+     * this was written for answered with a cheerful note explaining which model
+     * it used to be, which the user saw, in red, instead of a reply.
+     *
+     * Scoped to one provider and driven by ids the caller has just seen, so
+     * OrcaRouter being unreachable cannot empty OpenRouter's half of the library.
+     * The caller must only call this for a source that actually answered — see
+     * `refreshLibrary`, where a rejected source is skipped entirely.
+     *
+     * A model somebody added by hand goes too. `added_by` records who first
+     * asked for it, not a promise to keep it after the provider stopped serving
+     * it: a row that cannot answer is not an asset, and leaving it in place
+     * leaves a picker entry whose only behaviour is to fail.
+     *
+     * @returns how many rows went.
+     */
+    async pruneMissingModels(provider, liveIds) {
+      if (!provider || !Array.isArray(liveIds) || !liveIds.length) return 0;
+      const rows = await q(
+        `DELETE FROM shared_models
+          WHERE provider = $1 AND NOT (id = ANY($2::text[]))
+      RETURNING id`,
+        [provider, liveIds],
+      );
+      return rows.length;
+    },
+
     async modelLibraryStatus() {
       const rows = await q(
         `SELECT COUNT(*)::int AS total,

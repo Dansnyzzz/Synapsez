@@ -358,6 +358,195 @@ section('a conversation inherits its project');
   check('they simply stop belonging to one', survivor.body?.project === null);
 }
 
+/* ── a project remembers its own way of working ────────────────── */
+
+/**
+ * Memory used to be one flat set per account, which is wrong at exactly the
+ * scale where a preference means something. "Cite the article number" is true
+ * of a law project and false of the slide deck beside it, and pooled together
+ * they contradict each other — so the assistant either applies the wrong
+ * project's conventions or learns nothing rather than risk it.
+ *
+ * A project now keeps its own notes *underneath* the account's, not instead of
+ * them: both are readable inside the project, the project's win a name clash,
+ * and a write lands in the narrower of the two unless told otherwise.
+ */
+section('a project keeps its own notes, under the account\'s');
+{
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  const { getStore } = await import('../server/store/index.js');
+  const store = getStore();
+  const aliceId = (await store.getUserByEmail('alice@projects.test')).id;
+
+  const write = CLOUD_IMPLEMENTATIONS.memory_write;
+  const read = CLOUD_IMPLEMENTATIONS.memory_read;
+  const forget = CLOUD_IMPLEMENTATIONS.memory_delete;
+  const amend = CLOUD_IMPLEMENTATIONS.memory_edit;
+
+  const inProject = await alice.call('POST', '/api/chats', { projectId });
+  const insideId = inProject.body.chat.id;
+  const outside = await alice.call('POST', '/api/chats', {});
+  const outsideId = outside.body.chat.id;
+
+  // Learned outside any project: a fact about the person, true everywhere.
+  await write({ key: 'language', content: 'Always answer in Vietnamese.' }, { userId: aliceId, chatId: outsideId });
+  // And learned inside one: a fact about this work, true only here.
+  const saved = await write(
+    { key: 'house-style', content: 'Cite the article number beside every claim.' },
+    { userId: aliceId, chatId: insideId },
+  );
+  check('a note written in a project says which project it went to', /for the project "UI project"|for the project/.test(saved), saved);
+
+  const here = await read({}, { userId: aliceId, chatId: insideId });
+  check('inside the project, its own notes are listed', /house-style/.test(here), here);
+  check('and so are the account\'s', /language/.test(here), here);
+  check('each side labelled, so the model can tell them apart', /apply everywhere/.test(here), here);
+
+  const elsewhere = await read({}, { userId: aliceId, chatId: outsideId });
+  check('outside it, the account\'s notes are there', /language/.test(elsewhere), elsewhere);
+  // The whole point: a convention picked up in one project does not leak into
+  // unrelated work.
+  check('and the project\'s are not', !/house-style/.test(elsewhere), elsewhere);
+
+  // A name used in both: the narrower context is the more specific instruction.
+  await write({ key: 'tone', content: 'Plain and short.' }, { userId: aliceId, chatId: outsideId });
+  await write({ key: 'tone', content: 'Formal, and cite everything.' }, { userId: aliceId, chatId: insideId });
+  const shadowed = await read({ key: 'tone' }, { userId: aliceId, chatId: insideId });
+  check('a project note wins a clash inside the project', /Formal/.test(shadowed), shadowed);
+  const plain = await read({ key: 'tone' }, { userId: aliceId, chatId: outsideId });
+  check('and the account\'s is untouched outside it', /Plain and short/.test(plain), plain);
+
+  // Reading hands the model both, so it can perfectly well correct an
+  // account-wide note from inside a project. The edit must follow the note.
+  const corrected = await amend(
+    { key: 'language', old_string: 'Vietnamese', new_string: 'Vietnamese, unless asked otherwise' },
+    { userId: aliceId, chatId: insideId },
+  );
+  check('an account note can be corrected from inside a project', /^Updated/.test(corrected), corrected);
+  check(
+    'and the correction lands in the account, not the project',
+    /unless asked otherwise/.test(await read({ key: 'language' }, { userId: aliceId, chatId: outsideId })),
+  );
+
+  // `scope: 'account'` is the override for a genuinely general fact noticed
+  // while working inside a project.
+  await write(
+    { key: 'timezone', content: 'Hanoi.', scope: 'account' },
+    { userId: aliceId, chatId: insideId },
+  );
+  check(
+    'a note can be deliberately filed account-wide from inside a project',
+    /Hanoi/.test(await read({ key: 'timezone' }, { userId: aliceId, chatId: outsideId })),
+  );
+
+  const dropped = await forget({ key: 'house-style' }, { userId: aliceId, chatId: insideId });
+  check('a project note can be deleted', /Deleted the note/.test(dropped), dropped);
+  check(
+    'and is gone from the project',
+    !/house-style/.test(await read({}, { userId: aliceId, chatId: insideId })),
+  );
+
+  // The page shows both, each marked, so somebody can see what was learned here.
+  const page = await alice.call('GET', `/api/projects/${projectId}`);
+  const notes = page.body?.memory || [];
+  check('the project page carries the notes', notes.length > 0, `${notes.length}`);
+  check('each saying where it lives', notes.every((note) => note.scope === 'project' || note.scope === 'account'));
+  check(
+    'with the project\'s copy of a shared name, not the account\'s',
+    notes.find((note) => note.key === 'tone')?.content === 'Formal, and cite everything.',
+    JSON.stringify(notes.find((note) => note.key === 'tone')),
+  );
+  check('and each name only once', new Set(notes.map((n) => n.key)).size === notes.length);
+
+  // Tenancy, the same as everything else here.
+  const mallory = jar();
+  await mallory.call('POST', '/api/register', {
+    name: 'Mallory',
+    email: 'mallory@projects.test',
+    password: 'a-long-enough-password',
+  });
+  const stolen = await mallory.call('GET', `/api/projects/${projectId}`);
+  check('another account cannot read this project at all', stolen.status === 404, `${stolen.status}`);
+}
+
+/* ── what the project produced ─────────────────────────────────── */
+
+/**
+ * A project shelf listed the documents put *in* and nothing of what came out,
+ * so a report written last Tuesday lived only in the transcript of whichever
+ * conversation wrote it. The account-wide Artifacts page is the wrong grain for
+ * "what has this project made" — it is every project's output at once.
+ */
+section('a project lists what was made in it');
+{
+  const { getStore } = await import('../server/store/index.js');
+  const store = getStore();
+  const aliceId = (await store.getUserByEmail('alice@projects.test')).id;
+
+  const inside = await alice.call('POST', '/api/chats', { projectId });
+  const insideId = inside.body.chat.id;
+  const elsewhere = await alice.call('POST', '/api/chats', {});
+  const elsewhereId = elsewhere.body.chat.id;
+
+  await store.createAttachment(aliceId, {
+    id: 'out-report',
+    name: 'Report.docx',
+    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    kind: 'file',
+    bytes: 1234,
+    data: Buffer.from('x').toString('base64'),
+    origin: 'generated',
+    chatId: insideId,
+  });
+  // An upload into the same conversation is not output — it is something the
+  // person put there, and it already appears as a source.
+  await store.createAttachment(aliceId, {
+    id: 'in-upload',
+    name: 'Notes.txt',
+    mime: 'text/plain',
+    kind: 'file',
+    bytes: 10,
+    data: Buffer.from('x').toString('base64'),
+    origin: 'upload',
+    chatId: insideId,
+  });
+  // And a document made in an ordinary conversation belongs to no project.
+  await store.createAttachment(aliceId, {
+    id: 'out-elsewhere',
+    name: 'Unrelated.xlsx',
+    mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    kind: 'file',
+    bytes: 99,
+    data: Buffer.from('x').toString('base64'),
+    origin: 'generated',
+    chatId: elsewhereId,
+  });
+
+  const page = await alice.call('GET', `/api/projects/${projectId}`);
+  const names = (page.body?.outputs || []).map((f) => f.name);
+  check('what the assistant made here is listed', names.includes('Report.docx'), names.join(', '));
+  check('an upload is not output', !names.includes('Notes.txt'), names.join(', '));
+  check('nor is another conversation\'s document', !names.includes('Unrelated.xlsx'), names.join(', '));
+  check('and it says which conversation produced it', !!page.body.outputs.find((f) => f.name === 'Report.docx')?.chat_id);
+
+  // The conversation rows carry a time rather than a message count: scanning a
+  // project is a search through time, and "10 messages" sorts you nowhere.
+  await alice.call('POST', `/api/chats/${insideId}/messages`, { text: 'a question' });
+  const after = await alice.call('GET', `/api/projects/${projectId}`);
+  const row = after.body.chats.find((c) => c.id === insideId);
+  check('a conversation row carries when it was last spoken in', !!row?.updated_at, JSON.stringify(row));
+  check('and it parses as a date', Number.isFinite(new Date(row.updated_at).getTime()));
+
+  const mallory2 = jar();
+  await mallory2.call('POST', '/api/register', {
+    name: 'Mallory Two',
+    email: 'mallory2@projects.test',
+    password: 'a-long-enough-password',
+  });
+  const theirs = await mallory2.call('GET', `/api/projects/${projectId}`);
+  check('another account sees none of it', theirs.status === 404, `${theirs.status}`);
+}
+
 /* ── pinning and archiving ─────────────────────────────────────── */
 
 section('a shelf can be ordered and thinned out');

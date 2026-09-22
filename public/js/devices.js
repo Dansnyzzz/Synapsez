@@ -1,9 +1,15 @@
 /**
  * Your computers — pairing, and what each paired machine is allowed to touch.
  *
- * Lifted out of `app.js` whole. Everything here is about one dialog and the
- * header chip that opens it; the rest of the app needs exactly two things from
+ * Lifted out of `app.js` whole. Everything here is about one dialog, reached
+ * from Settings → Computers; the rest of the app needs exactly two things from
  * it, so that is all this hands back.
+ *
+ * There used to be a chip in the header as well, labelled "Add a computer" with
+ * nothing paired. It was a permanent invitation to a thing most people set up
+ * once or never, sitting in the one row that also has to hold the conversation's
+ * title — which it overran on any window narrower than a desktop. Pairing is a
+ * settings job and now lives only there.
  *
  * The English that was hardcoded in these lines while it lived in `app.js` is
  * now in the dictionaries with the rest — see `devices.*` and `time.*`.
@@ -40,27 +46,6 @@ export function createDevices({ state, refreshWorker, armed }) {
     $('pair-status').textContent = '';
     loadDevices();
     if (!matchMedia('(hover: none)').matches) $('pair-code').focus();
-  }
-
-  /** The header chip says at a glance whether anything is connected. */
-  function renderPairChip() {
-    const worker = state.boot?.worker;
-    const online = !!worker?.online;
-    const count = worker?.machines?.length || 0;
-
-    let label;
-    if (!online) label = t('devices.add');
-    // The app is running on the machine it works on, so there is nothing to pair
-    // for *this* account — but somebody else can still pair a computer of theirs.
-    else if (worker.local) label = t('devices.thisOne');
-    else if (count > 1) label = t('devices.countComputers', { count });
-    else label = worker.activeName || t('devices.computer');
-
-    // The chip carries no dot: the label above already says whether anything
-    // is connected, and by name when something is.
-    $('pair-chip').classList.toggle('is-online', online);
-    $('pair-chip-label').textContent = label;
-    $('pair-chip').title = online ? t('devices.yours') : t('devices.none');
   }
 
   /**
@@ -234,7 +219,6 @@ export function createDevices({ state, refreshWorker, armed }) {
     }
   }
 
-  $('pair-chip').addEventListener('click', () => openPair());
   $('open-pair').addEventListener('click', () => {
     /** @type {HTMLDialogElement} */ ($('settings')).close();
     openPair();
@@ -279,7 +263,6 @@ export function createDevices({ state, refreshWorker, armed }) {
       setTimeout(async () => {
         await refreshWorker();
         await loadDevices();
-        renderPairChip();
       }, 3000);
     } catch (err) {
       status.textContent = err.message;
@@ -296,5 +279,5 @@ export function createDevices({ state, refreshWorker, armed }) {
     }
   });
 
-  return { renderPairChip, loadDevices, openPair };
+  return { loadDevices, openPair };
 }

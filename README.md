@@ -720,18 +720,19 @@ belonging to a project. Nothing said is ever deleted by tidying a folder.
 
 ### One project, opened
 
-Every way into a project — the shelf, the header chip on a conversation, the moment you finish
-naming a new one — lands on the same page. The left column is the work: a composer that says *"How
-can I help you today?"*, and under it the conversations this project has already produced. Nothing
-is created until you send something; the conversation comes into existence at its first message,
-carrying the project with it.
+Every way into a project — the shelf, the breadcrumb beside a conversation's title, the moment you
+finish naming a new one — lands on the same page. The left column is the work: a composer that says
+*"How can I help you today?"*, and under it the conversations this project has already produced,
+each showing when it was last spoken in. Nothing is created until you send something; the
+conversation comes into existence at its first message, carrying the project with it.
 
-The right column is what the work reads from.
+The right column is what the work reads from, and what it has produced.
 
 | | |
 |---|---|
 | **Instructions** | The standing instructions, edited in place. |
-| **Memory** | What the assistant has remembered about you — labelled **account-wide**, because that is what it is. There is one set of notes per account, shared by every project and every ordinary chat. A card headed "Memory" on a project page that quietly showed account memory would be the kind of small lie nobody catches until it matters. |
+| **Memory** | What the assistant has learned. A note picked up inside a project is filed **under that project** and read back only by its conversations; the account's own notes apply everywhere, including here, and each row says which it is. A project is exactly the scale at which a preference means something — "cite the article number" is true of a law project and false of the deck beside it — and pooled into one account-wide list those contradict each other. Where a name exists in both, the project's wins: the narrower context is the more specific instruction. |
+| **Output** | Everything made in this project's conversations, newest first. Pressing one opens it in the same panel a file card in a transcript opens. The shelf used to list what was put *in* and nothing of what came out, so a report written last Tuesday lived only in the transcript that wrote it — and the account-wide Artifacts page is the wrong grain, being every project's output at once. |
 | **Context** | The sources. `+` offers **Upload from device** and **Add text content**, and files can be dropped straight onto the dashed area. Half of what belongs on a shelf was never a file — a brief from an email, notes from a call — so pasting one in is a first-class way to add it. |
 
 > Claude's version of that menu also offers GitHub and Google Drive. Neither exists here, and a menu

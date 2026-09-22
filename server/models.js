@@ -198,9 +198,14 @@ export async function refreshLibrary() {
   );
 
   const models = [];
+  /** Sources that actually answered, with everything they listed. */
+  const answered = [];
   settled.forEach((result, i) => {
-    if (result.status === 'fulfilled') models.push(...result.value);
-    else log.error('catalogue refresh failed', result.reason, { provider: CATALOGUE_SOURCES[i].provider });
+    const { provider } = CATALOGUE_SOURCES[i];
+    if (result.status === 'fulfilled') {
+      models.push(...result.value);
+      answered.push({ provider, ids: result.value.map((m) => m.id) });
+    } else log.error('catalogue refresh failed', result.reason, { provider });
   });
 
   // Every source failing is a real failure — surface it so `refreshIfStale` can
@@ -211,8 +216,30 @@ export async function refreshLibrary() {
 
   await getStore().upsertModels(models);
 
+  /**
+   * And forget what the source has stopped listing.
+   *
+   * A refresh used to be additive only, so the library was a record of every
+   * model that had ever existed rather than of the ones that answer today.
+   * Withdrawn models stayed in the picker indefinitely, and the account unlucky
+   * enough to have one as its default could not send a message at all — every
+   * request came back as the provider's 404.
+   *
+   * Only for a source that answered, and only when it listed something. A
+   * provider that is down returns nothing or throws, and reading that as "every
+   * model has been withdrawn" would empty the library on an outage — the one
+   * failure worse than the one being fixed.
+   */
+  let dropped = 0;
+  for (const { provider, ids } of answered) {
+    if (!ids.length) continue;
+    const gone = await getStore().pruneMissingModels(provider, ids);
+    if (gone) log.info('models withdrawn upstream, removed', { provider, count: gone });
+    dropped += gone;
+  }
+
   const status = await getStore().modelLibraryStatus();
-  return { imported: models.length, ...status };
+  return { imported: models.length, dropped, ...status };
 }
 
 /**

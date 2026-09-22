@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { t } from './i18n.js';
+import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { openMenu } from './menu.js';
 import { toast } from './render.js';
@@ -81,6 +81,30 @@ const ago = (value) => {
   }
   if (seconds < 2592000) return n('when.days', Math.round(seconds / 86400));
   return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+
+/**
+ * When somebody last said something in this conversation.
+ *
+ * The row used to carry "10 messages", which answers a question nobody asks.
+ * Scanning a project's conversations is a search through time — "the one I was
+ * in on Friday", "the one from before the deadline" — and a count sorts you
+ * nowhere, while the list is already ordered by exactly the thing it was not
+ * showing.
+ *
+ * A real date rather than "3 days ago": relative time reads well for the last
+ * hour and stops meaning anything past a week, which is where most of a
+ * project's conversations live. The full timestamp goes in the tooltip for
+ * anyone who wants the hour.
+ */
+const lastSpoke = (value) => {
+  const then = new Date(value).getTime();
+  if (!Number.isFinite(then)) return '';
+  return new Date(then).toLocaleDateString(currentLanguage(), {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 };
 
 /** A File as base64, without the `data:…;base64,` preamble the server does not want. */
@@ -221,6 +245,8 @@ export function createProjectPage({
   openChat,
   startChat,
   onBack,
+  /** Show one of this project's own documents in the side panel. */
+  openFile = (/** @type {{ id: string, name: string }} */ _file) => {},
   /** Open the shared task form, so the project page never grows a second copy. */
   newTask = (/** @type {{ project: { id: string, name: string }, after: () => Promise<void> }} */ _options) => {},
   /** Show one task on its own page. */
@@ -256,7 +282,7 @@ export function createProjectPage({
   /* ── the page ─────────────────────────────────────────────────── */
 
   function draw() {
-    const { project, files, chats, memory, tasks = [] } = data;
+    const { project, files, chats, memory, tasks = [], outputs = [] } = data;
 
     crumb.textContent = project.name;
     nameEl.textContent = project.name;
@@ -274,7 +300,7 @@ export function createProjectPage({
       : t('proj.noSources');
 
     drawChats(chats);
-    drawSide(project, files, memory, tasks);
+    drawSide(project, files, memory, tasks, outputs);
   }
 
   function drawChats(chats) {
@@ -295,9 +321,10 @@ export function createProjectPage({
       chats
         .map(
           (chat) => `
-        <button class="chatline" type="button" data-chat="${escapeHtml(chat.id)}">
+        <button class="chatline" type="button" data-chat="${escapeHtml(chat.id)}"
+                title="${escapeHtml(t('proj.lastSpoke', { when: new Date(chat.updated_at).toLocaleString(currentLanguage()) }))}">
           <span class="chatline__name">${escapeHtml(chat.title || t('proj.untitled'))}</span>
-          <span class="chatline__when">${escapeHtml(counted(chat.message_count, 'count.messages'))}</span>
+          <span class="chatline__when">${escapeHtml(lastSpoke(chat.updated_at))}</span>
         </button>`,
         )
         .join('');
@@ -329,7 +356,7 @@ export function createProjectPage({
       </button>`;
   }
 
-  function drawSide(project, files, memory, tasks = []) {
+  function drawSide(project, files, memory, tasks = [], outputs = []) {
     side.innerHTML = `
       <section class="panel-card">
         <div class="panel-card__head">
@@ -353,6 +380,12 @@ export function createProjectPage({
         }
       </section>
 
+      <!-- What the assistant has learned. A note picked up inside this
+           project is filed under it and read back only by its conversations;
+           the account's own notes apply here too, and each row says which it
+           is. Before this the card showed one flat account-wide list, which
+           meant a client's house style learned in one project turned up in the
+           answers of every other. -->
       <section class="panel-card">
         <div class="panel-card__head">
           <span class="panel-card__name">${escapeHtml(t('proj.memory'))}</span>
@@ -368,11 +401,41 @@ export function createProjectPage({
                 <span class="source__name" title="${escapeHtml(note.content)}">${escapeHtml(
                   note.content.slice(0, 90),
                 )}</span>
+                <span class="note__scope note__scope--${note.scope === 'project' ? 'here' : 'all'}">${escapeHtml(
+                  t(note.scope === 'project' ? 'proj.noteHere' : 'proj.noteEverywhere'),
+                )}</span>
                 <span class="source__size">${escapeHtml(ago(note.updatedAt))}</span>
               </div>`,
                 )
                 .join('')
             : `<p class="panel-card__say">${escapeHtml(t('proj.memoryEmpty'))}</p>`
+        }
+      </section>
+
+      <!-- And what came out of it.
+           A project shelf listed the documents put *in* and nothing of what was
+           produced, so last Tuesday's report lived only in the transcript that
+           wrote it. The account-wide Artifacts page is the wrong grain for
+           "what has this project made"; this is that list. -->
+      <section class="panel-card">
+        <div class="panel-card__head">
+          <span class="panel-card__name">${escapeHtml(t('proj.outputs'))}</span>
+          ${outputs.length ? `<span class="panel-card__tag">${outputs.length}</span>` : ''}
+        </div>
+        ${
+          outputs.length
+            ? `<p class="panel-card__say" style="margin-bottom:8px">${escapeHtml(t('proj.outputsLede'))}</p>` +
+              outputs
+                .map(
+                  (file) => `
+              <button class="source source--press" type="button" data-output="${escapeHtml(file.id)}"
+                      title="${escapeHtml(file.chat_title || '')}">
+                <span class="source__name">${escapeHtml(file.name)}</span>
+                <span class="source__size">${escapeHtml(fmtBytes(file.bytes))}</span>
+              </button>`,
+                )
+                .join('')
+            : `<p class="panel-card__say">${escapeHtml(t('proj.outputsEmpty'))}</p>`
         }
       </section>
 
@@ -488,7 +551,7 @@ export function createProjectPage({
   function wireSide() {
     $('pp-edit-instructions').addEventListener('click', () => {
       editingInstructions = !editingInstructions;
-      drawSide(data.project, data.files, data.memory, data.tasks || []);
+      drawSide(data.project, data.files, data.memory, data.tasks || [], data.outputs || []);
       if (editingInstructions) $('pp-instructions').focus();
     });
 
@@ -508,6 +571,14 @@ export function createProjectPage({
         button.disabled = false;
       }
     });
+
+    // A document this project produced, opened in the side panel — the same
+    // viewer the transcript's own file cards use, so there is one way to read
+    // an artifact rather than two that drift.
+    for (const button of /** @type {NodeListOf<HTMLElement>} */ (side.querySelectorAll('[data-output]'))) {
+      const file = (data.outputs || []).find((entry) => entry.id === button.dataset.output);
+      if (file) button.addEventListener('click', () => openFile({ id: file.id, name: file.name }));
+    }
 
     for (const button of side.querySelectorAll('[data-open]')) {
       button.addEventListener('click', () => {
@@ -541,13 +612,13 @@ export function createProjectPage({
     $('pp-select-all')?.addEventListener('click', () => {
       if (selected.size === data.files.length) selected.clear();
       else for (const file of data.files) selected.add(file.id);
-      drawSide(data.project, data.files, data.memory, data.tasks || []);
+      drawSide(data.project, data.files, data.memory, data.tasks || [], data.outputs || []);
     });
 
     $('pp-end-select')?.addEventListener('click', () => {
       selecting = false;
       selected.clear();
-      drawSide(data.project, data.files, data.memory, data.tasks || []);
+      drawSide(data.project, data.files, data.memory, data.tasks || [], data.outputs || []);
     });
 
     $('pp-delete-selected')?.addEventListener('click', async () => {
@@ -616,7 +687,7 @@ export function createProjectPage({
     else selected.add(id);
     // Ticking the last one off leaves the bar up rather than snapping out of
     // selection: somebody clearing a mistake is usually about to tick another.
-    drawSide(data.project, data.files, data.memory, data.tasks || []);
+    drawSide(data.project, data.files, data.memory, data.tasks || [], data.outputs || []);
   }
 
   /* ── looking at one source ────────────────────────────────────── */
@@ -966,7 +1037,7 @@ export function createProjectPage({
 
   async function reload() {
     const fresh = await api.project(data.project.id);
-    data = { ...fresh, memory: fresh.memory || [], tasks: fresh.tasks || [] };
+    data = { ...fresh, memory: fresh.memory || [], tasks: fresh.tasks || [], outputs: fresh.outputs || [] };
     draw();
   }
 
@@ -993,7 +1064,7 @@ export function createProjectPage({
       chatList.innerHTML = '';
       try {
         const fresh = await api.project(id);
-        data = { ...fresh, memory: fresh.memory || [] };
+        data = { ...fresh, memory: fresh.memory || [], tasks: fresh.tasks || [], outputs: fresh.outputs || [] };
         draw();
       } catch (err) {
         crumb.textContent = '';

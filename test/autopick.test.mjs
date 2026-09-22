@@ -133,6 +133,50 @@ section('the library filters by provider, so a row limit cannot hide one');
   check('no provider filter still returns both', all.some((m) => m.provider === 'orcarouter') && all.some((m) => m.provider === 'openrouter'));
 }
 
+/* ── models that stopped existing ──────────────────────────────── */
+
+/**
+ * The library only ever grew, and that was the bug behind the worst failure
+ * this app has: an account whose default model had been withdrawn could not
+ * send a message at all. Every request came back as the provider's own 404 —
+ * in one case a cheerful note thanking the user for taking part in a preview —
+ * shown in red, in English, on every attempt, with nothing saying that the
+ * model was the problem or that the picker was the fix.
+ *
+ * A refresh now forgets what its source has stopped listing. The guard that
+ * matters is the second half: a source that is *down* lists nothing, and
+ * reading that as "everything was withdrawn" would empty the library on an
+ * outage, which is worse than the problem being solved.
+ */
+section('a refresh forgets the models its source no longer lists');
+{
+  await store.upsertModels([
+    model({ id: 'openrouter/lab/gone-tomorrow', family: 'lab' }),
+    model({ id: 'openrouter/lab/still-here', family: 'lab' }),
+    model({ id: 'orcarouter/lab/untouched', family: 'lab', provider: 'orcarouter' }),
+  ]);
+
+  const dropped = await store.pruneMissingModels('openrouter', [
+    'openrouter/lab/still-here',
+    'openrouter/deepseek/deepseek-r1:free',
+  ]);
+  check('the withdrawn one is removed', dropped >= 1, `${dropped}`);
+
+  const ids = (await store.listSharedModels({ limit: 500 })).map((m) => m.id);
+  check('and is out of the picker', !ids.includes('openrouter/lab/gone-tomorrow'), ids.join(', '));
+  check('the one still listed stays', ids.includes('openrouter/lab/still-here'));
+  // Scoped to the provider that answered: OrcaRouter being slow or down must
+  // not cost OpenRouter's half of the library, or the other way round.
+  check('another aggregator is untouched', ids.includes('orcarouter/lab/untouched'));
+
+  const nothing = await store.pruneMissingModels('openrouter', []);
+  check('an empty list prunes nothing at all', nothing === 0, `${nothing}`);
+  check(
+    'so a source that is down cannot empty the library',
+    (await store.listSharedModels({ limit: 500 })).some((m) => m.id === 'openrouter/lab/still-here'),
+  );
+}
+
 await store.close?.();
 removeTemp(process.env.DATA_DIR);
 

@@ -1684,10 +1684,24 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/*
+ * The right of the header shrinks, and its chips shrink with it.
+ *
+ * Without `min-width: 0` a flex item refuses to go below the width of its
+ * contents, so on a narrow window this block stayed at its full size, pushed
+ * past the edge, and its chips sat on top of the title. The title has always
+ * had the same guard; this side never did, and it is the side that grows.
+ *
+ * Each chip keeps a floor so that shrinking ellipsises the label rather than
+ * crushing a chip to a sliver — a 34px stub with no readable text in it is not
+ * a smaller control, it is a broken one.
+ */
 .topbar__right {
   display: flex;
+  min-width: 0;
   gap: 7px;
 }
+.topbar__right .chip { min-width: 62px; }
 
 /* ── Scrollbars that are not furniture ───────────────────────────
  *
@@ -1971,22 +1985,42 @@ textarea {
   gap: 8px;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
 }
-/* Glass rather than a solid card, so the sky shows through and the row belongs
-   to the screen it is sitting on. */
+/*
+ * Glass, on the accent — not a grey card.
+ *
+ * `color-mix(var(--surface) 62%)` is a named surface colour thinned out, and a
+ * thinned-out opaque grey over a violet sky is still grey: it read as four flat
+ * tiles laid on the only screen in the app with something behind them. Real
+ * glass is three things together — a wash you can see through, a blur so what
+ * is behind it is *there* rather than merely visible, and a bright hairline
+ * along the cut edge — and the app already has tokens for all three, which
+ * every other floating surface uses.
+ *
+ * The border keeps the accent rather than waiting for a hover to find it. These
+ * four are the only thing to press on an empty screen; the ring is what says so.
+ */
 .suggestion {
   padding: 13px 15px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface) 62%, transparent);
-  backdrop-filter: blur(10px);
+  border: 1px solid var(--accent-dim);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--glass-hi), transparent 46%), var(--tint);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: 0 10px 30px -22px var(--accent-glow);
   color: var(--text-dim);
   text-align: left;
   font-size: 13.5px;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, transform 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, color 0.15s, transform 0.15s, box-shadow 0.15s, background 0.15s;
+}
+/* No blur available — Firefox with the pref off, older WebKit. A transparent
+   wash over a busy sky is unreadable without one, so those get the pane. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .suggestion { background: var(--glass-solid); }
 }
 .suggestion:hover {
-  border-color: var(--accent-dim);
+  border-color: var(--accent);
+  background: linear-gradient(180deg, var(--glass-hi), transparent 46%), var(--tint-2);
   color: var(--text);
   transform: translateY(-2px);
   box-shadow: 0 10px 26px -14px var(--accent-glow);
@@ -3687,13 +3721,7 @@ details.block pre {
 }
 .bubble__text a:hover { color: var(--accent); }
 
-/* ── the Computers chip and its sheet ──────────────────────── */
-
-.chip--pair .dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-}
+/* ── the pairing sheet, reached from Settings → Computers ───── */
 
 .sheet--pair { width: min(520px, 100%); }
 .sheet--pair .sheet__body { padding: 20px 22px 24px; }
@@ -3840,14 +3868,6 @@ details.block pre {
 .gauge__label:empty { display: none; }
 
 /* ── projects ────────────────────────────────────────────────── */
-
-/* The header chip. Green when the answers are held to the sources, plain when
-   the project is only instructions and a folder. */
-.chip--project { border-color: var(--line); }
-.chip--project.is-grounded {
-  border-color: var(--accent-dim);
-  color: var(--accent);
-}
 
 .project-card {
   display: grid;
@@ -5049,7 +5069,19 @@ details.block pre {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-family: Georgia, 'Times New Roman', 'Noto Serif', serif;
+  /*
+     Georgia is not on this list, and that is the fix.
+     
+     Georgia stops at Latin Extended-A. Vietnamese lives in Latin Extended
+     Additional (U+1EA0–U+1EF9), so every letter carrying a Vietnamese tone mark
+     — ố, ế, ậ, ộ, ệ — fell out of it and was drawn by whatever the browser
+     found next. A project called "luật thương mại quốc tế" rendered with five
+     letters in a different typeface, at a different weight, sitting off the
+     baseline: it reads as broken text, and it was the only serif in the app,
+     which is why nothing else showed it.
+     
+     Everything below covers Vietnamese. */
+  font-family: 'Noto Serif', Cambria, 'Times New Roman', ui-serif, serif;
   font-size: 34px;
   font-weight: 400;
   letter-spacing: -0.01em;
@@ -5772,7 +5804,7 @@ details.block pre {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-family: Georgia, 'Times New Roman', 'Noto Serif', serif;
+  font-family: 'Noto Serif', Cambria, 'Times New Roman', ui-serif, serif;
   font-size: 30px;
   font-weight: 400;
   letter-spacing: -0.01em;
@@ -5924,6 +5956,40 @@ details.block pre {
   white-space: nowrap;
 }
 .source__size { flex: none; color: var(--text-faint); font-size: 11.5px; }
+
+/* A document this project produced. A row you press, so it has to read as one:
+   the same shape as the source rows above it, plus a hand and a lit edge. */
+.source--press {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.source--press:hover { color: var(--accent); }
+.source--press:hover .source__name { text-decoration: underline; text-underline-offset: 3px; }
+
+/* Which memory a note lives in. Two words, because "project" and "account" are
+   the whole distinction and a colour alone would not survive being colour-blind
+   or printed. */
+.note__scope {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.note__scope--here {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
 
 /* ── a project's shelf ────────────────────────────────────────────────
  *
