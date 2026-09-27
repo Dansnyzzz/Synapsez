@@ -1011,6 +1011,14 @@ function placeScheduleCard(body, schedule) {
   else body.append(card);
 }
 
+/** A question card's answer, drawn as the person's own bubble. */
+function placeAnswer(body, text) {
+  const bubble = el('div', 'answerbubble');
+  bubble.setAttribute('aria-label', t('chat.yourAnswer'));
+  bubble.textContent = text;
+  body.append(bubble);
+}
+
 export function fileCard(file) {
   const card = el('div', 'filecard');
   card.dataset.file = file.id;
@@ -1302,6 +1310,7 @@ export function assistantMessage() {
         if (result.file?.id) placeFile(body, result.file);
         if (result.widget?.markup) body.append(widgetNode(result.widget, result.name));
         if (result.schedule?.id) placeScheduleCard(body, result.schedule);
+        if (result.answered) placeAnswer(body, result.answered);
       },
     };
   }
@@ -1660,6 +1669,13 @@ export function assistantMessage() {
            * change it" is what was asked for.
            */
           if (result.schedule?.id) placeScheduleCard(body, result.schedule);
+
+          /**
+           * What the person answered on a question card, on their side of the
+           * conversation — so a setup filled in through a form reads back like
+           * something they said, live and after a reload.
+           */
+          if (result.answered) placeAnswer(body, result.answered);
         },
       };
     },

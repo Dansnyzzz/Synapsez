@@ -13,8 +13,10 @@
  * than no answer at all.
  */
 
-/** More than this in one card and nobody reads to the end. */
-const MAX_QUESTIONS = 5;
+/** More than this in one card and nobody reads to the end. A form may run longer. */
+const MAX_QUESTIONS = 6;
+/** Fields typed into rather than chosen from. */
+const TEXT_KINDS = new Set(['text', 'email']);
 /** One option is not a choice; past eight it is a form. */
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 8;
@@ -59,6 +61,26 @@ export function normaliseQuestions(input) {
     const question = text(entry?.question ?? entry?.title, MAX_QUESTION);
     if (!question) continue;
 
+    /**
+     * A field to type into rather than choose from — an email address, a
+     * name, a time. What makes a setup form possible: "which frequency" is a
+     * choice, "which address" never can be.
+     */
+    const kind = TEXT_KINDS.has(entry?.kind) ? entry.kind : 'choice';
+    if (kind !== 'choice') {
+      questions.push({
+        question,
+        kind,
+        options: [],
+        multiple: false,
+        other: true,
+        otherLabel: text(entry?.placeholder ?? entry?.other_label ?? '', MAX_LABEL),
+        hint: text(entry?.hint ?? '', MAX_LABEL * 2),
+        required: !!entry?.required,
+      });
+      continue;
+    }
+
     const options = [];
     const seen = new Set();
     for (const candidate of Array.isArray(entry?.options) ? entry.options : []) {
@@ -74,6 +96,7 @@ export function normaliseQuestions(input) {
 
     questions.push({
       question,
+      kind,
       options,
       multiple: !!entry?.multiple,
       // On by default. The list is the model's guess at the answers; letting
@@ -81,6 +104,7 @@ export function normaliseQuestions(input) {
       // question and a quiz.
       other: entry?.other !== false,
       otherLabel: text(entry?.other_label ?? entry?.otherLabel ?? '', MAX_LABEL),
+      hint: text(entry?.hint ?? '', MAX_LABEL * 2),
     });
   }
 
@@ -123,6 +147,17 @@ export function answerText(questions, answers) {
       return;
     }
 
+    if (q.kind === 'email' && !EMAIL.test(other)) {
+      answeredAny = true;
+      lines.push(`Q: ${q.question}\nA: "${other}" — this does not look like an email address; check it with the user before using it.`);
+      return;
+    }
+    if (q.kind && q.kind !== 'choice') {
+      answeredAny = true;
+      lines.push(`Q: ${q.question}\nA: "${other}"`);
+      return;
+    }
+
     answeredAny = true;
     const said = [...picks.map((p) => `"${p}"`)];
     if (other) said.push(`and in their own words: "${other}"`);
@@ -137,6 +172,43 @@ export function answerText(questions, answers) {
     : 'Carry on with your own best judgement, and do not ask this again — they have already declined once.';
 
   return `${head}\n\n${lines.join('\n\n')}\n\n${tail}`;
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The answer as the person would have written it, for the transcript.
+ *
+ * The model reads `answerText`; the person sees this — one line per question,
+ * "Frequency: Daily · Email: an@x.com" — in a bubble on their side of the
+ * conversation, so a setup filled in through a form reads back like something
+ * they said rather than disappearing into a collapsed step.
+ */
+export function answerSummary(questions, answers) {
+  const parts = [];
+  questions.forEach((q, index) => {
+    const given = answers?.[index] ?? {};
+    const picks = (Array.isArray(given.picks) ? given.picks : []).filter((p) => q.options.some((o) => o.label === p));
+    const other = text(given.other, MAX_LABEL * 2);
+    const said = [...picks, other].filter(Boolean).join(', ');
+    if (said) parts.push(`${q.question.replace(/[?？:：]\s*$/, '')}: ${said}`);
+  });
+  return parts.join('\n');
+}
+
+/**
+ * How the card is drawn: one question at a time, or everything at once as a
+ * form with a single submit button ("Continue setup"). A form when the model
+ * asks for one, or when any field is typed into — a text box alone on a page
+ * of its own is a worse form than the same box among the choices it belongs to.
+ */
+export function askLayout(input, questions) {
+  const form = input?.style === 'form' || questions.some((q) => q.kind && q.kind !== 'choice');
+  return {
+    form,
+    title: text(input?.title ?? '', MAX_QUESTION),
+    submitLabel: text(input?.submit_label ?? input?.submitLabel ?? '', 40),
+  };
 }
 
 export const __testing = { MAX_QUESTIONS, MIN_OPTIONS, MAX_OPTIONS };

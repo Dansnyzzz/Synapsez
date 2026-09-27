@@ -487,7 +487,7 @@
             not trap focus — you are free to ignore it and type something else,
             and the card says so by offering Skip.
           -->
-          <div class="question" id="question" role="group" aria-labelledby="question-title" hidden>
+          <div class="question" id="question" role="group" aria-labelledby="question-title" tabindex="-1" hidden>
             <div class="question__head">
               <strong class="question__title" id="question-title"></strong>
               <div class="question__nav" id="question-nav" hidden>
@@ -498,9 +498,17 @@
               <button class="icon-btn icon-btn--tiny" id="question-dismiss" type="button" data-i18n-aria-label="question.dismissAria" aria-label="Skip all of these">✕</button>
             </div>
             <div class="question__options" id="question-options" role="group"></div>
+            <!-- The last row of a question: an answer the list did not think of,
+                 typed in place. Moved into the list by question.js; the send
+                 arrow appears once there is something to send. -->
+            <div class="question__otherrow" id="question-otherrow" hidden>
+              <span class="question__pencil" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m14 6 4 4"/></svg></span>
+              <input id="question-other" type="text" autocomplete="off" data-i18n-placeholder="question.other" placeholder="Something else — type it here…" />
+              <button class="question__send" id="question-send" type="button" hidden data-i18n-aria-label="question.sendAria" aria-label="Send this answer">↑</button>
+            </div>
             <div class="question__foot">
-              <input id="question-other" type="text" autocomplete="off" data-i18n-placeholder="question.other" placeholder="Something else…" />
-              <button class="btn btn--primary" id="question-go" type="button"></button>
+              <span class="question__keys" id="question-keys" data-i18n="question.keys">↑↓ to move · Enter to choose · or type something else below</span>
+              <button class="btn" id="question-go" type="button"></button>
             </div>
           </div>
 

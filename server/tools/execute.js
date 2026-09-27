@@ -185,6 +185,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
  *   widget?: any,
  *   shot?: any,
  *   schedule?: any,
+ *   answered?: string,
  * }} ToolResult
  */
 
@@ -402,6 +403,8 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           // card with a way into it. The third field this return has had to
           // learn; see the note on `widget` above for what forgetting one costs.
           schedule: result.schedule,
+          // What the person answered on a question card, in their words.
+          answered: result.answered,
         };
       }
       return { isError: false, content: String(result ?? '') };

@@ -960,7 +960,9 @@ export const TOOLS = [
       'Ask the user a short question they answer by pressing, instead of typing. The turn pauses until they ' +
       'answer. Use it when one missing fact changes what you should do — which of several directions they ' +
       'want, which format, which of two readings of their request is right. Do not use it for questions you ' +
-      'can answer yourself, and do not use it to confirm something they already said.',
+      'can answer yourself, and do not use it to confirm something they already said. ' +
+      'Several missing details at once (how often, which address, which language) go in one call as a form: ' +
+      'style "form", a submit_label, and kind "email" or "text" for values typed in rather than chosen.',
     parameters: {
       type: 'object',
       properties: {
@@ -980,6 +982,10 @@ export const TOOLS = [
                   'distinct — two options meaning the same thing is a choice nobody can make.',
                 items: { type: 'string' },
               },
+              kind: { type: 'string', enum: ['choice', 'text', 'email'], description: 'Default choice. text/email take no options.' },
+              placeholder: { type: 'string' },
+              hint: { type: 'string', description: 'A line under the field.' },
+              required: { type: 'boolean' },
               multiple: { type: 'boolean', description: 'Several answers may be chosen. Default false.' },
               other: {
                 type: 'boolean',
@@ -987,9 +993,12 @@ export const TOOLS = [
               },
               other_label: { type: 'string', description: 'Placeholder for that box.' },
             },
-            required: ['question', 'options'],
+            required: ['question'],
           },
         },
+        style: { type: 'string', enum: ['steps', 'form'], description: 'form shows every question at once with one button.' },
+        title: { type: 'string' },
+        submit_label: { type: 'string', description: 'The form button, e.g. "Continue setup", in their language.' },
       },
       required: ['questions'],
     },

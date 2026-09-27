@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-09-28 — setting something up by describing it actually sets it up; forms and a better picker
+
+### Fixed
+
+- "Describe it to the assistant" from the Scheduled or Workflows shelf — and any message that plainly
+  asks for a repeat ("mỗi sáng gửi tôi…", "every Monday") or an email — now hands the model
+  `schedule_task` / `workflow_write` / `send_email` before its first step. They were deferred behind
+  `load_tools`, and a small model would rather chat about the digest than fetch the tool, so the
+  setup never happened. The shelf notes now say to set it up in this turn, never as a draft only.
+
+### Added
+
+- `ask_options` can be a **form**: `style: "form"`, a `title`, a `submit_label` ("Continue setup"),
+  and fields of `kind: "email"` or `"text"` alongside the choices — every question on one card with
+  one solid button, required fields and email addresses checked before it sends. The answer is
+  drawn back as the person's own bubble in the transcript, live and after a reload.
+- The question picker reads like a modern one: numbered rows, a single choice answers and moves on,
+  a last row with a pencil where you type your own answer and a send arrow appears, and ↑/↓, Enter
+  and the number keys work.
+
 ## 2026-09-27 (late) — Google, and colours that mean what they mean everywhere
 
 ### Added

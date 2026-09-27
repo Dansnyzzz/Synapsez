@@ -1042,7 +1042,13 @@ export const vi = {
 
   /* ── câu hỏi có nút bấm ── */
   'question.waiting': 'Đang chờ bạn trả lời',
-  'question.other': 'Ý khác…',
+  'question.other': 'Khác — tự nhập ý của bạn…',
+  'question.keys': '↑↓ để di chuyển · Enter để chọn · hoặc gõ ý khác bên dưới',
+  'question.sendAria': 'Gửi câu trả lời này',
+  'question.continue': 'Tiếp tục thiết lập',
+  'question.formTitle': 'Cho mình thêm vài thông tin',
+  'question.badEmail': 'Đây không phải địa chỉ email hợp lệ.',
+  'chat.yourAnswer': 'Câu trả lời của bạn',
   'question.skip': 'Bỏ qua',
   'question.next': 'Tiếp',
   'question.done': 'Xong',

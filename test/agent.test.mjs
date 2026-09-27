@@ -1476,7 +1476,8 @@ removeTemp(process.env.DATA_DIR);
  * what counts as a well-formed question, and what the model is told was said.
  * ───────────────────────────────────────────────────────────────── */
 
-const { normaliseQuestions, answerText } = await import('../server/tools/askOptions.js');
+const { normaliseQuestions, answerText, answerSummary, askLayout } = await import('../server/tools/askOptions.js');
+const { toolsToPreload } = await import('../server/agent.js');
 
 section('what counts as a question worth drawing');
 {
@@ -1506,7 +1507,42 @@ section('what counts as a question worth drawing');
   const many = normaliseQuestions({
     questions: Array.from({ length: 9 }, (_, i) => ({ question: `Q${i}`, options: ['a', 'b'] })),
   });
-  check('past five questions the rest are cut', many.length === 5, `${many.length}`);
+  // Six, not five: a setup form (frequency, address, language, length, topic…)
+  // is one card, and five left no room for the address.
+  check('past six questions the rest are cut', many.length === 6, `${many.length}`);
+
+  // A form: choices and a typed field, answered together.
+  const form = normaliseQuestions({
+    style: 'form',
+    questions: [
+      { question: 'Tần suất?', options: ['Hằng ngày', 'Hằng tuần'] },
+      { question: 'Email nhận', kind: 'email', placeholder: 'you@example.com', hint: 'Có thể để trống' },
+    ],
+  });
+  check('a typed field needs no options', form.length === 2 && form[1].kind === 'email' && form[1].options.length === 0);
+  check('and keeps its placeholder and hint', form[1].otherLabel === 'you@example.com' && form[1].hint === 'Có thể để trống');
+  const layout = askLayout({ style: 'form', submit_label: 'Tiếp tục thiết lập' }, form);
+  check('it is drawn as a form with its own button', layout.form && layout.submitLabel === 'Tiếp tục thiết lập');
+  check('a typed field alone makes a form too', askLayout({}, form).form === true);
+  const given = [{ picks: ['Hằng ngày'], other: '' }, { picks: [], other: 'an@example.com' }];
+  check('the model reads the typed value', /"an@example\.com"/.test(answerText(form, given)));
+  check(
+    'and the person sees their answers as they would say them',
+    answerSummary(form, given) === 'Tần suất: Hằng ngày\nEmail nhận: an@example.com',
+    JSON.stringify(answerSummary(form, given)),
+  );
+  check(
+    'an address that is not one is flagged to the model',
+    /does not look like an email/.test(answerText(form, [given[0], { picks: [], other: 'not-an-address' }])),
+  );
+
+  // A turn that is plainly setting something up is handed the tool up front,
+  // rather than left to discover it is behind load_tools.
+  check('a message from the Scheduled shelf gets schedule_task', toolsToPreload({ intent: 'schedule', text: 'x' }).includes('schedule_task'));
+  check('one from the Workflows shelf gets workflow_write', toolsToPreload({ intent: 'workflow', text: 'x' }).includes('workflow_write'));
+  check('"mỗi sáng gửi tôi bản tin" gets it too', toolsToPreload({ text: 'mỗi sáng gửi tôi bản tin AI qua mail' }).includes('schedule_task'));
+  check('  and the email tool', toolsToPreload({ text: 'mỗi sáng gửi tôi bản tin AI qua mail' }).includes('send_email'));
+  check('an ordinary question gets nothing extra', toolsToPreload({ text: 'giải thích định lý Pythagoras' }).length === 0);
 
   const wide = normaliseQuestions({ question: 'Q', options: Array.from({ length: 20 }, (_, i) => `o${i}`) });
   check('and past eight options so are they', wide[0].options.length === 8, `${wide[0].options.length}`);

@@ -26,7 +26,7 @@ import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
 import { search, formatResults } from '../search.js';
 import { untrusted } from './untrusted.js';
-import { normaliseQuestions, answerText } from './askOptions.js';
+import { normaliseQuestions, answerText, answerSummary } from './askOptions.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
 
@@ -341,7 +341,9 @@ async function askOptionsTool(input, { answers }) {
         'Do not retry it; ask in prose instead.',
     );
   }
-  return answerText(questions, answers);
+  // The person's own reading of what they chose, drawn on their side of the
+  // conversation; the model reads `answerText`.
+  return { content: answerText(questions, answers), answered: answerSummary(questions, answers) };
 }
 
 /* ── A video, as words ───────────────────────────────────────────

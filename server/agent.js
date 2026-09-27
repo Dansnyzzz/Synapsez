@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { getPrefs, usesSharedKey, providerStatus } from './settings.js';
 import { checkQuota, record as recordUsage, turnTokenLimit } from './usage.js';
-import { normaliseQuestions } from './tools/askOptions.js';
+import { normaliseQuestions, askLayout } from './tools/askOptions.js';
 import { streamCompletion } from './providers/index.js';
 import { withMarkup } from './pricing.js';
 import { budgetStop } from './providers/stop.js';
@@ -373,10 +373,36 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
  */
 const INTENT_NOTES = {
   workflow:
-    '(Written from the Workflows shelf: set this up with workflow_write so it is saved as a workflow — not with schedule_task. Ask only what is genuinely missing.)',
+    '(Written from the Workflows shelf: set this up now with workflow_write so it is saved as a workflow — not with schedule_task, and never as only a draft in the reply. ' +
+    'If something essential is missing — when it runs, who an email goes to — ask it in ONE ask_options call with style "form" ' +
+    '(choices for the options, a kind "email" or "text" field for free values, submit_label "Continue setup" in their language), then call workflow_write straight after with the answers.)',
   schedule:
-    '(Written from the Scheduled shelf: set this up with schedule_task so it is saved as one scheduled task — not as a workflow. Ask only what is genuinely missing.)',
+    '(Written from the Scheduled shelf: set this up now with schedule_task so it is saved as one scheduled task — not as a workflow, and never as only a draft in the reply. ' +
+    'If something essential is missing — the time, who an email goes to — ask it in ONE ask_options call with style "form" ' +
+    '(choices for the options, a kind "email" or "text" field for free values, submit_label "Continue setup" in their language), then call schedule_task straight after with the answers.)',
 };
+
+/**
+ * Tools a turn will certainly need, loaded before its first step.
+ *
+ * `schedule_task` and `workflow_write` are deferred behind `load_tools` to keep
+ * ordinary turns cheap — and a small model asked to "set up a daily digest"
+ * would rather chat about the digest than make the extra call to be handed the
+ * tool, so the setup never happened. A message written from a shelf says what
+ * it is for; a message that plainly asks for a repeat or an email says so in
+ * words. Either is reason enough to hand the tool over up front.
+ */
+const RECURRING = /\b(daily|weekly|monthly|every (day|morning|week|month|hour)|each (day|morning|week)|schedule|remind)\b|hằng ngày|hàng ngày|mỗi (ngày|sáng|tối|tuần|tháng|giờ)|hằng (tuần|tháng)|hàng (tuần|tháng)|lên lịch|đặt lịch|nhắc (tôi|mình)|định kỳ|tự động gửi/i;
+const EMAILING = /\b(e-?mail|gmail|inbox)\b|\bmail\b|thư điện tử|gửi thư/i;
+
+export function toolsToPreload(message) {
+  const names = new Set();
+  const say = String(message?.text || '');
+  if (message?.intent === 'schedule' || RECURRING.test(say)) names.add('schedule_task').add('list_tasks');
+  if (message?.intent === 'workflow') names.add('workflow_write').add('workflow_status');
+  if (message?.intent || EMAILING.test(say)) names.add('send_email').add('gmail');
+  return [...names];
+}
 
 function withIntentNotes(messages) {
   return messages.map((m) =>
@@ -721,7 +747,7 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
       }
       const started = Date.now();
       emit('tool_call', { id: call.id, name: call.name, input: call.input });
-      const { content, isError, file, widget, shot, schedule } = await executeTool({
+      const { content, isError, file, widget, shot, schedule, answered } = await executeTool({
         user,
         name: call.name,
         input: call.input,
@@ -760,6 +786,9 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         // On the result for the same reason as `file`: the transcript is what
         // a reopened conversation is rebuilt from.
         ...(schedule ? { schedule } : {}),
+        // A question card's answer as the person would say it, drawn as their
+        // own bubble — live and when the conversation is reopened.
+        ...(answered ? { answered } : {}),
       };
       emit('tool_result', result);
       /**
@@ -947,7 +976,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * only the one with a native mechanism for it: nothing is added mid-request,
    * the next request simply carries more.
    */
-  const activated = new Set();
+  const activated = new Set(toolsToPreload([...messages].reverse().find((m) => m.role === 'user')));
   /** Outbound messages sent this turn without a prompt. See `outboundRefusal`. */
   const sent = { count: 0 };
   const buildTools = () => availableTools({
@@ -1039,7 +1068,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         /* malformed: fall through and let the tool path report it */
       }
       if (questions) {
-        emit('question_required', { toolCallId: asking.id, questions });
+        emit('question_required', { toolCallId: asking.id, questions, ...askLayout(asking.input, questions) });
         return;
       }
     }
@@ -1463,7 +1492,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         /* falls through to the tool path, which reports it properly */
       }
       if (questions) {
-        emit('question_required', { toolCallId: asking.id, questions });
+        emit('question_required', { toolCallId: asking.id, questions, ...askLayout(asking.input, questions) });
         return; // The browser resumes by calling back with the answers.
       }
     }

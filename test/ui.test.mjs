@@ -5045,7 +5045,7 @@ section('a question card collects an answer');
       options: opts().length,
       // Nothing chosen yet, so the way on is Skip rather than Next.
       goLabel: go().textContent,
-      otherShown: !(/** @type {HTMLInputElement} */ (document.getElementById('question-other')).hidden),
+      otherShown: !document.getElementById('question-otherrow').hidden,
       role: document.getElementById('question-options').getAttribute('role'),
     };
 
@@ -5065,6 +5065,7 @@ section('a question card collects an answer');
     const other = /** @type {HTMLInputElement} */ (document.getElementById('question-other'));
     other.value = 'quản trị rủi ro';
     other.dispatchEvent(new window.Event('input', { bubbles: true }));
+    const sendShown = !document.getElementById('question-send').hidden;
 
     // On to the second question.
     go().click();
@@ -5072,18 +5073,14 @@ section('a question card collects an answer');
       title: document.getElementById('question-title').textContent,
       count: document.getElementById('question-count').textContent,
       role: document.getElementById('question-options').getAttribute('role'),
-      otherShown: !(/** @type {HTMLInputElement} */ (document.getElementById('question-other')).hidden),
+      otherShown: !document.getElementById('question-otherrow').hidden,
       goLabel: go().textContent,
     };
 
-    // One only: choosing the second must drop the first.
-    opts()[0].click();
+    // One of these, on the last question: choosing it is answering it.
+    const numbered = opts().map((o) => o.querySelector('.question__mark')?.textContent).join(',');
     opts()[1].click();
-    const onlyOne = opts().filter((o) => o.getAttribute('aria-checked') === 'true').length;
-    const lastLabel = go().textContent;
-
-    go().click();
-    return { firstShown, afterTwo, afterUndo, second, onlyOne, lastLabel, sent, gone: document.getElementById('question').hidden };
+    return { firstShown, afterTwo, afterUndo, sendShown, second, numbered, sent, gone: document.getElementById('question').hidden };
   });
 
   check('the card comes up with the question on it', out.firstShown.visible && out.firstShown.title === 'Lĩnh vực nào?', out.firstShown.title);
@@ -5102,14 +5099,98 @@ section('a question card collects an answer');
   check('and the count follows', out.second.count === '2/2', out.second.count);
   check('a one-of-these question is a radiogroup', out.second.role === 'radiogroup', out.second.role);
   check('its free-text box is hidden when the model turned it off', out.second.otherShown === false);
-  check('choosing one drops the other', out.onlyOne === 1, String(out.onlyOne));
-  check('and the last question offers Done', out.lastLabel === 'Done', out.lastLabel);
+  check('a one-of-these question is numbered', out.numbered === '1,2', out.numbered);
+  check('typing your own answer brings up its send arrow', out.sendShown === true);
 
   check('answering hands back the call it belongs to', out.sent?.toolCallId === 'q1', JSON.stringify(out.sent?.toolCallId));
   check('with both choices from the first question', out.sent?.given?.[0]?.picks?.join(',') === 'Tài chính,AI', JSON.stringify(out.sent?.given?.[0]));
   check('what was typed alongside them', out.sent?.given?.[0]?.other === 'quản trị rủi ro', out.sent?.given?.[0]?.other);
   check('and the single choice from the second', out.sent?.given?.[1]?.picks?.join(',') === 'Dài', JSON.stringify(out.sent?.given?.[1]));
   check('the card goes once it is answered', out.gone === true);
+}
+
+section('your own words, sent from the pencil row, and the number keys');
+{
+  const out = await page.evaluate(async () => {
+    const { createQuestionCard } = await import('/js/question.js');
+    /** @type {any[]} */
+    const sent = [];
+    const card = createQuestionCard({ onAnswer: (a) => { sent.push(a); }, scrollToEnd: () => {} });
+    card.show({ toolCallId: 'q3', questions: [{ question: 'Gửi cho ai?', options: [{ label: 'Khách hàng' }, { label: 'Đồng nghiệp' }], multiple: false, other: true, otherLabel: '' }] });
+    const other = /** @type {HTMLInputElement} */ (document.getElementById('question-other'));
+    const inList = !!document.querySelector('#question-options #question-otherrow');
+    other.value = 'bản thân tôi';
+    other.dispatchEvent(new window.Event('input', { bubbles: true }));
+    /** @type {HTMLButtonElement} */ (document.getElementById('question-send')).click();
+
+    card.show({ toolCallId: 'q4', questions: [{ question: 'Q?', options: [{ label: 'a' }, { label: 'b' }], multiple: false, other: true, otherLabel: '' }] });
+    document.getElementById('question').dispatchEvent(new window.KeyboardEvent('keydown', { key: '2', bubbles: true }));
+    return { sent, inList };
+  });
+  check('the pencil row is the last row of the list', out.inList);
+  check('its send arrow answers with what was typed', out.sent[0]?.given?.[0]?.other === 'bản thân tôi' && !out.sent[0].given[0].picks.length, JSON.stringify(out.sent[0]));
+  check('pressing 2 chooses the second option', out.sent[1]?.given?.[0]?.picks?.join() === 'b', JSON.stringify(out.sent[1]));
+}
+
+section('a setup form asks everything at once, with one button');
+{
+  const out = await page.evaluate(async () => {
+    const { createQuestionCard } = await import('/js/question.js');
+    /** @type {any} */
+    let sent = null;
+    const card = createQuestionCard({ onAnswer: (a) => { sent = a; }, scrollToEnd: () => {} });
+    card.show({
+      toolCallId: 'f1',
+      form: true,
+      title: 'Bạn muốn gửi email theo cách nào?',
+      submitLabel: 'Tiếp tục thiết lập',
+      questions: [
+        { question: 'Tần suất nhận bản tin', kind: 'choice', options: [{ label: 'Hằng ngày' }, { label: 'Hằng tuần' }], multiple: false, other: false, otherLabel: '' },
+        { question: 'Email người nhận', kind: 'email', options: [], multiple: false, other: true, otherLabel: 'you@example.com', hint: 'Có thể để trống', required: true },
+      ],
+    });
+    const go = /** @type {HTMLButtonElement} */ (document.getElementById('question-go'));
+    const sections = document.querySelectorAll('#question-options .qform__sec').length;
+    const label = go.textContent;
+    const title = document.getElementById('question-title').textContent;
+    /** @type {HTMLButtonElement} */ (document.querySelector('.qform__opts .question__opt')).click();
+    go.click();
+    const blockedEmpty = sent === null;
+    const email = /** @type {HTMLInputElement} */ (document.querySelector('input[data-field="1"]'));
+    email.value = 'not-an-address';
+    email.dispatchEvent(new window.Event('input', { bubbles: true }));
+    go.click();
+    const blockedBad = sent === null;
+    email.value = 'an@example.com';
+    email.dispatchEvent(new window.Event('input', { bubbles: true }));
+    go.click();
+    return { sections, label, title, blockedEmpty, blockedBad, sent, gone: document.getElementById('question').hidden };
+  });
+  check('every question is on the page at once', out.sections === 2, String(out.sections));
+  check("under the form's own title", out.title === 'Bạn muốn gửi email theo cách nào?', out.title);
+  check('with the button the model named', out.label === 'Tiếp tục thiết lập', out.label);
+  check('a required address cannot be left out', out.blockedEmpty);
+  check('nor be something that is not an address', out.blockedBad);
+  check('filled in, it sends choices and typed values together', out.sent?.given?.[0]?.picks?.join() === 'Hằng ngày' && out.sent?.given?.[1]?.other === 'an@example.com', JSON.stringify(out.sent));
+  check('and goes', out.gone);
+}
+
+section("an answer reads back as the person's own bubble");
+{
+  const out = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.body.append(turn.node);
+    turn.startTool({ id: 'a1', name: 'ask_options', input: { questions: [] } }).complete({
+      content: 'The user answered',
+      ms: 2,
+      answered: 'Tần suất: Hằng ngày\nEmail: an@example.com',
+    });
+    const text = turn.node.querySelector('.answerbubble')?.textContent || '';
+    turn.node.remove();
+    return { text };
+  });
+  check('the answer is drawn in the transcript', /Tần suất: Hằng ngày/.test(out.text) && /an@example\.com/.test(out.text), out.text);
 }
 
 section('skipping a question is an answer, not a cancel');

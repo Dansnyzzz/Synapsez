@@ -1052,7 +1052,13 @@ export const en = {
 
   /* ── a question with buttons on it ── */
   'question.waiting': 'Waiting on your answer',
-  'question.other': 'Something else…',
+  'question.other': 'Something else — type it here…',
+  'question.keys': '↑↓ to move · Enter to choose · or type something else below',
+  'question.sendAria': 'Send this answer',
+  'question.continue': 'Continue setup',
+  'question.formTitle': 'A few details first',
+  'question.badEmail': 'That is not a valid email address.',
+  'chat.yourAnswer': 'Your answer',
   'question.skip': 'Skip',
   'question.next': 'Next',
   'question.done': 'Done',
