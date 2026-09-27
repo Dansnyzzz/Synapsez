@@ -2315,6 +2315,22 @@ details.block pre {
   text-overflow: ellipsis;
 }
 .tool__time { color: var(--text-faint); font-size: 11.5px; }
+/* A call still being written: the same card, before it can be opened. */
+.tool--draft {
+  margin: 0 0 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: var(--bg-elev);
+}
+.tool__draft {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 13px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.tool__draft .tool__time { font-variant-numeric: tabular-nums; }
 .tool--error .tool__name { color: var(--danger); }
 .tool--error .mark { color: var(--danger); }
 
@@ -2846,6 +2862,13 @@ details.block pre {
   scrollbar-width: none;
 }
 .composer textarea::-webkit-scrollbar { display: none; }
+/* The hint never wraps: an empty box is one straight line, whatever the width.
+   `fitPlaceholder` swaps in the short hint when the long one would be cut. */
+.composer textarea:placeholder-shown {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .composer__actions { display: flex; gap: 6px; }
 /* Round, and quiet until there is something to send.
    A permanently lit button is a permanently lit button: it stops meaning
@@ -3321,6 +3344,62 @@ details.block pre {
 }
 @media (max-width: 860px) {
   .widget__frame { height: 260px; }
+}
+
+/* An interactive chart: the tool's own drawing, in the page, read by hovering. */
+.chart__stage {
+  position: relative;
+  padding: 10px;
+  outline: none;
+}
+.chart__stage:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-dim); }
+.chart__stage svg { display: block; width: 100%; height: auto; max-height: 70vh; }
+.chart__stage .hit { cursor: crosshair; }
+.chart__stage .bar,
+.chart__stage .dot,
+.chart__stage .slice,
+.chart__stage polyline { transition: opacity 0.15s; }
+/* Reading one label dims the rest, so the eye lands on the right bars. */
+.chart__stage svg.is-reading .bar:not(.is-active),
+.chart__stage svg.is-reading .slice:not(.is-active) { opacity: 0.45; }
+.chart__stage .dot.is-active { stroke-width: 3; r: 6; }
+.chart__guide { stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 3 3; pointer-events: none; }
+.chart__stage .legend-item { cursor: pointer; }
+.chart__stage .legend-item:focus-visible { outline: 2px solid var(--accent-dim); }
+.chart__stage .legend-item.is-off { opacity: 0.35; }
+.chart__stage .is-off:not(.legend-item) { opacity: 0.08; }
+.chart__tip {
+  position: absolute;
+  z-index: 2;
+  min-width: 140px;
+  max-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-elev);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  pointer-events: none;
+}
+.chart__tip-head { margin-bottom: 4px; color: var(--text); font-weight: 600; }
+.chart__tip-row { display: flex; align-items: center; gap: 7px; color: var(--text-dim); }
+.chart__tip-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart__tip-value { color: var(--text); font-variant-numeric: tabular-nums; }
+.chart__tip-total { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--line-soft); }
+.chart__swatch { flex: none; width: 9px; height: 9px; border-radius: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .chart__stage .bar, .chart__stage .dot, .chart__stage .slice, .chart__stage polyline { transition: none; }
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ── Mobile ──────────────────────────────────────────────────── */

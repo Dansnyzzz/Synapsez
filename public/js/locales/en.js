@@ -36,6 +36,7 @@ export const en = {
   // Sending here queues: the message waits, visibly, and goes in at the next
   // step boundary rather than starting a second conversation over the first.
   'composer.placeholderRunning': 'Queue another message…',
+  'composer.placeholderShort': 'Ask anything…',
   'composer.attach': 'Attach photos or files',
   'composer.send': 'Send',
   'composer.queue': 'Queue this — it goes in at the next step',
@@ -91,8 +92,12 @@ export const en = {
    */
   'chat.reasoning': 'Reasoning',
   'chat.noOutput': '(no output)',
+  'chat.drafting': 'writing… {size}',
   'chat.noResult': '(no result recorded)',
   'chat.diagram': 'Diagram',
+  'chart.keys': 'use the arrow keys to read each value',
+  'chart.share': 'Share',
+  'chart.total': 'Total',
   'chat.open': 'Open',
   'chat.download': 'Download',
   'chat.openNamed': 'Open {name}',

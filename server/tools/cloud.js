@@ -517,8 +517,32 @@ const humanSize = (bytes) =>
  * the thing later, and knows it does not have to repeat the document into its
  * reply.
  */
-async function createFileTool({ name, format, content, title }, { userId, chatId }) {
-  const built = createDocument({ format, name, content, title });
+/**
+ * A name for a file the model forgot to name.
+ *
+ * Refusing the call cost a whole step — and on a long page, the whole page:
+ * the model has to write every byte of `content` again to retry, which is how a
+ * 130-question quiz turned into a refusal, a truncated rewrite and a turn that
+ * no longer fit the window. The page nearly always names itself.
+ */
+export function nameForFile({ name, filename, file_name: fileName, title, content }) {
+  const given = [name, filename, fileName, title].find((v) => typeof v === 'string' && v.trim());
+  if (given) return given.trim();
+  const text = String(content || '');
+  const heading =
+    text.match(/<title[^>]*>([^<]{1,120})<\/title>/i)?.[1] ||
+    text.match(/<h1[^>]*>([^<]{1,120})<\/h1>/i)?.[1] ||
+    text.match(/^#{1,3}\s+(.{1,120})$/m)?.[1];
+  return heading ? heading.trim() : 'Document';
+}
+
+async function createFileTool({ name, format, content, title, filename, file_name }, { userId, chatId }) {
+  const built = createDocument({
+    format,
+    name: nameForFile({ name, filename, file_name, title, content }),
+    content,
+    title,
+  });
   const saved = await saveGenerated(userId, {
     name: built.name,
     mime: built.mime,
@@ -536,18 +560,30 @@ async function createFileTool({ name, format, content, title }, { userId, chatId
   };
 }
 
-async function updateFileTool({ file_id: fileId, content, name }, { userId }) {
+async function updateFileTool({ file_id: fileId, content, name, append = false }, { userId }) {
   const store = getStore();
   const existing = await store.getAttachment(userId, fileId);
   if (!existing) throw new Error(`There is no file with the id ${fileId} on this account.`);
   if (existing.origin !== 'generated') {
     throw new Error(`${existing.name} was uploaded by the user, not written by you, so it cannot be rewritten.`);
   }
+  /**
+   * Added to the end rather than replacing.
+   *
+   * A long page in one call is a single string tens of kilobytes long, and a
+   * free model's reply is often cut off before it is finished — leaving
+   * arguments that are not JSON and nothing written at all. In parts, each
+   * call is small enough to arrive whole, and a cut-off part costs one part.
+   */
+  if (append && typeof existing.source !== 'string') {
+    throw new Error(`${existing.name} has no stored source to add to. Pass the complete content instead.`);
+  }
+  const whole = append ? `${existing.source}${content}` : content;
 
   // The format belongs to the file, not to this call: renaming is allowed,
   // and "update it" must never quietly turn a .docx into a .md.
   const format = extensionOf(existing.name);
-  const built = createDocument({ format, name: name || existing.name, content });
+  const built = createDocument({ format, name: name || existing.name, content: whole });
 
   const saved = await store.replaceAttachment(userId, fileId, {
     data: built.buffer.toString('base64'),
@@ -559,7 +595,9 @@ async function updateFileTool({ file_id: fileId, content, name }, { userId }) {
   if (!saved) throw new Error('That file could not be updated.');
 
   return {
-    content: `Rewrote ${saved.name} (${humanSize(saved.bytes)}). Same file, same id — the viewer shows the new version.`,
+    content: append
+      ? `Added to ${saved.name}; it is now ${humanSize(saved.bytes)}. Same file, same id — keep appending until it is complete.`
+      : `Rewrote ${saved.name} (${humanSize(saved.bytes)}). Same file, same id — the viewer shows the new version.`,
     file: {
       id: saved.id,
       name: saved.name,
@@ -927,7 +965,15 @@ async function chartTool({ title, type, data, format }) {
     content:
       `Drew the ${type} chart "${caption}" in the conversation. The user can see it, so say what it shows — the ` +
       'comparison, the trend, the outlier — rather than listing the numbers again.',
-    widget: { title: caption, markup, kind: 'svg' },
+    // `spec` is what makes it interactive: the browser reads each point's
+    // values from it on hover. `markup` stays the picture itself, so anything
+    // that only knows how to show an SVG still shows the chart.
+    widget: {
+      title: caption,
+      markup,
+      kind: 'chart',
+      spec: { type, format: format || 'number', labels: data.labels, series: data.series },
+    },
   };
 }
 

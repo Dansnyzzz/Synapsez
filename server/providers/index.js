@@ -63,7 +63,7 @@ async function* streamOne(entry, common) {
  * asking for an output larger than the whole window cannot be satisfied whatever
  * the model's own cap says.
  */
-export function outputBudget(entry) {
+export function outputBudget(entry, promptTokens = 0) {
   const stated = Number(entry?.maxOutput);
   const wanted = Number.isFinite(stated) && stated > 0 ? stated : 32_000;
 
@@ -93,9 +93,74 @@ export function outputBudget(entry) {
     return Number.isFinite(stated) && stated > 0 ? wanted : 4_096;
   }
 
-  // Leave the prompt somewhere to live. A model whose window is smaller than the
-  // reply it is being asked for cannot produce that reply.
-  return Math.max(256, Math.min(wanted, context - 1024));
+  /**
+   * Leave the prompt somewhere to live — the prompt actually being sent, not a
+   * token placeholder for it.
+   *
+   * This subtracted a flat 1024, so a model whose published output cap is 90%
+   * of its window (OpenRouter lists several free ones that way: 235,929 of
+   * 262,144) was asked for 235,929 output tokens on top of an 80,000-token
+   * conversation, and the provider refused the whole turn with a 400 — on a
+   * conversation the gauge rightly called half full. Compaction could never
+   * help: the overflow was the reply's reservation, not the transcript.
+   */
+  const room = context - Math.max(0, Number(promptTokens) || 0) - 1024;
+  return Math.max(256, Math.min(wanted, context - 1024, Math.max(1024, room)));
+}
+
+/**
+ * Roughly how many tokens a request's prompt is, before anybody has counted.
+ *
+ * Divided by three rather than four: Vietnamese, code and JSON all run denser
+ * than English prose, and an estimate that is too low is the one that fails —
+ * it asks for an output that no longer fits. An inline picture is counted at a
+ * flat rate rather than by the length of its base64, which would call a
+ * screenshot several hundred thousand tokens.
+ *
+ * @param {{ system?: unknown, messages?: unknown, tools?: unknown }} [request]
+ */
+export function estimatePromptTokens({ system, messages, tools } = {}) {
+  let chars = 0;
+  let pictures = 0;
+  const walk = (value) => {
+    if (typeof value === 'string') {
+      if (value.length > 4000 && (value.startsWith('data:') || /^[A-Za-z0-9+/=\r\n]+$/.test(value.slice(0, 4000)))) {
+        pictures += 1;
+      } else {
+        chars += value.length;
+      }
+    } else if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+    } else if (value && typeof value === 'object') {
+      for (const item of Object.values(value)) walk(item);
+    }
+  };
+  walk(system);
+  walk(messages);
+  walk(tools);
+  return Math.ceil(chars / 3) + pictures * 1500;
+}
+
+/**
+ * The window and the input, read off a provider's "maximum context length"
+ * refusal, so the same request can be sent again asking for less.
+ *
+ * OpenRouter: "This endpoint's maximum context length is 262144 tokens. However,
+ * you requested about 316800 tokens (71928 of text input, 1445 of image input,
+ * 7498 of tool input, 235929 in the output)."
+ * OpenAI: "This model's maximum context length is 128000 tokens. However, you
+ * requested 140000 tokens (20000 in the messages, 120000 in the completion)."
+ */
+export function contextRefusal(error) {
+  const message = String(error?.message || '');
+  const window = message.match(/maximum context length is (\d+)/i);
+  const asked = message.match(/requested (?:about )?(\d+) tokens/i);
+  const output = message.match(/(\d+) (?:in the output|in the completion)/i);
+  if (!window || !asked || !output) return null;
+  const context = Number(window[1]);
+  const input = Number(asked[1]) - Number(output[1]);
+  if (!(context > 0) || !(input >= 0)) return null;
+  return { context, input, output: Number(output[1]) };
 }
 
 /** The longest we will hold one request open waiting for a limit to lift. */
@@ -252,6 +317,7 @@ const ROUNDS = 3;
  * is the answer; when it is hours away, saying so is.
  *
  * Yields: {type:'text'|'thinking', delta} · {type:'tool_call_start', id, name}
+ *       · {type:'tool_call_progress', id, name, chars}
  *       · {type:'notice', text} · {type:'retry', reason}
  *       · {type:'done', stopReason, toolCalls, usage, raw?}
  */
@@ -265,6 +331,9 @@ export async function* streamCompletion(opts) {
   const wait = sleep || pause;
 
   let refused = null;
+  // Worked out once: the prompt does not change between keys or attempts.
+  let maxTokens = opts.maxTokens ?? outputBudget(entry, estimatePromptTokens(opts));
+  let shrunk = false;
 
   for (let round = 0; round < ROUNDS; round += 1) {
     const keys = await getApiKeys(userId, provider);
@@ -302,9 +371,9 @@ export async function* streamCompletion(opts) {
         model: entry.model,
         entry,
         baseURL: baseUrlFor(provider),
-        // Whatever this model actually produces, rather than the 32000 every
-        // adapter used to fall back to. A caller may still override it.
-        maxTokens: opts.maxTokens ?? outputBudget(entry),
+        // Whatever this model actually produces and the window still has room
+        // for, rather than the 32000 every adapter used to fall back to.
+        maxTokens,
       };
 
       for (let attempt = 0; attempt < UPSTREAM_TRIES; attempt += 1) {
@@ -335,6 +404,30 @@ export async function* streamCompletion(opts) {
         // in should not decide that, so it is settled here rather than left to
         // whether `classify` recognises the message.
         if (signal?.aborted) throw failure;
+
+        /**
+         * Refused for asking too much room, which the provider has just
+         * measured for us. Asked again once, for what fits, before the first
+         * word — so nobody sees anything but a reply. Only when the prompt
+         * itself leaves no room is it an error, and then it says so plainly.
+         */
+        const overflow = !emitted.text && !emitted.toolCalls ? contextRefusal(failure) : null;
+        if (overflow && !shrunk) {
+          const fits = overflow.context - overflow.input - 512;
+          if (fits >= 1024 && fits < maxTokens) {
+            shrunk = true;
+            maxTokens = fits;
+            common.maxTokens = fits;
+            attempt -= 1;
+            continue;
+          }
+          if (fits < 1024) {
+            throw new Error(
+              `${label}: this conversation (${overflow.input} tokens) no longer fits this model's ` +
+                `${overflow.context}-token window. Compact it, start a new one, or pick a model with a larger window.`,
+            );
+          }
+        }
 
         const { kind, retryAfterMs } = classify(failure);
 
@@ -394,4 +487,4 @@ export async function* streamCompletion(opts) {
 export { resolveModel, PROVIDERS };
 
 /** Exposed for the suite that pins which failures are worth another key. */
-export const __testing = { classify, waitFrom, headerOf, outputBudget };
+export const __testing = { classify, waitFrom, headerOf, outputBudget, estimatePromptTokens, contextRefusal };

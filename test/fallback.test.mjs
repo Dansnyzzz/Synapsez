@@ -189,7 +189,7 @@ section('the rotation reacts to what actually came out');
    * already takes its `stream` — the point is to watch the decisions without a
    * network, and without real seconds passing.
    */
-  const drive = async (script, keys = ['key-one', 'key-two'], signal = undefined) => {
+  const drive = async (script, keys = ['key-one', 'key-two'], signal = undefined, model = entry) => {
     await setApiKey(uid, 'openrouter', keys[0]);
     for (const spare of keys.slice(1)) await addApiKey(uid, 'openrouter', spare);
     clearKeyRest(uid, 'openrouter');
@@ -197,9 +197,11 @@ section('the rotation reacts to what actually came out');
     const seen = [];
     const events = [];
     const waits = [];
+    const budgets = [];
     const streamOne = async function* (_entry, common) {
       const step = script[seen.length] || { throw: err(500, 'ran off the end of the script') };
       seen.push(common.apiKey);
+      budgets.push(common.maxTokens);
       for (const event of step.emit || []) yield event;
       if (step.throw) throw step.throw;
     };
@@ -207,7 +209,7 @@ section('the rotation reacts to what actually came out');
     try {
       for await (const event of streamCompletion({
         userId: uid,
-        entry,
+        entry: model,
         messages: [],
         signal,
         streamOne,
@@ -218,7 +220,7 @@ section('the rotation reacts to what actually came out');
     } catch (thrown) {
       error = thrown;
     }
-    return { seen, events, waits, error };
+    return { seen, events, waits, budgets, error };
   };
 
   // Nothing was shown, so nothing is lost: the second key picks the turn up and
@@ -356,6 +358,67 @@ section('the rotation reacts to what actually came out');
       /rate limited until/i.test(run.error?.message || ''),
       run.error?.message,
     );
+  }
+
+  /**
+   * The screenshot: a free model publishing a 235,929-token output cap on a
+   * 262,144 window, asked for all of it on top of an 80,000-token conversation.
+   * The provider measured the overflow and refused; the same key is asked again
+   * for what fits, and nobody sees anything but the reply.
+   */
+  {
+    const big = { provider: 'openrouter', model: 'nex/n2.5-mini:free', context: 262_144, maxOutput: 235_929 };
+    const refusal = err(
+      400,
+      "400 This endpoint's maximum context length is 262144 tokens. However, you requested about 316800 tokens " +
+        '(71928 of text input, 1445 of image input, 7498 of tool input, 235929 in the output).',
+    );
+    const run = await drive(
+      [{ throw: refusal }, { emit: [{ type: 'text', delta: 'fits now' }, { type: 'done', stopReason: 'stop' }] }],
+      ['only-key'],
+      undefined,
+      big,
+    );
+    check('a context-length refusal is asked again, not reported', run.error === null, String(run.error?.message || ''));
+    check('on the same key', run.seen.length === 2 && run.seen[0] === run.seen[1], run.seen.join(','));
+    check(
+      'asking for only what fits beside the measured input',
+      run.budgets[1] === 262_144 - (316_800 - 235_929) - 512,
+      run.budgets.join(','),
+    );
+  }
+
+  // Asked again once. A second refusal is reported, not looped on.
+  {
+    const big = { provider: 'openrouter', model: 'nex/n2.5-mini:free', context: 262_144, maxOutput: 235_929 };
+    const refusal = () =>
+      err(
+        400,
+        'maximum context length is 262144 tokens. However, you requested about 300000 tokens ' +
+          '(100000 of text input, 200000 in the output).',
+      );
+    const run = await drive([{ throw: refusal() }, { throw: refusal() }], ['only-key'], undefined, big);
+    check('a second refusal ends the turn', run.error !== null && run.seen.length === 2, run.seen.join(','));
+  }
+
+  // A conversation that alone overfills the window has nothing to shrink.
+  {
+    const small = { provider: 'openrouter', model: 'tiny:free', context: 8192, maxOutput: 4096 };
+    const run = await drive(
+      [
+        {
+          throw: err(
+            400,
+            'maximum context length is 8192 tokens. However, you requested about 12000 tokens ' +
+              '(9000 of text input, 3000 in the output).',
+          ),
+        },
+      ],
+      ['only-key'],
+      undefined,
+      small,
+    );
+    check('an input larger than the window says so', /no longer fits/.test(run.error?.message || ''), run.error?.message);
   }
 }
 

@@ -238,7 +238,7 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
        * the built-in skills, and this is the line that gets them read.
        */
       '- **Read the matching skill before you write the file**, the first time in a conversation: `skill_read` with "docx", "xlsx", "pptx", "pdf" or "artifact". They carry the conventions of each format — a heading above a table starts a new sheet, a blockquote under a slide becomes the speaker notes — and none of that is guessable from the tool description.',
-      '- A picture that belongs inside your explanation is `show_widget`, not a file: a flow chart of what you found, a chart of four numbers. It draws inline where you called it. Something they will keep or come back to is a file.',
+      '- Numbers that make a point — a comparison, a trend, growth, shares of a whole — are a `chart`: drawn to scale in the conversation, and interactive (hovering shows each value). Reach for it unasked when a picture says it faster than a paragraph; not for two or three numbers a sentence holds. A diagram with no numbers — a flow, a timeline — is `show_widget`. Something they will keep or come back to is a file.',
       '- Word, Excel, PowerPoint, Markdown, text, CSV, HTML and JSON. You write Markdown either way; the format decides what it becomes.',
       '- Changing something you already made is `update_file` on the same id. A second nearly-identical file is how the wrong version gets sent to somebody.',
       '- No PDFs. Make it a .docx or .html and say the viewer has Print → Save as PDF — that goes through their browser, which has the fonts and gets the accents right.',
@@ -1195,6 +1195,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
      * that with a progress notice would be noise.
      */
     let started = false;
+    let lastDraftAt = 0;
     const waitedFrom = Date.now();
     const waiting = setInterval(() => {
       if (started) return;
@@ -1264,6 +1265,15 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           emit('thinking', { delta: ev.delta });
         } else if (ev.type === 'tool_call_start') {
           emit('status', { phase: 'tool', name: ev.name });
+        } else if (ev.type === 'tool_call_progress') {
+          // A long file being written: its arguments arrive over a minute or
+          // more. Four updates a second is plenty to watch it grow, and far
+          // fewer than the provider's per-fragment chunks.
+          const now = Date.now();
+          if (now - lastDraftAt >= 250) {
+            lastDraftAt = now;
+            emit('status', { phase: 'drafting', name: ev.name, chars: ev.chars });
+          }
         } else if (ev.type === 'notice') {
           // A key was refused and the next one is being tried. Worth seeing:
           // silent failover is how somebody discovers their first key died a

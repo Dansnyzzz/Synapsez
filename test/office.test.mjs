@@ -733,6 +733,21 @@ let madeId;
   });
   check('the source can be read back for the next edit', readBack.content.includes('# Báo giá (đã sửa)'));
 
+  // A long file in parts: each call small enough to arrive whole.
+  const appended = await executeTool({
+    user: aliceUser,
+    chatId,
+    name: 'update_file',
+    input: { file_id: madeId, content: '\n\n## Phụ lục\n\nPhần thêm.', append: true },
+  });
+  check('a part is added to the end', appended.isError === false && /Added to/.test(appended.content), appended.content?.slice(0, 80));
+  const whole = await executeTool({ user: aliceUser, chatId, name: 'read_generated_file', input: { file_id: madeId } });
+  check(
+    '  keeping what was there before it',
+    whole.content.includes('# Báo giá (đã sửa)') && whole.content.includes('## Phụ lục'),
+    whole.content.slice(0, 120),
+  );
+
   const listing = await executeTool({ user: aliceUser, chatId, name: 'read_generated_file', input: {} });
   check('and they can be listed', listing.content.includes('Báo giá tháng 8.docx'));
 

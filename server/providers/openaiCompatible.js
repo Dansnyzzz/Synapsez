@@ -184,7 +184,12 @@ export async function* streamOpenAICompatible({
         slot.name = tc.function.name;
         yield { type: 'tool_call_start', id: slot.id, name: slot.name };
       }
-      if (tc.function?.arguments) slot.args += tc.function.arguments;
+      if (tc.function?.arguments) {
+        slot.args += tc.function.arguments;
+        // A 60 KB page arrives over a minute or more; without this the only sign
+        // of it was a status line that never moved.
+        if (slot.name) yield { type: 'tool_call_progress', id: slot.id, name: slot.name, chars: slot.args.length };
+      }
       pending.set(tc.index, slot);
     }
   }

@@ -87,13 +87,22 @@ function legend(series, x, y) {
   let cursor = 0;
   series.forEach((s, i) => {
     out +=
-      `<g transform="translate(${cursor},0)">` +
+      `<g class="legend-item" data-s="${i}" transform="translate(${cursor},0)">` +
       `<rect width="9" height="9" rx="2" y="-8" fill="${PALETTE[i % PALETTE.length]}"/>` +
       `<text x="14" y="0" font-size="11" fill="${TEXT}">${esc(s.name)}</text></g>`;
     cursor += 22 + String(s.name ?? '').length * 6.2;
   });
   return `${out}</g>`;
 }
+
+/**
+ * An invisible target over one label's column (or row), which the browser uses
+ * to show that label's values on hover. Transparent rather than absent, so it
+ * catches the pointer; drawn last, so it sits above the marks it describes.
+ */
+const hit = (i, x, y, w, h, shape = 'col') =>
+  `<rect class="hit hit--${shape}" data-i="${i}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" ` +
+  `width="${Math.max(1, w).toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" fill="transparent"/>`;
 
 const frame = (w, h, title, body) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="${esc(title)}">` +
@@ -135,11 +144,12 @@ function barChart({ title, data, format }) {
       const x = groupX + j * (barW + gap);
       const y = bottom - h;
       body +=
-        `<rect class="bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" ` +
+        `<rect class="bar" data-i="${i}" data-s="${j}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" ` +
         `rx="4" fill="${PALETTE[j % PALETTE.length]}"/>`;
-      body += `<text x="${(x + barW / 2).toFixed(1)}" y="${(y - 5).toFixed(1)}" font-size="10" text-anchor="middle" fill="${TEXT_STRONG}">${esc(formatValue(v, format))}</text>`;
+      body += `<text data-s="${j}" x="${(x + barW / 2).toFixed(1)}" y="${(y - 5).toFixed(1)}" font-size="10" text-anchor="middle" fill="${TEXT_STRONG}">${esc(formatValue(v, format))}</text>`;
     });
     body += `<text x="${(left + groupW * i + groupW / 2).toFixed(1)}" y="${bottom + 16}" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(label)}</text>`;
+    body += hit(i, left + groupW * i, top, groupW, plotH);
   });
 
   return frame(W, H, title, body);
@@ -164,13 +174,15 @@ function hbarChart({ title, data, format }) {
       const v = Number(s.values[i]) || 0;
       const w = Math.max(0, (v / max) * plotW);
       const y = top + row * rowH;
-      body += `<rect class="bar" x="${left}" y="${y}" width="${w.toFixed(1)}" height="${rowH - 8}" rx="4" fill="${PALETTE[j % PALETTE.length]}"/>`;
-      body += `<text x="${(left + w + 8).toFixed(1)}" y="${y + rowH - 13}" font-size="10" fill="${TEXT_STRONG}">${esc(formatValue(v, format))}</text>`;
+      body += `<rect class="bar" data-i="${i}" data-s="${j}" x="${left}" y="${y}" width="${w.toFixed(1)}" height="${rowH - 8}" rx="4" fill="${PALETTE[j % PALETTE.length]}"/>`;
+      body += `<text data-s="${j}" x="${(left + w + 8).toFixed(1)}" y="${y + rowH - 13}" font-size="10" fill="${TEXT_STRONG}">${esc(formatValue(v, format))}</text>`;
       if (j === 0) {
         body += `<text x="${left - 8}" y="${y + rowH - 13}" font-size="11" text-anchor="end" fill="${TEXT}">${esc(label)}</text>`;
       }
       row += 1;
     });
+    const first = top + (row - data.series.length) * rowH;
+    body += hit(i, 0, first - 2, W, data.series.length * rowH, 'row');
   });
 
   return frame(W, H, title, body);
@@ -201,18 +213,22 @@ function lineChart({ title, data, format }) {
   data.series.forEach((s, j) => {
     const colour = PALETTE[j % PALETTE.length];
     const points = s.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-    body += `<polyline fill="none" stroke="${colour}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${points}"/>`;
+    body += `<polyline data-s="${j}" fill="none" stroke="${colour}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${points}"/>`;
     // Markers carry a surface ring so overlapping series stay separable.
     s.values.forEach((v, i) => {
-      body += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="4" fill="${colour}" stroke="#1a1a19" stroke-width="2"/>`;
+      body += `<circle class="dot" data-i="${i}" data-s="${j}" cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="4" fill="${colour}" stroke="#1a1a19" stroke-width="2"/>`;
     });
     // Direct-label the end of each line rather than every point.
     const lastI = s.values.length - 1;
-    body += `<text x="${(x(lastI) - 4).toFixed(1)}" y="${(y(s.values[lastI]) - 10).toFixed(1)}" font-size="10" text-anchor="end" fill="${TEXT_STRONG}">${esc(formatValue(s.values[lastI], format))}</text>`;
+    body += `<text data-s="${j}" x="${(x(lastI) - 4).toFixed(1)}" y="${(y(s.values[lastI]) - 10).toFixed(1)}" font-size="10" text-anchor="end" fill="${TEXT_STRONG}">${esc(formatValue(s.values[lastI], format))}</text>`;
   });
 
+  // A column per point, so hovering anywhere above a label reads that label —
+  // aiming at a 4px dot is not a thing to ask of anybody.
+  const step = data.labels.length > 1 ? plotW / (data.labels.length - 1) : plotW;
   data.labels.forEach((label, i) => {
     body += `<text x="${x(i).toFixed(1)}" y="${bottom + 16}" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(label)}</text>`;
+    body += hit(i, x(i) - step / 2, top, step, plotH);
   });
 
   return frame(W, H, title, body);
@@ -239,7 +255,7 @@ function pieChart({ title, data, format }) {
     body +=
       `<path d="M ${p(rOuter, angle)} A ${rOuter} ${rOuter} 0 ${large} 1 ${p(rOuter, end)} ` +
       `L ${p(rInner, end)} A ${rInner} ${rInner} 0 ${large} 0 ${p(rInner, angle)} Z" ` +
-      `fill="${PALETTE[i % PALETTE.length]}" stroke="#1a1a19" stroke-width="2"/>`;
+      `fill="${PALETTE[i % PALETTE.length]}" stroke="#1a1a19" stroke-width="2" class="slice hit" data-i="${i}"/>`;
     angle = end;
   });
 
@@ -292,10 +308,11 @@ function stackedChart({ title, data, format }) {
       if (h <= 0) return;
       // 2px gap between segments, so stacked fills stay separable.
       cursor -= h;
-      body += `<rect class="bar" x="${x.toFixed(1)}" y="${cursor.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, h - 2).toFixed(1)}" rx="3" fill="${PALETTE[j % PALETTE.length]}"/>`;
+      body += `<rect class="bar" data-i="${i}" data-s="${j}" x="${x.toFixed(1)}" y="${cursor.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, h - 2).toFixed(1)}" rx="3" fill="${PALETTE[j % PALETTE.length]}"/>`;
     });
     body += `<text x="${(x + barW / 2).toFixed(1)}" y="${(cursor - 6).toFixed(1)}" font-size="10" text-anchor="middle" fill="${TEXT_STRONG}">${esc(formatValue(totals[i], format))}</text>`;
     body += `<text x="${(x + barW / 2).toFixed(1)}" y="${bottom + 16}" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(label)}</text>`;
+    body += hit(i, left + groupW * i, top, groupW, plotH);
   });
 
   return frame(W, H, title, body);

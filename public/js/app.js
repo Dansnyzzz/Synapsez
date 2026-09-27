@@ -2909,6 +2909,16 @@ async function streamOnce(run, decision, answers) {
   // make impossible. `setStatus`, `noteStop` and `maybeScroll` take the run and
   // do nothing visible when it is not the conversation being looked at.
   const block = () => nextBlock(run);
+  /**
+   * Cards for calls still being written, by tool name. Replaced by the real
+   * card when the call arrives whole, and cleared if the turn ends first — a
+   * draft left behind would be a spinner for a call that never ran.
+   */
+  const drafts = new Map();
+  const clearDrafts = () => {
+    for (const handle of drafts.values()) handle?.remove();
+    drafts.clear();
+  };
 
   await runAgent({
       chatId: run.chatId,
@@ -2923,7 +2933,7 @@ async function streamOnce(run, decision, answers) {
       runId: run.runId,
       signal: run.abort.signal,
       handlers: {
-        status: ({ phase, name, message, seconds, model, free, stop, folding }) => {
+        status: ({ phase, name, message, seconds, model, free, stop, folding, chars }) => {
           // The count arrives a moment after the phase does — the server says
           // "compacting" before it knows how much, then says how much. Both
           // land here, and the second draws the same line with the number in.
@@ -2955,7 +2965,16 @@ async function streamOnce(run, decision, answers) {
                 .replace('{n}', String(seconds ?? 0)),
               run,
             );
-          } else if (phase === 'tool') setStatus(t('status.tool').replace('{name}', name), run);
+          } else if (phase === 'tool') {
+            setStatus(t('status.tool').replace('{name}', name), run);
+            if (!drafts.has(name)) {
+              const handle = block().draftTool(name);
+              if (handle) drafts.set(name, handle);
+              maybeScroll(run);
+            }
+          } else if (phase === 'drafting') {
+            drafts.get(name)?.progress(chars || 0);
+          }
           // A turn that stopped badly but still asked for tools — truncated
           // part-way through writing a call, most often. Drawn into the
           // transcript rather than toasted, because the loop carries on and a
@@ -2977,6 +2996,7 @@ async function streamOnce(run, decision, answers) {
         // from the start. Clear what was written rather than letting the second
         // attempt run on from the tail of the first.
         retry: ({ reason }) => {
+          clearDrafts();
           block().resetText();
           if (reason && onScreen(run)) toast(reason);
           setStatus(t('status.restarting'), run);
@@ -2990,6 +3010,7 @@ async function streamOnce(run, decision, answers) {
           // Deliberately not `block()`: the card belongs to the turn that asked
           // for it, even though that turn is already persisted.
           run.turn.finishThinking();
+          clearDrafts();
           run.toolHandles.set(call.id, run.turn.startTool(call));
           setStatus(t('status.tool').replace('{name}', call.name), run);
           // Show the screen the moment the assistant touches the browser or the
@@ -3063,11 +3084,13 @@ async function streamOnce(run, decision, answers) {
         },
         error: ({ message }) => {
           outcome = 'done';
+          clearDrafts();
           run.turn?.finish();
           if (onScreen(run)) toast(message, 'error');
         },
         done: ({ stop }) => {
           outcome = 'done';
+          clearDrafts();
           // Collapse any run of steps still drawn as in progress. Without this a
           // finished turn keeps a spinner for the rest of the conversation.
           run.turn?.finish();
@@ -3090,6 +3113,7 @@ async function streamOnce(run, decision, answers) {
       },
     });
 
+  clearDrafts();
   return run.abort.signal.aborted ? 'done' : outcome;
 }
 
@@ -3589,6 +3613,8 @@ $('language').addEventListener('change', async (event) => {
   // need drawing again — this is the screen somebody is most likely to be
   // looking at when they change the language, being the one with nothing on it.
   renderSuggestions();
+  // `applyI18n` put the full hint back; the new language's may not fit either.
+  fitPlaceholder();
   /**
    * And the sidebar, whose headings are built from script too.
    *
@@ -4723,12 +4749,12 @@ function renderContext(info) {
 
   gauge.hidden = false;
   gauge.querySelector('.gauge__fill').style.strokeDasharray = `${RING * ratio} ${RING}`;
-  // The number joins in only once it is worth knowing. The class goes with it:
-  // without a number the control is a circle, with one it is a pill, and the
-  // padding each needs is different.
-  const showNumber = ratio >= 0.5;
-  $('context-percent').textContent = showNumber ? `${percent}%` : '';
-  gauge.classList.toggle('has-number', showNumber);
+  // The ring and its colour carry it; the number lives in the tooltip and the
+  // menu. A percentage beside the ring said the same thing twice and widened
+  // the composer's left edge the moment a conversation passed half full.
+  $('context-percent').textContent = '';
+  gauge.classList.remove('has-number');
+  gauge.setAttribute('aria-label', t('context.menuUsed', { percent, used: fmtK(info.used), total: fmtK(info.budget) }));
   gauge.classList.toggle('is-warm', ratio >= 0.6);
   gauge.classList.toggle('is-hot', ratio >= 0.85);
 
@@ -4855,9 +4881,43 @@ function renderSuggestions() {
 
 const input = $('input');
 function autosize(node) {
+  /**
+   * An empty box is one line, always.
+   *
+   * `scrollHeight` on an empty textarea measures the *placeholder*, and the
+   * placeholder wraps: with the progress panel open the composer narrows, the
+   * hint ran onto a second line, and the box grew to hold it — then shrank
+   * again the moment a letter was typed. It looked like the composer jumping.
+   */
+  if (!node.value) {
+    node.style.height = '';
+    return;
+  }
   node.style.height = 'auto';
   node.style.height = `${node.scrollHeight}px`;
 }
+
+/**
+ * The hint in the empty box, shortened when the full one would not fit.
+ *
+ * Measured with the box's own font rather than guessed from the window width:
+ * the composer's width depends on the sidebar, the progress panel and the
+ * buttons beside it, and only the result matters.
+ */
+const placeholderRuler = document.createElement('canvas').getContext('2d');
+function fitPlaceholder(running = !!runHere()) {
+  const full = running ? t('composer.placeholderRunning') : t('composer.placeholder');
+  let chosen = full;
+  if (placeholderRuler && input.clientWidth) {
+    const style = getComputedStyle(input);
+    placeholderRuler.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const room = input.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+    if (placeholderRuler.measureText(full).width > room) chosen = t('composer.placeholderShort');
+  }
+  const box = /** @type {HTMLTextAreaElement} */ (input);
+  if (box.placeholder !== chosen) box.placeholder = chosen;
+}
+if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitPlaceholder()).observe(input);
 /**
  * Light the send button only when pressing it would do something.
  *
@@ -4894,7 +4954,7 @@ function refreshSendState() {
 
   $('stop').hidden = !showStop;
 
-  input.placeholder = running ? t('composer.placeholderRunning') : t('composer.placeholder');
+  fitPlaceholder(running);
 }
 
 /**

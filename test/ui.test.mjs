@@ -576,10 +576,6 @@ section('the context gauge');
   check('the same size as the buttons beside it', quiet.matchesRow);
   check('with the ring dead centre', quiet.left === quiet.right && quiet.top === quiet.bottom, JSON.stringify(quiet));
 
-  const wide = await box(true);
-  check('a number makes it a pill, still the same height', wide.w > wide.h && wide.h === quiet.h, `${wide.w}x${wide.h}`);
-  check('and the ring keeps its own margin', wide.left > 4, `${wide.left}px`);
-  await box(false);
 
   /**
    * Now the real path: a conversation with something in it.
@@ -599,11 +595,20 @@ section('the context gauge');
 
   const live = await page.evaluate(() => {
     const g = document.getElementById('context-gauge');
-    return { shown: !g.hidden, title: g.title, dash: g.querySelector('.gauge__fill').style.strokeDasharray };
+    return {
+      shown: !g.hidden,
+      title: g.title,
+      dash: g.querySelector('.gauge__fill').style.strokeDasharray,
+      number: document.getElementById('context-percent').textContent,
+      label: g.getAttribute('aria-label'),
+    };
   });
   check('a real conversation shows the gauge', live.shown);
   check('with the numbers in the tooltip', /tokens/.test(live.title || ''), live.title);
   check('and the ring drawn to a real value', !!live.dash, live.dash);
+  // The ring and its colour say it; a percentage beside it said it twice.
+  check('with no percentage printed beside the ring', live.number === '', JSON.stringify(live.number));
+  check('  which a screen reader still hears', /%/.test(live.label || ''), live.label);
 
   await page.click('#context-gauge');
   await page.waitForTimeout(400);
@@ -5493,6 +5498,111 @@ section('an abandoned draft cannot be handed to the copy button');
     result.afterSecond.markdown,
   );
   check('and the copy button is back', result.afterSecond.hasButton === true);
+}
+
+section('a chart can be read by hovering, like any charting tool');
+{
+  const { renderChart } = await import('../server/tools/chart.js');
+  const spec = {
+    type: 'line',
+    format: 'number',
+    labels: ['1', '2', '3', '4'],
+    series: [
+      { name: 'Classical (x)', values: [1, 2, 3, 4] },
+      { name: 'Quantum (2^x)', values: [2, 4, 8, 16] },
+    ],
+  };
+  const markup = renderChart({ type: spec.type, title: 'Growth', data: spec });
+  const read = await page.evaluate(
+    async ({ markup, spec }) => {
+      const { widgetNode } = await import('/js/render.js');
+      const node = widgetNode({ title: 'Growth', markup, kind: 'chart', spec });
+      document.getElementById('thread').append(node);
+      const stage = node.querySelector('.chart__stage');
+      const hit = node.querySelector('.hit[data-i="2"]');
+      hit?.dispatchEvent(new PointerEvent('pointerenter', { bubbles: false }));
+      const tip = node.querySelector('.chart__tip');
+      const hovered = { shown: !tip.hidden, text: tip.textContent, guide: node.querySelector('.chart__guide')?.style.display };
+      stage.focus();
+      stage.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      const keyed = tip.textContent;
+      const legend = node.querySelector('.legend-item[data-s="1"]');
+      legend.dispatchEvent(new globalThis.MouseEvent('click', { bubbles: true }));
+      const afterToggle = {
+        off: legend.classList.contains('is-off'),
+        line: node.querySelector('polyline[data-s="1"]').classList.contains('is-off'),
+        tip: tip.textContent,
+      };
+      const out = {
+        inline: node.querySelector('svg') !== null && !node.querySelector('iframe'),
+        hovered,
+        keyed,
+        afterToggle,
+        table: node.querySelector('table.sr-only')?.textContent || '',
+      };
+      node.remove();
+      return out;
+    },
+    { markup, spec },
+  );
+  check('the chart is drawn in the page, not a frame', read.inline);
+  check('hovering a column shows its values', read.hovered.shown && /3/.test(read.hovered.text) && /8/.test(read.hovered.text), read.hovered.text);
+  check('  with a guide line through it', read.hovered.guide === '', String(read.hovered.guide));
+  check('the arrow keys move along the labels', /16/.test(read.keyed), read.keyed);
+  check('the legend sets a series aside', read.afterToggle.off && read.afterToggle.line);
+  check('  and the tooltip stops listing it', !/Quantum/.test(read.afterToggle.tip), read.afterToggle.tip);
+  check('a screen reader gets the numbers as a table', /Quantum/.test(read.table) && /16/.test(read.table));
+
+  // Markup that is not a chart falls back to the sandboxed frame rather than
+  // being inserted into the page.
+  const fallback = await page.evaluate(async () => {
+    const { widgetNode } = await import('/js/render.js');
+    const node = widgetNode({ title: 'x', markup: '<div onclick="x">not svg</div>', kind: 'chart', spec: { labels: [], series: [] } });
+    return !!node.querySelector('iframe');
+  });
+  check('markup that is not a chart is not put in the page', fallback);
+}
+
+section('a long tool call shows a card while it is still being written');
+{
+  const draft = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.body.append(turn.node);
+    const handle = turn.draftTool('create_file');
+    handle.progress(20 * 1024);
+    const card = turn.node.querySelector('.tool--draft');
+    const out = { headline: card?.querySelector('.tool__name')?.textContent, size: card?.querySelector('.tool__time')?.textContent };
+    handle.remove();
+    out.gone = !turn.node.querySelector('.tool--draft');
+    out.grouped = turn.draftTool('browser_click') === null;
+    turn.node.remove();
+    return out;
+  });
+  check('the card says what is being made', !!draft.headline && draft.headline !== 'create_file', draft.headline);
+  check('  and how much of it has arrived', /20\.0 KB/.test(draft.size || ''), draft.size);
+  check('  and goes when the real card takes over', draft.gone);
+  check('a small grouped step gets no draft card', draft.grouped);
+}
+
+section('the empty composer is one straight line, however narrow');
+{
+  const narrow = await page.evaluate(async () => {
+    const input = /** @type {HTMLTextAreaElement} */ (document.getElementById('input'));
+    const box = document.querySelector('.composer__box');
+    input.value = '';
+    input.dispatchEvent(new Event('input'));
+    const wide = { h: input.getBoundingClientRect().height, placeholder: input.placeholder };
+    box.style.width = '430px';
+    await new Promise((r) => setTimeout(r, 150));
+    const tight = { h: input.getBoundingClientRect().height, placeholder: input.placeholder };
+    box.style.width = '';
+    await new Promise((r) => setTimeout(r, 150));
+    return { wide, tight, restored: input.placeholder };
+  });
+  check('it does not grow to fit a wrapped hint', Math.abs(narrow.tight.h - narrow.wide.h) < 1, `${narrow.wide.h} → ${narrow.tight.h}`);
+  check('the hint shortens when the full one would not fit', narrow.tight.placeholder.length < narrow.wide.placeholder.length, narrow.tight.placeholder);
+  check('and comes back when there is room', narrow.restored === narrow.wide.placeholder, narrow.restored);
 }
 
 await browser.close();

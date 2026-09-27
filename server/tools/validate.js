@@ -27,15 +27,22 @@
  * Strict where the harm is, lenient where models are merely sloppy:
  *
  *   - a missing required field is refused;
- *   - a value outside an `enum` is refused, with the allowed values named;
+ *   - a value outside an `enum` is refused, with the allowed values named —
+ *     after a case- and spacing-blind match (`"Thank you"` is `thank_you`);
+ *   - …unless the field is optional, in which case it is **dropped** and the
+ *     tool's own default applies, with a note saying so. An optional enum is a
+ *     hint the tool can do without (`send_email`'s `kind` is inferred when
+ *     absent), and refusing a whole email over `kind: "email"` cost a step and
+ *     left a red card on a job that went on to succeed;
  *   - an object or array of the wrong kind is refused;
  *   - `"5"` for a number and `"true"` for a boolean are **coerced**, because
  *     models send them constantly and refusing would turn a working call into
  *     a retry that costs a full step;
  *   - a number or boolean where a string is wanted becomes that string.
  *
- * Returns `{ ok: true, input }` with the coerced input, or `{ ok: false, error }`
- * with a sentence written for the model to act on.
+ * Returns `{ ok: true, input, notes }` with the coerced input and anything that
+ * was set aside, or `{ ok: false, error }` with a sentence written for the
+ * model to act on.
  */
 
 export const SUPPORTED_KEYWORDS = new Set(['type', 'description', 'properties', 'required', 'enum', 'items']);
@@ -71,7 +78,10 @@ function coerce(value, type) {
   return { ok: true, value };
 }
 
-function check(value, schema, where) {
+/** `"Thank you"` → `thank_you`, so a near miss is read as what it plainly meant. */
+const loose = (v) => String(v).trim().toLowerCase().replace(/[\s-]+/g, '_');
+
+function check(value, schema, where, notes = []) {
   if (!schema || typeof schema !== 'object') return { ok: true, value };
 
   if (schema.type) {
@@ -91,7 +101,10 @@ function check(value, schema, where) {
   }
 
   if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+    const near = typeof value === 'string' ? schema.enum.find((e) => loose(e) === loose(value)) : undefined;
+    if (near !== undefined) return { ok: true, value: near };
     return {
+      enumMiss: true,
       ok: false,
       error: `${where} must be one of ${schema.enum.map((e) => JSON.stringify(e)).join(', ')}, but got ${JSON.stringify(value)}.`,
     };
@@ -100,7 +113,7 @@ function check(value, schema, where) {
   if (Array.isArray(value) && schema.items) {
     const out = [];
     for (let i = 0; i < value.length; i += 1) {
-      const item = check(value[i], schema.items, `${where}[${i}]`);
+      const item = check(value[i], schema.items, `${where}[${i}]`, notes);
       if (!item.ok) return item;
       out.push(item.value);
     }
@@ -125,7 +138,13 @@ function check(value, schema, where) {
           delete out[key];
           continue;
         }
-        const field = check(value[key], sub, where === 'arguments' ? key : `${where}.${key}`);
+        const name = where === 'arguments' ? key : `${where}.${key}`;
+        const field = check(value[key], sub, name, notes);
+        if (!field.ok && field.enumMiss && !(schema.required || []).includes(key)) {
+          delete out[key];
+          notes.push(`${name} ${JSON.stringify(value[key])} is not one it knows, so it was left out and the default used.`);
+          continue;
+        }
         if (!field.ok) return field;
         out[key] = field.value;
       }
@@ -141,6 +160,7 @@ function check(value, schema, where) {
  * @param {unknown} input  the arguments the model sent
  */
 export function validateArguments(schema, input) {
-  const result = check(input ?? {}, schema, 'arguments');
-  return result.ok ? { ok: true, input: result.value } : { ok: false, error: result.error };
+  const notes = [];
+  const result = check(input ?? {}, schema, 'arguments', notes);
+  return result.ok ? { ok: true, input: result.value, notes } : { ok: false, error: result.error };
 }

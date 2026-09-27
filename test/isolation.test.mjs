@@ -1412,15 +1412,45 @@ section('the untrusted-content boundary');
   const nulled = validateArguments(list, { command: 'ls', cwd: null });
   check('a null optional field is dropped so the tool default applies', nulled.ok && !('cwd' in nulled.input), JSON.stringify(nulled.input));
 
-  const enumTool = catalogue.find((t) => Object.values(t.parameters?.properties || {}).some((p) => Array.isArray(p.enum)));
+  // A *required* enum: an optional one is a hint, and is dropped rather than
+  // refused — see below.
+  const requiredEnum = (t) =>
+    Object.entries(t.parameters?.properties || {}).find(
+      ([k, p]) => Array.isArray(p.enum) && (t.parameters.required || []).includes(k),
+    );
+  const enumTool = catalogue.find(requiredEnum);
+  check('the catalogue has a required enum to test against', !!enumTool);
   if (enumTool) {
-    const [field, spec] = Object.entries(enumTool.parameters.properties).find(([, p]) => Array.isArray(p.enum));
+    const [field, spec] = requiredEnum(enumTool);
     const base = Object.fromEntries((enumTool.parameters.required || []).map((k) => [k, k === field ? 'definitely-not-allowed' : 'x']));
     base[field] = 'definitely-not-allowed';
     const outside = validateArguments(enumTool.parameters, base);
     check(`a value outside an enum is refused (${enumTool.name}.${field})`, !outside.ok && /must be one of/.test(outside.error), outside.error);
     check('  and the allowed values are named', spec.enum.every((v) => (outside.error || '').includes(JSON.stringify(v))));
   }
+
+  /*
+   * The screenshot: a scheduled job's email refused over `kind: "email"`, a
+   * field the tool infers when it is absent. Refusing cost a step and left a
+   * red card on a job that went on to send anyway.
+   */
+  const mail = byName.send_email.parameters;
+  const hint = validateArguments(mail, { subject: 'S', body: 'B', kind: 'email' });
+  check('an optional enum outside its values is dropped, not refused', hint.ok && !('kind' in hint.input), JSON.stringify(hint));
+  check('  and the model is told what was set aside', /kind "email"/.test((hint.notes || []).join(' ')), (hint.notes || []).join(' '));
+  const near = validateArguments(mail, { subject: 'S', body: 'B', kind: 'Thank you' });
+  check('a near miss is read as what it meant', near.ok && near.input.kind === 'thank_you', JSON.stringify(near.input));
+  const exact = validateArguments(mail, { subject: 'S', body: 'B', kind: 'report' });
+  check('  and a correct value passes untouched, with nothing noted', exact.ok && exact.input.kind === 'report' && !exact.notes.length);
+
+  // A file with no name is named from its own page, not refused after minutes of writing.
+  const unnamed = validateArguments(byName.create_file.parameters, { format: 'html', content: '<title>Quiz</title>' });
+  check('create_file without a name is not refused', unnamed.ok, unnamed.error);
+  const { nameForFile } = await import('../server/tools/cloud.js');
+  check('  it takes the page title', nameForFile({ content: '<html><title>Quiz TMQT</title></html>' }) === 'Quiz TMQT');
+  check('  or a Markdown heading', nameForFile({ content: 'intro\n# Báo cáo tháng 8\n' }) === 'Báo cáo tháng 8');
+  check('  or a filename the model sent under another key', nameForFile({ filename: 'quiz.html' }) === 'quiz.html');
+  check('  or, with nothing to go on, a plain word', nameForFile({ content: 'x' }) === 'Document');
 
   const { executeTool: runChecked } = await import('../server/tools/execute.js');
   const refusedCall = await runChecked({ user: { id: 'nobody' }, name: 'delete_file', input: {}, chatId: null });

@@ -1074,11 +1074,18 @@ export const TOOLS = [
       'Content that is Markdown instead becomes a styled article, so both readings of "make me a web page" work. ' +
       'Source files — js, ts, py, sql, css, sh and the rest — are stored exactly as written and shown as code.' +
       '\n\n' +
+      'Anything long (over about 15 KB — a quiz with dozens of questions, a big page) goes in parts: the first part here, ' +
+      'then update_file with `append: true` for each next part. One enormous call gets cut off and writes nothing.' +
+      '\n\n' +
       'This does not touch their filesystem — use write_file for that.',
     parameters: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: 'What to call it, e.g. "Bao gia thang 8". The extension is added to match the format.' },
+        name: {
+          type: 'string',
+          description:
+            'What to call it, e.g. "Bao gia thang 8". The extension is added to match the format. Put it first, before content.',
+        },
         format: {
           type: 'string',
           enum: [
@@ -1092,7 +1099,10 @@ export const TOOLS = [
         content: { type: 'string', description: 'The document in Markdown, the page as HTML, or the source as itself.' },
         title: { type: 'string', description: "Document title for the file's own properties. Defaults to the first heading." },
       },
-      required: ['name', 'format', 'content'],
+      // `name` is asked for and not required: a missing one is taken from the
+      // page's own title rather than refusing a call whose content took minutes
+      // to write. See `nameForFile`.
+      required: ['format', 'content'],
     },
   },
   {
@@ -1102,13 +1112,19 @@ export const TOOLS = [
     description:
       'Rewrite a document you made earlier, keeping the same file and the same place in the conversation. ' +
       'Pass the complete new content, not a patch — read the current source back with read_generated_file first if you no longer have it. ' +
-      'Use this rather than create_file when the user asks to change something: a second copy of a quotation with one number different is how the wrong one gets sent.',
+      'Use this rather than create_file when the user asks to change something: a second copy of a quotation with one number different is how the wrong one gets sent. ' +
+      'With `append: true` the content is added to the end instead — the way to write anything long (a quiz with a hundred questions, a big page): ' +
+      'create_file with the first part, then append the rest a part at a time, each under about 15 KB. One enormous call is cut off before it finishes and writes nothing.',
     parameters: {
       type: 'object',
       properties: {
         file_id: { type: 'string', description: 'The id create_file returned.' },
-        content: { type: 'string', description: 'The complete new content, in the same language as the original.' },
+        content: {
+          type: 'string',
+          description: 'The complete new content, in the same language as the original — or, with append, the next part.',
+        },
         name: { type: 'string', description: 'Rename it at the same time. Optional.' },
+        append: { type: 'boolean', description: 'Add content to the end rather than replacing it. Default false.' },
       },
       required: ['file_id', 'content'],
     },

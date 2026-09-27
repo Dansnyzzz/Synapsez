@@ -653,6 +653,21 @@ section('output budget follows the model');
     Date.now = realNow;
   }
 
+  // The reply shares the window with the prompt actually being sent. A cap
+  // published at 90% of the window, on an 80,000-token conversation, is what
+  // came back from the provider as a 400.
+  {
+    const nearlyWhole = { context: 262_144, maxOutput: 235_929 };
+    const budget = outputBudget(nearlyWhole, 80_000);
+    check('the reply is fitted beside the prompt', budget + 80_000 <= 262_144, String(budget));
+    check('  and still gets everything left', budget === 262_144 - 80_000 - 1024, String(budget));
+    check('  a small prompt leaves the published cap alone', outputBudget(nearlyWhole, 1000) === 235_929);
+    const { estimatePromptTokens } = __testing;
+    const picture = 'A'.repeat(900_000);
+    const est = estimatePromptTokens({ system: 'x'.repeat(3000), messages: [{ content: [{ data: picture }] }] });
+    check('  a pasted picture is not counted by its base64', est < 3000, String(est));
+  }
+
   const unknown = outputBudget({ id: 'openrouter/mystery/model', provider: 'openrouter' });
   check('an entry that states nothing gets a cautious cap', unknown === 4096, String(unknown));
   check('  not the flat 32000 that fits in no small window', unknown !== 32_000);

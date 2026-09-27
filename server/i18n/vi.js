@@ -566,4 +566,8 @@ export const vi = {
     'Google từ chối tạo hình đó: {0}',
   'Google returned no image and gave no reason. Try describing it differently.':
     'Google không trả về hình nào và không nêu lý do. Hãy thử mô tả theo cách khác.',
+  "{0}: this conversation ({1} tokens) no longer fits this model's {2}-token window. Compact it, start a new one, or pick a model with a larger window.":
+    '{0}: cuộc trò chuyện này ({1} token) không còn vừa cửa sổ {2} token của model. Hãy thu gọn nó, mở cuộc mới, hoặc chọn model có cửa sổ lớn hơn.',
+  '{0} has no stored source to add to. Pass the complete content instead.':
+    '{0} không có nội dung gốc để nối thêm. Hãy gửi toàn bộ nội dung thay vào đó.',
 };

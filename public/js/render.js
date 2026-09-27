@@ -1,6 +1,7 @@
 import { renderMarkdown, escapeHtml } from './markdown.js';
 import { t, currentLanguage } from './i18n.js';
 import { humanSize, repeatsAs } from './format.js';
+import { chartFigure } from './chart.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -714,6 +715,14 @@ export function widgetFrame(widget) {
 }
 
 /**
+ * A chart from the `chart` tool is drawn interactive; anything else, or a chart
+ * whose markup does not survive cleaning, is the sandboxed picture.
+ */
+export function widgetNode(widget) {
+  return (widget?.kind === 'chart' && chartFigure(widget)) || widgetFrame(widget);
+}
+
+/**
  * When a scheduled run fires next, in the zone it was set in.
  *
  * The zone is the task's, not the browser's: somebody who set a 07:30 summary
@@ -1081,7 +1090,7 @@ export function assistantMessage() {
           if (existing) existing.replaceWith(card);
           else body.append(card);
         }
-        if (result.widget?.markup) body.append(widgetFrame(result.widget));
+        if (result.widget?.markup) body.append(widgetNode(result.widget));
         if (result.schedule?.id) placeScheduleCard(body, result.schedule);
       },
     };
@@ -1293,6 +1302,42 @@ export function assistantMessage() {
       body.prepend(plan);
     },
 
+    /**
+     * A card for a call the model is still writing.
+     *
+     * Between the moment a model names a tool and the moment its arguments are
+     * complete there can be a minute or more — a 130-question quiz is a very long
+     * `content` string — and all that showed was a status line that never moved.
+     * This draws the card straight away with the same headline it will have, and
+     * a size that grows as the arguments arrive. The real card replaces it when
+     * the call is whole.
+     */
+    draftTool(name) {
+      // Browser clicks and file reads are tiny and grouped into a run of steps;
+      // a draft card between them would only flicker.
+      if (stepFamily(name)) return null;
+      const { verb } = describeStep(name, {});
+      const block = el('div', 'block tool tool--draft');
+      block.setAttribute('role', 'status');
+      const head = el('div', 'tool__draft');
+      const size = el('span', 'tool__time');
+      head.innerHTML = `${MARK_PENDING}<span class="tool__name">${escapeHtml(verb)}</span>`;
+      head.append(size);
+      block.append(head);
+      body.append(block);
+      return {
+        progress(chars) {
+          const kb = chars / 1024;
+          size.textContent = t('chat.drafting', {
+            size: kb >= 1 ? `${kb >= 100 ? Math.round(kb) : kb.toFixed(1)} KB` : `${chars} B`,
+          });
+        },
+        remove() {
+          block.remove();
+        },
+      };
+    },
+
     /** Start a collapsed card for a tool call; returns a handle to complete it. */
     startTool(call) {
       const family = stepFamily(call.name);
@@ -1366,7 +1411,7 @@ export function assistantMessage() {
            * something to open — it is already open, which is what makes it the
            * right shape for "here is what I found" rather than "here is a report".
            */
-          if (result.widget?.markup) body.append(widgetFrame(result.widget));
+          if (result.widget?.markup) body.append(widgetNode(result.widget));
 
           /**
            * A schedule set up — or found already there — by this call.

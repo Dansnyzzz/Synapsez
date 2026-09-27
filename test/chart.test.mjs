@@ -115,6 +115,20 @@ section('text from the model cannot become markup');
   check('and an ampersand in a series name', two.includes('y &amp; z'));
 }
 
+section('every mark says which point it is, so the browser can read it on hover');
+{
+  const data = { labels: ['Q1', 'Q2', 'Q3'], series: [{ name: 'A', values: [1, 2, 3] }, { name: 'B', values: [3, 2, 1] }] };
+  for (const type of ['bar', 'hbar', 'line', 'stacked']) {
+    const svg = renderChart({ type, title: 'T', data });
+    const hits = svg.match(/class="hit hit--(col|row)" data-i="\d+"/g) || [];
+    check(`${type}: one hover target per label`, hits.length === 3, String(hits.length));
+    check(`${type}: marks carry label and series`, /data-i="2" data-s="1"/.test(svg));
+    check(`${type}: the legend names its series`, /class="legend-item" data-s="1"/.test(svg));
+  }
+  const pie = renderChart({ type: 'pie', title: 'T', data: { labels: ['a', 'b'], series: [{ name: 's', values: [1, 3] }] } });
+  check('pie: each slice is its own hover target', (pie.match(/class="slice hit" data-i=/g) || []).length === 2);
+}
+
 console.log(
   failures === 0 ? '\n\x1b[32mAll chart checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`,
 );

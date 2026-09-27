@@ -44,6 +44,7 @@ export const vi = {
   // là xếp hàng đợi — tin nhắn chờ hiện rõ và vào ở ranh giới bước kế tiếp,
   // chứ không mở một cuộc hội thoại thứ hai đè lên cái đang chạy.
   'composer.placeholderRunning': 'Xếp thêm một tin nhắn…',
+  'composer.placeholderShort': 'Hỏi bất cứ điều gì…',
   // Danh sách việc do `update_plan` vẽ trong một tin nhắn, và số đếm cạnh cùng
   // các bước đó ở thanh tiến trình.
   'chat.plan': 'Kế hoạch',
@@ -221,8 +222,12 @@ export const vi = {
    */
   'chat.reasoning': 'Suy luận',
   'chat.noOutput': '(không có kết quả)',
+  'chat.drafting': 'đang viết… {size}',
   'chat.noResult': '(không ghi nhận được kết quả)',
   'chat.diagram': 'Sơ đồ',
+  'chart.keys': 'dùng phím mũi tên để đọc từng giá trị',
+  'chart.share': 'Tỉ trọng',
+  'chart.total': 'Tổng',
   'chat.open': 'Mở',
   'chat.download': 'Tải về',
   'chat.openNamed': 'Mở {name}',

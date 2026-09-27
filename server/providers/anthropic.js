@@ -170,15 +170,25 @@ export async function* streamAnthropic({
   const stream = client.messages.stream(params, { signal });
 
   const blockTypes = new Map();
+  // index -> { id, name, chars }, so a long call's arguments can be seen arriving.
+  const calls = new Map();
   for await (const event of stream) {
     if (event.type === 'content_block_start') {
       blockTypes.set(event.index, event.content_block.type);
       if (event.content_block.type === 'tool_use') {
+        calls.set(event.index, { id: event.content_block.id, name: event.content_block.name, chars: 0 });
         yield { type: 'tool_call_start', id: event.content_block.id, name: event.content_block.name };
       }
     } else if (event.type === 'content_block_delta') {
       if (event.delta.type === 'text_delta') yield { type: 'text', delta: event.delta.text };
       else if (event.delta.type === 'thinking_delta') yield { type: 'thinking', delta: event.delta.thinking };
+      else if (event.delta.type === 'input_json_delta') {
+        const call = calls.get(event.index);
+        if (call) {
+          call.chars += String(event.delta.partial_json || '').length;
+          yield { type: 'tool_call_progress', id: call.id, name: call.name, chars: call.chars };
+        }
+      }
     }
   }
 

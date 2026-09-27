@@ -226,7 +226,10 @@ export async function executeTool(args) {
       isError: true,
       content:
         `The arguments for ${args?.name} were not valid JSON, so the call was not run. ` +
-        'This usually means the reply was cut off mid-call. Send it again with shorter arguments. ' +
+        'This usually means the reply was cut off mid-call. Send it again with shorter arguments' +
+        (args?.name === 'create_file' || args?.name === 'update_file'
+          ? ' — for a long file, write the first part, then add the rest with update_file and append: true, a part at a time. '
+          : '. ') +
         `What arrived was: ${String(malformed).slice(0, 200)}`,
     };
   }
@@ -239,6 +242,7 @@ export async function executeTool(args) {
    * refused and what is merely coerced.
    */
   const def = TOOLS_BY_NAME[args?.name];
+  let notes = [];
   if (def?.parameters) {
     const checked = validateArguments(def.parameters, args.input);
     if (!checked.ok) {
@@ -248,9 +252,15 @@ export async function executeTool(args) {
       };
     }
     args = { ...args, input: checked.input };
+    notes = checked.notes || [];
   }
 
-  const result = await runTool(args);
+  let result = await runTool(args);
+  // Said to the model, so it learns the value rather than repeating it.
+  if (notes.length && !result?.isError) {
+    const aside = `\n\n[${notes.join(' ')}]`;
+    result = { ...result, content: `${result?.content ?? ''}${aside}` };
+  }
 
   /**
    * One exit, and the envelope goes on here.
