@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-27 (evening) — an everyday toolbox
+
+Branch `feat/tool-library-2026-09-27`.
+
+### Added
+
+Ten tools for the questions a model should answer from a lookup or a calculation rather than
+from memory. All are free with no key, all are deferred — listed in `load_tools` by one short
+sentence and sent in full only to a turn that asks — so an ordinary turn costs 144 more tokens,
+not ten schemas. Everything from outside comes back inside the untrusted envelope.
+
+- `date_calc` — days between dates (and working days), date plus days/months, weekday and ISO
+  week, the Vietnamese lunar calendar both ways (Hồ Ngọc Đức's algorithm; can chi names), a
+  clock time moved between zones across daylight saving, and public holidays by country — with
+  Tết and Giỗ Tổ computed, because the holiday service leaves Vietnam's lunar ones out.
+- `convert_units` — length, weight, temperature, area (sào, mẫu, ha), volume, speed, time, data
+  size, energy, pressure, power.
+- `market_data` — crypto (CoinGecko) and stocks, indices and commodities (Yahoo Finance):
+  US tickers, HOSE listings, VN-Index, VN30, gold, oil. Marked as possibly delayed.
+- `place_lookup` — a place on OpenStreetMap, or the distance between two, straight and by road.
+- `read_feed` — the latest items of an RSS or Atom feed.
+- `text_tools` — count, hash, base64/URL encoding, UUIDs, JSON checks, regex, diff, slugs,
+  Vietnamese accent stripping, case.
+- `analyze_data` — describe, group-total or rank a CSV or JSON table, inline or attached;
+  reads `1.234,5` and `1,234.5` alike.
+- `make_qr` — a QR code image in the conversation.
+- `http_request` — any REST call; GET and HEAD run, anything that writes asks first.
+- `encyclopedia` — a Wikipedia summary and link, in Vietnamese for a Vietnamese query.
+
 ## 2026-09-27 (later) — work that runs on time, in one place, and says so
 
 Branch `fix/realtime-runs-2026-09-27`.

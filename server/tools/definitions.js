@@ -1259,6 +1259,200 @@ export const TOOLS = [
       required: ['kind'],
     },
   },
+  /*
+   * The everyday toolbox (server/tools/library.js). All deferred: listed by
+   * their first sentence in `load_tools` and only sent in full to a turn that
+   * asks for them, so the catalogue does not grow for the turns that never do.
+   */
+  {
+    name: 'date_calc',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Date maths, lunar calendar, time zones and public holidays. Days between two dates, a date plus N days or months, the weekday and week of a date, ' +
+      'the Vietnamese lunar calendar (âm lịch) both ways, a clock time converted between zones, and public holidays by country (Tết included). ' +
+      'Dates as YYYY-MM-DD or DD/MM/YYYY; "today" works.',
+    parameters: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['diff', 'add', 'info', 'to_lunar', 'to_solar', 'convert_time', 'holidays'] },
+        date: { type: 'string', description: 'diff/add/info/to_lunar: the date.' },
+        to: { type: 'string', description: 'diff: the second date.' },
+        days: { type: 'number', description: 'add: days, negative to go back.' },
+        months: { type: 'number', description: 'add: months.' },
+        lunar_day: { type: 'number' },
+        lunar_month: { type: 'number' },
+        lunar_year: { type: 'number', description: 'to_solar: lunar year; defaults to this year.' },
+        leap: { type: 'boolean', description: 'to_solar: the leap (nhuận) month.' },
+        time: { type: 'string', description: 'convert_time: "YYYY-MM-DD HH:MM" in from_zone.' },
+        from_zone: { type: 'string', description: 'IANA zone, e.g. Asia/Ho_Chi_Minh.' },
+        to_zone: { type: 'string', description: 'IANA zone, e.g. Europe/London.' },
+        country: { type: 'string', description: 'holidays: two-letter code; defaults to VN.' },
+        year: { type: 'number', description: 'holidays: the year.' },
+      },
+      required: ['op'],
+    },
+  },
+  {
+    name: 'convert_units',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Convert a quantity between units. Length, weight, temperature, area (sào, mẫu, ha), volume, speed, time, data size, energy, pressure, power.',
+    parameters: {
+      type: 'object',
+      properties: {
+        value: { type: 'number' },
+        from: { type: 'string', description: 'e.g. km, lb, °F, acre, gal, mph, GB, kWh, psi' },
+        to: { type: 'string' },
+      },
+      required: ['value', 'from', 'to'],
+    },
+  },
+  {
+    name: 'market_data',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Live crypto, stock, index and commodity prices. Crypto (BTC, ETH…) with 24h change; US tickers, Vietnamese stocks (FPT, VNM with market "vn"), ' +
+      'VNINDEX, VN30, S&P500, Dow, Nasdaq, Nikkei, gold, oil. Quotes can be delayed; never present them as trading advice.',
+    parameters: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['crypto', 'stock'] },
+        symbols: { type: 'array', items: { type: 'string' }, description: 'Up to 12, e.g. ["BTC","ETH"] or ["FPT","VNINDEX","gold"].' },
+        vs: { type: 'string', description: 'crypto: a second currency besides USD; defaults to VND.' },
+        market: { type: 'string', description: 'stock: "vn" to read bare three-letter codes as HOSE listings.' },
+      },
+      required: ['kind', 'symbols'],
+    },
+  },
+  {
+    name: 'place_lookup',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Find a place, or the distance and driving time between two. Address, coordinates and a map link; distance in a straight line and by road.',
+    parameters: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['find', 'distance'] },
+        place: { type: 'string', description: 'find: a place or address.' },
+        from: { type: 'string', description: 'distance: where from.' },
+        to: { type: 'string', description: 'distance: where to.' },
+      },
+      required: ['op'],
+    },
+  },
+  {
+    name: 'read_feed',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Read the latest items of an RSS or Atom feed. Titles, links, dates and summaries — more reliable than searching a site for its newest articles.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'The feed address, e.g. https://vnexpress.net/rss/kinh-doanh.rss' },
+        limit: { type: 'number', description: 'How many items, up to 30. Default 10.' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'text_tools',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Exact text operations. Count words and characters, hash, base64 and URL encode/decode, UUIDs, validate and format JSON, test a regex, ' +
+      'diff two texts line by line, make a URL slug, strip Vietnamese accents, change case.',
+    parameters: {
+      type: 'object',
+      properties: {
+        op: {
+          type: 'string',
+          enum: ['count', 'hash', 'base64_encode', 'base64_decode', 'url_encode', 'url_decode', 'uuid', 'json_format', 'regex', 'diff', 'slug', 'remove_accents', 'upper', 'lower', 'title'],
+        },
+        text: { type: 'string' },
+        text2: { type: 'string', description: 'diff: the second text.' },
+        pattern: { type: 'string', description: 'regex: the pattern.' },
+        flags: { type: 'string', description: 'regex: i, m, s, u.' },
+        algorithm: { type: 'string', enum: ['md5', 'sha1', 'sha256', 'sha512'] },
+        count: { type: 'number', description: 'uuid: how many.' },
+      },
+      required: ['op'],
+    },
+  },
+  {
+    name: 'analyze_data',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Analyse a CSV or JSON table exactly. Describe every column (types, min, max, mean, median, sum, blanks, common values), total or average one column by another, or list the top rows. ' +
+      'Give CSV or a JSON array as data, or the id of an attached CSV file. Use it instead of adding up rows yourself.',
+    parameters: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['describe', 'group', 'top'] },
+        data: { type: 'string', description: 'CSV text or a JSON array of objects.' },
+        file_id: { type: 'string', description: 'An attached CSV, instead of data.' },
+        column: { type: 'string', description: 'group: the value column; top: the column to sort by.' },
+        group_by: { type: 'string', description: 'group: the column to group on.' },
+        agg: { type: 'string', enum: ['sum', 'avg', 'min', 'max', 'median', 'count'] },
+        top: { type: 'number', description: 'top: how many rows.' },
+        descending: { type: 'boolean', description: 'Largest first. Default true.' },
+      },
+      required: ['op'],
+    },
+  },
+  {
+    name: 'make_qr',
+    scope: 'cloud',
+    readOnly: false,
+    description: 'Make a QR code image. For a link, text, Wi-Fi login or contact; it appears in the conversation to download.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'What it holds. Wi-Fi: WIFI:T:WPA;S:<name>;P:<password>;;' },
+        name: { type: 'string', description: 'File name, without extension.' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'http_request',
+    scope: 'cloud',
+    readOnly: false,
+    description:
+      'Call a web API with any method, headers and JSON body. Returns the status and the response. ' +
+      'For public APIs and ones the user gives a key for; use web_fetch for ordinary pages. Anything but GET/HEAD asks first.',
+    parameters: {
+      type: 'object',
+      properties: {
+        method: { type: 'string', enum: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] },
+        url: { type: 'string' },
+        headers: { type: 'object', description: 'e.g. {"Authorization": "Bearer …"}' },
+        json: { description: 'A JSON body; sent with Content-Type application/json.' },
+        body: { type: 'string', description: 'A raw body, when not JSON.' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'encyclopedia',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Look something up in Wikipedia. Summary and link of the article — people, places, events, concepts; Vietnamese articles for a Vietnamese query.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        lang: { type: 'string', description: 'Wikipedia language code, e.g. vi, en. Guessed from the query if omitted.' },
+      },
+      required: ['query'],
+    },
+  },
   {
     name: 'calculate',
     scope: 'cloud',
@@ -2136,6 +2330,10 @@ export function assessRisk(name, input = {}) {
   if (tool.readOnly) return 'safe';
   if (ALWAYS_SENSITIVE.has(name)) return 'sensitive';
 
+  // Reading an API is what web_fetch already does; writing to one changes
+  // something somewhere else, which somebody should see before it happens.
+  if (name === 'http_request') return /^(GET|HEAD)$/i.test(String(input?.method || 'GET')) ? 'ordinary' : 'sensitive';
+
   // The shell is judged by what it is about to run, not by the fact that it is
   // the shell. `npm test` and `git status` are the texture of ordinary work and
   // stopping for each one trains people to click yes without looking; `rm -rf`
@@ -2215,6 +2413,15 @@ export function riskReason(name, input = {}) {
     if (looksDestructive(command)) return 'This command looks destructive or irreversible.';
     if (MENTIONS_PROTECTED.test(command)) return 'This command touches Windows system files.';
     return null;
+  }
+  if (name === 'http_request') {
+    let host = 'an API';
+    try {
+      host = new URL(String(input?.url || '')).host || host;
+    } catch {
+      /* named generically when the address does not parse */
+    }
+    return `Sends a ${String(input?.method || 'GET').toUpperCase()} request to ${host}, which may change something there.`;
   }
   if (name === 'download_file') {
     return `Downloads ${input?.url || 'a file'} onto your computer.`;
@@ -2399,6 +2606,10 @@ const DEFERRABLE = new Set([
   // Indexing and its housekeeping. Searching stays loaded; building the index
   // is a deliberate act somebody asks for by name.
   'index_folder', 'list_indexed', 'forget_docs',
+  // The everyday toolbox (library.js): each one exactly right when it is
+  // wanted and noise on every turn that does not want it.
+  'date_calc', 'convert_units', 'market_data', 'place_lookup', 'read_feed', 'text_tools',
+  'analyze_data', 'make_qr', 'http_request', 'encyclopedia',
 ]);
 
 /**

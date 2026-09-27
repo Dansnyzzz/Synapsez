@@ -586,4 +586,78 @@ export const vi = {
     "kind phải là một trong: time, weather, exchange_rate.",
   "This exact email — to {0}, subject \"{1}\" — was already accepted by the mail server a few minutes ago in this conversation, so it was NOT sent again. Treat the send as done and carry on. Only if the user explicitly asked for a second copy, call again with resend: true.":
     "Đúng email này — gửi tới {0}, tiêu đề \"{1}\" — đã được máy chủ thư nhận vài phút trước trong cuộc trò chuyện này, nên KHÔNG gửi lại lần nữa. Coi như đã gửi xong và làm tiếp. Chỉ khi người dùng yêu cầu rõ một bản thứ hai thì mới gọi lại với resend: true.",
+  "\"{0}\" is not a date. Write it as YYYY-MM-DD or DD/MM/YYYY.":
+    "\"{0}\" không phải là ngày. Hãy viết dạng YYYY-MM-DD hoặc DD/MM/YYYY.",
+  "{0}/{1}/{2} is not a real date.":
+    "{0}/{1}/{2} không phải là một ngày có thật.",
+  "Both zones must be IANA names, e.g. \"Asia/Ho_Chi_Minh\", \"Europe/London\".":
+    "Cả hai múi giờ phải là tên IANA, ví dụ \"Asia/Ho_Chi_Minh\", \"Europe/London\".",
+  "Give the time as \"YYYY-MM-DD HH:MM\".":
+    "Hãy đưa thời gian dạng \"YYYY-MM-DD HH:MM\".",
+  "Country is a two-letter code, e.g. VN, US, JP.":
+    "Quốc gia là mã hai chữ cái, ví dụ VN, US, JP.",
+  "Lunar {0}/{1}{2}/{3} does not exist.":
+    "Ngày âm lịch {0}/{1}{2}/{3} không tồn tại.",
+  "op is one of: diff, add, info, to_lunar, to_solar, convert_time, holidays.":
+    "op phải là một trong: diff, add, info, to_lunar, to_solar, convert_time, holidays.",
+  "\"{0}\" is not a unit this knows. Try m, km, kg, lb, °C, l, km/h, GB, kWh, psi…":
+    "\"{0}\" không phải đơn vị được hỗ trợ. Thử m, km, kg, lb, °C, l, km/h, GB, kWh, psi…",
+  "Give the value as a number.":
+    "Hãy đưa giá trị dạng số.",
+  "Cannot convert {0} ({1}) to {2} ({3}).":
+    "Không thể đổi {0} ({1}) sang {2} ({3}).",
+  "No coin called \"{0}\".":
+    "Không có đồng coin nào tên \"{0}\".",
+  "Name at least one symbol — e.g. BTC, ETH, AAPL, FPT, VNINDEX, gold.":
+    "Hãy nêu ít nhất một mã — ví dụ BTC, ETH, AAPL, FPT, VNINDEX, gold.",
+  "kind is crypto or stock.":
+    "kind là crypto hoặc stock.",
+  "Name the place.":
+    "Hãy nêu địa điểm.",
+  "No place called \"{0}\" was found on OpenStreetMap.":
+    "Không tìm thấy địa điểm \"{0}\" trên OpenStreetMap.",
+  "op is find or distance.":
+    "op là find hoặc distance.",
+  "That address is not an RSS or Atom feed (no items found). Try web_fetch for an ordinary page.":
+    "Địa chỉ này không phải nguồn RSS hay Atom (không có mục nào). Hãy dùng web_fetch cho trang thường.",
+  "Those texts are too long to diff here.":
+    "Hai văn bản quá dài để so sánh ở đây.",
+  "algorithm is md5, sha1, sha256 or sha512.":
+    "algorithm là md5, sha1, sha256 hoặc sha512.",
+  "Not valid JSON: {0}":
+    "JSON không hợp lệ: {0}",
+  "Not a valid regular expression: {0}":
+    "Biểu thức chính quy không hợp lệ: {0}",
+  "op is one of: count, hash, base64_encode, base64_decode, url_encode, url_decode, uuid, json_format, regex, diff, slug, remove_accents, upper, lower, title.":
+    "op phải là một trong: count, hash, base64_encode, base64_decode, url_encode, url_decode, uuid, json_format, regex, diff, slug, remove_accents, upper, lower, title.",
+  "There are no rows to analyse.":
+    "Không có dòng nào để phân tích.",
+  "Name a column. There are: {0}.":
+    "Hãy nêu một cột. Các cột hiện có: {0}.",
+  "No column \"{0}\". There are: {1}.":
+    "Không có cột \"{0}\". Các cột hiện có: {1}.",
+  "agg is sum, avg, min, max, median or count.":
+    "agg là sum, avg, min, max, median hoặc count.",
+  "op is describe, group or top.":
+    "op là describe, group hoặc top.",
+  "No file with the id \"{0}\" on this account.":
+    "Tài khoản này không có tệp nào mang id \"{0}\".",
+  "Give the table as `data` (CSV or a JSON array), or the `file_id` of an attached CSV.":
+    "Hãy đưa bảng qua `data` (CSV hoặc mảng JSON), hoặc `file_id` của một tệp CSV đính kèm.",
+  "JSON data must be an array of objects.":
+    "Dữ liệu JSON phải là một mảng các object.",
+  "Give the text or link the QR code should hold.":
+    "Hãy đưa nội dung hoặc đường link cho mã QR.",
+  "That is too long for a QR code a phone can read; keep it under 2,000 characters.":
+    "Nội dung quá dài để điện thoại đọc được mã QR; hãy giữ dưới 2.000 ký tự.",
+  "method is GET, HEAD, POST, PUT, PATCH or DELETE.":
+    "method là GET, HEAD, POST, PUT, PATCH hoặc DELETE.",
+  "Only http and https addresses.":
+    "Chỉ chấp nhận địa chỉ http và https.",
+  "Say what to look up.":
+    "Hãy nói cần tra cứu gì.",
+  "Wikipedia ({0}) has no article matching \"{1}\".":
+    "Wikipedia ({0}) không có bài nào khớp với \"{1}\".",
+  "Sends a {0} request to {1}, which may change something there.":
+    "Gửi yêu cầu {0} tới {1}, có thể làm thay đổi dữ liệu ở đó.",
 };

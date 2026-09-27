@@ -208,6 +208,16 @@ const STEP_VERBS = {
   chart: 'step.chart',
   calculate: 'step.calculate',
   world_facts: 'step.world_facts',
+  date_calc: 'step.date_calc',
+  convert_units: 'step.convert_units',
+  market_data: 'step.market_data',
+  place_lookup: 'step.place_lookup',
+  read_feed: 'step.read_feed',
+  text_tools: 'step.text_tools',
+  analyze_data: 'step.analyze_data',
+  make_qr: 'step.make_qr',
+  http_request: 'step.http_request',
+  encyclopedia: 'step.encyclopedia',
 
   /* ── what it remembers, and what it knows how to do ── */
   memory_write: 'step.memory_write',
@@ -364,6 +374,16 @@ const STEP_DETAILS = {
   chart: (i) => `${clip(i.title)}${i.type ? ` (${i.type})` : ''}`,
   calculate: (i) => clip(i.expression, 64),
   world_facts: (i) => clip([i.kind, i.location || i.timezone || (i.base && `${i.base}→${i.quote || ''}`)].filter(Boolean).join(' · '), 64),
+  date_calc: (i) => clip([i.op, i.date, i.to, i.time].filter(Boolean).join(' · '), 64),
+  convert_units: (i) => clip(`${i.value} ${i.from} → ${i.to}`, 64),
+  market_data: (i) => clip([].concat(i.symbols || []).join(', '), 64),
+  place_lookup: (i) => clip(i.place || [i.from, i.to].filter(Boolean).join(' → '), 64),
+  read_feed: (i) => clip(i.url, 64),
+  text_tools: (i) => clip(i.op, 64),
+  analyze_data: (i) => clip([i.op, i.group_by, i.column].filter(Boolean).join(' · '), 64),
+  make_qr: (i) => clip(i.text, 64),
+  http_request: (i) => clip(`${String(i.method || 'GET').toUpperCase()} ${i.url || ''}`, 64),
+  encyclopedia: (i) => clip(i.query, 64),
 
   /* what it remembers, and what it knows how to do */
   memory_write: (i) => clip(i.key),

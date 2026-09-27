@@ -81,12 +81,25 @@ section('the decision is by share, not by absolute window size');
 {
   // The bug this replaces: the same catalogue was trimmed or not depending only
   // on the window, so a small catalogue in a mid-size window was cut for nothing.
-  const small = availableTools({ workerOnline: false, desktopOnline: false, policy: 'auto', context: 65_000, activated: everything });
-  const smallUntrimmed = availableTools({ workerOnline: false, desktopOnline: false, policy: 'auto', context: 0, activated: everything });
+  //
+  // "Small" is what an ordinary turn is offered: the cloud tools, with the rare
+  // ones deferred behind load_tools. Every tool in it must keep its whole
+  // description. (Every tool loaded at once is no longer small — the everyday
+  // toolbox took it past 12% of 65k — and the next check pins that it is then
+  // trimmed, which is the same rule working.)
+  const byName = Object.fromEntries(TOOLS.map((t) => [t.name, t]));
+  const small = availableTools({ workerOnline: false, desktopOnline: false, policy: 'auto', context: 65_000 });
   check(
     'a small catalogue in a 65k window keeps its guidance',
-    small.map(full).join() === smallUntrimmed.map(full).join(),
+    small.every((t) => t.name === 'load_tools' || t.description === byName[t.name]?.description),
     `${estimateTokens(small)} tok of 65k`,
+  );
+  const loadedAll = availableTools({ workerOnline: false, desktopOnline: false, policy: 'auto', context: 65_000, activated: everything });
+  const loadedAllUntrimmed = availableTools({ workerOnline: false, desktopOnline: false, policy: 'auto', context: 0, activated: everything });
+  check(
+    'and past its share — every tool loaded at once — it is trimmed',
+    estimateTokens(loadedAllUntrimmed) > 65_000 * 0.12 && estimateTokens(loadedAll) < estimateTokens(loadedAllUntrimmed),
+    `${estimateTokens(loadedAll)} < ${estimateTokens(loadedAllUntrimmed)}`,
   );
 
   // The same window, but with a paired computer the catalogue is far larger —

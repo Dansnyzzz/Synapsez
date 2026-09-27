@@ -10,6 +10,7 @@ import { extractFromPage } from './extract.js';
 import { resolveForUser } from '../autoPick.js';
 import { parseSchedule } from '../scheduler.js';
 import { validZone } from '../util/zone.js';
+import { LIBRARY_IMPLEMENTATIONS } from './library.js';
 import { normaliseSteps } from '../workflows.js';
 import { CONNECTOR_CALLS } from '../connectors.js';
 import { getPrefs, getApiKey } from '../settings.js';
@@ -2064,6 +2065,9 @@ export const CLOUD_IMPLEMENTATIONS = {
   chart: chartTool,
   calculate: calculateTool,
   world_facts: worldFactsTool,
+  // The everyday toolbox — dates, units, markets, places, feeds, text, tables,
+  // QR codes, any API, the encyclopedia. See library.js.
+  ...LIBRARY_IMPLEMENTATIONS,
   extract: extractTool,
   memory_write: memoryWrite,
   memory_read: memoryRead,
