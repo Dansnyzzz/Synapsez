@@ -880,8 +880,19 @@ section('projects: instructions and sources a conversation inherits');
   check('with a composer, not a form', opened.asks === 'How can I help you today?', opened.asks);
   check(
     'and what it knows down the side',
-    JSON.stringify(opened.cards) === JSON.stringify(['Instructions', 'Memory', 'Output', 'Context', 'Scheduled']),
+    JSON.stringify(opened.cards) === JSON.stringify(['Instructions', 'Memory', 'Context', 'Scheduled']),
     JSON.stringify(opened.cards),
+  );
+  /**
+   * Output is in the work column, not this one.
+   *
+   * The right-hand side is what the work *reads from* — instructions, memory,
+   * the shelf of sources. A finished report is not a source; it is the point.
+   * So it sits between the composer and the conversations that produced it.
+   */
+  check(
+    'and what it produced is in the work column',
+    await page.evaluate(() => !!document.getElementById('project-page-outputs')),
   );
 
   /**
@@ -910,12 +921,33 @@ section('projects: instructions and sources a conversation inherits');
    * conversation wrote it.
    */
   const output = await page.evaluate(() => {
-    const cards = [...document.querySelectorAll('#project-page-side .panel-card')];
-    const made = cards.find((c) => c.querySelector('.panel-card__name')?.textContent === 'Output');
-    return { there: !!made, say: made?.textContent || '' };
+    const host = document.getElementById('project-page-outputs');
+    return { there: !!host, empty: (host?.textContent || '').trim() };
   });
   check('there is somewhere for what the project made', output.there);
-  check('with an empty state rather than a blank box', /Nothing made here yet/i.test(output.say), output.say.slice(0, 120));
+  // Nothing yet, so nothing is drawn: a heading over an empty box is furniture,
+  // and the composer above it is what a new project is actually for.
+  check('and a project that has made nothing shows no heading at all', output.empty === '', output.empty);
+
+  /**
+   * The notes can be opened in full, and thrown away.
+   *
+   * The card is a glance — each note clipped to a line. A note is read into
+   * every future conversation, so a stale one is a wrong fact being repeated,
+   * and the only way to be rid of one used to be asking the assistant to delete
+   * it and hoping it picked the right key.
+   */
+  await page.click('#pp-view-memory');
+  await page.waitForTimeout(400);
+  const sheet = await page.evaluate(() => {
+    const dialog = /** @type {HTMLDialogElement} */ (document.getElementById('memory-sheet'));
+    return { open: dialog.open, say: dialog.textContent || '' };
+  });
+  check('View memory opens the sheet', sheet.open);
+  check('which says so when there is nothing in it yet', /Nothing remembered yet/i.test(sheet.say), sheet.say.slice(0, 120));
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
 
   // The Context menu offers only what exists here. Claude's has GitHub and
   // Drive; an entry that opens an apology is worse than no entry.
@@ -2051,6 +2083,23 @@ section('the interface speaks Vietnamese');
   check('there are four openers', openers.length === 4, `${openers.length}`);
   check('and they are Vietnamese now, without a reload', openers.every((s) => /[àáâãèéêìíòóôõùúýăđĩũơưạảấầẩậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i.test(s)), openers.join(' | '));
   check('none is a leaked key', !openers.some((s) => /^suggest\./.test(s)), openers.join(' | '));
+
+  /**
+   * And the sidebar's own headings, which are appended by script.
+   *
+   * "Conversations" and "Projects" are built by `refreshChats` rather than
+   * carried on `data-i18n` nodes, so `applyI18n` could not reach them: an
+   * English "CONVERSATIONS" stood over an otherwise Vietnamese sidebar until
+   * the list happened to refresh for some unrelated reason.
+   */
+  const headings = await page.evaluate(() =>
+    [...document.querySelectorAll('#chat-list .chats__label')].map((n) => n.textContent.trim()),
+  );
+  check(
+    'the sidebar headings are Vietnamese too, without a reload',
+    headings.length > 0 && !headings.some((h) => /^(CONVERSATIONS|PROJECTS)$/i.test(h)),
+    headings.join(' | '),
+  );
 
   // It has to survive a reload — that is what "per account" means.
   await page.reload({ waitUntil: 'domcontentloaded' });

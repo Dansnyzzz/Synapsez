@@ -296,7 +296,10 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       const chat = await store.getChat(req.user.id, req.params.id);
       if (!chat) return res.status(404).json({ error: 'Chat not found' });
       if (isRunning(chat)) {
-        return res.status(409).json({ error: 'This conversation is running. Stop it first.' });
+        return res.status(409).json({
+          error:
+            'This conversation is still answering, so it cannot be rewritten underneath itself. Press Stop above the composer, then try again.',
+        });
       }
 
       const text = String(req.body?.text || '').trim();
@@ -336,7 +339,10 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
        * its results vanish from what the model sees.
        */
       if (isRunning(chat)) {
-        return res.status(409).json({ error: 'This conversation is running. Stop it first.' });
+        return res.status(409).json({
+          error:
+            'This conversation is still answering, so it cannot be rewritten underneath itself. Press Stop above the composer, then try again.',
+        });
       }
 
       const prefs = await getPrefs(req.user.id);

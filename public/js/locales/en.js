@@ -1200,6 +1200,9 @@ export const en = {
     'Everything made in this project’s conversations. Press one to open it.',
   'proj.outputsEmpty':
     'Nothing made here yet. Documents, spreadsheets, slides and charts the assistant produces in this project collect here.',
+  'proj.viewMemory': 'View memory',
+  'action.delete': 'Delete',
+  'action.sure': 'Sure?',
   'proj.memory': 'Memory',
   'proj.context': 'Context',
   'proj.dropHere': 'Drop a file here, or press to choose one',

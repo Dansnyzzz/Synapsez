@@ -106,6 +106,11 @@ export const api = {
   createProject: (project) => request('POST', '/api/projects', project),
   updateProject: (id, patch) => request('PATCH', `/api/projects/${id}`, patch),
   deleteProject: (id) => request('DELETE', `/api/projects/${id}`),
+  // A note is read into every future conversation, so forgetting one is a real
+  // action rather than tidying. `scope` says which set it comes out of: a
+  // project note and an account note may share a name.
+  forgetNote: (projectId, key, scope) =>
+    request('DELETE', `/api/projects/${projectId}/memory/${encodeURIComponent(key)}?scope=${scope}`),
   addProjectFile: (id, file) => request('POST', `/api/projects/${id}/files`, file),
   deleteProjectFile: (id, fileId) => request('DELETE', `/api/projects/${id}/files/${fileId}`),
 

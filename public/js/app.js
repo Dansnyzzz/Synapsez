@@ -3562,6 +3562,19 @@ $('language').addEventListener('change', async (event) => {
   // need drawing again — this is the screen somebody is most likely to be
   // looking at when they change the language, being the one with nothing on it.
   renderSuggestions();
+  /**
+   * And the sidebar, whose headings are built from script too.
+   *
+   * "Conversations", "Projects", and the group names above them are appended by
+   * `refreshChats` rather than carried on `data-i18n` nodes, so `applyI18n`
+   * cannot reach them: switching to Vietnamese left an English "CONVERSATIONS"
+   * standing over a Vietnamese sidebar until the list happened to refresh for
+   * some other reason. `refreshChats` already counts the language in its redraw
+   * signature, so this repaints rather than merely re-fetching.
+   */
+  refreshChats().catch(() => {
+    /* the list keeps whatever it had; the language is still applied */
+  });
   onboarding.refresh();
   try {
     state.boot.prefs = await api.savePrefs({ language });

@@ -31,6 +31,19 @@ const $ = (id) => document.getElementById(id);
  * the entire phrase rather than a stem the formatter adds an `s` to.
  */
 
+/**
+ * The extension, upper-cased, or a word when there is none.
+ *
+ * A card needs something to be at a glance, and for a produced document that is
+ * its kind: DOCX, XLSX, PDF, HTML. Three letters carry it better than an icon
+ * set that would need one glyph per format nobody has drawn yet.
+ */
+const extensionLabel = (name) => {
+  const dot = String(name || '').lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot + 1) : '';
+  return (ext || 'file').slice(0, 5).toUpperCase();
+};
+
 /** A file's size, for a card. The chars count means nothing for a picture. */
 const fmtBytes = (n) => {
   const bytes = Number(n) || 0;
@@ -261,6 +274,9 @@ export function createProjectPage({
   const send = $('project-page-send');
   const chip = $('project-page-chip');
   const chatList = $('project-page-chats');
+  const outputsHost = $('project-page-outputs');
+  const memorySheet = /** @type {HTMLDialogElement} */ ($('memory-sheet'));
+  const memoryBody = $('memory-sheet-body');
   const side = $('project-page-side');
 
   /** Everything the last load returned: `{ project, files, chats, memory }`. */
@@ -299,8 +315,49 @@ export function createProjectPage({
         )
       : t('proj.noSources');
 
+    drawOutputs(outputs);
     drawChats(chats);
     drawSide(project, files, memory, tasks, outputs);
+  }
+
+  /**
+   * What the project has produced, above the conversations that produced it.
+   *
+   * In the work column rather than the reference column, because the right-hand
+   * side is what the work *reads from* — instructions, memory, the shelf of
+   * sources — and a finished report is not a source, it is the point. Cards
+   * rather than rows for the same reason the shelf uses cards: a column of
+   * filenames tells you a project made four documents and nothing about which
+   * one you want.
+   */
+  function drawOutputs(outputs) {
+    if (!outputs.length) {
+      outputsHost.innerHTML = '';
+      return;
+    }
+
+    outputsHost.innerHTML =
+      `<h2 class="panel-card__name" style="margin:26px 0 12px">${escapeHtml(t('proj.outputs'))}</h2>` +
+      `<div class="shelf">${outputs
+        .map(
+          (file) => `
+        <button class="outcard" type="button" data-output="${escapeHtml(file.id)}"
+                title="${escapeHtml(file.chat_title || '')}">
+          <span class="outcard__kind">${escapeHtml(extensionLabel(file.name))}</span>
+          <span class="outcard__name">${escapeHtml(file.name)}</span>
+          <span class="outcard__meta">${escapeHtml(fmtBytes(file.bytes))} · ${escapeHtml(
+            lastSpoke(file.created_at),
+          )}</span>
+        </button>`,
+        )
+        .join('')}</div>`;
+
+    for (const button of /** @type {NodeListOf<HTMLElement>} */ (
+      outputsHost.querySelectorAll('[data-output]')
+    )) {
+      const file = outputs.find((entry) => entry.id === button.dataset.output);
+      if (file) button.addEventListener('click', () => openFile({ id: file.id, name: file.name }));
+    }
   }
 
   function drawChats(chats) {
@@ -354,6 +411,77 @@ export function createProjectPage({
         </span>
         <span class="ptask__state">${escapeHtml(task.enabled ? t('proj.taskActive') : t('proj.taskPaused'))}</span>
       </button>`;
+  }
+
+  /**
+   * Every note, in full, and the only place one can be thrown away.
+   *
+   * The card on the page is a glance — four lines, each clipped to ninety
+   * characters. This is the rest of it, and the delete is the part that had no
+   * home at all: a note is read into every future conversation, so one that has
+   * gone stale is a wrong fact being repeated, and the only way to be rid of it
+   * was to ask the assistant to call `memory_delete` and hope it picked the
+   * right key. Nobody should have to negotiate about their own notes.
+   *
+   * Both scopes are listed, because both are read here. Deleting an account
+   * note says plainly that it goes everywhere — it is not this project's to
+   * throw away quietly.
+   */
+  function openMemorySheet() {
+    const notes = data.memory || [];
+    memoryBody.innerHTML = notes.length
+      ? `<p class="hint" style="margin:0 0 14px">${t('proj.memoryLede')}</p>` +
+        notes
+          .map(
+            (note) => `
+        <div class="note">
+          <div class="note__head">
+            <span class="note__key">${escapeHtml(note.key)}</span>
+            <span class="note__scope note__scope--${note.scope === 'project' ? 'here' : 'all'}">${escapeHtml(
+              t(note.scope === 'project' ? 'proj.noteHere' : 'proj.noteEverywhere'),
+            )}</span>
+            <span class="note__when">${escapeHtml(ago(note.updatedAt))}</span>
+            <button class="btn btn--ghost btn--small" type="button"
+                    data-forget="${escapeHtml(note.key)}" data-scope="${escapeHtml(note.scope)}">${escapeHtml(
+                      t('action.delete'),
+                    )}</button>
+          </div>
+          <p class="note__body">${escapeHtml(note.content)}</p>
+        </div>`,
+          )
+          .join('')
+      : `<p class="hint">${escapeHtml(t('proj.memoryEmpty'))}</p>`;
+
+    for (const button of /** @type {NodeListOf<HTMLElement>} */ (
+      memoryBody.querySelectorAll('[data-forget]')
+    )) {
+      button.addEventListener('click', async () => {
+        const { forget, scope } = button.dataset;
+        // Two presses, the way everything destructive in this app works: the
+        // first says what is about to happen, the second does it.
+        if (button.dataset.armed !== 'yes') {
+          button.dataset.armed = 'yes';
+          button.textContent = t('action.sure');
+          button.classList.add('is-armed');
+          setTimeout(() => {
+            if (!button.isConnected || button.dataset.armed !== 'yes') return;
+            delete button.dataset.armed;
+            button.textContent = t('action.delete');
+            button.classList.remove('is-armed');
+          }, 4000);
+          return;
+        }
+        try {
+          await api.forgetNote(data.project.id, forget, scope);
+          await reload();
+          openMemorySheet();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+    }
+
+    memorySheet.showModal();
   }
 
   function drawSide(project, files, memory, tasks = [], outputs = []) {
@@ -410,33 +538,11 @@ export function createProjectPage({
                 .join('')
             : `<p class="panel-card__say">${escapeHtml(t('proj.memoryEmpty'))}</p>`
         }
-      </section>
-
-      <!-- And what came out of it.
-           A project shelf listed the documents put *in* and nothing of what was
-           produced, so last Tuesday's report lived only in the transcript that
-           wrote it. The account-wide Artifacts page is the wrong grain for
-           "what has this project made"; this is that list. -->
-      <section class="panel-card">
-        <div class="panel-card__head">
-          <span class="panel-card__name">${escapeHtml(t('proj.outputs'))}</span>
-          ${outputs.length ? `<span class="panel-card__tag">${outputs.length}</span>` : ''}
+        <div class="panel-card__foot">
+          <button class="btn btn--ghost btn--small" id="pp-view-memory" type="button">${escapeHtml(
+            t('proj.viewMemory'),
+          )}</button>
         </div>
-        ${
-          outputs.length
-            ? `<p class="panel-card__say" style="margin-bottom:8px">${escapeHtml(t('proj.outputsLede'))}</p>` +
-              outputs
-                .map(
-                  (file) => `
-              <button class="source source--press" type="button" data-output="${escapeHtml(file.id)}"
-                      title="${escapeHtml(file.chat_title || '')}">
-                <span class="source__name">${escapeHtml(file.name)}</span>
-                <span class="source__size">${escapeHtml(fmtBytes(file.bytes))}</span>
-              </button>`,
-                )
-                .join('')
-            : `<p class="panel-card__say">${escapeHtml(t('proj.outputsEmpty'))}</p>`
-        }
       </section>
 
       <section class="panel-card">
@@ -555,6 +661,8 @@ export function createProjectPage({
       if (editingInstructions) $('pp-instructions').focus();
     });
 
+    $('pp-view-memory')?.addEventListener('click', openMemorySheet);
+
     $('pp-save-instructions')?.addEventListener('click', async () => {
       const button = $('pp-save-instructions');
       button.disabled = true;
@@ -571,14 +679,6 @@ export function createProjectPage({
         button.disabled = false;
       }
     });
-
-    // A document this project produced, opened in the side panel — the same
-    // viewer the transcript's own file cards use, so there is one way to read
-    // an artifact rather than two that drift.
-    for (const button of /** @type {NodeListOf<HTMLElement>} */ (side.querySelectorAll('[data-output]'))) {
-      const file = (data.outputs || []).find((entry) => entry.id === button.dataset.output);
-      if (file) button.addEventListener('click', () => openFile({ id: file.id, name: file.name }));
-    }
 
     for (const button of side.querySelectorAll('[data-open]')) {
       button.addEventListener('click', () => {

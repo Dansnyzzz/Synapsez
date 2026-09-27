@@ -459,6 +459,26 @@ section('a project keeps its own notes, under the account\'s');
   check('and each name only once', new Set(notes.map((n) => n.key)).size === notes.length);
 
   // Tenancy, the same as everything else here.
+  /**
+   * And a note can be thrown away from the page.
+   *
+   * A note is read into every future conversation, so a stale one is a wrong
+   * fact being repeated. Until this route existed the only way to be rid of one
+   * was to ask the assistant to call `memory_delete` and hope it picked the
+   * right key — an odd thing to have to negotiate about your own notes.
+   */
+  const gone = await alice.call('DELETE', `/api/projects/${projectId}/memory/tone?scope=project`);
+  check('a project note can be deleted from the page', gone.status === 200, `${gone.status}`);
+  const afterDelete = await alice.call('GET', `/api/projects/${projectId}`);
+  const tone = (afterDelete.body?.memory || []).find((note) => note.key === 'tone');
+  // The account's note of the same name was shadowed, not replaced — deleting
+  // the project's has to reveal it rather than take both.
+  check('and the account note it was shadowing comes back', tone?.scope === 'account', JSON.stringify(tone));
+  check('with the account wording', tone?.content === 'Plain and short.', tone?.content);
+
+  const missing = await alice.call('DELETE', `/api/projects/${projectId}/memory/never-existed?scope=project`);
+  check('deleting a note that is not there is a 404, not a false success', missing.status === 404, `${missing.status}`);
+
   const mallory = jar();
   await mallory.call('POST', '/api/register', {
     name: 'Mallory',

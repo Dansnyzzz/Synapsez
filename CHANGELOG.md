@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-22 (later) — what the screenshots showed
+
+Branch `fix/project-memory-sheet`. Follow-up to the entry below, made after seeing the screenshots
+that went with the original report.
+
+### Fixed
+
+- **Changing the language left the sidebar's own headings in the old one.** "CONVERSATIONS" stood in
+  English over an otherwise Vietnamese sidebar until the conversation list happened to refresh for
+  some unrelated reason: those headings are appended by script rather than carried on `data-i18n`
+  nodes, so `applyI18n` could not reach them. The same repaint that fixed the four openers now
+  covers them.
+- **"This conversation is running. Stop it first."** said to stop it and not where. Now that a turn
+  survives a refresh, that refusal is met far more often — and at exactly the moment the page has
+  just reloaded, which makes it read as a fault. It names the Stop button above the composer.
+
+### Changed
+
+- **Output moved into the work column**, between the composer and the conversations that produced
+  it, and is drawn as cards rather than a list of filenames. The right-hand column is what the work
+  *reads from* — instructions, memory, the shelf of sources — and a finished report is not a source,
+  it is the point. A project that has made nothing draws no heading at all.
+- **The Memory card has a "View memory" button**, and behind it every note in full with a Delete on
+  each. A note is read into every future conversation, so a stale one is not clutter — it is a wrong
+  fact being repeated, and until now the only way to be rid of one was to ask the assistant to call
+  `memory_delete` and hope it picked the right key. Two presses to delete, like everything else
+  destructive here. Deleting a project note that was shadowing an account note of the same name
+  reveals the account one rather than taking both.
+
 ## 2026-09-22 — a turn that survives a refresh, and a project that remembers its own way of working
 
 Branch `fix/run-survives-refresh`.

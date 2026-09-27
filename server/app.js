@@ -1361,6 +1361,38 @@ export function createApp() {
     }),
   );
 
+  /**
+   * Throw away one remembered note.
+   *
+   * A note is read back into every future conversation, so one that has gone
+   * stale is not clutter — it is a wrong fact being repeated. Until this route
+   * existed the only way to be rid of one was to ask the assistant to call
+   * `memory_delete` and hope it picked the right key, which is an odd thing to
+   * have to negotiate about your own notes.
+   *
+   * `scope` decides which set it comes out of, and it is checked rather than
+   * trusted: a project note and an account note can share a name, and deleting
+   * the wrong one would quietly remove a preference from every other project.
+   * The project is verified against this account first, the same as everywhere
+   * else here — the id comes from a browser.
+   */
+  api.delete(
+    '/projects/:id/memory/:key',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const project = await store.getProject(req.user.id, req.params.id);
+      if (!project) return res.status(404).json({ error: 'No such project.' });
+
+      const account = req.query.scope === 'account';
+      const bucket = account ? 'memory' : `memory:${project.id}`;
+      const notes = (await store.getUserSetting(req.user.id, bucket)) || {};
+      if (!(req.params.key in notes)) return res.status(404).json({ error: 'No such note.' });
+
+      await store.removeUserSettingKey(req.user.id, bucket, req.params.key);
+      res.json({ ok: true });
+    }),
+  );
+
   api.post(
     '/projects/:id/files',
     wrap(async (req, res) => {

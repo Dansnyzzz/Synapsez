@@ -1190,6 +1190,9 @@ export const vi = {
     'Mọi thứ được tạo ra trong các cuộc trò chuyện của dự án này. Bấm để mở.',
   'proj.outputsEmpty':
     'Chưa tạo ra gì ở đây. Tài liệu, bảng tính, slide và biểu đồ trợ lý làm trong dự án này sẽ nằm ở đây.',
+  'proj.viewMemory': 'Xem trí nhớ',
+  'action.delete': 'Xoá',
+  'action.sure': 'Chắc chứ?',
   'proj.memory': 'Trí nhớ',
   'proj.context': 'Ngữ cảnh',
   'proj.dropHere': 'Thả tệp vào đây, hoặc bấm để chọn',

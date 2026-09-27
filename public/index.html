@@ -412,6 +412,13 @@
                   <button class="starter__send" id="project-page-send" type="button" aria-label="Start conversation" disabled data-i18n-aria-label="project.start">↑</button>
                 </div>
               </div>
+              <!-- What this project made, between the composer and the
+                   conversations that produced it. Output belongs in the work
+                   column rather than the reference column beside it: the right
+                   is what the work *reads from* — instructions, memory, the
+                   shelf of sources — and a finished report is not a source, it
+                   is the point. -->
+              <div id="project-page-outputs"></div>
               <div id="project-page-chats"></div>
             </div>
 
@@ -918,6 +925,21 @@
          Two questions, because they are the two that make a project worth
          having: what it is, and what it is for. The second becomes the
          standing instructions every conversation in it starts with. -->
+    <!-- ── What the assistant remembers here ───────────────────────── -->
+    <!-- The card on the project page is a glance: four lines, clipped. This is
+         the whole of it, and the only place a note can be thrown away. A note
+         is read into every future conversation, so one that has gone stale is
+         not merely clutter — it is a wrong fact being repeated, and until this
+         existed the only way to be rid of one was to ask the assistant to
+         delete it and hope it picked the right key. -->
+    <dialog id="memory-sheet" class="sheet sheet--tall" aria-labelledby="memory-sheet-title">
+      <form method="dialog" class="sheet__head">
+        <h2 id="memory-sheet-title" data-i18n="proj.memory">Memory</h2>
+        <button class="icon-btn" value="close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
+      </form>
+      <div class="sheet__body" id="memory-sheet-body"></div>
+    </dialog>
+
     <dialog id="project-form" class="sheet sheet--form" aria-labelledby="project-form-title">
       <form method="dialog" class="sheet__head">
         <h2 id="project-form-title" data-i18n="projForm.title">Create a project</h2>

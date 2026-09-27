@@ -40,6 +40,12 @@ export const vi = {
     'Cuộc trò chuyện này đang chạy ở nơi khác. Hãy đợi, hoặc dừng nó ở đó.',
   'Type something, or attach a file.': 'Hãy gõ gì đó, hoặc đính kèm một tệp.',
   'This conversation is running. Stop it first.': 'Cuộc trò chuyện này đang chạy. Hãy dừng nó trước.',
+  /* Câu cũ chỉ nói "hãy dừng nó trước" mà không nói dừng ở đâu — và giờ lượt
+     chạy sống sót qua cả refresh, nên người dùng gặp câu này đúng lúc trang vừa
+     mở lại và dễ tưởng là hỏng. */
+  'This conversation is still answering, so it cannot be rewritten underneath itself. Press Stop above the composer, then try again.':
+    'Cuộc trò chuyện này vẫn đang trả lời, nên không thể sửa nội dung ngay bên dưới nó. Hãy bấm Dừng ở phía trên ô nhập rồi thử lại.',
+  'No such note.': 'Không có ghi chú này.',
   'A message cannot be empty.': 'Tin nhắn không được để trống.',
   'Message not found': 'Không tìm thấy tin nhắn',
   'There is not enough here yet to be worth folding up.': 'Chưa đủ nội dung để đáng gộp lại.',

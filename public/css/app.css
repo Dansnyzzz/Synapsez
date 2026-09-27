@@ -5957,22 +5957,88 @@ details.block pre {
 }
 .source__size { flex: none; color: var(--text-faint); font-size: 11.5px; }
 
-/* A document this project produced. A row you press, so it has to read as one:
-   the same shape as the source rows above it, plus a hand and a lit edge. */
-.source--press {
-  width: 100%;
-  border: 0;
-  border-bottom: 1px solid var(--line-soft);
-  border-radius: 0;
-  background: none;
+/* ── what a project produced ──────────────────────────────────────────
+ *
+ * Cards, in the work column, for the same reason the shelf of sources uses
+ * cards: a column of filenames tells you a project made four documents and
+ * nothing about which one you want. The kind goes first and large, because
+ * "the spreadsheet" is how somebody remembers a file they made last week.
+ */
+.outcard {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
   color: inherit;
   font: inherit;
-  font-size: 13px;
   text-align: left;
   cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
-.source--press:hover { color: var(--accent); }
-.source--press:hover .source__name { text-decoration: underline; text-underline-offset: 3px; }
+.outcard:hover {
+  border-color: var(--accent-dim);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px -18px var(--accent-glow);
+}
+.outcard__kind {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+.outcard__name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.outcard__meta { color: var(--text-faint); font-size: 11.5px; }
+
+/* ── one remembered note, in full ─────────────────────────────────────
+ *
+ * The card on the project page clips each note to a line; this is the sheet
+ * behind it, where the whole note is readable and where it can be thrown away.
+ * The key is set in the mono face because it is an identifier the assistant
+ * uses, not prose — "house-style" is a handle, and it reads as one.
+ */
+.note {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.note:last-of-type { border-bottom: 0; }
+.note__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+}
+.note__key {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note__when { flex: none; color: var(--text-faint); font-size: 11.5px; }
+.note__body {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+/* Armed: the first press said what would happen, the second does it. */
+.note__head .btn.is-armed {
+  border-color: var(--danger);
+  color: var(--danger);
+}
 
 /* Which memory a note lives in. Two words, because "project" and "account" are
    the whole distinction and a colour alone would not survive being colour-blind
