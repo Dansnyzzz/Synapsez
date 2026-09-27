@@ -98,6 +98,9 @@ export function createPages({
   onRunStarted = () => {},
   /** The sidebar keeps its own list of scheduled tasks; tell it when one changes. */
   onTasksChanged = () => {},
+  /** The rail beside the conversation is taken by a task, and given back. */
+  onPaneOpen = () => {},
+  onPaneClose = () => {},
 }) {
   const page = $('page');
   const title = $('page-title');
@@ -248,7 +251,7 @@ export function createPages({
     const view = views[showing];
     const shown = query ? items.filter((item) => view.matches(item, query)) : items;
     body.innerHTML = view.render(view.sort ? view.sort(shown, order) : shown);
-    view.wire?.();
+    view.wire?.(items);
   }
 
   async function load() {
@@ -502,6 +505,27 @@ export function createPages({
     },
   ];
 
+  /** Suggestions as buttons, each `data-idea` its index. Shared with the workflows shelf. */
+  function ideasHtml(ideas) {
+    return `<div class="ideas">${ideas
+      .map(
+        (idea, i) => `
+        <button class="idea" type="button" data-idea="${i}">
+          <span class="idea__mark">${idea.mark}</span>
+          <span>
+            <span class="idea__name">${escapeHtml(idea.name)}</span>
+            <span class="idea__what">${escapeHtml(idea.what)}</span>
+            <span class="idea__when">🕘 ${escapeHtml(idea.when)}</span>
+          </span>
+        </button>`,
+      )
+      .join('')}</div>`;
+  }
+
+  /** The same, under a "Suggested" heading, for below a list that has things in it. */
+  const suggestedHtml = (ideas) =>
+    `<div class="suggested__label">${escapeHtml(t('pages.suggested'))}</div>${ideasHtml(ideas)}`;
+
   views.scheduled = {
     get title() {
       return t('pages.tasks.title');
@@ -543,22 +567,7 @@ export function createPages({
         : '';
 
       if (!list.length) {
-        return (
-          local +
-          blank(clockMark, t('pages.tasks.none'), '') +
-          '<div class="blank__rule"></div>' +
-          `<div class="ideas">${IDEAS.map(
-            (idea, i) => `
-            <button class="idea" type="button" data-idea="${i}">
-              <span class="idea__mark">${idea.mark}</span>
-              <span>
-                <span class="idea__name">${escapeHtml(idea.name)}</span>
-                <span class="idea__what">${escapeHtml(idea.what)}</span>
-                <span class="idea__when">🕘 ${escapeHtml(idea.when)}</span>
-              </span>
-            </button>`,
-          ).join('')}</div>`
-        );
+        return local + blank(clockMark, t('pages.tasks.none'), '') + '<div class="blank__rule"></div>' + ideasHtml(IDEAS);
       }
 
       return (
@@ -598,14 +607,25 @@ export function createPages({
             task.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'),
           )}</button>
           <button class="task__act" data-drop="${escapeHtml(task.id)}">${escapeHtml(t('pages.tasks.remove'))}</button>
+          <button class="icon-btn task__edit" data-edit="${escapeHtml(task.id)}" type="button"
+                  title="${escapeHtml(t('pages.tasks.edit'))}" aria-label="${escapeHtml(t('pages.tasks.edit'))}">✎</button>
         </div>`,
           )
-          .join('')
+          .join('') +
+        // Still offered once there are tasks: having set up one is no reason
+        // to stop suggesting the next.
+        suggestedHtml(IDEAS)
       );
     },
-    wire: () => {
+    wire: (list = []) => {
       for (const button of body.querySelectorAll('[data-idea]')) {
         button.addEventListener('click', () => openTaskForm(IDEAS[Number(button.dataset.idea)]));
+      }
+      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-edit]'))) {
+        button.addEventListener('click', () => {
+          const task = list.find((x) => x.id === button.dataset.edit);
+          if (task) openTaskForm(null, { task });
+        });
       }
       for (const button of body.querySelectorAll('[data-open]')) {
         button.addEventListener('click', () => {
@@ -641,12 +661,14 @@ export function createPages({
 
   views.workflows = workflowsView({
     blank: (mark, say, note) => blank(mark, say, note),
+    ideasHtml,
+    suggestedHtml,
     body,
     toast,
     openChat,
     onLeave,
     onDescribe,
-    openForm: (id) => wfForm.open(id),
+    openForm: (id, preset) => wfForm.open(id, preset),
     reload: () => load(),
     onRunStarted,
   });
@@ -665,19 +687,35 @@ export function createPages({
   let formProject = null;
   /** What to do once a task is saved — the list that is looking at it reloads. */
   let formDone = null;
+  /** The task being changed, or null when the form is writing a new one. */
+  let formEditing = null;
+  /** The frequency the form opened on, so an untouched one is not re-timed. */
+  let formFrequency = null;
 
-  function openTaskForm(idea = null, { project = null, after = null } = {}) {
+  /** Which menu entry a stored schedule came from; see `fromFrequency` on the server. */
+  const frequencyOf = (cron) => {
+    if (!cron) return 'manual';
+    if (cron.startsWith('hourly')) return 'hourly';
+    if (cron.startsWith('weekdays')) return 'weekdays';
+    if (cron.startsWith('monthly')) return 'monthly';
+    return /^[a-z]{3}\s/.test(cron) ? 'weekly' : 'daily';
+  };
+
+  function openTaskForm(idea = null, { project = null, after = null, task = null } = {}) {
     const sheet = $('task-form');
     formProject = project;
     formDone = after;
+    formEditing = task;
 
-    $('task-form-name').value = idea?.name || '';
-    $('task-form-prompt').value = idea?.prompt || '';
+    $('task-form-title').textContent = t(task ? 'taskForm.editTitle' : 'taskForm.title');
+    $('task-form-name').value = task?.title || idea?.name || '';
+    $('task-form-prompt').value = task?.prompt || idea?.prompt || '';
     // An idea from the list comes with a time, which means it means to repeat;
     // a task somebody is writing themselves starts manual, because that is the
     // one choice that cannot surprise them at three in the morning.
-    sel('task-form-repeat').value = idea?.cron ? 'daily' : 'manual';
-    sel('task-form-policy').value = 'ask';
+    sel('task-form-repeat').value = task ? frequencyOf(task.cron) : idea?.cron ? 'daily' : 'manual';
+    formFrequency = sel('task-form-repeat').value;
+    sel('task-form-policy').value = task?.policy || 'ask';
     sayFrequency();
     sayPolicy();
 
@@ -714,15 +752,22 @@ export function createPages({
     const error = $('task-form-error');
     button.disabled = true;
     try {
-      await api.createTask({
+      const fields = {
         title: $('task-form-name').value.trim(),
         prompt: $('task-form-prompt').value.trim(),
         frequency: sel('task-form-repeat').value,
         policy: sel('task-form-policy').value,
-        projectId: formProject?.id || undefined,
-      });
+      };
+      if (formEditing) {
+        // Choosing a frequency takes today's time of day, so an unchanged one is
+        // left out rather than moving the task to whenever it was saved.
+        if (fields.frequency === formFrequency) delete fields.frequency;
+        await api.updateTask(formEditing.id, fields);
+      } else {
+        await api.createTask({ ...fields, projectId: formProject?.id || undefined });
+      }
       $('task-form').close();
-      toast(t('pages.tasks.scheduled'));
+      toast(t(formEditing ? 'pages.tasks.saved' : 'pages.tasks.scheduled'));
       // Whoever opened the form says what to refresh. The global list reloads
       // itself; a project page reloads its own Scheduled section.
       if (formDone) await formDone();
@@ -752,6 +797,133 @@ export function createPages({
     '<svg viewBox="0 0 40 40" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M23 5H11a3 3 0 0 0-3 3v24a3 3 0 0 0 3 3h18a3 3 0 0 0 3-3V14Z"/><path d="M23 5v9h9"/><path d="m16 21-3 3 3 3M24 21l3 3-3 3" stroke-linecap="round"/></svg>';
 
   /* ── one task, on its own ─────────────────────────────────────── */
+
+  /**
+   * One task's facts and buttons, as markup.
+   *
+   * Drawn in two places: the task's own page, reached from the sidebar, and
+   * the rail beside a conversation, reached from the card that set it up. One
+   * builder so the two cannot drift. Everything is found inside `root`
+   * afterwards rather than by id, because both can be in the document at once.
+   */
+  function taskDetailHtml(task, project, { withEdit }) {
+    return `
+      <div class="taskpage">
+        <div class="taskpage__head">
+          <span class="taskpage__state${task.enabled ? '' : ' is-off'}">${escapeHtml(
+            task.enabled ? t('pages.tasks.active') : t('pages.tasks.paused'),
+          )}</span>
+          <div class="taskpage__acts">
+            ${
+              withEdit
+                ? `<button class="icon-btn" data-task="edit" type="button"
+                           title="${escapeHtml(t('pages.tasks.edit'))}"
+                           aria-label="${escapeHtml(t('pages.tasks.edit'))}">✎</button>`
+                : ''
+            }
+            <button class="icon-btn" data-task="toggle" type="button"
+                    title="${escapeHtml(task.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}"
+                    aria-label="${escapeHtml(task.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}">${
+                      task.enabled ? '⏸' : '▶'
+                    }</button>
+            <button class="icon-btn" data-task="drop" type="button"
+                    title="${escapeHtml(t('pages.tasks.remove'))}"
+                    aria-label="${escapeHtml(t('pages.tasks.remove'))}">🗑</button>
+            <button class="btn btn--primary" data-task="run" type="button">${escapeHtml(t('pages.tasks.runNow'))}</button>
+          </div>
+        </div>
+
+        <dl class="taskpage__facts">
+          <dt>${escapeHtml(t('taskForm.prompt'))}</dt>
+          <dd class="taskpage__prompt">${escapeHtml(task.prompt || '')}</dd>
+
+          ${
+            project
+              ? `<dt>${escapeHtml(t('proj.one'))}</dt>
+                 <dd><button class="taskpage__project" type="button" data-task="project">${escapeHtml(
+                   project.name,
+                 )}</button></dd>`
+              : ''
+          }
+
+          <dt>${escapeHtml(t('pages.tasks.repeats'))}</dt>
+          <dd><strong>${escapeHtml(repeatsAs(task))}</strong></dd>
+
+          <dt>${escapeHtml(t('taskForm.permissions'))}</dt>
+          <dd>${escapeHtml(policyAs(task.policy))}</dd>
+
+          ${
+            task.last_status
+              ? `<dt>${escapeHtml(t('pages.tasks.lastRun'))}</dt>
+                 <dd>${escapeHtml(String(task.last_status).slice(0, 200))}${
+                   task.last_chat
+                     ? ` — <button class="taskpage__project" type="button" data-task="chat">${escapeHtml(
+                         t('pages.tasks.openResult'),
+                       )}</button>`
+                     : ''
+                 }</dd>`
+              : ''
+          }
+        </dl>
+      </div>`;
+  }
+
+  /**
+   * Draw one task into `root` and wire its buttons.
+   *
+   * @param redraw  fetch and draw again, after something on it changed
+   * @param gone    what to show once the task has been deleted
+   */
+  function drawTask(root, task, project, { withEdit, redraw, gone }) {
+    root.innerHTML = taskDetailHtml(task, project, { withEdit });
+    const button = (name) => /** @type {HTMLButtonElement | null} */ (root.querySelector(`[data-task="${name}"]`));
+
+    button('run')?.addEventListener('click', async () => {
+      const run = button('run');
+      run.disabled = true;
+      run.textContent = t('pages.tasks.running');
+      try {
+        const result = await api.runTask(task.id);
+        toast(t('pages.tasks.ranNow'));
+        // Straight into the conversation it wrote: that is the output, and
+        // making somebody go looking for it is the whole failure of a run
+        // nobody watched.
+        if (result?.chatId) {
+          onLeave();
+          openChat(result.chatId);
+          return;
+        }
+        await redraw();
+      } catch (err) {
+        toast(err.message, 'error');
+        run.disabled = false;
+        run.textContent = t('pages.tasks.runNow');
+      }
+    });
+
+    button('edit')?.addEventListener('click', () => openTaskForm(null, { task, after: redraw }));
+
+    button('toggle')?.addEventListener('click', async () => {
+      await api.setTaskEnabled(task.id, !task.enabled);
+      onTasksChanged();
+      await redraw();
+    });
+
+    armed(button('drop'), t('pages.tasks.removeConfirm'), async () => {
+      await api.deleteTask(task.id);
+      onTasksChanged();
+      await gone();
+    });
+
+    button('project')?.addEventListener('click', () => {
+      onLeave();
+      openProject(project.id);
+    });
+    button('chat')?.addEventListener('click', () => {
+      onLeave();
+      openChat(task.last_chat);
+    });
+  }
 
   /**
    * A scheduled task is a thing that will happen, so it gets a page.
@@ -784,103 +956,43 @@ export function createPages({
     newButton.hidden = true;
     $('page-search-open').hidden = true;
 
-    body.innerHTML = `
-      <div class="taskpage">
-        <div class="taskpage__head">
-          <span class="taskpage__state${task.enabled ? '' : ' is-off'}">${escapeHtml(
-            task.enabled ? t('pages.tasks.active') : t('pages.tasks.paused'),
-          )}</span>
-          <div class="taskpage__acts">
-            <button class="icon-btn" id="task-toggle" type="button"
-                    title="${escapeHtml(task.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}"
-                    aria-label="${escapeHtml(task.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}">${
-                      task.enabled ? '⏸' : '▶'
-                    }</button>
-            <button class="icon-btn" id="task-drop" type="button"
-                    title="${escapeHtml(t('pages.tasks.remove'))}"
-                    aria-label="${escapeHtml(t('pages.tasks.remove'))}">🗑</button>
-            <button class="btn btn--primary" id="task-run" type="button">${escapeHtml(t('pages.tasks.runNow'))}</button>
-          </div>
-        </div>
-
-        <dl class="taskpage__facts">
-          <dt>${escapeHtml(t('taskForm.prompt'))}</dt>
-          <dd class="taskpage__prompt">${escapeHtml(task.prompt || '')}</dd>
-
-          ${
-            project
-              ? `<dt>${escapeHtml(t('proj.one'))}</dt>
-                 <dd><button class="taskpage__project" type="button" id="task-project">${escapeHtml(
-                   project.name,
-                 )}</button></dd>`
-              : ''
-          }
-
-          <dt>${escapeHtml(t('pages.tasks.repeats'))}</dt>
-          <dd><strong>${escapeHtml(repeatsAs(task))}</strong></dd>
-
-          <dt>${escapeHtml(t('taskForm.permissions'))}</dt>
-          <dd>${escapeHtml(policyAs(task.policy))}</dd>
-
-          ${
-            task.last_status
-              ? `<dt>${escapeHtml(t('pages.tasks.lastRun'))}</dt>
-                 <dd>${escapeHtml(String(task.last_status).slice(0, 200))}${
-                   task.last_chat
-                     ? ` — <button class="taskpage__project" type="button" id="task-chat">${escapeHtml(
-                         t('pages.tasks.openResult'),
-                       )}</button>`
-                     : ''
-                 }</dd>`
-              : ''
-          }
-        </dl>
-      </div>`;
-
-    $('task-run').addEventListener('click', async () => {
-      const button = /** @type {HTMLButtonElement} */ ($('task-run'));
-      button.disabled = true;
-      button.textContent = t('pages.tasks.running');
-      try {
-        const result = await api.runTask(id);
-        toast(t('pages.tasks.ranNow'));
-        // Straight into the conversation it wrote: that is the output, and
-        // making somebody go looking for it is the whole failure of a run
-        // nobody watched.
-        if (result?.chatId) {
-          onLeave();
-          openChat(result.chatId);
-          return;
-        }
-        await showTask(id);
-      } catch (err) {
-        toast(err.message, 'error');
-        button.disabled = false;
-        button.textContent = t('pages.tasks.runNow');
-      }
-    });
-
-    $('task-toggle').addEventListener('click', async () => {
-      await api.setTaskEnabled(id, !task.enabled);
-      onTasksChanged();
-      await showTask(id);
-    });
-
-    armed($('task-drop'), t('pages.tasks.removeConfirm'), async () => {
-      await api.deleteTask(id);
-      onTasksChanged();
-      await showShelf('scheduled');
-    });
-
-    $('task-project')?.addEventListener('click', () => {
-      onLeave();
-      openProject(project.id);
-    });
-    $('task-chat')?.addEventListener('click', () => {
-      onLeave();
-      openChat(task.last_chat);
+    drawTask(body, task, project, {
+      withEdit: true,
+      redraw: () => showTask(id),
+      gone: () => showShelf('scheduled'),
     });
   }
+
+  /**
+   * One task in the rail beside the conversation.
+   *
+   * What the card in a transcript opens. Replacing the conversation with the
+   * task's page lost the place somebody was reading; the rail keeps both on
+   * screen, and its ✕ gives the rail back.
+   */
+  async function showTaskInPane(id) {
+    const { task, project } = await api.task(id);
+    const pane = $('taskpane');
+    $('taskpane-title').textContent = task.title;
+    // The rail's own pencil does what the one on the task's page does.
+    $('taskpane-edit').onclick = () =>
+      openTaskForm(null, { task, after: () => showTaskInPane(id) });
+    drawTask($('taskpane-body'), task, project, {
+      withEdit: false,
+      redraw: () => showTaskInPane(id),
+      gone: async () => closeTaskPane(),
+    });
+    pane.hidden = false;
+    onPaneOpen();
+  }
+
+  function closeTaskPane() {
+    $('taskpane').hidden = true;
+    $('taskpane-body').innerHTML = '';
+    onPaneClose();
+  }
+
+  $('taskpane-close').addEventListener('click', closeTaskPane);
 
   /** What a task's permission setting means, in the words the form used. */
   function policyAs(policy) {
@@ -958,6 +1070,12 @@ export function createPages({
 
     /** One scheduled task, on its own page. */
     showTask,
+
+    /** One scheduled task, in the rail beside the conversation. */
+    showTaskInPane,
+    closeTaskPane,
+    /** Whether the rail is showing a task — the file viewer asks before taking it. */
+    taskPaneOpen: () => !$('taskpane').hidden,
 
     /**
      * One workflow, opened to change — from a schedule card in a transcript.

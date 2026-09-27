@@ -1471,7 +1471,7 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: false,
     description:
-      'Set work to run later, or every day or week, without anyone watching. It runs as a fresh conversation the user can read afterwards. Use their words for the prompt — the future you has none of this context.',
+      'Set work to run later, or every hour, day, weekday, week or month, without anyone watching. It runs as a fresh conversation the user can read afterwards. Use their words for the prompt — the future you has none of this context.',
     parameters: {
       type: 'object',
       properties: {
@@ -1483,9 +1483,10 @@ export const TOOLS = [
         },
         when: {
           type: 'string',
-          description: 'Time of day as "17:00", or a weekday and time as "fri 17:00".',
+          description:
+            'One of: "17:00" (daily), "fri 17:00" (weekly), "weekdays 08:00" (Mon–Fri), "monthly 1 08:00", or "hourly :00" (every hour at that minute).',
         },
-        repeat: { type: 'boolean', description: 'True to repeat daily or weekly; false to run once. Defaults to true.' },
+        repeat: { type: 'boolean', description: 'True to repeat on that schedule; false to run once. Defaults to true.' },
         confirmed: {
           type: 'boolean',
           description:

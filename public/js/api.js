@@ -125,6 +125,8 @@ export const api = {
   createTask: (task) => request('POST', '/api/tasks', { ...task, tz: localZone() }),
   runDueTasks: () => request('POST', '/api/tasks/run-due'),
   setTaskEnabled: (id, enabled) => request('PATCH', `/api/tasks/${id}`, { enabled }),
+  /** Change a task. Only the fields given are written; the zone rides along for a new frequency. */
+  updateTask: (id, patch) => request('PATCH', `/api/tasks/${id}`, { ...patch, tz: localZone() }),
   deleteTask: (id) => request('DELETE', `/api/tasks/${id}`),
   task: (id) => request('GET', `/api/tasks/${id}`),
   /**

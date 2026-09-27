@@ -58,6 +58,7 @@ const viewer = createViewer({
    * neither of them.
    */
   onOpen: () => {
+    if (pages.taskPaneOpen()) pages.closeTaskPane();
     setDetail(true);
     document.getElementById('app').classList.add('is-filepane');
   },
@@ -2118,6 +2119,14 @@ const pages = createPages({
   // The sidebar keeps its own short list of scheduled work; a task written
   // anywhere has to reach it.
   onTasksChanged: () => refreshTasks().catch(() => {}),
+  // The rail holds one thing at a time, the same rule as a file: open it if it
+  // was closed, and let whatever else was in it stand down.
+  onPaneOpen: () => {
+    viewer.close();
+    setDetail(true);
+    $('app').classList.add('is-taskpane');
+  },
+  onPaneClose: () => $('app').classList.remove('is-taskpane'),
 });
 
 /**
@@ -2278,8 +2287,9 @@ $('messages').addEventListener('click', async (event) => {
       onPage(true);
       pages.editWorkflow(id).catch(failed);
     } else {
-      leavePages();
-      pages.showTask(id).catch(failed);
+      // Beside the conversation, not instead of it: the transcript that set the
+      // task up is what somebody was reading when they pressed its card.
+      pages.showTaskInPane(id).catch(failed);
     }
     return;
   }

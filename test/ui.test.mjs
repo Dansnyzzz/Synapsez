@@ -1683,7 +1683,8 @@ for (const [provider, pattern] of [
     own.length > 0 && own.every((id) => pattern.test(id)),
     `${own.length} models${own.find((id) => !pattern.test(id)) ? `, stray ${own.find((id) => !pattern.test(id))}` : ''}`,
   );
-  check(`${provider} offers Auto alongside them`, view.ids.includes(AUTO), view.ids.slice(0, 3).join(','));
+  // Auto runs on an OpenRouter key, so it is offered only where OpenRouter's models are.
+  check(`${provider} does not offer Auto`, !view.ids.includes(AUTO), view.ids.slice(0, 3).join(','));
   check(`${provider} hides the vendor chips`, view.chipsHidden === true);
 }
 
@@ -1694,6 +1695,8 @@ const library = await page.evaluate(() => ({
   chipsHidden: document.getElementById('vendor-row').hidden,
 }));
 const libraryOwn = library.ids.filter((id) => id !== AUTO);
+check('OpenRouter offers Auto', library.ids.includes(AUTO));
+check('and not the free router a second time as a row', !library.ids.includes('openrouter/openrouter/free'));
 check(
   'OpenRouter shows the library and nothing built in',
   libraryOwn.length > 0 && libraryOwn.every((id) => id.startsWith('openrouter/')),
@@ -3812,11 +3815,17 @@ section('a schedule set up in a conversation is a card that opens it');
   await page.click('#messages .schedcard__pill');
   await page.waitForTimeout(1200);
   const opened = await page.evaluate(() => ({
-    onTask: !document.getElementById('page').hidden && !!document.querySelector('.taskpage'),
-    title: document.querySelector('.page__title')?.textContent || '',
+    inPane: !document.getElementById('taskpane').hidden && !!document.querySelector('#taskpane .taskpage'),
+    conversation: !document.getElementById('thread').hidden,
+    title: document.getElementById('taskpane-title')?.textContent || '',
   }));
-  check('pressing the pill opens the task, where adjusting it happens', opened.onTask, JSON.stringify(opened));
+  // Beside the conversation, not instead of it.
+  check('pressing the pill opens the task in the side panel', opened.inPane, JSON.stringify(opened));
+  check('and the conversation stays on screen', opened.conversation);
   check('the right task', opened.title === 'Bản tin sáng', opened.title);
+
+  await page.click('#taskpane-close');
+  check('its close button gives the panel back', await page.evaluate(() => document.getElementById('taskpane').hidden));
 
   await store.deleteTask(user.id, task.id);
 }
@@ -4606,11 +4615,12 @@ section('a project schedules its own work, and can find its own files');
   const detail = await page.evaluate(() => ({
     title: document.getElementById('page-title')?.textContent,
     state: document.querySelector('.taskpage__state')?.textContent?.trim(),
-    run: !!document.getElementById('task-run'),
-    drop: !!document.getElementById('task-drop'),
+    run: !!document.querySelector('#page-body [data-task="run"]'),
+    drop: !!document.querySelector('#page-body [data-task="drop"]'),
+    edit: !!document.querySelector('#page-body [data-task="edit"]'),
     labels: [...document.querySelectorAll('.taskpage__facts dt')].map((d) => d.textContent),
     prompt: document.querySelector('.taskpage__prompt')?.textContent,
-    project: document.getElementById('task-project')?.textContent,
+    project: document.querySelector('#page-body [data-task="project"]')?.textContent,
     // A page about one thing has nothing to sort and no second one to make.
     quiet: document.getElementById('page-new')?.hidden === true,
   }));
@@ -4622,6 +4632,7 @@ section('a project schedules its own work, and can find its own files');
   check('how often it repeats and what it may do', detail.labels.includes('Repeats') && detail.labels.includes('Permissions'), detail.labels.join(','));
   check('a way to run it now', detail.run);
   check('a way to delete it', detail.drop);
+  check('and a pencil to edit it', detail.edit);
   check('and no shelf furniture on a page about one thing', detail.quiet);
 
   /*

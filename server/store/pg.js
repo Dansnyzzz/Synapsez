@@ -2287,6 +2287,29 @@ export function createPgStore(connectionString) {
       );
       return rows[0] ?? null;
     },
+    /**
+     * Change what a task says or when it runs.
+     *
+     * The allow-list is the boundary: the patch is built from a request body,
+     * and `user_id` or `last_chat` must never be reachable from it. Only the
+     * fields present are written, so a rename leaves the schedule alone.
+     */
+    async updateTask(userId, id, patch) {
+      const columns = { title: 'title', prompt: 'prompt', cron: 'cron', nextRunAt: 'next_run_at', tz: 'tz', policy: 'policy' };
+      const sets = [];
+      const values = [userId, id];
+      for (const [key, column] of Object.entries(columns)) {
+        if (!(key in patch)) continue;
+        values.push(patch[key] ?? null);
+        sets.push(`${column} = $${values.length}`);
+      }
+      if (!sets.length) return this.getTask(userId, id);
+      const rows = await q(
+        `UPDATE scheduled_tasks SET ${sets.join(', ')} WHERE user_id = $1 AND id = $2 RETURNING *`,
+        values,
+      );
+      return rows[0] ?? null;
+    },
     async deleteTask(userId, id) {
       await q('DELETE FROM scheduled_tasks WHERE user_id = $1 AND id = $2', [userId, id]);
     },

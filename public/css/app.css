@@ -1707,7 +1707,9 @@ textarea {
   min-width: 0;
   gap: 7px;
 }
-.topbar__right .chip { min-width: 62px; }
+/* Centred, so a label shorter than the floor — "Auto" — sits in the middle of
+ * the chip rather than against its left edge. */
+.topbar__right .chip { min-width: 62px; justify-content: center; }
 
 /* ── Scrollbars that are not furniture ───────────────────────────
  *
@@ -5628,15 +5630,37 @@ details.block pre {
 
 /* ── a row on a shelf that has things on it ─────────────────── */
 
+/* Glass, the same pane as the suggestions on a new conversation, so a shelf
+   over the sky reads as part of the same surface rather than solid slabs. */
+.task,
+.wf {
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--glass-hi), transparent 46%), var(--tint);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  margin-bottom: 10px;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .task,
+  .wf { background: var(--glass-solid); }
+}
 .task {
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 16px 20px;
-  border: 1px solid var(--line-soft);
-  border-radius: 14px;
-  background: var(--surface);
-  margin-bottom: 10px;
+}
+.task__edit { flex: none; }
+
+/* "Suggested", below a list that already has things in it. */
+.suggested__label {
+  margin: 40px 0 22px;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .task__body { flex: 1; min-width: 0; }
 .task__name { font-size: 14.5px; font-weight: 600; }
@@ -5673,13 +5697,7 @@ details.block pre {
  * reads the same to someone who cannot tell the red one from the green one.
  */
 
-.wf {
-  padding: 16px 20px;
-  border: 1px solid var(--line-soft);
-  border-radius: 14px;
-  background: var(--surface);
-  margin-bottom: 10px;
-}
+.wf { padding: 16px 20px; }
 .wf--off { opacity: 0.62; }
 .wf__head { display: flex; align-items: flex-start; gap: 14px; }
 .wf__head > div:first-child { flex: 1; min-width: 0; }
@@ -6576,6 +6594,51 @@ details.block pre {
 .app.is-filepane .detail__body > .screen { display: none; }
 .app.is-filepane .detail__body { padding: 0; overflow: hidden; }
 
+/* A scheduled task takes the rail the same way a file does. */
+.app.is-taskpane .detail__head,
+.app.is-taskpane .detail__body > .progress,
+.app.is-taskpane .detail__body > .hint,
+.app.is-taskpane .detail__body > .screen { display: none; }
+.app.is-taskpane .detail__body { padding: 0; overflow: hidden; }
+
+.taskpane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+}
+.taskpane[hidden] { display: none; }
+.taskpane__bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 9px 10px 9px 16px;
+  border-bottom: 1px solid var(--glass-line);
+}
+.taskpane__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.taskpane__body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 16px 24px; }
+/* The rail is narrow: the Run button goes under the state rather than
+   pushing it into a wrap. */
+.taskpane .taskpage__head { flex-wrap: wrap; }
+
+@media (max-width: 900px) {
+  .taskpane {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    height: 100dvh;
+  }
+}
+
 .filepane {
   display: flex;
   flex-direction: column;
@@ -6941,6 +7004,10 @@ select:focus-visible {
   align-items: center;
   padding: 3px 11px;
   flex-grow: 0;
+  /* One line, always: squeezed by the buttons beside it, "Đang bật" broke
+     onto two lines inside a pill. */
+  flex-shrink: 0;
+  white-space: nowrap;
   border-radius: 999px;
   border: 1px solid var(--accent-dim);
   color: var(--accent);

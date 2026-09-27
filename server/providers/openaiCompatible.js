@@ -118,6 +118,81 @@ function toMessages(messages, system) {
 
 const REASONING = /^(o\d|gpt-5|.*\bthinking\b)/i;
 
+/**
+ * A tool call written into the reply as text, in the XML shape some models
+ * were trained on — `<dots_function_call><invoke name="list_tasks">…` — rather
+ * than sent on the API's `tool_calls` field.
+ *
+ * Seen from free models behind OpenRouter's router. Left alone, the markup is
+ * printed in the conversation as the answer and nothing runs, so the turn ends
+ * on a line of angle brackets. The opening tag is recognised by shape rather
+ * than by one exact name, because each model family spells its wrapper
+ * differently.
+ */
+const TEXT_CALL_OPEN = /<([a-z_]*function_calls?|tool_calls?|invoke)\b/i;
+
+/**
+ * Withhold streamed text from the first call-shaped tag onwards.
+ *
+ * Text before the tag passes through as it arrives. A `<` near the end of a
+ * fragment is held back briefly, since the tag's name may arrive in the next
+ * fragment. What is withheld is only decided on at the end of the stream —
+ * released as ordinary text if it did not parse into a real call.
+ */
+function textCallFilter() {
+  let held = null;
+  let tail = '';
+  return {
+    push(delta) {
+      if (held !== null) {
+        held += delta;
+        return '';
+      }
+      const s = tail + delta;
+      tail = '';
+      const m = s.match(TEXT_CALL_OPEN);
+      if (m) {
+        held = s.slice(m.index);
+        return s.slice(0, m.index);
+      }
+      const lt = s.lastIndexOf('<');
+      if (lt >= 0 && s.length - lt < 24 && !s.includes('>', lt)) {
+        tail = s.slice(lt);
+        return s.slice(0, lt);
+      }
+      return s;
+    },
+    rest: () => (held ?? '') + tail,
+  };
+}
+
+/**
+ * The calls in withheld text, keeping only tools this request offered.
+ *
+ * A parameter's value is JSON when it parses as JSON — a number, a list — and
+ * the raw string otherwise, which is how these formats write plain text.
+ */
+function parseTextCalls(text, tools) {
+  const offered = new Set((tools || []).map((t) => t.name));
+  const calls = [];
+  const invoke = /<invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/invoke>/g;
+  const param = /<parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/parameter>/g;
+  for (const [, name, body] of text.matchAll(invoke)) {
+    if (!offered.has(name)) continue;
+    const input = {};
+    for (const [, key, raw] of body.matchAll(param)) {
+      const value = raw.trim();
+      try {
+        input[key] = JSON.parse(value);
+      } catch {
+        input[key] = value;
+      }
+    }
+    calls.push({ id: `call_text_${calls.length}_${name}`, name, input });
+  }
+  return calls;
+}
+
 export async function* streamOpenAICompatible({
   apiKey,
   baseURL,
@@ -165,6 +240,8 @@ export async function* streamOpenAICompatible({
   const pending = new Map();
   let usage = null;
   let stopReason = null;
+  // Only when tools were offered: without them, markup in a reply is content.
+  const filter = tools?.length ? textCallFilter() : null;
 
   for await (const chunk of stream) {
     if (chunk.usage) usage = readUsage(chunk.usage);
@@ -173,7 +250,10 @@ export async function* streamOpenAICompatible({
     if (choice.finish_reason) stopReason = choice.finish_reason;
 
     const delta = choice.delta || {};
-    if (delta.content) yield { type: 'text', delta: delta.content };
+    if (delta.content) {
+      const text = filter ? filter.push(delta.content) : delta.content;
+      if (text) yield { type: 'text', delta: text };
+    }
     // OpenRouter surfaces reasoning traces on a non-standard field.
     if (delta.reasoning) yield { type: 'thinking', delta: delta.reasoning };
 
@@ -221,6 +301,19 @@ export async function* streamOpenAICompatible({
     return { id: slot.id || `call_${slot.name}`, name: slot.name, input };
   });
 
+  // Withheld text becomes calls when it parses into ones this request offered
+  // and the model made no real ones; otherwise it was prose after all.
+  const withheld = filter ? filter.rest() : '';
+  if (withheld) {
+    const textCalls = toolCalls.length ? [] : parseTextCalls(withheld, tools);
+    if (textCalls.length) {
+      toolCalls.push(...textCalls);
+      stopReason = 'tool_calls';
+    } else {
+      yield { type: 'text', delta: withheld };
+    }
+  }
+
   yield {
     type: 'done',
     stopReason,
@@ -233,4 +326,4 @@ export async function* streamOpenAICompatible({
 }
 
 /** Exposed so the suite can assert what the OpenAI wire format is handed. */
-export const __testing = { toMessages, readUsage };
+export const __testing = { toMessages, readUsage, textCallFilter, parseTextCalls };

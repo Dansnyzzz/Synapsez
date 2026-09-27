@@ -1437,7 +1437,9 @@ async function workflowWriteTool({ action, id, title, steps, when, repeat, enabl
     if (steps !== undefined) patch.steps = normaliseSteps(steps);
     if (enabled !== undefined) patch.enabled = Boolean(enabled);
     if (when !== undefined) {
-      if (when) Object.assign(patch, parseSchedule(when, { once: repeat === false }));
+      // In the account's zone, as on create — without it "08:00" became 08:00 UTC.
+      const tz = (await getPrefs(userId)).timezone || null;
+      if (when) Object.assign(patch, parseSchedule(when, { once: repeat === false, tz }));
       else Object.assign(patch, { cron: null, nextRunAt: null });
     }
 

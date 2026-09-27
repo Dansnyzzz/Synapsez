@@ -60,8 +60,36 @@ const clip = (text, max = 140) => {
  * @param openForm   the create/edit sheet, owned by the page shell
  * @param reload     re-run the shelf's own load
  */
+/**
+ * Workflows worth starting from, each one a job the tools here can carry out:
+ * several stages where a later one needs what an earlier one found.
+ * Getters, for the same reason as `stepLook` — a language switch must reach them.
+ */
+const IDEAS = ['digest', 'rivals', 'week'].map((key, i) => ({
+  get name() {
+    return t(`wf.idea.${key}.name`);
+  },
+  get what() {
+    return t(`wf.idea.${key}.what`);
+  },
+  get when() {
+    return t(`wf.idea.${key}.when`);
+  },
+  get steps() {
+    return [1, 2, 3].map((n) => t(`wf.idea.${key}.s${n}`));
+  },
+  cron: ['08:00', 'mon 09:00', 'fri 16:00'][i],
+  mark: ['☀', '◎', '▤'][i],
+}));
+
+/**
+ * @param ideasHtml     the shell's suggestion buttons, shared with scheduled tasks
+ * @param suggestedHtml the same under a "Suggested" heading
+ */
 export function workflowsView({
   blank,
+  ideasHtml = /** @type {(ideas: object[]) => string} */ (() => ''),
+  suggestedHtml = /** @type {(ideas: object[]) => string} */ (() => ''),
   body,
   toast,
   openChat,
@@ -131,14 +159,11 @@ export function workflowsView({
 
     render: (list) => {
       if (!list.length) {
-        return blank(
-          workflowMark,
-          t('wf.none'),
-          t('wf.noneHint'),
-        );
+        return blank(workflowMark, t('wf.none'), t('wf.noneHint')) + '<div class="blank__rule"></div>' + ideasHtml(IDEAS);
       }
 
-      return list
+      return (
+        list
         .map((wf) => {
           const run = wf.lastRun;
           const steps = wf.steps || [];
@@ -190,7 +215,10 @@ export function workflowsView({
           <ol class="wf__steps">${trail}</ol>
         </div>`;
         })
-        .join('');
+        .join('') +
+        // Still offered once there are workflows, as scheduled tasks do.
+        suggestedHtml(IDEAS)
+      );
     },
 
     wire: () => {
@@ -251,6 +279,10 @@ export function workflowsView({
         button.addEventListener('click', () => openForm(button.dataset.edit));
       }
 
+      for (const button of body.querySelectorAll('[data-idea]')) {
+        button.addEventListener('click', () => openForm(null, IDEAS[Number(button.dataset.idea)]));
+      }
+
       for (const button of body.querySelectorAll('[data-toggle]')) {
         button.addEventListener('click', async () => {
           await api.updateWorkflow(button.dataset.toggle, { enabled: button.dataset.on !== 'true' });
@@ -299,9 +331,10 @@ export function workflowForm({ toast, reload }) {
 
   const sheet = () => $('workflow-form');
 
-  async function open(id = null) {
+  /** @param preset a suggestion to start from: `{ name, steps, cron }` */
+  async function open(id = null, preset = null) {
     editing = id;
-    let workflow = null;
+    let workflow = preset ? { title: preset.name, steps: preset.steps.map((instruction) => ({ instruction })), cron: preset.cron } : null;
 
     if (id) {
       try {
@@ -312,7 +345,7 @@ export function workflowForm({ toast, reload }) {
       }
     }
 
-    $('workflow-form-title').textContent = workflow ? t('wf.formEdit') : t('wf.formCreate');
+    $('workflow-form-title').textContent = editing ? t('wf.formEdit') : t('wf.formCreate');
     $('workflow-form-name').value = workflow?.title || '';
     $('workflow-form-steps').value = (workflow?.steps || []).map((s) => s.instruction).join('\n');
     $('workflow-form-when').value = workflow?.cron || '';

@@ -578,6 +578,49 @@ section('work that already exists is not quietly duplicated');
   check('and the update redraws its card', updatedResult.schedule?.id === existing.id && updatedResult.schedule?.existing === false);
 }
 
+section('a run whose conversation was deleted still runs');
+{
+  // The run's conversation is created empty and hidden from the sidebar; one
+  // deleted before the next nudge failed step one with "Chat not found".
+  const workflow = await store.createWorkflow(aliceId, {
+    id: 'wf-lost-chat',
+    title: 'Lost its conversation',
+    steps: normaliseSteps(['ask the model something']),
+    nextRunAt: null,
+  });
+  const run = await startRun(aliceId, workflow);
+  await store.deleteChat(aliceId, run.chat_id);
+
+  const after = await advanceRun(run, { deadline: Date.now() + 60_000 });
+  check('the conversation is made again', !!(await store.getChat(aliceId, run.chat_id)));
+  check('and the step does not fail for want of it', !/chat not found/i.test(after.steps[0].error || ''), after.steps[0].error?.slice(0, 60));
+}
+
+section('a scheduled task can be edited');
+{
+  const made = await alice.call('POST', '/api/tasks', { title: 'Morning', prompt: 'Say hello.', when: '09:00', tz: 'Asia/Ho_Chi_Minh' });
+  const id = made.body?.task?.id;
+  check('made one to edit', made.status === 201 && !!id, `${made.status}`);
+
+  const renamed = await alice.call('PATCH', `/api/tasks/${id}`, { title: 'Morning brief', prompt: 'Say good morning.', policy: 'guarded' });
+  const task = renamed.body?.task;
+  check('its name, instructions and permissions change', task?.title === 'Morning brief' && task?.prompt === 'Say good morning.' && task?.policy === 'guarded');
+  check('and its schedule is left alone when no frequency is sent', task?.cron === '09:00', task?.cron);
+  check('it stays enabled', task?.enabled === true);
+
+  const hourly = await alice.call('PATCH', `/api/tasks/${id}`, { frequency: 'hourly', tz: 'Asia/Ho_Chi_Minh' });
+  check('a new frequency re-times it', /^hourly :\d\d$/.test(hourly.body?.task?.cron || ''), hourly.body?.task?.cron);
+
+  const empty = await alice.call('PATCH', `/api/tasks/${id}`, { prompt: '   ' });
+  check('an empty instruction is refused', empty.status === 400, `${empty.status}`);
+
+  const paused = await alice.call('PATCH', `/api/tasks/${id}`, { enabled: false });
+  check('pause still works through the same route', paused.body?.task?.enabled === false);
+
+  const wrong = await alice.call('PATCH', '/api/tasks/nope', { title: 'x' });
+  check('an unknown task is a 404', wrong.status === 404, `${wrong.status}`);
+}
+
 section('deleting');
 {
   const gone = await alice.call('DELETE', `/api/workflows/${workflowId}`);

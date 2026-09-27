@@ -687,6 +687,19 @@
             <div class="filepane__body scroll-quiet" id="viewer-body"></div>
             <div class="viewer__sheets" id="viewer-sheets" hidden></div>
           </section>
+
+          <!-- ── A scheduled task, beside the conversation ──────────────
+               Opened from the card in the transcript that set it up, so the
+               conversation stays where it was instead of being replaced by
+               the task's page. The pencil opens the same form as everywhere. -->
+          <section class="taskpane" id="taskpane" hidden>
+            <header class="taskpane__bar">
+              <span class="taskpane__name" id="taskpane-title"></span>
+              <button class="icon-btn" id="taskpane-edit" type="button" title="Edit" aria-label="Edit" data-i18n-title="pages.tasks.edit" data-i18n-aria-label="pages.tasks.edit">✎</button>
+              <button class="icon-btn" id="taskpane-close" type="button" title="Close" aria-label="Close" data-i18n-title="action.close" data-i18n-aria-label="action.close">✕</button>
+            </header>
+            <div class="taskpane__body scroll-quiet" id="taskpane-body"></div>
+          </section>
         </div>
       </aside>
     </div>
@@ -1112,6 +1125,7 @@
 
     <dialog id="task-form" class="sheet sheet--form" aria-labelledby="task-form-title">
       <form method="dialog" class="sheet__head">
+        <!-- The form rewrites this each time it opens, to "Edit" when editing. -->
         <h2 id="task-form-title" data-i18n="taskForm.title">Create scheduled task</h2>
         <button class="icon-btn" value="close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
       </form>

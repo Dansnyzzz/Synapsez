@@ -228,6 +228,33 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
   let cursor = Number(run.cursor) || 0;
   const modelId = workflow.model || null;
 
+  /**
+   * The conversation a run writes into can be gone by the time a step starts.
+   *
+   * It is created empty, and the sidebar hides empty conversations only while
+   * nothing is running in them — so a run created by the clock and advanced by
+   * a later nudge can find that somebody deleted it in between. That used to
+   * fail the step with "Chat not found", which reads as the workflow being
+   * broken. The conversation is only where the output goes, so it is made
+   * again under the same id, and what earlier steps concluded is written into
+   * it so the next step still sees their results.
+   */
+  if (run.chat_id && !(await store.getChat(user.id, run.chat_id))) {
+    const prefs = await getPrefs(user.id);
+    await store.createChat(user.id, { id: run.chat_id, title: workflow.title, model: workflow.model || prefs.defaultModel });
+    const earlier = state
+      .slice(0, cursor)
+      .map((s, i) => (s.summary ? `Step ${i + 1}: ${s.summary}` : ''))
+      .filter(Boolean);
+    if (earlier.length) {
+      await store.appendMessage(user.id, run.chat_id, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        text: `Results of the earlier steps:\n\n${earlier.join('\n\n')}`,
+      });
+    }
+  }
+
   while (cursor < definition.length) {
     // Checked before starting, never during: an agent turn cannot be stopped
     // half way, so the honest thing is not to begin one we cannot afford.

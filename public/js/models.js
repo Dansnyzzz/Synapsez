@@ -40,6 +40,9 @@ const relative = (iso) => {
   return t('models.yearsAgo', { n: Math.round(days / 365) });
 };
 
+/** The library row Auto runs on; see AUTO_ROUTER in server/autoPick.js. */
+const AUTO_ROUTER_ID = 'openrouter/openrouter/free';
+
 export function createModelBrowser({ onPick }) {
   const dialog = document.getElementById('models');
   const searchInput = document.getElementById('model-search');
@@ -99,7 +102,9 @@ export function createModelBrowser({ onPick }) {
 
     // Context and price are client-side because they come from the parsed query
     // rather than the filter controls.
-    let models = isLibrary(provider) ? data.models : [];
+    // The free router is already the Auto card at the top; listing it again as
+    // an ordinary row would offer the same thing twice under two names.
+    let models = isLibrary(provider) ? data.models.filter((m) => m.id !== AUTO_ROUTER_ID) : [];
     // 'all' shows every aggregator's models together; a specific one shows only
     // its own — the library holds both OpenRouter and OrcaRouter now.
     if (provider !== 'all' && isLibrary(provider)) models = models.filter((m) => m.provider === provider);
@@ -236,7 +241,9 @@ export function createModelBrowser({ onPick }) {
    *
    * It is a real, selectable id (`auto`) resolved per turn to the best free
    * model the account can run, so it goes through the same click handler as any
-   * card. Hidden only on the Paid tab, where a free-only choice would be noise.
+   * card. Shown only where OpenRouter's models are — All and OpenRouter — since
+   * it runs on an OpenRouter key, and hidden on the Paid tab, where a free-only
+   * choice would be noise.
    */
   function autoCardHtml() {
     return (
@@ -251,7 +258,7 @@ export function createModelBrowser({ onPick }) {
 
   function renderResults(builtin, models, tier, provider) {
     const sections = [];
-    if (tier !== 'paid') sections.push(autoCardHtml());
+    if (tier !== 'paid' && (provider === 'all' || provider === 'openrouter')) sections.push(autoCardHtml());
 
     if (!builtin.length && !models.length) {
       // Say *why* it is empty. "Anthropic + Free" matches nothing for a real

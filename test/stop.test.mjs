@@ -224,6 +224,34 @@ section('an unattended run has to earn the word ok');
   check('as is one that never reported an ending at all', unattendedStatus('ok', null, false) === 'ok');
 }
 
+section('a tool call written as text is run, not printed');
+{
+  const { textCallFilter, parseTextCalls } = openai;
+  const tools = [{ name: 'list_tasks' }, { name: 'schedule_task' }];
+
+  // What a free model behind OpenRouter's router actually sent, split across
+  // fragments the way a stream delivers it.
+  const filter = textCallFilter();
+  const shown = ['Let me check.\n<dot', 's_function_call>\n<invoke name="list_tasks">\n', '</invoke>\n</dots_function_call>']
+    .map((d) => filter.push(d))
+    .join('');
+  check('the prose before it still streams', shown === 'Let me check.\n', JSON.stringify(shown));
+  const calls = parseTextCalls(filter.rest(), tools);
+  check('the markup becomes a call', calls.length === 1 && calls[0].name === 'list_tasks');
+
+  const withArgs = parseTextCalls(
+    '<function_calls><invoke name="schedule_task"><parameter name="title">Brief</parameter><parameter name="repeat">true</parameter></invoke></function_calls>',
+    tools,
+  );
+  check('its parameters are read, JSON where JSON', withArgs[0]?.input.title === 'Brief' && withArgs[0]?.input.repeat === true);
+
+  check('a tool this request did not offer is not run', parseTextCalls('<invoke name="delete_everything"></invoke>', tools).length === 0);
+
+  const prose = textCallFilter();
+  const said = prose.push('Use a <b>bold</b> tag, and 3 < 4.');
+  check('ordinary angle brackets pass through', said + prose.rest() === 'Use a <b>bold</b> tag, and 3 < 4.', said);
+}
+
 console.log(
   failures === 0
     ? '\n\x1b[32mAll stop-reason checks passed.\x1b[0m\n'

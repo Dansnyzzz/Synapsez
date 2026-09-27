@@ -1589,7 +1589,36 @@ export function createApp() {
   api.patch(
     '/tasks/:id',
     wrap(async (req, res) => {
-      const task = await getStore().setTaskEnabled(req.user.id, req.params.id, !!req.body?.enabled);
+      const store = getStore();
+      const b = req.body || {};
+
+      /**
+       * An edit, as well as pause and resume.
+       *
+       * The frequency is re-timed only when it is sent, and the form sends it
+       * only when it was changed: choosing a frequency takes the time of day
+       * from now, so re-sending an untouched one would quietly move a 09:00
+       * task to whenever it was last saved.
+       */
+      const patch = {};
+      try {
+        if (b.title !== undefined) patch.title = String(b.title).trim() || 'Scheduled task';
+        if (b.prompt !== undefined) {
+          patch.prompt = String(b.prompt).trim();
+          if (!patch.prompt) return res.status(400).json({ error: 'Say what the task should do.' });
+        }
+        if (b.policy !== undefined) patch.policy = TASK_POLICIES.has(String(b.policy)) ? String(b.policy) : null;
+        if (b.frequency !== undefined) {
+          const tz = validZone(b.tz) ? b.tz : null;
+          Object.assign(patch, fromFrequency(b.frequency, { tz }), { tz });
+        }
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+
+      let task = Object.keys(patch).length ? await store.updateTask(req.user.id, req.params.id, patch) : null;
+      if (b.enabled !== undefined) task = await store.setTaskEnabled(req.user.id, req.params.id, !!b.enabled);
+      else if (!Object.keys(patch).length) task = await store.getTask(req.user.id, req.params.id);
       if (!task) return res.status(404).json({ error: 'Task not found' });
       res.json({ task });
     }),
