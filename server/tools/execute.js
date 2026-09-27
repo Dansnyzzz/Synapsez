@@ -184,6 +184,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
  *   file?: any,
  *   widget?: any,
  *   shot?: any,
+ *   schedule?: any,
  * }} ToolResult
  */
 
@@ -387,6 +388,10 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           content: String(result.content ?? ''),
           file: result.file,
           widget: result.widget,
+          // Standing work just set up (or found already set up) — drawn as a
+          // card with a way into it. The third field this return has had to
+          // learn; see the note on `widget` above for what forgetting one costs.
+          schedule: result.schedule,
         };
       }
       return { isError: false, content: String(result ?? '') };

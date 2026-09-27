@@ -484,19 +484,42 @@ section('work that already exists is not quietly duplicated');
   const workflowWrite = CLOUD_IMPLEMENTATIONS.workflow_write;
   const ctx = { userId: aliceId };
 
-  const first = await scheduleTask(
+  // Both tools now return `{ content, schedule }`: the sentence the model reads
+  // and the card the transcript draws. `said` is the sentence.
+  const said = (result) => String(result?.content ?? result);
+
+  const firstResult = await scheduleTask(
     { title: 'Monday news summary', prompt: 'Summarise the news', when: 'mon 08:00' },
     ctx,
   );
+  const first = said(firstResult);
   check('the first one is created', /Scheduled/.test(first), first.slice(0, 60));
+
+  /**
+   * And it comes with a card, not only a sentence.
+   *
+   * The sentence scrolled away and led nowhere; the card says how often, in
+   * which zone, when next — and carries the id its pill opens.
+   */
+  const card = firstResult.schedule;
+  check('a created task carries a card for the transcript', card?.kind === 'task' && !!card?.id, JSON.stringify(card));
+  check('with the schedule it runs on', card?.cron === 'mon 08:00', card?.cron);
+  check('when it next fires', Number.isFinite(new Date(card?.nextRunAt).getTime()), card?.nextRunAt);
+  check('and not marked as a duplicate', card?.existing === false);
+  check('the model is told the card is there, so it does not recite it', /can see a card/.test(first), first);
 
   // The same job, described at a different length — which is how somebody
   // actually asks for it the second time, and what a title match on equality
   // would sail straight past.
-  const again = await scheduleTask(
+  const againResult = await scheduleTask(
     { title: 'Monday news summary for my field', prompt: 'Summarise the news', when: 'mon 09:00' },
     ctx,
   );
+  const again = said(againResult);
+  // "Show the old one": the card drawn above the question is the existing task,
+  // marked as such, so the person can see what they are being asked about.
+  check('the duplicate shows the existing one as a card', againResult.schedule?.id === card?.id, JSON.stringify(againResult.schedule));
+  check('marked as already there rather than just made', againResult.schedule?.existing === true);
   check('asking again creates nothing', /already exists, so nothing was created/.test(again), again.slice(0, 80));
   check('and shows the user what is already there', /Monday news summary/.test(again));
   check('with the schedule it runs on', /repeats mon 08:00/.test(again), again);
@@ -511,17 +534,18 @@ section('work that already exists is not quietly duplicated');
 
   // Something genuinely different is not a duplicate, and must not be treated
   // as one — a guard that fires on unrelated work is worse than none.
-  const different = await scheduleTask(
-    { title: 'Invoice chase', prompt: 'Chase unpaid invoices', when: 'fri 17:00' },
-    ctx,
+  const different = said(
+    await scheduleTask({ title: 'Invoice chase', prompt: 'Chase unpaid invoices', when: 'fri 17:00' }, ctx),
   );
   check('unrelated work is created as normal', /Scheduled/.test(different), different.slice(0, 60));
 
   // And the user is allowed to want two. `confirmed` is the model reporting
   // that it asked and was told to go ahead.
-  const both = await scheduleTask(
-    { title: 'Monday news summary', prompt: 'Summarise the news', when: 'mon 17:00', confirmed: true },
-    ctx,
+  const both = said(
+    await scheduleTask(
+      { title: 'Monday news summary', prompt: 'Summarise the news', when: 'mon 17:00', confirmed: true },
+      ctx,
+    ),
   );
   check('a second one is created once the user has chosen it', /Scheduled/.test(both), both.slice(0, 60));
   check(
@@ -531,19 +555,27 @@ section('work that already exists is not quietly duplicated');
 
   // The same guard on the other tool.
   await workflowWrite({ action: 'create', title: 'Quarterly board pack', steps: ['Pull the numbers'] }, ctx);
-  const wfAgain = await workflowWrite(
+  const wfAgainResult = await workflowWrite(
     { action: 'create', title: 'Quarterly board pack', steps: ['Pull the numbers', 'Chart them'] },
     ctx,
   );
+  const wfAgain = said(wfAgainResult);
   check('a repeated workflow is refused too', /already exists, so nothing was created/.test(wfAgain), wfAgain.slice(0, 80));
   check('naming the one that is there', /Quarterly board pack/.test(wfAgain));
+  // A stored step is `{ instruction }`; listing it by `prompt` printed
+  // "[object Object]" for every step the existing workflow had.
+  check('listing its steps as words', /1\. Pull the numbers/.test(wfAgain) && !/object Object/.test(wfAgain), wfAgain);
   check('and pointing at update rather than a second create', /action: "update"/.test(wfAgain));
+  check('with the existing workflow as the card', wfAgainResult.schedule?.kind === 'workflow' && wfAgainResult.schedule?.existing === true);
+  check('saying how many steps it has', wfAgainResult.schedule?.steps === 1, `${wfAgainResult.schedule?.steps}`);
 
   // Updating an existing workflow is not a create and must never be blocked by
   // this: the guard sits after the delete and update branches for that reason.
   const existing = (await store.listWorkflows(aliceId)).find((w) => w.title === 'Quarterly board pack');
-  const updated = await workflowWrite({ action: 'update', id: existing.id, title: 'Quarterly board pack' }, ctx);
+  const updatedResult = await workflowWrite({ action: 'update', id: existing.id, title: 'Quarterly board pack' }, ctx);
+  const updated = said(updatedResult);
   check('updating one is untouched by the guard', /^Updated/.test(updated), updated.slice(0, 60));
+  check('and the update redraws its card', updatedResult.schedule?.id === existing.id && updatedResult.schedule?.existing === false);
 }
 
 section('deleting');

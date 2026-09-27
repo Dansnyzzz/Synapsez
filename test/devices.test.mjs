@@ -39,10 +39,18 @@ const { createApp } = await import('../server/app.js');
 const { initStore } = await import('../server/store/index.js');
 const store = await initStore();
 
-const PORT = 5199;
-const server = createApp().listen(PORT);
+/**
+ * Whatever port is free, on loopback only.
+ *
+ * This was a fixed 5199 on every interface, and Windows hands out ports in that
+ * range as the *source* of ordinary outgoing connections — an editor talking to
+ * GitHub was holding it, and the suite failed with EADDRINUSE before a single
+ * check ran, twice in a row, with nothing wrong in the code. Port 0 asks the
+ * operating system for one nobody is using; nothing here needs to know which.
+ */
+const server = createApp().listen(0, '127.0.0.1');
 await new Promise((r) => server.once('listening', r));
-const base = `http://127.0.0.1:${PORT}`;
+const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
 
 let failures = 0;
 const section = (name) => console.log(`\n[1m${name}[0m`);

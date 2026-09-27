@@ -40,6 +40,32 @@ export const humanSize = (bytes) =>
  */
 export const counted = (n, key) => (n === 1 ? t(`${key}One`) : t(key)).replace('{n}', String(n));
 
+/**
+ * A task's recurrence, in words.
+ *
+ * The `cron` column holds what the scheduler reads — `hourly :30`, `weekdays
+ * 09:00`, `mon 16:00` — which is exactly the vocabulary a person should never
+ * be shown. Null is not "unknown": it is a task that only ever runs when the
+ * button is pressed, and saying so is the whole point of the manual option.
+ *
+ * Here rather than on the project page it was written for, because the
+ * transcript's schedule card needs the same words — and the transcript
+ * importing the project page would pull a whole screen in for one function.
+ */
+export function repeatsAs(task) {
+  const cron = String(task?.cron || '').trim();
+  if (!cron) return t('freq.manualOnly');
+  const hourly = /^hourly\s*:?(\d\d)$/.exec(cron);
+  if (hourly) return t('freq.everyHourAt').replace('{m}', hourly[1]);
+  const weekdays = /^weekdays\s+(.+)$/.exec(cron);
+  if (weekdays) return t('freq.everyWeekdayAt').replace('{time}', weekdays[1]);
+  const monthly = /^monthly\s+(\d{1,2})\s+(.+)$/.exec(cron);
+  if (monthly) return t('freq.everyMonthOn').replace('{day}', monthly[1]).replace('{time}', monthly[2]);
+  const weekly = /^([a-z]{3})\s+(.+)$/.exec(cron);
+  if (weekly) return t('freq.everyWeekOn').replace('{day}', t(`day.${weekly[1]}`)).replace('{time}', weekly[2]);
+  return t('freq.everyDayAt').replace('{time}', cron);
+}
+
 /** A File as base64, without the `data:…;base64,` preamble the server does not want. */
 export function readAsBase64(file) {
   return new Promise((resolve, reject) => {

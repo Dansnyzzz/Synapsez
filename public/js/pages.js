@@ -955,5 +955,16 @@ export function createPages({
 
     /** One scheduled task, on its own page. */
     showTask,
+
+    /**
+     * One workflow, opened to change — from a schedule card in a transcript.
+     *
+     * The shelf first, so closing the form leaves somebody among their
+     * workflows rather than back in a conversation with a sheet gone from it.
+     */
+    async editWorkflow(id) {
+      showShelf('workflows');
+      await wfForm.open(id);
+    },
   };
 }

@@ -1217,6 +1217,41 @@ const askBeforeDuplicating = (kind, summary) =>
   ].join('\n');
 
 /**
+ * What the transcript draws for standing work that was just set up — or that
+ * turned out to be set up already.
+ *
+ * A sentence was all a schedule ever produced: "Scheduled 'Monday summary' for
+ * mon 08:00. First run: …". Correct, and gone the moment it scrolled away, with
+ * no way from there to the thing itself — changing the time meant finding the
+ * Scheduled shelf, finding the row, and opening it. The card says the same
+ * facts at a glance (how often, which zone, when next) and ends in a pill that
+ * opens the task, which is where adjusting it happens.
+ *
+ * Carried on the tool result like `file` and `widget`, so reopening the
+ * conversation redraws it from the transcript. `existing` marks the duplicate
+ * case: the card is then the thing the model is asking about, drawn above the
+ * question so the person can see what they are being asked to keep or change.
+ */
+function scheduleCard(kind, row, { existing = false } = {}) {
+  return {
+    kind,
+    id: row.id,
+    title: row.title,
+    cron: row.cron || null,
+    nextRunAt: row.next_run_at || null,
+    tz: row.tz || null,
+    enabled: row.enabled !== false,
+    steps: kind === 'workflow' && Array.isArray(row.steps) ? row.steps.length : undefined,
+    existing,
+  };
+}
+
+/** Said to the model beside every card, so it confirms rather than recites. */
+const CARD_SHOWN =
+  'The user can see a card with these details and a button that opens it to adjust, so confirm in one ' +
+  'sentence rather than listing them again.';
+
+/**
  * "17:00" means the user's five o'clock, not the server's.
  *
  * The HTTP routes have always taken the zone from the browser. This tool had
@@ -1244,17 +1279,20 @@ async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed 
     if (clash) {
       const when_ = clash.cron ? `repeats ${clash.cron}` : 'runs once';
       const next = clash.next_run_at ? new Date(clash.next_run_at).toISOString() : 'unknown';
-      return askBeforeDuplicating(
-        'scheduled task',
-        [
-          `- "${clash.title}" — id ${clash.id}`,
-          `    ${when_}${clash.enabled ? '' : ' (paused)'}, next run ${next}`,
-          `    it asks: ${String(clash.prompt || '').replace(/\s+/g, ' ').slice(0, 200)}`,
-          '',
-          'To change it rather than add another, call cancel_task with that id and schedule_task again, or',
-          'leave it alone entirely. To add a second one, call schedule_task again with confirmed: true.',
-        ].join('\n'),
-      );
+      return {
+        schedule: scheduleCard('task', clash, { existing: true }),
+        content: askBeforeDuplicating(
+          'scheduled task',
+          [
+            `- "${clash.title}" — id ${clash.id}`,
+            `    ${when_}${clash.enabled ? '' : ' (paused)'}, next run ${next}`,
+            `    it asks: ${String(clash.prompt || '').replace(/\s+/g, ' ').slice(0, 200)}`,
+            '',
+            'To change it rather than add another, call cancel_task with that id and schedule_task again, or',
+            'leave it alone entirely. To add a second one, call schedule_task again with confirmed: true.',
+          ].join('\n'),
+        ),
+      };
     }
   }
 
@@ -1274,9 +1312,12 @@ async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed 
 
   const at = new Date(task.next_run_at).toLocaleString('en-GB', tz ? { timeZone: tz } : undefined);
   const where = tz ? ` (${tz})` : ' — server time, because this account has not told us its timezone';
-  return cron
-    ? `Scheduled "${title}" for ${cron}. First run: ${at}${where}.`
-    : `Scheduled "${title}" to run once at ${at}${where}.`;
+  return {
+    schedule: scheduleCard('task', task),
+    content: cron
+      ? `Scheduled "${title}" for ${cron}. First run: ${at}${where}. ${CARD_SHOWN}`
+      : `Scheduled "${title}" to run once at ${at}${where}. ${CARD_SHOWN}`,
+  };
 }
 
 async function listTasksTool(_input, { userId }) {
@@ -1356,7 +1397,10 @@ async function workflowWriteTool({ action, id, title, steps, when, repeat, enabl
 
     const updated = await store.updateWorkflow(userId, id, patch);
     const schedule = updated.cron ? `repeats ${updated.cron}` : 'runs by hand';
-    return `Updated "${updated.title}" — ${updated.steps.length} step(s), ${schedule}${updated.enabled ? '' : ', paused'}.`;
+    return {
+      schedule: scheduleCard('workflow', updated),
+      content: `Updated "${updated.title}" — ${updated.steps.length} step(s), ${schedule}${updated.enabled ? '' : ', paused'}. ${CARD_SHOWN}`,
+    };
   }
 
   /*
@@ -1369,17 +1413,26 @@ async function workflowWriteTool({ action, id, title, steps, when, repeat, enabl
     const clash = findDuplicate(await store.listWorkflows(userId), title, (row) => row.title);
     if (clash) {
       const steps = Array.isArray(clash.steps) ? clash.steps : [];
-      return askBeforeDuplicating(
-        'workflow',
-        [
-          `- "${clash.title}" — id ${clash.id}`,
-          `    ${clash.cron ? `repeats ${clash.cron}` : 'runs by hand'}${clash.enabled ? '' : ' (paused)'}, ${steps.length} step(s)`,
-          ...steps.slice(0, 6).map((step, i) => `    ${i + 1}. ${String(step?.prompt || step || '').replace(/\s+/g, ' ').slice(0, 120)}`),
-          '',
-          'To change it rather than add another, call workflow_write with action: "update" and that id.',
-          'To add a second one, call workflow_write again with confirmed: true.',
-        ].join('\n'),
-      );
+      // A stored step is `{ instruction }` (see `normaliseSteps`); a bare string
+      // is accepted too, so a row written before that shape still reads. Without
+      // this the list said "1. [object Object]" for every step it had.
+      const stepText = (step) => (typeof step === 'string' ? step : step?.instruction ?? step?.prompt ?? '');
+      return {
+        schedule: scheduleCard('workflow', clash, { existing: true }),
+        content: askBeforeDuplicating(
+          'workflow',
+          [
+            `- "${clash.title}" — id ${clash.id}`,
+            `    ${clash.cron ? `repeats ${clash.cron}` : 'runs by hand'}${clash.enabled ? '' : ' (paused)'}, ${steps.length} step(s)`,
+            ...steps
+              .slice(0, 6)
+              .map((step, i) => `    ${i + 1}. ${String(stepText(step)).replace(/\s+/g, ' ').slice(0, 120)}`),
+            '',
+            'To change it rather than add another, call workflow_write with action: "update" and that id.',
+            'To add a second one, call workflow_write again with confirmed: true.',
+          ].join('\n'),
+        ),
+      };
     }
   }
 
@@ -1404,11 +1457,15 @@ async function workflowWriteTool({ action, id, title, steps, when, repeat, enabl
   const first = workflow.next_run_at
     ? new Date(workflow.next_run_at).toLocaleString('en-GB', tz ? { timeZone: tz } : undefined)
     : null;
-  return [
-    `Created the workflow "${workflow.title}" with ${ordered.length} step(s). Id ${workflow.id}.`,
-    first ? `First run: ${first}${schedule.cron ? ` (repeats ${schedule.cron})` : ''}.` : 'It runs when asked, not on a clock.',
-    'Each step runs in order in one conversation, and a step that is interrupted is never repeated automatically.',
-  ].join(' ');
+  return {
+    schedule: scheduleCard('workflow', workflow),
+    content: [
+      `Created the workflow "${workflow.title}" with ${ordered.length} step(s). Id ${workflow.id}.`,
+      first ? `First run: ${first}${schedule.cron ? ` (repeats ${schedule.cron})` : ''}.` : 'It runs when asked, not on a clock.',
+      'Each step runs in order in one conversation, and a step that is interrupted is never repeated automatically.',
+      CARD_SHOWN,
+    ].join(' '),
+  };
 }
 
 /** What is set up, and how the last run of each went — step by step. */

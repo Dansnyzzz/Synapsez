@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-27 — a schedule you set up is a card you can open
+
+Branch `feat/schedule-card`.
+
+### Changed
+
+- **Setting up a scheduled task or a workflow draws a card in the conversation**, not only a
+  sentence: what was set up, how often in words ("every weekday at 07:30", never `weekdays 07:30`),
+  the time zone it fires in, and a pill at the foot — "every weekday at 07:30 · Next: 29 Sep, 07:30 ·
+  Morning briefing" — that opens it. A task opens on its own page, where the time, the instructions
+  and Run now are; a workflow opens in its form. The sentence used to scroll away and lead nowhere:
+  changing the time meant finding the Scheduled shelf, finding the row, and opening it. The next run
+  is shown in the task's own zone, so a 07:30 Hanoi briefing reads 07:30 wherever it is opened from.
+  The card is stored on the tool result, so reopening the conversation redraws it; a turn that
+  creates a workflow and then updates it shows one card, the latest.
+- **Asking for something already set up shows the existing one as that same card**, marked as
+  already there rather than just made, above the keep / change / add another / cancel question — so
+  the person can see what they are being asked about.
+
+### Fixed
+
+- **The duplicate-workflow notice listed every step as "[object Object]".** A stored step is
+  `{ instruction }`, and the list read a field that does not exist.
+
 ## 2026-09-22 (later) — what the screenshots showed
 
 Branch `fix/project-memory-sheet`. Follow-up to the entry below, made after seeing the screenshots

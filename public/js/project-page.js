@@ -3,7 +3,7 @@ import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { openMenu } from './menu.js';
 import { toast } from './render.js';
-import { counted } from './format.js';
+import { counted, repeatsAs } from './format.js';
 import { prepareUpload } from './shrink.js';
 import { thumbnailFor } from './thumbnail.js';
 
@@ -52,27 +52,9 @@ const fmtBytes = (n) => {
   return `${bytes}B`;
 };
 
-/**
- * A task's recurrence, in words.
- *
- * The `cron` column holds what the scheduler reads — `hourly :30`, `weekdays
- * 09:00`, `mon 16:00` — which is exactly the vocabulary a person should never
- * be shown. Null is not "unknown": it is a task that only ever runs when the
- * button is pressed, and saying so is the whole point of the manual option.
- */
-export function repeatsAs(task) {
-  const cron = String(task?.cron || '').trim();
-  if (!cron) return t('freq.manualOnly');
-  const hourly = /^hourly\s*:?(\d\d)$/.exec(cron);
-  if (hourly) return t('freq.everyHourAt').replace('{m}', hourly[1]);
-  const weekdays = /^weekdays\s+(.+)$/.exec(cron);
-  if (weekdays) return t('freq.everyWeekdayAt').replace('{time}', weekdays[1]);
-  const monthly = /^monthly\s+(\d{1,2})\s+(.+)$/.exec(cron);
-  if (monthly) return t('freq.everyMonthOn').replace('{day}', monthly[1]).replace('{time}', monthly[2]);
-  const weekly = /^([a-z]{3})\s+(.+)$/.exec(cron);
-  if (weekly) return t('freq.everyWeekOn').replace('{day}', t(`day.${weekly[1]}`)).replace('{time}', weekly[2]);
-  return t('freq.everyDayAt').replace('{time}', cron);
-}
+// `repeatsAs` moved to format.js, where the transcript's schedule card can reach
+// it too. Re-exported so the modules that already import it from here still do.
+export { repeatsAs };
 
 const fmtChars = (n) => {
   const say = (key, value) => t(key).replace('{n}', String(value));

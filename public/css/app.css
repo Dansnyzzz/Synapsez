@@ -4143,6 +4143,82 @@ details.block pre {
    stylesheet — the markup is built from escaped text.
    ───────────────────────────────────────────────────────────── */
 
+/* ── standing work set up in the transcript ─────────────────── */
+
+/* A confirmation you can act on: what was set up, how often, in which zone,
+   and a pill at the foot that opens it. The pill is the one control — the
+   facts above it are text, and somebody may want to select and copy them. */
+.schedcard {
+  margin: 10px 0 4px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  max-width: 560px;
+}
+.schedcard__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.schedcard__mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  /* The app's "done" is its accent — `.badge--ok` says so too — not a green
+     from some other palette. */
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 700;
+}
+/* Already there: the card is the subject of a question, not a success, so it
+   does not wear the green tick of one. */
+.schedcard--existing .schedcard__mark {
+  background: var(--warn);
+}
+.schedcard__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 5px 14px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.schedcard__facts dt { color: var(--text-faint); }
+.schedcard__facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+.schedcard__pill {
+  display: block;
+  max-width: 100%;
+  padding: 7px 13px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+  background: var(--tint);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.schedcard__pill:hover {
+  border-color: var(--accent);
+  background: var(--tint-2);
+}
+
 /* ── a file the assistant made, in the transcript ───────────── */
 
 .filecard {

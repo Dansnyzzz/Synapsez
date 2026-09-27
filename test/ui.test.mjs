@@ -3708,6 +3708,99 @@ section('reopening a conversation mid-answer rejoins it rather than blanking');
 }
 
 /**
+ * Setting up standing work leaves a card you can act on.
+ *
+ * A schedule came back as one sentence — correct, gone the moment it scrolled
+ * away, and leading nowhere: changing the time meant finding the Scheduled
+ * shelf, finding the row, opening it. The card says how often, in which zone
+ * and when next, and its pill opens the task itself.
+ *
+ * Planted in the store, the way the sections around it plant a run: a real
+ * turn needs a provider key, and what is on trial is what the page draws from a
+ * transcript that carries a schedule — which is also exactly what a reopened
+ * conversation is rebuilt from.
+ */
+section('a schedule set up in a conversation is a card that opens it');
+{
+  const store = await initStore();
+  const signedIn = await page.evaluate(async () => (await (await fetch('/api/session')).json()).user);
+  const user = await store.getUserByEmail(signedIn.email);
+
+  const task = await store.createTask(user.id, {
+    id: 't-card',
+    title: 'Bản tin sáng',
+    prompt: 'Tóm tắt tin buổi sáng',
+    cron: 'weekdays 07:30',
+    nextRunAt: new Date(Date.now() + 86_400_000).toISOString(),
+    tz: 'Asia/Ho_Chi_Minh',
+  });
+  await store.createChat(user.id, { id: 'c-sched', title: 'Lịch bản tin', model: 'm' });
+  await store.appendMessage(user.id, 'c-sched', { id: 'm-s1', role: 'user', text: 'mỗi sáng tóm tắt tin' });
+  await store.appendMessage(user.id, 'c-sched', {
+    id: 'm-s2',
+    role: 'assistant',
+    text: '',
+    toolCalls: [{ id: 'call-s', name: 'schedule_task', input: { title: task.title, when: '07:30' } }],
+  });
+  await store.appendMessage(user.id, 'c-sched', {
+    id: 'm-s3',
+    role: 'tool',
+    results: [
+      {
+        toolCallId: 'call-s',
+        name: 'schedule_task',
+        content: 'Scheduled.',
+        isError: false,
+        schedule: {
+          kind: 'task',
+          id: task.id,
+          title: task.title,
+          cron: task.cron,
+          nextRunAt: task.next_run_at,
+          tz: task.tz,
+          enabled: true,
+          existing: false,
+        },
+      },
+    ],
+  });
+
+  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  const drawn = await page.evaluate(async () => {
+    const row = [...document.querySelectorAll('#chat-list .chat-row')].find((r) => r.textContent.includes('Lịch bản tin'));
+    row?.querySelector('.chat-item')?.click();
+    await new Promise((r) => setTimeout(r, 1800));
+    const card = document.querySelector('#messages .schedcard');
+    return {
+      found: !!row,
+      card: !!card,
+      facts: card?.querySelector('.schedcard__facts')?.textContent || '',
+      pill: card?.querySelector('.schedcard__pill')?.textContent || '',
+    };
+  });
+  check('the conversation opens', drawn.found);
+  check('the schedule is drawn as a card, rebuilt from the transcript', drawn.card, JSON.stringify(drawn));
+  check('saying how often in words, not scheduler syntax', !/weekdays 07:30/.test(drawn.facts) && /07:30/.test(drawn.facts), drawn.facts);
+  check('and in which zone', /Asia\/Ho_Chi_Minh/.test(drawn.facts), drawn.facts);
+  check('with a pill naming the task', drawn.pill.includes('Bản tin sáng'), drawn.pill);
+
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(1200);
+  const opened = await page.evaluate(() => ({
+    onTask: !document.getElementById('page').hidden && !!document.querySelector('.taskpage'),
+    title: document.querySelector('.page__title')?.textContent || '',
+  }));
+  check('pressing the pill opens the task, where adjusting it happens', opened.onTask, JSON.stringify(opened));
+  check('the right task', opened.title === 'Bản tin sáng', opened.title);
+
+  await store.deleteTask(user.id, task.id);
+}
+
+/**
  * A step says what it did, and keeps the exact call for whoever opens it.
  *
  * Every tool outside the browser and desktop families used to draw its own

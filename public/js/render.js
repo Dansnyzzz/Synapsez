@@ -1,6 +1,6 @@
 import { renderMarkdown, escapeHtml } from './markdown.js';
-import { t } from './i18n.js';
-import { humanSize } from './format.js';
+import { t, currentLanguage } from './i18n.js';
+import { humanSize, repeatsAs } from './format.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -713,6 +713,117 @@ export function widgetFrame(widget) {
   return host;
 }
 
+/**
+ * When a scheduled run fires next, in the zone it was set in.
+ *
+ * The zone is the task's, not the browser's: somebody who set a 07:30 summary
+ * from Hanoi and opens the conversation from a hotel in Tokyo should still read
+ * "07:30", because 07:30 Hanoi is when it will arrive.
+ */
+function nextRunText(iso, tz) {
+  const when = new Date(iso);
+  if (!iso || !Number.isFinite(when.getTime())) return '';
+  /** @type {Intl.DateTimeFormatOptions} */
+  const options = { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
+  try {
+    return when.toLocaleString(currentLanguage(), tz ? { ...options, timeZone: tz } : options);
+  } catch {
+    // A zone name this browser does not know. Its own clock is the honest fallback.
+    return when.toLocaleString(currentLanguage(), options);
+  }
+}
+
+/**
+ * Standing work, set up in this conversation — or found already set up.
+ *
+ * A schedule used to come back as one sentence in the transcript: correct, gone
+ * as soon as it scrolled away, and with no way from there to the thing itself.
+ * Adjusting the time meant finding the Scheduled shelf, finding the row, and
+ * opening it. This says the same facts at a glance — how often, which zone,
+ * when next — and ends in a pill that opens it, which is where changing it
+ * happens.
+ *
+ * `existing` is the duplicate case. The model was asked for something already
+ * set up and is about to ask what to do; this card is what it is asking about,
+ * so the heading says "already set up" rather than claiming it was just made.
+ *
+ * The pill carries the kind and id and nothing else: one delegated listener on
+ * the transcript opens it, the same way file cards open, so a transcript of a
+ * hundred turns does not hold a hundred handlers.
+ */
+export function scheduleCard(schedule) {
+  const card = el('div', `schedcard${schedule.existing ? ' schedcard--existing' : ''}`);
+  card.dataset.scheduleKind = schedule.kind;
+  card.dataset.scheduleId = schedule.id;
+
+  const head = el('div', 'schedcard__head');
+  const mark = el('span', 'schedcard__mark');
+  mark.setAttribute('aria-hidden', 'true');
+  mark.textContent = schedule.existing ? '!' : '✓';
+  const heading = el('span', 'schedcard__title');
+  heading.textContent = t(
+    schedule.existing
+      ? 'sched.alreadyThere'
+      : schedule.kind === 'workflow'
+        ? 'sched.createdWorkflow'
+        : 'sched.createdTask',
+  );
+  head.append(mark, heading);
+
+  // How often. A cron of null means two different things depending on the
+  // kind: a task with a next run and no cron fires once; with neither, it — or
+  // a workflow — waits for somebody to press Run.
+  const often = schedule.cron
+    ? repeatsAs(schedule)
+    : schedule.nextRunAt
+      ? t('sched.once')
+      : t('freq.manualOnly');
+
+  const facts = el('dl', 'schedcard__facts');
+  const fact = (label, value) => {
+    if (!value) return;
+    const dt = el('dt');
+    dt.textContent = label;
+    const dd = el('dd');
+    dd.textContent = value;
+    facts.append(dt, dd);
+  };
+  fact(t('sched.name'), schedule.title);
+  fact(t('sched.frequency'), often);
+  fact(t('sched.timezone'), schedule.tz || t('sched.serverTime'));
+  if (schedule.kind === 'workflow' && schedule.steps) fact(t('sched.steps'), String(schedule.steps));
+  if (!schedule.enabled) fact(t('sched.state'), t('proj.taskPaused'));
+
+  const next = schedule.nextRunAt ? nextRunText(schedule.nextRunAt, schedule.tz) : '';
+  const pill = el('button', 'schedcard__pill');
+  pill.type = 'button';
+  pill.dataset.scheduleKind = schedule.kind;
+  pill.dataset.scheduleId = schedule.id;
+  pill.textContent = [often, next ? t('sched.next', { when: next }) : null, schedule.title]
+    .filter(Boolean)
+    .join(' · ');
+  pill.title = t('sched.open');
+
+  card.append(head, facts, pill);
+  return card;
+}
+
+/**
+ * One card per schedule in a turn, however many times the model touched it.
+ *
+ * A turn that creates a workflow and then updates it twice would otherwise show
+ * three cards for the one thing, two of them already out of date. The newest
+ * replaces the older, the same rule the file cards follow.
+ */
+function placeScheduleCard(body, schedule) {
+  const card = scheduleCard(schedule);
+  const existing = [...body.querySelectorAll('.schedcard')].find(
+    (node) => node.dataset.scheduleKind === schedule.kind && node.dataset.scheduleId === schedule.id,
+  );
+  if (existing) existing.replaceWith(card);
+  else body.append(card);
+}
+
 export function fileCard(file) {
   const card = el('div', 'filecard');
   card.dataset.file = file.id;
@@ -971,6 +1082,7 @@ export function assistantMessage() {
           else body.append(card);
         }
         if (result.widget?.markup) body.append(widgetFrame(result.widget));
+        if (result.schedule?.id) placeScheduleCard(body, result.schedule);
       },
     };
   }
@@ -1255,6 +1367,15 @@ export function assistantMessage() {
            * right shape for "here is what I found" rather than "here is a report".
            */
           if (result.widget?.markup) body.append(widgetFrame(result.widget));
+
+          /**
+           * A schedule set up — or found already there — by this call.
+           *
+           * Beside the tool block for the reason the other two are: the call is
+           * machinery, and "it is set for 07:30 every weekday, press here to
+           * change it" is what was asked for.
+           */
+          if (result.schedule?.id) placeScheduleCard(body, result.schedule);
         },
       };
     },

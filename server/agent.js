@@ -690,7 +690,7 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
       }
       const started = Date.now();
       emit('tool_call', { id: call.id, name: call.name, input: call.input });
-      const { content, isError, file, widget, shot } = await executeTool({
+      const { content, isError, file, widget, shot, schedule } = await executeTool({
         user,
         name: call.name,
         input: call.input,
@@ -725,6 +725,10 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         // session should show the pictures, and the transcript is the only
         // place that could remember them.
         ...(shot ? { shot } : {}),
+        // Scheduled work set up by this call, drawn as a card that opens it.
+        // On the result for the same reason as `file`: the transcript is what
+        // a reopened conversation is rebuilt from.
+        ...(schedule ? { schedule } : {}),
       };
       emit('tool_result', result);
       /**

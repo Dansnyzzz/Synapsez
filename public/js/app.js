@@ -2219,6 +2219,33 @@ $('messages').addEventListener('click', async (event) => {
     return;
   }
 
+  /**
+   * The pill on a schedule card opens what it describes.
+   *
+   * A task on its own page — where the time, the instructions and "Run now"
+   * are — and a workflow in its form. That is where adjusting either happens,
+   * and it was three clicks and a search away from the conversation that set
+   * it up. Only the pill: the rest of the card is text somebody may want to
+   * select and copy.
+   */
+  const pill = /** @type {HTMLElement | null} */ (
+    /** @type {Element} */ (event.target).closest('.schedcard__pill')
+  );
+  if (pill) {
+    const { scheduleKind: kind, scheduleId: id } = pill.dataset;
+    const failed = (err) => toast(err.message, 'error');
+    if (kind === 'workflow') {
+      // The same moves as `gotoShelf`, with the form opened on top.
+      projectPage.hide();
+      onPage(true);
+      pages.editWorkflow(id).catch(failed);
+    } else {
+      leavePages();
+      pages.showTask(id).catch(failed);
+    }
+    return;
+  }
+
   const button = event.target.closest('.msg__action');
   if (!button) return;
 
