@@ -12,7 +12,6 @@ import {
   toast,
   summariseToolInput,
   revealInStrip,
-  summaryDivider,
   stopNote,
   markdownOf,
   withLinks,
@@ -1704,7 +1703,9 @@ function drawTranscript(host, messages) {
 
   for (const m of messages) {
     if (m.role === 'user') host.append(userMessage(m.text, m.attachments || [], m.id));
-    else if (m.role === 'summary') host.append(summaryDivider(m.replaced || 0, m.text));
+    // A summary is what the model reads in place of the older turns; the
+    // person still has those turns, so it is not drawn among them.
+    else if (m.role === 'summary') continue;
     else if (m.role === 'assistant') host.append(assistantMessage().hydrate(m, resultsByCallId).node);
   }
 }
@@ -2577,6 +2578,11 @@ $('composer').addEventListener('submit', async (event) => {
   // failed — must not be silently dropped from a message that claims to have it.
   const ready = staged.filter((f) => f.id);
   if (!text && !ready.length) return;
+  // Not into a transcript that is being rewritten; the bar says how long.
+  if (state.compacting) {
+    toast(t('compact.wait'));
+    return;
+  }
   if (staged.some((f) => !f.id && !f.failed)) {
     toast(t('composer.uploading'));
     return;
@@ -3080,13 +3086,13 @@ async function streamOnce(run, decision, answers) {
           // "compacting" before it knows how much, then says how much. Both
           // land here, and the second draws the same line with the number in.
           if (phase === 'compacting') {
-            setStatus(
-              folding ? t('status.compactingN').replace('{n}', String(folding)) : t('status.compacting'),
-              run,
-              { bar: true },
-            );
+            if (onScreen(run)) compactBar.start(folding || 0);
           }
-          else if (phase === 'thinking') setStatus(t('status.thinking'), run);
+          else if (phase === 'thinking') {
+            // A fold that failed goes straight on to thinking; the bar goes too.
+            if (state.compacting) compactBar.finish(false);
+            setStatus(t('status.thinking'), run);
+          }
           /**
            * The provider has not answered yet, and that is worth saying.
            *
@@ -3192,17 +3198,11 @@ async function streamOnce(run, decision, answers) {
         },
         usage: (totals) => { if (onScreen(run)) renderUsage(totals); },
         context: (info) => { if (onScreen(run)) renderContext(info); },
-        compacted: ({ replaced, text }) => {
-          // Said out loud, because the transcript the model sees has just
-          // changed and that is not something to do silently.
-          toast(t('status.folded').replace('{n}', String(replaced)));
-          // `text` too: `summaryDivider` renders a "Read the summary"
-          // disclosure when it is given one, and `openChat` already passes it.
-          // Dropping it here made the summary visible after a reload and
-          // invisible at the moment it happened — which is exactly when
-          // somebody wants to check what was folded away.
-          run.stage.append(summaryDivider(replaced, text));
-          maybeScroll(run);
+        compacted: ({ replaced }) => {
+          // Said once the bar reaches the end, as a notice rather than a block
+          // in the transcript: the summary is the model's working memory, not
+          // part of the conversation somebody is reading.
+          if (onScreen(run)) compactBar.finish(true, replaced);
         },
         /**
          * The turn has stopped to ask you something.
@@ -3514,6 +3514,59 @@ function renderPolicy() {
  * Called with no run for the plain cases — a toast-like notice about the
  * conversation on screen — which always draw.
  */
+/**
+ * Folding the conversation up, shown as it happens.
+ *
+ * One bar above the composer for both kinds — pressed by hand, or started by
+ * the run when the window was nearly full. It fills while the summary is
+ * written (a single model call, so the fill is time, not steps — it slows
+ * toward the end rather than claiming a finish it cannot see), reaches the end
+ * when the fold lands, and then gives way to a notice. Sending waits for it.
+ */
+const compactBar = (() => {
+  let timer = null;
+  let started = 0;
+  const fill = (ratio) => {
+    $('compact-bar-fill').style.width = `${Math.round(ratio * 100)}%`;
+    $('compact-bar').setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
+  };
+  return {
+    start(count) {
+      const bar = $('compact-bar');
+      if (count) $('compact-bar-say').textContent = t('compact.progressN', { n: String(count) });
+      if (state.compacting) return;
+      state.compacting = true;
+      bar.hidden = false;
+      bar.classList.remove('is-done');
+      if (!count) $('compact-bar-say').textContent = t('compact.progress');
+      started = Date.now();
+      fill(0.03);
+      clearInterval(timer);
+      timer = setInterval(() => fill(0.93 * (1 - Math.exp(-(Date.now() - started) / 7000))), 150);
+      refreshSendState();
+    },
+    finish(ok, replaced = 0) {
+      clearInterval(timer);
+      if (!state.compacting) return;
+      const bar = $('compact-bar');
+      if (ok) {
+        fill(1);
+        bar.classList.add('is-done');
+        $('compact-bar-say').textContent = t('compact.doneBar');
+      }
+      setTimeout(
+        () => {
+          bar.hidden = true;
+          state.compacting = false;
+          refreshSendState();
+          if (ok) toast(t('compact.done', { n: String(replaced) }), 'ok');
+        },
+        ok ? 650 : 0,
+      );
+    },
+  };
+})();
+
 function setStatus(text, run = null, options = undefined) {
   if (run) {
     run.status = text;
@@ -4865,6 +4918,9 @@ function openMenu(host, anchor, items) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `menu__item${item.active ? ' is-active' : ''}`;
+    // Shown but not pressable, with the hint saying why — an action that
+    // vanishes when unavailable leaves people hunting for where it went.
+    if (item.disabled) button.disabled = true;
     // Choosing between modes is a radio group; the context gauge's menu is a
     // list of actions. Only the first kind gets a checked state to announce.
     const choice = item.active !== undefined;
@@ -5004,14 +5060,24 @@ $('context-gauge').addEventListener('click', () => {
     },
     {
       label: t('compact.now'),
-      hint: t('compact.nowHint'),
+      // Not while a fold is under way, and not until a quarter of the window
+      // is in use again: pressed straight after a fold it summarised the three
+      // turns since, and each press left another line in the transcript.
+      disabled: state.compacting || percent < 25 || !!runHere(),
+      hint: state.compacting ? t('compact.busy') : percent < 25 ? t('compact.tooSmall') : t('compact.nowHint'),
       async run() {
         if (!state.chatId) return toast(t('compact.nothing'));
-        toast(t('compact.working'));
-        const { summary, context } = await api.compactChat(state.chatId);
-        renderContext(context);
-        toast(t('chat.summarised', { n: summary.replaced }));
-        await openChat(state.chatId);
+        const chatId = state.chatId;
+        compactBar.start(0);
+        try {
+          const { summary, context } = await api.compactChat(chatId);
+          // The ring is reset now, from the fold, not after the next reply.
+          if (state.chatId === chatId) renderContext(context);
+          compactBar.finish(true, summary.replaced);
+        } catch (err) {
+          compactBar.finish(false);
+          throw err;
+        }
       },
     },
   ]);
@@ -5159,8 +5225,8 @@ function refreshSendState() {
   const showStop = running && !ready;
 
   $('send').hidden = showStop;
-  $('send').classList.toggle('is-ready', ready);
-  $('send').disabled = !ready;
+  $('send').classList.toggle('is-ready', ready && !state.compacting);
+  $('send').disabled = !ready || !!state.compacting;
   // Say what pressing it does now, since mid-run it does not send but queue.
   $('send').title = running ? t('composer.queue') : t('composer.send');
 

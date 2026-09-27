@@ -512,6 +512,16 @@
             </div>
           </div>
 
+          <!-- Folding the conversation up: a bar while it happens, then a notice.
+               Sending waits for it. See compactBar in app.js. -->
+          <div class="compactbar" id="compact-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="compact-bar-say" hidden>
+            <div class="compactbar__row">
+              <span class="compactbar__spin" aria-hidden="true"></span>
+              <span class="compactbar__say" id="compact-bar-say" data-i18n="compact.progress">Compacting the conversation…</span>
+            </div>
+            <div class="compactbar__track"><div class="compactbar__fill" id="compact-bar-fill"></div></div>
+          </div>
+
           <form class="composer" id="composer">
             <!-- What you have typed while the assistant is still working.
                  It waits here until the current tool call finishes and then

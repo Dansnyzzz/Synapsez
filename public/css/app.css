@@ -2682,6 +2682,46 @@ details.block pre {
   font-size: 13px;
 }
 .status-line .spinner { border-top-color: var(--accent); }
+
+/* Folding the conversation up: a glass strip above the composer with a bar
+   that fills, then turns green at the end. */
+.compactbar {
+  max-width: 780px;
+  margin: 0 auto 10px;
+  padding: 10px 16px 12px;
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--glass-hi), transparent 50%), var(--composer-glass);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+}
+.compactbar[hidden] { display: none; }
+.compactbar__row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--text-dim); }
+.compactbar__spin {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.compactbar.is-done .compactbar__spin { animation: none; border-color: var(--ok); background: var(--ok); }
+.compactbar.is-done .compactbar__say { color: var(--ok); }
+.compactbar__track { height: 6px; border-radius: 999px; background: var(--tint-2); overflow: hidden; }
+.compactbar__fill {
+  width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--galaxy);
+  transition: width 0.3s ease-out, background 0.3s;
+}
+.compactbar.is-done .compactbar__fill { background: var(--ok); }
+@media (prefers-reduced-motion: reduce) {
+  .compactbar__spin { animation: none; }
+  .compactbar__fill { transition: none; }
+}
+.menu__item:disabled { opacity: 0.5; cursor: not-allowed; }
+.menu__item:disabled:hover { background: none; }
 /**
  * The travelling stripe, for work with no countable steps.
  *
@@ -4275,7 +4315,8 @@ details.block pre {
 
 .gauge__track { stroke: var(--line); }
 .gauge__fill {
-  stroke: var(--ok);
+  /* The brand colour while there is room; amber, then red, as it fills. */
+  stroke: var(--accent);
   /* The dash length is the value; animating it makes the ring fill rather than
      jump, which is what makes it read as a gauge at all. */
   transition: stroke-dasharray 400ms cubic-bezier(0.4, 0, 0.2, 1), stroke 300ms;
@@ -5753,7 +5794,23 @@ details.block pre {
   text-align: left;
   cursor: pointer;
 }
+/* Glass, with light along its top edge — the same pane as the rest of the
+   shelves — and it lifts a little under the pointer. */
+.cards > .card {
+  border-color: var(--glass-line);
+  background: linear-gradient(180deg, var(--glass-hi), transparent 42%), var(--tint);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  transition: border-color 0.18s, transform 0.18s, box-shadow 0.18s, background 0.18s;
+}
 .card:hover { border-color: var(--line); background: var(--surface-2); }
+.cards > .card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--glass-line));
+  background: linear-gradient(180deg, var(--glass-hi), transparent 42%), var(--tint-2);
+  transform: translateY(-3px);
+  box-shadow: 0 18px 36px -22px rgba(0, 0, 0, 0.75);
+}
+@media (prefers-reduced-motion: reduce) { .cards > .card:hover { transform: none; } }
 
 .card__name {
   font-size: 16.5px;
@@ -6263,7 +6320,8 @@ details.block pre {
   height: 30px;
   border: 0;
   border-radius: 9px;
-  background: var(--surface-2);
+  /* No fill of its own: on a glass card a filled square reads as a hole. */
+  background: transparent;
   color: transparent;
   font-size: 15px;
   line-height: 1;
@@ -6274,7 +6332,7 @@ details.block pre {
    or it would be reachable by keyboard and invisible. */
 .card:hover .card__more,
 .card__more:focus-visible { color: var(--text-dim); }
-.card__more:hover { background: var(--line); color: var(--text); }
+.card__more:hover { background: var(--tint-2); color: var(--text); }
 
 .card__pin {
   position: absolute;
@@ -6736,6 +6794,9 @@ details.block pre {
  *
  * Two columns, and two at every width: the panel is narrow to begin with, and
  * a single column of cards is the row list again with more scrolling. */
+/* Scoped under .shelf: `.card` is also the project card on the Projects page,
+   and these rules — a clamped name with its own padding, a glass fill — used
+   to leak onto it, indenting its title and exposing its menu button. */
 .shelf {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6743,7 +6804,7 @@ details.block pre {
   margin-bottom: 12px;
 }
 
-.card {
+.shelf .card {
   position: relative;
   border: 1px solid var(--glass-line);
   border-radius: 14px;
@@ -6751,16 +6812,16 @@ details.block pre {
   overflow: hidden;
   transition: border-color 0.18s, transform 0.18s, box-shadow 0.18s;
 }
-.card:hover {
+.shelf .card:hover {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--glass-line));
   transform: translateY(-2px);
   box-shadow: 0 12px 26px -18px rgba(0, 0, 0, 0.7);
 }
-.card.is-picked { border-color: var(--accent); }
+.shelf .card.is-picked { border-color: var(--accent); }
 
 /* The whole card is the button. A card with a small target somewhere inside it
    is a card people click and nothing happens. */
-.card__open {
+.shelf .card__open {
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -6774,7 +6835,7 @@ details.block pre {
   cursor: pointer;
 }
 
-.card__shot {
+.shelf .card__shot {
   display: block;
   flex: 1;
   min-height: 0;
@@ -6783,7 +6844,7 @@ details.block pre {
   background: #fff;
   overflow: hidden;
 }
-.card__shot img {
+.shelf .card__shot img {
   display: block;
   width: 100%;
   height: 118px;
@@ -6795,7 +6856,7 @@ details.block pre {
 
 /* A source with nothing to draw — a .docx, a text file — keeps the name it
    always had, which is what the whole shelf used to be. */
-.card__name {
+.shelf .card__name {
   flex: 1;
   padding: 12px 12px 0;
   color: var(--text);
@@ -6808,13 +6869,13 @@ details.block pre {
   -webkit-box-orient: vertical;
 }
 
-.card__foot {
+.shelf .card__foot {
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 8px 10px;
 }
-.card__badge {
+.shelf .card__badge {
   flex: none;
   padding: 2px 6px;
   border-radius: 5px;
@@ -6823,7 +6884,7 @@ details.block pre {
   font-size: 10px;
   letter-spacing: 0.04em;
 }
-.card__facts {
+.shelf .card__facts {
   min-width: 0;
   color: var(--text-faint);
   font-size: 10.5px;
@@ -6834,7 +6895,7 @@ details.block pre {
 
 /* The tick sits on the card and stays out of the way until it is wanted: shown
    on hover, on focus, and always once anything is selected. */
-.card__tick {
+.shelf .card__tick {
   position: absolute;
   right: 8px;
   bottom: 8px;
@@ -6852,10 +6913,10 @@ details.block pre {
   opacity: 0;
   transition: opacity 0.12s;
 }
-.card:hover .card__tick,
-.card__tick:focus-visible,
-.card__tick.is-on { opacity: 1; }
-.card__tick.is-on {
+.shelf .card:hover .card__tick,
+.shelf .card__tick:focus-visible,
+.shelf .card__tick.is-on { opacity: 1; }
+.shelf .card__tick.is-on {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent, #05140c);

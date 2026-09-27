@@ -742,4 +742,6 @@ export const vi = {
     "Xoá một việc khỏi Google Tasks.",
   "Changes something in your Google account ({0}: {1}).":
     "Thay đổi dữ liệu trong tài khoản Google của bạn ({0}: {1}).",
+  "This conversation uses under 25% of the window, so there is nothing worth folding yet.":
+    "Cuộc trò chuyện này dùng chưa tới 25% cửa sổ ngữ cảnh, nên chưa có gì đáng để nén.",
 };

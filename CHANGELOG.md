@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-28 (evening) — compacting you can see and trust; a provider hiccup retried
+
+### Fixed
+
+- **An error sent mid-stream by the provider** ("JSON error injected into SSE stream" from
+  OpenRouter) carries no HTTP status, so it was graded fatal and ended the turn. It — and
+  overloaded / terminated / premature-close errors — is now a provider hiccup and retried.
+- **The context ring stayed full after compacting**, and the next turn compacted again, a few
+  messages at a time (27, then 7, then 3): the measurement kept reading the last billed figure,
+  which described the transcript before the fold. After a fold it now measures what is actually
+  sent — the summary and the kept turns — so the ring drops the moment the fold lands, and
+  auto-compaction counts the live transcript, not every message ever sent.
+- The Projects page cards: the title was indented and the ⋮ showed as a dark square — rules for a
+  project's source cards shared the `.card` class and leaked onto them. They are scoped now.
+
+### Changed
+
+- Compacting is a bar above the composer that fills while the summary is written, turns green
+  at the end, then gives way to a "compacted — carry on" notice. Sending waits for it. The summary
+  is no longer drawn in the transcript — it is the model's working memory, not part of the
+  conversation. "Compact now" is disabled while compacting and until a quarter of the window is in
+  use again (the server refuses below 25% too).
+- The context ring is purple again while there is room (amber, then red, as it fills).
+- The Projects page cards are glass and lift a little under the pointer.
+
 ## 2026-09-28 (later) — setup in two steps, outputs as a row of pages, a glass project page
 
 ### Changed

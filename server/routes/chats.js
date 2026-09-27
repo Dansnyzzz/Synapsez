@@ -5,6 +5,9 @@ import { getStore } from '../store/index.js';
 import { verifyOwned } from '../attachments.js';
 import { deriveTitle, needsApproval as pendingApproval } from '../agent.js';
 import { compact as compactChat, measure as measureContext } from '../compact.js';
+
+/** The share of the window a conversation must use before it can be folded by hand. */
+export const MIN_MANUAL_COMPACT = 0.25;
 import { getPrefs } from '../settings.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 
@@ -361,6 +364,19 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       // performed against the window the next turn will run in. Through
       // resolveForUser so Auto expands to the free model it would actually pick.
       const entry = await resolveForUser(req.user.id, prefs.defaultModel);
+
+      /**
+       * Not until there is something worth folding.
+       *
+       * Pressed again straight after a fold, it summarised the three turns
+       * since — a model call to save almost nothing, and one more "summarised"
+       * line in the transcript each time. A quarter of the window is the floor.
+       */
+      if (measureContext(messages, entry).ratio < MIN_MANUAL_COMPACT) {
+        return res.status(400).json({
+          error: 'This conversation uses under 25% of the window, so there is nothing worth folding yet.',
+        });
+      }
 
       try {
         const summary = await compactChat({

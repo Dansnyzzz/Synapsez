@@ -48,6 +48,10 @@ section('a failure is graded by what it says about the key');
   check('403 is a dead key', classify(err(403, 'Forbidden')).kind === 'KEY_DEAD');
   check('503 is the provider, not the key', classify(err(503, 'Service unavailable')).kind === 'UPSTREAM');
   check('a socket hang up is upstream', classify(err(0, 'socket hang up')).kind === 'UPSTREAM');
+  // An error sent inside a stream the provider had already started: no status,
+  // and the next attempt usually works.
+  check('an error injected mid-stream is upstream', classify(err(undefined, 'JSON error injected into SSE stream')).kind === 'UPSTREAM');
+  check('an overloaded provider is upstream', classify(err(undefined, 'Provider returned error: overloaded')).kind === 'UPSTREAM');
   check('400 is fatal on every key', classify(err(400, 'messages: invalid role')).kind === 'FATAL');
   check('an unknown model is fatal', classify(err(404, 'model not found')).kind === 'FATAL');
 

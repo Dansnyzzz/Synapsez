@@ -89,6 +89,26 @@ export function measure(messages, entry, { maxOutput } = {}) {
   for (let i = lastCounted + 1; i < messages.length; i += 1) used += estimateTokens(messages[i]);
 
   /**
+   * After a fold, the provider's last figure describes a transcript that no
+   * longer exists.
+   *
+   * It was billed on everything before the summary, so reading it as current
+   * kept the ring full after a compaction — until the next reply brought a new
+   * figure — and kept `shouldCompact` true, so the next turn folded again,
+   * a handful of turns at a time (27, then 7, then 3). What is sent now is
+   * the summary and the tail, so that is what is measured.
+   */
+  let lastSummary = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === 'summary') {
+      lastSummary = i;
+      break;
+    }
+  }
+  const folded = lastSummary > lastCounted;
+  if (folded) used = activeTranscript(messages).reduce((sum, m) => sum + estimateTokens(m), 0);
+
+  /**
    * What is left once the reply has its room.
    *
    * The room reserved is the model's own output limit, and it has to be capped at
@@ -112,7 +132,7 @@ export function measure(messages, entry, { maxOutput } = {}) {
     budget,
     ratio: Math.min(1, used / budget),
     // `counted` is exact; anything past it is arithmetic on character counts.
-    exact: lastCounted === messages.length - 1,
+    exact: !folded && lastCounted === messages.length - 1,
   };
 }
 
@@ -120,7 +140,9 @@ export function measure(messages, entry, { maxOutput } = {}) {
 export function shouldCompact(messages, entry, options = {}) {
   const { ratio } = measure(messages, entry, options);
   // Nothing to gain from summarising a conversation that is mostly tail.
-  return ratio >= COMPACT_AT && messages.length > KEEP_RECENT + 2;
+  // Counted on what is sent, not on everything ever said: a transcript already
+  // folded is short, and folding it again would summarise three turns.
+  return ratio >= COMPACT_AT && activeTranscript(messages).length > KEEP_RECENT + 2;
 }
 
 /**

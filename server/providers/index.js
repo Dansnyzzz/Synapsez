@@ -221,7 +221,15 @@ function waitFrom(error, now = Date.now()) {
 
 const DEAD_KEY =
   /invalid[ _-]?api[ _-]?key|incorrect api key|unauthorized|no such key|out of credit|insufficient|billing/;
-const TRANSIENT = /timeout|timed out|econnreset|econnrefused|socket hang up|fetch failed|network/;
+/**
+ * The provider broke off, or sent an error in the middle of a stream it had
+ * started. OpenRouter does this — an `error` event inside the SSE, surfaced by
+ * the SDK with no HTTP status ("JSON error injected into SSE stream") — and
+ * with no status it used to fall through to FATAL, ending the turn on a
+ * hiccup that the next attempt would not have had.
+ */
+const TRANSIENT =
+  /timeout|timed out|econnreset|econnrefused|socket hang up|fetch failed|network|sse|stream|overloaded|upstream|provider returned error|terminated|premature|unexpected end|bad gateway|service unavailable|internal server error/;
 
 /**
  * What a failure says about the key that produced it.

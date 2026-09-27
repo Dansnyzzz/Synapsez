@@ -323,6 +323,19 @@ section('deciding when to fold');
     shouldCompact(shortButFull, entry, { maxOutput: 10_000 }) === false,
     'there would be nothing left to keep',
   );
+
+  /*
+   * After a fold, the last billed figure describes a transcript that no longer
+   * exists. Read as current, it kept the ring full until the next reply and
+   * folded again every turn — 27 messages, then 7, then 3.
+   */
+  const { measure } = await import('../server/compact.js');
+  const seqd = full.map((m, i) => ({ ...m, seq: i + 1 }));
+  const afterFold = [...seqd, { role: 'summary', text: 'short summary', replaced: 5, covers: 5, seq: seqd.length + 1 }];
+  const before = measure(seqd, entry, { maxOutput: 10_000 }).ratio;
+  const after = measure(afterFold, entry, { maxOutput: 10_000 }).ratio;
+  check('the ring drops the moment a fold lands', after < 0.1 && before > 0.8, `${before.toFixed(2)} → ${after.toFixed(2)}`);
+  check('and it is not folded again straight away', shouldCompact(afterFold, entry, { maxOutput: 10_000 }) === false);
 }
 
 section('the fold never splits a tool call from its result');

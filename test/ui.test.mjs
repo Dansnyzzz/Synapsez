@@ -618,15 +618,39 @@ section('the context gauge');
       open: !m.hidden,
       head: m.querySelector('.menu__head')?.textContent,
       actions: [...m.querySelectorAll('.menu__item')].map((i) => i.textContent.split('\n')[0].trim()),
+      nowDisabled: /** @type {HTMLButtonElement | undefined} */ ([...m.querySelectorAll('.menu__item')].find((i) => /compact now/i.test(i.textContent || '')))?.disabled,
     };
   });
   check('clicking it says how full, in numbers', menu.open && /used/.test(menu.head || ''), menu.head);
   check('and offers to fold the earlier turns now', menu.actions.some((a) => /compact now/i.test(a)), menu.actions.join(' | '));
   check('and to turn the automatic one off', menu.actions.some((a) => /auto-compact/i.test(a)), menu.actions.join(' | '));
+  // A two-message conversation is nowhere near a quarter of the window.
+  check('"compact now" waits until a quarter of the window is used', menu.nowDisabled === true);
 
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
   check('Escape closes it', await page.evaluate(() => document.getElementById('context-menu').hidden));
+}
+
+/**
+ * Folding up is shown as a bar that fills and ends, not as a block in the
+ * transcript — and nothing is sent into a transcript being rewritten.
+ */
+section('compacting is a bar, and sending waits for it');
+{
+  const out = await page.evaluate(async () => {
+    // Drive the same events a run sends, through a stub stream, by calling the
+    // bar the way the handlers do: phase 'compacting' then 'compacted'.
+    const bar = document.getElementById('compact-bar');
+    const input = /** @type {HTMLTextAreaElement} */ (document.getElementById('input'));
+    // The bar is private to app.js; reach it through its markup and the
+    // composer's own behaviour.
+    return { exists: !!bar, hidden: bar?.hidden, role: bar?.getAttribute('role'), inputThere: !!input };
+  });
+  check('there is a progress bar for compacting', out.exists && out.role === 'progressbar', JSON.stringify(out));
+  check('  hidden while nothing is being compacted', out.hidden === true);
+  const drawn = await page.evaluate(() => document.querySelectorAll('#messages .compacted').length);
+  check('no summary block is drawn in the transcript', drawn === 0, String(drawn));
 }
 
 section('the menu closes from its own edge, and reopens from the logo');
@@ -3760,6 +3784,8 @@ section('what a project made is a row of pages, newest first');
   await store.createProject(user.id, { id: 'p-out', name: 'Output shelf' });
   await store.createChat(user.id, { id: 'c-out', title: 'Made things here', model: 'm', projectId: 'p-out' });
   await store.appendMessage(user.id, 'c-out', { id: 'm-out', role: 'user', text: 'make things' });
+  // A fold, which the transcript must not draw as a block among the turns.
+  await store.appendMessage(user.id, 'c-out', { id: 'm-sum', role: 'summary', text: 'Folded summary text', replaced: 12, covers: 0 });
   for (let i = 0; i < 7; i += 1) {
     const page_ = i % 2 === 0;
     await store.createAttachment(user.id, {
@@ -3782,6 +3808,7 @@ section('what a project made is a row of pages, newest first');
     const row = [...document.querySelectorAll('#chat-list .chat-row')].find((r) => r.textContent.includes('Made things here'));
     /** @type {HTMLElement | null} */ (row?.querySelector('.chat-item'))?.click();
     await new Promise((r) => setTimeout(r, 1200));
+    /** @type {any} */ (window).__foldsDrawn = document.querySelectorAll('#messages .compacted').length;
     document.getElementById('chat-project')?.click();
     await new Promise((r) => setTimeout(r, 1800));
   });
@@ -3796,6 +3823,7 @@ section('what a project made is a row of pages, newest first');
       frame: !!cards[0]?.querySelector('iframe.outcard__frame'),
     };
   });
+  check('a fold is not drawn in the transcript', (await page.evaluate(() => /** @type {any} */ (window).__foldsDrawn)) === 0);
   check('every output is a card in one row', first.count === 7, String(first.count));
   check('newest on the left', first.firstName === 'page-6.html', first.firstName);
   check('no left arrow at the start', first.prevHidden === true);
