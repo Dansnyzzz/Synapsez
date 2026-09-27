@@ -218,6 +218,14 @@ const STEP_VERBS = {
   make_qr: 'step.make_qr',
   http_request: 'step.http_request',
   encyclopedia: 'step.encyclopedia',
+  gmail: 'step.gmail',
+  google_calendar: 'step.google_calendar',
+  google_drive: 'step.google_drive',
+  google_docs: 'step.google_docs',
+  google_sheets: 'step.google_sheets',
+  google_forms: 'step.google_forms',
+  google_tasks: 'step.google_tasks',
+  google_contacts: 'step.google_contacts',
 
   /* ── what it remembers, and what it knows how to do ── */
   memory_write: 'step.memory_write',
@@ -384,6 +392,14 @@ const STEP_DETAILS = {
   make_qr: (i) => clip(i.text, 64),
   http_request: (i) => clip(`${String(i.method || 'GET').toUpperCase()} ${i.url || ''}`, 64),
   encyclopedia: (i) => clip(i.query, 64),
+  gmail: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
+  google_calendar: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
+  google_drive: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
+  google_docs: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
+  google_sheets: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
+  google_forms: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
+  google_tasks: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
+  google_contacts: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
 
   /* what it remembers, and what it knows how to do */
   memory_write: (i) => clip(i.key),
@@ -1793,7 +1809,8 @@ export function toast(message, kind = 'info') {
     }
   }
 
-  const node = el('div', `toast${kind === 'error' ? ' toast--error' : ''}`);
+  // 'ok' is a success: the same toast with a green edge, as an error has a red one.
+  const node = el('div', `toast${kind === 'error' ? ' toast--error' : kind === 'ok' ? ' toast--ok' : ''}`);
   node.dataset.message = message;
   node.textContent = message;
   host.append(node);

@@ -43,6 +43,10 @@
   --warn: #ffb454;
   --danger: #ff6b6b;
   --info: #6cb6ff;
+  /* Done, on, saved, connected — the colour every other app uses for them. */
+  --ok: #3fb950;
+  --ok-bg: rgba(63, 185, 80, 0.15);
+  --info-bg: rgba(108, 182, 255, 0.14);
 
   --radius: 14px;
   --radius-sm: 9px;
@@ -143,6 +147,9 @@
   --warn: #9a5d00;
   --danger: #c3352f;
   --info: #1b6fc4;
+  --ok: #1a7f37;
+  --ok-bg: rgba(26, 127, 55, 0.12);
+  --info-bg: rgba(27, 111, 196, 0.1);
 
   --shadow: 0 18px 44px -20px rgba(16, 30, 45, 0.35);
   --aurora-a: rgba(16, 133, 90, 0.05);
@@ -193,6 +200,9 @@
   --warn: #9a5d00;
     --danger: #c3352f;
     --info: #1b6fc4;
+    --ok: #1a7f37;
+    --ok-bg: rgba(26, 127, 55, 0.12);
+    --info-bg: rgba(27, 111, 196, 0.1);
 
     --shadow: 0 18px 44px -20px rgba(16, 30, 45, 0.35);
     --aurora-a: rgba(16, 133, 90, 0.05);
@@ -465,7 +475,7 @@ textarea {
 .gate__remember input {
   width: 15px;
   height: 15px;
-  accent-color: var(--accent);
+  accent-color: var(--info);
   cursor: pointer;
 }
 .gate__remember:hover { color: var(--text); }
@@ -734,8 +744,8 @@ textarea {
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
-.tag--free { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-glow); }
-.tag--new { color: var(--warn); border-color: rgba(255, 180, 84, 0.4); }
+.tag--free { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
+.tag--new { color: var(--info); border-color: var(--info); background: var(--info-bg); }
 .tag--ending { color: var(--danger); border-color: rgba(255, 107, 107, 0.45); }
 
 .browser__foot {
@@ -787,7 +797,7 @@ textarea {
 .meter__fill {
   height: 100%;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--ok);
 }
 .meter__fill.is-high { background: var(--warn); }
 .meter__fill.is-full { background: var(--danger); }
@@ -1431,16 +1441,16 @@ textarea {
 }
 .progress .is-done { color: var(--text-faint); }
 .progress .is-done span:last-child { text-decoration: line-through; }
-.progress .is-done span:first-child { color: var(--accent); }
+.progress .is-done span:first-child { color: var(--ok); }
 /* A tint rather than a fill: an opaque row on a translucent panel reads as a
    sticker somebody put on the glass. */
 .progress .is-active {
-  background: var(--accent-glow);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--info-bg);
+  box-shadow: inset 2px 0 0 var(--info);
   color: var(--text);
   font-weight: 500;
 }
-.progress .is-active span:first-child { color: var(--accent); }
+.progress .is-active span:first-child { color: var(--info); }
 
 /* The panel before there is anything to show. Left as a bare paragraph it read
    as a page that had failed to load; boxed, it reads as a slot waiting to be
@@ -2110,7 +2120,7 @@ textarea {
   transition: background 0.14s, color 0.14s;
 }
 .msg__action:hover { background: var(--surface-2); color: var(--text); }
-.msg__action.is-done { color: var(--accent); }
+.msg__action.is-done { color: var(--ok); }
 /* No hover on a touch screen, so there is nothing to reveal — they simply stay. */
 @media (hover: none) {
   .msg__actions { opacity: 1; }
@@ -2166,7 +2176,7 @@ textarea {
 .prose h3 { font-size: 16px; }
 .prose ul, .prose ol { margin: 0 0 13px; padding-left: 22px; }
 .prose li { margin-bottom: 5px; }
-.prose a { color: var(--accent); text-underline-offset: 3px; }
+.prose a { color: var(--info); text-underline-offset: 3px; }
 .prose blockquote {
   margin: 0 0 13px;
   padding: 2px 0 2px 14px;
@@ -2383,10 +2393,13 @@ details.block pre {
 /* The headline of a tool card: what was done, in words. Deliberately not
    monospace any more — it stopped being a function name and became a sentence,
    and setting a sentence in a code face is what made the transcript read as a
-   log file. The colour stays: it is how the eye finds the actions in a turn. */
+   log file. */
 .tool__name {
   flex: none;
-  color: var(--warn);
+  /* Full-strength text and weight find the action in a turn; amber is kept
+     for warnings, which a finished step is not. */
+  color: var(--text);
+  font-weight: 600;
   font-size: 13px;
 }
 /* The argument that matters — a path, a URL, a query. Still monospace, because
@@ -2508,7 +2521,7 @@ details.block pre {
   cursor: pointer;
 }
 .step__link:hover {
-  color: var(--accent);
+  color: var(--info);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -2610,7 +2623,8 @@ details.block pre {
   justify-content: center;
   width: 11px;
   height: 11px;
-  color: var(--accent);
+  /* Done is green, the one colour nobody has to learn. */
+  color: var(--ok);
   font-size: 11px;
   line-height: 1;
 }
@@ -2643,7 +2657,7 @@ details.block pre {
 }
 .plan ul { margin: 0; padding: 0; }
 .plan .is-done { color: var(--text-faint); text-decoration: line-through; }
-.plan .is-active { color: var(--accent); }
+.plan .is-active { color: var(--info); }
 
 .status-line {
   display: flex;
@@ -3175,7 +3189,7 @@ details.block pre {
 }
 .lang-choice__item:has(input:checked) { border-color: var(--accent-dim); background: var(--accent-glow); }
 .field .lang-choice__item input,
-.lang-choice__item input { width: auto; margin: 0; padding: 0; accent-color: var(--accent); }
+.lang-choice__item input { width: auto; margin: 0; padding: 0; accent-color: var(--info); }
 .lang-choice__item:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lang-choice__native { font-weight: 600; }
 .lang-choice__english { margin-left: auto; color: var(--text-faint); font-size: 12.5px; }
@@ -3212,6 +3226,22 @@ details.block pre {
   border-radius: 12px;
   background: var(--surface);
 }
+/* Google: a checklist of products and one sign-in button. */
+.gprods { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px 14px; }
+.gprod { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.gprod input { width: auto; margin: 0; accent-color: var(--info); }
+.gprod .badge { margin-left: auto; }
+/* Google's own button shape: white, rounded, dark bold text. */
+.gsignin {
+  padding: 8px 18px;
+  border: 1px solid #dadce0;
+  border-radius: 999px;
+  background: #fff;
+  color: #1f1f1f;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gsignin:hover { background: #f1f3f4; }
 .provider__head {
   display: flex;
   align-items: center;
@@ -3226,7 +3256,7 @@ details.block pre {
   border: 1px solid var(--line);
   color: var(--text-faint);
 }
-.badge--ok { color: var(--accent); border-color: var(--accent-dim); }
+.badge--ok { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
 .provider__row { display: flex; gap: 8px; }
 .provider__row input {
   flex: 1;
@@ -3275,6 +3305,7 @@ details.block pre {
   animation: drop 0.2s ease-out;
 }
 .toast--error { border-color: var(--danger); color: #ffd4d4; }
+.toast--ok { border-color: var(--ok); }
 @keyframes drop {
   from { opacity: 0; transform: translateY(-8px); }
 }
@@ -3336,9 +3367,9 @@ details.block pre {
   background: var(--surface);
   font-size: 13.5px;
 }
-.onb__state.is-done { border-color: var(--accent-dim); }
+.onb__state.is-done { border-color: var(--ok); }
 .onb__state.is-todo { border-color: var(--warn); }
-.onb__state.is-free { border-color: var(--accent-dim); }
+.onb__state.is-free { border-color: var(--ok); }
 /* The three sample questions. Full-width rows rather than a grid: they are
    sentences of different lengths, and a grid would either clip them or leave a
    ragged hole. */
@@ -3970,7 +4001,7 @@ details.block pre {
   color: inherit;
   text-underline-offset: 3px;
 }
-.bubble__text a:hover { color: var(--accent); }
+.bubble__text a:hover { color: var(--info); }
 
 /* ── the pairing sheet, reached from Settings → Computers ───── */
 
@@ -4137,7 +4168,7 @@ details.block pre {
 
 .gauge__track { stroke: var(--line); }
 .gauge__fill {
-  stroke: var(--accent);
+  stroke: var(--ok);
   /* The dash length is the value; animating it makes the ring fill rather than
      jump, which is what makes it read as a gauge at all. */
   transition: stroke-dasharray 400ms cubic-bezier(0.4, 0, 0.2, 1), stroke 300ms;
@@ -4448,10 +4479,9 @@ details.block pre {
   width: 21px;
   height: 21px;
   border-radius: 50%;
-  /* The app's "done" is its accent — `.badge--ok` says so too — not a green
-     from some other palette. */
-  background: var(--accent);
-  color: var(--surface);
+  /* Done is green, the convention every other app keeps. */
+  background: var(--ok);
+  color: #fff;
   font-size: 12px;
   font-weight: 700;
 }
@@ -4480,8 +4510,8 @@ details.block pre {
   white-space: nowrap;
   padding: 2px 9px;
   border-radius: 999px;
-  background: var(--accent-glow);
-  color: var(--accent);
+  background: var(--ok-bg);
+  color: var(--ok);
   font-size: 12px;
   font-weight: 600;
 }
@@ -4502,30 +4532,32 @@ details.block pre {
 .schedcard__para { margin: 0; color: var(--text); line-height: 1.55; overflow-wrap: anywhere; }
 .schedcard__points { margin: 0; padding-left: 20px; display: grid; gap: 5px; line-height: 1.5; }
 .schedcard__points li { overflow-wrap: anywhere; }
-/* Grey and round, as a button that summarises: when in the accent, what in
-   the text colour. */
+/* A solid white pill with dark bold text — the primary action on a dark
+   page, the way a "Continue" button is drawn everywhere; inverted on a light
+   page so it is still the strongest thing on the card. */
 .schedcard__pill {
-  display: inline-block;
-  max-width: 100%;
+  display: block;
+  width: 100%;
   margin-top: 10px;
-  padding: 7px 15px;
-  border: 1px solid var(--line);
+  padding: 11px 18px;
+  border: 0;
   border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text-dim);
+  background: var(--text);
+  color: var(--bg);
   font: inherit;
-  font-size: 13px;
-  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: opacity 0.15s;
 }
-.schedcard__when { color: var(--info); }
-.schedcard__what { color: var(--text); }
-.schedcard__pill:hover { border-color: var(--text-faint); background: var(--bg-elev); }
-.schedcard__pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.schedcard__when,
+.schedcard__what { color: inherit; }
+.schedcard__pill:hover { opacity: 0.88; }
+.schedcard__pill:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
 
 /* ── a file the assistant made, in the transcript ───────────── */
 
@@ -5143,9 +5175,9 @@ details.block pre {
 .keyrow__when { margin-left: auto; color: var(--text-faint); font-size: 11px; }
 .keyrow__badge {
   padding: 1px 7px;
-  border: 1px solid var(--accent-dim);
+  border: 1px solid var(--ok);
   border-radius: 999px;
-  color: var(--accent);
+  color: var(--ok);
   font-size: 10.5px;
 }
 .keyrow__drop {
@@ -5809,7 +5841,7 @@ details.block pre {
   white-space: nowrap;
 }
 .task__when { display: flex; align-items: center; gap: 7px; margin-top: 6px; color: var(--text-faint); font-size: 12px; }
-.task__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.task__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
 .task--off .task__dot { background: var(--text-faint); }
 .task__act {
   flex: none;
@@ -5868,8 +5900,8 @@ details.block pre {
   font-size: 12px;
 }
 
-.wf__step--done .wf__step-mark { color: var(--accent); }
-.wf__step--running .wf__step-mark { color: var(--accent); }
+.wf__step--done .wf__step-mark { color: var(--ok); }
+.wf__step--running .wf__step-mark { color: var(--info); }
 .wf__step--failed .wf__step-mark { color: var(--danger); }
 .wf__step--failed .wf__step-say { color: var(--danger); }
 /* Interrupted is not failure and must not read as it: the step may well have
@@ -5905,8 +5937,8 @@ details.block pre {
   background: var(--text-faint);
   transition: transform 0.16s ease, background 0.16s ease;
 }
-.switch[aria-pressed='true'] { background: var(--accent-dim); }
-.switch[aria-pressed='true']::after { background: var(--accent); transform: translateX(18px); }
+.switch[aria-pressed='true'] { background: var(--ok); }
+.switch[aria-pressed='true']::after { background: #fff; transform: translateX(18px); }
 @media (prefers-reduced-motion: reduce) {
   .switch::after { transition: none; }
 }
@@ -6779,6 +6811,7 @@ details.block pre {
 .spane[hidden], .spane [hidden] { display: none !important; }
 .spane__top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .spane__kicker { color: var(--info); font-size: 13px; font-weight: 600; }
+.spane__status.is-ok { color: var(--ok); }
 .spane__acts { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .spane__title {
   width: 100%;
@@ -7184,7 +7217,7 @@ select:focus-visible {
   cursor: pointer;
 }
 .ptask:hover { background: var(--tint); border-color: var(--line); }
-.ptask__mark { flex: none; color: var(--accent); line-height: 0; }
+.ptask__mark { flex: none; color: var(--ok); line-height: 0; }
 .ptask--off .ptask__mark { color: var(--text-faint); }
 .ptask__body { flex: 1; min-width: 0; }
 .ptask__name {
@@ -7199,8 +7232,9 @@ select:focus-visible {
   flex: none;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid var(--accent-dim);
-  color: var(--accent);
+  border: 1px solid var(--ok);
+  background: var(--ok-bg);
+  color: var(--ok);
   font-size: 10.5px;
 }
 .ptask--off .ptask__state { border-color: var(--line); color: var(--text-faint); }
@@ -7238,11 +7272,12 @@ select:focus-visible {
   flex-shrink: 0;
   white-space: nowrap;
   border-radius: 999px;
-  border: 1px solid var(--accent-dim);
-  color: var(--accent);
+  border: 1px solid var(--ok);
+  background: var(--ok-bg);
+  color: var(--ok);
   font-size: 12px;
 }
-.taskpage__state.is-off { border-color: var(--line); color: var(--text-faint); }
+.taskpage__state.is-off { border-color: var(--line); background: none; color: var(--text-faint); }
 .taskpage__acts {
   display: flex;
   align-items: center;

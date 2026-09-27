@@ -668,4 +668,78 @@ export const vi = {
     "Wikipedia ({0}) không có bài nào khớp với \"{1}\".",
   "Sends a {0} request to {1}, which may change something there.":
     "Gửi yêu cầu {0} tới {1}, có thể làm thay đổi dữ liệu ở đó.",
+  "Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts. Tick what the assistant may use, then sign in with Google.":
+    "Gmail, Drive, Lịch, Tài liệu, Trang tính, Biểu mẫu, Tasks và Danh bạ. Tick những gì trợ lý được dùng, rồi đăng nhập bằng Google.",
+  "Not set up on this deployment yet. The owner creates a free OAuth client in Google Cloud Console and sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET — see docs/google.md.":
+    "Bản triển khai này chưa được thiết lập. Chủ sở hữu tạo một OAuth client miễn phí trong Google Cloud Console và đặt GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET — xem docs/google.md.",
+  "Google is not set up on this deployment. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET first.":
+    "Bản triển khai này chưa thiết lập Google. Hãy đặt GOOGLE_CLIENT_ID và GOOGLE_CLIENT_SECRET trước.",
+  "The Google sign-in came back without a valid state. Start again from Settings.":
+    "Đăng nhập Google trả về không có mã xác thực hợp lệ. Hãy bắt đầu lại từ Cài đặt.",
+  "That Google sign-in was started from another session. Start again from Settings.":
+    "Lần đăng nhập Google đó được bắt đầu từ một phiên khác. Hãy bắt đầu lại từ Cài đặt.",
+  "The Google sign-in took too long. Start again from Settings.":
+    "Đăng nhập Google quá lâu. Hãy bắt đầu lại từ Cài đặt.",
+  "Google refused the sign-in ({0}).":
+    "Google từ chối đăng nhập ({0}).",
+  "Google did not give a refresh token, so scheduled runs could not reach it. Disconnect and connect again.":
+    "Google không cấp refresh token, nên các lần chạy theo lịch sẽ không truy cập được. Hãy ngắt kết nối rồi kết nối lại.",
+  "Google is not connected. The user can connect it in Settings → Connectors.":
+    "Chưa kết nối Google. Người dùng có thể kết nối trong Cài đặt → Kết nối.",
+  "Google access has expired or been revoked. Reconnect Google in Settings → Connectors.":
+    "Quyền truy cập Google đã hết hạn hoặc bị thu hồi. Hãy kết nối lại Google trong Cài đặt → Kết nối.",
+  "Only Google API addresses can be called with the Google token.":
+    "Token Google chỉ được dùng để gọi địa chỉ API của Google.",
+  "Google has not given this app access to that. Reconnect Google in Settings → Connectors and allow it.":
+    "Google chưa cho ứng dụng này quyền đó. Hãy kết nối lại Google trong Cài đặt → Kết nối và cho phép.",
+  "That Google API is not switched on for this app. The deployment owner enables it in Google Cloud Console → APIs & Services ({0}).":
+    "API Google đó chưa được bật cho ứng dụng này. Chủ bản triển khai bật nó trong Google Cloud Console → APIs & Services ({0}).",
+  "Google answered HTTP {0}{1}.":
+    "Google trả về HTTP {0}{1}.",
+  "no Gemini key":
+    "không có key Gemini",
+  "Google (Gemini grounding) returned HTTP {0}":
+    "Google (Gemini grounding) trả về HTTP {0}",
+  "action is search, read, send, draft, modify, trash or labels.":
+    "action phải là search, read, send, draft, modify, trash hoặc labels.",
+  "action is list, calendars, create, update, delete or free_busy.":
+    "action phải là list, calendars, create, update, delete hoặc free_busy.",
+  "action is search, read, create, upload, share, move, rename or trash.":
+    "action phải là search, read, create, upload, share, move, rename hoặc trash.",
+  "action is read, create, append or replace.":
+    "action phải là read, create, append hoặc replace.",
+  "values must be a list of rows, each a list of cells.":
+    "values phải là danh sách các hàng, mỗi hàng là danh sách ô.",
+  "action is info, read, write, append, create or clear.":
+    "action phải là info, read, write, append, create hoặc clear.",
+  "Question \"{0}\" needs options.":
+    "Câu hỏi \"{0}\" cần có các lựa chọn.",
+  "\"{0}\" is not a question type. Use text, paragraph, choice, checkbox, dropdown, scale, date or time.":
+    "\"{0}\" không phải loại câu hỏi. Dùng text, paragraph, choice, checkbox, dropdown, scale, date hoặc time.",
+  "action is create, get, responses or add_questions.":
+    "action phải là create, get, responses hoặc add_questions.",
+  "action is lists, list, add, complete or delete.":
+    "action phải là lists, list, add, complete hoặc delete.",
+  "action is search or list.":
+    "action phải là search hoặc list.",
+  "Give {0}.":
+    "Hãy cung cấp {0}.",
+  "Sends an email from your Gmail to {0}. It cannot be unsent.":
+    "Gửi email từ Gmail của bạn tới {0}. Không thể thu hồi.",
+  "Saves a draft in your Gmail. Nothing is sent.":
+    "Lưu bản nháp trong Gmail của bạn. Chưa gửi gì cả.",
+  "Moves an email to your Gmail trash.":
+    "Chuyển một email vào thùng rác Gmail.",
+  "Changes your Google Calendar and sends an invitation to {0}.":
+    "Thay đổi Google Lịch và gửi lời mời tới {0}.",
+  "Deletes an event from your Google Calendar.":
+    "Xoá một sự kiện khỏi Google Lịch.",
+  "Shares a Drive file with {0}.":
+    "Chia sẻ một tệp Drive với {0}.",
+  "Moves a file to your Google Drive trash.":
+    "Chuyển một tệp vào thùng rác Google Drive.",
+  "Deletes a task from Google Tasks.":
+    "Xoá một việc khỏi Google Tasks.",
+  "Changes something in your Google account ({0}: {1}).":
+    "Thay đổi dữ liệu trong tài khoản Google của bạn ({0}: {1}).",
 };

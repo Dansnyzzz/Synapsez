@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-27 (late) — Google, and colours that mean what they mean everywhere
+
+### Added
+
+- **Google connector** (OAuth): Gmail, Calendar, Drive, Docs, Sheets, Forms, Tasks and Contacts.
+  The deployment owner sets `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` once
+  ([docs/google.md](docs/google.md)); each account ticks products and signs in. Eight tools, one
+  per product with an `action`, offered only for the products actually granted, deferred behind
+  `load_tools`. Reads are ordinary, every write is sensitive and shown first. The sign-in state
+  is signed, bound to the account and the browser, and expires in ten minutes; the token is only
+  ever sent to `*.googleapis.com`; access tokens refresh themselves; disconnecting revokes the
+  grant at Google. Email subjects cannot smuggle headers; email and document text comes back
+  marked untrusted.
+- **Google Search** in the web-search chain, through Gemini grounding on a Gemini key (deployment
+  or the account's own), second after Exa. Silent when there is no key.
+
+### Changed
+
+- Semantic colours follow the conventions people already know, instead of the brand purple for
+  everything: new `--ok` green for done ticks, "On"/"Đang bật" badges, connected, saved, switches,
+  success toasts and healthy meters; blue for links, in-progress rows and checkboxes; amber only
+  for warnings (tool names are no longer amber); red for errors. The brand purple stays for brand
+  things — selection, focus, primary identity.
+- The schedule card's tick is green and its pill is a solid white, bold, full-width button.
+
 ## 2026-09-27 (night) — a schedule you adjust beside the conversation
 
 ### Changed

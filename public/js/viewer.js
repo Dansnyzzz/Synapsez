@@ -632,8 +632,8 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
     if (!text && !html) return toast(t('viewer.nothingToCopy'), 'error');
 
     const wrote = await writeRich({ html, text });
-    if (wrote === 'rich') toast(t('viewer.copiedRich'));
-    else if (wrote === 'plain') toast(t('viewer.copied'));
+    if (wrote === 'rich') toast(t('viewer.copiedRich'), 'ok');
+    else if (wrote === 'plain') toast(t('viewer.copied'), 'ok');
     else toast(t('viewer.copyRefused'), 'error');
   }
 

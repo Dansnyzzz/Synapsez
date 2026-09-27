@@ -55,7 +55,7 @@ internet ever connects inward to your machine.
 | **A queue, not an interruption** | Type while it is working and the message waits above the composer, then goes when the turn ends — or when you press stop. Interrupting is still one press away, on the queued line. |
 | **File panel** | A document the assistant makes opens *beside* the conversation on its own — Word as pages, spreadsheets as a grid with frozen headers, decks as slides with their notes, figures and all, PDFs in the browser's own reader. Open it in Word or Excel on your machine, show it in a folder, copy it with its formatting intact, or Print → Save as PDF. Every version it ever wrote is one press away. |
 | **Housekeeping** | Expired codes, unsent uploads, finished tool jobs and stale throttle counters are swept without being asked. |
-| **Connectors** | GitHub, Notion and Slack via a pasted token. Google needs OAuth and is not included. |
+| **Connectors** | Google (Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks, Contacts) by signing in; GitHub, Notion, Slack, Telegram and more via a pasted token. |
 | **Interruptible** | Keep typing while it works. A new message is picked up at the next step, so you can change your mind mid-task. |
 | **Approval gate** | Ask before anything that changes your machine, auto-run everything, or read-only. Your call — from the control beside the send button. |
 | **Auto-compact** | Long conversations fold their older turns into a summary before the window fills. A ring in the header shows how full it is. |
@@ -1267,9 +1267,10 @@ with the same key as your provider keys and never returned to the browser.
 | **Notion** | notion.so/my-integrations → Internal Integration Secret | `notion_search` |
 | **Slack** | api.slack.com/apps → Bot User OAuth Token | `slack_post` |
 
-> **Gmail, Drive and Calendar are not here.** Google requires a full OAuth flow with a registered
-> application and a verified redirect URI — there is no token you can paste. Adding them means
-> building an OAuth client, and I would rather they be absent than half-present.
+> **Google is a sign-in, not a token.** Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and
+> Contacts appear once the deployment has an OAuth client (`GOOGLE_CLIENT_ID`,
+> `GOOGLE_CLIENT_SECRET`); each account then ticks the products and signs in. Reads run at once,
+> every write is shown first. Setup, and the 7-day expiry of an app left in Testing: [docs/google.md](docs/google.md).
 
 Notion only sees pages explicitly shared with the integration, so an empty search often means
 unshared rather than absent.
@@ -1445,6 +1446,8 @@ sets `DATABASE_URL` for you. The schema is created automatically on first reques
 | `ENCRYPTION_KEY` | **yes** | Encrypts stored provider keys. Changing it makes existing ones unreadable. |
 | `CRON_SECRET` | **yes** | Authenticates the cron endpoints — the scheduler and the model-library refresh. Any long random string. Without it both refuse every call, so scheduled tasks never run. |
 | `GMAIL_USER` + `GMAIL_APP_PASSWORD`, **or** `RESEND_API_KEY`, **or** `SMTP_*` | optional | Sends password-reset codes and the assistant's emails. Without one, reset links go to the server log and `send_email` says it cannot send. |
+| `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` | optional | Lets accounts connect Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts. See [docs/google.md](docs/google.md). |
+| `GEMINI_API_KEY` | optional | Real Google results in web search (Gemini grounding). An account's own Google key works too. |
 | `EMAIL_FROM` | optional | The From name and address, e.g. `Elite Business <you@gmail.com>`. The name also heads every email. Defaults to the Gmail/SMTP login. |
 | `EMAIL_REPLY_TO` | optional | Where replies to the assistant's emails go, e.g. `support@yourcompany.com`. Unset, they come back to the sending mailbox. |
 | `ALLOW_SIGNUP` | optional | Open by default. `false` closes registration; the first account is always allowed. |
@@ -1895,7 +1898,8 @@ Being explicit, so you do not assume protection that is not there:
 - **UI Automation does not reach everything.** Apps that draw their own interface without exposing
   accessibility information — some games, some Electron and Java apps — show few or no numbered
   controls. Coordinates and keyboard shortcuts are the fallback there.
-- **No Google connectors.** Gmail, Drive and Calendar need an OAuth client, not a pasted token.
+- **Google needs a one-time OAuth client** from the deployment owner ([docs/google.md](docs/google.md)).
+  Unverified, it shows Google's warning screen and is capped at 100 users.
 - **No browser extension.** The sandbox is a separate browser the assistant drives; it cannot act
   inside the Chrome window you are personally using, and there is no extension that would let it.
 - **Sub-agents cannot write.** They are read-only on purpose — see above.

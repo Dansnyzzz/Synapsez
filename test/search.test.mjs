@@ -61,7 +61,7 @@ const ddgPage = (n) =>
 // ── the order ───────────────────────────────────────────────────────
 section('which engines, in which order');
 {
-  check('the default chain is Exa, DuckDuckGo, Tavily, Brave', searchChain().join(',') === 'exa,duckduckgo,tavily,brave', searchChain().join(','));
+  check('the default chain is Exa, Google, DuckDuckGo, Tavily, Brave', searchChain().join(',') === 'exa,google,duckduckgo,tavily,brave', searchChain().join(','));
 
   process.env.SEARCH_ORDER = 'tavily, exa';
   check('the order can be overridden', searchChain().join(',') === 'tavily,exa', searchChain().join(','));

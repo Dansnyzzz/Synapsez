@@ -1,5 +1,6 @@
 import { getStore } from './store/index.js';
 import { encryptSecret, decryptSecret } from './crypto.js';
+import { GOOGLE_PRODUCTS, googleConfigured, googleGrants, disconnectGoogle } from './google.js';
 
 /**
  * Connectors — the assistant reaching services you already use.
@@ -10,10 +11,10 @@ import { encryptSecret, decryptSecret } from './crypto.js';
  * the provider API keys this app already handles, with no redirect flow, no
  * client secret, and nothing to register.
  *
- * Google's services (Gmail, Drive, Calendar) do not work that way: they need a
- * full OAuth consent flow with a registered application and a verified redirect
- * URI, which cannot be done from a token box. They are absent rather than
- * half-present — see the README.
+ * Google's services (Gmail, Drive, Calendar and the rest) do not work that way:
+ * they need a full OAuth consent flow with a registered application and a
+ * redirect URI, which cannot be done from a token box. That flow lives in
+ * google.js, and appears here only as one more card in the list.
  *
  * Tokens are encrypted at rest with the same key as everything else and are
  * never returned to the browser, only ever used server-side.
@@ -211,13 +212,15 @@ export async function connect(userId, service, token) {
 }
 
 export async function disconnect(userId, service) {
+  // Google's grant is revoked on Google's side too, not only forgotten here.
+  if (service === 'google') return disconnectGoogle(userId);
   await getStore().deleteConnector(userId, service);
 }
 
 export async function connectedServices(userId) {
   const rows = await getStore().listConnectors(userId);
   const connected = new Set(rows.map((r) => r.service));
-  return Object.entries(SERVICES).map(([id, spec]) => ({
+  const tokens = Object.entries(SERVICES).map(([id, spec]) => ({
     id,
     label: spec.label,
     help: spec.help,
@@ -225,6 +228,27 @@ export async function connectedServices(userId) {
     connected: connected.has(id),
     account: rows.find((r) => r.service === id)?.account ?? null,
   }));
+
+  /**
+   * Google first, and a different kind of card: a button and a choice of
+   * products rather than a token box. `configured` is false until the
+   * deployment has its OAuth client, and the card then says how to set it up.
+   */
+  const granted = connected.has('google') ? await googleGrants(userId) : [];
+  const google = {
+    id: 'google',
+    label: 'Google',
+    oauth: true,
+    configured: googleConfigured(),
+    help: googleConfigured()
+      ? 'Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts. Tick what the assistant may use, then sign in with Google.'
+      : 'Not set up on this deployment yet. The owner creates a free OAuth client in Google Cloud Console and sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET — see docs/google.md.',
+    placeholder: '',
+    connected: connected.has('google'),
+    account: rows.find((r) => r.service === 'google')?.account ?? null,
+    products: Object.entries(GOOGLE_PRODUCTS).map(([id, spec]) => ({ id, label: spec.label, granted: granted.includes(id) })),
+  };
+  return [google, ...tokens];
 }
 
 async function tokenFor(userId, service) {
@@ -249,13 +273,20 @@ async function tokenFor(userId, service) {
 export async function connectorSummary(userId) {
   const rows = await getStore().listConnectors(userId);
   const ids = rows.map((r) => r.service);
+  // Google is one connection but several grants: each product the person
+  // allowed is its own id, so a Gmail tool is offered only when Gmail was.
+  let googleProducts = [];
+  if (ids.includes('google')) {
+    googleProducts = await googleGrants(userId).catch(() => []);
+    ids.push(...googleProducts.map((p) => `google_${p}`));
+  }
+  const label = (r) =>
+    r.service === 'google'
+      ? `Google — ${googleProducts.map((p) => GOOGLE_PRODUCTS[p].label).join(', ') || 'no products'}`
+      : SERVICES[r.service]?.label || r.service;
   return {
     ids,
-    summary: rows.length
-      ? rows
-          .map((r) => `${SERVICES[r.service]?.label || r.service}${r.account ? ` (${r.account})` : ''}`)
-          .join(', ')
-      : null,
+    summary: rows.length ? rows.map((r) => `${label(r)}${r.account ? ` (${r.account})` : ''}`).join(', ') : null,
   };
 }
 

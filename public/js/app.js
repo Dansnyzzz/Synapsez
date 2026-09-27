@@ -518,6 +518,7 @@ async function start() {
   setEmpty(true);
 
   await refreshChats();
+  afterGoogleSignIn();
   // Never fatal: a sidebar section that could not load is a missing list, not
   // a broken app, and throwing here would take the conversations with it.
   await refreshTasks().catch(() => {});
@@ -1196,7 +1197,7 @@ function chatMenuItems(chat, { titleButton = null, onDone = async () => refreshC
           hideApproval();
         }
         await refreshChats();
-        toast(t('chat.deleted'));
+        toast(t('chat.deleted'), 'ok');
       } catch (err) {
         toast(err.message, 'error');
       }
@@ -4475,8 +4476,10 @@ $('task-save').addEventListener('click', async () => {
 async function loadConnectors() {
   const { connectors } = await api.connectors();
   $('connector-list').innerHTML = connectors
-    .map(
-      (c) => `<div class="provider">
+    .map((c) =>
+      c.oauth
+        ? googleCardHtml(c)
+        : `<div class="provider">
         <div class="provider__head">
           <span class="provider__name">${escapeHtml(c.label)}</span>
           <span class="badge ${c.connected ? 'badge--ok' : ''}">${
@@ -4515,6 +4518,74 @@ async function loadConnectors() {
       loadConnectors();
     });
   }
+
+  // Google is a sign-in, not a paste: the browser goes to Google and comes back.
+  $('connector-list')
+    .querySelector('[data-google-connect]')
+    ?.addEventListener('click', () => {
+      const products = [...$('connector-list').querySelectorAll('[data-google-product]:checked')].map(
+        (box) => /** @type {HTMLInputElement} */ (box).value,
+      );
+      if (!products.length) return toast(t('google.pickOne'), 'error');
+      location.href = `/api/connectors/google/start?products=${encodeURIComponent(products.join(','))}`;
+    });
+}
+
+/**
+ * The Google card: which products the assistant may use, and one button.
+ *
+ * Ticked by default for what is already granted, or everything on a first
+ * connect — Google's consent screen lets the person untick any of them again,
+ * and the tools follow what was actually granted.
+ */
+function googleCardHtml(c) {
+  const anyGranted = c.products.some((p) => p.granted);
+  const boxes = c.products
+    .map(
+      (p) => `<label class="gprod">
+        <input type="checkbox" data-google-product value="${escapeHtml(p.id)}" ${
+          !c.connected || !anyGranted || p.granted ? 'checked' : ''
+        } ${c.configured ? '' : 'disabled'} />
+        <span>${escapeHtml(p.label)}</span>
+        ${p.granted ? `<span class="badge badge--ok">${escapeHtml(t('google.allowed'))}</span>` : ''}
+      </label>`,
+    )
+    .join('');
+  return `<div class="provider provider--google">
+    <div class="provider__head">
+      <span class="provider__name">Google</span>
+      <span class="badge ${c.connected ? 'badge--ok' : ''}">${
+        c.connected ? escapeHtml(c.account || t('connectors.connected')) : escapeHtml(t('connectors.notConnected'))
+      }</span>
+    </div>
+    <div class="hint">${escapeHtml(c.help)}</div>
+    <div class="gprods">${boxes}</div>
+    <div class="provider__row">
+      ${
+        c.configured
+          ? `<button class="gsignin" data-google-connect type="button">${escapeHtml(
+              t(c.connected ? 'google.update' : 'google.signIn'),
+            )}</button>`
+          : ''
+      }
+      ${c.connected ? `<button data-disconnect="google" type="button">${escapeHtml(t('connectors.disconnect'))}</button>` : ''}
+    </div>
+  </div>`;
+}
+
+/**
+ * Back from Google's consent screen: say how it went, and show the card.
+ * The query is removed first so a reload does not say it again.
+ */
+function afterGoogleSignIn() {
+  const outcome = takeUrlToken('google');
+  if (!outcome) return;
+  const products = takeUrlToken('products');
+  const message = takeUrlToken('message');
+  if (outcome === 'connected') toast(t('google.connected', { n: String(products ? products.split(',').length : 0) }), 'ok');
+  else if (outcome === 'denied') toast(t('google.denied'), 'error');
+  else toast(message || t('google.failed'), 'error');
+  openSettings('connectors');
 }
 
 /* ── account ───────────────────────────────────────────────────── */

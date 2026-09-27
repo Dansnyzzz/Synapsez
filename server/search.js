@@ -9,10 +9,12 @@
  * did — because "who told you that" is a fair question and the model should be
  * able to pass the answer on.
  *
- * The default order is Exa, then DuckDuckGo, then Tavily, then Brave:
+ * The default order is Exa, then Google, then DuckDuckGo, then Tavily, then Brave:
  *
  *   **Exa** is neural search built for exactly this — it returns the passage
  *   that answers the question rather than a page that mentions the words.
+ *   **Google** is real Google results through Gemini's search grounding, on
+ *   a Gemini key; with none it stands aside silently (see `searchGoogle`).
  *   **DuckDuckGo** needs no key and costs nothing, so it sits ahead of the paid
  *   fallbacks: an outage on the good engine should not start spending credits.
  *   **Tavily** and **Brave** are the paid safety nets, in that order.
@@ -24,7 +26,7 @@
 import { untrusted } from './tools/untrusted.js';
 import { log } from './util/trace.js';
 
-const DEFAULT_ORDER = ['exa', 'duckduckgo', 'tavily', 'brave'];
+const DEFAULT_ORDER = ['exa', 'google', 'duckduckgo', 'tavily', 'brave'];
 
 const TIMEOUT_MS = 30_000;
 
@@ -240,6 +242,76 @@ async function searchDuckDuckGo(query, count) {
   });
 }
 
+/* ── Google, through Gemini ─────────────────────────────────────────── */
+
+/**
+ * Google Search, via Gemini's "grounding with Google Search".
+ *
+ * Google's own search API for developers (Custom Search JSON) no longer takes
+ * new customers, so the way to real Google results is to ask Gemini with the
+ * search tool switched on and read back the pages it grounded on. It runs on a
+ * Gemini key — the deployment's `GEMINI_API_KEY`, or the account's own Google
+ * key from Settings → Providers — and simply stands aside when there is none.
+ *
+ * The links Gemini returns are Google redirect addresses; each is followed once
+ * to the real page, because "vertexaisearch.cloud.google.com/grounding-api-
+ * redirect/…" tells the reader nothing about where a claim came from.
+ */
+const GROUNDING_MODEL = process.env.GOOGLE_SEARCH_MODEL || 'gemini-2.5-flash';
+
+/** @param {{ userId?: string|null }} [who] */
+async function searchGoogle(query, count, who = {}) {
+  const userId = who.userId;
+  let key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+  if (!key && userId) {
+    const { getApiKey } = await import('./settings.js');
+    key = (await getApiKey(userId, 'google').catch(() => null)) || '';
+  }
+  if (!key) throw Object.assign(new Error('no Gemini key'), { skip: true });
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GROUNDING_MODEL)}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: `Search Google for: ${query}\nList what the top results say, briefly.` }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { temperature: 0 },
+      }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    },
+  );
+  if (!res.ok) throw new Error(`Google (Gemini grounding) returned HTTP ${res.status}`);
+  const body = await res.json();
+  const meta = body?.candidates?.[0]?.groundingMetadata || {};
+  const chunks = meta.groundingChunks || [];
+  if (!chunks.length) return [];
+
+  // What each source was cited for: the sentences of the answer that point at it.
+  const said = chunks.map(() => []);
+  for (const support of meta.groundingSupports || []) {
+    for (const i of support.groundingChunkIndices || []) said[i]?.push(support.segment?.text || '');
+  }
+
+  const resolve = async (uri) => {
+    try {
+      const hop = await fetch(uri, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(5_000) });
+      return hop.headers.get('location') || uri;
+    } catch {
+      return uri;
+    }
+  };
+  const picked = chunks.slice(0, count);
+  const urls = await Promise.all(picked.map((c) => resolve(c.web?.uri || '')));
+  return picked.map((c, i) => ({
+    title: c.web?.title || urls[i],
+    url: urls[i],
+    snippet: said[i].join(' ').slice(0, 400),
+    published: null,
+  }));
+}
+
 /* ── the chain ──────────────────────────────────────────────────────── */
 
 const ENGINES = {
@@ -249,6 +321,8 @@ const ENGINES = {
   // No key, so it is always available — which is what makes it a good middle
   // of the chain rather than a last resort.
   duckduckgo: { label: 'DuckDuckGo', run: searchDuckDuckGo, key: null },
+  // Keyed per account as well as per deployment, so it decides for itself.
+  google: { label: 'Google', run: searchGoogle, key: null },
 };
 
 /** The engines to try, in order, skipping the ones with no key. */
@@ -288,7 +362,7 @@ export async function search(query, { count = 8, userId = null } = {}) {
   for (const name of chain) {
     const engine = ENGINES[name];
     try {
-      const results = await engine.run(query, wanted);
+      const results = await engine.run(query, wanted, { userId });
       if (results.length) {
         /**
          * Say who spent it.
@@ -309,6 +383,8 @@ export async function search(query, { count = 8, userId = null } = {}) {
       }
       attempts.push({ engine: engine.label, error: 'no results' });
     } catch (err) {
+      // An engine with nothing to run on stands aside without being reported as failing.
+      if (err.skip) continue;
       attempts.push({ engine: engine.label, error: err.message });
     }
   }

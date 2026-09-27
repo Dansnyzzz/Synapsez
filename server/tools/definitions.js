@@ -1844,6 +1844,217 @@ export const TOOLS = [
       },
     },
   },
+  /* ── Google, as the account connected it (google.js) ────────────────
+   * One tool per product, each with an action. `needs` is per product, so
+   * a person who allowed Calendar but not Gmail is never offered Gmail.
+   * Reads run at once; every write is shown first — see assessRisk. */
+  {
+    name: 'gmail',
+    scope: 'cloud',
+    readOnly: false,
+    needs: 'google_gmail',
+    description:
+      "The user's own Gmail: search, read, send, reply, draft, label, trash. " +
+      'search takes Gmail query syntax ("from:boss is:unread newer_than:7d"); read takes an id from search. ' +
+      'send and draft take to, subject, body (plain text) and optionally html, cc, bcc; reply_to_id replies in that thread. ' +
+      'modify adds/removes labels (UNREAD, STARRED, IMPORTANT, INBOX to archive, or a label name).',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['search', 'read', 'send', 'draft', 'modify', 'trash', 'labels'] },
+        query: { type: 'string' },
+        max: { type: 'number' },
+        id: { type: 'string' },
+        to: { type: 'string', description: 'Comma-separated addresses.' },
+        cc: { type: 'string' },
+        bcc: { type: 'string' },
+        subject: { type: 'string' },
+        body: { type: 'string' },
+        html: { type: 'string' },
+        reply_to_id: { type: 'string' },
+        add_labels: { type: 'string' },
+        remove_labels: { type: 'string' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'google_calendar',
+    scope: 'cloud',
+    readOnly: false,
+    needs: 'google_calendar',
+    description:
+      "The user's Google Calendar: list events, create, update or delete one, check free/busy. " +
+      'Times are ISO 8601 ("2026-09-30T14:00") in tz, or a date for all-day. create can add attendees, a Google Meet link, a reminder, recurrence (RRULE).',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'calendars', 'create', 'update', 'delete', 'free_busy'] },
+        calendar_id: { type: 'string', description: 'Default primary.' },
+        time_min: { type: 'string' },
+        time_max: { type: 'string' },
+        query: { type: 'string' },
+        max: { type: 'number' },
+        event_id: { type: 'string' },
+        summary: { type: 'string' },
+        description: { type: 'string' },
+        location: { type: 'string' },
+        start: { type: 'string' },
+        end: { type: 'string' },
+        tz: { type: 'string', description: 'IANA zone, e.g. Asia/Ho_Chi_Minh.' },
+        all_day: { type: 'boolean' },
+        attendees: { type: 'string', description: 'Comma-separated emails; they are sent an invitation.' },
+        meet: { type: 'boolean' },
+        reminder_minutes: { type: 'number' },
+        recurrence: { type: 'string', description: 'e.g. RRULE:FREQ=WEEKLY;BYDAY=MO' },
+        calendars: { type: 'string', description: 'free_busy: comma-separated calendar ids.' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'google_drive',
+    scope: 'cloud',
+    readOnly: false,
+    needs: 'google_drive',
+    description:
+      "The user's Google Drive: search files, read one as text (Docs, Sheets as CSV, Slides, PDF, text), create a Doc/Sheet/folder/file, " +
+      'upload a file from this conversation, share, move, rename, trash. create as doc takes HTML for formatting; as sheet takes CSV.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['search', 'read', 'create', 'upload', 'share', 'move', 'rename', 'trash'] },
+        query: { type: 'string' },
+        raw_query: { type: 'string', description: 'A Drive query, instead of query.' },
+        type: { type: 'string', enum: ['doc', 'sheet', 'slides', 'folder'] },
+        max: { type: 'number' },
+        file_id: { type: 'string' },
+        folder_id: { type: 'string' },
+        name: { type: 'string' },
+        as: { type: 'string', enum: ['doc', 'sheet', 'folder', 'file'] },
+        content: { type: 'string' },
+        mime_type: { type: 'string' },
+        attachment_id: { type: 'string' },
+        email: { type: 'string', description: 'share: who; omit to share with anyone who has the link.' },
+        role: { type: 'string', enum: ['reader', 'commenter', 'writer'] },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'google_docs',
+    scope: 'cloud',
+    readOnly: false,
+    needs: 'google_docs',
+    description:
+      'Google Docs: read a document, create one (HTML content keeps headings, lists and tables), append text, or find and replace.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['read', 'create', 'append', 'replace'] },
+        document_id: { type: 'string' },
+        title: { type: 'string' },
+        content: { type: 'string' },
+        text: { type: 'string' },
+        find: { type: 'string' },
+        folder_id: { type: 'string' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'google_sheets',
+    scope: 'cloud',
+    readOnly: false,
+    needs: 'google_sheets',
+    description:
+      'Google Sheets: list tabs, read a range as CSV, write or append rows (formulas allowed), create a spreadsheet, clear a range. ' +
+      'values are rows of cells: [["Name","Total"],["An",5]].',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['info', 'read', 'write', 'append', 'create', 'clear'] },
+        spreadsheet_id: { type: 'string' },
+        range: { type: 'string', description: 'A1 notation, e.g. Sheet1!A1:D20.' },
+        values: { type: 'array', items: { type: 'array', items: {} } },
+        formulas: { type: 'boolean' },
+        title: { type: 'string' },
+        sheet_names: { type: 'string' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'google_forms',
+    scope: 'cloud',
+    readOnly: false,
+    needs: 'google_forms',
+    description:
+      'Google Forms: create a form with questions, add questions, read a form, or read its responses. ' +
+      'Question types: text, paragraph, choice, checkbox, dropdown, scale, date, time.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['create', 'get', 'responses', 'add_questions'] },
+        form_id: { type: 'string' },
+        title: { type: 'string' },
+        description: { type: 'string' },
+        questions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string' },
+              type: { type: 'string' },
+              options: { type: 'array', items: { type: 'string' } },
+              required: { type: 'boolean' },
+              description: { type: 'string' },
+              low: { type: 'number' },
+              high: { type: 'number' },
+            },
+            required: ['title'],
+          },
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'google_tasks',
+    scope: 'cloud',
+    readOnly: false,
+    needs: 'google_tasks',
+    description: "The user's Google Tasks to-do lists: show lists and tasks, add a task with a due date, complete or delete one.",
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['lists', 'list', 'add', 'complete', 'delete'] },
+        list_id: { type: 'string' },
+        task_id: { type: 'string' },
+        title: { type: 'string' },
+        notes: { type: 'string' },
+        due: { type: 'string', description: 'YYYY-MM-DD.' },
+        show_completed: { type: 'boolean' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'google_contacts',
+    scope: 'cloud',
+    readOnly: true,
+    needs: 'google_contacts',
+    description: "Look people up in the user's Google Contacts — an email address or phone number by name, or the whole list.",
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['search', 'list'] },
+        query: { type: 'string' },
+        max: { type: 'number' },
+      },
+      required: ['action'],
+    },
+  },
   {
     name: 'github',
     scope: 'cloud',
@@ -2302,6 +2513,38 @@ export function externalSource(name, input = {}) {
   return path ? String(path).slice(0, 200) : `the output of ${name}`;
 }
 
+/** The Google actions that only read. Every other action writes and is shown first. */
+export const GOOGLE_READS = {
+  gmail: ['search', 'read', 'labels'],
+  google_calendar: ['list', 'calendars', 'free_busy'],
+  google_drive: ['search', 'read'],
+  google_docs: ['read'],
+  google_sheets: ['info', 'read'],
+  google_forms: ['get', 'responses'],
+  google_tasks: ['lists', 'list'],
+  google_contacts: ['search', 'list'],
+};
+
+/** What a Google write is about to do, in the words the approval prompt shows. */
+function googleRiskReason(name, input = {}) {
+  const action = String(input?.action || '');
+  if (name === 'gmail' && action === 'send') {
+    return `Sends an email from your Gmail to ${input?.to || 'someone'}. It cannot be unsent.`;
+  }
+  if (name === 'gmail' && action === 'draft') return 'Saves a draft in your Gmail. Nothing is sent.';
+  if (name === 'gmail' && action === 'trash') return 'Moves an email to your Gmail trash.';
+  if (name === 'google_calendar' && (action === 'create' || action === 'update') && input?.attendees) {
+    return `Changes your Google Calendar and sends an invitation to ${input.attendees}.`;
+  }
+  if (name === 'google_calendar' && action === 'delete') return 'Deletes an event from your Google Calendar.';
+  if (name === 'google_drive' && action === 'share') {
+    return `Shares a Drive file with ${input?.email || 'anyone who has the link'}.`;
+  }
+  if (name === 'google_drive' && action === 'trash') return 'Moves a file to your Google Drive trash.';
+  if (name === 'google_tasks' && action === 'delete') return 'Deletes a task from Google Tasks.';
+  return `Changes something in your Google account (${name.replace('google_', '')}: ${action}).`;
+}
+
 /**
  * What level is this specific call?
  *
@@ -2333,6 +2576,10 @@ export function assessRisk(name, input = {}) {
   // Reading an API is what web_fetch already does; writing to one changes
   // something somewhere else, which somebody should see before it happens.
   if (name === 'http_request') return /^(GET|HEAD)$/i.test(String(input?.method || 'GET')) ? 'ordinary' : 'sensitive';
+
+  // Google: reading the account is ordinary; sending, sharing, deleting and
+  // writing into it are not, whatever the product.
+  if (GOOGLE_READS[name]) return GOOGLE_READS[name].includes(String(input?.action || '')) ? 'ordinary' : 'sensitive';
 
   // The shell is judged by what it is about to run, not by the fact that it is
   // the shell. `npm test` and `git status` are the texture of ordinary work and
@@ -2426,6 +2673,7 @@ export function riskReason(name, input = {}) {
   if (name === 'download_file') {
     return `Downloads ${input?.url || 'a file'} onto your computer.`;
   }
+  if (GOOGLE_READS[name]) return googleRiskReason(name, input);
   // The audience is not the person being asked, and none of it can be recalled.
   if (name === 'send_email') {
     return `Sends an email to ${input?.to || 'your own account address'}. It cannot be unsent.`;
@@ -2610,6 +2858,10 @@ const DEFERRABLE = new Set([
   // wanted and noise on every turn that does not want it.
   'date_calc', 'convert_units', 'market_data', 'place_lookup', 'read_feed', 'text_tools',
   'analyze_data', 'make_qr', 'http_request', 'encyclopedia',
+  // Google, only ever offered to an account that connected it — and even then
+  // most turns are not about the inbox.
+  'gmail', 'google_calendar', 'google_drive', 'google_docs', 'google_sheets', 'google_forms', 'google_tasks',
+  'google_contacts',
 ]);
 
 /**

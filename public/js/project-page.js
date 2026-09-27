@@ -168,7 +168,7 @@ export function projectMenuItems(project, { after, onGone, onEdit }) {
         try {
           await api.deleteProject(project.id);
           document.dispatchEvent(new globalThis.CustomEvent('projects-changed'));
-          toast(t('proj.deleted'));
+          toast(t('proj.deleted'), 'ok');
           await onGone?.();
         } catch (err) {
           toast(err.message, 'error');
@@ -657,7 +657,7 @@ export function createProjectPage({
         data.project = project;
         editingInstructions = false;
         draw();
-        toast(t('proj.instructionsSaved'));
+        toast(t('proj.instructionsSaved'), 'ok');
       } catch (err) {
         toast(err.message, 'error');
         button.disabled = false;
@@ -1037,7 +1037,7 @@ export function createProjectPage({
           data: textToBase64(text),
         });
         done();
-        toast(t('proj.added'));
+        toast(t('proj.added'), 'ok');
         await reload();
       } catch (err) {
         error.textContent = err.message;

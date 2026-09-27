@@ -770,7 +770,7 @@ export function createPages({
         await api.createTask({ ...fields, projectId: formProject?.id || undefined });
       }
       $('task-form').close();
-      toast(t(formEditing ? 'pages.tasks.saved' : 'pages.tasks.scheduled'));
+      toast(t(formEditing ? 'pages.tasks.saved' : 'pages.tasks.scheduled'), 'ok');
       // Whoever opened the form says what to refresh. The global list reloads
       // itself; a project page reloads its own Scheduled section.
       if (formDone) await formDone();
@@ -905,7 +905,7 @@ export function createPages({
       try {
         const result = await api.runTask(task.id);
         clearTimeout(peek);
-        toast(t('pages.tasks.ranNow'));
+        toast(t('pages.tasks.ranNow'), 'ok');
         // Straight into the conversation it wrote: that is the output, and
         // making somebody go looking for it is the whole failure of a run
         // nobody watched. Not again if they are already there — or have
@@ -1251,7 +1251,7 @@ export function createPages({
 
     const save = async (patch) => {
       status.textContent = t('pane.saving');
-      status.classList.remove('is-error');
+      status.classList.remove('is-error', 'is-ok');
       try {
         const result = await update(patch);
         const fresh = result.task || result.workflow;
@@ -1268,6 +1268,7 @@ export function createPages({
             })
           : t('pane.noNext');
         status.textContent = t('pane.saved');
+        status.classList.add('is-ok');
         refreshCards(kind, row);
         onTasksChanged();
       } catch (err) {
@@ -1355,7 +1356,7 @@ export function createPages({
       try {
         const result = kind === 'workflow' ? await api.runWorkflow(row.id) : await api.runTask(row.id);
         clearTimeout(peek);
-        toast(t('pages.tasks.ranNow'));
+        toast(t('pages.tasks.ranNow'), 'ok');
         const chatId = result?.chatId || result?.run?.chat_id;
         if (chatId && !watching) {
           onLeave();
