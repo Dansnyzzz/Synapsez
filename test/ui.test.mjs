@@ -789,7 +789,23 @@ section('the openers on a blank screen are glass with a lit edge');
   // The lit edge along the cut, which is what stops translucency reading as a
   // washed-out rectangle.
   check('and a highlight along the top edge', /gradient/.test(look.backgroundImage || ''), look.backgroundImage);
-  check('the ring is on the accent, not the plain line colour', look.borderColor !== 'rgb(35, 45, 54)', look.borderColor);
+  // At rest the edge is glass; the neon belongs to the one being pointed at.
+  check('at rest the edge is quiet glass, not the accent', !/124, 92, 255/.test(look.borderColor), look.borderColor);
+  await page.hover('#suggestions .suggestion:nth-child(2)');
+  await page.waitForTimeout(250);
+  const lit = await page.evaluate(() =>
+    [...document.querySelectorAll('#suggestions .suggestion')].map((el) => getComputedStyle(el).boxShadow !== 'none'),
+  );
+  check('pointing at one lights that one', lit[1] === true, JSON.stringify(lit));
+  check('  and only that one', lit.filter(Boolean).length === 1, JSON.stringify(lit));
+  await page.mouse.move(0, 0);
+
+  const glass = await page.evaluate(() => {
+    const s = getComputedStyle(document.querySelector('.composer__box'));
+    return { bg: s.backgroundColor, blur: s.backdropFilter || s.webkitBackdropFilter };
+  });
+  check('the composer is glass, not an opaque grey', /rgba\([^)]+,\s*0?\.\d+\)/.test(glass.bg), glass.bg);
+  check('  with a blur behind it', /blur\(/.test(glass.blur || ''), glass.blur);
 }
 
 section('the opening screen has a sky, and only the opening screen');
@@ -4189,7 +4205,9 @@ section('the accent is a galaxy, except where it should not be');
     return {
       focused: document.activeElement === field,
       outline: getComputedStyle(field).outlineStyle,
-      boxPaint: getComputedStyle(box).backgroundImage,
+      // The ring is a masked layer over the glass, lit while focused.
+      ringPaint: getComputedStyle(box, '::before').backgroundImage,
+      ringLit: getComputedStyle(box, '::before').opacity,
       // The rule itself, for the case where focus cannot land here because a
       // sheet from an earlier section is over the composer.
       rule: [...document.styleSheets]
@@ -4200,16 +4218,20 @@ section('the accent is a galaxy, except where it should not be');
             return [];
           }
         })
-        .filter((r) => r.selectorText === '.composer__box:focus-within')
-        .map((r) => r.style.backgroundImage)
+        .filter((r) => r.selectorText === '.composer__box::before')
+        .map((r) => r.cssText)
         .join(''),
     };
   });
   check('the field inside draws no second outline', rings.outline === 'none', rings.outline);
   check(
     'while the rounded box wears the gradient',
-    rings.focused ? /linear-gradient/.test(rings.boxPaint) : /var\(--galaxy\)|linear-gradient/.test(rings.rule),
-    rings.focused ? rings.boxPaint.slice(0, 60) : `not focused; rule says ${rings.rule.slice(0, 60)}`,
+    rings.focused
+      ? /gradient/.test(rings.ringPaint) && rings.ringLit === '1'
+      : /var\(--galaxy\)|gradient/.test(rings.rule),
+    rings.focused
+      ? `${rings.ringPaint.slice(0, 60)} at opacity ${rings.ringLit}`
+      : `not focused; rule says ${rings.rule.slice(0, 60)}`,
   );
 }
 

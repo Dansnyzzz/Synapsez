@@ -118,9 +118,30 @@ export function createModelNews({ state, renderTopbar, refreshModelFacts }) {
     newsDialog.showModal();
   }
 
+  /**
+   * Look again at six in the morning, this device's time, if the app is still
+   * open then — that is when the library is refreshed for this person, and a
+   * tab left open overnight should hear about a release the same morning as
+   * one opened fresh. A few random minutes on top, so a deployment's worth of
+   * tabs does not arrive in the same second.
+   */
+  let morning = null;
+  function scheduleMorning(check) {
+    clearTimeout(morning);
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(6, 0, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    const wait = next.getTime() - now.getTime() + Math.floor(Math.random() * 5 * 60_000);
+    morning = setTimeout(() => {
+      void check();
+    }, wait);
+  }
+
   return {
     /** Ask the server whether there is anything to announce, and announce it. */
     async check() {
+      scheduleMorning(() => this.check());
       try {
         const { model } = await api.modelNews();
         if (!model) return;

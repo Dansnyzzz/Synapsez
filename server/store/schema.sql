@@ -443,6 +443,15 @@ ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS vision BOOLEAN NOT NULL DEFAU
 -- figure from the context length in that case rather than reaching for 32000.
 ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS max_output INTEGER;
 
+-- When the provider stops serving this model — OpenRouter's "Going away
+-- September 25" — as it publishes it (`expiration_date`).
+--
+-- Read at query time, not only at refresh: a free model that ends at midnight
+-- must leave the Free list at midnight, not whenever the next daily refresh
+-- happens to land. Until then the picker shows the date, so nobody builds a
+-- workflow on a model with a week to live. Null means no end announced.
+ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
 -- Counters behind the login and password-reset throttles.
 --
 -- In a table rather than in memory on purpose: on a serverless deployment each

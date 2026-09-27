@@ -158,7 +158,9 @@ export const api = {
   setMcpEnabled: (id, enabled) => request('PATCH', `/api/mcp/${id}`, { enabled }),
   removeMcpServer: (id) => request('DELETE', `/api/mcp/${id}`),
 
-  models: (params) => request('GET', `/api/models?${new URLSearchParams(clean(params))}`),
+  // The browser's zone rides along so the server can tell whether the library
+  // is fresh as of six this morning *here* — see refreshIfStale.
+  models: (params) => request('GET', `/api/models?${new URLSearchParams(clean({ tz: localZone(), ...params }))}`),
   resolveModel: (id) => request('GET', `/api/models/resolve?id=${encodeURIComponent(id)}`),
   refreshModels: () => request('POST', '/api/models/refresh'),
 
@@ -179,7 +181,7 @@ export const api = {
   setDeviceWorkspace: (id, path) => request('PUT', `/api/devices/${id}/workspace`, { path }),
   enrolmentLink: () => request('POST', '/api/devices/enrolment'),
 
-  modelNews: () => request('GET', '/api/models/news'),
+  modelNews: () => request('GET', `/api/models/news?tz=${encodeURIComponent(localZone() || '')}`),
   decideModelNews: (id, action) => request('POST', '/api/models/news', { id, action }),
   updateUser: (id, patch) => request('PATCH', `/api/admin/users/${id}`, patch),
 

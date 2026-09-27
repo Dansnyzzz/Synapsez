@@ -1164,6 +1164,7 @@ export const vi = {
   'models.libraryStatus': '{total} model · {free} miễn phí · cập nhật {when}',
   'models.tagFree': 'miễn phí',
   'models.tagNew': 'mới',
+  'models.goingAway': 'ngừng cung cấp {day}',
   'models.tagBuiltIn': 'có sẵn',
   'models.noCost': 'không mất phí',
   'models.released': 'phát hành {when}',

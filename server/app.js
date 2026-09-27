@@ -125,6 +125,22 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  */
 const MODEL_GONE =
   /no longer available|is not found|not found for api version|does not exist|no longer supported|has been (?:retired|deprecated|shut down)|deprecat\w*|testing period/i;
+
+/**
+ * The zone to read "six this morning" in: the account's own setting, else the
+ * one the browser reported, else none (UTC). Never throws — it only decides
+ * whether a refresh is due.
+ */
+async function zoneOf(req, prefs = null) {
+  try {
+    const own = (prefs || (await getPrefs(req.user.id)))?.timezone;
+    if (own) return own;
+  } catch {
+    /* fall through to the browser's */
+  }
+  const asked = typeof req.query?.tz === 'string' ? req.query.tz.slice(0, 64) : '';
+  return asked || null;
+}
 
 export function readableFailure(error) {
   let message = redactSecrets(String(error?.message || error || 'Something went wrong.')).text;
@@ -857,9 +873,10 @@ export function createApp() {
   api.get(
     '/models',
     wrap(async (req, res) => {
-      // Self-healing: if the daily refresh has not landed, catch up quietly
-      // rather than showing a stale or empty list.
-      await refreshIfStale();
+      // Self-healing: if the daily refresh has not landed — or landed before
+      // six this morning where this person is — catch up quietly rather than
+      // showing a stale list.
+      await refreshIfStale({ tz: await zoneOf(req) });
       res.json(
         await browse({
           query: req.query.q,
@@ -929,9 +946,27 @@ export function createApp() {
     '/models/news',
     wrap(async (req, res) => {
       // The library refreshing itself is what makes this daily. If the cron has
-      // not landed, catch up first rather than announcing yesterday's news.
-      await refreshIfStale().catch(() => {});
-      res.json({ model: await pendingAnnouncement(req.user.id) });
+      // not landed since six this morning on this person's clock, catch up
+      // first rather than announcing yesterday's news.
+      const prefs = await getPrefs(req.user.id);
+      await refreshIfStale({ tz: await zoneOf(req, prefs) }).catch(() => {});
+      /*
+       * News in the tier they use. Somebody on a free model is told about new
+       * free models, and not about a paid flagship they have chosen not to pay
+       * for; somebody paying is told about paid releases, not about free ones.
+       */
+      let tier = 'free';
+      try {
+        const current = prefs.defaultModel;
+        if (current && current !== 'auto') {
+          const entry = await resolveModelId(current);
+          const free = !!entry.tags?.includes('free') || (entry.price?.in === 0 && entry.price?.out === 0);
+          tier = free ? 'free' : 'paid';
+        }
+      } catch {
+        /* an unresolvable default is treated as free: the safer thing to suggest */
+      }
+      res.json({ model: await pendingAnnouncement(req.user.id, { tier }) });
     }),
   );
 

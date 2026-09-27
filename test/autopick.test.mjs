@@ -177,6 +177,126 @@ section('a refresh forgets the models its source no longer lists');
   );
 }
 
+section('a model leaves the library on the day its provider ends it');
+{
+  const { __testing, resolve, refreshIfStale } = await import('../server/models.js');
+  const { expiryOf, hasExpired, normalise } = __testing;
+
+  // OpenRouter's "Going away September 25, 2026", as the API publishes it.
+  check('a bare day is read as the start of that day, UTC', expiryOf({ expiration_date: '2026-09-25' }) === '2026-09-25T00:00:00.000Z');
+  check('no date is no end', expiryOf({}) === null && expiryOf({ expiration_date: '' }) === null);
+  check('nonsense is not a date', expiryOf({ expiration_date: 'soon' }) === null);
+  const n = normalise({ id: 'nex-agi/nex-n2.5-mini:free', pricing: { prompt: '0', completion: '0' }, expiration_date: '2026-09-25' });
+  check('the end date travels with the model', n.expiresAt === '2026-09-25T00:00:00.000Z', n.expiresAt);
+  check('  and is past on the 26th', hasExpired(n, Date.parse('2026-09-26T01:00:00Z')));
+  check('  and not on the 24th', !hasExpired(n, Date.parse('2026-09-24T23:00:00Z')));
+
+  const past = new Date(Date.now() - 3600_000).toISOString();
+  const soon = new Date(Date.now() + 7 * 86400_000).toISOString();
+  await store.upsertModels([
+    { ...model({ id: 'openrouter/nex-agi/ended:free', family: 'nex-agi' }), expiresAt: past },
+    { ...model({ id: 'openrouter/lab/ending-soon:free', family: 'lab' }), expiresAt: soon },
+    { ...model({ id: 'openrouter/lab/paid-ended', family: 'lab' }), priceIn: 1, priceOut: 2, isFree: false, expiresAt: past },
+  ]);
+  const listed = (await store.listSharedModels({ tier: 'free', limit: 500 })).map((m) => m.id);
+  check('an ended free model is gone from the Free list at once', !listed.includes('openrouter/nex-agi/ended:free'));
+  check('one with a week left is still there', listed.includes('openrouter/lab/ending-soon:free'));
+  const soonRow = (await store.listSharedModels({ limit: 500 })).find((m) => m.id === 'openrouter/lab/ending-soon:free');
+  check('  carrying its date for the picker', !!soonRow?.expires_at);
+
+  // Somebody whose default was the ended free model is moved to the free
+  // router and told — never to the paid version of the same model.
+  const moved = await resolve('openrouter/nex-agi/ended:free');
+  check('an ended free model resolves to the free router', moved.id === AUTO_ROUTER.id, moved.id);
+  check('  saying which model it replaced', !!moved.retiredFrom, String(moved.retiredFrom));
+  check('  and it is free', moved.price?.in === 0 && moved.price?.out === 0);
+  const vanished = await resolve('openrouter/some/withdrawn:free');
+  check('a free id the library no longer has also goes to the free router', vanished.id === AUTO_ROUTER.id, vanished.id);
+  let paidError = '';
+  try {
+    await resolve('openrouter/lab/paid-ended');
+  } catch (err) {
+    paidError = err.message;
+  }
+  check('an ended paid model is refused in words, not swapped', /retired by its provider/.test(paidError), paidError);
+
+  // Fresh as of six this morning, the asking person's time.
+  const status = await store.modelLibraryStatus();
+  const refreshed = new Date(status.refreshedAt);
+  let refreshedAgain = false;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    refreshedAgain = true;
+    throw new Error('offline in the suite');
+  };
+  try {
+    // An hour after the last refresh, and still before six there: fresh.
+    const tz = 'Asia/Ho_Chi_Minh';
+    const { lastLocalHour } = await import('../server/util/zone.js');
+    check(
+      'six this morning in Hanoi, seen from noon there, is 23:00 UTC the day before',
+      lastLocalHour(6, tz, new Date('2026-09-27T05:00:00Z')).toISOString() === '2026-09-26T23:00:00.000Z',
+    );
+    check(
+      '  and seen from five in the morning, it is the previous day’s six',
+      lastLocalHour(6, tz, new Date('2026-09-26T22:00:00Z')).toISOString() === '2026-09-25T23:00:00.000Z',
+    );
+    check('an unknown zone reads as UTC rather than failing', lastLocalHour(6, 'Not/AZone', new Date('2026-03-01T05:00:00Z')).toISOString() === '2026-02-28T06:00:00.000Z');
+    const six = lastLocalHour(6, tz, new Date(refreshed.getTime() + 60_000));
+    const beforeNextSix = new Date(six.getTime() + 86400_000 - 60_000);
+    await refreshIfStale({ tz, now: refreshed.getTime() < six.getTime() ? six : beforeNextSix });
+    const firstTry = refreshedAgain;
+    refreshedAgain = false;
+    await refreshIfStale({ tz, now: new Date(Math.max(six.getTime(), refreshed.getTime()) + 86400_000 + 60_000) });
+    check('a library refreshed before six this morning is refreshed again', refreshedAgain);
+    check('  one refreshed since is left alone', refreshed.getTime() >= six.getTime() ? !firstTry : true);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+section('news comes in the tier the person uses');
+{
+  const { pendingAnnouncement } = await import('../server/modelNews.js');
+  const reader = 'u-news';
+  await store.createUser({
+    id: reader,
+    email: 'news@example.com',
+    name: 'News',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'user',
+  });
+  // First look draws the line and says nothing.
+  check('the first look announces nothing', (await pendingAnnouncement(reader, { tier: 'free' })) === null);
+  await new Promise((r) => setTimeout(r, 20));
+  const recent = new Date(Date.now() - 2 * 86400_000).toISOString();
+  await store.upsertModels([
+    { ...model({ id: 'openrouter/small-lab/fresh:free', family: 'small-lab' }), releasedAt: recent },
+    { ...model({ id: 'openrouter/openai/fresh-paid', family: 'openai' }), priceIn: 2, priceOut: 8, isFree: false, releasedAt: recent },
+    { ...model({ id: 'openrouter/qwen/fresh-but-ending:free', family: 'qwen' }), releasedAt: recent, expiresAt: new Date(Date.now() + 86400_000).toISOString() },
+  ]);
+  const forFree = await pendingAnnouncement(reader, { tier: 'free' });
+  check('somebody on a free model hears of a new free one, whoever made it', forFree?.id === 'openrouter/small-lab/fresh:free', forFree?.id);
+  const forPaid = await pendingAnnouncement(reader, { tier: 'paid' });
+  check('somebody paying hears of the paid release', forPaid?.id === 'openrouter/openai/fresh-paid', forPaid?.id);
+  check('  priced as charged, with the service share on top', forPaid?.price?.in === 2.2 && forPaid?.price?.out === 8.8, JSON.stringify(forPaid?.price));
+}
+
+section('every price shown carries the service share');
+{
+  const { withMarkup, markedPrice, PRICE_MARKUP } = await import('../server/pricing.js');
+  check('ten percent by default', PRICE_MARKUP === 0.1);
+  check('on input and output alike', JSON.stringify(markedPrice({ in: 1.25, out: 4.25 })) === JSON.stringify({ in: 1.375, out: 4.675 }));
+  check('free stays free', withMarkup(0) === 0);
+  check('unknown stays unknown', withMarkup(null) === null);
+  check('no floating-point dust', withMarkup(0.045) === 0.0495, String(withMarkup(0.045)));
+  const { browse } = await import('../server/models.js');
+  const shown = await browse({ limit: 500 });
+  const paid = shown.models.find((m) => m.id === 'openrouter/openai/fresh-paid');
+  check('the picker shows the charged rate', paid?.price?.in === 2.2, JSON.stringify(paid?.price));
+  check('  built-in models too', shown.builtin.every((m) => !m.price || m.price.in >= 0));
+}
+
 await store.close?.();
 removeTemp(process.env.DATA_DIR);
 

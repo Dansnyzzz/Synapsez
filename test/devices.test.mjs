@@ -866,7 +866,8 @@ section('new-model announcement');
   const m = news.json.model;
   check('with the vendor named', m.vendor === 'Claude', m.vendor);
   check('the context window', m.context === 500_000, String(m.context));
-  check('the price', m.price?.in === 4 && m.price?.out === 20, JSON.stringify(m.price));
+  // As charged: the provider's $4 / $20 plus the service's ten percent.
+  check('the price, as charged', m.price?.in === 4.4 && m.price?.out === 22, JSON.stringify(m.price));
   check('the release date', !!m.releasedAt);
   check('and what it is', /invented by the test suite/.test(m.description || ''), m.description);
 

@@ -2,10 +2,20 @@ import { getStore } from './store/index.js';
 import { getApiKeys } from './settings.js';
 import { CATALOG, resolveModel } from './providers/catalog.js';
 import { log } from './util/trace.js';
+import { lastLocalHour } from './util/zone.js';
+import { markedPrice } from './pricing.js';
+import { AUTO_ROUTER } from './autoPick.js';
 
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const ORCAROUTER_MODELS = 'https://api.orcarouter.ai/v1/models';
 const STALE_AFTER_MS = 25 * 60 * 60 * 1000; // a day plus the cron's ±59min slop
+
+/**
+ * The hour, on each person's own clock, by which the library is expected to be
+ * fresh. The cron runs once a day on UTC; this is what makes "today's list"
+ * mean today where the person is, and it is when a new-model notice is due.
+ */
+export const DAILY_REFRESH_HOUR = 6;
 
 /**
  * Where the catalogue is pulled from, and under which provider each source is
@@ -128,6 +138,23 @@ function maxOutputOf(entry) {
   return Number.isFinite(stated) && stated > 0 ? stated : null;
 }
 
+/**
+ * When the provider stops serving this model, as an ISO instant, or null.
+ *
+ * OpenRouter publishes `expiration_date` as a bare day ("2026-09-25") — the
+ * "Going away September 25" on its model page — and a free variant's end date
+ * is how a free model stops being free. Read as the start of that day in UTC,
+ * the earliest reading of it: leaving a model in the Free list for an extra day
+ * risks a turn that fails, or worse, one that is billed.
+ */
+export function expiryOf(entry) {
+  const raw = entry?.expiration_date ?? entry?.expires_at ?? entry?.deprecation_date ?? null;
+  if (raw == null || raw === '') return null;
+  const text = String(raw).trim();
+  const when = /^\d{4}-\d{2}-\d{2}$/.test(text) ? Date.parse(`${text}T00:00:00Z`) : Date.parse(text);
+  return Number.isFinite(when) ? new Date(when).toISOString() : null;
+}
+
 function normalise(entry, provider = 'openrouter') {
   let priceIn = perMillion(entry.pricing?.prompt);
   let priceOut = perMillion(entry.pricing?.completion);
@@ -160,7 +187,14 @@ function normalise(entry, provider = 'openrouter') {
     vision: acceptsImages(entry),
     // `created` is a unix timestamp of when the model was published.
     releasedAt: entry.created ? new Date(entry.created * 1000).toISOString() : null,
+    expiresAt: expiryOf(entry),
   };
+}
+
+/** Whether a normalised model or a stored row has reached its end date. */
+export function hasExpired(model, now = Date.now()) {
+  const at = model?.expiresAt ?? model?.expires_at ?? null;
+  return at != null && new Date(at).getTime() <= now;
 }
 
 async function fetchCatalogue(url, label) {
@@ -190,10 +224,15 @@ export async function refreshLibrary() {
   const settled = await Promise.allSettled(
     CATALOGUE_SOURCES.map(async ({ provider, url }) => {
       const entries = await fetchCatalogue(url, provider);
+      /*
+       * A model already past its end date is not imported, even if the source
+       * still lists it for a day or two afterwards — so it also falls to the
+       * prune below, rather than lingering in the Free list.
+       */
       return entries
         .filter((e) => isTextModel(e) && supportsTools(e))
         .map((e) => normalise(e, provider))
-        .filter((m) => m.model);
+        .filter((m) => m.model && !hasExpired(m));
     }),
   );
 
@@ -247,10 +286,19 @@ export async function refreshLibrary() {
  * failure surface to the caller — a slow or down OpenRouter must not stop
  * someone opening the model picker.
  */
-export async function refreshIfStale() {
+/**
+ * @param {{ tz?: string|null, now?: Date }} [options]  `tz` is the asking
+ *   person's zone. With one, the library also counts as stale when it was last
+ *   refreshed before six this morning *their* time — so whoever opens the app
+ *   first after their morning gets today's catalogue, prices and discounts,
+ *   whatever hour the UTC cron happened to run.
+ */
+export async function refreshIfStale({ tz = null, now = new Date() } = {}) {
   const status = await getStore().modelLibraryStatus();
-  const age = status.refreshedAt ? Date.now() - new Date(status.refreshedAt).getTime() : Infinity;
-  if (age < STALE_AFTER_MS) return status;
+  const refreshed = status.refreshedAt ? new Date(status.refreshedAt).getTime() : 0;
+  const age = refreshed ? now.getTime() - refreshed : Infinity;
+  const beforeMorning = tz ? refreshed < lastLocalHour(DAILY_REFRESH_HOUR, tz, now).getTime() : false;
+  if (age < STALE_AFTER_MS && !beforeMorning) return status;
 
   try {
     return await refreshLibrary();
@@ -305,7 +353,28 @@ export async function addModelById(rawId, userId) {
  */
 export async function resolve(id) {
   if (CATALOG.some((m) => m.id === id)) return resolveModel(id);
-  return resolveModel(id, await getStore().getSharedModel(id));
+  const row = await getStore().getSharedModel(id);
+  if (row && !hasExpired(row)) return resolveModel(id, row);
+
+  /**
+   * The model has gone — past its end date, or no longer listed at all.
+   *
+   * A `:free` id is the case that happens: a free period ends, OpenRouter
+   * drops the variant, and every account that chose it would otherwise fail on
+   * every turn with the provider's 404. It moves to the free router, which is
+   * free too, and carries `retiredFrom` so the turn says so out loud. It never
+   * moves to the paid version of the same model — that would start billing
+   * somebody who chose a free model, without asking.
+   */
+  const wasFree = row ? !!row.is_free : /:free$/.test(String(id));
+  if (wasFree && String(id).startsWith('openrouter/')) {
+    return { ...AUTO_ROUTER, retiredFrom: row?.label || String(id).replace(/^openrouter\//, '') };
+  }
+  if (row) {
+    const day = new Date(row.expires_at).toISOString().slice(0, 10);
+    throw new Error(`${row.label || id} was retired by its provider on ${day}. Pick another model.`);
+  }
+  return resolveModel(id, null);
 }
 
 /**
@@ -321,7 +390,9 @@ export async function browse(filters) {
   ]);
 
   return {
-    builtin: CATALOG,
+    // Every price here is what the person pays: the provider's rate plus this
+    // service's share (see pricing.js). The stored rate stays the provider's.
+    builtin: CATALOG.map((m) => (m.price ? { ...m, price: markedPrice(m.price) } : m)),
     models: shared.map((m) => ({
       id: m.id,
       provider: m.provider,
@@ -330,10 +401,12 @@ export async function browse(filters) {
       label: m.label,
       description: m.description,
       context: m.context ? Number(m.context) : null,
-      price: m.price_in == null ? null : { in: Number(m.price_in), out: Number(m.price_out) },
+      price: m.price_in == null ? null : markedPrice({ in: Number(m.price_in), out: Number(m.price_out) }),
       isFree: m.is_free,
       vision: !!m.vision,
       releasedAt: m.released_at,
+      // Shown as "Going away <date>" in the picker, the way OpenRouter does.
+      expiresAt: m.expires_at ? new Date(m.expires_at).toISOString() : null,
     })),
     families: families.map((f) => ({ family: f.family, count: f.count, free: f.free })),
     status,
@@ -473,4 +546,4 @@ const summarise = (entry) => ({
 });
 
 /** Exposed for the suite that pins how each aggregator's /models shape is read. */
-export const __testing = { normalise, maxOutputOf, acceptsImages };
+export const __testing = { normalise, maxOutputOf, acceptsImages, expiryOf, hasExpired };

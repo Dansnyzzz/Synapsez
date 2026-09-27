@@ -1,6 +1,7 @@
 import { getStore } from './store/index.js';
 import { familyOf } from './models.js';
 import { FAMILY_LABELS } from '../public/js/search.js';
+import { markedPrice } from './pricing.js';
 
 /**
  * "There is a new model" — said once, to each person, about the models that
@@ -19,6 +20,13 @@ import { FAMILY_LABELS } from '../public/js/search.js';
  *   xAI, DeepSeek, Qwen, Mistral. This is a judgement call and it is meant to
  *   be: the question is not "is this model good" but "would this person want to
  *   be told", and for a flagship from one of these the answer is usually yes.
+ *   Paid models only: a new *free* model is news to somebody on a free model
+ *   whoever made it, because the alternative is them never hearing of it.
+ *
+ *   **In the tier they use.** Somebody on a free model hears about free models
+ *   and not about paid ones, and the other way round. And never a model that
+ *   already has an end date — telling somebody to switch to a model that is
+ *   going away is telling them to switch twice.
  *
  * Seen state is per account and per model, so a shared deployment does not have
  * one person's dismissal silence it for everybody. Recorded on both answers —
@@ -77,7 +85,7 @@ async function newsState(userId) {
  * One at a time, and at most one a day, so even a busy week cannot become a
  * queue.
  */
-export async function pendingAnnouncement(userId) {
+export async function pendingAnnouncement(userId, { tier = 'free' } = {}) {
   const store = getStore();
   const state = await newsState(userId);
 
@@ -95,7 +103,8 @@ export async function pendingAnnouncement(userId) {
 
   // Newest first, and only a page of them: the answer is at the top or it is not
   // worth showing.
-  const candidates = await store.listSharedModels({ sort: 'new', limit: 60 });
+  const wanted = tier === 'paid' ? 'paid' : 'free';
+  const candidates = await store.listSharedModels({ sort: 'new', limit: 60, tier: wanted });
   const now = Date.now();
   const since = new Date(state.since).getTime();
 
@@ -106,7 +115,9 @@ export async function pendingAnnouncement(userId) {
     // And actually a release, not an old model the catalogue only just listed.
     if (!row.released_at) continue;
     if (now - new Date(row.released_at).getTime() > RECENT_MS) continue;
-    if (!NOTABLE_FAMILIES.has(row.family || familyOf(row.model || row.id))) continue;
+    if (!!row.is_free !== (wanted === 'free')) continue;
+    if (row.expires_at) continue;
+    if (wanted === 'paid' && !NOTABLE_FAMILIES.has(row.family || familyOf(row.model || row.id))) continue;
 
     /**
      * The quiet period starts when it is *shown*, not when it is fetched.
@@ -151,7 +162,8 @@ function describe(row) {
     description: row.description || null,
     context: row.context ? Number(row.context) : null,
     isFree: !!row.is_free,
-    price: priceIn == null ? null : { in: priceIn, out: priceOut },
+    // As charged — the provider's rate plus this service's share.
+    price: priceIn == null ? null : markedPrice({ in: priceIn, out: priceOut }),
     releasedAt: row.released_at,
     addedAt: row.created_at,
   };

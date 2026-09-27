@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { t } from './i18n.js';
+import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { toast, revealInStrip } from './render.js';
 import { parseQuery, familyLabel } from './search.js';
@@ -200,6 +200,17 @@ export function createModelBrowser({ onPick }) {
     // to a model without it and the provider rejects the whole request.
     if (model.vision !== false) tags.push(`<span class="tag tag--vision">${escapeHtml(t('models.seesImages'))}</span>`);
     if (isBuiltin) tags.push(`<span class="tag">${escapeHtml(t('models.tagBuiltIn'))}</span>`);
+    // The provider has announced an end date — OpenRouter's "Going away". Said
+    // before it happens, so nobody builds a daily job on a model with a week left.
+    if (model.expiresAt) {
+      const day = new Date(model.expiresAt).toLocaleDateString(currentLanguage() === 'vi' ? 'vi-VN' : 'en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC',
+      });
+      tags.push(`<span class="tag tag--ending">${escapeHtml(t('models.goingAway', { day }))}</span>`);
+    }
 
     const meta = [
       fmtContext(model.context),

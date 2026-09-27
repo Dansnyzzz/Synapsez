@@ -1,3 +1,4 @@
+import { withMarkup } from './pricing.js';
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 
@@ -123,7 +124,9 @@ export async function summary(userId) {
   // Cached input as a share of all input, which is the number to watch when
   // tuning what goes in the cached prefix and what does not.
   const cacheHitRate = month.tokens > 0 ? (month.cacheRead || 0) / month.tokens : 0;
-  return { month: { ...month, cacheHitRate }, byModel, byRole };
+  // Stored at the provider's price; shown at what is charged (pricing.js).
+  const charged = (row) => (row && row.cost != null ? { ...row, cost: withMarkup(Number(row.cost)) } : row);
+  return { month: { ...charged(month), cacheHitRate }, byModel: byModel.map(charged), byRole: byRole.map(charged) };
 }
 
 

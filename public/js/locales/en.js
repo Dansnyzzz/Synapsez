@@ -1174,6 +1174,7 @@ export const en = {
   'models.libraryStatus': '{total} models · {free} free · updated {when}',
   'models.tagFree': 'free',
   'models.tagNew': 'new',
+  'models.goingAway': 'going away {day}',
   'models.tagBuiltIn': 'built-in',
   'models.noCost': 'no cost',
   'models.released': 'released {when}',

@@ -4,6 +4,7 @@ import { getPrefs, usesSharedKey, providerStatus } from './settings.js';
 import { checkQuota, record as recordUsage, turnTokenLimit } from './usage.js';
 import { normaliseQuestions } from './tools/askOptions.js';
 import { streamCompletion } from './providers/index.js';
+import { withMarkup } from './pricing.js';
 import { budgetStop } from './providers/stop.js';
 import { resolve as resolveModelId } from './models.js';
 import { isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
@@ -1377,7 +1378,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // Priced when we have a rate card *or* the provider invoiced us. The second
     // half is what makes a cost appear at all for the large part of the library
     // whose price was never verified.
-    emit('usage', { ...totals, priced: entry.price != null || totals.cost > 0 });
+    // The cost as charged: the provider's figure plus this service's share
+    // (pricing.js). `totals.cost` itself stays the provider's, as recorded.
+    emit('usage', { ...totals, cost: withMarkup(totals.cost), priced: entry.price != null || totals.cost > 0 });
 
     if (!assistant.toolCalls.length) {
       /**

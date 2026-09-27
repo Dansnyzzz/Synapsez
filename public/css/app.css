@@ -77,6 +77,9 @@
      The docked chrome does not use these. The rail, the header and the
      progress panel have no pane at all — see `.sidebar`. */
   --glass-solid: rgba(14, 19, 25, 0.88);
+  /* The writing box: frosted, so the sky and the transcript show through it
+     softly, the way a pane of glass does, rather than a grey slab. */
+  --composer-glass: rgba(20, 24, 36, 0.52);
   --glass-line: rgba(255, 255, 255, 0.07);
   --glass-hi: rgba(255, 255, 255, 0.08);
   --blur: saturate(1.6) blur(22px);
@@ -148,6 +151,7 @@
 
   /* Frosted white rather than frosted black. */
   --glass-solid: rgba(255, 255, 255, 0.92);
+  --composer-glass: rgba(255, 255, 255, 0.62);
   --glass-line: rgba(16, 30, 45, 0.09);
   --glass-hi: rgba(255, 255, 255, 0.7);
   --tint: rgba(16, 30, 45, 0.05);
@@ -196,6 +200,7 @@
     --scrim: rgba(16, 30, 45, 0.35);
 
     --glass-solid: rgba(255, 255, 255, 0.92);
+    --composer-glass: rgba(255, 255, 255, 0.62);
     --glass-line: rgba(16, 30, 45, 0.09);
     --glass-hi: rgba(255, 255, 255, 0.7);
     --tint: rgba(16, 30, 45, 0.05);
@@ -731,6 +736,7 @@ textarea {
 }
 .tag--free { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-glow); }
 .tag--new { color: var(--warn); border-color: rgba(255, 180, 84, 0.4); }
+.tag--ending { color: var(--danger); border-color: rgba(255, 107, 107, 0.45); }
 
 .browser__foot {
   display: flex;
@@ -1996,17 +2002,18 @@ textarea {
  * along the cut edge — and the app already has tokens for all three, which
  * every other floating surface uses.
  *
- * The border keeps the accent rather than waiting for a hover to find it. These
- * four are the only thing to press on an empty screen; the ring is what says so.
+ * At rest the edge is the glass hairline; the neon arrives on the one card
+ * being pointed at, or focused from the keyboard. Four lit rings at once made
+ * none of them the one about to be chosen — the light is what says "this one".
  */
 .suggestion {
   padding: 13px 15px;
-  border: 1px solid var(--accent-dim);
+  border: 1px solid var(--glass-line);
   border-radius: 14px;
   background: linear-gradient(180deg, var(--glass-hi), transparent 46%), var(--tint);
   -webkit-backdrop-filter: var(--blur);
   backdrop-filter: var(--blur);
-  box-shadow: 0 10px 30px -22px var(--accent-glow);
+  box-shadow: none;
   color: var(--text-dim);
   text-align: left;
   font-size: 13.5px;
@@ -2018,12 +2025,15 @@ textarea {
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .suggestion { background: var(--glass-solid); }
 }
-.suggestion:hover {
+.suggestion:hover,
+.suggestion:focus-visible {
   border-color: var(--accent);
   background: linear-gradient(180deg, var(--glass-hi), transparent 46%), var(--tint-2);
   color: var(--text);
   transform: translateY(-2px);
-  box-shadow: 0 10px 26px -14px var(--accent-glow);
+  /* The neon: a tight ring of the accent, then its glow. */
+  box-shadow: 0 0 0 1px var(--accent-dim), 0 0 22px -4px var(--accent-glow), 0 10px 26px -14px var(--accent-glow);
+  outline: none;
 }
 
 /* ── Messages ────────────────────────────────────────────────── */
@@ -2768,7 +2778,7 @@ details.block pre {
   margin: 0 auto;
   /* Even on both sides now that the left holds two controls rather than one. */
   padding: 8px;
-  /* Transparent, not absent, and the same width it has when focused.
+  /* A hairline of glass, and the same width it has when focused.
      A grey ring read as a second, squarer edge around a shape that is already
      drawn by its own surface and shadow; reserving the pixel here is what
      stops the box jumping when the galaxy ring arrives.
@@ -2777,41 +2787,54 @@ details.block pre {
      frame around the field rather than as an edge on it — the eye kept
      catching on it while typing, which is the one place in this app where
      nothing should be competing for attention. */
-  border: 1px solid transparent;
+  position: relative;
+  border: 1px solid var(--glass-line);
   border-radius: 26px;
-  /* Opaque, because the transcript now scrolls behind it. */
-  background: var(--surface);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  /*
+   * Glass, not a grey slab.
+   *
+   * It used to be the opaque surface colour, chosen so the transcript would not
+   * show through — and on the opening screen it sat on the sky as the one flat
+   * grey thing on it. Frosted instead: a translucent wash, a strong blur so
+   * whatever scrolls behind is a soft colour rather than readable text, a
+   * highlight along the top edge, and an inner line of light where the glass is
+   * cut. The blur is what keeps text readable; without it there is a fallback.
+   */
+  background: linear-gradient(180deg, var(--glass-hi), transparent 55%), var(--composer-glass);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: 0 14px 40px -14px rgba(0, 0, 0, 0.6), inset 0 1px 0 var(--glass-hi);
   transition: border-color 0.15s;
 }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .composer__box { background: var(--glass-solid); }
+}
 /**
- * The ring is the galaxy; the inside stays the surface.
+ * The galaxy ring, drawn as its own layer.
  *
- * The first entry in `background-image` is the *topmost* layer, and the galaxy
- * was written first — so it was painted over the surface beneath it and filled
- * the whole box, gradient from edge to edge, instead of showing only in the
- * two pixels of border the surface does not cover. Surface on top, clipped to
- * the padding box; galaxy underneath, clipped to the border box. The sizes
- * follow the same order.
+ * It used to be painted as the box's background underneath an opaque inner
+ * layer, which only works while the inside is opaque — through glass the whole
+ * gradient would show. So the ring is a pseudo-element holding the gradient,
+ * masked down to the one-pixel border: the inside stays glass.
  */
-.composer__box:focus-within {
-  border-color: transparent;
-  background-image: linear-gradient(var(--surface), var(--surface)), var(--galaxy);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
-  background-size: auto, 300% 100%;
-  /**
-   * The ring, and nothing around the ring.
-   *
-   * There used to be a 4px accent halo outside the border as well. Two rings
-   * around one box, in two different colours, and the outer one was wide and
-   * faint enough to read as the frame — which made the bright galaxy line look
-   * like it had come loose and was floating inside it with a gap.
-   *
-   * The drop shadow stays: it lifts the composer off the transcript scrolling
-   * behind it, which is a different job and is not drawn as an edge.
-   */
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+.composer__box::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  padding: 1px;
+  border-radius: inherit;
+  background: var(--galaxy);
+  background-size: 300% 100%;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.composer__box:focus-within { border-color: transparent; }
+.composer__box:focus-within::before {
+  opacity: 1;
   animation: galaxy-drift 14s linear infinite;
 }
 /* The textarea's own ring is off at the foot of this file, with every other
@@ -2831,7 +2854,7 @@ details.block pre {
 }
 @media (prefers-reduced-motion: reduce) {
   /* Still a gradient, just a still one. */
-  .composer__box:focus-within,
+  .composer__box:focus-within::before,
   .btn--primary,
   .chat-row.is-active::before { animation: none; }
 }

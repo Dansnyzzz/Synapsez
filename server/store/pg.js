@@ -199,8 +199,11 @@ export function splitStatements(sql) {
  *  21  chats.archived_at, .unread and .chat_group — a conversation filed under
  *      a project can be put away without being destroyed, flagged as not
  *      finished with, and gathered under a name somebody invented
+ *  22  shared_models.expires_at — the date the provider stops serving a model,
+ *      so a free model leaves the Free list the day its free period ends
+ *      rather than at the next refresh, and the picker can warn before then
  */
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 22;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -2655,11 +2658,12 @@ export function createPgStore(connectionString) {
           `INSERT INTO shared_models
              (id, provider, model, family, label, description, context,
               price_in, price_out, is_free, released_at, added_by, vision,
-              max_output, refreshed_at)
+              max_output, expires_at, refreshed_at)
            SELECT *, NOW() FROM unnest(
              $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
              $7::bigint[], $8::double precision[], $9::double precision[],
-             $10::boolean[], $11::timestamptz[], $12::text[], $13::boolean[], $14::int[]
+             $10::boolean[], $11::timestamptz[], $12::text[], $13::boolean[], $14::int[],
+             $15::timestamptz[]
            )
            ON CONFLICT (id) DO UPDATE SET
              provider    = EXCLUDED.provider,
@@ -2674,6 +2678,7 @@ export function createPgStore(connectionString) {
              released_at = EXCLUDED.released_at,
              vision      = EXCLUDED.vision,
              max_output  = EXCLUDED.max_output,
+             expires_at  = EXCLUDED.expires_at,
              refreshed_at = NOW()`,
           [
             slice.map((m) => m.id),
@@ -2690,6 +2695,7 @@ export function createPgStore(connectionString) {
             slice.map((m) => m.addedBy ?? null),
             slice.map((m) => !!m.vision),
             slice.map((m) => m.maxOutput ?? null),
+            slice.map((m) => m.expiresAt ?? null),
           ],
         );
       }
@@ -2702,7 +2708,9 @@ export function createPgStore(connectionString) {
      * for something new to try.
      */
     async listSharedModels({ query, family, tier, sort = 'new', limit = 300, provider } = {}) {
-      const where = [];
+      // A model past its end date is gone, whatever the last refresh said —
+      // see shared_models.expires_at.
+      const where = ['(expires_at IS NULL OR expires_at > NOW())'];
       const values = [];
 
       // Filtered at the database, not on the client, so the row limit cannot
@@ -2873,7 +2881,7 @@ export function createPgStore(connectionString) {
     async modelLibraryStatus() {
       const rows = await q(
         `SELECT COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE is_free)::int AS free,
+                COUNT(*) FILTER (WHERE is_free AND (expires_at IS NULL OR expires_at > NOW()))::int AS free,
                 MAX(refreshed_at) AS refreshed_at
            FROM shared_models`,
       );
@@ -2889,7 +2897,8 @@ export function createPgStore(connectionString) {
     async modelFamilies() {
       return q(
         `SELECT family, COUNT(*)::int AS count, COUNT(*) FILTER (WHERE is_free)::int AS free
-           FROM shared_models GROUP BY family ORDER BY COUNT(*) DESC`,
+           FROM shared_models WHERE expires_at IS NULL OR expires_at > NOW()
+          GROUP BY family ORDER BY COUNT(*) DESC`,
       );
     },
 

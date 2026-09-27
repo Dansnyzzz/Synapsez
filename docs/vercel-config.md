@@ -71,8 +71,16 @@ asserts every schedule is at most daily.
 
 ### The times
 
-`0 16 * * *` and `0 17 * * *` are UTC; 17:00 UTC is midnight in UTC+7. They are
-an hour apart so the two jobs do not contend for the same cold start.
+`0 16 * * *` and `0 23 * * *` are UTC; 16:00 UTC is 23:00 in UTC+7, and 23:00
+UTC is six in the morning there. They are apart so the two jobs do not contend
+for the same cold start.
+
+The model library is refreshed at six in the morning **on each person's own
+clock**, not only by this cron: `refreshIfStale` treats the library as stale
+when its last refresh was before 06:00 in the asking person's zone, so the first
+person to open the app after their morning pulls today's catalogue — new models,
+prices and discounts, and end dates ("going away") — wherever they are. The cron
+is the backstop for a day nobody opens it.
 
 Hobby fires within the hour, not on the minute: `0 16 * * *` lands somewhere
 between 16:00 and 16:59. Nothing here needs the precision — scheduled tasks also

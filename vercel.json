@@ -16,7 +16,7 @@
     },
     {
       "path": "/api/cron/refresh-models",
-      "schedule": "0 17 * * *"
+      "schedule": "0 23 * * *"
     }
   ]
 }
