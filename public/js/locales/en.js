@@ -1058,6 +1058,7 @@ export const en = {
   'question.continue': 'Continue setup',
   'question.formTitle': 'A few details first',
   'question.badEmail': 'That is not a valid email address.',
+  'question.notActive': 'Not active yet',
   'chat.yourAnswer': 'Your answer',
   'question.skip': 'Skip',
   'question.next': 'Next',
@@ -1266,6 +1267,8 @@ export const en = {
     'everywhere',
   'proj.outputs':
     'Output',
+  'proj.outputsPrev': 'Earlier outputs',
+  'proj.outputsNext': 'More outputs',
   'proj.outputsLede':
     'Everything made in this project’s conversations. Press one to open it.',
   'proj.outputsEmpty':

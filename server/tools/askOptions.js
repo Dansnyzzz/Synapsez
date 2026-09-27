@@ -203,11 +203,40 @@ export function answerSummary(questions, answers) {
  * of its own is a worse form than the same box among the choices it belongs to.
  */
 export function askLayout(input, questions) {
-  const form = input?.style === 'form' || questions.some((q) => q.kind && q.kind !== 'choice');
+  const preview = previewOf(input?.preview);
+  const form = input?.style === 'form' || !!preview || questions.some((q) => q.kind && q.kind !== 'choice');
   return {
     form,
     title: text(input?.title ?? '', MAX_QUESTION),
     submitLabel: text(input?.submit_label ?? input?.submitLabel ?? '', 40),
+    ...(preview ? { preview } : {}),
+  };
+}
+
+/**
+ * What is about to be set up, drawn above the fields that confirm it.
+ *
+ * The second of the two steps: the first form collected preferences; this
+ * shows the result — name, when, what it covers — marked not active yet,
+ * with only what is still missing (usually the address) and a Confirm
+ * button. Seeing the thing before it exists is what makes confirming it a
+ * decision rather than a formality.
+ */
+function previewOf(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const title = text(raw.title, MAX_LABEL);
+  if (!title) return null;
+  const list = (value, max) =>
+    (Array.isArray(value) ? value : [])
+      .map((v) => text(v, MAX_LABEL * 2))
+      .filter(Boolean)
+      .slice(0, max);
+  return {
+    title,
+    subtitle: text(raw.subtitle, MAX_LABEL),
+    badge: text(raw.badge, 30),
+    rows: list(raw.rows, 6),
+    points: list(raw.points, 8),
   };
 }
 

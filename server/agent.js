@@ -371,15 +371,25 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
  * came from and the model is told, beside the request rather than in the
  * cached system prompt.
  */
+/**
+ * The setup a shelf asks for, in two steps that bend to what is known.
+ *
+ * Step one gathers preferences; step two shows what will exist — a preview
+ * marked not active — with only what is still missing and a Confirm button.
+ * Either step is skipped when its answers are already in the message, so
+ * "every morning at 7, AI news in Vietnamese to an@x.com" is set up at once.
+ */
+const twoSteps = (tool, other, shelf) =>
+  `(Written from the ${shelf} shelf: set this up with ${tool} — not ${other}, and never as only a draft in the reply. ` +
+  'Two steps, adapted to what is already known. Step 1, only if preferences are missing (how often, what to cover, language, length): ' +
+  'ONE ask_options form — choices, plus kind "text" fields where a choice will not do — submit_label "Continue setup" in their language. ' +
+  'Step 2: ONE ask_options form with a preview of what will be set up (title, subtitle, badge "Not active yet", rows for when/language/scope, ' +
+  'points for what it covers) and only what is still missing — usually a kind "email" field — submit_label "Confirm" in their language. ' +
+  `Then call ${tool} at once. Skip a step whose answers you already have; if nothing is missing, set it up straight away.)`;
+
 const INTENT_NOTES = {
-  workflow:
-    '(Written from the Workflows shelf: set this up now with workflow_write so it is saved as a workflow — not with schedule_task, and never as only a draft in the reply. ' +
-    'If something essential is missing — when it runs, who an email goes to — ask it in ONE ask_options call with style "form" ' +
-    '(choices for the options, a kind "email" or "text" field for free values, submit_label "Continue setup" in their language), then call workflow_write straight after with the answers.)',
-  schedule:
-    '(Written from the Scheduled shelf: set this up now with schedule_task so it is saved as one scheduled task — not as a workflow, and never as only a draft in the reply. ' +
-    'If something essential is missing — the time, who an email goes to — ask it in ONE ask_options call with style "form" ' +
-    '(choices for the options, a kind "email" or "text" field for free values, submit_label "Continue setup" in their language), then call schedule_task straight after with the answers.)',
+  workflow: twoSteps('workflow_write', 'schedule_task', 'Workflows'),
+  schedule: twoSteps('schedule_task', 'a workflow', 'Scheduled'),
 };
 
 /**
@@ -404,10 +414,31 @@ export function toolsToPreload(message) {
   return [...names];
 }
 
+/**
+ * The same two steps for a message typed in an ordinary conversation that is
+ * plainly setting up an email or a repeat — "send me the latest AI news" —
+ * where the choice between a one-off and a schedule is itself one of the
+ * questions. Only on the newest message: an old request is already settled.
+ */
+const SETUP_NOTE =
+  '(This looks like setting up an email or a repeat. If details are missing, use two steps adapted to what is known: ' +
+  'step 1, ONE ask_options form (style "form") for preferences — including once now vs daily vs weekly — submit_label "Continue setup"; ' +
+  'step 2, ONE ask_options form with a preview card (badge "Not active yet") and only what is still missing, usually a kind "email" field, submit_label "Confirm". ' +
+  'Then send_email for a one-off or schedule_task for a repeat. Skip what you already know.)';
+
+/** Setting something up to send or repeat — not merely reading an inbox. */
+const looksLikeSetup = (text) =>
+  RECURRING.test(String(text || '')) ||
+  (EMAILING.test(String(text || '')) && /\b(send|write|draft)\b|gửi|soạn|tạo/i.test(String(text || '')));
+
 function withIntentNotes(messages) {
-  return messages.map((m) =>
-    m.role === 'user' && INTENT_NOTES[m.intent] ? { ...m, text: `${m.text || ''}\n\n${INTENT_NOTES[m.intent]}` } : m,
-  );
+  const last = messages.findLastIndex((m) => m.role === 'user');
+  return messages.map((m, i) => {
+    if (m.role !== 'user') return m;
+    if (INTENT_NOTES[m.intent]) return { ...m, text: `${m.text || ''}\n\n${INTENT_NOTES[m.intent]}` };
+    if (i === last && looksLikeSetup(m.text)) return { ...m, text: `${m.text || ''}\n\n${SETUP_NOTE}` };
+    return m;
+  });
 }
 
 const newId = () => crypto.randomUUID();

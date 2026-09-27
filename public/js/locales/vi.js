@@ -1048,6 +1048,7 @@ export const vi = {
   'question.continue': 'Tiếp tục thiết lập',
   'question.formTitle': 'Cho mình thêm vài thông tin',
   'question.badEmail': 'Đây không phải địa chỉ email hợp lệ.',
+  'question.notActive': 'Chưa kích hoạt',
   'chat.yourAnswer': 'Câu trả lời của bạn',
   'question.skip': 'Bỏ qua',
   'question.next': 'Tiếp',
@@ -1256,6 +1257,8 @@ export const vi = {
     'mọi nơi',
   'proj.outputs':
     'Sản phẩm',
+  'proj.outputsPrev': 'Sản phẩm trước',
+  'proj.outputsNext': 'Sản phẩm tiếp theo',
   'proj.outputsLede':
     'Mọi thứ được tạo ra trong các cuộc trò chuyện của dự án này. Bấm để mở.',
   'proj.outputsEmpty':

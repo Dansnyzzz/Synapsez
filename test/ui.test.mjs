@@ -3744,6 +3744,87 @@ section('reopening a conversation mid-answer rejoins it rather than blanking');
  * transcript that carries a schedule — which is also exactly what a reopened
  * conversation is rebuilt from.
  */
+/**
+ * What a project made, as a row of pages.
+ *
+ * A grid of filenames said a project had made nine things and nothing about
+ * which was which. The row shows each one — the page running, the document's
+ * first lines — newest on the left, scrolled sideways, with an arrow only on
+ * a side that has more.
+ */
+section('what a project made is a row of pages, newest first');
+{
+  const store = await initStore();
+  const signedIn = await page.evaluate(async () => (await (await fetch('/api/session')).json()).user);
+  const user = await store.getUserByEmail(signedIn.email);
+  await store.createProject(user.id, { id: 'p-out', name: 'Output shelf' });
+  await store.createChat(user.id, { id: 'c-out', title: 'Made things here', model: 'm', projectId: 'p-out' });
+  await store.appendMessage(user.id, 'c-out', { id: 'm-out', role: 'user', text: 'make things' });
+  for (let i = 0; i < 7; i += 1) {
+    const page_ = i % 2 === 0;
+    await store.createAttachment(user.id, {
+      id: `o-${i}`,
+      name: page_ ? `page-${i}.html` : `report-${i}.md`,
+      mime: page_ ? 'text/html' : 'text/markdown',
+      kind: 'text',
+      bytes: 120,
+      data: Buffer.from(page_ ? `<h1>Page ${i}</h1>` : `# Report ${i}\n\nThe body of report ${i}.`).toString('base64'),
+      origin: 'generated',
+      chatId: 'c-out',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+  }
+
+  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2200);
+  await page.evaluate(async () => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+    const row = [...document.querySelectorAll('#chat-list .chat-row')].find((r) => r.textContent.includes('Made things here'));
+    /** @type {HTMLElement | null} */ (row?.querySelector('.chat-item'))?.click();
+    await new Promise((r) => setTimeout(r, 1200));
+    document.getElementById('chat-project')?.click();
+    await new Promise((r) => setTimeout(r, 1800));
+  });
+  const first = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('#project-page-outputs .outcard')];
+    const navs = [...document.querySelectorAll('#project-page-outputs .outrail__nav')];
+    return {
+      count: cards.length,
+      firstName: cards[0]?.querySelector('.outcard__name')?.textContent,
+      prevHidden: navs[0]?.hidden,
+      nextHidden: navs[1]?.hidden,
+      frame: !!cards[0]?.querySelector('iframe.outcard__frame'),
+    };
+  });
+  check('every output is a card in one row', first.count === 7, String(first.count));
+  check('newest on the left', first.firstName === 'page-6.html', first.firstName);
+  check('no left arrow at the start', first.prevHidden === true);
+  check('a right arrow while there is more', first.nextHidden === false, JSON.stringify(first));
+  check('a page shows itself, running', first.frame);
+
+  await page.click('#project-page-outputs .outrail__nav[data-dir="1"]');
+  await page.waitForTimeout(900);
+  const moved = await page.evaluate(() => {
+    const navs = [...document.querySelectorAll('#project-page-outputs .outrail__nav')];
+    const doc = document.querySelector('#project-page-outputs .outcard__doctitle')?.textContent || '';
+    return { prevHidden: navs[0]?.hidden, doc };
+  });
+  check('after scrolling, the left arrow appears', moved.prevHidden === false);
+  check('a document shows its opening lines', /Report \d/.test(moved.doc), moved.doc);
+
+  await page.hover('#project-page-outputs .outcard');
+  await page.waitForTimeout(400);
+  const lifted = await page.evaluate(
+    () => getComputedStyle(/** @type {Element} */ (document.querySelector('#project-page-outputs .outcard'))).transform,
+  );
+  check('a card lifts under the pointer', lifted !== 'none', lifted);
+  await page.screenshot({ path: (process.env.TEMP || '.') + '/shot-rail.png' });
+
+  await page.click('#project-page-outputs .outcard');
+  await page.waitForTimeout(1200);
+  check('pressing one opens it', await page.evaluate(() => !document.getElementById('filepane').hidden && /report|page/.test(document.getElementById('viewer-title').textContent || '')));
+}
+
 section('a schedule set up in a conversation is a card that opens it');
 {
   const store = await initStore();
@@ -5164,7 +5245,12 @@ section('a setup form asks everything at once, with one button');
     email.value = 'an@example.com';
     email.dispatchEvent(new window.Event('input', { bubbles: true }));
     go.click();
-    return { sections, label, title, blockedEmpty, blockedBad, sent, gone: document.getElementById('question').hidden };
+    const firstSent = sent;
+    const firstGone = document.getElementById('question').hidden;
+    card.show({ toolCallId: 'f2', form: true, submitLabel: 'Xác nhận', preview: { title: 'AI Intelligence Daily', subtitle: 'Bản tin AI mỗi ngày', badge: 'Chưa kích hoạt', rows: ['Hằng ngày 7:00'], points: ['Mô hình AI mới'] }, questions: [{ question: 'Email', kind: 'email', options: [], multiple: false, other: true, otherLabel: '' }] });
+    const preview = { name: document.querySelector('.qform__preview .schedcard__name')?.textContent, badge: document.querySelector('.qform__preview .schedcard__state')?.textContent };
+    /** @type {HTMLButtonElement} */ (document.getElementById('question-dismiss')).click();
+    return { sections, label, title, blockedEmpty, blockedBad, sent: firstSent, preview, gone: firstGone };
   });
   check('every question is on the page at once', out.sections === 2, String(out.sections));
   check("under the form's own title", out.title === 'Bạn muốn gửi email theo cách nào?', out.title);
@@ -5173,6 +5259,7 @@ section('a setup form asks everything at once, with one button');
   check('nor be something that is not an address', out.blockedBad);
   check('filled in, it sends choices and typed values together', out.sent?.given?.[0]?.picks?.join() === 'Hằng ngày' && out.sent?.given?.[1]?.other === 'an@example.com', JSON.stringify(out.sent));
   check('and goes', out.gone);
+  check('a confirm step shows what will be set up, not active yet', out.preview?.name === 'AI Intelligence Daily' && out.preview?.badge === 'Chưa kích hoạt', JSON.stringify(out.preview));
 }
 
 section("an answer reads back as the person's own bubble");

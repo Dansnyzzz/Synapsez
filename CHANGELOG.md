@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-28 (later) — setup in two steps, outputs as a row of pages, a glass project page
+
+### Changed
+
+- Setting something up is two steps that bend to what is known: a form for preferences
+  ("Continue setup"), then a form showing **a preview of what will exist** — title, when, what it
+  covers, an amber "Not active yet" badge — with only what is still missing (usually the address)
+  and "Confirm". Either step is skipped when its answers are already in the message. The same
+  guidance now applies to an email or repeat typed in an ordinary conversation, not only from a
+  shelf. `ask_options` takes a `preview`.
+- A project's **Outputs** are one row of cards, newest on the left, scrolled sideways with an arrow
+  only on a side that has more. Each card shows its file: an HTML page running (sandboxed, no
+  network), a document's opening lines, a picture. Cards lift on hover and open in the viewer.
+  Previews load as they scroll into view.
+- The project page is glass: the starter, the side column, source cards, conversation rows.
+
 ## 2026-09-28 — setting something up by describing it actually sets it up; forms and a better picker
 
 ### Fixed

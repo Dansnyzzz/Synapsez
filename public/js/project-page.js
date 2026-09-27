@@ -263,6 +263,9 @@ export function createProjectPage({
   const memoryBody = $('memory-sheet-body');
   const side = $('project-page-side');
 
+  /** The opening lines of each output, once read — see `fillPeek`. */
+  const peekText = new Map();
+
   /** Everything the last load returned: `{ project, files, chats, memory }`. */
   let data = null;
   /** True while the instructions card is a textarea rather than a paragraph. */
@@ -320,27 +323,146 @@ export function createProjectPage({
       return;
     }
 
-    outputsHost.innerHTML =
-      `<h2 class="panel-card__name" style="margin:26px 0 12px">${escapeHtml(t('proj.outputs'))}</h2>` +
-      `<div class="shelf">${outputs
-        .map(
-          (file) => `
-        <button class="outcard" type="button" data-output="${escapeHtml(file.id)}"
-                title="${escapeHtml(file.chat_title || '')}">
-          <span class="outcard__kind">${escapeHtml(extensionLabel(file.name))}</span>
-          <span class="outcard__name">${escapeHtml(file.name)}</span>
-          <span class="outcard__meta">${escapeHtml(fmtBytes(file.bytes))} · ${escapeHtml(
-            lastSpoke(file.created_at),
-          )}</span>
-        </button>`,
-        )
-        .join('')}</div>`;
+    /**
+     * A row of pages rather than a list of names: each card shows what the
+     * file looks like — an HTML page running, a document's first lines, a
+     * picture — so the one you want is found by sight. Newest on the left,
+     * scrolled sideways, with an arrow only on a side that has more.
+     */
+    const sorted = [...outputs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const arrow = (dir) => `
+      <button class="outrail__nav" type="button" data-dir="${dir}" hidden
+              aria-label="${escapeHtml(t(dir < 0 ? 'proj.outputsPrev' : 'proj.outputsNext'))}">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${dir < 0 ? 'm15 6-6 6 6 6' : 'm9 6 6 6-6 6'}"/></svg>
+      </button>`;
+    outputsHost.innerHTML = `
+      <div class="outrail__head">
+        <h2 class="panel-card__name">${escapeHtml(t('proj.outputs'))}</h2>
+        ${arrow(-1)}${arrow(1)}
+      </div>
+      <div class="outrail" tabindex="-1">
+        ${sorted
+          .map(
+            (file) => `
+          <div class="outcard" role="button" tabindex="0" data-output="${escapeHtml(file.id)}"
+               aria-label="${escapeHtml(file.name)}" title="${escapeHtml(file.chat_title || file.name)}">
+            <div class="outcard__peek" data-peek="${escapeHtml(file.id)}" aria-hidden="true">
+              <span class="outcard__ext">${escapeHtml(extensionLabel(file.name))}</span>
+            </div>
+            <div class="outcard__foot">
+              <span class="outcard__name">${escapeHtml(file.name)}</span>
+              <span class="outcard__meta"><span class="outcard__kind">${escapeHtml(extensionLabel(file.name))}</span> · ${escapeHtml(
+                fmtBytes(file.bytes),
+              )} · ${escapeHtml(lastSpoke(file.created_at))}</span>
+            </div>
+          </div>`,
+          )
+          .join('')}
+      </div>`;
 
-    for (const button of /** @type {NodeListOf<HTMLElement>} */ (
-      outputsHost.querySelectorAll('[data-output]')
-    )) {
-      const file = outputs.find((entry) => entry.id === button.dataset.output);
-      if (file) button.addEventListener('click', () => openFile({ id: file.id, name: file.name }));
+    const rail = /** @type {HTMLElement} */ (outputsHost.querySelector('.outrail'));
+    const navs = /** @type {HTMLButtonElement[]} */ ([...outputsHost.querySelectorAll('.outrail__nav')]);
+
+    /** An arrow only where there is something to scroll to. */
+    const sayArrows = () => {
+      const [prev, next] = navs;
+      prev.hidden = rail.scrollLeft <= 2;
+      next.hidden = rail.scrollLeft + rail.clientWidth >= rail.scrollWidth - 2;
+    };
+    for (const nav of navs) {
+      nav.addEventListener('click', () => {
+        rail.scrollBy({ left: Number(nav.dataset.dir) * rail.clientWidth * 0.85, behavior: 'smooth' });
+      });
+    }
+    rail.addEventListener('scroll', sayArrows, { passive: true });
+    new window.ResizeObserver(sayArrows).observe(rail);
+    sayArrows();
+
+    for (const card of /** @type {NodeListOf<HTMLElement>} */ (outputsHost.querySelectorAll('[data-output]'))) {
+      const file = sorted.find((entry) => entry.id === card.dataset.output);
+      if (!file) continue;
+      const open = () => openFile({ id: file.id, name: file.name });
+      card.addEventListener('click', open);
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          open();
+        }
+      });
+    }
+
+    // Drawn as they come into view, so a project with sixty files does not
+    // start sixty pages and sixty reads the moment it opens.
+    const watch = new window.IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          watch.unobserve(entry.target);
+          const peek = /** @type {HTMLElement} */ (entry.target);
+          const file = sorted.find((f) => f.id === peek.dataset.peek);
+          if (file) fillPeek(peek, file);
+        }
+      },
+      { root: rail, rootMargin: '0px 300px' },
+    );
+    for (const peek of outputsHost.querySelectorAll('[data-peek]')) watch.observe(peek);
+  }
+
+  /**
+   * One card's picture of its file.
+   *
+   * A page the assistant wrote is run, small, in the same sandbox the viewer
+   * uses — no same-origin, no network — so the card is the page itself rather
+   * than a description of it. A picture is itself. Anything else shows its
+   * opening lines, read by the same preview route the viewer uses and kept for
+   * the next time the page is drawn.
+   */
+  async function fillPeek(peek, file) {
+    const ext = String(file.name).split('.').pop().toLowerCase();
+    if (ext === 'html' || ext === 'htm' || ext === 'svg') {
+      const frame = document.createElement('iframe');
+      frame.className = 'outcard__frame';
+      frame.setAttribute('sandbox', 'allow-scripts');
+      frame.setAttribute('loading', 'lazy');
+      frame.setAttribute('tabindex', '-1');
+      frame.title = file.name;
+      frame.src = `/api/attachments/${encodeURIComponent(file.id)}/run`;
+      peek.append(frame);
+      peek.classList.add('is-page');
+      return;
+    }
+    if (String(file.mime || '').startsWith('image/')) {
+      const img = document.createElement('img');
+      img.className = 'outcard__img';
+      img.alt = '';
+      img.loading = 'lazy';
+      img.src = `/api/attachments/${encodeURIComponent(file.id)}`;
+      peek.append(img);
+      peek.classList.add('is-page');
+      return;
+    }
+    try {
+      let text = peekText.get(file.id);
+      if (text === undefined) {
+        const { preview } = await api.filePreview(file.id);
+        text = String(preview?.text || '').trim().slice(0, 900);
+        peekText.set(file.id, text);
+      }
+      if (!text) return;
+      const [first, ...rest] = text.split(/\n+/).map((line) => line.replace(/^#+\s*/, '').trim()).filter(Boolean);
+      const doc = document.createElement('div');
+      doc.className = 'outcard__doc';
+      const title = document.createElement('div');
+      title.className = 'outcard__doctitle';
+      title.textContent = first || '';
+      const body = document.createElement('div');
+      body.className = 'outcard__docbody';
+      body.textContent = rest.join(' ');
+      doc.append(title, body);
+      peek.append(doc);
+      peek.classList.add('is-doc');
+    } catch {
+      // No preview is a card with its kind on it, which is what it was before.
     }
   }
 

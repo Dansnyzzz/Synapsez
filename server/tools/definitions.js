@@ -999,6 +999,17 @@ export const TOOLS = [
         style: { type: 'string', enum: ['steps', 'form'], description: 'form shows every question at once with one button.' },
         title: { type: 'string' },
         submit_label: { type: 'string', description: 'The form button, e.g. "Continue setup", in their language.' },
+        preview: {
+          type: 'object',
+          description: 'A card of what is about to be set up, shown above the fields: title, subtitle, badge ("Not active yet"), rows (when, language…), points (what it covers).',
+          properties: {
+            title: { type: 'string' },
+            subtitle: { type: 'string' },
+            badge: { type: 'string' },
+            rows: { type: 'array', items: { type: 'string' } },
+            points: { type: 'array', items: { type: 'string' } },
+          },
+        },
       },
       required: ['questions'],
     },

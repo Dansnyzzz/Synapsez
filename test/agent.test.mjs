@@ -1091,10 +1091,15 @@ section('a request begun from a shelf is filed on that shelf');
     { role: 'user', text: 'nhắc tôi uống nước', intent: 'schedule' },
     { role: 'user', text: 'xin chào' },
   ]);
-  check('from Workflows, it is told to use workflow_write', /workflow_write/.test(wf.text) && /not with schedule_task/.test(wf.text));
-  check('from Scheduled, schedule_task', /schedule_task/.test(sched.text) && /not as a workflow/.test(sched.text));
+  check('from Workflows, it is told to use workflow_write', /workflow_write/.test(wf.text) && /not schedule_task/.test(wf.text));
+  check('from Scheduled, schedule_task', /schedule_task/.test(sched.text) && /not a workflow/.test(sched.text));
   check('the request itself is kept as written', wf.text.startsWith('mỗi sáng lấy tin và gửi email'));
   check('an ordinary message is untouched', plain.text === 'xin chào');
+  check('the setup is two steps: preferences, then a preview to confirm', /Step 1/.test(sched.text) && /preview/.test(sched.text) && /Confirm/.test(sched.text));
+  const [typed] = __testing.withIntentNotes([{ role: 'user', text: 'bạn giúp tôi tạo gửi mail nói về các vấn đề AI mới nhất' }]);
+  check('an email typed in an ordinary chat gets the same two steps', /two steps/.test(typed.text) && /send_email/.test(typed.text));
+  const [reading] = __testing.withIntentNotes([{ role: 'user', text: 'check my inbox' }]);
+  check('reading an inbox does not', reading.text === 'check my inbox');
 }
 
 section('read-only and plan mode hold even for a tool nobody offered');
@@ -1524,6 +1529,14 @@ section('what counts as a question worth drawing');
   const layout = askLayout({ style: 'form', submit_label: 'Tiếp tục thiết lập' }, form);
   check('it is drawn as a form with its own button', layout.form && layout.submitLabel === 'Tiếp tục thiết lập');
   check('a typed field alone makes a form too', askLayout({}, form).form === true);
+  // Step two: what will be set up, shown before it exists.
+  const confirm = askLayout(
+    { preview: { title: 'AI Intelligence Daily', badge: 'Chưa kích hoạt', rows: ['Hằng ngày 7:00', 'Tiếng Việt'], points: ['Mô hình AI mới'] } },
+    form,
+  );
+  check('a preview is carried to the card', confirm.preview?.title === 'AI Intelligence Daily' && confirm.preview.rows.length === 2);
+  check('and makes it a form', confirm.form === true);
+  check('a preview with no title is dropped', !askLayout({ preview: { rows: ['x'] } }, form).preview);
   const given = [{ picks: ['Hằng ngày'], other: '' }, { picks: [], other: 'an@example.com' }];
   check('the model reads the typed value', /"an@example\.com"/.test(answerText(form, given)));
   check(

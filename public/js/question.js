@@ -25,7 +25,7 @@ import { t } from './i18n.js';
  * @param {{ onAnswer: (answers: { toolCallId: string, given: any[] }) => void, scrollToEnd: () => void }} wiring
  */
 export function createQuestionCard({ onAnswer, scrollToEnd }) {
-  /** @type {{ toolCallId: string, questions: any[], at: number, given: any[], form: boolean, title: string, submitLabel: string, focus: number } | null} */
+  /** @type {{ toolCallId: string, questions: any[], at: number, given: any[], form: boolean, title: string, submitLabel: string, focus: number, preview: any } | null} */
   let asking = null;
 
   const qEl = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
@@ -37,8 +37,8 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
   const sendButton = /** @type {HTMLButtonElement} */ (document.getElementById('question-send'));
   const qOther = () => otherInput;
 
-  /** @param {{ toolCallId: string, questions: any[], form?: boolean, title?: string, submitLabel?: string }} payload */
-  function showQuestion({ toolCallId, questions, form = false, title = '', submitLabel = '' }) {
+  /** @param {{ toolCallId: string, questions: any[], form?: boolean, title?: string, submitLabel?: string, preview?: any }} payload */
+  function showQuestion({ toolCallId, questions, form = false, title = '', submitLabel = '', preview = null }) {
     asking = {
       toolCallId,
       questions,
@@ -50,6 +50,7 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
       title,
       submitLabel,
       focus: -1,
+      preview,
     };
     qEl('question').hidden = false;
     qEl('question').classList.toggle('question--form', !!form);
@@ -201,6 +202,7 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
     host.after(otherRow);
     host.innerHTML = '';
     host.setAttribute('role', 'group');
+    if (asking.preview) host.append(previewCard(asking.preview));
     questions.forEach((q, index) => {
       const slot = asking.given[index];
       const section = document.createElement('div');
@@ -261,6 +263,68 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
       host.append(section);
     });
     qBtn('question-go').textContent = goLabel();
+  }
+
+/**
+   * What is about to be set up, above the fields that confirm it — drawn like
+   * the card it will become once confirmed, and marked not active yet.
+   */
+  function previewCard(preview) {
+    const box = document.createElement('div');
+    box.className = 'schedcard__box qform__preview';
+    const top = document.createElement('div');
+    top.className = 'schedcard__top';
+    const icon = document.createElement('span');
+    icon.className = 'schedcard__icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML =
+      '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>';
+    const who = document.createElement('div');
+    who.className = 'schedcard__who';
+    const name = document.createElement('div');
+    name.className = 'schedcard__name';
+    name.textContent = preview.title;
+    who.append(name);
+    if (preview.subtitle) {
+      const sub = document.createElement('div');
+      sub.className = 'schedcard__sub';
+      sub.textContent = preview.subtitle;
+      who.append(sub);
+    }
+    const badge = document.createElement('span');
+    badge.className = 'schedcard__state is-pending';
+    badge.textContent = preview.badge || t('question.notActive');
+    top.append(icon, who, badge);
+    box.append(top);
+    if (preview.rows?.length) {
+      const rows = document.createElement('ul');
+      rows.className = 'schedcard__rows';
+      for (const text of preview.rows) {
+        const li = document.createElement('li');
+        const dot = document.createElement('span');
+        dot.className = 'schedcard__ri';
+        dot.textContent = '•';
+        const say = document.createElement('span');
+        say.textContent = text;
+        li.append(dot, say);
+        rows.append(li);
+      }
+      box.append(rows);
+    }
+    if (preview.points?.length) {
+      const content = document.createElement('div');
+      content.className = 'schedcard__content';
+      const list = document.createElement('ul');
+      list.className = 'schedcard__points';
+      for (const text of preview.points) {
+        const li = document.createElement('li');
+        li.textContent = text;
+        list.append(li);
+      }
+      content.append(list);
+      box.append(content);
+    }
+    return box;
   }
 
   /** The keyboard's place in the list, drawn. */
