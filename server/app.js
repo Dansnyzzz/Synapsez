@@ -125,7 +125,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  */
 const MODEL_GONE =
   /no longer available|is not found|not found for api version|does not exist|no longer supported|has been (?:retired|deprecated|shut down)|deprecat\w*|testing period/i;
-
+
 /**
  * The zone to read "six this morning" in: the account's own setting, else the
  * one the browser reported, else none (UTC). Never throws — it only decides
