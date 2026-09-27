@@ -3783,6 +3783,7 @@ section('a schedule set up in a conversation is a card that opens it');
           nextRunAt: task.next_run_at,
           tz: task.tz,
           enabled: true,
+          prompt: task.prompt,
           existing: false,
         },
       },
@@ -3802,7 +3803,12 @@ section('a schedule set up in a conversation is a card that opens it');
     return {
       found: !!row,
       card: !!card,
-      facts: card?.querySelector('.schedcard__facts')?.textContent || '',
+      facts: card?.querySelector('.schedcard__rows')?.textContent || '',
+      name: card?.querySelector('.schedcard__name')?.textContent || '',
+      state: card?.querySelector('.schedcard__state')?.textContent || '',
+      content: card?.querySelector('.schedcard__content')?.textContent || '',
+      // The pill sits under the card, not inside its border.
+      pillOutside: !!card?.querySelector(':scope > .schedcard__pill') && !card?.querySelector('.schedcard__box .schedcard__pill'),
       pill: card?.querySelector('.schedcard__pill')?.textContent || '',
     };
   });
@@ -3811,11 +3817,14 @@ section('a schedule set up in a conversation is a card that opens it');
   check('saying how often in words, not scheduler syntax', !/weekdays 07:30/.test(drawn.facts) && /07:30/.test(drawn.facts), drawn.facts);
   check('and in which zone', /Asia\/Ho_Chi_Minh/.test(drawn.facts), drawn.facts);
   check('with a pill naming the task', drawn.pill.includes('Bản tin sáng'), drawn.pill);
+  check('the card names it and says it is on', drawn.name === 'Bản tin sáng' && drawn.state.length > 0, JSON.stringify(drawn));
+  check('and says what it will do', drawn.content.includes('Tóm tắt tin buổi sáng'), drawn.content);
+  check('the pill is under the card, not inside it', drawn.pillOutside);
 
   await page.click('#messages .schedcard__pill');
   await page.waitForTimeout(1200);
   const opened = await page.evaluate(() => ({
-    inPane: !document.getElementById('taskpane').hidden && !!document.querySelector('#taskpane .taskpage'),
+    inPane: !document.getElementById('taskpane').hidden && !!document.querySelector('#taskpane .spane'),
     conversation: !document.getElementById('thread').hidden,
     title: document.getElementById('taskpane-title')?.textContent || '',
   }));
@@ -3823,6 +3832,52 @@ section('a schedule set up in a conversation is a card that opens it');
   check('pressing the pill opens the task in the side panel', opened.inPane, JSON.stringify(opened));
   check('and the conversation stays on screen', opened.conversation);
   check('the right task', opened.title === 'Bản tin sáng', opened.title);
+
+  // The panel is an editor: what it shows is what the row holds.
+  const shown = await page.evaluate(() => {
+    const v = (name) => /** @type {HTMLSelectElement} */ (document.querySelector(`#taskpane [data-s="${name}"]`))?.value;
+    const visible = (name) => !document.querySelector(`#taskpane [data-s="${name}"]`)?.closest('[hidden]');
+    return {
+      frequency: v('frequency'),
+      time: v('time'),
+      tz: v('tz'),
+      ends: v('ends'),
+      weekdayShown: visible('weekday'),
+      timeShown: visible('time'),
+      prompt: v('prompt'),
+    };
+  });
+  check('the panel shows the repeat, time and zone the task has',
+    shown.frequency === 'weekdays' && shown.time === '07:30' && shown.tz === 'Asia/Ho_Chi_Minh', JSON.stringify(shown));
+  check('  only the fields that repeat uses', shown.timeShown && !shown.weekdayShown, JSON.stringify(shown));
+  check('  and the instructions, editable', shown.prompt === 'Tóm tắt tin buổi sáng', shown.prompt);
+
+  // Changing the time saves it, and the card in the conversation follows.
+  await page.selectOption('#taskpane [data-s="time"]', '07:00');
+  await page.waitForTimeout(1200);
+  const saved = await page.evaluate(async () => ({
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+    status: document.querySelector('#taskpane [data-s="status"]')?.textContent || '',
+    card: document.querySelector('#messages .schedcard__rows')?.textContent || '',
+  }));
+  check('choosing a time in the panel saves it', saved.cron === 'weekdays 07:00', JSON.stringify(saved));
+  check('  and says so', saved.status.length > 0, saved.status);
+  check('  and the card beside it says the new time', /07:00/.test(saved.card) && !/07:30/.test(saved.card), saved.card);
+
+  // Weekly brings the weekday up; an end date is kept.
+  await page.selectOption('#taskpane [data-s="frequency"]', 'weekly');
+  await page.waitForTimeout(1000);
+  const weekly = await page.evaluate(async () => ({
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+    weekdayShown: !document.querySelector('#taskpane [data-s="weekday"]')?.closest('[hidden]'),
+  }));
+  check('switching to weekly shows the weekday and saves', weekly.weekdayShown && /^[a-z]{3} 07:00$/.test(weekly.cron || ''), JSON.stringify(weekly));
+  await page.selectOption('#taskpane [data-s="ends"]', 'date');
+  await page.fill('#taskpane [data-s="endsOn"]', '2999-12-31');
+  await page.dispatchEvent('#taskpane [data-s="endsOn"]', 'change');
+  await page.waitForTimeout(1000);
+  const ended = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.ends_on);
+  check('an end date set in the panel is kept', ended === '2999-12-31', String(ended));
 
   await page.click('#taskpane-close');
   check('its close button gives the panel back', await page.evaluate(() => document.getElementById('taskpane').hidden));

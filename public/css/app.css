@@ -4427,31 +4427,26 @@ details.block pre {
 
 /* ── standing work set up in the transcript ─────────────────── */
 
-/* A confirmation you can act on: what was set up, how often, in which zone,
-   and a pill at the foot that opens it. The pill is the one control — the
-   facts above it are text, and somebody may want to select and copy them. */
-.schedcard {
-  margin: 10px 0 4px;
-  padding: 14px 16px 12px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  max-width: 560px;
-}
-.schedcard__head {
+/* A confirmation laid out the way people now expect one: a heading, then a
+   card — name and state, time, how often and where, what it will do — and
+   under it a round grey pill that opens it in the panel beside the chat. The
+   pill is the one control; the card is text somebody may want to copy. */
+.schedcard { margin: 14px 0 6px; max-width: 620px; }
+.schedcard__heading {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin-bottom: 10px;
-  font-weight: 600;
-  font-size: 14px;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 .schedcard__mark {
   display: grid;
   place-items: center;
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 21px;
+  height: 21px;
   border-radius: 50%;
   /* The app's "done" is its accent — `.badge--ok` says so too — not a green
      from some other palette. */
@@ -4461,34 +4456,65 @@ details.block pre {
   font-weight: 700;
 }
 /* Already there: the card is the subject of a question, not a success, so it
-   does not wear the green tick of one. */
-.schedcard--existing .schedcard__mark {
-  background: var(--warn);
+   does not wear the tick of one. */
+.schedcard--existing .schedcard__mark { background: var(--warn); }
+.schedcard__box {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  padding: 4px 18px;
 }
-.schedcard__facts {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 5px 14px;
-  margin: 0 0 12px;
-  font-size: 13px;
+.schedcard__box > * + * { border-top: 1px solid var(--line-soft); }
+.schedcard__top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 0;
 }
-.schedcard__facts dt { color: var(--text-faint); }
-.schedcard__facts dd {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--text);
-}
-.schedcard__pill {
-  display: block;
-  max-width: 100%;
-  padding: 7px 13px;
-  border: 1px solid var(--accent-dim);
+.schedcard__icon { flex: none; color: var(--text); margin-top: 2px; }
+.schedcard__who { flex: 1; min-width: 0; }
+.schedcard__name { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.schedcard__sub { color: var(--text-dim); font-size: 13px; margin-top: 2px; }
+.schedcard__state {
+  flex: none;
+  white-space: nowrap;
+  padding: 2px 9px;
   border-radius: 999px;
-  background: var(--tint);
+  background: var(--accent-glow);
   color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.schedcard__state.is-off { background: var(--surface-2); color: var(--text-faint); }
+.schedcard__rows {
+  list-style: none;
+  margin: 0;
+  padding: 12px 0;
+  display: grid;
+  gap: 10px;
+  font-size: 14px;
+}
+.schedcard__rows li { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.schedcard__rows li > :last-child { min-width: 0; overflow-wrap: anywhere; }
+.schedcard__ri { flex: none; display: inline-grid; color: var(--text-dim); }
+.schedcard__content { padding: 14px 0 12px; font-size: 14px; }
+.schedcard__label { font-weight: 600; margin-bottom: 8px; }
+.schedcard__para { margin: 0; color: var(--text); line-height: 1.55; overflow-wrap: anywhere; }
+.schedcard__points { margin: 0; padding-left: 20px; display: grid; gap: 5px; line-height: 1.5; }
+.schedcard__points li { overflow-wrap: anywhere; }
+/* Grey and round, as a button that summarises: when in the accent, what in
+   the text colour. */
+.schedcard__pill {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 7px 15px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4496,10 +4522,10 @@ details.block pre {
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
-.schedcard__pill:hover {
-  border-color: var(--accent);
-  background: var(--tint-2);
-}
+.schedcard__when { color: var(--info); }
+.schedcard__what { color: var(--text); }
+.schedcard__pill:hover { border-color: var(--text-faint); background: var(--bg-elev); }
+.schedcard__pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ── a file the assistant made, in the transcript ───────────── */
 
@@ -6739,6 +6765,99 @@ details.block pre {
 /* The rail is narrow: the Run button goes under the state rather than
    pushing it into a wrap. */
 .taskpane .taskpage__head { flex-wrap: wrap; }
+
+/* The editor needs room for a label and a menu on one line; the rail widens
+   while it holds one, and still honours a wider width somebody dragged it to. */
+.app.is-detail.is-taskpane {
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) max(var(--detail-w), min(520px, 42vw));
+}
+
+/* ── the schedule editor in the rail ──
+   Grouped rows, label left and control right, the way a settings sheet reads:
+   Details, then Frequency, then when it stops. Each control saves itself. */
+.spane { display: grid; gap: 14px; }
+.spane[hidden], .spane [hidden] { display: none !important; }
+.spane__top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.spane__kicker { color: var(--info); font-size: 13px; font-weight: 600; }
+.spane__acts { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.spane__title {
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+}
+.spane__title:hover { border-bottom-color: var(--line); }
+.spane__title:focus { outline: none; border-bottom-color: var(--accent); }
+.spane__prompt {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.spane__prompt:focus { outline: none; border-color: var(--accent); }
+.spane__steps {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  font-size: 14px;
+}
+.spane__steps ol { margin: 0 0 10px; padding-left: 20px; display: grid; gap: 4px; }
+.spane__label { margin: 6px 0 -6px 4px; color: var(--text-faint); font-size: 13px; }
+.spane__group {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+.spane__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 6px 14px;
+  font-size: 14px;
+}
+.spane__row + .spane__row { border-top: 1px solid var(--line-soft); }
+.spane__row > span:first-child { color: var(--text); flex: none; }
+.spane__value { color: var(--text); text-align: right; }
+.spane__row select,
+.spane__row input[type='date'] {
+  min-width: 0;
+  max-width: 62%;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: right;
+  cursor: pointer;
+  color-scheme: light dark;
+}
+.spane__row select:hover,
+.spane__row input[type='date']:hover { background: var(--surface-2); }
+.spane__row select:focus-visible,
+.spane__row input[type='date']:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.spane__row select option { background: var(--surface); color: var(--text); }
+.spane__meta { display: grid; gap: 6px; color: var(--text-dim); font-size: 13px; justify-items: start; }
+.spane__meta strong { color: var(--text); font-weight: 600; }
+.spane__status { min-height: 1.2em; color: var(--text-faint); }
+.spane__status.is-error { color: var(--danger); }
 
 @media (max-width: 900px) {
   .taskpane {

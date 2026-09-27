@@ -48,6 +48,7 @@ import { addSource } from './projects.js';
 import {
   parseSchedule,
   fromFrequency,
+  schedulePatch,
   runDueTasks,
   runDueTasksForUser,
   runTaskNow,
@@ -1632,6 +1633,14 @@ export function createApp() {
         if (b.frequency !== undefined) {
           const tz = validZone(b.tz) ? b.tz : null;
           Object.assign(patch, fromFrequency(b.frequency, { tz }), { tz });
+        }
+        // The side panel's pieces — a time as well as a frequency — and the
+        // date a repeat stops. Read against the row, because an end date is
+        // judged against the next run whether or not this edit moved it.
+        if (b.schedule !== undefined || b.endsOn !== undefined) {
+          const current = await store.getTask(req.user.id, req.params.id);
+          if (!current) return res.status(404).json({ error: 'Task not found' });
+          Object.assign(patch, schedulePatch(b, current));
         }
       } catch (err) {
         return res.status(400).json({ error: err.message });

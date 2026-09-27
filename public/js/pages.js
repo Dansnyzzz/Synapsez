@@ -6,8 +6,8 @@ import { openMenu } from './menu.js';
 // string means, shared with the page that also shows one.
 import { editProjectDetails, projectMenuItems, repeatsAs } from './project-page.js';
 import { workflowsView, workflowForm } from './workflows.js';
-import { toast } from './render.js';
-import { humanSize, counted } from './format.js';
+import { toast, scheduleCard } from './render.js';
+import { humanSize, counted, cronParts } from './format.js';
 
 /**
  * The shelves: Projects, Artifacts, Scheduled.
@@ -101,6 +101,8 @@ export function createPages({
   /** The rail beside the conversation is taken by a task, and given back. */
   onPaneOpen = () => {},
   onPaneClose = () => {},
+  /** Open the page shell — the moves the app makes before showing any shelf. */
+  onShowPage = () => {},
 }) {
   const page = $('page');
   const title = $('page-title');
@@ -985,28 +987,400 @@ export function createPages({
     });
   }
 
+  /* ── one task or workflow, in the rail beside the conversation ── */
+
+  /** Every quarter hour of a day, as the time menu lists them. */
+  const QUARTERS = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, '0')}:${String((i % 4) * 15).padStart(2, '0')}`);
+  /** "09:05" → "9:05", the way a clock face is read. */
+  const clockText = (hhmm) => hhmm.replace(/^0(\d)/, '$1');
+
+  /** Zones the browser knows, with the ones already in play first. */
+  function zoneList(current) {
+    let all = [];
+    try {
+      all = /** @type {any} */ (Intl).supportedValuesOf?.('timeZone') || [];
+    } catch {
+      all = [];
+    }
+    const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return [...new Set([current, here, ...all].filter(Boolean))];
+  }
+
+  const option = (value, label, selected) =>
+    `<option value="${escapeHtml(String(value))}"${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+
   /**
-   * One task in the rail beside the conversation.
+   * The editor the card's pill opens: everything about when it runs, changed in
+   * place and saved as it is changed.
    *
-   * What the card in a transcript opens. Replacing the conversation with the
-   * task's page lost the place somebody was reading; the rail keeps both on
-   * screen, and its ✕ gives the rail back.
+   * The pencil-and-sheet form stays for the whole thing — this is for the
+   * adjustment somebody makes while reading the conversation that set it up:
+   * seven instead of whenever it was created, weekdays instead of every day,
+   * stop at the end of the month. Each control saves on its own, so there is
+   * no Save button to forget and nothing lost by closing the rail.
    */
-  async function showTaskInPane(id) {
+  function scheduleEditorHtml(kind, row, project) {
+    const parts = cronParts(row.cron);
+    const isTask = kind === 'task';
+    const times = QUARTERS.includes(parts.time) ? QUARTERS : [...QUARTERS, parts.time].sort();
+    const next = row.next_run_at
+      ? new Date(row.next_run_at).toLocaleString(undefined, {
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+          ...(row.tz ? { timeZone: row.tz } : {}),
+        })
+      : t('pane.noNext');
+    const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+    const steps = Array.isArray(row.steps) ? row.steps : [];
+    const stepText = (s) => (typeof s === 'string' ? s : s?.instruction ?? s?.prompt ?? '');
+
+    return `
+      <div class="spane">
+        <div class="spane__top">
+          <span class="spane__kicker">${escapeHtml(t('pane.activity'))}</span>
+          <span class="taskpage__state${row.enabled ? '' : ' is-off'}">${escapeHtml(
+            row.enabled ? t('pages.tasks.active') : t('pages.tasks.paused'),
+          )}</span>
+          <div class="spane__acts">
+            <button class="icon-btn" data-s="toggle" type="button"
+                    title="${escapeHtml(row.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}"
+                    aria-label="${escapeHtml(row.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}">${
+                      row.enabled ? '⏸' : '▶'
+                    }</button>
+            <button class="icon-btn" data-s="drop" type="button"
+                    title="${escapeHtml(t('pages.tasks.remove'))}"
+                    aria-label="${escapeHtml(t('pages.tasks.remove'))}">🗑</button>
+            <button class="btn btn--primary" data-s="run" type="button">${escapeHtml(t('pages.tasks.runNow'))}</button>
+          </div>
+        </div>
+
+        <input class="spane__title" data-s="title" type="text" maxlength="200"
+               aria-label="${escapeHtml(t('sched.name'))}" value="${escapeHtml(row.title || '')}">
+
+        ${
+          isTask
+            ? `<textarea class="spane__prompt" data-s="prompt" rows="5"
+                         aria-label="${escapeHtml(t('taskForm.prompt'))}">${escapeHtml(row.prompt || '')}</textarea>`
+            : `<div class="spane__steps">
+                 <ol>${steps.map((s) => `<li>${escapeHtml(stepText(s))}</li>`).join('')}</ol>
+                 <button class="btn btn--ghost" data-s="steps" type="button">${escapeHtml(t('pane.editSteps'))}</button>
+               </div>`
+        }
+
+        <div class="spane__label">${escapeHtml(t('pane.details'))}</div>
+        <div class="spane__group">
+          <div class="spane__row">
+            <span>${escapeHtml(t('pane.runsOn'))}</span>
+            <span class="spane__value">${state.localOnly ? '🖥' : '☁'} ${escapeHtml(t(state.localOnly ? 'pane.thisComputer' : 'pane.cloud'))}</span>
+          </div>
+          ${
+            isTask
+              ? `<label class="spane__row">
+                   <span>${escapeHtml(t('taskForm.permissions'))}</span>
+                   <select data-s="policy">
+                     ${option('ask', t('taskForm.policyAsk'), (row.policy || 'ask') === 'ask')}
+                     ${option('guarded', t('taskForm.policyGuarded'), row.policy === 'guarded')}
+                     ${option('auto', t('taskForm.policySkip'), row.policy === 'auto')}
+                   </select>
+                 </label>`
+              : ''
+          }
+          ${
+            project
+              ? `<div class="spane__row"><span>${escapeHtml(t('proj.one'))}</span>
+                   <button class="taskpage__project" type="button" data-s="project">${escapeHtml(project.name)}</button></div>`
+              : ''
+          }
+        </div>
+
+        <div class="spane__label">${escapeHtml(t('pane.frequency'))}</div>
+        <div class="spane__group">
+          <label class="spane__row">
+            <span>${escapeHtml(t('pane.repeat'))}</span>
+            <select data-s="frequency">
+              ${['manual', 'hourly', 'daily', 'weekdays', 'weekly', 'monthly']
+                .map((f) => option(f, t(`freq.${f}`), parts.frequency === f))
+                .join('')}
+            </select>
+          </label>
+          <label class="spane__row" data-when="hourly">
+            <span>${escapeHtml(t('pane.minute'))}</span>
+            <select data-s="minute">
+              ${Array.from({ length: 12 }, (_, i) => i * 5)
+                .concat(parts.minute % 5 ? [parts.minute] : [])
+                .sort((a, b) => a - b)
+                .map((m) => option(m, `:${String(m).padStart(2, '0')}`, parts.minute === m))
+                .join('')}
+            </select>
+          </label>
+          <label class="spane__row" data-when="weekly">
+            <span>${escapeHtml(t('pane.weekday'))}</span>
+            <select data-s="weekday">
+              ${days.map((d) => option(d, t(`day.${d}`), parts.weekday === d)).join('')}
+            </select>
+          </label>
+          <label class="spane__row" data-when="monthly">
+            <span>${escapeHtml(t('pane.dayOfMonth'))}</span>
+            <select data-s="day">
+              ${Array.from({ length: 31 }, (_, i) => i + 1)
+                .map((d) => option(d, String(d), parts.day === d))
+                .join('')}
+            </select>
+          </label>
+          <label class="spane__row" data-when="daily weekdays weekly monthly">
+            <span>${escapeHtml(t('pane.time'))}</span>
+            <select data-s="time">
+              ${times.map((hhmm) => option(hhmm, clockText(hhmm), parts.time === hhmm)).join('')}
+            </select>
+          </label>
+          <label class="spane__row" data-when="hourly daily weekdays weekly monthly">
+            <span>${escapeHtml(t('sched.timezone'))}</span>
+            <select data-s="tz">
+              ${zoneList(row.tz).map((z) => option(z, z, z === (row.tz || zoneList(null)[0]))).join('')}
+            </select>
+          </label>
+        </div>
+
+        <div class="spane__group" data-when="hourly daily weekdays weekly monthly">
+          <label class="spane__row">
+            <span>${escapeHtml(t('pane.ends'))}</span>
+            <select data-s="ends">
+              ${option('never', t('pane.never'), !row.ends_on)}
+              ${option('date', t('pane.onDate'), !!row.ends_on)}
+            </select>
+          </label>
+          <label class="spane__row" data-s-show="ends">
+            <span>${escapeHtml(t('pane.endDate'))}</span>
+            <input type="date" data-s="endsOn" value="${escapeHtml(row.ends_on || '')}">
+          </label>
+        </div>
+
+        <div class="spane__meta">
+          <div><span>${escapeHtml(t('pane.nextRun'))}</span> <strong data-s="next">${escapeHtml(next)}</strong></div>
+          ${
+            (isTask ? row.last_status : null)
+              ? `<div><span>${escapeHtml(t('pages.tasks.lastRun'))}</span> ${escapeHtml(String(row.last_status).slice(0, 200))}</div>`
+              : ''
+          }
+          ${
+            row.last_chat || row.lastChat
+              ? `<button class="taskpage__project" type="button" data-s="chat">${escapeHtml(t('pages.tasks.openResult'))}</button>`
+              : ''
+          }
+          <div class="spane__status" data-s="status" role="status" aria-live="polite"></div>
+        </div>
+      </div>`;
+  }
+
+  async function fetchSchedule(kind, id) {
+    if (kind === 'workflow') {
+      const { workflow, runs } = await api.workflow(id);
+      return { row: { ...workflow, lastChat: runs?.[0]?.chat_id || null }, project: null };
+    }
     const { task, project } = await api.task(id);
+    return { row: task, project };
+  }
+
+  /**
+   * The card in the transcript as the row now is. The card is what somebody
+   * reads first; after changing the time beside it, it must not go on saying
+   * the old one.
+   */
+  function refreshCards(kind, row) {
+    const cards = [...document.querySelectorAll('.schedcard')].filter(
+      (node) => /** @type {HTMLElement} */ (node).dataset.scheduleKind === kind && /** @type {HTMLElement} */ (node).dataset.scheduleId === row.id,
+    );
+    for (const card of cards) {
+      card.replaceWith(
+        scheduleCard({
+          kind,
+          id: row.id,
+          title: row.title,
+          cron: row.cron || null,
+          nextRunAt: row.next_run_at || null,
+          tz: row.tz || null,
+          enabled: row.enabled !== false,
+          steps: Array.isArray(row.steps) ? row.steps.length : undefined,
+          endsOn: row.ends_on || null,
+          prompt: kind === 'task' ? String(row.prompt || '').slice(0, 600) : undefined,
+          stepList:
+            kind === 'workflow' && Array.isArray(row.steps)
+              ? row.steps.slice(0, 8).map((s) => String(typeof s === 'string' ? s : s?.instruction ?? s?.prompt ?? '').slice(0, 160))
+              : undefined,
+          existing: card.classList.contains('schedcard--existing'),
+        }),
+      );
+    }
+  }
+
+  async function showScheduleInPane(kind, id) {
+    const { row, project } = await fetchSchedule(kind, id);
     const pane = $('taskpane');
-    $('taskpane-title').textContent = task.title;
-    // The rail's own pencil does what the one on the task's page does.
+    const root = $('taskpane-body');
+    $('taskpane-title').textContent = row.title;
+    // The pencil opens the whole form — the steps of a workflow, or a task's
+    // every field at once — the same one the shelves use.
     $('taskpane-edit').onclick = () =>
-      openTaskForm(null, { task, after: () => showTaskInPane(id) });
-    drawTask($('taskpane-body'), task, project, {
-      withEdit: false,
-      redraw: () => showTaskInPane(id),
-      gone: async () => closeTaskPane(),
-    });
+      kind === 'workflow'
+        ? editWorkflowFromPane(id)
+        : openTaskForm(null, { task: row, after: () => showScheduleInPane(kind, id) });
+    root.innerHTML = scheduleEditorHtml(kind, row, project);
+    wireScheduleEditor(root, kind, row, project);
+    refreshCards(kind, row);
     pane.hidden = false;
     onPaneOpen();
   }
+
+  function wireScheduleEditor(root, kind, row, project) {
+    const q = (name) => /** @type {HTMLInputElement} */ (root.querySelector(`[data-s="${name}"]`));
+    const status = q('status');
+    const update = (patch) => (kind === 'workflow' ? api.updateWorkflow(row.id, patch) : api.updateTask(row.id, patch));
+
+    /** Show only the rows the chosen frequency uses. */
+    const layout = () => {
+      const f = q('frequency').value;
+      for (const node of root.querySelectorAll('[data-when]')) {
+        /** @type {HTMLElement} */ (node).hidden = !String(/** @type {HTMLElement} */ (node).dataset.when).split(' ').includes(f);
+      }
+      /** @type {HTMLElement} */ (root.querySelector('[data-s-show="ends"]')).hidden = q('ends').value !== 'date' || f === 'manual';
+    };
+    layout();
+
+    const save = async (patch) => {
+      status.textContent = t('pane.saving');
+      status.classList.remove('is-error');
+      try {
+        const result = await update(patch);
+        const fresh = result.task || result.workflow;
+        Object.assign(row, fresh);
+        $('taskpane-title').textContent = row.title;
+        q('next').textContent = row.next_run_at
+          ? new Date(row.next_run_at).toLocaleString(undefined, {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+              ...(row.tz ? { timeZone: row.tz } : {}),
+            })
+          : t('pane.noNext');
+        status.textContent = t('pane.saved');
+        refreshCards(kind, row);
+        onTasksChanged();
+      } catch (err) {
+        status.textContent = err.message;
+        status.classList.add('is-error');
+      }
+    };
+
+    const saveSchedule = () =>
+      save({
+        schedule: {
+          frequency: q('frequency').value,
+          time: q('time').value,
+          minute: Number(q('minute').value),
+          weekday: q('weekday').value,
+          day: Number(q('day').value),
+        },
+        tz: q('tz').value,
+      });
+
+    q('frequency').addEventListener('change', () => {
+      layout();
+      saveSchedule();
+    });
+    for (const name of ['time', 'minute', 'weekday', 'day', 'tz']) q(name).addEventListener('change', saveSchedule);
+
+    q('ends').addEventListener('change', () => {
+      layout();
+      if (q('ends').value === 'never') save({ endsOn: null });
+      else q('endsOn').focus();
+    });
+    q('endsOn').addEventListener('change', () => {
+      if (q('endsOn').value) save({ endsOn: q('endsOn').value });
+    });
+
+    q('title').addEventListener('change', () => {
+      const title = q('title').value.trim();
+      if (title && title !== row.title) save({ title });
+    });
+    q('prompt')?.addEventListener('change', () => {
+      const prompt = q('prompt').value.trim();
+      if (prompt && prompt !== row.prompt) save({ prompt });
+    });
+    q('policy')?.addEventListener('change', () => save({ policy: q('policy').value }));
+    q('steps')?.addEventListener('click', () => editWorkflowFromPane(row.id));
+
+    q('toggle').addEventListener('click', async () => {
+      if (kind === 'workflow') await api.updateWorkflow(row.id, { enabled: !row.enabled });
+      else await api.setTaskEnabled(row.id, !row.enabled);
+      onTasksChanged();
+      await showScheduleInPane(kind, row.id);
+    });
+
+    armed(q('drop'), t('pages.tasks.removeConfirm'), async () => {
+      if (kind === 'workflow') await api.deleteWorkflow(row.id);
+      else await api.deleteTask(row.id);
+      onTasksChanged();
+      closeTaskPane();
+    });
+
+    q('project')?.addEventListener('click', () => {
+      onLeave();
+      openProject(project.id);
+    });
+    q('chat')?.addEventListener('click', () => {
+      onLeave();
+      openChat(row.last_chat || row.lastChat);
+    });
+
+    q('run').addEventListener('click', async () => {
+      const run = q('run');
+      run.disabled = true;
+      run.textContent = t('pages.tasks.running');
+      // Into the conversation as soon as the run names one, the way the
+      // shelves do it: the request is held open for the whole run.
+      let watching = false;
+      const peek = setTimeout(async () => {
+        const fresh = await fetchSchedule(kind, row.id).catch(() => null);
+        const chatId = fresh?.row.last_chat || fresh?.row.lastChat;
+        if (!chatId) return;
+        watching = true;
+        onLeave();
+        openChat(chatId);
+      }, 1500);
+      try {
+        const result = kind === 'workflow' ? await api.runWorkflow(row.id) : await api.runTask(row.id);
+        clearTimeout(peek);
+        toast(t('pages.tasks.ranNow'));
+        const chatId = result?.chatId || result?.run?.chat_id;
+        if (chatId && !watching) {
+          onLeave();
+          openChat(chatId);
+        }
+      } catch (err) {
+        clearTimeout(peek);
+        toast(err.message, 'error');
+      } finally {
+        run.disabled = false;
+        run.textContent = t('pages.tasks.runNow');
+      }
+    });
+  }
+
+  /** The workflow form, over its shelf — the rail cannot hold a step editor. */
+  function editWorkflowFromPane(id) {
+    closeTaskPane();
+    onShowPage();
+    showShelf('workflows');
+    return wfForm.open(id);
+  }
+
+  /** A task in the rail — kept by name for the callers that only have tasks. */
+  const showTaskInPane = (id) => showScheduleInPane('task', id);
 
   function closeTaskPane() {
     $('taskpane').hidden = true;
@@ -1095,6 +1469,8 @@ export function createPages({
 
     /** One scheduled task, in the rail beside the conversation. */
     showTaskInPane,
+    /** A task or a workflow in the rail, as the editor its card's pill opens. */
+    showScheduleInPane,
     closeTaskPane,
     /** Whether the rail is showing a task — the file viewer asks before taking it. */
     taskPaneOpen: () => !$('taskpane').hidden,

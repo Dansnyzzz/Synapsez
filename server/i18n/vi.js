@@ -102,6 +102,14 @@ export const vi = {
     '"{0}" không phải thứ trong tuần. Dùng mon, tue, wed, thu, fri, sat hoặc sun.',
   'Could not find a time matching "{0}" in {1}.': 'Không tìm được thời điểm khớp "{0}" trong {1}.',
   '"{0}" is not a frequency. Pick one of: {1}.': '"{0}" không phải tần suất hợp lệ. Chọn một trong: {1}.',
+  'An hourly repeat needs a minute from 0 to 59.': 'Lặp hằng giờ cần số phút từ 0 đến 59.',
+  'Give the time as HH:MM — "07:00".': 'Nhập giờ dạng HH:MM — "07:00".',
+  'A weekly repeat needs a weekday: mon, tue, wed, thu, fri, sat or sun.':
+    'Lặp hằng tuần cần chọn thứ: mon, tue, wed, thu, fri, sat hoặc sun.',
+  'A monthly repeat needs a day from 1 to 31.': 'Lặp hằng tháng cần ngày từ 1 đến 31.',
+  'Give the end date as YYYY-MM-DD.': 'Nhập ngày kết thúc dạng YYYY-MM-DD.',
+  'That end date is before the next run — pick a later one.':
+    'Ngày kết thúc đó trước lần chạy tới — hãy chọn ngày muộn hơn.',
   'A monthly task needs a time as HH:MM — "monthly 1 08:00".':
     'Việc chạy hằng tháng cần giờ dạng HH:MM — "monthly 1 08:00".',
   'A weekdays task needs a time as HH:MM — "weekdays 08:00".':

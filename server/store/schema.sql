@@ -827,3 +827,13 @@ ALTER TABLE chats ADD COLUMN IF NOT EXISTS chat_group  TEXT;
 -- The sidebar reads "not archived, newest first" on every load, and the project
 -- sections read the same thing per project.
 CREATE INDEX IF NOT EXISTS chats_live_idx ON chats (user_id, archived_at, pinned, updated_at DESC);
+
+-- ── 23: a repeat can stop on a date ──────────────────────────────────────────
+-- "Every morning until the end of the course." `ends_on` is a calendar date,
+-- 'YYYY-MM-DD', read in the row's own `tz` — a date, not an instant, because
+-- "until the 30th" means the whole of the 30th wherever the person is. When the
+-- next run would fall after it, the schedule retires the way a one-off does.
+-- Text rather than DATE so it round-trips exactly as written, with no driver
+-- turning it into midnight UTC on the way out.
+ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS ends_on TEXT;
+ALTER TABLE workflows       ADD COLUMN IF NOT EXISTS ends_on TEXT;

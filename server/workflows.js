@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { getPrefs } from './settings.js';
 import { runAgent } from './agent.js';
-import { parseSchedule } from './scheduler.js';
+import { nextRunOf } from './scheduler.js';
 import { redactSecrets } from './redact.js';
 
 /**
@@ -343,12 +343,6 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
   });
 }
 
-/** When a repeating workflow should run again after firing now. */
-function advance(cron, after = new Date(), tz = null) {
-  if (!cron) return null;
-  return parseSchedule(cron, { from: new Date(after.getTime() + 60_000), tz }).nextRunAt;
-}
-
 /**
  * Everything that is due, and everything already in flight.
  *
@@ -377,7 +371,8 @@ export async function runDueWorkflows({ limit = 3, userId = null, budgetMs = STA
     }
     // Set the real next run now that the claim is safely taken. A one-shot
     // workflow has no cron and simply stops being due.
-    const next = advance(workflow.cron, new Date(), workflow.tz);
+    // Null for a one-off, and for a repeat whose end date has passed.
+    const next = nextRunOf(workflow);
     await store.updateWorkflow(workflow.user_id, workflow.id, {
       nextRunAt: next,
       ...(next ? {} : { enabled: false }),
@@ -432,7 +427,7 @@ export async function runWorkflowNow(userId, workflowId, { budgetMs = START_BUDG
    * sends email and posts to Slack; a surprise second run of one is worse than
    * a skipped occurrence.
    */
-  const next = advance(workflow.cron, new Date(), workflow.tz);
+  const next = nextRunOf(workflow);
   if (next) await store.updateWorkflow(userId, workflow.id, { nextRunAt: next });
 
   const run = await startRun(userId, workflow);
@@ -450,4 +445,4 @@ export async function runWorkflowNow(userId, workflowId, { budgetMs = START_BUDG
   return advanceRun(claimed, { deadline: Date.now() + budgetMs });
 }
 
-export const __testing = { runStep, freshState, advance };
+export const __testing = { runStep, freshState };

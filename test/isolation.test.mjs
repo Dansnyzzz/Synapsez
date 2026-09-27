@@ -38,7 +38,7 @@ import { PROVIDERS } from '../server/providers/catalog.js';
 // The single place a provider failure becomes text a person reads, which is why
 // it is also the place a credential quoted back by that provider must be lost.
 import { readableFailure } from '../server/app.js';
-import { parseSchedule } from '../server/scheduler.js';
+import { parseSchedule, scheduleFrom, pastEnd, nextRunOf, validEndDate } from '../server/scheduler.js';
 import { DESKTOP_IMPLEMENTATIONS } from '../worker/desktop.js';
 import { BROWSER_IMPLEMENTATIONS } from '../worker/browser.js';
 import { normaliseOrder } from '../server/agent.js';
@@ -608,6 +608,31 @@ section('schedules');
     typeof parseSchedule('17:00', { from: monday, tz: 'Mars/Olympus_Mons' }).nextRunAt === 'string',
   );
   check('and a missing zone still works', typeof parseSchedule('17:00', { from: monday }).nextRunAt === 'string');
+
+  // The side panel's pieces, and the date a repeat stops.
+  const piece = scheduleFrom({ frequency: 'weekdays', time: '7:00' }, { from: monday, tz: 'Asia/Ho_Chi_Minh' });
+  check('a panel time is written as the scheduler reads it', piece.cron === 'weekdays 07:00', piece.cron);
+  check('  and read back to the same pieces', readAt(piece.nextRunAt, 'Asia/Ho_Chi_Minh') === '07:00', readAt(piece.nextRunAt, 'Asia/Ho_Chi_Minh'));
+  check('manual has no schedule', scheduleFrom({ frequency: 'manual' }).cron === null);
+  let refusedMinute = false;
+  try {
+    scheduleFrom({ frequency: 'hourly', minute: 75 });
+  } catch {
+    refusedMinute = true;
+  }
+  check('a minute past 59 is refused', refusedMinute);
+
+  // "Until the 30th" includes a run late on the 30th in the person's zone, even
+  // when that instant is already the 31st somewhere else.
+  const lateOn30th = '2026-09-30T16:30:00Z'; // 23:30 in Saigon
+  check('a run on the end date is still inside it', !pastEnd(lateOn30th, '2026-09-30', 'Asia/Ho_Chi_Minh'));
+  check('the day after is not', pastEnd('2026-09-30T17:30:00Z', '2026-09-30', 'Asia/Ho_Chi_Minh'));
+  check('no end date never ends', !pastEnd('2999-01-01T00:00:00Z', null));
+  const lastDaily = nextRunOf({ cron: '23:30', tz: 'Asia/Ho_Chi_Minh', ends_on: '2026-09-30' }, new Date('2026-09-29T17:00:00Z'));
+  check('the last run before the end is kept', new Date(lastDaily).getTime() === new Date(lateOn30th).getTime(), String(lastDaily));
+  const afterEnd = nextRunOf({ cron: '23:30', tz: 'Asia/Ho_Chi_Minh', ends_on: '2026-09-30' }, new Date(lateOn30th));
+  check('and the one after it retires the repeat', afterEnd === null, String(afterEnd));
+  check('validEndDate rejects a day that does not exist', validEndDate('2026-02-30') === null && validEndDate('2026-02-28') === '2026-02-28');
 
   await store.createTask(alice.id, {
     id: 'task-1',

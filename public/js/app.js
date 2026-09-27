@@ -2217,6 +2217,11 @@ const pages = createPages({
     $('app').classList.add('is-taskpane');
   },
   onPaneClose: () => $('app').classList.remove('is-taskpane'),
+  // The same moves as `gotoShelf`, for the rail's way onto the workflow form.
+  onShowPage: () => {
+    projectPage.hide();
+    onPage(true);
+  },
 });
 
 /**
@@ -2371,16 +2376,11 @@ $('messages').addEventListener('click', async (event) => {
   if (pill) {
     const { scheduleKind: kind, scheduleId: id } = pill.dataset;
     const failed = (err) => toast(err.message, 'error');
-    if (kind === 'workflow') {
-      // The same moves as `gotoShelf`, with the form opened on top.
-      projectPage.hide();
-      onPage(true);
-      pages.editWorkflow(id).catch(failed);
-    } else {
-      // Beside the conversation, not instead of it: the transcript that set the
-      // task up is what somebody was reading when they pressed its card.
-      pages.showTaskInPane(id).catch(failed);
-    }
+    // Beside the conversation, not instead of it: the transcript that set it up
+    // is what somebody was reading when they pressed its card. A task and a
+    // workflow alike — the rail is where the time, the repeat and the end date
+    // are changed.
+    pages.showScheduleInPane(kind === 'workflow' ? 'workflow' : 'task', id).catch(failed);
     return;
   }
 

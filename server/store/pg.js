@@ -202,8 +202,10 @@ export function splitStatements(sql) {
  *  22  shared_models.expires_at — the date the provider stops serving a model,
  *      so a free model leaves the Free list the day its free period ends
  *      rather than at the next refresh, and the picker can warn before then
+ *  23  scheduled_tasks.ends_on and workflows.ends_on — a repeat can stop on a
+ *      date ("every morning until the 30th") instead of only never
  */
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 23;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -2311,7 +2313,15 @@ export function createPgStore(connectionString) {
      * fields present are written, so a rename leaves the schedule alone.
      */
     async updateTask(userId, id, patch) {
-      const columns = { title: 'title', prompt: 'prompt', cron: 'cron', nextRunAt: 'next_run_at', tz: 'tz', policy: 'policy' };
+      const columns = {
+        title: 'title',
+        prompt: 'prompt',
+        cron: 'cron',
+        nextRunAt: 'next_run_at',
+        tz: 'tz',
+        policy: 'policy',
+        endsOn: 'ends_on',
+      };
       const sets = [];
       const values = [userId, id];
       for (const [key, column] of Object.entries(columns)) {
@@ -2513,6 +2523,7 @@ export function createPgStore(connectionString) {
       if (patch.cron !== undefined) put('cron', patch.cron);
       if (patch.tz !== undefined) put('tz', patch.tz);
       if (patch.nextRunAt !== undefined) put('next_run_at', patch.nextRunAt);
+      if (patch.endsOn !== undefined) put('ends_on', patch.endsOn);
       if (patch.enabled !== undefined) put('enabled', patch.enabled);
       if (!sets.length) {
         // Nothing asked for. Return the row unchanged rather than building an

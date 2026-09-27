@@ -1,4 +1,4 @@
-import { parseSchedule, validZone } from '../scheduler.js';
+import { parseSchedule, schedulePatch, validZone } from '../scheduler.js';
 import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { normaliseSteps, runWorkflowNow } from '../workflows.js';
@@ -120,6 +120,13 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
             // Clearing the schedule leaves the workflow, and it is run by hand.
             Object.assign(patch, { cron: null, nextRunAt: null });
           }
+        }
+
+        // The side panel: a time as well as a frequency, and an end date.
+        if (req.body?.schedule !== undefined || req.body?.endsOn !== undefined) {
+          const current = await getStore().getWorkflow(req.user.id, req.params.id);
+          if (!current) return res.status(404).json({ error: 'Workflow not found' });
+          Object.assign(patch, schedulePatch(req.body, current));
         }
 
         const workflow = await getStore().updateWorkflow(req.user.id, req.params.id, patch);

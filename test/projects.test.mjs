@@ -701,6 +701,45 @@ section('a project can have work that runs on its own');
   // tells nobody that.
   check('and names the project it answers from', one.body?.project?.id === projectId, JSON.stringify(one.body?.project));
 
+  /*
+   * The side panel: a time of its own rather than whenever it was saved, a
+   * zone chosen there, and a date the repeat stops.
+   */
+  const repeatId = repeating.body.task.id;
+  const timed = await alice.call('PATCH', `/api/tasks/${repeatId}`, {
+    schedule: { frequency: 'weekly', time: '7:15', weekday: 'fri' },
+    tz: 'Asia/Ho_Chi_Minh',
+  });
+  check('the panel sets the time it shows', timed.body?.task?.cron === 'fri 07:15', `${timed.status} ${timed.body?.task?.cron} ${timed.body?.error || ''}`);
+  const nextAt = new Date(timed.body?.task?.next_run_at);
+  const saigonClock = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(nextAt);
+  check('  and the next run is that time in that zone', saigonClock === 'Fri 07:15', saigonClock);
+
+  const hourlyEdit = await alice.call('PATCH', `/api/tasks/${repeatId}`, { schedule: { frequency: 'hourly', minute: 5 } });
+  check('an hourly repeat takes a minute', hourlyEdit.body?.task?.cron === 'hourly :05', hourlyEdit.body?.task?.cron);
+  const monthlyEdit = await alice.call('PATCH', `/api/tasks/${repeatId}`, {
+    schedule: { frequency: 'monthly', day: 15, time: '08:00' },
+  });
+  check('a monthly one a day of the month', monthlyEdit.body?.task?.cron === 'monthly 15 08:00', monthlyEdit.body?.task?.cron);
+  const badWeekly = await alice.call('PATCH', `/api/tasks/${repeatId}`, { schedule: { frequency: 'weekly', time: '08:00', weekday: 'someday' } });
+  check('a weekday that is not one is refused', badWeekly.status === 400, `${badWeekly.status}`);
+
+  const ends = await alice.call('PATCH', `/api/tasks/${repeatId}`, { endsOn: '2999-12-31' });
+  check('a repeat can be told when to stop', ends.body?.task?.ends_on === '2999-12-31', `${ends.status} ${ends.body?.task?.ends_on}`);
+  const tooEarly = await alice.call('PATCH', `/api/tasks/${repeatId}`, { endsOn: '2001-01-01' });
+  check('an end before the next run is refused, not silently accepted', tooEarly.status === 400, `${tooEarly.status}`);
+  const notADate = await alice.call('PATCH', `/api/tasks/${repeatId}`, { endsOn: '2026-02-30' });
+  check('  and so is a date that does not exist', notADate.status === 400, `${notADate.status}`);
+  const never = await alice.call('PATCH', `/api/tasks/${repeatId}`, { endsOn: null });
+  check('"never" clears it', never.body?.task?.ends_on === null, String(never.body?.task?.ends_on));
+  const theirs = await carol2.call('PATCH', `/api/tasks/${repeatId}`, { schedule: { frequency: 'daily', time: '03:00' } });
+  check("another account cannot re-time someone else's task", theirs.status === 404, `${theirs.status}`);
+
   const strange = await alice.call('POST', '/api/tasks', {
     title: 'Nope',
     prompt: 'x',

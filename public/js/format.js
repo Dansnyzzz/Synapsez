@@ -66,6 +66,32 @@ export function repeatsAs(task) {
   return t('freq.everyDayAt').replace('{time}', cron);
 }
 
+/**
+ * A stored recurrence taken apart into the fields the side panel edits.
+ *
+ * The inverse of `scheduleFrom` on the server: `hourly :30` is minute 30,
+ * `mon 16:00` is weekly on Monday at four. Null cron is manual. The panel
+ * writes these same pieces back, so whatever it shows is what it would save.
+ *
+ * @returns {{ frequency: string, time: string, minute: number, weekday: string, day: number }}
+ */
+export function cronParts(cron) {
+  const text = String(cron || '').trim();
+  const base = { frequency: 'manual', time: '09:00', minute: 0, weekday: 'mon', day: 1 };
+  if (!text) return base;
+  const pad = (hhmm) => hhmm.replace(/^(\d):/, '0$1:');
+  const hourly = /^hourly\s*:?(\d\d)$/.exec(text);
+  if (hourly) return { ...base, frequency: 'hourly', minute: Number(hourly[1]) };
+  const weekdays = /^weekdays\s+(\d{1,2}:\d\d)$/.exec(text);
+  if (weekdays) return { ...base, frequency: 'weekdays', time: pad(weekdays[1]) };
+  const monthly = /^monthly\s+(\d{1,2})\s+(\d{1,2}:\d\d)$/.exec(text);
+  if (monthly) return { ...base, frequency: 'monthly', day: Number(monthly[1]), time: pad(monthly[2]) };
+  const weekly = /^([a-z]{3})\s+(\d{1,2}:\d\d)$/.exec(text);
+  if (weekly) return { ...base, frequency: 'weekly', weekday: weekly[1], time: pad(weekly[2]) };
+  if (/^\d{1,2}:\d\d$/.test(text)) return { ...base, frequency: 'daily', time: pad(text) };
+  return base;
+}
+
 /** A File as base64, without the `data:…;base64,` preamble the server does not want. */
 export function readAsBase64(file) {
   return new Promise((resolve, reject) => {

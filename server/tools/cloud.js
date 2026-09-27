@@ -1411,6 +1411,17 @@ function scheduleCard(kind, row, { existing = false } = {}) {
     tz: row.tz || null,
     enabled: row.enabled !== false,
     steps: kind === 'workflow' && Array.isArray(row.steps) ? row.steps.length : undefined,
+    endsOn: row.ends_on || null,
+    // What it will do, so the card can say so under its facts: a task's
+    // instructions, or a workflow's steps in order. Clipped — the card is a
+    // summary, and the panel it opens holds the whole of it.
+    prompt: kind === 'task' && row.prompt ? String(row.prompt).slice(0, 600) : undefined,
+    stepList:
+      kind === 'workflow' && Array.isArray(row.steps)
+        ? row.steps
+            .slice(0, 8)
+            .map((step) => String(typeof step === 'string' ? step : step?.instruction ?? step?.prompt ?? '').slice(0, 160))
+        : undefined,
     existing,
   };
 }

@@ -1,6 +1,6 @@
 import { renderMarkdown, escapeHtml } from './markdown.js';
 import { t, currentLanguage } from './i18n.js';
-import { humanSize, repeatsAs } from './format.js';
+import { humanSize, repeatsAs, cronParts } from './format.js';
 import { chartFigure } from './chart.js';
 import { mediaTools, svgToPng, fileNameFrom, imageUrlToPng } from './media.js';
 
@@ -829,24 +829,81 @@ function nextRunText(iso, tz) {
  * the transcript opens it, the same way file cards open, so a transcript of a
  * hundred turns does not hold a hundred handlers.
  */
-export function scheduleCard(schedule) {
-  const card = el('div', `schedcard${schedule.existing ? ' schedcard--existing' : ''}`);
-  card.dataset.scheduleKind = schedule.kind;
-  card.dataset.scheduleId = schedule.id;
+/** Line icons for the card's rows — fixed markup, never built from data. */
+const SCHED_ICON = {
+  task: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 1.5M9 2.5h6"/></svg>',
+  workflow: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3.5" width="7" height="6" rx="1.5"/><rect x="14" y="14.5" width="7" height="6" rx="1.5"/><path d="M6.5 9.5v3.5a2 2 0 0 0 2 2H14"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
+  next: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4h-4"/></svg>',
+  end: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>',
+  steps: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>',
+};
 
-  const head = el('div', 'schedcard__head');
+/**
+ * What the work will do, as the card's closing section.
+ *
+ * A task's instructions read better as points when they already are points —
+ * lines of their own, or a handful of sentences — and as a paragraph when
+ * they are one long thought. A workflow's steps are points by nature.
+ */
+function scheduleContent(schedule) {
+  let points = [];
+  if (Array.isArray(schedule.stepList)) points = schedule.stepList.filter(Boolean);
+  else if (schedule.prompt) {
+    const text = String(schedule.prompt).trim();
+    const lines = text.split(/\n+/).map((s) => s.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean);
+    const sentences = text.split(/(?<=[.!?;])\s+/).map((s) => s.trim()).filter(Boolean);
+    if (lines.length > 1) points = lines;
+    else if (sentences.length > 1 && sentences.length <= 8) points = sentences;
+    else points = [text];
+  }
+  if (!points.length) return null;
+
+  const section = el('div', 'schedcard__content');
+  const label = el('div', 'schedcard__label');
+  label.textContent = t(schedule.kind === 'workflow' ? 'sched.stepsHeading' : 'sched.contentHeading');
+  section.append(label);
+  if (points.length === 1 && schedule.kind !== 'workflow') {
+    const p = el('p', 'schedcard__para');
+    p.textContent = points[0];
+    section.append(p);
+  } else {
+    const list = el(schedule.kind === 'workflow' ? 'ol' : 'ul', 'schedcard__points');
+    for (const point of points) {
+      const li = el('li');
+      li.textContent = point;
+      list.append(li);
+    }
+    section.append(list);
+  }
+  return section;
+}
+
+/**
+ * The confirmation, laid out the way people now expect one: a heading, then a
+ * card with the name and whether it is on, its time, how often and in which
+ * zone, when it runs next, and what it will do — and under the card a round
+ * pill that opens it in the panel beside the conversation to adjust.
+ */
+export function scheduleCard(schedule) {
+  const wrap = el('div', `schedcard${schedule.existing ? ' schedcard--existing' : ''}`);
+  wrap.dataset.scheduleKind = schedule.kind;
+  wrap.dataset.scheduleId = schedule.id;
+
+  const heading = el('div', 'schedcard__heading');
   const mark = el('span', 'schedcard__mark');
   mark.setAttribute('aria-hidden', 'true');
   mark.textContent = schedule.existing ? '!' : '✓';
-  const heading = el('span', 'schedcard__title');
-  heading.textContent = t(
+  const headingText = el('span');
+  headingText.textContent = t(
     schedule.existing
       ? 'sched.alreadyThere'
       : schedule.kind === 'workflow'
         ? 'sched.createdWorkflow'
         : 'sched.createdTask',
   );
-  head.append(mark, heading);
+  heading.append(mark, headingText);
 
   // How often. A cron of null means two different things depending on the
   // kind: a task with a next run and no cron fires once; with neither, it — or
@@ -856,34 +913,70 @@ export function scheduleCard(schedule) {
     : schedule.nextRunAt
       ? t('sched.once')
       : t('freq.manualOnly');
+  const parts = cronParts(schedule.cron);
 
-  const facts = el('dl', 'schedcard__facts');
-  const fact = (label, value) => {
-    if (!value) return;
-    const dt = el('dt');
-    dt.textContent = label;
-    const dd = el('dd');
-    dd.textContent = value;
-    facts.append(dt, dd);
+  const card = el('div', 'schedcard__box');
+
+  const top = el('div', 'schedcard__top');
+  const icon = el('span', 'schedcard__icon', SCHED_ICON[schedule.kind === 'workflow' ? 'workflow' : 'task']);
+  icon.setAttribute('aria-hidden', 'true');
+  const who = el('div', 'schedcard__who');
+  const name = el('div', 'schedcard__name');
+  name.textContent = schedule.title;
+  const sub = el('div', 'schedcard__sub');
+  sub.textContent = [
+    t(schedule.enabled ? 'sched.on' : 'proj.taskPaused'),
+    schedule.cron ? t(`sched.repeat.${parts.frequency}`) : often,
+  ].join(' · ');
+  who.append(name, sub);
+  const state = el('span', `schedcard__state${schedule.enabled ? '' : ' is-off'}`);
+  state.textContent = t(schedule.enabled ? 'pages.tasks.active' : 'pages.tasks.paused');
+  top.append(icon, who, state);
+  card.append(top);
+
+  const rows = el('ul', 'schedcard__rows');
+  const row = (iconKey, text, strong = false) => {
+    if (!text) return;
+    const li = el('li');
+    li.append(el('span', 'schedcard__ri', SCHED_ICON[iconKey]));
+    const span = el(strong ? 'strong' : 'span');
+    span.textContent = text;
+    li.append(span);
+    rows.append(li);
   };
-  fact(t('sched.name'), schedule.title);
-  fact(t('sched.frequency'), often);
-  fact(t('sched.timezone'), schedule.tz || t('sched.serverTime'));
-  if (schedule.kind === 'workflow' && schedule.steps) fact(t('sched.steps'), String(schedule.steps));
-  if (!schedule.enabled) fact(t('sched.state'), t('proj.taskPaused'));
+  if (schedule.cron) {
+    row('clock', parts.frequency === 'hourly' ? t('freq.everyHourAt').replace('{m}', String(parts.minute).padStart(2, '0')) : parts.time, true);
+  }
+  row('calendar', [often, schedule.tz ? t('sched.inZone', { tz: schedule.tz }) : t('sched.serverTime')].join(' · '));
+  if (schedule.nextRunAt) row('next', t('sched.next', { when: nextRunText(schedule.nextRunAt, schedule.tz) }));
+  if (schedule.endsOn) {
+    // A calendar date, read as one: formatted in UTC so no zone shifts the day.
+    const [y, m, d] = String(schedule.endsOn).split('-').map(Number);
+    const date = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(currentLanguage(), { timeZone: 'UTC', dateStyle: 'medium' });
+    row('end', t('sched.endsOn', { date }));
+  }
+  if (schedule.kind === 'workflow' && schedule.steps && !schedule.stepList) row('steps', t('sched.stepCount', { n: schedule.steps }));
+  if (rows.children.length) card.append(rows);
 
+  const content = scheduleContent(schedule);
+  if (content) card.append(content);
+
+  // The one control. Blue for when, plain for what — it reads as a summary and
+  // opens the panel where every part of it can be changed.
   const next = schedule.nextRunAt ? nextRunText(schedule.nextRunAt, schedule.tz) : '';
   const pill = el('button', 'schedcard__pill');
   pill.type = 'button';
   pill.dataset.scheduleKind = schedule.kind;
   pill.dataset.scheduleId = schedule.id;
-  pill.textContent = [often, next ? t('sched.next', { when: next }) : null, schedule.title]
-    .filter(Boolean)
-    .join(' · ');
+  const when = el('span', 'schedcard__when');
+  when.textContent = [often, next ? t('sched.next', { when: next }) : null].filter(Boolean).join(' · ');
+  const what = el('span', 'schedcard__what');
+  what.textContent = schedule.title;
+  pill.append(when, document.createTextNode(' · '), what);
   pill.title = t('sched.open');
 
-  card.append(head, facts, pill);
-  return card;
+  wrap.append(heading, card, pill);
+  return wrap;
 }
 
 /**

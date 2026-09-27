@@ -93,6 +93,124 @@ export function fromFrequency(frequency, { from = new Date(), tz = null } = {}) 
   return { cron, nextRunAt: parseSchedule(cron, { from, tz }).nextRunAt };
 }
 
+/**
+ * A schedule chosen piece by piece — the side panel beside a conversation.
+ *
+ * `fromFrequency` takes the time of day from *now*, which is right for a menu
+ * with nothing else on it and wrong for a panel that shows the time as a field
+ * of its own: somebody who picks 07:00 means seven. This takes the pieces as
+ * given — frequency, time, and the weekday, day of month or minute the
+ * frequency needs — and writes the same words `parseSchedule` reads back, so
+ * nothing downstream knows which path made the row.
+ *
+ * @param {{ frequency?: string, time?: string, weekday?: string, day?: number|string, minute?: number|string }} spec
+ * @returns {{ cron: string|null, nextRunAt: string|null }} both null for `manual`.
+ */
+export function scheduleFrom(spec, { from = new Date(), tz = null } = {}) {
+  const choice = String(spec?.frequency || '').trim().toLowerCase();
+  if (!FREQUENCIES.includes(choice)) {
+    throw new Error(`"${spec?.frequency}" is not a frequency. Pick one of: ${FREQUENCIES.join(', ')}.`);
+  }
+  if (choice === 'manual') return { cron: null, nextRunAt: null };
+
+  const two = (n) => String(n).padStart(2, '0');
+  let cron;
+  if (choice === 'hourly') {
+    const minute = Number(spec.minute ?? String(spec.time || '').split(':')[1]);
+    if (!Number.isInteger(minute) || minute < 0 || minute > 59) {
+      throw new Error('An hourly repeat needs a minute from 0 to 59.');
+    }
+    cron = `hourly :${two(minute)}`;
+  } else {
+    const at = TIME.exec(String(spec.time || '').trim());
+    if (!at) throw new Error('Give the time as HH:MM — "07:00".');
+    const hhmm = `${two(at[1])}:${at[2]}`;
+    if (choice === 'daily') cron = hhmm;
+    else if (choice === 'weekdays') cron = `weekdays ${hhmm}`;
+    else if (choice === 'weekly') {
+      const day = String(spec.weekday || '').slice(0, 3).toLowerCase();
+      if (!WEEKDAYS.includes(day)) throw new Error('A weekly repeat needs a weekday: mon, tue, wed, thu, fri, sat or sun.');
+      cron = `${day} ${hhmm}`;
+    } else {
+      const day = Number(spec.day);
+      if (!Number.isInteger(day) || day < 1 || day > 31) throw new Error('A monthly repeat needs a day from 1 to 31.');
+      cron = `monthly ${day} ${hhmm}`;
+    }
+  }
+  return { cron, nextRunAt: parseSchedule(cron, { from, tz }).nextRunAt };
+}
+
+/** A calendar date as the store keeps it, or null. */
+export function validEndDate(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const [y, m, d] = text.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCMonth() === m - 1 && date.getUTCDate() === d ? text : null;
+}
+
+/**
+ * Whether a run would fall after the date a repeat was told to stop.
+ *
+ * Compared as calendar dates in the row's own zone: "until the 30th" includes
+ * a run at eleven at night on the 30th, wherever the server is.
+ */
+export function pastEnd(nextRunAt, endsOn, tz = null) {
+  if (!nextRunAt || !endsOn) return false;
+  const at = new Date(nextRunAt);
+  let year = at.getFullYear();
+  let month = at.getMonth() + 1;
+  let day = at.getDate();
+  if (validZone(tz)) ({ year, month, day } = partsIn(at, tz));
+  const local = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return local > endsOn;
+}
+
+/**
+ * When a task or workflow row should run next after firing now — null once it
+ * is a one-off, or once the next run would be past its end date.
+ *
+ * @param {{ cron?: string|null, tz?: string|null, ends_on?: string|null }} row
+ */
+export function nextRunOf(row, after = new Date()) {
+  if (!row?.cron) return null;
+  // A minute past is the floor; parseSchedule then walks forward to the weekday.
+  const next = parseSchedule(row.cron, { from: new Date(after.getTime() + 60_000), tz: row.tz || null }).nextRunAt;
+  return pastEnd(next, row.ends_on, row.tz) ? null : next;
+}
+
+/**
+ * The schedule half of an edit from the side panel, for a task or a workflow.
+ *
+ * `schedule` re-times the row from the pieces given; `endsOn` sets or clears
+ * the date it stops. An end date before the next run is refused rather than
+ * accepted and silently retiring the schedule on its next firing — the panel
+ * says so beside the field, which is where the mistake was made.
+ *
+ * @param {{ schedule?: object, endsOn?: string|null, tz?: string }} body
+ * @param {{ tz?: string|null, ends_on?: string|null, next_run_at?: string|Date|null } | null} current
+ */
+export function schedulePatch(body, current) {
+  /** @type {{ cron?: string|null, nextRunAt?: string|null, tz?: string|null, endsOn?: string|null }} */
+  const patch = {};
+  const tz = validZone(body?.tz) ? body.tz : current?.tz || null;
+  if (body?.schedule !== undefined) Object.assign(patch, scheduleFrom(body.schedule, { tz }), { tz });
+  if (body?.endsOn !== undefined) {
+    if (body.endsOn === null || body.endsOn === '') patch.endsOn = null;
+    else {
+      const date = validEndDate(body.endsOn);
+      if (!date) throw new Error('Give the end date as YYYY-MM-DD.');
+      patch.endsOn = date;
+    }
+  }
+  const endsOn = 'endsOn' in patch ? patch.endsOn : current?.ends_on;
+  const next = 'nextRunAt' in patch ? patch.nextRunAt : current?.next_run_at;
+  if (next && endsOn && pastEnd(next, endsOn, 'tz' in patch ? patch.tz : current?.tz)) {
+    throw new Error('That end date is before the next run — pick a later one.');
+  }
+  return patch;
+}
+
 /** Which day of the week an instant falls on, in a given zone. */
 function weekdayIn(date, tz) {
   const { year, month, day } = partsIn(date, tz);
@@ -207,14 +325,6 @@ export function parseSchedule(input, { once = false, from = new Date(), tz = nul
 
   // Unreachable for any real weekday — eight days always contains one of each.
   throw new Error(`Could not find a time matching "${input}" in ${zone}.`);
-}
-
-/** When a repeating task should run again after firing now. */
-function advance(cron, after = new Date(), tz = null) {
-  if (!cron) return null;
-  // A minute past is the floor; parseSchedule then walks forward to the weekday.
-  const from = new Date(after.getTime() + 60_000);
-  return parseSchedule(cron, { from, tz }).nextRunAt;
 }
 
 /**
@@ -335,7 +445,7 @@ async function runTask(task) {
 
   status = unattendedStatus(status, ending, waitingForApproval);
 
-  await store.finishTask(task.id, { status, chatId, nextRunAt: advance(task.cron, new Date(), task.tz) });
+  await store.finishTask(task.id, { status, chatId, nextRunAt: nextRunOf(task) });
   return { taskId: task.id, status, chatId };
 }
 
@@ -360,7 +470,7 @@ export async function runTaskNow(task) {
    * means the worst case is a skipped occurrence rather than a surprise repeat
    * of a job that sends email.
    */
-  const next = advance(task.cron, new Date(), task.tz);
+  const next = nextRunOf(task);
   if (next) await getStore().finishTask(task.id, { status: task.last_status ?? null, chatId: task.last_chat ?? null, nextRunAt: next });
   return runTask(task);
 }

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-09-27 (night) — a schedule you adjust beside the conversation
+
+### Changed
+
+- The card a new scheduled task or workflow leaves in the transcript is laid out like a
+  confirmation people now expect: a heading, then a card with the name and an "On" badge,
+  the time, how often and in which zone, the next run, the end date if any, and what it
+  will do (the task's instructions, or the workflow's steps) — and under it a round grey
+  pill that opens it.
+- The pill opens an editor in the side panel for **workflows as well as tasks** (a workflow
+  used to open its full-screen form). Name, instructions, permissions, repeat, time (quarter
+  hours, plus the current one if it is off the grid), weekday, day of month, minute, time
+  zone and end of repeat are changed in place and saved as they change; the card in the
+  conversation follows.
+
+### Added
+
+- A repeat can stop on a date: `ends_on` on tasks and workflows (schema 23). The run whose
+  next occurrence would fall after that date — read in the row's own zone — retires the
+  schedule the way a one-off does. An end date before the next run is refused.
+- `PATCH /api/tasks/:id` and `PATCH /api/workflows/:id` accept `schedule` —
+  `{ frequency, time, weekday, day, minute }` — and `endsOn`. The existing `frequency` and
+  `when` forms are unchanged.
+
 ## 2026-09-27 (evening) — an everyday toolbox
 
 Branch `feat/tool-library-2026-09-27`.

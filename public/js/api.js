@@ -125,8 +125,11 @@ export const api = {
   createTask: (task) => request('POST', '/api/tasks', { ...task, tz: localZone() }),
   runDueTasks: () => request('POST', '/api/tasks/run-due'),
   setTaskEnabled: (id, enabled) => request('PATCH', `/api/tasks/${id}`, { enabled }),
-  /** Change a task. Only the fields given are written; the zone rides along for a new frequency. */
-  updateTask: (id, patch) => request('PATCH', `/api/tasks/${id}`, { ...patch, tz: localZone() }),
+  /**
+   * Change a task. Only the fields given are written; the browser's zone rides
+   * along for a new frequency, and a zone chosen in the side panel wins over it.
+   */
+  updateTask: (id, patch) => request('PATCH', `/api/tasks/${id}`, { tz: localZone(), ...patch }),
   deleteTask: (id) => request('DELETE', `/api/tasks/${id}`),
   task: (id) => request('GET', `/api/tasks/${id}`),
   /**
@@ -142,7 +145,7 @@ export const api = {
   workflow: (id) => request('GET', `/api/workflows/${id}`),
   // Same reasoning as createTask: the schedule is written in the user's zone.
   createWorkflow: (wf) => request('POST', '/api/workflows', { ...wf, tz: localZone() }),
-  updateWorkflow: (id, patch) => request('PATCH', `/api/workflows/${id}`, { ...patch, tz: localZone() }),
+  updateWorkflow: (id, patch) => request('PATCH', `/api/workflows/${id}`, { tz: localZone(), ...patch }),
   deleteWorkflow: (id) => request('DELETE', `/api/workflows/${id}`),
   // Held open while steps run — the response is what keeps a serverless instance
   // alive long enough to finish one honestly.
