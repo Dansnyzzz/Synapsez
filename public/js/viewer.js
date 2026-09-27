@@ -6,6 +6,10 @@ import { openMenu } from './menu.js';
 import { toast } from './render.js';
 import { humanSize } from './format.js';
 
+/** Google Drive's mark, in its own colours — fixed markup, never data. */
+const DRIVE_ICON =
+  '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="#0f9d58" d="M7.7 3.5h8.6l5.2 9h-8.6z"/><path fill="#ffc107" d="M2.5 16.5 6.8 9l4.3 7.5-4.3 4z"/><path fill="#1a73e8" d="M6.8 20.5 11.1 13h10.4l-4.3 7.5z"/></svg>';
+
 
 /**
  * The parent's half of the artifact storage bridge.
@@ -155,6 +159,22 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
   const bodyNode = $('viewer-body');
   const tabsNode = $('viewer-tabs');
   const versionsNode = $('viewer-versions');
+/**
+   * Whether this account let the assistant use Google Drive — asked of the
+   * server at most once a minute, since connecting happens in Settings and the
+   * menu is opened far more often than that.
+   */
+  let driveKnown = { at: 0, ok: false };
+  async function driveAllowed() {
+    if (Date.now() - driveKnown.at < 60_000) return driveKnown.ok;
+    const ok = await api
+      .connectors()
+      .then(({ connectors }) => !!connectors.find((c) => c.id === 'google')?.products?.some((p) => p.id === 'drive' && p.granted))
+      .catch(() => false);
+    driveKnown = { at: Date.now(), ok };
+    return ok;
+  }
+
   const doNode = $('viewer-do');
   const moreNode = $('viewer-more');
 
@@ -722,11 +742,45 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
 
   doNode.addEventListener('click', () => current && primary().run());
 
-  moreNode.addEventListener('click', (event) => {
+  moreNode.addEventListener('click', async (event) => {
     event.stopPropagation();
+    if (!current) return;
+    const driveReady = await driveAllowed();
     if (!current) return;
 
     const items = [];
+    /**
+     * Into the person's own Google Drive — first, because it is the one place
+     * here a file can go that is not this browser. Only offered once Drive has
+     * been allowed; the answer opens the copy in a new tab.
+     */
+    if (driveReady) {
+      items.push({
+        label: t('viewer.saveToDrive'),
+        icon: DRIVE_ICON,
+        run: async () => {
+          const pending = window.open('', '_blank');
+          try {
+            toast(t('viewer.savingToDrive'));
+            const { link } = await api.saveToDrive(current.file.id);
+            if (pending) pending.location.href = link;
+            toast(t('viewer.savedToDrive'), 'ok');
+          } catch (err) {
+            pending?.close();
+            toast(err.message, 'error');
+          }
+        },
+      });
+    }
+    // A browser can show a PDF, a picture or a page itself: open it in a tab,
+    // which is "download and open" for somebody with no computer paired.
+    if (!opener && /^(image\/|application\/pdf|text\/html)/.test(current.file.mime || '')) {
+      items.push({
+        label: t('viewer.openInTab'),
+        icon: '↗',
+        run: () => window.open(`/api/attachments/${encodeURIComponent(current.file.id)}`, '_blank', 'noopener'),
+      });
+    }
     // Whatever the button is not already doing.
     // By id, not by label — see `primary()`.
     const first = primary().id;

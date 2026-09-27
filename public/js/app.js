@@ -5,6 +5,7 @@ import { makeResizable } from './resize.js';
 import { wireCopyButtons, escapeHtml } from './markdown.js';
 import { cleanHtml, forWord, writeRich } from './clipboard.js';
 import { createQuestionCard } from './question.js';
+import { createRail } from './rail.js';
 import {
   assistantMessage,
   userMessage,
@@ -63,6 +64,20 @@ const viewer = createViewer({
   },
   onClose: () => document.getElementById('app').classList.remove('is-filepane'),
 });
+
+/**
+ * What this conversation made and what it is working from, under the plan in
+ * the side panel. See rail.js.
+ */
+const rail = createRail({
+  api,
+  openFile: (file) => viewer.open(file),
+  openSettings: (tab) => openSettings(tab),
+});
+/** Redraw the panel sections for whatever conversation is on screen. */
+const renderRail = () => {
+  rail.render(state).catch(() => {});
+};
 
 // Named to avoid shadowing the global window.screen.
 const screenPanel = createScreen();
@@ -1788,6 +1803,7 @@ async function openChat(id) {
   state.project = project || null;
   state.files = files || [];
   renderFilesChip();
+  renderRail();
   /**
    * Deliberately no `clearQueue()` here.
    *
@@ -1983,6 +1999,7 @@ function startBlankChat(project = null) {
   state.files = [];
   renderContext(null);
   renderFilesChip();
+  renderRail();
   // The header describes the conversation, and this is a different one — so the
   // breadcrumb has to let go of the last conversation's project, or a blank
   // chat keeps claiming to be filed under whatever you were just reading.
@@ -2080,6 +2097,7 @@ function noteFile(file) {
   if (!file?.id) return;
   state.files = [file, ...(state.files || []).filter((other) => other.id !== file.id)];
   renderFilesChip();
+  renderRail();
   offerPreview(file);
 }
 
@@ -2999,7 +3017,7 @@ async function stream(decision, answers, { rejoin = null } = {}) {
       if (outcome !== 'cut') break;
 
       if (resume === MAX_RESUMES) {
-        if (onScreen(run)) toast(t('status.paused'));
+        if (onScreen(run)) noteInterrupted(run, t('status.paused'));
         break;
       }
       // The host closed the connection mid-run. Every step is already saved,
@@ -3016,6 +3034,7 @@ async function stream(decision, answers, { rejoin = null } = {}) {
       await mirrorRun(run);
     } else if (err.name !== 'AbortError' && onScreen(run)) {
       toast(err.message || t('status.streamFailed'), 'error');
+      noteInterrupted(run, err.message || t('status.streamFailed'));
     }
   } finally {
     runs.finish(chatId);
@@ -3224,11 +3243,16 @@ async function streamOnce(run, decision, answers) {
           // `openChat` puts the prompt back up the moment you return to it.
           if (onScreen(run)) showApproval(toolCalls);
         },
-        error: ({ message }) => {
+        error: ({ message, code }) => {
           outcome = 'done';
           clearDrafts();
           run.turn?.finish();
-          if (onScreen(run)) toast(message, 'error');
+          if (!onScreen(run)) return;
+          toast(message, 'error');
+          // A quota or a missing model will say the same thing again; anything
+          // else — a provider hiccup, every key failing, a stall — is worth
+          // one press to carry on from where it stopped.
+          if (code !== 'quota_exceeded' && code !== 'no_auto_model') noteInterrupted(run, message);
         },
         done: ({ stop }) => {
           outcome = 'done';
@@ -3289,6 +3313,22 @@ function noteStop({ kind, message, detail, resumable }, run) {
   run.stage.append(
     stopNote(kind, body, resumable && onScreen(run) ? () => { void stream(); } : null),
   );
+  maybeScroll(run);
+}
+
+/**
+ * A turn that stopped before it finished, with the one button that carries on.
+ *
+ * For every abrupt end — an error from the provider, every key refusing, a
+ * stall, a connection that would not come back — not only the tidy ones the
+ * server marks resumable. The run is saved step by step, so Continue picks up
+ * from the last saved step and the server tells the model what happened (see
+ * CONTINUE_NOTE). Once per turn, however many ways it reported the failure.
+ */
+function noteInterrupted(run, reason) {
+  if (run.interruptedNoted) return;
+  run.interruptedNoted = true;
+  run.stage.append(stopNote('interrupted', t('stop.interrupted', { reason: String(reason || '').slice(0, 200) }), () => { void stream(); }));
   maybeScroll(run);
 }
 
@@ -3795,6 +3835,11 @@ function openSettings(tab) {
 }
 
 $('open-settings').addEventListener('click', () => openSettings());
+// Whatever was connected or added in there shows in the side panel's Context.
+$('settings').addEventListener('close', () => {
+  rail.forgetAccount();
+  renderRail();
+});
 
 $('language').addEventListener('change', async (event) => {
   const language = /** @type {HTMLInputElement} */ (event.target).value;

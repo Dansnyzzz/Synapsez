@@ -744,4 +744,8 @@ export const vi = {
     "Thay đổi dữ liệu trong tài khoản Google của bạn ({0}: {1}).",
   "This conversation uses under 25% of the window, so there is nothing worth folding yet.":
     "Cuộc trò chuyện này dùng chưa tới 25% cửa sổ ngữ cảnh, nên chưa có gì đáng để nén.",
+  "The provider stopped sending (stalled for {0}s).":
+    "Nhà cung cấp ngừng gửi dữ liệu (treo {0} giây).",
+  "Google Drive is not connected. Connect it in Settings → Connectors.":
+    "Chưa kết nối Google Drive. Hãy kết nối trong Cài đặt → Kết nối.",
 };

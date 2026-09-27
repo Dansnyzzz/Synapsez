@@ -1,4 +1,7 @@
 import { getStore } from '../store/index.js';
+import { saveToDrive } from '../tools/google.js';
+import { googleGrants } from '../google.js';
+import { languageOf, translateMessage } from '../i18n/index.js';
 import { saveUpload } from '../attachments.js';
 import { createDocument, extensionOf, RUNNABLE } from '../office/index.js';
 import {
@@ -71,6 +74,31 @@ export function mountFileRoutes(api, { wrap, body }) {
     String(name)
       .replace(/[\\"]/g, '')
       .replace(/[^ -~]/g, '_') || 'file';
+
+  /**
+   * Put a file in the person's own Google Drive.
+   *
+   * Only when Drive was granted; the account's own token, never a shared one.
+   * Answers with the link so the viewer can open the copy straight away.
+   */
+  api.post(
+    '/attachments/:id/drive',
+    wrap(async (req, res) => {
+      const file = await getStore().getAttachment(req.user.id, req.params.id);
+      if (!file) return res.status(404).json({ error: 'Not found' });
+      if (!(await googleGrants(req.user.id)).includes('drive')) {
+        return res.status(400).json({
+          error: translateMessage('Google Drive is not connected. Connect it in Settings → Connectors.', languageOf(req)),
+        });
+      }
+      try {
+        const saved = await saveToDrive(req.user.id, file);
+        res.json({ id: saved.id, name: saved.name, link: saved.webViewLink });
+      } catch (err) {
+        res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
+      }
+    }),
+  );
 
   api.get(
     '/attachments/:id',

@@ -233,6 +233,8 @@ export const api = {
   uploadAttachment: (file) => request('POST', '/api/attachments', file),
   /** A file as something the viewer can draw: a document, sheets, slides, text. */
   filePreview: (id) => request('GET', `/api/attachments/${id}/preview`),
+  /** A copy in the account's own Google Drive; answers with its link. */
+  saveToDrive: (id) => request('POST', `/api/attachments/${id}/drive`),
   artifactStorageGet: (id, key) => request('GET', '/api/attachments/' + id + '/storage' + (key == null ? '' : '?key=' + encodeURIComponent(key))),
   artifactStorageSet: (id, key, value) => request('PUT', '/api/attachments/' + id + '/storage', { key, value }),
   artifactStorageDelete: (id, key) => request('DELETE', '/api/attachments/' + id + '/storage' + (key == null ? '' : '?key=' + encodeURIComponent(key))),

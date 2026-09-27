@@ -676,6 +676,28 @@ async function contactsTool(input, { userId }) {
   throw new Error('action is search or list.');
 }
 
+/**
+ * A file from this app, put in the person's Drive — the viewer's "Save to
+ * Google Drive". Word, Excel and PowerPoint files are converted to Docs, Sheets
+ * and Slides, so the copy opens and edits in Google's editors rather than as a
+ * download; everything else goes up as it is.
+ */
+const CONVERT_TO = {
+  docx: GOOGLE_TYPES.doc,
+  xlsx: GOOGLE_TYPES.sheet,
+  pptx: GOOGLE_TYPES.slides,
+  csv: GOOGLE_TYPES.sheet,
+};
+export async function saveToDrive(userId, file) {
+  const ext = String(file.name).split('.').pop().toLowerCase();
+  const target = CONVERT_TO[ext];
+  return driveUpload(userId, {
+    metadata: { name: target ? String(file.name).replace(/\.[^.]+$/, '') : file.name, ...(target ? { mimeType: target } : {}) },
+    content: Buffer.from(String(file.data || ''), 'base64'),
+    contentType: file.mime || 'application/octet-stream',
+  });
+}
+
 export const GOOGLE_IMPLEMENTATIONS = {
   gmail: gmailTool,
   google_calendar: calendarTool,

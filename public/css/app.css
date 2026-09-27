@@ -4576,23 +4576,33 @@ details.block pre {
   color: var(--text);
 }
 /* The way on, where the explanation is — see stopNote(). */
+.stopnote {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.stopnote__line { flex: 1; min-width: 200px; }
+/* The way on: a solid button, the strongest thing in the note, so nobody has
+   to work out that typing "continue" would have done the same. */
 .stopnote__go {
-  display: inline-block;
-  margin-top: 8px;
-  padding: 5px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
   font: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.14s, border-color 0.14s;
+  transition: opacity 0.14s;
 }
-.stopnote__go:hover {
-  border-color: var(--accent);
-  color: var(--text);
-}
+.stopnote__go::before { content: '↻'; font-size: 15px; }
+.stopnote__go:hover { opacity: 0.88; }
+.stopnote__go:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
 
 /* ─────────────────────────────────────────────────────────────
    Documents: the cards, and the viewer that opens them
@@ -7070,7 +7080,8 @@ details.block pre {
 .app.is-taskpane .detail__head,
 .app.is-taskpane .detail__body > .progress,
 .app.is-taskpane .detail__body > .hint,
-.app.is-taskpane .detail__body > .screen { display: none; }
+.app.is-taskpane .detail__body > .screen,
+.app.is-taskpane .detail__body > .rail-extra { display: none; }
 .app.is-taskpane .detail__body { padding: 0; overflow: hidden; }
 
 .taskpane {
@@ -7915,3 +7926,73 @@ select:focus-visible {
      neither has an edge to drag. */
   .grip { display: none; }
 }
+
+
+/* ── Outputs and Context, under the plan ────────────────────────────── */
+.rail-extra[hidden] { display: none; }
+.railsec { border-top: 1px solid var(--glass-line); padding: 12px 0 6px; }
+.railsec__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 4px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.railsec__count { color: var(--text-faint); font-weight: 500; font-size: 13px; }
+.railsec__chev { color: var(--text-faint); transition: transform 0.18s; }
+.railsec__head[aria-expanded='false'] .railsec__chev { transform: rotate(-90deg); }
+.railsec__body { display: grid; gap: 2px; padding: 4px 0 6px; max-height: 340px; overflow-y: auto; }
+.railsec__body[hidden] { display: none; }
+.railrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.railrow:hover:not(:disabled) { background: var(--tint-2); }
+.railrow:disabled { cursor: default; }
+.railrow__icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  color: var(--text-dim);
+}
+.railrow__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.railgrp + .railgrp { margin-top: 10px; }
+.railgrp__name { padding: 2px 8px 6px; color: var(--text-faint); font-size: 12.5px; }
+.railchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 6px; }
+.railchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: var(--tint);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.railchip:hover { background: var(--tint-2); }

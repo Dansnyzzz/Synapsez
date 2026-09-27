@@ -441,6 +441,27 @@ function withIntentNotes(messages) {
   });
 }
 
+/**
+ * A turn picked up after it was cut off.
+ *
+ * Pressing Continue starts a run with no new message, so the transcript ends
+ * on the assistant's own half-finished reply — which some providers reject
+ * outright and the rest read as "you are done". The note says what happened
+ * and what is wanted: carry on from where it stopped, using what the steps
+ * above already did, without sending anything a second time. Only for this
+ * request; nothing is stored.
+ */
+export const CONTINUE_NOTE =
+  '(The previous reply was cut off — a provider error, a stall, a key change or a limit — and the user pressed Continue. ' +
+  'Carry on with the same task from where it stopped. Look at the steps and results above to see what is already done; ' +
+  'do not repeat anything that sent, posted or changed something; finish what remains and then answer.)';
+
+function withContinuation(messages) {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'assistant') return messages;
+  return [...messages, { id: 'continue-note', role: 'user', text: CONTINUE_NOTE }];
+}
+
 const newId = () => crypto.randomUUID();
 
 /**
@@ -1314,7 +1335,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * them afterwards meant asking for images nobody had loaded.
        */
       const grounded = withProjectSources(
-        withIntentNotes(activeTranscript(normaliseOrder(messages))),
+        withContinuation(withIntentNotes(activeTranscript(normaliseOrder(messages)))),
         project?.passages,
         project?.images,
       );
@@ -1580,4 +1601,4 @@ export function deriveTitle(text) {
  */
 const countsAsStarted = (event) => !!event?.type;
 
-export const __testing = { applyStreamEvent, mapWithLimit, MAX_PARALLEL_TOOLS, WAIT_NOTICE_MS, countsAsStarted, withIntentNotes };
+export const __testing = { applyStreamEvent, mapWithLimit, MAX_PARALLEL_TOOLS, WAIT_NOTICE_MS, countsAsStarted, withIntentNotes, withContinuation };

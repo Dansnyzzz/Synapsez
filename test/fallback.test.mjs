@@ -83,6 +83,36 @@ section('a failure is graded by what it says about the key');
   );
 }
 
+section('a provider that goes silent is given up on, and retried');
+{
+  const { stallGuard } = __testing;
+  // Accepts the request, says one word, then nothing — no error, no close.
+  async function* silentAfterOne() {
+    yield { type: 'text', delta: 'Giờ tôi thu thập' };
+    await new Promise(() => {});
+  }
+  const got = [];
+  let failure = null;
+  try {
+    for await (const ev of stallGuard(silentAfterOne(), { first: 200, between: 60 })) got.push(ev);
+  } catch (err) {
+    failure = err;
+  }
+  check('what arrived before the silence is kept', got.length === 1);
+  check('the silence ends the attempt instead of hanging the turn', /stalled/.test(failure?.message || ''), failure?.message);
+  check('and it is graded as the provider stumbling, so it is retried', classify(failure).kind === 'UPSTREAM');
+
+  async function* steady() {
+    for (let i = 0; i < 3; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+      yield { type: 'text', delta: String(i) };
+    }
+  }
+  const all = [];
+  for await (const ev of stallGuard(steady(), { first: 200, between: 60 })) all.push(ev);
+  check('a provider that keeps talking is left alone', all.length === 3);
+}
+
 section('how long to wait comes from the provider, not from a guess');
 {
   check('Retry-After in seconds', waitFrom(err(429, '', { 'retry-after': '20' })) === 20_000);

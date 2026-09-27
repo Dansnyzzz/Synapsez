@@ -229,7 +229,7 @@ const DEAD_KEY =
  * hiccup that the next attempt would not have had.
  */
 const TRANSIENT =
-  /timeout|timed out|econnreset|econnrefused|socket hang up|fetch failed|network|sse|stream|overloaded|upstream|provider returned error|terminated|premature|unexpected end|bad gateway|service unavailable|internal server error/;
+  /timeout|timed out|econnreset|econnrefused|socket hang up|fetch failed|network|sse|stream|overloaded|upstream|provider returned error|terminated|premature|unexpected end|bad gateway|service unavailable|internal server error|stalled/;
 
 /**
  * What a failure says about the key that produced it.
@@ -283,6 +283,48 @@ function pause(ms, signal) {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+/**
+ * How long a provider may go silent before the attempt is given up.
+ *
+ * A free model on a busy aggregator sometimes accepts the request and then
+ * sends nothing — no error, no close — and the turn hung until somebody gave
+ * up on it. Longer before the first word (a queue is normal there) than
+ * between words (once it is talking, a long silence means it has stopped).
+ * A stall is graded like any other provider hiccup: retried, and if it keeps
+ * happening, reported — which is what puts a Continue button in front of the
+ * person instead of a spinner.
+ */
+const STALL_FIRST_MS = Number(process.env.STREAM_STALL_FIRST_MS) || 150_000;
+const STALL_BETWEEN_MS = Number(process.env.STREAM_STALL_MS) || 90_000;
+
+async function* stallGuard(events, { first = STALL_FIRST_MS, between = STALL_BETWEEN_MS } = {}) {
+  const it = events[Symbol.asyncIterator]();
+  let heard = false;
+  for (;;) {
+    const limit = heard ? between : first;
+    let timer;
+    const stalled = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`The provider stopped sending (stalled for ${Math.round(limit / 1000)}s).`)),
+        limit,
+      );
+    });
+    let next;
+    try {
+      next = await Promise.race([it.next(), stalled]);
+    } catch (err) {
+      // Let the underlying request go, rather than leaving it open.
+      it.return?.().catch?.(() => {});
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (next.done) return;
+    heard = true;
+    yield next.value;
+  }
 }
 
 /** How long to pause before trying a stumbling provider again. */
@@ -392,7 +434,7 @@ export async function* streamCompletion(opts) {
         let failure = null;
 
         try {
-          for await (const event of dispatch(entry, common)) {
+          for await (const event of stallGuard(dispatch(entry, common))) {
             if (event.type === 'text') emitted.text += 1;
             else if (event.type === 'thinking') emitted.thinking += 1;
             else if (event.type === 'tool_call_start') emitted.toolCalls += 1;
@@ -495,4 +537,4 @@ export async function* streamCompletion(opts) {
 export { resolveModel, PROVIDERS };
 
 /** Exposed for the suite that pins which failures are worth another key. */
-export const __testing = { classify, waitFrom, headerOf, outputBudget, estimatePromptTokens, contextRefusal };
+export const __testing = { stallGuard, classify, waitFrom, headerOf, outputBudget, estimatePromptTokens, contextRefusal };

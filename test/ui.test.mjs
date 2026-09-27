@@ -3809,6 +3809,8 @@ section('what a project made is a row of pages, newest first');
     /** @type {HTMLElement | null} */ (row?.querySelector('.chat-item'))?.click();
     await new Promise((r) => setTimeout(r, 1200));
     /** @type {any} */ (window).__foldsDrawn = document.querySelectorAll('#messages .compacted').length;
+    const railRows = [...document.querySelectorAll('#rail-extra [data-rail="outputs"] .railrow')];
+    /** @type {any} */ (window).__rail = { rows: railRows.length, first: railRows[0]?.textContent?.trim(), count: document.querySelector('#rail-extra .railsec__count')?.textContent };
     document.getElementById('chat-project')?.click();
     await new Promise((r) => setTimeout(r, 1800));
   });
@@ -3824,6 +3826,9 @@ section('what a project made is a row of pages, newest first');
     };
   });
   check('a fold is not drawn in the transcript', (await page.evaluate(() => /** @type {any} */ (window).__foldsDrawn)) === 0);
+  const railed = await page.evaluate(() => /** @type {any} */ (window).__rail);
+  check('the side panel lists what this conversation made', railed?.rows === 7 && railed?.count === '7', JSON.stringify(railed));
+  check('  newest first', /page-6/.test(railed?.first || ''), railed?.first);
   check('every output is a card in one row', first.count === 7, String(first.count));
   check('newest on the left', first.firstName === 'page-6.html', first.firstName);
   check('no left arrow at the start', first.prevHidden === true);
@@ -5656,11 +5661,15 @@ section('a stale Continue button does not outlive the note it belongs to');
     lineStillThere: [...document.querySelectorAll('.stopnote__line')].some(
       (l) => l.textContent === 'Dừng ở đây vì hết bước.',
     ),
-    buttonGone: !document.querySelector('.stopnote__go'),
+    // The old note's button, not any button: the new run may leave a note of
+    // its own (here it fails for want of a key), and that one rightly has one.
+    buttonGone: ![...document.querySelectorAll('.stopnote')].find((n) => n.textContent.includes('Dừng ở đây vì hết bước.'))?.querySelector('.stopnote__go'),
   }));
 
   check('the note itself is kept — it is still a true record of what happened', after.lineStillThere);
   check('but its Continue button is cleared the moment a new run starts', after.buttonGone);
+  // The run that just failed (no key in the suite) leaves a way on of its own.
+  check('a run that failed partway offers Continue', await page.evaluate(() => !!document.querySelector('.stopnote--interrupted .stopnote__go')));
 }
 
 section('the Ctrl+C path itself produces a clean payload, not just cleanHtml in isolation');

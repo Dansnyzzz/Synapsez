@@ -1111,6 +1111,15 @@ section('a request begun from a shelf is filed on that shelf');
   check('the setup is two steps: preferences, then a preview to confirm', /Step 1/.test(sched.text) && /preview/.test(sched.text) && /Confirm/.test(sched.text));
   const [typed] = __testing.withIntentNotes([{ role: 'user', text: 'bạn giúp tôi tạo gửi mail nói về các vấn đề AI mới nhất' }]);
   check('an email typed in an ordinary chat gets the same two steps', /two steps/.test(typed.text) && /send_email/.test(typed.text));
+  // Continue after a cut-off: the transcript ends on the assistant's own half
+  // reply, and the model is told what happened and what is wanted.
+  const cut = __testing.withContinuation([
+    { role: 'user', text: 'gửi bản tin' },
+    { role: 'assistant', text: 'Giờ tôi thu thập tin từ 4 chủ đề song song:' },
+  ]);
+  check('a turn picked up after a cut-off tells the model to carry on', cut.length === 3 && /Carry on with the same task/.test(cut[2].text));
+  check('  without repeating what already went out', /do not repeat anything that sent/.test(cut[2].text));
+  check('an ordinary turn gets no such note', __testing.withContinuation([{ role: 'user', text: 'hi' }]).length === 1);
   const [reading] = __testing.withIntentNotes([{ role: 'user', text: 'check my inbox' }]);
   check('reading an inbox does not', reading.text === 'check my inbox');
 }

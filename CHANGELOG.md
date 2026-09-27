@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-28 (night) — every interruption has a Continue; Outputs and Context in the side panel
+
+### Added
+
+- **Continue after any abrupt stop.** A provider error, every key refusing, a connection that
+  would not come back, a stall — each now leaves a note with a solid ↻ Continue button, not only
+  the tidy limits. Continue picks up from the last saved step, and the server tells the model what
+  happened: carry on from where it stopped, use what the steps above already did, and do not send
+  anything a second time (`CONTINUE_NOTE`, for that request only).
+- **A stall is detected.** A provider that accepts a request and then goes silent is given up on
+  after 150 s before its first word, or 90 s between words (`STREAM_STALL_FIRST_MS`,
+  `STREAM_STALL_MS`), and graded as a provider hiccup: retried, then reported with Continue.
+  Rotating to the next key on a dead or rate-limited one was already there.
+- **Outputs and Context in the side panel**, under the plan. Outputs lists every file made in this
+  conversation, newest first, opening in the viewer. Context lists what the assistant reads from —
+  the project's files, connected services, skills, MCP servers — each group only when it has
+  something, the section only when any group does. Both fold.
+- **Save to Google Drive** in the viewer's ▾ menu once Drive is allowed (Word, Excel and PowerPoint
+  become Docs, Sheets and Slides), and **Open in a new tab** for a PDF, picture or page when no
+  computer is paired.
+
 ## 2026-09-28 (evening) — compacting you can see and trust; a provider hiccup retried
 
 ### Fixed
