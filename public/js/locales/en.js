@@ -46,6 +46,9 @@ export const en = {
   'mirror.watching': 'Running in another tab — watching…',
   /* What the assistant is doing, in the line above the composer. */
   'status.thinking': 'Thinking…',
+  'composer.modeWorkflow': 'Asking the assistant to set up a workflow — saved under Workflows',
+  'composer.modeSchedule': 'Asking the assistant to set up a scheduled task — saved under Scheduled',
+  'status.background': 'Running on its schedule — updating live…',
   'status.compacting': 'Summarising the earlier turns…',
   'status.compactingN': 'Folding {n} earlier turns into a summary so the conversation can carry on…',
   'status.tool': 'Running {name}…',
@@ -571,6 +574,7 @@ export const en = {
   'step.show_widget': 'Drew something into the conversation',
   'step.chart': 'Drew a chart',
   'step.calculate': 'Calculated',
+  'step.world_facts': 'Looked up',
   'step.memory_write': 'Saved a note',
   'step.memory_append': 'Added to a note',
   'step.memory_edit': 'Edited a note',

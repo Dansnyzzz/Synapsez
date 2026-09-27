@@ -1216,6 +1216,22 @@ instances cannot run the same task twice.
 > the gap. On Pro, change that entry to `*/15 * * * *` — that is what the feature actually wants.
 > The reasoning behind every line of `vercel.json` is in [docs/vercel-config.md](docs/vercel-config.md).
 
+### Running on time with the app closed (free)
+
+Hobby's once-a-day cron means a task set for 09:00 runs at 23:00 unless the app happens to be open.
+The fix costs nothing and takes two minutes: a free pinger calls the heartbeat every few minutes.
+
+1. Make an account at [cron-job.org](https://cron-job.org) (free, runs as often as every minute).
+2. Create a cron job:
+   - **URL:** `https://<your-deployment>/api/cron/run-tasks?background=1`
+   - **Schedule:** every 5 minutes (every minute is fine too)
+   - **Advanced → Headers:** `Authorization: Bearer <your CRON_SECRET>`
+3. Save, then press *Test run* — the answer is `202 {"accepted":true}`.
+
+`?background=1` answers at once and keeps working through Vercel's `waitUntil`, so the pinger's
+thirty-second timeout never cuts a run off. The claims are atomic, so a ping that overlaps the last
+one cannot run a task twice. Any other scheduler that can send a header works the same way.
+
 Write the prompt as if to somebody with no memory of today, because that is exactly what it is.
 
 ---

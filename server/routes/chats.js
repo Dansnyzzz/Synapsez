@@ -176,7 +176,12 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
        */
       const running = isRunning(chat) ? { runId: chat.run_lock_by } : null;
 
-      res.json({ chat, messages, pendingApproval: pending, context, project, files, running });
+      // A scheduled task or a workflow writing into it. There is no stream to
+      // join for those — they run on the server with nobody attached — so the
+      // page follows the transcript as each step is saved instead.
+      const background = !running && (await store.chatHasBackgroundRun(req.user.id, req.params.id));
+
+      res.json({ chat, messages, pendingApproval: pending, context, project, files, running, background });
     }),
   );
 
@@ -263,11 +268,16 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         return res.status(400).json({ error: 'Type something, or attach a file.' });
       }
 
+      // Written from "Describe it to the assistant" on the Workflows or the
+      // Scheduled shelf — which of the two it is for. See `INTENT_NOTES`.
+      const intent = ['workflow', 'schedule'].includes(req.body?.intent) ? req.body.intent : null;
+
       const message = {
         id: crypto.randomUUID(),
         role: 'user',
         text,
         ...(files.length ? { attachments: files } : {}),
+        ...(intent ? { intent } : {}),
       };
       await store.appendMessage(req.user.id, chatId, message);
       await store.attachToChat(req.user.id, chatId, files.map((f) => f.id));

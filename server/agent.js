@@ -22,6 +22,7 @@ import { projectPrompt } from './projects.js';
 import { compact, shouldCompact, measure, activeTranscript } from './compact.js';
 import { log, annotate } from './util/trace.js';
 import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
+import { validZone } from './util/zone.js';
 
 /**
  * There is one mode.
@@ -90,9 +91,10 @@ export function promptVersion() {
  *   connectors?: string,
  *   project?: string,
  *   mcpServers?: Array<{ id: string, tools?: number, error?: string }>,
+ *   timezone?: string,
  * }} options
  */
-export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills, connectors, project, mcpServers }) {
+export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills, connectors, project, mcpServers, timezone }) {
   const lines = [
     'You are Synapse — an agentic assistant the user drives from their phone, tablet, or laptop.',
     'Work autonomously: use your tools to find things out rather than asking the user to look them up.',
@@ -350,8 +352,36 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
   // conversation is about, and they sit closest to the question being asked.
   if (project?.trim()) lines.push('', project.trim());
 
-  lines.push('', `Current date: ${new Date().toISOString().slice(0, 10)}.`);
+  // In the account's own zone: the UTC date is yesterday for anyone east of
+  // Greenwich until their morning. The date only, so the cached prefix holds for
+  // the day; the exact time is what the world_facts tool is for.
+  const zone = validZone(timezone) ? timezone : 'UTC';
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(new Date());
+  lines.push('', `Current date: ${today} (${zone}). For the time, weather or a rate, call world_facts.`);
   return lines.join('\n');
+}
+
+/**
+ * Where a request written from a shelf's "Describe it to the assistant" belongs.
+ *
+ * The two shelves hold different things — a workflow is several steps kept in
+ * order, a scheduled task is one instruction on a clock — and a request like
+ * "every morning, gather the news and email it" fits either. Asked from the
+ * Workflows shelf it must land there, so the message remembers which shelf it
+ * came from and the model is told, beside the request rather than in the
+ * cached system prompt.
+ */
+const INTENT_NOTES = {
+  workflow:
+    '(Written from the Workflows shelf: set this up with workflow_write so it is saved as a workflow — not with schedule_task. Ask only what is genuinely missing.)',
+  schedule:
+    '(Written from the Scheduled shelf: set this up with schedule_task so it is saved as one scheduled task — not as a workflow. Ask only what is genuinely missing.)',
+};
+
+function withIntentNotes(messages) {
+  return messages.map((m) =>
+    m.role === 'user' && INTENT_NOTES[m.intent] ? { ...m, text: `${m.text || ''}\n\n${INTENT_NOTES[m.intent]}` } : m,
+  );
 }
 
 const newId = () => crypto.randomUUID();
@@ -901,6 +931,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // conversation instead; see `withProjectSources`.
     project: project?.briefing,
     mcpServers: mcp.servers,
+    timezone: prefs.timezone,
   });
   /**
    * Tools the model has asked for this turn.
@@ -1223,7 +1254,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * them afterwards meant asking for images nobody had loaded.
        */
       const grounded = withProjectSources(
-        activeTranscript(normaliseOrder(messages)),
+        withIntentNotes(activeTranscript(normaliseOrder(messages))),
         project?.passages,
         project?.images,
       );
@@ -1489,4 +1520,4 @@ export function deriveTitle(text) {
  */
 const countsAsStarted = (event) => !!event?.type;
 
-export const __testing = { applyStreamEvent, mapWithLimit, MAX_PARALLEL_TOOLS, WAIT_NOTICE_MS, countsAsStarted };
+export const __testing = { applyStreamEvent, mapWithLimit, MAX_PARALLEL_TOOLS, WAIT_NOTICE_MS, countsAsStarted, withIntentNotes };

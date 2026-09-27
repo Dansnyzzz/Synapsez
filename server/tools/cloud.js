@@ -9,6 +9,7 @@ import { evaluate } from './calc.js';
 import { extractFromPage } from './extract.js';
 import { resolveForUser } from '../autoPick.js';
 import { parseSchedule } from '../scheduler.js';
+import { validZone } from '../util/zone.js';
 import { normaliseSteps } from '../workflows.js';
 import { CONNECTOR_CALLS } from '../connectors.js';
 import { getPrefs, getApiKey } from '../settings.js';
@@ -952,6 +953,127 @@ async function loadToolsTool({ names }, { deliverable = null } = {}) {
   );
 }
 
+/* ── facts about the world right now ─────────────────────────────── */
+
+/**
+ * What a WMO weather code means, in words — Open-Meteo reports the code only.
+ * English, because the model says it back in whatever language it is using.
+ */
+const WEATHER_WORDS = {
+  0: 'clear sky', 1: 'mainly clear', 2: 'partly cloudy', 3: 'overcast', 45: 'fog', 48: 'freezing fog',
+  51: 'light drizzle', 53: 'drizzle', 55: 'heavy drizzle', 56: 'freezing drizzle', 57: 'freezing drizzle',
+  61: 'light rain', 63: 'rain', 65: 'heavy rain', 66: 'freezing rain', 67: 'freezing rain',
+  71: 'light snow', 73: 'snow', 75: 'heavy snow', 77: 'snow grains',
+  80: 'light showers', 81: 'showers', 82: 'violent showers', 85: 'snow showers', 86: 'heavy snow showers',
+  95: 'thunderstorm', 96: 'thunderstorm with hail', 99: 'thunderstorm with heavy hail',
+};
+const weatherWord = (code) => WEATHER_WORDS[code] || `weather code ${code}`;
+
+/** The clock in a zone, said the way a person reads it, with the zone named. */
+export function describeTime(now, zone) {
+  const tz = validZone(zone) ? zone : 'UTC';
+  const said = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(now);
+  return `It is ${said} in ${tz} (ISO ${now.toISOString()}).`;
+}
+
+/** Current conditions and the next days, from Open-Meteo's forecast payload. */
+export function describeWeather(place, data) {
+  const c = data?.current || {};
+  const u = data?.current_units || {};
+  const lines = [
+    `Weather in ${place} now (${c.time || 'current'} local): ${weatherWord(c.weather_code)}, ` +
+      `${c.temperature_2m}${u.temperature_2m || '°C'} (feels like ${c.apparent_temperature}${u.apparent_temperature || '°C'}), ` +
+      `humidity ${c.relative_humidity_2m}%, wind ${c.wind_speed_10m} ${u.wind_speed_10m || 'km/h'}, ` +
+      `precipitation ${c.precipitation ?? 0} ${u.precipitation || 'mm'}.`,
+  ];
+  const d = data?.daily;
+  if (d?.time?.length) {
+    lines.push('Next days:');
+    d.time.forEach((day, i) => {
+      lines.push(
+        `- ${day}: ${weatherWord(d.weather_code?.[i])}, ${d.temperature_2m_min?.[i]}–${d.temperature_2m_max?.[i]}°C, ` +
+          `chance of rain ${d.precipitation_probability_max?.[i] ?? '?'}%`,
+      );
+    });
+  }
+  lines.push('Source: Open-Meteo (open-meteo.com).');
+  return lines.join('\n');
+}
+
+/** A conversion from open.er-api.com's table of rates against one base. */
+export function describeRate(data, base, quote, amount) {
+  const rate = data?.rates?.[quote];
+  if (data?.result !== 'success' || !rate) throw new Error(`No rate from ${base} to ${quote}. Use ISO codes like USD, VND, EUR.`);
+  const value = amount * rate;
+  const fmt = (n) => n.toLocaleString('en-US', { maximumFractionDigits: n >= 100 ? 0 : 4 });
+  return (
+    `${fmt(amount)} ${base} = ${fmt(value)} ${quote} (1 ${base} = ${fmt(rate)} ${quote}), ` +
+    `rates updated ${data.time_last_update_utc || 'recently'}. ` +
+    'Source: open.er-api.com — a mid-market reference, not what a bank or exchange will quote.'
+  );
+}
+
+/** JSON from one of the fixed public services above, with a timeout. */
+async function getJson(url) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`${new URL(url).host} returned HTTP ${res.status}.`);
+  return res.json();
+}
+
+/**
+ * Today's date and time, the weather, an exchange rate — looked up, not guessed.
+ *
+ * A model's sense of "now" is its training cut-off, and the date line in the
+ * system prompt is cached for the day and has no clock in it. These three are
+ * the questions people ask expecting an exact answer, and each is one call to
+ * a free service with no key, so there is nothing to configure.
+ *
+ * @param {{ kind?: string, location?: string, timezone?: string, base?: string, quote?: string, amount?: number }} input
+ * @param {{ userId?: string }} [context]
+ */
+async function worldFactsTool({ kind, location, timezone, base, quote, amount }, { userId } = {}) {
+  if (kind === 'time') {
+    const zone = validZone(timezone) ? timezone : (await getPrefs(userId).catch(() => null))?.timezone;
+    return describeTime(new Date(), zone);
+  }
+
+  if (kind === 'weather') {
+    const name = String(location || '').trim();
+    if (!name) throw new Error('Say which place — a city name, e.g. "Hanoi" or "Ho Chi Minh City".');
+    const geo = await getJson(
+      `https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=${encodeURIComponent(name)}`,
+    );
+    const hit = geo?.results?.[0];
+    if (!hit) throw new Error(`No place called "${name}" was found. Try the city's English name, e.g. "Ho Chi Minh City".`);
+    const forecast = await getJson(
+      'https://api.open-meteo.com/v1/forecast?timezone=auto&forecast_days=3' +
+        `&latitude=${hit.latitude}&longitude=${hit.longitude}` +
+        '&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,precipitation' +
+        '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+    );
+    return describeWeather([hit.name, hit.admin1, hit.country].filter(Boolean).join(', '), forecast);
+  }
+
+  if (kind === 'exchange_rate') {
+    const from = String(base || 'USD').trim().toUpperCase();
+    const to = String(quote || 'VND').trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(from) || !/^[A-Z]{3}$/.test(to)) throw new Error('Currencies are ISO codes: USD, VND, EUR, JPY…');
+    const data = await getJson(`https://open.er-api.com/v6/latest/${from}`);
+    return describeRate(data, from, to, Number(amount) > 0 ? Number(amount) : 1);
+  }
+
+  throw new Error('kind is one of: time, weather, exchange_rate.');
+}
+
 async function calculateTool({ expression }) {
   const { value, expression: shown } = evaluate(expression);
   return `${shown} = ${value}`;
@@ -1624,16 +1746,75 @@ function recipientsFor(to, user) {
   return list;
 }
 
+/** How far back an identical email counts as "already sent". */
+const RESEND_WINDOW_MS = 20 * 60_000;
+
+const sendKey = (recipients, subject) =>
+  `${[...recipients].map((a) => a.toLowerCase()).sort().join(',')}|${String(subject || '').trim().toLowerCase()}`;
+
 /**
- * @param {{ to?: string | string[], subject?: string, body?: string, html?: string, kind?: string }} input
- * @param {{ user?: { email?: string, name?: string } }} context
+ * When this conversation already had the same email accepted, recently.
+ *
+ * The same message went out twice: a workflow step told to "put it all in an
+ * email" sent it, and the next step, "send the email", sent it again — or a run
+ * started by hand overlapped the scheduled one. The conversation itself is the
+ * record, so it is read rather than a second table kept: an earlier
+ * `send_email` call to the same people with the same subject, whose result says
+ * the mail server accepted it. The window is short enough that an hourly job
+ * still sends every hour.
  */
-async function sendEmailTool({ to, subject, body, html, kind }, { user } = {}) {
+async function alreadySent({ userId, chatId, user, recipients, subject }) {
+  if (!userId || !chatId) return null;
+  let messages;
+  try {
+    messages = await getStore().listMessages(userId, chatId);
+  } catch {
+    return null; // nothing to read is not a reason to refuse a send
+  }
+  const since = Date.now() - RESEND_WINDOW_MS;
+  const wanted = sendKey(recipients, subject);
+  const calls = new Map();
+  for (const m of messages) {
+    if (m.role === 'assistant') {
+      for (const c of m.toolCalls || []) if (c.name === 'send_email') calls.set(c.id, c);
+    } else if (m.role === 'tool' && new Date(m.createdAt).getTime() >= since) {
+      for (const r of m.results || []) {
+        const call = calls.get(r.toolCallId);
+        if (!call || r.isError || !/accepted an email/.test(String(r.content))) continue;
+        let to;
+        try {
+          to = recipientsFor(call.input?.to, user);
+        } catch {
+          continue;
+        }
+        if (sendKey(to, call.input?.subject) === wanted) return m.createdAt;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {{ to?: string | string[], subject?: string, body?: string, html?: string, kind?: string, resend?: boolean }} input
+ * @param {{ user?: { id?: string, email?: string, name?: string }, userId?: string, chatId?: string | null }} context
+ */
+async function sendEmailTool({ to, subject, body, html, kind, resend }, { user, userId, chatId } = {}) {
   const recipients = recipientsFor(to, user);
   const line = String(subject || '').trim();
   if (!line) throw new Error('An email with no subject line reads as spam. Give it one.');
   const text = String(body || '').trim();
   if (!text && !html) throw new Error('There is nothing to send — give a body.');
+
+  if (resend !== true) {
+    const when = await alreadySent({ userId: userId || user?.id, chatId, user, recipients, subject: line });
+    if (when) {
+      throw new Error(
+        `This exact email — to ${recipients.join(', ')}, subject "${line}" — was already accepted by the mail server ` +
+          'a few minutes ago in this conversation, so it was NOT sent again. Treat the send as done and carry on. ' +
+          'Only if the user explicitly asked for a second copy, call again with resend: true.',
+      );
+    }
+  }
 
   if (emailBackend() === 'console') {
     throw new Error(
@@ -1882,6 +2063,7 @@ export const CLOUD_IMPLEMENTATIONS = {
   show_widget: showWidgetTool,
   chart: chartTool,
   calculate: calculateTool,
+  world_facts: worldFactsTool,
   extract: extractTool,
   memory_write: memoryWrite,
   memory_read: memoryRead,

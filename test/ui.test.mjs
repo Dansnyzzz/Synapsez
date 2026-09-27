@@ -3905,6 +3905,61 @@ section('a tool step reads as a sentence, with the call still inside it');
  * before storing, so a reload is already right; this is the live view catching
  * up, which is what the person watching the turn actually sees.
  */
+section('the reasoning card: a window on the newest lines, or the whole of it');
+{
+  const card = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    const host = document.createElement('div');
+    host.style.width = '420px';
+    host.append(turn.node);
+    document.body.append(host);
+    for (let i = 1; i <= 30; i += 1) turn.appendThinking(`Line ${i} of the reasoning.\n`);
+    const node = host.querySelector('.think');
+    const body = node.querySelector('.think__body');
+    const head = node.querySelector('.think__head');
+    const folded = {
+      live: node.classList.contains('is-live'),
+      short: body.clientHeight < body.scrollHeight,
+      atEnd: body.scrollHeight - body.scrollTop - body.clientHeight < 4,
+      glowing: node.querySelectorAll('.think__new').length > 0,
+      expanded: head.getAttribute('aria-expanded'),
+    };
+    head.click();
+    const open = { full: body.clientHeight >= body.scrollHeight - 1, expanded: head.getAttribute('aria-expanded') };
+    head.click();
+    turn.finishThinking();
+    const done = {
+      live: node.classList.contains('is-live'),
+      tick: node.querySelector('.think__head .mark')?.textContent,
+      glowing: node.querySelectorAll('.think__new').length,
+      text: node.querySelector('.think__text').textContent.split('\n').filter(Boolean).length,
+      atEnd: body.scrollHeight - body.scrollTop - body.clientHeight < 4,
+    };
+    host.remove();
+    return { folded, open, done };
+  });
+  check('while thinking it is marked live', card.folded.live);
+  check('folded, it is a short window', card.folded.short);
+  check('showing the newest lines', card.folded.atEnd);
+  check('with the words just arrived glowing', card.folded.glowing);
+  check('and says it is folded', card.folded.expanded === 'false');
+  check('opened, the whole trace shows', card.open.full && card.open.expanded === 'true', JSON.stringify(card.open));
+  check('finished, it is ticked and no longer live', !card.done.live && card.done.tick === '✓', JSON.stringify(card.done));
+  check('nothing is left glowing', card.done.glowing === 0);
+  check('no words were lost settling the glow', card.done.text === 30, String(card.done.text));
+  check('and folded again it rests on the last lines', card.done.atEnd);
+}
+
+section('a chat begun from a shelf says what it is setting up');
+{
+  const mode = await page.evaluate(async () => {
+    const chip = document.getElementById('composer-mode');
+    return { exists: !!chip, hidden: chip?.hidden };
+  });
+  check('the chip is in the composer, and hidden by default', mode.exists && mode.hidden === true, JSON.stringify(mode));
+}
+
 section('an answer that arrived as reasoning is shown as the answer');
 {
   const shown = await page.evaluate(async () => {
@@ -3913,11 +3968,11 @@ section('an answer that arrived as reasoning is shown as the answer');
     const host = turn.node;
     document.body.append(host);
     turn.appendThinking('Không, tôi không thể tạo 100 câu.');
-    const hadBlock = !!host.querySelector('details.block');
+    const hadBlock = !!host.querySelector('.think');
     turn.adoptThinkingAsReply('Không, tôi không thể tạo 100 câu.');
     const out = {
       hadBlock,
-      stillFolded: !!host.querySelector('details.block'),
+      stillFolded: !!host.querySelector('.think'),
       prose: host.querySelector('.prose')?.textContent?.trim(),
     };
     host.remove();

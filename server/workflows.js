@@ -155,14 +155,27 @@ async function runStep({ user, chatId, modelId, instruction }) {
 export async function startRun(userId, workflow, { chatTitle } = {}) {
   const store = getStore();
   const steps = normaliseSteps(workflow.steps);
-  const chatId = crypto.randomUUID();
   const prefs = await getPrefs(userId);
 
-  await store.createChat(userId, {
-    id: chatId,
-    title: chatTitle || workflow.title,
-    model: workflow.model || prefs.defaultModel,
-  });
+  /**
+   * One conversation per workflow, not one per run.
+   *
+   * A daily workflow made a new conversation every morning, so a month of it
+   * was thirty near-identical entries in the sidebar. Each run now continues
+   * the conversation the last one wrote into, and only a workflow that has
+   * never run — or whose conversation was deleted — gets a new one.
+   */
+  const [previous] = await store.listWorkflowRuns(userId, workflow.id, 1);
+  const reuse = previous?.chat_id && (await store.getChat(userId, previous.chat_id)) ? previous.chat_id : null;
+  const chatId = reuse || crypto.randomUUID();
+
+  if (!reuse) {
+    await store.createChat(userId, {
+      id: chatId,
+      title: chatTitle || workflow.title,
+      model: workflow.model || prefs.defaultModel,
+    });
+  }
 
   return store.createWorkflowRun(userId, {
     id: crypto.randomUUID(),

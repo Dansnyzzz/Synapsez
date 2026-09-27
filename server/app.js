@@ -2,6 +2,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import { waitUntil } from '@vercel/functions';
 
 import {
   loginUser,
@@ -416,35 +417,55 @@ export function createApp() {
     '/api/cron/run-tasks',
     requireCron,
     wrap(async (req, res) => {
-      // Also the deployment's only chance to take the bins out: the local
-      // scheduler sweeps on its minute tick, and a deployment has no minute
-      // tick. Without this, four tables grow without bound.
-      // The 300s ceiling is for the whole invocation, not per phase. Sweeping
-      // and then running up to five full agent turns can spend most of it, so
-      // what workflows get is what is *left* — handing them a fresh budget is
-      // how the function gets killed with a run in mid-step, which is the exact
-      // failure workflows exist to avoid.
-      const started = Date.now();
-      const remaining = () => Math.max(0, 240_000 - (Date.now() - started));
-
-      await sweep().catch(() => {});
-      // Tasks get a budget too. Without one they ran until the invocation was
-      // killed, which both left a task marked mid-run and guaranteed workflows
-      // inherited nothing — the very thing `remaining()` was written to prevent.
-      // Two thirds to tasks, so a long queue cannot starve the workflows below.
-      const ran = await runDueTasks({ budgetMs: Math.floor(remaining() * 0.66) });
-
-      // Workflows share this heartbeat rather than adding a second cron: the
-      // free tier allows one a day, and spending it twice is not an option. A
-      // run that does not finish is resumed by the next nudge, not restarted.
-      const workflows = await runDueWorkflows({ budgetMs: remaining() }).catch((err) => ({
-        started: [],
-        advanced: [],
-        error: String(err?.message || err).slice(0, 200),
-      }));
-      res.json({ ran, workflows });
+      /**
+       * `?background=1` answers at once and keeps working.
+       *
+       * Vercel's own cron may only fire once a day on the free plan, so the
+       * frequent heartbeat comes from outside — a free pinger such as
+       * cron-job.org, every few minutes. Those give up on a request after about
+       * thirty seconds, and this one can take four minutes. `waitUntil` holds
+       * the function open until the work is done, under the same 300s ceiling,
+       * so the pinger gets its answer and the run is not cut off with it.
+       * The claims below are atomic, so an overlapping ping cannot run a task twice.
+       */
+      if (req.query?.background) {
+        waitUntil(runHeartbeat().catch((err) => log.error('background heartbeat failed', err)));
+        return res.status(202).json({ accepted: true });
+      }
+      res.json(await runHeartbeat());
     }),
   );
+
+  /** Everything a heartbeat does: sweep, then due tasks, then due workflows. */
+  async function runHeartbeat() {
+    // Also the deployment's only chance to take the bins out: the local
+    // scheduler sweeps on its minute tick, and a deployment has no minute
+    // tick. Without this, four tables grow without bound.
+    // The 300s ceiling is for the whole invocation, not per phase. Sweeping
+    // and then running up to five full agent turns can spend most of it, so
+    // what workflows get is what is *left* — handing them a fresh budget is
+    // how the function gets killed with a run in mid-step, which is the exact
+    // failure workflows exist to avoid.
+    const started = Date.now();
+    const remaining = () => Math.max(0, 240_000 - (Date.now() - started));
+
+    await sweep().catch(() => {});
+    // Tasks get a budget too. Without one they ran until the invocation was
+    // killed, which both left a task marked mid-run and guaranteed workflows
+    // inherited nothing — the very thing `remaining()` was written to prevent.
+    // Two thirds to tasks, so a long queue cannot starve the workflows below.
+    const ran = await runDueTasks({ budgetMs: Math.floor(remaining() * 0.66) });
+
+    // Workflows share this heartbeat rather than adding a second cron: the
+    // free tier allows one a day, and spending it twice is not an option. A
+    // run that does not finish is resumed by the next nudge, not restarted.
+    const workflows = await runDueWorkflows({ budgetMs: remaining() }).catch((err) => ({
+      started: [],
+      advanced: [],
+      error: String(err?.message || err).slice(0, 200),
+    }));
+    return { ran, workflows };
+  }
 
   app.post(
     '/api/register',

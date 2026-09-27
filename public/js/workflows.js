@@ -94,7 +94,7 @@ export function workflowsView({
   toast,
   openChat,
   onLeave,
-  onDescribe = /** @type {(starter?: string) => void} */ (() => onLeave()),
+  onDescribe = /** @type {(starter?: string, mode?: string) => void} */ (() => onLeave()),
   openForm,
   reload,
   onRunStarted = () => {},
@@ -150,7 +150,7 @@ export function workflowsView({
         label: t('wf.describe'),
         icon: '💬',
         run: () => {
-          onDescribe(t('wf.starter'));
+          onDescribe(t('wf.starter'), 'workflow');
           toast(t('wf.describeHint'));
         },
       },
@@ -253,9 +253,19 @@ export function workflowsView({
           button.textContent = t('wf.running');
           // The request is held open for minutes, but the conversation exists
           // within a moment of pressing — show it in the list now, not at the end.
-          const early = setTimeout(onRunStarted, 1500);
+          // And go and watch it, the way a task's Run now does: its steps
+          // appear in that conversation as each finishes (`followBackground`).
+          const id = button.dataset.run;
+          const early = setTimeout(async () => {
+            onRunStarted();
+            const list = (await api.workflows().catch(() => null))?.workflows || [];
+            const chatId = list.find((w) => w.id === id)?.lastRun?.chat_id;
+            if (!chatId) return;
+            onLeave();
+            openChat(chatId);
+          }, 1500);
           try {
-            const { run } = await api.runWorkflow(button.dataset.run);
+            const { run } = await api.runWorkflow(id);
             toast(
               run?.status === 'done'
                 ? t('wf.finished')

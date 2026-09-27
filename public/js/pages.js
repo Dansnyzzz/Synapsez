@@ -93,7 +93,7 @@ export function createPages({
   openViewer,
   openChat,
   onLeave,
-  onDescribe = /** @type {(starter?: string) => void} */ (() => onLeave()),
+  onDescribe = /** @type {(starter?: string, mode?: string) => void} */ (() => onLeave()),
   onNewProject,
   onRunStarted = () => {},
   /** The sidebar keeps its own list of scheduled tasks; tell it when one changes. */
@@ -553,7 +553,7 @@ export function createPages({
         label: t('pages.tasks.describe'),
         icon: '💬',
         run: () => {
-          onDescribe(t('pages.tasks.starter'));
+          onDescribe(t('pages.tasks.starter'), 'schedule');
           toast(t('pages.tasks.describeHint'));
         },
       },
@@ -669,7 +669,8 @@ export function createPages({
     onLeave,
     onDescribe,
     openForm: (id, preset) => wfForm.open(id, preset),
-    reload: () => load(),
+    // Only while the shelf is on screen: Run now may have moved to the conversation.
+    reload: () => (showing === 'workflows' ? load() : null),
     onRunStarted,
   });
 
@@ -882,19 +883,40 @@ export function createPages({
       const run = button('run');
       run.disabled = true;
       run.textContent = t('pages.tasks.running');
+      /**
+       * Into the conversation while it runs, not after.
+       *
+       * The request is held open for the whole run, so waiting for it meant
+       * minutes of a disabled button and then only the finished answer. The
+       * run names its conversation as soon as it starts; once it has, go and
+       * watch it the way a chat is watched (see `followBackground`). The
+       * request carries on regardless — nothing here aborts it.
+       */
+      let watching = false;
+      const peek = setTimeout(async () => {
+        const chatId = (await api.task(task.id).catch(() => null))?.task?.last_chat;
+        if (!chatId) return;
+        watching = true;
+        onLeave();
+        openChat(chatId);
+      }, 1500);
       try {
         const result = await api.runTask(task.id);
+        clearTimeout(peek);
         toast(t('pages.tasks.ranNow'));
         // Straight into the conversation it wrote: that is the output, and
         // making somebody go looking for it is the whole failure of a run
-        // nobody watched.
-        if (result?.chatId) {
+        // nobody watched. Not again if they are already there — or have
+        // moved on from it.
+        if (result?.chatId && !watching) {
           onLeave();
           openChat(result.chatId);
           return;
         }
+        if (watching) return;
         await redraw();
       } catch (err) {
+        clearTimeout(peek);
         toast(err.message, 'error');
         run.disabled = false;
         run.textContent = t('pages.tasks.runNow');

@@ -86,7 +86,7 @@ section('"email it to me" goes to the address the account registered');
   const shown = JSON.stringify({ from: sent[0]?.from, replyTo: sent[0]?.replyTo, html: sent[0]?.html, text: sent[0]?.text });
   check("the person's own address appears nowhere in what the recipient reads", !shown.includes('lan@example.com'));
   check('there is an HTML part too', /^<!doctype html>/.test(sent[0]?.html || ''), (sent[0]?.html || '').slice(0, 40));
-  check('laid out with the subject as its title and the body inside', /<h1[^>]*>Bản tin sáng<\/h1>/.test(sent[0]?.html || '') && /Nội dung/.test(sent[0]?.html || ''));
+  check('laid out with the subject as its title and the body inside', /<h1[^>]*>(?:<span[^>]*>)*Bản tin sáng(?:<\/span>)*<\/h1>/.test(sent[0]?.html || '') && /Nội dung/.test(sent[0]?.html || ''));
   check('and the sender named in the footer', /Người gửi <strong[^>]*>Lan Nguyen<\/strong>/.test(sent[0]?.html || ''));
   check('replies come back to the business, with no Reply-To of their own', sent[0]?.replyTo === undefined, sent[0]?.replyTo);
   check('the result says where it went and where replies go', /lan@example\.com/.test(r.result) && /replies come back to the Synapse mailbox/.test(r.result), r.result);

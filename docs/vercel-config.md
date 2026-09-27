@@ -87,6 +87,13 @@ between 16:00 and 16:59. Nothing here needs the precision — scheduled tasks al
 get nudged along when somebody opens the app, and the model library refreshes on
 demand when it goes stale.
 
+### On Hobby, from outside
+
+A free external pinger (cron-job.org) calling `/api/cron/run-tasks?background=1` every few
+minutes, with `Authorization: Bearer <CRON_SECRET>`, gives Hobby the heartbeat its own cron cannot.
+The `background` form replies `202` immediately and finishes the work under `waitUntil`, inside
+the same 300s ceiling. Setup steps are in the README, under Scheduled tasks.
+
 ### On Pro
 
 Change `/api/cron/run-tasks` to `*/15 * * * *`. That is what the feature actually

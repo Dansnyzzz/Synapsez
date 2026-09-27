@@ -596,6 +596,115 @@ section('a run whose conversation was deleted still runs');
   check('and the step does not fail for want of it', !/chat not found/i.test(after.steps[0].error || ''), after.steps[0].error?.slice(0, 60));
 }
 
+section('a workflow runs in one conversation, run after run');
+{
+  const workflow = await store.createWorkflow(aliceId, {
+    id: 'wf-one-chat',
+    title: 'Every morning',
+    steps: normaliseSteps(['ask the model something']),
+    nextRunAt: null,
+  });
+  const first = await startRun(aliceId, workflow);
+  await advanceRun(first, { deadline: Date.now() + 60_000 });
+  const second = await startRun(aliceId, workflow);
+  check('the second run writes into the first run\'s conversation', second.chat_id === first.chat_id, `${first.chat_id} / ${second.chat_id}`);
+
+  await store.deleteChat(aliceId, first.chat_id);
+  await advanceRun(second, { deadline: Date.now() + 60_000 });
+  const third = await startRun(aliceId, workflow);
+  check('and one whose conversation is gone gets a fresh one', !!(await store.getChat(aliceId, third.chat_id)));
+}
+
+section('a scheduled task runs in one conversation, run after run');
+{
+  const made = await alice.call('POST', '/api/tasks', { title: 'Hourly', prompt: 'Say hi.', when: '09:00' });
+  const id = made.body?.task?.id;
+  await alice.call('POST', `/api/tasks/${id}/run`);
+  const firstChat = (await store.getTask(aliceId, id))?.last_chat;
+  await alice.call('POST', `/api/tasks/${id}/run`);
+  const secondChat = (await store.getTask(aliceId, id))?.last_chat;
+  check('both runs used the same conversation', !!firstChat && firstChat === secondChat, `${firstChat} / ${secondChat}`);
+  const users = (await store.listMessages(aliceId, firstChat)).filter((m) => m.role === 'user');
+  check('with each run\'s request in it, in order', users.length === 2, `${users.length}`);
+}
+
+section('the same email is not sent twice');
+{
+  const email = await import('../server/email.js');
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  process.env.GMAIL_USER = 'deployment.mailbox@gmail.com';
+  process.env.GMAIL_APP_PASSWORD = 'abcd efgh ijkl mnop';
+  const sent = [];
+  email.__testing.useTransport({ async sendMail(m) { sent.push(m); return { messageId: 'x' }; } });
+
+  const chat = await store.createChat(aliceId, { id: 'c-mail-once', title: 'Mail once', model: null });
+  const context = { user: { id: aliceId, email: 'alice@workflow.test', name: 'Alice' }, userId: aliceId, chatId: chat.id };
+  const input = { to: 'boss@example.com', subject: 'Bản tin sáng', body: 'Tin hôm nay.' };
+
+  // What the agent loop stores around a send: the call, then its result.
+  const first = await CLOUD_IMPLEMENTATIONS.send_email(input, context);
+  await store.appendMessage(aliceId, chat.id, { id: 'a1', role: 'assistant', text: '', toolCalls: [{ id: 'call-1', name: 'send_email', input }] });
+  await store.appendMessage(aliceId, chat.id, { id: 't1', role: 'tool', results: [{ toolCallId: 'call-1', content: first }] });
+
+  let refused = '';
+  try {
+    await CLOUD_IMPLEMENTATIONS.send_email(input, context);
+  } catch (err) {
+    refused = err.message;
+  }
+  check('the second identical send is refused', sent.length === 1 && /NOT sent again/.test(refused), refused.slice(0, 80));
+  await CLOUD_IMPLEMENTATIONS.send_email({ ...input, subject: 'Something else' }, context);
+  check('a different email still goes', sent.length === 2);
+  await CLOUD_IMPLEMENTATIONS.send_email({ ...input, resend: true }, context);
+  check('and a copy the user asked for goes with resend', sent.length === 3);
+
+  delete process.env.GMAIL_USER;
+  delete process.env.GMAIL_APP_PASSWORD;
+}
+
+section('a conversation says when a scheduled run is working in it');
+{
+  const chat = await store.createChat(aliceId, { id: 'c-bg', title: 'Background', model: null });
+  const wf = await store.createWorkflow(aliceId, { id: 'wf-bg', title: 'bg', steps: normaliseSteps(['x']), nextRunAt: null });
+  const run = await store.createWorkflowRun(aliceId, {
+    id: 'run-bg',
+    workflowId: wf.id,
+    chatId: chat.id,
+    status: 'running',
+    steps: [{ id: 's1', status: 'running' }],
+    cursor: 0,
+  });
+  const shown = await alice.call('GET', `/api/chats/${chat.id}`);
+  check('a conversation a workflow is running in says so', shown.body?.background === true, JSON.stringify(shown.body?.background));
+  check('and a conversation nothing is running in does not', (await alice.call('GET', '/api/chats/c-mail-once')).body?.background === false);
+
+  await store.saveWorkflowRun(run.id, { status: 'done', finished: true });
+  check('nor does it once the run is over', (await alice.call('GET', `/api/chats/${chat.id}`)).body?.background === false);
+}
+
+section('an outside pinger gets its answer at once');
+{
+  // Vercel's own cron fires once a day on the free plan; a free pinger calls
+  // this every few minutes and gives up after ~30s, so it must not be kept waiting.
+  process.env.CRON_SECRET = 'workflow-test-cron-secret';
+  const started = Date.now();
+  const res = await fetch(`${base}/api/cron/run-tasks?background=1`, { headers: { Authorization: 'Bearer workflow-test-cron-secret' } });
+  check('it is accepted', res.status === 202, `${res.status}`);
+  check('without waiting for the work', Date.now() - started < 5_000, `${Date.now() - started}ms`);
+  const denied = await fetch(`${base}/api/cron/run-tasks?background=1`, { headers: { Authorization: 'Bearer wrong' } });
+  check('and still refuses a caller without the secret', denied.status === 401, `${denied.status}`);
+  delete process.env.CRON_SECRET;
+}
+
+section('a message begun from a shelf remembers which');
+{
+  const chat = await store.createChat(aliceId, { id: 'c-intent', title: 'Intent', model: null });
+  const kept = await alice.call('POST', `/api/chats/${chat.id}/messages`, { text: 'mỗi sáng lấy tin', intent: 'workflow' });
+  check('a workflow request is marked so', kept.body?.message?.intent === 'workflow', JSON.stringify(kept.body?.message));
+  const odd = await alice.call('POST', `/api/chats/${chat.id}/messages`, { text: 'x', intent: 'delete_everything' });
+  check('and anything else is dropped, not stored', odd.status === 201 && !('intent' in (odd.body?.message || {})));
+}
+
 section('a scheduled task can be edited');
 {
   const made = await alice.call('POST', '/api/tasks', { title: 'Morning', prompt: 'Say hello.', when: '09:00', tz: 'Asia/Ho_Chi_Minh' });

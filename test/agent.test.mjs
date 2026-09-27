@@ -1075,6 +1075,26 @@ section('the app\'s own prompt has a version');
   const shifted = raw.replace(/^Current date: .*$/m, 'Current date: 1999-01-01.');
   const strip = (s) => s.replace(/^Current date: .*$/m, '');
   check('  and removing it is what makes two days\' prompts identical', strip(raw) === strip(shifted));
+
+  // The date is the account's, not the server's: 23:30 UTC is already tomorrow in Vietnam.
+  const vn = buildSystemPrompt({ workerOnline: false, policy: 'guarded', timezone: 'Asia/Ho_Chi_Minh' });
+  const expected = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+  check('  the date is read in the account\'s zone, and says which', vn.includes(`Current date: ${expected} (Asia/Ho_Chi_Minh)`));
+  check('  and points at world_facts for anything more exact', /call world_facts/.test(vn));
+}
+
+section('a request begun from a shelf is filed on that shelf');
+{
+  const { __testing } = await import('../server/agent.js');
+  const [wf, sched, plain] = __testing.withIntentNotes([
+    { role: 'user', text: 'mỗi sáng lấy tin và gửi email', intent: 'workflow' },
+    { role: 'user', text: 'nhắc tôi uống nước', intent: 'schedule' },
+    { role: 'user', text: 'xin chào' },
+  ]);
+  check('from Workflows, it is told to use workflow_write', /workflow_write/.test(wf.text) && /not with schedule_task/.test(wf.text));
+  check('from Scheduled, schedule_task', /schedule_task/.test(sched.text) && /not as a workflow/.test(sched.text));
+  check('the request itself is kept as written', wf.text.startsWith('mỗi sáng lấy tin và gửi email'));
+  check('an ordinary message is untouched', plain.text === 'xin chào');
 }
 
 section('read-only and plan mode hold even for a tool nobody offered');

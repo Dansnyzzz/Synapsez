@@ -1241,6 +1241,25 @@ export const TOOLS = [
     },
   },
   {
+    name: 'world_facts',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Look up the exact current time and date, the weather for a place, or an exchange rate, live — never from memory.',
+    parameters: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['time', 'weather', 'exchange_rate'] },
+        location: { type: 'string', description: 'weather: city in English' },
+        timezone: { type: 'string', description: 'time: IANA zone; omit for the user\'s' },
+        base: { type: 'string', description: 'ISO code, e.g. USD' },
+        quote: { type: 'string', description: 'ISO code, e.g. VND' },
+        amount: { type: 'number' },
+      },
+      required: ['kind'],
+    },
+  },
+  {
     name: 'calculate',
     scope: 'cloud',
     readOnly: true,
@@ -1516,7 +1535,7 @@ export const TOOLS = [
     readOnly: false,
     secondary: true,
     description:
-      'Create, change or delete a multi-step job that runs unattended. Each step is one instruction, run in order, in a conversation of its own that the user can read. Use this instead of schedule_task when the work has stages that depend on each other — pulling numbers, then charting them, then sending the result — because a workflow resumes where it stopped instead of starting over.',
+      'Create, change or delete a multi-step job that runs unattended. Each step is one instruction, run in order, in the one conversation the workflow always writes into, which the user can read. Use this instead of schedule_task when the work has stages that depend on each other — pulling numbers, then charting them, then sending the result — because a workflow resumes where it stopped instead of starting over. Only the last step sends anything (email, message); earlier steps gather and draft, and must say so, or the result is sent twice.',
     parameters: {
       type: 'object',
       properties: {
@@ -1744,7 +1763,7 @@ export const TOOLS = [
           description:
             'The message in Markdown, laid out as a finished email automatically — never HTML. ## headings, - lists, ' +
             '**bold**, tables (a "Total"/"Tổng" row is highlighted), "Label: value" lines (become a details card), ' +
-            '"- [ ] task" checklists, a line that is only [label](https://…) (becomes a button). A letter keeps its greeting and sign-off.',
+            '"- [ ] task" checklists, a line that is only [label](https://…) (becomes a button). A letter keeps its greeting and sign-off. A briefing: per topic a ## heading, "Label: value" lines, then "Sources:" — one card each.',
         },
         kind: {
           type: 'string',
@@ -1755,6 +1774,11 @@ export const TOOLS = [
           description: 'What the email is, from what the user asked for; decides its layout and colour. Omit to infer it.',
         },
         html: { type: 'string', description: 'Only when the user supplies exact HTML to send. Normally leave empty.' },
+        resend: {
+          type: 'boolean',
+          description:
+            'Only if the user asked for a second copy of an email already sent.',
+        },
       },
       required: ['subject', 'body'],
     },

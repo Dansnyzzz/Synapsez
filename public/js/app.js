@@ -1691,7 +1691,85 @@ function showStage(run) {
   runs.show(run, $('messages'));
 }
 
+/** Rebuild the stored transcript into `host`. */
+function drawTranscript(host, messages) {
+  host.innerHTML = '';
+
+  // Tool results live in their own message, so index them by call id first.
+  const resultsByCallId = new Map();
+  for (const m of messages) {
+    if (m.role === 'tool') for (const r of m.results || []) resultsByCallId.set(r.toolCallId, r);
+  }
+
+  for (const m of messages) {
+    if (m.role === 'user') host.append(userMessage(m.text, m.attachments || [], m.id));
+    else if (m.role === 'summary') host.append(summaryDivider(m.replaced || 0, m.text));
+    else if (m.role === 'assistant') host.append(assistantMessage().hydrate(m, resultsByCallId).node);
+  }
+}
+
+/**
+ * Watch a scheduled task or a workflow work, the way a chat is watched.
+ *
+ * Those runs happen on the server with nobody attached, so there is no stream
+ * to rejoin — opening the conversation showed whatever had been saved when it
+ * was opened and nothing after, which read as "it only shows the result". Each
+ * step is saved as it finishes, so while the server says the run is still going
+ * this asks again every couple of seconds and redraws when there is more: the
+ * request, the tool steps and the reply appear in order as they happen.
+ *
+ * One timer, tied to the conversation on screen; opening another one, or the
+ * run ending, stops it.
+ */
+let backgroundFollow = null;
+const BACKGROUND_FOLLOW_MS = 2500;
+
+function followBackground(id, seen) {
+  clearTimeout(backgroundFollow);
+  setStatus(t('status.background'));
+  const signature = (messages) => `${messages.length}:${messages.at(-1)?.id || ''}`;
+  let last = signature(seen);
+
+  const tick = async () => {
+    backgroundFollow = null;
+    if (state.chatId !== id) return;
+    let data;
+    try {
+      data = await api.chat(id);
+    } catch {
+      backgroundFollow = setTimeout(tick, BACKGROUND_FOLLOW_MS * 2);
+      return;
+    }
+    if (state.chatId !== id) return;
+
+    const now = signature(data.messages || []);
+    if (now !== last) {
+      last = now;
+      const host = $('messages');
+      const scroller = host.closest('.thread') || document.scrollingElement;
+      const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120;
+      host.setAttribute('aria-busy', 'true');
+      drawTranscript(host, data.messages || []);
+      host.setAttribute('aria-busy', 'false');
+      setEmpty(!(data.messages || []).length);
+      // Stay with the newest step unless they scrolled up to read something.
+      if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+    }
+
+    if (data.background) {
+      backgroundFollow = setTimeout(tick, BACKGROUND_FOLLOW_MS);
+    } else {
+      setStatus(null);
+      refreshChats({ background: true }).catch(() => {});
+    }
+  };
+  backgroundFollow = setTimeout(tick, BACKGROUND_FOLLOW_MS);
+}
+
 async function openChat(id) {
+  clearTimeout(backgroundFollow);
+  backgroundFollow = null;
+  setComposeMode(null);
   hideRun();
   closeSidebar();
   // A conversation replaces whichever shelf was on screen.
@@ -1699,7 +1777,7 @@ async function openChat(id) {
   // Files were staged for the conversation you were in, not this one. Carrying
   // them across would attach a screenshot to a completely unrelated question.
   clearStaged();
-  const { chat, messages, pendingApproval, context, project, files, running } = await api.chat(id);
+  const { chat, messages, pendingApproval, context, project, files, running, background } = await api.chat(id);
   state.chatId = id;
   // Not `chat.model`. There is one model for the whole app, so a conversation
   // opened today runs on whatever is chosen today — the stored value is history
@@ -1742,19 +1820,7 @@ async function openChat(id) {
    * than narrating the construction.
    */
   host.setAttribute('aria-busy', 'true');
-  host.innerHTML = '';
-
-  // Tool results live in their own message, so index them by call id first.
-  const resultsByCallId = new Map();
-  for (const m of messages) {
-    if (m.role === 'tool') for (const r of m.results || []) resultsByCallId.set(r.toolCallId, r);
-  }
-
-  for (const m of messages) {
-    if (m.role === 'user') host.append(userMessage(m.text, m.attachments || [], m.id));
-    else if (m.role === 'summary') host.append(summaryDivider(m.replaced || 0, m.text));
-    else if (m.role === 'assistant') host.append(assistantMessage().hydrate(m, resultsByCallId).node);
-  }
+  drawTranscript(host, messages);
 
   /**
    * If this conversation is mid-answer in this tab, its live nodes go back on
@@ -1787,6 +1853,7 @@ async function openChat(id) {
   // that has been running since before you left.
   setRunning(!!live || !!running);
   setStatus(live ? live.status : running ? t('status.reconnecting') : null);
+  if (!live && background) followBackground(id, messages);
   renderQueue();
 
   // Whether this conversation is actually waiting on a yes is a question about
@@ -1879,6 +1946,26 @@ async function openChat(id) {
  * message; the send path already created the very first conversation that way,
  * so this is the same road for every one after it.
  */
+/**
+ * "Setting up a workflow" / "a scheduled task", above the composer.
+ *
+ * Begun from a shelf's "Describe it to the assistant", a blank chat looked like
+ * any other, so there was no telling that what was typed would be saved as a
+ * workflow rather than answered. The chip says so, ✕ drops it, and the first
+ * message carries it to the server, which tells the model which shelf it is for.
+ */
+function setComposeMode(mode) {
+  state.composeMode = mode === 'workflow' || mode === 'schedule' ? mode : null;
+  const chip = $('composer-mode');
+  chip.hidden = !state.composeMode;
+  if (!state.composeMode) return;
+  chip.dataset.mode = state.composeMode;
+  $('composer-mode-icon').textContent = state.composeMode === 'workflow' ? '⛓' : '⏰';
+  $('composer-mode-text').textContent = t(state.composeMode === 'workflow' ? 'composer.modeWorkflow' : 'composer.modeSchedule');
+}
+
+$('composer-mode-clear').addEventListener('click', () => setComposeMode(null));
+
 function startBlankChat(project = null) {
   // Same reason as `openChat`: the run carries on, but its nodes come off the
   // page so they are not sitting in the blank conversation now on screen.
@@ -1888,6 +1975,7 @@ function startBlankChat(project = null) {
   leavePages();
   clearStaged();
   state.chatId = null;
+  setComposeMode(null);
   state.pendingProject = project;
   state.project = project;
   state.files = [];
@@ -2109,10 +2197,12 @@ const pages = createPages({
    * described into the middle of an unrelated thread. A blank conversation,
    * with the sentence already begun, is what "new" means.
    */
-  onDescribe: (starter) => {
+  onDescribe: (starter, mode) => {
     leavePages();
     closeSidebar();
     startBlankChat();
+    // After the blank chat, which clears any mode left from before.
+    setComposeMode(mode || null);
     if (starter) setComposerText(starter);
   },
   onNewProject: () => openProjectForm(),
@@ -2540,7 +2630,10 @@ $('composer').addEventListener('submit', async (event) => {
     $('messages').append(node);
     scrollToEnd();
 
-    const { message } = await api.sendMessage(state.chatId, text, ids);
+    // The shelf this was begun from travels with the first message only.
+    const intent = state.composeMode;
+    setComposeMode(null);
+    const { message } = await api.sendMessage(state.chatId, text, ids, intent);
     if (message?.id) node.dataset.messageId = message.id;
     settleAttachments(node, sending, ids);
     await refreshChats();

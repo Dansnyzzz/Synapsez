@@ -207,6 +207,7 @@ const STEP_VERBS = {
   show_widget: 'step.show_widget',
   chart: 'step.chart',
   calculate: 'step.calculate',
+  world_facts: 'step.world_facts',
 
   /* ── what it remembers, and what it knows how to do ── */
   memory_write: 'step.memory_write',
@@ -362,6 +363,7 @@ const STEP_DETAILS = {
   show_widget: (i) => clip(i.title),
   chart: (i) => `${clip(i.title)}${i.type ? ` (${i.type})` : ''}`,
   calculate: (i) => clip(i.expression, 64),
+  world_facts: (i) => clip([i.kind, i.location || i.timezone || (i.base && `${i.base}→${i.quote || ''}`)].filter(Boolean).join(' · '), 64),
 
   /* what it remembers, and what it knows how to do */
   memory_write: (i) => clip(i.key),
@@ -1211,35 +1213,71 @@ export function assistantMessage() {
     wrap.append(actions);
   }
 
+  /** Folded, the window shows the newest lines — the ones just finished. */
+  const keepTailInView = () => {
+    if (!thinkingBody || thinkingBlock?.classList.contains('is-open')) return;
+    thinkingBody.scrollTop = thinkingBody.scrollHeight;
+  };
+
   const api = {
     node: wrap,
 
+    /**
+     * The reasoning, as a card that is readable both folded and open.
+     *
+     * Folded, it is a window a few lines tall that always shows the newest
+     * lines, fading at its edges — you can watch it think without it taking
+     * the screen. Open, it is the whole text. Either way the words that just
+     * arrived glow and settle, so the eye finds where it is up to.
+     *
+     * No spinner, the same as every other card: the status line under the
+     * transcript already says, in words, what is running. A card still working
+     * is the one without a tick.
+     */
     appendThinking(delta) {
       if (!thinkingBlock) {
-        thinkingBlock = el('details', 'block');
-        /**
-         * No spinner here, and none on the cards below.
-         *
-         * One turn draws a status line under the transcript that says what is
-         * happening by name — "Running deep_research…", "Thinking…" — and every
-         * card that had not finished drew its own spinning ring as well. Three
-         * or four of them at once, in different places, all saying the thing
-         * the one line at the bottom already said. A card that is still working
-         * is the one with no tick, which is quieter and just as clear.
-         */
-        thinkingBlock.append(el('summary', null, `${MARK_PENDING} ${escapeHtml(t('chat.reasoning'))}`));
-        thinkingBody = el('div', 'block__body');
-        thinkingBody.append(el('pre'));
-        thinkingBlock.append(thinkingBody);
+        thinkingBlock = el('div', 'think is-live');
+        const head = el(
+          'button',
+          'think__head',
+          `${MARK_PENDING} <span class="think__title">${escapeHtml(t('status.thinking'))}</span><span class="think__chev" aria-hidden="true">›</span>`,
+        );
+        head.type = 'button';
+        head.setAttribute('aria-expanded', 'false');
+        head.addEventListener('click', () => {
+          const open = !thinkingBlock.classList.contains('is-open');
+          thinkingBlock.classList.toggle('is-open', open);
+          head.setAttribute('aria-expanded', String(open));
+          if (!open) keepTailInView();
+        });
+        thinkingBody = el('div', 'think__body');
+        thinkingBody.append(el('div', 'think__text'));
+        thinkingBlock.append(head, thinkingBody);
         body.append(thinkingBlock);
       }
-      thinkingBody.querySelector('pre').textContent += delta;
+      const text = thinkingBody.firstElementChild;
+      const fresh = el('span', 'think__new');
+      fresh.textContent = delta;
+      text.append(fresh);
+      // Settled spans go back to plain text, so a long trace is not ten
+      // thousand elements. The last few keep their glow.
+      const spans = text.querySelectorAll('.think__new');
+      if (spans.length > 48) {
+        for (const span of [...spans].slice(0, spans.length - 24)) span.replaceWith(span.textContent);
+        text.normalize();
+      }
+      keepTailInView();
     },
 
     finishThinking() {
-      if (thinkingBlock) {
-        thinkingBlock.querySelector('summary').innerHTML = `${MARK_DONE} ${escapeHtml(t('chat.reasoning'))}`;
-      }
+      if (!thinkingBlock) return;
+      thinkingBlock.classList.remove('is-live');
+      thinkingBlock.querySelector('.think__head .mark')?.replaceWith(el('span', 'mark', '✓'));
+      thinkingBlock.querySelector('.think__title').textContent = t('chat.reasoning');
+      const text = thinkingBody.firstElementChild;
+      for (const span of text.querySelectorAll('.think__new')) span.replaceWith(span.textContent);
+      text.normalize();
+      keepTailInView();
     },
 
     /**

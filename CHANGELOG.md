@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-27 (later) — work that runs on time, in one place, and says so
+
+Branch `fix/realtime-runs-2026-09-27`.
+
+### Added
+
+- **`world_facts`** — the current time and date, the weather for a place (now and three days), and
+  exchange rates, looked up live from Open-Meteo and open.er-api.com. No key, read-only, so it runs
+  without asking. The system prompt's date is now read in the account's own zone rather than UTC,
+  which was yesterday's date in Vietnam until 07:00.
+- **A mode chip when a workflow or scheduled task is set up by describing it.** "Describe it to the
+  assistant" on either shelf opens a chat marked "setting up a workflow" (or "a scheduled task"); the
+  first message carries that to the server and the model is told which tool files it on which shelf.
+- **`/api/cron/run-tasks?background=1`** answers `202` at once and finishes under Vercel's
+  `waitUntil`, so a free outside pinger (cron-job.org) can drive the queue every few minutes. The
+  README says how; without it Hobby only runs due work once a day or while the app is open.
+
+### Changed
+
+- **A scheduled task or a workflow keeps one conversation.** Each run adds to the one the last run
+  wrote into, rather than making another; a deleted one is made again.
+- **Opening a conversation something is running in follows it** — the request, the steps and the
+  reply appear as each is saved, where before only the finished result showed. Run now goes straight
+  to that conversation.
+- **The reasoning is a card**: folded, a window on its newest lines, faded at the edges; open, the
+  whole trace, with the words just arrived glowing. The title shimmers while it is still thinking.
+- **Email: each briefing section is one card**, its "Sources" line included, and a sentence-long
+  value is no longer set in bold. Commas between linked sources are kept.
+
+### Fixed
+
+- **The same email could be sent twice** — a step told to "put it in an email" sent it, then the
+  next step sent it again. An identical email (same recipients and subject) accepted in the same
+  conversation in the last 20 minutes is refused unless the user asked for a copy.
+- **The email's title was black on the purple header in the Gmail app's dark mode**, which inverts
+  text colours but not gradients. The header text is layered so it stays white there.
+
 ## 2026-09-27 — a schedule you set up is a card you can open
 
 Branch `feat/schedule-card`.

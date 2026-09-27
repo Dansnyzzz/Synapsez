@@ -252,7 +252,13 @@ function inline(text, theme, { sourceLine = false } = {}) {
     .replace(/\*\*(.+?)\*\*/g, `<strong style="font-weight:600;color:${BASE.text}">$1</strong>`)
     .replace(/(^|[^*\w])\*(?!\s)(.+?)(?<!\s)\*(?!\w)/g, '$1<em>$2</em>')
     // A bare link reads as its site rather than as a URL. See `labelFor`.
-    .replace(BARE_URL, (whole, lead, url) => `${lead}${link(url, labelFor(url, sourceLine), theme)}`);
+    // Punctuation after a link is the sentence's, not the URL's: "a.html, b.html"
+    // lost its comma, and two sources ran together as one.
+    .replace(BARE_URL, (whole, lead, raw) => {
+      const tail = raw.match(/[.,;:!?]+$/)?.[0] || '';
+      const url = tail ? raw.slice(0, -tail.length) : raw;
+      return `${lead}${link(url, labelFor(url, sourceLine), theme)}${tail}`;
+    });
   return out.replace(SLOT, (whole, i) => slots[Number(i)] ?? '');
 }
 
@@ -305,14 +311,21 @@ function factOf(line) {
   return { label, value: match[2].replace(/\*\*$/, '').trim() };
 }
 
+/**
+ * A details card: label on the left, value on the right.
+ *
+ * A short value — a figure, a date — is bold, the way a form reads. A long one
+ * is a sentence, and a paragraph set in bold is hard to read, so it stays at
+ * normal weight. A `html` value is already rendered: the Sources row.
+ */
 function factsCard(facts, theme) {
   return (
     `<table class="sx-facts" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;background:${theme.soft};border-radius:10px">` +
     facts
       .map(
-        ({ label, value }, i) =>
+        ({ label, value, html }, i) =>
           `<tr><td style="padding:${i ? 6 : 14}px 16px ${i === facts.length - 1 ? 14 : 6}px;width:34%;vertical-align:top;font-size:13px;line-height:1.5;color:${BASE.muted}">${inline(label, theme)}</td>` +
-          `<td style="padding:${i ? 6 : 14}px 16px ${i === facts.length - 1 ? 14 : 6}px 0;vertical-align:top;font-size:15px;line-height:1.5;font-weight:600;color:${BASE.text};${WRAP}">${inline(value, theme)}</td></tr>`,
+          `<td style="padding:${i ? 6 : 14}px 16px ${i === facts.length - 1 ? 14 : 6}px 0;vertical-align:top;font-size:15px;line-height:1.5;font-weight:${html || String(value).length > 48 ? 400 : 600};color:${BASE.text};${WRAP}">${html || inline(value, theme)}</td></tr>`,
       )
       .join('') +
     '</table>'
@@ -440,6 +453,15 @@ export function renderEmailBody(markdown, theme = KINDS.letter) {
     if (factOf(line) && factOf(lines[i + 1] || '')) {
       const facts = [];
       while (i < lines.length && lines[i].trim() && factOf(lines[i])) facts.push(factOf(lines[i++]));
+      // A "Sources:" line straight after the card is the card's last row, so a
+      // section's facts and where they came from stay in one box.
+      const cited = (lines[i] || '').trim().replace(/^\s*[-*•+]\s+/, '');
+      if (SOURCE_LINE.test(cited)) {
+        const [label, ...rest] = cited.split(':');
+        const links = inline(rest.join(':').trim(), theme, { sourceLine: true });
+        facts.push({ label: label.replace(/\*/g, '').trim(), value: '', html: links });
+        i += 1;
+      }
       out.push(factsCard(facts, theme));
       continue;
     }
@@ -619,6 +641,8 @@ const WORDS = {
 function adaptiveCss() {
   return [
     ':root{color-scheme:light dark;supported-color-schemes:light dark}',
+    // Gmail's apps: see `keepWhite`. `u + .body` matches only inside Gmail.
+    'u + .body .gx-s{background:#000;mix-blend-mode:screen}u + .body .gx-d{background:#000;mix-blend-mode:difference}',
     '@media (max-width:520px){.sx-outer{padding:14px 6px!important}.sx-pad{padding-left:20px!important;padding-right:20px!important}.sx-h1{font-size:22px!important}}',
     '@media (prefers-color-scheme:dark){' +
       '.sx-page{background:#0b0a14!important}' +
@@ -645,6 +669,17 @@ function adaptiveCss() {
  * for mail — see scripts/email-logo.js.
  */
 export const LOGO_CID = 'brand-logo@mail';
+
+/**
+ * White text on the galaxy header that stays white in Gmail's dark mode.
+ *
+ * The Gmail apps darken a message by inverting its colours but leave a
+ * gradient background as it is, so the header's white title became black on
+ * purple and could not be read. Two nested layers on black — `screen`, then
+ * `difference` — change nothing anywhere else, and in Gmail's dark mode turn
+ * the inverted text back. The rules are in `adaptiveCss`, scoped to Gmail.
+ */
+const keepWhite = (html) => `<span class="gx-s"><span class="gx-d">${html}</span></span>`;
 
 /** The brand mark: the logo, or the first letter on the galaxy gradient when there is none. */
 function brandMark(brand, size, logo) {
@@ -703,13 +738,13 @@ export function layoutEmail({ brand, title, contentHtml, kind = 'newsletter', pr
                 ? `<img src="cid:${LOGO_CID}" width="26" height="26" alt="${escapeHtml(brand)}" style="display:block;margin:5px;width:26px;height:26px;border:0;outline:none">`
                 : escapeHtml(brand.charAt(0).toUpperCase())
             }</td>
-            <td style="padding-left:11px;font-size:15px;font-weight:700;letter-spacing:0.01em;color:#ffffff">${escapeHtml(brand)}</td>
+            <td style="padding-left:11px;font-size:15px;font-weight:700;letter-spacing:0.01em;color:#ffffff">${keepWhite(escapeHtml(brand))}</td>
           </tr></table>
           <div style="margin:0 0 10px">
-            <span style="display:inline-block;padding:3px 10px;border-radius:999px;background-color:rgba(255,255,255,0.14);border:1px solid rgba(255,255,255,0.28);font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff">${escapeHtml(theme.label[lang])}</span>
-            ${date ? `<span style="padding-left:8px;font-size:12px;color:#ddd6fe">${escapeHtml(date)}</span>` : ''}
+            <span style="display:inline-block;padding:3px 10px;border-radius:999px;background-color:rgba(255,255,255,0.14);border:1px solid rgba(255,255,255,0.28);font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff">${keepWhite(escapeHtml(theme.label[lang]))}</span>
+            ${date ? `<span style="padding-left:8px;font-size:12px;color:#ddd6fe">${keepWhite(escapeHtml(date))}</span>` : ''}
           </div>
-          <h1 class="sx-h1" style="margin:0;font-size:26px;line-height:1.28;font-weight:700;letter-spacing:-0.015em;color:#ffffff">${escapeHtml(title)}</h1>
+          <h1 class="sx-h1" style="margin:0;font-size:26px;line-height:1.28;font-weight:700;letter-spacing:-0.015em;color:#ffffff">${keepWhite(escapeHtml(title))}</h1>
         </td></tr>`
     : `<tr><td height="3" style="${GALAXY.line};font-size:0;line-height:0">&nbsp;</td></tr>`;
 
@@ -723,7 +758,7 @@ export function layoutEmail({ brand, title, contentHtml, kind = 'newsletter', pr
 <title>${escapeHtml(title)}</title>
 <style>${adaptiveCss()}</style>
 </head>
-<body class="sx-page" style="margin:0;padding:0;background:${BASE.page};-webkit-text-size-adjust:100%">
+<body class="sx-page body" style="margin:0;padding:0;background:${BASE.page};-webkit-text-size-adjust:100%">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;mso-hide:all">${escapeHtml(preheader)}</div>
 <table class="sx-page" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${BASE.page}">
 <tr><td class="sx-outer" align="center" style="padding:${card ? '28px 12px' : '24px 12px'}">

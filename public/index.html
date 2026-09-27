@@ -527,6 +527,15 @@
               <button type="button" id="vision-switch" data-i18n="vision.pickOne">Pick one that can</button>
             </p>
 
+            <!-- Which shelf this message is setting something up for, when it was
+                 begun from "Describe it to the assistant". The model is told the
+                 same, so a workflow is not filed as a scheduled task. -->
+            <p class="composer__mode" id="composer-mode" hidden>
+              <span class="composer__mode-icon" aria-hidden="true" id="composer-mode-icon"></span>
+              <span id="composer-mode-text"></span>
+              <button type="button" class="composer__mode-clear" id="composer-mode-clear" title="Cancel" aria-label="Cancel" data-i18n-title="action.cancel" data-i18n-aria-label="action.cancel">✕</button>
+            </p>
+
             <div class="composer__box">
               <input
                 type="file"

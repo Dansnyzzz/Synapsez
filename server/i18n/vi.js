@@ -572,4 +572,18 @@ export const vi = {
     '{0} đã bị nhà cung cấp ngừng từ ngày {1}. Hãy chọn model khác.',
   '{0} has no stored source to add to. Pass the complete content instead.':
     '{0} không có nội dung gốc để nối thêm. Hãy gửi toàn bộ nội dung thay vào đó.',
+  "No rate from {0} to {1}. Use ISO codes like USD, VND, EUR.":
+    "Không có tỷ giá từ {0} sang {1}. Hãy dùng mã ISO như USD, VND, EUR.",
+  "{0} returned HTTP {1}.":
+    "{0} trả về HTTP {1}.",
+  "Say which place — a city name, e.g. \"Hanoi\" or \"Ho Chi Minh City\".":
+    "Hãy nói nơi nào — tên một thành phố, ví dụ \"Hanoi\" hoặc \"Ho Chi Minh City\".",
+  "No place called \"{0}\" was found. Try the city's English name, e.g. \"Ho Chi Minh City\".":
+    "Không tìm thấy nơi nào tên \"{0}\". Hãy thử tên tiếng Anh của thành phố, ví dụ \"Ho Chi Minh City\".",
+  "Currencies are ISO codes: USD, VND, EUR, JPY…":
+    "Tiền tệ dùng mã ISO: USD, VND, EUR, JPY…",
+  "kind is one of: time, weather, exchange_rate.":
+    "kind phải là một trong: time, weather, exchange_rate.",
+  "This exact email — to {0}, subject \"{1}\" — was already accepted by the mail server a few minutes ago in this conversation, so it was NOT sent again. Treat the send as done and carry on. Only if the user explicitly asked for a second copy, call again with resend: true.":
+    "Đúng email này — gửi tới {0}, tiêu đề \"{1}\" — đã được máy chủ thư nhận vài phút trước trong cuộc trò chuyện này, nên KHÔNG gửi lại lần nữa. Coi như đã gửi xong và làm tiếp. Chỉ khi người dùng yêu cầu rõ một bản thứ hai thì mới gọi lại với resend: true.",
 };

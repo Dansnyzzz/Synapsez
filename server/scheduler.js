@@ -256,7 +256,17 @@ async function runTask(task) {
   }
 
   const prefs = await getPrefs(user.id);
-  const chatId = crypto.randomUUID();
+
+  /**
+   * One conversation per task, not one per run.
+   *
+   * An hourly task made twenty-four conversations a day. Each run now adds to
+   * the one the last run wrote, so the sidebar holds the task once and its
+   * history reads top to bottom; a task that has never run, or whose
+   * conversation was deleted, gets a fresh one.
+   */
+  const reuse = task.last_chat && (await store.getChat(user.id, task.last_chat)) ? task.last_chat : null;
+  const chatId = reuse || crypto.randomUUID();
 
   /**
    * `ok` has to be earned, not assumed.
@@ -279,16 +289,18 @@ async function runTask(task) {
   let waitingForApproval = false;
 
   try {
-    await store.createChat(user.id, {
-      id: chatId,
-      title: deriveTitle(task.title) || task.title,
-      model: task.model || prefs.defaultModel,
-      // A task made inside a project runs inside it: same standing
-      // instructions, same shelf. Without this, "summarise this week's filings"
-      // answered from nothing at all — which is worse than failing, because it
-      // looks like it worked.
-      projectId: task.project_id || null,
-    });
+    if (!reuse) {
+      await store.createChat(user.id, {
+        id: chatId,
+        title: deriveTitle(task.title) || task.title,
+        model: task.model || prefs.defaultModel,
+        // A task made inside a project runs inside it: same standing
+        // instructions, same shelf. Without this, "summarise this week's filings"
+        // answered from nothing at all — which is worse than failing, because it
+        // looks like it worked.
+        projectId: task.project_id || null,
+      });
+    }
     await store.appendMessage(user.id, chatId, {
       id: crypto.randomUUID(),
       role: 'user',

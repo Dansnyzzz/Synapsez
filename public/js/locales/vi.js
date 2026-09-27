@@ -100,6 +100,7 @@ export const vi = {
   'step.show_widget': 'Vẽ vào hội thoại',
   'step.chart': 'Vẽ biểu đồ',
   'step.calculate': 'Tính toán',
+  'step.world_facts': 'Tra cứu thực tế',
   'step.memory_write': 'Lưu ghi chú',
   'step.memory_append': 'Thêm vào ghi chú',
   'step.memory_edit': 'Sửa ghi chú',
@@ -181,6 +182,9 @@ export const vi = {
   'mirror.watching': 'Đang chạy ở tab khác — đang theo dõi…',
   /* Trợ lý đang làm gì, ở dòng ngay trên khung soạn. */
   'status.thinking': 'Đang suy nghĩ…',
+  'composer.modeWorkflow': 'Đang nhờ trợ lý tạo chuỗi việc — sẽ lưu vào mục Chuỗi việc',
+  'composer.modeSchedule': 'Đang nhờ trợ lý tạo việc chạy theo giờ — sẽ lưu vào mục Chạy theo giờ',
+  'status.background': 'Đang chạy theo lịch — cập nhật trực tiếp…',
   'status.compacting': 'Đang tóm tắt các lượt cũ…',
   'status.compactingN': 'Đang gộp {n} lượt cũ thành bản tóm tắt để cuộc trò chuyện chạy tiếp…',
   'status.tool': 'Đang chạy {name}…',

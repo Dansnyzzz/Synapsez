@@ -215,8 +215,8 @@ export const api = {
   searchChats: (q) => request('GET', `/api/chats/search?q=${encodeURIComponent(q)}`),
   updateChat: (id, patch) => request('PATCH', `/api/chats/${id}`, patch),
   deleteChat: (id) => request('DELETE', `/api/chats/${id}`),
-  sendMessage: (id, text, attachments) =>
-    request('POST', `/api/chats/${id}/messages`, { text, attachments }),
+  sendMessage: (id, text, attachments, intent) =>
+    request('POST', `/api/chats/${id}/messages`, { text, attachments, ...(intent ? { intent } : {}) }),
   /**
    * Tell the server to stop, as well as hanging up on it.
    *

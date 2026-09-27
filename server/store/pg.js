@@ -809,6 +809,22 @@ export function createPgStore(connectionString) {
         [userId, RUN_LEASE_STALE_MS / 1000],
       );
     },
+    /**
+     * Whether a workflow run or a scheduled task is working in this conversation
+     * now — the same test `listChats` uses for its `running` flag, for one chat.
+     * Those runs hold no chat lease, so without this an open conversation cannot
+     * tell that something is still writing into it.
+     */
+    async chatHasBackgroundRun(userId, chatId) {
+      const rows = await q(
+        `SELECT 1 FROM workflow_runs WHERE user_id = $1 AND chat_id = $2 AND status = 'running'
+         UNION ALL
+         SELECT 1 FROM scheduled_tasks WHERE user_id = $1 AND last_chat = $2 AND run_state = 'running'
+         LIMIT 1`,
+        [userId, chatId],
+      );
+      return rows.length > 0;
+    },
     async createChat(userId, chat) {
       await q('INSERT INTO chats (id, user_id, title, model, project_id) VALUES ($1, $2, $3, $4, $5)', [
         chat.id,

@@ -247,5 +247,30 @@ section('a sources line cites the article, not the front page');
   check('a link in prose keeps its path', inBody?.label === 'phs.vn/bao-cao/quy-3.html', inBody?.label);
 }
 
+section('a briefing section is one card, sources included');
+{
+  const html = renderEmailBody(
+    [
+      '## Chứng khoán Việt Nam',
+      'VN-Index: Phiên 14/9 giảm 6,98 điểm xuống 1.788,23 điểm, thanh khoản cao cho thấy áp lực cung vẫn còn.',
+      'Khối ngoại: Mua ròng 812 tỷ',
+      'Nguồn: https://nhandan.vn/a.html, https://dnse.com.vn/b.html',
+    ].join('\n'),
+    KINDS.newsletter,
+  );
+  const card = html.slice(html.indexOf('sx-facts'), html.indexOf('</table>', html.indexOf('sx-facts')));
+  check('the Sources line is the card\'s last row, not a line under it', /Nguồn/.test(card) && /nhandan\.vn/.test(card), card.slice(-200));
+  check('a sentence-long value is not set in bold', /font-weight:400[^>]*>Phiên 14\/9/.test(card));
+  check('a short figure still is', /font-weight:600[^>]*>Mua ròng 812 tỷ/.test(card));
+}
+
+section('the header stays readable in Gmail\'s dark mode');
+{
+  const html = layoutEmail({ brand: 'Synapse', title: 'Bản tin tài chính sáng', contentHtml: '<p>x</p>', kind: 'newsletter', logo: false });
+  check('the title is wrapped to survive colour inversion', /<h1[^>]*><span class="gx-s"><span class="gx-d">Bản tin tài chính sáng/.test(html));
+  check('the rules for it are scoped to Gmail', /u \+ \.body \.gx-d\{background:#000;mix-blend-mode:difference\}/.test(html));
+  check('and the body carries the class that scoping needs', /<body class="sx-page body"/.test(html));
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll mail template checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);
