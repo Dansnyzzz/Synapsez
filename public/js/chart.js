@@ -15,6 +15,7 @@
  * data is not trusted to be what it was when it was written.
  */
 import { t } from './i18n.js';
+import { mediaTools, svgToPng, fileNameFrom } from './media.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ELEMENTS = new Set(['svg', 'g', 'rect', 'line', 'polyline', 'circle', 'path', 'text']);
@@ -65,10 +66,13 @@ const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300
  *   caller can fall back to the plain frame.
  */
 export function chartFigure(widget) {
-  const spec = widget?.spec;
-  if (!spec || !Array.isArray(spec.labels) || !Array.isArray(spec.series)) return null;
-  const svg = cleanSvg(widget.markup);
+  const svg = cleanSvg(widget?.markup);
   if (!svg) return null;
+  // A chart drawn before charts carried their numbers is still drawn here, in
+  // the page — just without the hover, which needs the numbers.
+  const given = widget?.spec;
+  const readable = !!given && Array.isArray(given.labels) && Array.isArray(given.series);
+  const spec = readable ? given : { type: '', labels: [], series: [] };
 
   const figure = document.createElement('figure');
   figure.className = 'widget chart';
@@ -99,7 +103,17 @@ export function chartFigure(widget) {
   svg.insertBefore(guide, svg.firstChild?.nextSibling || null);
 
   stage.append(svg, tip);
-  figure.append(caption, stage, dataTable(widget.title, spec));
+  figure.append(
+    caption,
+    stage,
+    mediaTools({ name: fileNameFrom(widget.title, 'png'), blob: () => svgToPng(svg) }),
+  );
+  if (!readable) {
+    stage.removeAttribute('tabindex');
+    stage.setAttribute('aria-label', widget.title || t('chat.diagram'));
+    return figure;
+  }
+  figure.append(dataTable(widget.title, spec));
 
   const off = new Set();
   const hits = [...svg.querySelectorAll('.hit')];

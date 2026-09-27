@@ -86,12 +86,14 @@ function armed(button, warning, run) {
  * @param openViewer   hand a file id to the artifact viewer
  * @param openChat     open a conversation, which closes the shelf
  * @param onLeave      restore the conversation view
+ * @param onDescribe   start a blank conversation with a sentence begun, for "describe it to the assistant"
  */
 export function createPages({
   openProject,
   openViewer,
   openChat,
   onLeave,
+  onDescribe = /** @type {(starter?: string) => void} */ (() => onLeave()),
   onNewProject,
   onRunStarted = () => {},
   /** The sidebar keeps its own list of scheduled tasks; tell it when one changes. */
@@ -450,7 +452,7 @@ export function createPages({
       }
     },
     onNew: () => {
-      onLeave();
+      onDescribe(t('pages.artifacts.starter'));
       toast(t('pages.artifacts.newHint'));
     },
   };
@@ -527,7 +529,7 @@ export function createPages({
         label: t('pages.tasks.describe'),
         icon: '💬',
         run: () => {
-          onLeave();
+          onDescribe(t('pages.tasks.starter'));
           toast(t('pages.tasks.describeHint'));
         },
       },
@@ -643,6 +645,7 @@ export function createPages({
     toast,
     openChat,
     onLeave,
+    onDescribe,
     openForm: (id) => wfForm.open(id),
     reload: () => load(),
     onRunStarted,

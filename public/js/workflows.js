@@ -56,10 +56,21 @@ const clip = (text, max = 140) => {
  * @param toast      transient confirmation
  * @param openChat   go to the conversation a run wrote into
  * @param onLeave    close the shelf first
+ * @param onDescribe start a blank conversation with a sentence begun
  * @param openForm   the create/edit sheet, owned by the page shell
  * @param reload     re-run the shelf's own load
  */
-export function workflowsView({ blank, body, toast, openChat, onLeave, openForm, reload, onRunStarted = () => {} }) {
+export function workflowsView({
+  blank,
+  body,
+  toast,
+  openChat,
+  onLeave,
+  onDescribe = /** @type {(starter?: string) => void} */ (() => onLeave()),
+  openForm,
+  reload,
+  onRunStarted = () => {},
+}) {
   /**
    * A run continues after the request that started it returns.
    *
@@ -111,7 +122,7 @@ export function workflowsView({ blank, body, toast, openChat, onLeave, openForm,
         label: t('wf.describe'),
         icon: '💬',
         run: () => {
-          onLeave();
+          onDescribe(t('wf.starter'));
           toast(t('wf.describeHint'));
         },
       },

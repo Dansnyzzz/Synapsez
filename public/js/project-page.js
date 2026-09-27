@@ -130,6 +130,7 @@ export function projectMenuItems(project, { after, onGone, onEdit }) {
   const patch = async (body, said) => {
     try {
       await api.updateProject(project.id, body);
+      document.dispatchEvent(new globalThis.CustomEvent('projects-changed'));
       toast(said);
       await after?.();
     } catch (err) {
@@ -166,6 +167,7 @@ export function projectMenuItems(project, { after, onGone, onEdit }) {
         if (!sure) return;
         try {
           await api.deleteProject(project.id);
+          document.dispatchEvent(new globalThis.CustomEvent('projects-changed'));
           toast(t('proj.deleted'));
           await onGone?.();
         } catch (err) {
@@ -1058,6 +1060,8 @@ export function createProjectPage({
       const { project } = await api.updateProject(data.project.id, { pinned: next });
       data.project = project;
       draw();
+      // The sidebar lists pinned projects; tell it now, not on the next click.
+      document.dispatchEvent(new globalThis.CustomEvent('projects-changed'));
     } catch (err) {
       toast(err.message, 'error');
     }

@@ -4028,7 +4028,7 @@ section('a project source is a card you can open');
   const preview = await page.evaluate(async () => {
     const card = [...document.querySelectorAll('.shelf .card')].find((c) => c.querySelector('.card__shot img'));
     card?.querySelector('.card__open')?.click();
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 1200));
     const dialog = document.getElementById('source-view');
     const out = {
       open: dialog?.open === true,
@@ -5585,6 +5585,114 @@ section('a chart can be read by hovering, like any charting tool');
   check('markup that is not a chart is not put in the page', fallback);
 }
 
+section('a picture in a frame sits on the conversation, not on a white slab');
+{
+  const framed = await page.evaluate(async () => {
+    const { widgetNode } = await import('/js/render.js');
+    const node = widgetNode({
+      title: 'Diagram',
+      markup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><text x="10" y="50" fill="#fff">hi</text></svg>',
+      kind: 'svg',
+    });
+    const frame = node.querySelector('iframe');
+    frame.loading = 'eager';
+    // The load of the picture itself — not the blank document every frame
+    // starts with, which is "complete" before the srcdoc is even read.
+    const loaded = new Promise((r) => {
+      frame.addEventListener('load', r, { once: true });
+      setTimeout(r, 3000);
+    });
+    document.getElementById('thread').append(node);
+    await loaded;
+    const inner = frame.contentDocument;
+    const out = {
+      schemeOut: frame.style.colorScheme,
+      schemeIn: inner ? getComputedStyle(inner.documentElement).colorScheme : '',
+      barHidden: inner ? getComputedStyle(inner.documentElement).scrollbarWidth : '',
+      tools: node.querySelectorAll('.media-tools__btn').length,
+      toolsHidden: getComputedStyle(node.querySelector('.media-tools')).opacity,
+    };
+    node.remove();
+    return out;
+  });
+  // A frame whose scheme differs from the page's is painted opaque — white in
+  // a dark page, under light text. Matching them keeps it transparent.
+  check('the frame declares the scheme the page is in', !!framed.schemeOut && framed.schemeIn === framed.schemeOut, `${framed.schemeOut} / ${framed.schemeIn}`);
+  check('no scrollbar is drawn through a picture', framed.barHidden === 'none', framed.barHidden);
+  check('copy and download are there', framed.tools === 2, String(framed.tools));
+  check('  out of sight until the picture is pointed at', framed.toolsHidden === '0', framed.toolsHidden);
+
+  // A chart drawn before charts carried their numbers is ours, so it goes in
+  // the page too — never into the white frame.
+  const { renderChart } = await import('../server/tools/chart.js');
+  const old = renderChart({ type: 'pie', title: 'Old', data: { labels: ['a', 'b'], series: [{ name: 's', values: [1, 2] }] } });
+  const oldChart = await page.evaluate(async (markup) => {
+    const { widgetNode } = await import('/js/render.js');
+    const node = widgetNode({ title: 'Old', markup, kind: 'svg' }, 'chart');
+    return { inline: !!node.querySelector('svg') && !node.querySelector('iframe'), tools: node.querySelectorAll('.media-tools__btn').length };
+  }, old);
+  check('an older chart is drawn in the page as well', oldChart.inline);
+  check('  with copy and download', oldChart.tools === 2);
+}
+
+section('pinning a project puts it in the sidebar at once');
+{
+  const shown = await page.evaluate(async () => {
+    const made = await (
+      await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Pinned right away' }) })
+    ).json();
+    const id = made.project?.id;
+    await fetch(`/api/projects/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned: true }) });
+    // What the pin buttons do after their request: tell the sidebar.
+    document.dispatchEvent(new globalThis.CustomEvent('projects-changed'));
+    await new Promise((r) => setTimeout(r, 900));
+    const listed = [...document.querySelectorAll('#chat-list .proj-row')].some((row) => row.textContent.includes('Pinned right away'));
+    await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    document.dispatchEvent(new globalThis.CustomEvent('projects-changed'));
+    await new Promise((r) => setTimeout(r, 900));
+    const gone = ![...document.querySelectorAll('#chat-list .proj-row')].some((row) => row.textContent.includes('Pinned right away'));
+    return { listed, gone };
+  });
+  check('a pinned project appears without opening anything else', shown.listed);
+  check('  even before it holds a conversation', shown.listed);
+  check('  and leaves when it is deleted', shown.gone);
+}
+
+section('"describe it to the assistant" starts a new conversation');
+{
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  // Something open first, so going back to it would be visible.
+  await page.click('.chat-item').catch(() => {});
+  await page.waitForTimeout(800);
+  await page.click('#open-scheduled');
+  await page.waitForTimeout(700);
+  const ring = await page.evaluate(() => {
+    const r = document.querySelector('.blank__ring');
+    return r ? getComputedStyle(r).backgroundColor : null;
+  });
+  check('the empty-state mark has no grey disc behind it', ring === null || ring === 'rgba(0, 0, 0, 0)', String(ring));
+  await page.click('#page-new');
+  await page.waitForTimeout(200);
+  await page.click('#page-new-menu [data-pick="0"]');
+  await page.waitForTimeout(700);
+  const after = await page.evaluate(() => ({
+    page: !document.getElementById('page').hidden,
+    title: document.getElementById('chat-title').textContent.trim(),
+    typed: /** @type {HTMLTextAreaElement} */ (document.getElementById('input')).value,
+    active: !!document.querySelector('.chat-row.is-active'),
+  }));
+  check('the shelf closes', !after.page);
+  check('onto a new conversation, not the last one', after.title === 'New chat' && !after.active, `${after.title} / active row: ${after.active}`);
+  check('  with the sentence begun', /^Set up a scheduled job/.test(after.typed), after.typed);
+  await page.evaluate(() => {
+    const input = /** @type {HTMLTextAreaElement} */ (document.getElementById('input'));
+    input.value = '';
+    input.dispatchEvent(new Event('input'));
+  });
+}
+
 section('a long tool call shows a card while it is still being written');
 {
   const draft = await page.evaluate(async () => {
@@ -5611,19 +5719,27 @@ section('the empty composer is one straight line, however narrow');
 {
   const narrow = await page.evaluate(async () => {
     const input = /** @type {HTMLTextAreaElement} */ (document.getElementById('input'));
-    const box = document.querySelector('.composer__box');
+    const box = /** @type {HTMLElement} */ (document.querySelector('.composer__box'));
+    const seen = [];
+    const watch = new globalThis.MutationObserver(() => seen.push(input.placeholder.slice(0, 24)));
+    watch.observe(input, { attributes: true, attributeFilter: ['placeholder'] });
     input.value = '';
     input.dispatchEvent(new Event('input'));
-    const wide = { h: input.getBoundingClientRect().height, placeholder: input.placeholder };
+    const wide = { h: input.getBoundingClientRect().height, placeholder: input.placeholder, w: input.clientWidth };
     box.style.width = '430px';
-    await new Promise((r) => setTimeout(r, 150));
-    const tight = { h: input.getBoundingClientRect().height, placeholder: input.placeholder };
+    await new Promise((r) => setTimeout(r, 1200));
+    const tight = { h: input.getBoundingClientRect().height, placeholder: input.placeholder, w: input.clientWidth };
     box.style.width = '';
-    await new Promise((r) => setTimeout(r, 150));
-    return { wide, tight, restored: input.placeholder };
+    await new Promise((r) => setTimeout(r, 1200));
+    watch.disconnect();
+    return { wide, tight, restored: input.placeholder, seen };
   });
   check('it does not grow to fit a wrapped hint', Math.abs(narrow.tight.h - narrow.wide.h) < 1, `${narrow.wide.h} → ${narrow.tight.h}`);
-  check('the hint shortens when the full one would not fit', narrow.tight.placeholder.length < narrow.wide.placeholder.length, narrow.tight.placeholder);
+  check(
+    'the hint shortens when the full one would not fit',
+    narrow.tight.placeholder.length < narrow.wide.placeholder.length,
+    `${narrow.tight.placeholder} — field ${narrow.wide.w}px → ${narrow.tight.w}px — changes: ${narrow.seen.join(' | ')}`,
+  );
   check('and comes back when there is room', narrow.restored === narrow.wide.placeholder, narrow.restored);
 }
 

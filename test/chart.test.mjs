@@ -115,6 +115,24 @@ section('text from the model cannot become markup');
   check('and an ampersand in a series name', two.includes('y &amp; z'));
 }
 
+section('the axis always reaches the tallest value');
+{
+  const { axisTicks } = __testing;
+  for (const max of [1750, 1500, 1, 7, 99, 2024, 0.37, 262144]) {
+    const ticks = axisTicks(max);
+    check(`an axis for ${max} tops out at or above it`, ticks[ticks.length - 1] >= max, ticks.join(','));
+    check(`  and not a whole step beyond`, ticks.length < 2 || ticks[ticks.length - 2] < max, ticks.join(','));
+  }
+  // The screenshot: VNBank at 1,750 drawn through the title.
+  const svg = renderChart({
+    type: 'bar',
+    title: 'T',
+    data: { labels: ['VNBank', 'Viettel'], series: [{ name: 'Doanh thu', values: [1750, 1620] }] },
+  });
+  const tops = [...svg.matchAll(/class="bar"[^>]*? y="([\d.]+)"/g)].map((m) => Number(m[1]));
+  check('no bar is drawn above the plot', tops.every((y) => y >= 46 - 0.5), tops.join(','));
+}
+
 section('every mark says which point it is, so the browser can read it on hover');
 {
   const data = { labels: ['Q1', 'Q2', 'Q3'], series: [{ name: 'A', values: [1, 2, 3] }, { name: 'B', values: [3, 2, 1] }] };

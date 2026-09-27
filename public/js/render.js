@@ -2,6 +2,7 @@ import { renderMarkdown, escapeHtml } from './markdown.js';
 import { t, currentLanguage } from './i18n.js';
 import { humanSize, repeatsAs } from './format.js';
 import { chartFigure } from './chart.js';
+import { mediaTools, svgToPng, fileNameFrom, imageUrlToPng } from './media.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -677,6 +678,20 @@ export function widgetFrame(widget) {
   };
   frame.addEventListener('load', fit);
 
+  /**
+   * The same colour scheme inside the frame as outside it.
+   *
+   * A frame whose document uses a different scheme from the page is painted on
+   * an **opaque** canvas — white, for a light-scheme document in a dark page.
+   * The frame declared none, so every chart and diagram sat on a white slab
+   * with light text on it, legible only by selecting it. Declared to match, the
+   * canvas stays transparent and the picture sits on the conversation.
+   */
+  const scheme = usedScheme();
+  frame.style.colorScheme = scheme;
+  const ink = scheme === 'light' ? '#1d2733' : '#c8d3de';
+  const rule = scheme === 'light' ? '#d5dde5' : '#2a3642';
+
   // A document rather than a fragment, so the picture is not styled by this page
   // and cannot reach out of its box.
   /**
@@ -702,24 +717,56 @@ export function widgetFrame(widget) {
     '<meta http-equiv="Content-Security-Policy" ' +
     "content=\"default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:\">" +
     '<style>' +
+    `:root{color-scheme:${scheme}}` +
     'html,body{margin:0;padding:0;background:transparent;' +
-    "font:13px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif;color:#c8d3de}" +
-    'body{padding:10px}svg{max-width:100%;height:auto;display:block}' +
-    'table{border-collapse:collapse;font-size:12px}td,th{border:1px solid #2a3642;padding:4px 8px}' +
+    `font:13px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif;color:${ink}}` +
+    // No scrollbar inside a picture: the drawing is scaled to fit instead, and
+    // anything genuinely taller scrolls without a bar drawn through it.
+    'html{scrollbar-width:none}html::-webkit-scrollbar{display:none}' +
+    'body{padding:10px}svg{max-width:100%;max-height:64vh;height:auto;display:block;margin:0 auto}' +
+    `table{border-collapse:collapse;font-size:12px}td,th{border:1px solid ${rule};padding:4px 8px}` +
     'a{color:#7cc7ff}' +
     '</style>' +
     `<body>${widget.markup}</body>`;
 
   host.append(caption, frame);
+  // Copy and download, when there is a drawing to take. A fragment of HTML
+  // has no single picture to hand over, so it gets none.
+  if (/^\s*<svg[\s>]/i.test(String(widget.markup || ''))) {
+    host.append(
+      mediaTools({
+        name: fileNameFrom(widget.title, 'png'),
+        blob: () => {
+          const svg = frame.contentDocument?.querySelector('svg');
+          if (svg) return svgToPng(svg);
+          const parsed = new globalThis.DOMParser().parseFromString(widget.markup, 'image/svg+xml').documentElement;
+          return svgToPng(/** @type {SVGSVGElement} */ (/** @type {unknown} */ (parsed)));
+        },
+      }),
+    );
+  }
   return host;
 }
 
+/** Which scheme the page is actually drawn in right now: 'dark' or 'light'. */
+function usedScheme() {
+  const chosen = document.documentElement.dataset.theme;
+  if (chosen === 'dark' || chosen === 'light') return chosen;
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
 /**
- * A chart from the `chart` tool is drawn interactive; anything else, or a chart
- * whose markup does not survive cleaning, is the sandboxed picture.
+ * A chart from the `chart` tool is drawn in the page, interactive; anything
+ * else, or a chart whose markup does not survive cleaning, is the sandboxed
+ * picture.
+ *
+ * `toolName` catches the charts drawn before they carried their numbers: the
+ * markup is still this app's own drawing, so it goes in the page too — as a
+ * picture without the hover, rather than in a frame.
  */
-export function widgetNode(widget) {
-  return (widget?.kind === 'chart' && chartFigure(widget)) || widgetFrame(widget);
+export function widgetNode(widget, toolName = null) {
+  const ours = widget?.kind === 'chart' || toolName === 'chart';
+  return (ours && chartFigure(widget)) || widgetFrame(widget);
 }
 
 /**
@@ -863,6 +910,45 @@ export function fileCard(file) {
 
   card.append(icon, body, open, download);
   return card;
+}
+
+/**
+ * A file the assistant made, placed in the transcript — replacing the card for
+ * the same id, so a document edited three times is one card, not four.
+ *
+ * A picture is also *shown*: a generated image behind an "Open" button is a
+ * picture nobody sees until they go looking. It sits above its card, with the
+ * corner buttons to copy or download it.
+ */
+function placeFile(body, file) {
+  const card = fileCard(file);
+  const existing = [...body.querySelectorAll('.filecard')].find((node) => node.dataset.file === file.id);
+  if (existing) existing.replaceWith(card);
+  else body.append(card);
+
+  if (!/^image\//i.test(file.mime || '') || /svg/i.test(file.mime || '')) return;
+  const src = `/api/attachments/${file.id}${file.version ? `?v=${file.version}` : ''}`;
+  const figure = el('figure', 'media');
+  figure.dataset.media = file.id;
+  const open = el('button', 'media__open');
+  open.type = 'button';
+  open.dataset.file = file.id;
+  open.title = t('chat.openNamed').replace('{name}', file.name || '');
+  const img = el('img');
+  img.src = src;
+  img.alt = file.name || '';
+  img.loading = 'lazy';
+  open.append(img);
+  figure.append(
+    open,
+    mediaTools({
+      name: file.name || fileNameFrom('image', 'png'),
+      blob: () => imageUrlToPng(src),
+    }),
+  );
+  const shown = [...body.querySelectorAll('figure.media')].find((node) => node.dataset.media === file.id);
+  if (shown) shown.replaceWith(figure);
+  else card.before(figure);
 }
 
 /**
@@ -1082,15 +1168,8 @@ export function assistantMessage() {
         out.append(pre);
         item.append(out);
 
-        if (result.file?.id) {
-          const card = fileCard(result.file);
-          const existing = [...body.querySelectorAll('.filecard')].find(
-            (node) => node.dataset.file === result.file.id,
-          );
-          if (existing) existing.replaceWith(card);
-          else body.append(card);
-        }
-        if (result.widget?.markup) body.append(widgetNode(result.widget));
+        if (result.file?.id) placeFile(body, result.file);
+        if (result.widget?.markup) body.append(widgetNode(result.widget, result.name));
         if (result.schedule?.id) placeScheduleCard(body, result.schedule);
       },
     };
@@ -1394,14 +1473,7 @@ export function assistantMessage() {
            * that was asked for. A rewrite replaces the card for that same id, so
            * a document edited three times is one card, not four.
            */
-          if (result.file?.id) {
-            const card = fileCard(result.file);
-            const existing = [...body.querySelectorAll('.filecard')].find(
-              (node) => node.dataset.file === result.file.id,
-            );
-            if (existing) existing.replaceWith(card);
-            else body.append(card);
-          }
+          if (result.file?.id) placeFile(body, result.file);
 
           /**
            * A picture drawn into the conversation itself.
@@ -1411,7 +1483,7 @@ export function assistantMessage() {
            * something to open — it is already open, which is what makes it the
            * right shape for "here is what I found" rather than "here is a report".
            */
-          if (result.widget?.markup) body.append(widgetNode(result.widget));
+          if (result.widget?.markup) body.append(widgetNode(result.widget, result.name));
 
           /**
            * A schedule set up — or found already there — by this call.

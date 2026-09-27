@@ -56,8 +56,16 @@ function axisTicks(max, count = 4) {
   const raw = max / count;
   const mag = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) || mag * 10;
-  const ticks = [];
-  for (let v = 0; v <= max + step * 0.001; v += step) ticks.push(Math.round(v * 1000) / 1000);
+  /*
+   * Up to the first round number at or above the largest value — never short
+   * of it. This stopped at the last step *below* the maximum, so a 1,750 bar on
+   * a 500-step axis was scaled against 1,500 and drawn past the top of the
+   * plot, through the title, with its own value label hidden behind it.
+   */
+  const ticks = [0];
+  while (ticks[ticks.length - 1] < max - step * 0.001) {
+    ticks.push(Math.round((ticks[ticks.length - 1] + step) * 1000) / 1000);
+  }
   return ticks;
 }
 

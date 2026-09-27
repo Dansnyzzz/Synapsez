@@ -800,6 +800,15 @@ const shutProjects = new Set();
  * Twenty is where a list you glance at becomes a list you scroll. Everything
  * past it is one press away, and in search and the Projects shelf regardless.
  */
+/**
+ * A project changed somewhere else — pinned from its page or the shelf,
+ * renamed, archived — and the sidebar lists pinned projects, so it redraws now
+ * rather than whenever the next conversation happens to be opened.
+ */
+document.addEventListener('projects-changed', () => {
+  refreshChats().catch(() => {});
+});
+
 const SIDEBAR_CHATS = 20;
 let showingAllChats = false;
 
@@ -816,7 +825,10 @@ async function refreshChats({ background = false } = {}) {
     currentLanguage(),
     [...shutProjects].sort(),
     showingAllChats,
-    projects.map((p) => [p.id, p.name]),
+    // Pinned too: pinning is what puts a project in the sidebar, and a
+    // signature without it treated a pin as "nothing changed" and skipped the
+    // redraw until something else happened to force one.
+    projects.map((p) => [p.id, p.name, !!p.pinned]),
     chats.map((c) => [c.id, c.title, c.pinned, c.running, c.project_id, c.unread, c.chat_group]),
   ]);
   if (background && signature === chatSignature) return;
@@ -855,7 +867,14 @@ async function refreshChats({ background = false } = {}) {
    * project that is not pinned is one click away on the shelf, exactly where
    * the rest of them are.
    */
-  const filed = projects.filter((project) => project.pinned && byProject.has(project.id));
+  /*
+   * Every pinned project, including one with nothing in it yet. Pinning is
+   * somebody saying "keep this in front of me"; waiting for its first
+   * conversation before honouring that made the pin look like it had not
+   * worked. An empty one opens its page when pressed rather than folding
+   * nothing.
+   */
+  const filed = projects.filter((project) => project.pinned);
   if (filed.length) {
     list.append(sidebarLabel(t('nav.projects')));
     for (const project of filed) {
@@ -874,6 +893,11 @@ async function refreshChats({ background = false } = {}) {
       toggle.append(Object.assign(document.createElement('span'), { textContent: project.name }));
       toggle.title = project.name;
       toggle.addEventListener('click', () => {
+        if (!byProject.has(project.id)) {
+          leavePages();
+          projectPage.open(project.id);
+          return;
+        }
         if (shutProjects.has(project.id)) shutProjects.delete(project.id);
         else shutProjects.add(project.id);
         refreshChats().catch(() => {});
@@ -896,7 +920,7 @@ async function refreshChats({ background = false } = {}) {
       head.append(toggle, go);
       list.append(head);
 
-      if (open) for (const chat of byProject.get(project.id)) list.append(chatRow(chat, { nested: true }));
+      if (open) for (const chat of byProject.get(project.id) || []) list.append(chatRow(chat, { nested: true }));
     }
   }
 
@@ -2076,6 +2100,20 @@ const pages = createPages({
   openViewer: (id) => viewer.open({ id }),
   openChat: (id) => openChat(id),
   onLeave: () => leavePages(),
+  /**
+   * "Describe it to the assistant" — in a new conversation, not the last one.
+   *
+   * This was `leavePages()` and a toast, which put the person back in
+   * whatever conversation they had open before, so a new scheduled job was
+   * described into the middle of an unrelated thread. A blank conversation,
+   * with the sentence already begun, is what "new" means.
+   */
+  onDescribe: (starter) => {
+    leavePages();
+    closeSidebar();
+    startBlankChat();
+    if (starter) setComposerText(starter);
+  },
   onNewProject: () => openProjectForm(),
   // The sidebar keeps its own short list of scheduled work; a task written
   // anywhere has to reach it.
