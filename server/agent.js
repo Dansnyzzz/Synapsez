@@ -979,7 +979,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     workerStatus(user, prefs),
     skillMenu(userId),
     connectorSummary(userId),
-    projectPrompt(userId, chat, asked),
+    projectPrompt(userId, chat, asked, { contextTokens: entry?.context }),
     providerStatus(userId),
     // Never allowed to fail the turn. One unreachable server must not take the
     // assistant's own tools away with it — `mcpTools` records the failure and

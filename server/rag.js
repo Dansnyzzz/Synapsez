@@ -293,12 +293,17 @@ const MAX_ANSWER_CHARS = 24_000;
  * precision, and a real stemmer would cost a dependency and an argument about
  * which one.
  */
-const STOPWORDS = new Set([
+export const STOPWORDS = new Set([
   'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'is', 'it', 'for', 'on', 'at', 'as', 'by',
   'be', 'are', 'was', 'were', 'that', 'this', 'with', 'from', 'what', 'which', 'who', 'how',
   'when', 'where', 'why', 'do', 'does', 'did', 'i', 'we', 'you',
   'là', 'và', 'của', 'cho', 'với', 'các', 'những', 'một', 'trong', 'khi', 'thì', 'có', 'được',
   'gì', 'nào', 'sao', 'bao', 'tôi', 'bạn',
+  // Words that carry a request rather than its subject: "please fix the
+  // header" must not match a document because both contain "the".
+  'please', 'can', 'could', 'me', 'my', 'your', 'help', 'about', 'not', 'no', 'yes', 'if', 'so', 'but', 'all',
+  'không', 'này', 'đó', 'để', 'nhé', 'hãy', 'giúp', 'muốn', 'cần', 'lại', 'đã', 'sẽ', 'đang', 'rồi', 'như',
+  'về', 'từ', 'ra', 'vào', 'mình', 'ạ', 'thế', 'vậy', 'nhưng', 'hay', 'hoặc', 'cũng', 'rất', 'nữa',
 ]);
 
 const terms = (text) =>

@@ -26,6 +26,7 @@ import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
 import { search, formatResults } from '../search.js';
 import { untrusted } from './untrusted.js';
+import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText, answerSummary } from './askOptions.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
@@ -1689,8 +1690,25 @@ async function workflowStatusTool({ id }, { userId }) {
   return ['Workflows on this account:', '', ...lines].join('\n');
 }
 
-async function searchDocsTool({ query, limit, source }, { userId }) {
-  return searchDocs(userId, { query, limit, source });
+/**
+ * Search the documents this conversation can read.
+ *
+ * In a project, that is first of all the project's own sources — files
+ * uploaded there never went into the folder index, so searching only that
+ * told the model "nothing has been indexed" in a project holding the very
+ * document it was asked about. The shelf answers first; the folder index is
+ * added when there is one, and its absence is not reported as an error when
+ * the shelf already answered.
+ */
+async function searchDocsTool({ query, limit, source }, { userId, chatId }) {
+  const chat = chatId ? await getStore().getChat(userId, chatId) : null;
+  const fromProject = chat?.project_id ? await searchProject(userId, chat.project_id, query, limit) : null;
+  if (!fromProject) return searchDocs(userId, { query, limit, source });
+
+  const shelf = untrusted('project sources', fromProject);
+  const indexed = await searchDocs(userId, { query, limit, source }).catch(() => null);
+  if (!indexed || /^Nothing (has been )?indexed|^Nothing is indexed/.test(indexed)) return shelf;
+  return `${shelf}\n\nFrom the indexed folders:\n${indexed}`;
 }
 
 async function listIndexedTool(_input, { userId }) {

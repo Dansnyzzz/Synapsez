@@ -1829,7 +1829,7 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: true,
     description:
-      'Search the documents the user has indexed, by meaning rather than by keyword — "what did we agree about the deposit" finds the paragraph even when it never says "deposit". ' +
+      "Search the user's documents — this project's sources in a project conversation, and any folders they indexed. " +
       'Returns whole passages with the file they came from. Reach for this before saying you do not know something about their own work, and cite the file when you answer from it.',
     parameters: {
       type: 'object',

@@ -3,6 +3,7 @@ import { getStore } from './store/index.js';
 import { classify, saveUpload } from './attachments.js';
 import { extractPdfText } from './pdf.js';
 import { isLegacyOffice, officeFormat, readOffice } from './office/index.js';
+import { STOPWORDS } from './rag.js';
 
 /**
  * Projects: standing instructions, a shelf of sources, and answers that stay on
@@ -25,8 +26,22 @@ import { isLegacyOffice, officeFormat, readOffice } from './office/index.js';
  * instruction to be accurate.
  */
 
-/** How much source text a turn may carry. Roughly 15k tokens of the window. */
-const CONTEXT_CHARS = 60_000;
+/** How much source text a turn may carry, at most. Roughly 10k tokens. */
+const CONTEXT_CHARS = 40_000;
+
+/**
+ * The share of a model's window the shelf may take on one turn.
+ *
+ * A flat 60,000 characters was about 15k tokens on every step of every turn —
+ * a tenth of a 128k window, and most of a 32k one. The shelf is now sized to
+ * the window (an eighth of it, at four characters a token), capped above, and
+ * floored so a small model still sees a useful slice. Anything the turn needs
+ * beyond that is one `search_docs` call away, which reads the same shelf.
+ */
+export function shelfBudget(contextTokens) {
+  const tokens = Number(contextTokens) || 128_000;
+  return Math.max(8_000, Math.min(CONTEXT_CHARS, Math.floor(tokens * 4 * 0.125)));
+}
 
 /**
  * Passage size when a shelf is too big to send whole. Big enough to hold an
@@ -206,7 +221,7 @@ const terms = (text) =>
   String(text || '')
     .toLowerCase()
     .split(/[^\p{L}\p{N}_]+/u)
-    .filter((w) => w.length > 1);
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w));
 
 /** Split one file into overlapping passages, on paragraph edges where it can. */
 function passages(file, size = PASSAGE_CHARS) {
@@ -365,8 +380,22 @@ export function selectSources(files, question, budget = CONTEXT_CHARS) {
    * the opening of the shelf is sent instead, in document order, which is at
    * least honest about being a starting point.
    */
-  const matching = ordered.filter((p) => p.score > 0);
-  const pool = matching.length ? matching : ordered;
+  /**
+   * A passage has to match *well* to be worth its tokens.
+   *
+   * Anything scoring above zero used to qualify, so one shared common word let
+   * a passage in, and the budget filled with text that happened to contain
+   * "the". A fifth of the best match is the floor now.
+   *
+   * And when nothing matches at all — "fix the header", "thanks", a follow-up
+   * about a file — nothing is sent. The opening of the shelf used to go
+   * instead, up to the whole budget, on every step of a turn that had no use
+   * for it. The model still has the list of files in the briefing and
+   * `search_docs` to read any of them when it does need to.
+   */
+  const best = ordered[0]?.score || 0;
+  const pool = ordered.filter((p) => p.score > 0 && p.score >= best * 0.2);
+  if (!pool.length) return { whole: false, truncated: true, sources: [], nothingMatched: true };
 
   const keep = [];
   let used = 0;
@@ -409,7 +438,7 @@ export function selectSources(files, question, budget = CONTEXT_CHARS) {
  * be careful. "Say the sources do not cover it" is a specific, achievable
  * action; "be accurate" is a mood.
  */
-export function renderProject({ project, sources, whole, truncated, names, images = [] }) {
+export function renderProject({ project, sources, whole, truncated, names, images = [], nothingMatched = false }) {
   const lines = ['', `# Project: ${project.name}`];
 
   if (project.instructions?.trim()) {
@@ -470,7 +499,30 @@ export function renderProject({ project, sources, whole, truncated, names, image
    * puts the cache back to work, and costs nothing in quality — the model reads
    * the same words either way.
    */
+  /**
+   * A shelf small enough to send whole is the same text on every turn, so it
+   * belongs in the briefing — the stable, cached part of the prompt — not on
+   * the question, where it moved every turn and was paid for in full each
+   * time. Only a shelf too big to send whole has passages that depend on the
+   * question, and only those travel with it.
+   */
+  if (whole && !truncated && sources.length) {
+    lines.push('', '## Source text', 'The whole of every source, as the user uploaded it.');
+    for (const source of sources) lines.push('', `### ${source.name}`, source.text);
+    return { briefing: lines.join('\n'), passages: '' };
+  }
+
   const passages = [];
+
+  // Nothing on the shelf matched this message. Said in one line, so the model
+  // knows to look rather than to assume the sources are silent.
+  if (nothingMatched) {
+    return {
+      briefing: lines.join('\n'),
+      passages:
+        '(No passage of the project sources matched this message, so none are attached. If you need them, call search_docs — it searches these files.)',
+    };
+  }
 
   /**
    * The truncation warning belongs here, with the passages it describes.
@@ -502,7 +554,9 @@ export function renderProject({ project, sources, whole, truncated, names, image
  * `question` is the message being answered: it decides which passages are worth
  * sending when the shelf does not fit whole.
  */
-export async function projectPrompt(userId, chat, question) {
+/** @param {{ contextTokens?: number }} [options] */
+export async function projectPrompt(userId, chat, question, options = {}) {
+  const { contextTokens } = options;
   if (!chat?.project_id) return null;
 
   const store = getStore();
@@ -535,7 +589,7 @@ export async function projectPrompt(userId, chat, question) {
 
   const readable = files.filter((f) => f.kind !== 'image');
   const picked = readable.length
-    ? selectSources(readable, question)
+    ? selectSources(readable, question, shelfBudget(contextTokens))
     : { whole: true, truncated: false, sources: [] };
 
   const { briefing, passages } = renderProject({ project, names, images, ...picked });
@@ -551,3 +605,36 @@ export async function projectPrompt(userId, chat, question) {
  * does not quietly make every turn cost a fortune.
  */
 const MAX_PROJECT_IMAGES = 4;
+
+
+/**
+ * Search a project's own sources — what `search_docs` reads in a project
+ * conversation.
+ *
+ * The folder index (rag.js) is a different store, filled by `index_folder`;
+ * files uploaded to a project were never in it, so a model asking "what does
+ * Article 5 of the CISG say" in the project that holds the CISG was told
+ * "nothing has been indexed yet". This answers from the shelf itself, with the
+ * same passages and ranking the turn uses, and needs no embedding key.
+ *
+ * Scoped by account and project in the store query; the cache it shares is
+ * keyed by file ids, so nothing crosses between accounts.
+ *
+ * @returns {Promise<string|null>} the passages as text, or null when the
+ *   project has nothing readable.
+ */
+export async function searchProject(userId, projectId, query, limit = 6) {
+  const store = getStore();
+  const files = (await store.readProjectFiles(userId, projectId)).filter((f) => f.kind !== 'image' && f.text);
+  if (!files.length) return null;
+  const wanted = Math.min(Math.max(Number(limit) || 6, 1), 20);
+  const ranked = rank(shelfIndex(files, PASSAGE_CHARS), String(query || ''));
+  const best = ranked[0]?.score || 0;
+  const hits = ranked.filter((p) => p.score > 0 && p.score >= best * 0.2).slice(0, wanted);
+  if (!hits.length) {
+    return `No passage in this project's sources (${files.map((f) => f.name).join(', ')}) matches "${query}". Try the words the documents themselves would use.`;
+  }
+  // In document order within each file, so neighbouring passages read on.
+  hits.sort((a, b) => (a.file === b.file ? a.at - b.at : a.file.localeCompare(b.file)));
+  return hits.map((h) => `[${h.file}]\n${h.text}`).join('\n\n---\n\n');
+}

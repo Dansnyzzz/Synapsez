@@ -147,6 +147,25 @@ section('what may go on the shelf');
     data: b64('PK'),
   });
   check('and so is a kind nothing can read', junk.status === 400, junk.body?.error);
+
+  /*
+   * search_docs in a project conversation reads the project's own sources.
+   * It used to search only the folder index, which files uploaded to a project
+   * never enter — so it answered "nothing has been indexed yet" in a project
+   * holding the very document asked about.
+   */
+  const { getStore } = await import('../server/store/index.js');
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  const store = getStore();
+  const me = await store.getUserByEmail('alice@projects.test');
+  const chat = await alice.call('POST', '/api/chats', { title: 'ask the shelf', projectId });
+  const chatId = chat.body?.chat?.id;
+  const found = await CLOUD_IMPLEMENTATIONS.search_docs({ query: 'deadline' }, { userId: me.id, chatId });
+  check('search_docs in a project finds the project source', /14 March/.test(String(found)) && /notes\.md/.test(String(found)), String(found).slice(0, 160));
+  check('  and never says nothing is indexed', !/Nothing has been indexed/.test(String(found)));
+  const other = await store.getUserByEmail('carol@projects.test');
+  const theirs = await CLOUD_IMPLEMENTATIONS.search_docs({ query: 'deadline' }, { userId: other.id, chatId }).catch((err) => err.message);
+  check("another account's search cannot reach this project", !/14 March/.test(String(theirs)), String(theirs).slice(0, 120));
 }
 
 /* ── the part that decides whether answers are grounded ─────────── */
@@ -222,7 +241,10 @@ section('what actually reaches the prompt');
   check('the project is named', /# Project: Exam/.test(briefing));
   check('its instructions are carried', /Answer in Vietnamese\./.test(briefing));
   check('the sources are listed by name', /rules\.md, syllabus\.md/.test(briefing));
-  check('the text itself is there', /pass mark is 5\.0/.test(passages));
+  // A shelf that fits whole is the same text every turn, so it rides in the
+  // briefing — the stable, cached block — and nothing moves with the question.
+  check('a whole shelf is in the briefing', /pass mark is 5\.0/.test(briefing));
+  check('  and nothing travels with the question', passages === '', JSON.stringify(passages.slice(0, 60)));
 
   // The four rules that make grounding mean something.
   check('claims must name their file', /name the file it came from/.test(briefing));
@@ -244,8 +266,15 @@ section('what actually reaches the prompt');
    * wrong when the passages leak back into the briefing, it just silently costs
    * several times more.
    */
-  check('the question-selected text is NOT in the briefing', !/pass mark is 5\.0/.test(briefing));
-  check('  which is what keeps the cached prefix identical between turns', !/### /.test(briefing));
+  // Text chosen *by the question* must not: it differs every turn.
+  const searched = renderProject({
+    project: { name: 'Exam', instructions: 'Answer in Vietnamese.', grounded: true },
+    names: long.map((f) => f.name),
+    ...picked,
+  });
+  check('the question-selected text is NOT in the briefing', !/pass mark is 5\.0/.test(searched.briefing));
+  check('  which is what keeps the cached prefix identical between turns', !/### /.test(searched.briefing));
+  check('  it travels with the question instead', /pass mark is 5\.0/.test(searched.passages));
 
   /*
    * Two different questions over the same shelf, including one short enough to
@@ -267,9 +296,30 @@ section('what actually reaches the prompt');
     'if this ever differs, prompt caching is dead for every project chat',
   );
   check(
-    '  and so does one that fits the shelf whole',
-    sameShelf('what is the pass mark', 800) === sameShelf('what is the pass mark', 500_000),
+    '  and a shelf that fits whole gives one briefing for every question',
+    sameShelf('what is the pass mark', 500_000) === sameShelf('something else entirely', 500_000),
   );
+
+  // Nothing matched: nothing is sent but a one-line pointer to search_docs —
+  // not the opening of the shelf, which used to fill the whole budget.
+  const unrelated = selectSources(long, 'fix the header styling please', 800);
+  check('a message that matches nothing sends no passages', unrelated.sources.length === 0 && unrelated.nothingMatched);
+  const pointer = renderProject({ project: { name: 'Exam', grounded: true }, names: ['big.md'], ...unrelated }).passages;
+  check('  only a pointer to search_docs', /search_docs/.test(pointer) && pointer.length < 300, pointer);
+
+  // A passage that shares one common word with the question is not worth its tokens.
+  const noisy = [
+    { id: 'n', name: 'n.md', text: `${'The weather is the topic here. '.repeat(60)}\n\n${'x '.repeat(900)}\n\nThe pass mark for the exam is 5.0 and the retake mark is 4.0.` },
+  ];
+  const tight = selectSources(noisy, 'pass mark exam retake', 900);
+  check('weak matches do not fill the budget', tight.sources.every((src) => !/weather/.test(src.text)), JSON.stringify(tight.sources).slice(0, 120));
+
+  // The budget follows the model's window.
+  const { shelfBudget, searchProject } = await import('../server/projects.js');
+  check('a small window gets a smaller shelf', shelfBudget(16_000) < shelfBudget(128_000), `${shelfBudget(16_000)} < ${shelfBudget(128_000)}`);
+  check('  never below a useful floor', shelfBudget(4_000) >= 8_000);
+  check('  and never above the cap', shelfBudget(2_000_000) <= 40_000);
+  check('searchProject is exported for search_docs', typeof searchProject === 'function');
 
   const loose = renderProject({
     project: { name: 'Exam', instructions: '', grounded: false },
