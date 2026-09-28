@@ -228,9 +228,12 @@ export async function executeTool(args) {
       content:
         `The arguments for ${args?.name} were not valid JSON, so the call was not run. ` +
         'This usually means the reply was cut off mid-call. Send it again with shorter arguments' +
-        (args?.name === 'create_file' || args?.name === 'update_file'
-          ? ' — for a long file, write the first part, then add the rest with update_file and append: true, a part at a time. '
-          : '. ') +
+        (args?.name === 'update_file'
+          ? ' — to change part of an existing file, do not resend it whole: pass edits, [{find, replace}], with only the parts that change. ' +
+            'For a whole new version, write it in parts with append: true. '
+          : args?.name === 'create_file'
+            ? ' — for a long file, write the first part, then add the rest with update_file and append: true, a part at a time. '
+            : '. ') +
         `What arrived was: ${String(malformed).slice(0, 200)}`,
     };
   }

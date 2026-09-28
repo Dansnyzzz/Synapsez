@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-28 (later still) — project documents found, small edits to big files, a quieter transcript
+
+### Fixed
+
+- **search_docs in a project** searches the project's own sources (see be470b9) — it answered
+  "nothing has been indexed" in a project holding the document. Project context is also sized to
+  the model's window, filtered to real matches, and cached when it fits whole.
+- **Fixing part of a big file** no longer means rewriting all of it. `update_file` takes `edits`,
+  `[{find, replace}]` — each find exact and unique, all or nothing — so a header fix to a 40 KB quiz
+  sends a few lines instead of 40 KB that a free model's reply was cut off partway through.
+- **"Waiting for the model — it has to queue"** no longer shows while the model is plainly
+  thinking or writing: the line is cleared the moment reasoning, text or a tool call arrives. The
+  status line under the transcript is dropped for tools too — each card's own mark spins (brand
+  purple) while it works, and that is the one sign.
+- The **Scheduled list in the sidebar** is gone: a handful of tasks pushed the conversation history
+  off the screen. Scheduled work lives on the Scheduled page.
+- The project page lays itself out by the room it has, so opening the side panel no longer squeezes
+  the work column to a sliver.
+
+### Added
+
+- **Tools used, as connectors.** The side panel's Context lists the tools this conversation used —
+  Web search first — beside the connected services. Pressing one opens every call in the panel:
+  one group per message that asked, each group folding, each result a link with its site.
+
 ## 2026-09-28 (night) — every interruption has a Continue; Outputs and Context in the side panel
 
 ### Added

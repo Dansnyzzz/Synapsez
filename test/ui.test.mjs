@@ -3786,6 +3786,9 @@ section('what a project made is a row of pages, newest first');
   await store.appendMessage(user.id, 'c-out', { id: 'm-out', role: 'user', text: 'make things' });
   // A fold, which the transcript must not draw as a block among the turns.
   await store.appendMessage(user.id, 'c-out', { id: 'm-sum', role: 'summary', text: 'Folded summary text', replaced: 12, covers: 0 });
+  // One web search, answered, so Context lists it and its panel has something to show.
+  await store.appendMessage(user.id, 'c-out', { id: 'm-ws', role: 'assistant', text: '', toolCalls: [{ id: 'ws1', name: 'web_search', input: { query: 'ESMC Dresden groundbreaking' } }] });
+  await store.appendMessage(user.id, 'c-out', { id: 'm-wr', role: 'tool', results: [{ toolCallId: 'ws1', name: 'web_search', isError: false, content: '2 results from Exa.\n\n1. ESMC breaks ground in Dresden\n   https://pr.tsmc.com/english/news/3169\n   snippet\n\n2. TSMC Dresden fab\n   https://www.digitimes.com/news/a1\n   snippet' }] });
   for (let i = 0; i < 7; i += 1) {
     const page_ = i % 2 === 0;
     await store.createAttachment(user.id, {
@@ -3811,6 +3814,15 @@ section('what a project made is a row of pages, newest first');
     /** @type {any} */ (window).__foldsDrawn = document.querySelectorAll('#messages .compacted').length;
     const railRows = [...document.querySelectorAll('#rail-extra [data-rail="outputs"] .railrow')];
     /** @type {any} */ (window).__rail = { rows: railRows.length, first: railRows[0]?.textContent?.trim(), count: document.querySelector('#rail-extra .railsec__count')?.textContent };
+    const chip = /** @type {HTMLElement | null} */ (document.querySelector('#rail-extra [data-tool="web_search"]'));
+    chip?.click();
+    await new Promise((r) => setTimeout(r, 200));
+    const group = /** @type {HTMLDetailsElement | null} */ (document.querySelector('#toolpane .toolgrp'));
+    const info = { chip: !!chip, open: !document.getElementById('toolpane').hidden, groups: document.querySelectorAll('#toolpane .toolgrp').length, hits: document.querySelectorAll('#toolpane .toolhit').length, folded: false };
+    /** @type {HTMLElement | null} */ (group?.querySelector('summary'))?.click();
+    info.folded = group ? !group.open : false;
+    document.getElementById('toolpane-close')?.click();
+    /** @type {any} */ (window).__search = info;
     document.getElementById('chat-project')?.click();
     await new Promise((r) => setTimeout(r, 1800));
   });
@@ -3827,6 +3839,10 @@ section('what a project made is a row of pages, newest first');
   });
   check('a fold is not drawn in the transcript', (await page.evaluate(() => /** @type {any} */ (window).__foldsDrawn)) === 0);
   const railed = await page.evaluate(() => /** @type {any} */ (window).__rail);
+  const searched = /** @type {any} */ (await page.evaluate(() => /** @type {any} */ (window).__search));
+  check('a web search the conversation used is listed as a connector', searched?.chip === true, JSON.stringify(searched));
+  check('  and opens every search, grouped by the message that asked', searched?.groups === 1 && searched?.hits === 2, JSON.stringify(searched));
+  check('  each group folds on a press', searched?.folded === true, JSON.stringify(searched));
   check('the side panel lists what this conversation made', railed?.rows === 7 && railed?.count === '7', JSON.stringify(railed));
   check('  newest first', /page-6/.test(railed?.first || ''), railed?.first);
   check('every output is a card in one row', first.count === 7, String(first.count));
@@ -4860,21 +4876,15 @@ section('a project schedules its own work, and can find its own files');
   check('and no shelf furniture on a page about one thing', detail.quiet);
 
   /*
-   * The sidebar keeps its own list of what will happen without you. This task
-   * was made by a direct request rather than through the form, which is the
-   * same situation as one the assistant scheduled itself or a phone added — so
-   * the refresh comes from returning to the tab, which is when the app looks.
+   * Scheduled work is not listed in the sidebar: a handful of tasks pushed the
+   * conversation history off the screen. It lives on the Scheduled page.
    */
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   await page.waitForTimeout(900);
-  const rail = await page.evaluate(() => ({
-    label: document.querySelector('#sidebar-tasks .chats__label')?.textContent,
-    names: [...document.querySelectorAll('#sidebar-tasks .chat-item')].map((b) => b.textContent),
-    when: document.querySelector('#sidebar-tasks .chat-row__when')?.textContent,
-  }));
-  check('the sidebar lists scheduled work of its own', rail.names.includes('Daily digest'), rail.names.join(','));
-  check('under its own heading', rail.label === 'Scheduled', rail.label);
-  check('with how often each repeats', rail.when === 'Manual only', rail.when);
+  const listed = await page.evaluate(() =>
+    [...document.querySelectorAll('.sidebar .chat-item')].some((b) => b.textContent === 'Daily digest'),
+  );
+  check('scheduled work does not crowd the conversation list', listed === false);
 
   // And the shelf can be searched when it has outgrown being browsed.
   await page.click('#open-projects');

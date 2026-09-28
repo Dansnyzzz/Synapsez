@@ -1108,12 +1108,6 @@ textarea {
   margin: 2px -6px;
   padding: 0 6px;
 }
-#sidebar-tasks {
-  flex: none;
-  /* Bounded anyway: somebody with thirty scheduled tasks must not lose the
-     conversation list to them. */
-  max-height: 32vh;
-}
 #chat-list { flex: 1; }
 
 /**
@@ -2642,7 +2636,12 @@ details.block pre {
 }
 .mark--pending {
   border: 2px solid var(--line);
+  border-top-color: var(--accent);
   border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mark--pending { animation: none; }
 }
 
 .plan {
@@ -6423,6 +6422,14 @@ details.block pre {
   letter-spacing: -0.01em;
 }
 
+/* Laid out by the room the page actually has, not the window: with the side
+   panel open the page can be half the screen, and two columns in that
+   squeezed the work column to a sliver. */
+#project-page { container-type: inline-size; }
+@container (max-width: 760px) {
+  .project__grid { grid-template-columns: minmax(0, 1fr) !important; }
+}
+
 /* Two columns: what you do here, and what this project knows. */
 .project__grid {
   display: grid;
@@ -7996,3 +8003,57 @@ select:focus-visible {
   cursor: pointer;
 }
 .railchip:hover { background: var(--tint-2); }
+
+/* ── what a tool did: every search, grouped by the message that asked ── */
+.toolpane__count {
+  margin: 0 2px 12px;
+  color: var(--text-faint);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.toolgrp {
+  margin-bottom: 10px;
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--glass-hi), transparent 40%), var(--tint);
+  overflow: hidden;
+}
+.toolgrp__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+.toolgrp__head::-webkit-details-marker { display: none; }
+.toolgrp__head:hover { background: var(--tint-2); }
+.toolgrp__asked { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.toolgrp__n { flex: none; color: var(--text-faint); font-size: 12.5px; }
+.toolgrp__chev { flex: none; color: var(--text-faint); transition: transform 0.18s; }
+.toolgrp:not([open]) .toolgrp__chev { transform: rotate(-90deg); }
+.toolgrp__body { display: grid; gap: 2px; padding: 0 8px 10px; max-height: 380px; overflow-y: auto; }
+.toolq {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px 4px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.toolq > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolq__n { flex: none; color: var(--text-faint); }
+.toolhit {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 8px 7px 28px;
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+.toolhit:hover { background: var(--tint-2); }
+.toolhit__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolhit__host { flex: none; color: var(--text-faint); font-size: 12px; }

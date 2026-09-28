@@ -16,9 +16,9 @@ import { escapeHtml } from './markdown.js';
  * Its own module because app.js is five thousand lines and this is a
  * self-contained view with one way in (`render`) and clicks as the way out.
  *
- * @param {{ api: any, openFile: (file: {id: string, name?: string}) => void, openSettings: (tab: string) => void }} wiring
+ * @param {{ api: any, openFile: (file: {id: string, name?: string}) => void, openSettings: (tab: string) => void, openPane: (title: string, html: string) => void }} wiring
  */
-export function createRail({ api, openFile, openSettings }) {
+export function createRail({ api, openFile, openSettings, openPane }) {
   const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
   /** Folded or open, per section, for the session. */
@@ -34,6 +34,8 @@ export function createRail({ api, openFile, openSettings }) {
     doc: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>',
     link: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
     skill: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2Z"/><path d="M8 7h6M8 11h6"/></svg>',
+    globe: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+    tool: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4Z"/></svg>',
     plug: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0Z"/><path d="M12 17v4"/></svg>',
   };
 
@@ -83,7 +85,7 @@ export function createRail({ api, openFile, openSettings }) {
 
   /**
    * Draw both sections for the conversation on screen.
-   * @param {{ files?: any[], project?: {id: string} | null }} state
+   * @param {{ files?: any[], project?: {id: string} | null, transcript?: any[], liveTools?: any[] }} state
    */
   async function render(state) {
     const host = $('rail-extra');
@@ -109,14 +111,26 @@ export function createRail({ api, openFile, openSettings }) {
           .join('')}</div>`,
       );
     }
-    if (acct.connectors.length) {
+    /**
+     * Connectors, and the tools this conversation actually used.
+     *
+     * Web search is as much a source as a linked Drive — it is where the
+     * answer's facts came from — so it sits beside them, and a press opens
+     * every search, grouped by the message that asked for it.
+     */
+    const log = toolLog(state.transcript || [], state.liveTools || []);
+    const used = usedKinds(log);
+    if (acct.connectors.length || used.length) {
+      const connected = acct.connectors.map(
+        (c) =>
+          `<button class="railchip" type="button" data-settings="connectors" title="${escapeHtml(c.account || c.label)}">${icon.link}<span>${escapeHtml(c.label)}</span></button>`,
+      );
+      const tools = used.map(
+        (u) =>
+          `<button class="railchip" type="button" data-tool="${escapeHtml(u.kind)}" title="${escapeHtml(u.label)}">${u.kind === 'web_search' ? icon.globe : icon.tool}<span>${escapeHtml(u.label)}</span></button>`,
+      );
       groups.push(
-        `<div class="railgrp"><div class="railgrp__name">${escapeHtml(t('rail.connectors'))}</div><div class="railchips">${acct.connectors
-          .map(
-            (c) =>
-              `<button class="railchip" type="button" data-settings="connectors" title="${escapeHtml(c.account || c.label)}">${icon.link}<span>${escapeHtml(c.label)}</span></button>`,
-          )
-          .join('')}</div></div>`,
+        `<div class="railgrp"><div class="railgrp__name">${escapeHtml(t('rail.connectors'))}</div><div class="railchips">${[...connected, ...tools].join('')}</div></div>`,
       );
     }
     if (acct.skills.length) {
@@ -157,6 +171,61 @@ export function createRail({ api, openFile, openSettings }) {
     for (const button of host.querySelectorAll('[data-settings]')) {
       button.addEventListener('click', () => openSettings(/** @type {HTMLElement} */ (button).dataset.settings));
     }
+    for (const button of host.querySelectorAll('[data-tool]')) {
+      button.addEventListener('click', () => showTool(/** @type {HTMLElement} */ (button).dataset.tool, log));
+    }
+  }
+
+  /**
+   * Every call of one tool in this conversation, in the side panel — one group
+   * per message that asked for it, each group folding on a press.
+   */
+  function showTool(kind, log) {
+    const calls = log.filter((c) => kindOf(c.name) === kind);
+    const turns = [];
+    for (const call of calls) {
+      const last = turns[turns.length - 1];
+      if (last && last.turn === call.turn) last.calls.push(call);
+      else turns.push({ turn: call.turn, asked: call.asked, calls: [call] });
+    }
+    const title = labelOf(kind);
+    const count =
+      kind === 'web_search'
+        ? t(turns.length === 1 ? 'rail.searchesOne' : 'rail.searches', { n: String(turns.length) })
+        : t(calls.length === 1 ? 'rail.usesOne' : 'rail.uses', { n: String(calls.length) });
+    const groups = turns
+      .slice()
+      .reverse()
+      .map((group, i) => {
+        const results = group.calls.flatMap((c) => (kind === 'web_search' ? parseResults(c.content) : []));
+        const body = group.calls
+          .map((c) => {
+            const hits = kind === 'web_search' ? parseResults(c.content) : [];
+            const head = `<div class="toolq">${icon.globe}<span>${escapeHtml(labelInput(c))}</span>${
+              hits.length ? `<span class="toolq__n">${escapeHtml(t('rail.results', { n: String(hits.length) }))}</span>` : ''
+            }</div>`;
+            const rows = hits
+              .map(
+                (h) =>
+                  `<a class="toolhit" href="${escapeHtml(h.url)}" target="_blank" rel="noopener noreferrer"><span class="toolhit__title">${escapeHtml(h.title)}</span><span class="toolhit__host">${escapeHtml(h.host)}</span></a>`,
+              )
+              .join('');
+            return head + rows;
+          })
+          .join('');
+        return `<details class="toolgrp"${i === 0 ? ' open' : ''}>
+          <summary class="toolgrp__head">
+            <span class="toolgrp__asked">${escapeHtml(group.asked || title)}</span>
+            <span class="toolgrp__n">${escapeHtml(
+              kind === 'web_search' ? t('rail.results', { n: String(results.length) }) : t('rail.uses', { n: String(group.calls.length) }),
+            )}</span>
+            <span class="toolgrp__chev" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="toolgrp__body">${body}</div>
+        </details>`;
+      })
+      .join('');
+    openPane(title, `<div class="toolpane__count">${escapeHtml(count)}</div>${groups}`);
   }
 
   return {
@@ -167,4 +236,81 @@ export function createRail({ api, openFile, openSettings }) {
     },
     forgetSources: (projectId) => sources.delete(projectId),
   };
+}
+
+/* ── what the tools did, read from the transcript ───────────────────── */
+
+/** Tools that fetch the outside world, shown under their own names. */
+const KINDS = {
+  web_search: 'rail.tool.web_search',
+  web_fetch: 'rail.tool.web_fetch',
+  deep_research: 'rail.tool.deep_research',
+};
+const kindOf = (name) => (KINDS[name] ? name : String(name || ''));
+const labelOf = (kind) => (KINDS[kind] ? t(KINDS[kind]) : t(`step.${kind}`) === `step.${kind}` ? kind : t(`step.${kind}`));
+
+/** Tools not worth listing as a source: bookkeeping, not reading. */
+const QUIET = new Set(['update_plan', 'load_tools', 'ask_options', 'memory_write', 'memory_append', 'skill_read']);
+
+/**
+ * Every tool call in the conversation, each with the message that led to it.
+ *
+ * Built from the stored transcript plus the calls of a run still in flight,
+ * so a search appears here the moment it finishes, not after a reload.
+ */
+export function toolLog(messages, live = []) {
+  const out = [];
+  const results = new Map();
+  for (const m of messages) if (m.role === 'tool') for (const r of m.results || []) results.set(r.toolCallId, r.content);
+  let turn = 0;
+  let asked = '';
+  for (const m of messages) {
+    if (m.role === 'user') {
+      turn += 1;
+      asked = String(m.text || '').slice(0, 140);
+    }
+    if (m.role !== 'assistant') continue;
+    for (const c of m.toolCalls || []) {
+      out.push({ id: c.id, name: c.name, input: c.input || {}, content: results.get(c.id) || '', turn, asked });
+    }
+  }
+  const seen = new Set(out.map((c) => c.id));
+  for (const c of live) if (!seen.has(c.id)) out.push({ ...c, turn: c.turn ?? turn + 1, asked: c.asked ?? asked });
+  return out;
+}
+
+/** The distinct tools used, most used first, without the bookkeeping ones. */
+export function usedKinds(log) {
+  const counts = new Map();
+  for (const c of log) {
+    if (QUIET.has(c.name)) continue;
+    const kind = kindOf(c.name);
+    counts.set(kind, (counts.get(kind) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([kind, n]) => ({ kind, n, label: labelOf(kind) }));
+}
+
+/** What a call was asked for, in a line. */
+const labelInput = (c) =>
+  String(c.input?.query || c.input?.url || c.input?.question || c.input?.path || c.input?.name || c.name).slice(0, 160);
+
+/**
+ * The results a web search returned, from the text the model was given:
+ * numbered lines, a title then its address. See formatResults on the server.
+ */
+export function parseResults(content) {
+  const hits = [];
+  const text = String(content || '');
+  const line = /^\s*\d+\.\s+(.+)\n\s+(https?:\/\/\S+)/gm;
+  let m;
+  while ((m = line.exec(text)) && hits.length < 25) {
+    let host = '';
+    try {
+      host = new URL(m[2]).hostname.replace(/^www\./, '');
+    } catch {
+      continue;
+    }
+    hits.push({ title: m[1].trim(), url: m[2], host });
+  }
+  return hits;
 }

@@ -1130,8 +1130,9 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: false,
     description:
-      'Rewrite a document you made earlier, keeping the same file and the same place in the conversation. ' +
-      'Pass the complete new content, not a patch — read the current source back with read_generated_file first if you no longer have it. ' +
+      'Change a document you made earlier, keeping the same file and the same place in the conversation. ' +
+      'For a fix to part of it (a header, a style, a few questions) pass edits — [{find, replace}], each find copied exactly and unique — and only those parts travel. ' +
+      'For a rewrite pass the complete new content; read the current source back with read_generated_file first if you no longer have it. ' +
       'Use this rather than create_file when the user asks to change something: a second copy of a quotation with one number different is how the wrong one gets sent. ' +
       'With `append: true` the content is added to the end instead — the way to write anything long (a quiz with a hundred questions, a big page): ' +
       'create_file with the first part, then append the rest a part at a time, each under about 15 KB. One enormous call is cut off before it finishes and writes nothing.',
@@ -1145,8 +1146,17 @@ export const TOOLS = [
         },
         name: { type: 'string', description: 'Rename it at the same time. Optional.' },
         append: { type: 'boolean', description: 'Add content to the end rather than replacing it. Default false.' },
+        edits: {
+          type: 'array',
+          description: 'Targeted changes instead of content: each find must appear once in the source.',
+          items: {
+            type: 'object',
+            properties: { find: { type: 'string' }, replace: { type: 'string' } },
+            required: ['find', 'replace'],
+          },
+        },
       },
-      required: ['file_id', 'content'],
+      required: ['file_id'],
     },
   },
   {

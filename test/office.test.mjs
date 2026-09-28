@@ -748,6 +748,41 @@ let madeId;
     whole.content.slice(0, 120),
   );
 
+  /*
+   * A fix to part of a file sends only that part. Rewriting all of a 40 KB
+   * quiz to change its header was cut off every time on a free model.
+   */
+  const edited = await executeTool({
+    user: aliceUser,
+    chatId,
+    name: 'update_file',
+    input: { file_id: madeId, edits: [{ find: '## Phụ lục', replace: '## Phụ lục A' }] },
+  });
+  check('a targeted edit needs no content', edited.isError === false && /Made 1 change/.test(edited.content), edited.content?.slice(0, 100));
+  const afterEdit = await executeTool({ user: aliceUser, chatId, name: 'read_generated_file', input: { file_id: madeId } });
+  check(
+    '  changing only what it named',
+    afterEdit.content.includes('## Phụ lục A') && afterEdit.content.includes('# Báo giá (đã sửa)'),
+    afterEdit.content.slice(0, 120),
+  );
+  const missing = await executeTool({
+    user: aliceUser,
+    chatId,
+    name: 'update_file',
+    input: { file_id: madeId, edits: [{ find: 'not in the file', replace: 'x' }] },
+  });
+  check('an edit that does not match is refused and says so', missing.isError === true && /did not match/.test(missing.content), missing.content);
+  const twice = await executeTool({
+    user: aliceUser,
+    chatId,
+    name: 'update_file',
+    input: { file_id: madeId, edits: [{ find: 'Phụ lục A', replace: 'B' }, { find: 'nowhere', replace: 'x' }] },
+  });
+  const unchanged = await executeTool({ user: aliceUser, chatId, name: 'read_generated_file', input: { file_id: madeId } });
+  check('  all or nothing: one failed edit leaves the file as it was', twice.isError === true && unchanged.content.includes('## Phụ lục A'));
+  const neither = await executeTool({ user: aliceUser, chatId, name: 'update_file', input: { file_id: madeId } });
+  check('neither content nor edits is refused', neither.isError === true, neither.content);
+
   const listing = await executeTool({ user: aliceUser, chatId, name: 'read_generated_file', input: {} });
   check('and they can be listed', listing.content.includes('Báo giá tháng 8.docx'));
 

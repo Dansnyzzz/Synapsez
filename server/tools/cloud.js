@@ -566,12 +566,53 @@ async function createFileTool({ name, format, content, title, filename, file_nam
   };
 }
 
-async function updateFileTool({ file_id: fileId, content, name, append = false }, { userId }) {
+/**
+ * Targeted changes to a file's source: each `find` must appear exactly once,
+ * and is replaced by its `replace`. All or nothing — a single edit that does
+ * not match leaves the file as it was, and the error says which one.
+ */
+export function applyEdits(source, edits) {
+  let text = String(source);
+  edits.forEach((edit, i) => {
+    const find = String(edit?.find ?? '');
+    if (!find) throw new Error(`Edit ${i + 1} has nothing to find.`);
+    const first = text.indexOf(find);
+    if (first < 0) {
+      throw new Error(
+        `Edit ${i + 1} did not match: its find text is not in the file. Read the source with read_generated_file and copy the text exactly.`,
+      );
+    }
+    if (text.indexOf(find, first + 1) >= 0) {
+      throw new Error(`Edit ${i + 1} matches more than once. Include more of the surrounding text so it is unique.`);
+    }
+    text = text.slice(0, first) + String(edit?.replace ?? '') + text.slice(first + find.length);
+  });
+  return text;
+}
+
+async function updateFileTool({ file_id: fileId, content, name, append = false, edits }, { userId }) {
   const store = getStore();
   const existing = await store.getAttachment(userId, fileId);
   if (!existing) throw new Error(`There is no file with the id ${fileId} on this account.`);
   if (existing.origin !== 'generated') {
     throw new Error(`${existing.name} was uploaded by the user, not written by you, so it cannot be rewritten.`);
+  }
+  /**
+   * Changing part of a file without sending the rest of it.
+   *
+   * A fix to the header of a 40 KB quiz used to mean writing all 40 KB again,
+   * and a free model's reply is routinely cut off long before that — leaving
+   * arguments that were not JSON and nothing changed. With `edits` only the
+   * lines that change travel.
+   */
+  if (Array.isArray(edits) && edits.length) {
+    if (typeof existing.source !== 'string') {
+      throw new Error(`${existing.name} has no stored source to edit. Pass the complete content instead.`);
+    }
+    content = applyEdits(existing.source, edits);
+    append = false;
+  } else if (typeof content !== 'string') {
+    throw new Error('Pass content (the whole new file, or the next part with append) or edits (the parts that change).');
   }
   /**
    * Added to the end rather than replacing.
@@ -601,7 +642,9 @@ async function updateFileTool({ file_id: fileId, content, name, append = false }
   if (!saved) throw new Error('That file could not be updated.');
 
   return {
-    content: append
+    content: Array.isArray(edits) && edits.length
+      ? `Made ${edits.length} change${edits.length === 1 ? '' : 's'} to ${saved.name} (${humanSize(saved.bytes)}). Same file, same id — the viewer shows the new version.`
+      : append
       ? `Added to ${saved.name}; it is now ${humanSize(saved.bytes)}. Same file, same id — keep appending until it is complete.`
       : `Rewrote ${saved.name} (${humanSize(saved.bytes)}). Same file, same id — the viewer shows the new version.`,
     file: {

@@ -748,4 +748,14 @@ export const vi = {
     "Nhà cung cấp ngừng gửi dữ liệu (treo {0} giây).",
   "Google Drive is not connected. Connect it in Settings → Connectors.":
     "Chưa kết nối Google Drive. Hãy kết nối trong Cài đặt → Kết nối.",
+  "Edit {0} has nothing to find.":
+    "Chỉnh sửa {0} không có đoạn cần tìm.",
+  "Edit {0} did not match: its find text is not in the file. Read the source with read_generated_file and copy the text exactly.":
+    "Chỉnh sửa {0} không khớp: đoạn cần tìm không có trong tệp. Đọc mã nguồn bằng read_generated_file và chép đúng từng ký tự.",
+  "Edit {0} matches more than once. Include more of the surrounding text so it is unique.":
+    "Chỉnh sửa {0} khớp nhiều hơn một chỗ. Thêm phần chữ xung quanh để nó là duy nhất.",
+  "{0} has no stored source to edit. Pass the complete content instead.":
+    "{0} không có mã nguồn đã lưu để sửa. Hãy gửi toàn bộ nội dung thay vào đó.",
+  "Pass content (the whole new file, or the next part with append) or edits (the parts that change).":
+    "Hãy gửi content (toàn bộ tệp mới, hoặc phần tiếp theo kèm append) hoặc edits (chỉ những phần thay đổi).",
 };

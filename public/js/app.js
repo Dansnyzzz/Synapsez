@@ -23,7 +23,7 @@ import { createViewer } from './viewer.js';
 import { shouldAutoPreview } from './autopreview.js';
 import { createWorkspace } from './workspace.js';
 import { createPages } from './pages.js';
-import { createProjectPage, repeatsAs } from './project-page.js';
+import { createProjectPage } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
 import { humanSize } from './format.js';
@@ -73,7 +73,30 @@ const rail = createRail({
   api,
   openFile: (file) => viewer.open(file),
   openSettings: (tab) => openSettings(tab),
+  openPane: (title, html) => openToolPane(title, html),
 });
+
+/**
+ * What one tool did, in the side panel over the plan — the same place a task
+ * opens, and it gives the panel back when closed.
+ */
+function openToolPane(title, html) {
+  if (pages.taskPaneOpen()) pages.closeTaskPane();
+  $('toolpane-title').textContent = title;
+  $('toolpane-body').innerHTML = html;
+  $('toolpane').hidden = false;
+  viewer.close();
+  setDetail(true);
+  $('app').classList.add('is-taskpane');
+}
+function closeToolPane() {
+  if ($('toolpane').hidden) return;
+  $('toolpane').hidden = true;
+  $('toolpane-body').innerHTML = '';
+  if (!pages.taskPaneOpen()) $('app').classList.remove('is-taskpane');
+}
+// Not $(): this runs before that helper is declared further down.
+document.getElementById('toolpane-close')?.addEventListener('click', closeToolPane);
 /** Redraw the panel sections for whatever conversation is on screen. */
 const renderRail = () => {
   rail.render(state).catch(() => {});
@@ -685,50 +708,15 @@ makeResizable('detail', $('detail-grip'));
 const busyWithList = () => !!document.querySelector('#chat-list .chat-item--editing') || !$('row-menu').hidden;
 
 /**
- * The work that runs on its own, listed above the conversations.
+ * Scheduled work is not listed in the sidebar.
  *
- * Its own section because a scheduled task is not a conversation you had: it is
- * something that will happen, and the one thing worth seeing at a glance in a
- * sidebar is what the app is going to do without you. Drawn only when there is
- * at least one, so nobody is shown a heading over nothing.
- *
- * Never fatal. A sidebar section that could not load is a missing list, not a
- * broken app, and throwing here would take the conversations down with it.
+ * It was, above the conversations, and a handful of tasks pushed the whole
+ * conversation history down off the screen — the list you use every minute
+ * displaced by one you check once a week. The Scheduled page (and the pill on
+ * the card that set a task up) is where they live. Kept as a no-op so the
+ * places that announce "tasks changed" need not know.
  */
-async function refreshTasks() {
-  const host = $('sidebar-tasks');
-  const { tasks } = await api.tasks();
-  host.innerHTML = '';
-  if (!tasks.length) return;
-
-  host.append(Object.assign(document.createElement('div'), {
-    className: 'chats__label',
-    textContent: t('nav.scheduled'),
-  }));
-
-  for (const task of tasks) {
-    const row = document.createElement('div');
-    row.className = `chat-row${task.enabled ? '' : ' is-muted'}`;
-
-    const btn = document.createElement('button');
-    btn.className = 'chat-item';
-    btn.textContent = task.title;
-    btn.title = task.title;
-    btn.addEventListener('click', () => {
-      leavePages();
-      pages.showTask(task.id).catch((err) => toast(err.message, 'error'));
-    });
-
-    // How often, rather than when next: a list is read for "what is set up
-    // here", and the exact next timestamp is on the task's own page.
-    const when = document.createElement('span');
-    when.className = 'chat-row__when';
-    when.textContent = repeatsAs(task);
-
-    row.append(btn, when);
-    host.append(row);
-  }
-}
+async function refreshTasks() {}
 
 /**
  * One conversation, as a row.
@@ -1802,6 +1790,9 @@ async function openChat(id) {
   state.model = state.boot.prefs.defaultModel;
   state.project = project || null;
   state.files = files || [];
+  state.transcript = messages || [];
+  state.liveTools = [];
+  closeToolPane();
   renderFilesChip();
   renderRail();
   /**
@@ -1997,6 +1988,9 @@ function startBlankChat(project = null) {
   state.pendingProject = project;
   state.project = project;
   state.files = [];
+  state.transcript = [];
+  state.liveTools = [];
+  closeToolPane();
   renderContext(null);
   renderFilesChip();
   renderRail();
@@ -2232,6 +2226,7 @@ const pages = createPages({
   // The rail holds one thing at a time, the same rule as a file: open it if it
   // was closed, and let whatever else was in it stand down.
   onPaneOpen: () => {
+    closeToolPane();
     viewer.close();
     setDetail(true);
     $('app').classList.add('is-taskpane');
@@ -2596,6 +2591,8 @@ $('composer').addEventListener('submit', async (event) => {
   // failed — must not be silently dropped from a message that claims to have it.
   const ready = staged.filter((f) => f.id);
   if (!text && !ready.length) return;
+  state.lastAsked = text.slice(0, 140);
+  state.liveTurn = (state.liveTurn || 0) + 1;
   // Not into a transcript that is being rewritten; the bar says how long.
   if (state.compacting) {
     toast(t('compact.wait'));
@@ -3133,7 +3130,9 @@ async function streamOnce(run, decision, answers) {
               run,
             );
           } else if (phase === 'tool') {
-            setStatus(t('status.tool').replace('{name}', name), run);
+            // The card being drafted says so itself, with its size ticking up;
+            // a second line under the transcript saying the same was noise.
+            setStatus(null, run);
             if (!drafts.has(name)) {
               const handle = block().draftTool(name);
               if (handle) drafts.set(name, handle);
@@ -3150,10 +3149,19 @@ async function streamOnce(run, decision, answers) {
           else if (message && onScreen(run)) toast(message);
         },
         thinking: ({ delta }) => {
+          /**
+           * The reasoning card is live and says so, with its own spinning mark.
+           * A line under it saying "waiting for the model — it has to queue"
+           * while the model was plainly thinking contradicted what was on
+           * screen: the notice was set before the first token and nothing
+           * cleared it when reasoning began to arrive.
+           */
+          setStatus(null, run);
           block().appendThinking(delta);
           maybeScroll(run);
         },
         text: ({ delta }) => {
+          setStatus(null, run);
           const turn = block();
           turn.finishThinking();
           turn.appendText(delta);
@@ -3179,7 +3187,12 @@ async function streamOnce(run, decision, answers) {
           run.turn.finishThinking();
           clearDrafts();
           run.toolHandles.set(call.id, run.turn.startTool(call));
-          setStatus(t('status.tool').replace('{name}', call.name), run);
+          if (onScreen(run)) {
+            state.liveTools = [...(state.liveTools || []), { id: call.id, name: call.name, input: call.input || {}, content: '', asked: state.lastAsked || '', turn: 100000 + (state.liveTurn || 0) }];
+          }
+          // The card for this call spins while it runs; nothing more is said
+          // underneath it.
+          setStatus(null, run);
           // Show the screen the moment the assistant touches the browser or the
           // desktop, rather than making the user go looking for it — but only
           // for the conversation they are actually watching.
@@ -3192,6 +3205,13 @@ async function streamOnce(run, decision, answers) {
         tool_result: (result) => {
           run.toolHandles.get(result.toolCallId)?.complete(result);
           run.toolHandles.delete(result.toolCallId);
+          if (onScreen(run)) {
+            const live = (state.liveTools || []).find((c) => c.id === result.toolCallId);
+            if (live) {
+              live.content = result.content || '';
+              renderRail();
+            }
+          }
           if (result.file && onScreen(run)) noteFile(result.file);
           maybeScroll(run);
           // A step just finished, which is the earliest point the loop can read

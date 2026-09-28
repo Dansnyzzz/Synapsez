@@ -287,7 +287,6 @@
              it is a thing that will happen, and it belongs where you can see
              at a glance what the app is going to do without you. Empty until
              there is one, so nobody is shown a heading over nothing. -->
-        <nav class="chats scroll-quiet" id="sidebar-tasks" aria-label="Scheduled" data-i18n-aria-label="nav.scheduled"></nav>
 
         <nav class="chats scroll-quiet" id="chat-list" aria-label="Conversations" data-i18n-aria-label="nav.conversationsLabel"></nav>
 
@@ -730,6 +729,17 @@
               <button class="icon-btn" id="taskpane-close" type="button" title="Close" aria-label="Close" data-i18n-title="action.close" data-i18n-aria-label="action.close">✕</button>
             </header>
             <div class="taskpane__body scroll-quiet" id="taskpane-body"></div>
+          </section>
+
+          <!-- What a tool did in this conversation — every web search, grouped
+               by the message that asked for it. Opened from the Context list;
+               drawn by rail.js. -->
+          <section class="taskpane" id="toolpane" hidden>
+            <header class="taskpane__bar">
+              <span class="taskpane__name" id="toolpane-title"></span>
+              <button class="icon-btn" id="toolpane-close" type="button" title="Close" aria-label="Close" data-i18n-title="action.close" data-i18n-aria-label="action.close">✕</button>
+            </header>
+            <div class="taskpane__body scroll-quiet" id="toolpane-body"></div>
           </section>
         </div>
       </aside>
