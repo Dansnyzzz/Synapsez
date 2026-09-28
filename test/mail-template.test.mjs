@@ -68,17 +68,17 @@ section('nothing in a message can become markup or a script');
   check('a javascript: link is not a link', !/href="javascript/i.test(body));
   const quoted = renderEmailBody('[a](https://x.example/"onmouseover="alert(1))');
   check('a quote cannot break out of an href', !/"onmouseover=/.test(quoted), quoted);
-  const title = layoutEmail({ brand: 'Synapse', title: '<b>Subject</b>', contentHtml: '' });
+  const title = layoutEmail({ brand: 'Synapsez', title: '<b>Subject</b>', contentHtml: '' });
   check('the subject is escaped as the title', title.includes('&lt;b&gt;Subject&lt;/b&gt;') && !title.includes('<b>Subject'));
 }
 
 section('the email loads nothing from anywhere');
 {
-  const { html } = composeMessage({ brand: 'Synapse', subject: 'S', markdown, sender: { name: 'Lan', email: 'lan@example.com' }, language: 'vi' });
+  const { html } = composeMessage({ brand: 'Synapsez', subject: 'S', markdown, sender: { name: 'Lan', email: 'lan@example.com' }, language: 'vi' });
   const sources = [...html.matchAll(/\ssrc="([^"]*)"/gi)].map((m) => m[1]);
   check('the only image is the embedded logo', sources.length > 0 && sources.every((src) => src === 'cid:brand-logo@mail'), sources.join(' '));
   check('no stylesheets, fonts or scripts', !/<link|<script|@import|url\(/i.test(html));
-  const plain = layoutEmail({ brand: 'Synapse', title: 'T', contentHtml: '', logo: false });
+  const plain = layoutEmail({ brand: 'Synapsez', title: 'T', contentHtml: '', logo: false });
   check('without the logo file the mark is a letter, not a broken image', !/<img/i.test(plain) && />S<\/td>/.test(plain));
   check('600px wide at most', html.includes('max-width:600px'));
   check('with a hidden preview line that skips the heading', /display:none;max-height:0[^>]*>VN-Index giảm 6,98 điểm/.test(html), html.match(/mso-hide:all">[^<]*/)?.[0]);
@@ -87,7 +87,7 @@ section('the email loads nothing from anywhere');
 section('the footer and date speak the message language');
 {
   const now = new Date('2026-09-15T05:00:00Z');
-  const vi = composeMessage({ brand: 'Synapse', subject: 'Bản tin sáng', markdown: 'x', sender: { name: 'Lan', email: 'lan@example.com' }, language: 'vi', now });
+  const vi = composeMessage({ brand: 'Synapsez', subject: 'Bản tin sáng', markdown: 'x', sender: { name: 'Lan', email: 'lan@example.com' }, language: 'vi', now });
   check('Vietnamese footer', vi.html.includes('Người gửi <strong') && vi.html.includes('Trả lời email này'));
   check('the sender is named but their address is never shown', !vi.html.includes('lan@example.com') && !vi.text.includes('lan@example.com') && !vi.html.includes('mailto:'));
   check('Vietnamese date', /15 tháng 9, 2026/i.test(vi.html), vi.html.match(/THỨ|Thứ[^<]*/)?.[0]);
@@ -101,7 +101,7 @@ section('the footer and date speak the message language');
 section('every kind of email is dressed for what it is');
 {
   const now = new Date('2026-09-15T05:00:00Z');
-  const compose = (kind) => composeMessage({ brand: 'Synapse', subject: 'Subject', markdown: 'Hello there, this is the message body.', kind, now });
+  const compose = (kind) => composeMessage({ brand: 'Synapsez', subject: 'Subject', markdown: 'Hello there, this is the message body.', kind, now });
   for (const name of KIND_NAMES.filter((n) => n !== 'security')) {
     const kind = KINDS[name];
     const { html, kind: used } = compose(name);
@@ -172,17 +172,17 @@ section('language and repetition');
   check('Vietnamese is recognised from the body', detectLanguage('Chào anh, em gửi tài liệu') === 'vi');
   check('an English body is English whatever the account says', detectLanguage('Hello Minh, please find the file attached.', 'vi') === 'en');
   check('a body too short to tell uses the account language', detectLanguage('OK', 'vi') === 'vi');
-  const repeated = composeMessage({ brand: 'Synapse', subject: 'Bản tin tài chính sáng', markdown: '# Bản tin tài chính sáng\nNội dung chính của bản tin hôm nay.' });
+  const repeated = composeMessage({ brand: 'Synapsez', subject: 'Bản tin tài chính sáng', markdown: '# Bản tin tài chính sáng\nNội dung chính của bản tin hôm nay.' });
   check('a first line that repeats the subject is dropped', (repeated.html.match(/Bản tin tài chính sáng/g) || []).length === 2, String((repeated.html.match(/Bản tin tài chính sáng/g) || []).length));
-  const zone = composeMessage({ brand: 'Synapse', subject: 'Báo cáo', markdown: 'x', kind: 'report', language: 'vi', timeZone: 'Asia/Ho_Chi_Minh', now: new Date('2026-09-14T20:00:00Z') });
+  const zone = composeMessage({ brand: 'Synapsez', subject: 'Báo cáo', markdown: 'x', kind: 'report', language: 'vi', timeZone: 'Asia/Ho_Chi_Minh', now: new Date('2026-09-14T20:00:00Z') });
   check("a dated card reads the date in the account's zone", /15 THÁNG 9|15 tháng 9/i.test(zone.html), zone.html.match(/sx-date[^>]*>[^<]*/)?.[0]);
-  const html = composeMessage({ brand: 'Synapse', subject: 'S', markdown: 'x', kind: 'report' }).html;
+  const html = composeMessage({ brand: 'Synapsez', subject: 'S', markdown: 'x', kind: 'report' }).html;
   check('dark mode and phone spacing are declared', html.includes('prefers-color-scheme:dark') && html.includes('max-width:520px') && html.includes('content="light dark"'));
 }
 
 section('the galaxy look survives a client that drops gradients');
 {
-  const html = composeMessage({ brand: 'Synapse', subject: 'Hoá đơn', markdown: '[Thanh toán](https://pay.example.com)\n\n## Mục', kind: 'invoice' }).html;
+  const html = composeMessage({ brand: 'Synapsez', subject: 'Hoá đơn', markdown: '[Thanh toán](https://pay.example.com)\n\n## Mục', kind: 'invoice' }).html;
   const gradients = [...html.matchAll(/background-image:linear-gradient/g)].length;
   const withSolid = [...html.matchAll(/background-color:#[0-9a-f]{6};background-image:linear-gradient/g)].length;
   check('every gradient has a solid colour before it', gradients > 0 && gradients === withSolid, `${withSolid}/${gradients}`);
@@ -212,7 +212,7 @@ section('the plain-text part reads as plain text');
 
 section('the reset email shares the layout');
 {
-  const html = resetMessage({ brand: 'Synapse', code: '482913', link: 'https://app.example/r?t=a&b=c' });
+  const html = resetMessage({ brand: 'Synapsez', code: '482913', link: 'https://app.example/r?t=a&b=c' });
   check('the code is shown large', /font-size:34px[^>]*>482913</.test(html));
   check('the link is escaped into the button', html.includes('href="https://app.example/r?t=a&amp;b=c"'));
   check('and nothing is loaded but the embedded logo', !/<link|<script/i.test(html) && [...html.matchAll(/\ssrc="([^"]*)"/g)].every((m) => m[1] === 'cid:brand-logo@mail'));
@@ -266,7 +266,7 @@ section('a briefing section is one card, sources included');
 
 section('the header stays readable in Gmail\'s dark mode');
 {
-  const html = layoutEmail({ brand: 'Synapse', title: 'Bản tin tài chính sáng', contentHtml: '<p>x</p>', kind: 'newsletter', logo: false });
+  const html = layoutEmail({ brand: 'Synapsez', title: 'Bản tin tài chính sáng', contentHtml: '<p>x</p>', kind: 'newsletter', logo: false });
   check('the title is wrapped to survive colour inversion', /<h1[^>]*><span class="gx-s"><span class="gx-d">Bản tin tài chính sáng/.test(html));
   check('the rules for it are scoped to Gmail', /u \+ \.body \.gx-d\{background:#000;mix-blend-mode:difference\}/.test(html));
   check('and the body carries the class that scoping needs', /<body class="sx-page body"/.test(html));

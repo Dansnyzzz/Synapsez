@@ -400,10 +400,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'That server id belongs to another account.': 'Id máy chủ đó thuộc về tài khoản khác.',
   'Process {0} is already using the database at {1}. Two processes writing to one PGlite database corrupt it beyond repair, so this one is stopping before it starts. Stop the other one, or set DATA_DIR to somewhere else.':
     'Tiến trình {0} đang dùng cơ sở dữ liệu tại {1}. Hai tiến trình cùng ghi vào một cơ sở dữ liệu PGlite sẽ làm hỏng không sửa được, nên tiến trình này dừng trước khi chạy. Hãy dừng tiến trình kia, hoặc đặt DATA_DIR sang chỗ khác.',
-  'Another copy of Synapse is already running on port {0} and using {1}. Two processes writing to one database will damage it, so this one is stopping. Close the other one — or set PORT and DATA_DIR to run a second instance properly.':
-    'Một bản Synapse khác đang chạy ở cổng {0} và dùng {1}. Hai tiến trình cùng ghi vào một cơ sở dữ liệu sẽ làm hỏng nó, nên bản này dừng lại. Hãy đóng bản kia — hoặc đặt PORT và DATA_DIR để chạy bản thứ hai đúng cách.',
-  'The local database is not installed. Run `npm install` in this folder — @electric-sql/pglite is what Synapse stores everything in when there is no DATABASE_URL. If you installed with --omit=dev or --production, install again without it.':
-    'Chưa cài cơ sở dữ liệu cục bộ. Chạy `npm install` trong thư mục này — Synapse lưu mọi thứ vào @electric-sql/pglite khi không có DATABASE_URL. Nếu bạn đã cài với --omit=dev hoặc --production, hãy cài lại không kèm tuỳ chọn đó.',
+  'Another copy of Synapsez is already running on port {0} and using {1}. Two processes writing to one database will damage it, so this one is stopping. Close the other one — or set PORT and DATA_DIR to run a second instance properly.':
+    'Một bản Synapsez khác đang chạy ở cổng {0} và dùng {1}. Hai tiến trình cùng ghi vào một cơ sở dữ liệu sẽ làm hỏng nó, nên bản này dừng lại. Hãy đóng bản kia — hoặc đặt PORT và DATA_DIR để chạy bản thứ hai đúng cách.',
+  'The local database is not installed. Run `npm install` in this folder — @electric-sql/pglite is what Synapsez stores everything in when there is no DATABASE_URL. If you installed with --omit=dev or --production, install again without it.':
+    'Chưa cài cơ sở dữ liệu cục bộ. Chạy `npm install` trong thư mục này — Synapsez lưu mọi thứ vào @electric-sql/pglite khi không có DATABASE_URL. Nếu bạn đã cài với --omit=dev hoặc --production, hãy cài lại không kèm tuỳ chọn đó.',
 
   /* ── công cụ của trợ lý ────────────────────────────────────────── */
   'Give at least one task.': 'Hãy đưa ít nhất một việc.',

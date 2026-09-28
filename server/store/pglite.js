@@ -127,7 +127,7 @@ async function clearStaleLock(pgdata, port) {
   if (await portIsBusy(port)) {
     throw Object.assign(
       new Error(
-        `Another copy of Synapse is already running on port ${port} and using ${pgdata}. ` +
+        `Another copy of Synapsez is already running on port ${port} and using ${pgdata}. ` +
           'Two processes writing to one database will damage it, so this one is stopping. ' +
           'Close the other one — or set PORT and DATA_DIR to run a second instance properly.',
       ),
@@ -157,7 +157,7 @@ export async function createPgliteStore(dataDir) {
     if (err?.code !== 'ERR_MODULE_NOT_FOUND') throw err;
     throw new Error(
       'The local database is not installed. Run `npm install` in this folder — ' +
-        '@electric-sql/pglite is what Synapse stores everything in when there is no DATABASE_URL. ' +
+        '@electric-sql/pglite is what Synapsez stores everything in when there is no DATABASE_URL. ' +
         'If you installed with --omit=dev or --production, install again without it.',
     );
   }

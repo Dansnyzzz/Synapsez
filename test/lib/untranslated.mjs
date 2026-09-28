@@ -11,7 +11,7 @@
  *   - `data-i18n-js` — the script owns that node's text and translates it.
  *   - brand names and sample values, which read the same in every language.
  */
-const BRANDS = new Set(['Synapse', 'Anthropic', 'OpenAI', 'Google', 'OpenRouter', 'OrcaRouter']);
+const BRANDS = new Set(['Synapsez', 'Anthropic', 'OpenAI', 'Google', 'OpenRouter', 'OrcaRouter']);
 const SAMPLES = new Set([
   'you@example.com',
   'ABCD-2K7M',

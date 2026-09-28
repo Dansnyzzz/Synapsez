@@ -55,7 +55,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
     return {
       isError: true,
       content:
-        'No computer is connected to this account, so this tool cannot run. Tell the user to start the Synapse worker on their machine — Settings → Computers has a pairing code — or solve the task with the web tools instead.',
+        'No computer is connected to this account, so this tool cannot run. Tell the user to start the Synapsez worker on their machine — Settings → Computers has a pairing code — or solve the task with the web tools instead.',
     };
   }
 

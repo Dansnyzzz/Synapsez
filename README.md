@@ -1,4 +1,4 @@
-# Synapse
+# Synapsez
 
 A self-hosted, multi-user, multi-provider agentic AI workspace you drive from any device — including
 your phone.
@@ -360,7 +360,7 @@ Three constraints on that endpoint, each closing a hole:
 - **It cannot be told to do anything.** One route, GET only, returning an identifier. There is no
   verb there to abuse.
 - **CORS names exactly one origin**: the deployment that worker answers to, matched in full rather
-  than by prefix. With `*`, every site you visit could quietly learn that you run Synapse and what
+  than by prefix. With `*`, every site you visit could quietly learn that you run Synapsez and what
   your machine is called.
 
 Order of precedence when choosing a machine:
@@ -1412,7 +1412,7 @@ and search the web; only your own machine can touch your files.
 ```bash
 git init
 git add .
-git commit -m "Synapse"
+git commit -m "Synapsez"
 git branch -M main
 git remote add origin https://github.com/<you>/ai-remote.git
 git push -u origin main
@@ -1656,7 +1656,7 @@ people want.
 
 > **A Windows VM costs money, per hour, whether or not anything is happening.** A small always-on
 > instance is roughly the price of a streaming subscription; the smallest ones will run the worker
-> and struggle with a browser. This is the one part of Synapse with an unavoidable bill attached,
+> and struggle with a browser. This is the one part of Synapsez with an unavoidable bill attached,
 > which is why it is opt-in and last in this document rather than assumed.
 
 ---
@@ -1911,7 +1911,7 @@ Being explicit, so you do not assume protection that is not there:
 
 ## Cost
 
-You pay your providers directly; Synapse adds nothing. Verified per-million-token pricing is shown
+You pay your providers directly; Synapsez adds nothing. Verified per-million-token pricing is shown
 for Claude models and for anything loaded from the OpenRouter catalogue. Where a price is not
 verified the app shows token counts rather than inventing a number — check your provider's pricing
 page.

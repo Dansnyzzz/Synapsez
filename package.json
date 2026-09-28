@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Synapse â€” a self-hosted, multi-provider agentic AI workspace you can drive from any device.",
+  "description": "Synapsez â€” a self-hosted, multi-provider agentic AI workspace you can drive from any device.",
   "main": "server/index.js",
   "scripts": {
     "start": "node scripts/launch.js",

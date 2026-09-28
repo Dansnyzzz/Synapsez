@@ -488,10 +488,11 @@ const STEP_DETAILS = {
  */
 function toolCallDetail(call) {
   const node = el('div', 'tool__call');
-
-  const name = el('code', 'tool__fn');
-  name.textContent = call.name;
-  node.append(name);
+  // The function's name used to sit here as a grey badge ("world_facts"). The
+  // headline already says what was done in words, and the badge was the one
+  // thing in the card nobody read; the name is still on the card's tooltip for
+  // whoever is reproducing a step.
+  node.title = call.name;
 
   const args = call.input && Object.keys(call.input).length ? call.input : null;
   if (args) {

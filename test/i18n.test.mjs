@@ -72,7 +72,7 @@ section('every string the markup asks for exists');
   check('no visible text in the page is left without a translation', bare.length === 0, bare.slice(0, 20).join(' | '));
 }
 
-section('the product is called Synapse everywhere a person reads its name');
+section('the product is called Synapsez everywhere a person reads its name');
 {
   /*
    * The app was renamed from "AI Remote". A rename that misses one screen, one
@@ -105,7 +105,7 @@ section('the product is called Synapse everywhere a person reads its name');
     .filter((rel) => fs.readFileSync(path.join(root, rel), 'utf8').includes('AI Remote'));
   check('no user-facing file still says "AI Remote"', offenders.length === 0, offenders.join(', '));
   const { en: english } = await import('../public/js/locales/en.js');
-  check('the app name is Synapse', english['app.name'] === 'Synapse' && vi['app.name'] === 'Synapse');
+  check('the app name is Synapsez', english['app.name'] === 'Synapsez' && vi['app.name'] === 'Synapsez');
 }
 
 section('the strings the script builds are defined too');

@@ -289,7 +289,7 @@ export function createProjectPage({
 
     crumb.textContent = project.name;
     nameEl.textContent = project.name;
-    document.title = `${project.name} · Synapse`;
+    document.title = `${project.name} · Synapsez`;
 
     pinButton.classList.toggle('is-on', !!project.pinned);
     pinButton.setAttribute('aria-pressed', String(!!project.pinned));
@@ -1291,7 +1291,7 @@ export function createProjectPage({
 
     hide() {
       page.hidden = true;
-      document.title = 'Synapse';
+      document.title = 'Synapsez';
     },
 
     /** The id on screen, or null. Used to decide whether a refresh applies. */

@@ -16,7 +16,7 @@ import { allowedImageUrl } from '../imageProxy.js';
  * from (see imageProxy.js).
  */
 
-const UA = 'Synapse/1.0 (+https://synapsez.vercel.app)';
+const UA = 'Synapsez/1.0 (+https://synapsez.vercel.app)';
 const MAX_RESULTS = 12;
 
 async function getJson(url) {

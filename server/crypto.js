@@ -202,7 +202,7 @@ export function verifyTotp(secret, code, at = Date.now()) {
 }
 
 /** The URI authenticator apps read from a QR code. */
-export function totpUri({ secret, email, issuer = 'Synapse' }) {
+export function totpUri({ secret, email, issuer = 'Synapsez' }) {
   const label = encodeURIComponent(`${issuer}:${email}`);
   const params = new URLSearchParams({ secret, issuer, algorithm: 'SHA1', digits: '6', period: '30' });
   return `otpauth://totp/${label}?${params}`;

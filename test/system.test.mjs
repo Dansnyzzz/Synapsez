@@ -175,7 +175,7 @@ section('the clipboard round-trips, and is put back');
 
   // Non-ASCII on purpose: the failure this catches is a console code page, and
   // plain ASCII round-trips even when the encoding is wrong.
-  const probe = `Synapse — kiểm tra khay nhớ tạm ${Date.now()}`;
+  const probe = `Synapsez — kiểm tra khay nhớ tạm ${Date.now()}`;
   const wrote = await LOCAL_IMPLEMENTATIONS.clipboard_write({ text: probe }).catch((err) => `ERROR ${err.message}`);
   /**
    * Two reasons to skip rather than fail, and both are about the machine rather

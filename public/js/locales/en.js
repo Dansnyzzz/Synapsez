@@ -7,7 +7,7 @@
  */
 export const en = {
   /* ── shared ────────────────────────────────────────────────────── */
-  'app.name': 'Synapse',
+  'app.name': 'Synapsez',
   'action.next': 'Continue',
   'action.back': 'Back',
   'action.skip': 'Skip',
@@ -786,11 +786,11 @@ export const en = {
   'model.switched': 'Now using {model}.',
 
   /* ── onboarding ────────────────────────────────────────────────── */
-  'onb.title': 'Getting started with Synapse',
+  'onb.title': 'Getting started with Synapsez',
   'onb.step': 'Step {n} of {total}',
   'onb.reopen': 'Show the getting-started guide again',
 
-  'onb.1.title': 'What Synapse does for you',
+  'onb.1.title': 'What Synapsez does for you',
   'onb.1.body': 'This is not a chatbot that only answers. It does real work on your computer.',
   'onb.1.a': 'Reads and edits files, runs commands, drives a browser — on your machine, while you watch.',
   'onb.1.b': 'Writes real quotations, reports, spreadsheets and decks you can download from the chat.',
@@ -1025,7 +1025,7 @@ export const en = {
   'devices.copied': 'Copied',
   'devices.copy': 'Copy',
   'devices.pressCtrlC': 'Press Ctrl+C',
-  'devices.noneYet': 'No computers paired yet. Run Synapse on the machine you want to use and type its code above.',
+  'devices.noneYet': 'No computers paired yet. Run Synapsez on the machine you want to use and type its code above.',
   'devices.desktopOn': 'desktop control on',
   'devices.wholeDisk': 'can reach the whole disk',
   'devices.confined': 'confined to the workspace',
@@ -1196,10 +1196,10 @@ export const en = {
   'viewer.moreActions': 'More actions',
   'pair.offer': 'This computer is waiting to be added. Enter this code from any device:',
   'pair.copyCode': 'Copy the code',
-  'pair.oneLine': 'One line to paste on the machine you want to use. It downloads Synapse, connects it to this account, and sets it to start when you log in.',
+  'pair.oneLine': 'One line to paste on the machine you want to use. It downloads Synapsez, connects it to this account, and sets it to start when you log in.',
   'pair.setUp': 'Set up a computer',
   'pair.orType': 'Or type a pairing code',
-  'pair.codeHint': 'If that computer is already running Synapse, it shows an eight-character code. It does not have to be your own account, and this works from a phone.',
+  'pair.codeHint': 'If that computer is already running Synapsez, it shows an eight-character code. It does not have to be your own account, and this works from a phone.',
   'pair.submit': 'Pair',
   'pair.yours': 'Your computers',
   'news.badge': 'New model',
@@ -1288,7 +1288,7 @@ export const en = {
   'google.connected': 'Google connected — {n} products allowed.',
   'google.denied': 'Google sign-in was cancelled. Nothing changed.',
   'google.failed': 'Could not connect Google. Try again.',
-  'worker.lede': 'Run Synapse on the machine you want the assistant to work on. It shows an eight-character code — enter it and that computer is yours from any device you sign in on, for good. Nothing on the internet connects inward: the computer polls outward.',
+  'worker.lede': 'Run Synapsez on the machine you want the assistant to work on. It shows an eight-character code — enter it and that computer is yours from any device you sign in on, for good. Nothing on the internet connects inward: the computer polls outward.',
   'worker.byHand': 'Or do it by hand',
   'worker.enterCode': 'Enter a pairing code',
   'account.displayName': 'Display name',

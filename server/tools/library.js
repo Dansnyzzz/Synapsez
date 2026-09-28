@@ -21,7 +21,7 @@ import { solarToLunar, lunarToSolar, yearName, dayName } from './lunar.js';
  * a reason not to read it.
  */
 
-const UA = 'Synapse/1.0 (+https://synapsez.vercel.app)';
+const UA = 'Synapsez/1.0 (+https://synapsez.vercel.app)';
 
 /** JSON from a fixed public service, with a timeout and a readable failure. */
 async function getJson(url, headers = {}) {

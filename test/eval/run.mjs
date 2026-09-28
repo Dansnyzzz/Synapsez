@@ -51,7 +51,7 @@ const { buildSystemPrompt, promptVersion } = await import('../../server/agent.js
  * they still pass for the reason they claim, then update the value and say in the
  * commit what the prompt change was for.
  */
-const PROMPT_STAMP = '7f339b038b87';
+const PROMPT_STAMP = '7402c13805c3';
 
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;

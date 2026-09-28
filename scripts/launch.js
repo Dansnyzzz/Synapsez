@@ -123,7 +123,7 @@ const wantWorker = args.wantWorker;
 const MIN_NODE = 20;
 const nodeMajor = Number(process.versions.node.split('.')[0]);
 if (nodeMajor < MIN_NODE) {
-  console.error(`\n  Synapse needs Node ${MIN_NODE} or newer. This is Node ${process.versions.node}.`);
+  console.error(`\n  Synapsez needs Node ${MIN_NODE} or newer. This is Node ${process.versions.node}.`);
   console.error('  Install a current version from nodejs.org and try again.\n');
   process.exit(1);
 }
@@ -185,7 +185,7 @@ function run(file, label, code, env = {}) {
 
 // ── what is about to run ──────────────────────────────────────────────
 
-console.log(`\n  ${colour(ANSI.green, 'Synapse')}\n`);
+console.log(`\n  ${colour(ANSI.green, 'Synapsez')}\n`);
 if (wantServer) console.log(`    web app   http://localhost:${port}`);
 if (wantWorker) {
   const where = remoteWorker ? workerServer : 'this machine (local app)';

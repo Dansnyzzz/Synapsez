@@ -195,7 +195,7 @@ function installGnome() {
     const list = existing === '@as []' || existing === '[]' ? `['${slot}']` : existing.replace(/\]$/, `, '${slot}']`);
     spawnSync('gsettings', ['set', 'org.gnome.settings-daemon.plugins.media-keys', 'custom-keybindings', list]);
   }
-  set('name', 'Synapse launcher');
+  set('name', 'Synapsez launcher');
   set('command', COMMAND);
   set('binding', binding);
 
@@ -304,7 +304,7 @@ if (flags.has('--open')) {
     installGnome();
   }
 } else {
-  console.log('\n  Synapse launcher\n');
+  console.log('\n  Synapsez launcher\n');
   console.log(`    app:    ${URL_BASE}`);
   console.log(`    hotkey: ${HOTKEY}\n`);
 

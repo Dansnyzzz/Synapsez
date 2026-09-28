@@ -700,7 +700,7 @@ async function pollLoop() {
   }
 }
 
-console.log('\n  Synapse worker\n');
+console.log('\n  Synapsez worker\n');
 console.log(`    server:    ${SERVER_URL}`);
 console.log(`    computer:  ${DEVICE_NAME}`);
 console.log(`    workspace: ${WORKSPACE}`);
@@ -778,7 +778,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
  *   identifier. There is no verb here to abuse even if something did reach it.
  *
  *   **CORS names one origin: the deployment this worker answers to.** With `*`,
- *   every site on the internet could quietly learn that you run Synapse and
+ *   every site on the internet could quietly learn that you run Synapsez and
  *   what your machine is called — a fingerprinting signal handed out for free.
  *
  * If the port is taken or the browser refuses the request, nothing breaks: the

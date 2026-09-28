@@ -15,7 +15,7 @@
  */
 export const vi = {
   /* ── chung ─────────────────────────────────────────────────────── */
-  'app.name': 'Synapse',
+  'app.name': 'Synapsez',
   'action.next': 'Tiếp tục',
   'action.back': 'Quay lại',
   'action.skip': 'Bỏ qua',
@@ -773,11 +773,11 @@ export const vi = {
   'model.switched': 'Đang dùng {model}.',
 
   /* ── onboarding ────────────────────────────────────────────────── */
-  'onb.title': 'Bắt đầu với Synapse',
+  'onb.title': 'Bắt đầu với Synapsez',
   'onb.step': 'Bước {n}/{total}',
   'onb.reopen': 'Xem lại hướng dẫn ban đầu',
 
-  'onb.1.title': 'Synapse làm được gì cho bạn',
+  'onb.1.title': 'Synapsez làm được gì cho bạn',
   'onb.1.body': 'Đây không phải chatbot chỉ biết trả lời. Nó làm việc thật trên máy tính của bạn.',
   'onb.1.a': 'Đọc và sửa tệp, chạy lệnh, mở web — trên máy tính của bạn, bạn xem trực tiếp.',
   'onb.1.b': 'Tự làm báo giá, báo cáo, bảng tính, slide và gửi lại cho bạn tải về.',
@@ -1015,7 +1015,7 @@ export const vi = {
   'devices.copied': 'Đã chép',
   'devices.copy': 'Chép',
   'devices.pressCtrlC': 'Nhấn Ctrl+C',
-  'devices.noneYet': 'Chưa ghép máy nào. Chạy Synapse trên máy bạn muốn dùng rồi nhập mã của nó ở trên.',
+  'devices.noneYet': 'Chưa ghép máy nào. Chạy Synapsez trên máy bạn muốn dùng rồi nhập mã của nó ở trên.',
   'devices.desktopOn': 'điều khiển desktop: bật',
   'devices.wholeDisk': 'truy cập được toàn bộ ổ đĩa',
   'devices.confined': 'giới hạn trong thư mục làm việc',
@@ -1186,10 +1186,10 @@ export const vi = {
   'viewer.moreActions': 'Thao tác khác',
   'pair.offer': 'Máy tính này đang chờ được thêm. Nhập mã này từ bất kỳ thiết bị nào:',
   'pair.copyCode': 'Sao chép mã',
-  'pair.oneLine': 'Một dòng lệnh để dán vào máy bạn muốn dùng. Nó tải Synapse về, kết nối với tài khoản này, và tự khởi động khi bạn đăng nhập.',
+  'pair.oneLine': 'Một dòng lệnh để dán vào máy bạn muốn dùng. Nó tải Synapsez về, kết nối với tài khoản này, và tự khởi động khi bạn đăng nhập.',
   'pair.setUp': 'Cài đặt một máy tính',
   'pair.orType': 'Hoặc nhập mã ghép nối',
-  'pair.codeHint': 'Nếu máy đó đã chạy Synapse, nó sẽ hiện một mã 8 ký tự. Không nhất thiết phải là tài khoản của bạn, và làm được cả trên điện thoại.',
+  'pair.codeHint': 'Nếu máy đó đã chạy Synapsez, nó sẽ hiện một mã 8 ký tự. Không nhất thiết phải là tài khoản của bạn, và làm được cả trên điện thoại.',
   'pair.submit': 'Ghép nối',
   'pair.yours': 'Máy tính của bạn',
   'news.badge': 'Model mới',
@@ -1278,7 +1278,7 @@ export const vi = {
   'google.connected': 'Đã kết nối Google — {n} dịch vụ được cho phép.',
   'google.denied': 'Bạn đã huỷ đăng nhập Google. Chưa có gì thay đổi.',
   'google.failed': 'Không kết nối được Google. Hãy thử lại.',
-  'worker.lede': 'Chạy Synapse trên máy bạn muốn trợ lý làm việc. Nó hiện một mã 8 ký tự — nhập mã đó và máy tính ấy thuộc về bạn trên mọi thiết bị bạn đăng nhập, lâu dài. Không có kết nối nào từ internet đi vào máy: chính máy tính chủ động kết nối ra ngoài.',
+  'worker.lede': 'Chạy Synapsez trên máy bạn muốn trợ lý làm việc. Nó hiện một mã 8 ký tự — nhập mã đó và máy tính ấy thuộc về bạn trên mọi thiết bị bạn đăng nhập, lâu dài. Không có kết nối nào từ internet đi vào máy: chính máy tính chủ động kết nối ra ngoài.',
   'worker.byHand': 'Hoặc làm thủ công',
   'worker.enterCode': 'Nhập mã ghép nối',
   'account.displayName': 'Tên hiển thị',

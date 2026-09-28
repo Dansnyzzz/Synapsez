@@ -73,10 +73,10 @@ function senderMailbox() {
   const configured = process.env.EMAIL_FROM || '';
   const inAngles = configured.match(/<([^>]+)>/);
   if (inAngles) return { name: configured.slice(0, configured.indexOf('<')).trim().replace(/^"|"$/g, ''), address: inAngles[1].trim() };
-  if (configured.includes('@')) return { name: 'Synapse', address: configured.trim() };
+  if (configured.includes('@')) return { name: 'Synapsez', address: configured.trim() };
   const login = smtpSettings()?.user;
-  if (login && login.includes('@')) return { name: 'Synapse', address: login };
-  return { name: 'Synapse', address: 'onboarding@resend.dev' };
+  if (login && login.includes('@')) return { name: 'Synapsez', address: login };
+  return { name: 'Synapsez', address: 'onboarding@resend.dev' };
 }
 
 /**
@@ -94,7 +94,7 @@ const cleanName = (name) =>
 /**
  * The From header: the deployment's own name and mailbox, and nothing else.
  *
- * It used to read "Lan Nguyen via Synapse" <mailbox@gmail.com>. A display name
+ * It used to read "Lan Nguyen via Synapsez" <mailbox@gmail.com>. A display name
  * that names a person the address does not belong to is the pattern spam
  * filters are built to catch — it is what impersonation looks like — and it
  * sent real messages to the spam folder. Who the message is for now lives
@@ -108,7 +108,7 @@ function fromHeader() {
 
 /** The deployment's display name, for the footer of a message. */
 export function senderName() {
-  return cleanName(senderMailbox().name) || 'Synapse';
+  return cleanName(senderMailbox().name) || 'Synapsez';
 }
 
 let transport = null;

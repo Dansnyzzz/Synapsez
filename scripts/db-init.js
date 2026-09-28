@@ -19,7 +19,7 @@ if (fs.existsSync(envFile)) {
 
 if (!process.env.DATABASE_URL && !process.env.POSTGRES_URL) {
   console.error('\n  DATABASE_URL is not set — there is no hosted database to initialise.\n');
-  console.error('  Running locally you do not need this script: Synapse starts Postgres');
+  console.error('  Running locally you do not need this script: Synapsez starts Postgres');
   console.error('  in-process (PGlite, stored under ./data) and builds the schema on boot.\n');
   process.exit(1);
 }

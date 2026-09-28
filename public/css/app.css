@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────
-   Synapse — a dark, terminal-adjacent workspace.
+   Synapsez — a dark, terminal-adjacent workspace.
    Signal green for the assistant, amber for machine activity.
    ───────────────────────────────────────────────────────────── */
 
@@ -2429,44 +2429,74 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
   .think.is-open.is-live .think__body::before { animation: none; background-image: none; background-color: var(--accent); }
 }
 
+/* ── Tool cards ─────────────────────────────────────────────────
+ *
+ * One design for every card a tool draws — a single call, a run of browser
+ * steps, a call still being written — and the same one the web card uses:
+ * glass rather than a filled slab, so a turn with twelve tool calls reads as a
+ * light column of events over the conversation instead of a stack of boxes.
+ * The header is the whole card at rest: a mark, what was done, the one
+ * argument that matters, how long it took. */
 details.block {
-  margin: 0 0 12px;
-  border: 1px solid var(--line-soft);
-  border-radius: 11px;
-  background: var(--bg-elev);
+  --card-line: var(--line);
+  margin: 0 0 10px;
+  border: 1px solid var(--card-line);
+  border-radius: 14px;
+  background: transparent;
   overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 details.block > summary {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 13px;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 14px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   list-style: none;
+  transition: background 0.15s;
 }
+details.block > summary:hover { background: var(--tint); }
+details.block > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 14px; }
 details.block > summary::-webkit-details-marker { display: none; }
 details.block > summary::after {
   content: '›';
   margin-left: auto;
+  flex: none;
   color: var(--text-faint);
-  transition: transform 0.15s;
+  transition: transform 0.18s;
 }
 details.block[open] > summary::after { transform: rotate(90deg); }
+/* Open, the header is set off from what it opened by a hairline. */
+details.block:not(.web)[open] > summary { border-bottom: 1px solid var(--line-soft); }
 details.block .block__body {
-  padding: 0 13px 13px;
+  padding: 12px 14px 14px;
   color: var(--text-dim);
   font-size: 13.5px;
 }
+/* The finished marks read the way the web card's do: green done, red failed. */
+details.block > summary > .mark,
+details.block > summary > .step__mark { color: var(--ok); }
+/* Still working: the card's edge carries a soft light, so the eye finds the
+   one live card in a long turn without a second spinner. */
+details.block:has(> summary .mark--pending) {
+  --card-line: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), 0 0 18px -6px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+/* Output and arguments: glass on glass, readable in both themes — the fixed
+   near-black this used was a slab on the light theme. */
 details.block pre {
   margin: 0;
-  padding: 11px;
-  border-radius: 8px;
-  background: #0d1216;
+  padding: 11px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   overflow-x: auto;
   font-family: var(--mono);
   font-size: 12.2px;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2481,7 +2511,7 @@ details.block pre {
      for warnings, which a finished step is not. */
   color: var(--text);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
 }
 /* The argument that matters — a path, a URL, a query. Still monospace, because
    this half really is a literal value and the difference between `l` and `1` in
@@ -2500,42 +2530,41 @@ details.block pre {
   text-overflow: ellipsis;
 }
 .tool__time { color: var(--text-faint); font-size: 11.5px; }
-/* A call still being written: the same card, before it can be opened. */
+/* A call still being written: the same card, before it can be opened — and
+   lit the way a working card is, because it is one. */
 .tool--draft {
-  margin: 0 0 12px;
-  border: 1px solid var(--line-soft);
-  border-radius: 11px;
-  background: var(--bg-elev);
+  margin: 0 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), 0 0 18px -6px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .tool__draft {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 13px;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 14px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 14px;
 }
 .tool__draft .tool__time { font-variant-numeric: tabular-nums; }
+/* A failed card says so at its edge as well as in its words. */
+details.block.tool--error,
+details.block.steps--error { --card-line: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 .tool--error .tool__name { color: var(--danger); }
+details.block.tool--error > summary > .mark,
 .tool--error .mark { color: var(--danger); }
 
-/* The exact call, inside the card. Everything the summary stopped showing is
-   here: the function's real name and every argument it was given. */
-.tool__call { margin-bottom: 8px; }
-.tool__fn {
-  display: inline-block;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: var(--tint);
-  color: var(--text-dim);
-  font-family: var(--mono);
-  font-size: 11.5px;
-}
+/* The exact call's arguments, inside the card. The function's name is on the
+   card's tooltip rather than in a badge nobody read. */
+.tool__call { margin-bottom: 10px; }
+.tool__call:empty { display: none; }
 /* Two classes deep on purpose: `details.block pre` and `.step__out pre` both
    set a size, and this has to outrank them without reaching for `!important`. */
 .block .tool__args,
 .step__out .tool__args {
-  margin: 6px 0 0;
+  margin: 0;
   max-height: 260px;
   overflow: auto;
   font-size: 11.5px;
@@ -2548,13 +2577,16 @@ details.block pre {
  * transcript written for the person, and `browser_click {"ref":"7"}` was the
  * problem it exists to fix.
  */
-.steps__title { color: var(--text); font-size: 13px; }
-.steps__tally { color: var(--text-faint); font-size: 12px; }
+/* `.steps` is also the class of the numbered instruction lists further down;
+   the step card must not pick up their indent and text colour. */
+details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
+.steps__title { color: var(--text); font-weight: 600; font-size: 14px; }
+.steps__tally { color: var(--text-faint); font-size: 12.5px; }
 .steps--error .steps__title { color: var(--danger); }
 
 .steps__list {
   margin: 0;
-  padding: 2px 13px 11px 13px;
+  padding: 8px 14px 12px;
   list-style: none;
   display: grid;
   gap: 2px;
@@ -2644,9 +2676,10 @@ details.block pre {
 .step__out > summary::-webkit-details-marker { display: none; }
 .step__out pre {
   margin: 4px 0 2px;
-  padding: 9px;
-  border-radius: 7px;
-  background: #0d1216;
+  padding: 9px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   overflow-x: auto;
   font-family: var(--mono);
   font-size: 12px;

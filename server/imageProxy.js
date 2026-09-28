@@ -57,7 +57,7 @@ export function allowedImageUrl(value) {
 }
 
 /** Wikimedia and OpenStreetMap both refuse anonymous clients; this names the app. */
-const UA = 'Synapse/1.0 (+https://synapsez.vercel.app)';
+const UA = 'Synapsez/1.0 (+https://synapsez.vercel.app)';
 
 async function fetchRaster(url) {
   const res = await safeFetch(url, {

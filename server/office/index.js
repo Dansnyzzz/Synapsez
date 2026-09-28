@@ -402,7 +402,7 @@ const escapeHtmlText = (value) =>
  * Written out because only the two with defaults were being inferred: with the
  * rest unmarked, every caller read as passing properties the type did not have.
  */
-export function createDocument({ format, name, content, title, author = 'Synapse', created = new Date() } = {}) {
+export function createDocument({ format, name, content, title, author = 'Synapsez', created = new Date() } = {}) {
   const kind = String(format || '').toLowerCase();
   if (!CREATABLE.includes(kind)) {
     throw Object.assign(

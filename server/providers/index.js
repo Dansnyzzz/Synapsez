@@ -21,7 +21,7 @@ const ORCAROUTER_BASE = 'https://api.orcarouter.ai/v1';
  */
 function routerHeaders() {
   const referer = process.env.PUBLIC_URL || 'https://github.com/';
-  return { 'HTTP-Referer': referer, 'X-Title': 'Synapse' };
+  return { 'HTTP-Referer': referer, 'X-Title': 'Synapsez' };
 }
 
 /** One provider's stream, for one key. */

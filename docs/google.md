@@ -8,7 +8,7 @@ has a daily quota far above what one person uses.
 
 ## 1. Create the OAuth client (once, ~10 minutes)
 
-1. Open <https://console.cloud.google.com/> and create a project (any name, e.g. "Synapse").
+1. Open <https://console.cloud.google.com/> and create a project (any name, e.g. "Synapsez").
 2. **APIs & Services → Library** — enable each of these:
    Gmail API, Google Calendar API, Google Drive API, Google Docs API, Google Sheets API,
    Google Forms API, Google Tasks API, People API.

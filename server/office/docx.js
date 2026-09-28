@@ -719,7 +719,7 @@ function blockXml(block, links) {
  * @param author   who it says wrote it
  * @returns a Buffer holding the whole package
  */
-export function writeDocx({ blocks, title = 'Document', author = 'Synapse', created = new Date() } = {}) {
+export function writeDocx({ blocks, title = 'Document', author = 'Synapsez', created = new Date() } = {}) {
   const model = normaliseBlocks(blocks);
   const links = new Map();
   const body = model.map((block) => blockXml(block, links)).join('');

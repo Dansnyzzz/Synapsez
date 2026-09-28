@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Synapse — add this computer.
+# Synapsez — add this computer.
 #
 # Run the line the app gave you. Everything variable arrives in the environment
 # and this file is byte-for-byte the same for every deployment and every user —
@@ -16,7 +16,7 @@ set -euo pipefail
 say() { printf '  %s\n' "$1"; }
 fail() { printf '\n  \033[31m%s\033[0m\n\n' "$1" >&2; exit 1; }
 
-printf '\n  \033[32mSynapse\033[0m\n\n'
+printf '\n  \033[32mSynapsez\033[0m\n\n'
 
 [ -n "${AIR_TOKEN:-}" ]  || fail "No setup token. Copy the whole line from the app."
 [ -n "${AIR_SERVER:-}" ] || fail "No server address. Copy the whole line from the app."

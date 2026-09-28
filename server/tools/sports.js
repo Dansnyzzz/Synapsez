@@ -18,7 +18,7 @@ import { untrusted } from './untrusted.js';
 
 const KEY = () => process.env.THESPORTSDB_KEY || '123';
 const BASE = () => `https://www.thesportsdb.com/api/v1/json/${KEY()}`;
-const UA = 'Synapse/1.0 (+https://synapsez.vercel.app)';
+const UA = 'Synapsez/1.0 (+https://synapsez.vercel.app)';
 
 /** The leagues people ask about most, so the common case costs one request, not two. */
 const LEAGUES = {

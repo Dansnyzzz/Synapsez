@@ -225,7 +225,7 @@ async function notify({ title, body = '' }) {
   } else {
     await firstOf(
       [
-        { command: 'notify-send', args: ['--app-name=Synapse', heading, message] },
+        { command: 'notify-send', args: ['--app-name=Synapsez', heading, message] },
         { command: 'zenity', args: ['--notification', `--text=${heading}\n${message}`] },
       ],
       'No notification daemon is installed. Install libnotify (notify-send).',
@@ -338,7 +338,7 @@ async function processKill({ pid, name, force = false }) {
 
   // Never take the worker down with the thing it was asked to stop.
   const self = targets.find((t) => t.pid === process.pid);
-  if (self) throw new Error('That is the Synapse worker itself. Refusing — it would kill this connection.');
+  if (self) throw new Error('That is the Synapsez worker itself. Refusing — it would kill this connection.');
 
   const done = [];
   const failed = [];

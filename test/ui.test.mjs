@@ -4333,7 +4333,8 @@ section('a tool step reads as a sentence, with the call still inside it');
     const block = host.querySelector('.block.tool');
     const out = {
       headline: block?.querySelector('.tool__name')?.textContent,
-      fn: block?.querySelector('.tool__fn')?.textContent,
+      badge: !!block?.querySelector('.tool__fn'),
+      fn: block?.querySelector('.tool__call')?.title,
       args: block?.querySelector('.tool__args')?.textContent,
       result: block?.querySelector('.block__body > pre')?.textContent,
     };
@@ -4342,7 +4343,10 @@ section('a tool step reads as a sentence, with the call still inside it');
   });
 
   check('the card is headlined in words', card.headline === 'Read a guide', card.headline);
-  check('the real tool name is inside it', card.fn === 'skill_read', card.fn);
+  // The grey name badge was removed at the user's request (it repeated the
+  // headline); the exact name stays reachable on the tooltip.
+  check('no grey name badge in the card', !card.badge);
+  check('the real tool name is still on it, as the tooltip', card.fn === 'skill_read', card.fn);
   check('with the arguments it was given', /Writing a Word document/.test(card.args || ''), card.args);
   check('and the result is still there', card.result === 'the guide', card.result);
 }

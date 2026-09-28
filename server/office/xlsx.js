@@ -511,7 +511,7 @@ function sheetName(name, taken) {
  *   numbers, booleans, Dates or null
  * @returns a Buffer holding the whole package
  */
-export function writeXlsx({ sheets, title = 'Workbook', author = 'Synapse', created = new Date() } = {}) {
+export function writeXlsx({ sheets, title = 'Workbook', author = 'Synapsez', created = new Date() } = {}) {
   const input = (Array.isArray(sheets) ? sheets : []).filter((sheet) => sheet && Array.isArray(sheet.rows));
   const list = input.length ? input : [{ name: 'Sheet1', rows: [[]] }];
 
