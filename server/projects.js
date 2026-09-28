@@ -635,6 +635,8 @@ export async function searchProject(userId, projectId, query, limit = 6) {
     return `No passage in this project's sources (${files.map((f) => f.name).join(', ')}) matches "${query}". Try the words the documents themselves would use.`;
   }
   // In document order within each file, so neighbouring passages read on.
-  hits.sort((a, b) => (a.file === b.file ? a.at - b.at : a.file.localeCompare(b.file)));
+  // Grouped by id, not name: two sources may share a name, and by name their
+  // passages interleaved as though they were one document.
+  hits.sort((a, b) => (a.fileId === b.fileId ? a.at - b.at : a.file.localeCompare(b.file) || String(a.fileId).localeCompare(String(b.fileId))));
   return hits.map((h) => `[${h.file}]\n${h.text}`).join('\n\n---\n\n');
 }

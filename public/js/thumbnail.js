@@ -217,6 +217,9 @@ export async function thumbnailFor(file) {
   if (!isPdf && !isImage) return { thumb: null, pages: null };
 
   const work = isPdf ? fromPdf(file) : fromImage(file).then((thumb) => ({ thumb, pages: null }));
+  // When the timeout wins, `work` can still fail later with nobody awaiting it —
+  // an unhandled rejection in the console for a file that already went up.
+  work.catch(() => {});
   const timeout = new Promise((resolve) => setTimeout(() => resolve({ thumb: null, pages: null }), TIMEOUT_MS));
 
   try {

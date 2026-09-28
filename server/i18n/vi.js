@@ -32,6 +32,8 @@ export const vi = {
     'supadata.ai → đăng ký → Dashboard → API key. Gói miễn phí được 100 phụ đề mỗi tháng và không cần thẻ. Chỉ cần cho việc đọc video; mọi thứ khác vẫn chạy mà không có nó.',
   'Supadata rejected that key (HTTP {0}).': 'Supadata từ chối key đó (HTTP {0}).',
 
+  'This task is already running. Wait for it to finish.': 'Tác vụ này đang chạy. Hãy đợi nó xong.',
+
   /* ── dữ liệu rời khỏi tài khoản ── */
   'The address carries a long block of data to {0}. Check it is not your information leaving — a page or email can ask for exactly this.':
     'Địa chỉ này mang theo một khối dữ liệu dài gửi tới {0}. Hãy kiểm tra đó không phải thông tin của bạn đang bị gửi ra ngoài — một trang web hay email có thể yêu cầu đúng việc này.',

@@ -554,6 +554,19 @@ export function withProjectSources(messages, passages, images = []) {
   return messages;
 }
 
+/** A result for each call of a turn that was never carried out. */
+const notRun = (assistant) => ({
+  id: `${assistant.id}:not-run`,
+  role: 'tool',
+  results: assistant.toolCalls.map((c) => ({
+    toolCallId: c.id,
+    name: c.name,
+    content: 'Not run: the conversation moved on before this was approved. Do not assume it happened.',
+    isError: true,
+    ms: 0,
+  })),
+});
+
 export function normaliseOrder(messages) {
   const out = [];
   let i = 0;
@@ -565,15 +578,27 @@ export function normaliseOrder(messages) {
 
     if (message.role !== 'assistant' || !message.toolCalls?.length) continue;
 
-    // Pull the matching tool message forward past anything that slipped in.
+    // Pull the matching tool message forward past anything that slipped in —
+    // but not past a later assistant turn, whose results are its own.
     const interrupted = [];
-    while (i < messages.length && messages[i].role !== 'tool') {
+    while (i < messages.length && messages[i].role !== 'tool' && messages[i].role !== 'assistant') {
       interrupted.push(messages[i]);
       i += 1;
     }
-    if (i < messages.length) {
+    if (i < messages.length && messages[i].role === 'tool') {
       out.push(messages[i]);
       i += 1;
+    } else if (i < messages.length || interrupted.length) {
+      /*
+       * The conversation moved on and these calls never got results: a turn
+       * paused for an approval nobody gave, then a new message — typed by a
+       * person, or the next run of a scheduled task in the same conversation.
+       * Every strict provider refuses a call with no result after it, so every
+       * later turn failed with a 400. They are answered here, in the transcript
+       * sent to the model only; nothing is stored. A call at the very end is
+       * left alone: that one is the resume path's to run or to ask about.
+       */
+      out.push(notRun(message));
     }
     out.push(...interrupted);
   }
@@ -911,7 +936,7 @@ export function applyStreamEvent(ev, assistant, emit) {
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, policy: policyOverride = null, stream = streamCompletion }) {
+export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, policy: policyOverride = null, unattended = false, stream = streamCompletion }) {
   const store = getStore();
   const prefs = await getPrefs(userId);
 
@@ -1028,7 +1053,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * only the one with a native mechanism for it: nothing is added mid-request,
    * the next request simply carries more.
    */
-  const activated = new Set(toolsToPreload([...messages].reverse().find((m) => m.role === 'user')));
+  // Nothing preloaded for a run nobody is watching: the words of a task prompt
+  // ("every morning", "email me") read as a request to set one up, and a task
+  // that can create tasks is a task that multiplies.
+  const activated = new Set(unattended ? [] : toolsToPreload([...messages].reverse().find((m) => m.role === 'user')));
   /** Outbound messages sent this turn without a prompt. See `outboundRefusal`. */
   const sent = { count: 0 };
   const buildTools = () => availableTools({
@@ -1048,7 +1076,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     context: entry.context,
     // Tools from outside this repository, already in the same shape.
     extra: mcp.tools,
-  });
+    // A question with nobody to answer it only ends the run.
+  }).filter((t) => !(unattended && t.name === 'ask_options'));
 
   /** Take the names `load_tools` asked for, so the next step carries them. */
   const activate = (names) => {
@@ -1335,7 +1364,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * them afterwards meant asking for images nobody had loaded.
        */
       const grounded = withProjectSources(
-        withContinuation(withIntentNotes(activeTranscript(normaliseOrder(messages)))),
+        withContinuation(unattended ? activeTranscript(normaliseOrder(messages)) : withIntentNotes(activeTranscript(normaliseOrder(messages)))),
         project?.passages,
         project?.images,
       );

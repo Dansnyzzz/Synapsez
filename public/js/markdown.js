@@ -90,7 +90,10 @@ function inline(text) {
     .replace(/(^|\W)\*(?!\s)(.+?)(?<!\s)\*/g, '$1<em>$2</em>')
     .replace(/~~(.+?)~~/g, '<del>$1</del>')
     // Only http(s) and relative links — no javascript: URLs.
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]*)\)/g,
+    // And never a slot marker (NUL): "[x](https://a/$y$)" put a formula's span —
+    // quotes included — inside the href.
+    // eslint-disable-next-line no-control-regex
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+|\/[^\s)\u0000]*)\)/g,
       '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
     // A bare URL stops at a slot marker (NUL), so a formula or code span written
     // straight after a link is not pulled into its href.

@@ -239,17 +239,34 @@ section('normaliseOrder edge cases');
   );
   check('nothing is dropped', messy.length === 6);
 
-  // A run cut off before its results arrived: the trailing call has no answer,
-  // and re-ordering must neither invent one nor lose the interruption.
+  // A call the conversation moved on from — an approval nobody gave, then a new
+  // message — gets a "not run" result, because every strict provider rejects a
+  // call with no result after it. The later message is kept.
   const truncated = normaliseOrder([
-    { id: '1', role: 'assistant', toolCalls: [{ id: 'a' }] },
+    { id: '1', role: 'assistant', toolCalls: [{ id: 'a', name: 'send_email' }] },
     { id: '2', role: 'user', text: 'still here?' },
   ]);
   check(
-    'an unanswered call keeps the later message',
-    truncated.map((m) => m.id).join(',') === '1,2',
+    'an abandoned call is answered as not run, and the later message kept',
+    truncated.map((m) => m.id).join(',') === '1,1:not-run,2',
     truncated.map((m) => m.id).join(','),
   );
+  check('  the answer names the call and does not claim it ran', truncated[1].results[0].toolCallId === 'a' && /Not run/.test(truncated[1].results[0].content));
+
+  // The case that broke scheduled tasks: two paused runs, one conversation. The
+  // second call must not be paired with a result that belongs to the first.
+  const twoRuns = normaliseOrder([
+    { id: 'u1', role: 'user' },
+    { id: 'a1', role: 'assistant', toolCalls: [{ id: 'x' }] },
+    { id: 'u2', role: 'user' },
+    { id: 'a2', role: 'assistant', toolCalls: [{ id: 'y' }] },
+    { id: 't2', role: 'tool', results: [{ toolCallId: 'y' }] },
+  ]);
+  check('each call keeps its own result', twoRuns.map((m) => m.id).join(',') === 'u1,a1,a1:not-run,u2,a2,t2', twoRuns.map((m) => m.id).join(','));
+
+  // A call at the very end is the resume path's, not this function's.
+  const pending = normaliseOrder([{ id: '1', role: 'user' }, { id: '2', role: 'assistant', toolCalls: [{ id: 'a' }] }]);
+  check('a pending call at the end is left for the resume path', pending.length === 2);
   check('an empty transcript is fine', normaliseOrder([]).length === 0);
 }
 
@@ -1493,8 +1510,6 @@ section('the turn-token ceiling reaches the browser too');
   }
 }
 
-removeTemp(process.env.DATA_DIR);
-
 /* ── asking the person, with buttons ──────────────────────────────
  *
  * The assistant could always ask something in prose and end the turn, so in
@@ -1732,6 +1747,65 @@ section('asking never needs approval, and never gets skipped');
   check('the turn then carries on', secondCall === 1 && after.some((e) => e.type === 'done'), `${secondCall}`);
   check('and does not ask the same thing twice', !after.some((e) => e.type === 'question_required'));
 }
+
+section('a question and an approval in one batch do not loop');
+{
+  const both = await store.createUser({ id: 'u-both', email: 'both@example.com', name: 'Both', passwordHash: 'x', role: 'user' });
+  await setPrefs(both.id, { toolPolicy: 'guarded' });
+  const chat = await store.createChat(both.id, { id: 'c-both', title: 'Both' });
+  await store.appendMessage(both.id, chat.id, { id: 'm-both', role: 'user', text: 'Email my boss.' });
+  const batch = [
+    { id: 'q-both', name: 'ask_options', input: { questions: [{ question: 'Tone?', options: ['Formal', 'Warm'] }] } },
+    { id: 'e-both', name: 'send_email', input: { to: 'boss@example.com', subject: 'Hi', body: 'Hello' } },
+  ];
+  let first = true;
+  const model = async function* fake() {
+    if (first) {
+      first = false;
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: batch, usage: { input: 10, output: 5 } };
+    } else yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+  };
+  const run = async (extra) => {
+    const events = [];
+    await runAgent({ userId: both.id, user: both, chatId: chat.id, emit: (type, payload) => events.push({ type, payload }), stream: model, ...extra });
+    return events;
+  };
+  const answers = { toolCallId: 'q-both', given: [{ picks: ['Warm'], other: '' }] };
+  const asked = await run({});
+  check('it asks first', asked.some((e) => e.type === 'question_required'));
+  const answered = await run({ answers });
+  check('the answer leads to the approval', answered.some((e) => e.type === 'approval_required'), answered.map((e) => e.type).join(','));
+  // What the browser now sends: the decision and the answer it already gave.
+  const allowed = await run({ decision: 'allow', decisionFor: batch.map((c) => c.id), answers });
+  check('allowing does not ask the question again', !allowed.some((e) => e.type === 'question_required'), allowed.map((e) => e.type).join(','));
+  const told = allowed.find((e) => e.type === 'tool_result' && e.payload?.toolCallId === 'q-both');
+  check('  and the model reads the answer', /"Warm"/.test(told?.payload?.content || ''), told?.payload?.content);
+}
+
+section('a run nobody is watching is not told to ask');
+{
+  // A task prompt reads like a setup request — "every morning", "email me" —
+  // and used to get the setup note, ask_options, and schedule_task preloaded.
+  const taskUser = await store.createUser({ id: 'u-task', email: 'task@example.com', name: 'Task', passwordHash: 'x', role: 'user' });
+  const chat = await store.createChat(taskUser.id, { id: 'c-task-run', title: 'Morning news' });
+  await store.appendMessage(taskUser.id, chat.id, { id: 'm-task-1', role: 'user', text: 'Gửi tin AI mới nhất vào email tôi mỗi sáng.' });
+  let offered = [];
+  let sentText = '';
+  const once = async function* fake(opts) {
+    offered = (opts.tools || []).map((t) => t.name);
+    sentText = opts.messages.filter((m) => m.role === 'user').map((m) => m.text).join('\n');
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+  };
+  await runAgent({ userId: taskUser.id, user: taskUser, chatId: chat.id, unattended: true, emit: () => {}, stream: once });
+  // (Preloading is not observable here: with no known window nothing is
+  // deferred, so every tool is offered anyway.)
+  check('ask_options is not offered', offered.length > 0 && !offered.includes('ask_options'), offered.join(','));
+  check('  and the prompt carries no setup note', !/ask_options/.test(sentText), sentText.slice(-160));
+}
+
+// Last, after every section that uses the database: it was removed midway, and
+// the sections after it ran against pages PGlite happened to still hold.
+removeTemp(process.env.DATA_DIR);
 
 
 console.log(

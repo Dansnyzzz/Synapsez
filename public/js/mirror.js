@@ -88,8 +88,11 @@ export function narrate(chatId, event, data) {
       flushQueued = false;
       flushText(bus);
     };
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
-    else setTimeout(run, 16);
+    // Not a frame callback when this tab is hidden: the owner of a run is very
+    // often the tab in the background, where frames never come, so the follower
+    // saw no text at all until some other event happened to flush it.
+    if (typeof requestAnimationFrame === 'function' && !globalThis.document?.hidden) requestAnimationFrame(run);
+    else setTimeout(run, 50);
     return;
   }
 

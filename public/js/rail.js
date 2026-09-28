@@ -83,6 +83,8 @@ export function createRail({ api, openFile, openSettings, openPane }) {
        <span class="railrow__name">${escapeHtml(label)}</span>${extra}
      </button>`;
 
+  let renders = 0;
+
   /**
    * Draw both sections for the conversation on screen.
    * @param {{ files?: any[], project?: {id: string} | null, transcript?: any[], liveTools?: any[] }} state
@@ -91,7 +93,11 @@ export function createRail({ api, openFile, openSettings, openPane }) {
     const host = $('rail-extra');
     if (!host) return;
     const files = state.files || [];
+    // Only the newest render may draw: a slow project read for the last
+    // conversation used to land after the next one's and show its outputs.
+    const mine = ++renders;
     const [acct, projectFiles] = await Promise.all([loadAccount(), loadSources(state.project?.id)]);
+    if (mine !== renders) return;
 
     let html = '';
     if (files.length) {

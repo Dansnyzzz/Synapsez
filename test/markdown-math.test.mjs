@@ -116,5 +116,16 @@ section('the vendored KaTeX is the installed one');
   check('every font the stylesheet names is there', fonts.length > 0 && missing.length === 0, missing.slice(0, 3).join(', '));
 }
 
+section('a formula never lands inside a link address');
+{
+  // The slot for "$y$" is NUL-delimited; the link rule used to accept it, and
+  // the formula's markup — its quotes with it — ended up inside href="…".
+  const html = renderMarkdown('[x](https://a.com/$y$) và tiếp');
+  const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
+  // eslint-disable-next-line no-control-regex -- the slot marker is exactly what must not appear
+  check('no href holds markup', hrefs.every((h) => !/[<>\u0000]/.test(h)), JSON.stringify(hrefs));
+  check('  and the link text is not lost', />x</.test(html) || /\[x\]/.test(html), html.slice(0, 160));
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll markdown maths checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);

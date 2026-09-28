@@ -628,6 +628,55 @@ section('a scheduled task runs in one conversation, run after run');
   check('with each run\'s request in it, in order', users.length === 2, `${users.length}`);
 }
 
+section('a turn paused on a question shows it again when reopened');
+{
+  const chat = await store.createChat(aliceId, { id: 'c-paused-q', title: 'Paused' });
+  await store.appendMessage(aliceId, chat.id, { id: 'pq-u', role: 'user', text: 'Set it up.' });
+  await store.appendMessage(aliceId, chat.id, {
+    id: 'pq-a',
+    role: 'assistant',
+    text: '',
+    toolCalls: [{ id: 'pq-call', name: 'ask_options', input: { questions: [{ question: 'How often?', options: ['Daily', 'Weekly'] }] } }],
+  });
+  const opened = await alice.call('GET', `/api/chats/${chat.id}`);
+  const q = opened.body?.pendingQuestion;
+  check('the question comes back with the conversation', q?.toolCallId === 'pq-call' && q.questions?.[0]?.question === 'How often?', JSON.stringify(q)?.slice(0, 160));
+  check('  and no approval bar competes with it', !opened.body?.pendingApproval);
+}
+
+section('an hourly repeat keeps the account\'s minute in a half-hour zone');
+{
+  const { parseSchedule } = await import('../server/scheduler.js');
+  const from = new Date('2026-09-28T03:45:00Z');
+  for (const tz of ['Asia/Kolkata', 'Asia/Kathmandu', 'Asia/Ho_Chi_Minh']) {
+    const at = new Date(parseSchedule('hourly :10', { from, tz }).nextRunAt);
+    const local = new Intl.DateTimeFormat('en-GB', { timeZone: tz, minute: '2-digit' }).format(at);
+    check(`${tz}: at :10 on its own clock, within the hour`, Number(local) === 10 && at > from && at - from <= 3_600_000, `${at.toISOString()} → :${local}`);
+  }
+}
+
+section('Run now takes the lease, and a manual task stays on');
+{
+  const made = await alice.call('POST', '/api/tasks', { title: 'By hand', prompt: 'Say hi.', frequency: 'manual' });
+  const id = made.body?.task?.id;
+  const before = await store.getTask(aliceId, id);
+  check('a manual task has no next run', before && !before.cron && !before.next_run_at, JSON.stringify({ cron: before?.cron, next: before?.next_run_at }));
+
+  // A run already holds it — the cron, another tab, a double press.
+  const held = await store.claimTask(aliceId, id);
+  check('the first claim takes it', !!held);
+  check('  and a second is refused while it is held', (await store.claimTask(aliceId, id)) === null);
+  const busy = await alice.call('POST', `/api/tasks/${id}/run`);
+  check('Run now on a running task is a 409, not a second run', busy.status === 409, `${busy.status}`);
+  await store.finishTask(id, { status: 'ok', chatId: null, nextRunAt: null, retire: false });
+
+  const ran = await alice.call('POST', `/api/tasks/${id}/run`);
+  check('once free it runs', ran.status === 200, `${ran.status}`);
+  const after = await store.getTask(aliceId, id);
+  check('and a manual task is still enabled afterwards', after?.enabled === true, `enabled=${after?.enabled}`);
+  check('  and not left holding the lease', after?.run_state == null, String(after?.run_state));
+}
+
 section('the same email is not sent twice');
 {
   const email = await import('../server/email.js');

@@ -1199,6 +1199,8 @@ export function assistantMessage() {
 
   let thinkingBlock = null;
   let thinkingBody = null;
+  /** Settled since its last delta, so `finishThinking` has nothing to do. */
+  let thinkingDone = false;
   let prose = null;
   let rawText = '';
   /** Whether a repaint is already scheduled for the next frame — see appendText. */
@@ -1393,6 +1395,7 @@ export function assistantMessage() {
         thinkingBlock.append(head, thinkingBody);
         body.append(thinkingBlock);
       }
+      thinkingDone = false;
       const text = thinkingBody.firstElementChild;
       const fresh = el('span', 'think__new');
       fresh.textContent = delta;
@@ -1408,7 +1411,10 @@ export function assistantMessage() {
     },
 
     finishThinking() {
-      if (!thinkingBlock) return;
+      // Called on every text delta. Settling the trace — two queries, a
+      // normalize over the whole of it, and a forced layout — once is enough.
+      if (!thinkingBlock || thinkingDone) return;
+      thinkingDone = true;
       thinkingBlock.classList.remove('is-live');
       thinkingBlock.querySelector('.think__head .mark')?.replaceWith(el('span', 'mark', '✓'));
       thinkingBlock.querySelector('.think__title').textContent = t('chat.reasoning');
@@ -1782,8 +1788,9 @@ export function stopNote(kind, text, onContinue = null) {
     go.type = 'button';
     go.textContent = t('chat.continue');
     go.addEventListener('click', () => {
-      wrap.remove();
-      onContinue();
+      // `false` is "nothing started" — a run was still going — and then the
+      // button stays, rather than vanishing having done nothing.
+      if (onContinue() !== false) wrap.remove();
     });
     wrap.append(go);
   }

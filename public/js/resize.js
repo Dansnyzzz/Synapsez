@@ -84,6 +84,9 @@ export function makeResizable(name, handle) {
   };
 
   if (Number.isFinite(widths[name])) apply(clamp(widths[name], spec));
+  // A separator a screen reader can operate says where it is from the start,
+  // not only after somebody has dragged it once.
+  else requestAnimationFrame(() => handle.setAttribute('aria-valuenow', String(Math.round(current()))));
 
   handle.setAttribute('role', 'separator');
   handle.setAttribute('aria-orientation', 'vertical');

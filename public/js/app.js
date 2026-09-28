@@ -84,19 +84,34 @@ function openToolPane(title, html) {
   if (pages.taskPaneOpen()) pages.closeTaskPane();
   $('toolpane-title').textContent = title;
   $('toolpane-body').innerHTML = html;
+  if ($('toolpane').hidden) toolPaneReturn = document.activeElement;
   $('toolpane').hidden = false;
   viewer.close();
   setDetail(true);
   $('app').classList.add('is-taskpane');
+  // A keyboard user is taken to what just opened, not left to find it.
+  $('toolpane').focus();
 }
+/** Where focus was before the pane opened, so closing it can give it back. */
+let toolPaneReturn = null;
 function closeToolPane() {
   if ($('toolpane').hidden) return;
-  $('toolpane').hidden = true;
+  const pane = $('toolpane');
+  const hadFocus = pane.contains(document.activeElement);
+  pane.hidden = true;
   $('toolpane-body').innerHTML = '';
   if (!pages.taskPaneOpen()) $('app').classList.remove('is-taskpane');
+  if (hadFocus && toolPaneReturn?.isConnected) toolPaneReturn.focus();
+  toolPaneReturn = null;
 }
 // Not $(): this runs before that helper is declared further down.
 document.getElementById('toolpane-close')?.addEventListener('click', closeToolPane);
+document.getElementById('toolpane')?.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    event.stopPropagation();
+    closeToolPane();
+  }
+});
 /** Redraw the panel sections for whatever conversation is on screen. */
 const renderRail = () => {
   rail.render(state).catch(() => {});
@@ -1398,8 +1413,9 @@ function openGroupPicker(chat, anchor) {
   make.addEventListener('click', (event) => {
     event.stopPropagation();
     // Typed in place rather than in a dialog: this is one short name, and a
-    // modal for it would be heavier than the thing it is asking for.
-    make.innerHTML = '';
+    // modal for it would be heavier than the thing it is asking for. The field
+    // takes the button's place rather than going inside it: an input in a
+    // button is invalid, and Firefox sends its clicks and keys to the button.
     const field = document.createElement('input');
     field.type = 'text';
     field.className = 'menu__find';
@@ -1411,7 +1427,7 @@ function openGroupPicker(chat, anchor) {
       if (e.key === 'Enter' && field.value.trim()) move(field.value.trim());
       if (e.key === 'Escape') closeSubMenu();
     });
-    make.append(field);
+    make.replaceWith(field);
     field.focus();
   });
   list.append(make);
@@ -1782,7 +1798,7 @@ async function openChat(id) {
   // Files were staged for the conversation you were in, not this one. Carrying
   // them across would attach a screenshot to a completely unrelated question.
   clearStaged();
-  const { chat, messages, pendingApproval, context, project, files, running, background } = await api.chat(id);
+  const { chat, messages, pendingApproval, pendingQuestion, context, project, files, running, background } = await api.chat(id);
   state.chatId = id;
   // Not `chat.model`. There is one model for the whole app, so a conversation
   // opened today runs on whatever is chosen today — the stored value is history
@@ -1846,6 +1862,14 @@ async function openChat(id) {
    * goes back up. Whatever is still streaming has no stored copy yet and stays.
    */
   const live = runs.get(id);
+  // A fold being drawn belongs to the conversation that started it; arriving
+  // somewhere else takes it down rather than leaving Send disabled here.
+  for (const other of runs.all()) {
+    if (other.compacting && other !== live) {
+      other.compacting = false;
+      compactBar.finish(false);
+    }
+  }
   if (live) {
     for (const node of [...live.stage.children]) {
       if (node !== live.turn?.node) node.remove();
@@ -1864,6 +1888,7 @@ async function openChat(id) {
   setStatus(live ? live.status : running ? t('status.reconnecting') : null);
   if (!live && background) followBackground(id, messages);
   renderQueue();
+  if (!live && !running) void flushLeftover(id);
 
   // Whether this conversation is actually waiting on a yes is a question about
   // the risk rules and the account's policy, both of which live on the server —
@@ -1871,6 +1896,8 @@ async function openChat(id) {
   // would never have been gated, under "auto" and "read-only" alike.
   if (pendingApproval?.length) showApproval(pendingApproval);
   else hideApproval();
+  // A turn paused on a form: the card comes back with the conversation.
+  if (pendingQuestion && !live) questionCard.show(pendingQuestion);
 
   // The rail should describe *this* conversation, so rebuild it from the last
   // plan in the transcript rather than leaving the previous chat's steps up.
@@ -2642,26 +2669,38 @@ $('composer').addEventListener('submit', async (event) => {
   try {
     // Where the conversation actually comes into existence: at the first thing
     // anybody says in it, carrying the project it was started under.
-    if (!state.chatId) {
+    //
+    // The conversation is pinned here, once. Every await below is a moment in
+    // which somebody can open another chat, and reading `state.chatId` after
+    // one of them started a second, unasked-for run on whatever was on screen.
+    let chatId = state.chatId;
+    if (!chatId) {
       const { chat } = await api.createChat(state.model, state.pendingProject?.id || null);
-      state.chatId = chat.id;
-      state.pendingProject = null;
+      chatId = chat.id;
+      // Only claimed for the screen if nobody went elsewhere meanwhile.
+      if (!state.chatId) {
+        state.chatId = chatId;
+        state.pendingProject = null;
+      }
     }
-    setEmpty(false);
+    const here = () => state.chatId === chatId;
     const node = userMessage(text, sending);
-    $('messages').append(node);
-    scrollToEnd();
+    if (here()) {
+      setEmpty(false);
+      $('messages').append(node);
+      scrollToEnd();
+    }
 
     // The shelf this was begun from travels with the first message only.
     const intent = state.composeMode;
     setComposeMode(null);
-    const { message } = await api.sendMessage(state.chatId, text, ids, intent);
+    const { message } = await api.sendMessage(chatId, text, ids, intent);
     if (message?.id) node.dataset.messageId = message.id;
     settleAttachments(node, sending, ids);
     await refreshChats();
-    $('chat-title').textContent = state.chats.find((c) => c.id === state.chatId)?.title || t('chat.untitled');
+    if (here()) $('chat-title').textContent = state.chats.find((c) => c.id === chatId)?.title || t('chat.untitled');
 
-    await stream();
+    await stream(undefined, undefined, { chatId });
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -2676,9 +2715,32 @@ $('composer').addEventListener('submit', async (event) => {
  * indistinguishable from one that was lost, and the whole point of waiting is
  * that you can see it waiting.
  */
+/**
+ * Lines typed into a conversation whose run finished while you were in
+ * another one, kept until you come back to it.
+ *
+ * The queue belongs to its run, and the run is dropped when it finishes. A
+ * finish on screen delivers the queue; one off screen used to drop it with the
+ * run, so the lines were neither shown nor sent.
+ */
+const leftover = new Map();
+
+/** The queue for the conversation on screen: its run's, or what that run left. */
+function queueHere() {
+  return runHere()?.queue || leftover.get(state.chatId) || [];
+}
+
+/** Deliver what a finished run left for this conversation, if anything. */
+async function flushLeftover(chatId) {
+  const waiting = leftover.get(chatId);
+  if (!waiting?.length) return;
+  await flushQueue(waiting, chatId);
+  if (!waiting.length) leftover.delete(chatId);
+}
+
 function renderQueue() {
   const host = $('queue');
-  const queue = runHere()?.queue || [];
+  const queue = queueHere();
   host.hidden = queue.length === 0;
 
   host.innerHTML = queue
@@ -2688,7 +2750,7 @@ function renderQueue() {
         <span class="queue__wait" aria-hidden="true"></span>
         <div class="queue__body">
           <p class="queue__text" id="queue-text-${i}">${escapeHtml(
-            item.text || `${item.files.length} file${item.files.length === 1 ? '' : 's'}`,
+            item.text || t(item.files.length === 1 ? 'ws.filesOne' : 'ws.files', { n: String(item.files.length) }),
           )}</p>
           <button class="queue__more" data-more="${i}" type="button" hidden
                   aria-expanded="${item.open ? 'true' : 'false'}" aria-controls="queue-text-${i}">${
@@ -2717,7 +2779,7 @@ function renderQueue() {
    * honest test is whether the clamped box is actually shorter than its content.
    */
   for (const button of host.querySelectorAll('[data-more]')) {
-    const item = (runHere()?.queue || [])[Number(button.dataset.more)];
+    const item = queueHere()[Number(button.dataset.more)];
     const text = host.querySelector(`#queue-text-${button.dataset.more}`);
     if (!text) continue;
     button.hidden = !item?.open && text.scrollHeight <= text.clientHeight + 1;
@@ -2729,7 +2791,7 @@ function renderQueue() {
 
   for (const button of host.querySelectorAll('[data-drop]')) {
     button.addEventListener('click', () => {
-      const [gone] = (runHere()?.queue || []).splice(Number(button.dataset.drop), 1);
+      const [gone] = queueHere().splice(Number(button.dataset.drop), 1);
       for (const file of gone?.files || []) if (file.preview) URL.revokeObjectURL(file.preview);
       renderQueue();
     });
@@ -2737,9 +2799,12 @@ function renderQueue() {
   for (const button of host.querySelectorAll('[data-now]')) {
     button.addEventListener('click', async () => {
       const here = runHere();
-      const [item] = (here?.queue || []).splice(Number(button.dataset.now), 1);
+      const [item] = queueHere().splice(Number(button.dataset.now), 1);
       renderQueue();
-      if (item) await deliver(item, { interrupting: true, run: here });
+      if (!item) return;
+      // A line a finished run left behind has no run to join: it starts one.
+      if (here) await deliver(item, { interrupting: true, run: here });
+      else if (await deliver(item)) await stream();
     });
   }
 }
@@ -2947,7 +3012,22 @@ async function mirrorRun(run) {
   // The database is the truth again, and it has the turn the other tab wrote —
   // properly, with its tool cards and its message ids.
   setStatus(null, run);
+  // The mirrored nodes go first: the run is still registered until `stream`
+  // finishes it, so `openChat` would otherwise put its last block back on after
+  // the stored copy of the same turn, and draw the answer twice.
+  run.stage.remove();
+  run.turn = null;
   if (state.chatId === chatId) await openChat(chatId);
+}
+
+/**
+ * A stop note's Continue. `false` when a run is still going here, so nothing
+ * started and the button stays; the note removes itself otherwise.
+ */
+function continueHere() {
+  if (runHere()) return false;
+  void stream();
+  return true;
 }
 
 /** Hosts cap how long one request may run; the agent loop is resumable. */
@@ -2969,8 +3049,9 @@ const MAX_RESUMES = 25;
  * it is not answering a question, it is catching up — and everything below, the
  * resume loop included, behaves exactly as it does for a turn started here.
  */
-async function stream(decision, answers, { rejoin = null } = {}) {
-  const chatId = state.chatId;
+async function stream(decision, answers, { rejoin = null, chatId: target = null } = {}) {
+  // Named by the caller where it can have changed since the caller began.
+  const chatId = target || state.chatId;
   if (!chatId) return;
 
   const run = runs.start(chatId, {
@@ -3034,6 +3115,12 @@ async function stream(decision, answers, { rejoin = null } = {}) {
       noteInterrupted(run, err.message || t('status.streamFailed'));
     }
   } finally {
+    // Stopped, failed or cut off mid-fold: the bar went with it, and Send with
+    // it — Send stays disabled while a fold is drawn, in every conversation.
+    if (run.compacting) {
+      run.compacting = false;
+      compactBar.finish(false);
+    }
     runs.finish(chatId);
     setStatus(null, run);
     if (onScreen(run)) setRunning(false);
@@ -3057,7 +3144,12 @@ async function stream(decision, answers, { rejoin = null } = {}) {
 
     // Whatever was typed while this was running goes now — including after a
     // stop, which is the other moment somebody means "right, my turn".
-    if (run.queue.length) await flushQueue(run.queue, chatId);
+    // Kept by conversation first, so a finish off screen — or behind another
+    // flush — cannot lose it; `openChat` delivers it on the way back in.
+    if (run.queue.length) {
+      leftover.set(chatId, run.queue);
+      await flushLeftover(chatId);
+    }
   }
 }
 
@@ -3102,11 +3194,19 @@ async function streamOnce(run, decision, answers) {
           // "compacting" before it knows how much, then says how much. Both
           // land here, and the second draws the same line with the number in.
           if (phase === 'compacting') {
-            if (onScreen(run)) compactBar.start(folding || 0);
+            if (onScreen(run)) {
+              // The bar is this run's: another run's `thinking` must not end it,
+              // and this run ending any way at all must (see `stream`'s finally).
+              run.compacting = true;
+              compactBar.start(folding || 0);
+            }
           }
           else if (phase === 'thinking') {
             // A fold that failed goes straight on to thinking; the bar goes too.
-            if (state.compacting) compactBar.finish(false);
+            if (run.compacting) {
+              run.compacting = false;
+              compactBar.finish(false);
+            }
             setStatus(t('status.thinking'), run);
           }
           /**
@@ -3241,7 +3341,10 @@ async function streamOnce(run, decision, answers) {
           // Said once the bar reaches the end, as a notice rather than a block
           // in the transcript: the summary is the model's working memory, not
           // part of the conversation somebody is reading.
-          if (onScreen(run)) compactBar.finish(true, replaced);
+          if (run.compacting) {
+            run.compacting = false;
+            compactBar.finish(true, replaced);
+          }
         },
         /**
          * The turn has stopped to ask you something.
@@ -3331,7 +3434,7 @@ function noteStop({ kind, message, detail, resumable }, run) {
   if (!body || run.lastStopNote === `${kind}:${body}`) return;
   run.lastStopNote = `${kind}:${body}`;
   run.stage.append(
-    stopNote(kind, body, resumable && onScreen(run) ? () => { void stream(); } : null),
+    stopNote(kind, body, resumable && onScreen(run) ? continueHere : null),
   );
   maybeScroll(run);
 }
@@ -3348,7 +3451,7 @@ function noteStop({ kind, message, detail, resumable }, run) {
 function noteInterrupted(run, reason) {
   if (run.interruptedNoted) return;
   run.interruptedNoted = true;
-  run.stage.append(stopNote('interrupted', t('stop.interrupted', { reason: String(reason || '').slice(0, 200) }), () => { void stream(); }));
+  run.stage.append(stopNote('interrupted', t('stop.interrupted', { reason: String(reason || '').slice(0, 200) }), continueHere));
   maybeScroll(run);
 }
 
@@ -3435,8 +3538,19 @@ function showApproval(toolCalls) {
  * The question card, wired to this app's two facts about it: how to resume the
  * turn once it is answered, and how to keep the transcript scrolled to it.
  */
+/**
+ * The last answers given, sent again with an approval.
+ *
+ * A batch can hold a question and a call that needs a yes. The answer resumes
+ * the turn, which then stops for the approval — and the approval used to go
+ * back without the answer, so the server asked the question again, and so on
+ * for ever. The server matches answers by call id, so a stale one from another
+ * pause is ignored rather than misapplied.
+ */
+let lastAnswers;
 const questionCard = createQuestionCard({
   onAnswer: (answers) => {
+    lastAnswers = answers;
     void stream(undefined, answers);
   },
   scrollToEnd,
@@ -3450,8 +3564,8 @@ function hideApproval() {
   questionCard.hide();
 }
 
-$('allow').addEventListener('click', () => stream('allow'));
-$('deny').addEventListener('click', () => stream('deny'));
+$('allow').addEventListener('click', () => stream('allow', lastAnswers));
+$('deny').addEventListener('click', () => stream('deny', lastAnswers));
 
 
 
@@ -5587,24 +5701,29 @@ function snippetAround(raw, query) {
   return `${at > 30 ? '…' : ''}${text.slice(Math.max(0, at - 30), at + 110)}…`;
 }
 
+let searches = 0;
 async function runSearch() {
   const query = $('search-input').value.trim();
   const results = $('search-results');
   $('search-clear').hidden = !query;
 
   if (query.length < 2) {
+    searches += 1;
     results.innerHTML = `<p class="hint">${escapeHtml(t('search.tooShort'))}</p>`;
     return;
   }
 
   results.innerHTML = `<p class="hint">${escapeHtml(t('search.searching'))}</p>`;
+  // Answers can arrive out of order; only the newest query's may draw.
+  const mine = ++searches;
   let chats;
   try {
     ({ chats } = await api.searchChats(query));
   } catch (err) {
-    results.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
+    if (mine === searches) results.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
     return;
   }
+  if (mine !== searches) return;
 
   if (!chats.length) {
     results.innerHTML = `<p class="hint">${escapeHtml(t('search.noMatch', { query }))}</p>`;

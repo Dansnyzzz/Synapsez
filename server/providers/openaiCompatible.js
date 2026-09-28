@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import OpenAI from 'openai';
 import { normaliseStop } from './stop.js';
 
@@ -188,7 +189,10 @@ function parseTextCalls(text, tools) {
         input[key] = value;
       }
     }
-    calls.push({ id: `call_text_${calls.length}_${name}`, name, input });
+    // Unique per step, not only per reply: `call_text_0_x` on every step put the
+    // same id in the transcript twice, which strict providers refuse and which
+    // let an answer meant for one pause match another.
+    calls.push({ id: `call_text_${randomUUID().slice(0, 8)}_${calls.length}_${name}`, name, input });
   }
   return calls;
 }

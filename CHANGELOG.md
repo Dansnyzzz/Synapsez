@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-09-28 (audit) — privacy, fewer tokens per step, and runs that cannot tangle
+
+### Security and privacy
+
+- **A fetch that carries data out now asks first.** "Read my inbox, then open
+  `https://…/?d=<the inbox>`" was all reads, so nothing asked. Any tool that sends a URL
+  (`web_fetch`, `http_request`, `browser_open`, `read_feed`, `download_file`, …) is approved first
+  when the address carries a payload, and the prompt says why.
+- **Private addresses are refused however they are written.** `[::ffff:169.254.169.254]` reached
+  the check as `::ffff:a9fe:a9fe` and passed as public; IPv6 is now judged by value, including
+  NAT64, 6to4 and IPv4-compatible forms.
+- **An API key stays with its site.** A redirect to another origin drops every credential-shaped
+  header (not only `Authorization`), and a request body is never resent to another origin — the
+  redirect is reported to the model instead. `http_request` and `read_feed` read at most a capped
+  number of bytes.
+- **Password-reset links no longer reach a deployment's logs** when no mail provider is set.
+- **Google results are data, not instructions**, everywhere: Drive search, calendars, Sheets,
+  Forms, Tasks and Contacts join Gmail in the untrusted envelope. Calendar and Contacts listings
+  are clipped. Gmail ids are validated before they enter an API path.
+- A failed Google sign-in carries its reason in a same-origin cookie, not the URL, so a link can
+  no longer put someone else's words in the app's error message.
+- The shared model library refuses to drop more than a quarter of a provider's models at once.
+
+### Tokens
+
+- The `load_tools` index lists tool families on one line (~300 tokens less on every step), and its
+  descriptions no longer stop at "e.g.".
+- **Claude and Gemini through OpenRouter are cached.** They only cache when asked; every step
+  re-bought the tool list and system prompt at full price.
+
+### Fixed
+
+- **Scheduled tasks and workflows** are no longer told to ask a form nobody will answer, and a
+  question stops them as an approval does. A task conversation left paused no longer breaks every
+  later run (calls without results are answered "not run" for the model).
+- **Run now** takes the task's lease — a double press or a second tab no longer starts two runs
+  (409) — and a manual task stays on after it runs. Hourly repeats keep their minute in half-hour
+  zones (India, Nepal).
+- A question and an approval in the same step no longer ask each other forever; a paused question
+  comes back when the conversation is reopened.
+- Lines queued in a conversation are delivered when you come back to it, even if its run finished
+  while you were elsewhere; a reply never starts in the conversation you switched to while sending.
+- Send is no longer stuck disabled after a stop during compaction; a watched run from another tab
+  is not drawn twice, and shows its text while that tab is in the background.
+- Accessibility: the tool pane takes and returns focus and closes on Escape; picking in a question
+  form keeps keyboard focus; the "new group" field is no longer inside a button.
+
 ## 2026-09-28 (later still) — project documents found, small edits to big files, a quieter transcript
 
 ### Fixed

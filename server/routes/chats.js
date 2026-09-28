@@ -4,6 +4,7 @@ import { resolveForUser } from '../autoPick.js';
 import { getStore } from '../store/index.js';
 import { verifyOwned } from '../attachments.js';
 import { deriveTitle, needsApproval as pendingApproval } from '../agent.js';
+import { normaliseQuestions, askLayout } from '../tools/askOptions.js';
 import { compact as compactChat, measure as measureContext } from '../compact.js';
 
 /** The share of the window a conversation must use before it can be folded by hand. */
@@ -111,7 +112,24 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
        */
       const last = messages[messages.length - 1];
       let pending = null;
-      if (last?.role === 'assistant' && last.toolCalls?.length) {
+      /**
+       * A turn paused on a question, drawn again on the way back in.
+       *
+       * The card was only ever sent when a run started, so a reload or a visit
+       * to another conversation left the turn waiting on a form nobody could see.
+       * Asked before approval, as the loop does.
+       */
+      let question = null;
+      const asking = last?.role === 'assistant' ? last.toolCalls?.find((c) => c.name === 'ask_options') : null;
+      if (asking) {
+        try {
+          const questions = normaliseQuestions(asking.input);
+          question = { toolCallId: asking.id, questions, ...askLayout(asking.input, questions) };
+        } catch {
+          /* malformed: the resume path reports it when the turn goes on */
+        }
+      }
+      if (!question && last?.role === 'assistant' && last.toolCalls?.length) {
         const prefs = await getPrefs(req.user.id);
         const gated = pendingApproval(last.toolCalls, prefs.toolPolicy);
         if (gated.length) {
@@ -184,7 +202,7 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       // page follows the transcript as each step is saved instead.
       const background = !running && (await store.chatHasBackgroundRun(req.user.id, req.params.id));
 
-      res.json({ chat, messages, pendingApproval: pending, context, project, files, running, background });
+      res.json({ chat, messages, pendingApproval: pending, pendingQuestion: question, context, project, files, running, background });
     }),
   );
 
@@ -204,10 +222,13 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
     wrap(async (req, res) => {
       const store = getStore();
       const patch = {};
-      for (const key of ['title', 'model', 'pinned', 'unread']) {
+      for (const key of ['title', 'model']) {
         if (key in (req.body || {})) patch[key] = req.body[key];
       }
-      if ('archived' in (req.body || {})) patch.archived = !!req.body.archived;
+      // Boolean columns: anything else was a database error and a 500.
+      for (const key of ['pinned', 'unread', 'archived']) {
+        if (key in (req.body || {})) patch[key] = !!req.body[key];
+      }
 
       /**
        * Moving a conversation into a project, or out of one.

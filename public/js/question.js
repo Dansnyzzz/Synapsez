@@ -170,6 +170,8 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
             return advance();
           }
           paintQuestion();
+          // Several allowed: stay on the one just toggled rather than on <body>.
+          /** @type {HTMLElement | null} */ (qEl('question-options').querySelector(`[data-index="${index}"]`))?.focus();
         }),
       );
     });
@@ -237,6 +239,11 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
             optionRow(q, slot, option, i, (opt, chosen) => {
               pick(q, slot, opt, chosen);
               paintForm();
+              // The repaint replaced the button that had focus, which dropped a
+              // keyboard or screen-reader user back at the top of the page.
+              /** @type {HTMLElement | null} */ (
+                qEl('question-options').querySelector(`#qform-q-${index} ~ .qform__opts [data-index="${i}"]`)
+              )?.focus();
             }),
           );
         });

@@ -1668,6 +1668,7 @@ export function createApp() {
       const task = await getStore().getTask(req.user.id, req.params.id);
       if (!task) return res.status(404).json({ error: 'Task not found' });
       const result = await runTaskNow(task);
+      if (result.status === 'busy') return res.status(409).json({ error: 'This task is already running. Wait for it to finish.' });
       res.json(result);
     }),
   );

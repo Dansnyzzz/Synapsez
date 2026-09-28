@@ -230,12 +230,19 @@ export function parseSchedule(input, { once = false, from = new Date(), tz = nul
   const hourly = /^hourly\s*:?([0-5]\d)$/.exec(text);
   if (hourly) {
     const minute = Number(hourly[1]);
-    const next = new Date(from);
-    next.setSeconds(0, 0);
-    next.setMinutes(minute);
-    // Minutes and hours are the same length in every zone, so this one needs no
-    // calendar walk: the next occurrence is at most an hour away.
-    if (next <= from) next.setTime(next.getTime() + 3_600_000);
+    // The minute on the account's clock, not the server's: India is UTC+5:30
+    // and Nepal +5:45, so ":10" on a UTC server ran at :40 or :55 there.
+    let next;
+    if (validZone(tz)) {
+      const p = partsIn(from, tz);
+      next = instantOf({ year: p.year, month: p.month, day: p.day, hour: p.hour, minute }, tz);
+    } else {
+      next = new Date(from);
+      next.setSeconds(0, 0);
+      next.setMinutes(minute);
+    }
+    // The next occurrence is at most an hour away, so no calendar walk.
+    if (next <= from) next = new Date(next.getTime() + 3_600_000);
     return { cron: `hourly :${hourly[1]}`, nextRunAt: next.toISOString() };
   }
 
@@ -429,6 +436,7 @@ async function runTask(task) {
       // What this run may do unwatched. The task's own choice where it made
       // one, the account's default otherwise — see `policyFor` in the loop.
       policy: task.policy || null,
+      unattended: true,
       emit(event, data) {
         // Stored in last_status and shown in the interface, so a key quoted
         // back by a provider must not survive the trip.
@@ -436,7 +444,7 @@ async function runTask(task) {
         else if (event === 'done') ending = data?.stop?.kind || data?.stopReason || null;
         // A scheduled run that stops to ask is stopped for good: the prompt goes
         // nowhere, because nobody is watching a run that happens at 3am.
-        else if (event === 'approval_required') waitingForApproval = true;
+        else if (event === 'approval_required' || event === 'question_required') waitingForApproval = true;
       },
     });
   } catch (err) {
@@ -445,7 +453,10 @@ async function runTask(task) {
 
   status = unattendedStatus(status, ending, waitingForApproval);
 
-  await store.finishTask(task.id, { status, chatId, nextRunAt: nextRunOf(task) });
+  // Only a task that had a schedule can run out of one; a manual task has
+  // no next run and stays on.
+  const retire = !!(task.cron || task.next_run_at);
+  await store.finishTask(task.id, { status, chatId, nextRunAt: nextRunOf(task), retire });
   return { taskId: task.id, status, chatId };
 }
 
@@ -470,9 +481,12 @@ export async function runTaskNow(task) {
    * means the worst case is a skipped occurrence rather than a surprise repeat
    * of a job that sends email.
    */
-  const next = nextRunOf(task);
-  if (next) await getStore().finishTask(task.id, { status: task.last_status ?? null, chatId: task.last_chat ?? null, nextRunAt: next });
-  return runTask(task);
+  // The claim both moves the schedule on and takes the lease, in one statement.
+  // It used to clear the lease instead, which let this run start beside one the
+  // cron was already holding.
+  const claimed = await getStore().claimTask(task.user_id, task.id, { nextRunAt: nextRunOf(task) });
+  if (!claimed) return { taskId: task.id, status: 'busy', chatId: task.last_chat ?? null };
+  return runTask(claimed);
 }
 
 /**

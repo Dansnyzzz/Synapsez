@@ -112,9 +112,11 @@ async function runStep({ user, chatId, modelId, instruction }) {
       user,
       chatId,
       modelId,
+      unattended: true,
       emit(event, data) {
         if (event === 'error') error = clean(data?.message || 'failed', 400);
-        else if (event === 'approval_required') awaitingApproval = true;
+        // A question stops a step exactly as an approval does: nobody is there.
+        else if (event === 'approval_required' || event === 'question_required') awaitingApproval = true;
         else if (event === 'done') stopReason = String(data?.stopReason || '');
         else if (event === 'message' && data?.message?.role === 'assistant' && data.message.text) {
           summary = clean(data.message.text, 2_000);

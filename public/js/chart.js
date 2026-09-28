@@ -71,7 +71,14 @@ export function chartFigure(widget) {
   // A chart drawn before charts carried their numbers is still drawn here, in
   // the page — just without the hover, which needs the numbers.
   const given = widget?.spec;
-  const readable = !!given && Array.isArray(given.labels) && Array.isArray(given.series);
+  // Every series with its numbers, or none of the hover: a stored chart with a
+  // series missing `values` threw inside the pointer handlers on every move.
+  const readable =
+    !!given &&
+    Array.isArray(given.labels) &&
+    Array.isArray(given.series) &&
+    given.series.length > 0 &&
+    given.series.every((s) => Array.isArray(s?.values));
   const spec = readable ? given : { type: '', labels: [], series: [] };
 
   const figure = document.createElement('figure');

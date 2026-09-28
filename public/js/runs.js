@@ -73,6 +73,8 @@ export function createRuns({ currentChatId, newStage = () => document.createElem
        * truncated as well is news, not a repeat.
        */
       lastStopNote: null,
+      /** This run started the compaction bar and has not yet ended it. */
+      compacting: false,
       ...fields,
     };
     byChat.set(chatId, run);
@@ -85,6 +87,8 @@ export function createRuns({ currentChatId, newStage = () => document.createElem
     start,
     get: (chatId) => byChat.get(chatId) || null,
     has: (chatId) => byChat.has(chatId),
+    /** Every run going, in any conversation. */
+    all: () => [...byChat.values()],
     /** How many conversations are answering. Two at once is the point of this. */
     get size() {
       return byChat.size;

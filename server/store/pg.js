@@ -2427,11 +2427,44 @@ export function createPgStore(connectionString) {
       await q('UPDATE scheduled_tasks SET last_chat = $2 WHERE id = $1', [id, chatId]);
     },
 
-    async finishTask(id, { status, chatId, nextRunAt }) {
+    /**
+     * Take one task's lease for a run somebody asked for by hand.
+     *
+     * "Run now" used to call the runner with no claim at all, so a double
+     * press, a second tab, or a press while the cron held the same task started
+     * two runs into one conversation — and a task that sends email sent it
+     * twice. Null when a live run already holds the lease.
+     *
+     * @param nextRunAt  where the schedule goes next, so the passed time left in
+     *                   the row cannot fire it again straight after; null keeps it.
+     */
+    async claimTask(userId, id, { nextRunAt = null, leaseMs = 600_000 } = {}) {
+      const rows = await q(
+        `UPDATE scheduled_tasks
+            SET run_state   = 'running',
+                started_at  = NOW(),
+                last_run_at = NOW(),
+                lease_until = NOW() + ($3 || ' milliseconds')::interval,
+                next_run_at = COALESCE($4::timestamptz, next_run_at)
+          WHERE id = $1 AND user_id = $2
+            AND (run_state IS DISTINCT FROM 'running' OR lease_until IS NULL OR lease_until <= NOW())
+      RETURNING *`,
+        [id, userId, String(leaseMs), nextRunAt],
+      );
+      return rows[0] ?? null;
+    },
+
+    /**
+     * @param retire  when there is no next run, whether that retires the task.
+     *   True for a schedule that has run out — a one-off, or one past its end
+     *   date. False for a manual task, which never had a next run: it used to
+     *   switch itself off after its first "Run now", the only way it can run.
+     */
+    async finishTask(id, { status, chatId, nextRunAt, retire = true }) {
       // The lease is given up here and nowhere else. A task left marked
       // `running` is precisely the signal `reapStalledTasks` reads, so clearing
       // it is what distinguishes "finished" from "died holding it".
-      if (nextRunAt) {
+      if (nextRunAt || !retire) {
         await q(
           `UPDATE scheduled_tasks
               SET last_status = $2, last_chat = $3, next_run_at = $4,

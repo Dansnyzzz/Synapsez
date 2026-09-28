@@ -13,6 +13,9 @@
  * transparent PNG pasted onto a white page would lose it.
  */
 import { t } from './i18n.js';
+// A cycle (render.js imports this file), safe because `toast` is a hoisted
+// function called at click time, long after both modules have loaded.
+import { toast } from './render.js';
 
 const ICON_COPY =
   '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">' +
@@ -118,7 +121,9 @@ export function mediaTools({ blob, name }) {
         copy.title = t('media.copy');
       }, 1400);
     } catch {
+      // Said out loud: a changed tooltip is a failure nobody hears.
       copy.title = t('media.copyFailed');
+      toast(t('media.copyFailed'), 'error');
     }
   });
 
@@ -136,6 +141,7 @@ export function mediaTools({ blob, name }) {
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch {
       download.title = t('media.downloadFailed');
+      toast(t('media.downloadFailed'), 'error');
     }
   });
 

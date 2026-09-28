@@ -300,13 +300,21 @@ export async function refreshIfStale({ tz = null, now = new Date() } = {}) {
   const beforeMorning = tz ? refreshed < lastLocalHour(DAILY_REFRESH_HOUR, tz, now).getTime() : false;
   if (age < STALE_AFTER_MS && !beforeMorning) return status;
 
+  // One refresh at a time per instance: the first page loads after six each
+  // morning arrive together, and each used to fetch and prune the whole library.
+  refreshing ??= refreshLibrary().finally(() => {
+    refreshing = null;
+  });
   try {
-    return await refreshLibrary();
+    return await refreshing;
   } catch (err) {
     log.error('model library refresh failed', err);
     return status;
   }
 }
+
+/** The refresh in flight, shared by everyone who asks while it runs. */
+let refreshing = null;
 
 /**
  * Add one model by id, verifying it exists first. Accepts what people actually

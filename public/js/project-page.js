@@ -317,7 +317,12 @@ export function createProjectPage({
    * filenames tells you a project made four documents and nothing about which
    * one you want.
    */
+  /** The last draw's observers, let go before the next draw makes its own. */
+  let observers = [];
+
   function drawOutputs(outputs) {
+    for (const o of observers) o.disconnect();
+    observers = [];
     if (!outputs.length) {
       outputsHost.innerHTML = '';
       return;
@@ -375,7 +380,9 @@ export function createProjectPage({
       });
     }
     rail.addEventListener('scroll', sayArrows, { passive: true });
-    new window.ResizeObserver(sayArrows).observe(rail);
+    const resize = new window.ResizeObserver(sayArrows);
+    resize.observe(rail);
+    observers.push(resize);
     sayArrows();
 
     for (const card of /** @type {NodeListOf<HTMLElement>} */ (outputsHost.querySelectorAll('[data-output]'))) {
@@ -405,6 +412,7 @@ export function createProjectPage({
       },
       { root: rail, rootMargin: '0px 300px' },
     );
+    observers.push(watch);
     for (const peek of outputsHost.querySelectorAll('[data-peek]')) watch.observe(peek);
   }
 
