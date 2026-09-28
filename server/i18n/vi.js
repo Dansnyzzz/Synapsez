@@ -802,9 +802,6 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "{0} không có mã nguồn đã lưu để sửa. Hãy gửi toàn bộ nội dung thay vào đó.",
   // The cloud computer (server/sandbox.js).
   'A file needs a path, e.g. "data/input.csv".': 'Tệp cần có đường dẫn, ví dụ "data/input.csv".',
-  '"{0}" climbs out of the work folder; give a path inside it.':
-    '"{0}" đi ra ngoài thư mục làm việc; hãy dùng đường dẫn bên trong nó.',
-  'Files go under {0} or /tmp — "{1}" is outside both.': 'Tệp phải nằm trong {0} hoặc /tmp — "{1}" nằm ngoài cả hai.',
   'Give a `command` to run, `files` to write, or a file to `download`.':
     'Hãy đưa `command` để chạy, `files` để ghi, hoặc một tệp để `download`.',
   'Write at most {0} files per call.': 'Mỗi lần ghi tối đa {0} tệp.',
@@ -836,6 +833,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Chỉ những gì trợ lý tạo ra mới chia sẻ được bằng link. Tệp tải lên luôn được giữ riêng tư.',
   'Give the `file_id` of a file you made — create_file returns it.': 'Hãy đưa `file_id` của tệp đã tạo — create_file trả về giá trị này.',
   'There is no file {0} made in this account.': 'Không có tệp {0} nào được tạo trong tài khoản này.',
+  'This command on the cloud computer looks like it sends data out or destroys something.':
+    'Lệnh này trên máy tính đám mây có vẻ gửi dữ liệu ra ngoài hoặc xoá thứ gì đó.',
   'Makes this file public: anyone with the link can open it without signing in.':
     'Công khai tệp này: ai có link đều mở được mà không cần đăng nhập.',
   // Scatter charts.

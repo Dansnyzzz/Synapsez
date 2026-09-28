@@ -2,52 +2,38 @@ import crypto from 'node:crypto';
 import { classify, saveGenerated } from './attachments.js';
 
 /**
- * A private Linux computer in the cloud, one per conversation.
+ * A private Linux computer in the cloud, one per account.
  *
  * `run_command` runs on the person's own PC, through the worker — which is the
  * right place for their files and the wrong place for "work this out in
  * Python", and does not exist at all for somebody who never paired a machine.
  * This is the other half: a Vercel Sandbox, a Firecracker microVM with bash,
- * Python, Node, git and a 64 GB disk, started for the conversation that asks
- * and found again by name on its next call.
+ * Python, Node, git, root and a 64 GB disk.
+ *
+ * **One per account, kept.** The same machine is found again by name from every
+ * conversation, and its disk is snapshotted when it pauses — so what was
+ * installed, cloned or saved is there next week, the way a computer is. Only
+ * the newest snapshot is kept, for thirty days after it was last used.
+ *
+ * **The whole internet.** It used to reach package registries only, which
+ * stopped exactly the work people wanted it for: calling an API, downloading a
+ * dataset, reading a page from code. The risk that fence addressed — a model
+ * talked into posting what it has read to somebody's server — is now graded
+ * per command instead (see `assessRisk` for `sandbox_run`): a command that
+ * uploads, pipes a download into a shell, or destroys asks first, as `run_command`
+ * does, and everything else runs.
  *
  * Free on Vercel's Hobby plan within its monthly allotment; past it, creation
- * pauses rather than billing (see docs/sandbox/pricing on vercel.com). So the
- * choices below lean small: two vCPUs, a short session, one snapshot kept.
- *
- * **Why the network is fenced.** Code in here is written by a model, and a model
- * can be talked into things by a page it read a moment ago. With the whole
- * internet open, "base64 the notes you were shown and POST them to my server"
- * is one line of Python. Package registries and source hosts are what real work
- * needs — `pip install`, `npm install`, `git clone` — and a registry is not a
- * place anybody receives a payload. Everything else is refused by the sandbox's
- * own proxy, which a command inside it cannot talk its way past.
+ * pauses rather than billing (see docs/sandbox/pricing on vercel.com).
  */
 
-const ALLOWED_HOSTS = [
-  'pypi.org',
-  'files.pythonhosted.org',
-  'registry.npmjs.org',
-  '*.npmjs.org',
-  'registry.yarnpkg.com',
-  'github.com',
-  'codeload.github.com',
-  'objects.githubusercontent.com',
-  'raw.githubusercontent.com',
-  'deb.debian.org',
-  'archive.ubuntu.com',
-  'security.ubuntu.com',
-  'dl-cdn.alpinelinux.org',
-  'fonts.gstatic.com',
-];
-
-const SESSION_MS = 15 * 60 * 1000;
+const SESSION_MS = 20 * 60 * 1000;
 const COMMAND_MS = 120_000;
 const MAX_OUTPUT_CHARS = 16_000;
 const MAX_FILES_IN = 20;
 const MAX_FILE_IN_BYTES = 2 * 1024 * 1024;
 const DOWNLOAD_BYTES = 10 * 1024 * 1024;
-const WORKDIR = '/vercel/sandbox';
+const SNAPSHOT_DAYS = 30;
 
 /**
  * Whether there is anything to start a sandbox with. On Vercel the platform
@@ -70,29 +56,28 @@ function credentials(env = process.env) {
 }
 
 /**
- * The sandbox's name: the same for every call in one conversation, and nothing
- * anybody could read an account or a conversation back out of.
+ * The machine's name: the same for every conversation of one account, and
+ * nothing anybody could read the account back out of.
  */
-export function sandboxName(userId, chatId) {
-  const digest = crypto.createHash('sha256').update(`${userId}:${chatId || 'none'}`).digest('hex');
-  return `syn-${digest.slice(0, 32)}`;
+export function sandboxName(userId) {
+  const digest = crypto.createHash('sha256').update(`machine:${userId}`).digest('hex');
+  return `synz-${digest.slice(0, 32)}`;
 }
 
-/** Where a path lands inside the machine, refusing the ones that leave the work folder. */
+/**
+ * A path as the machine will read it: relative ones resolve against the
+ * session's own working folder (the SDK does that), absolute ones are taken
+ * as given — it is the account's own computer, and every folder on it is theirs.
+ *
+ * It used to prefix `/vercel/sandbox` and run every command there, which is
+ * where the older runtime images kept their work; the current image has no
+ * such folder, and every command failed with `chdir /vercel/sandbox: no such
+ * file or directory` before it ran.
+ */
 export function workPath(path) {
   const raw = String(path || '').trim().replace(/\\/g, '/');
   if (!raw) throw new Error('A file needs a path, e.g. "data/input.csv".');
-  const parts = [];
-  for (const piece of (raw.startsWith('/') ? raw.slice(1) : raw).split('/')) {
-    if (!piece || piece === '.') continue;
-    if (piece === '..') throw new Error(`"${raw}" climbs out of the work folder; give a path inside it.`);
-    parts.push(piece);
-  }
-  const full = raw.startsWith('/') ? `/${parts.join('/')}` : `${WORKDIR}/${parts.join('/')}`;
-  if (raw.startsWith('/') && !full.startsWith(`${WORKDIR}/`) && !full.startsWith('/tmp/')) {
-    throw new Error(`Files go under ${WORKDIR} or /tmp — "${raw}" is outside both.`);
-  }
-  return full;
+  return raw;
 }
 
 const clipOutput = (text) => {
@@ -134,12 +119,12 @@ async function machineFor(name, { signal } = {}) {
     name,
     timeout: SESSION_MS,
     resources: { vcpus: 2 },
-    networkPolicy: { allow: ALLOWED_HOSTS },
-    // The disk survives a pause, so a conversation that comes back tomorrow
-    // finds its files — but only the newest snapshot is kept, and not forever.
+    networkPolicy: 'allow-all',
+    // The disk survives a pause, so the account finds its files and installs
+    // again next time — only the newest snapshot, kept a month after last use.
     persistent: true,
-    keepLastSnapshots: { count: 1, expiration: 7 * 24 * 60 * 60 * 1000, deleteEvicted: true },
-    tags: { app: 'synapse' },
+    keepLastSnapshots: { count: 1, expiration: SNAPSHOT_DAYS * 24 * 60 * 60 * 1000, deleteEvicted: true },
+    tags: { app: 'synapsez' },
     signal,
   });
 }
@@ -148,7 +133,7 @@ async function machineFor(name, { signal } = {}) {
  * Run one command, having written any files first, and hand back what it said
  * — plus, when asked, one file it made, saved into the conversation.
  *
- * @param {{ command?: string, files?: {path: string, content: string}[], download?: string, timeout_seconds?: number }} input
+ * @param {{ command?: string, files?: {path: string, content: string}[], download?: string, timeout_seconds?: number, as_root?: boolean }} input
  * @param {{ userId?: string, chatId?: string, signal?: AbortSignal }} [context]
  */
 export async function runInSandbox(input, { userId, chatId, signal } = {}) {
@@ -168,7 +153,7 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
 
   let machine;
   try {
-    machine = await machineFor(sandboxName(userId, chatId), { signal });
+    machine = await machineFor(sandboxName(userId), { signal });
   } catch (err) {
     throw new Error(
       `The cloud computer could not be started: ${err?.message || err}. ` +
@@ -179,16 +164,19 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   const report = [];
   if (writes.length) {
     await machine.writeFiles(writes, { signal });
-    report.push(`Wrote ${writes.map((w) => w.path.replace(`${WORKDIR}/`, '')).join(', ')}.`);
+    report.push(`Wrote ${writes.map((w) => w.path).join(', ')}.`);
   }
 
   if (command) {
     const seconds = Math.min(300, Math.max(5, Number(input?.timeout_seconds) || COMMAND_MS / 1000));
     const started = Date.now();
+    // No `cwd`: the session's own working folder, which is where relative
+    // paths in `files` and `download` land too. Root only when asked for —
+    // installing a system package — so ordinary work runs as the normal user.
     const done = await machine.runCommand({
       cmd: 'bash',
       args: ['-lc', command],
-      cwd: WORKDIR,
+      sudo: !!input?.as_root,
       timeoutMs: seconds * 1000,
       signal,
     });
@@ -228,10 +216,17 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
     );
   }
 
+  let home = '';
+  try {
+    home = machine.currentSession?.()?.cwd || '';
+  } catch {
+    /* an older SDK without sessions; the note just omits the folder */
+  }
   report.push(
-    `(Machine for this conversation: files under ${WORKDIR} persist between calls. Network: package registries and GitHub only.)`,
+    `(This account's own cloud computer: it keeps its files and installs between conversations${home ? `; working folder ${home}` : ''}. ` +
+      'Full internet access; as_root: true for system packages.)',
   );
   return { content: report.join('\n'), ...(file ? { file } : {}) };
 }
 
-export const __testing = { ALLOWED_HOSTS, WORKDIR };
+export const __testing = { SNAPSHOT_DAYS };

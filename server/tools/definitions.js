@@ -1411,15 +1411,16 @@ export const TOOLS = [
     readOnly: false,
     needsHost: 'sandbox',
     description:
-      'Run bash on a private Linux computer in the cloud that belongs to this conversation — Python, Node, git, pip and npm are installed. ' +
-      'Use it to compute, analyse data, convert or generate files (a PDF, a chart image, a zip of results), or test code. ' +
-      'Write files with `files`, run with `command`, and hand one file to the user with `download`. ' +
-      'Files under /vercel/sandbox stay between calls; the network reaches package registries and GitHub only. ' +
+      'Run bash on this account\'s own Linux computer in the cloud — Python, Node, git, pip, npm, full internet, root with as_root. ' +
+      'Use it to compute, analyse data, call APIs, download, convert or generate files (a PDF, a chart image, a zip), or build and test code. ' +
+      'It keeps its files and installed software between conversations. Write files with `files`, run with `command`, ' +
+      'and hand one file to the user with `download`. Relative paths are in its working folder. ' +
       'This is not the user\'s own computer — use run_command for that.',
     parameters: {
       type: 'object',
       properties: {
-        command: { type: 'string', description: 'A bash command line, run in /vercel/sandbox, e.g. "pip install pandas && python analyse.py".' },
+        command: { type: 'string', description: 'A bash command line, run in the working folder, e.g. "pip install pandas && python analyse.py".' },
+        as_root: { type: 'boolean', description: 'Run as root — only to install system packages (dnf install …).' },
         files: {
           type: 'array',
           description: 'Text files to write before the command runs.',
@@ -2818,6 +2819,12 @@ export function assessRisk(name, input = {}) {
     return 'ordinary';
   }
 
+  // The cloud computer has the whole internet now, so its commands are judged
+  // the same way the shell's are: an upload, a download piped into a shell, a
+  // wipe asks first; ordinary work runs. Its own disk is the account's, not
+  // Windows', so the protected-path list does not apply here.
+  if (name === 'sandbox_run') return looksDestructive(String(input?.command || '')) ? 'sensitive' : 'ordinary';
+
   // Writing outside the folder the user pointed at is a different act from
   // writing inside it, whatever the tool.
   const path = pathArgument(name, input);
@@ -2909,6 +2916,9 @@ export function riskReason(name, input = {}) {
   }
   if (name === 'slack_post') return `Posts to ${input?.channel || 'a Slack channel'}, where other people will read it.`;
   if (name === 'publish_file') return 'Makes this file public: anyone with the link can open it without signing in.';
+  if (name === 'sandbox_run' && looksDestructive(String(input?.command || ''))) {
+    return 'This command on the cloud computer looks like it sends data out or destroys something.';
+  }
   if (name === 'telegram_send') return `Sends a Telegram message to ${input?.chat_id || 'a chat'}.`;
   if (name === 'meta_page_post') return 'Publishes a post on your Facebook Page, publicly and immediately.';
   if (name === 'github_write') {
