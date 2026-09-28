@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-28 (night) — workflows work like scheduled tasks; a readable Delete; a glass question card
+
+### Fixed
+
+- **Delete showed a blank red pill** after the first press on Scheduled (and on files and notes):
+  the global armed style painted the text the same red as the fill. It now reads on the fill.
+
+### Changed
+
+- **Workflows use the same buttons as scheduled tasks** — Pause, Remove and a pencil — and the
+  pencil opens the side panel, where the steps are edited in place (one per line, saved when you
+  click away) and Run now lives. The edit sheet is gone; the sheet now only creates workflows.
+- **The question card is glass**, like the composer, instead of a grey slab.
+
 ## 2026-09-28 (late evening) — tasks edited in the side panel; Context is what was used
 
 ### Changed

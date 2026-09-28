@@ -672,7 +672,8 @@ export function createPages({
     openChat,
     onLeave,
     onDescribe,
-    openForm: (id, preset) => wfForm.open(id, preset),
+    openForm: (preset) => wfForm.open(preset),
+    openPane: (id) => showScheduleInPane('workflow', id, { after: load }),
     // Only while the shelf is on screen: Run now may have moved to the conversation.
     reload: () => (showing === 'workflows' ? load() : null),
     onRunStarted,
@@ -1048,10 +1049,11 @@ export function createPages({
           isTask
             ? `<textarea class="spane__prompt" data-s="prompt" rows="5"
                          aria-label="${escapeHtml(t('taskForm.prompt'))}">${escapeHtml(row.prompt || '')}</textarea>`
-            : `<div class="spane__steps">
-                 <ol>${steps.map((s) => `<li>${escapeHtml(stepText(s))}</li>`).join('')}</ol>
-                 <button class="btn btn--ghost" data-s="steps" type="button">${escapeHtml(t('pane.editSteps'))}</button>
-               </div>`
+            : // The steps are changed here, one per line, like a task's instructions —
+              // not in a sheet over the page.
+              `<textarea class="spane__prompt" data-s="steps" rows="8"
+                         aria-label="${escapeHtml(t('wf.stepsLabel'))}">${escapeHtml(steps.map(stepText).join('\n'))}</textarea>
+               <p class="hint">${escapeHtml(t('pane.stepsHint'))}</p>`
         }
 
         <div class="spane__label">${escapeHtml(t('pane.details'))}</div>
@@ -1298,7 +1300,18 @@ export function createPages({
       if (prompt && prompt !== row.prompt) save({ prompt });
     });
     q('policy')?.addEventListener('change', () => save({ policy: q('policy').value }));
-    q('steps')?.addEventListener('click', () => editWorkflowFromPane(row.id));
+    q('steps')?.addEventListener('change', () => {
+      const lines = q('steps')
+        .value.split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (!lines.length) {
+        status.textContent = t('wf.needStep');
+        status.classList.add('is-error');
+        return;
+      }
+      save({ steps: lines });
+    });
 
     q('toggle').addEventListener('click', async () => {
       if (kind === 'workflow') await api.updateWorkflow(row.id, { enabled: !row.enabled });
@@ -1358,14 +1371,6 @@ export function createPages({
         run.textContent = t('pages.tasks.runNow');
       }
     });
-  }
-
-  /** The workflow form, over its shelf — the rail cannot hold a step editor. */
-  function editWorkflowFromPane(id) {
-    closeTaskPane();
-    onShowPage();
-    showShelf('workflows');
-    return wfForm.open(id);
   }
 
   /** A task in the rail — kept by name for the callers that only have tasks. */
@@ -1463,16 +1468,5 @@ export function createPages({
     closeTaskPane,
     /** Whether the rail is showing a task — the file viewer asks before taking it. */
     taskPaneOpen: () => !$('taskpane').hidden,
-
-    /**
-     * One workflow, opened to change — from a schedule card in a transcript.
-     *
-     * The shelf first, so closing the form leaves somebody among their
-     * workflows rather than back in a conversation with a sheet gone from it.
-     */
-    async editWorkflow(id) {
-      showShelf('workflows');
-      await wfForm.open(id);
-    },
   };
 }

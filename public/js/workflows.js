@@ -57,7 +57,7 @@ const clip = (text, max = 140) => {
  * @param openChat   go to the conversation a run wrote into
  * @param onLeave    close the shelf first
  * @param onDescribe start a blank conversation with a sentence begun
- * @param openForm   the create/edit sheet, owned by the page shell
+ * @param openForm   the create sheet, owned by the page shell
  * @param reload     re-run the shelf's own load
  */
 /**
@@ -96,6 +96,8 @@ export function workflowsView({
   onLeave,
   onDescribe = /** @type {(starter?: string, mode?: string) => void} */ (() => onLeave()),
   openForm,
+  /** One workflow in the side panel, to change or run. */
+  openPane = /** @type {(id: string) => void} */ (() => {}),
   reload,
   onRunStarted = () => {},
 }) {
@@ -203,12 +205,12 @@ export function workflowsView({
             </div>
             <div class="wf__acts">
               ${run?.chat_id ? `<button class="task__act" data-open="${escapeHtml(run.chat_id)}">${escapeHtml(t('wf.openResult'))}</button>` : ''}
-              <button class="task__act" data-run="${escapeHtml(wf.id)}">${escapeHtml(t('wf.runNow'))}</button>
-              <button class="task__act" data-edit="${escapeHtml(wf.id)}">${escapeHtml(t('wf.edit'))}</button>
               <button class="task__act" data-toggle="${escapeHtml(wf.id)}" data-on="${!!wf.enabled}">${
                 wf.enabled ? t('wf.pause') : t('wf.resume')
               }</button>
               <button class="task__act" data-drop="${escapeHtml(wf.id)}">${escapeHtml(t('wf.remove'))}</button>
+              <button class="icon-btn task__edit" data-edit="${escapeHtml(wf.id)}" type="button"
+                      title="${escapeHtml(t('wf.edit'))}" aria-label="${escapeHtml(t('wf.edit'))}">✎</button>
             </div>
           </div>
           ${attention}
@@ -243,54 +245,14 @@ export function workflowsView({
         });
       }
 
-      for (const button of body.querySelectorAll('[data-run]')) {
-        button.addEventListener('click', async () => {
-          // The request is held open while steps execute, so the button has to
-          // say so — several minutes of an apparently dead page is how someone
-          // presses it a second time and starts a second run.
-          const was = button.textContent;
-          button.disabled = true;
-          button.textContent = t('wf.running');
-          // The request is held open for minutes, but the conversation exists
-          // within a moment of pressing — show it in the list now, not at the end.
-          // And go and watch it, the way a task's Run now does: its steps
-          // appear in that conversation as each finishes (`followBackground`).
-          const id = button.dataset.run;
-          const early = setTimeout(async () => {
-            onRunStarted();
-            const list = (await api.workflows().catch(() => null))?.workflows || [];
-            const chatId = list.find((w) => w.id === id)?.lastRun?.chat_id;
-            if (!chatId) return;
-            onLeave();
-            openChat(chatId);
-          }, 1500);
-          try {
-            const { run } = await api.runWorkflow(id);
-            toast(
-              run?.status === 'done'
-                ? t('wf.finished')
-                : run?.status === 'running'
-                  ? t('wf.startedBackground')
-                  : t('wf.stopped', { status: runSay(run?.status) || t('wf.run.unknown') }),
-            );
-          } catch (err) {
-            toast(err.message);
-          } finally {
-            clearTimeout(early);
-            button.disabled = false;
-            button.textContent = was;
-            reload();
-            onRunStarted();
-          }
-        });
-      }
-
-      for (const button of body.querySelectorAll('[data-edit]')) {
-        button.addEventListener('click', () => openForm(button.dataset.edit));
+      // Changed in the side panel, where Run now also lives — the same as a
+      // scheduled task, so the two shelves work one way.
+      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-edit]'))) {
+        button.addEventListener('click', () => openPane(button.dataset.edit));
       }
 
       for (const button of body.querySelectorAll('[data-idea]')) {
-        button.addEventListener('click', () => openForm(null, IDEAS[Number(button.dataset.idea)]));
+        button.addEventListener('click', () => openForm(IDEAS[Number(button.dataset.idea)]));
       }
 
       for (const button of body.querySelectorAll('[data-toggle]')) {
@@ -308,9 +270,12 @@ export function workflowsView({
           if (!ready) {
             ready = true;
             button.textContent = t('wf.removeConfirm');
+            // The same red confirm a scheduled task's Delete shows.
+            button.classList.add('is-armed');
             setTimeout(() => {
               ready = false;
               button.textContent = original;
+              button.classList.remove('is-armed');
             }, 4000);
             return;
           }
@@ -325,7 +290,8 @@ export function workflowsView({
 }
 
 /**
- * The create-and-edit sheet.
+ * The sheet that writes a new workflow. Changing one happens in the side panel
+ * (`showScheduleInPane` in pages.js), where each field saves on its own.
  *
  * Steps are one per line in a textarea rather than a list of inputs with add and
  * remove buttons. Reordering four instructions is something a text editor is
@@ -337,25 +303,14 @@ export function workflowsView({
  */
 export function workflowForm({ toast, reload }) {
   const $ = (id) => document.getElementById(id);
-  let editing = null;
 
   const sheet = () => $('workflow-form');
 
   /** @param preset a suggestion to start from: `{ name, steps, cron }` */
-  async function open(id = null, preset = null) {
-    editing = id;
-    let workflow = preset ? { title: preset.name, steps: preset.steps.map((instruction) => ({ instruction })), cron: preset.cron } : null;
+  function open(preset = null) {
+    const workflow = preset ? { title: preset.name, steps: preset.steps.map((instruction) => ({ instruction })), cron: preset.cron } : null;
 
-    if (id) {
-      try {
-        ({ workflow } = await api.workflow(id));
-      } catch (err) {
-        toast(err.message);
-        return;
-      }
-    }
-
-    $('workflow-form-title').textContent = editing ? t('wf.formEdit') : t('wf.formCreate');
+    $('workflow-form-title').textContent = t('wf.formCreate');
     $('workflow-form-name').value = workflow?.title || '';
     $('workflow-form-steps').value = (workflow?.steps || []).map((s) => s.instruction).join('\n');
     $('workflow-form-when').value = workflow?.cron || '';
@@ -389,11 +344,10 @@ export function workflowForm({ toast, reload }) {
         when: $('workflow-form-when').value.trim(),
         repeat: $('workflow-form-repeat').value === 'repeat',
       };
-      if (editing) await api.updateWorkflow(editing, payload);
-      else await api.createWorkflow(payload);
+      await api.createWorkflow(payload);
 
       sheet().close();
-      toast(editing ? t('wf.saved') : t('wf.created'));
+      toast(t('wf.created'));
       reload();
     } catch (err) {
       error.textContent = err.message;

@@ -2845,23 +2845,24 @@ section('a workflow shows the state of every step');
   // the red one from the green one, so each step carries a mark and a word.
   check('  each carries a mark, not only a colour', shelf.marks);
   check('  and says its state in words', shelf.words);
-  check('  with the actions a person needs', shelf.acts.includes('Run now') && shelf.acts.includes('Edit'), shelf.acts.join(','));
+  // The same buttons as a scheduled task: pause, delete, and a pencil.
+  check('  with the same actions as a scheduled task', shelf.acts.includes('Pause') && shelf.acts.includes('Remove') && shelf.acts.includes('✎'), shelf.acts.join(','));
 
-  const sheet = await page.evaluate(() => {
-    document.querySelector('[data-edit]')?.click();
-    return true;
-  });
-  await page.waitForTimeout(500);
-  const form = await page.evaluate(() => ({
-    open: !!document.getElementById('workflow-form')?.open,
-    title: document.getElementById('workflow-form-title')?.textContent.trim() || '',
-    steps: document.getElementById('workflow-form-steps')?.value || '',
+  await page.click('.wf .task__edit');
+  await page.waitForTimeout(900);
+  const pane = await page.evaluate(() => ({
+    open: !document.getElementById('taskpane').hidden,
+    title: document.getElementById('taskpane-title').textContent.trim(),
+    steps: /** @type {HTMLTextAreaElement} */ (document.querySelector('#taskpane-body [data-s="steps"]'))?.value || '',
+    run: !!document.querySelector('#taskpane-body [data-s="run"]'),
+    sheet: !!document.getElementById('workflow-form')?.open,
   }));
-  check('editing opens the sheet', sheet && form.open, JSON.stringify(form).slice(0, 60));
-  check('  titled as an edit', form.title === 'Edit workflow', form.title);
-  check('  with one step per line, ready to reorder', form.steps.split('\n').length === 3, JSON.stringify(form.steps));
+  check('the pencil opens the side panel', pane.open && pane.title === 'Monday sales pack', JSON.stringify(pane).slice(0, 80));
+  check('  not a sheet over the page', !pane.sheet);
+  check('  with the steps editable in place, one per line', pane.steps.split('\n').length === 3, JSON.stringify(pane.steps));
+  check('  and Run now there, as for a task', pane.run);
 
-  await page.evaluate(() => document.getElementById('workflow-form')?.close());
+  await page.click('#taskpane-close');
 }
 
 section('a shelf is searched from one field, not two');
