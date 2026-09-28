@@ -4356,6 +4356,49 @@ section('a tool step reads as a sentence, with the call still inside it');
  * before storing, so a reload is already right; this is the live view catching
  * up, which is what the person watching the turn actually sees.
  */
+section('pages read in consecutive steps share one card, and a failure is red');
+{
+  const got = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const host = document.createElement('div');
+    document.body.append(host);
+    const step = () => {
+      const m = assistantMessage();
+      host.append(m.node);
+      return m;
+    };
+    const read = (m, url, ok) =>
+      m.startTool({ name: 'web_fetch', input: { url } }).complete({ content: ok ? 'Page' : 'x.test returned HTTP 403', isError: !ok });
+    // Each saved step is its own block, exactly as a live turn and a reload draw it.
+    read(step(), 'https://x.test/a', false);
+    read(step(), 'https://x.test/b', false);
+    read(step(), 'https://x.test/c', false);
+    const first = host.querySelectorAll('details.block.web').length;
+    const card = host.querySelector('details.block.web');
+    const mark = card?.querySelector('.web__mark .mark');
+    const rows = card?.querySelectorAll('.webrow').length;
+    const tip = card?.querySelector('.webrow.is-failed')?.title || '';
+    // A reasoning card between is a real break: a new card.
+    const t = step();
+    t.appendThinking('Try the site directly.');
+    t.finishThinking();
+    read(t, 'https://x.test/d', true);
+    const after = host.querySelectorAll('details.block.web').length;
+    const markColour = getComputedStyle(mark).color;
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--danger)';
+    document.body.append(probe);
+    const dangerColour = getComputedStyle(probe).color;
+    probe.remove();
+    host.remove();
+    return { first, rows, tip, after, markColour, dangerColour };
+  });
+  check('three reads in three steps are one card', got.first === 1 && got.rows === 3, JSON.stringify(got));
+  check('a reasoning card between them starts a new one', got.after === 2, String(got.after));
+  check('a card where every read failed is marked in red', got.markColour === got.dangerColour, `${got.markColour} vs ${got.dangerColour}`);
+  check('and a failed page says why on hover', /HTTP 403/.test(got.tip), got.tip);
+}
+
 section('the reasoning card: a window on the newest lines, or the whole of it');
 {
   const card = await page.evaluate(async () => {

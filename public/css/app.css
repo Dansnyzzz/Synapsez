@@ -2131,6 +2131,9 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
 .stage--sent.stage--file { padding: 10px 12px; }
 /* A message that is only files has no words to put in a bubble. */
 .msg--user .bubble:empty { display: none; }
+/* A step whose only work joined the card of the step before (see `webCard`)
+   is left with nothing to show, and must not leave a gap where it is. */
+.msg--assistant:has(> .msg__body:empty):not(:has(> .msg__actions)) { display: none; }
 
 .msg__action {
   display: inline-grid;
@@ -4994,26 +4997,41 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
 .menu__foot-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .menu__foot-hint { margin: 0; max-width: 34ch; color: var(--text-faint); font-size: 11.5px; line-height: 1.45; }
 /* Five steps drawn as five dots: the ones you have passed stay lit but small,
-   so the row reads as a level and not as five unrelated buttons. The button is
-   24px square — a finger's worth — and the dot is its padded content box. */
+   so the row reads as a level and not as five unrelated buttons.
+
+   The button is 24px square — a finger's worth — and invisible; the dot is
+   drawn by ::before and is all that changes. It used to be the button's own
+   padded background, and the state rules below set `background`, whose
+   shorthand resets the clip: every lit dot became a 24px disc, and the chosen
+   one, scaled 1.5×, a 36px ball that pushed the row about. */
 .effort-dot {
+  position: relative;
+  display: grid;
+  place-items: center;
   width: 24px;
   height: 24px;
-  padding: 7.5px;
+  padding: 0;
   border: 0;
   border-radius: 50%;
-  background: var(--line);
-  background-clip: content-box;
+  background: transparent;
   cursor: pointer;
-  transition: background 0.15s, transform 0.15s;
 }
-.effort-dot:hover { background: var(--text-dim); }
-.effort-dot.is-under { background: var(--accent-dim); }
-.effort-dot.is-on {
+.effort-dot::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--line);
+  transition: background 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.effort-dot:hover::before { background: var(--text-dim); }
+.effort-dot.is-under::before { background: var(--accent-dim); }
+.effort-dot.is-on::before {
   background: var(--accent);
-  transform: scale(1.5);
+  transform: scale(1.45);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
-.effort-dot:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+.effort-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 
 /* ── where a conversation was folded up ────────────────────── */
 
@@ -8679,7 +8697,10 @@ select:focus-visible {
 .web__head::-webkit-details-marker { display: none; }
 .web__head:hover { background: var(--tint); }
 .web__mark { flex: none; display: grid; place-items: center; width: 16px; color: var(--ok); }
-.web--error .web__mark { color: var(--danger); }
+.web--error .web__mark,
+.web--error .web__mark .mark { color: var(--danger); }
+/* A failed card says so at its edge, like every other tool card. */
+.block.web.web--error { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 .web__title { flex: none; color: var(--text-dim); font-size: 14px; }
 .web__query { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 14px; }
 .web__list {

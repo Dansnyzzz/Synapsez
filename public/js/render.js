@@ -1316,6 +1316,14 @@ export function userMessage(text, files = [], id = null) {
  * the transcript reads as a single continuous action rather than a pile of
  * disconnected cards.
  */
+/**
+ * The newest web card and the block it is in, so the next step's block can
+ * add to it rather than draw another beside it (see `webCard`). Module-level
+ * because each step is a separate `assistantMessage`.
+ * @type {{ card: any, wrap: HTMLElement, body: HTMLElement } | null}
+ */
+let lastWebCard = null;
+
 export function assistantMessage() {
   // No "ASSISTANT" label. In a two-party conversation where one side is in a
   // bubble on the right and the other is not, saying which is which every turn
@@ -1395,6 +1403,37 @@ export function assistantMessage() {
   /** The card this call belongs in: a search that follows a search starts a new one. */
   function webCard(isSearch) {
     if (web && !(isSearch && web.searched)) return web;
+    /**
+     * Carried over from the step before.
+     *
+     * Every saved step of a turn is drawn in a block of its own, so four page
+     * reads in four steps drew four "Read the web" cards stacked one after
+     * another. When this block has shown nothing yet and the one right before
+     * it ended on a web card, the read joins that card instead — the same work,
+     * one card. A reasoning card or a line of reply between them is a real
+     * break, and so is a second search (one query, one card).
+     */
+    const last = lastWebCard;
+    if (
+      !web &&
+      last &&
+      body.childElementCount === 0 &&
+      last.wrap.nextElementSibling === wrap &&
+      last.card.node.isConnected &&
+      // Nothing drawn after the card: in its own block, and in the block that
+      // last joined it (which holds nothing of its own).
+      last.card.node.parentElement?.lastElementChild === last.card.node &&
+      (last.body === last.card.node.parentElement || last.body.childElementCount === 0) &&
+      !(isSearch && last.card.searched)
+    ) {
+      web = last.card;
+      web.live = true;
+      web.node.open = true;
+      webs.add(web);
+      // The chain continues from this block: the next step joins it here too.
+      lastWebCard = { card: web, wrap, body };
+      return web;
+    }
     closeSteps();
     const node = el('details', 'block web');
     node.open = true;
@@ -1410,6 +1449,7 @@ export function assistantMessage() {
     body.append(node);
     web = { node, mark, title, query, list, rows: new Map(), queryText: '', pending: 0, calls: 0, failures: 0, searched: false, live: true };
     webs.add(web);
+    lastWebCard = { card: web, wrap, body };
     return web;
   }
 
@@ -1442,6 +1482,7 @@ export function assistantMessage() {
         } else if (url) {
           const row = w.rows.get(url);
           row.state = result.isError ? 'failed' : 'read';
+          row.note = result.isError ? String(result.content || '').split('\n')[0].slice(0, 160) : null;
           row.title ||= titleFromContent(call.name, result.content);
         }
         paintWeb(w);

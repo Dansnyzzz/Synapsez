@@ -1751,7 +1751,13 @@ function drawTranscript(host, messages) {
     // A summary is what the model reads in place of the older turns; the
     // person still has those turns, so it is not drawn among them.
     else if (m.role === 'summary') continue;
-    else if (m.role === 'assistant') host.append(assistantMessage().hydrate(m, resultsByCallId).node);
+    // Placed before it is filled, so a step that only read pages can join the
+    // web card the step before it ended on — see `webCard` in render.js.
+    else if (m.role === 'assistant') {
+      const turn = assistantMessage();
+      host.append(turn.node);
+      turn.hydrate(m, resultsByCallId);
+    }
   }
 }
 

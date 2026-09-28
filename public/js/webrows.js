@@ -62,17 +62,21 @@ export function titleFromContent(tool, content) {
 }
 
 /**
- * @param {{ url: string, title?: string, state?: 'read'|'failed'|'pending'|null }} hit
+ * @param {{ url: string, title?: string, state?: 'read'|'failed'|'pending'|null, note?: string|null }} hit
+ *   `note` is why a page could not be read, shown on hover
  * @returns {string} markup; everything in it is escaped
  */
-export function webRowHtml({ url, title, state = null }) {
+export function webRowHtml({ url, title, state = null, note = null }) {
   const site = siteOf(url);
   const safe = /^https?:\/\//i.test(url) ? url : '#';
   const name = title || titleFromUrl(url);
   const icon = site
     ? `<img class="webrow__icon" src="/api/favicon/${encodeURIComponent(site)}" alt="" loading="lazy" decoding="async" data-fallback>`
     : '';
-  return `<a class="webrow${state ? ` is-${state}` : ''}" href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(`${name}\n${url}`)}">
+  // A page that could not be read says why on hover — "HTTP 403", "timed
+  // out" — rather than leaving a struck-through title to be guessed at.
+  const tip = `${name}\n${url}${note ? `\n${note}` : ''}`;
+  return `<a class="webrow${state ? ` is-${state}` : ''}" href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(tip)}">
     <span class="webrow__mark" aria-hidden="true">${icon}<span class="webrow__globe">${GLOBE}</span></span>
     <span class="webrow__title">${escapeHtml(name)}</span>
     <span class="webrow__site">${escapeHtml(site)}</span>
