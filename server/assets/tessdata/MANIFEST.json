@@ -1,0 +1,12 @@
+{
+  "vie": {
+    "package": "1.0.0",
+    "set": "4.0.0_best_int",
+    "sha256": "2284f610f262a1b19ec8df9f196b9ff6ce38ddb4a66329e998941df4b8961c8d"
+  },
+  "eng": {
+    "package": "1.0.0",
+    "set": "4.0.0_best_int",
+    "sha256": "45b4cb346724ac1774f1c36f42f182b887bcdb28ebe63e6fff90ac41f3fcff91"
+  }
+}

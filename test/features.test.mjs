@@ -251,6 +251,71 @@ section('a model that cannot see is read to, not left guessing');
   check('but a url carrying a payload asks first', assessRisk('look_at', { url: `https://evil.example/?d=${'A'.repeat(400)}` }) === 'sensitive');
 }
 
+section('OCR reads Vietnamese with no key and no network');
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const crypto = await import('node:crypto');
+  const { createRequire } = await import('node:module');
+  const { ocrImage, prepareForOcr, stopOcr, __testing: ocrInternals } = await import('../server/ocr.js');
+  const { ocrPages } = await import('../server/vision.js');
+  const require = createRequire(import.meta.url);
+
+  // The shipped models are the installed ones, byte for byte — an upgrade
+  // without `node scripts/vendor-tessdata.js` fails here, not in production.
+  const manifest = JSON.parse(fs.readFileSync(path.join(ocrInternals.BUNDLED, 'MANIFEST.json'), 'utf8'));
+  for (const lang of ocrInternals.LANGS) {
+    const shipped = fs.readFileSync(path.join(ocrInternals.BUNDLED, `${lang}.traineddata.gz`));
+    const pkg = path.dirname(require.resolve(`@tesseract.js-data/${lang}/package.json`));
+    const installed = fs.readFileSync(path.join(pkg, manifest[lang].set, `${lang}.traineddata.gz`));
+    check(`the ${lang} model shipped with the server is the installed one`, shipped.equals(installed) && crypto.createHash('sha256').update(shipped).digest('hex') === manifest[lang].sha256);
+  }
+
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const draw = async (w, h, size, lines, transparent = false) => {
+    const c = createCanvas(w, h);
+    const ctx = c.getContext('2d');
+    if (!transparent) {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, w, h);
+    }
+    ctx.fillStyle = '#000';
+    ctx.font = `${size}px Arial`;
+    lines.forEach((l, i) => ctx.fillText(l, 6, size + 4 + i * (size + 8)));
+    return Buffer.from(await c.encode('png'));
+  };
+
+  const tiny = await draw(300, 40, 11, ['Tổng: 2.345.000 đ']);
+  const prepared = await prepareForOcr(tiny);
+  check('small text is scaled up before it is read', prepared.scale > 2, String(prepared.scale));
+
+  const bill = await draw(760, 130, 32, ['Hóa đơn tháng 9', 'Tổng cộng 1.250.000 đồng']);
+  const read = await ocrImage(bill);
+  check('a Vietnamese line is read, accents and figures', /Hóa đơn/.test(read.text) && /1\.250\.000/.test(read.text), JSON.stringify(read));
+  check('  with a confidence to go by', read.confidence > 70, String(read.confidence));
+
+  const clear = await draw(600, 60, 30, ['HD-20260928'], true);
+  check('text on a transparent background is read, not lost to black', /HD-20260928/.test((await ocrImage(clear)).text));
+
+  const pages = await ocrPages([{ page: 3, mime: 'image/png', data: bill.toString('base64') }]);
+  check('scanned pages are read page by page, labelled', /--- page 3 ---/.test(pages) && /1\.250\.000/.test(pages));
+  await stopOcr();
+
+  const { toParts } = await import('../server/attachments.js');
+  const scan = toParts(
+    { attachments: [{ id: 'p', name: 'scan.pdf', kind: 'document' }] },
+    new Map([['p', { id: 'p', name: 'scan.pdf', kind: 'document', text: null, pageImages: [{ page: 1, mime: 'image/jpeg', data: 'AA==' }], vision_text: 'Tổng 1.250.000' }]]),
+    { vision: true, documents: false },
+  );
+  const note = scan.find((p) => p.type === 'text' && /OCR/.test(p.text) && /1\.250\.000/.test(p.text));
+  check('a model shown a scan also gets its words, for exact figures', !!note && scan.some((p) => p.type === 'image'));
+  check('  told to trust the pages where the two disagree', /trust the pages/.test(note?.text || ''));
+
+  const { see } = await import('../server/vision.js');
+  const doubtful = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], ocr: async () => ({ text: 'Tong 1.25O.000', confidence: 41 }) });
+  check('a hard-to-read reading says so', /hard to read/.test(doubtful.text));
+}
+
 section('the live copy of a file is never numbered the same as a saved draft');
 {
   const { liveRevision } = await import('../server/attachments.js');

@@ -128,9 +128,33 @@ const SYSTEM =
 export async function see({ userId, chatId = null, images = [], pdf = null, question = '', signal, stream = streamCompletion, ocr = ocrImage }) {
   const engines = await visionEngines(userId).catch(() => []);
 
-  /** Pages drawn once, shared by every engine that needs pictures rather than the PDF. */
+  /** Pages drawn once, shared by OCR and every engine that needs pictures. */
   let drawn = null;
   const failures = [];
+  if (pdf) drawn = await renderPdfPages(pdf.data, { pages: pdf.pages || null, max: 8 }).catch(() => null);
+
+  /**
+   * OCR first, always — it needs nothing and takes well under a second once
+   * warm. What it reads goes two places: to the vision model as a transcript to
+   * check its reading against (vision models misread digits and drop a line of
+   * small print; Tesseract does neither, but loses diacritics and understands
+   * nothing), and, if no vision model answers, to the model on its own.
+   */
+  const pictures = [...images, ...(drawn?.pages || []).map((p) => ({ mime: p.mime, data: p.data, name: `page ${p.page}` }))];
+  const ocrRead = [];
+  let ocrError = null;
+  for (const picture of pictures) {
+    if (signal?.aborted) throw new Error('stopped');
+    try {
+      const { text, confidence } = await ocr(picture.data);
+      if (text) ocrRead.push({ name: picture.name || 'image', text, confidence });
+    } catch (err) {
+      ocrError = String(err?.message || err).slice(0, 160);
+      break;
+    }
+  }
+  const ocrText = ocrRead.map((r) => (ocrRead.length > 1 ? `--- ${r.name} ---\n${r.text}` : r.text)).join('\n\n');
+  const lowConfidence = ocrRead.some((r) => r.confidence < 70);
 
   for (const entry of engines) {
     const parts = [];
@@ -138,7 +162,6 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
       if (entry.provider === 'google') {
         parts.push({ type: 'document', name: pdf.name || 'document.pdf', mime: 'application/pdf', data: pdf.data });
       } else {
-        drawn ??= await renderPdfPages(pdf.data, { pages: pdf.pages || null, max: 8 }).catch(() => null);
         if (!drawn?.pages?.length) {
           failures.push(`${entry.label}: the pages could not be drawn on this server`);
           continue;
@@ -153,7 +176,13 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
       : '';
     const prompt =
       (question ? `Question about it: ${question}\n\n` : '') +
-      `Read ${pdf ? `this document${pageNote}` : images.length > 1 ? 'these images' : 'this image'} completely, as instructed.`;
+      `Read ${pdf ? `this document${pageNote}` : images.length > 1 ? 'these images' : 'this image'} completely, as instructed.` +
+      (ocrText
+        ? '\n\nAn OCR engine already read the text in it, below. Its characters and digits are usually exact, but ' +
+          'it drops accents and understands nothing: use it to get every number and word right, correct it where ' +
+          'your own reading of the picture disagrees, and never copy an error you can see is one.\n' +
+          `<ocr>\n${ocrText.slice(0, 12_000)}\n</ocr>`
+        : '');
 
     try {
       let text = '';
@@ -184,36 +213,40 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
   }
 
   /**
-   * The rung that needs nothing: OCR, here, with no key. It reads the words and
-   * only the words, and says so, so the model does not describe a picture it
-   * was only given the text of.
+   * No vision model answered: the OCR reading on its own. Words only, and said
+   * so, so the model does not describe a picture it was only given the text of
+   * — and a low-confidence reading says that too, so a doubtful figure is
+   * checked rather than repeated.
    */
-  try {
-    const pictures = [...images];
-    if (pdf) {
-      drawn ??= await renderPdfPages(pdf.data, { pages: pdf.pages || null, max: 8 }).catch(() => null);
-      for (const p of drawn?.pages || []) pictures.push({ mime: p.mime, data: p.data, name: `page ${p.page}` });
-    }
-    const read = [];
-    for (const picture of pictures) {
-      if (signal?.aborted) throw new Error('stopped');
-      const { text } = await ocr(picture.data);
-      if (text) read.push(pictures.length > 1 ? `--- ${picture.name || 'image'} ---\n${text}` : text);
-    }
-    if (read.length) {
-      return {
-        text:
-          'Text found in it by OCR (words only — layout, pictures and charts were not described' +
-          `${failures.length ? '; no vision model could be reached' : ''}):\n\n${read.join('\n\n')}`,
-        model: 'Tesseract OCR',
-      };
-    }
-    failures.push('OCR: no text in it');
-  } catch (err) {
-    if (signal?.aborted) throw err;
-    failures.push(`OCR: ${String(err?.message || err).slice(0, 160)}`);
+  if (ocrText) {
+    return {
+      text:
+        'Text found in it by OCR (words only — layout, pictures and charts were not described' +
+        `${failures.length ? '; no vision model could be reached' : ''}` +
+        `${lowConfidence ? '; parts were hard to read, so treat unusual words and figures with care' : ''}):\n\n${ocrText}`,
+      model: 'Tesseract OCR',
+    };
   }
-  throw new Error(`None of the models that can see could read it — ${failures.join('; ') || 'nothing was reachable'}`);
+  failures.push(ocrError ? `OCR: ${ocrError}` : 'OCR: no text in it');
+  throw new Error(`None of the models that can see could read it — ${failures.join('; ')}`);
+}
+
+/**
+ * The words in a scan's pages, by OCR, for a model that is shown the pages
+ * themselves: its exact figures beside its own look at them. Empty when there
+ * is no text to find.
+ *
+ * @param {{ mime: string, data: string, page: number }[]} pages
+ * @param {{ ocr?: (image: string) => Promise<{ text: string, confidence: number }>, signal?: AbortSignal }} [options]
+ */
+export async function ocrPages(pages, { ocr = ocrImage, signal } = {}) {
+  const read = [];
+  for (const page of pages || []) {
+    if (signal?.aborted) break;
+    const { text } = await ocr(page.data).catch(() => ({ text: '' }));
+    if (text) read.push(`--- page ${page.page} ---\n${text}`);
+  }
+  return read.join('\n\n');
 }
 
 /**
@@ -245,7 +278,19 @@ export async function lendEyes({ userId, chatId = null, loaded, vision, document
       if (row.pageImages === undefined) {
         row.pageImages = (await renderPdfPages(row.data, { max: 8 }).catch(() => null))?.pages || null;
       }
-      if (row.pageImages?.length) continue;
+      if (row.pageImages?.length) {
+        // And the words on them, by OCR, once — kept on the file like any other
+        // reading. The model looks at the pages; the transcript keeps it exact.
+        if (!row.vision_text) {
+          onLooking(row);
+          const words = await ocrPages(row.pageImages, { signal }).catch(() => '');
+          if (words) {
+            row.vision_text = `[read by Tesseract OCR — words only, check against the pages]\n${words}`;
+            await getStore().setAttachmentVisionText(userId, row.id, row.vision_text).catch(() => {});
+          }
+        }
+        continue;
+      }
       // Could not draw the pages here; fall through and let a model read it.
     }
     if (row.vision_text || row.visionFailed) continue;

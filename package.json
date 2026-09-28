@@ -77,7 +77,8 @@
     "eval:json": "node test/eval/run.mjs --json",
     "test:webfetch": "node test/webfetch.test.mjs",
     "test:steps": "node test/steps.test.mjs",
-    "vendor:pdfjs": "node scripts/vendor-pdfjs.js"
+    "vendor:pdfjs": "node scripts/vendor-pdfjs.js",
+    "vendor:tessdata": "node scripts/vendor-tessdata.js"
   },
   "engines": {
     "node": ">=20"
@@ -99,6 +100,8 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
+    "@tesseract.js-data/eng": "^1.0.0",
+    "@tesseract.js-data/vie": "^1.0.0",
     "c8": "^12.0.0",
     "eslint": "^9.39.0",
     "espree": "^10.4.0",
