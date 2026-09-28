@@ -8,10 +8,11 @@ import { escapeHtml } from './markdown.js';
  * **Outputs** — every file the assistant produced here, newest first; a press
  * opens it in the viewer, the same as its card in the transcript.
  *
- * **Context** — what the assistant can read in this conversation, grouped:
- * the project's sources, connected services, skills, MCP servers. A group
- * with nothing in it is not drawn, and the section is not drawn at all when
- * every group is empty — a heading over nothing is furniture.
+ * **Context** — what this conversation has actually used, grouped: the
+ * project's sources once it has started, the services, tools, skills and MCP
+ * servers its turns called. Not what the account merely has plugged in. A
+ * group with nothing in it is not drawn, and the section is not drawn at all
+ * when every group is empty — a heading over nothing is furniture.
  *
  * Its own module because app.js is five thousand lines and this is a
  * self-contained view with one way in (`render`) and clicks as the way out.
@@ -109,8 +110,25 @@ export function createRail({ api, openFile, openSettings, openPane }) {
       );
     }
 
+    /**
+     * Context is what this conversation has actually used — not what the account
+     * has plugged in. A blank chat listed every connector, skill and MCP server
+     * before anything had run, which read as "the assistant is using these", and
+     * after an edit the tools of the turns the edit removed stayed listed. It is
+     * derived from the transcript and the calls arriving live, so it is true at
+     * every moment and follows an edit.
+     */
+    const log = toolLog(state.transcript || [], state.liveTools || []);
+    const called = new Set(log.map((c) => c.name));
+    const started = log.length > 0 || (state.transcript || []).some((m) => m.role === 'user');
+    const connectors = acct.connectors.filter((c) => (c.tools || []).some((name) => called.has(name)));
+    const connectorTools = new Set(connectors.flatMap((c) => c.tools || []));
+    const mcp = acct.mcp.filter((s) => s.prefix && [...called].some((name) => name.startsWith(s.prefix)));
+    const read = new Set(log.filter((c) => c.name === 'skill_read').map((c) => String(c.input?.name || '').toLowerCase()));
+    const skills = acct.skills.filter((s) => read.has(String(s.name || '').toLowerCase()));
+
     const groups = [];
-    if (projectFiles.length) {
+    if (started && projectFiles.length) {
       groups.push(
         `<div class="railgrp"><div class="railgrp__name">${escapeHtml(t('rail.sources'))}</div>${projectFiles
           .map((f) => row(f.attachment_id ? `data-open="${escapeHtml(f.attachment_id)}"` : 'disabled', isImage(f) ? icon.image : icon.doc, f.name))
@@ -124,10 +142,11 @@ export function createRail({ api, openFile, openSettings, openPane }) {
      * answer's facts came from — so it sits beside them, and a press opens
      * every search, grouped by the message that asked for it.
      */
-    const log = toolLog(state.transcript || [], state.liveTools || []);
-    const used = usedKinds(log);
-    if (acct.connectors.length || used.length) {
-      const connected = acct.connectors.map(
+    // A connector's own tools are shown as the connector, not twice; MCP tools
+    // likewise as their server.
+    const used = usedKinds(log.filter((c) => !connectorTools.has(c.name) && !c.name.startsWith('mcp__')));
+    if (connectors.length || used.length) {
+      const connected = connectors.map(
         (c) =>
           `<button class="railchip" type="button" data-settings="connectors" title="${escapeHtml(c.account || c.label)}">${icon.link}<span>${escapeHtml(c.label)}</span></button>`,
       );
@@ -139,16 +158,16 @@ export function createRail({ api, openFile, openSettings, openPane }) {
         `<div class="railgrp"><div class="railgrp__name">${escapeHtml(t('rail.connectors'))}</div><div class="railchips">${[...connected, ...tools].join('')}</div></div>`,
       );
     }
-    if (acct.skills.length) {
+    if (skills.length) {
       groups.push(
-        `<div class="railgrp"><div class="railgrp__name">${escapeHtml(t('rail.skills'))}</div>${acct.skills
+        `<div class="railgrp"><div class="railgrp__name">${escapeHtml(t('rail.skills'))}</div>${skills
           .map((s) => row('data-settings="skills"', icon.skill, s.name))
           .join('')}</div>`,
       );
     }
-    if (acct.mcp.length) {
+    if (mcp.length) {
       groups.push(
-        `<div class="railgrp"><div class="railgrp__name">${escapeHtml(t('rail.mcp'))}</div>${acct.mcp
+        `<div class="railgrp"><div class="railgrp__name">${escapeHtml(t('rail.mcp'))}</div>${mcp
           .map((s) => row('data-settings="mcp"', icon.plug, s.name))
           .join('')}</div>`,
       );

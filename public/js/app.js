@@ -2588,6 +2588,19 @@ function beginEdit(message, text) {
     body.append(withLinks(next));
     bubble.append(body);
 
+    // The page's picture of the conversation has to lose those turns too: the
+    // side panel is drawn from it, and kept the tools, outputs and sources of
+    // replies that no longer exist. Re-read from the server, which is the truth.
+    state.liveTools = [];
+    try {
+      const fresh = await api.chat(state.chatId);
+      state.transcript = fresh.messages || [];
+      state.files = fresh.files || [];
+    } catch {
+      state.transcript = (state.transcript || []).slice(0, Math.max(0, state.transcript.findIndex((m) => m.id === id) + 1));
+    }
+    renderRail();
+
     await stream();
   };
 

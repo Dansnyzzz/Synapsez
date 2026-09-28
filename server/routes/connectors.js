@@ -3,6 +3,7 @@ import { limit as rateLimit } from '../ratelimit.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 import { authUrl, finishAuth, googleConfigured, pickProducts, readState } from '../google.js';
 import { publicUrlFor } from '../util/net.js';
+import { TOOLS } from '../tools/definitions.js';
 
 /**
  * Connecting a third-party account — GitHub, Notion, Slack and the rest.
@@ -24,6 +25,12 @@ export function mountConnectorRoutes(api, { wrap }) {
           ...c,
           help: translateMessage(c.help, language),
           placeholder: translateMessage(c.placeholder, language),
+          // The tools that reach this service, so the side panel can list a
+          // connector only when a conversation actually used it. Read from the
+          // catalogue's own `needs`, so a new tool cannot be missed here.
+          tools: TOOLS.filter((t) => t.needs === c.id || (c.id === 'google' && String(t.needs || '').startsWith('google_'))).map(
+            (t) => t.name,
+          ),
         }));
         res.json({ connectors });
       }),

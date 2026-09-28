@@ -626,7 +626,9 @@ export function createPages({
       for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-edit]'))) {
         button.addEventListener('click', () => {
           const task = list.find((x) => x.id === button.dataset.edit);
-          if (task) openTaskForm(null, { task });
+          // Edited in the panel beside the list, where every field is changed in
+          // place — the same editor a card in a conversation opens.
+          if (task) showScheduleInPane('task', task.id, { after: load });
         });
       }
       for (const button of body.querySelectorAll('[data-open]')) {
@@ -690,35 +692,24 @@ export function createPages({
   let formProject = null;
   /** What to do once a task is saved — the list that is looking at it reloads. */
   let formDone = null;
-  /** The task being changed, or null when the form is writing a new one. */
-  let formEditing = null;
-  /** The frequency the form opened on, so an untouched one is not re-timed. */
-  let formFrequency = null;
 
-  /** Which menu entry a stored schedule came from; see `fromFrequency` on the server. */
-  const frequencyOf = (cron) => {
-    if (!cron) return 'manual';
-    if (cron.startsWith('hourly')) return 'hourly';
-    if (cron.startsWith('weekdays')) return 'weekdays';
-    if (cron.startsWith('monthly')) return 'monthly';
-    return /^[a-z]{3}\s/.test(cron) ? 'weekly' : 'daily';
-  };
-
-  function openTaskForm(idea = null, { project = null, after = null, task = null } = {}) {
+  /**
+   * The form that writes a new task. Changing one is the side panel's job —
+   * `showScheduleInPane` — where every field is edited in place.
+   */
+  function openTaskForm(idea = null, { project = null, after = null } = {}) {
     const sheet = $('task-form');
     formProject = project;
     formDone = after;
-    formEditing = task;
 
-    $('task-form-title').textContent = t(task ? 'taskForm.editTitle' : 'taskForm.title');
-    $('task-form-name').value = task?.title || idea?.name || '';
-    $('task-form-prompt').value = task?.prompt || idea?.prompt || '';
+    $('task-form-title').textContent = t('taskForm.title');
+    $('task-form-name').value = idea?.name || '';
+    $('task-form-prompt').value = idea?.prompt || '';
     // An idea from the list comes with a time, which means it means to repeat;
     // a task somebody is writing themselves starts manual, because that is the
     // one choice that cannot surprise them at three in the morning.
-    sel('task-form-repeat').value = task ? frequencyOf(task.cron) : idea?.cron ? 'daily' : 'manual';
-    formFrequency = sel('task-form-repeat').value;
-    sel('task-form-policy').value = task?.policy || 'ask';
+    sel('task-form-repeat').value = idea?.cron ? 'daily' : 'manual';
+    sel('task-form-policy').value = 'ask';
     sayFrequency();
     sayPolicy();
 
@@ -761,16 +752,9 @@ export function createPages({
         frequency: sel('task-form-repeat').value,
         policy: sel('task-form-policy').value,
       };
-      if (formEditing) {
-        // Choosing a frequency takes today's time of day, so an unchanged one is
-        // left out rather than moving the task to whenever it was saved.
-        if (fields.frequency === formFrequency) delete fields.frequency;
-        await api.updateTask(formEditing.id, fields);
-      } else {
-        await api.createTask({ ...fields, projectId: formProject?.id || undefined });
-      }
+      await api.createTask({ ...fields, projectId: formProject?.id || undefined });
       $('task-form').close();
-      toast(t(formEditing ? 'pages.tasks.saved' : 'pages.tasks.scheduled'), 'ok');
+      toast(t('pages.tasks.scheduled'), 'ok');
       // Whoever opened the form says what to refresh. The global list reloads
       // itself; a project page reloads its own Scheduled section.
       if (formDone) await formDone();
@@ -925,7 +909,7 @@ export function createPages({
       }
     });
 
-    button('edit')?.addEventListener('click', () => openTaskForm(null, { task, after: redraw }));
+    button('edit')?.addEventListener('click', () => showScheduleInPane('task', task.id, { after: redraw }));
 
     button('toggle')?.addEventListener('click', async () => {
       await api.setTaskEnabled(task.id, !task.enabled);
@@ -1216,17 +1200,17 @@ export function createPages({
     }
   }
 
-  async function showScheduleInPane(kind, id) {
+  /** What opened the panel wants redrawn after a change there, if anything. */
+  let paneAfter = null;
+
+  async function showScheduleInPane(kind, id, { after = null } = {}) {
+    paneAfter = after;
     const { row, project } = await fetchSchedule(kind, id);
     const pane = $('taskpane');
     const root = $('taskpane-body');
     $('taskpane-title').textContent = row.title;
-    // The pencil opens the whole form — the steps of a workflow, or a task's
-    // every field at once — the same one the shelves use.
-    $('taskpane-edit').onclick = () =>
-      kind === 'workflow'
-        ? editWorkflowFromPane(id)
-        : openTaskForm(null, { task: row, after: () => showScheduleInPane(kind, id) });
+    // No pencil in the header: every field below is edited in place, and a
+    // workflow's steps have their own button inside.
     root.innerHTML = scheduleEditorHtml(kind, row, project);
     wireScheduleEditor(root, kind, row, project);
     refreshCards(kind, row);
@@ -1271,6 +1255,7 @@ export function createPages({
         status.classList.add('is-ok');
         refreshCards(kind, row);
         onTasksChanged();
+        paneAfter?.();
       } catch (err) {
         status.textContent = err.message;
         status.classList.add('is-error');
@@ -1319,14 +1304,17 @@ export function createPages({
       if (kind === 'workflow') await api.updateWorkflow(row.id, { enabled: !row.enabled });
       else await api.setTaskEnabled(row.id, !row.enabled);
       onTasksChanged();
-      await showScheduleInPane(kind, row.id);
+      paneAfter?.();
+      await showScheduleInPane(kind, row.id, { after: paneAfter });
     });
 
     armed(q('drop'), t('pages.tasks.removeConfirm'), async () => {
       if (kind === 'workflow') await api.deleteWorkflow(row.id);
       else await api.deleteTask(row.id);
       onTasksChanged();
+      const after = paneAfter;
       closeTaskPane();
+      after?.();
     });
 
     q('project')?.addEventListener('click', () => {

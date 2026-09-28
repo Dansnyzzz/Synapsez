@@ -2755,6 +2755,29 @@ section('the shelves');
   check('a suggestion arrives filled in', filled.name.length > 0 && filled.prompt > 40, `${filled.name}, ${filled.prompt} chars`);
   await page.evaluate(() => document.getElementById('task-form').close());
 
+  // Changing a task happens in the panel beside the list, not in that form.
+  await page.evaluate(() =>
+    fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Pencil check', prompt: 'Say hello.', frequency: 'manual' }),
+    }),
+  );
+  await page.click('#open-scheduled');
+  await page.waitForTimeout(900);
+  await page.click('.task__edit');
+  await page.waitForTimeout(900);
+  const edit = await page.evaluate(() => ({
+    pane: !document.getElementById('taskpane').hidden,
+    title: document.getElementById('taskpane-title').textContent.trim(),
+    modal: document.getElementById('task-form').open,
+    pencil: !!document.getElementById('taskpane-edit'),
+  }));
+  check('a task\'s pencil opens the side panel', edit.pane && edit.title === 'Pencil check', JSON.stringify(edit));
+  check('  not the form', !edit.modal);
+  check('  and the panel has no pencil of its own — every field is edited in place', !edit.pencil);
+  await page.click('#taskpane-close');
+
   // And back to the conversation.
   await page.click('#new-chat');
   await page.waitForTimeout(600);
@@ -2763,6 +2786,8 @@ section('the shelves');
     thread: !document.getElementById('thread').hidden,
   }));
   check('starting a chat leaves the shelf', !back.page && back.thread, JSON.stringify(back));
+  // Context is what a conversation used; a blank one has used nothing.
+  check('a blank chat lists no context', !(await page.$('#rail-extra [data-rail="context"]')));
 }
 
 /**

@@ -51,6 +51,9 @@ export function mountMcpRoutes(api, { wrap, body }) {
       const servers = rows.map((row) => ({
         id: row.id,
         name: row.name,
+        // What its tools are called, so the side panel can tell which server a
+        // call in a conversation came from. The registry's rule, not a copy.
+        prefix: `mcp__${slugify(row.name)}__`,
         enabled: row.enabled !== false,
         transport: row.config?.transport === 'http' ? 'http' : 'stdio',
         command: row.config?.command ?? null,
