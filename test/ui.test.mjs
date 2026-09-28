@@ -4795,6 +4795,56 @@ section('the accent is a galaxy, except where it should not be');
   );
 }
 
+section('a citation chip opens its list of sources');
+{
+  const out = await page.evaluate(async () => {
+    const { renderMarkdown } = await import('/js/markdown.js');
+    const { rememberSearch } = await import('/js/cite.js');
+    rememberSearch('1. Files API - Upload and Manage Workspace Files\n   https://openrouter.ai/a\n   The maximum file size is 100 MiB.');
+    const host = document.createElement('div');
+    host.className = 'prose';
+    // Pinned on top: the app fills the viewport, so a node appended to the end
+    // of the body is below the fold, where a mouse cannot reach it.
+    host.style.cssText = 'position:fixed;top:80px;left:80px;z-index:2000;width:600px;background:var(--bg)';
+    host.innerHTML = renderMarkdown(
+      'Giới hạn. ([OpenRouter](https://openrouter.ai/a), [OpenRouter](https://openrouter.ai/b), [Reddit](https://reddit.com/r/x), [Tong_hop.docx])',
+    );
+    document.body.append(host);
+    const chip = host.querySelector('.cite');
+    const rect = chip.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, marks: chip.querySelectorAll('.cite__marks > *').length, text: chip.textContent.replace(/\s+/g, ' ') };
+  });
+  check('one mark per site or file kind', out.marks === 3, String(out.marks));
+
+  await page.mouse.move(out.x, out.y);
+  await page.waitForSelector('.cite-pop:not([hidden])', { timeout: 2000 }).catch(() => null);
+  const card = await page.evaluate(() => {
+    const pop = document.querySelector('.cite-pop');
+    return {
+      open: !!pop && !pop.hidden,
+      items: pop?.querySelectorAll('.cite-item').length,
+      links: [...(pop?.querySelectorAll('a.cite-item') || [])].map((a) => a.getAttribute('href')),
+      title: pop?.querySelector('.cite-item__title')?.textContent,
+      snippet: pop?.querySelector('.cite-item__snip')?.textContent,
+      fileIsLink: !!pop?.querySelector('a.cite-item--file'),
+    };
+  });
+  check('hovering opens the card', card.open);
+  check('listing all four sources', card.items === 4, String(card.items));
+  check('the pages link to where they were read', card.links.join() === 'https://openrouter.ai/a,https://openrouter.ai/b,https://reddit.com/r/x', card.links.join());
+  check('with the title the search gave', card.title === 'Files API - Upload and Manage Workspace Files', card.title);
+  check('and its summary', card.snippet === 'The maximum file size is 100 MiB.', card.snippet);
+  check('a file is named, not linked', !card.fileIsLink);
+
+  await page.mouse.move(2, 2);
+  await page.waitForTimeout(400);
+  const closed = await page.evaluate(() => document.querySelector('.cite-pop')?.hidden);
+  check('moving away closes it', closed === true);
+
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => document.querySelector('.prose .cite')?.closest('.prose')?.remove());
+}
+
 section('an oversized upload is made to fit, or refused in words');
 {
   const out = await page.evaluate(async () => {

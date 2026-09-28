@@ -7,6 +7,7 @@ import { api } from './api.js';
 import { mediaTools, svgToPng, fileNameFrom, imageUrlToPng } from './media.js';
 import { webRowHtml, titleFromContent } from './webrows.js';
 import { parseResults } from './rail.js';
+import { rememberSearch, rememberPage } from './cite.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -1476,6 +1477,8 @@ export function assistantMessage() {
         w.pending = Math.max(0, w.pending - 1);
         if (result.isError) w.failures += 1;
         if (call.name === 'web_search') {
+          // What a citation chip's card shows beyond the name in the reply.
+          if (!result.isError) rememberSearch(result.content);
           for (const hit of parseResults(result.content)) {
             const row = w.rows.get(hit.url);
             if (row) row.title ||= hit.title;
@@ -1486,6 +1489,7 @@ export function assistantMessage() {
           row.state = result.isError ? 'failed' : 'read';
           row.note = result.isError ? String(result.content || '').split('\n')[0].slice(0, 160) : null;
           row.title ||= titleFromContent(call.name, result.content);
+          if (!result.isError) rememberPage(url, row.title);
         }
         paintWeb(w);
       },

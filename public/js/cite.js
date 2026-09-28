@@ -1,0 +1,212 @@
+/**
+ * The card a citation chip opens.
+ *
+ * `markdown.js` draws the chip and, hidden inside it, the list of sources it
+ * stands for. This module shows that list as a floating card: on hover with a
+ * mouse, on a tap on a touch screen, and on Enter or Space from the keyboard. A
+ * page source is a link that opens where it was read; a file source only names
+ * the file, because the file is already in the conversation.
+ *
+ * One card for the whole page, positioned against the chip, rather than a card
+ * inside every chip: a chip sits in a paragraph inside a scrolling transcript,
+ * and an absolutely positioned child there is clipped by the first container
+ * with overflow hidden — a table, a code block, the transcript itself.
+ *
+ * What the reply's text does not carry — a page's title and the search engine's
+ * summary of it — is filled in from the searches this tab has already seen
+ * (`rememberSearch`, fed by the web card in render.js). A source the tab never
+ * saw searched simply shows the name the assistant gave it and its address.
+ */
+
+/** @type {Map<string, { title: string|null, snippet: string|null }>} */
+const known = new Map();
+const MAX_KNOWN = 600;
+
+/** The same page written with or without a trailing slash or fragment. */
+const keyOf = (url) => String(url || '').replace(/#.*$/, '').replace(/\/+$/, '');
+
+function remember(url, { title = null, snippet = null }) {
+  const key = keyOf(url);
+  if (!key) return;
+  const prev = known.get(key);
+  known.delete(key);
+  known.set(key, { title: prev?.title || title, snippet: prev?.snippet || snippet });
+  // Oldest out first: a long session searches a lot, and none of this is precious.
+  if (known.size > MAX_KNOWN) known.delete(known.keys().next().value);
+}
+
+/**
+ * Keep the titles and summaries from a `web_search` result.
+ *
+ * The format is `formatResults` in server/search.js: a numbered title, the
+ * address on the next line, then the summary and an optional "published" line,
+ * each indented.
+ */
+export function rememberSearch(content) {
+  const text = String(content || '');
+  const entry = /^\s*\d+\.\s+(.+)\n\s+(https?:\/\/\S+)((?:\n {3,}\S.*)*)/gm;
+  for (const m of text.matchAll(entry)) {
+    const snippet = m[3]
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !/^published \d/.test(line))
+      .join(' ')
+      .slice(0, 280);
+    remember(m[2], { title: m[1].trim().slice(0, 200), snippet: snippet || null });
+  }
+}
+
+/** Keep the title of a page that was read directly. */
+export function rememberPage(url, title) {
+  if (title) remember(url, { title: String(title).slice(0, 200) });
+}
+
+/** For the tests. */
+export const knownSource = (url) => known.get(keyOf(url)) || null;
+
+let pop = null;
+/** @type {HTMLElement|null} */
+let current = null;
+/** Opened by a click or a key, so moving the mouse away does not close it. */
+let pinned = false;
+let showTimer = 0;
+let hideTimer = 0;
+
+function popover() {
+  if (pop) return pop;
+  pop = document.createElement('div');
+  pop.className = 'cite-pop';
+  pop.setAttribute('role', 'dialog');
+  pop.hidden = true;
+  pop.addEventListener('pointerenter', () => clearTimeout(hideTimer));
+  pop.addEventListener('pointerleave', (event) => {
+    if (event.pointerType === 'mouse' && !pinned) scheduleHide();
+  });
+  document.body.append(pop);
+  return pop;
+}
+
+/** Titles and summaries the reply did not carry, from what the tab has seen. */
+function enrich(root) {
+  for (const item of root.querySelectorAll('a.cite-item[data-url]')) {
+    const info = known.get(keyOf(item.getAttribute('data-url')));
+    if (!info) continue;
+    if (info.title) item.querySelector('.cite-item__title').textContent = info.title;
+    if (info.snippet) item.querySelector('.cite-item__snip').textContent = info.snippet;
+  }
+}
+
+function place(chip, card) {
+  const gap = 6;
+  const rect = chip.getBoundingClientRect();
+  const width = Math.min(380, window.innerWidth - 16);
+  card.style.width = `${width}px`;
+  const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+  const height = card.offsetHeight;
+  // Below the chip, unless that runs off the screen and above does not.
+  let top = rect.bottom + gap;
+  if (top + height > window.innerHeight - 8 && rect.top - gap - height >= 8) top = rect.top - gap - height;
+  card.style.left = `${left}px`;
+  card.style.top = `${Math.max(8, top)}px`;
+}
+
+function show(chip, { pin = false } = {}) {
+  clearTimeout(hideTimer);
+  clearTimeout(showTimer);
+  const card = popover();
+  if (current !== chip) {
+    current?.setAttribute('aria-expanded', 'false');
+    current = chip;
+    card.innerHTML = chip.querySelector('.cite__card')?.innerHTML || '';
+    card.setAttribute('aria-label', chip.getAttribute('aria-label') || '');
+    enrich(card);
+    card.scrollTop = 0;
+  }
+  pinned = pinned || pin;
+  card.hidden = false;
+  chip.setAttribute('aria-expanded', 'true');
+  place(chip, card);
+}
+
+function hide() {
+  clearTimeout(hideTimer);
+  clearTimeout(showTimer);
+  current?.setAttribute('aria-expanded', 'false');
+  current = null;
+  pinned = false;
+  if (pop) pop.hidden = true;
+}
+
+function scheduleHide() {
+  clearTimeout(hideTimer);
+  // Long enough to cross the gap from the chip to the card.
+  hideTimer = window.setTimeout(hide, 220);
+}
+
+if (typeof document !== 'undefined') {
+  const chipOf = (target) => /** @type {HTMLElement|null} */ (target?.closest?.('.cite'));
+
+  document.addEventListener('pointerover', (event) => {
+    if (event.pointerType !== 'mouse') return;
+    const chip = chipOf(event.target);
+    if (!chip) return;
+    clearTimeout(hideTimer);
+    if (current === chip) return;
+    if (pinned) return;
+    clearTimeout(showTimer);
+    showTimer = window.setTimeout(() => show(chip), 120);
+  });
+
+  document.addEventListener('pointerout', (event) => {
+    if (event.pointerType !== 'mouse') return;
+    const chip = chipOf(event.target);
+    if (!chip || chip.contains(/** @type {Node} */ (event.relatedTarget))) return;
+    clearTimeout(showTimer);
+    if (current === chip && !pinned) scheduleHide();
+  });
+
+  document.addEventListener('click', (event) => {
+    const chip = chipOf(event.target);
+    if (chip) {
+      event.preventDefault();
+      // A tap opens it and a second tap closes it. With a mouse the hover has
+      // usually opened it already, so the click only makes it stay.
+      if (current === chip && pinned) hide();
+      else show(chip, { pin: true });
+      return;
+    }
+    if (pop && !pop.hidden && !pop.contains(/** @type {Node} */ (event.target))) hide();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    const chip = chipOf(event.target);
+    if (chip && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      show(chip, { pin: true });
+      /** @type {HTMLElement|null} */ (pop?.querySelector('a.cite-item'))?.focus();
+      return;
+    }
+    if (event.key === 'Escape' && current) {
+      const back = current;
+      hide();
+      back.focus();
+    }
+  });
+
+  // A card left floating over a transcript that moved under it points at the wrong line.
+  document.addEventListener('scroll', (event) => {
+    if (pop && !pop.hidden && !pop.contains(/** @type {Node} */ (event.target))) hide();
+  }, true);
+  window.addEventListener('resize', hide);
+
+  // A site with no icon shows no broken image. One listener, because the chip
+  // is drawn as markup and an inline handler would need a CSP hole.
+  document.addEventListener(
+    'error',
+    (event) => {
+      const img = /** @type {HTMLElement} */ (event.target);
+      if (img?.matches?.('img[data-cite-icon]')) img.classList.add('is-bare');
+    },
+    true,
+  );
+}

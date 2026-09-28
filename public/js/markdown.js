@@ -65,6 +65,138 @@ function protect(text, hold) {
     );
 }
 
+/**
+ * Citations: where a sentence came from, as a small chip after it.
+ *
+ * The assistant is asked (see "Cite as you go" in server/agent.js) to end a
+ * sourced sentence with the source in parentheses — a page as
+ * `([OpenRouter](https://…))`, a file as `([Chap005.pdf])`, several at once
+ * separated by commas. That is ordinary Markdown on purpose: copied out, mailed,
+ * or read by anything else it is still a readable link in brackets, and a model
+ * that ignores the convention loses nothing. Parentheses are what separate a
+ * citation from a link that is part of the sentence ("see [the docs](…)").
+ *
+ * Runs over escaped text, so the pieces are already HTML-safe. Consecutive
+ * citations merge into one chip — "OpenRouter +3" — whose card lists all of them.
+ */
+const CITE_WEB = String.raw`\[([^\[\]\n]{1,80})\]\((https?:\/\/[^\s)\u0000]+)\)`;
+const CITE_FILE = String.raw`\[([^\[\]\n\/\\]{1,120}?\.(?:pdf|docx?|xlsx?|pptx?|csv|tsv|txt|md|rtf|odt|json|html?|png|jpe?g|gif|webp))\]`;
+const CITE_ONE = `(?:${CITE_WEB}|${CITE_FILE})`;
+const CITE_GROUP = String.raw`\(\s*${CITE_ONE}(?:\s*[,;]\s*${CITE_ONE})*\s*\)`;
+const CITE_RUN = new RegExp(`${CITE_GROUP}(?:\\s*${CITE_GROUP})*`, 'gi');
+const CITE_ITEM = new RegExp(CITE_ONE, 'gi');
+
+/** `&amp;` back to `&`, for reading a host out of an already-escaped address. */
+const unescapeUrl = (url) => url.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+
+function hostOf(escapedUrl) {
+  try {
+    return new URL(unescapeUrl(escapedUrl)).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+/** More distinct marks than this and the chip stops being small. */
+const MAX_MARKS = 5;
+
+const GLOBE_MARK =
+  '<svg class="cite__icon cite__icon--glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>';
+
+/** Kinds of file that share an icon: a .doc and a .docx are both Word. */
+function fileFamily(ext) {
+  if (ext === 'PDF') return 'pdf';
+  if (/^(DOCX?|ODT|RTF)$/.test(ext)) return 'doc';
+  if (/^(XLSX?|CSV|TSV)$/.test(ext)) return 'sheet';
+  if (/^PPTX?$/.test(ext)) return 'slides';
+  if (/^(PNG|JPG|GIF|WEBP)$/.test(ext)) return 'image';
+  return 'text';
+}
+
+/** A file's icon: a page with a folded corner, coloured and lettered by its kind. */
+function fileMark(ext) {
+  const family = fileFamily(ext);
+  const letter = { pdf: 'P', doc: 'W', sheet: 'X', slides: 'P', image: '', text: '' }[family];
+  const inner =
+    family === 'image'
+      ? '<circle cx="9" cy="13" r="1.6" fill="#fff"/><path d="M6 19l4-4 3 3 2-2 3 3z" fill="#fff"/>'
+      : letter
+        ? `<text x="12" y="18" text-anchor="middle" font-size="9" font-weight="700" font-family="system-ui,sans-serif" fill="#fff">${letter}</text>`
+        : '<path d="M8 12h8M8 15h8M8 18h5" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>';
+  return (
+    `<svg class="cite__icon cite__file cite__file--${family}" viewBox="0 0 24 24">` +
+    '<path d="M5 2h10l5 5v15H5z" fill="currentColor"/><path d="M15 2v5h5" fill="#fff" fill-opacity=".45"/>' +
+    `${inner}</svg>`
+  );
+}
+
+const extOf = (name) => (name.match(/\.([a-z0-9]+)$/i)?.[1] || '').toUpperCase().replace(/^JPEG$/, 'JPG');
+
+/** One run of citations, already escaped, as its chip. */
+function citeChip(run) {
+  const items = [];
+  for (const m of run.matchAll(CITE_ITEM)) {
+    if (m[2]) items.push({ kind: 'web', label: m[1].trim(), url: m[2], host: hostOf(m[2]) });
+    else items.push({ kind: 'file', name: m[3].trim(), ext: extOf(m[3]) });
+  }
+  // A repeated source is one source.
+  const seen = new Set();
+  const unique = items.filter((it) => {
+    const key = it.kind === 'web' ? it.url : it.name;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const [first] = unique;
+
+  const favicon = (host) =>
+    host ? `<img class="cite__icon" src="/api/favicon/${encodeURIComponent(host)}" alt="" loading="lazy" decoding="async" data-cite-icon>` : '';
+
+  /**
+   * Every distinct source's mark, side by side, so the chip says at a glance
+   * which sites and which kinds of file are behind it: one logo per site (two
+   * OpenRouter pages are one OpenRouter logo) and one icon per file type. The
+   * `+N` after the name counts sources, not logos — "OpenRouter +3" is four
+   * sources however many of them share a site.
+   */
+  const marks = [];
+  const marked = new Set();
+  for (const it of unique) {
+    const key = it.kind === 'web' ? `w:${it.host}` : `f:${fileFamily(it.ext)}`;
+    if (marked.has(key)) continue;
+    marked.add(key);
+    marks.push(it.kind === 'web' ? favicon(it.host) || GLOBE_MARK : fileMark(it.ext));
+  }
+  const shown = marks.slice(0, MAX_MARKS).join('');
+  const head =
+    `<span class="cite__marks" aria-hidden="true">${shown}</span>` +
+    (first.kind === 'web'
+      ? `<span class="cite__name">${first.label || first.host}</span>`
+      : `<span class="cite__name cite__name--file">${first.ext}</span>`);
+  const more = unique.length > 1 ? `<span class="cite__more">+${unique.length - 1}</span>` : '';
+
+  const card = unique
+    .map((it) =>
+      it.kind === 'web'
+        ? `<a class="cite-item" href="${it.url}" target="_blank" rel="noopener noreferrer" data-url="${it.url}">` +
+          `<span class="cite-item__site">${favicon(it.host)}<span>${it.host || it.label}</span></span>` +
+          `<span class="cite-item__title">${it.label}</span>` +
+          `<span class="cite-item__snip"></span>` +
+          `<span class="cite-item__url">${it.url}</span></a>`
+        : `<span class="cite-item cite-item--file">` +
+          `<span class="cite-item__site">${fileMark(it.ext)}<span>${it.ext}</span></span>` +
+          `<span class="cite-item__title">${it.name}</span></span>`,
+    )
+    .join('');
+
+  const names = unique.map((it) => (it.kind === 'web' ? it.label || it.host : it.name)).join(', ');
+  return (
+    `<span class="cite" role="button" tabindex="0" aria-haspopup="dialog" aria-expanded="false" ` +
+    `aria-label="${escapeHtml(t('cite.sources'))}: ${names}">${head}${more}` +
+    `<span class="cite__card" hidden>${card}</span></span>`
+  );
+}
+
 function inline(text) {
   const slots = [];
   const token = marker();
@@ -76,6 +208,10 @@ function inline(text) {
   // Code and mathematics first, so their contents are not re-processed as
   // emphasis — an underscore in `CF_t` is a subscript, not italics.
   let out = escapeHtml(protect(text, hold));
+
+  // Citations before emphasis and links, and held, so an underscore or an
+  // asterisk in an address is not turned into italics inside the chip.
+  out = out.replace(CITE_RUN, (run) => hold(citeChip(run)));
 
   out = out
     // The one tag let back through after escaping. A model writes `<br>` to

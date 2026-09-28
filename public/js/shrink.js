@@ -22,7 +22,12 @@
  *   of the library nothing at all is lost; what goes is the layout, and the
  *   person is told so rather than left to wonder.
  *
- *   **Everything else** — a .docx, a .pptx, a video — is already compressed and
+ *   **Word, Excel and PowerPoint** files are sent without the pictures inside
+ *   them, which are nearly always what makes them big. The words, tables,
+ *   slides and sheets are what the server reads (server/office/), and they go
+ *   across byte for byte. The person is told the pictures were left out.
+ *
+ *   **Everything else** — a video, an archive — is already compressed and
  *   cannot be made smaller honestly. It is refused with the one sentence that
  *   helps: how big it is, what fits, and that the app did try.
  *
@@ -49,6 +54,151 @@ const IMAGE_QUALITY = 0.82;
 
 const isImage = (type, name) => /^image\//.test(type) || /\.(png|jpe?g|webp|gif|bmp)$/i.test(name);
 const isPdf = (type, name) => type === 'application/pdf' || /\.pdf$/i.test(name);
+
+/**
+ * The largest photo or PDF worth trying to shrink.
+ *
+ * Neither is uploaded at this size — `prepareUpload` sends a re-encoded image or
+ * the PDF's text — so this is a bound on what the browser is asked to decode, not
+ * on the request. A 60MB scanned textbook still reads in pdfjs; past that a phone
+ * tab is likely to run out of memory before it finishes.
+ */
+export const MAX_SHRINKABLE_BYTES = 60 * 1024 * 1024;
+
+const isOffice = (name) => /\.(docx|xlsx|pptx)$/i.test(name);
+
+/** Whether `prepareUpload` can make this file smaller, rather than only refuse it. */
+export const shrinkable = (file) => {
+  const name = String(file?.name || '');
+  const type = String(file?.type || '').toLowerCase();
+  return isImage(type, name) || isPdf(type, name) || isOffice(name);
+};
+
+/**
+ * Parts of an Office file that are pictures, embedded files and fonts — what
+ * makes a 7MB .docx 7MB. The words, the tables, the slides and the sheets are
+ * XML a few hundred kilobytes long, and they are all the server reads anyway
+ * (server/office/ skips a picture whose part is missing).
+ */
+const HEAVY_PART = /(^|\/)(media|embeddings|fonts)\/|^docProps\/thumbnail\./i;
+
+/**
+ * The same Office file without its pictures.
+ *
+ * A .docx, .xlsx or .pptx is a zip. Every part that is kept is copied across
+ * exactly as it was compressed — no inflating, no re-deflating, no checksum to
+ * recompute — and only the table of contents is written anew. Returns null for
+ * anything this does not understand (zip64, a damaged file), and the caller
+ * refuses the file as before rather than sending something broken.
+ */
+export function slimOfficeBytes(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  // The end-of-central-directory record, searched for from the end: it is
+  // followed by a comment of up to 64KB.
+  let eocd = -1;
+  for (let at = bytes.length - 22; at >= Math.max(0, bytes.length - 22 - 65535); at -= 1) {
+    if (view.getUint32(at, true) === 0x06054b50) {
+      eocd = at;
+      break;
+    }
+  }
+  if (eocd < 0) return null;
+  const count = view.getUint16(eocd + 10, true);
+  const cdOffset = view.getUint32(eocd + 16, true);
+  // 0xFFFF / 0xFFFFFFFF mean the real numbers are in a zip64 record.
+  if (count === 0xffff || cdOffset === 0xffffffff || cdOffset >= bytes.length) return null;
+
+  const decoder = new TextDecoder();
+  const locals = [];
+  const centrals = [];
+  let dropped = 0;
+  let offset = 0;
+  let at = cdOffset;
+
+  for (let i = 0; i < count; i += 1) {
+    if (at + 46 > bytes.length || view.getUint32(at, true) !== 0x02014b50) return null;
+    const nameLength = view.getUint16(at + 28, true);
+    const extraLength = view.getUint16(at + 30, true);
+    const commentLength = view.getUint16(at + 32, true);
+    const recordLength = 46 + nameLength + extraLength + commentLength;
+    const name = decoder.decode(bytes.subarray(at + 46, at + 46 + nameLength));
+
+    if (HEAVY_PART.test(name)) {
+      dropped += 1;
+      at += recordLength;
+      continue;
+    }
+
+    const flags = view.getUint16(at + 8, true);
+    const crc = view.getUint32(at + 16, true);
+    const compressedSize = view.getUint32(at + 20, true);
+    const size = view.getUint32(at + 24, true);
+    const localAt = view.getUint32(at + 42, true);
+    if (localAt + 30 > bytes.length || view.getUint32(localAt, true) !== 0x04034b50) return null;
+    const localHeaderLength = 30 + view.getUint16(localAt + 26, true) + view.getUint16(localAt + 28, true);
+    const dataEnd = localAt + localHeaderLength + compressedSize;
+    if (dataEnd > bytes.length) return null;
+
+    // The local header, with the sizes written in: a part streamed with a data
+    // descriptor (flag bit 3) has zeros here and its sizes after the data,
+    // which is dropped — so the header must carry them itself.
+    const local = bytes.slice(localAt, localAt + localHeaderLength);
+    const localView = new DataView(local.buffer);
+    localView.setUint16(6, flags & ~0x08, true);
+    localView.setUint32(14, crc, true);
+    localView.setUint32(18, compressedSize, true);
+    localView.setUint32(22, size, true);
+    locals.push(local, bytes.subarray(localAt + localHeaderLength, dataEnd));
+
+    const central = bytes.slice(at, at + recordLength);
+    const centralView = new DataView(central.buffer);
+    centralView.setUint16(8, flags & ~0x08, true);
+    centralView.setUint32(42, offset, true);
+    centrals.push(central);
+
+    offset += localHeaderLength + compressedSize;
+    at += recordLength;
+  }
+
+  if (!dropped) return null;
+  const cdSize = centrals.reduce((sum, c) => sum + c.length, 0);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(8, centrals.length, true);
+  endView.setUint16(10, centrals.length, true);
+  endView.setUint32(12, cdSize, true);
+  endView.setUint32(16, offset, true);
+
+  const out = new Uint8Array(offset + cdSize + 22);
+  let write = 0;
+  for (const part of [...locals, ...centrals, end]) {
+    out.set(part, write);
+    write += part.length;
+  }
+  return { bytes: out, dropped };
+}
+
+/** An oversized Office file, sent without its pictures. */
+async function slimOffice(file) {
+  const slim = slimOfficeBytes(await file.arrayBuffer());
+  if (!slim) return null;
+  const data = payloadOf(await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('That file could not be read.'));
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(new Blob([slim.bytes], { type: file.type || 'application/octet-stream' }));
+  }));
+  if (!data) return null;
+  return {
+    name: file.name,
+    mime: file.type,
+    data,
+    note: { kind: 'office', from: file.size, to: bytesOf(data), dropped: slim.dropped },
+  };
+}
 
 /** A `data:` URL's payload, as the base64 the API wants. */
 const payloadOf = (url) => String(url || '').split(',')[1] || '';
@@ -158,6 +308,12 @@ export async function prepareUpload(file) {
     const text = await pdfToText(file).catch(() => null);
     if (text && bytesOf(text.data) <= MAX_UPLOAD_BYTES) return text;
     throw new Error(tooBig(name, file.size, text ? 'pdf-long' : 'pdf'));
+  }
+
+  if (isOffice(name)) {
+    const slim = await slimOffice(file).catch(() => null);
+    if (slim && bytesOf(slim.data) <= MAX_UPLOAD_BYTES) return slim;
+    throw new Error(tooBig(name, file.size, slim ? 'office-long' : 'other'));
   }
 
   throw new Error(tooBig(name, file.size, 'other'));

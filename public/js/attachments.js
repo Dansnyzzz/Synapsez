@@ -16,7 +16,7 @@ import { escapeHtml } from './markdown.js';
 import { toast } from './render.js';
 import { t } from './i18n.js';
 import { humanSize } from './format.js';
-import { prepareUpload } from './shrink.js';
+import { prepareUpload, shrinkable, MAX_SHRINKABLE_BYTES } from './shrink.js';
 import { thumbnailFor } from './thumbnail.js';
 import { openSketch } from './sketch.js';
 
@@ -73,6 +73,9 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     const mb = (n) => `${(n / 1024 / 1024).toFixed(1)}MB`;
     if (note.kind === 'pdf-text') {
       return t('upload.sentAsText').replace('{pages}', String(note.pages)).replace('{size}', mb(note.from));
+    }
+    if (note.kind === 'office') {
+      return t('upload.withoutPictures').replace('{from}', mb(note.from)).replace('{to}', mb(note.to));
     }
     return t('upload.resized').replace('{from}', mb(note.from)).replace('{to}', mb(note.to));
   }
@@ -199,10 +202,16 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
         break;
       }
       // Refused here as well as on the server, so a 5MB mistake is not found out
-      // at the end of a 5MB upload.
-      if (file.size > limits.maxBytes) {
+      // at the end of a 5MB upload — but only for what cannot be made smaller.
+      // A photo is re-encoded, a PDF is sent as its text and an Office file
+      // without its pictures (see shrink.js), so a 7MB PDF of lecture slides
+      // fits; refusing it on its raw size here meant that path was never
+      // reached. Those get a much higher ceiling, which
+      // is about what the browser can read without struggling, not about the upload.
+      const ceiling = shrinkable(file) ? MAX_SHRINKABLE_BYTES : limits.maxBytes;
+      if (file.size > ceiling) {
         toast(
-          t('attachment.tooBig', { name: file.name, size: humanSize(file.size), limit: humanSize(limits.maxBytes) }),
+          t('attachment.tooBig', { name: file.name, size: humanSize(file.size), limit: humanSize(ceiling) }),
           'error',
         );
         continue;

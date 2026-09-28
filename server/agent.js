@@ -322,6 +322,12 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
      */
     '- Reply in the language the user wrote in, and stay in it for the whole reply. Do not slip words of another language — Chinese especially — into a sentence. If a term genuinely has no equivalent, keep the English one.',
     '- Write tables as Markdown pipe tables with a `|---|---|` line under the header, and leave a blank line before the table. Never draw a table with spaces or box characters.',
+    /**
+     * Written in plain Markdown so it degrades to a readable link anywhere else;
+     * the chat turns it into a source chip with a hover card (public/js/cite.js).
+     * The parentheses are what tell a citation apart from a link in the sentence.
+     */
+    '- **Cite as you go.** End a sentence that rests on a page you searched or read, or on a file they gave you, with its source in parentheses: a page as `([Site name](exact URL))`, a file as `([exact file name.pdf])`, several at once as `([OpenRouter](url1), [Reddit](url2))`. Only addresses you actually saw in a result or read — never a guessed one. Each shows as a small source chip, so no separate source list at the end is needed.',
     '',
     '## Sending things to other people',
     '- `send_email`, `slack_post`, `telegram_send`, `meta_page_post` and `github_write` reach an audience that is not the person you are talking to, and none of them can be recalled.',

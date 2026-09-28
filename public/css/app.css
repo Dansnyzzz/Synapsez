@@ -8748,3 +8748,120 @@ select:focus-visible {
   padding: 0 8px 8px;
   overflow: hidden auto;
 }
+
+/* ── Citations ────────────────────────────────────────────────
+   The chip after a sourced sentence (drawn by markdown.js) and the card it
+   opens (cite.js). Grey and quiet: a source is something you can check, not
+   something the sentence is about. */
+.cite {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(18em, 100%);
+  margin-left: 4px;
+  padding: 1px 9px 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 20px;
+  vertical-align: 1px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.cite:hover,
+.cite[aria-expanded='true'] { background: var(--tint-2); color: var(--text); }
+.cite:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cite__marks { display: inline-flex; align-items: center; flex: none; }
+/* Overlapped like a stack of avatars, each ringed so neighbours stay apart. */
+.cite__marks > .cite__icon + .cite__icon { margin-left: -4px; }
+.cite__marks > .cite__icon { box-shadow: 0 0 0 1.5px var(--surface-2); }
+.cite__icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  object-fit: contain;
+}
+.cite__icon.is-bare { display: none; }
+.cite__icon--glyph { padding: 1px; background: var(--surface); color: var(--text-dim); }
+.cite__file { border-radius: 3px; background: transparent; }
+.cite__marks > .cite__file { box-shadow: none; }
+.cite__file--pdf { color: #e5484d; }
+.cite__file--doc { color: #3e7bfa; }
+.cite__file--sheet { color: #2f9e5b; }
+.cite__file--slides { color: #e8702a; }
+.cite__file--image { color: #9b6cf0; }
+.cite__file--text { color: #7b8794; }
+.cite__name { overflow: hidden; text-overflow: ellipsis; }
+.cite__name--file { letter-spacing: 0.02em; }
+.cite__more { flex: none; color: var(--text-faint); }
+.cite:hover .cite__more,
+.cite[aria-expanded='true'] .cite__more { color: var(--text-dim); }
+
+.cite-pop {
+  position: fixed;
+  z-index: 900;
+  max-height: min(380px, 60vh);
+  padding: 6px;
+  overflow: hidden auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.38);
+  overscroll-behavior: contain;
+}
+.cite-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--text);
+  text-decoration: none;
+}
+.cite-item + .cite-item { border-top: 1px solid var(--line-soft); }
+a.cite-item:hover,
+a.cite-item:focus-visible { background: var(--surface-2); outline: none; }
+a.cite-item:hover .cite-item__title,
+a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-underline-offset: 3px; }
+.cite-item__site {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.cite-item__site > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cite-item__title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.cite-item__snip {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.cite-item__snip:empty { display: none; }
+.cite-item__url {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cite-item--file { cursor: default; }

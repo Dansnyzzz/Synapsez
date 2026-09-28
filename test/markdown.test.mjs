@@ -149,6 +149,86 @@ section('escaping is safe in an attribute, not only in text');
   check('undefined too', escapeHtml(undefined) === '');
 }
 
+/* ── citations ─────────────────────────────────────────────────── */
+
+section('a page cited in parentheses becomes a source chip');
+{
+  const html = renderMarkdown('Tối đa 100 MiB mỗi tệp. ([OpenRouter](https://openrouter.ai/docs/guides/features/files-api))');
+  check('is a chip', html.includes('class="cite"'), html.slice(0, 160));
+  check('named after the site', html.includes('<span class="cite__name">OpenRouter</span>'));
+  check('with the site logo from our own server', html.includes('src="/api/favicon/openrouter.ai"'));
+  check('the card links to the exact address', html.includes('href="https://openrouter.ai/docs/guides/features/files-api"'));
+  check('no +N for a single source', !html.includes('cite__more'));
+  check('and no raw brackets left', !html.includes('[OpenRouter]'));
+}
+
+section('four sources, two sharing a site: one chip, three logos, +3');
+{
+  const html = renderMarkdown(
+    'Giới hạn 20 request/phút. ([OpenRouter](https://openrouter.ai/a), [OpenRouter](https://openrouter.ai/b), [Reddit](https://www.reddit.com/r/x), [Zendesk](https://help.zendesk.com/y))',
+  );
+  const chips = html.match(/class="cite"/g) || [];
+  const marks = html.match(/<span class="cite__marks"[^>]*>(.*?)<\/span>/)?.[1] || '';
+  check('one chip for the run', chips.length === 1, String(chips.length));
+  check('+3 counts every other source', html.includes('>+3<'));
+  check('one logo per site, not per page', (marks.match(/<img/g) || []).length === 3, marks);
+  check('all four listed in the card', (html.match(/class="cite-item"/g) || []).length === 4);
+}
+
+section('adjacent groups merge, and a repeated address is one source');
+{
+  const html = renderMarkdown('Câu. ([A](https://a.com/x)) ([A](https://a.com/x)) ([B](https://b.com/))');
+  check('one chip', (html.match(/class="cite"/g) || []).length === 1);
+  check('+1, not +2', html.includes('>+1<'), html.match(/cite__more">[^<]*/)?.[0]);
+}
+
+section('files: the kind as the name, one icon per kind, not a link');
+{
+  const html = renderMarkdown('Theo tài liệu. ([Chap005- Introduction Risk and Return.pdf], [Tong_hop_DTTC.docx], [Ghi chu.doc])');
+  check('named by the first file\'s type', html.includes('cite__name--file">PDF<'));
+  check('+2', html.includes('>+2<'));
+  const marks = html.match(/<span class="cite__marks"[^>]*>(.*?)<\/span>/)?.[1] || '';
+  check('a .docx and a .doc share the Word icon', (marks.match(/<svg/g) || []).length === 2, marks.slice(0, 120));
+  check('the file name is in the card', html.includes('Chap005- Introduction Risk and Return.pdf'));
+  check('a file source is not a link', !/<a [^>]*cite-item[^>]*>[^]*Tong_hop/.test(html));
+  check('an underscore in a name is not italics', !html.includes('<em>'));
+}
+
+section('a link that is part of the sentence stays a link');
+{
+  const html = renderMarkdown('Xem [tài liệu Files API](https://openrouter.ai/docs) để biết thêm.');
+  check('no chip', !html.includes('class="cite"'));
+  check('an ordinary link', html.includes('<a href="https://openrouter.ai/docs"'));
+}
+
+section('a citation cannot smuggle markup');
+{
+  const html = renderMarkdown('x ([<img src=x onerror=alert(1)>](https://a.com/"onmouseover="y))');
+  check('no live tag', !html.includes('<img src=x'));
+  check('no attribute break-out', !/"onmouseover="/.test(html));
+}
+
+section('the card learns titles and summaries from a search the tab saw');
+{
+  const { rememberSearch, knownSource } = await import('../public/js/cite.js');
+  const { formatResults } = await import('../server/search.js');
+  rememberSearch(
+    formatResults('openrouter file limit', {
+      engine: 'Test',
+      attempts: [],
+      results: [
+        { title: 'Files API - Upload and Manage Workspace Files', url: 'https://openrouter.ai/docs/files-api', snippet: 'The maximum file size is 100 MiB.', published: '2026-08-25' },
+        { title: 'Giới hạn mới của Openrouter', url: 'https://www.reddit.com/r/SillyTavernAI/x', snippet: '' },
+      ],
+    }),
+  );
+  const a = knownSource('https://openrouter.ai/docs/files-api/');
+  check('title kept, trailing slash or not', a?.title === 'Files API - Upload and Manage Workspace Files', JSON.stringify(a));
+  check('summary kept, the date line left out', a?.snippet === 'The maximum file size is 100 MiB.', a?.snippet);
+  const b = knownSource('https://www.reddit.com/r/SillyTavernAI/x');
+  check('a result with no summary still has its title', b?.title === 'Giới hạn mới của Openrouter' && !b.snippet);
+}
+
 console.log(
   failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll markdown checks passed.\x1b[0m\n',
 );

@@ -129,5 +129,36 @@ console.log('\n\x1b[1mand nothing from the document becomes markup\x1b[0m');
 // Round trip through the ZIP writer/reader, to be sure the fixture is real.
 check('the fixture is a genuine package', openZip(buffer).has('word/media/image1.png'));
 
+// An Office file too big to send goes without its pictures (public/js/shrink.js).
+// What the server reads from the slimmed copy has to be the same document.
+console.log('\n\x1b[1man oversized .docx is sent without its pictures\x1b[0m');
+{
+  const { slimOfficeBytes } = await import('../public/js/shrink.js');
+  const { randomBytes } = await import('node:crypto');
+  // A photo is incompressible, which is exactly why these files are big.
+  const heavy = writeZip([
+    { name: '[Content_Types].xml', data: Buffer.from(types, 'utf8') },
+    { name: '_rels/.rels', data: Buffer.from(rootRels, 'utf8') },
+    { name: 'word/document.xml', data: Buffer.from(doc, 'utf8') },
+    { name: 'word/_rels/document.xml.rels', data: Buffer.from(rels, 'utf8') },
+    { name: 'word/media/image1.png', data: randomBytes(4 * 1024 * 1024) },
+    { name: 'word/media/image2.jpeg', data: randomBytes(2 * 1024 * 1024) },
+    { name: 'docProps/thumbnail.jpeg', data: randomBytes(64 * 1024) },
+  ]);
+  const slim = slimOfficeBytes(heavy);
+  check('it slims', !!slim, 'returned null');
+  check('the pictures and the thumbnail are what went', slim?.dropped === 3, String(slim?.dropped));
+  check('from megabytes to kilobytes', slim && slim.bytes.length < 20_000, `${heavy.length} → ${slim?.bytes.length}`);
+
+  const zip = openZip(Buffer.from(slim.bytes));
+  check('still a package the server opens', zip.has('word/document.xml') && !zip.has('word/media/image1.png'), zip.names.join(', '));
+  const reread = readDocx(Buffer.from(slim.bytes));
+  check('and every word is still there', /Trước hình/.test(reread.text) && /Hình 1: biểu đồ/.test(reread.text) && /Sau hình/.test(reread.text), reread.text.slice(0, 120));
+  check('a missing picture is skipped, not an error', reread.media.length === 0);
+
+  check('a file with nothing heavy in it is left alone', slimOfficeBytes(slimOfficeBytes(heavy).bytes) === null);
+  check('and a file that is not a zip is refused, not mangled', slimOfficeBytes(Buffer.from('not a zip at all')) === null);
+}
+
 console.log(bad ? `\n\x1b[31m${bad} problem(s).\x1b[0m\n` : '\n\x1b[32mAll good.\x1b[0m\n');
 process.exit(bad ? 1 : 0);
