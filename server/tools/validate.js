@@ -81,8 +81,46 @@ function coerce(value, type) {
 /** `"Thank you"` → `thank_you`, so a near miss is read as what it plainly meant. */
 const loose = (v) => String(v).trim().toLowerCase().replace(/[\s-]+/g, '_');
 
+/** The names a model gives the one piece of text when it wraps a string in an object. */
+const TEXT_KEYS = ['task', 'text', 'prompt', 'question', 'query', 'content', 'description', 'value', 'instruction', 'message'];
+
+/**
+ * The string inside `{ "task": "…" }`, when a string was wanted.
+ *
+ * Models wrap list items this way constantly — `run_parallel` was sent
+ * `tasks: [{ task: "…" }, …]` and refused six times running, because the
+ * refusal named the type and never the shape, so the model sent the same
+ * thing again. When the object plainly carries one piece of text, that text is
+ * what was meant. When it does not — two strings and no telling which — it is
+ * still refused, with the right shape shown.
+ */
+function unwrapText(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const named = TEXT_KEYS.find((k) => typeof value[k] === 'string' && value[k].trim());
+  if (named) return value[named];
+  const strings = Object.values(value).filter((v) => typeof v === 'string' && v.trim());
+  return strings.length === 1 ? strings[0] : null;
+}
+
 function check(value, schema, where, notes = []) {
   if (!schema || typeof schema !== 'object') return { ok: true, value };
+
+  const wantsString = schema.type === 'string' || (Array.isArray(schema.type) && schema.type.length === 1 && schema.type[0] === 'string');
+  if (wantsString && value && typeof value === 'object' && !Array.isArray(value)) {
+    const text = unwrapText(value);
+    if (text !== null) {
+      // One note for the whole list, not one per item.
+      const field = where.replace(/\[\d+\]$/, '[…]');
+      const note = `${field} was an object; its text was used. Send plain strings here next time.`;
+      if (!notes.includes(note)) notes.push(note);
+      value = text;
+    } else {
+      return {
+        ok: false,
+        error: `${where} should be a plain string, but got an object. Send the text itself, e.g. "…", not { "task": "…" }.`,
+      };
+    }
+  }
 
   if (schema.type) {
     const types = Array.isArray(schema.type) ? schema.type : [schema.type];

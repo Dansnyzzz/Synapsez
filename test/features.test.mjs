@@ -316,6 +316,22 @@ section('OCR reads Vietnamese with no key and no network');
   check('a hard-to-read reading says so', /hard to read/.test(doubtful.text));
 }
 
+section('a list of strings sent as objects is read, not refused six times');
+{
+  const { validateArguments } = await import('../server/tools/validate.js');
+  const schema = TOOLS_BY_NAME.run_parallel.parameters;
+  // The exact shape from the report: every task wrapped as { task: "…" }.
+  const wrapped = validateArguments(schema, { tasks: [{ task: 'Trích chương 2' }, { task: 'Trích chương 7' }] });
+  check('run_parallel takes { task } objects as their text', wrapped.ok && wrapped.input.tasks.join('|') === 'Trích chương 2|Trích chương 7', JSON.stringify(wrapped));
+  check('  and tells the model to send plain strings next time', wrapped.ok && /plain strings/.test(wrapped.notes.join(' ')));
+  const other = validateArguments(schema, { tasks: [{ description: 'a' }, { prompt: 'b' }] });
+  check('other names for the text work too', other.ok && other.input.tasks.join() === 'a,b');
+  const unclear = validateArguments(schema, { tasks: [{ title: 'a', body: 'b' }] });
+  check('an object with two texts and no telling which is still refused', !unclear.ok);
+  check('  with the right shape shown', /plain string/.test(unclear.error || '') && /not \{ "task"/.test(unclear.error || ''), unclear.error);
+  check('plain strings are untouched', validateArguments(schema, { tasks: ['x', 'y'] }).input.tasks.join() === 'x,y');
+}
+
 section('the live copy of a file is never numbered the same as a saved draft');
 {
   const { liveRevision } = await import('../server/attachments.js');

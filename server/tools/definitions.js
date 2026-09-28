@@ -1851,7 +1851,7 @@ export const TOOLS = [
         tasks: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Up to 6 self-contained tasks. Each must make sense with no other context.',
+          description: 'Up to 6 self-contained tasks, each a plain string — ["read X and …", "check Y …"]. Each must make sense with no other context.',
         },
       },
       required: ['tasks'],
