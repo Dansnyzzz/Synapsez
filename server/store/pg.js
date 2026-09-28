@@ -204,8 +204,10 @@ export function splitStatements(sql) {
  *      rather than at the next refresh, and the picker can warn before then
  *  23  scheduled_tasks.ends_on and workflows.ends_on — a repeat can stop on a
  *      date ("every morning until the 30th") instead of only never
+ *  24  attachments.thumb — the small picture of a sent file, so a message draws
+ *      its tiles without downloading the file or rendering a PDF again
  */
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 24;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1282,8 +1284,8 @@ export function createPgStore(connectionString) {
     // ── attachments ─────────────────────────────────────────────────
     async createAttachment(userId, file) {
       const rows = await q(
-        `INSERT INTO attachments (id, user_id, name, mime, kind, bytes, data, origin, source, chat_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO attachments (id, user_id, name, mime, kind, bytes, data, origin, source, chat_id, thumb)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING id, name, mime, kind, bytes, origin, created_at`,
         [
           file.id,
@@ -1296,9 +1298,15 @@ export function createPgStore(connectionString) {
           file.origin || 'upload',
           file.source ?? null,
           file.chatId ?? null,
+          file.thumb ?? null,
         ],
       );
       return rows[0];
+    },
+    /** The small picture of one attachment, or null — never the file itself. */
+    async getAttachmentThumb(userId, id) {
+      const rows = await q('SELECT thumb FROM attachments WHERE user_id = $1 AND id = $2', [userId, id]);
+      return rows[0]?.thumb ?? null;
     },
     /** Metadata only — the bytes are the expensive part and rarely the point. */
     async listAttachments(userId, ids) {

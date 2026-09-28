@@ -31,6 +31,7 @@ export function mountFileRoutes(api, { wrap, body }) {
           name: req.body?.name,
           mime: req.body?.mime,
           data: req.body?.data,
+          thumb: req.body?.thumb,
         });
         // The bytes are never echoed back — the browser already has the file it
         // just picked, and a round trip of the same megabytes helps nobody.
@@ -97,6 +98,23 @@ export function mountFileRoutes(api, { wrap, body }) {
       } catch (err) {
         res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
       }
+    }),
+  );
+
+  /**
+   * The small picture of a sent file, for the tile a message draws — so a 92px
+   * square is not the whole photo, and a PDF's first page is not rendered again
+   * on every reload. 404 when there is none; the tile then falls back.
+   */
+  api.get(
+    '/attachments/:id/thumb',
+    wrap(async (req, res) => {
+      const thumb = await getStore().getAttachmentThumb(req.user.id, req.params.id);
+      const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(thumb || '');
+      if (!m) return res.status(404).json({ error: 'Not found' });
+      res.setHeader('Content-Type', m[1]);
+      res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+      res.send(Buffer.from(m[2], 'base64'));
     }),
   );
 

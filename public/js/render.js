@@ -592,56 +592,83 @@ const fileNoun = (extension) =>
 
 
 /**
- * What was sent, above what was said about it.
+ * What was sent, as the same tiles it was waiting in above the composer.
  *
- * `preview` is a local object URL for something just picked, which the browser
- * already holds; `id` is a stored one, fetched from the server. Both end up in
- * the same markup — the difference only matters for where the bytes come from.
+ * Above the bubble, not inside it: the files are not part of the sentence, and
+ * inside it they were drawn a second, different way from the tray — and an edit,
+ * which rebuilds the bubble from the words, took them off the screen although
+ * they were still attached. A picture is the picture and a PDF its first page,
+ * both from the small copy kept with the file (`/thumb`) rather than the whole
+ * file; anything else is its name and its type.
  *
- * Anything already stored is a button, because it can be opened: a Word
- * document or a spreadsheet is unreadable as a name in a bubble, and the whole
- * point of attaching one is that both parties can see it. A file still
- * uploading has nothing to open yet and stays inert.
+ * `preview` and `thumb` are what the browser already holds for something just
+ * sent; `id` is a stored file, and a stored file is a button that opens it.
  */
-function attachmentStrip(files) {
-  const strip = el('div', 'bubble__files');
-
-  for (const file of files) {
-    const src = file.preview || (file.id ? `/api/attachments/${file.id}` : null);
-    const image = file.preview ? true : /^image\//i.test(file.mime || '');
-
-    if (src && image) {
-      const img = el('img', 'bubble__image');
-      img.src = src;
-      img.alt = file.name || '';
-      img.loading = 'lazy';
-      if (file.id) {
-        const open = el('button', 'bubble__thumb');
-        open.type = 'button';
-        open.dataset.file = file.id;
-        open.title = t('chat.openNamed').replace('{name}', file.name || '');
-        open.append(img);
-        strip.append(open);
-      } else {
-        strip.append(img);
-      }
-      continue;
-    }
-
-    const chip = el(file.id ? 'button' : 'span', 'bubble__file');
-    if (file.id) {
-      chip.type = 'button';
-      chip.dataset.file = file.id;
-      chip.title = file.name ? t('chat.openNamed', { name: file.name }) : t('chat.openThisFile');
-    }
-    const kind = el('span', 'bubble__file-ext');
-    kind.textContent = extensionBadge(file.name);
-    const label = el('span');
-    label.textContent = file.name || 'file';
-    chip.append(kind, label);
-    strip.append(chip);
-  }
+export function sentFiles(files) {
+  const strip = el('div', 'msg__files');
+  for (const file of files) strip.append(sentTile(file));
   return strip;
+}
+
+/** Its name and type, for anything that is not a picture — or a picture that cannot be drawn. */
+function fileFace(tile, name) {
+  tile.classList.remove('stage--media');
+  tile.classList.add('stage--file');
+  tile.replaceChildren();
+  const type = extensionBadge(name);
+  const icon = el('span', 'stage__icon');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = type;
+  const label = el('span', 'stage__name');
+  label.textContent = name;
+  const kind = el('span', 'stage__type');
+  kind.textContent = type;
+  tile.append(icon, label, kind);
+}
+
+function sentTile(file) {
+  const name = file.name || 'file';
+  const mime = String(file.mime || '');
+  const isImage = !!file.isImage || /^image\//i.test(mime) || (!!file.preview && !/pdf/i.test(mime));
+  const isPdf = /pdf/i.test(mime) || /\.pdf$/i.test(name);
+  const tile = el(file.id ? 'button' : 'div', 'stage stage--sent');
+  if (file.id) {
+    tile.type = 'button';
+    tile.dataset.file = file.id;
+    tile.setAttribute('aria-label', t('chat.openNamed', { name }));
+  }
+  tile.title = name;
+
+  const local = file.preview || file.thumb;
+  if (!isImage && !isPdf && !local) {
+    fileFace(tile, name);
+    return tile;
+  }
+  tile.classList.add('stage--media');
+  const img = el('img', 'stage__img');
+  img.alt = name;
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  if (local) img.src = local;
+  else if (file.id) {
+    img.src = `/api/attachments/${encodeURIComponent(file.id)}/thumb`;
+    // Sent before small copies were kept: a picture falls back to itself, a
+    // PDF to its name. Either way the tile never shows a broken image.
+    img.addEventListener('error', function fallback() {
+      if (isImage && !img.dataset.full) {
+        img.dataset.full = '1';
+        img.src = `/api/attachments/${encodeURIComponent(file.id)}`;
+      } else {
+        img.removeEventListener('error', fallback);
+        fileFace(tile, name);
+      }
+    });
+  } else {
+    fileFace(tile, name);
+    return tile;
+  }
+  tile.append(img);
+  return tile;
 }
 
 /**
@@ -1151,7 +1178,6 @@ export function userMessage(text, files = [], id = null) {
   if (id) wrap.dataset.messageId = id;
   const bubble = el('div', 'bubble');
 
-  if (files.length) bubble.append(attachmentStrip(files));
 
   if (text) {
     const body = el('div', 'bubble__text');
@@ -1161,6 +1187,8 @@ export function userMessage(text, files = [], id = null) {
     bubble.append(body);
   }
 
+  // The files above the words, and outside them — see sentFiles.
+  if (files.length) wrap.append(sentFiles(files));
   wrap.append(bubble);
 
   /**

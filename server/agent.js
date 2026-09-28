@@ -494,8 +494,10 @@ export const readsPdfNatively = (entry) => READS_PDF.has(entry?.provider);
 function withAttachments(messages, loaded, entry) {
   const vision = entry?.vision !== false;
   const documents = readsPdfNatively(entry);
+  // Shared across the transcript, in order, so a file attached twice goes once.
+  const seen = new Set();
   return messages.map((m) =>
-    m.attachments?.length ? { ...m, parts: toParts(m, loaded, { vision, documents }) } : m,
+    m.attachments?.length ? { ...m, parts: toParts(m, loaded, { vision, documents, seen }) } : m,
   );
 }
 
@@ -1059,6 +1061,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   const activated = new Set(unattended ? [] : toolsToPreload([...messages].reverse().find((m) => m.role === 'user')));
   /** Outbound messages sent this turn without a prompt. See `outboundRefusal`. */
   const sent = { count: 0 };
+  /** Attachment rows read this turn, by id — they never change, so each is read once. */
+  const turnFiles = new Map();
   const buildTools = () => availableTools({
     workerOnline,
     desktopOnline: !!worker?.info?.desktop,
@@ -1371,6 +1375,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       const loaded = await loadForTranscript(userId, grounded, {
         // Only worth parsing when the model cannot be shown the file itself.
         extractText: !readsPdfNatively(entry),
+        // Read once per turn, not once per step — see loadForTranscript.
+        cache: turnFiles,
       });
 
       for await (const ev of stream({

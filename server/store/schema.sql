@@ -837,3 +837,12 @@ CREATE INDEX IF NOT EXISTS chats_live_idx ON chats (user_id, archived_at, pinned
 -- turning it into midnight UTC on the way out.
 ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS ends_on TEXT;
 ALTER TABLE workflows       ADD COLUMN IF NOT EXISTS ends_on TEXT;
+
+-- ── 24: a small picture of an attachment ─────────────────────────────────
+-- A message shows what was sent as tiles — a picture, a PDF's first page — and
+-- drawing a 92px tile from the full file meant downloading megabytes of photo,
+-- or rendering a PDF in the browser on every reload of the conversation. The
+-- browser already draws this picture when the file is picked, so it is kept
+-- with the file: a data URL, bounded, of a known image type (see cleanThumb).
+-- Served by its own route, so reading a transcript never carries it.
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS thumb TEXT;

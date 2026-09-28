@@ -85,13 +85,37 @@ function refusal(filename, mime) {
 }
 
 /**
+ * The little picture a shelf or a message draws, if the browser sent a usable one.
+ *
+ * Rendered by the browser that uploaded the file — a PDF's first page, or the
+ * image scaled down — because doing it here would mean a canvas, which means a
+ * native module, which is the one thing a free serverless deployment cannot
+ * have. That it comes from the client is exactly why it is bounded and checked
+ * here: a data URL of a known image type, and small enough that it belongs in
+ * the row rather than in a file of its own.
+ */
+const MAX_THUMB_CHARS = 200_000;
+
+export function cleanThumb(thumb) {
+  const value = String(thumb || '');
+  if (!value) return null;
+  if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) return null;
+  return value.length > MAX_THUMB_CHARS ? null : value;
+}
+
+/**
  * Take one upload.
  *
  * `data` is base64 without a data: prefix. Kept as base64 all the way through —
  * it is what every provider wants and what JSON can carry, so decoding it here
  * only to re-encode it later would be work for nothing.
  */
-export async function saveUpload(userId, { name, mime, data }) {
+/**
+ * @param {string} userId
+ * @param {{ name?: string, mime?: string, data?: string, thumb?: string|null }} file
+ *   `thumb` is optional: the small picture a browser drew, when it drew one.
+ */
+export async function saveUpload(userId, { name, mime, data, thumb = null }) {
   const filename = String(name || 'file').slice(0, 200);
   const base64 = String(data || '');
   if (!base64) throw new Error(`${filename} is empty.`);
@@ -115,6 +139,8 @@ export async function saveUpload(userId, { name, mime, data }) {
     kind,
     bytes,
     data: base64,
+    // Drawn by the browser, which already has the file; checked, not trusted.
+    thumb: cleanThumb(thumb),
   });
 }
 
@@ -310,7 +336,7 @@ async function readDocument(row) {
  *   ones being sent in full. Anything absent from the map is deliberately not
  *   being sent.
  */
-export async function loadForTranscript(userId, messages, { extractText = false } = {}) {
+export async function loadForTranscript(userId, messages, { extractText = false, cache = null } = {}) {
   const store = getStore();
 
   const ids = [];
@@ -319,8 +345,33 @@ export async function loadForTranscript(userId, messages, { extractText = false 
   }
   if (!ids.length) return new Map();
 
-  // Newest first: the ones just sent are the ones being asked about.
-  const live = ids.slice(-LIVE_ATTACHMENTS);
+  // Newest first: the ones just sent are the ones being asked about. Counted
+  // once each — the same file sent twice is one file, and must not push a
+  // different one out of the window.
+  const live = [...new Set([...ids].reverse())].slice(0, LIVE_ATTACHMENTS).reverse();
+
+  /**
+   * The rows, once per turn rather than once per step.
+   *
+   * This runs on every step of the loop, and an attachment never changes once
+   * stored — so a twenty-step turn over a 5MB PDF read the same 5MB out of the
+   * database twenty times to send the same bytes. `cache` is the turn's own map
+   * (see runAgent); only what it does not already hold is fetched.
+   */
+  if (cache) {
+    const missing = live.filter((id) => !cache.has(id));
+    if (missing.length) for (const row of await store.getAttachments(userId, missing)) cache.set(row.id, row);
+    const loaded = new Map();
+    for (const id of live) {
+      const row = cache.get(id);
+      if (!row) continue;
+      if (row.text === undefined && (row.kind === 'office' || (extractText && row.kind === 'document'))) {
+        row.text = await readDocument(row);
+      }
+      loaded.set(id, row);
+    }
+    return loaded;
+  }
 
   /**
    * One query, not eight.
@@ -353,6 +404,9 @@ export async function loadForTranscript(userId, messages, { extractText = false 
   return loaded;
 }
 
+/** The most of an Office document's text sent to a model — the same bound as a PDF's (pdf.js). */
+const OFFICE_MAX_CHARS = 120_000;
+
 /** What a Word, Excel or PowerPoint file is called in a sentence. */
 const OFFICE_NOUN = {
   docx: 'Word document',
@@ -368,10 +422,18 @@ const OFFICE_NOUN = {
  * asking — and a file too old to send becomes a line of prose, which is
  * something every provider understands.
  */
-export function toParts(message, loaded, { vision = true, documents = true } = {}) {
+export function toParts(message, loaded, { vision = true, documents = true, seen = null } = {}) {
   const parts = [];
 
   for (const file of message.attachments || []) {
+    // The same file attached again is not sent again: once in full, where it
+    // first appears — which also keeps the earlier turns, and the prompt cache
+    // over them, unchanged.
+    if (seen?.has(file.id)) {
+      parts.push({ type: 'text', text: `[${file.name} — the same file as attached earlier in this conversation, shown there in full]` });
+      continue;
+    }
+    seen?.add(file.id);
     const full = loaded.get(file.id);
 
     if (!full) {
@@ -401,11 +463,16 @@ export function toParts(message, loaded, { vision = true, documents = true } = {
     if (full.kind === 'office') {
       const noun = OFFICE_NOUN[full.text?.format] || 'Office document';
       if (full.text?.text) {
+        // Bounded like a PDF's text: a 50,000-row workbook was sent whole on
+        // every step of every turn, and nothing said it was cut when it was.
+        const body = full.text.text;
+        const cut = body.length > OFFICE_MAX_CHARS;
         parts.push({
           type: 'text',
           text:
-            `--- ${full.name} (text read out of a ${noun}; formatting, images and charts are not included) ---\n` +
-            `${full.text.text}\n--- end of ${full.name} ---`,
+            `--- ${full.name} (text read out of ${/^[AEIOU]/.test(noun) ? 'an' : 'a'} ${noun}; formatting, images and charts are not included` +
+            `${cut ? `; only the first ${OFFICE_MAX_CHARS.toLocaleString('en')} of ${body.length.toLocaleString('en')} characters — say so if the answer may be in the rest` : ''}) ---\n` +
+            `${cut ? body.slice(0, OFFICE_MAX_CHARS) : body}\n--- end of ${full.name} ---`,
         });
       } else {
         parts.push({

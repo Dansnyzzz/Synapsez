@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
-import { classify, saveUpload } from './attachments.js';
+import { classify, saveUpload, cleanThumb } from './attachments.js';
 import { extractPdfText } from './pdf.js';
 import { isLegacyOffice, officeFormat, readOffice } from './office/index.js';
 import { STOPWORDS } from './rag.js';
@@ -188,25 +188,6 @@ export async function addSource(userId, projectId, { name, mime, data, thumb }) 
     attachmentId: stored?.id ?? null,
     thumb: cleanThumb(thumb),
   });
-}
-
-/**
- * The little picture the shelf draws, if the browser sent a usable one.
- *
- * Rendered by the browser that uploaded the file — a PDF's first page, or the
- * image scaled down — because doing it here would mean a canvas, which means a
- * native module, which is the one thing a free serverless deployment cannot
- * have. That it comes from the client is exactly why it is bounded and checked
- * here: a data URL of a known image type, and small enough that it belongs in
- * the row rather than in a file of its own.
- */
-const MAX_THUMB_CHARS = 200_000;
-
-function cleanThumb(thumb) {
-  const value = String(thumb || '');
-  if (!value) return null;
-  if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) return null;
-  return value.length > MAX_THUMB_CHARS ? null : value;
 }
 
 /* ── finding the part that answers the question ────────────────── */

@@ -166,8 +166,17 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
        * this replaces is a request the host refused at the edge, with a
        * plain-text error that never mentioned the file. See shrink.js.
        */
-      const ready = await prepareUpload(file);
-      const { attachment } = await api.uploadAttachment(ready);
+      // The small picture is drawn alongside the upload and kept with the file,
+      // so the sent message shows the same tile without fetching the whole file.
+      const [ready, drawn] = await Promise.all([
+        prepareUpload(file),
+        entry.isImage || entry.isPdf ? thumbnailFor(file).catch(() => ({ thumb: null })) : { thumb: null },
+      ]);
+      if (drawn.thumb && entry.isPdf && staged.includes(entry)) {
+        entry.thumb = drawn.thumb;
+        renderStaged();
+      }
+      const { attachment } = await api.uploadAttachment({ ...ready, thumb: drawn.thumb || undefined });
       entry.id = attachment.id;
       entry.name = ready.name;
       // Said out loud rather than done quietly: what was sent is not quite
@@ -202,25 +211,17 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       const entry = {
         name: file.name,
         size: file.size,
+        mime: file.type || '',
         id: null,
         isImage: isImage(file.type),
+        isPdf: /pdf/i.test(file.type) || /\.pdf$/i.test(file.name),
         preview: isImage(file.type) ? URL.createObjectURL(file) : null,
+        // A PDF's first page, once `upload` has drawn it. Its own field:
+        // `preview` means "a picture of the file itself".
+        thumb: null,
       };
       staged.push(entry);
       renderVisionWarning();
-      // A PDF shows its first page, drawn here from the file already in hand.
-      // Not awaited: the upload does not wait for a picture of it.
-      if (/pdf/i.test(file.type) || /\.pdf$/i.test(file.name)) {
-        thumbnailFor(file)
-          .then(({ thumb }) => {
-            if (thumb && staged.includes(entry)) {
-              // Its own field: `preview` means "a picture" to the bubble drawn on send.
-              entry.thumb = thumb;
-              renderStaged();
-            }
-          })
-          .catch(() => {});
-      }
       await upload(entry, file);
     }
   }

@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-09-28 (last) — sent files look as they did waiting; edits keep them; files cost less
+
+### Fixed
+
+- **Files in a sent message are the tiles they were waiting as** — a picture, a PDF's first page, or
+  the file's name and type — above the words, not squeezed inside the bubble, and after a reload too.
+  Each opens the file.
+- **Editing a message keeps its files** on screen; they were always kept on the message, and are sent
+  again with the edited words.
+
+### Performance and tokens
+
+- A file's small picture is stored with it (schema 24, `attachments.thumb`) and served from
+  `/api/attachments/:id/thumb`, so a tile no longer downloads the whole photo, and a PDF's first page is
+  not rendered again on every reload.
+- Attachments are read from the database once per turn instead of once per step.
+- A file attached twice is sent to the model once.
+- An Office document's text is bounded like a PDF's (120,000 characters), and the model is told when it
+  was cut.
+- PDFs, Office documents and text files count toward how full the window is, so the conversation is
+  folded before a large document overflows it rather than after the provider refuses.
+
 ## 2026-09-28 (late) — schedules that say what people mean; one state; one close
 
 ### Added

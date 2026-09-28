@@ -185,6 +185,34 @@ section('an attachment belongs to one account');
   check("nor attach it to their own message", stolen.status === 400, `got ${stolen.status}`);
 }
 
+// ── the small picture a message draws ───────────────────────────────
+section('a sent file keeps a small picture, for its tile');
+{
+  const withThumb = await alice.call('POST', '/api/attachments', {
+    name: 'photo.png',
+    mime: 'image/png',
+    data: PNG,
+    thumb: `data:image/png;base64,${PNG}`,
+  });
+  const id = withThumb.json?.attachment?.id;
+  const thumb = await alice.call('GET', `/api/attachments/${id}/thumb`);
+  check('the picture the browser drew is served back', thumb.status === 200 && /image\/png/.test(thumb.headers.get('content-type') || ''), `${thumb.status} ${thumb.headers.get('content-type')}`);
+  check('  as the image bytes, not the data URL', thumb.text.startsWith('�PNG') || thumb.text.includes('PNG'), thumb.text.slice(0, 8));
+  check('  cached hard, since it never changes', /immutable/.test(thumb.headers.get('cache-control') || ''));
+  check("  and never to another account", (await bob.call('GET', `/api/attachments/${id}/thumb`)).status === 404);
+
+  // It comes from the client, so anything that is not a small picture is dropped.
+  const script = await alice.call('POST', '/api/attachments', {
+    name: 'a.png',
+    mime: 'image/png',
+    data: PNG,
+    thumb: 'data:text/html;base64,PHNjcmlwdD4=',
+  });
+  check('a thumbnail that is not a picture is not kept', (await alice.call('GET', `/api/attachments/${script.json.attachment.id}/thumb`)).status === 404);
+  check('a file sent without one answers 404, and the tile falls back', (await alice.call('GET', `/api/attachments/${imageId}/thumb`)).status === 404);
+  check('  and the upload response carries no picture either', !('thumb' in (withThumb.json?.attachment || {})), Object.keys(withThumb.json?.attachment || {}).join(','));
+}
+
 // ── sending ─────────────────────────────────────────────────────────
 section('sending a message with files');
 let chatId;
@@ -255,6 +283,43 @@ section('what each provider is handed');
     parts.some((p) => p.type === 'text' && /GCXU6471654/.test(p.text)),
     JSON.stringify(parts.map((p) => p.type)),
   );
+
+  // Read once per turn: a cache handed in is filled once and then answers
+  // every later step without the database.
+  const turn = new Map();
+  await loadForTranscript(aliceId, messages, { cache: turn });
+  const fetched = turn.size;
+  const realGet = store.getAttachments;
+  let asked = 0;
+  store.getAttachments = async (...args) => {
+    asked += 1;
+    return realGet.apply(store, args);
+  };
+  const again = await loadForTranscript(aliceId, messages, { cache: turn });
+  store.getAttachments = realGet;
+  check('a second step reads nothing from the database', asked === 0 && again.size === fetched && fetched > 0, `${asked} reads, ${again.size}/${fetched}`);
+
+  // The same file twice is one file: in full once, named the second time.
+  const twice = [first, { ...first, id: 'again' }];
+  const seen = new Set();
+  const once = toParts(twice[0], loaded, { seen });
+  const second = toParts(twice[1], loaded, { seen });
+  check('a file sent twice goes in full once', once.some((p) => p.type === 'image') && !second.some((p) => p.type === 'image'), JSON.stringify(second.map((p) => p.type)));
+  check('  and is named the second time', second.every((p) => p.type === 'text' && /same file/.test(p.text)), JSON.stringify(second));
+
+  // An Office document is bounded like a PDF's text, and says so when cut.
+  const huge = 'x'.repeat(300_000);
+  const office = toParts(
+    { attachments: [{ id: 'o1', name: 'big.xlsx', kind: 'office' }] },
+    new Map([['o1', { id: 'o1', name: 'big.xlsx', kind: 'office', text: { text: huge, format: 'xlsx' } }]]),
+  )[0];
+  check('a huge workbook is cut to the same bound as a PDF', office.text.length < 125_000, String(office.text.length));
+  check('  and the model is told it was cut', /only the first 120,000 of 300,000 characters/.test(office.text), office.text.slice(0, 200));
+
+  // The guard that folds a conversation now sees documents, not only pictures.
+  const { measure } = await import('../server/compact.js');
+  const withPdf = measure([{ role: 'user', text: 'read this', attachments: [{ kind: 'document', bytes: 400_000 }] }], { context: 200_000 });
+  check('a PDF counts toward how full the window is', withPdf.used >= 20_000, JSON.stringify(withPdf).slice(0, 120));
 
   const withParts = [{ ...first, parts }];
 

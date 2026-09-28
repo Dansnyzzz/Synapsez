@@ -58,9 +58,21 @@ function estimateTokens(message) {
     chars += String(result.content ?? '').length;
   }
   // An image is not characters at all. A rough per-image constant beats
-  // pretending a 2MB screenshot costs nothing.
-  const images = (message.attachments || []).filter((a) => a.kind === 'image').length;
-  return Math.ceil(chars / 4) + images * 1200;
+  // pretending a 2MB screenshot costs nothing — and the same for documents,
+  // which used to count as nothing, so a 40-page PDF sent with the first
+  // question was invisible to the guard that folds a conversation before it
+  // overflows. Bounded by what attachments.js actually sends of each.
+  let files = 0;
+  for (const a of message.attachments || []) {
+    const bytes = Number(a.bytes) || 0;
+    if (a.kind === 'image') files += 1200;
+    else if (a.kind === 'text' || a.kind === 'office') files += Math.ceil(Math.min(bytes, 120_000) / 4);
+    // A PDF is sent as pages or as their text; either way about a token for
+    // every twenty-odd bytes of an ordinary text PDF, and never more than its
+    // 120,000 characters of text would be.
+    else if (a.kind === 'document') files += Math.ceil(Math.min(bytes / 20, 30_000));
+  }
+  return Math.ceil(chars / 4) + files;
 }
 
 /**

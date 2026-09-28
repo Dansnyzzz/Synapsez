@@ -3257,12 +3257,21 @@ section('the file viewer');
   await page.click(`.chat-row[data-chat="${made.chat}"]`);
   await page.waitForTimeout(700);
 
-  const chips = await page.$$('.bubble__file');
-  check('each file is a chip in the bubble', chips.length === 2, `${chips.length} found`);
-  check(
-    'and the chips are buttons, because they open',
-    await page.$eval('.bubble__file', (el) => el.tagName === 'BUTTON'),
-  );
+  const chips = await page.$$('.msg__files .stage');
+  check('each file is a tile, as it was waiting to be sent', chips.length === 2, `${chips.length} found`);
+  const placed = await page.evaluate(() => {
+    const tile = document.querySelector('.msg__files .stage');
+    return {
+      button: tile?.tagName === 'BUTTON',
+      outsideBubble: !tile?.closest('.bubble'),
+      named: tile?.querySelector('.stage__name')?.textContent,
+      type: tile?.querySelector('.stage__type')?.textContent,
+      size: /\d+\s?(B|KB|MB)\b/.test(document.querySelector('.msg__files')?.textContent || ''),
+    };
+  });
+  check('  above the bubble, not inside it', placed.outsideBubble, JSON.stringify(placed));
+  check('  named, with its type and no size', placed.named === 'bien-ban.docx' && placed.type === 'DOCX' && !placed.size, JSON.stringify(placed));
+  check('and the tiles are buttons, because they open', placed.button);
 
   await chips[0].click();
   await page.waitForTimeout(900);
@@ -3338,7 +3347,7 @@ section('the file viewer');
     await page.evaluate(() => !document.getElementById('app').classList.contains('is-filepane')),
   );
 
-  (await page.$$('.bubble__file'))[1].click();
+  (await page.$$('.msg__files .stage'))[1].click();
   await page.waitForTimeout(900);
   const sheet = await page.evaluate(() => {
     const cells = [...document.querySelectorAll('#viewer-body .grid td')].map((td) => td.textContent);
@@ -3369,7 +3378,7 @@ section('the file viewer');
   const opener = await page.evaluate(async () => {
     // The id from the chip that was just clicked. /api/files lists what the
     // assistant made, and these two were uploaded.
-    const id = [...document.querySelectorAll('.bubble__file')][1].dataset.file;
+    const id = [...document.querySelectorAll('.msg__files .stage')][1].dataset.file;
     return (await fetch(`/api/attachments/${id}/opener`)).json();
   });
   check(
@@ -3476,6 +3485,28 @@ section('the file viewer');
 
   await page.click('#viewer-close');
   await page.waitForTimeout(200);
+
+  // Editing the words leaves the files where they were: they were never part of
+  // the sentence, and the server keeps them on the message.
+  const sent = '.msg--user:has(.msg__files)';
+  await page.hover(sent);
+  await page.click(`${sent} [data-act="edit"]`);
+  await page.waitForTimeout(300);
+  const whileEditing = await page.evaluate((sel) => document.querySelectorAll(`${sel} .msg__files .stage`).length, sent);
+  check('while the words are edited, the files stay on screen', whileEditing === 2, `${whileEditing} tiles`);
+  await page.fill(`${sent} .bubble__edit`, 'xem giúp hai file này, kỹ hơn');
+  await page.click(`${sent} [data-edit="save"]`);
+  await page.waitForTimeout(1500);
+  const afterEdit = await page.evaluate(async (chatId) => {
+    const full = await (await fetch(`/api/chats/${chatId}`)).json();
+    const user = full.messages.find((m) => m.role === 'user');
+    return {
+      tiles: document.querySelectorAll('.msg--user .msg__files .stage').length,
+      stored: (user?.attachments || []).length,
+      text: user?.text,
+    };
+  }, made.chat);
+  check('  and after saving, on screen and on the message', afterEdit.tiles === 2 && afterEdit.stored === 2 && /kỹ hơn/.test(afterEdit.text || ''), JSON.stringify(afterEdit));
 }
 
 /**

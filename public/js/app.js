@@ -16,6 +16,7 @@ import {
   stopNote,
   markdownOf,
   withLinks,
+  sentFiles,
 } from './render.js';
 import { createModelBrowser } from './models.js';
 import { createScreen } from './screen.js';
@@ -2119,18 +2120,30 @@ function renderFilesChip() {
  * with `innerHTML = ''` without touching them. A pasted screenshot is several
  * megabytes pinned for the lifetime of the tab, per message.
  *
- * The images are repointed rather than left blank, so the bubble keeps showing
- * the picture — it is now reading the same bytes back from the server.
+ * The tiles are redrawn from the stored files rather than left blank: they now
+ * open the file when pressed, and a picture reads its small stored copy back.
  */
 function settleAttachments(node, previews, ids) {
-  const images = node.querySelectorAll('img.bubble__image');
-  previews.forEach((file, i) => {
-    if (!file?.preview) return;
-    const img = images[i];
-    if (img && ids[i]) img.src = `/api/attachments/${ids[i]}`;
+  const strip = node.querySelector('.msg__files');
+  if (strip && ids.length) {
+    strip.replaceWith(
+      sentFiles(
+        previews.map((f, i) => ({
+          id: ids[i],
+          name: f.name,
+          mime: f.mime,
+          isImage: f.isImage,
+          // A PDF's first page is already in hand; a picture reads its stored copy.
+          thumb: f.isImage ? null : f.thumb,
+        })),
+      ),
+    );
+  }
+  for (const file of previews) {
+    if (!file?.preview) continue;
     URL.revokeObjectURL(file.preview);
     file.preview = null;
-  });
+  }
 }
 
 function noteFile(file) {
@@ -2685,7 +2698,7 @@ $('composer').addEventListener('submit', async (event) => {
 
   // Held for the optimistic bubble, which needs the local previews: the server
   // copy is not fetchable until it has been sent.
-  const sending = ready.map((f) => ({ name: f.name, preview: f.preview, size: f.size }));
+  const sending = ready.map((f) => ({ name: f.name, preview: f.preview, size: f.size, mime: f.mime, isImage: f.isImage, thumb: f.thumb }));
   const ids = ready.map((f) => f.id);
 
   input.value = '';
