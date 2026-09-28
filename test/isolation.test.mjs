@@ -1228,6 +1228,25 @@ section('housekeeping');
     'somebody may still be composing',
   );
 
+  // A project source's original: an upload with no conversation, like the
+  // orphan above, but a shelf points at it. The sweep took these a day after
+  // they were added.
+  await store.createProject('u-bob', { id: 'p-sweep', name: 'Sweep' });
+  await driver.query(
+    `INSERT INTO attachments (id, user_id, name, mime, kind, bytes, data, created_at)
+     VALUES ('shelved', 'u-bob', 'diagram.png', 'image/png', 'image', 3, 'AAA', NOW() - INTERVAL '3 days')`,
+  );
+  await store.addProjectFile('u-bob', 'p-sweep', {
+    id: 'pf-sweep', name: 'diagram.png', mime: 'image/png', kind: 'image', bytes: 3, text: '', attachmentId: 'shelved',
+  });
+  await store.pruneOrphanAttachments();
+  check('a project source is not swept as an unsent upload', (await rows('attachments', "WHERE id = 'shelved'")) === 1);
+
+  // And deleting the project takes the originals with it, not just the shelf rows.
+  await store.deleteProject('u-bob', 'p-sweep');
+  check('deleting a project deletes its sources\' files', (await rows('attachments', "WHERE id = 'shelved'")) === 0);
+  check('and the shelf rows', (await rows('project_files', "WHERE id = 'pf-sweep'")) === 0);
+
   // Codes nobody claimed.
   await driver.query(
     `INSERT INTO pairings (id, code_hash, device_name, expires_at)

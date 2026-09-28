@@ -1621,10 +1621,15 @@ export function createPgStore(connectionString) {
      * rows are already written, and nothing else would ever look at them again.
      */
     async pruneOrphanAttachments(olderThanHours = 24) {
+      // A project source's original is an upload with no conversation too — it
+      // belongs to the shelf, not a message — and this sweep used to take it a
+      // day after it was added: the download vanished, and a picture on the
+      // shelf lost the only copy of its bytes. Anything a shelf points at stays.
       await q(
-        `DELETE FROM attachments
-          WHERE chat_id IS NULL AND origin = 'upload'
-            AND created_at < NOW() - ($1 || ' hours')::interval`,
+        `DELETE FROM attachments a
+          WHERE a.chat_id IS NULL AND a.origin = 'upload'
+            AND a.created_at < NOW() - ($1 || ' hours')::interval
+            AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id)`,
         [String(olderThanHours)],
       );
     },
@@ -1925,6 +1930,19 @@ export function createPgStore(connectionString) {
       return rows[0] ?? null;
     },
     async deleteProject(userId, id) {
+      // The sources' originals go with it. `project_files` cascades from the
+      // project, but the bytes live in `attachments`, which only points the
+      // other way (`attachment_id ... ON DELETE SET NULL`) — so without this
+      // every file ever put on a deleted project's shelf stayed in the database
+      // with nothing left that could reach it. Conversations are kept, as before:
+      // they fall out of the project, not out of existence.
+      await q(
+        `DELETE FROM attachments
+          WHERE user_id = $1
+            AND id IN (SELECT attachment_id FROM project_files
+                        WHERE user_id = $1 AND project_id = $2 AND attachment_id IS NOT NULL)`,
+        [userId, id],
+      );
       await q('DELETE FROM projects WHERE user_id = $1 AND id = $2', [userId, id]);
     },
 
