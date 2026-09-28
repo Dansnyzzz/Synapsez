@@ -111,6 +111,8 @@ export const en = {
   'chat.openNamed': 'Open {name}',
   'chat.copy': 'Copy',
   'cite.sources': 'Sources',
+  'cite.unseenFile': 'No file by this name is in the conversation or the project — the assistant may have misremembered it. Check it yourself.',
+  'cite.unseenPage': 'The assistant did not search for or open this page in the conversation — check it before relying on it.',
   'chat.edit': 'Edit',
   'chat.continue': 'Continue',
   'rail.outputs': 'Outputs',

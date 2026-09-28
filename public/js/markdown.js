@@ -264,7 +264,14 @@ function fileMark(ext) {
   );
 }
 
-const extOf = (name) => (name.match(/\.([a-z0-9]+)$/i)?.[1] || '').toUpperCase().replace(/^JPEG$/, 'JPG');
+/**
+ * The kind a file is, as a person knows it. `slides.pdf.txt` is a PDF sent as
+ * its text (see shrink.js), so it is shown as the PDF it was.
+ */
+const extOf = (name) => {
+  const inner = name.match(/\.(pdf|docx?|xlsx?|pptx?)\.txt$/i)?.[1];
+  return (inner || name.match(/\.([a-z0-9]+)$/i)?.[1] || '').toUpperCase().replace(/^JPEG$/, 'JPG');
+};
 
 const NOTE_MARK =
   '<svg class="cite__icon cite__icon--glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13H5z"/><path d="M8 10h8M8 14h8M8 18h5"/></svg>';
@@ -351,7 +358,7 @@ function citeChip(items) {
           `<span class="cite-item__snip"></span>` +
           `<span class="cite-item__url">${it.url}</span></a>`
         : it.kind === 'file'
-          ? `<span class="cite-item cite-item--file">` +
+          ? `<span class="cite-item cite-item--file" data-file="${it.name}">` +
             `<span class="cite-item__site">${fileMark(it.ext)}<span>${it.ext}</span></span>` +
             `<span class="cite-item__title">${it.name}</span>` +
             (it.where ? `<span class="cite-item__where">${it.where}</span>` : '') +

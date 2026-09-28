@@ -6,6 +6,7 @@ import { wireCopyButtons, escapeHtml } from './markdown.js';
 import { cleanHtml, forWord, writeRich } from './clipboard.js';
 import { createQuestionCard } from './question.js';
 import { createRail } from './rail.js';
+import { setCitationEvidence } from './cite.js';
 import {
   assistantMessage,
   userMessage,
@@ -142,6 +143,39 @@ document.getElementById('toolpane')?.addEventListener('keydown', (event) => {
 const renderRail = () => {
   rail.render(state).catch(() => {});
 };
+
+/**
+ * What the conversation on screen had in front of it, for the citation check
+ * (cite.js): every file sent, made or on the project's shelf, and the text of
+ * everything asked and every tool call and result.
+ *
+ * Remembered until one of its inputs changes. A long conversation opened from
+ * the list audits every reply as it is drawn, and joining the whole transcript
+ * again for each one would be quadratic in its length.
+ */
+let evidenceMemo = { key: null, value: null };
+setCitationEvidence(() => {
+  const shelf = rail.knownSources(state.project?.id || state.pendingProject?.id || null);
+  // A live call's result is written into its entry in place, so the lengths are
+  // part of the key too.
+  const liveSize = (state.liveTools || []).reduce((n, c) => n + String(c.content || '').length, 0);
+  const key = [state.transcript, state.files, state.liveTools, state.liveTools?.length, liveSize, state.sentFiles, state.sentTexts, shelf];
+  if (evidenceMemo.key && key.every((part, i) => part === evidenceMemo.key[i])) return evidenceMemo.value;
+
+  const names = [...(state.sentFiles || []), ...(state.files || []).map((f) => f.name)];
+  const parts = [...(state.sentTexts || [])];
+  for (const m of state.transcript || []) {
+    for (const a of m.attachments || []) names.push(a.name);
+    if (m.role === 'user') parts.push(m.text || '');
+    if (m.role === 'tool') for (const r of m.results || []) parts.push(String(r.content || ''));
+    for (const c of m.toolCalls || []) parts.push(JSON.stringify(c.input || {}));
+  }
+  for (const c of state.liveTools || []) parts.push(JSON.stringify(c.input || {}), String(c.content || ''));
+  // The shelf not being loaded yet means "unknown", not "empty".
+  const value = { files: shelf === null ? null : [...names, ...shelf.map((f) => f.name)], text: parts.join('\n') };
+  evidenceMemo = { key, value };
+  return value;
+});
 
 // Named to avoid shadowing the global window.screen.
 const screenPanel = createScreen();
@@ -1913,6 +1947,8 @@ async function openChat(id) {
   state.files = files || [];
   state.transcript = messages || [];
   state.liveTools = [];
+  state.sentFiles = [];
+  state.sentTexts = [];
   closeToolPane();
   renderFilesChip();
   renderRail();
@@ -2122,6 +2158,8 @@ function startBlankChat(project = null) {
   state.files = [];
   state.transcript = [];
   state.liveTools = [];
+  state.sentFiles = [];
+  state.sentTexts = [];
   closeToolPane();
   renderContext(null);
   renderFilesChip();
@@ -2786,6 +2824,10 @@ $('composer').addEventListener('submit', async (event) => {
   // copy is not fetchable until it has been sent.
   const sending = ready.map((f) => ({ name: f.name, preview: f.preview, size: f.size, mime: f.mime, isImage: f.isImage, thumb: f.thumb }));
   const ids = ready.map((f) => f.id);
+  // What this session sent, which the transcript only holds after a reload —
+  // the citation check must count a file attached a minute ago as given.
+  state.sentFiles = [...(state.sentFiles || []), ...sending.map((f) => f.name)];
+  state.sentTexts = [...(state.sentTexts || []), text];
 
   input.value = '';
   autosize(input);

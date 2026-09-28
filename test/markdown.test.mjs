@@ -339,6 +339,32 @@ section('a citation cannot smuggle markup');
   check('no attribute break-out', !/"onmouseover="/.test(html));
 }
 
+section('a PDF sent as its text still shows as a PDF');
+{
+  const html = renderMarkdown('x [SLIDE-DTTC_Gốc.pdf.txt, tr.12]');
+  check('named by the document it was', html.includes('cite__name--file">PDF<'), html.match(/cite__name[^>]*>[^<]*/)?.[0]);
+  check('with the PDF icon', html.includes('cite__file--pdf'));
+  check('and a plain .txt is still text', renderMarkdown('x [notes.txt]').includes('cite__name--file">TXT<'));
+}
+
+section('whether a cited source was actually in front of the assistant');
+{
+  const { fileWasSeen, pageWasSeen, rememberSearch } = await import('../public/js/cite.js');
+  const seen = { files: ['SLIDE-DTTC_Gốc.pdf.txt', 'TESTBANK-DTTC.pdf'], text: 'search_docs → found in Q3 report.docx' };
+  check('a file that was given', fileWasSeen('TESTBANK-DTTC.pdf', seen));
+  check('regardless of case', fileWasSeen('testbank-dttc.PDF', seen));
+  check('a PDF sent as text, cited as the .txt or as the PDF', fileWasSeen('SLIDE-DTTC_Gốc.txt', seen) && fileWasSeen('SLIDE-DTTC_Gốc.pdf', seen));
+  check('Vietnamese written in either Unicode form', fileWasSeen('SLIDE-DTTC_Gốc.pdf', seen));
+  check('a file a tool found', fileWasSeen('Q3 report.docx', seen));
+  check('a file nobody gave is not', !fileWasSeen('Chap005.pdf', seen));
+  check('and nothing is marked while the shelf is unknown', fileWasSeen('Chap005.pdf', { files: null, text: '' }));
+
+  rememberSearch('1. Rate limits\n   https://openrouter.ai/docs/limits\n   20 requests per minute.');
+  check('a page from a search', pageWasSeen('https://openrouter.ai/docs/limits/', { text: '' }));
+  check('a page the person pasted', pageWasSeen('https://vnexpress.net/a-123.html', { text: 'đọc giúp tôi https://vnexpress.net/a-123.html' }));
+  check('a page never searched, read or given is not', !pageWasSeen('https://made-up.example/paper', { text: 'nothing here' }));
+}
+
 section('the card learns titles and summaries from a search the tab saw');
 {
   const { rememberSearch, knownSource } = await import('../public/js/cite.js');

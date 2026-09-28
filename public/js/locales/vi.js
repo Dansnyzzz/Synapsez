@@ -318,6 +318,8 @@ export const vi = {
   'chat.openNamed': 'Mở {name}',
   'chat.copy': 'Sao chép',
   'cite.sources': 'Nguồn',
+  'cite.unseenFile': 'Không thấy tệp này trong cuộc trò chuyện hay dự án — trợ lý có thể đã nhớ nhầm tên. Hãy tự kiểm tra.',
+  'cite.unseenPage': 'Trợ lý không tìm hay mở trang này trong cuộc trò chuyện — hãy tự kiểm tra trước khi tin.',
   'chat.edit': 'Sửa',
   'chat.continue': 'Tiếp tục',
   'rail.outputs': 'Sản phẩm',

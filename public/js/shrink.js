@@ -273,7 +273,10 @@ async function pdfToText(file) {
   if (!data) return null;
 
   return {
-    name: file.name.replace(/\.pdf$/i, '') + '.txt',
+    // `slides.pdf.txt`, not `slides.txt`: what is stored and downloaded is text,
+    // so it must end in .txt, but the name still says which document it was —
+    // to the person, to the assistant citing it, and to the chip showing "PDF".
+    name: `${file.name}.txt`,
     mime: 'text/plain',
     data,
     note: { kind: 'pdf-text', from: file.size, to: bytesOf(data), pages: read.pages },

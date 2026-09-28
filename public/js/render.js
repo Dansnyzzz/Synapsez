@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { mediaTools, svgToPng, fileNameFrom, imageUrlToPng } from './media.js';
 import { webRowHtml, titleFromContent } from './webrows.js';
 import { parseResults } from './rail.js';
-import { rememberSearch, rememberPage } from './cite.js';
+import { rememberSearch, rememberPage, auditCitations } from './cite.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -1997,6 +1997,9 @@ export function assistantMessage() {
       // must show all of what it said, not all but the final sentence.
       if (paintQueued) api.flushText();
       closeGroup();
+      // Sources the conversation cannot account for are marked once the reply
+      // is whole; opening a chip checks again with whatever has loaded since.
+      if (prose) auditCitations(prose);
     },
   };
 

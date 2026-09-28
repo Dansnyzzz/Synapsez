@@ -4874,6 +4874,32 @@ section('a citation chip opens its list of sources');
 
   await page.keyboard.press('Escape');
   await page.evaluate(() => document.querySelector('.prose .cite')?.closest('.prose')?.remove());
+
+  // A source the conversation cannot account for is marked, on the chip and in the card.
+  const audit = await page.evaluate(async () => {
+    const { renderMarkdown } = await import('/js/markdown.js');
+    const { setCitationEvidence, auditCitations } = await import('/js/cite.js');
+    setCitationEvidence(() => ({ files: ['TESTBANK-DTTC.pdf'], text: '' }));
+    const host = document.createElement('div');
+    host.innerHTML = renderMarkdown('Có [TESTBANK-DTTC.pdf]. Và [Chap099-bia.pdf, tr.4].');
+    document.body.append(host);
+    auditCitations(host);
+    const [real, invented] = host.querySelectorAll('.cite');
+    const out = {
+      realMarked: real.classList.contains('cite--unseen'),
+      inventedMarked: invented.classList.contains('cite--unseen'),
+      warning: invented.querySelector('.cite-item__warn')?.textContent || '',
+      dot: getComputedStyle(invented, '::after').backgroundColor,
+    };
+    host.remove();
+    // Hand the check back to nothing: later sections draw replies of their own.
+    setCitationEvidence(null);
+    return out;
+  });
+  check('a file that was given is not marked', !audit.realMarked);
+  check('one nobody gave is', audit.inventedMarked);
+  check('and its card says so in words', audit.warning.length > 20, audit.warning);
+  check('with a dot on the chip', audit.dot && audit.dot !== 'rgba(0, 0, 0, 0)', audit.dot);
 }
 
 section('an oversized upload is made to fit, or refused in words');

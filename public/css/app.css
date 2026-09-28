@@ -8878,4 +8878,25 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .cite-item--file { cursor: default; }
 .cite-item__where { color: var(--text-dim); font-size: 13px; }
 .cite-item--note { cursor: default; }
+
+/* A source the conversation cannot account for: said in the card, and hinted
+   on the chip with an amber dot so it is noticed before anyone opens it. */
+.cite--unseen::after {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: -1px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.cite-item__warn {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  color: var(--warn);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.cite-item__warn::before { content: '⚠'; flex: none; }
 .cite-item--note .cite-item__snip { color: var(--text); -webkit-line-clamp: 6; }

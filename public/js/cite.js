@@ -17,6 +17,7 @@
  * (`rememberSearch`, fed by the web card in render.js). A source the tab never
  * saw searched simply shows the name the assistant gave it and its address.
  */
+import { t } from './i18n.js';
 
 /** @type {Map<string, { title: string|null, snippet: string|null }>} */
 const known = new Map();
@@ -63,6 +64,77 @@ export function rememberPage(url, title) {
 
 /** For the tests. */
 export const knownSource = (url) => known.get(keyOf(url)) || null;
+
+/**
+ * Was this source actually in front of the assistant?
+ *
+ * A model can name a file nobody gave it or an address it never opened — the
+ * citation looks exactly as trustworthy as a real one. So each source is
+ * checked against the conversation: the files sent, made and on the project's
+ * shelf, and everything the tools read or returned. One that is not there is
+ * marked, not removed — "not seen here" is a fact about this conversation, not
+ * proof the source is wrong, and the card says it that way.
+ *
+ * `evidence` is supplied by the app (app.js), because only it knows the
+ * conversation on screen: `{ files: string[] | null, text: string }`. `files`
+ * is null while something it depends on (a project's shelf) is not loaded yet,
+ * and then no file is marked: a false alarm is worse than a missing one.
+ */
+/** @type {null | (() => { files: string[] | null, text: string })} */
+let evidence = null;
+export function setCitationEvidence(fn) {
+  evidence = fn;
+}
+
+const fold = (s) => String(s || '').normalize('NFC').toLowerCase().trim();
+/** `slides.pdf.txt`, `slides.pdf` and `slides.txt` are one document. */
+const stemOf = (name) => fold(name).replace(/(\.[a-z0-9]{1,5}){1,2}$/, '');
+
+/** Whether a cited file is one the conversation had, given what it had. */
+export function fileWasSeen(name, { files, text }) {
+  if (!files) return true;
+  const want = fold(name);
+  const stem = stemOf(name);
+  if (files.some((f) => fold(f) === want || stemOf(f) === stem)) return true;
+  // A file a tool read or listed: named in its result, the index, the machine.
+  return fold(text).includes(want) || (stem.length >= 4 && fold(text).includes(stem));
+}
+
+/** Whether a cited address was searched, read, or given in the conversation. */
+export function pageWasSeen(url, { text }) {
+  const key = keyOf(url);
+  if (known.has(key)) return true;
+  const bare = key.replace(/^https?:\/\//, '');
+  return String(text || '').includes(bare);
+}
+
+/** Mark what the conversation cannot account for, in one chip's card or a whole reply. */
+export function auditCitations(root) {
+  if (!evidence || !root) return;
+  let seen;
+  try {
+    seen = evidence();
+  } catch {
+    return;
+  }
+  for (const item of root.querySelectorAll('.cite-item[data-file], a.cite-item[data-url]')) {
+    const ok = item.hasAttribute('data-file')
+      ? fileWasSeen(item.getAttribute('data-file'), seen)
+      : pageWasSeen(item.getAttribute('data-url'), seen);
+    item.classList.toggle('is-unseen', !ok);
+    let warn = item.querySelector(':scope > .cite-item__warn');
+    if (!ok && !warn) {
+      warn = document.createElement('span');
+      warn.className = 'cite-item__warn';
+      warn.textContent = t(item.hasAttribute('data-file') ? 'cite.unseenFile' : 'cite.unseenPage');
+      item.append(warn);
+    } else if (ok && warn) warn.remove();
+  }
+  // A chip whose card holds an unseen source says so before it is opened.
+  for (const chip of root.matches?.('.cite') ? [root] : root.querySelectorAll('.cite')) {
+    chip.classList.toggle('cite--unseen', !!chip.querySelector('.cite__card .is-unseen'));
+  }
+}
 
 let pop = null;
 /** @type {HTMLElement|null} */
@@ -117,6 +189,9 @@ function show(chip, { pin = false } = {}) {
   if (current !== chip) {
     current?.setAttribute('aria-expanded', 'false');
     current = chip;
+    // Checked again now, not only when the reply finished: a project's shelf
+    // or a tool's result may have arrived since.
+    auditCitations(chip);
     card.innerHTML = chip.querySelector('.cite__card')?.innerHTML || '';
     card.setAttribute('aria-label', chip.getAttribute('aria-label') || '');
     enrich(card);

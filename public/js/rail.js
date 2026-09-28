@@ -60,7 +60,10 @@ export function createRail({ api, openFile, openSettings, openPane }) {
     const files = await api
       .project(projectId)
       .then((data) => data.files || [])
-      .catch(() => []);
+      .catch(() => null);
+    // A failed read is not remembered as "no sources": the citation check
+    // (cite.js) would then call every file this project cites unverifiable.
+    if (!files) return [];
     sources.set(projectId, files);
     return files;
   }
@@ -257,6 +260,8 @@ export function createRail({ api, openFile, openSettings, openPane }) {
       account = null;
     },
     forgetSources: (projectId) => sources.delete(projectId),
+    /** A project's sources if they have been read, or null when not (yet) known. */
+    knownSources: (projectId) => (projectId ? sources.get(projectId) ?? null : []),
   };
 }
 
