@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-28 (late) — schedules that say what people mean; one state; one close
+
+### Added
+
+- **Schedules can be anything a person means**, from the side panel or in words to the assistant:
+  once on a date; every N minutes (5 at least); every hour or every N hours at a minute; every day at
+  one or more times; weekdays; chosen days of the week (Mon + Fri…) at one or more times; every N
+  days from a first day; chosen days of the month, including the last. An interval that divides the
+  day stays on the clock (every 10 minutes is :00, :10, :20…); one that does not (7 minutes, 23 hours)
+  is counted from its first run and cannot drift. The grammar lives in one module the server and the
+  panel share (`public/js/schedule-grammar.js`); every old schedule reads exactly as before.
+
+### Changed
+
+- **One state in the side panel** — Active, Paused, or "Runs when you press it" for a manual task —
+  centred beside the buttons, instead of an "Activity" label and a badge. A manual task has no pause.
+- **Closing a task or tool panel puts the side area back as it was**, instead of revealing the plan
+  underneath and needing a second close.
+- The Scheduled list says how often in words ("Every 15 minutes") rather than the stored form
+  ("every hourly :00"), and a manual task no longer claims "once · next".
+- The Scheduled and Workflows pages keep titles and cards readable beside an open side panel instead
+  of breaking them one word per line.
+
 ## 2026-09-28 (later) — files above the composer show themselves; draw on a picture before sending
 
 ### Added

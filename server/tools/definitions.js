@@ -1726,7 +1726,9 @@ export const TOOLS = [
         when: {
           type: 'string',
           description:
-            'One of: "17:00" (daily), "fri 17:00" (weekly), "weekdays 08:00" (Mon–Fri), "monthly 1 08:00", or "hourly :00" (every hour at that minute).',
+            'In the user\'s zone. "17:00" or "07:00,12:30" (daily), "fri 17:00", "mon,wed,fri 08:00", "weekdays 08:00", "weekends 10:00", ' +
+            '"monthly 1 08:00", "monthly 1,15,last 09:00", "hourly :00", "every 10 minutes" (5 is the least), "every 6 hours", "every 23 hours", ' +
+            '"every 3 days 08:00", or a one-off "2026-10-01 09:00".',
         },
         repeat: { type: 'boolean', description: 'True to repeat on that schedule; false to run once. Defaults to true.' },
         confirmed: {
@@ -1778,7 +1780,7 @@ export const TOOLS = [
         when: {
           type: 'string',
           description:
-            'Time of day as "17:00", or a weekday and time as "mon 09:00". Leave it out for a workflow the user runs by hand.',
+            'As for schedule_task: "17:00", "mon,wed 09:00", "every 2 hours", "monthly last 09:00"… Leave it out for a workflow the user runs by hand.',
         },
         repeat: { type: 'boolean', description: 'True to repeat daily or weekly; false to run once. Defaults to true.' },
         enabled: { type: 'boolean', description: 'Set false to pause without deleting.' },

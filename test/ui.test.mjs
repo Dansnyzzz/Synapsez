@@ -76,6 +76,9 @@ if (!browser) {
 }
 
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+// An uncaught error in the page is said out loud: a check that fails because a
+// handler threw otherwise reads as the feature simply not being there.
+page.on('pageerror', (err) => console.log(`  \x1b[31m[page error]\x1b[0m ${err.message}\n${String(err.stack || '').split('\n').slice(1, 4).join('\n')}`));
 
 /**
  * Open a project by name, from the Projects shelf.
@@ -2808,6 +2811,12 @@ section('the shelves');
   );
   await page.click('#open-scheduled');
   await page.waitForTimeout(900);
+  // Start with the side area closed: that is where one close used to take two.
+  const sideWasOpen = await page.evaluate(() => {
+    const open = document.getElementById('app').classList.contains('is-detail');
+    if (open) document.getElementById('detail-close').click();
+    return open;
+  });
   await page.click('.task__edit');
   await page.waitForTimeout(900);
   const edit = await page.evaluate(() => ({
@@ -2820,6 +2829,13 @@ section('the shelves');
   check('  not the form', !edit.modal);
   check('  and the panel has no pencil of its own — every field is edited in place', !edit.pencil);
   await page.click('#taskpane-close');
+  await page.waitForTimeout(300);
+  check(
+    'one close puts the side area back — the plan does not appear behind it',
+    await page.evaluate(() => !document.getElementById('app').classList.contains('is-detail')),
+  );
+  // Left as found, for the sections after this one.
+  if (sideWasOpen) await page.click('#detail-toggle');
 
   // And back to the conversation.
   await page.click('#new-chat');
@@ -4026,6 +4042,7 @@ section('a schedule set up in a conversation is a card that opens it');
   check('and says what it will do', drawn.content.includes('Tóm tắt tin buổi sáng'), drawn.content);
   check('the pill is under the card, not inside it', drawn.pillOutside);
 
+  const detailWasOpen = await page.evaluate(() => document.getElementById('app').classList.contains('is-detail'));
   await page.click('#messages .schedcard__pill');
   await page.waitForTimeout(1200);
   const opened = await page.evaluate(() => ({
@@ -4041,24 +4058,28 @@ section('a schedule set up in a conversation is a card that opens it');
   // The panel is an editor: what it shows is what the row holds.
   const shown = await page.evaluate(() => {
     const v = (name) => /** @type {HTMLSelectElement} */ (document.querySelector(`#taskpane [data-s="${name}"]`))?.value;
-    const visible = (name) => !document.querySelector(`#taskpane [data-s="${name}"]`)?.closest('[hidden]');
+    const visible = (sel) => !document.querySelector(`#taskpane ${sel}`)?.closest('[hidden]');
     return {
       frequency: v('frequency'),
-      time: v('time'),
+      time: /** @type {HTMLInputElement} */ (document.querySelector('#taskpane [data-t]'))?.value,
       tz: v('tz'),
       ends: v('ends'),
-      weekdayShown: visible('weekday'),
-      timeShown: visible('time'),
+      daysShown: visible('[data-day]'),
+      timeShown: visible('[data-t]'),
       prompt: v('prompt'),
+      state: document.querySelector('#taskpane .spane__state')?.textContent.trim(),
+      label: !!document.querySelector('#taskpane .spane__kicker'),
     };
   });
   check('the panel shows the repeat, time and zone the task has',
     shown.frequency === 'weekdays' && shown.time === '07:30' && shown.tz === 'Asia/Ho_Chi_Minh', JSON.stringify(shown));
-  check('  only the fields that repeat uses', shown.timeShown && !shown.weekdayShown, JSON.stringify(shown));
+  check('  only the fields that repeat uses', shown.timeShown && !shown.daysShown, JSON.stringify(shown));
   check('  and the instructions, editable', shown.prompt === 'Tóm tắt tin buổi sáng', shown.prompt);
+  check('  with one state, not a label and a badge', !!shown.state && !shown.label, JSON.stringify(shown));
 
   // Changing the time saves it, and the card in the conversation follows.
-  await page.selectOption('#taskpane [data-s="time"]', '07:00');
+  await page.fill('#taskpane [data-t]', '07:00');
+  await page.dispatchEvent('#taskpane [data-t]', 'change');
   await page.waitForTimeout(1200);
   const saved = await page.evaluate(async () => ({
     cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
@@ -4069,14 +4090,38 @@ section('a schedule set up in a conversation is a card that opens it');
   check('  and says so', saved.status.length > 0, saved.status);
   check('  and the card beside it says the new time', /07:00/.test(saved.card) && !/07:30/.test(saved.card), saved.card);
 
-  // Weekly brings the weekday up; an end date is kept.
+  // Weekly brings the days up, starting from one; more days and times can be added.
   await page.selectOption('#taskpane [data-s="frequency"]', 'weekly');
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(1500);
   const weekly = await page.evaluate(async () => ({
     cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
-    weekdayShown: !document.querySelector('#taskpane [data-s="weekday"]')?.closest('[hidden]'),
+    frequency: /** @type {HTMLSelectElement} */ (document.querySelector('#taskpane [data-s="frequency"]')).value,
+    daysShown: !document.querySelector('#taskpane [data-day]')?.closest('[hidden]'),
   }));
-  check('switching to weekly shows the weekday and saves', weekly.weekdayShown && /^[a-z]{3} 07:00$/.test(weekly.cron || ''), JSON.stringify(weekly));
+  check('switching to weekly shows the days and saves one of them', weekly.daysShown && weekly.frequency === 'weekly' && /^[a-z]{3} 07:00$/.test(weekly.cron || ''), JSON.stringify(weekly));
+  await page.click('#taskpane [data-day="fri"]');
+  await page.waitForTimeout(900);
+  await page.click('#taskpane [data-add-time]');
+  await page.waitForTimeout(1200);
+  const twice = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.cron);
+  check('  a second day and a second time are both kept', twice === 'days mon,fri 07:00,08:00', String(twice));
+
+  // Every 15 minutes, with a real next run rather than "not scheduled".
+  await page.selectOption('#taskpane [data-s="frequency"]', 'minutes');
+  await page.waitForTimeout(1500);
+  await page.fill('#taskpane [data-s="everyMinutes"]', '15');
+  await page.dispatchEvent('#taskpane [data-s="everyMinutes"]', 'change');
+  await page.waitForTimeout(1200);
+  const often = await page.evaluate(async () => ({
+    task: (await (await fetch('/api/tasks/t-card')).json()).task,
+    next: document.querySelector('#taskpane [data-s="next"]')?.textContent || '',
+  }));
+  check('every 15 minutes is kept on the clock', often.task?.cron === 'every 15m', String(often.task?.cron));
+  check('  with its next run set, within a quarter of an hour', !!often.task?.next_run_at && new Date(often.task.next_run_at) - Date.now() <= 15 * 60_000 + 60_000, String(often.task?.next_run_at));
+
+  // Back to weekly for the end date below.
+  await page.selectOption('#taskpane [data-s="frequency"]', 'weekly');
+  await page.waitForTimeout(1500);
   await page.selectOption('#taskpane [data-s="ends"]', 'date');
   await page.fill('#taskpane [data-s="endsOn"]', '2999-12-31');
   await page.dispatchEvent('#taskpane [data-s="endsOn"]', 'change');
@@ -4086,6 +4131,10 @@ section('a schedule set up in a conversation is a card that opens it');
 
   await page.click('#taskpane-close');
   check('its close button gives the panel back', await page.evaluate(() => document.getElementById('taskpane').hidden));
+  // The side area was closed before the task opened, so one close ends both —
+  // not the task, then the plan it had been covering.
+  const detailNow = await page.evaluate(() => document.getElementById('app').classList.contains('is-detail'));
+  check('one close, not two: the side area is left as it was found', detailNow === detailWasOpen, `before ${detailWasOpen}, after ${detailNow}`);
 
   await store.deleteTask(user.id, task.id);
 }

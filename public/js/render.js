@@ -961,7 +961,8 @@ export function scheduleCard(schedule) {
     rows.append(li);
   };
   if (schedule.cron) {
-    row('clock', parts.frequency === 'hourly' ? t('freq.everyHourAt').replace('{m}', String(parts.minute).padStart(2, '0')) : parts.time, true);
+    // The times it runs at, or — for an interval, which has none — the interval.
+    row('clock', ['minutes', 'hours', 'hourly'].includes(parts.frequency) ? often : parts.times.join(', '), true);
   }
   row('calendar', [often, schedule.tz ? t('sched.inZone', { tz: schedule.tz }) : t('sched.serverTime')].join(' · '));
   if (schedule.nextRunAt) row('next', t('sched.next', { when: nextRunText(schedule.nextRunAt, schedule.tz) }));

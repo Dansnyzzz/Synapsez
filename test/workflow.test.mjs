@@ -644,6 +644,69 @@ section('a turn paused on a question shows it again when reopened');
   check('  and no approval bar competes with it', !opened.body?.pendingApproval);
 }
 
+section('a schedule can be anything a person means, and runs when it says');
+{
+  const { parseSchedule, scheduleFrom, nextRunOf } = await import('../server/scheduler.js');
+  const tz = 'Asia/Ho_Chi_Minh';
+  const from = new Date('2026-09-28T03:47:30Z'); // Monday 10:47:30 in Hanoi
+  const hanoi = (iso) =>
+    new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
+  const at = (when) => {
+    const r = parseSchedule(when, { from, tz });
+    return { cron: r.cron, next: hanoi(r.nextRunAt) };
+  };
+  const cases = [
+    ['every 10 minutes', 'every 10m', 'Mon 28, 10:50'],
+    ['mỗi 10 phút', 'every 10m', 'Mon 28, 10:50'],
+    ['every 6 hours at :15', 'every 6h :15', 'Mon 28, 12:15'],
+    ['every 23 hours', 'every 23h @2026-09-28T04:47:00.000Z', 'Mon 28, 11:47'],
+    ['every 3 days 08:00', 'every 3d 08:00 @2026-09-29', 'Tue 29, 08:00'],
+    ['mon,wed,fri 08:00,18:00', 'days mon,wed,fri 08:00,18:00', 'Mon 28, 18:00'],
+    ['daily 07:00,12:30,21:00', 'days all 07:00,12:30,21:00', 'Mon 28, 12:30'],
+    ['weekends 10:00', 'days sat,sun 10:00', 'Sat 03, 10:00'],
+    ['monthly last 09:00', 'monthly last 09:00', 'Wed 30, 09:00'],
+    ['monthly 31 08:00', 'monthly 31 08:00', 'Sat 31, 08:00'],
+    ['fri 17:00', 'fri 17:00', 'Fri 02, 17:00'],
+    ['hourly :00', 'hourly :00', 'Mon 28, 11:00'],
+  ];
+  for (const [when, cron, next] of cases) {
+    const got = at(when);
+    check(`"${when}" → ${cron}, first at ${next}`, got.cron === cron && got.next === next, JSON.stringify(got));
+  }
+  const oneOff = parseSchedule('2026-10-01 09:00', { from, tz });
+  check('a date and a time is one run, not a repeat', oneOff.cron === null && hanoi(oneOff.nextRunAt) === 'Thu 01, 09:00');
+  let refused = '';
+  try {
+    parseSchedule('every 2m', { from, tz });
+  } catch (err) {
+    refused = err.message;
+  }
+  check('less than five minutes is refused, with the reason', /5 to 1440/.test(refused), refused);
+
+  // After each run, the next — the chain is what an unattended task lives by.
+  const chain = (cron, n = 4) => {
+    const out = [];
+    let t = from;
+    for (let i = 0; i < n; i += 1) {
+      const next = nextRunOf({ cron, tz }, t);
+      out.push(hanoi(next));
+      t = new Date(next);
+    }
+    return out.join(' | ');
+  };
+  check('every 10 minutes stays on the clock', chain('every 10m') === 'Mon 28, 10:50 | Mon 28, 11:00 | Mon 28, 11:10 | Mon 28, 11:20', chain('every 10m'));
+  check('every 23 hours counts from its start, without drifting',
+    chain('every 23h @2026-09-28T04:00:00.000Z') === 'Mon 28, 11:00 | Tue 29, 10:00 | Wed 30, 09:00 | Thu 01, 08:00', chain('every 23h @2026-09-28T04:00:00.000Z'));
+  check('every third day keeps its rhythm', chain('every 3d 07:00 @2026-09-29') === 'Tue 29, 07:00 | Fri 02, 07:00 | Mon 05, 07:00 | Thu 08, 07:00', chain('every 3d 07:00 @2026-09-29'));
+
+  // The panel's pieces write the same words.
+  check('the panel: every 45 minutes is on the clock', scheduleFrom({ frequency: 'minutes', every: 45 }, { from, tz }).cron === 'every 45m');
+  check('the panel: Tue and Thu, twice a day', scheduleFrom({ frequency: 'weekly', days: ['thu', 'tue'], times: ['17:00', '09:00'] }, { from, tz }).cron === 'days tue,thu 09:00,17:00');
+  check('the panel: the 15th and the last day', scheduleFrom({ frequency: 'monthly', monthDays: ['last', 15], times: ['08:00'] }, { from, tz }).cron === 'monthly 15,last 08:00');
+  const once = scheduleFrom({ frequency: 'once', date: '2026-09-29', time: '09:00' }, { from, tz });
+  check('the panel: once, on a date', once.cron === null && hanoi(once.nextRunAt) === 'Tue 29, 09:00');
+}
+
 section('an hourly repeat keeps the account\'s minute in a half-hour zone');
 {
   const { parseSchedule } = await import('../server/scheduler.js');

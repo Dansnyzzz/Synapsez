@@ -5743,6 +5743,7 @@ details.block pre {
 
 .page__head {
   display: flex;
+  flex-wrap: wrap; /* the title keeps its words together beside a side panel */
   align-items: center;
   gap: 16px;
   max-width: 1120px;
@@ -5757,7 +5758,7 @@ details.block pre {
  * so without a word of explanation.
  */
 .page__title {
-  flex: 1;
+  flex: 1 1 12ch;
   min-width: 0;
   margin: 0;
   /*
@@ -6106,6 +6107,7 @@ details.block pre {
 }
 .task {
   display: flex;
+  flex-wrap: wrap; /* buttons move under the text rather than squeezing it to a word a line */
   align-items: center;
   gap: 14px;
   padding: 16px 20px;
@@ -6121,7 +6123,7 @@ details.block pre {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.task__body { flex: 1; min-width: 0; }
+.task__body { flex: 1 1 220px; min-width: 0; }
 .task__name { font-size: 14.5px; font-weight: 600; }
 .task__what {
   margin-top: 3px;
@@ -6158,8 +6160,8 @@ details.block pre {
 
 .wf { padding: 16px 20px; }
 .wf--off { opacity: 0.62; }
-.wf__head { display: flex; align-items: flex-start; gap: 14px; }
-.wf__head > div:first-child { flex: 1; min-width: 0; }
+.wf__head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px; }
+.wf__head > div:first-child { flex: 1 1 220px; min-width: 0; }
 .wf__name { font-size: 14.5px; font-weight: 600; }
 .wf__when { margin-top: 6px; color: var(--text-faint); font-size: 12px; }
 .wf__acts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
@@ -7247,7 +7249,6 @@ details.block pre {
 .spane { display: grid; gap: 14px; }
 .spane[hidden], .spane [hidden] { display: none !important; }
 .spane__top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.spane__kicker { color: var(--info); font-size: 13px; font-weight: 600; }
 .spane__status.is-ok { color: var(--ok); }
 .spane__acts { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .spane__title {
@@ -7320,6 +7321,88 @@ details.block pre {
 .spane__meta strong { color: var(--text); font-weight: 600; }
 .spane__status { min-height: 1.2em; color: var(--text-faint); }
 .spane__status.is-error { color: var(--danger); }
+
+/* One state, beside the buttons that change it, centred on them. */
+.spane__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--ok) 55%, transparent);
+  border-radius: 999px;
+  color: var(--ok);
+  font-size: 13px;
+  font-weight: 600;
+}
+.spane__state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.spane__state.is-off { border-color: var(--line); color: var(--text-faint); }
+.spane__state.is-manual { border-color: color-mix(in srgb, var(--info) 55%, transparent); color: var(--info); }
+
+/* A number with its unit, right-aligned like the menus beside it. */
+.spane__num { display: inline-flex; align-items: center; gap: 8px; color: var(--text-dim); }
+.spane__num input,
+.spane__row input[type='time'],
+.spane__times input[type='time'] {
+  width: 5.5em;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: right;
+  color-scheme: light dark;
+}
+.spane__num input:focus-visible,
+.spane__times input:focus-visible,
+.spane__row input[type='time']:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Rows whose control is a set rather than one value sit under their label. */
+.spane__row--stack { flex-direction: column; align-items: stretch; gap: 10px; padding-block: 12px; }
+.spane__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.spane__chips--month { display: grid; grid-template-columns: repeat(7, 1fr); }
+.spane__chip {
+  min-width: 36px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.spane__chip:hover { border-color: var(--accent-dim); color: var(--text); }
+.spane__chip[aria-pressed='true'] { border-color: var(--accent); background: var(--accent); color: #fff; }
+.spane__chip--wide { grid-column: span 4; }
+.spane__times { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.spane__timeitem { display: inline-flex; align-items: center; gap: 2px; }
+.spane__x {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.spane__x:hover { color: var(--danger); }
+.spane__add {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.spane__add:hover { border-color: var(--accent); color: var(--text); }
+.spane__hint { margin: 0; padding: 10px 14px; border-top: 1px solid var(--line-soft); }
 
 @media (max-width: 900px) {
   .taskpane {

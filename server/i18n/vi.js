@@ -34,6 +34,23 @@ export const vi = {
 
   'This task is already running. Wait for it to finish.': 'Tác vụ này đang chạy. Hãy đợi nó xong.',
 
+  /* ── tần suất chạy ── */
+  'Give a date and a time for a one-off run.': 'Hãy chọn ngày và giờ cho lần chạy một lần.',
+  'That time has already passed — pick one in the future.': 'Thời điểm đó đã qua — hãy chọn một thời điểm trong tương lai.',
+  'That schedule has no valid starting time.': 'Lịch này không có thời điểm bắt đầu hợp lệ.',
+  'Every {0} minutes is the shortest repeat — a shorter one cannot be kept to.':
+    'Ngắn nhất là mỗi {0} phút — khoảng ngắn hơn không thể giữ đúng giờ.',
+  'The number of minutes must be a whole number from {0} to {1}.': 'Số phút phải là số nguyên từ {0} đến {1}.',
+  'The number of hours must be a whole number from {0} to {1}.': 'Số giờ phải là số nguyên từ {0} đến {1}.',
+  'The number of days must be a whole number from {0} to {1}.': 'Số ngày phải là số nguyên từ {0} đến {1}.',
+  'The minute must be a whole number from 0 to 59.': 'Phút phải là số nguyên từ 0 đến 59.',
+  'Could not find a time matching "{0}".': 'Không tìm được thời điểm nào khớp với "{0}".',
+  'An interval that does not divide the day needs a starting time.': 'Khoảng lặp không chia hết một ngày thì cần một thời điểm bắt đầu.',
+  'Give the first day as YYYY-MM-DD.': 'Hãy nhập ngày bắt đầu dạng YYYY-MM-DD.',
+  'Pick at least one day of the week.': 'Hãy chọn ít nhất một thứ trong tuần.',
+  'Give at least one time as HH:MM — "07:00".': 'Hãy nhập ít nhất một giờ dạng HH:MM — "07:00".',
+  'Pick at least one day of the month.': 'Hãy chọn ít nhất một ngày trong tháng.',
+
   /* ── tìm bản tin RSS thật của một trang ── */
   [`{0} led to a web page, not an RSS or Atom feed. The feeds {1} lists are:
 {2}

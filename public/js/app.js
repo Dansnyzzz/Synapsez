@@ -80,6 +80,22 @@ const rail = createRail({
  * What one tool did, in the side panel over the plan — the same place a task
  * opens, and it gives the panel back when closed.
  */
+/**
+ * Whether the side area was open before a panel borrowed it — null while
+ * nothing has. A task or a tool opens the area to show itself; closing it used
+ * to leave the area open on the plan underneath, so it took two closes to get
+ * back to where you were. It is now handed back as it was found.
+ */
+let detailBefore = null;
+function borrowDetail() {
+  if (detailBefore === null) detailBefore = $('app').classList.contains('is-detail');
+  setDetail(true);
+}
+function returnDetail() {
+  if (detailBefore === false) setDetail(false);
+  detailBefore = null;
+}
+
 function openToolPane(title, html) {
   if (pages.taskPaneOpen()) pages.closeTaskPane();
   $('toolpane-title').textContent = title;
@@ -87,7 +103,7 @@ function openToolPane(title, html) {
   if ($('toolpane').hidden) toolPaneReturn = document.activeElement;
   $('toolpane').hidden = false;
   viewer.close();
-  setDetail(true);
+  borrowDetail();
   $('app').classList.add('is-taskpane');
   // A keyboard user is taken to what just opened, not left to find it.
   $('toolpane').focus();
@@ -100,7 +116,10 @@ function closeToolPane() {
   const hadFocus = pane.contains(document.activeElement);
   pane.hidden = true;
   $('toolpane-body').innerHTML = '';
-  if (!pages.taskPaneOpen()) $('app').classList.remove('is-taskpane');
+  if (!pages.taskPaneOpen()) {
+    $('app').classList.remove('is-taskpane');
+    returnDetail();
+  }
   if (hadFocus && toolPaneReturn?.isConnected) toolPaneReturn.focus();
   toolPaneReturn = null;
 }
@@ -2255,10 +2274,13 @@ const pages = createPages({
   onPaneOpen: () => {
     closeToolPane();
     viewer.close();
-    setDetail(true);
+    borrowDetail();
     $('app').classList.add('is-taskpane');
   },
-  onPaneClose: () => $('app').classList.remove('is-taskpane'),
+  onPaneClose: () => {
+    $('app').classList.remove('is-taskpane');
+    returnDetail();
+  },
   // The same moves as `gotoShelf`, for the rail's way onto the workflow form.
   onShowPage: () => {
     projectPage.hide();

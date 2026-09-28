@@ -8,6 +8,7 @@ import { editProjectDetails, projectMenuItems, repeatsAs } from './project-page.
 import { workflowsView, workflowForm } from './workflows.js';
 import { toast, scheduleCard } from './render.js';
 import { humanSize, counted, cronParts } from './format.js';
+import { WEEK, LIMITS } from './schedule-grammar.js';
 
 /**
  * The shelves: Projects, Artifacts, Scheduled.
@@ -583,11 +584,13 @@ export function createPages({
             <div class="task__name">${escapeHtml(task.title)}</div>
             <div class="task__what">${escapeHtml(task.prompt || '')}</div>
             <div class="task__when">
-              ${escapeHtml(task.cron ? t('pages.tasks.every').replace('{cron}', task.cron) : t('pages.tasks.once'))}
-              · ${
-                task.enabled
-                  ? escapeHtml(t('pages.tasks.next').replace('{when}', ago(task.next_run_at)))
-                  : escapeHtml(t('pages.tasks.paused'))
+              ${escapeHtml(repeatsAs(task))}
+              ${
+                !task.enabled
+                  ? `· ${escapeHtml(t('pages.tasks.paused'))}`
+                  : task.next_run_at
+                    ? `· ${escapeHtml(t('pages.tasks.next').replace('{when}', ago(task.next_run_at)))}`
+                    : ''
               }
               ${
                 task.last_status
@@ -974,10 +977,6 @@ export function createPages({
 
   /* ── one task or workflow, in the rail beside the conversation ── */
 
-  /** Every quarter hour of a day, as the time menu lists them. */
-  const QUARTERS = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, '0')}:${String((i % 4) * 15).padStart(2, '0')}`);
-  /** "09:05" → "9:05", the way a clock face is read. */
-  const clockText = (hhmm) => hhmm.replace(/^0(\d)/, '$1');
 
   /** Zones the browser knows, with the ones already in play first. */
   function zoneList(current) {
@@ -990,6 +989,19 @@ export function createPages({
     const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
     return [...new Set([current, here, ...all].filter(Boolean))];
   }
+
+  /** When a row runs next, in its own zone, or that it only runs when pressed. */
+  const nextText = (row) =>
+    row.next_run_at
+      ? new Date(row.next_run_at).toLocaleString(undefined, {
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+          ...(row.tz ? { timeZone: row.tz } : {}),
+        })
+      : t('pane.noNext');
 
   const option = (value, label, selected) =>
     `<option value="${escapeHtml(String(value))}"${selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
@@ -1007,34 +1019,53 @@ export function createPages({
   function scheduleEditorHtml(kind, row, project) {
     const parts = cronParts(row.cron);
     const isTask = kind === 'task';
-    const times = QUARTERS.includes(parts.time) ? QUARTERS : [...QUARTERS, parts.time].sort();
-    const next = row.next_run_at
-      ? new Date(row.next_run_at).toLocaleString(undefined, {
-          weekday: 'short',
-          day: 'numeric',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit',
-          ...(row.tz ? { timeZone: row.tz } : {}),
-        })
-      : t('pane.noNext');
-    const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+    const FREQS = ['manual', 'once', 'minutes', 'hourly', 'hours', 'daily', 'weekdays', 'weekly', 'days', 'monthly'];
+    // No schedule words and a next run is a one-off; neither is manual.
+    const freq = row.cron ? parts.frequency : row.next_run_at ? 'once' : 'manual';
+    const manual = freq === 'manual';
+    const zone = zoneList(row.tz)[0];
+    const inZone = (date, opts) => {
+      try {
+        return new Intl.DateTimeFormat('en-CA', { ...opts, timeZone: zone }).format(date);
+      } catch {
+        return new Intl.DateTimeFormat('en-CA', opts).format(date);
+      }
+    };
+    const today = inZone(new Date(), {});
+    const onceAt = freq === 'once' ? new Date(row.next_run_at) : new Date(Date.now() + 86_400_000);
+    const onceDate = inZone(onceAt, {});
+    if (freq === 'once') parts.time = inZone(onceAt, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    /*
+     * One state, said once, beside the buttons that change it. It used to be a
+     * label ("Activity") and a badge ("On") that read as two things; and a manual
+     * task said "On" while never running by itself, which is what it is for.
+     */
+    const stateLabel = !row.enabled ? t('pages.tasks.paused') : manual ? t('pane.stateManual') : t('pages.tasks.active');
+    const stateClass = !row.enabled ? ' is-off' : manual ? ' is-manual' : '';
+    const next = nextText(row);
+    const num = (name, value, { min, max }, label, unit, when) => `
+          <label class="spane__row" data-when="${when}">
+            <span>${escapeHtml(label)}</span>
+            <span class="spane__num"><input type="number" data-s="${name}" min="${min}" max="${max}" step="1" inputmode="numeric"
+                   value="${escapeHtml(String(value))}">${unit ? `<span>${escapeHtml(unit)}</span>` : ''}</span>
+          </label>`;
     const steps = Array.isArray(row.steps) ? row.steps : [];
     const stepText = (s) => (typeof s === 'string' ? s : s?.instruction ?? s?.prompt ?? '');
 
     return `
       <div class="spane">
         <div class="spane__top">
-          <span class="spane__kicker">${escapeHtml(t('pane.activity'))}</span>
-          <span class="taskpage__state${row.enabled ? '' : ' is-off'}">${escapeHtml(
-            row.enabled ? t('pages.tasks.active') : t('pages.tasks.paused'),
-          )}</span>
+          <span class="spane__state${stateClass}">${escapeHtml(stateLabel)}</span>
           <div class="spane__acts">
-            <button class="icon-btn" data-s="toggle" type="button"
+            ${
+              manual
+                ? ''
+                : `<button class="icon-btn" data-s="toggle" type="button"
                     title="${escapeHtml(row.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}"
                     aria-label="${escapeHtml(row.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'))}">${
                       row.enabled ? '⏸' : '▶'
-                    }</button>
+                    }</button>`
+            }
             <button class="icon-btn" data-s="drop" type="button"
                     title="${escapeHtml(t('pages.tasks.remove'))}"
                     aria-label="${escapeHtml(t('pages.tasks.remove'))}">🗑</button>
@@ -1083,54 +1114,71 @@ export function createPages({
         </div>
 
         <div class="spane__label">${escapeHtml(t('pane.frequency'))}</div>
-        <div class="spane__group">
+        <div class="spane__group" data-s-group="when">
           <label class="spane__row">
             <span>${escapeHtml(t('pane.repeat'))}</span>
             <select data-s="frequency">
-              ${['manual', 'hourly', 'daily', 'weekdays', 'weekly', 'monthly']
-                .map((f) => option(f, t(`freq.${f}`), parts.frequency === f))
-                .join('')}
+              ${FREQS.map((f) => option(f, t(`freq.${f}`), freq === f)).join('')}
             </select>
           </label>
-          <label class="spane__row" data-when="hourly">
-            <span>${escapeHtml(t('pane.minute'))}</span>
-            <select data-s="minute">
-              ${Array.from({ length: 12 }, (_, i) => i * 5)
-                .concat(parts.minute % 5 ? [parts.minute] : [])
-                .sort((a, b) => a - b)
-                .map((m) => option(m, `:${String(m).padStart(2, '0')}`, parts.minute === m))
-                .join('')}
-            </select>
+          <label class="spane__row" data-when="once">
+            <span>${escapeHtml(t('pane.date'))}</span>
+            <input type="date" data-s="date" value="${escapeHtml(onceDate)}">
           </label>
-          <label class="spane__row" data-when="weekly">
-            <span>${escapeHtml(t('pane.weekday'))}</span>
-            <select data-s="weekday">
-              ${days.map((d) => option(d, t(`day.${d}`), parts.weekday === d)).join('')}
-            </select>
-          </label>
-          <label class="spane__row" data-when="monthly">
-            <span>${escapeHtml(t('pane.dayOfMonth'))}</span>
-            <select data-s="day">
-              ${Array.from({ length: 31 }, (_, i) => i + 1)
-                .map((d) => option(d, String(d), parts.day === d))
-                .join('')}
-            </select>
-          </label>
-          <label class="spane__row" data-when="daily weekdays weekly monthly">
+          <label class="spane__row" data-when="once">
             <span>${escapeHtml(t('pane.time'))}</span>
-            <select data-s="time">
-              ${times.map((hhmm) => option(hhmm, clockText(hhmm), parts.time === hhmm)).join('')}
-            </select>
+            <input type="time" data-s="onceTime" value="${escapeHtml(parts.time)}">
           </label>
-          <label class="spane__row" data-when="hourly daily weekdays weekly monthly">
+          ${num('everyMinutes', freq === 'minutes' ? parts.every : 30, LIMITS.minutes, t('pane.every'), t('pane.unitMinutes'), 'minutes')}
+          ${num('everyHours', freq === 'hours' ? parts.every : 2, LIMITS.hours, t('pane.every'), t('pane.unitHours'), 'hours')}
+          ${num('everyDays', freq === 'days' ? parts.every : 2, LIMITS.days, t('pane.every'), t('pane.unitDays'), 'days')}
+          ${num('minute', parts.minute, { min: 0, max: 59 }, t('pane.minute'), '', 'hourly hours')}
+          <div class="spane__row spane__row--stack" data-when="weekly">
+            <span>${escapeHtml(t('pane.weekdays'))}</span>
+            <div class="spane__chips" role="group" aria-label="${escapeHtml(t('pane.weekdays'))}">
+              ${WEEK.map(
+                (d) => `<button type="button" class="spane__chip" data-day="${d}" aria-pressed="${parts.days.includes(d)}"
+                          title="${escapeHtml(t(`day.${d}`))}">${escapeHtml(t(`day.short.${d}`))}</button>`,
+              ).join('')}
+            </div>
+          </div>
+          <div class="spane__row spane__row--stack" data-when="monthly">
+            <span>${escapeHtml(t('pane.monthDays'))}</span>
+            <div class="spane__chips spane__chips--month" role="group" aria-label="${escapeHtml(t('pane.monthDays'))}">
+              ${/** @type {Array<number|'last'>} */ ([...Array.from({ length: 31 }, (_, i) => i + 1), 'last'])
+                .map(
+                  (d) => `<button type="button" class="spane__chip${d === 'last' ? ' spane__chip--wide' : ''}" data-mday="${d}"
+                            aria-pressed="${parts.monthDays.includes(d)}">${escapeHtml(d === 'last' ? t('freq.lastDay') : String(d))}</button>`,
+                )
+                .join('')}
+            </div>
+          </div>
+          <label class="spane__row" data-when="days">
+            <span>${escapeHtml(t('pane.startOn'))}</span>
+            <input type="date" data-s="start" value="${escapeHtml(parts.start || today)}">
+          </label>
+          <div class="spane__row spane__row--stack" data-when="daily weekdays weekly monthly days">
+            <span>${escapeHtml(t(freq === 'days' ? 'pane.time' : 'pane.times'))}</span>
+            <div class="spane__times">
+              ${parts.times
+                .map(
+                  (hhmm) => `<span class="spane__timeitem"><input type="time" data-t value="${escapeHtml(hhmm)}" aria-label="${escapeHtml(t('pane.time'))}">
+                    <button type="button" class="spane__x" data-drop-time aria-label="${escapeHtml(t('pane.removeTime'))}"${parts.times.length < 2 ? ' hidden' : ''}>✕</button></span>`,
+                )
+                .join('')}
+              <button type="button" class="spane__add" data-add-time${freq === 'days' ? ' hidden' : ''}>${escapeHtml(t('pane.addTime'))}</button>
+            </div>
+          </div>
+          <label class="spane__row" data-when="once minutes hourly hours daily weekdays weekly days monthly">
             <span>${escapeHtml(t('sched.timezone'))}</span>
             <select data-s="tz">
               ${zoneList(row.tz).map((z) => option(z, z, z === (row.tz || zoneList(null)[0]))).join('')}
             </select>
           </label>
+          <p class="hint spane__hint" data-when="minutes hours">${escapeHtml(t('pane.intervalHint'))}</p>
         </div>
 
-        <div class="spane__group" data-when="hourly daily weekdays weekly monthly">
+        <div class="spane__group" data-when="minutes hourly hours daily weekdays weekly days monthly">
           <label class="spane__row">
             <span>${escapeHtml(t('pane.ends'))}</span>
             <select data-s="ends">
@@ -1231,7 +1279,7 @@ export function createPages({
       for (const node of root.querySelectorAll('[data-when]')) {
         /** @type {HTMLElement} */ (node).hidden = !String(/** @type {HTMLElement} */ (node).dataset.when).split(' ').includes(f);
       }
-      /** @type {HTMLElement} */ (root.querySelector('[data-s-show="ends"]')).hidden = q('ends').value !== 'date' || f === 'manual';
+      /** @type {HTMLElement} */ (root.querySelector('[data-s-show="ends"]')).hidden = q('ends').value !== 'date';
     };
     layout();
 
@@ -1243,44 +1291,94 @@ export function createPages({
         const fresh = result.task || result.workflow;
         Object.assign(row, fresh);
         $('taskpane-title').textContent = row.title;
-        q('next').textContent = row.next_run_at
-          ? new Date(row.next_run_at).toLocaleString(undefined, {
-              weekday: 'short',
-              day: 'numeric',
-              month: 'short',
-              hour: '2-digit',
-              minute: '2-digit',
-              ...(row.tz ? { timeZone: row.tz } : {}),
-            })
-          : t('pane.noNext');
+        q('next').textContent = nextText(row);
         status.textContent = t('pane.saved');
         status.classList.add('is-ok');
         refreshCards(kind, row);
         onTasksChanged();
         paneAfter?.();
+        return true;
       } catch (err) {
         status.textContent = err.message;
         status.classList.add('is-error');
+        return false;
       }
     };
 
-    const saveSchedule = () =>
-      save({
-        schedule: {
-          frequency: q('frequency').value,
-          time: q('time').value,
-          minute: Number(q('minute').value),
-          weekday: q('weekday').value,
-          day: Number(q('day').value),
-        },
-        tz: q('tz').value,
-      });
+    /** The schedule as the controls now describe it, in the pieces `scheduleFrom` takes. */
+    const spec = () => {
+      const f = q('frequency').value;
+      const times = [...root.querySelectorAll('[data-t]')].map((i) => /** @type {HTMLInputElement} */ (i).value).filter(Boolean);
+      const pressed = (attr) => [...root.querySelectorAll(`[${attr}][aria-pressed="true"]`)].map((b) => b.getAttribute(attr));
+      if (f === 'once') return { frequency: f, date: q('date').value, time: q('onceTime').value };
+      if (f === 'minutes') return { frequency: f, every: Number(q('everyMinutes').value) };
+      if (f === 'hourly') return { frequency: f, minute: Number(q('minute').value) };
+      if (f === 'hours') return { frequency: f, every: Number(q('everyHours').value), minute: Number(q('minute').value) };
+      if (f === 'days') return { frequency: f, every: Number(q('everyDays').value), time: times[0], start: q('start').value };
+      if (f === 'weekly') return { frequency: f, days: pressed('data-day'), times };
+      if (f === 'monthly') return { frequency: f, monthDays: pressed('data-mday').map((d) => (d === 'last' ? d : Number(d))), times };
+      return { frequency: f, times };
+    };
+    const saveSchedule = () => save({ schedule: spec(), tz: q('tz').value });
 
-    q('frequency').addEventListener('change', () => {
+    // A new frequency brings different controls, so the panel is drawn again
+    // once the row has its new schedule — or stays as it was if that was refused.
+    q('frequency').addEventListener('change', async () => {
+      // "Weekly" chosen over weekdays or every day would carry all five or
+      // seven days with it, save as that again, and the menu would jump back.
+      // It starts from one day instead.
+      const days = [...root.querySelectorAll('[data-day]')];
+      const on = days.filter((b) => b.getAttribute('aria-pressed') === 'true');
+      if (q('frequency').value === 'weekly' && (on.length === 5 || on.length === 7)) {
+        days.forEach((b, i) => b.setAttribute('aria-pressed', String(i === 0)));
+      }
       layout();
-      saveSchedule();
+      if (await saveSchedule()) await showScheduleInPane(kind, row.id, { after: paneAfter });
     });
-    for (const name of ['time', 'minute', 'weekday', 'day', 'tz']) q(name).addEventListener('change', saveSchedule);
+    for (const name of ['everyMinutes', 'everyHours', 'everyDays', 'minute', 'date', 'onceTime', 'start', 'tz']) {
+      q(name)?.addEventListener('change', saveSchedule);
+    }
+
+    // Times: change one, add one, take one away. At least one always stays.
+    const times = /** @type {HTMLElement} */ (root.querySelector('.spane__times'));
+    const tidyTimes = () => {
+      const rows = times.querySelectorAll('.spane__timeitem');
+      for (const x of times.querySelectorAll('[data-drop-time]')) /** @type {HTMLElement} */ (x).hidden = rows.length < 2;
+    };
+    times.addEventListener('change', (event) => {
+      if (/** @type {HTMLElement} */ (event.target).matches('[data-t]')) saveSchedule();
+    });
+    times.addEventListener('click', (event) => {
+      const target = /** @type {HTMLElement} */ (event.target);
+      if (target.matches('[data-drop-time]')) {
+        target.closest('.spane__timeitem')?.remove();
+        tidyTimes();
+        saveSchedule();
+      } else if (target.matches('[data-add-time]')) {
+        const last = /** @type {HTMLInputElement | null} */ ([...times.querySelectorAll('[data-t]')].pop() || null);
+        const item = /** @type {HTMLElement} */ (times.querySelector('.spane__timeitem').cloneNode(true));
+        const input = /** @type {HTMLInputElement} */ (item.querySelector('[data-t]'));
+        // An hour after the last one, so a new time is never a duplicate of it.
+        const [h, m] = String(last?.value || '08:00').split(':').map(Number);
+        input.value = `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        target.before(item);
+        tidyTimes();
+        input.focus();
+        saveSchedule();
+      }
+    });
+
+    // Days of the week and of the month: pressed or not, never none.
+    for (const attr of ['data-day', 'data-mday']) {
+      for (const chip of root.querySelectorAll(`[${attr}]`)) {
+        chip.addEventListener('click', () => {
+          const on = chip.getAttribute('aria-pressed') === 'true';
+          if (on && root.querySelectorAll(`[${attr}][aria-pressed="true"]`).length === 1) return;
+          chip.setAttribute('aria-pressed', String(!on));
+          saveSchedule();
+        });
+      }
+    }
 
     q('ends').addEventListener('change', () => {
       layout();
@@ -1313,7 +1411,8 @@ export function createPages({
       save({ steps: lines });
     });
 
-    q('toggle').addEventListener('click', async () => {
+    // A manual task has no pause: it never runs by itself to begin with.
+    q('toggle')?.addEventListener('click', async () => {
       if (kind === 'workflow') await api.updateWorkflow(row.id, { enabled: !row.enabled });
       else await api.setTaskEnabled(row.id, !row.enabled);
       onTasksChanged();

@@ -1,4 +1,5 @@
 import { t } from './i18n.js';
+import { readCron } from './schedule-grammar.js';
 
 /**
  * The small formatters more than one screen needs.
@@ -54,41 +55,53 @@ export const counted = (n, key) => (n === 1 ? t(`${key}One`) : t(key)).replace('
  */
 export function repeatsAs(task) {
   const cron = String(task?.cron || '').trim();
-  if (!cron) return t('freq.manualOnly');
-  const hourly = /^hourly\s*:?(\d\d)$/.exec(cron);
-  if (hourly) return t('freq.everyHourAt').replace('{m}', hourly[1]);
-  const weekdays = /^weekdays\s+(.+)$/.exec(cron);
-  if (weekdays) return t('freq.everyWeekdayAt').replace('{time}', weekdays[1]);
-  const monthly = /^monthly\s+(\d{1,2})\s+(.+)$/.exec(cron);
-  if (monthly) return t('freq.everyMonthOn').replace('{day}', monthly[1]).replace('{time}', monthly[2]);
-  const weekly = /^([a-z]{3})\s+(.+)$/.exec(cron);
-  if (weekly) return t('freq.everyWeekOn').replace('{day}', t(`day.${weekly[1]}`)).replace('{time}', weekly[2]);
-  return t('freq.everyDayAt').replace('{time}', cron);
+  if (!cron) return task?.next_run_at || task?.nextRunAt ? t('sched.once') : t('freq.manualOnly');
+  const s = readCron(cron);
+  const list = (items) => items.join(', ');
+  const dayName = (d) => t(`day.${d}`);
+  const two = (n) => String(n).padStart(2, '0');
+  if (s.kind === 'minutes') return t('freq.everyNMinutes', { n: String(s.every) });
+  if (s.kind === 'hours') {
+    if (s.every === 1) return t('freq.everyHourAt').replace('{m}', two(s.minute));
+    return s.anchor ? t('freq.everyNHours', { n: String(s.every) }) : t('freq.everyNHoursAt', { n: String(s.every), m: two(s.minute) });
+  }
+  if (s.kind === 'days') return t('freq.everyNDaysAt', { n: String(s.every), time: s.time });
+  if (s.kind === 'monthly') {
+    const days = s.monthDays.map((d) => (d === 'last' ? t('freq.lastDay') : String(d)));
+    return t('freq.everyMonthOn').replace('{day}', list(days)).replace('{time}', list(s.times));
+  }
+  if (s.kind === 'weekly') {
+    const time = list(s.times);
+    if (s.days.length === 7) return t('freq.everyDayAt').replace('{time}', time);
+    if (s.days.join() === 'mon,tue,wed,thu,fri') return t('freq.everyWeekdayAt').replace('{time}', time);
+    if (s.days.length === 1) return t('freq.everyWeekOn').replace('{day}', dayName(s.days[0])).replace('{time}', time);
+    return t('freq.onDaysAt', { days: list(s.days.map(dayName)), time });
+  }
+  return t('freq.manualOnly');
 }
 
 /**
- * A stored recurrence taken apart into the fields the side panel edits.
+ * A stored schedule taken apart into the fields the side panel edits.
  *
- * The inverse of `scheduleFrom` on the server: `hourly :30` is minute 30,
- * `mon 16:00` is weekly on Monday at four. Null cron is manual. The panel
- * writes these same pieces back, so whatever it shows is what it would save.
+ * The inverse of `scheduleFrom` on the server, through the same grammar
+ * (schedule-grammar.js), so whatever the panel shows is what it would save.
+ * `frequency` is what the menu shows: a weekly schedule on all seven days is
+ * "daily", on Monday to Friday "weekdays", an interval of one hour "hourly".
  *
- * @returns {{ frequency: string, time: string, minute: number, weekday: string, day: number }}
+ * @returns {{ frequency: string, every: number, minute: number, time: string, times: string[],
+ *   days: string[], monthDays: Array<number|'last'>, start: string|null, anchored: boolean }}
  */
 export function cronParts(cron) {
-  const text = String(cron || '').trim();
-  const base = { frequency: 'manual', time: '09:00', minute: 0, weekday: 'mon', day: 1 };
-  if (!text) return base;
-  const pad = (hhmm) => hhmm.replace(/^(\d):/, '0$1:');
-  const hourly = /^hourly\s*:?(\d\d)$/.exec(text);
-  if (hourly) return { ...base, frequency: 'hourly', minute: Number(hourly[1]) };
-  const weekdays = /^weekdays\s+(\d{1,2}:\d\d)$/.exec(text);
-  if (weekdays) return { ...base, frequency: 'weekdays', time: pad(weekdays[1]) };
-  const monthly = /^monthly\s+(\d{1,2})\s+(\d{1,2}:\d\d)$/.exec(text);
-  if (monthly) return { ...base, frequency: 'monthly', day: Number(monthly[1]), time: pad(monthly[2]) };
-  const weekly = /^([a-z]{3})\s+(\d{1,2}:\d\d)$/.exec(text);
-  if (weekly) return { ...base, frequency: 'weekly', weekday: weekly[1], time: pad(weekly[2]) };
-  if (/^\d{1,2}:\d\d$/.test(text)) return { ...base, frequency: 'daily', time: pad(text) };
+  const s = readCron(cron);
+  const base = { frequency: 'manual', every: 1, minute: 0, time: '09:00', times: ['09:00'], days: ['mon'], monthDays: [1], start: null, anchored: false };
+  if (s.kind === 'minutes') return { ...base, frequency: 'minutes', every: s.every, anchored: !!s.anchor };
+  if (s.kind === 'hours') return { ...base, frequency: s.every === 1 ? 'hourly' : 'hours', every: s.every, minute: s.minute ?? 0, anchored: !!s.anchor };
+  if (s.kind === 'days') return { ...base, frequency: 'days', every: s.every, time: s.time, times: [s.time], start: s.start };
+  if (s.kind === 'monthly') return { ...base, frequency: 'monthly', monthDays: s.monthDays, time: s.times[0], times: s.times };
+  if (s.kind === 'weekly') {
+    const frequency = s.days.length === 7 ? 'daily' : s.days.join() === 'mon,tue,wed,thu,fri' ? 'weekdays' : 'weekly';
+    return { ...base, frequency, days: s.days, time: s.times[0], times: s.times };
+  }
   return base;
 }
 

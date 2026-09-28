@@ -8,6 +8,7 @@ import { redactSecrets } from './redact.js';
 // An unattended run needs it more, not less. See `runTask`.
 import { isComplete } from './providers/stop.js';
 import { validZone, partsIn, instantOf } from './util/zone.js';
+import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public/js/schedule-grammar.js';
 
 /**
  * Work that happens without anyone watching.
@@ -16,9 +17,11 @@ import { validZone, partsIn, instantOf } from './util/zone.js';
  * turn in a conversation of its own, so the result is somewhere you can read it
  * and carry on from — not a notification with no context behind it.
  *
- * The clock is deliberately simple: a time of day, optionally pinned to one
- * weekday. Real cron expressions are powerful and almost nobody writes them
- * correctly, and everything this is for is "every day at" or "every Monday at".
+ * Schedules are words a person can read, not cron expressions nobody writes
+ * correctly: "every 10m", "days mon,wed,fri 08:00,18:00", "monthly last 09:00",
+ * "every 23h @<start>". The grammar is in public/js/schedule-grammar.js, shared
+ * with the panel that edits it, and every form becomes one search for the next
+ * slot on a day that qualifies — see `nextSlot`.
  *
  * It is, however, the *user's* clock. "17:00" used to mean 17:00 wherever the
  * server happened to be standing — UTC on a deployment — so somebody in Vietnam
@@ -27,7 +30,6 @@ import { validZone, partsIn, instantOf } from './util/zone.js';
  */
 
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-const TIME = /^([01]?\d|2[0-3]):([0-5]\d)$/;
 
 // The zone arithmetic lives in util/zone.js, so the model library can ask
 // "when was six this morning, where this person is" without importing the
@@ -35,28 +37,18 @@ const TIME = /^([01]?\d|2[0-3]):([0-5]\d)$/;
 export { validZone };
 
 /**
- * Parse "17:00" or "fri 17:00" into the next moment it means.
+ * The frequencies the side panel offers, and the short menu the create form
+ * and older callers use.
  *
- * @param tz  IANA zone the time is written in. Omitted, it falls back to the
- *            server's own clock — which is only ever right by luck, so callers
- *            that have the user's zone should pass it.
- * @returns {{ cron: string|null, nextRunAt: string }} cron is null for a
- *   one-off, which is what makes it retire after running.
+ * `manual` is not a recurrence at all: it stores no cron and no next run, so
+ * the due query — `enabled AND next_run_at <= now()` — never matches it, and
+ * the task waits for Run now. `once` stores no cron and one next run, which is
+ * what retires it after it has run.
  */
-/**
- * The repeats a person picks from a list, rather than types.
- *
- * The form used to ask for a time in words — "08:00, or fri 16:00" — which is
- * precise, learnable, and something most people get wrong once and then avoid.
- * A menu of six is what anybody expects to choose from, and each of them still
- * has to become a real recurrence: the words below are what `cron` holds, and
- * `parseSchedule` reads them back to work out when the next run is.
- *
- * `manual` is the one that is not a recurrence at all. It stores no cron and no
- * next run, so the due query — `enabled AND next_run_at <= now()` — never
- * matches it, and the task waits for the Run now button.
- */
-export const FREQUENCIES = ['manual', 'hourly', 'daily', 'weekdays', 'weekly', 'monthly'];
+export const FREQUENCIES = ['manual', 'once', 'minutes', 'hours', 'hourly', 'daily', 'days', 'weekdays', 'weekly', 'monthly'];
+
+/** The six a menu with nothing else on it offers; see `fromFrequency`. */
+const MENU = ['manual', 'hourly', 'daily', 'weekdays', 'weekly', 'monthly'];
 
 /**
  * Turn a chosen frequency into the schedule the store keeps.
@@ -69,8 +61,8 @@ export const FREQUENCIES = ['manual', 'hourly', 'daily', 'weekdays', 'weekly', '
  */
 export function fromFrequency(frequency, { from = new Date(), tz = null } = {}) {
   const choice = String(frequency || '').trim().toLowerCase();
-  if (!FREQUENCIES.includes(choice)) {
-    throw new Error(`"${frequency}" is not a frequency. Pick one of: ${FREQUENCIES.join(', ')}.`);
+  if (!MENU.includes(choice)) {
+    throw new Error(`"${frequency}" is not a frequency. Pick one of: ${MENU.join(', ')}.`);
   }
   if (choice === 'manual') return { cron: null, nextRunAt: null };
 
@@ -94,17 +86,29 @@ export function fromFrequency(frequency, { from = new Date(), tz = null } = {}) 
 }
 
 /**
- * A schedule chosen piece by piece — the side panel beside a conversation.
+ * A schedule chosen piece by piece — the side panel.
  *
- * `fromFrequency` takes the time of day from *now*, which is right for a menu
- * with nothing else on it and wrong for a panel that shows the time as a field
- * of its own: somebody who picks 07:00 means seven. This takes the pieces as
- * given — frequency, time, and the weekday, day of month or minute the
- * frequency needs — and writes the same words `parseSchedule` reads back, so
- * nothing downstream knows which path made the row.
+ * Takes the pieces as given and writes the same words `parseSchedule` reads
+ * back (see public/js/schedule-grammar.js), so nothing downstream knows which
+ * path made the row. The pieces each frequency uses:
  *
- * @param {{ frequency?: string, time?: string, weekday?: string, day?: number|string, minute?: number|string }} spec
- * @returns {{ cron: string|null, nextRunAt: string|null }} both null for `manual`.
+ *   once      date "YYYY-MM-DD", time
+ *   minutes   every (5–1440)
+ *   hours     every (1–168), minute (0–59)       hourly: minute
+ *   daily     time, or times [...]
+ *   days      every (2–365), time, start "YYYY-MM-DD" (defaults to the next day the time is still ahead)
+ *   weekdays  time, or times [...]
+ *   weekly    days ["mon", …] or weekday "mon", time or times [...]
+ *   monthly   monthDays [1, 15, "last"] or day, time or times [...]
+ *
+ * An interval that does not divide the day is counted from its next natural
+ * start — the next minute, or the next time the clock shows `minute` — and
+ * that start is kept in the words, so it cannot drift from run to run.
+ *
+ * @param {{ frequency?: string, time?: string, times?: string[], weekday?: string, days?: string[],
+ *   day?: number|string, monthDays?: Array<number|string>, minute?: number|string, every?: number|string,
+ *   date?: string, start?: string }} spec
+ * @returns {{ cron: string|null, nextRunAt: string|null }}
  */
 export function scheduleFrom(spec, { from = new Date(), tz = null } = {}) {
   const choice = String(spec?.frequency || '').trim().toLowerCase();
@@ -112,31 +116,35 @@ export function scheduleFrom(spec, { from = new Date(), tz = null } = {}) {
     throw new Error(`"${spec?.frequency}" is not a frequency. Pick one of: ${FREQUENCIES.join(', ')}.`);
   }
   if (choice === 'manual') return { cron: null, nextRunAt: null };
+  const zone = validZone(tz) ? tz : null;
+  const c = clock(zone);
 
-  const two = (n) => String(n).padStart(2, '0');
-  let cron;
-  if (choice === 'hourly') {
-    const minute = Number(spec.minute ?? String(spec.time || '').split(':')[1]);
-    if (!Number.isInteger(minute) || minute < 0 || minute > 59) {
-      throw new Error('An hourly repeat needs a minute from 0 to 59.');
-    }
-    cron = `hourly :${two(minute)}`;
-  } else {
-    const at = TIME.exec(String(spec.time || '').trim());
-    if (!at) throw new Error('Give the time as HH:MM — "07:00".');
-    const hhmm = `${two(at[1])}:${at[2]}`;
-    if (choice === 'daily') cron = hhmm;
-    else if (choice === 'weekdays') cron = `weekdays ${hhmm}`;
-    else if (choice === 'weekly') {
-      const day = String(spec.weekday || '').slice(0, 3).toLowerCase();
-      if (!WEEKDAYS.includes(day)) throw new Error('A weekly repeat needs a weekday: mon, tue, wed, thu, fri, sat or sun.');
-      cron = `${day} ${hhmm}`;
-    } else {
-      const day = Number(spec.day);
-      if (!Number.isInteger(day) || day < 1 || day > 31) throw new Error('A monthly repeat needs a day from 1 to 31.');
-      cron = `monthly ${day} ${hhmm}`;
-    }
+  if (choice === 'once') {
+    const time = normTime(spec.time);
+    if (!time || !/^\d{4}-\d{2}-\d{2}$/.test(String(spec.date || ''))) throw new Error('Give a date and a time for a one-off run.');
+    const [y, mo, d] = String(spec.date).split('-').map(Number);
+    const at = c.at(y, mo, d, Number(time.slice(0, 2)), Number(time.slice(3)));
+    if (at <= from) throw new Error('That time has already passed — pick one in the future.');
+    return { cron: null, nextRunAt: at.toISOString() };
   }
+
+  const times = spec.times?.length ? spec.times : spec.time ? [spec.time] : [];
+  let parts;
+  if (choice === 'minutes') parts = { kind: 'minutes', every: Number(spec.every), anchor: nextMinute(from) };
+  else if (choice === 'hours' || choice === 'hourly') {
+    const minute = Number(spec.minute ?? String(spec.time || '').split(':')[1] ?? 0);
+    if (!Number.isInteger(minute) || minute < 0 || minute > 59) throw new Error('An hourly repeat needs a minute from 0 to 59.');
+    parts = { kind: 'hours', every: choice === 'hourly' ? 1 : Number(spec.every), minute, anchor: nextAtMinute(from, minute, zone) };
+  } else if (choice === 'days') {
+    const time = normTime(spec.time);
+    if (!time) throw new Error('Give the time as HH:MM — "07:00".');
+    parts = { kind: 'days', every: Number(spec.every), time, start: spec.start || firstDayAhead(from, time, zone) };
+  } else if (choice === 'daily') parts = { kind: 'weekly', days: ['all'], times };
+  else if (choice === 'weekdays') parts = { kind: 'weekly', days: ['weekdays'], times };
+  else if (choice === 'weekly') parts = { kind: 'weekly', days: spec.days?.length ? spec.days : [spec.weekday], times };
+  else parts = { kind: 'monthly', monthDays: spec.monthDays?.length ? spec.monthDays : [spec.day], times };
+
+  const cron = writeCron(parts);
   return { cron, nextRunAt: parseSchedule(cron, { from, tz }).nextRunAt };
 }
 
@@ -217,121 +225,187 @@ function weekdayIn(date, tz) {
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
+/**
+ * Wall-clock arithmetic in the account's zone, or on the server's own clock
+ * when there is none (which is only ever right by luck).
+ *
+ * Calendar days are walked as dates and each time is turned into an instant in
+ * the zone, rather than adding 24h to a timestamp: "the same time tomorrow" is
+ * a calendar operation, and arithmetic on the instant drifts by an hour across
+ * a daylight-saving change.
+ */
+function clock(zone) {
+  return {
+    today: (from) =>
+      zone
+        ? partsIn(from, zone)
+        : { year: from.getFullYear(), month: from.getMonth() + 1, day: from.getDate(), hour: from.getHours(), minute: from.getMinutes() },
+    at: (year, month, day, hour, minute) =>
+      zone ? new Date(instantOf({ year, month, day, hour, minute }, zone)) : new Date(year, month - 1, day, hour, minute, 0, 0),
+  };
+}
+
+/** The start of the next whole minute after `from`. */
+const nextMinute = (from) => new Date(Math.floor(from.getTime() / 60_000) * 60_000 + 60_000).toISOString();
+
+/** The next instant the clock in `zone` shows `minute` past the hour. */
+function nextAtMinute(from, minute, zone) {
+  const c = clock(zone);
+  const p = c.today(from);
+  let at = c.at(p.year, p.month, p.day, p.hour, minute);
+  if (at <= from) at = new Date(at.getTime() + 3_600_000);
+  return at.toISOString();
+}
+
+/** Today's date in the zone if `time` is still ahead today, otherwise tomorrow's. */
+function firstDayAhead(from, time, zone) {
+  const c = clock(zone);
+  const p = c.today(from);
+  const [h, m] = time.split(':').map(Number);
+  const ahead = c.at(p.year, p.month, p.day, h, m) > from ? 0 : 1;
+  const d = new Date(Date.UTC(p.year, p.month - 1, p.day + ahead));
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The first moment after `from` that is one of `slots` (minutes past local
+ * midnight) on a day `dayOk` accepts, looking at most `maxDays` ahead.
+ *
+ * One search for every calendar schedule — daily, chosen weekdays, several
+ * times a day, days of the month, the last day, every N days, and intervals
+ * kept on the clock — so none of them has its own arithmetic to get wrong.
+ */
+function nextSlot(from, zone, slots, dayOk, maxDays) {
+  const c = clock(zone);
+  const t0 = c.today(from);
+  const nowMinute = t0.hour * 60 + t0.minute;
+  for (let i = 0; i < maxDays; i += 1) {
+    const date = new Date(Date.UTC(t0.year, t0.month - 1, t0.day + i));
+    const y = date.getUTCFullYear();
+    const mo = date.getUTCMonth() + 1;
+    const d = date.getUTCDate();
+    if (!dayOk(y, mo, d, date.getUTCDay())) continue;
+    for (const s of slots) {
+      // On the first day, skip what the clock has already passed without
+      // computing an instant for each: every five minutes is 288 slots a day.
+      if (i === 0 && s < nowMinute) continue;
+      const at = c.at(y, mo, d, Math.floor(s / 60), s % 60);
+      if (at > from) return at;
+    }
+  }
+  return null;
+}
+
+/** Minutes past midnight, from "HH:MM". */
+const minuteOf = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+
+/** A fixed step counted from an anchor: the first multiple after `from`. */
+function afterAnchor(anchorIso, stepMs, from) {
+  const anchor = new Date(anchorIso).getTime();
+  if (!Number.isFinite(anchor)) throw new Error('That schedule has no valid starting time.');
+  if (from.getTime() < anchor) return new Date(anchor);
+  return new Date(anchor + (Math.floor((from.getTime() - anchor) / stepMs) + 1) * stepMs);
+}
+
+const INVALID = 'Give a time as HH:MM, optionally with a weekday first — "17:00" or "fri 17:00".';
+
+/**
+ * The words a schedule is kept in, or typed as, and the next moment they mean.
+ *
+ * Accepts every stored form (see public/js/schedule-grammar.js), what a person
+ * or a model types — "every 10 minutes", "mỗi 23 giờ", "mon,wed 08:00,18:00",
+ * "monthly last 09:00" — and a one-off date, "2026-10-01 09:00".
+ *
+ * @param tz    IANA zone the times are written in; without it the server's own clock
+ * @param once  run it once at the next such moment rather than repeating
+ * @returns {{ cron: string|null, nextRunAt: string }} cron is null for a
+ *   one-off, which is what makes it retire after running.
+ */
 export function parseSchedule(input, { once = false, from = new Date(), tz = null } = {}) {
-  const text = String(input || '').trim().toLowerCase();
-
-  /**
-   * The menu's own vocabulary, read back.
-   *
-   * `advance` re-parses whatever is in `cron` to find the next run, so every
-   * word `fromFrequency` can write has to be understood here — otherwise a
-   * task fires once and then throws in the scheduler, where nobody sees it.
-   */
-  const hourly = /^hourly\s*:?([0-5]\d)$/.exec(text);
-  if (hourly) {
-    const minute = Number(hourly[1]);
-    // The minute on the account's clock, not the server's: India is UTC+5:30
-    // and Nepal +5:45, so ":10" on a UTC server ran at :40 or :55 there.
-    let next;
-    if (validZone(tz)) {
-      const p = partsIn(from, tz);
-      next = instantOf({ year: p.year, month: p.month, day: p.day, hour: p.hour, minute }, tz);
-    } else {
-      next = new Date(from);
-      next.setSeconds(0, 0);
-      next.setMinutes(minute);
-    }
-    // The next occurrence is at most an hour away, so no calendar walk.
-    if (next <= from) next = new Date(next.getTime() + 3_600_000);
-    return { cron: `hourly :${hourly[1]}`, nextRunAt: next.toISOString() };
-  }
-
-  const monthly = /^monthly\s+(\d{1,2})\s+(.+)$/.exec(text);
-  if (monthly) {
-    const wanted = Math.min(31, Math.max(1, Number(monthly[1])));
-    const at = TIME.exec(monthly[2].trim());
-    if (!at) throw new Error('A monthly task needs a time as HH:MM — "monthly 1 08:00".');
-    const zone = validZone(tz) ? tz : null;
-    const today = zone ? partsIn(from, zone) : { year: from.getFullYear(), month: from.getMonth() + 1, day: from.getDate() };
-
-    // Up to fourteen months, because a task asking for the 31st skips the
-    // months that do not have one rather than firing on the 1st of the next.
-    for (let ahead = 0; ahead < 14; ahead += 1) {
-      const month = today.month - 1 + ahead;
-      const year = today.year + Math.floor(month / 12);
-      const m = ((month % 12) + 12) % 12;
-      // Day 0 of the following month is the last day of this one.
-      if (wanted > new Date(Date.UTC(year, m + 1, 0)).getUTCDate()) continue;
-      const when = { year, month: m + 1, day: wanted, hour: Number(at[1]), minute: Number(at[2]) };
-      const instant = zone ? new Date(instantOf(when, zone)) : new Date(year, m, wanted, when.hour, when.minute, 0, 0);
-      if (instant > from) return { cron: `monthly ${wanted} ${at[0]}`, nextRunAt: instant.toISOString() };
-    }
-    throw new Error(`Could not find a day ${wanted} in the next year.`);
-  }
-
-  // Monday to Friday at a fixed time: five weekly rules, so take the soonest.
-  const weekdays = /^weekdays\s+(.+)$/.exec(text);
-  if (weekdays) {
-    const at = weekdays[1].trim();
-    if (!TIME.test(at)) throw new Error('A weekdays task needs a time as HH:MM — "weekdays 08:00".');
-    const soonest = ['mon', 'tue', 'wed', 'thu', 'fri']
-      .map((day) => parseSchedule(`${day} ${at}`, { from, tz }).nextRunAt)
-      .sort()[0];
-    return { cron: `weekdays ${at}`, nextRunAt: soonest };
-  }
-
-  const parts = text.split(/\s+/);
-  const time = parts.pop() || '';
-  const day = parts.pop() || '';
-
-  const match = TIME.exec(time);
-  if (!match) {
-    throw new Error('Give a time as HH:MM, optionally with a weekday first — "17:00" or "fri 17:00".');
-  }
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-
-  let weekday = -1;
-  if (day) {
-    weekday = WEEKDAYS.indexOf(day.slice(0, 3));
-    if (weekday < 0) throw new Error(`"${day}" is not a weekday. Use mon, tue, wed, thu, fri, sat or sun.`);
-  }
-
-  const cron = once ? null : weekday >= 0 ? `${WEEKDAYS[weekday]} ${time}` : time;
   const zone = validZone(tz) ? tz : null;
+  let text = String(input || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
-  if (!zone) {
-    // Server-local fallback, unchanged, for callers with no zone to offer.
-    const next = new Date(from);
-    next.setSeconds(0, 0);
-    next.setHours(hour, minute);
-    if (next <= from) next.setDate(next.getDate() + 1);
-    if (weekday >= 0) {
-      while (next.getDay() !== weekday) next.setDate(next.getDate() + 1);
-    }
-    return { cron, nextRunAt: next.toISOString() };
+  // A date and a time is always a single run.
+  const oneOff = /^(\d{4}-\d{2}-\d{2})[ t](\d{1,2}:\d{2})$/.exec(text);
+  if (oneOff) {
+    const time = normTime(oneOff[2]);
+    if (!time) throw new Error(INVALID);
+    const [y, mo, d] = oneOff[1].split('-').map(Number);
+    const at = clock(zone).at(y, mo, d, Number(time.slice(0, 2)), Number(time.slice(3)));
+    if (at <= from) throw new Error('That time has already passed — pick one in the future.');
+    return { cron: null, nextRunAt: at.toISOString() };
   }
 
-  // Walk the calendar in the user's own zone rather than adding 24h to a
-  // timestamp: "the same time tomorrow" is a calendar operation, and arithmetic
-  // on the instant drifts by an hour across a daylight-saving change.
-  const today = partsIn(from, zone);
-  const cursor = new Date(Date.UTC(today.year, today.month - 1, today.day));
-
-  for (let i = 0; i < 8; i += 1) {
-    const year = cursor.getUTCFullYear();
-    const month = cursor.getUTCMonth() + 1;
-    const date = cursor.getUTCDate();
-    const at = instantOf({ year, month, day: date, hour, minute }, zone);
-
-    if (at > from && (weekday < 0 || cursor.getUTCDay() === weekday)) {
-      return { cron, nextRunAt: at.toISOString() };
+  // Typed words become the canonical ones, with any starting point they need.
+  const typed = readWhen(text);
+  if (typed) {
+    if (typed.kind === 'minutes') typed.anchor = nextMinute(from);
+    if (typed.kind === 'hours') {
+      const minute = typed.minute ?? (typed.every === 1 || 24 % typed.every === 0 ? 0 : clock(zone).today(from).minute);
+      typed.minute = minute;
+      typed.anchor = nextAtMinute(from, minute, zone);
     }
-    cursor.setUTCDate(date + 1);
+    if (typed.kind === 'days') {
+      const t0 = clock(zone).today(from);
+      typed.time ||= `${String(t0.hour).padStart(2, '0')}:${String(t0.minute).padStart(2, '0')}`;
+      typed.time = normTime(typed.time);
+      if (!typed.time) throw new Error(INVALID);
+      if (typed.every === 1) Object.assign(typed, { kind: 'weekly', days: ['all'], times: [typed.time] });
+      else typed.start = firstDayAhead(from, typed.time, zone);
+    }
+    text = writeCron(typed);
   }
 
-  // Unreachable for any real weekday — eight days always contains one of each.
-  throw new Error(`Could not find a time matching "${input}" in ${zone}.`);
+  const s = readCron(text);
+  let next = null;
+
+  if (s.kind === 'minutes') {
+    if (!Number.isInteger(s.every) || s.every < LIMITS.minutes.min || s.every > LIMITS.minutes.max) {
+      throw new Error(`Every ${LIMITS.minutes.min} minutes is the shortest repeat — a shorter one cannot be kept to.`);
+    }
+    if (s.anchor) next = afterAnchor(s.anchor, s.every * 60_000, from);
+    else {
+      const slots = Array.from({ length: 1440 / s.every }, (_, i) => i * s.every);
+      next = nextSlot(from, zone, slots, () => true, 2);
+    }
+  } else if (s.kind === 'hours') {
+    if (!Number.isInteger(s.every) || s.every < LIMITS.hours.min || s.every > LIMITS.hours.max) {
+      throw new Error(`The number of hours must be a whole number from ${LIMITS.hours.min} to ${LIMITS.hours.max}.`);
+    }
+    if (s.anchor) next = afterAnchor(s.anchor, s.every * 3_600_000, from);
+    else {
+      const slots = Array.from({ length: 24 / s.every }, (_, i) => i * s.every * 60 + s.minute);
+      next = nextSlot(from, zone, slots, () => true, 2);
+    }
+  } else if (s.kind === 'days') {
+    const [sy, sm, sd] = s.start.split('-').map(Number);
+    const start = Date.UTC(sy, sm - 1, sd);
+    const dayOk = (y, mo, d) => {
+      const gap = Math.round((Date.UTC(y, mo - 1, d) - start) / 86_400_000);
+      return gap >= 0 && gap % s.every === 0;
+    };
+    // Far enough to reach a start that is still ahead, then two whole cycles.
+    const t0 = clock(zone).today(from);
+    const lead = Math.max(0, Math.round((start - Date.UTC(t0.year, t0.month - 1, t0.day)) / 86_400_000));
+    next = nextSlot(from, zone, [minuteOf(s.time)], dayOk, lead + s.every * 2 + 2);
+  } else if (s.kind === 'weekly') {
+    if (!s.days?.length || !s.times?.length) throw new Error(INVALID);
+    const wanted = new Set(s.days);
+    next = nextSlot(from, zone, s.times.map(minuteOf), (y, mo, d, dow) => wanted.has(WEEK[(dow + 6) % 7]), 8);
+  } else if (s.kind === 'monthly') {
+    if (!s.monthDays?.length || !s.times?.length) throw new Error('A monthly task needs a time as HH:MM — "monthly 1 08:00".');
+    const days = new Set(s.monthDays);
+    const lastOf = (y, mo) => new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    // Up to fourteen months ahead: the 31st skips the months that have none
+    // rather than firing on the 1st of the next.
+    next = nextSlot(from, zone, s.times.map(minuteOf), (y, mo, d) => days.has(d) || (days.has('last') && d === lastOf(y, mo)), 430);
+  } else {
+    throw new Error(INVALID);
+  }
+
+  if (!next) throw new Error(`Could not find a time matching "${input}".`);
+  // Kept in the canonical words — "9:05" as "09:05", an anchor as a proper ISO instant.
+  return { cron: once ? null : writeCron(s) || text, nextRunAt: next.toISOString() };
 }
 
 /**
