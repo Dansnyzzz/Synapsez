@@ -299,15 +299,17 @@ export async function safeFetch(input, init = {}) {
 
     const location = res.headers.get('location');
     if (!location) return res;
-    // Nothing reads a redirect's body, and leaving it unread holds the socket.
-    res.body.resume();
     const next = new URL(location, url);
 
     // Credentials must not survive a cross-origin hop, and a body must not be
-    // replayed to somewhere the caller never named.
-    if (next.origin !== url.origin && init.headers) {
-      init = { ...init, headers: stripAuth(init.headers) };
+    // replayed to somewhere the caller never named: a 307/308 would resend it
+    // verbatim, so that redirect comes back to the caller unfollowed instead.
+    if (next.origin !== url.origin) {
+      if (init.body != null && (res.status === 307 || res.status === 308)) return res;
+      if (init.headers) init = { ...init, headers: stripAuth(init.headers) };
     }
+    // Nothing reads a redirect's body, and leaving it unread holds the socket.
+    res.body.resume();
     if (res.status === 303 || ((res.status === 301 || res.status === 302) && init.method === 'POST')) {
       init = { ...init, method: 'GET', body: undefined };
     }
@@ -317,12 +319,55 @@ export async function safeFetch(input, init = {}) {
   throw new Error(`Too many redirects (more than ${MAX_REDIRECTS}).`);
 }
 
+/**
+ * Every header that looks like a credential, not only the three standard ones.
+ *
+ * `http_request` lets the model set any header, and APIs put keys in
+ * `X-API-Key`, `X-Auth-Token`, `Api-Key` and the like; those used to follow a
+ * redirect to whatever origin it named.
+ */
+const CREDENTIAL_HEADER = /^(authorization|proxy-authorization|cookie)$|api[-_]?key|token|secret|session|signature|^x-auth/i;
+
 function stripAuth(headers) {
   const out = { ...(headers instanceof Headers ? Object.fromEntries(headers) : headers) };
   for (const key of Object.keys(out)) {
-    if (/^(authorization|cookie|proxy-authorization)$/i.test(key)) delete out[key];
+    if (CREDENTIAL_HEADER.test(key)) delete out[key];
   }
   return out;
 }
 
-export const __testing = { isPrivateAddress, assertPublic };
+/**
+ * Read at most `cap` bytes of a response, then let the connection go.
+ *
+ * `text()` buffers whatever arrives until the timeout, and a URL a page steered
+ * the model to can stream without end — one such read takes the instance, and
+ * every other account's turn on it, down with it.
+ *
+ * Bytes, joined at the end: decoding per chunk splits a UTF-8 character across
+ * two chunks, which is how Vietnamese text acquires replacement characters.
+ */
+export async function readCapped(res, cap) {
+  if (!res.body) return { buffer: Buffer.from(await res.text(), 'utf8'), truncated: false };
+
+  const chunks = [];
+  let read = 0;
+  let truncated = false;
+  try {
+    for await (const chunk of res.body) {
+      if (read + chunk.length > cap) {
+        chunks.push(chunk.subarray(0, cap - read));
+        truncated = true;
+        break;
+      }
+      chunks.push(chunk);
+      read += chunk.length;
+    }
+  } finally {
+    // Let go of the connection rather than leaving it draining in the
+    // background after we have stopped caring about it.
+    res.body.destroy?.();
+  }
+  return { buffer: Buffer.concat(chunks), truncated };
+}
+
+export const __testing = { isPrivateAddress, assertPublic, stripAuth };

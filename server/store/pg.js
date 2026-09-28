@@ -2919,6 +2919,15 @@ export function createPgStore(connectionString) {
      */
     async pruneMissingModels(provider, liveIds) {
       if (!provider || !Array.isArray(liveIds) || !liveIds.length) return 0;
+      // A partial answer — a truncated page, a filtered listing — is not a mass
+      // withdrawal. Removing more than a quarter of a provider's library at once
+      // is refused, since the rows are shared by every account on the deployment.
+      const [seen] = await q(
+        `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE NOT (id = ANY($2::text[])))::int AS missing
+           FROM shared_models WHERE provider = $1`,
+        [provider, liveIds],
+      );
+      if (seen && seen.missing > 20 && seen.missing > seen.total * 0.25) return 0;
       const rows = await q(
         `DELETE FROM shared_models
           WHERE provider = $1 AND NOT (id = ANY($2::text[]))

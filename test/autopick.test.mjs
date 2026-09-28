@@ -175,6 +175,12 @@ section('a refresh forgets the models its source no longer lists');
     'so a source that is down cannot empty the library',
     (await store.listSharedModels({ limit: 500 })).some((m) => m.id === 'openrouter/lab/still-here'),
   );
+
+  // A partial answer that still lists something is the harder case.
+  await store.upsertModels(Array.from({ length: 60 }, (_, i) => model({ id: `openrouter/lab/m${i}`, family: 'lab' })));
+  const partial = await store.pruneMissingModels('openrouter', ['openrouter/lab/m0']);
+  check('an answer missing most of the library prunes nothing', partial === 0, `${partial}`);
+  check('  and the library is intact', (await store.listSharedModels({ limit: 500 })).filter((m) => m.id.startsWith('openrouter/lab/m')).length === 60);
 }
 
 section('a model leaves the library on the day its provider ends it');

@@ -31,6 +31,12 @@ export const vi = {
   'supadata.ai → sign up → Dashboard → API key. The free plan is 100 transcripts a month and takes no card. Only needed to read videos; everything else works without it.':
     'supadata.ai → đăng ký → Dashboard → API key. Gói miễn phí được 100 phụ đề mỗi tháng và không cần thẻ. Chỉ cần cho việc đọc video; mọi thứ khác vẫn chạy mà không có nó.',
   'Supadata rejected that key (HTTP {0}).': 'Supadata từ chối key đó (HTTP {0}).',
+
+  /* ── dữ liệu rời khỏi tài khoản ── */
+  'The address carries a long block of data to {0}. Check it is not your information leaving — a page or email can ask for exactly this.':
+    'Địa chỉ này mang theo một khối dữ liệu dài gửi tới {0}. Hãy kiểm tra đó không phải thông tin của bạn đang bị gửi ra ngoài — một trang web hay email có thể yêu cầu đúng việc này.',
+  '"{0}" is not an email id — use the id from a Gmail search.':
+    '"{0}" không phải mã email — hãy dùng mã lấy từ một lần tìm kiếm Gmail.',
   'Supadata could not read that video: {0}': 'Supadata không đọc được video đó: {0}',
   'Supadata queued video {0} as a background job rather than answering, which this tool cannot wait for. Try a shorter video.':
     'Supadata xếp video {0} vào hàng đợi xử lý nền thay vì trả lời ngay, và công cụ này không chờ được. Hãy thử video ngắn hơn.',

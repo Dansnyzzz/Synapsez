@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
-import { safeFetch } from '../util/safeFetch.js';
+import { safeFetch, readCapped } from '../util/safeFetch.js';
 import { validZone } from '../util/zone.js';
 import { getStore } from '../store/index.js';
 import { saveGenerated } from '../attachments.js';
@@ -428,7 +428,7 @@ async function readFeedTool({ url, limit }) {
   }
   const res = await safeFetch(parsed, { headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml' }, signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`${parsed.host} returned HTTP ${res.status}.`);
-  const xml = (await res.text()).slice(0, 2_000_000);
+  const xml = (await readCapped(res, 2_000_000)).buffer.toString('utf8');
   const feed = parseFeed(xml);
   if (!feed.items.length) throw new Error('That address is not an RSS or Atom feed (no items found). Try web_fetch for an ordinary page.');
   const n = Math.min(Math.max(Number(limit) || 10, 1), 30);
@@ -718,7 +718,12 @@ async function httpRequestTool({ method = 'GET', url, headers, body, json }) {
   // tell it where to go. Private and metadata addresses are refused.
   const res = await safeFetch(parsed, { method: verb, headers: sendHeaders, body: payload, signal: AbortSignal.timeout(30_000) });
   const type = res.headers.get('content-type') || '';
-  let text = verb === 'HEAD' ? '' : await res.text();
+  // Bytes enough for the 40,000 characters shown, and not one byte more held.
+  let text = verb === 'HEAD' ? '' : (await readCapped(res, MAX_RESPONSE * 4)).buffer.toString('utf8');
+  // A redirect safeFetch would not follow — a body is never resent to another
+  // origin — comes back as it is, with where it pointed.
+  const moved = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+  if (moved) text = `Redirected to ${moved} — not followed, because the request body would have gone to a different site. Repeat the call there if that is right.\n${text}`;
   if (/json/i.test(type)) {
     try {
       text = JSON.stringify(JSON.parse(text), null, 2);

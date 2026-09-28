@@ -130,13 +130,30 @@ const routes = {
   },
 };
 
+// What reached the other origin after a redirect: its headers and its body.
+const arrived = [];
 const server = http.createServer((req, res) => {
-  const route = routes[req.url.split('?')[0]];
+  const path = req.url.split('?')[0];
+  // 127.0.0.1 and localhost are different origins on the same server.
+  const other = `http://localhost:${server.address().port}`;
+  if (path === '/moved-get') return res.writeHead(302, { Location: `${other}/landing` }).end();
+  if (path === '/moved-post') return res.writeHead(307, { Location: `${other}/landing` }).end();
+  if (path === '/landing') {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      arrived.push({ headers: req.headers, body });
+      res.writeHead(200, { 'Content-Type': 'text/plain' }).end('landed');
+    });
+    return;
+  }
+  const route = routes[path];
   if (!route) return res.writeHead(404).end();
   route(res);
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
+const { LIBRARY_IMPLEMENTATIONS } = await import('../server/tools/library.js');
 
 const failure = async (promise) => promise.then(() => null, (err) => err.message);
 
@@ -183,6 +200,25 @@ try {
     const out = await webFetch({ url: `${base}/page.html` });
     check('the markup is stripped', !out.includes('<h1>') && out.includes('Tiêu đề'), out.slice(0, 200));
     check('and the stylesheet is not treated as prose', !out.includes('b{}'), out.slice(0, 200));
+  }
+
+  section('http_request: a key and a body stay with the site they were meant for');
+  {
+    const call = LIBRARY_IMPLEMENTATIONS.http_request;
+    arrived.length = 0;
+    const got = await call({ method: 'GET', url: `${base}/moved-get`, headers: { 'X-API-Key': 'k-123', Authorization: 'Bearer t', 'X-Trace': 'keep' } });
+    const hop = arrived[0]?.headers || {};
+    check('a GET follows the redirect', /landed/.test(got), got.slice(0, 120));
+    check('  without the API key', !hop['x-api-key'] && !hop.authorization, JSON.stringify(hop));
+    check('  and keeps what is not a credential', hop['x-trace'] === 'keep');
+
+    arrived.length = 0;
+    const post = await call({ method: 'POST', url: `${base}/moved-post`, json: { secret: 'payload' } });
+    check('a POST body is not resent to another origin', arrived.length === 0, JSON.stringify(arrived));
+    check('  and the model is told where it pointed', /Redirected to http:\/\/localhost:\d+\/landing/.test(post), post.slice(0, 200));
+
+    const endless = await call({ method: 'GET', url: `${base}/endless.txt` });
+    check('an endless body is read to a cap, not to the end', endless.length < 50_000, String(endless.length));
   }
 
   section('a size nothing could hold is still refused before it is read');

@@ -34,6 +34,13 @@ const need = (value, what) => {
   if (value === undefined || value === null || value === '') throw new Error(`Give ${what}.`);
   return value;
 };
+// A Gmail id is hex. Anything else in the path — `../settings/…` — would walk
+// to another endpoint of the same API with the same grant.
+const mailId = (value, what) => {
+  const id = String(need(value, what));
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`"${id}" is not an email id — use the id from a Gmail search.`);
+  return id;
+};
 const list = (value) => (Array.isArray(value) ? value : String(value || '').split(',')).map((s) => String(s).trim()).filter(Boolean);
 
 /* ── Gmail ─────────────────────────────────────────────────────────── */
@@ -140,7 +147,7 @@ async function gmailTool(input, { userId }) {
     return untrusted('Gmail', `${rows.length} email(s):\n${text}`);
   }
   if (action === 'read') {
-    const m = await googleApi(userId, `${GMAIL}/messages/${need(input.id, 'the email id from a search')}`, { query: { format: 'full' } });
+    const m = await googleApi(userId, `${GMAIL}/messages/${mailId(input.id, 'the email id from a search')}`, { query: { format: 'full' } });
     const files = attachmentsOf(m.payload);
     return untrusted(
       'Gmail',
@@ -159,7 +166,7 @@ async function gmailTool(input, { userId }) {
     let references;
     let subject = input.subject;
     if (input.reply_to_id) {
-      const original = await googleApi(userId, `${GMAIL}/messages/${input.reply_to_id}`, {
+      const original = await googleApi(userId, `${GMAIL}/messages/${mailId(input.reply_to_id, 'the id of the email to reply to')}`, {
         query: { format: 'metadata', metadataHeaders: ['Message-ID', 'References', 'Subject'] },
       });
       threadId = original.threadId;
@@ -185,14 +192,14 @@ async function gmailTool(input, { userId }) {
     };
     const add = list(input.add_labels).map(byName);
     const remove = list(input.remove_labels).map(byName);
-    await googleApi(userId, `${GMAIL}/messages/${need(input.id, 'the email id')}/modify`, {
+    await googleApi(userId, `${GMAIL}/messages/${mailId(input.id, 'the email id')}/modify`, {
       method: 'POST',
       json: { addLabelIds: add, removeLabelIds: remove },
     });
     return `Updated email ${input.id}: added ${add.join(', ') || 'nothing'}, removed ${remove.join(', ') || 'nothing'}.`;
   }
   if (action === 'trash') {
-    await googleApi(userId, `${GMAIL}/messages/${need(input.id, 'the email id')}/trash`, { method: 'POST' });
+    await googleApi(userId, `${GMAIL}/messages/${mailId(input.id, 'the email id')}/trash`, { method: 'POST' });
     return `Moved email ${input.id} to the Trash (recoverable for 30 days).`;
   }
   if (action === 'labels') {
@@ -241,7 +248,8 @@ async function calendarTool(input, { userId }) {
   }
   if (action === 'calendars') {
     const found = await googleApi(userId, `${CAL}/users/me/calendarList`);
-    return (found.items || []).map((c) => `- ${c.summary}${c.primary ? ' (primary)' : ''} — id ${c.id}, ${c.timeZone}`).join('\n');
+    // Calendars shared with the account are named by whoever shared them.
+    return untrusted('Google Calendar', (found.items || []).map((c) => `- ${c.summary}${c.primary ? ' (primary)' : ''} — id ${c.id}, ${c.timeZone}`).join('\n'));
   }
   if (action === 'create' || action === 'update') {
     const body = {};
@@ -369,7 +377,8 @@ async function driveTool(input, { userId }) {
     });
     const files = found.files || [];
     if (!files.length) return 'No files found.';
-    return files.map((f) => `- ${f.name} · ${f.mimeType.replace('application/vnd.google-apps.', 'google ')} · ${f.modifiedTime} · id ${f.id}\n  ${f.webViewLink}`).join('\n');
+    // A file shared with the account is named by whoever shared it.
+    return untrusted('Google Drive', clip(files.map((f) => `- ${f.name} · ${f.mimeType.replace('application/vnd.google-apps.', 'google ')} · ${f.modifiedTime} · id ${f.id}\n  ${f.webViewLink}`).join('\n')));
   }
   if (action === 'read') {
     const { meta, text } = await driveText(userId, need(input.file_id, 'the file id'));
@@ -493,9 +502,9 @@ async function sheetsTool(input, { userId }) {
   const id = () => encodeURIComponent(need(input.spreadsheet_id, 'the spreadsheet id'));
   if (action === 'info') {
     const s = await googleApi(userId, `${SHEETS}/${id()}`, { query: { fields: 'properties.title,spreadsheetUrl,sheets.properties' } });
-    return `${s.properties.title} — ${s.spreadsheetUrl}\n${(s.sheets || [])
+    return untrusted('Google Sheets', `${s.properties.title} — ${s.spreadsheetUrl}\n${(s.sheets || [])
       .map((sh) => `- ${sh.properties.title}: ${sh.properties.gridProperties?.rowCount} rows × ${sh.properties.gridProperties?.columnCount} columns`)
-      .join('\n')}`;
+      .join('\n')}`);
   }
   if (action === 'read') {
     const range = input.range || 'A1:Z1000';
@@ -582,7 +591,7 @@ async function formsTool(input, { userId }) {
   if (action === 'get') {
     const form = await googleApi(userId, `${FORMS}/${id}`);
     const items = (form.items || []).map((it, i) => `${i + 1}. ${it.title}${it.questionItem?.question?.required ? ' *' : ''}`).join('\n');
-    return `${form.info?.title}\n${form.responderUri}\n${items}`;
+    return untrusted('Google Forms', clip(`${form.info?.title}\n${form.responderUri}\n${items}`));
   }
   if (action === 'responses') {
     const [form, found] = await Promise.all([googleApi(userId, `${FORMS}/${id}`), googleApi(userId, `${FORMS}/${id}/responses`)]);
@@ -626,7 +635,7 @@ async function tasksTool(input, { userId }) {
     });
     const items = found.items || [];
     if (!items.length) return 'No tasks.';
-    return items.map((x) => `- [${x.status === 'completed' ? 'x' : ' '}] ${x.title}${x.due ? ` · due ${x.due.slice(0, 10)}` : ''}${x.notes ? ` — ${x.notes}` : ''} (id ${x.id})`).join('\n');
+    return untrusted('Google Tasks', clip(items.map((x) => `- [${x.status === 'completed' ? 'x' : ' '}] ${x.title}${x.due ? ` · due ${x.due.slice(0, 10)}` : ''}${x.notes ? ` — ${x.notes}` : ''} (id ${x.id})`).join('\n')));
   }
   if (action === 'add') {
     const due = input.due ? `${String(input.due).slice(0, 10)}T00:00:00.000Z` : undefined;

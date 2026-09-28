@@ -4699,7 +4699,16 @@ function afterGoogleSignIn() {
   const outcome = takeUrlToken('google');
   if (!outcome) return;
   const products = takeUrlToken('products');
-  const message = takeUrlToken('message');
+  // Set by the callback itself; a `message` in the URL is ignored, since anyone
+  // can write one into a link.
+  const cookie = /(?:^|;\s*)g_err=([^;]*)/.exec(document.cookie)?.[1];
+  document.cookie = 'g_err=; Max-Age=0; Path=/';
+  let message = '';
+  try {
+    message = cookie ? decodeURIComponent(cookie) : '';
+  } catch {
+    /* a mangled cookie falls back to the generic sentence */
+  }
   if (outcome === 'connected') toast(t('google.connected', { n: String(products ? products.split(',').length : 0) }), 'ok');
   else if (outcome === 'denied') toast(t('google.denied'), 'error');
   else toast(message || t('google.failed'), 'error');

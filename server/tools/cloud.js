@@ -17,7 +17,7 @@ import { CONNECTOR_CALLS } from '../connectors.js';
 import { getPrefs, getApiKey } from '../settings.js';
 import { sendEmail, emailBackend, senderName } from '../email.js';
 import { composeMessage, KIND_NAMES } from '../mailTemplate.js';
-import { safeFetch } from '../util/safeFetch.js';
+import { safeFetch, readCapped } from '../util/safeFetch.js';
 import { searchDocs, listSources, forgetSource } from '../rag.js';
 import { createDocument, extensionOf, readOffice } from '../office/index.js';
 import { extractPdfText } from '../pdf.js';
@@ -168,45 +168,9 @@ function sniff(buffer) {
  */
 const looksBinary = (buffer) => buffer.subarray(0, 8192).includes(0);
 
-/**
- * Read a response into memory, and stop reading at the cap.
- *
- * The `content-length` check at the call site only catches a server that *says*
- * how much it is about to send. A chunked response declares nothing, and
- * `res.text()` will happily read gigabytes before `max_chars` ever gets a chance
- * to clip it — so the limit that exists to protect the process was skipped by
- * precisely the responses most likely to need it. A model can be talked into
- * fetching any URL by the page it is reading, which makes this reachable rather
- * than theoretical.
- *
- * Bytes rather than a decoded string, because the caller does not yet know
- * whether it is holding prose or a ZIP; and `Buffer.concat` at the end rather
- * than decoding per chunk, because a UTF-8 character split across two chunks is
- * how Vietnamese text acquires replacement characters.
- */
-async function readCapped(res, cap) {
-  if (!res.body) return { buffer: Buffer.from(await res.text(), 'utf8'), truncated: false };
-
-  const chunks = [];
-  let read = 0;
-  let truncated = false;
-  try {
-    for await (const chunk of res.body) {
-      if (read + chunk.length > cap) {
-        chunks.push(chunk.subarray(0, cap - read));
-        truncated = true;
-        break;
-      }
-      chunks.push(chunk);
-      read += chunk.length;
-    }
-  } finally {
-    // Let go of the connection rather than leaving it draining in the
-    // background after we have stopped caring about it.
-    res.body.destroy?.();
-  }
-  return { buffer: Buffer.concat(chunks), truncated };
-}
+// `readCapped` lives beside safeFetch, so every tool that fetches can bound its
+// read: a chunked response declares no length, and `res.text()` reads gigabytes
+// before any later clip gets a chance.
 
 /**
  * Turn a fetched response into text a model can read.

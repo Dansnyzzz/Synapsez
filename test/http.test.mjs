@@ -903,6 +903,19 @@ section('the default model is one the account can run');
   );
 }
 
+section('a failed Google sign-in carries its reason out of the URL');
+{
+  const res = await fetch(`${base}/api/connectors/google/callback?state=forged&code=x`, {
+    headers: { Cookie: alice.value },
+    redirect: 'manual',
+  });
+  const where = res.headers.get('location') || '';
+  check('it goes back to the app as an error', res.status === 302 && /google=error/.test(where), `${res.status} ${where}`);
+  // A reason in the URL is text anyone can put in a link.
+  check('  with no message in the address', !/message=/.test(where), where);
+  check('  and the reason in a cookie only this origin sets', /g_err=[^;]+/.test(res.headers.get('set-cookie') || ''), res.headers.get('set-cookie'));
+}
+
 // ── signing out ─────────────────────────────────────────────────────
 section('signing out');
 {

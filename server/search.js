@@ -295,6 +295,15 @@ async function searchGoogle(query, count, who = {}) {
   }
 
   const resolve = async (uri) => {
+    // Only Google's own redirector is asked where it points. Anything else is
+    // returned as given rather than fetched from the server unchecked.
+    let host = '';
+    try {
+      host = new URL(uri).hostname;
+    } catch {
+      return uri;
+    }
+    if (host !== 'vertexaisearch.cloud.google.com') return uri;
     try {
       const hop = await fetch(uri, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(5_000) });
       return hop.headers.get('location') || uri;

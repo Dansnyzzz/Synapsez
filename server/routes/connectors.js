@@ -77,7 +77,12 @@ export function mountConnectorRoutes(api, { wrap }) {
           const { products } = await finishAuth({ userId: req.user.id, code: req.query.code, origin: publicUrlFor(req) });
           back({ google: 'connected', products: products.join(',') });
         } catch (err) {
-          back({ google: 'error', message: translateMessage(String(err.message), languageOf(req)).slice(0, 300) });
+          // The reason travels in a cookie only this origin can set, not in the
+          // URL: `/?google=error&message=…` was a link anyone could send that put
+          // their own words in this app's error toast.
+          const reason = encodeURIComponent(translateMessage(String(err.message), languageOf(req)).slice(0, 300));
+          res.append('Set-Cookie', `g_err=${reason}; Path=/; Max-Age=60; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+          back({ google: 'error' });
         }
       }),
     );
