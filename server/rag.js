@@ -467,7 +467,9 @@ const QUERY_CACHE_MAX = 64;
 const QUERY_CACHE_TTL_MS = 5 * 60_000;
 
 async function queryVector(userId, text, embedder, fetchVector = null) {
-  const key = `${embedder.provider}:${embedder.model}:${text}`;
+  // Per account: a vector computed on one account's key is not handed to
+  // another, and one account's queries leave no trace in another's lookups.
+  const key = `${userId}:${embedder.provider}:${embedder.model}:${text}`;
   const hit = QUERY_VECTORS.get(key);
   if (hit && Date.now() - hit.at < QUERY_CACHE_TTL_MS) {
     QUERY_VECTORS.delete(key);

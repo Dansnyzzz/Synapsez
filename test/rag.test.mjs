@@ -497,10 +497,15 @@ section('a query is embedded once, not once per search');
   check('another model is a different vector, not a cache hit', calls === 3, `${calls} calls`);
 
   // Stale entries must not be served, or a re-index would be invisible.
-  const key = 'openai:text-embedding-3-small:the deposit';
+  const key = 'u1:openai:text-embedding-3-small:the deposit';
   QUERY_VECTORS.set(key, { vector: Float32Array.from([9, 9]), at: Date.now() - QUERY_CACHE_TTL_MS - 1 });
   await queryVector('u1', 'the deposit', openai, stub);
   check('an entry past its TTL is re-embedded', calls === 4, `${calls} calls`);
+
+  // Per account: another account asking the same thing is not served a vector
+  // computed on someone else's key.
+  await queryVector('u2', 'the deposit', openai, stub);
+  check('the cache is not shared between accounts', calls === 5, `${calls} calls`);
 
   // Bounded, or a long-lived process holds every question ever asked.
   for (let i = 0; i < QUERY_CACHE_MAX + 40; i += 1) {
