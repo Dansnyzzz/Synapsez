@@ -48,6 +48,10 @@ export const BROWSER_PORT = 3000;
  * else; the per-account budget keeps that fair, and the app-wide one keeps a
  * busy day from exhausting the month. Both are plain counters in the database
  * (the same table as sign-in throttling), so they hold across instances.
+ *
+ * The defaults are sized to Hobby: 5 CPU-hours is ~18,000 CPU-seconds a
+ * month, ~600 a day, and a browser action costs Chromium roughly one to three
+ * — so ~400 actions a day keeps the month from running out in its first week.
  * Raise them with CLOUD_ACTIONS_PER_DAY / CLOUD_ACTIONS_TOTAL_PER_DAY on a
  * paid plan.
  */
@@ -55,8 +59,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 class LimitError extends Error {}
 export function cloudBudgets(env = process.env) {
   return {
-    perAccount: Math.max(1, Number(env.CLOUD_ACTIONS_PER_DAY) || 300),
-    total: Math.max(1, Number(env.CLOUD_ACTIONS_TOTAL_PER_DAY) || 4000),
+    perAccount: Math.max(1, Number(env.CLOUD_ACTIONS_PER_DAY) || 60),
+    total: Math.max(1, Number(env.CLOUD_ACTIONS_TOTAL_PER_DAY) || 400),
   };
 }
 
