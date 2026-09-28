@@ -182,5 +182,32 @@ section('the approval prompt says who it goes to');
   check('and an empty one is the account itself', /your own account address/.test(riskReason('send_email', {}) || ''), riskReason('send_email', {}));
 }
 
+section('a deployment with no mail provider logs no mail');
+{
+  // A reset link in a host's logs is an account takeover for whoever reads them.
+  const secret = 'https://app.example/reset?token=SECRET-TOKEN-123';
+  const printed = [];
+  const saved = { log: console.log, warn: console.warn, error: console.error, info: console.info, out: process.stdout.write };
+  const keep = (...a) => { printed.push(a.map(String).join(' ')); };
+  const mailbox = { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD };
+  delete process.env.GMAIL_USER;
+  delete process.env.GMAIL_APP_PASSWORD;
+  process.env.VERCEL = '1';
+  Object.assign(console, { log: keep, warn: keep, error: keep, info: keep });
+  process.stdout.write = (chunk) => { printed.push(String(chunk)); return true; };
+  try {
+    await email.sendEmail({ to: 'lan@example.com', subject: 'Reset', text: `Open ${secret}` });
+  } finally {
+    Object.assign(console, { log: saved.log, warn: saved.warn, error: saved.error, info: saved.info });
+    process.stdout.write = saved.out;
+    delete process.env.VERCEL;
+    if (mailbox.user) Object.assign(process.env, { GMAIL_USER: mailbox.user, GMAIL_APP_PASSWORD: mailbox.pass });
+  }
+  const all = printed.join('\n');
+  check('the body is not logged', !all.includes('SECRET-TOKEN-123'));
+  check('  nor the address', !all.includes('lan@example.com'));
+  check('  but the failure to send is', /no mail provider/.test(all), all.slice(0, 120));
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll email checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

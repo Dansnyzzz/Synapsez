@@ -1564,12 +1564,8 @@ export const TOOLS = [
       properties: {
         key: { type: 'string', description: 'The note to add to, e.g. "project-decisions".' },
         content: { type: 'string', description: 'What to add. It goes after a blank line.' },
-        scope: {
-          type: 'string',
-          enum: ['project', 'account'],
-          description:
-            'Where the note belongs. Omit it inside a project and the note is that project’s, which is nearly always right — its conventions, its people, its house style. Pass "account" only for something true of the user everywhere, such as the language they want answers in.',
-        },
+        // Explained once, on memory_write — both are sent on every step.
+        scope: { type: 'string', enum: ['project', 'account'], description: 'As for memory_write.' },
       },
       required: ['key', 'content'],
     },
@@ -2817,8 +2813,58 @@ function estimateTokens(tools) {
  */
 function firstSentence(text) {
   const clean = String(text || '').replace(/\s+/g, ' ').trim();
-  const match = clean.match(/^.*?[.!?](?=\s|$)/);
+  // Not at the stop inside "e.g." or "i.e.": "Press a key or a combination, e.g."
+  // was the whole of desktop_key's line, the example it introduced cut away.
+  const match = clean.match(/^.*?(?<!\b(?:e\.g|i\.e|vs))[.!?](?=\s|$)/);
   return match ? match[0] : clean;
+}
+
+/**
+ * Families listed on one line in the `load_tools` index.
+ *
+ * The index is sent on every step. Ten `desktop_*` lines each saying one verb of
+ * the same job cost more than one line naming them all, and a model that needs
+ * one of them needs the rest, so it should load them together anyway.
+ */
+const INDEX_GROUPS = [
+  {
+    names: ['desktop_windows', 'desktop_launch', 'desktop_look', 'desktop_focus', 'desktop_click',
+      'desktop_type', 'desktop_key', 'desktop_scroll', 'desktop_wait', 'desktop_close'],
+    text: "Drive real applications on the user's desktop: list, launch, read and focus windows; click, type, press keys, scroll, wait, close. Load them together.",
+  },
+  {
+    names: ['create_file', 'update_file', 'read_generated_file', 'file_versions'],
+    text: 'Documents the user previews and downloads in the chat (Word, Excel, PowerPoint, Markdown, text, CSV, HTML, JSON): make one, change it, read it back, list earlier drafts.',
+  },
+  {
+    names: ['schedule_task', 'list_tasks', 'cancel_task'],
+    text: 'Work that runs later or on a repeat without anyone watching: set it up, list it, delete it.',
+  },
+  {
+    names: ['index_folder', 'list_indexed', 'forget_docs'],
+    text: 'The index `search_docs` reads: add a folder of documents, list what is indexed, remove a folder.',
+  },
+];
+
+/** One line per deferred tool, or per family when two or more of it are held. */
+function toolIndex(deferred) {
+  const held = new Set(deferred.map((t) => t.name));
+  const grouped = new Map();
+  for (const group of INDEX_GROUPS) {
+    const present = group.names.filter((n) => held.has(n));
+    if (present.length > 1) for (const n of present) grouped.set(n, { group, present });
+  }
+  const lines = [];
+  const done = new Set();
+  for (const t of deferred) {
+    const g = grouped.get(t.name);
+    if (!g) lines.push(`- ${t.name}: ${firstSentence(t.description)}`);
+    else if (!done.has(g.group)) {
+      done.add(g.group);
+      lines.push(`- ${g.present.join(', ')}: ${g.group.text}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -2914,9 +2960,7 @@ const DEFER_ABOVE_SHARE = 0.05;
  * declaration for why it is `hidden` there.
  */
 function loadToolsTool(deferred) {
-  const index = deferred
-    .map((t) => `- ${t.name}: ${firstSentence(t.description)}`)
-    .join('\n');
+  const index = toolIndex(deferred);
   return {
     ...TOOLS_BY_NAME.load_tools,
     hidden: false,

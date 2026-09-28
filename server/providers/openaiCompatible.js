@@ -193,10 +193,35 @@ function parseTextCalls(text, tools) {
   return calls;
 }
 
+/**
+ * Ask OpenRouter to cache the prefix, for the two families that only cache when asked.
+ *
+ * OpenAI, DeepSeek, Grok and Gemini 2.5+ cache on their own. Claude does not:
+ * without a marker every step of a turn re-bought the tool catalogue and the
+ * system prompt at full price — the same prefix the direct Anthropic adapter
+ * caches at 0.1×. For Claude a root `cache_control` is OpenRouter's automatic
+ * mode, which moves the breakpoint forward as the conversation grows; Gemini
+ * takes it only on a content block, so it goes on the system prompt.
+ * https://openrouter.ai/docs/features/prompt-caching
+ */
+export function markPromptCache(params, model) {
+  const id = String(model || '').replace(/^~/, '');
+  if (id.startsWith('anthropic/')) {
+    params.cache_control = { type: 'ephemeral' };
+  } else if (id.startsWith('google/gemini')) {
+    const sys = params.messages[0];
+    if (sys?.role === 'system' && typeof sys.content === 'string') {
+      sys.content = [{ type: 'text', text: sys.content, cache_control: { type: 'ephemeral' } }];
+    }
+  }
+  return params;
+}
+
 export async function* streamOpenAICompatible({
   apiKey,
   baseURL,
   headers,
+  markCache = false,
   model,
   entry,
   system,
@@ -233,6 +258,7 @@ export async function* streamOpenAICompatible({
   if (REASONING.test(model) || entry?.tags?.includes('reasoning')) {
     params.reasoning_effort = effort === 'xhigh' || effort === 'max' ? 'high' : effort;
   }
+  if (markCache) markPromptCache(params, model);
 
   const stream = await client.chat.completions.create(params, { signal });
 

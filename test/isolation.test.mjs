@@ -321,6 +321,21 @@ section('SSRF guards');
   check('IPv6 link-local is refused', priv('fe80::1'));
   check('IPv6 unique-local is refused', priv('fd00::1'));
   check('an IPv4 address in IPv6 clothing is still refused', priv('::ffff:169.254.169.254'));
+  // The URL parser writes the mapped form in hex, and that is what reaches the check.
+  const parsed = new URL('http://[::ffff:169.254.169.254]/').hostname.replace(/^\[|\]$/g, '');
+  check('  and so is the hex spelling the URL parser produces', priv(parsed), parsed);
+  check('  and mapped loopback', priv('::ffff:7f00:1'));
+  check('NAT64 of a private address is refused', priv('64:ff9b::a9fe:a9fe'));
+  check('6to4 of a private address is refused', priv('2002:a9fe:a9fe::1'));
+  check('IPv4-compatible IPv6 is refused', priv('::a9fe:a9fe'));
+  check('a link-local address with a zone is refused', priv('fe80::1%eth0'));
+  check('public IPv6 is allowed', !priv('2001:4860:4860::8888'));
+  check('  and a mapped public IPv4', !priv('::ffff:808:808'));
+  let refusedMapped = '';
+  await fetchGuard.assertPublic(new URL('http://[::ffff:169.254.169.254]/latest/meta-data/')).catch((e) => {
+    refusedMapped = e.message;
+  });
+  check('a mapped metadata URL is refused before any connection', /private address/.test(refusedMapped), refusedMapped);
 
   check('a real public address is allowed', !priv('93.184.216.34'));
   check('another one is allowed', !priv('8.8.8.8'));

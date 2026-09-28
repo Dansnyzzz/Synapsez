@@ -20,6 +20,22 @@ import https from 'node:https';
 
 const MAX_REDIRECTS = 5;
 
+/** An IPv6 address (already validated by `net.isIPv6`) as its eight 16-bit words. */
+function ipv6Words(address) {
+  let text = address.toLowerCase();
+  // A trailing dotted quad is the last two words written in decimal.
+  const quad = text.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (quad) {
+    const [a, b, c, d] = quad.slice(1).map(Number);
+    text = `${text.slice(0, quad.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head, tail] = text.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail === undefined ? [] : tail ? tail.split(':') : [];
+  const fill = tail === undefined ? 0 : 8 - left.length - right.length;
+  return [...left, ...Array(fill).fill('0'), ...right].map((h) => parseInt(h, 16));
+}
+
 /** Address ranges that are not the public internet. */
 export function isPrivateAddress(address) {
   if (net.isIPv4(address)) {
@@ -36,15 +52,33 @@ export function isPrivateAddress(address) {
     return false;
   }
 
-  if (net.isIPv6(address)) {
-    const lower = address.toLowerCase().replace(/^\[|\]$/g, '');
-    if (lower === '::' || lower === '::1') return true; // unspecified, loopback
-    if (lower.startsWith('fe80')) return true; // link-local
-    if (/^f[cd]/.test(lower)) return true; // unique local
-    if (lower.startsWith('ff')) return true; // multicast
-    // ::ffff:10.0.0.1 — an IPv4 address wearing an IPv6 coat.
-    const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPrivateAddress(mapped[1]);
+  const bare = String(address).replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  if (net.isIPv6(bare)) {
+    /*
+     * Judged on the eight numbers, never on the spelling.
+     *
+     * The URL parser rewrites `[::ffff:169.254.169.254]` as `[::ffff:a9fe:a9fe]`,
+     * so a check that matched the dotted form let every IPv4-mapped address
+     * through — cloud metadata and localhost included. The same address has many
+     * spellings; it has one value.
+     */
+    const w = ipv6Words(bare);
+    const v4 = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+    const zeroTo = (n) => w.slice(0, n).every((x) => x === 0);
+    if (zeroTo(7) && w[7] <= 1) return true; // unspecified, loopback
+    if (zeroTo(5) && w[5] === 0xffff) return isPrivateAddress(v4(w[6], w[7])); // IPv4-mapped
+    if (zeroTo(6)) return true; // IPv4-compatible, deprecated and never public
+    if (w[0] === 0x64 && w[1] === 0xff9b) {
+      // NAT64: the well-known prefix carries a real IPv4 address; the local-use one is private.
+      return w.slice(2, 6).every((x) => x === 0) ? isPrivateAddress(v4(w[6], w[7])) : true;
+    }
+    if (w[0] === 0x2002) return isPrivateAddress(v4(w[1], w[2])); // 6to4
+    if (w[0] === 0x2001 && w[1] === 0) return true; // Teredo — the address inside is obscured
+    if (w[0] === 0x2001 && w[1] === 0xdb8) return true; // documentation
+    if (w[0] === 0x100 && zeroTo(4)) return true; // discard-only
+    if ((w[0] & 0xffc0) === 0xfe80 || (w[0] & 0xffc0) === 0xfec0) return true; // link- and site-local
+    if ((w[0] & 0xfe00) === 0xfc00) return true; // unique local
+    if ((w[0] & 0xff00) === 0xff00) return true; // multicast
     return false;
   }
 

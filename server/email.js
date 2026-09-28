@@ -213,6 +213,11 @@ export async function sendEmail({ to, subject, html, text, replyTo }) {
         rejected: (info?.rejected || []).map(String),
         response: info?.response || '',
       };
+    } else if (process.env.VERCEL) {
+      // Deployed with no provider. The body can be a working password-reset
+      // link, and a host's logs are read by more people, and kept longer, than
+      // a terminal — so only the fact is logged, never the address or the text.
+      log.warn('email not sent: no mail provider is configured on this deployment', { backend });
     } else {
       console.log(`\n──────── email (no provider configured) ────────`);
       console.log(`  to:      ${asList(to).join(', ')}`);

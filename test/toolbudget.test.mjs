@@ -174,6 +174,39 @@ section('tools a turn probably will not use are deferred');
   check('a sub-agent is exempt', !sub.some((t) => t.name === 'load_tools'));
 }
 
+section('The load_tools index');
+{
+  const { firstSentence } = __testing;
+  check('a first sentence runs past "e.g."', firstSentence('Press a key, e.g. ctrl+s. More.') === 'Press a key, e.g. ctrl+s.');
+  check('  and still stops at a real full stop', firstSentence('One. Two.') === 'One.');
+
+  const opts = { workerOnline: true, desktopOnline: true, policy: 'guarded', connected: [], providers: [], context: 200_000 };
+  const index = availableTools({ ...opts, activated: new Set() }).find((t) => t.name === 'load_tools').description;
+  const desktop = TOOLS.filter((t) => t.scope === 'desktop').map((t) => t.name);
+  check('a family is one line', index.split('\n').filter((l) => l.includes('desktop_')).length === 1);
+  check('  that still names every member exactly', desktop.every((n) => index.includes(n)), desktop.join(','));
+  // One member activated leaves the rest listed, not the family's summary of a set it no longer is.
+  const partial = availableTools({ ...opts, activated: new Set(['desktop_click']) }).find((t) => t.name === 'load_tools').description;
+  check('an activated member drops out of its family line', !partial.includes('desktop_click') && partial.includes('desktop_key'));
+  // Every deferred tool must be loadable by a name the index shows.
+  const loaded = new Set(availableTools({ ...opts, activated: new Set() }).map((t) => t.name));
+  const all = availableTools({ ...opts, activated: new Set(TOOLS.map((t) => t.name)) }).map((t) => t.name);
+  const missing = all.filter((n) => !loaded.has(n) && !index.includes(n));
+  check('nothing held back is missing from the index', missing.length === 0, missing.join(','));
+}
+
+section('Prompt caching through OpenRouter');
+{
+  const { markPromptCache } = await import('../server/providers/openaiCompatible.js');
+  const base = () => ({ messages: [{ role: 'system', content: 'S' }, { role: 'user', content: 'Q' }] });
+  const claude = markPromptCache(base(), 'anthropic/claude-sonnet-5');
+  check('Claude gets automatic caching at the root', claude.cache_control?.type === 'ephemeral');
+  const gemini = markPromptCache(base(), 'google/gemini-3-pro');
+  check('Gemini gets a breakpoint on the system block', gemini.messages[0].content[0].cache_control?.type === 'ephemeral' && gemini.messages[0].content[0].text === 'S');
+  const other = markPromptCache(base(), 'deepseek/deepseek-chat');
+  check('a model that caches on its own is left alone', !other.cache_control && other.messages[0].content === 'S');
+}
+
 console.log(
   failures === 0 ? '\n\x1b[32mAll tool-budget checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`,
 );

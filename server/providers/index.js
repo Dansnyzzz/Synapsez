@@ -34,7 +34,7 @@ async function* streamOne(entry, common) {
       yield* streamOpenAICompatible(common);
       return;
     case 'openrouter':
-      yield* streamOpenAICompatible({ ...common, baseURL: OPENROUTER_BASE, headers: routerHeaders() });
+      yield* streamOpenAICompatible({ ...common, baseURL: OPENROUTER_BASE, headers: routerHeaders(), markCache: true });
       return;
     case 'orcarouter':
       yield* streamOpenAICompatible({ ...common, baseURL: ORCAROUTER_BASE, headers: routerHeaders() });

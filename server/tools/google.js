@@ -235,7 +235,9 @@ async function calendarTool(input, { userId }) {
     });
     const items = found.items || [];
     if (!items.length) return `Nothing on the calendar between ${from.toISOString()} and ${to.toISOString()}.`;
-    return untrusted('Google Calendar', `${items.length} event(s), calendar time zone ${found.timeZone}:\n${items.map(describeEvent).join('\n')}`);
+    // Clipped like every other read: up to 250 events stay in the transcript and
+    // are re-sent on every remaining step of the turn.
+    return untrusted('Google Calendar', clip(`${items.length} event(s), calendar time zone ${found.timeZone}:\n${items.map(describeEvent).join('\n')}`));
   }
   if (action === 'calendars') {
     const found = await googleApi(userId, `${CAL}/users/me/calendarList`);
@@ -665,13 +667,16 @@ async function contactsTool(input, { userId }) {
       query: { query: need(input.query, 'a name, email or phone to look for'), readMask, pageSize: 30 },
     });
     const people = (found.results || []).map((r) => r.person);
-    return people.length ? people.map(person).join('\n') : `No contact matches ${JSON.stringify(input.query)}.`;
+    // Names and notes on a contact are written by other people as often as by
+    // the owner, so they reach the model as data, like mail does.
+    return people.length ? untrusted('Google Contacts', clip(people.map(person).join('\n'))) : `No contact matches ${JSON.stringify(input.query)}.`;
   }
   if (input.action === 'list') {
     const found = await googleApi(userId, `${PEOPLE}/people/me/connections`, {
       query: { personFields: readMask, pageSize: Math.min(Number(input.max) || 100, 1000), sortOrder: 'FIRST_NAME_ASCENDING' },
     });
-    return (found.connections || []).map(person).join('\n') || 'No contacts.';
+    const people = found.connections || [];
+    return people.length ? untrusted('Google Contacts', clip(people.map(person).join('\n'))) : 'No contacts.';
   }
   throw new Error('action is search or list.');
 }
