@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-28 (late evening) — tasks edited in the side panel; Context is what was used
+
+### Changed
+
+- **A task's pencil opens the side panel**, the same editor a schedule card in a conversation
+  opens, where every field is changed in place. The edit form is gone (the form now only creates
+  tasks), and so is the pencil in the panel's header.
+- **Context in the side panel lists only what the conversation used**: connectors and MCP servers
+  whose tools it called, skills it read, and the project's sources once it has started. A new chat
+  shows none. Editing a message refreshes the panel, so the tools of the removed replies leave it.
+
 ## 2026-09-28 (evening) — the new-model notice follows the list; feeds are found, not guessed
 
 ### Fixed
