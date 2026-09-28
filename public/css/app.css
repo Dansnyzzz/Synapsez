@@ -2146,9 +2146,17 @@ textarea {
   font: inherit;
   resize: vertical;
   outline: none;
-  scrollbar-width: none;
+  /* A long message scrolls inside the box, with a thin bar that can be grabbed
+     and dragged — hidden, there was no way to see where you were in it. */
+  max-height: 55vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
-.bubble__edit::-webkit-scrollbar { display: none; }
+.bubble__edit::-webkit-scrollbar { width: 6px; }
+.bubble__edit::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--line); }
+.bubble__edit::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+.bubble__edit::-webkit-scrollbar-track { background: transparent; }
 .bubble__editrow {
   display: flex;
   justify-content: flex-end;
@@ -4024,72 +4032,174 @@ details.block pre {
   margin: 0 auto 8px;
 }
 
-.attachment {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  max-width: 240px;
-  padding: 6px 8px 6px 6px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-}
-.attachment--failed { border-color: var(--danger); }
 
-.attachment__thumb {
-  width: 38px;
-  height: 38px;
+/* One thing waiting to go. A picture or a PDF is shown as itself — its name
+   and size told nobody anything the picture did not; anything else is its name
+   and its type. Square, like the composer's own buttons are round. */
+.stage {
+  position: relative;
   flex: none;
-  border-radius: 8px;
-  object-fit: cover;
-  background: var(--surface-2);
+  width: 92px;
+  height: 92px;
+  overflow: hidden;
+  border: 1px solid var(--glass-line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
-
-/* No thumbnail to show, so the extension stands in for one. */
-.attachment__icon {
+.stage--file {
+  display: flex;
+  flex-direction: column;
+  width: 150px;
+  padding: 10px 12px;
+  gap: 4px;
+}
+.stage.is-failed { border-color: var(--danger); }
+.stage__open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+.stage__img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.stage__icon {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  flex: none;
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text-dim);
+  width: 30px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--accent-dim, var(--surface-2));
+  color: var(--text);
   font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 9.5px;
+  font-weight: 700;
 }
-
-.attachment__body { min-width: 0; }
-.attachment__name {
-  display: block;
+.stage__name {
+  display: -webkit-box;
   overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   font-size: 12.5px;
+  line-height: 1.3;
+  word-break: break-word;
+}
+.stage__type { margin-top: auto; color: var(--text-faint); font-size: 11px; letter-spacing: 0.04em; }
+.stage__err {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 3px 6px;
+  overflow: hidden;
+  background: var(--danger);
+  color: #0b0e11;
+  font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.attachment__meta {
-  display: block;
-  color: var(--text-faint);
-  font-size: 11px;
+.stage__spin {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
 }
-.attachment--failed .attachment__meta { color: var(--danger); }
-
-/* 26px, not 22. WCAG 2.5.8 asks for 24 as a floor and this is a phone-first
-   app; the glyph stays small, the hit area does not. */
-.attachment__remove {
-  flex: none;
+.stage.is-uploading .stage__img { opacity: 0.55; }
+/* 26px hit area on a small glyph: WCAG 2.5.8 asks for 24 as a floor. */
+.stage__remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
   width: 26px;
   height: 26px;
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: transparent;
-  color: var(--text-faint);
+  background: rgba(10, 12, 18, 0.72);
+  color: #fff;
   font-size: 11px;
   cursor: pointer;
 }
-.attachment__remove:hover { background: var(--surface-2); color: var(--danger); }
+.stage__remove:hover { background: var(--danger); color: #0b0e11; }
+.stage:not(:hover):not(:focus-within) .stage__remove { opacity: 0.85; }
+
+/* ── drawing on a picture before it goes ─────────────────────── */
+.sketch {
+  width: min(1200px, 96vw);
+  max-width: none;
+  height: min(900px, 94vh);
+  max-height: none;
+  padding: 16px 20px 20px;
+  border: 1px solid var(--glass-line);
+  border-radius: 22px;
+  background: var(--glass-solid);
+  color: var(--text);
+}
+.sketch[open] { display: flex; flex-direction: column; gap: 14px; }
+.sketch::backdrop { background: rgba(0, 0, 0, 0.62); backdrop-filter: blur(4px); }
+.sketch__top { display: flex; align-items: center; gap: 8px; }
+.sketch__spacer { flex: 1; }
+.sketch__save { min-width: 96px; }
+.sketch__stage { position: relative; display: grid; flex: 1; min-height: 0; place-items: center; }
+.sketch__canvas {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  cursor: crosshair;
+  touch-action: none;
+}
+.sketch__canvas.is-text { cursor: text; }
+.sketch__type {
+  position: absolute;
+  min-width: 140px;
+  padding: 4px 8px;
+  border: 1px dashed currentColor;
+  border-radius: 6px;
+  background: rgba(10, 12, 18, 0.55);
+  font: 600 18px system-ui, sans-serif;
+  outline: none;
+}
+.sketch__colors { display: flex; justify-content: center; gap: 12px; }
+.sketch__color {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: var(--c);
+  cursor: pointer;
+}
+.sketch__color[aria-checked='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg); }
+.sketch__tools { display: flex; justify-content: center; gap: 22px; }
+.sketch__tool {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.sketch__toolmark {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  font-size: 20px;
+}
+.sketch__tool[aria-checked='true'] { color: var(--text); }
+.sketch__tool[aria-checked='true'] .sketch__toolmark { background: var(--text); color: var(--bg); }
 
 /* Dragging a file anywhere over the window is the other way people attach one,
    so the whole app acknowledges it rather than one small target. */

@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-28 (later) — files above the composer show themselves; draw on a picture before sending
+
+### Added
+
+- **Draw or write on a picture before it is sent.** Press a picture waiting above the composer:
+  it opens large with a pen (Sketch) and Text, seven colours, Undo/Redo (also Ctrl+Z / Ctrl+Y)
+  and Save, which sends the drawing in its place.
+
+### Changed
+
+- **Files waiting to be sent are tiles.** A picture is the picture, a PDF shows its first page,
+  anything else is its name and its type (DOCX, XLSX, HTML…). No file sizes. Uploading and failures
+  are still shown on the tile.
+- **Editing a message:** Save and ask again stays disabled until the text changes; a long message
+  scrolls inside the box with a thin draggable bar; double-clicking the resize corner puts the box
+  back to its size.
+
 ## 2026-09-28 (night) — workflows work like scheduled tasks; a readable Delete; a glass question card
 
 ### Fixed

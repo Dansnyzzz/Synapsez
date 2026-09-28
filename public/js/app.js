@@ -2557,6 +2557,24 @@ function beginEdit(message, text) {
   box.focus();
   box.setSelectionRange(box.value.length, box.value.length);
 
+  // "Save and ask again" only once there is something to save: re-sending the
+  // same words re-runs the turn for nothing.
+  const saveButton = /** @type {HTMLButtonElement} */ (row.querySelector('[data-edit="save"]'));
+  const unchanged = () => !box.value.trim() || box.value.trim() === text.trim();
+  saveButton.disabled = unchanged();
+  box.addEventListener('input', () => {
+    saveButton.disabled = unchanged();
+  });
+
+  // Double-clicking the resize corner puts the box back to the size it opened at.
+  box.addEventListener('dblclick', (event) => {
+    const r = box.getBoundingClientRect();
+    if (r.right - event.clientX < 20 && r.bottom - event.clientY < 20) {
+      box.style.height = '';
+      box.style.width = '';
+    }
+  });
+
   const cancel = () => {
     message.classList.remove('is-editing');
     bubble.innerHTML = previous;

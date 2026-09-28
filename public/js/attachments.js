@@ -17,6 +17,8 @@ import { toast } from './render.js';
 import { t } from './i18n.js';
 import { humanSize } from './format.js';
 import { prepareUpload } from './shrink.js';
+import { thumbnailFor } from './thumbnail.js';
+import { openSketch } from './sketch.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -75,35 +77,46 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     return t('upload.resized').replace('{from}', mb(note.from)).replace('{to}', mb(note.to));
   }
 
+  /** The type a file is, as its extension says it: "DOCX", "PDF". */
+  const typeOf = (name) => (String(name).includes('.') ? String(name).split('.').pop().slice(0, 5).toUpperCase() : 'FILE');
+
+  /**
+   * What is waiting to go, as tiles above the composer.
+   *
+   * A picture is the picture — its name and size told nobody anything the
+   * picture did not — and pressing it opens it to draw or write on. A PDF shows
+   * its first page. Anything else is its name and its type. The state that
+   * matters is still said: uploading as a spinner, a failure in words, and what
+   * was changed on the way out (a PDF sent as its text) in the tile's title.
+   */
   function renderStaged() {
     const host = $('attachments');
     host.hidden = staged.length === 0;
 
     host.innerHTML = staged
-      .map(
-        (file, i) => `
-      <div class="attachment${file.failed ? ' attachment--failed' : ''}">
-        ${
-          file.preview
-            ? `<img class="attachment__thumb" src="${file.preview}" alt="" />`
-            : `<span class="attachment__icon">${file.name.split('.').pop().slice(0, 4).toUpperCase()}</span>`
-        }
-        <span class="attachment__body">
-          <span class="attachment__name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
-          <span class="attachment__meta">${
-            file.failed
-              ? escapeHtml(file.failed)
-              : file.id
-                // What was actually sent, when that is not what was picked.
-                ? escapeHtml(file.note || humanSize(file.size))
-                : escapeHtml(t('attachment.uploading'))
-          }</span>
-        </span>
-        <button class="attachment__remove" data-drop="${i}" type="button" aria-label="${escapeHtml(
+      .map((file, i) => {
+        const type = typeOf(file.name);
+        const state = `${file.failed ? ' is-failed' : ''}${!file.id && !file.failed ? ' is-uploading' : ''}`;
+        const say = file.failed || file.note || file.name;
+        const face = file.isImage
+          ? `<button class="stage__open" data-open="${i}" type="button" aria-label="${escapeHtml(t('attachment.edit', { name: file.name }))}">
+               <img class="stage__img" src="${file.preview}" alt="">
+             </button>`
+          : file.thumb
+            ? `<img class="stage__img" src="${file.thumb}" alt="">`
+            : `<span class="stage__icon" aria-hidden="true">${escapeHtml(type.slice(0, 4))}</span>
+               <span class="stage__name">${escapeHtml(file.name)}</span>
+               <span class="stage__type">${escapeHtml(type)}</span>`;
+        return `
+      <div class="stage ${file.isImage || file.thumb ? 'stage--media' : 'stage--file'}${state}" title="${escapeHtml(say)}">
+        ${face}
+        ${file.failed ? `<span class="stage__err">${escapeHtml(file.failed)}</span>` : ''}
+        ${!file.id && !file.failed ? `<span class="stage__spin" aria-label="${escapeHtml(t('attachment.uploading'))}"></span>` : ''}
+        <button class="stage__remove" data-drop="${i}" type="button" aria-label="${escapeHtml(
           t('attachment.remove', { name: file.name }),
         )}">✕</button>
-      </div>`,
-      )
+      </div>`;
+      })
       .join('');
 
     for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-drop]'))) {
@@ -115,6 +128,57 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
         renderVisionWarning();
       });
     }
+    for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-open]'))) {
+      btn.addEventListener('click', () => editPicture(staged[Number(btn.dataset.open)]));
+    }
+  }
+
+  /**
+   * Open a staged picture to draw or write on, and send the result instead.
+   *
+   * The edited picture replaces the original in the tray and is uploaded as a
+   * new attachment; the original upload is simply never sent.
+   */
+  async function editPicture(entry) {
+    if (!entry?.preview) return;
+    const blob = await openSketch(entry.preview);
+    if (!blob || !staged.includes(entry)) return;
+    const name = entry.name.replace(/\.[^.]+$/, '') + '.png';
+    URL.revokeObjectURL(entry.preview);
+    entry.preview = URL.createObjectURL(blob);
+    entry.id = null;
+    entry.failed = null;
+    entry.note = null;
+    await upload(entry, new File([blob], name, { type: 'image/png' }));
+  }
+
+  /** Upload one staged file, shrinking it first where that is honest. */
+  async function upload(entry, file) {
+    renderStaged();
+    refreshSendState();
+    try {
+      /**
+       * Shrunk first, where shrinking is honest.
+       *
+       * A photo off a phone is eight megapixels that no model reads at that
+       * resolution, and an oversized PDF can be sent as the text inside it —
+       * which is what most of the library would have been given anyway. What
+       * this replaces is a request the host refused at the edge, with a
+       * plain-text error that never mentioned the file. See shrink.js.
+       */
+      const ready = await prepareUpload(file);
+      const { attachment } = await api.uploadAttachment(ready);
+      entry.id = attachment.id;
+      entry.name = ready.name;
+      // Said out loud rather than done quietly: what was sent is not quite
+      // what was picked, and a person answering questions about a document
+      // needs to know it went as text.
+      if (ready.note) entry.note = describeShrink(ready.note);
+    } catch (err) {
+      entry.failed = err.message;
+    }
+    renderStaged();
+    refreshSendState();
   }
 
   async function stageFiles(files) {
@@ -143,33 +207,21 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
         preview: isImage(file.type) ? URL.createObjectURL(file) : null,
       };
       staged.push(entry);
-      renderStaged();
-      refreshSendState();
       renderVisionWarning();
-
-      try {
-        /**
-         * Shrunk first, where shrinking is honest.
-         *
-         * A photo off a phone is eight megapixels that no model reads at that
-         * resolution, and an oversized PDF can be sent as the text inside it —
-         * which is what most of the library would have been given anyway. What
-         * this replaces is a request the host refused at the edge, with a
-         * plain-text error that never mentioned the file. See shrink.js.
-         */
-        const ready = await prepareUpload(file);
-        const { attachment } = await api.uploadAttachment(ready);
-        entry.id = attachment.id;
-        entry.name = ready.name;
-        // Said out loud rather than done quietly: what was sent is not quite
-        // what was picked, and a person answering questions about a document
-        // needs to know it went as text.
-        if (ready.note) entry.note = describeShrink(ready.note);
-      } catch (err) {
-        entry.failed = err.message;
+      // A PDF shows its first page, drawn here from the file already in hand.
+      // Not awaited: the upload does not wait for a picture of it.
+      if (/pdf/i.test(file.type) || /\.pdf$/i.test(file.name)) {
+        thumbnailFor(file)
+          .then(({ thumb }) => {
+            if (thumb && staged.includes(entry)) {
+              // Its own field: `preview` means "a picture" to the bubble drawn on send.
+              entry.thumb = thumb;
+              renderStaged();
+            }
+          })
+          .catch(() => {});
       }
-      renderStaged();
-      refreshSendState();
+      await upload(entry, file);
     }
   }
 

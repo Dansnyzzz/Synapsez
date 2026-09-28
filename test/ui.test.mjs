@@ -360,24 +360,23 @@ section('attaching photos and files');
     const strip = document.getElementById('attachments');
     return {
       shown: !strip.hidden,
-      count: strip.querySelectorAll('.attachment').length,
-      name: strip.querySelector('.attachment__name')?.textContent,
-      meta: strip.querySelector('.attachment__meta')?.textContent,
-      removable: !!strip.querySelector('.attachment__remove'),
+      count: strip.querySelectorAll('.stage').length,
+      name: strip.querySelector('.stage__name')?.textContent,
+      type: strip.querySelector('.stage__type')?.textContent,
+      text: strip.textContent,
+      removable: !!strip.querySelector('.stage__remove'),
       sendReady: document.getElementById('send').classList.contains('is-ready'),
     };
   });
   check('the preview appears', staged.shown && staged.count === 1, `${staged.count} shown`);
   check('naming the file', staged.name === 'note.txt', staged.name);
-  // `B` as well as KB and MB. This asserted /KB|MB/ against a 21-byte file, which
-  // only passed because humanSize rounded everything under a megabyte up to at
-  // least "1 KB" — so the check was pinning the rounding bug rather than the
-  // behaviour. The unified formatter says "21 B", which is what the file is.
-  check('and its size once uploaded', /\d+\s?(B|KB|MB)\b/.test(staged.meta || ''), staged.meta);
+  check('and its type', staged.type === 'TXT', staged.type);
+  // The size told nobody anything worth the room.
+  check('without a size', !/\d+\s?(B|KB|MB)\b/.test(staged.text || ''), staged.text);
   check('a file alone lights the send button', staged.sendReady, 'a photo with no caption is a complete message');
   check('and it can be removed', staged.removable);
 
-  await page.click('.attachment__remove');
+  await page.click('.stage__remove');
   await page.waitForTimeout(300);
   const cleared = await page.evaluate(() => ({
     hidden: document.getElementById('attachments').hidden,
@@ -393,12 +392,50 @@ section('attaching photos and files');
   );
   await page.setInputFiles('#file-input', { name: 'shot.png', mimeType: 'image/png', buffer: PNG });
   await page.waitForTimeout(1200);
-  check(
-    'an image previews as a thumbnail',
-    !!(await page.$('.attachment__thumb')),
-    'not an extension badge',
-  );
-  await page.click('.attachment__remove');
+  const picture = await page.evaluate(() => {
+    const tile = document.querySelector('#attachments .stage');
+    return { image: !!tile?.querySelector('.stage__img'), words: tile?.querySelector('.stage__name')?.textContent || '' };
+  });
+  check('an image is shown as itself', picture.image, 'not an extension badge');
+  check('  with no name or size beside it', !picture.words, picture.words);
+
+  // Pressing it opens it to draw on; Save sends the drawing in its place.
+  await page.click('#attachments .stage__open');
+  await page.waitForTimeout(600);
+  const opened = await page.evaluate(() => ({
+    open: !!document.querySelector('dialog.sketch[open]'),
+    colors: document.querySelectorAll('.sketch__color').length,
+    tools: [...document.querySelectorAll('.sketch__tool')].map((b) => b.textContent.trim()),
+    undoOff: document.querySelector('.sketch [data-k="undo"]').disabled,
+  }));
+  check('pressing the picture opens the editor', opened.open);
+  check('  with colours, a pen and text', opened.colors === 7 && opened.tools.length === 2, JSON.stringify(opened));
+  check('  and nothing to undo yet', opened.undoOff);
+  const box = await page.$eval('.sketch__canvas', (c) => {
+    const r = c.getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
+  });
+  await page.mouse.move(box.x + box.w * 0.2, box.y + box.h * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.w * 0.8, box.y + box.h * 0.8, { steps: 5 });
+  await page.mouse.up();
+  const drew = await page.evaluate(() => !document.querySelector('.sketch [data-k="undo"]').disabled);
+  check('a stroke can be undone', drew);
+  await page.click('.sketch [data-k="undo"]');
+  const redoable = await page.evaluate(() => !document.querySelector('.sketch [data-k="redo"]').disabled);
+  check('  and redone', redoable);
+  await page.click('.sketch [data-k="redo"]');
+  await page.click('.sketch [data-k="save"]');
+  await page.waitForTimeout(1500);
+  const saved = await page.evaluate(() => ({
+    closed: !document.querySelector('dialog.sketch[open]'),
+    tiles: document.querySelectorAll('#attachments .stage').length,
+    failed: !!document.querySelector('#attachments .stage.is-failed'),
+    title: document.querySelector('#attachments .stage')?.getAttribute('title') || '',
+  }));
+  check('saving closes it and keeps one picture, now the drawing', saved.closed && saved.tiles === 1 && !saved.failed, JSON.stringify(saved));
+  check('  sent as a PNG', /\.png$/.test(saved.title), saved.title);
+  await page.click('.stage__remove');
   await page.waitForTimeout(300);
 }
 
@@ -1196,6 +1233,12 @@ section('copying and editing what you said');
   }, bubble);
   check('editing opens a box holding what you wrote', editing.open && editing.value === 'the question as first asked', editing.value);
   check('with a way out and a way on', editing.buttons === 2);
+  // Nothing changed, nothing to save: re-asking the same words re-runs the turn for nothing.
+  const saveOff = await page.evaluate((sel) => document.querySelector(`${sel} [data-edit="save"]`).disabled, bubble);
+  check('Save and ask again waits for a change', saveOff);
+  await page.fill(`${bubble} .bubble__edit`, 'the question as first asked!');
+  const saveOn = await page.evaluate((sel) => !document.querySelector(`${sel} [data-edit="save"]`).disabled, bubble);
+  check('  and is enabled by one', saveOn);
 
   // With an address in it, because the commonest edit is fixing the sentence
   // *around* a link — and the rebuilt bubble used to come back as plain text,
