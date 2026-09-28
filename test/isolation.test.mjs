@@ -1247,6 +1247,38 @@ section('housekeeping');
   check('deleting a project deletes its sources\' files', (await rows('attachments', "WHERE id = 'shelved'")) === 0);
   check('and the shelf rows', (await rows('project_files', "WHERE id = 'pf-sweep'")) === 0);
 
+  // What nothing can reach: counted, then removed — and nothing else with it.
+  await driver.query(
+    `INSERT INTO attachments (id, user_id, chat_id, name, mime, kind, bytes, data)
+     VALUES ('detached', 'u-bob', 'c-deleted-long-ago', 'd.png', 'image/png', 'image', 1000, 'AAA')`,
+  );
+  await driver.query(
+    `INSERT INTO attachments (id, user_id, name, mime, kind, bytes, data, created_at)
+     VALUES ('unsent-old', 'u-bob', 'u.png', 'image/png', 'image', 500, 'AAA', NOW() - INTERVAL '3 days')`,
+  );
+  await store.createProject('u-bob', { id: 'p-keep', name: 'Keep' });
+  await driver.query(
+    `INSERT INTO attachments (id, user_id, name, mime, kind, bytes, data, created_at)
+     VALUES ('on-shelf', 'u-bob', 's.png', 'image/png', 'image', 700, 'AAA', NOW() - INTERVAL '3 days')`,
+  );
+  await store.addProjectFile('u-bob', 'p-keep', {
+    id: 'pf-keep', name: 's.png', mime: 'image/png', kind: 'image', bytes: 700, text: '', attachmentId: 'on-shelf',
+  });
+  const report = await store.storageReport();
+  check('a file of a deleted conversation is counted', report.detached.count === 1 && report.detached.bytes === 1000, JSON.stringify(report.detached));
+  check('an old unsent upload is counted', report.unsent.count >= 1 && report.unsent.bytes >= 500, JSON.stringify(report.unsent));
+  check('with the database size', report.databaseBytes > 0);
+
+  const before = await rows('attachments');
+  const gone = await store.pruneUnreachableFiles();
+  check('pruning removes exactly those', gone.detached === 1 && (await rows('attachments', "WHERE id IN ('detached', 'unsent-old')")) === 0, JSON.stringify(gone));
+  check('a file of a live conversation stays', (await rows('attachments', "WHERE id = 'kept'")) === 1);
+  check('a project source stays', (await rows('attachments', "WHERE id = 'on-shelf'")) === 1);
+  check('an upload still being composed stays', (await rows('attachments', "WHERE id = 'fresh'")) === 1);
+  check('and nothing else went', before - (await rows('attachments')) === gone.detached + gone.unsent, `${before} → ${await rows('attachments')}`);
+  const after = await store.storageReport();
+  check('the report then shows nothing to free', after.detached.count === 0 && after.unsent.count === 0);
+
   // Codes nobody claimed.
   await driver.query(
     `INSERT INTO pairings (id, code_hash, device_name, expires_at)

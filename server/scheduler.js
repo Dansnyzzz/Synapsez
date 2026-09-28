@@ -659,7 +659,10 @@ export async function sweep() {
   await Promise.allSettled([
     store.pruneRateLimits(),
     store.prunePairings(),
-    store.pruneOrphanAttachments(),
+    // Unsent uploads, and files still labelled with a conversation that is gone.
+    // Every path that binds a file to a conversation creates the conversation
+    // first, so a label pointing at nothing can only mean it was deleted.
+    store.pruneUnreachableFiles(),
     store.pruneFinishedJobs(),
     // Both write a few kilobytes per run and nothing was removing either. The
     // list above exists because three of its four pruners had been written and

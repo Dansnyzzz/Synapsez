@@ -1634,6 +1634,74 @@ export function createPgStore(connectionString) {
       );
     },
 
+    /**
+     * Stored files nothing can reach any more, and how much room they take.
+     *
+     * Two kinds, both safe to delete by construction:
+     *
+     *   detached  a file still labelled with a conversation that no longer
+     *             exists. `attachments.chat_id` has no foreign key (it is set
+     *             after the upload), so a conversation removed any way other
+     *             than `deleteChat` left its files behind.
+     *   unsent    an upload with no conversation and no project shelf pointing
+     *             at it, older than a day — what the daily sweep removes, counted
+     *             here so a sweep that has not been running shows up as a number.
+     *
+     * And one that is reported but never deleted, because deleting would lose
+     * the only thing left: a project source whose original is gone (`lost`) —
+     * the text is still on the shelf and still answers questions.
+     */
+    async storageReport() {
+      const [row] = await q(
+        `SELECT
+           (SELECT COUNT(*) FROM attachments a
+             WHERE a.chat_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = a.chat_id))::int AS detached,
+           (SELECT COALESCE(SUM(a.bytes), 0) FROM attachments a
+             WHERE a.chat_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = a.chat_id))::bigint AS detached_bytes,
+           (SELECT COUNT(*) FROM attachments a
+             WHERE a.chat_id IS NULL AND a.origin = 'upload'
+               AND a.created_at < NOW() - INTERVAL '24 hours'
+               AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id))::int AS unsent,
+           (SELECT COALESCE(SUM(a.bytes), 0) FROM attachments a
+             WHERE a.chat_id IS NULL AND a.origin = 'upload'
+               AND a.created_at < NOW() - INTERVAL '24 hours'
+               AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id))::bigint AS unsent_bytes,
+           (SELECT COUNT(*) FROM project_files WHERE attachment_id IS NULL)::int AS lost,
+           (SELECT COUNT(*) FROM attachments)::int AS files,
+           (SELECT COALESCE(SUM(bytes), 0) FROM attachments)::bigint AS files_bytes,
+           (SELECT COALESCE(SUM(bytes), 0) FROM attachment_versions)::bigint AS versions_bytes,
+           pg_database_size(current_database())::bigint AS database_bytes`,
+      );
+      const n = (v) => Number(v || 0);
+      return {
+        detached: { count: n(row.detached), bytes: n(row.detached_bytes) },
+        unsent: { count: n(row.unsent), bytes: n(row.unsent_bytes) },
+        lostOriginals: n(row.lost),
+        files: { count: n(row.files), bytes: n(row.files_bytes) },
+        versionsBytes: n(row.versions_bytes),
+        databaseBytes: n(row.database_bytes),
+      };
+    },
+    /** Delete what `storageReport` calls detached and unsent. Returns how many of each went. */
+    async pruneUnreachableFiles() {
+      const detached = await q(
+        `DELETE FROM attachments a
+          WHERE a.chat_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = a.chat_id)
+      RETURNING a.id`,
+      );
+      const unsent = await q(
+        `DELETE FROM attachments a
+          WHERE a.chat_id IS NULL AND a.origin = 'upload'
+            AND a.created_at < NOW() - INTERVAL '24 hours'
+            AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id)
+      RETURNING a.id`,
+      );
+      return { detached: detached.length, unsent: unsent.length };
+    },
+
     // ── worker relay ────────────────────────────────────────────────
     async enqueueJob(userId, job) {
       await q(
