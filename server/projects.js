@@ -446,7 +446,7 @@ export function renderProject({ project, sources, whole, truncated, names, image
       '',
       '**Answer from these sources.** They are the ground truth for this project and they outrank anything you remember from training.',
       '',
-      '- Every factual claim must come from the text below, and must name the file it came from — like `[report.pdf]` — so the user can check it.',
+      '- Every factual claim must come from the text below, and must name the file it came from — like `[report.pdf]`, or `[report.pdf, p. 12]` when you know where in it — so the user can check it. Several at once: `[report.pdf, p. 3; notes.docx]`. The file name exactly as listed above.',
       '- When the sources do not answer the question, say exactly that and stop. "The sources here do not cover X" is a correct and useful answer; a plausible guess dressed as an answer is not, and it is the one thing this project exists to prevent.',
       '- Do not fill gaps from general knowledge. If you have relevant knowledge from outside the sources and it genuinely helps, you may add it *after* answering, clearly labelled as outside the sources.',
       '- Quote rather than paraphrase where the wording carries the meaning — definitions, figures, dates, names, contract terms.',

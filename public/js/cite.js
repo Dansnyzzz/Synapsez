@@ -148,6 +148,10 @@ if (typeof document !== 'undefined') {
 
   document.addEventListener('pointerover', (event) => {
     if (event.pointerType !== 'mouse') return;
+    // A streaming reply repaints its prose every frame, so the chip a card was
+    // opened from can be replaced under it; a card for a chip that is gone is
+    // a card pointing at nothing.
+    if (current && !current.isConnected) hide();
     const chip = chipOf(event.target);
     if (!chip) return;
     clearTimeout(hideTimer);

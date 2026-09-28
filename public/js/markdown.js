@@ -76,15 +76,149 @@ function protect(text, hold) {
  * that ignores the convention loses nothing. Parentheses are what separate a
  * citation from a link that is part of the sentence ("see [the docs](…)").
  *
+ * A file is also cited without the parentheses, because a project's grounding
+ * rules (server/projects.js) ask for `[report.pdf]` and models add where in it:
+ * `[SLIDE.txt, tr.32–46]`, `[đề 1.pdf, p. 2; notes.docx]`. Brackets holding
+ * nothing but a file name — and an optional short locator — are never anything
+ * else, as long as no `(` follows to make them a link.
+ *
  * Runs over escaped text, so the pieces are already HTML-safe. Consecutive
  * citations merge into one chip — "OpenRouter +3" — whose card lists all of them.
  */
-const CITE_WEB = String.raw`\[([^\[\]\n]{1,80})\]\((https?:\/\/[^\s)\u0000]+)\)`;
-const CITE_FILE = String.raw`\[([^\[\]\n\/\\]{1,120}?\.(?:pdf|docx?|xlsx?|pptx?|csv|tsv|txt|md|rtf|odt|json|html?|png|jpe?g|gif|webp))\]`;
+const CITE_EXT =
+  'pdf|docx?|dotx|xlsx?|xlsm|ods|pptx?|odp|key|csv|tsv|txt|md|markdown|rtf|odt|epub|json|jsonl|xml|ya?ml|html?|log|ipynb|py|js|ts|sql|png|jpe?g|gif|webp|svg|bmp|heic';
+/** An address, allowing one level of parentheses inside it — Wikipedia's `Foo_(bar)`. */
+const CITE_URL = String.raw`https?:\/\/(?:[^\s()\u0000]|\([^\s()\u0000]*\))+`;
+/** Where in a file: ", tr.32–46", " – p. 3", ": slide 4". */
+const CITE_WHERE_SEP = String.raw`\s*(?:,|:|\s[–—-])\s*`;
+/** A file name, then optionally where in it. */
+const CITE_FILE_ENTRY = String.raw`[^\[\]\n\/\\,;]{1,120}?\.(?:${CITE_EXT})(?:${CITE_WHERE_SEP}[^\[\]\n;,]{1,40}?)?`;
+const CITE_WEB = String.raw`\[([^\[\]\n]{1,80})\]\((${CITE_URL})\)`;
+const CITE_FILE = String.raw`\[(${CITE_FILE_ENTRY}(?:\s*;\s*${CITE_FILE_ENTRY})*)\]`;
 const CITE_ONE = `(?:${CITE_WEB}|${CITE_FILE})`;
-const CITE_GROUP = String.raw`\(\s*${CITE_ONE}(?:\s*[,;]\s*${CITE_ONE})*\s*\)`;
-const CITE_RUN = new RegExp(`${CITE_GROUP}(?:\\s*${CITE_GROUP})*`, 'gi');
-const CITE_ITEM = new RegExp(CITE_ONE, 'gi');
+/** "(Nguồn: …)", "(theo …)", "(see …)" — the word introducing a source is not part of it. */
+const CITE_LEAD = String.raw`(?:(?:nguồn|nguon|theo|xem|tham khảo|source|sources|via|see|ref|cf\.?)\s*:?\s*)?`;
+const CITE_GROUP = String.raw`\(\s*${CITE_LEAD}${CITE_ONE}(?:\s*[,;]\s*${CITE_ONE})*\s*\)`;
+const CITE_BARE = String.raw`${CITE_FILE}(?!\()`;
+/**
+ * `(SLIDE.txt, tr.12)` — a file in plain parentheses. Only with a locator that
+ * starts with a word meaning "where in it" (page, trang, slide, chương…): a
+ * name alone in parentheses is too often ordinary prose ("(xem report.pdf)").
+ */
+const CITE_LOCATOR = String.raw`(?:tr|trang|p|pp|pg|page|pages|slide|slides|mục|chương|chapter|ch|sheet|sec|section|§)\.?\s*[\w\d]`;
+const CITE_PAREN_ENTRY = String.raw`[^\[\]\n\/\\,;()]{1,120}?\.(?:${CITE_EXT})${CITE_WHERE_SEP}${CITE_LOCATOR}[^\[\]\n;,()]{0,38}`;
+const CITE_PAREN_FILE = String.raw`\(\s*${CITE_LEAD}(${CITE_PAREN_ENTRY}(?:\s*;\s*${CITE_PAREN_ENTRY})*)\s*\)`;
+/** `[openrouter.ai](https://…)` — a link whose words are a bare domain names its source. */
+const CITE_DOMAIN_LINK = String.raw`\[(?![^\]\n]*\.(?:${CITE_EXT})\])((?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,24})\]\((${CITE_URL})\)`;
+const CITE_PIECE = `(?:${CITE_GROUP}|${CITE_BARE}|${CITE_PAREN_FILE}|${CITE_DOMAIN_LINK})`;
+const CITE_RUN = new RegExp(`${CITE_PIECE}(?:\\s*[,;]?\\s*${CITE_PIECE})*`, 'gi');
+/** Every source in a run, in order: a bracketed link or file, or a parenthesised file. */
+const CITE_ITEM = new RegExp(`${CITE_ONE}|${CITE_PAREN_FILE}`, 'gi');
+const FILE_ENTRY = new RegExp(String.raw`^(.+?\.(?:${CITE_EXT}))(?:${CITE_WHERE_SEP}(.+))?$`, 'i');
+
+/**
+ * Forms that are rewritten into the ones above before a run is looked for.
+ *
+ * `(https://…)` — an address alone in parentheses, optionally introduced
+ * ("(Nguồn: https://…)"), is a source; it becomes `([host](url))`.
+ *
+ * `【4:0†report.pdf】` — the marker OpenAI's file search leaves in a reply —
+ * becomes `[report.pdf]` when what follows the dagger is a file.
+ */
+// Not after `]`: there the parentheses are the address half of a Markdown link.
+const PAREN_URL = new RegExp(String.raw`(?<!\])\(\s*${CITE_LEAD}(${CITE_URL})\s*\)`, 'gi');
+const LENTICULAR = /【([^】\n]{1,160})】/g;
+const LOOKS_LIKE_FILE = new RegExp(String.raw`^[^\[\]\n\/\\;]{1,120}?\.(?:${CITE_EXT})(?:${CITE_WHERE_SEP}.{1,40})?$`, 'i');
+
+/**
+ * Numbered notes: `[1]`, `[1][2]`, `[1, 3]`, `[1–3]`, `[^2]` — the Perplexity
+ * and footnote styles — resolved against what the reply defines them as, either
+ * as definitions (`[1]: https://…`, `[^1]: report.pdf, p. 3`) or as a numbered
+ * list under a "Sources" / "Nguồn" heading. A number with no definition is left
+ * exactly as written.
+ */
+const NOTE_RUN = /(?<![\w\]])(?:\[\^?\d{1,3}(?:\s*(?:,|–|—|-)\s*\^?\d{1,3})*\]\s?)+(?![(:])/g;
+const NOTE_DEFINITION = /^\s{0,3}\[\^?(\d{1,3})\]\s*:\s*(.+)$/;
+const SOURCES_HEADING =
+  /^\s{0,3}(?:#{1,6}\s*)?(?:\*\*|__)?\s*(?:nguồn(?: tham khảo)?|tài liệu tham khảo|trích dẫn|sources?|references?|citations?|bibliography)\s*:?\s*(?:\*\*|__)?\s*:?\s*$/i;
+const SOURCES_ITEM = /^\s{0,3}(?:\[\^?(\d{1,3})\]|(\d{1,3})[.)]|[-*+])\s+(.+)$/;
+
+/** What a note number stands for, read from its definition's raw text. */
+function noteTarget(raw) {
+  const text = String(raw).trim();
+  const link = text.match(new RegExp(String.raw`\[([^\]\n]{1,200})\]\((${CITE_URL})\)`));
+  if (link) return { kind: 'web', label: link[1].trim(), url: link[2] };
+  const url = text.match(new RegExp(CITE_URL));
+  if (url) {
+    const quoted = text.match(/"([^"]{1,200})"/);
+    const before = text.slice(0, url.index).replace(/[\s:–—-]+$/, '').trim();
+    return { kind: 'web', label: (quoted?.[1] || before).replace(/^\*+|\*+$/g, ''), url: url[0].replace(/[.,;]+$/, '') };
+  }
+  const file = text.replace(/^[[(]|[\])]$/g, '').match(FILE_ENTRY);
+  if (file) return { kind: 'file', name: file[1].trim(), where: (file[2] || '').trim() };
+  return { kind: 'note', text: text.slice(0, 300) };
+}
+
+/** Every numbered note a reply defines, and the definition lines to hide. */
+function collectNotes(lines) {
+  const notes = new Map();
+  const definitionAt = new Map();
+  let inSources = false;
+  let counter = 0;
+  let inFence = false;
+  lines.forEach((line, i) => {
+    // `[1]: x` inside a code block is code, not a note.
+    if (/^\s*```/.test(line)) inFence = !inFence;
+    if (inFence || /^\s*```/.test(line)) return;
+    const definition = line.match(NOTE_DEFINITION);
+    if (definition) {
+      notes.set(definition[1], noteTarget(definition[2]));
+      definitionAt.set(i, definition[1]);
+      return;
+    }
+    if (SOURCES_HEADING.test(line)) {
+      inSources = true;
+      counter = 0;
+      return;
+    }
+    if (!inSources) return;
+    const item = line.match(SOURCES_ITEM);
+    if (item) {
+      counter += 1;
+      const number = item[1] || item[2] || String(counter);
+      if (!notes.has(number)) notes.set(number, noteTarget(item[3]));
+    } else if (line.trim()) {
+      inSources = false;
+    }
+  });
+  if (!notes.size) return { notes: null, hidden: new Set() };
+
+  // A definition line is hidden only when something points at it: the chip then
+  // carries it. One nothing points at stays visible, or its source would be lost.
+  const body = lines.filter((_, i) => !definitionAt.has(i)).join('\n');
+  const hidden = new Set();
+  for (const [i, number] of definitionAt) {
+    if (new RegExp(String.raw`\[\^?${number}\]|\[[^\]\n]*\b${number}\b[^\]\n]*\](?![(:])`).test(body)) hidden.add(i);
+  }
+  return { notes, hidden };
+}
+
+/** The numbers inside one run of note markers: "[1][3]" → 1, 3; "[2–4]" → 2, 3, 4. */
+function noteNumbers(run) {
+  const out = [];
+  for (const [, inside] of run.matchAll(/\[([^\]]*)\]/g)) {
+    for (const part of inside.replace(/\^/g, '').split(',')) {
+      const range = part.split(/[–—-]/).map((n) => Number(n.trim()));
+      if (range.length === 2 && range[1] >= range[0] && range[1] - range[0] < 20) {
+        for (let n = range[0]; n <= range[1]; n += 1) out.push(String(n));
+      } else if (Number.isFinite(range[0])) out.push(String(range[0]));
+    }
+  }
+  return out;
+}
+
+/** The notes this reply defines, while it is being rendered. */
+let activeNotes = null;
 
 /** `&amp;` back to `&`, for reading a host out of an already-escaped address. */
 const unescapeUrl = (url) => url.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
@@ -106,10 +240,10 @@ const GLOBE_MARK =
 /** Kinds of file that share an icon: a .doc and a .docx are both Word. */
 function fileFamily(ext) {
   if (ext === 'PDF') return 'pdf';
-  if (/^(DOCX?|ODT|RTF)$/.test(ext)) return 'doc';
-  if (/^(XLSX?|CSV|TSV)$/.test(ext)) return 'sheet';
-  if (/^PPTX?$/.test(ext)) return 'slides';
-  if (/^(PNG|JPG|GIF|WEBP)$/.test(ext)) return 'image';
+  if (/^(DOCX?|DOTX|ODT|RTF|EPUB)$/.test(ext)) return 'doc';
+  if (/^(XLSX?|XLSM|ODS|CSV|TSV)$/.test(ext)) return 'sheet';
+  if (/^(PPTX?|ODP|KEY)$/.test(ext)) return 'slides';
+  if (/^(PNG|JPG|GIF|WEBP|SVG|BMP|HEIC)$/.test(ext)) return 'image';
   return 'text';
 }
 
@@ -132,22 +266,53 @@ function fileMark(ext) {
 
 const extOf = (name) => (name.match(/\.([a-z0-9]+)$/i)?.[1] || '').toUpperCase().replace(/^JPEG$/, 'JPG');
 
-/** One run of citations, already escaped, as its chip. */
-function citeChip(run) {
+const NOTE_MARK =
+  '<svg class="cite__icon cite__icon--glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13H5z"/><path d="M8 10h8M8 14h8M8 18h5"/></svg>';
+
+/** A web source; `label` and `url` already escaped. */
+const webItem = (label, url) => ({ kind: 'web', label: label.trim(), url, host: hostOf(url) });
+
+/** One run of citations, already escaped, as the sources it names. */
+function runItems(run) {
   const items = [];
   for (const m of run.matchAll(CITE_ITEM)) {
-    if (m[2]) items.push({ kind: 'web', label: m[1].trim(), url: m[2], host: hostOf(m[2]) });
-    else items.push({ kind: 'file', name: m[3].trim(), ext: extOf(m[3]) });
+    if (m[2]) {
+      items.push(webItem(m[1], m[2]));
+      continue;
+    }
+    for (const entry of (m[3] ?? m[4]).split(';')) {
+      const [, name, where] = entry.trim().match(FILE_ENTRY) || [];
+      if (name) items.push({ kind: 'file', name: name.trim(), where: (where || '').trim(), ext: extOf(name) });
+    }
   }
-  // A repeated source is one source.
+  return items;
+}
+
+/** A numbered note's target — raw text from the reply — as an escaped source. */
+function noteItem(target) {
+  if (target.kind === 'web') {
+    const url = escapeHtml(target.url);
+    return webItem(escapeHtml(target.label) || hostOf(url), url);
+  }
+  if (target.kind === 'file') {
+    return { kind: 'file', name: escapeHtml(target.name), where: escapeHtml(target.where), ext: extOf(target.name) };
+  }
+  return { kind: 'note', text: escapeHtml(target.text) };
+}
+
+/** Sources, already escaped, as one chip. */
+function citeChip(items) {
+  // A repeated source is one source; the same file at two places is two.
+  // Compared without case: `Report.PDF` and `report.pdf` are one file.
   const seen = new Set();
   const unique = items.filter((it) => {
-    const key = it.kind === 'web' ? it.url : it.name;
+    const key = (it.kind === 'web' ? it.url : it.kind === 'file' ? `${it.name}|${it.where}` : it.text).toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
   const [first] = unique;
+  if (!first) return '';
 
   const favicon = (host) =>
     host ? `<img class="cite__icon" src="/api/favicon/${encodeURIComponent(host)}" alt="" loading="lazy" decoding="async" data-cite-icon>` : '';
@@ -162,17 +327,19 @@ function citeChip(run) {
   const marks = [];
   const marked = new Set();
   for (const it of unique) {
-    const key = it.kind === 'web' ? `w:${it.host}` : `f:${fileFamily(it.ext)}`;
+    const key = it.kind === 'web' ? `w:${it.host}` : it.kind === 'file' ? `f:${fileFamily(it.ext)}` : 'n';
     if (marked.has(key)) continue;
     marked.add(key);
-    marks.push(it.kind === 'web' ? favicon(it.host) || GLOBE_MARK : fileMark(it.ext));
+    marks.push(it.kind === 'web' ? favicon(it.host) || GLOBE_MARK : it.kind === 'file' ? fileMark(it.ext) : NOTE_MARK);
   }
   const shown = marks.slice(0, MAX_MARKS).join('');
   const head =
     `<span class="cite__marks" aria-hidden="true">${shown}</span>` +
     (first.kind === 'web'
       ? `<span class="cite__name">${first.label || first.host}</span>`
-      : `<span class="cite__name cite__name--file">${first.ext}</span>`);
+      : first.kind === 'file'
+        ? `<span class="cite__name cite__name--file">${first.ext}</span>`
+        : `<span class="cite__name">${first.text}</span>`);
   const more = unique.length > 1 ? `<span class="cite__more">+${unique.length - 1}</span>` : '';
 
   const card = unique
@@ -180,16 +347,24 @@ function citeChip(run) {
       it.kind === 'web'
         ? `<a class="cite-item" href="${it.url}" target="_blank" rel="noopener noreferrer" data-url="${it.url}">` +
           `<span class="cite-item__site">${favicon(it.host)}<span>${it.host || it.label}</span></span>` +
-          `<span class="cite-item__title">${it.label}</span>` +
+          `<span class="cite-item__title">${it.label || it.host}</span>` +
           `<span class="cite-item__snip"></span>` +
           `<span class="cite-item__url">${it.url}</span></a>`
-        : `<span class="cite-item cite-item--file">` +
-          `<span class="cite-item__site">${fileMark(it.ext)}<span>${it.ext}</span></span>` +
-          `<span class="cite-item__title">${it.name}</span></span>`,
+        : it.kind === 'file'
+          ? `<span class="cite-item cite-item--file">` +
+            `<span class="cite-item__site">${fileMark(it.ext)}<span>${it.ext}</span></span>` +
+            `<span class="cite-item__title">${it.name}</span>` +
+            (it.where ? `<span class="cite-item__where">${it.where}</span>` : '') +
+            `</span>`
+          : `<span class="cite-item cite-item--note"><span class="cite-item__snip">${it.text}</span></span>`,
     )
     .join('');
 
-  const names = unique.map((it) => (it.kind === 'web' ? it.label || it.host : it.name)).join(', ');
+  const names = unique
+    .map((it) =>
+      it.kind === 'web' ? it.label || it.host : it.kind === 'file' ? `${it.name}${it.where ? ` ${it.where}` : ''}` : it.text,
+    )
+    .join(', ');
   return (
     `<span class="cite" role="button" tabindex="0" aria-haspopup="dialog" aria-expanded="false" ` +
     `aria-label="${escapeHtml(t('cite.sources'))}: ${names}">${head}${more}` +
@@ -211,7 +386,25 @@ function inline(text) {
 
   // Citations before emphasis and links, and held, so an underscore or an
   // asterisk in an address is not turned into italics inside the chip.
-  out = out.replace(CITE_RUN, (run) => hold(citeChip(run)));
+  // Numbered notes first: `[1]` resolves only against this reply's own list.
+  if (activeNotes) {
+    const notes = activeNotes;
+    out = out.replace(NOTE_RUN, (run) => {
+      const numbers = noteNumbers(run);
+      // All or nothing: "[1][7]" with no 7 defined is left as written rather
+      // than shown as a chip that quietly drops a source.
+      if (!numbers.length || !numbers.every((n) => notes.has(n))) return run;
+      const space = /\s$/.test(run) ? ' ' : '';
+      return hold(citeChip(numbers.map((n) => noteItem(notes.get(n))))) + space;
+    });
+  }
+  out = out
+    .replace(PAREN_URL, (whole, url) => `([${hostOf(url) || url}](${url}))`)
+    .replace(LENTICULAR, (whole, inside) => {
+      const target = inside.split('†').pop().trim();
+      return LOOKS_LIKE_FILE.test(target) ? `[${target}]` : whole;
+    })
+    .replace(CITE_RUN, (run) => hold(citeChip(runItems(run))));
 
   out = out
     // The one tag let back through after escaping. A model writes `<br>` to
@@ -350,7 +543,20 @@ function readMathBlock(lines, i) {
 }
 
 export function renderMarkdown(source) {
-  const lines = String(source ?? '').replace(/\r\n/g, '\n').split('\n');
+  const all = String(source ?? '').replace(/\r\n/g, '\n').split('\n');
+  // A quote inside a reply is rendered by a nested call, which keeps the notes
+  // the reply as a whole defined rather than looking for its own.
+  if (activeNotes) return renderBlocks(all);
+  const { notes, hidden } = collectNotes(all);
+  activeNotes = notes;
+  try {
+    return renderBlocks(hidden.size ? all.filter((_, i) => !hidden.has(i)) : all);
+  } finally {
+    activeNotes = null;
+  }
+}
+
+function renderBlocks(lines) {
   const html = [];
 
   let i = 0;

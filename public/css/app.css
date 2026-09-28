@@ -8766,12 +8766,23 @@ select:focus-visible {
   color: var(--text-dim);
   font-size: 12.5px;
   font-weight: 500;
-  line-height: 20px;
-  vertical-align: 1px;
+  /* A fixed height, centred on the line. `inline-flex` takes its baseline from
+     its first item, and when that is a logo that failed to load — or nothing —
+     the whole chip dropped below the words around it. `middle` centres it on
+     the lower-case letters, which is what the eye reads as level. */
+  height: 22px;
+  box-sizing: border-box;
+  line-height: 1;
+  vertical-align: middle;
+  position: relative;
+  top: -2px;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
 }
+/* No logo loaded at all: no empty gap where it would have been. */
+.cite__marks:not(:has(> :not(.is-bare))) { display: none; }
+.cite:not(:has(.cite__marks > :not(.is-bare))) { padding-left: 9px; }
 .cite:hover,
 .cite[aria-expanded='true'] { background: var(--tint-2); color: var(--text); }
 .cite:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -8865,3 +8876,6 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
   white-space: nowrap;
 }
 .cite-item--file { cursor: default; }
+.cite-item__where { color: var(--text-dim); font-size: 13px; }
+.cite-item--note { cursor: default; }
+.cite-item--note .cite-item__snip { color: var(--text); -webkit-line-clamp: 6; }

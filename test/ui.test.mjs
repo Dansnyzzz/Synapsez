@@ -4816,6 +4816,37 @@ section('a citation chip opens its list of sources');
   });
   check('one mark per site or file kind', out.marks === 3, String(out.marks));
 
+  // Level with the words around it — with a logo, with none that loaded, and
+  // a bare file citation. It sat a few pixels low when its baseline came from
+  // a logo that failed to load.
+  const level = await page.evaluate(async () => {
+    const { renderMarkdown } = await import('/js/markdown.js');
+    const host = document.createElement('div');
+    host.className = 'prose';
+    host.style.cssText = 'position:fixed;top:300px;left:80px;z-index:2000;width:900px';
+    host.innerHTML = renderMarkdown(
+      [
+        'Chữ trước ([Library of Congress TOC](https://no-such-host.invalid/toc)) chữ sau.',
+        '',
+        'Chữ trước [SLIDE-DTTC_Gốc.txt, tr.32–46] chữ sau.',
+        '',
+        'Chữ trước ([OpenRouter](https://openrouter.ai/a)) chữ sau.',
+      ].join('\n'),
+    );
+    document.body.append(host);
+    await new Promise((r) => setTimeout(r, 600));
+    const out = [...host.querySelectorAll('p')].map((p) => {
+      const chip = p.querySelector('.cite').getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(p.firstChild);
+      const text = range.getBoundingClientRect();
+      return Math.round(((chip.top + chip.bottom) / 2 - (text.top + text.bottom) / 2) * 10) / 10;
+    });
+    host.remove();
+    return out;
+  });
+  check('the chip is centred on its line of text', level.every((d) => Math.abs(d) <= 1), `offsets ${level.join(', ')}px`);
+
   await page.mouse.move(out.x, out.y);
   await page.waitForSelector('.cite-pop:not([hidden])', { timeout: 2000 }).catch(() => null);
   const card = await page.evaluate(() => {

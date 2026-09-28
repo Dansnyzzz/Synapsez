@@ -194,11 +194,142 @@ section('files: the kind as the name, one icon per kind, not a link');
   check('an underscore in a name is not italics', !html.includes('<em>'));
 }
 
+section('a project source cited the way the grounding rules ask: bare brackets, with a page');
+{
+  // Copied from a real reply.
+  const html = renderMarkdown('**Khủng hoảng tài chính 2008** [SLIDE-DTTC_Gốc.txt, tr.32–46]:');
+  check('is a chip', (html.match(/class="cite"/g) || []).length === 1, html.slice(0, 160));
+  check('no raw brackets left', !html.includes('[SLIDE'), html.slice(0, 160));
+  check('the colon after it stays', /<\/span>:<\/p>$/.test(html), html.slice(-40));
+  check('the page range is in the card', html.includes('<span class="cite-item__where">tr.32–46</span>'));
+  check('named by its type', html.includes('cite__name--file">TXT<'));
+
+  const two = renderMarkdown('Có bộ trắc nghiệm [TESTBANK-DTTC.pdf]. Giáo trình [SLIDE-DTTC_Gốc.txt, tr.12] và [đề 1.pdf, tr.2].');
+  check('each bare citation is its own chip', (two.match(/class="cite"/g) || []).length === 3, String((two.match(/class="cite"/g) || []).length));
+
+  const merged = renderMarkdown('Khớp [SLIDE.txt, tr.19–46], [đề 1.pdf, tr.2; TESTBANK.pdf].');
+  check('adjacent ones merge into one chip', (merged.match(/class="cite"/g) || []).length === 1);
+  check('three sources, so +2', merged.includes('>+2<'), merged.match(/cite__more">[^<]*/)?.[0]);
+
+  const samePages = renderMarkdown('x [a.pdf, tr.1] [a.pdf, tr.9]');
+  check('the same file at two places is two sources', samePages.includes('>+1<'));
+}
+
+section('other ways models cite');
+{
+  const paren = renderMarkdown('Giáo trình là Bodie (SLIDE-DTTC_Gốc.txt, tr.12).');
+  check('a file with a page in plain parentheses', paren.includes('class="cite"') && paren.includes('cite-item__where">tr.12<'), paren.slice(0, 200));
+  check('and the full stop after it stays', /<\/span>\.<\/p>$/.test(paren), paren.slice(-30));
+
+  const pages = renderMarkdown('x (Chap005.pdf, p. 3; notes.docx, slide 4)');
+  check('two in one pair of parentheses', pages.includes('>+1<'));
+
+  const domain = renderMarkdown('Theo [openrouter.ai](https://openrouter.ai/docs/files-api), tối đa 100 MiB.');
+  check('a link whose words are a domain is a source', domain.includes('class="cite"') && domain.includes('cite__name">openrouter.ai<'));
+}
+
+section('numbered notes, Perplexity style, against a Sources list');
+{
+  const html = renderMarkdown(
+    [
+      'Tối đa 100 MiB mỗi tệp [1][2]. Free plan 50 request/ngày [3].',
+      '',
+      '**Nguồn:**',
+      '1. [Files API - OpenRouter](https://openrouter.ai/docs/files-api)',
+      '2. [Upload a file](https://openrouter.ai/docs/api/upload)',
+      '3. Reddit — https://www.reddit.com/r/SillyTavernAI/x',
+    ].join('\n'),
+  );
+  const chips = html.match(/class="cite"/g) || [];
+  check('two chips, one per run of numbers', chips.length === 2, String(chips.length));
+  check('[1][2] is one chip, +1', html.includes('>+1<'));
+  check('named from the list', html.includes('cite__name">Files API - OpenRouter<'));
+  check('a bare address in the list works too', html.includes('href="https://www.reddit.com/r/SillyTavernAI/x"'));
+  check('its words before the address become the name', html.includes('cite__name">Reddit<'), html.match(/cite__name">[^<]*/g)?.join(' | '));
+  check('no bare [1] left in the text', !/\[\d\]/.test(html.replace(/<span class="cite__card"[^]*?<\/span><\/span>/g, '')));
+  check('the list itself stays visible', html.includes('<ol>'));
+}
+
+section('numbered notes as definitions, and footnotes');
+{
+  const html = renderMarkdown(
+    ['Khủng hoảng 2008 [^1] và Glass-Steagall [2, 3].', '', '[^1]: SLIDE-DTTC_Gốc.txt, tr.32–46', '[2]: https://en.wikipedia.org/wiki/Glass–Steagall_legislation "Glass–Steagall"', '[3]: Bodie, Kane, Marcus, Investments, 10th ed.'].join('\n'),
+  );
+  check('a footnote to a file is a file chip', html.includes('cite-item__where">tr.32–46<'));
+  check('a definition with a quoted title uses it', html.includes('cite__name">Glass–Steagall<'));
+  check('a note with no link or file still shows', html.includes('cite-item--note') && html.includes('Bodie, Kane, Marcus'));
+  check('used definitions are not printed again', !html.includes('[2]:') && !html.includes('[^1]:'));
+
+  const undefinedNote = renderMarkdown('Theo [4] thì sao.\n\n[1]: https://a.com');
+  check('a number with no definition is left as written', undefinedNote.includes('[4]') && !undefinedNote.includes('class="cite"'));
+  check('and a definition nothing points at stays visible', undefinedNote.includes('https://a.com'));
+
+  const range = renderMarkdown('x [1–3].\n\n[1]: https://a.com\n[2]: https://b.com\n[3]: https://c.com');
+  check('a range [1–3] is three sources', range.includes('>+2<'));
+
+  const partial = renderMarkdown('x [1][9].\n\n[1]: https://a.com');
+  check('a run with one undefined number is left whole', partial.includes('[1][9]') && !partial.includes('class="cite"'));
+
+  const code = renderMarkdown('```\narr[1]: x\n```\n\nitems[1] is fine.');
+  check('an index into an array is not a note', !code.includes('class="cite"'));
+}
+
+section('introduced sources, bare addresses, OpenAI markers, dashes, odd addresses');
+{
+  const lead = renderMarkdown('Tối đa 100 MiB (Nguồn: [OpenRouter](https://openrouter.ai/docs)).');
+  check('"(Nguồn: [X](url))" is a chip', lead.includes('class="cite"') && !lead.includes('Nguồn:'), lead.slice(0, 120));
+
+  const theo = renderMarkdown('Như vậy (theo [Reddit](https://reddit.com/r/x), [Zendesk](https://z.com/a)).');
+  check('"(theo …, …)" too, with +1', theo.includes('>+1<'));
+
+  const bare = renderMarkdown('Giới hạn 20 request/phút (https://openrouter.ai/docs/limits).');
+  check('an address alone in parentheses is a chip named by its site', bare.includes('cite__name">openrouter.ai<'), bare.slice(0, 160));
+
+  const openai = renderMarkdown('Theo tài liệu 【4:0†Chap005.pdf】 thì…');
+  check('OpenAI\'s 【†file】 marker is a file chip', openai.includes('cite__name--file">PDF<') && !openai.includes('【'));
+
+  const dash = renderMarkdown('x [Chap005.pdf – tr.12]');
+  check('a page after a dash', dash.includes('cite-item__where">tr.12<'), dash.slice(0, 200));
+
+  const wiki = renderMarkdown('x ([Wikipedia](https://en.wikipedia.org/wiki/Lehman_(bank)))');
+  check('an address with parentheses in it is kept whole', wiki.includes('href="https://en.wikipedia.org/wiki/Lehman_(bank)"'), wiki.match(/href="[^"]*"/)?.[0]);
+
+  const upper = renderMarkdown('x [BAO-CAO.PDF] [bao-cao.pdf]');
+  check('upper-case extensions, and case does not make two files', upper.includes('cite__name--file">PDF<') && !upper.includes('cite__more'));
+
+  const kinds = renderMarkdown('x [a.ods] [b.odp] [c.svg] [d.ipynb]');
+  check('less common kinds are recognised too', (kinds.match(/class="cite"/g) || []).length === 1 && kinds.includes('>+3<'));
+}
+
+section('what looks like a citation but is not one');
+{
+  check('an ordinary aside in parentheses', !renderMarkdown('Kết quả (tăng 20%) là tốt.').includes('class="cite"'));
+  check('a Markdown task list', !renderMarkdown('- [ ] a\n- [x] b').includes('class="cite"'));
+  check('a link inside a sentence with a lead-in word', !renderMarkdown('Xem thêm [tài liệu](https://a.com/docs) nhé.').includes('class="cite"'));
+  check('a file named in parentheses without a place in it is prose', !renderMarkdown('(xem report.pdf)').includes('class="cite"'));
+  check('nor with a comma and ordinary words', !renderMarkdown('(report.pdf, bản mới nhất)').includes('class="cite"'));
+  check('an ordinary link with words stays a link', !renderMarkdown('[trang chủ OpenRouter](https://openrouter.ai)').includes('class="cite"'));
+  check('a file name as link text stays a link', !renderMarkdown('[report.pdf](https://a.com/r.pdf)').includes('class="cite"'));
+  check('a checkbox is not a file', !renderMarkdown('- [x] done').includes('class="cite"'));
+  check('brackets around words are left alone', !renderMarkdown('see [note 1] below').includes('class="cite"'));
+  check('a file named in code is left alone', !renderMarkdown('`[a.pdf]`').includes('class="cite"'));
+}
+
 section('a link that is part of the sentence stays a link');
 {
   const html = renderMarkdown('Xem [tài liệu Files API](https://openrouter.ai/docs) để biết thêm.');
   check('no chip', !html.includes('class="cite"'));
   check('an ordinary link', html.includes('<a href="https://openrouter.ai/docs"'));
+}
+
+section('a numbered note cannot smuggle markup either');
+{
+  const html = renderMarkdown(
+    ['a [1] b [2] c [3]', '', '[1]: <img src=x onerror=alert(1)>', '[2]: https://a.com/"onmouseover="y "t<b>"', '[3]: javascript:alert(1)'].join('\n'),
+  );
+  check('no live tag from a note', !/<img src=x/.test(html) && !html.includes('<b>'));
+  check('no attribute break-out from a note address', !/"onmouseover="/.test(html));
+  check('a javascript: note is text, never a link', !/href="javascript/i.test(html));
 }
 
 section('a citation cannot smuggle markup');
