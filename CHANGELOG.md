@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-28 (night) — the web as one card of sites
+
+### Changed
+
+- **Searching and reading the web is one card**, like Claude's "Searched the web": `web_search`,
+  `web_fetch`, `extract`, `http_request` and `read_feed` no longer draw a raw call-and-result card each.
+  The header says what was done, with the query beside it, and folds; inside is one row per site, with
+  its icon, its title cut to fit, and its domain. A row opens the exact address the assistant used, not the
+  site's homepage, and shows whether it is loading, was read, or failed.
+- The side panel's search results use the same row and no longer scroll sideways under a long title.
+- Both are transparent with a rounded border instead of a grey fill.
+
+### Privacy
+
+- Site icons come from this app's own server (`/api/favicon/:host`, signed-in only), which fetches them
+  through `safeFetch` and caches them, so neither a favicon service nor the sites themselves learn which
+  pages a conversation touched. Only a bare public hostname is accepted; a site without an icon shows a
+  globe.
+
 ## 2026-09-28 (last) — sent files look as they did waiting; edits keep them; files cost less
 
 ### Fixed

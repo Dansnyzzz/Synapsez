@@ -3,6 +3,8 @@ import { t, currentLanguage } from './i18n.js';
 import { humanSize, repeatsAs, cronParts } from './format.js';
 import { chartFigure } from './chart.js';
 import { mediaTools, svgToPng, fileNameFrom, imageUrlToPng } from './media.js';
+import { webRowHtml, titleFromContent } from './webrows.js';
+import { parseResults } from './rail.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -49,6 +51,9 @@ const ms = (n) => (n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`);
  * different places is noise rather than information.
  */
 const MARK_PENDING = '<span class="mark mark--pending" aria-hidden="true"></span>';
+
+/** The tools drawn as the web card rather than as cards of their own. */
+const WEB_TOOLS = new Set(['web_search', 'web_fetch', 'extract', 'http_request', 'read_feed']);
 const MARK_DONE = '<span class="mark">✓</span>';
 
 /** The nearest ancestor that actually scrolls sideways, if there is one. */
@@ -1246,7 +1251,102 @@ export function assistantMessage() {
    */
   let group = null;
 
+  /** Whatever run is open — steps or the web card — ends here. */
   function closeGroup() {
+    closeSteps();
+    closeWeb();
+  }
+
+  /**
+   * The web card: searching, reading a page, extracting, calling an API,
+   * reading a feed — one card per run of them, like Claude's "Searched the web".
+   *
+   * The header says what happened and the query it was for; the body lists every
+   * site involved as a row — its icon, its title, its domain — pointing at the
+   * exact address used. A page read after a search is the same row as its
+   * result, not a second one. The raw JSON that used to fill these cards is not
+   * something anybody reads; the tool's answer is still what the model got.
+   */
+  let web = null;
+
+  function closeWeb() {
+    if (!web) return;
+    web.live = false;
+    paintWeb();
+    web.node.open = false;
+    web = null;
+  }
+
+  function paintWeb() {
+    if (!web) return;
+    const w = web;
+    const working = w.live && w.pending > 0;
+    const allFailed = !working && w.calls > 0 && w.failures === w.calls;
+    w.mark.innerHTML = working ? MARK_PENDING : `<span class="mark">${allFailed ? '✗' : '✓'}</span>`;
+    w.title.textContent = t(w.searched ? (working ? 'web.searching' : 'web.searched') : working ? 'web.reading' : 'web.read');
+    const asked = w.queries.filter(Boolean);
+    w.query.textContent = asked.length ? asked[asked.length - 1] + (asked.length > 1 ? ` · +${asked.length - 1}` : '') : '';
+    w.node.classList.toggle('web--error', allFailed);
+    w.list.innerHTML = [...w.rows.values()].map((row) => webRowHtml(row)).join('');
+    w.list.hidden = w.rows.size === 0;
+  }
+
+  function webCard() {
+    if (web) return web;
+    closeSteps();
+    const node = el('details', 'block web');
+    node.open = true;
+    const summary = el('summary', 'web__head');
+    const mark = el('span', 'web__mark');
+    const title = el('span', 'web__title');
+    const query = el('span', 'web__query');
+    const chev = el('span', 'web__chev', '⌄');
+    chev.setAttribute('aria-hidden', 'true');
+    summary.append(mark, title, query, chev);
+    const list = el('div', 'web__list');
+    node.append(summary, list);
+    body.append(node);
+    web = { node, mark, title, query, list, rows: new Map(), queries: [], pending: 0, calls: 0, failures: 0, searched: false, live: true };
+    return web;
+  }
+
+  function startWeb(call) {
+    const w = webCard();
+    w.calls += 1;
+    w.pending += 1;
+    const input = call.input || {};
+    if (call.name === 'web_search') {
+      w.searched = true;
+      w.queries.push(String(input.query || ''));
+    }
+    const url = call.name === 'web_search' ? null : String(input.url || '');
+    if (url) {
+      const row = w.rows.get(url) || { url, title: null, state: null };
+      row.state = 'pending';
+      w.rows.set(url, row);
+    }
+    paintWeb();
+    return {
+      complete(result) {
+        w.pending = Math.max(0, w.pending - 1);
+        if (result.isError) w.failures += 1;
+        if (call.name === 'web_search') {
+          for (const hit of parseResults(result.content)) {
+            const row = w.rows.get(hit.url);
+            if (row) row.title ||= hit.title;
+            else w.rows.set(hit.url, { url: hit.url, title: hit.title, state: null });
+          }
+        } else if (url) {
+          const row = w.rows.get(url);
+          row.state = result.isError ? 'failed' : 'read';
+          row.title ||= titleFromContent(call.name, result.content);
+        }
+        paintWeb();
+      },
+    };
+  }
+
+  function closeSteps() {
     if (!group) return;
     // The run is history now: swap the waiting mark for a tick and fold it up.
     const mark = group.node.querySelector(':scope > summary > .mark');
@@ -1350,6 +1450,8 @@ export function assistantMessage() {
   function groupFor(family) {
     if (group && group.family === family) return group;
     closeGroup();
+    // closeGroup ended the web card too: a browser step after a search is a new
+    // piece of work.
 
     const node = el('details', 'block steps');
     node.open = true;
@@ -1605,7 +1707,7 @@ export function assistantMessage() {
     draftTool(name) {
       // Browser clicks and file reads are tiny and grouped into a run of steps;
       // a draft card between them would only flicker.
-      if (stepFamily(name)) return null;
+      if (stepFamily(name) || WEB_TOOLS.has(name)) return null;
       const { verb } = describeStep(name, {});
       const block = el('div', 'block tool tool--draft');
       block.setAttribute('role', 'status');
@@ -1630,6 +1732,7 @@ export function assistantMessage() {
 
     /** Start a collapsed card for a tool call; returns a handle to complete it. */
     startTool(call) {
+      if (WEB_TOOLS.has(call.name)) return startWeb(call);
       const family = stepFamily(call.name);
       if (family) return startStep(call, family);
 

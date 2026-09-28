@@ -8162,9 +8162,9 @@ select:focus-visible {
 }
 .toolgrp {
   margin-bottom: 10px;
-  border: 1px solid var(--glass-line);
+  border: 1px solid var(--line);
   border-radius: 14px;
-  background: linear-gradient(180deg, var(--glass-hi), transparent 40%), var(--tint);
+  background: transparent;
   overflow: hidden;
 }
 .toolgrp__head {
@@ -8181,7 +8181,7 @@ select:focus-visible {
 .toolgrp__n { flex: none; color: var(--text-faint); font-size: 12.5px; }
 .toolgrp__chev { flex: none; color: var(--text-faint); transition: transform 0.18s; }
 .toolgrp:not([open]) .toolgrp__chev { transform: rotate(-90deg); }
-.toolgrp__body { display: grid; gap: 2px; padding: 0 8px 10px; max-height: 380px; overflow-y: auto; }
+.toolgrp__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 0 8px 10px; max-height: 380px; overflow: hidden auto; }
 .toolq {
   display: flex;
   align-items: center;
@@ -8192,16 +8192,71 @@ select:focus-visible {
 }
 .toolq > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolq__n { flex: none; color: var(--text-faint); }
-.toolhit {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 7px 8px 7px 28px;
-  border-radius: 9px;
+
+/* ── a site the assistant searched or read ─────────────────────── */
+/* One row, in the web card and in the side panel: icon, title cut to fit, domain. */
+.webrow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: 10px;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: 14px;
   text-decoration: none;
 }
-.toolhit:hover { background: var(--tint-2); }
-.toolhit__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.toolhit__host { flex: none; color: var(--text-faint); font-size: 12px; }
+.webrow:hover { background: var(--tint-2); }
+.webrow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.webrow__mark { position: relative; display: grid; place-items: center; width: 20px; height: 20px; color: var(--text-faint); }
+.webrow__icon { width: 16px; height: 16px; border-radius: 3px; object-fit: contain; }
+.webrow__globe { display: none; }
+.webrow__mark.is-bare .webrow__icon { display: none; }
+.webrow__mark.is-bare .webrow__globe { display: grid; }
+.webrow__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.webrow__site { color: var(--text-faint); font-size: 12.5px; white-space: nowrap; }
+.webrow.is-pending .webrow__title { color: var(--text-dim); }
+.webrow.is-pending .webrow__mark::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1.5px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.webrow.is-failed .webrow__title { color: var(--text-faint); text-decoration: line-through; }
+
+/* The web card in a reply: transparent, a border, the query beside the title. */
+.block.web {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: transparent;
+  overflow: hidden;
+}
+.web__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+.web__head::-webkit-details-marker { display: none; }
+.web__head:hover { background: var(--tint); }
+.web__mark { flex: none; display: grid; place-items: center; width: 16px; color: var(--ok); }
+.web--error .web__mark { color: var(--danger); }
+.web__title { flex: none; color: var(--text-dim); font-size: 14px; }
+.web__query { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 14px; }
+.web__chev { flex: none; color: var(--text-faint); transition: transform 0.18s; }
+.block.web:not([open]) .web__chev { transform: rotate(-90deg); }
+.web__list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  max-height: 420px;
+  padding: 0 8px 8px;
+  overflow: hidden auto;
+}

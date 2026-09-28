@@ -3802,6 +3802,80 @@ section('work running in the background shows up in the conversation list');
  * workflow: a real turn needs a provider key, and what is on trial is the
  * page's behaviour when it meets one, not the model's.
  */
+section('searching and reading the web is one card of sites, like Claude\'s');
+{
+  const store = await initStore();
+  const signedIn = await page.evaluate(async () => (await (await fetch('/api/session')).json()).user);
+  const user = await store.getUserByEmail(signedIn.email);
+  await store.createChat(user.id, { id: 'c-web', title: 'Tin hôm nay', model: 'm' });
+  await store.appendMessage(user.id, 'c-web', { id: 'w-u', role: 'user', text: 'tin mới nhất hôm nay' });
+  const long = 'Giá vàng hôm nay 28/9/2026: Thế giới hạ sâu, vàng SJC giảm tới 1 triệu/lượng và còn nhiều biến động mạnh trong phiên chiều';
+  await store.appendMessage(user.id, 'c-web', {
+    id: 'w-a',
+    role: 'assistant',
+    text: '',
+    toolCalls: [
+      { id: 'w1', name: 'web_search', input: { query: 'tin tức mới nhất hôm nay 28/9/2026', count: 3 } },
+      { id: 'w2', name: 'web_fetch', input: { url: 'https://vietnamnet.vn/gia-vang-hom-nay-2559407.html' } },
+      { id: 'w3', name: 'read_feed', input: { url: 'https://vnexpress.net/rss/tin-moi-nhat.rss' } },
+    ],
+  });
+  await store.appendMessage(user.id, 'c-web', {
+    id: 'w-t',
+    role: 'tool',
+    results: [
+      {
+        toolCallId: 'w1',
+        name: 'web_search',
+        content: `3 results.\n\n<untrusted source="search">\n1. Trực tiếp ASIAD 2026 hôm nay, 28/9\n   https://vietnamnet.vn/truc-tiep-asiad-2026-2559401.html\n2. ${long}\n   https://vietnamnet.vn/gia-vang-hom-nay-2559407.html\n3. Thời tiết hôm nay 28/9\n   https://voh.com.vn/thoi-tiet-28-9.html\n</untrusted>`,
+      },
+      { toolCallId: 'w2', name: 'web_fetch', content: '# https://vietnamnet.vn/gia-vang-hom-nay-2559407.html\n\n<untrusted source="x">\nGiá vàng hôm nay\nNội dung...\n</untrusted>' },
+      { toolCallId: 'w3', name: 'read_feed', content: '<untrusted source="https://vnexpress.net/rss/tin-moi-nhat.rss">\nTin mới nhất - VnExpress RSS — 46 items, newest 10:\n1. A\n</untrusted>' },
+    ],
+  });
+  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await page.click('.chat-row[data-chat="c-web"]');
+  await page.waitForTimeout(900);
+  // Folded once the turn is over; opened to read.
+  await page.click('.block.web > summary');
+  await page.waitForTimeout(300);
+  const card = await page.evaluate(() => {
+    const node = document.querySelector('.block.web');
+    const rows = [...(node?.querySelectorAll('.webrow') || [])];
+    const list = node?.querySelector('.web__list');
+    return {
+      cards: document.querySelectorAll('.block.web').length,
+      separate: document.querySelectorAll('.block.tool').length,
+      title: node?.querySelector('.web__title')?.textContent,
+      query: node?.querySelector('.web__query')?.textContent,
+      rows: rows.map((r) => ({
+        href: r.getAttribute('href'),
+        title: r.querySelector('.webrow__title')?.textContent,
+        site: r.querySelector('.webrow__site')?.textContent,
+        icon: r.querySelector('.webrow__icon')?.getAttribute('src'),
+        cls: r.className,
+      })),
+      json: /"query"|"url"/.test(node?.textContent || ''),
+      sideways: list ? list.scrollWidth > list.clientWidth + 1 : true,
+      background: node ? getComputedStyle(node).backgroundColor : '',
+    };
+  });
+  check('one card for the whole run, not a card per call', card.cards === 1 && card.separate === 0, JSON.stringify({ cards: card.cards, separate: card.separate }));
+  check('  saying it searched, with the query beside it', /web|web/i.test(card.title || '') && card.query === 'tin tức mới nhất hôm nay 28/9/2026', `${card.title} | ${card.query}`);
+  check('  a row per site, the page it read being the same row as its result', card.rows.length === 4, JSON.stringify(card.rows.map((r) => r.href)));
+  const gold = card.rows.find((r) => r.href === 'https://vietnamnet.vn/gia-vang-hom-nay-2559407.html');
+  check('  each row points at the exact page, not the homepage', !!gold && /is-read/.test(gold.cls), JSON.stringify(gold));
+  check('  with the site as a domain, and its icon from this app', gold?.site === 'vietnamnet.vn' && gold?.icon === '/api/favicon/vietnamnet.vn', JSON.stringify(gold));
+  check('  a feed named by its own title', card.rows.some((r) => r.title === 'Tin mới nhất - VnExpress RSS'), JSON.stringify(card.rows.map((r) => r.title)));
+  check('  no raw arguments on show', !card.json);
+  check('  and a long title is cut, not scrolled sideways', !card.sideways);
+  check('  transparent, a border and nothing else', /rgba\(0, 0, 0, 0\)|transparent/.test(card.background), card.background);
+}
+
 section('reopening a conversation mid-answer rejoins it rather than blanking');
 {
   const store = await initStore();
@@ -3940,7 +4014,7 @@ section('what a project made is a row of pages, newest first');
     chip?.click();
     await new Promise((r) => setTimeout(r, 200));
     const group = /** @type {HTMLDetailsElement | null} */ (document.querySelector('#toolpane .toolgrp'));
-    const info = { chip: !!chip, open: !document.getElementById('toolpane').hidden, groups: document.querySelectorAll('#toolpane .toolgrp').length, hits: document.querySelectorAll('#toolpane .toolhit').length, folded: false };
+    const info = { chip: !!chip, open: !document.getElementById('toolpane').hidden, groups: document.querySelectorAll('#toolpane .toolgrp').length, hits: document.querySelectorAll('#toolpane .webrow').length, folded: false };
     /** @type {HTMLElement | null} */ (group?.querySelector('summary'))?.click();
     info.folded = group ? !group.open : false;
     document.getElementById('toolpane-close')?.click();
@@ -5514,9 +5588,11 @@ section('a step that acted on an address says so as a link');
     const { assistantMessage } = await import('/js/render.js');
     const turn = assistantMessage();
     document.getElementById('messages').append(turn.node);
+    // Not a web tool — those are rows in the web card — but any other step
+    // that takes an address still carries it as a link on its own card.
     const handle = turn.startTool({
       id: 'c1',
-      name: 'web_fetch',
+      name: 'download_file',
       input: { url: 'https://edenai.co/post/top-free-image-generation-tools?utm=1' },
     });
 
@@ -5549,6 +5625,31 @@ section('a step that acted on an address says so as a link');
   check('clicking it does not unfold the card', card.openedByLink === false);
   check('and it is still a link once the call finishes', card.afterHref === card.href, card.afterHref);
   check('with the tick beside it', card.tick === '✓', card.tick);
+
+  // A page the web card read: the row is the link, and it lives in the body,
+  // so following it can never fold or unfold the card.
+  const row = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    const url = 'https://edenai.co/post/top-free-image-generation-tools?utm=1';
+    const handle = turn.startTool({ id: 'c1w', name: 'web_fetch', input: { url } });
+    const pending = turn.node.querySelector('.web__list a.webrow')?.classList.contains('is-pending');
+    handle.complete({ content: 'ok', ms: 57, isError: false });
+    const link = turn.node.querySelector('.web__list a.webrow');
+    const out = {
+      pending,
+      href: link?.getAttribute('href') || '',
+      read: link?.classList.contains('is-read'),
+      inSummary: !!turn.node.querySelector('.web summary a'),
+    };
+    turn.node.remove();
+    return out;
+  });
+  check('a fetched page is a row while it loads', row.pending === true);
+  check('its row goes to the exact address', row.href === 'https://edenai.co/post/top-free-image-generation-tools?utm=1', row.href);
+  check('and says it was read', row.read === true);
+  check('with no link in the header to click by mistake', row.inSummary === false);
 }
 
 section('a query is not pretending to be a link');
@@ -5558,8 +5659,8 @@ section('a query is not pretending to be a link');
     const turn = assistantMessage();
     document.getElementById('messages').append(turn.node);
     turn.startTool({ id: 'c2', name: 'web_search', input: { query: 'best free image API' } });
-    const summary = turn.node.querySelector('.tool summary');
-    const out = { anchors: summary.querySelectorAll('a').length, arg: summary.querySelector('.tool__arg')?.textContent || '' };
+    const summary = turn.node.querySelector('.web summary');
+    const out = { anchors: summary.querySelectorAll('a').length, arg: summary.querySelector('.web__query')?.textContent || '' };
     turn.node.remove();
     return out;
   });

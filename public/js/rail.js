@@ -1,5 +1,6 @@
 import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
+import { webRowHtml } from './webrows.js';
 
 /**
  * Below the plan in the side panel: what this conversation made, and what it
@@ -229,12 +230,8 @@ export function createRail({ api, openFile, openSettings, openPane }) {
             const head = `<div class="toolq">${icon.globe}<span>${escapeHtml(labelInput(c))}</span>${
               hits.length ? `<span class="toolq__n">${escapeHtml(t('rail.results', { n: String(hits.length) }))}</span>` : ''
             }</div>`;
-            const rows = hits
-              .map(
-                (h) =>
-                  `<a class="toolhit" href="${escapeHtml(h.url)}" target="_blank" rel="noopener noreferrer"><span class="toolhit__title">${escapeHtml(h.title)}</span><span class="toolhit__host">${escapeHtml(h.host)}</span></a>`,
-              )
-              .join('');
+            // The same row as the web card in the reply: icon, title cut to fit, domain.
+            const rows = hits.map((h) => webRowHtml({ url: h.url, title: h.title })).join('');
             return head + rows;
           })
           .join('');

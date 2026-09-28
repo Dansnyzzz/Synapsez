@@ -3,6 +3,7 @@ import { saveToDrive } from '../tools/google.js';
 import { googleGrants } from '../google.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 import { saveUpload } from '../attachments.js';
+import { faviconFor, cleanHost } from '../favicon.js';
 import { createDocument, extensionOf, RUNNABLE } from '../office/index.js';
 import {
   withStorageShim,
@@ -98,6 +99,30 @@ export function mountFileRoutes(api, { wrap, body }) {
       } catch (err) {
         res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
       }
+    }),
+  );
+
+  /**
+   * A site's icon, for the web card and the side panel. Fetched by the server
+   * (see favicon.js) so the browser never tells a third party which sites a
+   * conversation touched. 404 when the site has none; the row shows a globe.
+   */
+  api.get(
+    '/favicon/:host',
+    wrap(async (req, res) => {
+      const host = cleanHost(req.params.host);
+      if (!host) return res.status(400).json({ error: 'Not a host name.' });
+      const icon = await faviconFor(host);
+      if (!icon) {
+        res.setHeader('Cache-Control', 'private, max-age=21600');
+        return res.status(404).json({ error: 'Not found' });
+      }
+      res.setHeader('Content-Type', icon.type);
+      // An SVG icon is still a document; drawn only by <img>, and forbidden to run anything.
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'private, max-age=604800');
+      res.send(icon.data);
     }),
   );
 

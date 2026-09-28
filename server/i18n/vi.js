@@ -675,6 +675,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "algorithm là md5, sha1, sha256 hoặc sha512.",
   "Not valid JSON: {0}":
     "JSON không hợp lệ: {0}",
+  "Not a host name.":
+    "Không phải tên miền.",
   "Not a valid regular expression: {0}":
     "Biểu thức chính quy không hợp lệ: {0}",
   "op is one of: count, hash, base64_encode, base64_decode, url_encode, url_decode, uuid, json_format, regex, diff, slug, remove_accents, upper, lower, title.":
