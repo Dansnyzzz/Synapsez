@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-28 (evening) — the new-model notice follows the list; feeds are found, not guessed
+
+### Fixed
+
+- **The "new model" notice is the top of the model list.** It announces exactly the newest model
+  in your tier — free if you are on a free model, paid if you are on a paid one — in the list's own
+  Newest order, the day it appears there (first visit included). Once shown or answered it is not
+  shown again, and nothing is shown the next day unless something newer arrives. A model you are
+  already on, or used this month, is never announced. Removed the rules the list did not share (a
+  20-hour quiet period, "only models imported after your first visit", a list of notable labs),
+  which hid models on their release day and announced one you were already using.
+- **read_feed finds a site's real feed.** Models guess feed addresses (`vnexpress.net/rss/tin-moi.rss`;
+  the real one is `tin-moi-nhat.rss`) and every guess failed. When an address is not a feed, the
+  site's own feeds are found — on the page it led to, on `/rss`, or in the homepage's
+  `<link rel="alternate">` — and the matching one (or a site's only one) is read straight away;
+  otherwise the real addresses are listed so the next call is right. Passing just the site works.
+
 ## 2026-09-28 (audit) — privacy, fewer tokens per step, and runs that cannot tangle
 
 ### Security and privacy

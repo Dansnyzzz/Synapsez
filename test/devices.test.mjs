@@ -831,17 +831,18 @@ section('new-model announcement');
     },
   ]);
 
-  // "New" means arrived after this account started watching, not "released
-  // recently" — otherwise a fresh account meets a queue of modals catching it up
-  // on the whole of last month, one per reload, which is how a useful notice
-  // becomes the thing people close without reading.
+  // The notice follows the list: the newest model in the tier, the day it is
+  // there — including on the first look. Never the ancient one.
   const firstLook = await alice.call('GET', '/api/models/news');
   check(
-    'the first look announces nothing',
-    firstLook.json?.model === null,
-    'there is no news on the day you subscribe',
+    'the newest in the list is announced, first look included',
+    firstLook.json?.model?.id === 'openrouter/google/pre-existing-gemini',
+    firstLook.json?.model?.id || 'none',
   );
-  await bob.call('GET', '/api/models/news'); // draw Bob's line too
+  // Once it has been on screen, the same top of the list is not news tomorrow.
+  await alice.call('POST', '/api/models/news', { id: 'openrouter/google/pre-existing-gemini', action: 'shown' });
+  check('and once shown, not again while it is still the newest', (await alice.call('GET', '/api/models/news')).json?.model === null);
+  await bob.call('POST', '/api/models/news', { id: 'openrouter/google/pre-existing-gemini', action: 'shown' });
 
   // Now something genuinely arrives.
   await store.upsertModels([
@@ -900,10 +901,29 @@ section('new-model announcement');
   check('and is also only asked once', (await bob.call('GET', '/api/models/news')).json?.model === null);
 
   check(
-    'an old model is never announced',
+    'an older model is never offered in place of the newest',
     (await alice.call('GET', '/api/models/news')).json?.model === null,
-    'nothing recent and notable is left',
+    'the newest was answered; nothing below it is news',
   );
+
+  // A model somebody is already on is not news to them, however new it is.
+  await store.upsertModels([
+    {
+      id: 'openrouter/anthropic/claude-fictional-10',
+      provider: 'openrouter',
+      model: 'anthropic/claude-fictional-10',
+      family: 'anthropic',
+      label: 'Claude Fictional 10',
+      context: 500_000,
+      priceIn: 4,
+      priceOut: 20,
+      isFree: false,
+      releasedAt: new Date().toISOString(),
+    },
+  ]);
+  await alice.call('PUT', '/api/prefs', { defaultModel: 'openrouter/anthropic/claude-fictional-10' });
+  check('the model already in use is not announced', (await alice.call('GET', '/api/models/news')).json?.model === null);
+  check('  while somebody not on it is told', (await bob.call('GET', '/api/models/news')).json?.model?.id === 'openrouter/anthropic/claude-fictional-10');
 
   const bogus = await alice.call('POST', '/api/models/news', { id: 'made/up', action: 'apply' });
   check('a model that is not in the library cannot become a default', bogus.status === 400, `got ${bogus.status}`);

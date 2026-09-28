@@ -175,6 +175,14 @@ section('a new account is shown the guide, once');
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
   check('and it does not come back after a reload', !(await page.$('#onboarding[open]')));
+  // With the guide answered, the newest model in the list may be announced —
+  // once. Answered here, the way a person would, before anything is pressed.
+  if (await page.$('#model-news[open]')) {
+    const title = await page.evaluate(() => document.getElementById('news-title').textContent.trim());
+    check('after the guide, one new model is announced', !!title, title);
+    await page.click('#news-decline');
+    await page.waitForTimeout(800);
+  }
   check('leaving the app usable', await page.isVisible('#model-chip'));
   /**
    * Pressing a suggestion has to arm the send button.
@@ -210,19 +218,17 @@ section('a new account is shown the guide, once');
   });
 }
 
-section('a fresh account is not caught up on old news');
+section('the newest model is announced once, not caught up on');
 {
-  // The library populates itself on first load and holds hundreds of models,
-  // dozens of them recent. Announcing those would greet a new account with a
-  // queue of modals — one per reload — which is precisely how a useful notice
-  // becomes the thing people close without reading. The first look draws a line
-  // and says nothing; only what arrives afterwards is news.
+  // The notice is the top of the model list in this account's tier — one
+  // model, never a queue of the month's releases. Once answered, a reload
+  // shows nothing until something newer arrives.
   await page.waitForTimeout(2500);
-  check('no modal on first sign-in', !(await page.$('#model-news[open]')));
+  check('the answered announcement stays answered', !(await page.$('#model-news[open]')));
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
-  check('and none on reload either', !(await page.$('#model-news[open]')));
+  check('and it does not come back on reload', !(await page.$('#model-news[open]')));
 }
 
 section('the chat window is fixed, only the transcript scrolls');

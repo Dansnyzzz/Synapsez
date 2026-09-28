@@ -4,49 +4,32 @@ import { FAMILY_LABELS } from '../public/js/search.js';
 import { markedPrice } from './pricing.js';
 
 /**
- * "There is a new model" — said once, to each person, about the models that
- * actually warrant interrupting somebody.
+ * "There is a new model" — the newest model in the tier somebody uses, once.
  *
- * The library refreshes itself daily and OpenRouter publishes hundreds of
- * entries, so announcing every arrival would be a modal a day for a fine-tune of
- * something nobody has heard of. That is not a feature, it is a reason to stop
- * reading modals. Two filters do the work:
+ * The rule is the model list's own, so the two cannot disagree: the model at
+ * the top of the list sorted Newest, in the person's tier, is the one announced.
+ * If yesterday's announcement is still the top of the list today, there is
+ * nothing new and nothing is shown. The notice used to apply rules the list did
+ * not — a quiet period, "only models imported after this account first looked",
+ * a list of notable labs — so a model could sit at the top of the list on its
+ * release day with no notice, and a model the person was already using could be
+ * announced to them days later.
  *
- *   **Recent.** Released within the last month. An old model appearing in the
- *   catalogue for the first time is news about the catalogue, not about the
- *   model.
+ *   **In the tier they use.** Somebody on a free model hears about the newest
+ *   free model and never about a paid one, and the other way round.
  *
- *   **From a lab whose releases are events.** Anthropic, OpenAI, Google, Meta,
- *   xAI, DeepSeek, Qwen, Mistral. This is a judgement call and it is meant to
- *   be: the question is not "is this model good" but "would this person want to
- *   be told", and for a flagship from one of these the answer is usually yes.
- *   Paid models only: a new *free* model is news to somebody on a free model
- *   whoever made it, because the alternative is them never hearing of it.
+ *   **Not one they already have.** Their current default, or one they have used
+ *   in the last month, is not news to them.
  *
- *   **In the tier they use.** Somebody on a free model hears about free models
- *   and not about paid ones, and the other way round. And never a model that
- *   already has an end date — telling somebody to switch to a model that is
- *   going away is telling them to switch twice.
+ *   **Recent, and staying.** Released within the last month — the top of an
+ *   old catalogue is not a release — and without an end date: telling somebody
+ *   to switch to a model that is going away is telling them to switch twice.
  *
- * Seen state is per account and per model, so a shared deployment does not have
- * one person's dismissal silence it for everybody. Recorded on both answers —
- * taking it and turning it down are both decisions, and neither should be asked
- * about twice.
+ * State is per account, so one person's answer does not silence it for anyone
+ * else.
  */
 
 const NEWS_KEY = 'modelNews';
-
-/** Labs whose releases are worth a modal. */
-const NOTABLE_FAMILIES = new Set([
-  'anthropic',
-  'openai',
-  'google',
-  'meta',
-  'xai',
-  'deepseek',
-  'qwen',
-  'mistral',
-]);
 
 const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -60,90 +43,60 @@ const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
  */
 const MAX_REMEMBERED = 300;
 
-/** At most one interruption a day, however busy the labs have been. */
-const QUIET_PERIOD_MS = 20 * 60 * 60 * 1000;
-
 async function newsState(userId) {
   const stored = await getStore().getUserSetting(userId, NEWS_KEY);
   return stored && typeof stored === 'object' && stored.seen ? stored : { seen: {} };
 }
 
 /**
- * The one model to tell this account about, or null.
+ * The newest model in this person's tier, if it is news to them; otherwise null.
  *
- * The hard part is what "new" means, and getting it wrong is what turns a
- * useful notice into the thing people close without reading. It cannot mean
- * "recently released": the library holds hundreds of models and a fresh account
- * would meet a queue of modals, one per reload, for every good release of the
- * past month. Nobody wants to be caught up on the news; they want to be told
- * when something happens.
+ * Only ever the newest. An older model is never offered because the newest was
+ * already answered — that is what made the notice drift away from the list —
+ * so once the top of the list has been shown, taken, declined or used, nothing
+ * is shown until something newer takes its place.
  *
- * So "new" means **arrived after this account started watching**. The first look
- * establishes that line and announces nothing — there is no news on the day you
- * subscribe — and everything after it is genuinely a thing that just happened.
- *
- * One at a time, and at most one a day, so even a busy week cannot become a
- * queue.
+ * @param {string} userId
+ * @param {{ tier?: 'free'|'paid', current?: string|null }} [options]
+ *   `current` is the account's default model, which is never news to it.
  */
-export async function pendingAnnouncement(userId, { tier = 'free' } = {}) {
+export async function pendingAnnouncement(userId, { tier = 'free', current = null } = {}) {
   const store = getStore();
-  const state = await newsState(userId);
+  const wanted = tier === 'paid' ? 'paid' : 'free';
 
-  // First look: draw the line and say nothing. Deliberately silent — the
-  // alternative is greeting a new account with a stack of month-old releases.
-  if (!state.since) {
-    state.since = new Date().toISOString();
+  // The list's own order and tier. A few rows, only to step past models that are
+  // already going away — a withdrawal date is not a release.
+  const rows = await store.listSharedModels({ sort: 'new', limit: 10, tier: wanted });
+  const now = Date.now();
+  const newest = rows.find((r) => !!r.is_free === (wanted === 'free') && !r.expires_at);
+  if (!newest?.released_at || now - new Date(newest.released_at).getTime() > RECENT_MS) return null;
+
+  const state = await newsState(userId);
+  if (state.seen[newest.id] || state.announced === newest.id) return null;
+
+  // Already theirs: the default they are on, or one they have used this month.
+  const used = current === newest.id || (await store.usageByModel(userId, 30)).some((u) => u.model === newest.id);
+  if (used) {
+    state.announced = newest.id;
     await store.setUserSetting(userId, NEWS_KEY, state);
     return null;
   }
-
-  if (state.lastShownAt && Date.now() - new Date(state.lastShownAt).getTime() < QUIET_PERIOD_MS) {
-    return null;
-  }
-
-  // Newest first, and only a page of them: the answer is at the top or it is not
-  // worth showing.
-  const wanted = tier === 'paid' ? 'paid' : 'free';
-  const candidates = await store.listSharedModels({ sort: 'new', limit: 60, tier: wanted });
-  const now = Date.now();
-  const since = new Date(state.since).getTime();
-
-  for (const row of candidates) {
-    if (state.seen[row.id]) continue;
-    // Discovered by the daily refresh after this account started watching.
-    if (!row.created_at || new Date(row.created_at).getTime() <= since) continue;
-    // And actually a release, not an old model the catalogue only just listed.
-    if (!row.released_at) continue;
-    if (now - new Date(row.released_at).getTime() > RECENT_MS) continue;
-    if (!!row.is_free !== (wanted === 'free')) continue;
-    if (row.expires_at) continue;
-    if (wanted === 'paid' && !NOTABLE_FAMILIES.has(row.family || familyOf(row.model || row.id))) continue;
-
-    /**
-     * The quiet period starts when it is *shown*, not when it is fetched.
-     *
-     * This used to stamp `lastShownAt` here, before the response had been
-     * delivered — so a prefetch, a double render, or a response the browser
-     * never received burned the twenty-hour window and the account was simply
-     * never told about the model. The write moved to `markAnnouncementShown`,
-     * which the client calls once the dialog is actually on screen.
-     */
-    return describe(row);
-  }
-  return null;
+  return describe(newest);
 }
 
 /**
- * Record that an announcement really reached somebody.
+ * Record that an announcement reached somebody's screen.
  *
- * Separate from reading it, so the quiet period cannot be spent by a request
- * whose answer nobody saw. Safe to call more than once: the window is measured
- * from the last stamp, and re-stamping it a second later changes nothing.
+ * Separate from reading it, so a request whose answer nobody saw cannot use the
+ * announcement up. After this, the same model is not shown again — whether or
+ * not they answered it.
  */
-export async function markAnnouncementShown(userId) {
+export async function markAnnouncementShown(userId, modelId) {
+  const id = String(modelId || '');
+  if (!id) return;
   const store = getStore();
   const state = await newsState(userId);
-  state.lastShownAt = new Date().toISOString();
+  state.announced = id;
   await store.setUserSetting(userId, NEWS_KEY, state);
 }
 

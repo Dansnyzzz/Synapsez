@@ -136,6 +136,17 @@ const server = http.createServer((req, res) => {
   const path = req.url.split('?')[0];
   // 127.0.0.1 and localhost are different origins on the same server.
   const other = `http://localhost:${server.address().port}`;
+  // A news site whose feeds are listed on /rss, as VnExpress's are.
+  if (path === '/rss') {
+    return res
+      .writeHead(200, { 'Content-Type': 'text/html' })
+      .end('<html><body><a href="/rss/tin-moi-nhat.rss">Tin mới</a><a href="/rss/the-thao.rss">Thể thao</a></body></html>');
+  }
+  if (path === '/rss/tin-moi-nhat.rss') {
+    return res
+      .writeHead(200, { 'Content-Type': 'application/xml' })
+      .end('<rss><channel><title>Tin mới nhất</title><item><title>Tin một</title><link>https://x/1</link></item></channel></rss>');
+  }
   if (path === '/moved-get') return res.writeHead(302, { Location: `${other}/landing` }).end();
   if (path === '/moved-post') return res.writeHead(307, { Location: `${other}/landing` }).end();
   if (path === '/landing') {
@@ -219,6 +230,17 @@ try {
 
     const endless = await call({ method: 'GET', url: `${base}/endless.txt` });
     check('an endless body is read to a cap, not to the end', endless.length < 50_000, String(endless.length));
+  }
+
+  section('read_feed finds the feed a site really has');
+  {
+    const feed = LIBRARY_IMPLEMENTATIONS.read_feed;
+    // The model's guess — "tin-moi.rss" — does not exist; the site has tin-moi-nhat.rss.
+    const found = await feed({ url: `${base}/rss/tin-moi.rss` });
+    check('a guessed name is matched to the real feed', /Tin một/.test(found) && /tin-moi-nhat\.rss/.test(found), found.slice(0, 200));
+    check('  and says it read a different address', /is not a feed; this is the site's own feed/.test(found));
+    const unmatched = await failure(feed({ url: `${base}/rss/khong-co.rss` }));
+    check('a name matching nothing lists the real feeds', /the-thao\.rss/.test(unmatched || '') && /tin-moi-nhat\.rss/.test(unmatched || ''), unmatched);
   }
 
   section('a size nothing could hold is still refused before it is read');

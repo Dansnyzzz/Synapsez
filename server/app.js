@@ -977,9 +977,10 @@ export function createApp() {
        * free models, and not about a paid flagship they have chosen not to pay
        * for; somebody paying is told about paid releases, not about free ones.
        */
+      /** @type {'free'|'paid'} */
       let tier = 'free';
+      const current = prefs.defaultModel;
       try {
-        const current = prefs.defaultModel;
         if (current && current !== 'auto') {
           const entry = await resolveModelId(current);
           const free = !!entry.tags?.includes('free') || (entry.price?.in === 0 && entry.price?.out === 0);
@@ -988,7 +989,7 @@ export function createApp() {
       } catch {
         /* an unresolvable default is treated as free: the safer thing to suggest */
       }
-      res.json({ model: await pendingAnnouncement(req.user.id, { tier }) });
+      res.json({ model: await pendingAnnouncement(req.user.id, { tier, current }) });
     }),
   );
 
@@ -1004,7 +1005,7 @@ export function createApp() {
          * browser reports back once the dialog is actually up.
          */
         if (req.body?.action === 'shown') {
-          await markAnnouncementShown(req.user.id);
+          await markAnnouncementShown(req.user.id, req.body?.id);
           return res.json({ ok: true, shown: true });
         }
         const outcome = await decideAnnouncement(req.user.id, req.body?.id, req.body?.action);

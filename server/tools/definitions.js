@@ -1383,7 +1383,10 @@ export const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'The feed address, e.g. https://vnexpress.net/rss/kinh-doanh.rss' },
+        url: {
+          type: 'string',
+          description: 'The feed address, or just the site (https://vnexpress.net) — its own feeds are found when the address is not one.',
+        },
         limit: { type: 'number', description: 'How many items, up to 30. Default 10.' },
       },
       required: ['url'],

@@ -34,6 +34,22 @@ export const vi = {
 
   'This task is already running. Wait for it to finish.': 'Tác vụ này đang chạy. Hãy đợi nó xong.',
 
+  /* ── tìm bản tin RSS thật của một trang ── */
+  [`{0} led to a web page, not an RSS or Atom feed. The feeds {1} lists are:
+{2}
+Call read_feed with the one you want.`]: `{0} dẫn tới một trang web, không phải bản tin RSS hay Atom. Các bản tin {1} có là:
+{2}
+Hãy gọi read_feed với bản tin bạn muốn.`,
+  [`{0} returned HTTP {1}. The feeds {2} lists are:
+{3}
+Call read_feed with the one you want.`]: `{0} trả về HTTP {1}. Các bản tin {2} có là:
+{3}
+Hãy gọi read_feed với bản tin bạn muốn.`,
+  '{0} led to a web page, not a feed, and {1} lists no feeds. Use web_search or web_fetch for this site instead.':
+    '{0} dẫn tới một trang web, không phải bản tin, và {1} không liệt kê bản tin nào. Hãy dùng web_search hoặc web_fetch cho trang này.',
+  '{0} returned HTTP {1}, and {2} lists no feeds. Use web_search or web_fetch for this site instead.':
+    '{0} trả về HTTP {1}, và {2} không liệt kê bản tin nào. Hãy dùng web_search hoặc web_fetch cho trang này.',
+
   /* ── dữ liệu rời khỏi tài khoản ── */
   'The address carries a long block of data to {0}. Check it is not your information leaving — a page or email can ask for exactly this.':
     'Địa chỉ này mang theo một khối dữ liệu dài gửi tới {0}. Hãy kiểm tra đó không phải thông tin của bạn đang bị gửi ra ngoài — một trang web hay email có thể yêu cầu đúng việc này.',

@@ -419,6 +419,79 @@ export function parseFeed(xml) {
   return { title, items };
 }
 
+/** One read of an address the model named: status, and the body as text, capped. */
+async function fetchFeedText(target) {
+  const res = await safeFetch(target, {
+    headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8' },
+    signal: AbortSignal.timeout(20_000),
+  });
+  const text = res.ok ? (await readCapped(res, 2_000_000)).buffer.toString('utf8') : '';
+  if (!res.ok) res.body?.resume?.();
+  return { ok: res.ok, status: res.status, text };
+}
+
+/**
+ * The feeds a web page points at: its `<link rel="alternate">` tags first, then
+ * any link to a `.rss` address, made absolute and without repeats.
+ */
+export function feedLinks(html, base) {
+  const found = [];
+  for (const m of String(html).matchAll(/<link\b[^>]*>/gi)) {
+    if (!/type=["']application\/(rss|atom)\+xml["']/i.test(m[0])) continue;
+    const href = m[0].match(/href=["']([^"']+)["']/i)?.[1];
+    if (href) found.push(href);
+  }
+  for (const m of String(html).matchAll(/href=["']([^"'#?]+\.(?:rss|atom)(?:\?[^"']*)?)["']/gi)) found.push(m[1]);
+  const out = [];
+  for (const href of found) {
+    try {
+      const abs = new URL(href.replace(/&amp;/g, '&'), base).href;
+      if (/^https?:/.test(abs) && !out.includes(abs)) out.push(abs);
+    } catch {
+      /* not an address */
+    }
+  }
+  return out;
+}
+
+/**
+ * Find the feed a site really has, when the address given was a guess.
+ *
+ * Models write feed addresses from memory — `vnexpress.net/rss/tin-moi.rss`,
+ * where the real one is `tin-moi-nhat.rss` — and the site answered with its
+ * homepage or a 404, so every such call failed and the model guessed again.
+ * Sites list their feeds on the page the guess led to, on `/rss`, or in the
+ * homepage's `<link rel="alternate">`, so that is where this looks. A feed whose
+ * name begins with what was asked for is read straight away, as is a site's
+ * only feed; otherwise the real addresses come back so the next call is right.
+ *
+ * @returns {Promise<{ url: string, feed: ReturnType<typeof parseFeed> } | { choices: string[] }>}
+ */
+async function discoverFeed(asked, firstPage) {
+  const pages = [firstPage && { url: asked.href, text: firstPage }];
+  let links = firstPage ? feedLinks(firstPage, asked) : [];
+  for (const path of ['/rss', '/']) {
+    if (links.length) break;
+    const at = new URL(path, asked.origin);
+    const got = await fetchFeedText(at).catch(() => null);
+    if (got?.ok) {
+      pages.push({ url: at.href, text: got.text });
+      links = feedLinks(got.text, at);
+    }
+  }
+  if (!links.length) return { choices: [] };
+
+  const wanted = asked.pathname.split('/').pop().replace(/\.(rss|xml|atom)$/i, '').toLowerCase();
+  const named = wanted ? links.find((l) => new URL(l).pathname.split('/').pop().toLowerCase().startsWith(wanted)) : null;
+  const pick = named || (links.length === 1 ? links[0] : null);
+  if (pick && pick !== asked.href) {
+    const got = await fetchFeedText(new URL(pick)).catch(() => null);
+    const feed = got?.ok ? parseFeed(got.text) : null;
+    if (feed?.items.length) return { url: pick, feed };
+  }
+  return { choices: links.slice(0, 30) };
+}
+
 async function readFeedTool({ url, limit }) {
   let parsed;
   try {
@@ -426,17 +499,36 @@ async function readFeedTool({ url, limit }) {
   } catch {
     throw new Error(`"${url}" is not a valid URL.`);
   }
-  const res = await safeFetch(parsed, { headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml' }, signal: AbortSignal.timeout(20_000) });
-  if (!res.ok) throw new Error(`${parsed.host} returned HTTP ${res.status}.`);
-  const xml = (await readCapped(res, 2_000_000)).buffer.toString('utf8');
-  const feed = parseFeed(xml);
-  if (!feed.items.length) throw new Error('That address is not an RSS or Atom feed (no items found). Try web_fetch for an ordinary page.');
+  const first = await fetchFeedText(parsed);
+  let feed = first.ok ? parseFeed(first.text) : { title: '', items: [] };
+  let source = parsed.href;
+  if (!feed.items.length) {
+    const found = await discoverFeed(parsed, first.ok ? first.text : '');
+    if ('feed' in found) {
+      feed = found.feed;
+      source = found.url;
+    } else {
+      // Whole sentences, so each one translates as a unit.
+      const list = found.choices.join('\n');
+      if (found.choices.length && first.ok) {
+        throw new Error(`${parsed.href} led to a web page, not an RSS or Atom feed. The feeds ${parsed.host} lists are:\n${list}\nCall read_feed with the one you want.`);
+      }
+      if (found.choices.length) {
+        throw new Error(`${parsed.href} returned HTTP ${first.status}. The feeds ${parsed.host} lists are:\n${list}\nCall read_feed with the one you want.`);
+      }
+      if (first.ok) {
+        throw new Error(`${parsed.href} led to a web page, not a feed, and ${parsed.host} lists no feeds. Use web_search or web_fetch for this site instead.`);
+      }
+      throw new Error(`${parsed.href} returned HTTP ${first.status}, and ${parsed.host} lists no feeds. Use web_search or web_fetch for this site instead.`);
+    }
+  }
   const n = Math.min(Math.max(Number(limit) || 10, 1), 30);
   const body = feed.items
     .slice(0, n)
     .map((i, k) => `${k + 1}. ${i.title}${i.date ? ` — ${i.date}` : ''}\n   ${i.link}${i.summary ? `\n   ${i.summary}` : ''}`)
     .join('\n');
-  return untrusted(parsed.href, `${feed.title || parsed.host} — ${feed.items.length} items, newest ${n}:\n${body}`);
+  const moved = source !== parsed.href ? `(${parsed.href} is not a feed; this is the site's own feed at ${source})\n` : '';
+  return untrusted(source, `${moved}${feed.title || parsed.host} — ${feed.items.length} items, newest ${n}:\n${body}`);
 }
 
 /* ── text ──────────────────────────────────────────────────────── */
