@@ -316,6 +316,18 @@ section('OCR reads Vietnamese with no key and no network');
   check('a hard-to-read reading says so', /hard to read/.test(doubtful.text));
 }
 
+section('a published link uses the address the person is on');
+{
+  const { appOrigin } = await import('../server/tools/cloud.js');
+  const vercel = { VERCEL_PROJECT_PRODUCTION_URL: 'ai-remote-amber.vercel.app' };
+  // The report: the link was built on the project's old domain, which answered
+  // DEPLOYMENT_NOT_FOUND, while the app was in use at synapsez.vercel.app.
+  check('the request\'s own address wins over the project\'s domain', appOrigin('https://synapsez.vercel.app', vercel) === 'https://synapsez.vercel.app');
+  check('a stated PUBLIC_URL wins over both', appOrigin('https://synapsez.vercel.app', { ...vercel, PUBLIC_URL: 'https://synapse.example/' }) === 'https://synapse.example');
+  check('with no request, the project domain is the last resort', appOrigin(null, vercel) === 'https://ai-remote-amber.vercel.app');
+  check('an origin that is not an origin is ignored', appOrigin('javascript:alert(1)', vercel) === 'https://ai-remote-amber.vercel.app' && appOrigin('https://a.b/path', vercel) === 'https://ai-remote-amber.vercel.app');
+}
+
 section('a list of strings sent as objects is read, not refused six times');
 {
   const { validateArguments } = await import('../server/tools/validate.js');

@@ -274,6 +274,28 @@ export function createApp() {
   const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
   /**
+   * The address this account uses the app at, read from the request and kept.
+   *
+   * A link a tool builds during a turn uses it directly (see `appOrigin`). A
+   * scheduled task or a workflow has no request, so the last address the
+   * account itself used is stored and read back there — per account, never
+   * deployment-wide, because it comes from request headers and one account must
+   * not be able to change the links another account's runs hand out. Written
+   * only when it changes, so it costs one write per new address, not per turn.
+   */
+  const knownOrigin = new Map();
+  function rememberOrigin(req) {
+    const origin = publicUrlFor(req);
+    const userId = req.user?.id;
+    if (!origin || !userId || /\/\/(localhost|127\.|\[::1\])/.test(origin)) return origin;
+    if (knownOrigin.get(userId) !== origin) {
+      knownOrigin.set(userId, origin);
+      getStore().setSetting(`origin:${userId}`, origin).catch(() => {});
+    }
+    return origin;
+  }
+
+  /**
    * Whether a turn is live in this conversation right now.
    *
    * Measured against the same staleness the lease itself uses, so a route that
@@ -1929,6 +1951,11 @@ export function createApp() {
            * user's mouth.
            */
           answers: req.body?.answers,
+          // The address the person is actually using, for any link a tool hands
+          // back. The deployment's own idea of its domain can be an old one that
+          // no longer answers — a published file's link was built from it and
+          // opened a Vercel 404 while the same file shared from the card worked.
+          origin: rememberOrigin(req),
           // Which computer the browser is sitting at, learned from the worker on
           // that machine. Per request rather than stored: preferences belong to
           // the account, so two machines with the app open would take turns

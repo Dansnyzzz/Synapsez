@@ -2205,15 +2205,24 @@ async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, c
  * wins; on Vercel the production domain is known without asking; otherwise
  * the path alone, which the interface turns into a full link.
  */
-function appOrigin(env = process.env) {
+export function appOrigin(origin = null, env = process.env) {
   const stated = String(env.PUBLIC_URL || '').trim();
   if (stated) return stated.replace(/\/+$/, '');
+  /*
+   * The address the person is on, read from the request that started the turn.
+   * Ahead of Vercel's production domain on purpose: that variable named
+   * `ai-remote-amber.vercel.app`, a domain that no longer reached a deployment,
+   * so every published link opened Vercel's 404 while the app itself was being
+   * used at another address. Only an http(s) origin is taken.
+   */
+  const seen = String(origin || '').trim().replace(/\/+$/, '');
+  if (/^https?:\/\/[^/\s]+$/i.test(seen)) return seen;
   if (env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${env.VERCEL_PROJECT_PRODUCTION_URL}`;
   return '';
 }
 
 /** Publish something the assistant made as a link anyone can open. */
-async function publishFileTool({ file_id: fileId, unpublish }, { userId }) {
+async function publishFileTool({ file_id: fileId, unpublish }, { userId, origin = null }) {
   const id = String(fileId || '').trim();
   if (!id) throw new Error('Give the `file_id` of a file you made — create_file returns it.');
   if (unpublish) {
@@ -2223,7 +2232,10 @@ async function publishFileTool({ file_id: fileId, unpublish }, { userId }) {
   }
   const shared = await shareFile(userId, id);
   if (shared.error) throw new Error(shared.status === 404 ? `There is no file ${id} made in this account.` : shared.error);
-  const url = `${appOrigin()}${shared.path}`;
+  // A scheduled run has no request of its own: the address this account last
+  // used the app at stands in (stored by `rememberOrigin` in app.js).
+  const seen = origin || (await getStore().getSetting(`origin:${userId}`).catch(() => null));
+  const url = `${appOrigin(seen)}${shared.path}`;
   return (
     `Published ${shared.file.name}: ${url}\n` +
     'Anyone with this link can open it without signing in — a page runs sandboxed, with no access to the account. ' +
