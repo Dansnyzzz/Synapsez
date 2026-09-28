@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { classify, saveGenerated } from './attachments.js';
+import { getStore } from './store/index.js';
 
 /**
  * A private Linux computer in the cloud, one per account.
@@ -34,6 +35,91 @@ const MAX_FILES_IN = 20;
 const MAX_FILE_IN_BYTES = 2 * 1024 * 1024;
 const DOWNLOAD_BYTES = 10 * 1024 * 1024;
 const SNAPSHOT_DAYS = 30;
+/** The port the cloud browser listens on — see server/cloudBrowser. */
+export const BROWSER_PORT = 3000;
+
+/**
+ * How much of the shared allotment one account, and the whole app, may use a
+ * day.
+ *
+ * Vercel's Hobby plan gives a team — every account on this deployment
+ * together — ten machines at once and a few CPU-hours a month. Without a
+ * ceiling, one person looping a browser all afternoon spends it for everybody
+ * else; the per-account budget keeps that fair, and the app-wide one keeps a
+ * busy day from exhausting the month. Both are plain counters in the database
+ * (the same table as sign-in throttling), so they hold across instances.
+ * Raise them with CLOUD_ACTIONS_PER_DAY / CLOUD_ACTIONS_TOTAL_PER_DAY on a
+ * paid plan.
+ */
+const DAY_MS = 24 * 60 * 60 * 1000;
+class LimitError extends Error {}
+export function cloudBudgets(env = process.env) {
+  return {
+    perAccount: Math.max(1, Number(env.CLOUD_ACTIONS_PER_DAY) || 300),
+    total: Math.max(1, Number(env.CLOUD_ACTIONS_TOTAL_PER_DAY) || 4000),
+  };
+}
+
+/**
+ * Count one use of the cloud computer; throws a sentence the model can pass on
+ * when a budget is spent. A counter that cannot be reached lets the call
+ * through — a database hiccup should not switch the feature off.
+ *
+ * @param {string} userId
+ */
+export async function chargeCloud(userId) {
+  const store = getStore();
+  if (typeof store.hitRateLimit !== 'function') return;
+  const { perAccount, total } = cloudBudgets();
+  const hours = (ms) => Math.max(1, Math.ceil(ms / 3_600_000));
+  try {
+    const mine = await store.hitRateLimit(`cloud:acct:${userId}`, perAccount, DAY_MS);
+    if (!mine.allowed) {
+      throw new LimitError(
+        `This account has used its ${perAccount} cloud-computer actions for today; it opens again in about ${hours(mine.retryAfterMs)}h. ` +
+          'Tell the user plainly, and offer what can be done without it.',
+      );
+    }
+    const all = await store.hitRateLimit('cloud:all', total, DAY_MS);
+    if (!all.allowed) {
+      throw new LimitError(
+        `The cloud computers are at today's limit for the whole app; they open again in about ${hours(all.retryAfterMs)}h. ` +
+          'Tell the user plainly, and offer what can be done without it.',
+      );
+    }
+  } catch (err) {
+    if (err instanceof LimitError) throw err;
+  }
+}
+
+/**
+ * The platform's refusals, in words a person can act on.
+ *
+ * Starting a machine fails for reasons nobody in the conversation caused —
+ * the team's ten are all running, the month's allotment is spent — and the raw
+ * API error says so in a way that reads like a bug. Anything unrecognised
+ * keeps its own message, with the setup hint that is usually the cause.
+ */
+export function machineStartError(err) {
+  const raw = String(err?.message || err || '');
+  const status = Number(err?.response?.status || err?.status || 0);
+  if (status === 429 || /concurren|too many|rate.?limit/i.test(raw)) {
+    return new Error(
+      'Every cloud computer this app may run at once is in use by other people right now. ' +
+        'Try again in a few minutes; tell the user it is busy, not broken.',
+    );
+  }
+  if (status === 402 || /quota|allotment|usage limit|limit exceeded|payment|billing/i.test(raw)) {
+    return new Error(
+      'The cloud computers have used this month\'s free allotment, so none can start until it resets. ' +
+        'Tell the user plainly, and offer what can be done without it.',
+    );
+  }
+  return new Error(
+    `The cloud computer could not be started: ${raw}. ` +
+      'On Vercel this needs OIDC enabled for the project; elsewhere VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.',
+  );
+}
 
 /**
  * Whether there is anything to start a sandbox with. On Vercel the platform
@@ -125,8 +211,42 @@ async function machineFor(name, { signal } = {}) {
     persistent: true,
     keepLastSnapshots: { count: 1, expiration: SNAPSHOT_DAYS * 24 * 60 * 60 * 1000, deleteEvicted: true },
     tags: { app: 'synapsez' },
+    // The browser's port, reachable as https://….vercel.run. Machines made
+    // before the browser existed gain it in `machineForUser`.
+    ports: [BROWSER_PORT],
     signal,
   });
+}
+
+/**
+ * The account's machine, started or resumed, with the browser port open.
+ *
+ * @param {string} userId
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export async function machineForUser(userId, { signal } = {}) {
+  let machine;
+  try {
+    machine = await machineFor(sandboxName(userId), { signal });
+  } catch (err) {
+    throw machineStartError(err);
+  }
+  return machine;
+}
+
+/**
+ * The https address of the machine's browser port, opening it on an older machine.
+ *
+ * @param {any} machine
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export async function browserAddress(machine, { signal } = {}) {
+  try {
+    return machine.domain(BROWSER_PORT);
+  } catch {
+    await machine.update({ ports: [BROWSER_PORT] }, { signal });
+    return machine.domain(BROWSER_PORT);
+  }
 }
 
 /**
@@ -151,15 +271,8 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
     return { path: workPath(f?.path), content };
   });
 
-  let machine;
-  try {
-    machine = await machineFor(sandboxName(userId), { signal });
-  } catch (err) {
-    throw new Error(
-      `The cloud computer could not be started: ${err?.message || err}. ` +
-        'On Vercel this needs OIDC enabled for the project; elsewhere VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.',
-    );
-  }
+  await chargeCloud(String(userId));
+  const machine = await machineForUser(String(userId), { signal });
 
   const report = [];
   if (writes.length) {

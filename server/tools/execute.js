@@ -426,6 +426,8 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           schedule: result.schedule,
           // What the person answered on a question card, in their words.
           answered: result.answered,
+          // A picture of the page the cloud browser is on, kept like a worker's.
+          shot: result.shot ? await keepStepShot(userId, result.shot) : undefined,
         };
       }
       return { isError: false, content: String(result ?? '') };

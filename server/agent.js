@@ -267,7 +267,10 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
         : '- No PDFs. Make it a .docx or .html and say the viewer has Print → Save as PDF — that goes through their browser, which has the fonts and gets the accents right.',
       '- "Give me a link", "publish it", "share it": `publish_file` on the file you made.',
       ...(cloudComputer
-        ? ['- Computing, data analysis, calling an API, converting files or building code with no computer of theirs involved: `sandbox_run`, the account\'s own Linux machine in the cloud — full internet, keeps its files between conversations.']
+        ? [
+            '- Computing, data analysis, calling an API, converting files or building code with no computer of theirs involved: `sandbox_run`, the account\'s own Linux machine in the cloud — full internet, keeps its files between conversations.',
+            '- Using a website — filling a form, clicking through, a page that needs a real browser — with no browser of theirs involved: `cloud_browser`, Chrome on that same machine, which they watch live and can take over. Sign-ins, captchas and payments are theirs to do in the panel; ask, then continue.',
+          ]
         : []),
       '- For a small tool, a chart, a calculator or a mock-up, `create_file` with `format: "html"` and real markup makes something they can **run** in the chat. One self-contained page: inline styles and script, nothing fetched from the internet — it runs sandboxed with no network and no access to their session.',
       '- Code goes in code files — `js`, `py`, `sql`, `sh` and the rest — rather than in a fenced block in your reply, whenever it is something they will keep or run.',

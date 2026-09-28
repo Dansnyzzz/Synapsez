@@ -83,6 +83,7 @@ import { mountChatRoutes } from './routes/chats.js';
 import { mountFileRoutes } from './routes/files.js';
 import { mountShareRoutes, mountPublicShare } from './routes/share.js';
 import { mountChatShareRoutes, mountPublicChatShare } from './routes/chatShare.js';
+import { cloudBrowserState, cloudBrowserInput, closeCloudBrowser } from './cloudBrowser/index.js';
 import { EFFORTS } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
@@ -250,7 +251,9 @@ export function createApp() {
         "default-src 'self'",
         "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
+        // The cloud browser's live screen streams from the account's own
+        // machine, at an address Vercel gives it under vercel.run.
+        "img-src 'self' data: blob: https://*.vercel.run",
         "font-src 'self'",
         "connect-src 'self'",
         "frame-ancestors 'none'",
@@ -1231,6 +1234,42 @@ export function createApp() {
       } catch (err) {
         res.status(400).json({ error: err.message });
       }
+    }),
+  );
+
+  /**
+   * The cloud browser, for the screen panel.
+   *
+   * The picture itself never passes through here: `state` hands the panel the
+   * machine's own stream address, with a view-only key, and the frames go
+   * straight from the machine to the person. What does pass through is a
+   * person's gestures, checked first (see `cleanInput`), because the key that
+   * drives the browser stays on the server.
+   */
+  api.get(
+    '/cloud-browser/state',
+    wrap(async (req, res) => {
+      res.set('Cache-Control', 'no-store');
+      res.json(await cloudBrowserState(req.user.id));
+    }),
+  );
+
+  api.post(
+    '/cloud-browser/input',
+    wrap(async (req, res) => {
+      try {
+        res.json(await cloudBrowserInput(req.user.id, req.body || {}));
+      } catch (err) {
+        res.status(400).json({ error: err.message });
+      }
+    }),
+  );
+
+  api.post(
+    '/cloud-browser/close',
+    wrap(async (req, res) => {
+      await closeCloudBrowser(req.user.id);
+      res.json({ ok: true, message: 'Closed the cloud browser. Its sign-ins are kept for next time.' });
     }),
   );
 

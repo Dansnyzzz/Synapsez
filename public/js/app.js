@@ -3451,6 +3451,9 @@ async function streamOnce(run, decision, answers) {
           if (onScreen(run) && (call.name.startsWith('browser_') || call.name.startsWith('desktop_'))) {
             setDetail(true);
             screenPanel.wake();
+          } else if (onScreen(run) && call.name === 'cloud_browser' && call.input?.action !== 'close') {
+            setDetail(true);
+            screenPanel.wake('cloud');
           }
           maybeScroll(run);
         },
@@ -3463,6 +3466,8 @@ async function streamOnce(run, decision, answers) {
               live.content = result.content || '';
               renderRail();
             }
+            // The first step starts the machine, so only now is there a stream to show.
+            if (live?.name === 'cloud_browser') screenPanel.cloudStepDone(result.shot?.id);
           }
           if (result.file && onScreen(run)) noteFile(result.file);
           maybeScroll(run);

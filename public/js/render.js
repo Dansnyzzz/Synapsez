@@ -229,6 +229,7 @@ const STEP_VERBS = {
   sports: 'step.sports',
   show_card: 'step.show_card',
   sandbox_run: 'step.sandbox_run',
+  cloud_browser: 'step.cloud_browser',
   publish_file: 'step.publish_file',
   look_at: 'step.look_at',
   gmail: 'step.gmail',
@@ -409,6 +410,7 @@ const STEP_DETAILS = {
   sports: (i) => clip(i.team || i.league || i.player || i.date || i.op, 64),
   show_card: (i) => clip(i.card?.title || i.type, 64),
   sandbox_run: (i) => clip(i.command || i.download || (i.files || []).map((f) => f?.path).join(', '), 72),
+  cloud_browser: (i) => clip([i.action, i.url || i.value || i.text || i.key || (i.ref != null ? `#${i.ref}` : '')].filter(Boolean).join(' · '), 72),
   publish_file: (i) => clip(i.file_id, 24),
   look_at: (i) => clip(i.question || i.url || i.file_id, 64),
   gmail: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
@@ -576,7 +578,7 @@ export function describeStep(name, input = {}) {
  * costs a click to learn something that was already on screen.
  */
 export function stepFamily(name) {
-  if (/^browser_/.test(name)) return 'browser';
+  if (/^browser_/.test(name) || name === 'cloud_browser') return 'browser';
   if (/^desktop_/.test(name)) return 'desktop';
   return null;
 }

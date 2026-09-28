@@ -1,5 +1,5 @@
 {
-  "total": 344,
+  "total": 341,
   "files": {
     "public/js/api.js": 4,
     "public/js/app.js": 135,
@@ -9,7 +9,6 @@
     "public/js/pages.js": 29,
     "public/js/project-page.js": 33,
     "public/js/render.js": 1,
-    "public/js/screen.js": 3,
     "public/js/search.js": 1,
     "public/js/viewer.js": 15,
     "public/js/workflows.js": 15,

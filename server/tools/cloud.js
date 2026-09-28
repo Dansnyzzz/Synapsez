@@ -9,6 +9,7 @@ import { imageSearchTool } from './images.js';
 import { sportsTool } from './sports.js';
 import { showCardTool } from './cards.js';
 import { runInSandbox } from '../sandbox.js';
+import { cloudBrowser } from '../cloudBrowser/index.js';
 import { shareFile } from '../routes/share.js';
 import { see } from '../vision.js';
 import { evaluate } from './calc.js';
@@ -2292,6 +2293,7 @@ export const CLOUD_IMPLEMENTATIONS = {
   sports: sportsTool,
   show_card: showCardTool,
   sandbox_run: (input, context) => runInSandbox(input, context),
+  cloud_browser: (input, context) => cloudBrowser(input, context),
   publish_file: publishFileTool,
   look_at: lookAtTool,
 };

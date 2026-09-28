@@ -99,6 +99,9 @@ export const api = {
   screen: (hd = false) => request('GET', `/api/screen${hd ? '?hd=1' : ''}`),
   closeScreen: () => request('POST', '/api/screen/close'),
   screenInput: (event) => request('POST', '/api/screen/input', event),
+  cloudBrowserState: () => request('GET', '/api/cloud-browser/state'),
+  cloudBrowserInput: (event) => request('POST', '/api/cloud-browser/input', event),
+  closeCloudBrowser: () => request('POST', '/api/cloud-browser/close'),
 
   projects: ({ archived = false } = {}) =>
     request('GET', `/api/projects${archived ? '?archived=1' : ''}`),

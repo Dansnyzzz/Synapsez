@@ -21,12 +21,12 @@ const STALE_MS = 4000;
 
 export function createScreen() {
   const panel = document.getElementById('screen');
-  const img = document.getElementById('screen-img');
+  const img = /** @type {HTMLImageElement} */ (document.getElementById('screen-img'));
   const title = document.getElementById('screen-title');
   const url = document.getElementById('screen-url');
   const live = document.getElementById('screen-live');
   const source = document.getElementById('screen-source');
-  const closeButton = document.getElementById('screen-stop');
+  const closeButton = /** @type {HTMLButtonElement} */ (document.getElementById('screen-stop'));
   const nav = document.getElementById('screen-nav');
   const tabStrip = document.getElementById('screen-tabs');
 
@@ -69,6 +69,73 @@ export function createScreen() {
   let stopped = true;
   let lastFrameAt = 0;
   let fpsWindow = [];
+
+  /**
+   * Which browser the panel is showing: the one on the person's own PC
+   * ('local', frames relayed by this server) or the one on the account's cloud
+   * computer ('cloud').
+   *
+   * The cloud one streams straight from the machine into the <img> as MJPEG —
+   * the browser decodes it natively, and not one frame passes through the app's
+   * server, which is what lets a thousand people watch at once. Setting `src`
+   * opens the connection and removing it closes it, and the machine only
+   * captures while a connection is open.
+   */
+  let mode = 'local';
+  let lastShot = '';
+
+  const hostOf = (address) => {
+    try {
+      return new URL(address).host;
+    } catch {
+      return '';
+    }
+  };
+
+  function showCloud(state) {
+    title.textContent = state?.title || (state?.open ? t('screen.title') : t('screen.cloudStarting'));
+    url.textContent = state?.url || '';
+    source.textContent = t('screen.sourceCloud');
+    source.title = t('screen.cloudNote');
+    closeButton.hidden = false;
+    nav.hidden = false;
+    renderTabs((state?.tabs || []).map((tab) => ({ index: tab.index, host: hostOf(tab.url), active: tab.active })));
+    panel.hidden = false;
+    if (state?.open && state.stream && !stopped) {
+      if (img.dataset.stream !== state.stream) {
+        img.dataset.stream = state.stream;
+        img.src = state.stream;
+      }
+      live.classList.add('is-live');
+    } else {
+      live.classList.remove('is-live');
+    }
+  }
+
+  async function refreshCloud() {
+    if (mode !== 'cloud' || stopped) return;
+    try {
+      showCloud(await api.cloudBrowserState());
+    } catch {
+      /* the next step refreshes it */
+    }
+  }
+
+  // The machine paused or restarted under a new key: the stream is gone, so
+  // show the last picture rather than a broken image.
+  img.addEventListener('error', () => {
+    if (mode !== 'cloud' || !img.dataset.stream) return;
+    dropCloudStream();
+    live.classList.remove('is-live');
+  });
+
+  /** Let go of the live stream, leaving the last step's picture in its place. */
+  function dropCloudStream() {
+    if (!img.dataset.stream) return;
+    delete img.dataset.stream;
+    if (lastShot) img.src = lastShot;
+    else img.removeAttribute('src');
+  }
 
   function paint({ frame, meta }) {
     if (!frame) return false;
@@ -170,7 +237,7 @@ export function createScreen() {
   // `unref` is a Node idiom: a browser `setInterval` returns a number, so the
   // call that looked like it was disarming this did nothing at all.
   setInterval(() => {
-    if (stopped) return;
+    if (stopped || mode === 'cloud') return;
     if (Date.now() - lastFrameAt > STALE_MS) {
       live.classList.remove('is-live');
       live.dataset.fps = '0';
@@ -185,8 +252,9 @@ export function createScreen() {
   closeButton.addEventListener('click', async () => {
     closeButton.disabled = true;
     try {
-      const { message } = await api.closeScreen();
+      const { message } = mode === 'cloud' ? await api.closeCloudBrowser() : await api.closeScreen();
       toast(message || t('screen.sandboxClosed'));
+      if (mode === 'cloud') dropCloudStream();
       panel.hidden = true;
     } catch (err) {
       toast(err.message, 'error');
@@ -226,7 +294,14 @@ export function createScreen() {
 
   const send = async (event) => {
     try {
-      await api.screenInput(event);
+      if (mode === 'cloud') {
+        // The answer says where the page is now, so the header keeps up
+        // without the panel polling for it.
+        const now = await api.cloudBrowserInput(event);
+        showCloud({ open: true, stream: img.dataset.stream, ...now });
+      } else {
+        await api.screenInput(event);
+      }
     } catch (err) {
       toast(err.message, 'error');
       setDriving(false);
@@ -409,7 +484,8 @@ export function createScreen() {
       home.replaceWith(panel);
     }
 
-    if (!stopped) {
+    // The cloud stream is one size either way; only the local one is reopened.
+    if (!stopped && mode !== 'cloud') {
       closeStream();
       clearTimeout(timer);
       if (!openStream()) pollTick();
@@ -448,25 +524,57 @@ export function createScreen() {
     everStarted = true;
     if (!stopped) return;
     stopped = false;
-    if (!openStream()) pollTick();
+    if (mode === 'cloud') refreshCloud();
+    else if (!openStream()) pollTick();
   }
 
   function stop() {
     stopped = true;
     closeStream();
     clearTimeout(timer);
+    dropCloudStream();
     live.classList.remove('is-live');
+  }
+
+  /** Switch between the two browsers, closing whatever the other one had open. */
+  function setMode(next) {
+    if (next === mode) return;
+    const wasRunning = !stopped;
+    stop();
+    mode = next;
+    if (next !== 'cloud') lastShot = '';
+    if (wasRunning) start();
   }
 
   return {
     start,
     stop,
-    /** Called when a screen tool runs, so the panel appears without waiting. */
-    wake() {
+    /**
+     * Called when a screen tool runs, so the panel appears without waiting.
+     *
+     * @param {'local' | 'cloud'} [kind]  which browser the tool drives
+     */
+    wake(kind = 'local') {
+      setMode(kind);
       panel.hidden = false;
       panel.classList.remove('is-collapsed');
       wokenByTool = true;
       start();
+      // Already running: a new step may have started the machine or moved the page.
+      if (kind === 'cloud' && !img.dataset.stream) {
+        showCloud({ open: false });
+        refreshCloud();
+      }
+    },
+    /**
+     * A cloud step finished: pick up where the page is now, and keep its
+     * picture for when the live stream rests.
+     *
+     * @param {string} [shotId]
+     */
+    cloudStepDone(shotId) {
+      if (shotId) lastShot = `/api/attachments/${shotId}`;
+      refreshCloud();
     },
     /**
      * The run has finished; stop capturing unless a person is still using it.

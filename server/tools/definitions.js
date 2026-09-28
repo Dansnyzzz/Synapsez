@@ -1435,6 +1435,38 @@ export const TOOLS = [
       },
     },
   },
+  {
+    name: 'cloud_browser',
+    scope: 'cloud',
+    readOnly: false,
+    needsHost: 'sandbox',
+    description:
+      'A real Chrome on this account\'s cloud computer, shown to the user live in the screen panel — they can watch and take over. ' +
+      'Use it to use websites: fill forms, click through, read pages that need JavaScript or scrolling, compare across tabs, save a page as PDF. ' +
+      'Every answer lists the page\'s clickable things as numbered refs — click, type and select take a `ref` from the latest answer (or `text`). ' +
+      'Sign-ins stay between conversations. If a login, captcha or payment is needed, ask the user to do that part in the panel. ' +
+      'For reading a known article, web_fetch is faster; browser_* is the user\'s own browser on their PC.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['open', 'look', 'click', 'type', 'press', 'scroll', 'select', 'wait', 'back', 'forward', 'reload', 'tabs', 'new_tab', 'switch_tab', 'close_tab', 'pdf', 'close'],
+          description: 'open a url · look again · click/type/select a ref · press a key · scroll · wait for text · tabs · pdf saves the page into the conversation · close.',
+        },
+        url: { type: 'string', description: 'For open and new_tab.' },
+        ref: { type: 'integer', description: 'The number of an element from the latest answer.' },
+        text: { type: 'string', description: 'Visible text to click or wait for, when there is no ref.' },
+        value: { type: 'string', description: 'What to type, or the option to select.' },
+        submit: { type: 'boolean', description: 'Press Enter after typing.' },
+        key: { type: 'string', description: 'For press, e.g. "Enter", "Escape", "Control+A".' },
+        direction: { type: 'string', enum: ['down', 'up'] },
+        amount: { type: 'integer', description: 'Pixels to scroll, default 700.' },
+        index: { type: 'integer', description: 'Tab number for switch_tab.' },
+      },
+      required: ['action'],
+    },
+  },
   /*
    * The everyday toolbox (server/tools/library.js). All deferred: listed by
    * their first sentence in `load_tools` and only sent in full to a turn that
@@ -2670,6 +2702,8 @@ const EXTERNAL_OUTPUT = new Set([
   'desktop_look',
   // Third-party services, where anyone can open an issue or share a page.
   'github', 'notion_search',
+  // Any page on the web, read by the browser on the cloud computer.
+  'cloud_browser',
 ]);
 
 /** Does this tool's output need the envelope? */
@@ -2684,6 +2718,7 @@ export const returnsExternalContent = (name) => EXTERNAL_OUTPUT.has(name);
 export function externalSource(name, input = {}) {
   const path = input?.path ?? input?.file ?? input?.target ?? null;
   if (name === 'browser_look' || name === 'browser_tabs') return 'the page in the browser';
+  if (name === 'cloud_browser') return 'the page in the cloud browser';
   if (name === 'clipboard_read') return 'the clipboard';
   if (name === 'desktop_look') return 'the screen';
   if (name === 'github') return 'GitHub';
@@ -2729,7 +2764,7 @@ function googleRiskReason(name, input = {}) {
 /** The URL argument of every tool that makes a request to an address the model chose. */
 const URL_ARGUMENT = {
   web_fetch: 'url', extract: 'url', read_feed: 'url', youtube_transcript: 'url', http_request: 'url', look_at: 'url',
-  download_file: 'url', export_pdf: 'url', browser_open: 'url', open_url: 'target',
+  download_file: 'url', export_pdf: 'url', browser_open: 'url', open_url: 'target', cloud_browser: 'url',
 };
 
 /**
@@ -3153,7 +3188,7 @@ const DEFERRABLE = new Set([
   'image_search', 'sports', 'show_card', 'look_at',
   // The cloud computer, and publishing what was made. Real jobs, and a turn
   // that needs one says so.
-  'sandbox_run', 'publish_file',
+  'sandbox_run', 'cloud_browser', 'publish_file',
   // Google, only ever offered to an account that connected it — and even then
   // most turns are not about the inbox.
   'gmail', 'google_calendar', 'google_drive', 'google_docs', 'google_sheets', 'google_forms', 'google_tasks',

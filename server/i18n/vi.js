@@ -122,6 +122,27 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   /* ── sandbox, dự án, kỹ năng, tác vụ ───────────────────────────── */
   'Driving the sandbox by hand needs the server on the same machine as the browser.':
     'Điều khiển sandbox bằng tay cần máy chủ chạy trên cùng máy với trình duyệt.',
+
+  /* ── trình duyệt & máy tính đám mây ── */
+  'Closed the cloud browser. Its sign-ins are kept for next time.':
+    'Đã đóng trình duyệt đám mây. Các phiên đăng nhập được giữ lại cho lần sau.',
+  'The cloud browser did not come up in time.{0}': 'Trình duyệt đám mây không khởi động kịp.{0}',
+  'Unknown action "{0}". One of: {1}.': 'Không có thao tác "{0}". Chọn một trong: {1}.',
+  'The cloud browser started but did not answer. Try once more.':
+    'Trình duyệt đám mây đã khởi động nhưng không phản hồi. Hãy thử lại một lần nữa.',
+  '{0}\nThe page is now: {1} {2}. Look again before the next step.':
+    '{0}\nTrang hiện tại: {1} {2}. Hãy xem lại trang trước bước tiếp theo.',
+  'That is not something the screen can do.': 'Màn hình không làm được thao tác đó.',
+  'The cloud browser is resting. Ask the assistant to open a page and it will start again.':
+    'Trình duyệt đám mây đang nghỉ. Hãy nhờ trợ lý mở một trang, nó sẽ khởi động lại.',
+  'This account has used its {0} cloud-computer actions for today; it opens again in about {1}h. Tell the user plainly, and offer what can be done without it.':
+    'Tài khoản này đã dùng hết {0} lượt máy tính đám mây của hôm nay; khoảng {1} giờ nữa sẽ mở lại. Hãy nói rõ với người dùng và đề xuất cách làm không cần nó.',
+  "The cloud computers are at today's limit for the whole app; they open again in about {0}h. Tell the user plainly, and offer what can be done without it.":
+    'Máy tính đám mây đã chạm giới hạn hôm nay của toàn ứng dụng; khoảng {0} giờ nữa sẽ mở lại. Hãy nói rõ với người dùng và đề xuất cách làm không cần nó.',
+  'Every cloud computer this app may run at once is in use by other people right now. Try again in a few minutes; tell the user it is busy, not broken.':
+    'Tất cả máy tính đám mây mà ứng dụng được chạy cùng lúc đang được người khác dùng. Hãy thử lại sau vài phút; nói với người dùng là đang bận, không phải bị hỏng.',
+  "The cloud computers have used this month's free allotment, so none can start until it resets. Tell the user plainly, and offer what can be done without it.":
+    'Máy tính đám mây đã dùng hết hạn mức miễn phí của tháng này, nên không máy nào khởi động được cho tới khi hạn mức được làm mới. Hãy nói rõ với người dùng và đề xuất cách làm không cần nó.',
   'A project needs a name.': 'Dự án cần có tên.',
   'No such project.': 'Không có dự án này.',
   'Skill not found': 'Không tìm thấy kỹ năng',
