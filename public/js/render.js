@@ -2,6 +2,8 @@ import { renderMarkdown, escapeHtml } from './markdown.js';
 import { t, currentLanguage } from './i18n.js';
 import { humanSize, repeatsAs, cronParts } from './format.js';
 import { chartFigure } from './chart.js';
+import { richWidget } from './cards.js';
+import { api } from './api.js';
 import { mediaTools, svgToPng, fileNameFrom, imageUrlToPng } from './media.js';
 import { webRowHtml, titleFromContent } from './webrows.js';
 import { parseResults } from './rail.js';
@@ -223,6 +225,11 @@ const STEP_VERBS = {
   make_qr: 'step.make_qr',
   http_request: 'step.http_request',
   encyclopedia: 'step.encyclopedia',
+  image_search: 'step.image_search',
+  sports: 'step.sports',
+  show_card: 'step.show_card',
+  sandbox_run: 'step.sandbox_run',
+  publish_file: 'step.publish_file',
   gmail: 'step.gmail',
   google_calendar: 'step.google_calendar',
   google_drive: 'step.google_drive',
@@ -397,6 +404,11 @@ const STEP_DETAILS = {
   make_qr: (i) => clip(i.text, 64),
   http_request: (i) => clip(`${String(i.method || 'GET').toUpperCase()} ${i.url || ''}`, 64),
   encyclopedia: (i) => clip(i.query, 64),
+  image_search: (i) => clip(i.query, 64),
+  sports: (i) => clip(i.team || i.league || i.player || i.date || i.op, 64),
+  show_card: (i) => clip(i.card?.title || i.type, 64),
+  sandbox_run: (i) => clip(i.command || i.download || (i.files || []).map((f) => f?.path).join(', '), 72),
+  publish_file: (i) => clip(i.file_id, 24),
   gmail: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
   google_calendar: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
   google_drive: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
@@ -835,9 +847,17 @@ function usedScheme() {
  * picture without the hover, rather than in a frame.
  */
 export function widgetNode(widget, toolName = null) {
+  const rich = richWidget(widget);
+  if (rich) return rich;
   const ours = widget?.kind === 'chart' || toolName === 'chart';
   return (ours && chartFigure(widget)) || widgetFrame(widget);
 }
+
+/**
+ * Whether a result carries something to draw. A map, a gallery or a card has
+ * no markup — it is drawn from its data — so `markup` alone is not the test.
+ */
+const drawable = (widget) => !!(widget && (widget.markup || ['map', 'images', 'card'].includes(widget.kind)));
 
 /**
  * When a scheduled run fires next, in the zone it was set in.
@@ -1080,8 +1100,80 @@ export function fileCard(file) {
   download.setAttribute('download', file.name);
   download.textContent = t('chat.download');
 
-  card.append(icon, body, open, download);
+  card.append(icon, body, open, download, shareButton(file, card));
   return card;
+}
+
+/**
+ * Share by link: press once to publish and copy the link, and a row appears
+ * with the link and a way to take it back. The link is the same every time it
+ * is asked for, so pressing again never breaks one already sent round.
+ */
+function shareButton(file, card) {
+  const button = el('button', 'btn btn--ghost filecard__btn');
+  button.type = 'button';
+  button.dataset.noOpen = '';
+  button.textContent = t('share.button');
+
+  const showRow = (path) => {
+    card.querySelector('.filecard__share')?.remove();
+    const row = el('div', 'filecard__share');
+    row.dataset.noOpen = '';
+    const url = `${location.origin}${path}`;
+    const field = el('input', 'filecard__link');
+    field.type = 'text';
+    field.readOnly = true;
+    field.value = url;
+    field.setAttribute('aria-label', t('share.linkLabel'));
+    field.addEventListener('focus', () => field.select());
+    const copy = el('button', 'btn btn--ghost filecard__btn');
+    copy.type = 'button';
+    copy.textContent = t('share.copy');
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        copy.textContent = t('share.copied');
+      } catch {
+        field.select();
+      }
+    });
+    const stop = el('button', 'btn btn--ghost filecard__btn');
+    stop.type = 'button';
+    stop.textContent = t('share.stop');
+    stop.addEventListener('click', async () => {
+      stop.disabled = true;
+      try {
+        await api.unshareFile(file.id);
+        row.remove();
+        button.textContent = t('share.button');
+      } catch (err) {
+        stop.disabled = false;
+        row.append(el('span', 'filecard__share-error', escapeHtml(err.message)));
+      }
+    });
+    row.append(el('span', 'filecard__share-note', escapeHtml(t('share.note'))), field, copy, stop);
+    card.append(row);
+  };
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const { path } = await api.shareFile(file.id);
+      showRow(path);
+      button.textContent = t('share.shared');
+      try {
+        await navigator.clipboard.writeText(`${location.origin}${path}`);
+      } catch {
+        /* the link is on screen to copy by hand */
+      }
+    } catch (err) {
+      button.textContent = t('share.failed');
+      button.title = err.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
 }
 
 /**
@@ -1266,58 +1358,66 @@ export function assistantMessage() {
    * exact address used. A page read after a search is the same row as its
    * result, not a second one. The raw JSON that used to fill these cards is not
    * something anybody reads; the tool's answer is still what the model got.
+   *
+   * One search, one card. A second query gets a card of its own rather than a
+   * "· +1" on the first, which hid what was asked and mixed two lists of
+   * results into one. `webs` holds every card of the current run, because two
+   * searches sent together finish in either order and each must settle its own.
    */
   let web = null;
+  /** @type {Set<any>} */
+  const webs = new Set();
 
   function closeWeb() {
-    if (!web) return;
-    web.live = false;
-    paintWeb();
-    web.node.open = false;
+    for (const w of webs) {
+      w.live = false;
+      paintWeb(w);
+      w.node.open = false;
+    }
+    webs.clear();
     web = null;
   }
 
-  function paintWeb() {
-    if (!web) return;
-    const w = web;
+  function paintWeb(w) {
     const working = w.live && w.pending > 0;
     const allFailed = !working && w.calls > 0 && w.failures === w.calls;
     w.mark.innerHTML = working ? MARK_PENDING : `<span class="mark">${allFailed ? '✗' : '✓'}</span>`;
     w.title.textContent = t(w.searched ? (working ? 'web.searching' : 'web.searched') : working ? 'web.reading' : 'web.read');
-    const asked = w.queries.filter(Boolean);
-    w.query.textContent = asked.length ? asked[asked.length - 1] + (asked.length > 1 ? ` · +${asked.length - 1}` : '') : '';
+    w.query.textContent = w.queryText;
     w.node.classList.toggle('web--error', allFailed);
     w.list.innerHTML = [...w.rows.values()].map((row) => webRowHtml(row)).join('');
     w.list.hidden = w.rows.size === 0;
   }
 
-  function webCard() {
-    if (web) return web;
+  /** The card this call belongs in: a search that follows a search starts a new one. */
+  function webCard(isSearch) {
+    if (web && !(isSearch && web.searched)) return web;
     closeSteps();
     const node = el('details', 'block web');
     node.open = true;
+    // The chevron is the one every `details.block` draws after its summary —
+    // a second one of its own here put two arrows side by side.
     const summary = el('summary', 'web__head');
     const mark = el('span', 'web__mark');
     const title = el('span', 'web__title');
     const query = el('span', 'web__query');
-    const chev = el('span', 'web__chev', '⌄');
-    chev.setAttribute('aria-hidden', 'true');
-    summary.append(mark, title, query, chev);
+    summary.append(mark, title, query);
     const list = el('div', 'web__list');
     node.append(summary, list);
     body.append(node);
-    web = { node, mark, title, query, list, rows: new Map(), queries: [], pending: 0, calls: 0, failures: 0, searched: false, live: true };
+    web = { node, mark, title, query, list, rows: new Map(), queryText: '', pending: 0, calls: 0, failures: 0, searched: false, live: true };
+    webs.add(web);
     return web;
   }
 
   function startWeb(call) {
-    const w = webCard();
+    const w = webCard(call.name === 'web_search');
     w.calls += 1;
     w.pending += 1;
     const input = call.input || {};
     if (call.name === 'web_search') {
       w.searched = true;
-      w.queries.push(String(input.query || ''));
+      w.queryText = String(input.query || '');
     }
     const url = call.name === 'web_search' ? null : String(input.url || '');
     if (url) {
@@ -1325,7 +1425,7 @@ export function assistantMessage() {
       row.state = 'pending';
       w.rows.set(url, row);
     }
-    paintWeb();
+    paintWeb(w);
     return {
       complete(result) {
         w.pending = Math.max(0, w.pending - 1);
@@ -1341,7 +1441,7 @@ export function assistantMessage() {
           row.state = result.isError ? 'failed' : 'read';
           row.title ||= titleFromContent(call.name, result.content);
         }
-        paintWeb();
+        paintWeb(w);
       },
     };
   }
@@ -1439,7 +1539,7 @@ export function assistantMessage() {
         item.append(out);
 
         if (result.file?.id) placeFile(body, result.file);
-        if (result.widget?.markup) body.append(widgetNode(result.widget, result.name));
+        if (drawable(result.widget)) body.append(widgetNode(result.widget, result.name));
         if (result.schedule?.id) placeScheduleCard(body, result.schedule);
         if (result.answered) placeAnswer(body, result.answered);
       },
@@ -1797,7 +1897,7 @@ export function assistantMessage() {
            * something to open — it is already open, which is what makes it the
            * right shape for "here is what I found" rather than "here is a report".
            */
-          if (result.widget?.markup) body.append(widgetNode(result.widget, result.name));
+          if (drawable(result.widget)) body.append(widgetNode(result.widget, result.name));
 
           /**
            * A schedule set up — or found already there — by this call.

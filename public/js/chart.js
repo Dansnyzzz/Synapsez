@@ -61,7 +61,8 @@ const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300
 
 /**
  * @param {{ title?: string, markup: string, spec: { type: string, format?: string,
- *   labels: string[], series: { name: string, values: number[] }[] } }} widget
+ *   labels: string[], series: { name: string, values: number[] }[],
+ *   groups?: string[], group?: number[] } }} widget  `groups`/`group`: scatter only
  * @returns {HTMLElement | null} null when the markup is not a chart, so the
  *   caller can fall back to the plain frame.
  */
@@ -125,6 +126,10 @@ export function chartFigure(widget) {
   const off = new Set();
   const hits = [...svg.querySelectorAll('.hit')];
   const isPie = spec.type === 'pie';
+  // A scatter point reads as its x and y; the real series it belongs to is
+  // `group[i]`, which is what its colour and the legend refer to.
+  const isScatter = spec.type === 'scatter' && Array.isArray(spec.group) && Array.isArray(spec.groups);
+  const legendCount = isScatter ? spec.groups.length : spec.series.length;
   let active = -1;
 
   const clear = () => {
@@ -151,7 +156,9 @@ export function chartFigure(widget) {
     /** @type {{ name: string, value: number, colour: string, share?: boolean, j?: number }[]} */
     const rows = isPie
       ? [{ name: String(spec.labels[i]), value: spec.series[0]?.values[i], colour: PALETTE[i % PALETTE.length], share: true }]
-      : spec.series
+      : isScatter
+        ? spec.series.map((s) => ({ name: s.name, value: s.values[i], colour: PALETTE[(spec.group[i] || 0) % PALETTE.length] }))
+        : spec.series
           .map((s, j) => ({ name: s.name, value: s.values[i], colour: PALETTE[j % PALETTE.length], j }))
           .filter((row) => !off.has(row.j));
     const total = isPie ? spec.series[0].values.reduce((a, b) => a + (Number(b) || 0), 0) : 0;
@@ -223,7 +230,13 @@ export function chartFigure(widget) {
   stage.addEventListener('blur', clear);
   stage.addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
     const last = spec.labels.length - 1;
-    const next = { ArrowRight: active + 1, ArrowDown: active + 1, ArrowLeft: active - 1, ArrowUp: active - 1, Home: 0, End: last }[event.key];
+    let next = { ArrowRight: active + 1, ArrowDown: active + 1, ArrowLeft: active - 1, ArrowUp: active - 1, Home: 0, End: last }[event.key];
+    // Keys skip the points of a series set aside, the same as the eye does.
+    if (isScatter && next !== undefined && off.size) {
+      const step = next < active ? -1 : 1;
+      while (next >= 0 && next <= last && off.has(spec.group[next])) next += step;
+      if (next < 0 || next > last) return event.preventDefault();
+    }
     if (next === undefined) {
       if (event.key === 'Escape') clear();
       return;
@@ -236,7 +249,7 @@ export function chartFigure(widget) {
   // The legend sets a series aside, the way every charting tool does. The
   // scale does not change — that would be redrawing the chart, and the point is
   // to compare what is left against the same axis.
-  if (!isPie && spec.series.length > 1) {
+  if (!isPie && legendCount > 1) {
     for (const item of svg.querySelectorAll('.legend-item')) {
       const j = Number(item.getAttribute('data-s'));
       item.setAttribute('role', 'button');
@@ -244,12 +257,19 @@ export function chartFigure(widget) {
       item.setAttribute('aria-pressed', 'true');
       const toggle = () => {
         if (off.has(j)) off.delete(j);
-        else if (off.size < spec.series.length - 1) off.add(j);
+        else if (off.size < legendCount - 1) off.add(j);
         else return;
         const hidden = off.has(j);
         item.classList.toggle('is-off', hidden);
         item.setAttribute('aria-pressed', String(!hidden));
         svg.querySelectorAll(`[data-s="${j}"]:not(.legend-item)`).forEach((n) => n.classList.toggle('is-off', hidden));
+        // A hidden point's target goes too, so it cannot be hovered invisibly.
+        if (isScatter) {
+          svg.querySelectorAll('.hit--pt').forEach((n) => {
+            const g = spec.group[Number(n.getAttribute('data-i'))];
+            n.classList.toggle('is-off', off.has(g));
+          });
+        }
         if (active >= 0) show(active, hits.find((h) => h.getAttribute('data-i') === String(active)));
       };
       item.addEventListener('click', toggle);

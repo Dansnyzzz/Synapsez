@@ -32,7 +32,7 @@ const TEXT = '#c3c2b7';
 const TEXT_STRONG = '#ffffff';
 const GRID = '#3a3a38';
 
-const TYPES = ['bar', 'hbar', 'line', 'pie', 'stacked'];
+const TYPES = ['bar', 'hbar', 'line', 'pie', 'stacked', 'scatter'];
 
 const esc = (s) =>
   String(s ?? '')
@@ -73,6 +73,7 @@ function validate({ type, data }) {
   if (!TYPES.includes(type)) {
     throw new Error(`"${type}" is not a chart this draws. Use one of: ${TYPES.join(', ')}.`);
   }
+  if (type === 'scatter') return validateScatter(data);
   const labels = data?.labels;
   const series = data?.series;
   if (!Array.isArray(labels) || !labels.length) throw new Error('Give `data.labels` — one label per point.');
@@ -326,18 +327,151 @@ function stackedChart({ title, data, format }) {
   return frame(W, H, title, body);
 }
 
-const BUILDERS = { bar: barChart, hbar: hbarChart, line: lineChart, pie: pieChart, stacked: stackedChart };
+/* ── scatter, for how two measures relate ───────────────────────────── */
+
+/** One point as [x, y] or { x, y, label } — the two shapes a model reaches for. */
+function pointOf(p) {
+  if (Array.isArray(p)) return { x: Number(p[0]), y: Number(p[1]), label: p[2] == null ? '' : String(p[2]) };
+  return { x: Number(p?.x), y: Number(p?.y), label: p?.label == null ? '' : String(p.label) };
+}
+
+const MAX_POINTS = 2000;
+
+function validateScatter(data) {
+  const series = data?.series;
+  if (!Array.isArray(series) || !series.length) {
+    throw new Error('Give `data.series` — at least one { name, points: [[x, y], …] }.');
+  }
+  let total = 0;
+  for (const s of series) {
+    if (!Array.isArray(s?.points) || !s.points.length) {
+      throw new Error(`Series "${s?.name ?? '?'}" needs \`points\`: a list of [x, y] pairs.`);
+    }
+    for (const p of s.points) {
+      const { x, y } = pointOf(p);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        throw new Error(`Series "${s?.name ?? '?'}" has a point that is not two numbers: ${JSON.stringify(p)}.`);
+      }
+    }
+    total += s.points.length;
+  }
+  if (total > MAX_POINTS) throw new Error(`That is ${total} points; a scatter chart draws up to ${MAX_POINTS}.`);
+}
 
 /**
- * @param type   bar | hbar | line | pie | stacked
- * @param data   { labels: string[], series: [{ name, values: number[] }] }
+ * Round steps covering [min, max], negative values included — a scatter axis
+ * cannot assume zero is the floor the way a bar axis does.
+ */
+function rangeTicks(min, max, count = 5) {
+  if (min === max) {
+    const pad = Math.abs(min) || 1;
+    min -= pad;
+    max += pad;
+  }
+  const raw = (max - min) / count;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) || mag * 10;
+  const start = Math.floor(min / step) * step;
+  const ticks = [];
+  for (let v = start; v < max + step * 0.999; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+  return ticks;
+}
+
+function scatterChart({ title, data, format, xLabel = '', yLabel = '' }) {
+  const W = 720;
+  const H = 380;
+  const top = 46;
+  const left = 60;
+  const bottom = H - 52;
+  const plotW = W - left - 20;
+  const plotH = bottom - top;
+
+  const all = data.series.flatMap((s) => s.points.map(pointOf));
+  const xt = rangeTicks(Math.min(...all.map((p) => p.x)), Math.max(...all.map((p) => p.x)));
+  const yt = rangeTicks(Math.min(...all.map((p) => p.y)), Math.max(...all.map((p) => p.y)));
+  const [x0, x1] = [xt[0], xt[xt.length - 1]];
+  const [y0, y1] = [yt[0], yt[yt.length - 1]];
+  const sx = (v) => left + ((v - x0) / (x1 - x0 || 1)) * plotW;
+  const sy = (v) => bottom - ((v - y0) / (y1 - y0 || 1)) * plotH;
+
+  let body = legend(data.series, left, 32);
+  for (const t of yt) {
+    body += `<line x1="${left}" y1="${sy(t).toFixed(1)}" x2="${W - 20}" y2="${sy(t).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>`;
+    body += `<text x="${left - 8}" y="${(sy(t) + 4).toFixed(1)}" font-size="10" text-anchor="end" fill="${TEXT}">${esc(formatValue(t, format))}</text>`;
+  }
+  for (const t of xt) {
+    body += `<line x1="${sx(t).toFixed(1)}" y1="${top}" x2="${sx(t).toFixed(1)}" y2="${bottom}" stroke="${GRID}" stroke-width="1"/>`;
+    body += `<text x="${sx(t).toFixed(1)}" y="${bottom + 16}" font-size="10" text-anchor="middle" fill="${TEXT}">${esc(formatValue(t))}</text>`;
+  }
+  if (xLabel) body += `<text x="${left + plotW / 2}" y="${H - 10}" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(xLabel)}</text>`;
+  if (yLabel) {
+    body += `<text x="0" y="0" transform="translate(14,${top + plotH / 2}) rotate(-90)" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(yLabel)}</text>`;
+  }
+
+  // Marks, then the targets above them: a larger invisible circle per point,
+  // because a 4px dot is not something to ask anybody to aim at.
+  let i = 0;
+  let hits = '';
+  data.series.forEach((s, j) => {
+    const colour = PALETTE[j % PALETTE.length];
+    for (const raw of s.points) {
+      const p = pointOf(raw);
+      const cx = sx(p.x).toFixed(1);
+      const cy = sy(p.y).toFixed(1);
+      body += `<circle class="dot" data-i="${i}" data-s="${j}" cx="${cx}" cy="${cy}" r="4.5" fill="${colour}" stroke="#1a1a19" stroke-width="1.5"/>`;
+      hits += `<circle class="hit hit--pt" data-i="${i}" cx="${cx}" cy="${cy}" r="10" fill="transparent"/>`;
+      i += 1;
+    }
+  });
+
+  return frame(W, H, title, body + hits);
+}
+
+/**
+ * What the browser reads a scatter chart's hover from, in the same
+ * labels/series shape as every other chart: one label per point, and the
+ * x and y values as the two "series". `groups` and `group` say which real
+ * series each point belongs to, for the legend and the swatch colour.
+ */
+export function scatterSpec({ data, format, xLabel, yLabel }) {
+  const labels = [];
+  const xs = [];
+  const ys = [];
+  const group = [];
+  data.series.forEach((s, j) => {
+    s.points.map(pointOf).forEach((p, k) => {
+      labels.push(p.label || (data.series.length > 1 ? `${s.name} #${k + 1}` : `#${k + 1}`));
+      xs.push(p.x);
+      ys.push(p.y);
+      group.push(j);
+    });
+  });
+  return {
+    type: 'scatter',
+    format: format || 'number',
+    labels,
+    series: [
+      { name: xLabel || 'x', values: xs },
+      { name: yLabel || 'y', values: ys },
+    ],
+    groups: data.series.map((s) => String(s.name ?? '')),
+    group,
+  };
+}
+
+const BUILDERS = { bar: barChart, hbar: hbarChart, line: lineChart, pie: pieChart, stacked: stackedChart, scatter: scatterChart };
+
+/**
+ * @param type   bar | hbar | line | pie | stacked | scatter
+ * @param data   { labels: string[], series: [{ name, values: number[] }] };
+ *               for scatter, series of { name, points } where each point is [x, y]
  * @param format number | percent | currency
  * @returns a complete `<svg>` string
  */
-export function renderChart({ type, title, data, format = 'number' }) {
+export function renderChart({ type, title, data, format = 'number', xLabel = '', yLabel = '' }) {
   validate({ type, data });
-  return BUILDERS[type]({ title: title || '', data, format });
+  return BUILDERS[type]({ title: title || '', data, format, xLabel, yLabel });
 }
 
 /** Exposed for the suite that pins the arithmetic and the palette. */
-export const __testing = { formatValue, PALETTE, axisTicks };
+export const __testing = { formatValue, PALETTE, axisTicks, rangeTicks };

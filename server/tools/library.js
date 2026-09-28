@@ -362,23 +362,58 @@ const hm = (seconds) => {
   return h ? `${h} h ${m} min` : `${m} min`;
 };
 
+/**
+ * A route's line, thinned to at most `max` points — enough to draw on a small
+ * map, not the thousands OSRM returns for a long drive, since the map is
+ * stored with the conversation.
+ */
+export function thinLine(coords, max = 160) {
+  const pts = (Array.isArray(coords) ? coords : []).filter((c) => Array.isArray(c) && c.length >= 2);
+  if (pts.length <= max) return pts.map(([lon, lat]) => [round(lat, 5), round(lon, 5)]);
+  const step = (pts.length - 1) / (max - 1);
+  return Array.from({ length: max }, (_, i) => pts[Math.round(i * step)]).map(([lon, lat]) => [round(lat, 5), round(lon, 5)]);
+}
+
+/** The first part of a Nominatim name — "Hoàn Kiếm Lake", not the whole address. */
+const shortName = (name) => String(name || '').split(',')[0].trim();
+
 async function placeLookupTool({ op, place, from, to }) {
   if (op === 'find') {
     const p = await geocode(place);
-    return `${p.name} (${p.kind}) — lat ${round(p.lat, 5)}, lon ${round(p.lon, 5)}. Map: https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=14/${p.lat}/${p.lon}\nSource: OpenStreetMap.`;
+    return {
+      content: `${p.name} (${p.kind}) — lat ${round(p.lat, 5)}, lon ${round(p.lon, 5)}. Map: https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=14/${p.lat}/${p.lon}\nSource: OpenStreetMap. A map is shown to the user.`,
+      widget: { kind: 'map', title: shortName(p.name), points: [{ lat: p.lat, lon: p.lon, label: shortName(p.name), detail: p.name }] },
+    };
   }
   if (op === 'distance') {
     const [a, b] = await Promise.all([geocode(from), geocode(to)]);
     const straight = haversineKm(a, b);
     let road = '';
+    let line = [];
     try {
-      const route = await getJson(`https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`);
+      const route = await getJson(
+        `https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=simplified&geometries=geojson`,
+      );
       const r = route?.routes?.[0];
-      if (r) road = ` By road: about ${fmt(round(r.distance / 1000, 1))} km, roughly ${hm(r.duration)} driving without traffic.`;
+      if (r) {
+        road = ` By road: about ${fmt(round(r.distance / 1000, 1))} km, roughly ${hm(r.duration)} driving without traffic.`;
+        line = thinLine(r.geometry?.coordinates);
+      }
     } catch {
       /* the straight line still answers the question */
     }
-    return `${a.name} → ${b.name}: ${fmt(round(straight, 1))} km in a straight line.${road}\nSource: OpenStreetMap / OSRM.`;
+    return {
+      content: `${a.name} → ${b.name}: ${fmt(round(straight, 1))} km in a straight line.${road}\nSource: OpenStreetMap / OSRM. A map with the route is shown to the user.`,
+      widget: {
+        kind: 'map',
+        title: `${shortName(a.name)} → ${shortName(b.name)}`,
+        points: [
+          { lat: a.lat, lon: a.lon, label: shortName(a.name), detail: a.name },
+          { lat: b.lat, lon: b.lon, label: shortName(b.name), detail: b.name },
+        ],
+        line: line.length ? line : [[a.lat, a.lon], [b.lat, b.lon]],
+      },
+    };
   }
   throw new Error('op is find or distance.');
 }

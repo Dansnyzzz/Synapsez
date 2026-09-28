@@ -81,6 +81,7 @@ import { mountWorkspaceRoutes } from './routes/workspace.js';
 import { mountMcpRoutes } from './routes/mcp.js';
 import { mountChatRoutes } from './routes/chats.js';
 import { mountFileRoutes } from './routes/files.js';
+import { mountShareRoutes, mountPublicShare } from './routes/share.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf } from './i18n/index.js';
@@ -728,6 +729,9 @@ export function createApp() {
       }
     }),
   );
+
+  // A share link: the one read that needs no session — the token is the key.
+  mountPublicShare(app, { wrap });
 
   // ── everything below requires a session ─────────────────────────────
   const api = express.Router();
@@ -1689,6 +1693,7 @@ export function createApp() {
 
   // Lifted into server/routes/files.js.
   mountFileRoutes(api, { wrap, body });
+  mountShareRoutes(api, { wrap });
   mountWorkspaceRoutes(api, { wrap, body });
 
   // Lifted into server/routes/chats.js.

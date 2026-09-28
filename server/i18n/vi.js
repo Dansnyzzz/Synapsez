@@ -799,6 +799,48 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Chỉnh sửa {0} khớp nhiều hơn một chỗ. Thêm phần chữ xung quanh để nó là duy nhất.",
   "{0} has no stored source to edit. Pass the complete content instead.":
     "{0} không có mã nguồn đã lưu để sửa. Hãy gửi toàn bộ nội dung thay vào đó.",
+  // The cloud computer (server/sandbox.js).
+  'A file needs a path, e.g. "data/input.csv".': 'Tệp cần có đường dẫn, ví dụ "data/input.csv".',
+  '"{0}" climbs out of the work folder; give a path inside it.':
+    '"{0}" đi ra ngoài thư mục làm việc; hãy dùng đường dẫn bên trong nó.',
+  'Files go under {0} or /tmp — "{1}" is outside both.': 'Tệp phải nằm trong {0} hoặc /tmp — "{1}" nằm ngoài cả hai.',
+  'Give a `command` to run, `files` to write, or a file to `download`.':
+    'Hãy đưa `command` để chạy, `files` để ghi, hoặc một tệp để `download`.',
+  'Write at most {0} files per call.': 'Mỗi lần ghi tối đa {0} tệp.',
+  '{0} is over 2MB; write it in parts or generate it inside the machine.':
+    '{0} lớn hơn 2MB; hãy ghi từng phần hoặc tạo nó ngay trong máy.',
+  'The cloud computer could not be started: {0}. On Vercel this needs OIDC enabled for the project; elsewhere VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.':
+    'Không khởi động được máy tính đám mây: {0}. Trên Vercel cần bật OIDC cho dự án; nơi khác cần VERCEL_TOKEN, VERCEL_TEAM_ID và VERCEL_PROJECT_ID.',
+  '{0} does not exist in the machine — check the path with `ls`.': '{0} không có trong máy — kiểm tra đường dẫn bằng `ls`.',
+  '{0} is over 10MB, too large to hand over.': '{0} lớn hơn 10MB, quá lớn để gửi.',
+  '{0} is not a kind of file the conversation can show (PDF, image, Office, text, CSV, JSON). Convert it first.':
+    '{0} không phải loại tệp hội thoại hiển thị được (PDF, ảnh, Office, văn bản, CSV, JSON). Hãy chuyển đổi trước.',
+  // Share links.
+  'Only something the assistant made can be shared by link. Uploaded files stay private.':
+    'Chỉ những gì trợ lý tạo ra mới chia sẻ được bằng link. Tệp tải lên luôn được giữ riêng tư.',
+  'Give the `file_id` of a file you made — create_file returns it.': 'Hãy đưa `file_id` của tệp đã tạo — create_file trả về giá trị này.',
+  'There is no file {0} made in this account.': 'Không có tệp {0} nào được tạo trong tài khoản này.',
+  'Makes this file public: anyone with the link can open it without signing in.':
+    'Công khai tệp này: ai có link đều mở được mà không cần đăng nhập.',
+  // Scatter charts.
+  'Give `data.series` — at least one { name, points: [[x, y], …] }.':
+    'Hãy đưa `data.series` — ít nhất một { name, points: [[x, y], …] }.',
+  'Series "{0}" needs `points`: a list of [x, y] pairs.': 'Chuỗi "{0}" cần `points`: danh sách các cặp [x, y].',
+  'Series "{0}" has a point that is not two numbers: {1}.': 'Chuỗi "{0}" có một điểm không phải hai con số: {1}.',
+  'That is {0} points; a scatter chart draws up to {1}.': 'Có {0} điểm; biểu đồ phân tán vẽ tối đa {1}.',
+  // Image search and sports.
+  'Say what to look for, e.g. "Ha Long Bay at sunset".': 'Hãy nói cần tìm gì, ví dụ "Vịnh Hạ Long lúc hoàng hôn".',
+  'TheSportsDB is rate-limiting (30 requests a minute on the free key). Try again shortly.':
+    'TheSportsDB đang giới hạn tần suất (30 yêu cầu mỗi phút với key miễn phí). Thử lại sau ít phút.',
+  'TheSportsDB returned HTTP {0}.': 'TheSportsDB trả về HTTP {0}.',
+  'No team called "{0}" was found on TheSportsDB. Try its English name, e.g. "Manchester United".':
+    'Không tìm thấy đội "{0}" trên TheSportsDB. Thử tên tiếng Anh, ví dụ "Manchester United".',
+  '"{0}" is not a league this knows by name. Use one of: Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Champions League, Europa League, V.League, Eredivisie, MLS, NBA, NFL, MLB, NHL — or its TheSportsDB id.':
+    '"{0}" không phải giải đấu được biết theo tên. Dùng một trong: Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Champions League, Europa League, V.League, Eredivisie, MLS, NBA, NFL, MLB, NHL — hoặc id TheSportsDB.',
+  'No league with id {0} on TheSportsDB.': 'Không có giải đấu id {0} trên TheSportsDB.',
+  'date is YYYY-MM-DD.': 'date có dạng YYYY-MM-DD.',
+  'No player called "{0}" was found.': 'Không tìm thấy cầu thủ "{0}".',
+  'op is team, league, day or player.': 'op là team, league, day hoặc player.',
   "Pass content (the whole new file, or the next part with append) or edits (the parts that change).":
     "Hãy gửi content (toàn bộ tệp mới, hoặc phần tiếp theo kèm append) hoặc edits (chỉ những phần thay đổi).",
 };

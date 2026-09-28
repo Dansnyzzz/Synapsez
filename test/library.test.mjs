@@ -142,7 +142,10 @@ section('the services are read the way they answer (stubbed)');
     const index = await L.market_data({ kind: 'stock', symbols: ['VNINDEX'] });
     check('an index is in points, with its change', /1,785\.11 points, \+0\.56%/.test(index) && /may be delayed/.test(index), index);
     const road = await L.place_lookup({ op: 'distance', from: 'Hà Nội', to: 'Hải Phòng' });
-    check('distance in a straight line and by road', /km in a straight line/.test(road) && /107\.6 km, roughly 1 h 22 min/.test(road), road);
+    check('distance in a straight line and by road', /km in a straight line/.test(road.content) && /107\.6 km, roughly 1 h 22 min/.test(road.content), road.content);
+    check('and a map with both ends and a line between them', road.widget?.kind === 'map' && road.widget.points.length === 2 && road.widget.line.length >= 2);
+    const spot = await L.place_lookup({ op: 'find', place: 'Hà Nội' });
+    check('a place found is pinned on a map', spot.widget?.kind === 'map' && spot.widget.points.length === 1 && /openstreetmap\.org/.test(spot.content));
     const days = await L.date_calc({ op: 'holidays', country: 'VN', year: 2027 });
     check('holidays include the lunar ones the service leaves out', /2027-02-06.*Tết Nguyên Đán, day 1/.test(days) && /Giỗ Tổ Hùng Vương/.test(days) && /Quốc khánh/.test(days), days.split('\n').slice(0, 4).join(' | '));
     const wiki = await L.encyclopedia({ query: 'Hà Nội' });
@@ -151,6 +154,15 @@ section('the services are read the way they answer (stubbed)');
   } finally {
     globalThis.fetch = real;
   }
+}
+
+section('a long route is thinned before it is stored');
+{
+  const long = Array.from({ length: 5000 }, (_, i) => [105 + i / 5000, 21 + i / 10000]);
+  const thin = lib.thinLine(long);
+  check('at most 160 points', thin.length === 160, String(thin.length));
+  check('keeps both ends, as [lat, lon]', thin[0][0] === 21 && thin[0][1] === 105 && thin[159][1] === lib.thinLine([long[4999]])[0][1]);
+  check('a short one is kept whole', lib.thinLine([[1, 2], [3, 4]]).length === 2);
 }
 
 section('every tool is wired, deferred, and graded');

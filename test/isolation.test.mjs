@@ -1897,6 +1897,51 @@ section('concurrent writes to one setting compose instead of racing');
   check('or the other artifact', inner?.['art-two']?.beta === '"2"', JSON.stringify(inner?.['art-two']));
 }
 
+section('a share link opens one file, and only its owner can make or take it back');
+{
+  /*
+   * The public route is the one read in the app with no account behind it, so
+   * the token has to be the whole permission and nothing else may stand in for
+   * it: not another account's session, not an upload, not a token that was
+   * taken back.
+   */
+  const owner = await store.createUser({
+    id: 'u-share-owner', email: 'share-owner@example.com', passwordHash: 'x', name: 'Owner', role: 'user',
+  });
+  const other = await store.createUser({
+    id: 'u-share-other', email: 'share-other@example.com', passwordHash: 'x', name: 'Other', role: 'user',
+  });
+  const page = await store.createAttachment(owner.id, {
+    id: 'att-page', name: 'quiz.html', mime: 'text/html', kind: 'text', bytes: 5,
+    data: Buffer.from('<p>x</p>').toString('base64'), origin: 'generated', source: '<p>x</p>', chatId: null,
+  });
+  await store.createAttachment(owner.id, {
+    id: 'att-upload', name: 'passport.pdf', mime: 'application/pdf', kind: 'document', bytes: 5,
+    data: Buffer.from('%PDF').toString('base64'),
+  });
+
+  const stolen = await store.setAttachmentShare(other.id, page.id, 'tok-by-the-other-account-000000000000000000');
+  check('another account cannot publish my file', stolen === undefined);
+  check('  and no link came into being', (await store.getAttachmentShare(owner.id, page.id)) === null);
+
+  const upload = await store.setAttachmentShare(owner.id, 'att-upload', 'tok-for-an-upload-0000000000000000000000000');
+  check('an upload cannot be published, even by its owner', upload === undefined);
+  check('  so its would-be token opens nothing', (await store.getSharedAttachment('tok-for-an-upload-0000000000000000000000000')) === null);
+
+  const token = 'tok-real-share-00000000000000000000000000000';
+  check('the owner can publish', (await store.setAttachmentShare(owner.id, page.id, token)) === token);
+  const shared = await store.getSharedAttachment(token);
+  check('the token opens exactly that file', shared?.id === page.id && shared?.name === 'quiz.html');
+  check('  without saying whose it is', shared && !('user_id' in shared) && !('source' in shared), Object.keys(shared || {}).join(','));
+  check('no token opens nothing', (await store.getSharedAttachment('')) === null && (await store.getSharedAttachment(null)) === null);
+
+  const revokedByOther = await store.setAttachmentShare(other.id, page.id, null);
+  check('another account cannot take my link back', revokedByOther === undefined && (await store.getSharedAttachment(token))?.id === page.id);
+
+  await store.setAttachmentShare(owner.id, page.id, null);
+  check('taking it back closes it', (await store.getSharedAttachment(token)) === null);
+}
+
 console.log(
   failures === 0
     ? '\n\u001b[32mAll isolation checks passed.\u001b[0m\n'

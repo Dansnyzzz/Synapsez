@@ -119,6 +119,11 @@ export const api = {
   setSkillEnabled: (id, enabled) => request('PATCH', `/api/skills/${id}`, { enabled }),
   deleteSkill: (id) => request('DELETE', `/api/skills/${id}`),
 
+  // A public link to a file the assistant made (server/routes/share.js).
+  fileShare: (id) => request('GET', `/api/attachments/${encodeURIComponent(id)}/share`),
+  shareFile: (id) => request('POST', `/api/attachments/${encodeURIComponent(id)}/share`),
+  unshareFile: (id) => request('DELETE', `/api/attachments/${encodeURIComponent(id)}/share`),
+
   tasks: () => request('GET', '/api/tasks'),
   // The zone travels with the task: "17:00" means the user's five o'clock, not
   // the server's — and on a deployment the server's is UTC.

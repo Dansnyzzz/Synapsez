@@ -147,6 +147,39 @@ section('every mark says which point it is, so the browser can read it on hover'
   check('pie: each slice is its own hover target', (pie.match(/class="slice hit" data-i=/g) || []).length === 2);
 }
 
+section('a scatter chart plots pairs, negative ones included');
+{
+  const { scatterSpec } = await import('../server/tools/chart.js');
+  const data = {
+    series: [
+      { name: 'Hà Nội', points: [[1, 10], [2, 20], [3, -5]] },
+      { name: 'HCM', points: [{ x: 4, y: 40, label: 'Q4' }] },
+    ],
+  };
+  const svg = renderChart({ type: 'scatter', title: 'T', data, xLabel: 'Tháng', yLabel: 'Doanh thu' });
+  const dots = [...svg.matchAll(/class="dot" data-i="(\d+)" data-s="(\d)" cx="([\d.]+)" cy="([\d.]+)"/g)];
+  check('one dot per point', dots.length === 4, String(dots.length));
+  check('one hover target per point', (svg.match(/class="hit hit--pt"/g) || []).length === 4);
+  check('a larger x sits further right', Number(dots[1][3]) > Number(dots[0][3]));
+  check('a larger y sits higher', Number(dots[1][4]) < Number(dots[0][4]));
+  check('a negative y sits lowest', Number(dots[2][4]) > Number(dots[0][4]));
+  check('the axes are named', svg.includes('Tháng') && svg.includes('Doanh thu'));
+  check('the legend names both series', /class="legend-item" data-s="1"/.test(svg));
+  const spec = scatterSpec({ data, xLabel: 'Tháng', yLabel: 'Doanh thu' });
+  check('the spec has a label per point', spec.labels.length === 4 && spec.labels[3] === 'Q4', spec.labels.join('|'));
+  check('the spec knows each point’s series', spec.group.join('') === '0001');
+  check('x and y travel as the two series', spec.series[0].values.join() === '1,2,3,4' && spec.series[1].name === 'Doanh thu');
+  let threw = '';
+  try {
+    renderChart({ type: 'scatter', title: 'T', data: { series: [{ name: 's', points: [[1, 'a']] }] } });
+  } catch (e) {
+    threw = e.message;
+  }
+  check('a point that is not two numbers is refused', /not two numbers/.test(threw), threw);
+  const flat = renderChart({ type: 'scatter', title: 'T', data: { series: [{ name: 's', points: [[5, 5], [5, 5]] }] } });
+  check('all points equal still draws', !/NaN/.test(flat));
+}
+
 console.log(
   failures === 0 ? '\n\x1b[32mAll chart checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`,
 );

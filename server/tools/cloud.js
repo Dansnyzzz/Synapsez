@@ -4,7 +4,12 @@ import { redactSecrets } from '../redact.js';
 import { readSkill, saveSkill } from '../skills.js';
 import { runParallel } from '../subagents.js';
 import { runDeepResearch } from '../research/index.js';
-import { renderChart } from './chart.js';
+import { renderChart, scatterSpec } from './chart.js';
+import { imageSearchTool } from './images.js';
+import { sportsTool } from './sports.js';
+import { showCardTool } from './cards.js';
+import { runInSandbox } from '../sandbox.js';
+import { shareFile } from '../routes/share.js';
 import { evaluate } from './calc.js';
 import { extractFromPage } from './extract.js';
 import { resolveForUser } from '../autoPick.js';
@@ -465,12 +470,58 @@ async function youtubeTranscript({ url, lang, max_chars: maxChars }, { userId })
  * @param {{ query: string, count?: number }} input
  * @param {{ userId?: string }} [context]  the tool context; only `userId` is used
  */
-async function webSearch({ query, count = 8 }, context = {}) {
+/**
+ * How far one search goes: how many results, and how many of the top pages
+ * are opened and read into the answer.
+ *
+ * Set by the reasoning level the person chose, because that dial already
+ * means "how much care is this worth": on Low a search is a list of links and
+ * the model decides what to open; from High up the best few pages come back
+ * read, so a thorough answer is not three more steps away. `depth` on the call
+ * overrides it either way — a quick check inside a careful job, or a careful
+ * look on a fast setting.
+ */
+const SEARCH_DEPTH = {
+  low: { count: 5, read: 0 },
+  medium: { count: 8, read: 0 },
+  high: { count: 8, read: 2 },
+  xhigh: { count: 10, read: 3 },
+  max: { count: 12, read: 4 },
+};
+const EXCERPT_CHARS = 2500;
+
+export function searchDepth(effort, depth) {
+  const level = SEARCH_DEPTH[effort] || SEARCH_DEPTH.high;
+  if (depth === 'quick') return { count: level.count, read: 0 };
+  if (depth === 'thorough') return { count: Math.max(level.count, 10), read: Math.max(level.read, 3) };
+  return level;
+}
+
+async function webSearch({ query, count, depth }, context = {}) {
   const { userId } = context;
+  const prefs = userId ? await getPrefs(userId).catch(() => null) : null;
+  const plan = searchDepth(prefs?.effort, depth);
   // `userId` only so the search can be attributed in the log. The keys these
   // engines use are deployment-wide, so nothing else about the call depends on
   // which account made it.
-  return formatResults(query, await search(query, { count, userId }));
+  const found = await search(query, { count: Number(count) || plan.count, userId });
+  const listing = formatResults(query, found);
+  if (!plan.read || !found.results?.length) return listing;
+
+  // The top pages, read side by side and cut short: enough to answer from,
+  // not a whole article each. A page that will not open is skipped, not fatal.
+  const top = found.results.slice(0, plan.read);
+  const pages = await Promise.all(
+    top.map((r) => webFetch({ url: r.url, max_chars: EXCERPT_CHARS }).catch(() => null)),
+  );
+  const read = pages
+    .map((text, i) => (text ? `── Page ${i + 1}: ${top[i].url}\n${text}` : null))
+    .filter(Boolean);
+  if (!read.length) return listing;
+  return (
+    `${listing}\n\nThorough search: the top ${read.length} page${read.length === 1 ? ' was' : 's were'} opened and ` +
+    `read (first ${EXCERPT_CHARS} characters each). Use web_fetch on one for the rest of it.\n\n${read.join('\n\n')}`
+  );
 }
 
 /* ── documents the assistant makes ──────────────────────────────────── */
@@ -1091,10 +1142,15 @@ async function calculateTool({ expression }) {
   return `${shown} = ${value}`;
 }
 
-async function chartTool({ title, type, data, format }) {
+async function chartTool({ title, type, data, format, x_label: xLabel, y_label: yLabel }) {
   const caption = String(title || '').trim();
   if (!caption) throw new Error('Give the chart a short title, so it is labelled.');
-  const markup = renderChart({ type, title: caption, data, format });
+  const axes = { xLabel: String(xLabel || '').trim(), yLabel: String(yLabel || '').trim() };
+  const markup = renderChart({ type, title: caption, data, format, ...axes });
+  const spec =
+    type === 'scatter'
+      ? scatterSpec({ data, format, ...axes })
+      : { type, format: format || 'number', labels: data.labels, series: data.series };
   return {
     content:
       `Drew the ${type} chart "${caption}" in the conversation. The user can see it, so say what it shows — the ` +
@@ -1106,7 +1162,7 @@ async function chartTool({ title, type, data, format }) {
       title: caption,
       markup,
       kind: 'chart',
-      spec: { type, format: format || 'number', labels: data.labels, series: data.series },
+      spec,
     },
   };
 }
@@ -2090,6 +2146,37 @@ async function slackPostTool({ channel, text }, { userId }) {
   return CONNECTOR_CALLS.slackPost(userId, channel, text);
 }
 
+/**
+ * The address the app is reached at, for a link the model hands over. Stated
+ * wins; on Vercel the production domain is known without asking; otherwise
+ * the path alone, which the interface turns into a full link.
+ */
+function appOrigin(env = process.env) {
+  const stated = String(env.PUBLIC_URL || '').trim();
+  if (stated) return stated.replace(/\/+$/, '');
+  if (env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  return '';
+}
+
+/** Publish something the assistant made as a link anyone can open. */
+async function publishFileTool({ file_id: fileId, unpublish }, { userId }) {
+  const id = String(fileId || '').trim();
+  if (!id) throw new Error('Give the `file_id` of a file you made — create_file returns it.');
+  if (unpublish) {
+    const gone = await getStore().setAttachmentShare(userId, id, null);
+    if (gone === undefined) throw new Error(`There is no file ${id} made in this account.`);
+    return 'The link is taken back; anyone who opens it now gets "not found".';
+  }
+  const shared = await shareFile(userId, id);
+  if (shared.error) throw new Error(shared.status === 404 ? `There is no file ${id} made in this account.` : shared.error);
+  const url = `${appOrigin()}${shared.path}`;
+  return (
+    `Published ${shared.file.name}: ${url}\n` +
+    'Anyone with this link can open it without signing in — a page runs sandboxed, with no access to the account. ' +
+    'Give the user the link. They can take it back from the file card, or you can with unpublish.'
+  );
+}
+
 export const CLOUD_IMPLEMENTATIONS = {
   create_file: createFileTool,
   update_file: updateFileTool,
@@ -2135,4 +2222,9 @@ export const CLOUD_IMPLEMENTATIONS = {
   meta_page_post: metaPagePostTool,
   send_email: sendEmailTool,
   generate_image: generateImageTool,
+  image_search: imageSearchTool,
+  sports: sportsTool,
+  show_card: showCardTool,
+  sandbox_run: (input, context) => runInSandbox(input, context),
+  publish_file: publishFileTool,
 };

@@ -23,6 +23,10 @@ import { compact, shouldCompact, measure, activeTranscript } from './compact.js'
 import { log, annotate } from './util/trace.js';
 import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { validZone } from './util/zone.js';
+import { sandboxConfigured } from './sandbox.js';
+
+/** What this deployment can do beyond the account's own keys — see `needsHost`. */
+const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
 
 /**
  * There is one mode.
@@ -223,10 +227,23 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
     );
   }
 
+  /**
+   * Answers that have a shape of their own. These tools are deferred, so the
+   * model sees one sentence of each in `load_tools` — not enough for it to
+   * think of a scores card when somebody asks how Arsenal did. One line here
+   * is the nudge; every one of them only reads, so this holds under any policy.
+   */
+  lines.push(
+    '',
+    '## Showing, not listing',
+    '- When the answer IS a recipe, a trip plan, a product comparison, a quiz, flashcards, a translation or a how-to, draw it with `show_card` rather than writing a long list. Pictures of something: `image_search`. A place or a route: `place_lookup` draws the map. Scores, fixtures, tables: `sports`. Load them with `load_tools` when they are not already there.',
+  );
+
   // Skipped under the two looking-only policies, where these tools are not
   // offered at all — describing an ability the model does not have is how it
   // ends up apologising for failing to use one.
   if (policy !== 'readonly' && policy !== 'plan') {
+    const cloudComputer = sandboxConfigured();
     lines.push(
       '',
       '## Documents',
@@ -244,7 +261,13 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
       '- Numbers that make a point — a comparison, a trend, growth, shares of a whole — are a `chart`: drawn to scale in the conversation, and interactive (hovering shows each value). Reach for it unasked when a picture says it faster than a paragraph; not for two or three numbers a sentence holds. A diagram with no numbers — a flow, a timeline — is `show_widget`. Something they will keep or come back to is a file.',
       '- Word, Excel, PowerPoint, Markdown, text, CSV, HTML and JSON. You write Markdown either way; the format decides what it becomes.',
       '- Changing something you already made is `update_file` on the same id. A second nearly-identical file is how the wrong version gets sent to somebody.',
-      '- No PDFs. Make it a .docx or .html and say the viewer has Print → Save as PDF — that goes through their browser, which has the fonts and gets the accents right.',
+      cloudComputer
+        ? '- `create_file` writes no PDFs. For a real PDF, build it on the cloud computer (`sandbox_run`, e.g. Python with fpdf2 and a Unicode font) and hand it over with `download`; for a quick one, a .docx or .html and Print → Save as PDF in the viewer.'
+        : '- No PDFs. Make it a .docx or .html and say the viewer has Print → Save as PDF — that goes through their browser, which has the fonts and gets the accents right.',
+      '- "Give me a link", "publish it", "share it": `publish_file` on the file you made.',
+      ...(cloudComputer
+        ? ['- Computing, data analysis, converting files or testing code with no computer of theirs involved: `sandbox_run`, a private Linux machine for this conversation.']
+        : []),
       '- For a small tool, a chart, a calculator or a mock-up, `create_file` with `format: "html"` and real markup makes something they can **run** in the chat. One self-contained page: inline styles and script, nothing fetched from the internet — it runs sandboxed with no network and no access to their session.',
       '- Code goes in code files — `js`, `py`, `sql`, `sh` and the rest — rather than in a fenced block in your reply, whenever it is something they will keep or run.',
       '- `create_file` puts a file in the conversation; `write_file` puts one on their disk. They are different requests and it is worth being clear which you did.',
@@ -1078,6 +1101,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       .filter(([, status]) => status?.configured)
       .map(([provider]) => provider),
     context: entry.context,
+    // The cloud computer, only where this deployment can start one.
+    hosted: hostCapabilities(),
     // Tools from outside this repository, already in the same shape.
     extra: mcp.tools,
     // A question with nobody to answer it only ends the run.
@@ -1115,6 +1140,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           .filter(([, status]) => status?.configured)
           .map(([provider]) => provider),
         context: 0,
+        hosted: hostCapabilities(),
         extra: mcp.tools,
       }).map((t) => t.name),
     );

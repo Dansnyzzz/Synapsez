@@ -206,8 +206,10 @@ export function splitStatements(sql) {
  *      date ("every morning until the 30th") instead of only never
  *  24  attachments.thumb — the small picture of a sent file, so a message draws
  *      its tiles without downloading the file or rendering a PDF again
+ *  25  attachments.share_token — a public link to something the assistant
+ *      made, null while private, cleared to take the link back
  */
-export const SCHEMA_VERSION = 24;
+export const SCHEMA_VERSION = 25;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1322,6 +1324,40 @@ export function createPgStore(connectionString) {
         `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, created_at
            FROM attachments WHERE id = $1 AND user_id = $2`,
         [id, userId],
+      );
+      return rows[0] ?? null;
+    },
+    /**
+     * Give a file the assistant made a public link, or take it back (`token`
+     * null). Only a generated file, only the owner's: an upload is somebody's
+     * own document and is never published this way. Returns the token now in
+     * force, or undefined when there is no such file.
+     */
+    async setAttachmentShare(userId, id, token) {
+      const rows = await q(
+        `UPDATE attachments SET share_token = $3
+          WHERE id = $1 AND user_id = $2 AND origin = 'generated'
+          RETURNING share_token`,
+        [id, userId, token],
+      );
+      return rows.length ? rows[0].share_token : undefined;
+    },
+    /** The share token a file has now, or null — for the interface to show. */
+    async getAttachmentShare(userId, id) {
+      const rows = await q('SELECT share_token FROM attachments WHERE id = $1 AND user_id = $2', [id, userId]);
+      return rows[0]?.share_token ?? null;
+    },
+    /**
+     * The file a share link points at, for the one route that serves without
+     * signing in. Deliberately not scoped by account: the token *is* the
+     * permission, 256 random bits that only the owner was ever shown.
+     */
+    async getSharedAttachment(token) {
+      if (!token) return null;
+      const rows = await q(
+        `SELECT id, name, mime, kind, bytes, data, origin, created_at
+           FROM attachments WHERE share_token = $1 AND origin = 'generated'`,
+        [token],
       );
       return rows[0] ?? null;
     },

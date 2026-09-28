@@ -14,6 +14,10 @@
  *          Google's, and an OpenRouter key cannot stand in for it. Withheld for
  *          the same reason as `needs`: a model that can see the tool will promise
  *          a picture it has no way to make.
+ * needsHost
+ *          something the deployment itself must be set up with — `sandbox` is
+ *          the cloud computer, which needs Vercel credentials. Withheld when the
+ *          caller says the host lacks it.
  * secondary
  *          useful but not part of the core loop. Dropped first when the model's
  *          context window is too small to hold the whole catalogue — see
@@ -919,7 +923,13 @@ export const TOOLS = [
       type: 'object',
       properties: {
         query: { type: 'string', description: 'The search query.' },
-        count: { type: 'integer', description: 'How many results to return. Default 8.' },
+        count: { type: 'integer', description: 'How many results to return. Default set by the reasoning level.' },
+        depth: {
+          type: 'string',
+          enum: ['quick', 'thorough'],
+          description:
+            'Omit to follow the reasoning level the user chose. quick = links only; thorough = the top pages are also opened and read.',
+        },
       },
       required: ['query'],
     },
@@ -1289,6 +1299,122 @@ export const TOOLS = [
       required: ['kind'],
     },
   },
+  {
+    name: 'image_search',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Find pictures of something and show them in the conversation as a gallery. ' +
+      'Openly licensed images (Openverse, Wikimedia Commons) with their source and licence — good for places, animals, ' +
+      'objects, artworks and famous people; not for products or today\'s news, which web_search finds better.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What to look for; English words find more.' },
+        count: { type: 'integer', description: 'How many, up to 12. Default 8.' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'sports',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Live sports results, fixtures and league tables, shown as a scores card. ' +
+      'op "team" (last result and next match), "league" (table, latest and next games), "day" (matches on a date), ' +
+      '"player" (who, where, position). Free feed: one last and one next game, the top five of a table — say so ' +
+      'when more was asked, and use web_search for the rest.',
+    parameters: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['team', 'league', 'day', 'player'] },
+        team: { type: 'string', description: 'team: its English name, e.g. "Manchester United".' },
+        league: {
+          type: 'string',
+          description: 'league: Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Champions League, V.League, NBA, NFL… or a TheSportsDB id.',
+        },
+        date: { type: 'string', description: 'day: YYYY-MM-DD; today if omitted.' },
+        sport: { type: 'string', description: 'day: Soccer, Basketball, Tennis… Default Soccer.' },
+        player: { type: 'string', description: 'player: the name.' },
+      },
+      required: ['op'],
+    },
+  },
+  {
+    name: 'show_card',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Show a ready-designed card in the conversation: a recipe, a travel itinerary, a product comparison, a quiz, flashcards, a translation or step-by-step instructions. ' +
+      'You give the content; it is drawn the same good way every time, and the quiz and flashcards are interactive. ' +
+      'Use it whenever the answer IS one of these, instead of writing it out as a long list.',
+    parameters: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['recipe', 'itinerary', 'comparison', 'quiz', 'flashcards', 'translation', 'steps'] },
+        card: {
+          type: 'object',
+          description:
+            'Always title (and optional subtitle), in the user\'s language, plus by type — ' +
+            'recipe: servings, time, ingredients [str], steps [str], tips [str] · ' +
+            'itinerary: days [{label, items [{time, title, detail, place}]}] · ' +
+            'comparison: items [names], rows [{label, values [one per item]}], verdict, recommended (index) · ' +
+            'quiz: questions [{question, options [str], answer (index from 0), explanation}] · ' +
+            'flashcards: cards [{front, back}] · ' +
+            'translation: source_lang, target_lang, source, translation, pronunciation, notes [str] · ' +
+            'steps: steps [{title, detail}], note.',
+        },
+      },
+      required: ['type', 'card'],
+    },
+  },
+  {
+    name: 'publish_file',
+    scope: 'cloud',
+    readOnly: false,
+    description:
+      'Publish a page, app, dashboard or document you made as a link anyone can open without signing in, and share it. ' +
+      'Takes the file_id from create_file or sandbox_run; asking again returns the same link. A page runs sandboxed, ' +
+      'with no access to the account. unpublish takes the link back.',
+    parameters: {
+      type: 'object',
+      properties: {
+        file_id: { type: 'string', description: 'The id create_file returned.' },
+        unpublish: { type: 'boolean', description: 'Take the link back instead.' },
+      },
+      required: ['file_id'],
+    },
+  },
+  {
+    name: 'sandbox_run',
+    scope: 'cloud',
+    readOnly: false,
+    needsHost: 'sandbox',
+    description:
+      'Run bash on a private Linux computer in the cloud that belongs to this conversation — Python, Node, git, pip and npm are installed. ' +
+      'Use it to compute, analyse data, convert or generate files (a PDF, a chart image, a zip of results), or test code. ' +
+      'Write files with `files`, run with `command`, and hand one file to the user with `download`. ' +
+      'Files under /vercel/sandbox stay between calls; the network reaches package registries and GitHub only. ' +
+      'This is not the user\'s own computer — use run_command for that.',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'A bash command line, run in /vercel/sandbox, e.g. "pip install pandas && python analyse.py".' },
+        files: {
+          type: 'array',
+          description: 'Text files to write before the command runs.',
+          items: {
+            type: 'object',
+            properties: { path: { type: 'string' }, content: { type: 'string' } },
+            required: ['path', 'content'],
+          },
+        },
+        download: { type: 'string', description: 'A file the command made to give the user, e.g. "out/report.pdf".' },
+        timeout_seconds: { type: 'integer', description: 'How long the command may run. Default 120, at most 300.' },
+      },
+    },
+  },
   /*
    * The everyday toolbox (server/tools/library.js). All deferred: listed by
    * their first sentence in `load_tools` and only sent in full to a turn that
@@ -1515,41 +1641,45 @@ export const TOOLS = [
       'and unreadable, and this one does not. ' +
       '\n\n' +
       '`bar` compares things · `hbar` does the same when the labels are long · `line` shows change over time · ' +
-      '`pie` shows shares of a whole · `stacked` shows parts making up a total.',
+      '`pie` shows shares of a whole · `stacked` shows parts making up a total · ' +
+      '`scatter` shows how two measures relate (series of `points` instead of labels and values).',
     parameters: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'What the chart shows, in a few words.' },
         type: {
           type: 'string',
-          enum: ['bar', 'hbar', 'line', 'pie', 'stacked'],
-          description: 'bar | hbar | line | pie | stacked',
+          enum: ['bar', 'hbar', 'line', 'pie', 'stacked', 'scatter'],
+          description: 'bar | hbar | line | pie | stacked | scatter',
         },
         data: {
           type: 'object',
           description: 'The numbers. One label per point; each series must have exactly as many values as there are labels.',
           properties: {
-            labels: { type: 'array', items: { type: 'string' }, description: 'The category or time labels.' },
+            labels: { type: 'array', items: { type: 'string' }, description: 'The category or time labels. Not for scatter.' },
             series: {
               type: 'array',
-              description: 'One entry per series: { name, values }.',
+              description: 'One entry per series: { name, values } — or for scatter { name, points: [[x, y], …] }.',
               items: {
                 type: 'object',
                 properties: {
                   name: { type: 'string' },
                   values: { type: 'array', items: { type: 'number' } },
+                  points: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
                 },
-                required: ['name', 'values'],
+                required: ['name'],
               },
             },
           },
-          required: ['labels', 'series'],
+          required: ['series'],
         },
         format: {
           type: 'string',
           enum: ['number', 'percent', 'currency'],
           description: 'How to write the numbers. Default number.',
         },
+        x_label: { type: 'string', description: 'scatter: what the horizontal axis measures.' },
+        y_label: { type: 'string', description: 'scatter: what the vertical axis measures.' },
       },
       required: ['title', 'type', 'data'],
     },
@@ -2639,6 +2769,10 @@ export function assessRisk(name, input = {}) {
   if (tool.readOnly) return 'safe';
   if (ALWAYS_SENSITIVE.has(name)) return 'sensitive';
 
+  // Making something public is outward-facing and cannot be recalled from
+  // whoever already copied the link; taking a link back only narrows access.
+  if (name === 'publish_file') return input?.unpublish ? 'ordinary' : 'sensitive';
+
   // Reading an API is what web_fetch already does; writing to one changes
   // something somewhere else, which somebody should see before it happens.
   if (name === 'http_request') return /^(GET|HEAD)$/i.test(String(input?.method || 'GET')) ? 'ordinary' : 'sensitive';
@@ -2755,6 +2889,7 @@ export function riskReason(name, input = {}) {
     return `Sends an email to ${input?.to || 'your own account address'}. It cannot be unsent.`;
   }
   if (name === 'slack_post') return `Posts to ${input?.channel || 'a Slack channel'}, where other people will read it.`;
+  if (name === 'publish_file') return 'Makes this file public: anyone with the link can open it without signing in.';
   if (name === 'telegram_send') return `Sends a Telegram message to ${input?.chat_id || 'a chat'}.`;
   if (name === 'meta_page_post') return 'Publishes a post on your Facebook Page, publicly and immediately.';
   if (name === 'github_write') {
@@ -2883,8 +3018,8 @@ const INDEX_GROUPS = [
     text: "Drive real applications on the user's desktop: list, launch, read and focus windows; click, type, press keys, scroll, wait, close. Load them together.",
   },
   {
-    names: ['create_file', 'update_file', 'read_generated_file', 'file_versions'],
-    text: 'Documents the user previews and downloads in the chat (Word, Excel, PowerPoint, Markdown, text, CSV, HTML, JSON): make one, change it, read it back, list earlier drafts.',
+    names: ['create_file', 'update_file', 'read_generated_file', 'file_versions', 'publish_file'],
+    text: 'Documents the user previews and downloads in the chat (Word, Excel, PowerPoint, Markdown, text, CSV, HTML, JSON): make one, change it, read it back, list earlier drafts, publish one as a public link.',
   },
   {
     names: ['schedule_task', 'list_tasks', 'cancel_task'],
@@ -2984,6 +3119,12 @@ const DEFERRABLE = new Set([
   // wanted and noise on every turn that does not want it.
   'date_calc', 'convert_units', 'market_data', 'place_lookup', 'read_feed', 'text_tools',
   'analyze_data', 'make_qr', 'http_request', 'encyclopedia',
+  // Pictures, scores and ready-made cards: each the whole answer when it is
+  // wanted, and nothing on the turns that do not want it.
+  'image_search', 'sports', 'show_card',
+  // The cloud computer, and publishing what was made. Real jobs, and a turn
+  // that needs one says so.
+  'sandbox_run', 'publish_file',
   // Google, only ever offered to an account that connected it — and even then
   // most turns are not about the inbox.
   'gmail', 'google_calendar', 'google_drive', 'google_docs', 'google_sheets', 'google_forms', 'google_tasks',
@@ -3043,6 +3184,8 @@ export function availableTools({
   context,
   extra = [],
   subagent = false,
+  /** Capabilities this deployment has (`'sandbox'`). Omit to keep every host-gated tool. */
+  hosted = undefined,
   /**
    * Names the model has asked for this turn. The agent loop keeps the set and
    * recomputes this list each step, which is what makes activation work on every
@@ -3071,6 +3214,9 @@ export function availableTools({
     if (t.needs && connected && !connected.includes(t.needs)) return false;
     // Same reasoning as `needs`, for a provider key rather than a connector.
     if (t.needsProvider && providers && !providers.includes(t.needsProvider)) return false;
+    // And for something this deployment has to be set up with — the cloud
+    // computer needs Vercel credentials, whatever the account holds.
+    if (t.needsHost && hosted && !hosted.includes(t.needsHost)) return false;
     return true;
   });
 

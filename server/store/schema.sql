@@ -846,3 +846,12 @@ ALTER TABLE workflows       ADD COLUMN IF NOT EXISTS ends_on TEXT;
 -- with the file: a data URL, bounded, of a known image type (see cleanThumb).
 -- Served by its own route, so reading a transcript never carries it.
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS thumb TEXT;
+
+-- ── 25: a share link for something the assistant made ─────────────────────
+-- "Publish this page and give me a link" — the link opens without signing in,
+-- so it is a secret: 32 random bytes, stored only here. Null means private,
+-- which every existing row already is; clearing it is how a link is taken
+-- back. Unique where set, and indexed so the public route's lookup by token is
+-- one probe rather than a scan of every file.
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS share_token TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS attachments_share_token_idx ON attachments (share_token) WHERE share_token IS NOT NULL;

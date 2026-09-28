@@ -354,17 +354,20 @@ section('the video tool is hidden until Supadata is linked');
   // The point of the connector. YouTube's own endpoint serves a server an empty
   // body, so an account with no key has no way at all to read a video — and a
   // tool offered in that state could only promise and fail.
+  // `context: 0` asks about eligibility alone, the way the loop's `loadable()`
+  // does — at a real window the tool may be deferred behind load_tools, which
+  // is a question about size, not about whether it is offered at all.
   check(
     'an account with no connectors is not offered it',
-    !named(availableTools({ context: 200_000, connected: [] })),
+    !named(availableTools({ context: 0, connected: [] })),
   );
   check(
     'an account with other connectors is not offered it either',
-    !named(availableTools({ context: 200_000, connected: ['github', 'slack'] })),
+    !named(availableTools({ context: 0, connected: ['github', 'slack'] })),
   );
   check(
     'and linking Supadata is what reveals it',
-    named(availableTools({ context: 200_000, connected: ['supadata'] })),
+    named(availableTools({ context: 0, connected: ['supadata'] })),
   );
 }
 

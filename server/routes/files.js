@@ -4,6 +4,7 @@ import { googleGrants } from '../google.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 import { saveUpload } from '../attachments.js';
 import { faviconFor, cleanHost } from '../favicon.js';
+import { proxiedImage, mapTile } from '../imageProxy.js';
 import { createDocument, extensionOf, RUNNABLE } from '../office/index.js';
 import {
   withStorageShim,
@@ -123,6 +124,35 @@ export function mountFileRoutes(api, { wrap, body }) {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Cache-Control', 'private, max-age=604800');
       res.send(icon.data);
+    }),
+  );
+
+  /**
+   * A picture from an image search, and a map tile — fetched by the server for
+   * the same reason as the icons (see imageProxy.js). Only listed hosts, only
+   * raster images.
+   */
+  const sendPicture = (res, picture) => {
+    res.setHeader('Content-Type', picture.type);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.setHeader('Cache-Control', 'private, max-age=604800');
+    res.send(picture.data);
+  };
+  api.get(
+    '/image',
+    wrap(async (req, res) => {
+      const picture = await proxiedImage(req.query.u);
+      if (!picture) return res.status(404).json({ error: 'Not found' });
+      sendPicture(res, picture);
+    }),
+  );
+  api.get(
+    '/map/:z/:x/:y',
+    wrap(async (req, res) => {
+      const tile = await mapTile(req.params.z, req.params.x, req.params.y);
+      if (!tile) return res.status(404).json({ error: 'Not found' });
+      sendPicture(res, tile);
     }),
   );
 

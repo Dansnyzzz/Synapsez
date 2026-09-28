@@ -2432,7 +2432,8 @@ $('messages').addEventListener('click', async (event) => {
    * nobody asked for.
    */
   const openable = event.target.closest('[data-file]');
-  if (openable && !event.target.closest('a[download]')) {
+  // `data-no-open`: the share controls sit inside the card and are their own act.
+  if (openable && !event.target.closest('a[download], [data-no-open]')) {
     event.preventDefault();
     viewer.open({ id: openable.dataset.file });
     return;
