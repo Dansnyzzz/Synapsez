@@ -2369,6 +2369,53 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
 }
 .think__text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* Open, the trace hangs from a rail: a dot where it starts and a line down
+   its length. While the model is still thinking there is no dot yet — only
+   the line, with light falling down it like rain; the dot arrives when the
+   thought is finished. Folded, none of this shows. */
+.think.is-open .think__body { position: relative; padding-left: 36px; }
+.think.is-open .think__body::before {
+  content: '';
+  position: absolute;
+  left: 19px;
+  top: 20px;
+  bottom: 14px;
+  width: 1.5px;
+  border-radius: 1px;
+  background: var(--line);
+}
+.think.is-open .think__body::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  top: 7px;
+  width: 7.5px;
+  height: 7.5px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.think.is-open.is-live .think__body::after { content: none; }
+.think.is-open.is-live .think__body::before {
+  top: 4px;
+  width: 2px;
+  background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  /* Two streams of drops at different spacings, moved the same distance
+     as their own tile each cycle, so they fall at different speeds and
+     the loop never shows a seam. Each drop has a bright head at the bottom
+     and a tail fading upward — the direction reads as falling. */
+  background-image:
+    linear-gradient(180deg, transparent 0 45%, var(--accent) 88%, #fff 94%, transparent 95%),
+    linear-gradient(180deg, transparent 0 60%, var(--accent) 92%, #fff 96%, transparent 97%);
+  background-size: 100% 110px, 100% 170px;
+  background-repeat: repeat-y;
+  filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 6px var(--accent));
+  animation: think-rain 1.1s linear infinite;
+}
+@keyframes think-rain {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: 0 110px, 0 170px; }
+}
+
 /* Words that just arrived glow, then settle into the rest. */
 .think__new { animation: think-glow 1.4s ease-out forwards; }
 @keyframes think-glow {
@@ -2379,6 +2426,7 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
 @media (prefers-reduced-motion: reduce) {
   .think.is-live .think__title { animation: none; color: var(--text-dim); background: none; }
   .think__new { animation: none; }
+  .think.is-open.is-live .think__body::before { animation: none; background-image: none; background-color: var(--accent); }
 }
 
 details.block {
