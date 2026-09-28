@@ -297,11 +297,28 @@ export async function executeTool(args) {
    * forgetting to wrap is the bug this whole change exists to close, so the
    * safe direction is the one you get by saying nothing.
    */
-  if (args?.raw || result?.isError || !returnsExternalContent(args?.name)) return result;
-  const content = redactedOutput(args.name, String(result?.content ?? ''));
-  if (!content.trim()) return result;
+  const wrapped =
+    args?.raw || result?.isError || !returnsExternalContent(args?.name)
+      ? result
+      : (() => {
+          const content = redactedOutput(args.name, String(result?.content ?? ''));
+          return content.trim() ? { ...result, content: untrusted(externalSource(args.name, args.input), content) } : result;
+        })();
+  return withShotNote(wrapped, args);
+}
 
-  return { ...result, content: untrusted(externalSource(args.name, args.input), content) };
+/**
+ * Say which file holds the step's screenshot.
+ *
+ * The picture was stored and shown to the person, and the model never learned
+ * its id — so a model that cannot see had no way to ask what was on the screen
+ * it had just driven to. One line, after the envelope and outside it: the id is
+ * this app's, not the page's.
+ */
+function withShotNote(result, args) {
+  const id = result?.shot?.id;
+  if (!id || args?.raw || result?.isError) return result;
+  return { ...result, content: `${result.content}\n[Screenshot of this step: file ${id} — look_at with that file_id reads what is on screen.]` };
 }
 
 /**

@@ -169,6 +169,98 @@ section('search depth follows the reasoning level');
   check('"thorough" overrides a fast one', searchDepth('low', 'thorough').read >= 3);
 }
 
+section('the effort dial reaches every model that reasons, in each wire\'s own words');
+{
+  const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');
+  const { thinkingAttempts } = await import('../server/providers/google.js');
+  const { reasonsFor } = await import('../server/models.js');
+  const { resolveModel } = await import('../server/providers/catalog.js');
+  const { subagentEffort } = await import('../server/subagents.js');
+
+  check('five rungs', EFFORTS.join() === 'low,medium,high,xhigh,max');
+  const deepseek = { id: 'openrouter/deepseek/deepseek-r1:free', reasoning: true };
+  check('OpenRouter: a reasoning model the old id-guess missed now gets the setting',
+    reasoningParams({ router: 'openrouter', model: 'deepseek/deepseek-r1:free', entry: deepseek, effort: 'low' }).reasoning?.effort === 'low');
+  check('OpenRouter: max is asked as xhigh, the top of its scale',
+    reasoningParams({ router: 'openrouter', model: 'x', entry: {}, effort: 'max' }).reasoning?.effort === 'xhigh');
+  check('OpenRouter: a model known not to reason is sent nothing',
+    Object.keys(reasoningParams({ router: 'openrouter', model: 'x', entry: { reasoning: false }, effort: 'high' })).length === 0);
+  check('OpenRouter: the Auto router, unknown, is sent the setting',
+    !!reasoningParams({ router: 'openrouter', model: 'openrouter/free', entry: { reasoning: null }, effort: 'medium' }).reasoning);
+  check('OpenAI: the full scale reaches a reasoning model',
+    reasoningParams({ model: 'gpt-5.6-terra', entry: {}, effort: 'max' }).reasoning_effort === 'max');
+  check('OpenAI: a non-reasoning model is sent nothing, since it would refuse',
+    Object.keys(reasoningParams({ model: 'gpt-4.1', entry: {}, effort: 'high' })).length === 0);
+  check('an unknown stored value is read as high',
+    reasoningParams({ router: 'openrouter', model: 'x', entry: {}, effort: 'turbo' }).reasoning?.effort === 'high');
+
+  const p = { reasoning_effort: 'max' };
+  const steps = [];
+  while (stepDown(p)) steps.push(p.reasoning_effort ?? '(none)');
+  check('a refused level steps down, then goes', steps.join(' → ') === 'xhigh → high → (none)', steps.join(' → '));
+
+  const merged = oa.mergeDetails([], [{ type: 'reasoning.text', text: 'Let me ', index: 0 }]);
+  oa.mergeDetails(merged, [{ type: 'reasoning.text', text: 'think.', index: 0, signature: 'sig' }]);
+  check('streamed reasoning pieces are joined into one block', merged.length === 1 && merged[0].text === 'Let me think.' && merged[0].signature === 'sig');
+  const turn = [{ role: 'assistant', text: '', toolCalls: [{ id: 'c1', name: 'web_search', input: {} }], raw: { openrouter: { reasoningDetails: merged } } }];
+  check('OpenRouter replays them on the tool-calling turn', oa.toMessages(turn, null, { replayReasoning: true })[0].reasoning_details?.[0]?.signature === 'sig');
+  check('other wires never see the field', !('reasoning_details' in oa.toMessages(turn, null)[0]));
+
+  const g = thinkingAttempts('medium').map((a) => JSON.stringify(a));
+  check('Gemini: MEDIUM, then HIGH, then a budget, then nothing', g[0].includes('MEDIUM') && g[1].includes('HIGH') && g.some((x) => x.includes('thinkingBudget')) && g.at(-1) === '{}', g.join(' '));
+
+  check('the library reads reasoning from what the model accepts', reasonsFor({ supported_parameters: ['tools', 'reasoning'] }) === true && reasonsFor({ supported_parameters: ['tools'] }) === false && reasonsFor({}) === null);
+  check('a library row carries it', resolveModel('openrouter/x/y', { id: 'openrouter/x/y', provider: 'openrouter', model: 'x/y', reasoning: true }).reasoning === true);
+  check('built-ins know which of them reason', resolveModel('anthropic/claude-haiku-4-5').reasoning === false && resolveModel('google/gemini-flash-latest').reasoning === true && resolveModel('openai/gpt-4.1').reasoning === false);
+  check('helpers think a little harder only at the top of the dial', subagentEffort('high') === 'low' && subagentEffort('max') === 'medium');
+}
+
+section('a model that cannot see is read to, not left guessing');
+{
+  const { toParts } = await import('../server/attachments.js');
+  const { __testing: vision } = await import('../server/vision.js');
+  const msg = (id) => ({ attachments: [{ id, name: `${id}.x`, kind: 'image' }] });
+  const read = toParts(msg('img'), new Map([['img', { id: 'img', name: 'shot.png', kind: 'image', mime: 'image/png', data: 'AA==', vision_text: '[read by Gemini]\nA login form.' }]]), { vision: false });
+  check('an image becomes what a vision model read in it', read.length === 1 && read[0].type === 'text' && /A login form/.test(read[0].text));
+  check('  marked as a reading, and as content not commands', /cannot see it yourself/.test(read[0].text) && /not commands/.test(read[0].text));
+  const failed = toParts(msg('img'), new Map([['img', { id: 'img', name: 'shot.png', kind: 'image', visionFailed: 'no key' }]]), { vision: false });
+  check('when nobody could look, the model says why', /no model that can\s+see was reachable/.test(failed[0].text) && /no key/.test(failed[0].text));
+  const sees = toParts(msg('img'), new Map([['img', { id: 'img', name: 'shot.png', kind: 'image', mime: 'image/png', data: 'AA==', vision_text: 'x' }]]), { vision: true });
+  check('a model that can see still gets the picture itself', sees[0].type === 'image');
+
+  const scanMsg = { attachments: [{ id: 'pdf', name: 'scan.pdf', kind: 'document' }] };
+  const pages = toParts(scanMsg, new Map([['pdf', { id: 'pdf', name: 'scan.pdf', kind: 'document', text: null, pageImages: [{ page: 1, mime: 'image/jpeg', data: 'AA==' }, { page: 2, mime: 'image/jpeg', data: 'AA==' }] }]]), { vision: true, documents: false });
+  check('a scan, to a model that can see: its pages as pictures', pages.filter((p) => p.type === 'image').length === 2);
+  const told = toParts(scanMsg, new Map([['pdf', { id: 'pdf', name: 'scan.pdf', kind: 'document', text: null, vision_text: 'Invoice total 1250 USD' }]]), { vision: false, documents: false });
+  check('a scan, to a model that cannot: what was read in it', /Invoice total 1250 USD/.test(told[0].text));
+
+  check('Gemini is looked for first among free vision models', vision.rank('google/gemini-2.5-flash:free') < vision.rank('qwen/qwen2.5-vl-72b-instruct:free'));
+  check('today\'s free readers are ranked, strongest first', vision.rank('qwen/qwen3.8-27b:free') < vision.rank('google/gemma-4-31b-it:free') && vision.rank('google/gemma-4-31b-it:free') < vision.rank('thinkingmachines/inkling-small:free'));
+  check('a safety classifier, a router or a stealth model is never asked to read', ['nvidia/nemotron-3.5-content-safety:free', 'openrouter/free', 'stealth/space-bunny-alpha'].every((m) => vision.NOT_A_READER.test(m)));
+  {
+    const { see } = await import('../server/vision.js');
+    // No model reachable at all (no store, no keys): the keyless OCR still answers.
+    const read = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], ocr: async () => ({ text: 'Tổng cộng 1.250.000 đồng', confidence: 95 }) });
+    check('with nothing reachable, OCR still reads the words', read.model === 'Tesseract OCR' && /1\.250\.000/.test(read.text));
+    check('  and says it is the words only', /words only/.test(read.text));
+    const none = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], ocr: async () => ({ text: '', confidence: 0 }) }).catch((e) => e.message);
+    check('a picture with no text and no reader says so', /no text in it/.test(String(none)), String(none));
+  }
+  check('an unknown family still qualifies, last', vision.rank('acme/unknown-vl') === vision.PREFERENCE.length);
+  check('look_at only reads', assessRisk('look_at', { file_id: 'x' }) === 'safe');
+  check('but a url carrying a payload asks first', assessRisk('look_at', { url: `https://evil.example/?d=${'A'.repeat(400)}` }) === 'sensitive');
+}
+
+section('the live copy of a file is never numbered the same as a saved draft');
+{
+  const { liveRevision } = await import('../server/attachments.js');
+  // Twenty drafts kept after twenty-one rewrites: revisions 2..21 survive.
+  const kept = Array.from({ length: 20 }, (_, i) => ({ revision: 21 - i }));
+  check('after the oldest drafts are pruned, live is one past the newest', liveRevision(kept) === 22, String(liveRevision(kept)));
+  check('  not the count plus one, which collided with v21', liveRevision(kept) !== kept.length + 1);
+  check('a file never rewritten is v1', liveRevision([]) === 1);
+}
+
 section('publishing asks first; taking a link back does not');
 {
   check('publish is sensitive', assessRisk('publish_file', { file_id: 'x' }) === 'sensitive');

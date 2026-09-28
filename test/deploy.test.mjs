@@ -70,9 +70,11 @@ section('vercel.json');
   // imports, not file reads, so without this the first request on a fresh
   // deployment fails with ENOENT and the database is never built.
   check('server/ is force-included in the bundle', !!fn?.includeFiles, fn?.includeFiles || 'missing');
+  // A brace list is allowed — the page renderer's fonts and the OCR engine are
+  // read by path at runtime too — as long as `server/**` is one of its entries.
   check(
     'and the pattern actually covers schema.sql',
-    /^server\//.test(fn?.includeFiles || ''),
+    /(^|[{,])server\/\*\*([,}]|$)/.test(fn?.includeFiles || ''),
     fn?.includeFiles,
   );
 

@@ -25,6 +25,33 @@ const THINKING_LEVEL = {
 };
 
 /**
+ * The same dial as a token budget, for the models that predate `thinkingLevel`.
+ *
+ * `-latest` is an alias that moves, and Gemini 2.5 answers `thinkingLevel` with
+ * a 400 while Gemini 3 still takes a budget — so which of the two a request may
+ * carry is not something this code can know ahead of time. 24,576 is the top of
+ * every 2.5 model's range; `-1` is "decide for yourself".
+ */
+const THINKING_BUDGET = { low: 1024, medium: 8192, high: -1, xhigh: 24_576, max: 24_576 };
+
+/**
+ * What to try, in order, until the model takes one: the level the person
+ * chose; the nearest level every Gemini 3 model accepts (not all of them take
+ * MEDIUM); the budget form for an older model; and finally no setting at all,
+ * which is still a working turn.
+ */
+export function thinkingAttempts(effort) {
+  const level = THINKING_LEVEL[effort] || 'HIGH';
+  /** @type {Record<string, any>[]} */
+  const attempts = [{ thinkingLevel: level }];
+  if (level === 'MEDIUM') attempts.push({ thinkingLevel: 'HIGH' });
+  attempts.push({ thinkingBudget: THINKING_BUDGET[effort] ?? -1 });
+  if ((THINKING_BUDGET[effort] ?? -1) !== -1) attempts.push({ thinkingBudget: -1 });
+  attempts.push({});
+  return attempts;
+}
+
+/**
  * What one `usageMetadata` block is worth.
  *
  * `cachedContentTokenCount` is a subset of `promptTokenCount`, exactly as the
@@ -156,14 +183,25 @@ export async function* streamGoogle({
      * outright, and a rejected request is a worse outcome than an unhonoured
      * dial.
      */
-    thinkingConfig: {
-      includeThoughts: true,
-      ...(entry?.effort === false ? {} : { thinkingLevel: THINKING_LEVEL[effort] || 'HIGH' }),
-    },
+    thinkingConfig: { includeThoughts: true },
     abortSignal: signal,
   };
 
-  const stream = await ai.models.generateContentStream({ model, contents: toContents(messages), config });
+  const contents = toContents(messages);
+  const attempts = entry?.effort === false ? [{}] : thinkingAttempts(effort);
+  let stream;
+  for (const [i, attempt] of attempts.entries()) {
+    config.thinkingConfig = { includeThoughts: true, ...attempt };
+    try {
+      stream = await ai.models.generateContentStream({ model, contents, config });
+      break;
+    } catch (err) {
+      // Only a refusal of the thinking setting moves to the next form; anything
+      // else — a bad key, a quota — is the real answer and goes straight back.
+      const aboutThinking = /thinking|budget|level/i.test(String(err?.message || '')) && /400|INVALID_ARGUMENT/i.test(String(err?.status ?? err?.message ?? ''));
+      if (!aboutThinking || i === attempts.length - 1) throw err;
+    }
+  }
 
   const toolCalls = [];
   let usage = { input: 0, output: 0 };

@@ -241,6 +241,8 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     if (state.model === 'auto') {
       modelIsFree = true;
       modelSeesImages = true;
+      // The router picks per request, so whether this turn reasons is unknown.
+      state.modelReasons = null;
       renderVisionWarning();
       renderTopbar();
       return;
@@ -249,11 +251,14 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       const { model } = await api.resolveModel(state.model);
       modelSeesImages = model.vision !== false;
       modelIsFree = !!model.isFree;
+      // true / false / null (unknown) — the effort dial says so when it is false.
+      state.modelReasons = model.reasoning ?? null;
     } catch {
       // `true` until told otherwise: the vision warning must never be the thing
       // that appears wrongly. A missing free badge is the harmless direction.
       modelSeesImages = true;
       modelIsFree = false;
+      state.modelReasons = null;
     }
     renderVisionWarning();
     renderTopbar();

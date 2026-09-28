@@ -10,6 +10,7 @@ import { sportsTool } from './sports.js';
 import { showCardTool } from './cards.js';
 import { runInSandbox } from '../sandbox.js';
 import { shareFile } from '../routes/share.js';
+import { see } from '../vision.js';
 import { evaluate } from './calc.js';
 import { extractFromPage } from './extract.js';
 import { resolveForUser } from '../autoPick.js';
@@ -26,7 +27,7 @@ import { safeFetch, readCapped } from '../util/safeFetch.js';
 import { searchDocs, listSources, forgetSource } from '../rag.js';
 import { createDocument, extensionOf, readOffice } from '../office/index.js';
 import { extractPdfText } from '../pdf.js';
-import { saveGenerated } from '../attachments.js';
+import { saveGenerated, liveRevision } from '../attachments.js';
 import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
 import { search, formatResults } from '../search.js';
@@ -710,12 +711,14 @@ async function fileVersionsTool({ file_id: fileId, revision, restore }, { userId
   }
 
   const past = await store.listAttachmentVersions(userId, fileId);
-  const live = past.length + 1;
+  // Numbered like the switcher: one past the newest draft, not by count — the
+  // oldest drafts are pruned, so the count stops matching the numbers.
+  const live = liveRevision(past);
 
   if (revision == null) {
     if (!past.length) return `${file.name} has only ever had one version — nothing has been rewritten yet.`;
     return [
-      `${file.name} has ${live} versions:`,
+      `${file.name} is at v${live}; ${past.length} earlier draft${past.length === 1 ? ' is' : 's are'} kept:`,
       `- v${live} — the current one, ${humanSize(file.bytes)}`,
       ...past.map((v) => `- v${v.revision} — ${humanSize(v.bytes)}, saved ${new Date(v.created_at).toISOString()}`),
       '',
@@ -727,7 +730,7 @@ async function fileVersionsTool({ file_id: fileId, revision, restore }, { userId
   if (wanted === live) return `v${live} is the current version. read_generated_file gives you its source.`;
 
   const copy = await store.getAttachmentVersion(userId, fileId, wanted);
-  if (!copy) throw new Error(`${file.name} has no v${revision}. It has ${live} versions.`);
+  if (!copy) throw new Error(`${file.name} has no v${revision}. It is at v${live}; call without revision to list the drafts kept.`);
 
   if (!restore) {
     return copy.source
@@ -2146,6 +2149,57 @@ async function slackPostTool({ channel, text }, { userId }) {
   return CONNECTOR_CALLS.slackPost(userId, channel, text);
 }
 
+const LOOK_MAX_BYTES = 12 * 1024 * 1024;
+const LOOKABLE = /^(image\/(png|jpe?g|webp|gif)|application\/pdf)$/i;
+
+/**
+ * Look at a picture or a PDF page on demand, with a model that can see.
+ *
+ * The tool form of `lendEyes`: for a screenshot a browser step just took, an
+ * image or a PDF on the web, a particular page of a long document, or a
+ * question about a picture the model was only given a reading of. Any model
+ * can call it; for one that cannot see it is the only way to look at all.
+ */
+async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, chatId, signal }) {
+  const ask = String(question || '').trim();
+  const wantPages = Array.isArray(pages) ? pages.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 8) : null;
+  let source;
+  let item;
+
+  if (fileId) {
+    const row = await getStore().getAttachment(userId, String(fileId));
+    if (!row) throw new Error(`There is no file ${fileId} in this account.`);
+    if (row.kind !== 'image' && row.kind !== 'document') {
+      throw new Error(`${row.name} is not a picture or a PDF — read it with read_generated_file or as text instead.`);
+    }
+    source = row.name;
+    item = row.kind === 'image' ? { images: [{ mime: row.mime, data: row.data, name: row.name }] } : { pdf: { data: row.data, name: row.name, pages: wantPages } };
+  } else if (url) {
+    let parsed;
+    try {
+      parsed = new URL(String(url));
+    } catch {
+      throw new Error(`"${url}" is not a valid URL.`);
+    }
+    // The same guard as web_fetch: public addresses only, every hop checked.
+    const res = await safeFetch(parsed, { headers: { Accept: 'image/*,application/pdf;q=0.9,*/*;q=0.5' }, signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`${parsed.host} returned HTTP ${res.status}.`);
+    const type = String(res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!LOOKABLE.test(type)) throw new Error(`That address is ${type || 'not a picture'}, not an image or a PDF — use web_fetch for a page.`);
+    const { buffer, truncated } = await readCapped(res, LOOK_MAX_BYTES);
+    if (truncated) throw new Error('That file is over 12MB, too large to look at.');
+    source = parsed.href;
+    const data = buffer.toString('base64');
+    item = type === 'application/pdf' ? { pdf: { data, name: parsed.pathname.split('/').pop() || 'document.pdf', pages: wantPages } } : { images: [{ mime: type, data, name: parsed.href }] };
+  } else {
+    throw new Error('Give a `file_id` (an attachment, a made file or a step screenshot) or a `url` of an image or PDF.');
+  }
+
+  const { text, model } = await see({ userId, chatId, ...item, question: ask, signal });
+  // The reading is of somebody else's picture, so it is outside content too.
+  return untrusted(`${source} (read by ${model})`, text);
+}
+
 /**
  * The address the app is reached at, for a link the model hands over. Stated
  * wins; on Vercel the production domain is known without asking; otherwise
@@ -2227,4 +2281,5 @@ export const CLOUD_IMPLEMENTATIONS = {
   show_card: showCardTool,
   sandbox_run: (input, context) => runInSandbox(input, context),
   publish_file: publishFileTool,
+  look_at: lookAtTool,
 };

@@ -17,6 +17,9 @@
  * fonts with a ToUnicode table — subtly wrong, and text that is subtly wrong is
  * worse than text that is missing.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
 
 /** Enough of a long document to work with, without eating the whole window. */
 const MAX_CHARS = 120_000;
@@ -62,6 +65,90 @@ async function engine() {
     pdfjs = core;
   }
   return pdfjs;
+}
+
+/** Where pdfjs keeps its standard fonts, with the trailing slash it needs — or null. */
+let fontsDir;
+function standardFonts() {
+  if (fontsDir !== undefined) return fontsDir;
+  try {
+    const dir = path.join(path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')), 'standard_fonts');
+    fontsDir = fs.existsSync(dir) ? `${dir.replace(/\\/g, '/')}/` : null;
+  } catch {
+    fontsDir = null;
+  }
+  return fontsDir;
+}
+
+/**
+ * Pages of a PDF as pictures, for a model to look at.
+ *
+ * The text layer is what `extractPdfText` reads, and a scan has none: a photo
+ * of a contract, a phone-scanned exam paper, a poster. Those are only readable
+ * by looking, so they are drawn here — by the same pdfjs, onto
+ * `@napi-rs/canvas`, a prebuilt native canvas that needs no system libraries —
+ * and handed to a vision model as images.
+ *
+ * JPEG rather than PNG: a scanned page is a photograph, and the same page is a
+ * third of the size, which is what a request carrying eight of them needs.
+ *
+ * @param file   base64 or a Buffer, as for `extractPdfText`
+ * @param pages  1-based page numbers to draw; the first few when omitted
+ * @returns `{ pages: [{ page, mime, data }], total }`, or null when the canvas
+ *   is not available on this platform — a real answer, meaning "cannot look".
+ */
+export async function renderPdfPages(file, { pages = null, max = 8, width = 1400 } = {}) {
+  let canvasApi;
+  try {
+    // A literal specifier, so the deployment tracer bundles the native module.
+    canvasApi = await import('@napi-rs/canvas');
+  } catch {
+    return null;
+  }
+  const { getDocument } = await engine();
+  const bytes = Buffer.isBuffer(file) ? file : Buffer.from(String(file || ''), 'base64');
+  const task = getDocument({
+    data: Uint8Array.from(bytes),
+    isEvalSupported: false,
+    useSystemFonts: false,
+    verbosity: 0,
+    // The fourteen standard PDF fonts ship with pdfjs. Without them a page set in
+    // Helvetica is drawn in a fallback face with the spacing wrong — readable,
+    // but it costs a vision model accuracy on exactly the small print it is for.
+    ...(standardFonts() ? { standardFontDataUrl: standardFonts() } : {}),
+  });
+  let doc;
+  try {
+    doc = await task.promise;
+  } catch (err) {
+    throw Object.assign(new Error(`That PDF could not be opened: ${err.message}`), { code: 'pdf_unreadable' });
+  }
+  try {
+    const wanted = (Array.isArray(pages) && pages.length ? pages : Array.from({ length: doc.numPages }, (_, i) => i + 1))
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= doc.numPages)
+      .slice(0, max);
+    const out = [];
+    for (const n of wanted) {
+      const page = await doc.getPage(n);
+      const base = page.getViewport({ scale: 1 });
+      // Wide enough for small print to survive, capped so a poster-sized page
+      // does not become a forty-megapixel request.
+      const scale = Math.min(3, width / base.width);
+      const viewport = page.getViewport({ scale });
+      const canvas = canvasApi.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: /** @type {any} */ (context), viewport, canvas: /** @type {any} */ (canvas) }).promise;
+      const jpeg = await canvas.encode('jpeg', 82);
+      out.push({ page: n, mime: 'image/jpeg', data: Buffer.from(jpeg).toString('base64') });
+      page.cleanup();
+    }
+    return { pages: out, total: doc.numPages };
+  } finally {
+    await task.destroy();
+  }
 }
 
 /**

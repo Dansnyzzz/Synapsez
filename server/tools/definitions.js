@@ -1370,6 +1370,25 @@ export const TOOLS = [
     },
   },
   {
+    name: 'look_at',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Look at a picture, a screenshot or PDF pages and get back everything in it — all its text word for word, tables, charts and layout. ' +
+      'This is how a model that cannot see images sees: an attached image or PDF, a browser or desktop step\'s screenshot ' +
+      '(the file id the step reported), or an image or PDF on the web by url. Ask a question for a direct answer; ' +
+      'give pages for a particular part of a long PDF.',
+    parameters: {
+      type: 'object',
+      properties: {
+        file_id: { type: 'string', description: 'An attachment, a file you made, or a step screenshot.' },
+        url: { type: 'string', description: 'An image or PDF on the web, instead of file_id.' },
+        pages: { type: 'array', items: { type: 'integer' }, description: 'PDF: which pages, from 1; up to 8.' },
+        question: { type: 'string', description: 'What to find out about it.' },
+      },
+    },
+  },
+  {
     name: 'publish_file',
     scope: 'cloud',
     readOnly: false,
@@ -2708,7 +2727,7 @@ function googleRiskReason(name, input = {}) {
 
 /** The URL argument of every tool that makes a request to an address the model chose. */
 const URL_ARGUMENT = {
-  web_fetch: 'url', extract: 'url', read_feed: 'url', youtube_transcript: 'url', http_request: 'url',
+  web_fetch: 'url', extract: 'url', read_feed: 'url', youtube_transcript: 'url', http_request: 'url', look_at: 'url',
   download_file: 'url', export_pdf: 'url', browser_open: 'url', open_url: 'target',
 };
 
@@ -3121,7 +3140,7 @@ const DEFERRABLE = new Set([
   'analyze_data', 'make_qr', 'http_request', 'encyclopedia',
   // Pictures, scores and ready-made cards: each the whole answer when it is
   // wanted, and nothing on the turns that do not want it.
-  'image_search', 'sports', 'show_card',
+  'image_search', 'sports', 'show_card', 'look_at',
   // The cloud computer, and publishing what was made. Real jobs, and a turn
   // that needs one says so.
   'sandbox_run', 'publish_file',

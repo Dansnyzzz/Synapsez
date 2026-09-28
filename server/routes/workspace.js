@@ -1,6 +1,6 @@
 import { getStore } from '../store/index.js';
 import { executeTool } from '../tools/execute.js';
-import { previewOf, mediaOf } from '../attachments.js';
+import { previewOf, mediaOf, liveRevision } from '../attachments.js';
 
 /**
  * The workspace routes, lifted out of server/app.js.
@@ -253,12 +253,11 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
       if (!file) return res.status(404).json({ error: 'Not found' });
 
       const past = await store.listAttachmentVersions(req.user.id, file.id);
+      const live = liveRevision(past);
       res.json({
-        // `revision` counts drafts, so the live file is one past the last saved
-        // one. Numbering it separately would put two different "v3"s on screen.
-        current: past.length + 1,
+        current: live,
         versions: [
-          { revision: past.length + 1, name: file.name, bytes: file.bytes, createdAt: file.created_at, live: true },
+          { revision: live, name: file.name, bytes: file.bytes, createdAt: file.created_at, live: true },
           ...past.map((v) => ({
             revision: v.revision,
             name: v.name,

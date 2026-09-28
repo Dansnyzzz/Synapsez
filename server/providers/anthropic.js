@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { normaliseStop, refusalDetail } from './stop.js';
+import { EFFORTS } from './openaiCompatible.js';
 
 /**
  * Anthropic adapter.
@@ -128,6 +129,7 @@ export async function* streamAnthropic({
   // a limited key and hide the 429 that should have rested it.
   const client = new Anthropic({ apiKey, maxRetries: 0, ...(baseURL ? { baseURL } : {}) });
 
+  /** @type {any} Grown below: effort, thinking, and a stepped-down effort on retry. */
   const params = {
     model,
     max_tokens: maxTokens,
@@ -159,7 +161,9 @@ export async function* streamAnthropic({
   // Older models reject `effort` and adaptive thinking outright, so both are
   // opt-out per catalogue entry rather than sent unconditionally.
   if (entry?.effort !== false) {
-    params.output_config = { effort };
+    // A stored value from before the dial was validated is read as the default,
+    // not forwarded for the API to refuse on every turn.
+    params.output_config = { effort: EFFORTS.includes(effort) ? effort : 'high' };
   }
   // Reasoning is surfaced live in the UI, so opt in to summaries explicitly —
   // the default returns thinking blocks with empty text.
@@ -167,12 +171,48 @@ export async function* streamAnthropic({
     params.thinking = { type: 'adaptive', display: 'summarized' };
   }
 
-  const stream = client.messages.stream(params, { signal });
+  /**
+   * A level this model does not take is stepped down, not fatal.
+   *
+   * The SDK lists five levels; not every model accepts all five, and the dial
+   * is the account's, not the model's. `max → xhigh → high`, then the setting is
+   * dropped — but only while nothing has reached the screen yet, since a stream
+   * that already spoke cannot be taken back and replayed.
+   */
+  let stream;
+  let spoke = false;
+  const lower = { max: 'xhigh', xhigh: 'high' };
+  for (let attempt = 0; ; attempt += 1) {
+    stream = client.messages.stream(params, { signal });
+    try {
+      yield* relay(stream, () => {
+        spoke = true;
+      });
+      break;
+    } catch (err) {
+      const aboutEffort = Number(err?.status) === 400 && /effort|thinking|output_config/i.test(String(err?.message || ''));
+      if (spoke || attempt >= 3 || !aboutEffort || !params.output_config?.effort) throw err;
+      const next = lower[params.output_config.effort];
+      if (next) params.output_config = { ...params.output_config, effort: next };
+      else delete params.output_config;
+    }
+  }
 
+  const final = await stream.finalMessage();
+  yield* finish(final);
+}
+
+/** The live half: every event of one attempt, translated. */
+async function* relay(stream, onFirst) {
   const blockTypes = new Map();
   // index -> { id, name, chars }, so a long call's arguments can be seen arriving.
   const calls = new Map();
+  let first = true;
   for await (const event of stream) {
+    if (first) {
+      first = false;
+      onFirst();
+    }
     if (event.type === 'content_block_start') {
       blockTypes.set(event.index, event.content_block.type);
       if (event.content_block.type === 'tool_use') {
@@ -191,9 +231,10 @@ export async function* streamAnthropic({
       }
     }
   }
+}
 
-  const final = await stream.finalMessage();
-
+/** The closing half: the finished message as a `done` event. */
+async function* finish(final) {
   const toolCalls = final.content
     .filter((b) => b.type === 'tool_use')
     .map((b) => ({ id: b.id, name: b.name, input: b.input ?? {} }));

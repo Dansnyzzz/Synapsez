@@ -60,10 +60,16 @@ const viewer = createViewer({
    */
   onOpen: () => {
     if (pages.taskPaneOpen()) pages.closeTaskPane();
-    setDetail(true);
+    // Borrowed, not simply opened: closing the file gives the panel back the
+    // way it was found — shut if it was shut, on the progress view if that was
+    // showing — instead of always leaving it open behind the file.
+    borrowDetail();
     document.getElementById('app').classList.add('is-filepane');
   },
-  onClose: () => document.getElementById('app').classList.remove('is-filepane'),
+  onClose: () => {
+    document.getElementById('app').classList.remove('is-filepane');
+    returnDetail();
+  },
 });
 
 /**
@@ -4325,23 +4331,53 @@ $('policy-chip').addEventListener('click', () => {
  */
 function effortRow() {
   const row = document.createElement('div');
-  row.className = 'menu__foot';
-  row.setAttribute('role', 'group');
-  row.setAttribute('aria-label', t('settings.effort'));
+  row.className = 'menu__foot menu__foot--effort';
 
+  const top = document.createElement('div');
+  top.className = 'menu__foot-top';
   const name = document.createElement('span');
   name.className = 'menu__foot-name';
+  name.id = 'effort-name';
   const dots = document.createElement('div');
   dots.className = 'effort-dots';
+  // A radio group, so a screen reader announces "3 of 5" and the arrow keys
+  // move the choice — one tab stop for the whole dial, not five.
+  dots.setAttribute('role', 'radiogroup');
+  dots.setAttribute('aria-labelledby', 'effort-name');
+
+  /**
+   * What the chosen rung does, in one line. A dial with no words beside it is
+   * a guess: nobody could tell "Very high" from "Max" except by the bill.
+   */
+  const hint = document.createElement('p');
+  hint.className = 'menu__foot-hint';
+  hint.setAttribute('aria-live', 'polite');
 
   const paint = () => {
-    const current = state.boot.prefs.effort;
+    const current = EFFORT_IDS.includes(state.boot.prefs.effort) ? state.boot.prefs.effort : 'high';
     const index = EFFORT_IDS.indexOf(current);
     name.textContent = t('effort.named', { level: effortLabel(current) });
-    for (const [i, dot] of [...dots.children].entries()) {
+    for (const [i, dot] of [.../** @type {HTMLCollectionOf<HTMLElement>} */ (dots.children)].entries()) {
       dot.classList.toggle('is-on', i === index);
       dot.classList.toggle('is-under', i < index);
       dot.setAttribute('aria-checked', String(i === index));
+      dot.tabIndex = i === index ? 0 : -1;
+    }
+    // Said plainly when the model cannot use it, rather than implying the
+    // dial reaches it. It still sets how deep a web search goes.
+    hint.textContent =
+      t(`effort.hint.${current}`) + (state.modelReasons === false ? ` ${t('effort.noReasoning')}` : '');
+  };
+
+  const choose = async (value, label, focus = false) => {
+    if (state.boot.prefs.effort === value) return;
+    try {
+      state.boot.prefs = await api.savePrefs({ effort: value });
+      paint();
+      if (focus) /** @type {HTMLElement | undefined} */ (dots.children[EFFORT_IDS.indexOf(value)])?.focus();
+      toast(t('effort.set', { level: label }));
+    } catch (err) {
+      toast(err.message, 'error');
     }
   };
 
@@ -4352,21 +4388,27 @@ function effortRow() {
     dot.setAttribute('role', 'radio');
     dot.setAttribute('aria-label', label);
     dot.title = label;
-    dot.addEventListener('click', async (event) => {
+    dot.addEventListener('click', (event) => {
       event.stopPropagation();
-      if (state.boot.prefs.effort === value) return;
-      try {
-        state.boot.prefs = await api.savePrefs({ effort: value });
-        paint();
-        toast(t('effort.set', { level: label }));
-      } catch (err) {
-        toast(err.message, 'error');
-      }
+      choose(value, label);
     });
     dots.append(dot);
   }
 
-  row.append(name, dots);
+  dots.addEventListener('keydown', (event) => {
+    const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[event.key];
+    const jump = { Home: 0, End: EFFORT_IDS.length - 1 }[event.key];
+    if (step === undefined && jump === undefined) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const at = Math.max(0, EFFORT_IDS.indexOf(state.boot.prefs.effort));
+    const next = jump ?? Math.max(0, Math.min(EFFORT_IDS.length - 1, at + step));
+    const [value, label] = efforts()[next];
+    choose(value, label, true);
+  });
+
+  top.append(name, dots);
+  row.append(top, hint);
   paint();
   return row;
 }

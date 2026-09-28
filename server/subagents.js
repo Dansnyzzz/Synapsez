@@ -63,6 +63,9 @@ const SYSTEM = [
  * exactly what this used to do, which is why `sub-agents answer their task`
  * now lives in the test suite.
  */
+/** A sub-agent's effort: low, or medium when the conversation is set to think hardest. */
+export const subagentEffort = (effort) => (effort === 'xhigh' || effort === 'max' ? 'medium' : 'low');
+
 async function runOne({ userId, user, entry, prefs, tools, task, signal, stream }) {
   // The names this sub-agent was given. See the membership check in the tool loop.
   const offered = new Set((tools || []).map((t) => t.name));
@@ -107,8 +110,12 @@ async function runOne({ userId, user, entry, prefs, tools, task, signal, stream 
          *
          * The main loop keeps `prefs.effort` untouched: that is where the
          * reasoning the user is paying for actually happens.
+         *
+         * One step up — `medium` — when the person turned the dial to the top two
+         * rungs: they have said care matters more than cost, and a sub-agent that
+         * misreads a page quietly lowers the quality of everything built on it.
          */
-        effort: 'low',
+        effort: subagentEffort(prefs?.effort),
         signal,
       })) {
         if (ev.type === 'text') assistant.text += ev.delta ?? '';

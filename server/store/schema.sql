@@ -855,3 +855,14 @@ ALTER TABLE attachments ADD COLUMN IF NOT EXISTS thumb TEXT;
 -- one probe rather than a scan of every file.
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS share_token TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS attachments_share_token_idx ON attachments (share_token) WHERE share_token IS NOT NULL;
+-- ── 26: which models reason, and what a picture was seen to contain ───────
+-- `reasoning`: whether the aggregator says the model accepts a reasoning
+-- setting. Without it the effort dial reached only the few models whose ids
+-- happened to look like a reasoning model's. Null means "the source did not
+-- say", which is different from "no", so there is deliberately no default.
+ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS reasoning BOOLEAN;
+
+-- `vision_text`: what a vision model read in an image or a scanned PDF, kept
+-- for the models that cannot look for themselves. Worked out once and reused,
+-- rather than paying a second model on every turn the file is in view.
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS vision_text TEXT;

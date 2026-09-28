@@ -24,6 +24,7 @@ import { log, annotate } from './util/trace.js';
 import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { validZone } from './util/zone.js';
 import { sandboxConfigured } from './sandbox.js';
+import { lendEyes } from './vision.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
@@ -1082,6 +1083,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // ("every morning", "email me") read as a request to set one up, and a task
   // that can create tasks is a task that multiplies.
   const activated = new Set(unattended ? [] : toolsToPreload([...messages].reverse().find((m) => m.role === 'user')));
+  // A model that cannot see gets its eyes from the start: every browser step it
+  // takes names a screenshot it can only read through `look_at`, and spending a
+  // step to load it first is a step spent on every such turn.
+  if (entry?.vision === false) activated.add('look_at');
   /** Outbound messages sent this turn without a prompt. See `outboundRefusal`. */
   const sent = { count: 0 };
   /** Attachment rows read this turn, by id — they never change, so each is read once. */
@@ -1403,6 +1408,18 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         extractText: !readsPdfNatively(entry),
         // Read once per turn, not once per step — see loadForTranscript.
         cache: turnFiles,
+      });
+      // A picture or a scan this model cannot take is read by one that can
+      // (vision.js) — once, and remembered on the file. The status line says so,
+      // because the few seconds it takes would otherwise look like a hang.
+      await lendEyes({
+        userId,
+        chatId,
+        loaded,
+        vision: entry?.vision !== false,
+        documents: readsPdfNatively(entry),
+        signal,
+        onLooking: () => emit('status', { phase: 'tool', name: 'look_at' }),
       });
 
       for await (const ev of stream({

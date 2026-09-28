@@ -208,8 +208,11 @@ export function splitStatements(sql) {
  *      its tiles without downloading the file or rendering a PDF again
  *  25  attachments.share_token — a public link to something the assistant
  *      made, null while private, cleared to take the link back
+ *  26  shared_models.reasoning, so the effort dial reaches every model that
+ *      reasons; attachments.vision_text, what a vision model read in a picture
+ *      or a scan for a model that cannot look itself
  */
-export const SCHEMA_VERSION = 25;
+export const SCHEMA_VERSION = 26;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1392,13 +1395,24 @@ export function createPgStore(connectionString) {
       const out = [];
       for (let i = 0; i < ids.length; i += BATCH) {
         const rows = await q(
-          `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, created_at
+          `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, created_at, vision_text
              FROM attachments WHERE user_id = $1 AND id = ANY($2::text[])`,
           [userId, ids.slice(i, i + BATCH)],
         );
         out.push(...rows);
       }
       return out;
+    },
+    /**
+     * Keep what a vision model read in a file, for the models that cannot see.
+     * Scoped by account like every other write to this table.
+     */
+    async setAttachmentVisionText(userId, id, text) {
+      const rows = await q(
+        'UPDATE attachments SET vision_text = $3 WHERE id = $1 AND user_id = $2 RETURNING id',
+        [id, userId, text == null ? null : String(text).slice(0, 40_000)],
+      );
+      return rows.length > 0;
     },
     /**
      * Everything the assistant made in one conversation, newest first.
@@ -2785,12 +2799,12 @@ export function createPgStore(connectionString) {
           `INSERT INTO shared_models
              (id, provider, model, family, label, description, context,
               price_in, price_out, is_free, released_at, added_by, vision,
-              max_output, expires_at, refreshed_at)
+              max_output, expires_at, reasoning, refreshed_at)
            SELECT *, NOW() FROM unnest(
              $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
              $7::bigint[], $8::double precision[], $9::double precision[],
              $10::boolean[], $11::timestamptz[], $12::text[], $13::boolean[], $14::int[],
-             $15::timestamptz[]
+             $15::timestamptz[], $16::boolean[]
            )
            ON CONFLICT (id) DO UPDATE SET
              provider    = EXCLUDED.provider,
@@ -2806,6 +2820,7 @@ export function createPgStore(connectionString) {
              vision      = EXCLUDED.vision,
              max_output  = EXCLUDED.max_output,
              expires_at  = EXCLUDED.expires_at,
+             reasoning   = EXCLUDED.reasoning,
              refreshed_at = NOW()`,
           [
             slice.map((m) => m.id),
@@ -2823,6 +2838,8 @@ export function createPgStore(connectionString) {
             slice.map((m) => !!m.vision),
             slice.map((m) => m.maxOutput ?? null),
             slice.map((m) => m.expiresAt ?? null),
+            // Null is a real answer — the source did not say — and is kept.
+            slice.map((m) => (m.reasoning == null ? null : !!m.reasoning)),
           ],
         );
       }

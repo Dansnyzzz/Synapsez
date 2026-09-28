@@ -82,6 +82,7 @@ import { mountMcpRoutes } from './routes/mcp.js';
 import { mountChatRoutes } from './routes/chats.js';
 import { mountFileRoutes } from './routes/files.js';
 import { mountShareRoutes, mountPublicShare } from './routes/share.js';
+import { EFFORTS } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf } from './i18n/index.js';
@@ -829,6 +830,11 @@ export function createApp() {
       const patch = {};
       for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
       if ('autoPreview' in patch) patch.autoPreview = !!patch.autoPreview;
+      // One of the five rungs, or nothing is saved: an unknown string reached
+      // every provider as-is, and Anthropic refuses the whole turn for it.
+      if ('effort' in patch && !EFFORTS.includes(String(patch.effort))) {
+        return res.status(400).json({ error: `Reasoning effort is one of: ${EFFORTS.join(', ')}.` });
+      }
       /**
        * Clearing the box means "whatever the default is", not "thirty".
        *
@@ -955,6 +961,10 @@ export function createApp() {
             // rather than concluding the app is broken.
             isFree: !!entry.tags?.includes('free') || (entry.price?.in === 0 && entry.price?.out === 0),
             maxOutput: entry.maxOutput ?? null,
+            // So the effort dial can say when the model does not reason at all
+            // (false), rather than pretending the setting reaches it. Null is
+            // "unknown", which is treated as reasoning — see reasoningParams.
+            reasoning: entry.reasoning ?? null,
           },
         });
       } catch (err) {

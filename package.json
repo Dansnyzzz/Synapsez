@@ -85,6 +85,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
     "@google/genai": "^2.20.0",
+    "@napi-rs/canvas": "^1.0.9",
     "@neondatabase/serverless": "^1.0.2",
     "@vercel/functions": "^3.9.9",
     "@vercel/sandbox": "^3.5.1",
@@ -93,7 +94,8 @@
     "openai": "^7.9.0",
     "pdfjs-dist": "^6.3.289",
     "playwright-core": "^1.62.1",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

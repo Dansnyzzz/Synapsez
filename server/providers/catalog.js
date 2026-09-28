@@ -277,6 +277,18 @@ const RETIREMENTS = {
   },
 };
 
+/**
+ * Whether a built-in model reasons, and so whether the effort dial reaches it.
+ * Claude with adaptive thinking, every Gemini alias (all of them think), and
+ * OpenAI's reasoning line; GPT-4.1 and Haiku 4.5 do not.
+ */
+function builtInReasons(entry) {
+  if (entry.effort === false) return false;
+  if (entry.provider === 'anthropic') return entry.thinking !== false;
+  if (entry.provider === 'google') return true;
+  return /^(o\d|gpt-5)/i.test(entry.model) || entry.tags?.includes('reasoning');
+}
+
 export function resolveModel(id, sharedRow = null) {
   const retirement = RETIREMENTS[id];
   if (retirement && Date.now() >= Date.parse(`${retirement.on}T00:00:00Z`)) {
@@ -286,7 +298,7 @@ export function resolveModel(id, sharedRow = null) {
   // Every first-party model here reads images. They are the flagships of the
   // three vendors and all of them have for years.
   const found = CATALOG.find((m) => m.id === id);
-  if (found) return { vision: true, ...found };
+  if (found) return { vision: true, reasoning: builtInReasons(found), ...found };
 
   if (sharedRow) {
     return {
@@ -306,7 +318,9 @@ export function resolveModel(id, sharedRow = null) {
       // Roughly half the catalogue cannot be shown a picture, and sending one
       // anyway does not degrade the answer — the provider rejects the request.
       vision: !!sharedRow.vision,
-      tags: sharedRow.is_free ? ['free'] : [],
+      // True, false, or null for "the source did not say" — see `reasonsFor`.
+      reasoning: sharedRow.reasoning == null ? null : !!sharedRow.reasoning,
+      tags: [...(sharedRow.is_free ? ['free'] : []), ...(sharedRow.reasoning ? ['reasoning'] : [])],
     };
   }
 

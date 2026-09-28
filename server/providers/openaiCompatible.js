@@ -79,7 +79,14 @@ function attachmentParts(parts) {
   return out;
 }
 
-function toMessages(messages, system) {
+/**
+ * @param replayReasoning  OpenRouter only: hand back each tool-calling turn's
+ *   `reasoning_details` exactly as they came. Gemini 3 treats its thought
+ *   signature as part of the call and degrades tool use without it; Claude with
+ *   thinking needs its signed blocks to continue a tool loop. Every other wire
+ *   rejects the unknown field, so it is off unless asked for.
+ */
+function toMessages(messages, system, { replayReasoning = false } = {}) {
   const out = [];
   if (system) out.push({ role: 'system', content: system });
 
@@ -104,6 +111,8 @@ function toMessages(messages, system) {
           type: 'function',
           function: { name: c.name, arguments: JSON.stringify(c.input ?? {}) },
         }));
+        const details = m.raw?.openrouter?.reasoningDetails;
+        if (replayReasoning && Array.isArray(details) && details.length) msg.reasoning_details = details;
       }
       // A turn with neither text nor tool calls is rejected as empty.
       if (msg.content || msg.tool_calls) out.push(msg);
@@ -118,6 +127,89 @@ function toMessages(messages, system) {
 }
 
 const REASONING = /^(o\d|gpt-5|.*\bthinking\b)/i;
+
+/** The five rungs of the dial, lowest first. Anything else is read as `high`. */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * The effort dial, in the words each wire understands.
+ *
+ * **OpenRouter** takes one `reasoning: { effort }` for every model it routes and
+ * translates it itself — to `reasoning_effort` for OpenAI, a thinking budget for
+ * Claude and Gemini, a switch for DeepSeek and Qwen. That is what reaches the
+ * reasoning models the old id-guessing missed. Its scale stops at `xhigh`, so
+ * `max` asks for that. A model the library knows does not reason is sent
+ * nothing; one it knows nothing about (the Auto router, a hand-typed id) is sent
+ * the setting, which OpenRouter ignores where it does not apply.
+ *
+ * **OpenAI and OrcaRouter** take `reasoning_effort`, which a non-reasoning model
+ * refuses outright — so only where the model is known to reason. The full scale
+ * is sent: GPT-5.x understands `xhigh` and `max`, and one that does not gets a
+ * step down rather than a failed turn (see `stepDown`).
+ */
+export function reasoningParams({ router, model, entry, effort }) {
+  const level = EFFORTS.includes(effort) ? effort : 'high';
+  if (router === 'openrouter') {
+    if (entry?.reasoning === false) return {};
+    return { reasoning: { effort: level === 'max' ? 'xhigh' : level } };
+  }
+  if (REASONING.test(String(model || '')) || entry?.reasoning === true || entry?.tags?.includes('reasoning')) {
+    return { reasoning_effort: level };
+  }
+  return {};
+}
+
+/**
+ * One rung lower, after a provider refused the level asked for.
+ *
+ * "Not all reasoning models support every value" is the SDK's own warning, and
+ * a turn that fails because `max` was one step too far is a worse outcome than
+ * the same turn at `high`. `max → xhigh → high`, then the setting is dropped
+ * altogether. Returns false when there is nothing left to lower.
+ */
+export function stepDown(params) {
+  const lower = { max: 'xhigh', xhigh: 'high' };
+  if (params.reasoning?.effort) {
+    if (lower[params.reasoning.effort]) params.reasoning = { ...params.reasoning, effort: lower[params.reasoning.effort] };
+    else delete params.reasoning;
+    return true;
+  }
+  if (params.reasoning_effort) {
+    if (lower[params.reasoning_effort]) params.reasoning_effort = lower[params.reasoning_effort];
+    else delete params.reasoning_effort;
+    return true;
+  }
+  return false;
+}
+
+/** A 400 about the reasoning setting, as opposed to anything else wrong with the request. */
+const refusedEffort = (err) =>
+  Number(err?.status) === 400 && /reasoning|effort|thinking/i.test(String(err?.message || err?.error?.message || ''));
+
+/**
+ * `reasoning_details` arrive in pieces, each tagged with the block it belongs
+ * to. Text is joined; a signature or encrypted blob, which arrives whole, is
+ * kept as it came.
+ */
+function mergeDetails(into, pieces) {
+  for (const piece of pieces) {
+    if (!piece || typeof piece !== 'object') continue;
+    const key = piece.index ?? into.length;
+    const found = into.find((d) => (d.index ?? -1) === key);
+    if (!found) {
+      into.push({ ...piece });
+      continue;
+    }
+    for (const [k, v] of Object.entries(piece)) {
+      if ((k === 'text' || k === 'summary') && typeof v === 'string') found[k] = (found[k] || '') + v;
+      else if (v != null) found[k] = v;
+    }
+  }
+  return into;
+}
+
+/** The readable part of a reasoning detail, for the live trace. */
+const detailText = (d) => (d?.type === 'reasoning.text' ? d.text : d?.type === 'reasoning.summary' ? d.summary : '') || '';
 
 /**
  * A tool call written into the reply as text, in the XML shape some models
@@ -226,6 +318,8 @@ export async function* streamOpenAICompatible({
   baseURL,
   headers,
   markCache = false,
+  /** 'openrouter' | 'orcarouter' | undefined (OpenAI itself). */
+  router,
   model,
   entry,
   system,
@@ -244,7 +338,7 @@ export async function* streamOpenAICompatible({
 
   const params = {
     model,
-    messages: toMessages(messages, system),
+    messages: toMessages(messages, system, { replayReasoning: router === 'openrouter' }),
     stream: true,
     stream_options: { include_usage: true },
     // `max_completion_tokens` is OpenAI's newer spelling; OpenRouter, Ollama,
@@ -257,14 +351,20 @@ export async function* streamOpenAICompatible({
       function: { name: t.name, description: t.description, parameters: t.parameters },
     }));
   }
-  // `reasoning_effort` is rejected outright by non-reasoning models, so only
-  // send it where the model id says it will be understood.
-  if (REASONING.test(model) || entry?.tags?.includes('reasoning')) {
-    params.reasoning_effort = effort === 'xhigh' || effort === 'max' ? 'high' : effort;
-  }
+  Object.assign(params, reasoningParams({ router, model, entry, effort }));
   if (markCache) markPromptCache(params, model);
 
-  const stream = await client.chat.completions.create(params, { signal });
+  let stream;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      stream = await client.chat.completions.create(params, { signal });
+      break;
+    } catch (err) {
+      // A level this model does not take: try one lower rather than fail.
+      if (attempt < 3 && refusedEffort(err) && stepDown(params)) continue;
+      throw err;
+    }
+  }
 
   /** index -> { id, name, args } — tool call arguments arrive as JSON fragments. */
   const pending = new Map();
@@ -272,6 +372,8 @@ export async function* streamOpenAICompatible({
   let stopReason = null;
   // Only when tools were offered: without them, markup in a reply is content.
   const filter = tools?.length ? textCallFilter() : null;
+  /** OpenRouter's structured reasoning, kept whole so the next step can replay it. */
+  const details = [];
 
   for await (const chunk of stream) {
     if (chunk.usage) usage = readUsage(chunk.usage);
@@ -279,13 +381,29 @@ export async function* streamOpenAICompatible({
     if (!choice) continue;
     if (choice.finish_reason) stopReason = choice.finish_reason;
 
-    const delta = choice.delta || {};
+    const delta = /** @type {any} */ (choice.delta || {});
     if (delta.content) {
       const text = filter ? filter.push(delta.content) : delta.content;
       if (text) yield { type: 'text', delta: text };
     }
-    // OpenRouter surfaces reasoning traces on a non-standard field.
-    if (delta.reasoning) yield { type: 'thinking', delta: delta.reasoning };
+    /**
+     * The reasoning trace, on whichever field this provider uses.
+     *
+     * OpenRouter sends `reasoning`; DeepSeek, and several servers that copy it,
+     * send `reasoning_content`. A trace on the second was dropped on the floor,
+     * so the card stayed empty for a model that had thought for a minute.
+     * `reasoning_details` carries the same words in structured form, and is only
+     * read for text when neither plain field came with it — never twice.
+     */
+    const plain = delta.reasoning || delta.reasoning_content;
+    if (plain) yield { type: 'thinking', delta: plain };
+    if (Array.isArray(delta.reasoning_details) && delta.reasoning_details.length) {
+      mergeDetails(details, delta.reasoning_details);
+      if (!plain) {
+        const text = delta.reasoning_details.map(detailText).join('');
+        if (text) yield { type: 'thinking', delta: text };
+      }
+    }
 
     for (const tc of delta.tool_calls || []) {
       const slot = pending.get(tc.index) || { id: '', name: '', args: '' };
@@ -352,8 +470,11 @@ export async function* streamOpenAICompatible({
     stop: normaliseStop(stopReason),
     toolCalls,
     usage: usage || { input: 0, output: 0 },
+    // Stored with the assistant turn and replayed on the next step — see
+    // `replayReasoning`. Only where it can be replayed, and only when there is any.
+    ...(router === 'openrouter' && details.length ? { raw: { openrouter: { reasoningDetails: details } } } : {}),
   };
 }
 
 /** Exposed so the suite can assert what the OpenAI wire format is handed. */
-export const __testing = { toMessages, readUsage, textCallFilter, parseTextCalls };
+export const __testing = { toMessages, readUsage, textCallFilter, parseTextCalls, mergeDetails };

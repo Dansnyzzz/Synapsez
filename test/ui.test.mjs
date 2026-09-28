@@ -3151,6 +3151,10 @@ section('the sandbox, full screen');
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
     document.getElementById('screen').hidden = false;
+    // The screen lives in the panel, so the panel is opened here on purpose.
+    // It used to be left open as a side effect of an earlier file preview;
+    // closing a preview now hands the panel back shut if it was shut.
+    if (!document.getElementById('app').classList.contains('is-detail')) document.getElementById('detail-toggle').click();
   });
   await page.waitForTimeout(200);
 
@@ -3273,8 +3277,16 @@ section('the file viewer');
   check('  named, with its type and no size', placed.named === 'bien-ban.docx' && placed.type === 'DOCX' && !placed.size, JSON.stringify(placed));
   check('and the tiles are buttons, because they open', placed.button);
 
+  // What the panel was doing before the file borrowed it, to check it is
+  // handed back the same way.
+  const railWas = await page.evaluate(() => document.getElementById('app').classList.contains('is-detail'));
   await chips[0].click();
   await page.waitForTimeout(900);
+  const covered = await page.evaluate(() => {
+    const extra = document.getElementById('rail-extra');
+    return { outputsHidden: !extra || !extra.getClientRects().length };
+  });
+  check('the file sits over the Outputs and Context lists, not under them', covered.outputsHidden, JSON.stringify(covered));
   const word = await page.evaluate(() => {
     const pane = document.getElementById('filepane');
     const box = pane.getBoundingClientRect();
@@ -3345,6 +3357,27 @@ section('the file viewer');
   check(
     'and gives the rail back to the plan',
     await page.evaluate(() => !document.getElementById('app').classList.contains('is-filepane')),
+  );
+  check(
+    '  as it was found: shut if it was shut, open on the progress if it was open',
+    (await page.evaluate(() => document.getElementById('app').classList.contains('is-detail'))) === railWas,
+    `was ${railWas}`,
+  );
+
+  // And the other way round: open the panel first, then a file, then close it.
+  await page.evaluate(() => {
+    if (!document.getElementById('app').classList.contains('is-detail')) document.getElementById('detail-toggle').click();
+  });
+  (await page.$$('.msg__files .stage'))[0].click();
+  await page.waitForTimeout(700);
+  await page.click('#viewer-close');
+  await page.waitForTimeout(300);
+  check(
+    'with the panel open beforehand, closing the file leaves it open on the progress',
+    await page.evaluate(() => {
+      const app = document.getElementById('app');
+      return app.classList.contains('is-detail') && !app.classList.contains('is-filepane') && !!document.querySelector('.detail__head')?.getClientRects().length;
+    }),
   );
 
   (await page.$$('.msg__files .stage'))[1].click();

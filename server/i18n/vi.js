@@ -448,7 +448,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '{0} was uploaded, so it has no source to read back.': '{0} được tải lên, nên không có mã nguồn để đọc lại.',
   '{0} was uploaded, so it has no version history — only files you made do.':
     '{0} được tải lên, nên không có lịch sử phiên bản — chỉ tệp do trợ lý tạo mới có.',
-  '{0} has no v{1}. It has {2} versions.': '{0} không có bản v{1}. Nó có {2} phiên bản.',
+  '{0} has no v{1}. It is at v{2}; call without revision to list the drafts kept.':
+    '{0} không có bản v{1}. Bản hiện tại là v{2}; gọi không kèm revision để xem các bản nháp còn lưu.',
   '"{0}" cannot be used as a note name. Pick a plain descriptive name.': '"{0}" không dùng làm tên ghi chú được. Hãy chọn tên mô tả đơn giản.',
   'Give the picture a short title, so it is labelled.': 'Hãy đặt tiêu đề ngắn cho hình để có nhãn.',
   'Give either `svg` or `html` to draw.': 'Hãy cung cấp `svg` hoặc `html` để vẽ.',
@@ -815,6 +816,19 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '{0} is over 10MB, too large to hand over.': '{0} lớn hơn 10MB, quá lớn để gửi.',
   '{0} is not a kind of file the conversation can show (PDF, image, Office, text, CSV, JSON). Convert it first.':
     '{0} không phải loại tệp hội thoại hiển thị được (PDF, ảnh, Office, văn bản, CSV, JSON). Hãy chuyển đổi trước.',
+  'Reasoning effort is one of: {0}.': 'Mức suy luận phải là một trong: {0}.',
+  // Vision for models that cannot see (server/vision.js, look_at).
+  'There is no file {0} in this account.': 'Không có tệp {0} trong tài khoản này.',
+  '{0} is not a picture or a PDF — read it with read_generated_file or as text instead.':
+    '{0} không phải hình ảnh hay PDF — hãy đọc bằng read_generated_file hoặc dạng văn bản.',
+  'That address is {0}, not an image or a PDF — use web_fetch for a page.':
+    'Địa chỉ đó là {0}, không phải hình ảnh hay PDF — dùng web_fetch cho trang web.',
+  'That file is over 12MB, too large to look at.': 'Tệp đó lớn hơn 12MB, quá lớn để xem.',
+  'Give a `file_id` (an attachment, a made file or a step screenshot) or a `url` of an image or PDF.':
+    'Hãy đưa `file_id` (tệp đính kèm, tệp đã tạo hoặc ảnh chụp màn hình của một bước) hoặc `url` của ảnh hay PDF.',
+  'it answered with nothing': 'model không trả lời gì',
+  stopped: 'đã dừng',
+  'None of the models that can see could read it — {0}': 'Không model thị giác nào đọc được — {0}',
   // Share links.
   'Only something the assistant made can be shared by link. Uploaded files stay private.':
     'Chỉ những gì trợ lý tạo ra mới chia sẻ được bằng link. Tệp tải lên luôn được giữ riêng tư.',

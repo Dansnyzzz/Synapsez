@@ -4953,17 +4953,24 @@ details.block pre {
 .effort-dots {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 0;
 }
+/* The effort row stacks: the name and dots on one line, what the level does on
+   the next. */
+.menu__foot--effort { flex-direction: column; align-items: stretch; gap: 4px; padding-bottom: 8px; }
+.menu__foot-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.menu__foot-hint { margin: 0; max-width: 34ch; color: var(--text-faint); font-size: 11.5px; line-height: 1.45; }
 /* Five steps drawn as five dots: the ones you have passed stay lit but small,
-   so the row reads as a level and not as five unrelated buttons. */
+   so the row reads as a level and not as five unrelated buttons. The button is
+   24px square — a finger's worth — and the dot is its padded content box. */
 .effort-dot {
-  width: 9px;
-  height: 9px;
-  padding: 0;
+  width: 24px;
+  height: 24px;
+  padding: 7.5px;
   border: 0;
   border-radius: 50%;
   background: var(--line);
+  background-clip: content-box;
   cursor: pointer;
   transition: background 0.15s, transform 0.15s;
 }
@@ -7539,10 +7546,15 @@ details.block pre {
 /* The panel takes the whole rail rather than stacking under the plan: a
    document and a checklist sharing a 380px column is neither of them. The rail
    keeps its own header for Progress, so this one is hidden while a file is up. */
+/* An open file takes the whole panel, over everything else in it — the
+   Outputs and Context lists included. They were left showing, so the preview
+   was pushed down to the bottom of the column under them, cramped and easy to
+   miss. The task pane already hid them; this matches it. */
 .app.is-filepane .detail__head,
 .app.is-filepane .detail__body > .progress,
 .app.is-filepane .detail__body > .hint,
-.app.is-filepane .detail__body > .screen { display: none; }
+.app.is-filepane .detail__body > .screen,
+.app.is-filepane .detail__body > .rail-extra { display: none; }
 .app.is-filepane .detail__body { padding: 0; overflow: hidden; }
 
 /* A scheduled task takes the rail the same way a file does. */

@@ -1,5 +1,5 @@
 {
-  "total": 349,
+  "total": 344,
   "files": {
     "public/js/api.js": 4,
     "public/js/app.js": 135,
@@ -25,9 +25,8 @@
     "server/office/index.js": 4,
     "server/office/pptx.js": 1,
     "server/office/xlsx.js": 1,
-    "server/providers/anthropic.js": 3,
     "server/providers/index.js": 1,
-    "server/providers/openaiCompatible.js": 3,
+    "server/providers/openaiCompatible.js": 1,
     "server/research/debate.js": 2,
     "server/research/gather.js": 2,
     "server/scheduler.js": 1,

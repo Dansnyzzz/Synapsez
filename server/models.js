@@ -119,6 +119,22 @@ function acceptsImages(entry) {
 }
 
 /**
+ * Whether the model reasons before it answers — and so whether the effort dial
+ * means anything to it.
+ *
+ * Read from what the aggregator says the model accepts, not guessed from its
+ * name. The adapter used to guess (`o1`, `gpt-5`, "thinking" in the id), which
+ * missed DeepSeek R1, Qwen 3, GLM, gpt-oss and every Claude and Gemini reached
+ * through OpenRouter — most of the reasoning models in the library, all of
+ * which then ignored the dial entirely. Null when the source does not say.
+ */
+export function reasonsFor(entry) {
+  const params = entry?.supported_parameters;
+  if (!Array.isArray(params)) return null;
+  return params.includes('reasoning') || params.includes('include_reasoning') || params.includes('reasoning_effort');
+}
+
+/**
  * The most output tokens this model will actually produce, when it says.
  *
  * Worth reading rather than assuming, because the assumption was wrong for a
@@ -185,6 +201,7 @@ function normalise(entry, provider = 'openrouter') {
     priceOut,
     isFree,
     vision: acceptsImages(entry),
+    reasoning: reasonsFor(entry),
     // `created` is a unix timestamp of when the model was published.
     releasedAt: entry.created ? new Date(entry.created * 1000).toISOString() : null,
     expiresAt: expiryOf(entry),
