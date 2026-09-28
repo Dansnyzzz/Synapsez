@@ -320,6 +320,13 @@ function takeUrlToken(name) {
   return value;
 }
 
+/**
+ * A shared conversation somebody chose to carry on, waiting for them to sign
+ * in. Kept for the tab, so a sign-up with an emailed code still ends in the
+ * conversation they asked for.
+ */
+const CONTINUE_KEY = 'synapsez:continue-shared';
+
 async function boot() {
   session = await api.session();
 
@@ -330,8 +337,32 @@ async function boot() {
     return;
   }
 
-  if (!session.authed) return showGate();
+  const carry = takeUrlToken('continue');
+  if (carry) {
+    try {
+      sessionStorage.setItem(CONTINUE_KEY, carry);
+    } catch {
+      /* no storage: they will have to press Continue again after signing in */
+    }
+  }
+
+  if (!session.authed) {
+    showGate();
+    if (carry) note(t('sharechat.continuing'));
+    return;
+  }
   await start();
+}
+
+/** The shared conversation waiting to be carried on, if any — taken once. */
+function takeContinue() {
+  try {
+    const token = sessionStorage.getItem(CONTINUE_KEY);
+    sessionStorage.removeItem(CONTINUE_KEY);
+    return token;
+  } catch {
+    return null;
+  }
 }
 
 const fail = (message) => {
@@ -669,6 +700,19 @@ async function start() {
       if (shouldRun) await stream();
     } catch {
       toast(t('chat.openFailed'), 'error');
+    }
+  }
+
+  // A shared conversation they chose to carry on before signing in: copied
+  // into this account now, and opened.
+  const carried = takeContinue();
+  if (carried) {
+    try {
+      const { chatId } = await api.forkSharedChat(carried);
+      await refreshChats().catch(() => {});
+      await openChat(chatId);
+    } catch (err) {
+      toast(err.message || t('chat.openFailed'), 'error');
     }
   }
 
@@ -1132,21 +1176,50 @@ function chatMenuItems(chat, { titleButton = null, onDone = async () => refreshC
     });
   }
 
+  /**
+   * A link to the conversation, for anybody.
+   *
+   * It used to copy the session id, which nobody but this app could do
+   * anything with. Now it shares the conversation as it stands (a snapshot —
+   * pressing again moves it on) and copies a link that opens read-only with no
+   * account; carrying it on signs the visitor in and copies it into their own
+   * account (server/routes/chatShare.js).
+   */
   items.push({
     label: t('chat.copyId'),
     icon: ICON.copy,
     run: async () => {
       closeRowMenu();
+      let url = '';
       try {
-        await navigator.clipboard.writeText(chat.id);
-        toast(t('chat.idCopied'));
-      } catch {
-        // A browser that refuses the clipboard without a gesture it recognises.
-        // Showing the id is a worse answer than nothing at all is.
-        toast(chat.id);
+        const { path } = await api.shareChat(chat.id);
+        chat.share_token = true;
+        url = `${location.origin}${path}`;
+        await navigator.clipboard.writeText(url);
+        toast(t('chat.linkCopied'));
+      } catch (err) {
+        // The clipboard refused without a gesture it recognised: the link is
+        // still worth showing, and an error is worth saying.
+        toast(url || err.message, url ? undefined : 'error');
       }
     },
   });
+  if (chat.share_token) {
+    items.push({
+      label: t('chat.stopShare'),
+      icon: ICON.copy,
+      run: async () => {
+        closeRowMenu();
+        try {
+          await api.unshareChat(chat.id);
+          chat.share_token = null;
+          toast(t('chat.shareStopped'));
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      },
+    });
+  }
 
   items.push({ separator: true });
 

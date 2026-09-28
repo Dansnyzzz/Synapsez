@@ -814,6 +814,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '{0} is not a kind of file the conversation can show (PDF, image, Office, text, CSV, JSON). Convert it first.':
     '{0} không phải loại tệp hội thoại hiển thị được (PDF, ảnh, Office, văn bản, CSV, JSON). Hãy chuyển đổi trước.',
   'Reasoning effort is one of: {0}.': 'Mức suy luận phải là một trong: {0}.',
+  'This link does not exist, or was taken back.': 'Link này không tồn tại hoặc đã bị thu hồi.',
   '{0} should be a plain string, but got an object. Send the text itself, e.g. "…", not { "task": "…" }.':
     '{0} phải là chuỗi văn bản thường, nhưng nhận được một object. Hãy gửi chính đoạn văn bản, ví dụ "…", không phải { "task": "…" }.',
   // Vision for models that cannot see (server/vision.js, look_at).

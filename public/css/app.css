@@ -3835,6 +3835,43 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
 .chart__stage .is-off:not(.legend-item) { opacity: 0.08; }
 .chart__stage .hit--pt.is-off { pointer-events: none; }
 
+/* ── A conversation shared by link (share.html) ─────────────────── */
+body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
+.sharepage__bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px max(16px, calc((100% - 780px) / 2));
+  border-bottom: 1px solid var(--glass-line);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(12px);
+}
+.sharepage__brand { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 700; text-decoration: none; }
+.sharepage__ident { min-width: 0; }
+.sharepage__title { margin: 0; overflow: hidden; font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sharepage__meta { margin: 2px 0 0; color: var(--text-faint); font-size: 12px; }
+.sharepage__thread { padding: 24px 0 140px; }
+.sharepage__loading { max-width: 780px; margin: 40px auto; padding: 0 22px; color: var(--text-dim); }
+.sharepage__foot {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px 16px;
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--glass-line);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px);
+}
+.sharepage__foot[hidden] { display: none; }
+.sharepage__note { margin: 0; color: var(--text-dim); font-size: 13px; }
+
 /* ── Maps, galleries and ready-made cards (public/js/cards.js) ─────── */
 
 .xcard { max-width: 100%; }

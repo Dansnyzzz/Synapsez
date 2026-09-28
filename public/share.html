@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- A conversation shared by link: read-only, no account needed. Carrying it on
+     signs you in and copies it into your own account (server/routes/chatShare.js). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#0B0E11" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#F7F9FB" media="(prefers-color-scheme: light)" />
+    <title>Synapsez</title>
+    <link rel="icon" href="/logo.png" />
+    <script src="/js/lang-boot.js"></script>
+    <link rel="stylesheet" href="/css/app.css" />
+  </head>
+  <body class="sharepage">
+    <header class="sharepage__bar">
+      <a class="sharepage__brand" href="/">
+        <img src="/logo.png" alt="" width="22" height="22" />
+        <span>Synapsez</span>
+      </a>
+      <div class="sharepage__ident">
+        <h1 class="sharepage__title" id="share-title" data-i18n-js>…</h1>
+        <p class="sharepage__meta" id="share-meta" data-i18n-js></p>
+      </div>
+    </header>
+
+    <main class="sharepage__thread" id="share-thread" aria-live="polite">
+      <p class="sharepage__loading" data-i18n="sharechat.loading">Loading the conversation…</p>
+    </main>
+
+    <footer class="sharepage__foot" id="share-foot" hidden>
+      <p class="sharepage__note" id="share-note" data-i18n-js></p>
+      <button class="btn btn--primary sharepage__go" id="share-go" type="button" data-i18n-js>Continue</button>
+    </footer>
+
+    <script type="module" src="/js/share-view.js"></script>
+  </body>
+</html>

@@ -211,8 +211,10 @@ export function splitStatements(sql) {
  *  26  shared_models.reasoning, so the effort dial reaches every model that
  *      reasons; attachments.vision_text, what a vision model read in a picture
  *      or a scan for a model that cannot look itself
+ *  27  chats.share_token and .shared_at — a conversation shared by link, as it
+ *      was at the moment it was shared
  */
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 27;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1088,6 +1090,48 @@ export function createPgStore(connectionString) {
       // has to mean what it says.
       await q('DELETE FROM attachments WHERE user_id = $1 AND chat_id = $2', [userId, id]);
       await q('DELETE FROM chats WHERE id = $1 AND user_id = $2', [id, userId]);
+    },
+
+    // ── a conversation shared by link ───────────────────────────────
+    /**
+     * Share a conversation — or share it again, which moves the snapshot on to
+     * now — or take the link back (`token` null). Only the owner's. Returns
+     * `{ token, sharedAt }`, or undefined when there is no such conversation.
+     */
+    async setChatShare(userId, chatId, token) {
+      const rows = await q(
+        `UPDATE chats
+            SET share_token = $3, shared_at = CASE WHEN $3::text IS NULL THEN NULL ELSE NOW() END
+          WHERE id = $1 AND user_id = $2
+      RETURNING share_token, shared_at`,
+        [chatId, userId, token],
+      );
+      return rows.length ? { token: rows[0].share_token, sharedAt: rows[0].shared_at } : undefined;
+    },
+    /**
+     * The conversation a share link points at, for the reads that need no
+     * account. Not scoped by account: the token is the permission.
+     */
+    async getSharedChat(token) {
+      if (!token) return null;
+      const rows = await q(
+        'SELECT id, user_id, title, shared_at, created_at FROM chats WHERE share_token = $1 AND shared_at IS NOT NULL',
+        [token],
+      );
+      return rows[0] ?? null;
+    },
+    /**
+     * What a share link shows: the conversation up to the moment it was
+     * shared, and nothing said in it since. By the chat the token resolved to.
+     */
+    async listSharedMessages(chatId, sharedAt) {
+      const rows = await q(
+        `SELECT id, role, content, seq, created_at FROM messages
+          WHERE chat_id = $1 AND created_at <= $2
+          ORDER BY seq ASC`,
+        [chatId, sharedAt],
+      );
+      return rows.map((r) => ({ id: r.id, role: r.role, ...r.content, seq: Number(r.seq), createdAt: r.created_at }));
     },
 
     // ── messages ────────────────────────────────────────────────────

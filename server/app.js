@@ -82,6 +82,7 @@ import { mountMcpRoutes } from './routes/mcp.js';
 import { mountChatRoutes } from './routes/chats.js';
 import { mountFileRoutes } from './routes/files.js';
 import { mountShareRoutes, mountPublicShare } from './routes/share.js';
+import { mountChatShareRoutes, mountPublicChatShare } from './routes/chatShare.js';
 import { EFFORTS } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
@@ -755,6 +756,8 @@ export function createApp() {
 
   // A share link: the one read that needs no session — the token is the key.
   mountPublicShare(app, { wrap });
+  // A shared conversation, and the gate that lets its visitor see its files.
+  mountPublicChatShare(app, { wrap });
 
   // ── everything below requires a session ─────────────────────────────
   const api = express.Router();
@@ -1726,6 +1729,7 @@ export function createApp() {
   // Lifted into server/routes/files.js.
   mountFileRoutes(api, { wrap, body });
   mountShareRoutes(api, { wrap });
+  mountChatShareRoutes(api, { wrap });
   mountWorkspaceRoutes(api, { wrap, body });
 
   // Lifted into server/routes/chats.js.

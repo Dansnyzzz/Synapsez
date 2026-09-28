@@ -1659,7 +1659,9 @@ check('the menu opens', menu.open);
 check(
   'it offers everything you can do to a conversation',
   menu.items.join(',') ===
-    'Open in new window,Copy session ID,Pin,Mark as unread,Rename,Change project,Remove from project,Move to group,Archive,Delete',
+    // "Copy share link" replaced "Copy session ID": it shares the conversation
+    // by link (server/routes/chatShare.js) rather than copying an internal id.
+    'Open in new window,Copy share link,Pin,Mark as unread,Rename,Change project,Remove from project,Move to group,Archive,Delete',
   menu.items.join(' '),
 );
 check('with shortcut letters on the ones that have them', menu.keys.join('') === 'PURAD', menu.keys.join(''));

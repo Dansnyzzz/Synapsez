@@ -64,7 +64,7 @@ function verify(value) {
   }
 }
 
-function parseCookies(header = '') {
+export function parseCookies(header = '') {
   const out = {};
   for (const part of String(header).split(';')) {
     const i = part.indexOf('=');

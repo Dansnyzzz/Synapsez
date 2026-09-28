@@ -173,6 +173,51 @@ section('search depth follows the reasoning level');
   check('"thorough" overrides a fast one', searchDepth('low', 'thorough').read >= 3);
 }
 
+section('a shared conversation opens with no account, and shows only its own files');
+{
+  const { initStore } = await import('../server/store/index.js');
+  // An in-memory database, never the local data folder. The process has one
+  // store, so the sections after this one reuse it.
+  const memory = await PGlite.create();
+  const store = await initStore({ driver: { query: async (text, params = []) => (await memory.query(text, params)).rows } });
+  const { mountPublicChatShare } = await import('../server/routes/chatShare.js');
+
+  const owner = await store.createUser({ id: 'u-sc', email: 'sc@example.com', passwordHash: 'x', name: 'O', role: 'user' });
+  await store.createChat(owner.id, { id: 'c-sc', title: 'Lịch trình Đà Nẵng', model: 'm' });
+  await store.createAttachment(owner.id, { id: 'in-chat', name: 'map.png', mime: 'image/png', kind: 'image', bytes: 4, data: Buffer.from('png!').toString('base64') });
+  await store.createAttachment(owner.id, { id: 'elsewhere', name: 'passport.png', mime: 'image/png', kind: 'image', bytes: 4, data: Buffer.from('priv').toString('base64') });
+  await store.appendMessage(owner.id, 'c-sc', { id: 'sc-1', role: 'user', text: 'plan', attachments: [{ id: 'in-chat', name: 'map.png', kind: 'image' }] });
+  const token = 'tokFeatureShare0000000000000000000000000_00';
+  await store.setChatShare(owner.id, 'c-sc', token);
+
+  const app = express();
+  const wrap = (h) => (req, res, next) => Promise.resolve(h(req, res, next)).catch(next);
+  mountPublicChatShare(app, { wrap });
+  // Whatever the gate passes on reaches the signed-in routes, which a visitor fails.
+  app.use('/api', (req, res) => res.status(401).json({ error: 'sign in' }));
+  const server = http.createServer(app).listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const page = await fetch(`${base}/api/shared-chat/${token}`);
+    const body = await page.json();
+    const cookie = (page.headers.get('set-cookie') || '').split(';')[0];
+    check('the conversation opens with no account', page.status === 200 && body.title === 'Lịch trình Đà Nẵng' && body.messages.length === 1);
+    check('  and says the visitor is not signed in', body.viewer?.signedIn === false);
+    check('  setting a cookie scoped to the API, unreadable by script', /^synz_share=/.test(cookie) && /HttpOnly/.test(page.headers.get('set-cookie') || '') && /Path=\/api/.test(page.headers.get('set-cookie') || ''));
+
+    const mine = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie } });
+    check('a file the conversation shows is served to the visitor', mine.status === 200 && (await mine.text()) === 'png!');
+    const other = await fetch(`${base}/api/attachments/elsewhere`, { headers: { cookie } });
+    check('a file of the owner\'s that is not in it is not', other.status === 401);
+    const noCookie = await fetch(`${base}/api/attachments/in-chat`);
+    check('and nothing is served without the link', noCookie.status === 401);
+    const forged = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie: 'synz_share=forgedforgedforgedforgedforgedforgedforged1' } });
+    check('nor with a made-up token', forged.status === 401);
+  } finally {
+    server.close();
+  }
+}
+
 section('the effort dial reaches every model that reasons, in each wire\'s own words');
 {
   const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');

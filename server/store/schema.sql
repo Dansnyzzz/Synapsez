@@ -866,3 +866,10 @@ ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS reasoning BOOLEAN;
 -- for the models that cannot look for themselves. Worked out once and reused,
 -- rather than paying a second model on every turn the file is in view.
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS vision_text TEXT;
+-- ── 27: a conversation shared by link ─────────────────────────────────────
+-- `share_token`: the link's secret, null while private. `shared_at`: the point
+-- the shared copy stops — a link shows the conversation as it was when it was
+-- shared, not whatever is said in it afterwards; sharing again moves it on.
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS share_token TEXT;
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS chats_share_token_idx ON chats (share_token) WHERE share_token IS NOT NULL;

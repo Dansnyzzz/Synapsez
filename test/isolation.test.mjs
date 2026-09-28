@@ -1897,6 +1897,58 @@ section('concurrent writes to one setting compose instead of racing');
   check('or the other artifact', inner?.['art-two']?.beta === '"2"', JSON.stringify(inner?.['art-two']));
 }
 
+section('a shared conversation: a snapshot for anyone, a copy for whoever carries it on');
+{
+  const { forkSharedChat, referencedFiles, publicTranscript } = await import('../server/routes/chatShare.js');
+  const { initStore } = await import('../server/store/index.js');
+  // The routes read the process store; point it at this suite's database.
+  await initStore({ driver });
+
+  const owner = await store.createUser({ id: 'u-cs-owner', email: 'cs-owner@example.com', passwordHash: 'x', name: 'Owner', role: 'user' });
+  const reader = await store.createUser({ id: 'u-cs-reader', email: 'cs-reader@example.com', passwordHash: 'x', name: 'Reader', role: 'user' });
+  await store.createChat(owner.id, { id: 'c-shared', title: 'Kế hoạch', model: 'm' });
+  await store.createAttachment(owner.id, { id: 'att-photo', name: 'photo.png', mime: 'image/png', kind: 'image', bytes: 4, data: Buffer.from('png!').toString('base64'), chatId: 'c-shared' });
+  await store.appendMessage(owner.id, 'c-shared', { id: 'cs-1', role: 'user', text: 'hello', attachments: [{ id: 'att-photo', name: 'photo.png', kind: 'image' }] });
+  await store.appendMessage(owner.id, 'c-shared', { id: 'cs-2', role: 'assistant', text: 'hi', raw: { anthropic: [{ signature: 'secret-sig' }] } });
+
+  const stolen = await store.setChatShare(reader.id, 'c-shared', 'tok-by-reader-000000000000000000000000000000');
+  check('another account cannot share my conversation', stolen === undefined);
+
+  const token = 'tokSharedChat0000000000000000000000000000_0';
+  const shared = await store.setChatShare(owner.id, 'c-shared', token);
+  check('the owner can share it', shared?.token === token && !!shared.sharedAt);
+
+  // Said after the link was made: not in the snapshot.
+  await new Promise((r) => setTimeout(r, 20));
+  await store.appendMessage(owner.id, 'c-shared', { id: 'cs-3', role: 'user', text: 'said after sharing' });
+  const chat = await store.getSharedChat(token);
+  const snapshot = await store.listSharedMessages(chat.id, chat.shared_at);
+  check('the link shows the conversation as it was when shared', snapshot.length === 2 && !snapshot.some((m) => m.text === 'said after sharing'), String(snapshot.length));
+  const visible = publicTranscript(snapshot);
+  check('  without the provider\'s payloads', !JSON.stringify(visible).includes('secret-sig'));
+  check('  and it names only the files in it', [...referencedFiles(snapshot)].join() === 'att-photo');
+
+  const forked = await forkSharedChat(reader.id, token);
+  check('carrying it on makes a copy in the reader\'s account', !!forked.chatId && forked.chatId !== 'c-shared' && !forked.own, JSON.stringify(forked));
+  const copy = await store.listMessages(reader.id, forked.chatId);
+  check('  with the snapshot\'s messages', copy.length === 2 && copy[0].text === 'hello');
+  const copiedFile = copy[0].attachments?.[0]?.id;
+  check('  and its files copied under new ids the reader owns', copiedFile && copiedFile !== 'att-photo' && !!(await store.getAttachment(reader.id, copiedFile)));
+  check('  while the original file stays the owner\'s alone', !(await store.getAttachment(reader.id, 'att-photo')));
+
+  await store.appendMessage(reader.id, forked.chatId, { id: 'cs-r1', role: 'user', text: 'the reader goes on' });
+  const original = await store.listMessages(owner.id, 'c-shared');
+  check('what the reader says never reaches the owner\'s conversation', !original.some((m) => m.text === 'the reader goes on') && original.length === 3);
+  check('the reader cannot read the original directly', (await store.listMessages(reader.id, 'c-shared')).length === 0);
+
+  const own = await forkSharedChat(owner.id, token);
+  check('the owner opening their own link is taken to the conversation itself', own.chatId === 'c-shared' && own.own === true);
+
+  await store.setChatShare(owner.id, 'c-shared', null);
+  check('taking the link back closes it', (await store.getSharedChat(token)) === null);
+  check('  and a copy can no longer be made from it', (await forkSharedChat(reader.id, token)).status === 404);
+}
+
 section('a share link opens one file, and only its owner can make or take it back');
 {
   /*

@@ -119,6 +119,10 @@ export const api = {
   setSkillEnabled: (id, enabled) => request('PATCH', `/api/skills/${id}`, { enabled }),
   deleteSkill: (id) => request('DELETE', `/api/skills/${id}`),
 
+  // A conversation shared by link, and carrying one on (server/routes/chatShare.js).
+  shareChat: (id) => request('POST', `/api/chats/${encodeURIComponent(id)}/share`),
+  unshareChat: (id) => request('DELETE', `/api/chats/${encodeURIComponent(id)}/share`),
+  forkSharedChat: (token) => request('POST', `/api/shared-chat/${encodeURIComponent(token)}/fork`),
   // A public link to a file the assistant made (server/routes/share.js).
   fileShare: (id) => request('GET', `/api/attachments/${encodeURIComponent(id)}/share`),
   shareFile: (id) => request('POST', `/api/attachments/${encodeURIComponent(id)}/share`),
