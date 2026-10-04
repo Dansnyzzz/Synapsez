@@ -1440,6 +1440,93 @@ section('the modules in an import cycle can each be loaded first');
 // the way `compact()` and `runParallel` already do, so it could not be driven
 // without a live key; the seam is added in server/agent.js alongside this
 // test so the wiring itself — not just the descriptor — is what is checked.
+section('the progress gate: a turn cannot finish with its plan left behind');
+{
+  /*
+   * The report: the model read every chapter, wrote the quiz, answered — and
+   * the panel still said 0/7 with the first step running. Finishing with steps
+   * not done now sends the model back once to mark them.
+   */
+  const gateUser = await store.createUser({
+    id: 'u-gate',
+    email: 'gate@example.com',
+    name: 'Gate',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'admin',
+  });
+  const plan = (statuses) => ({
+    steps: ['Read chapter 1', 'Read chapter 2', 'Write the quiz'].map((title, i) => ({ title, status: statuses[i] })),
+  });
+
+  const drive = async (chatId, script) => {
+    await store.createChat(gateUser.id, { id: chatId, title: 'quiz' });
+    await store.appendMessage(gateUser.id, chatId, { id: `${chatId}-u`, role: 'user', text: 'Make me a quiz.' });
+    const seen = [];
+    let calls = 0;
+    const stream = async function* scripted(opts) {
+      seen.push(opts.messages);
+      const turn = script[calls] || { text: 'Done.' };
+      calls += 1;
+      if (turn.text) yield { type: 'text', delta: turn.text };
+      yield { type: 'done', stopReason: turn.calls ? 'tool_use' : 'end_turn', toolCalls: turn.calls || [], usage: { input: 10, output: 5 } };
+    };
+    const events = [];
+    await runAgent({ userId: gateUser.id, user: gateUser, chatId, emit: (type, payload) => events.push({ type, payload }), stream });
+    return { seen, events, calls: () => calls };
+  };
+
+  const fixed = await drive('c-gate-1', [
+    { calls: [{ id: 'p1', name: 'update_plan', input: plan(['in_progress', 'pending', 'pending']) }] },
+    { text: 'Here is your quiz.' },
+    { calls: [{ id: 'p2', name: 'update_plan', input: plan(['done', 'done', 'done']) }] },
+    { text: '' },
+  ]);
+  const gateMessage = fixed.seen[2]?.at(-1);
+  check('finishing with steps not done sends the model back', fixed.calls() === 4, `${fixed.calls()} calls`);
+  check('  with a note naming the steps left', gateMessage?.role === 'user' && /Progress gate/.test(gateMessage.text) && /Read chapter 2/.test(gateMessage.text), gateMessage?.text?.slice(0, 120));
+  check('  said in the status line', fixed.events.some((e) => e.type === 'status' && e.payload?.phase === 'progress_check'));
+  const plans = fixed.events.filter((e) => e.type === 'plan');
+  check('  so the last plan the panel sees is all done', plans.at(-1)?.payload.steps.every((s) => s.status === 'done'), JSON.stringify(plans.at(-1)?.payload.steps));
+  check('  and the turn ends once, after the update', fixed.events.filter((e) => e.type === 'done').length === 1);
+  const stored = await store.listMessages(gateUser.id, 'c-gate-1');
+  check('the gate note is never stored', !stored.some((m) => /Progress gate/.test(m.text || '')));
+
+  const stubborn = await drive('c-gate-2', [
+    { calls: [{ id: 'q1', name: 'update_plan', input: plan(['in_progress', 'pending', 'pending']) }] },
+    { text: 'Here is your quiz.' },
+    { text: 'Chapter 2 was not in the files, so it stays pending.' },
+  ]);
+  check('the gate fires once per turn, so a step left undone cannot loop', stubborn.calls() === 3, `${stubborn.calls()} calls`);
+
+  const finished = await drive('c-gate-3', [
+    { calls: [{ id: 'r1', name: 'update_plan', input: plan(['done', 'done', 'done']) }] },
+    { text: 'Here is your quiz.' },
+  ]);
+  check('a plan already done ends the turn at once', finished.calls() === 2, `${finished.calls()} calls`);
+}
+
+section('a long stretch without a plan update carries a reminder');
+{
+  const { withProgressNotes, PROGRESS_EVERY } = await import('../server/progress.js');
+  const transcript = [
+    { id: 'u', role: 'user', text: 'go' },
+    { id: 'a0', role: 'assistant', toolCalls: [{ id: 'p', name: 'update_plan', input: { steps: [{ title: 'One', status: 'in_progress' }, { title: 'Two', status: 'pending' }] } }] },
+    { id: 't0', role: 'tool', results: [{ toolCallId: 'p', name: 'update_plan', content: 'ok' }] },
+  ];
+  for (let i = 1; i <= PROGRESS_EVERY * 2; i += 1) {
+    transcript.push({ id: `a${i}`, role: 'assistant', toolCalls: [{ id: `c${i}`, name: 'web_fetch', input: {} }] });
+    transcript.push({ id: `t${i}`, role: 'tool', results: [{ toolCallId: `c${i}`, name: 'web_fetch', content: `page ${i}` }] });
+  }
+  const noted = withProgressNotes(transcript);
+  const flagged = noted.filter((m) => m.role === 'tool' && /Progress check/.test(m.results.at(-1).content)).map((m) => m.id);
+  check(`a reminder every ${PROGRESS_EVERY} calls without an update`, flagged.join() === `t${PROGRESS_EVERY},t${PROGRESS_EVERY * 2}`, flagged.join());
+  check('  naming the step in progress', /"One" in progress/.test(noted.find((m) => m.id === `t${PROGRESS_EVERY}`).results[0].content));
+  check('  the same note on the same message every time, so caching holds', JSON.stringify(withProgressNotes(transcript)) === JSON.stringify(noted));
+  check('  and the stored transcript is untouched', !/Progress check/.test(JSON.stringify(transcript)));
+  const allDone = transcript.map((m) => (m.id === 'a0' ? { ...m, toolCalls: [{ ...m.toolCalls[0], input: { steps: [{ title: 'One', status: 'done' }, { title: 'Two', status: 'done' }] } }] } : m));
+  check('no reminder once every step is done', !/Progress check/.test(JSON.stringify(withProgressNotes(allDone))));
+}
+
 section('the step ceiling reaches the browser, not just the descriptor');
 {
   const stepUser = await store.createUser({

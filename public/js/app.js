@@ -28,6 +28,7 @@ import { createProjectPage } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
 import { humanSize } from './format.js';
+import { normalisePlan, planItemHtml } from './plan.js';
 import { createAttachments } from './attachments.js';
 import { createModelNews } from './model-news.js';
 import { createTwoFactor } from './two-factor.js';
@@ -3431,6 +3432,9 @@ async function streamOnce(run, decision, answers) {
             }
           } else if (phase === 'drafting') {
             drafts.get(name)?.progress(chars || 0);
+          } else if (phase === 'progress_check') {
+            // The progress gate sent the model back to bring the plan up to date.
+            setStatus(t('status.progressCheck'), run);
           }
           // A turn that stopped badly but still asked for tools — truncated
           // part-way through writing a call, most often. Drawn into the
@@ -3978,6 +3982,9 @@ function setRunning(running) {
   // changing your mind impossible.
   $('input').disabled = false;
   refreshSendState();
+  // The step in progress turns only while work is actually happening; a plan
+  // left at rest after the turn ends must not look like it is still going.
+  $('progress-steps').classList.toggle('is-live', !!running);
 }
 
 async function refreshWorker() {
@@ -5640,7 +5647,10 @@ function resetDetailAutoOpen() {
  */
 function renderProgress(steps) {
   const list = $('progress-steps');
-  const items = Array.isArray(steps) ? steps : [];
+  // Normalised here as well as on the server: after a reload the steps come
+  // from the call's raw arguments, and a model that marked four steps in
+  // progress drew four highlighted rows where the live view had shown one.
+  const items = normalisePlan(steps);
 
   $('progress-empty').hidden = items.length > 0;
 
@@ -5649,18 +5659,9 @@ function renderProgress(steps) {
   // without cutting across whatever is already being spoken.
   list.setAttribute('aria-live', 'polite');
 
-  list.innerHTML = items
-    .map((s) => {
-      const cls = s.status === 'done' ? 'is-done' : s.status === 'in_progress' ? 'is-active' : '';
-      const mark = s.status === 'done' ? '✓' : s.status === 'in_progress' ? '▸' : '○';
-      // The mark is decorative: aria-current carries the same fact, and read
-      // aloud the glyph is just a shape.
-      return (
-        `<li class="${cls}"${s.status === 'in_progress' ? ' aria-current="step"' : ''}>` +
-        `<span aria-hidden="true">${mark}</span><span>${escapeHtml(s.title)}</span></li>`
-      );
-    })
-    .join('');
+  // The step being worked on carries its detail, so the rail says what "Read
+  // chapter 2" actually involves; the rest keep it for the tooltip.
+  list.innerHTML = items.map((s) => planItemHtml(s, { withDetail: s.status === 'in_progress' })).join('');
 
   const done = items.filter((s) => s.status === 'done').length;
   // Was `${done} of ${items.length}`, which put an English "of" in the middle of

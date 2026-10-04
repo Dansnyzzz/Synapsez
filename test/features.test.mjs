@@ -447,6 +447,23 @@ section('a tool cut off by its own deadline says so, not just "aborted"');
   check('and any other failure keeps its own words', timedOutSentence(new Error('HTTP 500')) === '');
 }
 
+section('the plan panel: one step running after a refresh, and updates say what changed');
+{
+  const { normalisePlan, planChange, planItemHtml } = await import('../public/js/plan.js');
+  // A model that marked four steps in progress: the live view showed one, and a
+  // refresh — drawn from the raw arguments — showed four.
+  const four = ['Ch1', 'Ch2', 'Ch3', 'Ch4'].map((title) => ({ title, status: 'in_progress' }));
+  check('a refresh shows one step in progress, as the live view did', normalisePlan(four).filter((s) => s.status === 'in_progress').length === 1);
+  const base = [{ title: 'Read', status: 'in_progress' }, { title: 'Write', status: 'pending' }];
+  const added = planChange(base, [...base, { title: 'Run full pipeline', status: 'pending', detail: 'Item 1: reproduce 888→275' }]);
+  check('adding a step reads "Added task" with its title', added.headline === 'Added task' && added.arg === 'Run full pipeline', JSON.stringify(added));
+  check('  and opens to its detail', planItemHtml(added.steps[0], { withDetail: true }).includes('Item 1: reproduce 888→275'));
+  check('finishing a step reads "Completed"', planChange(base, [{ title: 'Read', status: 'done' }, { title: 'Write', status: 'in_progress' }]).headline === 'Completed');
+  check('moving steps reads as a reorder', planChange(base, [base[1], base[0]]).headline === 'Reordered the plan');
+  check('the first plan reads "Created a plan"', planChange([], base).headline === 'Created a plan');
+  check('a running step is a ring, a waiting one dashed, a done one ticked', planItemHtml(base[0]).includes('pmark--active') && planItemHtml(base[1]).includes('stroke-dasharray') && planItemHtml({ title: 'x', status: 'done' }).includes('pmark--done'));
+}
+
 section('a quiz answer is read however the model says it');
 {
   const q = (answer, options = ['A. Lãi suất', 'B. Lạm phát', 'C. Thuế']) =>

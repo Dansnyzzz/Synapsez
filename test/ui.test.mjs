@@ -1372,29 +1372,45 @@ check('the toggle opens it', railOpen.open, `${railOpen.width}px wide`);
 check('it sits beside the conversation', railOpen.besideNotOver);
 check('it stays on screen', railOpen.onScreen);
 
-// A plan should fill it in and count itself off.
-await page.evaluate(() => {
+// A plan should fill it in and count itself off — drawn by the real module,
+// with a turning ring for the step in progress and dashed rings for the rest.
+await page.evaluate(async () => {
+  const { normalisePlan, planItemHtml } = await import('/js/plan.js');
   const list = document.getElementById('progress-steps');
-  list.innerHTML = '';
-  const steps = [
+  // Four "in progress" is what a careless model sends; one is what is drawn.
+  const steps = normalisePlan([
     { title: 'Read the spec', status: 'done' },
-    { title: 'Write the code', status: 'in_progress' },
-    { title: 'Run the tests', status: 'pending' },
-  ];
-  for (const s of steps) {
-    const li = document.createElement('li');
-    li.className = s.status === 'done' ? 'is-done' : s.status === 'in_progress' ? 'is-active' : '';
-    li.innerHTML = `<span>${s.status === 'done' ? '✓' : s.status === 'in_progress' ? '▸' : '○'}</span><span>${s.title}</span>`;
-    list.append(li);
-  }
-  document.getElementById('progress-count').textContent = '1 of 3';
+    { title: 'Write the code', status: 'in_progress', detail: 'The parser first, then the tests.' },
+    { title: 'Run the tests', status: 'in_progress' },
+    { title: 'Ship it', status: 'pending' },
+  ]);
+  list.innerHTML = steps.map((s) => planItemHtml(s, { withDetail: s.status === 'in_progress' })).join('');
+  list.classList.add('is-live');
+  document.getElementById('progress-count').textContent = '1 of 4';
 });
 await page.waitForTimeout(200);
-const steps = await page.$$eval('#progress-steps li', (els) =>
-  els.map((e) => `${e.className || 'pending'}:${e.textContent.trim()}`),
+const steps = await page.evaluate(() => {
+  const items = [...document.querySelectorAll('#progress-steps li')];
+  const ring = document.querySelector('#progress-steps .pmark--active');
+  return {
+    classes: items.map((e) => e.className.replace('pstep ', '')),
+    active: items.filter((e) => e.classList.contains('is-active')).length,
+    dashed: document.querySelectorAll('#progress-steps .pmark--pending').length,
+    turning: ring ? getComputedStyle(ring).animationName : '',
+    detail: document.querySelector('#progress-steps .is-active .pstep__detail')?.textContent || '',
+  };
+});
+check('steps render with their state', steps.classes.join() === 'is-done,is-active,is-pending,is-pending', steps.classes.join());
+check('  exactly one in progress, however many the model claimed', steps.active === 1);
+check('  the waiting ones as dashed rings', steps.dashed === 2, String(steps.dashed));
+check('  the running one turning while the turn is live', steps.turning === 'spin', steps.turning);
+check('  with what it involves under its title', /parser first/.test(steps.detail), steps.detail);
+await page.evaluate(() => document.getElementById('progress-steps').classList.remove('is-live'));
+check(
+  '  and still once the turn has ended',
+  (await page.evaluate(() => getComputedStyle(document.querySelector('#progress-steps .pmark--active')).animationName)) === 'none',
 );
-check('steps render with their state', steps.length === 3 && steps[0].startsWith('is-done'), steps.join(' | ').slice(0, 70));
-check('and are counted', (await page.textContent('#progress-count')) === '1 of 3');
+check('and are counted', (await page.textContent('#progress-count')) === '1 of 4');
 
 await page.click('#detail-close');
 

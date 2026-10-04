@@ -12,6 +12,7 @@ import { availableTools, assessRisk, riskReason, TOOLS_BY_NAME } from './tools/d
 import { UNTRUSTED_RULE } from './tools/untrusted.js';
 import { executeTool } from './tools/execute.js';
 import { normalisePlan, PLAN_MIN_STEPS } from './tools/cloud.js';
+import { withProgressNotes, unfinishedThisTurn, progressGateNote } from './progress.js';
 import { workerStatus } from './localTools.js';
 import { skillMenu } from './skills.js';
 import { connectorSummary } from './connectors.js';
@@ -1294,6 +1295,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     return true;
   }
 
+  /** The progress gate's note for the next request, and whether it has fired this turn. */
+  let progressGate = null;
+  let progressGated = false;
+
   for (let step = 0; step < prefs.maxSteps; step += 1) {
     if (signal?.aborted) {
       emit('done', { stopReason: 'aborted' });
@@ -1409,8 +1414,14 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * see them to fetch them — it reads `message.attachments`, so attaching
        * them afterwards meant asking for images nobody had loaded.
        */
+      // Where the plan stands rides on the tool results — see progress.js.
+      const tracked = withProgressNotes(
+        unattended ? activeTranscript(normaliseOrder(messages)) : withIntentNotes(activeTranscript(normaliseOrder(messages))),
+      );
       const grounded = withProjectSources(
-        withContinuation(unattended ? activeTranscript(normaliseOrder(messages)) : withIntentNotes(activeTranscript(normaliseOrder(messages)))),
+        // The progress gate sends the model back with its own note, in place of
+        // the continuation note that would otherwise follow its last reply.
+        progressGate ? [...tracked, { id: 'progress-gate', role: 'user', text: progressGate }] : withContinuation(tracked),
         project?.passages,
         project?.images,
       );
@@ -1560,6 +1571,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // `seq` comes back on the stored copy; see `absorbNewMessages`.
     const stored = await store.appendMessage(userId, chatId, assistant);
     assistant.seq = stored.seq;
+    // The gate's note was for that one request; it is never stored.
+    progressGate = null;
 
     /**
      * Never fatal, but never silent either.
@@ -1594,6 +1607,22 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * complete one, which is the whole reason this travels.
        */
       const stop = done?.stop || { kind: done?.stopReason ? 'unknown' : 'end_turn', raw: done?.stopReason ?? null, message: null };
+      /**
+       * The progress gate: finishing with the plan behind is sent back once.
+       *
+       * Only for a reply that really is finished (`stop.message` is set when it
+       * was cut off, refused or filtered) and only once per turn, so a step the
+       * model deliberately left undone ends the turn on the next reply.
+       */
+      if (!progressGated && !stop.message && step + 1 < prefs.maxSteps) {
+        const behind = unfinishedThisTurn(messages);
+        if (behind) {
+          progressGated = true;
+          progressGate = progressGateNote(behind);
+          emit('status', { phase: 'progress_check' });
+          continue;
+        }
+      }
       emit('done', { stopReason: done?.stopReason || 'end_turn', stop });
       return;
     }

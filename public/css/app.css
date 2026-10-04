@@ -1428,23 +1428,39 @@ textarea {
   color: var(--text-dim);
   font-size: 13px;
 }
-.progress li span:first-child {
-  flex: none;
-  width: 16px;
-  text-align: center;
-}
 .progress .is-done { color: var(--text-faint); }
-.progress .is-done span:last-child { text-decoration: line-through; }
-.progress .is-done span:first-child { color: var(--ok); }
+.progress .is-done .pstep__title { text-decoration: line-through; }
 /* A tint rather than a fill: an opaque row on a translucent panel reads as a
    sticker somebody put on the glass. */
 .progress .is-active {
   background: var(--info-bg);
-  box-shadow: inset 2px 0 0 var(--info);
   color: var(--text);
   font-weight: 500;
 }
-.progress .is-active span:first-child { color: var(--info); }
+
+/* ── one step: its mark, its title, and what it involves ───────── */
+
+.pstep { display: flex; gap: 10px; align-items: flex-start; }
+.pstep__text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pstep__detail {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-decoration: none;
+}
+/* A ring for every state, so the column of marks lines up: dashed for what is
+   still to come, turning while it is worked on, filled with a tick when done. */
+.pmark { flex: none; margin-top: 1px; }
+.pmark--done { color: var(--ok); }
+.pmark--pending { color: var(--text-faint); }
+.pmark--active { color: var(--info); }
+/* It turns only while the turn is running. A plan left at rest when the turn
+   ended keeps a still ring, so it never looks like work that is going on. */
+.progress.is-live .pmark--active { animation: spin 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .progress.is-live .pmark--active { animation: none; }
+}
 
 /* The panel before there is anything to show. Left as a bare paragraph it read
    as a page that had failed to load; boxed, it reads as a slot waiting to be
@@ -2752,16 +2768,21 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
   text-transform: uppercase;
 }
 .plan li {
-  display: flex;
-  gap: 9px;
-  align-items: baseline;
-  margin-bottom: 5px;
+  margin-bottom: 6px;
   list-style: none;
   font-size: 13.5px;
 }
 .plan ul { margin: 0; padding: 0; }
-.plan .is-done { color: var(--text-faint); text-decoration: line-through; }
-.plan .is-active { color: var(--info); }
+.plan .is-done { color: var(--text-faint); }
+.plan .is-done .pstep__title { text-decoration: line-through; }
+.plan .is-active { color: var(--text); }
+
+/* The card an update leaves in the transcript: what it changed, and opened,
+   the steps it touched with their detail. */
+.plancard__list { margin: 0; padding: 4px 2px 2px; }
+.plancard__list li { margin-bottom: 8px; list-style: none; font-size: 13.5px; color: var(--text); }
+.plancard__list li:last-child { margin-bottom: 0; }
+.plancard__list .is-done .pstep__title { text-decoration: line-through; color: var(--text-faint); }
 
 .status-line {
   display: flex;

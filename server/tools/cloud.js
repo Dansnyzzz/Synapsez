@@ -1313,6 +1313,9 @@ export function normalisePlan(steps) {
     .map((s) => ({
       title: s.title.trim(),
       status: ['pending', 'in_progress', 'done'].includes(s.status) ? s.status : 'pending',
+      // What the step involves, shown when a task is added and beside the step
+      // being worked on. Optional; cut to a size a side panel can hold.
+      ...(typeof s.detail === 'string' && s.detail.trim() ? { detail: s.detail.trim().slice(0, 600) } : {}),
     }));
 
   let running = false;

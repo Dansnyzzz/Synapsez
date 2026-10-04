@@ -44,6 +44,7 @@ export const en = {
   'mirror.watching': 'Running in another tab — watching…',
   /* What the assistant is doing, in the line above the composer. */
   'status.thinking': 'Thinking…',
+  'status.progressCheck': 'Bringing the plan up to date…',
   'composer.modeWorkflow': 'Asking the assistant to set up a workflow — saved under Workflows',
   'composer.modeSchedule': 'Asking the assistant to set up a scheduled task — saved under Scheduled',
   'status.background': 'Running on its schedule — updating live…',
@@ -586,6 +587,16 @@ export const en = {
   // The checklist drawn inside a message by `update_plan`, and the count beside
   // the same steps in the progress rail.
   'chat.plan': 'Plan',
+  'plan.created': 'Created a plan',
+  'plan.added': 'Added task',
+  'plan.addedMany': 'Added {n} tasks',
+  'plan.removed': 'Dropped task',
+  'plan.removedMany': 'Dropped {n} tasks',
+  'plan.completed': 'Completed',
+  'plan.started': 'Started',
+  'plan.reordered': 'Reordered the plan',
+  'plan.updated': 'Updated the plan',
+  'plan.stepCount': '{n} steps',
 
   /* ── a run of steps ──────────────────────────────────────────────
    *

@@ -8,6 +8,7 @@ import { mediaTools, svgToPng, fileNameFrom, imageUrlToPng } from './media.js';
 import { webRowHtml, titleFromContent } from './webrows.js';
 import { parseResults } from './rail.js';
 import { rememberSearch, rememberPage, auditCitations } from './cite.js';
+import { normalisePlan, planItemHtml, planChange } from './plan.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -1456,6 +1457,63 @@ export function assistantMessage() {
     return web;
   }
 
+  /**
+   * The plan as it stood before this update — the last plan card above it,
+   * in this message first and then anywhere in the conversation.
+   */
+  function previousPlan() {
+    const here = body.querySelectorAll('[data-plan-steps]');
+    let node = here[here.length - 1];
+    if (!node) {
+      const all = document.querySelectorAll('#messages [data-plan-steps]');
+      node = all[all.length - 1];
+    }
+    try {
+      return node ? JSON.parse(/** @type {HTMLElement} */ (node).dataset.planSteps || '[]') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * An update to the plan, said as what changed: "Added task Run the full
+   * pipeline", "Completed Read chapter 1" — and opened, the steps it touched
+   * with their detail. "Updated the plan · 7 steps" was true every time and
+   * told nobody anything, least of all that a task had been added half-way.
+   */
+  function startPlanCard(call) {
+    closeGroup();
+    const steps = normalisePlan(call.input?.steps);
+    const change = planChange(previousPlan(), steps);
+
+    const block = el('details', 'block tool plancard');
+    block.dataset.planSteps = JSON.stringify(steps);
+    const summary = el('summary');
+    const paint = (mark) => {
+      summary.innerHTML = `${mark}<span class="tool__name">${escapeHtml(change.headline)}</span>`;
+      if (change.arg) summary.append(detailNode('tool__arg', change.arg, null));
+    };
+    paint(MARK_PENDING);
+    const inner = el('div', 'block__body');
+    const list = el('ul', 'plancard__list');
+    list.innerHTML = change.steps.map((s) => planItemHtml(s, { withDetail: true })).join('');
+    inner.append(list);
+    block.append(summary, inner);
+    body.append(block);
+
+    return {
+      complete(result) {
+        block.classList.toggle('tool--error', !!result.isError);
+        paint(`<span class="mark">${result.isError ? '✗' : '✓'}</span>`);
+        if (result.isError) {
+          const why = el('pre');
+          why.textContent = result.content || '';
+          inner.append(why);
+        }
+      },
+    };
+  }
+
   function startWeb(call) {
     const w = webCard(call.name === 'web_search');
     w.calls += 1;
@@ -1828,17 +1886,10 @@ export function assistantMessage() {
         plan.append(heading, list);
         body.append(plan);
       }
-      plan.querySelector('ul').innerHTML = (steps || [])
-        .map((s) => {
-          const cls = s.status === 'done' ? 'is-done' : s.status === 'in_progress' ? 'is-active' : '';
-          const mark = s.status === 'done' ? '✓' : s.status === 'in_progress' ? '▸' : '○';
-          // The mark is decorative — the status it encodes is already carried by
-          // aria-current and the list order, and read aloud it is a shape.
-          return (
-            `<li class="${cls}"${s.status === 'in_progress' ? ' aria-current="step"' : ''}>` +
-            `<span aria-hidden="true">${mark}</span><span>${escapeHtml(s.title)}</span></li>`
-          );
-        })
+      // Through the same rules the server applies, so a reloaded transcript
+      // shows the plan that was shown live — see plan.js.
+      plan.querySelector('ul').innerHTML = normalisePlan(steps)
+        .map((s) => planItemHtml(s))
         .join('');
       // Keep the plan pinned above the prose it describes.
       body.prepend(plan);
@@ -1883,6 +1934,7 @@ export function assistantMessage() {
     /** Start a collapsed card for a tool call; returns a handle to complete it. */
     startTool(call) {
       if (WEB_TOOLS.has(call.name)) return startWeb(call);
+      if (call.name === 'update_plan') return startPlanCard(call);
       const family = stepFamily(call.name);
       if (family) return startStep(call, family);
 

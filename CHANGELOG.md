@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-10-04 (later) — a progress panel that stays true
+
+### Changed
+
+- **Progress marks**: the step being worked on is a turning ring (still once the turn ends), steps to come are
+  dashed rings, finished steps a ticked ring — in the side panel and in the checklist inside the message. The
+  running step shows its detail underneath.
+- **Each plan update says what it changed**: "Added task …", "Completed …", "Started …", "Reordered the plan",
+  "Dropped task …" instead of "Updated the plan · 7 steps"; opened, it lists the steps it touched with their
+  detail. `update_plan` steps take an optional `detail`, and the tool asks the model to add, reorder or drop
+  steps when the work changes mid-way.
+
+### Fixed
+
+- **After a refresh the panel showed several steps running at once.** It was rebuilt from the call's raw
+  arguments, where the live view used the server's normalised plan. Both now go through the same rules
+  (`public/js/plan.js`).
+- **The plan left behind** (0/7 after a finished answer). A progress gate in code (`server/progress.js`):
+  every 5 tool calls without an update, the newest tool result carries a reminder of where the plan stands;
+  a turn about to finish with steps of this turn's plan not done is sent back once to mark them, before the
+  turn's `done` — never twice, so a step genuinely left undone cannot loop. Neither note is stored.
+
 ## 2026-10-04 — an Archive shelf; no more computer pairing; tools that read what models send
 
 ### Added

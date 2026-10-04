@@ -46,6 +46,16 @@ export const vi = {
   // Danh sách việc do `update_plan` vẽ trong một tin nhắn, và số đếm cạnh cùng
   // các bước đó ở thanh tiến trình.
   'chat.plan': 'Kế hoạch',
+  'plan.created': 'Lập kế hoạch',
+  'plan.added': 'Thêm việc',
+  'plan.addedMany': 'Thêm {n} việc',
+  'plan.removed': 'Bỏ việc',
+  'plan.removedMany': 'Bỏ {n} việc',
+  'plan.completed': 'Hoàn thành',
+  'plan.started': 'Bắt đầu',
+  'plan.reordered': 'Sắp xếp lại kế hoạch',
+  'plan.updated': 'Cập nhật kế hoạch',
+  'plan.stepCount': '{n} bước',
 
   /* ── một chuỗi thao tác ─────────────────────────────────────────── */
   'steps.browser': 'Đã dùng trình duyệt',
@@ -248,6 +258,7 @@ export const vi = {
   'mirror.watching': 'Đang chạy ở tab khác — đang theo dõi…',
   /* Trợ lý đang làm gì, ở dòng ngay trên khung soạn. */
   'status.thinking': 'Đang suy nghĩ…',
+  'status.progressCheck': 'Đang cập nhật tiến độ kế hoạch…',
   'composer.modeWorkflow': 'Đang nhờ trợ lý tạo chuỗi việc — sẽ lưu vào mục Chuỗi việc',
   'composer.modeSchedule': 'Đang nhờ trợ lý tạo việc chạy theo giờ — sẽ lưu vào mục Chạy theo giờ',
   'status.background': 'Đang chạy theo lịch — cập nhật trực tiếp…',
