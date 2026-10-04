@@ -91,6 +91,10 @@ import { translateErrors, translateEvent, languageOf } from './i18n/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+/** Where the last cron heartbeat is recorded, and how recent it must be to count as running 24/7. */
+const HEARTBEAT_KEY = 'cron:lastHeartbeat';
+const HEARTBEAT_HEALTHY_MS = 20 * 60_000;
+
 /**
  * A provider's failure, in words rather than in JSON.
  *
@@ -255,6 +259,8 @@ export function createApp() {
         // machine, at an address Vercel gives it under vercel.run.
         "img-src 'self' data: blob: https://*.vercel.run",
         "font-src 'self'",
+        // A YouTube link in a reply plays in place, from the no-cookie domain only.
+        "frame-src 'self' https://www.youtube-nocookie.com",
         "connect-src 'self'",
         "frame-ancestors 'none'",
         "base-uri 'self'",
@@ -478,6 +484,9 @@ export function createApp() {
     const started = Date.now();
     const remaining = () => Math.max(0, 240_000 - (Date.now() - started));
 
+    // When the cloud was last nudged — what the Scheduled and Workflows shelves
+    // read to say whether work will run with every browser closed.
+    await getStore().setSetting(HEARTBEAT_KEY, new Date(started).toISOString()).catch(() => {});
     await sweep().catch(() => {});
     // Tasks get a budget too. Without one they ran until the invocation was
     // killed, which both left a task marked mid-run and guaranteed workflows
@@ -1589,6 +1598,29 @@ export function createApp() {
     '/tasks',
     wrap(async (req, res) => {
       res.json({ tasks: await getStore().listTasks(req.user.id) });
+    }),
+  );
+
+  /**
+   * Whether scheduled work runs with the web closed.
+   *
+   * On a deployment nothing runs between requests: work happens when the cron
+   * endpoint is called. Vercel's own cron fires once a day on the free plan, so
+   * on-time runs depend on an outside pinger calling it every few minutes. This
+   * says when that last happened, so the shelves can tell somebody whether
+   * their 08:00 job will really run at 08:00 — and what to set up if not.
+   */
+  api.get(
+    '/heartbeat',
+    wrap(async (req, res) => {
+      const lastAt = await getStore().getSetting(HEARTBEAT_KEY).catch(() => null);
+      const age = lastAt ? Date.now() - new Date(lastAt).getTime() : null;
+      res.json({
+        serverless: isServerless(),
+        lastAt: lastAt || null,
+        healthy: !isServerless() || (age != null && age < HEARTBEAT_HEALTHY_MS),
+        endpoint: `${publicUrlFor(req) || ''}/api/cron/run-tasks?background=1`,
+      });
     }),
   );
 

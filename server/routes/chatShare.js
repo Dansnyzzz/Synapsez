@@ -198,7 +198,7 @@ export function mountPublicChatShare(app, { wrap }) {
     '/api/image',
     wrap(async (req, res, next) => {
       if (!(await visitorScope(req))) return next();
-      const picture = await proxiedImage(req.query.u);
+      const picture = await proxiedImage(req.query.u, req.query.s);
       if (!picture) return res.status(404).json({ error: 'Not found' });
       sendPicture(res, picture);
     }),

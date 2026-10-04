@@ -1550,6 +1550,9 @@ export function assistantMessage() {
           if (!result.isError) rememberPage(url, row.title);
         }
         paintWeb(w);
+        // Folded once nothing in it is still loading: the sites are one click
+        // away, and an open list of ten results pushed the answer off screen.
+        if (w.pending === 0) w.node.open = false;
       },
     };
   }

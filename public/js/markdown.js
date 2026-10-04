@@ -425,6 +425,15 @@ function inline(text) {
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|\W)\*(?!\s)(.+?)(?<!\s)\*/g, '$1<em>$2</em>')
     .replace(/~~(.+?)~~/g, '<del>$1</del>')
+    // A picture the server signed (see imageProxy.js) is shown. Any other
+    // address is only a link: the browser never fetches it, so a reply cannot
+    // carry the conversation off to another site inside an image address.
+    // eslint-disable-next-line no-control-regex
+    .replace(/!\[([^\]\n]*)\]\((\/api\/image\?[^\s)\u0000]+)\)/g,
+      '<img class="mdimg" src="$2" alt="$1" loading="lazy" decoding="async">')
+    // eslint-disable-next-line no-control-regex
+    .replace(/!\[([^\]\n]*)\]\((https?:\/\/[^\s)\u0000]+)\)/g,
+      (whole, alt, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${alt || url}</a>`)
     // Only http(s) and relative links — no javascript: URLs.
     // And never a slot marker (NUL): "[x](https://a/$y$)" put a formula's span —
     // quotes included — inside the href.
@@ -549,6 +558,98 @@ function readMathBlock(lines, i) {
   return null;
 }
 
+/* ── pictures and videos ──────────────────────────────────────── */
+
+/** A line that is nothing but one or more `![caption](address)`. */
+const IMAGE_LINE = /^\s*(?:[-*]\s+)?(?:!\[[^\]\n]*\]\([^)\s]+\)\s*)+$/;
+const IMAGE_MD = /!\[([^\]\n]*)\]\(([^)\s]+)\)/g;
+
+/**
+ * Consecutive picture lines as one row of tiles. Only pictures this server
+ * signed are drawn (see imageProxy.js); a row with none of them is left to be
+ * rendered as ordinary text, where each becomes a link.
+ */
+function galleryHtml(run) {
+  const tiles = [];
+  for (const line of run) {
+    for (const [, alt, src] of line.matchAll(IMAGE_MD)) {
+      if (!src.startsWith('/api/image?')) continue;
+      const safeSrc = escapeHtml(src);
+      const caption = escapeHtml(alt.trim());
+      tiles.push(
+        `<a class="mdgallery__item" href="${safeSrc}" target="_blank" rel="noopener noreferrer">` +
+          `<img src="${safeSrc}" alt="${caption}" loading="lazy" decoding="async">` +
+          (caption ? `<span class="mdgallery__cap">${caption}</span>` : '') +
+          '</a>',
+      );
+    }
+  }
+  if (!tiles.length) return '';
+  return `<div class="mdgallery${tiles.length === 1 ? ' mdgallery--one' : ''}">${tiles.join('')}</div>`;
+}
+
+/** The eleven-character id of a YouTube video address, or null. */
+export function youtubeId(address) {
+  let url;
+  try {
+    url = new URL(address);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^(www|m|music)\./, '');
+  let id = null;
+  if (host === 'youtu.be') id = url.pathname.slice(1, 12);
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    id = url.pathname === '/watch' ? url.searchParams.get('v') : /^\/(?:shorts|embed|live|v)\/([\w-]{11})/.exec(url.pathname)?.[1] || null;
+  }
+  return id && /^[\w-]{11}$/.test(id) ? id : null;
+}
+
+/** A line that is only a YouTube link — bare, or `[title](address)` — as `{ id, title, url }`. */
+function videoOf(line) {
+  const m = /^\s*(?:[-*]\s+)?(?:\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|<?(https?:\/\/[^\s>]+)>?)\s*$/.exec(line);
+  if (!m) return null;
+  const url = m[2] || m[3];
+  const id = youtubeId(url);
+  return id ? { id, title: (m[1] || '').trim(), url } : null;
+}
+
+function videoCard({ id, title }) {
+  const thumb = `/api/image?u=${encodeURIComponent(`https://i.ytimg.com/vi/${id}/hqdefault.jpg`)}`;
+  const name = escapeHtml(title || t('video.untitled'));
+  const watch = `https://www.youtube.com/watch?v=${id}`;
+  return (
+    `<div class="mdvideo" data-yt="${id}">` +
+    `<button type="button" class="mdvideo__thumb" data-yt-play="${id}" aria-label="${escapeHtml(t('video.play', { title: title || 'YouTube' }))}">` +
+    `<img src="${thumb}" alt="" loading="lazy" decoding="async"><span class="mdvideo__play" aria-hidden="true"></span></button>` +
+    `<div class="mdvideo__meta"><a class="mdvideo__title" href="${watch}" target="_blank" rel="noopener noreferrer">${name}</a>` +
+    '<span class="mdvideo__src">YouTube</span></div></div>'
+  );
+}
+
+/**
+ * Pressing a video card plays it in place, from YouTube's no-cookie domain.
+ * One listener for the whole page, so a card drawn later needs no wiring.
+ */
+export function wireMedia(root) {
+  root.addEventListener('click', (event) => {
+    const button = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest?.('[data-yt-play]'));
+    if (!button) return;
+    const id = button.dataset.ytPlay || '';
+    if (!/^[\w-]{11}$/.test(id)) return;
+    const frame = document.createElement('iframe');
+    frame.className = 'mdvideo__frame';
+    frame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`;
+    frame.title = button.getAttribute('aria-label') || 'YouTube';
+    frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+    frame.allowFullscreen = true;
+    // The page sends no referrer anywhere; YouTube's player refuses to start
+    // without one, so this frame alone says which origin it is on.
+    frame.referrerPolicy = 'strict-origin-when-cross-origin';
+    button.replaceWith(frame);
+  });
+}
+
 export function renderMarkdown(source) {
   const all = String(source ?? '').replace(/\r\n/g, '\n').split('\n');
   // A quote inside a reply is rendered by a nested call, which keeps the notes
@@ -640,6 +741,27 @@ function renderBlocks(lines) {
       continue;
     }
 
+    // Pictures on lines of their own: a row, the way a search answer shows them.
+    if (IMAGE_LINE.test(line)) {
+      const run = [];
+      let j = i;
+      while (j < lines.length && IMAGE_LINE.test(lines[j])) run.push(lines[j++]);
+      const row = galleryHtml(run);
+      if (row) {
+        html.push(row);
+        i = j;
+        continue;
+      }
+    }
+
+    // A YouTube link on a line of its own: a video card, played in place.
+    if (videoOf(line)) {
+      const cards = [];
+      while (i < lines.length && videoOf(lines[i])) cards.push(videoCard(videoOf(lines[i++])));
+      html.push(cards.length > 1 ? `<div class="mdvideos">${cards.join('')}</div>` : cards[0]);
+      continue;
+    }
+
     const bullet = /^\s*[-*+]\s+/;
     const numbered = /^\s*\d+[.)]\s+/;
     if (bullet.test(line) || numbered.test(line)) {
@@ -697,7 +819,8 @@ function renderBlocks(lines) {
       !/^([-*_])\1{2,}\s*$/.test(lines[i].trim()) &&
       !tableAt(lines, i) &&
       !bullet.test(lines[i]) &&
-      !numbered.test(lines[i])
+      !numbered.test(lines[i]) &&
+      !(para.length && (IMAGE_LINE.test(lines[i]) || videoOf(lines[i])))
     ) {
       para.push(lines[i++]);
     }

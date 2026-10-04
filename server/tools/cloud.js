@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { signedImagePath } from '../imageProxy.js';
 import { getStore } from '../store/index.js';
 import { redactSecrets } from '../redact.js';
 import { readSkill, saveSkill } from '../skills.js';
@@ -217,7 +218,90 @@ async function readBody(buffer, { format, type, host }) {
   }
 
   const body = buffer.toString('utf8');
-  return { text: /html|xml/i.test(type) || /^\s*<(!doctype|html)\b/i.test(body) ? htmlToText(body) : body, note: '' };
+  const html = /html|xml/i.test(type) || /^\s*<(!doctype|html)\b/i.test(body);
+  return { text: html ? htmlToText(body) : body, note: '', html: html ? body : '' };
+}
+
+/** How many of a page's pictures are offered to the model. */
+const PAGE_IMAGES = 8;
+/** Addresses that are almost never the picture a person wants to see. */
+const NOT_A_PHOTO = /(logo|icon|sprite|avatar|badge|pixel|spacer|blank|loader|loading|placeholder|banner-ad|tracking|1x1|emoji|flag)/i;
+
+const attr = (tag, name) => {
+  const m = new RegExp(`\\s${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
+  return m ? (m[2] ?? m[3] ?? m[4] ?? '').trim() : '';
+};
+const decodeEntities = (s) =>
+  s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+
+/**
+ * The real pictures on a page — its share image first, then the large images
+ * in the body — as absolute https addresses with their alt text.
+ *
+ * So the assistant can show a product photo from the shop page it read, the
+ * way a search engine's answer does, instead of describing it. Icons, logos,
+ * tracking pixels and anything declared small are left out.
+ *
+ * @returns {{ url: string, alt: string }[]}
+ */
+export function pageImages(html, base) {
+  const found = [];
+  const seen = new Set();
+  const add = (raw, alt = '') => {
+    const value = decodeEntities(String(raw || '').trim());
+    if (!value || value.startsWith('data:')) return;
+    let url;
+    try {
+      url = new URL(value, base);
+    } catch {
+      return;
+    }
+    if (url.protocol === 'http:') url.protocol = 'https:';
+    if (url.protocol !== 'https:' || /\.svg(\?|$)/i.test(url.pathname) || NOT_A_PHOTO.test(url.pathname)) return;
+    if (seen.has(url.href)) return;
+    seen.add(url.href);
+    found.push({ url: url.href, alt: decodeEntities(alt).replace(/[[\]()\n\r]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) });
+  };
+
+  const head = String(html || '');
+  // The share image is captioned with the page's own title.
+  const title = head.match(/<title[^>]*>([^<]{1,120})/i)?.[1] || '';
+  for (const tag of head.match(/<meta\b[^>]*>/gi) || []) {
+    const key = (attr(tag, 'property') || attr(tag, 'name')).toLowerCase();
+    if (key === 'og:image' || key === 'og:image:secure_url' || key === 'twitter:image') add(attr(tag, 'content'), title);
+  }
+  for (const tag of head.match(/<img\b[^>]*>/gi) || []) {
+    if (found.length >= PAGE_IMAGES * 3) break;
+    const width = Number(attr(tag, 'width'));
+    const height = Number(attr(tag, 'height'));
+    if ((width && width < 120) || (height && height < 120)) continue;
+    // Lazy-loading pages keep the real address in a data attribute, and the
+    // largest candidate of a srcset is the last one listed.
+    const srcset = attr(tag, 'srcset') || attr(tag, 'data-srcset');
+    const best = srcset ? srcset.split(',').map((s) => s.trim().split(/\s+/)[0]).filter(Boolean).pop() : '';
+    add(attr(tag, 'data-src') || attr(tag, 'data-lazy-src') || attr(tag, 'data-original') || best || attr(tag, 'src'), attr(tag, 'alt'));
+  }
+  return found.slice(0, PAGE_IMAGES);
+}
+
+/**
+ * The pictures, said to the model as addresses it can put in its reply.
+ * Signed by this server — see `signedImagePath` — so only these display.
+ */
+function picturesNote(images) {
+  const lines = images
+    .map((image) => {
+      const path = signedImagePath(image.url);
+      return path ? `- ![${image.alt || 'picture'}](${path})` : '';
+    })
+    .filter(Boolean);
+  if (!lines.length) return '';
+  return (
+    '\n\n[Pictures on this page. When they help — a product, a place, a person, a design — show them in your reply ' +
+    'by copying a line as written, ![short caption](address); several on consecutive lines show as a row. ' +
+    'Only these exact addresses display.\n' +
+    `${lines.join('\n')}]`
+  );
 }
 
 /** Page default, and the larger one a parsed document gets — see `webFetch`. */
@@ -264,7 +348,7 @@ async function webFetch({ url, max_chars: maxChars }) {
     );
   }
 
-  const { text, note } = await readBody(buffer, { format, type, host: parsed.host });
+  const { text, note, html } = await readBody(buffer, { format, type, host: parsed.host });
 
   // A document gets a larger default than a page. 20,000 characters is a
   // generous slice of an article and a third of an exam paper, and a model that
@@ -288,7 +372,9 @@ async function webFetch({ url, max_chars: maxChars }) {
     // Wrapped, because this is the single most likely place for an instruction
     // aimed at the model to enter the conversation. See server/tools/untrusted.js.
     untrusted(parsed.href, clipped) +
-    notes.map((line) => `\n\n[${line}]`).join('')
+    notes.map((line) => `\n\n[${line}]`).join('') +
+    // Outside the envelope: the addresses are this server's own signed paths.
+    (html ? picturesNote(pageImages(html, parsed.href)) : '')
   );
 }
 

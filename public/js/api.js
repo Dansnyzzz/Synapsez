@@ -227,6 +227,8 @@ export const api = {
   chats: () => request('GET', '/api/chats'),
   /** The Archive shelf: conversations and projects put away. */
   archived: () => request('GET', '/api/chats/archived'),
+  /** Whether scheduled work runs with the web closed — see the route. */
+  heartbeat: () => request('GET', '/api/heartbeat'),
   createChat: (model, projectId) => request('POST', '/api/chats', { model, projectId }),
   chat: (id) => request('GET', `/api/chats/${id}`),
   searchChats: (q) => request('GET', `/api/chats/search?q=${encodeURIComponent(q)}`),

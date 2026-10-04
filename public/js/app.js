@@ -2,7 +2,7 @@ import { api, runAgent } from './api.js';
 import { follow, answerOwnership, someoneElseIsRunning } from './mirror.js';
 import { createRuns } from './runs.js';
 import { makeResizable } from './resize.js';
-import { wireCopyButtons, escapeHtml } from './markdown.js';
+import { wireCopyButtons, wireMedia, escapeHtml } from './markdown.js';
 import { cleanHtml, forWord, writeRich } from './clipboard.js';
 import { createQuestionCard } from './question.js';
 import { createRail } from './rail.js';
@@ -5835,6 +5835,7 @@ $('open-projects').addEventListener('click', () => {
 });
 
 wireCopyButtons(document.body);
+wireMedia(document.body);
 
 /**
  * Scrollbars that show themselves only while they are being used.

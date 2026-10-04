@@ -142,7 +142,7 @@ export function mountFileRoutes(api, { wrap, body }) {
   api.get(
     '/image',
     wrap(async (req, res) => {
-      const picture = await proxiedImage(req.query.u);
+      const picture = await proxiedImage(req.query.u, req.query.s);
       if (!picture) return res.status(404).json({ error: 'Not found' });
       sendPicture(res, picture);
     }),

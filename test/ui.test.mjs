@@ -1557,8 +1557,13 @@ check('and says so visibly', driving.marked);
 // The chart that would not pan. An <img> is draggable by default, so pressing
 // on the mirror and pulling started a native image drag and the gesture was
 // never ours to forward.
-const dragging = await page.evaluate(() => {
-  const img = document.getElementById('screen-img');
+const dragging = await page.evaluate(async () => {
+  const img = /** @type {HTMLImageElement} */ (document.getElementById('screen-img'));
+  // A frame to drag on. With no picture the image is hidden (the panel shows
+  // its "no picture yet" line instead), and there is nothing to drag.
+  const canvas = Object.assign(document.createElement('canvas'), { width: 320, height: 200 });
+  img.src = canvas.toDataURL('image/png');
+  await img.decode().catch(() => {});
   const style = getComputedStyle(img);
   // Does a real press-move-release reach the page as a drag rather than being
   // eaten by the browser's own image dragging?
@@ -1584,6 +1589,17 @@ const dragging = await page.evaluate(() => {
   };
 });
 check('the picture is not natively draggable', dragging.nativeDragBlocked, 'otherwise the gesture never reaches us');
+check(
+  'with no picture the frame says so instead of showing a broken image',
+  await page.evaluate(() => {
+    const img = document.getElementById('screen-img');
+    const held = img.getAttribute('src');
+    img.removeAttribute('src');
+    const empty = getComputedStyle(document.querySelector('.screen__empty')).display !== 'none' && getComputedStyle(img).display === 'none';
+    if (held) img.setAttribute('src', held);
+    return empty;
+  }),
+);
 check('a press and pull registers as a drag', dragging.midDrag, 'the panel marks itself while the gesture is live');
 check('and the mark is cleared on release', dragging.settled);
 check('the cursor invites it', /grab/.test(dragging.cursor), dragging.cursor);

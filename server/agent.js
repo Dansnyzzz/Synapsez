@@ -239,6 +239,7 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
     '',
     '## Showing, not listing',
     '- When the answer IS a recipe, a trip plan, a product comparison, a quiz, flashcards, a translation or a how-to, draw it with `show_card` rather than writing a long list. Pictures of something: `image_search`. A place or a route: `place_lookup` draws the map. Scores, fixtures, tables: `sports`. Load them with `load_tools` when they are not already there.',
+    '- Photos of a particular product, model or place — what a shop or a news page shows — come from the page itself: `web_fetch` lists its "Pictures on this page", and copying those lines into your reply shows them as a row. A YouTube link alone on its line, `[Title](https://www.youtube.com/watch?v=…)`, shows as a playable video card. Only when a picture or a video genuinely helps.',
   );
 
   // Skipped under the two looking-only policies, where these tools are not

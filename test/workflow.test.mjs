@@ -230,6 +230,82 @@ section('a step left mid-flight is never repeated');
   check('and the run is finished, not left open', !!after.finished_at);
 }
 
+
+section('a step cut off while only reading carries on by itself');
+{
+  /*
+   * The report: a deep_research step ran past the 300s ceiling, came back as
+   * "interrupted — not repeated", and the workflow sat waiting for a person.
+   * Reading has nothing to repeat by accident, so such a step resumes.
+   */
+  const { interruptedChanges, MAX_RESUMES } = await import('../server/workflows.js');
+  const steps = ['research the market', 'email the summary'];
+  const workflow = await store.createWorkflow(aliceId, { id: 'wf-resume', title: 'Resume', steps: normaliseSteps(steps), nextRunAt: null });
+  const chat = await store.createChat(aliceId, { id: 'c-resume', title: 'Resume' });
+  await store.appendMessage(aliceId, chat.id, { id: 'u-r1', role: 'user', text: steps[0] });
+  await store.appendMessage(aliceId, chat.id, {
+    id: 'a-r1',
+    role: 'assistant',
+    text: '',
+    toolCalls: [{ id: 'dr1', name: 'deep_research', input: { question: 'what moved the market' } }],
+  });
+
+  check('a read cut off before its result is not an unclear change', (await interruptedChanges(aliceId, chat.id, steps[0])).length === 0);
+
+  const run = await store.createWorkflowRun(aliceId, {
+    id: 'run-resume',
+    workflowId: workflow.id,
+    chatId: chat.id,
+    status: 'running',
+    steps: [
+      { id: 's1', status: 'running', started_at: new Date().toISOString(), finished_at: null, summary: '', error: '' },
+      { id: 's2', status: 'pending', started_at: null, finished_at: null, summary: '', error: '' },
+    ],
+    cursor: 0,
+  });
+  const after = await advanceRun(run, { deadline: Date.now() + 60_000 });
+  // No key in the test environment, so the resumed step fails on that — what
+  // matters is that it was picked up again rather than parked as unknown.
+  check('the step is picked up again, not parked as unknown', after.steps[0].status !== 'unknown', `${after.steps[0].status}: ${after.steps[0].error}`);
+  check('  counting the attempt', after.steps[0].attempts === 1, String(after.steps[0].attempts));
+  const transcript = await store.listMessages(aliceId, chat.id);
+  check('  without giving its instruction a second time', transcript.filter((m) => m.role === 'user' && m.text === steps[0]).length === 1);
+
+  await store.appendMessage(aliceId, chat.id, {
+    id: 'a-r2',
+    role: 'assistant',
+    text: '',
+    toolCalls: [{ id: 'em1', name: 'send_email', input: { subject: 'x', body: 'y' } }],
+  });
+  check('a change cut off before its result is named', (await interruptedChanges(aliceId, chat.id, steps[0])).join() === 'send_email');
+  const held = await advanceRun(
+    await store.createWorkflowRun(aliceId, {
+      id: 'run-resume-2',
+      workflowId: workflow.id,
+      chatId: chat.id,
+      status: 'running',
+      steps: [{ id: 's1', status: 'running', started_at: new Date().toISOString() }, { id: 's2', status: 'pending' }],
+      cursor: 0,
+    }),
+    { deadline: Date.now() + 60_000 },
+  );
+  check('  and that step waits for a person', held.status === 'needs_attention' && held.steps[0].status === 'unknown', held.status);
+  check('  saying which call it was', /send_email/.test(held.steps[0].error || ''), held.steps[0].error);
+
+  const tired = await advanceRun(
+    await store.createWorkflowRun(aliceId, {
+      id: 'run-resume-3',
+      workflowId: workflow.id,
+      chatId: 'c-resume-none',
+      status: 'running',
+      steps: [{ id: 's1', status: 'running', attempts: MAX_RESUMES }, { id: 's2', status: 'pending' }],
+      cursor: 0,
+    }),
+    { deadline: Date.now() + 60_000 },
+  );
+  check(`after ${MAX_RESUMES} resumes it stops for a person`, tired.status === 'needs_attention', tired.status);
+}
+
 section('a run stops at its time budget rather than half way through a step');
 {
   const workflow = await store.createWorkflow(aliceId, {
@@ -806,6 +882,14 @@ section('an outside pinger gets its answer at once');
   const denied = await fetch(`${base}/api/cron/run-tasks?background=1`, { headers: { Authorization: 'Bearer wrong' } });
   check('and still refuses a caller without the secret', denied.status === 401, `${denied.status}`);
   delete process.env.CRON_SECRET;
+
+  // The shelves say whether work runs with the web closed: when the cloud was
+  // last woken, and where an outside pinger should call.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const beat = await alice.call('GET', '/api/heartbeat');
+  check('the heartbeat is recorded', beat.status === 200 && !!beat.body?.lastAt && Date.now() - new Date(beat.body.lastAt).getTime() < 60_000, JSON.stringify(beat.body));
+  check('  with the address a pinger should call', /\/api\/cron\/run-tasks\?background=1$/.test(beat.body?.endpoint || ''), beat.body?.endpoint);
+  check('  and it needs a session to read', (await fetch(`${base}/api/heartbeat`)).status === 401);
 }
 
 section('a message begun from a shelf remembers which');

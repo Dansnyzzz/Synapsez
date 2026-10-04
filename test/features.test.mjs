@@ -435,6 +435,31 @@ section('a list sent wrapped as XML-turned-JSON is read, not refused');
   check('an index-keyed object is read in order', indexed.ok && indexed.input.tasks.join() === 'a,b');
 }
 
+section('a page\'s own pictures can be shown, and nothing else can');
+{
+  const { pageImages } = await import('../server/tools/cloud.js');
+  const { signedImagePath, allowedImageUrl } = await import('../server/imageProxy.js');
+  const html =
+    '<html><head><title>Tardis SVJ 63 Verde</title><meta property="og:image" content="https://shop.example/img/svj.jpg"></head><body>' +
+    '<img src="/logo.png" width="40"><img data-src="/p/svj-2.webp" alt="Side [view]"><img srcset="/a-400.jpg 400w, /a-1200.jpg 1200w" alt="Top">' +
+    '<img src="data:image/png;base64,xx"><img src="/icons/cart.svg"></body></html>';
+  const found = pageImages(html, 'https://shop.example/item/1');
+  check('the share image comes first, captioned with the page title', found[0]?.url === 'https://shop.example/img/svj.jpg' && found[0]?.alt === 'Tardis SVJ 63 Verde', JSON.stringify(found[0]));
+  check('a lazy-loaded image is found by its real address', found.some((f) => f.url === 'https://shop.example/p/svj-2.webp'));
+  check('  the largest of a srcset', found.some((f) => f.url === 'https://shop.example/a-1200.jpg'));
+  check('logos, small images, svg and data: are left out', !found.some((f) => /logo|cart\.svg|^data:/.test(f.url)), found.map((f) => f.url).join(' '));
+  check('brackets cannot break out of a caption', !found.some((f) => /[[\]()]/.test(f.alt)));
+
+  const path = signedImagePath('https://shop.example/img/svj.jpg');
+  const params = new URL(path, 'https://app.example').searchParams;
+  check('a signed address carries its signature', !!params.get('s') && params.get('u') === 'https://shop.example/img/svj.jpg');
+  check('an off-list host is still refused without one', allowedImageUrl('https://shop.example/img/svj.jpg') === null);
+  const { proxiedImage } = await import('../server/imageProxy.js');
+  check('an unsigned off-list address fetches nothing', (await proxiedImage('https://evil.example/?d=secret')) === null);
+  check('a forged signature fetches nothing', (await proxiedImage('https://evil.example/?d=secret', params.get('s'))) === null);
+  check('a signature for a private address still fetches nothing', (await proxiedImage('https://127.0.0.1/x.png', new URL(signedImagePath('https://127.0.0.1/x.png'), 'https://a.b').searchParams.get('s'))) === null);
+}
+
 section('a tool cut off by its own deadline says so, not just "aborted"');
 {
   const { timedOutSentence } = await import('../server/tools/execute.js');

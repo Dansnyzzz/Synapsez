@@ -531,6 +531,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Một công cụ ở bước này cần được duyệt mà không có ai theo dõi. Hãy duyệt trong cuộc trò chuyện, hoặc đổi chế độ duyệt để cho phép, rồi chạy lại chuỗi việc.',
   'The step ran out of agent steps before finishing. Split it into smaller steps.':
     'Bước này dùng hết số bước của trợ lý trước khi xong. Hãy tách thành các bước nhỏ hơn.',
+  'This step was interrupted while {0} was running. It is not repeated automatically, because there is no way to tell whether that had already happened.':
+    'Bước này bị ngắt khi {0} đang chạy. Nó không tự chạy lại, vì không có cách biết việc đó đã xảy ra hay chưa.',
+  'This step was interrupted {0} times and was not resumed again. Split it into smaller steps.':
+    'Bước này bị ngắt {0} lần nên không tự chạy tiếp nữa. Hãy chia nó thành các bước nhỏ hơn.',
   'This step was interrupted while running. It is not repeated automatically, because there is no way to tell whether what it does had already happened.':
     'Bước này bị gián đoạn khi đang chạy. Nó không tự chạy lại, vì không có cách nào biết việc của nó đã xảy ra hay chưa.',
   'No such workflow.': 'Không có chuỗi việc này.',

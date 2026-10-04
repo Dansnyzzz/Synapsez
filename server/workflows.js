@@ -4,6 +4,7 @@ import { getPrefs } from './settings.js';
 import { runAgent } from './agent.js';
 import { nextRunOf } from './scheduler.js';
 import { redactSecrets } from './redact.js';
+import { TOOLS_BY_NAME } from './tools/definitions.js';
 
 /**
  * Work with several steps that depend on each other, run unattended.
@@ -52,6 +53,42 @@ export const START_BUDGET_MS = 200_000;
  */
 export const LEASE_MS = 10 * 60_000;
 
+/** How many times a step cut off by the time limit is picked up again before it waits for a person. */
+export const MAX_RESUMES = 3;
+
+/**
+ * The change-making calls of the current step that were cut off before their
+ * result came back — the only ones nobody can say happened or not.
+ *
+ * Read from the step's own part of the conversation: everything after the
+ * last time its instruction was given. A read-only call without a result is
+ * not listed; resuming simply reads again.
+ */
+export async function interruptedChanges(userId, chatId, instruction) {
+  const messages = await getStore().listMessages(userId, chatId);
+  let from = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === 'user' && String(messages[i].text || '').trim() === String(instruction || '').trim()) {
+      from = i;
+      break;
+    }
+  }
+  const answered = new Set();
+  for (const m of messages.slice(from + 1)) {
+    if (m.role === 'tool') for (const r of m.results || []) answered.add(String(r.toolCallId));
+  }
+  const unclear = [];
+  for (const m of messages.slice(from + 1)) {
+    if (m.role !== 'assistant') continue;
+    for (const call of m.toolCalls || []) {
+      if (answered.has(String(call.id))) continue;
+      if (TOOLS_BY_NAME[call.name]?.readOnly === true) continue;
+      unclear.push(call.name);
+    }
+  }
+  return [...new Set(unclear)];
+}
+
 const nowIso = () => new Date().toISOString();
 const leaseUntil = (ms = LEASE_MS) => new Date(Date.now() + ms).toISOString();
 
@@ -83,14 +120,16 @@ const freshState = (steps) =>
  * nobody is here to approve, so the honest answer is that the run needs a
  * person — not that it failed, and certainly not that it finished.
  */
-async function runStep({ user, chatId, modelId, instruction }) {
+async function runStep({ user, chatId, modelId, instruction, resume = false }) {
   const store = getStore();
 
-  await store.appendMessage(user.id, chatId, {
-    id: crypto.randomUUID(),
-    role: 'user',
-    text: instruction,
-  });
+  if (!resume) {
+    await store.appendMessage(user.id, chatId, {
+      id: crypto.randomUUID(),
+      role: 'user',
+      text: instruction,
+    });
+  }
 
   /**
    * Everything captured here is written to the database and read back later —
@@ -223,21 +262,47 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
    * so the step is marked unknown and the run waits for a person.
    */
   const orphan = state.findIndex((s) => s.status === 'running');
+  /**
+   * …unless nothing it was doing can have changed anything.
+   *
+   * The 300s ceiling cuts long steps off as a matter of course — a deep
+   * research step is three minutes of reading — and stopping every one of
+   * them for a person meant no workflow with a long step ever finished on its
+   * own. The agent loop resumes a turn exactly where it stopped: finished
+   * calls keep their results, reads are simply read again, and a call that
+   * changes something is never run a second time. So the step carries on,
+   * and it is held for a person only when a change-making call was cut off
+   * before its result came back — the one case where nobody can say whether
+   * it happened. Three attempts, then it stops.
+   */
+  let resuming = false;
   if (orphan >= 0) {
-    state[orphan] = {
-      ...state[orphan],
-      status: 'unknown',
-      finished_at: nowIso(),
-      error:
-        'This step was interrupted while running. It is not repeated automatically, because ' +
-        'there is no way to tell whether what it does had already happened.',
-    };
-    return store.saveWorkflowRun(run.id, {
-      status: 'needs_attention',
-      steps: state,
-      leaseUntil: null,
-      finished: true,
-    });
+    const attempts = (Number(state[orphan].attempts) || 0) + 1;
+    // No transcript to read means nothing can be said about what happened.
+    const readable = run.chat_id && (await store.getChat(user.id, run.chat_id));
+    const unclear = readable ? await interruptedChanges(user.id, run.chat_id, definition[orphan]?.instruction) : null;
+    if (!unclear || unclear.length || attempts > MAX_RESUMES) {
+      state[orphan] = {
+        ...state[orphan],
+        status: 'unknown',
+        finished_at: nowIso(),
+        error: unclear?.length
+          ? `This step was interrupted while ${unclear.join(', ')} was running. It is not repeated automatically, because ` +
+            'there is no way to tell whether that had already happened.'
+          : unclear
+            ? `This step was interrupted ${MAX_RESUMES} times and was not resumed again. Split it into smaller steps.`
+            : 'This step was interrupted while running. It is not repeated automatically, because ' +
+              'there is no way to tell whether what it does had already happened.',
+      };
+      return store.saveWorkflowRun(run.id, {
+        status: 'needs_attention',
+        steps: state,
+        leaseUntil: null,
+        finished: true,
+      });
+    }
+    state[orphan] = { ...state[orphan], status: 'pending', attempts };
+    resuming = true;
   }
 
   let cursor = Number(run.cursor) || 0;
@@ -309,10 +374,14 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
         chatId: run.chat_id,
         modelId,
         instruction: definition[cursor].instruction,
+        // A step cut off last time carries on in its own transcript; its
+        // instruction is already there and is not sent a second time.
+        resume: resuming,
       });
     } finally {
       clearInterval(heartbeat);
     }
+    resuming = false;
 
     state[cursor] = {
       ...state[cursor],

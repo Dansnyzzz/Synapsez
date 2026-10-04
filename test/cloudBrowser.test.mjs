@@ -61,9 +61,45 @@ section('the start script installs once per build and then runs the service');
   const script = cb.startScript('abc123');
   check('installs only when the build changed', /if \[ "\$\(cat build 2>\/dev\/null\)" != "abc123" \]/.test(script));
   check('pins both dependencies', script.includes('playwright-core@1.63.0') && script.includes('@sparticuz/chromium@153.0.0'));
-  check('fonts are a best effort that cannot fail the start', /dnf install[^\n]*\|\| true/.test(script));
-  check('an older service is stopped before the new one starts', script.indexOf('pkill') < script.indexOf('exec node'));
+  check('fonts are a best effort that cannot fail the start', /install -y[^]*\|\| true/.test(script));
+  check('  with whichever package manager the image has', /dnf microdnf yum/.test(script));
+  check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec node'));
+  // `pkill -f 'node service.mjs'` matched the shell running this script, whose
+  // own command line holds those words, and killed it before `exec`.
+  check('and never by a name the script itself contains', !/pkill -f/.test(script));
   check('no key is written into the script (they travel as env)', !/SYNZ_KEY=/.test(script));
+}
+
+section('the start script really reaches the service, run under bash');
+{
+  const { spawnSync } = await import('node:child_process');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const probe = process.platform === 'win32' ? { status: 1 } : spawnSync('bash', ['-c', 'true']);
+  if (probe.status !== 0) {
+    console.log('  (skipped: no bash here — this runs in CI on Linux)');
+  } else {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-start-'));
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    // A node that says it started and exits; an npm that installs nothing; no sudo.
+    fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nif [ "$1" = "-v" ]; then echo v22; exit 0; fi\necho started > ran\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'sudo'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const run = () =>
+      spawnSync('bash', ['-lc', cb.startScript('t1')], {
+        cwd: dir,
+        env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, SYNZ_SERVICE: Buffer.from('// service').toString('base64') },
+        timeout: 20_000,
+      });
+    const first = run();
+    const ran = path.join(dir, '.synz-browser', 'ran');
+    check('a first start reaches the service', first.status === 0 && fs.existsSync(ran), `exit ${first.status} ${String(first.stderr).slice(0, 200)}`);
+    fs.rmSync(ran, { force: true });
+    const second = run();
+    check('  and so does a restart over an old pid', second.status === 0 && fs.existsSync(ran), `exit ${second.status}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 section('a person\'s gestures are checked before they reach the machine');

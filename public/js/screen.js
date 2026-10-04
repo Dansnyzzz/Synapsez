@@ -124,9 +124,14 @@ export function createScreen() {
   // The machine paused or restarted under a new key: the stream is gone, so
   // show the last picture rather than a broken image.
   img.addEventListener('error', () => {
-    if (mode !== 'cloud' || !img.dataset.stream) return;
-    dropCloudStream();
-    live.classList.remove('is-live');
+    if (mode === 'cloud' && img.dataset.stream) {
+      dropCloudStream();
+      live.classList.remove('is-live');
+      return;
+    }
+    // Anything else that will not load is taken away, so the frame shows its
+    // "no picture yet" line instead of a broken-image icon and its alt text.
+    img.removeAttribute('src');
   });
 
   /** Let go of the live stream, leaving the last step's picture in its place. */

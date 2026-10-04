@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-10-04 (evening) — pictures and videos in replies; a cloud browser that starts; workflows that finish
+
+### Added
+
+- **Photos in replies, like a search answer.** `web_fetch` lists a page's own pictures (its share image, then the
+  large images in the body) as addresses this server signed; written as `![caption](address)` on their own lines
+  they show as a row of tiles. Only signed addresses are fetched — any other image address in a reply stays a
+  link, so a reply cannot carry the conversation off inside an image URL (`imageSignature` in imageProxy.js).
+- **YouTube cards.** A YouTube link alone on its line becomes a card — thumbnail, title, YouTube — that plays in
+  place from youtube-nocookie.com (`frame-src` allows only that). A list of them is a row.
+- **Whether jobs run with the web closed** is said on the Scheduled and Workflows shelves: green with the last
+  cloud heartbeat, or amber with the three steps to set up a free pinger (cron-job.org → `/api/cron/run-tasks?background=1`
+  every 5 minutes with the `CRON_SECRET`). New route `GET /api/heartbeat`.
+
+### Fixed
+
+- **The cloud browser never started.** Its start script stopped the old service with `pkill -f 'node service.mjs'`,
+  which matched the shell running the script and killed it before `exec`: an empty service.log and "did not come
+  up in time" every time. Now stopped by pid. Chromium is also told it is on an AL2023-compatible host so it
+  unpacks its shared libraries, and fonts try dnf, microdnf and yum. A test runs the script under bash (in CI).
+- **The screen panel showed a broken image and its alt text** before there was a picture; it now says the picture
+  appears once a page is open.
+- **A workflow step cut off by the 300 s limit waited for a person** even when it was only reading (a deep research
+  step). It now resumes where it stopped, up to three times; it still stops for a person when a change-making call
+  (an email, a post) was cut off before its result came back.
+- The "Searched the web" card folds itself once every page in it has loaded.
+
 ## 2026-10-04 (later) — a progress panel that stays true
 
 ### Changed

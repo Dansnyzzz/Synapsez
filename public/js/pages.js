@@ -257,15 +257,47 @@ export function createPages({
   async function draw() {
     const view = views[showing];
     const shown = query ? items.filter((item) => view.matches(item, query)) : items;
-    body.innerHTML = view.render(view.sort ? view.sort(shown, order) : shown);
+    body.innerHTML = (view.cloud ? cloudNoticeHtml() : '') + view.render(view.sort ? view.sort(shown, order) : shown);
     view.wire?.(items);
+  }
+
+  /** The last answer from /api/heartbeat, for the shelves whose work runs on a clock. */
+  let heartbeat = null;
+
+  /**
+   * Whether this work will run with the web closed, said where it is set up.
+   *
+   * A deployment only works when something calls it. Without an outside pinger
+   * a job set for 08:00 ran when somebody next opened the app — or once a day
+   * at Vercel's own cron — and nothing on screen said so.
+   */
+  function cloudNoticeHtml() {
+    if (!heartbeat || !heartbeat.serverless || state.localOnly) return '';
+    if (heartbeat.healthy) {
+      return `<div class="notice notice--ok"><span class="notice__say">☁ ${escapeHtml(
+        t('pages.cloud.on', { when: ago(heartbeat.lastAt) }),
+      )}</span></div>`;
+    }
+    const steps = [
+      t('pages.cloud.step1'),
+      t('pages.cloud.step2', { url: heartbeat.endpoint }),
+      t('pages.cloud.step3'),
+      t('pages.cloud.step4'),
+    ];
+    return `<div class="notice notice--warn">
+      <span class="notice__say"><strong>${escapeHtml(t('pages.cloud.offTitle'))}</strong>
+        ${escapeHtml(heartbeat.lastAt ? t('pages.cloud.offLast', { when: ago(heartbeat.lastAt) }) : t('pages.cloud.offNever'))}</span>
+      <ol class="notice__steps">${steps.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ol>
+    </div>`;
   }
 
   async function load() {
     const view = views[showing];
     body.innerHTML = `<div class="viewer__loading"><span class="spinner"></span> ${escapeHtml(t('common.loading'))}</div>`;
     try {
-      items = await view.load();
+      const [loaded, beat] = await Promise.all([view.load(), view.cloud ? api.heartbeat().catch(() => null) : null]);
+      items = loaded;
+      if (view.cloud) heartbeat = beat;
       await draw();
     } catch (err) {
       body.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
@@ -545,6 +577,8 @@ export function createPages({
     },
     lede:
       t('pages.tasks.lede'),
+    // Runs on a clock: the shelf says whether that clock is ticking in the cloud.
+    cloud: true,
     orders: [
       { id: 'next', get label() { return t('pages.order.next'); } },
       { id: 'name', get label() { return t('pages.order.name'); } },
@@ -799,6 +833,7 @@ export function createPages({
     reload: () => (showing === 'workflows' ? load() : null),
     onRunStarted,
   });
+  views.workflows.cloud = true;
 
   /* ── the create-a-task form ───────────────────────────────────── */
 

@@ -69,11 +69,23 @@ export function startScript(build) {
     `if [ "$(cat build 2>/dev/null)" != "${build}" ]; then`,
     '  printf \'{"private":true}\' > package.json',
     `  npm install --no-save --no-audit --no-fund --loglevel=error ${DEPS.join(' ')} > setup.log 2>&1`,
-    '  (sudo -n dnf install -y -q dejavu-sans-fonts google-noto-sans-fonts google-noto-serif-fonts >> setup.log 2>&1 || true)',
+    // Fonts for accented and non-Latin pages, with whichever package manager
+    // the image has. Best effort: a page in a fallback font is still a page.
+    '  (for pm in dnf microdnf yum; do if command -v $pm >/dev/null 2>&1 || sudo -n sh -c "command -v $pm" >/dev/null 2>&1; then',
+    '     sudo -n $pm install -y dejavu-sans-fonts google-noto-sans-fonts google-noto-serif-fonts >> setup.log 2>&1 && break; fi; done) || true',
     `  echo "${build}" > build`,
     'fi',
-    "pkill -f 'node service.mjs' 2>/dev/null || true",
-    'exec node service.mjs > service.log 2>&1',
+    /*
+     * The old service is stopped by the pid it wrote, never by name. This was
+     * `pkill -f 'node service.mjs'` — and the shell running this very script
+     * has those words on its own command line, so pkill killed the script
+     * before it reached `exec`: no service, an empty service.log, and "did not
+     * come up in time" on every first start.
+     */
+    'if [ -f service.pid ]; then kill "$(cat service.pid)" 2>/dev/null || true; sleep 0.3; fi',
+    'echo $$ > service.pid',
+    'echo "starting $(date -u +%FT%TZ) node $(node -v)" > service.log',
+    'exec node service.mjs >> service.log 2>&1',
   ].join('\n');
 }
 
@@ -135,6 +147,15 @@ async function start(userId, { signal } = {}) {
       SYNZ_VIEW_KEY: conn.viewKey,
       PORT: '3000',
       SYNZ_PROFILE: 'profile',
+      /*
+       * Tells @sparticuz/chromium it is on an AL2023-compatible host, so it
+       * unpacks the shared libraries Chromium needs (libnss3 and the rest) and
+       * points LD_LIBRARY_PATH at them. It looks for VERCEL or a Lambda
+       * runtime variable; the sandbox has neither, and without them Chromium
+       * cannot load on a minimal image.
+       */
+      VERCEL: '1',
+      AWS_LAMBDA_JS_RUNTIME: 'nodejs22.x',
     },
     detached: true,
     signal,
