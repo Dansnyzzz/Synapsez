@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-04 (night) — archive cards, full context windows, looking at an attachment
+
+### Fixed
+
+- **Archive**: pressing anywhere on a card opens the conversation; the title is no longer a grey button; newest archived first.
+- **A 1M-context model showed "of 500K".** Its listing states a 1M output cap, and half the window was reserved
+  for one reply. The reserve is capped at 64K and the gauge reads against the whole window ("of 1M").
+- **"What is this picture?" failed** when the model called `look_at` with only a question. It now takes the newest
+  attachment — and a model that can see is told the picture is already in front of it, so no second model is paid.
 ## 2026-10-04 (evening) — pictures and videos in replies; a cloud browser that starts; workflows that finish
 
 ### Added

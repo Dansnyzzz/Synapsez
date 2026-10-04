@@ -731,7 +731,11 @@ export function createPages({
       ];
     },
     matches: (item, q) => `${item.title || ''} ${item.project_name || ''}`.toLowerCase().includes(q),
-    sort: (list, by) => list.filter((item) => item.kind === by),
+    // Newest put away first, whichever kind is showing.
+    sort: (list, by) =>
+      list
+        .filter((item) => item.kind === by)
+        .sort((a, b) => new Date(b.archived_at || 0).getTime() - new Date(a.archived_at || 0).getTime()),
     render: (list) => {
       if (!list.length) {
         return blank(
@@ -749,10 +753,11 @@ export function createPages({
           ].filter(Boolean);
           const id = escapeHtml(item.id);
           return `
-        <div class="task archived" data-archived="${id}" data-kind="${item.kind}">
+        <div class="task archived" data-archived="${id}" data-kind="${item.kind}" data-open-archived="${id}"
+             role="button" tabindex="0" aria-label="${escapeHtml(t('pages.archive.open', { name: item.title || t('chat.untitled') }))}">
           <span class="task__dot"></span>
           <div class="task__body">
-            <button class="task__name archived__open" type="button" data-open-archived="${id}">${escapeHtml(item.title || t('chat.untitled'))}</button>
+            <span class="task__name">${escapeHtml(item.title || t('chat.untitled'))}</span>
             <div class="task__when">${facts.map(escapeHtml).join(' · ')}</div>
           </div>
           <button class="task__act" type="button" data-restore="${id}">${escapeHtml(t('pages.archive.restore'))}</button>
@@ -767,18 +772,24 @@ export function createPages({
     },
     wire: () => {
       const byId = new Map(items.map((item) => [item.id, item]));
-      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-open-archived]'))) {
-        button.addEventListener('click', () => {
-          const item = byId.get(button.dataset.openArchived);
+      // The whole card opens it — read where it is; opening is not restoring.
+      // Its own buttons do their own thing and are not a press on the card.
+      for (const card of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-open-archived]'))) {
+        const open = () => {
+          const item = byId.get(card.dataset.openArchived);
           if (!item) return;
-          // Read where it is; opening is not restoring.
-          if (item.kind === 'project') {
-            onLeave();
-            openProject(item.id);
-          } else {
-            onLeave();
-            openChat(item.id);
-          }
+          onLeave();
+          if (item.kind === 'project') openProject(item.id);
+          else openChat(item.id);
+        };
+        card.addEventListener('click', (event) => {
+          if (/** @type {HTMLElement} */ (event.target).closest('button')) return;
+          open();
+        });
+        card.addEventListener('keydown', (event) => {
+          if (event.target !== card || (event.key !== 'Enter' && event.key !== ' ')) return;
+          event.preventDefault();
+          open();
         });
       }
       for (const button of /** @type {NodeListOf<HTMLButtonElement>} */ (body.querySelectorAll('[data-restore]'))) {

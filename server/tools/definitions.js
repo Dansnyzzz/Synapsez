@@ -1377,7 +1377,8 @@ export const TOOLS = [
       'Look at a picture, a screenshot or PDF pages and get back everything in it — all its text word for word, tables, charts and layout. ' +
       'This is how a model that cannot see images sees: an attached image or PDF, a browser or desktop step\'s screenshot ' +
       '(the file id the step reported), or an image or PDF on the web by url. Ask a question for a direct answer; ' +
-      'give pages for a particular part of a long PDF.',
+      'give pages for a particular part of a long PDF. If you can see images, a picture attached to the message is already ' +
+      'in front of you — answer from it and do not call this. With no file_id or url it looks at the newest attachment.',
     parameters: {
       type: 'object',
       properties: {

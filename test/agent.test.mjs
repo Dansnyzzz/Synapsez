@@ -319,6 +319,25 @@ section('normaliseOrder edge cases');
 }
 
 // ── keeping a long conversation inside the window ───────────────────
+section('look_at with nothing named looks at what was just attached');
+{
+  // The report: "what is this picture?" with a screenshot attached; the model
+  // called look_at with only a question and got a red card.
+  const { executeTool } = await import('../server/tools/execute.js');
+  const chat = await store.createChat(user.id, { id: 'c-look', title: 'look', model: 'anthropic/claude-opus-5' });
+  await store.appendMessage(user.id, chat.id, {
+    id: 'u-look',
+    role: 'user',
+    text: 'cái này là ảnh gì',
+    attachments: [{ id: 'att-look', name: 'shot.png', kind: 'image', mime: 'image/png' }],
+  });
+  const out = await executeTool({ user, name: 'look_at', input: { question: 'Mô tả ảnh này' }, chatId: chat.id });
+  check('it is not an error', !out.isError, out.content.slice(0, 120));
+  check('a model that can see is told the picture is already in front of it — no second model paid for', /already in front of you/.test(out.content), out.content.slice(0, 120));
+  const none = await executeTool({ user, name: 'look_at', input: { question: 'x' }, chatId: null });
+  check('with nothing attached anywhere it still says what to give', none.isError && /file_id/.test(none.content));
+}
+
 section('measuring how full the window is');
 {
   const { measure } = await import('../server/compact.js');
@@ -327,6 +346,12 @@ section('measuring how full the window is');
   const empty = measure([], entry, { maxOutput: 10_000 });
   check('an empty conversation uses nothing', empty.used === 0 && empty.ratio === 0);
   check('and the budget leaves room for the reply', empty.budget === 90_000, String(empty.budget));
+
+  // The report: a model listed at 1M with an output cap of 1M showed "of 500K",
+  // because half the window was kept back for one reply.
+  const million = measure([], { context: 1_000_000, maxOutput: 1_000_000 });
+  check('a 1M window keeps back one reply\'s room, not half of itself', million.budget === 1_000_000 - 64_000, String(million.budget));
+  check('  and reports the whole window', million.context === 1_000_000);
 
   // The honest number comes from the provider: every assistant turn records the
   // prompt size it was actually billed for.

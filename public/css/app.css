@@ -6407,6 +6407,10 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 }
 .task__body { flex: 1 1 220px; min-width: 0; }
 .task__name { font-size: 14.5px; font-weight: 600; }
+/* An archived conversation is opened by pressing anywhere on its card. */
+.task.archived { cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; }
+.task.archived:hover { border-color: var(--line); background: color-mix(in srgb, var(--surface) 80%, var(--tint)); }
+.task.archived:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .task__what {
   margin-top: 3px;
   overflow: hidden;

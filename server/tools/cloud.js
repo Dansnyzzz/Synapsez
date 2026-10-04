@@ -2253,6 +2253,33 @@ const safeDecode = (s) => {
 };
 const LOOKABLE = /^(image\/(png|jpe?g|webp|gif)|application\/pdf)$/i;
 
+/** The newest picture or PDF sent in this conversation, or null. */
+async function latestLookable(userId, chatId) {
+  const messages = await getStore().listMessages(userId, chatId).catch(() => []);
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const files = messages[i].attachments || [];
+    for (let j = files.length - 1; j >= 0; j -= 1) {
+      const file = files[j];
+      if (file?.id && (file.kind === 'image' || file.kind === 'document' || /^image\/|pdf/i.test(String(file.mime || '')))) {
+        return { id: file.id, name: file.name, kind: file.kind === 'image' || /^image\//i.test(String(file.mime || '')) ? 'image' : 'document' };
+      }
+    }
+  }
+  return null;
+}
+
+/** Whether the model this conversation runs on can see pictures. */
+async function chatModelSees(userId, chatId) {
+  try {
+    const chat = await getStore().getChat(userId, chatId);
+    const prefs = await getPrefs(userId);
+    const entry = await resolveForUser(userId, chat?.model || prefs.defaultModel);
+    return entry?.vision === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Look at a picture or a PDF page on demand, with a model that can see.
  *
@@ -2329,7 +2356,22 @@ async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, c
     const data = buffer.toString('base64');
     item = isPdf ? { pdf: { data, name: safeDecode(parsed.pathname.split('/').pop() || '') || 'document.pdf', pages: wantPages } } : { images: [{ mime: type, data, name: parsed.href }] };
   } else {
-    throw new Error('Give a `file_id` (an attachment, a made file or a step screenshot) or a `url` of an image or PDF.');
+    /*
+     * Neither given: "what is this picture?" about the one just attached. The
+     * call used to fail outright, a red card on the commonest question there
+     * is. The newest picture or PDF in the conversation is what was meant.
+     */
+    const latest = chatId ? await latestLookable(userId, chatId) : null;
+    if (!latest) throw new Error('Give a `file_id` (an attachment, a made file or a step screenshot) or a `url` of an image or PDF.');
+    // A model that can see already has the picture in front of it; a second
+    // model reading it again is time and money spent on nothing.
+    if (latest.kind === 'image' && (await chatModelSees(userId, chatId))) {
+      return (
+        `${latest.name || 'The picture'} is attached to this conversation and you can see it — it is already in front of you. ` +
+        'Answer from the picture itself. (look_at is for an image or PDF by url, particular pages of a PDF, or a step screenshot.)'
+      );
+    }
+    return lookAtTool({ file_id: latest.id, url: undefined, pages, question }, { userId, chatId, signal });
   }
 
   const { text, model } = await see({ userId, chatId, ...item, question: ask, signal });

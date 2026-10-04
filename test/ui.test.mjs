@@ -3080,6 +3080,19 @@ section('the Archive shelf');
   check('listing the archived conversation', shelf.row);
   check('with no New button — nothing is made here', shelf.newHidden);
 
+  // Pressing anywhere on the card opens the conversation; the title is not a
+  // grey button of its own.
+  check('the title is plain text, not a button', await page.evaluate((id) => !document.querySelector(`[data-archived="${id}"] .task__name`)?.closest('button'), made));
+  await page.click(`[data-archived="${made}"] .task__when`);
+  await page.waitForTimeout(900);
+  const opened = await page.evaluate(() => ({
+    onPage: !document.getElementById('page').hidden,
+    title: document.getElementById('chat-title').textContent,
+  }));
+  check('pressing the card opens the conversation', !opened.onPage && /Ôn thi chương 1/.test(opened.title), JSON.stringify(opened));
+  await page.click('#open-archive');
+  await page.waitForTimeout(900);
+
   await page.click(`[data-restore="${made}"]`);
   await page.waitForTimeout(1200);
   const after = await page.evaluate(async (id) => ({

@@ -82,6 +82,9 @@ function estimateTokens(message) {
  * prompt size it was actually billed for. Everything after the last of those is
  * estimated, because nobody has counted it yet.
  */
+/** The most the context gauge keeps back for one reply — see measure. */
+export const REPLY_ROOM = 64_000;
+
 export function measure(messages, entry, { maxOutput } = {}) {
   const context = Number(entry?.context) || ASSUMED_CONTEXT;
 
@@ -133,8 +136,16 @@ export function measure(messages, entry, { maxOutput } = {}) {
    * turn: an extra model call each time, spending tokens to save tokens, on the
    * cheap models people pick precisely to avoid spending them.
    */
+  /*
+   * And capped at what one reply really takes. Aggregators list some models
+   * with an output cap equal to the whole window — a 1M window and a 1M cap —
+   * so "half the window" held back 500K for a single answer: the gauge read
+   * "134K of 500K" on a model advertised at 1M, and the fold came at half the
+   * room the model has. No reply here comes near 64K.
+   */
   const reserve = Math.min(
     Number(maxOutput) || Number(entry?.maxOutput) || 32_000,
+    REPLY_ROOM,
     Math.floor(context / 2),
   );
   const budget = Math.max(1024, context - reserve);

@@ -5263,7 +5263,13 @@ function renderContext(info) {
     return;
   }
 
-  const ratio = Math.min(1, Math.max(0, info.ratio ?? 0));
+  /*
+   * Said against the model's whole window — the figure its listing advertises.
+   * It was said against the window minus the room kept for a reply, and a model
+   * listed with a 1M window and a 1M output cap showed "of 500K": half of it
+   * held back for one answer. The fold still triggers on that budget (server).
+   */
+  const ratio = shareOfWindow(info);
   const percent = Math.round(ratio * 100);
 
   gauge.hidden = false;
@@ -5273,25 +5279,30 @@ function renderContext(info) {
   // the composer's left edge the moment a conversation passed half full.
   $('context-percent').textContent = '';
   gauge.classList.remove('has-number');
-  gauge.setAttribute('aria-label', t('context.menuUsed', { percent, used: fmtK(info.used), total: fmtK(info.budget) }));
+  gauge.setAttribute('aria-label', t('context.menuUsed', { percent, used: fmtK(info.used), total: fmtK(info.context) }));
   gauge.classList.toggle('is-warm', ratio >= 0.6);
   gauge.classList.toggle('is-hot', ratio >= 0.85);
 
-  const used = Math.round(info.used / 1000);
-  const total = Math.round(info.budget / 1000);
-  gauge.title = t(info.exact ? 'context.gauge' : 'context.gaugeEstimated', { percent, used, total });
+  gauge.title = t(info.exact ? 'context.gauge' : 'context.gaugeEstimated', { percent, used: fmtK(info.used), total: fmtK(info.context) });
 }
 
-const fmtK = (n) => (n >= 1000 ? `${Math.round(n / 1000)}K` : String(Math.round(n)));
+/** How full the window is, from 0 to 1. */
+const shareOfWindow = (info) => Math.min(1, Math.max(0, (Number(info?.used) || 0) / (Number(info?.context) || Infinity)));
+
+/** 1,000,000 → "1M", 262,144 → "262K", 900 → "900". */
+const fmtK = (n) => {
+  if (n >= 1_000_000) return `${Number((n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0))}M`;
+  return n >= 1000 ? `${Math.round(n / 1000)}K` : String(Math.round(n));
+};
 
 $('context-gauge').addEventListener('click', () => {
   const info = state.context;
   if (!info) return;
-  const percent = Math.round((info.ratio ?? 0) * 100);
+  const percent = Math.round(shareOfWindow(info) * 100);
 
   openMenu($('context-menu'), $('context-gauge'), [
     {
-      label: t('context.menuUsed', { percent, used: fmtK(info.used), total: fmtK(info.budget) }),
+      label: t('context.menuUsed', { percent, used: fmtK(info.used), total: fmtK(info.context) }),
       static: true,
     },
     {
