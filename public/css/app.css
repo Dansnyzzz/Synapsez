@@ -2264,7 +2264,10 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
   border: 1px solid var(--line);
   text-align: left;
 }
-.prose th { background: var(--surface); }
+/* Clear, like everything else drawn in a reply: the heading row is told apart
+   by its weight and a stronger rule under it, not by a grey slab. */
+.prose th { background: transparent; font-weight: 600; }
+.prose thead th { border-bottom-color: var(--text-faint); }
 
 /* Mathematics (see public/js/math.js). KaTeX inherits the text colour, so it
    reads correctly in both themes; a long formula scrolls inside its own box
@@ -3735,9 +3738,11 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
  * box, and most of what lands here is one screenful of SVG. */
 .widget {
   margin: 10px 0 4px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  /* Clear with an edge, like the tool cards: the grey fill made every card in a
+     reply a slab over the glass. */
+  background: transparent;
   overflow: hidden;
 }
 .widget__caption {

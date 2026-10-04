@@ -86,15 +86,26 @@ section('the start script really reaches the service, run under bash');
     fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nif [ "$1" = "-v" ]; then echo v22; exit 0; fi\necho started > ran\n', { mode: 0o755 });
     fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     fs.writeFileSync(path.join(bin, 'sudo'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    // `-c`, not the `-lc` the sandbox uses: a login shell on a CI runner reads
+    // the image's profile, which resets PATH from /etc/environment — the fakes
+    // above vanish, and the real npm sets about installing Chromium. What is
+    // under test is the script's own logic, which is the same either way.
     const run = () =>
-      spawnSync('bash', ['-lc', cb.startScript('t1')], {
+      spawnSync('bash', ['-c', cb.startScript('t1')], {
         cwd: dir,
         env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, SYNZ_SERVICE: Buffer.from('// service').toString('base64') },
         timeout: 20_000,
       });
     const first = run();
     const ran = path.join(dir, '.synz-browser', 'ran');
-    check('a first start reaches the service', first.status === 0 && fs.existsSync(ran), `exit ${first.status} ${String(first.stderr).slice(0, 200)}`);
+    const logOf = () => {
+      try {
+        return fs.readFileSync(path.join(dir, '.synz-browser', 'service.log'), 'utf8').slice(-200);
+      } catch {
+        return '(no service.log)';
+      }
+    };
+    check('a first start reaches the service', first.status === 0 && fs.existsSync(ran), `exit ${first.status} ${String(first.stderr).slice(0, 200)} ${logOf()}`);
     fs.rmSync(ran, { force: true });
     const second = run();
     check('  and so does a restart over an old pid', second.status === 0 && fs.existsSync(ran), `exit ${second.status}`);

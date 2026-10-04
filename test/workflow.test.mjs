@@ -1007,6 +1007,30 @@ section('a conversation turn cut off by the time limit is finished in the cloud'
   check('a run somebody stopped is left stopped', none.length === 0 && seen.length === 1);
 }
 
+
+section('a new day starts the workflow over, whatever became of yesterday');
+{
+  /*
+   * The report: a run stopped one day, and the workflow did not run the next.
+   * A due workflow starts a fresh run on its own schedule; yesterday's
+   * unfinished run is closed so it cannot write into the conversation beside
+   * today's, and a deleted conversation is simply made again.
+   */
+  const { startRun } = await import('../server/workflows.js');
+  const wf = await store.createWorkflow(aliceId, { id: 'wf-daily', title: 'Daily', steps: normaliseSteps(['a', 'b']), nextRunAt: null });
+  const first = await startRun(aliceId, wf);
+  await store.saveWorkflowRun(first.id, { status: 'needs_attention', leaseUntil: null, finished: true });
+
+  const second = await startRun(aliceId, wf);
+  check('the next day gets a run of its own, from the first step', second.id !== first.id && second.status === 'running' && Number(second.cursor) === 0);
+  check('  in the same conversation', second.chat_id === first.chat_id);
+  check("  and yesterday's stopped run is closed, not left to resume beside it", (await store.getWorkflowRun(aliceId, first.id)).status === 'cancelled');
+
+  await store.deleteChat(aliceId, second.chat_id);
+  const third = await startRun(aliceId, wf);
+  check('a deleted conversation is replaced by a new one, not a stopped workflow', !!third.chat_id && third.chat_id !== second.chat_id && !!(await store.getChat(aliceId, third.chat_id)));
+}
+
 removeTemp(process.env.DATA_DIR);
 console.log(
   failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll workflow checks passed.\x1b[0m\n',

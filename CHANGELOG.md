@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-04 (night, 2) — a workflow is a fresh start every day; clear cards
+
+### Fixed
+
+- **A workflow stopped one day did not start over the next.** A new day's run now closes any older unfinished run
+  of the same workflow and starts from step 1; a deleted conversation is replaced by a new one.
+- **CI test job failed on Linux**: the cloud-browser start-script test ran under a login shell whose profile resets
+  PATH on GitHub runners, so the real npm began installing Chromium. It now runs the script with a plain shell.
+
+### Changed
+
+- Cards in replies (comparison, sports, charts) and Markdown tables are clear with a border instead of a grey fill.
 ## 2026-10-04 (late) — work that finishes itself in the cloud
 
 ### Fixed

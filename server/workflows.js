@@ -208,6 +208,20 @@ export async function startRun(userId, workflow, { chatTitle } = {}) {
    */
   const [previous] = await store.listWorkflowRuns(userId, workflow.id, 1);
   const reuse = previous?.chat_id && (await store.getChat(userId, previous.chat_id)) ? previous.chat_id : null;
+
+  /*
+   * A new day's run starts from the beginning whatever became of the last one.
+   * An older run still open — waiting for a person, or left mid-step — is
+   * closed first, so it is never picked up again to write into the same
+   * conversation alongside the new run. One actively held by another
+   * invocation is left to finish what it is doing.
+   */
+  for (const old of await store.listWorkflowRuns(userId, workflow.id, 5)) {
+    const held = old.lease_until && new Date(old.lease_until).getTime() > Date.now();
+    if ((old.status === 'needs_attention' || old.status === 'running') && !held) {
+      await store.saveWorkflowRun(old.id, { status: 'cancelled', leaseUntil: null, finished: true }).catch(() => {});
+    }
+  }
   const chatId = reuse || crypto.randomUUID();
 
   if (!reuse) {
