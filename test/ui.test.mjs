@@ -1177,7 +1177,8 @@ section('copying and editing what you said');
     return {
       hasId: !!m?.dataset.messageId,
       acts: [...(m?.querySelectorAll('.msg__action') || [])].map((b) => b.dataset.act).join(','),
-      opacity: actions ? Number(getComputedStyle(actions).opacity) : null,
+      // The buttons fade; the row stays, because it also carries the time.
+      opacity: actions?.querySelector('.msg__action') ? Number(getComputedStyle(actions.querySelector('.msg__action')).opacity) : null,
       // Reserved space, not display:none — a transcript that shifts under the
       // pointer as you move down it is unusable.
       height: actions ? Math.round(actions.getBoundingClientRect().height) : 0,
@@ -1191,7 +1192,7 @@ section('copying and editing what you said');
   await page.hover(bubble);
   await page.waitForTimeout(350);
   const shown = await page.evaluate(
-    (sel) => Number(getComputedStyle(document.querySelector(`${sel} .msg__actions`)).opacity),
+    (sel) => Number(getComputedStyle(document.querySelector(`${sel} .msg__actions .msg__action`)).opacity),
     bubble,
   );
   check('and appearing when you do', shown === 1, `${shown}`);
@@ -1209,7 +1210,7 @@ section('copying and editing what you said');
   const afterCopy = await page.evaluate((sel) => {
     const m = document.querySelector(sel);
     return {
-      opacity: Number(getComputedStyle(m.querySelector('.msg__actions')).opacity),
+      opacity: Number(getComputedStyle(m.querySelector('.msg__actions .msg__action')).opacity),
       stillFocused: m.contains(document.activeElement),
     };
   }, bubble);
@@ -1267,6 +1268,23 @@ section('copying and editing what you said');
   check('saving rewrites the message', after.onScreen === rewritten, after.onScreen);
   check('and stores the new wording', after.stored.join('|') === rewritten, after.stored.join('|'));
   check('the address in it is still a link afterwards', after.href === 'https://example.com/paper.pdf', after.href);
+
+  // When it was sent, beside its copy button, in this device's own time zone.
+  const stamp = await page.evaluate(() => {
+    const time = document.querySelector('#messages .msg--user .msg__actions .msg__time');
+    if (!time) return null;
+    const at = new Date(time.getAttribute('datetime'));
+    return {
+      text: time.textContent,
+      tooltip: time.title,
+      recent: Math.abs(Date.now() - at.getTime()) < 10 * 60_000,
+      year: String(new Date().getFullYear()),
+      visible: getComputedStyle(time).opacity !== '0',
+    };
+  });
+  check('a sent message says when it was sent', !!stamp?.recent && stamp.text.includes(stamp.year), JSON.stringify(stamp));
+  check('  shown without hovering, the buttons still only on hover', !!stamp?.visible);
+  check('  with the full date and the time zone on its tooltip', /\d{2}:\d{2}:\d{2}/.test(stamp?.tooltip || ''), stamp?.tooltip);
   check('and still opens away from the conversation', after.target === '_blank', after.target);
   // `textContent` has to read back exactly what was typed, or copying and
   // re-editing the bubble would hand back something the person did not write.

@@ -137,6 +137,20 @@ export function asList(value, { loose = true } = {}) {
       return null;
     }
     if (keys.length && keys.every((k, i) => k === String(i))) return keys.map((k) => value[k]);
+    /*
+     * Options keyed by their labels — `{ "A": "…", "B": "…" }` — where the
+     * schema wants a list of them. Only when the schema says a list belongs
+     * here (`loose`), and only when every value is a plain string or number,
+     * so a real object that happens to land here is not flattened into one.
+     */
+    if (loose && keys.length >= 2 && keys.every((k) => /^(?:[a-z]|\d{1,2}|option[ _-]?\w{1,3}|choice[ _-]?\w{1,3})[.)]?$/i.test(k))) {
+      const values = keys.map((k) => value[k]);
+      if (values.every((v) => typeof v === 'string' || typeof v === 'number')) return values;
+    }
+    // `{}` for a list with nothing in it — a free-text question's "options".
+    if (loose && keys.length === 0) return [];
+    // `{ "First option": true, "Second option": true }` — the names are the list.
+    if (loose && keys.length && keys.every((k) => value[k] === true)) return keys;
     return null;
   }
   if (typeof value === 'string' && /^\s*\[[\s\S]*\]\s*$/.test(value)) {

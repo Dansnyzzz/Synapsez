@@ -1,3 +1,4 @@
+import { asList } from './validate.js';
 /**
  * A question with buttons on it.
  *
@@ -48,8 +49,8 @@ function option(raw) {
  * the model is what reads a tool error and tries again.
  */
 export function normaliseQuestions(input) {
-  const raw = Array.isArray(input?.questions)
-    ? input.questions
+  const raw = asList(input?.questions)
+    ? asList(input.questions)
     : // One question passed at the top level, which is what a model writes when
       // it only has one to ask.
       input?.question
@@ -83,7 +84,8 @@ export function normaliseQuestions(input) {
 
     const options = [];
     const seen = new Set();
-    for (const candidate of Array.isArray(entry?.options) ? entry.options : []) {
+    // Read in every shape a list arrives in, the same as the argument check — see asList.
+    for (const candidate of asList(entry?.options) || []) {
       const cleaned = option(candidate);
       // A duplicate label is two buttons that do the same thing, and the answer
       // would not say which was pressed.

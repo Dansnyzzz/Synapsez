@@ -2109,16 +2109,30 @@ textarea {
    another, and the second is unusable. */
 .msg__actions {
   display: flex;
+  align-items: center;
   gap: 2px;
   height: 26px;
   margin-top: 3px;
-  opacity: 0;
-  transition: opacity 0.14s ease;
 }
-.msg--user:hover .msg__actions,
-.msg--assistant:hover .msg__actions {
+/* The buttons fade in on hover; the time beside them is always there, quiet. */
+.msg__actions .msg__action {
+  opacity: 0;
+  transition: opacity 0.14s ease, background 0.14s, color 0.14s;
+}
+.msg--user:hover .msg__actions .msg__action,
+.msg--assistant:hover .msg__actions .msg__action {
   opacity: 1;
 }
+/* When it was sent, or when the reply finished — in the device's own zone. */
+.msg__time {
+  margin-right: 6px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* At the left corner of a reply's row, across from its copy button. */
+.msg--assistant .msg__time { margin-right: auto; }
 /* Hard against the right edge, where the user's own copy button already is.
    Under the left edge of a reply it was the furthest point on the row from
    where the pointer has just been — you finish reading at the right. */
@@ -2134,8 +2148,8 @@ textarea {
  * is the distinction the browser already draws between "I tabbed here" and "I
  * clicked here", which is exactly the one wanted.
  */
-.msg--user:has(.msg__action:focus-visible) .msg__actions,
-.msg--assistant:has(.msg__action:focus-visible) .msg__actions {
+.msg--user:has(.msg__action:focus-visible) .msg__actions .msg__action,
+.msg--assistant:has(.msg__action:focus-visible) .msg__actions .msg__action {
   opacity: 1;
 }
 .msg--user.is-editing .msg__actions { visibility: hidden; }
@@ -2177,7 +2191,7 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
 .msg__action.is-done { color: var(--ok); }
 /* No hover on a touch screen, so there is nothing to reveal — they simply stay. */
 @media (hover: none) {
-  .msg__actions { opacity: 1; }
+  .msg__actions .msg__action { opacity: 1; }
 }
 
 /* The bubble while it is being rewritten. */
@@ -7202,17 +7216,25 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 
 /* A source with nothing to draw — a .docx, a text file — keeps the name it
    always had, which is what the whole shelf used to be. */
+/* Drawn as a page the same size as a thumbnail, so the grid lines up, with the
+   name centred on it. A name with no spaces — "Tong_hop_cong_cu.docx" — breaks
+   anywhere rather than running off the tile. */
 .shelf .card__name {
-  flex: 1;
-  padding: 12px 12px 0;
+  display: grid;
+  place-items: center;
+  height: 118px;
+  margin: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
   color: var(--text);
   font-size: 12.5px;
+  font-weight: 600;
   line-height: 1.35;
+  text-align: center;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
-  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .shelf .card__foot {

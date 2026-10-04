@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-10-04 (night, 3) — fewer interruptions; times on messages
+
+### Added
+
+- **When each message was sent and each reply finished**, beside its copy button, in the device's own time zone —
+  a device in Vietnam shows Vietnamese time, one in the US shows US time. Full date, seconds and zone on hover.
+
+### Fixed
+
+- **"Provider returned an empty response" ended the turn.** It is now retried like any other provider hiccup.
+- **A question form was refused after it was answered**, then asked again. The answer is accepted by the same reader
+  that drew the form, and options sent as `{}`, `{A: …}` or `{"…": true}` are read as lists.
+- **Comparison cards failed** when rows were written as `[label, …values]`, put beside the card, keyed by label, or
+  when the items were nested; all are read now, and a recommendation can be given by name.
+- **The same research or read ran twice.** An identical read in one turn is answered from the first; deep research
+  is capped at three per turn.
+- **A long file name ran off its tile** in a project's sources; it now wraps, centred on a page-sized tile.
 ## 2026-10-04 (night, 2) — a workflow is a fresh start every day; clear cards
 
 ### Fixed

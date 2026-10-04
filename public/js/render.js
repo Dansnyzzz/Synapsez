@@ -1291,7 +1291,32 @@ export function withLinks(text) {
   return frag;
 }
 
-export function userMessage(text, files = [], id = null) {
+/**
+ * When a message was sent, or a reply finished, in the device's own time.
+ *
+ * No time zone is named, so the browser uses the one the device is set to —
+ * a phone in Hanoi shows Hanoi time and the same conversation opened in New
+ * York shows New York time, and a device that changes zone follows it. The
+ * full date with seconds and the zone's name are on the tooltip.
+ */
+export function timeStamp(at) {
+  const date = at instanceof Date ? at : new Date(at);
+  if (!at || Number.isNaN(date.getTime())) return null;
+  const node = el('time', 'msg__time');
+  node.dateTime = date.toISOString();
+  const locale = currentLanguage() === 'vi' ? 'vi-VN' : undefined;
+  node.textContent = new Intl.DateTimeFormat(locale, {
+    weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(date);
+  node.title = new Intl.DateTimeFormat(locale, {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'long',
+  }).format(date);
+  return node;
+}
+
+/** @param at  when it was sent; the time is shown beside its copy button. */
+export function userMessage(text, files = [], id = null, at = null) {
   const wrap = el('div', 'msg msg--user');
   if (id) wrap.dataset.messageId = id;
   const bubble = el('div', 'bubble');
@@ -1324,6 +1349,8 @@ export function userMessage(text, files = [], id = null) {
     '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M13.5 2.9a1.9 1.9 0 0 1 2.7 2.7L7.8 14 4 15l1-3.8Z" />' +
     '</svg></button>';
+  const when = timeStamp(at);
+  if (when) actions.prepend(when);
   wrap.append(actions);
 
   return wrap;
@@ -2042,7 +2069,7 @@ export function assistantMessage() {
      * @param pending  this turn is still running, so a call with no result yet
      *   is waiting for one rather than lost.
      */
-    hydrate(message, resultsByCallId, { pending = false } = {}) {
+    hydrate(message, resultsByCallId, { pending = false, endsTurn = false } = {}) {
       if (message.thinking) {
         api.appendThinking(message.thinking);
         api.finishThinking();
@@ -2062,7 +2089,9 @@ export function assistantMessage() {
         else if (!pending) handle.complete({ content: t('chat.cutOff'), isError: true });
       }
       if (message.text) api.appendText(message.text);
-      api.finish();
+      // Only the reply's last block carries the time it finished, so a long turn
+      // is not a column of timestamps.
+      api.finish(endsTurn && !pending ? message.createdAt : null);
       return api;
     },
 
@@ -2073,10 +2102,14 @@ export function assistantMessage() {
      * for the rest of the conversation — a turn that finished an hour ago still
      * drawn as though it were working.
      */
-    finish() {
+    /** @param at  when the reply finished; shown beside its copy button. */
+    finish(at = null) {
       // The last tokens of a reply may still be owed a frame. A turn that ends
       // must show all of what it said, not all but the final sentence.
       if (paintQueued) api.flushText();
+      const row = wrap.querySelector(':scope > .msg__actions');
+      const when = row && !row.querySelector('.msg__time') ? timeStamp(at) : null;
+      if (when) row.prepend(when);
       closeGroup();
       // Sources the conversation cannot account for are marked once the reply
       // is whole; opening a chip checks again with whatever has loaded since.

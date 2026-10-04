@@ -1858,7 +1858,7 @@ function drawTranscript(host, messages, { live = false } = {}) {
 
   const newest = messages.findLastIndex((m) => m.role === 'assistant');
   messages.forEach((m, i) => {
-    if (m.role === 'user') host.append(userMessage(m.text, m.attachments || [], m.id));
+    if (m.role === 'user') host.append(userMessage(m.text, m.attachments || [], m.id, m.createdAt));
     // A summary is what the model reads in place of the older turns; the
     // person still has those turns, so it is not drawn among them.
     else if (m.role === 'summary') return;
@@ -1867,7 +1867,9 @@ function drawTranscript(host, messages, { live = false } = {}) {
     else if (m.role === 'assistant') {
       const turn = assistantMessage();
       host.append(turn.node);
-      turn.hydrate(m, resultsByCallId, { pending: live && i === newest });
+      // The turn ends where the next thing said is the person's, or nothing.
+      const next = messages.slice(i + 1).find((x) => x.role === 'user' || x.role === 'assistant');
+      turn.hydrate(m, resultsByCallId, { pending: live && i === newest, endsTurn: !next || next.role === 'user' });
     }
   });
 }
@@ -2882,7 +2884,7 @@ $('composer').addEventListener('submit', async (event) => {
       }
     }
     const here = () => state.chatId === chatId;
-    const node = userMessage(text, sending);
+    const node = userMessage(text, sending, null, new Date());
     if (here()) {
       setEmpty(false);
       $('messages').append(node);
@@ -3018,7 +3020,7 @@ function renderQueue() {
  */
 async function deliver(item, { interrupting = false, run = null, chatId = null } = {}) {
   const target = chatId || run?.chatId || state.chatId;
-  const node = userMessage(item.text, item.files);
+  const node = userMessage(item.text, item.files, null, new Date());
   if (run) run.stage.append(node);
   else $('messages').append(node);
   if (!run || onScreen(run)) scrollToEnd();
@@ -3588,7 +3590,8 @@ async function streamOnce(run, decision, answers) {
           clearDrafts();
           // Collapse any run of steps still drawn as in progress. Without this a
           // finished turn keeps a spinner for the rest of the conversation.
-          run.turn?.finish();
+          // Stamped with now: this is the moment the answer finished.
+          run.turn?.finish(new Date());
           /**
            * Say when the reply is not actually an answer.
            *

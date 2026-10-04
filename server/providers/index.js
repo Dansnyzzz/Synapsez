@@ -228,8 +228,14 @@ const DEAD_KEY =
  * with no status it used to fall through to FATAL, ending the turn on a
  * hiccup that the next attempt would not have had.
  */
+/*
+ * "Provider returned an empty response" is OpenRouter saying the model behind
+ * it sent nothing back — common on free models under load, and gone on the
+ * next attempt. Missing from this list it was graded FATAL, and every one of
+ * them ended the turn with a Continue button.
+ */
 const TRANSIENT =
-  /timeout|timed out|econnreset|econnrefused|socket hang up|fetch failed|network|sse|stream|overloaded|upstream|provider returned error|terminated|premature|unexpected end|bad gateway|service unavailable|internal server error|stalled/;
+  /timeout|timed out|econnreset|econnrefused|socket hang up|fetch failed|network|sse|stream|overloaded|upstream|provider returned error|terminated|premature|unexpected end|bad gateway|service unavailable|internal server error|stalled|empty response|empty completion|no content|returned nothing|no choices/;
 
 /**
  * What a failure says about the key that produced it.

@@ -123,14 +123,39 @@ const SHAPES = {
     return { days };
   },
   comparison(c) {
-    const items = strings(c.items, 6);
+    // The things compared, under any of the names models give them, and never
+    // nested one list deeper than they belong: [["A", "B"]] is ["A", "B"].
+    let rawItems = list(pick(c, 'items', 'columns', 'options', 'products', 'compare', 'headers'), 8);
+    if (rawItems.length === 1 && Array.isArray(rawItems[0])) rawItems = rawItems[0];
+    const items = rawItems.map((s) => str(s, 120)).filter(Boolean).slice(0, 6);
     need(items.length >= 2, 'A comparison needs at least two `items` — the things compared.');
-    const rows = list(c.rows, 30)
-      .map((r) => ({ label: str(r?.label, 80), values: list(r?.values, items.length).map((v) => str(v, 300)) }))
+    /*
+     * A row in any of the shapes it arrives in:
+     *   { label, values: [...] }           — the documented one
+     *   ["Price", "$0", "$20"]             — label first, then one per item
+     *   { label: "Price", "Claude Free": "$0", "Claude Pro": "$20" }
+     * and `rows` itself may be { "Price": ["$0", "$20"], … }.
+     */
+    const rowsIn = pick(c, 'rows', 'criteria', 'features', 'aspects');
+    const rowList =
+      rowsIn && typeof rowsIn === 'object' && !Array.isArray(rowsIn) && !asList(rowsIn)
+        ? Object.entries(rowsIn).map(([label, values]) => ({ label, values }))
+        : list(rowsIn, 30);
+    const rows = rowList
+      .map((r) => {
+        if (Array.isArray(r)) return { label: str(r[0], 80), values: r.slice(1, items.length + 1).map((v) => str(v, 300)) };
+        const label = str(pick(r, 'label', 'name', 'feature', 'criterion', 'aspect', 'title'), 80);
+        let values = list(pick(r, 'values', 'cells', 'data'), items.length);
+        if (!values.length && r && typeof r === 'object') values = items.map((item) => r[item] ?? '');
+        return { label, values: values.map((v) => str(v, 300)) };
+      })
       .filter((r) => r.label);
     need(rows.length, 'A comparison needs `rows`: [{ label, values: [one per item] }].');
     for (const r of rows) while (r.values.length < items.length) r.values.push('');
-    const best = Number.isInteger(c.recommended) && c.recommended >= 0 && c.recommended < items.length ? c.recommended : null;
+    // The recommended one by its index, as a numeric string, or by its name.
+    const said = pick(c, 'recommended', 'winner', 'best');
+    const asIndex = /^\d+$/.test(String(said ?? '').trim()) ? Number(said) : items.findIndex((i) => i.toLowerCase() === String(said ?? '').trim().toLowerCase());
+    const best = Number.isInteger(asIndex) && asIndex >= 0 && asIndex < items.length ? asIndex : null;
     return { items, rows, verdict: str(c.verdict, 600), recommended: best };
   },
   quiz(c) {
@@ -208,7 +233,10 @@ export function buildCard(type, data = {}) {
 export async function showCardTool(input) {
   // The card's fields put beside `type` instead of inside `card` are the same card.
   const { type: asked, card, ...rest } = input || {};
-  const built = buildCard(String(asked || ''), card ?? rest);
+  // Fields put beside `card` — `rows`, `recommended` — belong to it too; the
+  // ones inside the card win where both say something.
+  const merged = card && typeof card === 'object' && !Array.isArray(card) ? { ...rest, ...card } : (card ?? rest);
+  const built = buildCard(String(asked || ''), merged);
   const type = built.type;
   const interactive = type === 'quiz' || type === 'flashcards';
   return {

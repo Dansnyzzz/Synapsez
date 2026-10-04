@@ -847,7 +847,55 @@ export function resumableCalls(toolCalls, startedIds = []) {
   return { run, skipped };
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, answers }) {
+/**
+ * Reads whose answer does not change within a turn, so an identical second
+ * call is answered from the first — see `repeatedRead`.
+ *
+ * The report: a model sent the same deep research twice in one breath (two
+ * three-minute runs for one answer), and read the docx skill twice in a row
+ * after a long wait in a queue. Volatile reads — the time, prices, a live
+ * browser page, a file that may just have been rewritten — are left out.
+ */
+const STABLE_READS = new Set([
+  'deep_research', 'skill_read', 'web_search', 'web_fetch', 'search_docs', 'encyclopedia',
+  'image_search', 'extract', 'youtube_transcript', 'list_indexed', 'memory_read',
+]);
+/** Deep research runs at most this many times in one turn; each is minutes of work. */
+export const MAX_RESEARCH_PER_TURN = 3;
+
+const callKey = (call) => {
+  try {
+    return `${call.name}:${JSON.stringify(call.input ?? {}, Object.keys(call.input ?? {}).sort())}`;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The earlier answer to this exact call in this turn, or a refusal for one
+ * research too many — or null when the call should simply run.
+ *
+ * @param {Map<string, Promise<any>>} memo  this turn's reads, keyed by name and arguments
+ */
+export function repeatedRead(call, memo, counts) {
+  if (!memo) return null;
+  const key = STABLE_READS.has(call.name) ? callKey(call) : null;
+  if (key && memo.has(key)) return { key, earlier: memo.get(key) };
+  if (call.name === 'deep_research') {
+    counts.research = (counts.research || 0) + 1;
+    if (counts.research > MAX_RESEARCH_PER_TURN) {
+      return {
+        key,
+        refused:
+          `Deep research has already run ${MAX_RESEARCH_PER_TURN} times in this turn. Answer from what it found; ` +
+          'do not start another.',
+      };
+    }
+  }
+  return key ? { key } : null;
+}
+
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, answers, memo = null, counts = {} }) {
   const results = await mapWithLimit(
     toolCalls,
     MAX_PARALLEL_TOOLS,
@@ -861,7 +909,26 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
       }
       const started = Date.now();
       emit('tool_call', { id: call.id, name: call.name, input: call.input });
-      const { content, isError, file, widget, shot, schedule, answered } = await executeTool({
+      const seen = repeatedRead(call, memo, counts);
+      if (seen?.refused) {
+        const result = { toolCallId: call.id, name: call.name, content: seen.refused, isError: true, ms: 0 };
+        emit('tool_result', result);
+        return result;
+      }
+      if (seen?.earlier) {
+        // The same call already answered — or is answering, in this very batch.
+        const first = await seen.earlier;
+        const result = {
+          toolCallId: call.id,
+          name: call.name,
+          content: `${first.content}\n\n[This exact call already ran in this turn, so its result is repeated rather than run again. Use it; do not call it a third time.]`,
+          isError: first.isError,
+          ms: Date.now() - started,
+        };
+        emit('tool_result', result);
+        return result;
+      }
+      const running = executeTool({
         user,
         name: call.name,
         input: call.input,
@@ -878,6 +945,14 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         // Where the person is, for a link a tool builds — see publishFileTool.
         origin,
       });
+      // Remembered before it is awaited, so a duplicate in the same batch waits
+      // for this run instead of starting a second one. A failure is not kept:
+      // the next identical call should get to try.
+      if (seen?.key) {
+        memo.set(seen.key, running);
+        running.then((r) => r?.isError && memo.get(seen.key) === running && memo.delete(seen.key)).catch(() => memo.delete(seen.key));
+      }
+      const { content, isError, file, widget, shot, schedule, answered } = await running;
       const result = {
         toolCallId: call.id,
         name: call.name,
@@ -1104,6 +1179,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   const sent = { count: 0 };
   /** Attachment rows read this turn, by id — they never change, so each is read once. */
   const turnFiles = new Map();
+  // This turn's reads and its deep-research count — see `repeatedRead`.
+  const turnReads = new Map();
+  const turnCounts = {};
   const buildTools = () => availableTools({
     workerOnline,
     desktopOnline: !!worker?.info?.desktop,
@@ -1239,7 +1317,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: answered })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: answered, memo: turnReads, counts: turnCounts })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -1688,7 +1766,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // No answers on this path: a well-formed question pauses above rather than
     // reaching here, so anything named `ask_options` that gets this far is a
     // malformed call on its way to becoming a tool error.
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: null });
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: null, memo: turnReads, counts: turnCounts });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {

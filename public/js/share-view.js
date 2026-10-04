@@ -57,7 +57,7 @@ async function show() {
   for (const m of data.messages) if (m.role === 'tool') for (const r of m.results || []) results.set(r.toolCallId, r);
   thread.replaceChildren();
   for (const m of data.messages) {
-    if (m.role === 'user') thread.append(userMessage(m.text, m.attachments || [], m.id));
+    if (m.role === 'user') thread.append(userMessage(m.text, m.attachments || [], m.id, m.createdAt));
     else if (m.role === 'assistant') {
       const turn = assistantMessage();
       thread.append(turn.node);

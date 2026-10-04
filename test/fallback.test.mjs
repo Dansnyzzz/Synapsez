@@ -51,6 +51,9 @@ section('a failure is graded by what it says about the key');
   // An error sent inside a stream the provider had already started: no status,
   // and the next attempt usually works.
   check('an error injected mid-stream is upstream', classify(err(undefined, 'JSON error injected into SSE stream')).kind === 'UPSTREAM');
+  // The report: free models on OpenRouter answer "Provider returned an empty
+  // response" now and then; graded FATAL it ended the turn every time.
+  check('an empty response from the provider is retried, not fatal', classify(err(undefined, 'Provider returned an empty response')).kind === 'UPSTREAM');
   check('an overloaded provider is upstream', classify(err(undefined, 'Provider returned error: overloaded')).kind === 'UPSTREAM');
   check('400 is fatal on every key', classify(err(400, 'messages: invalid role')).kind === 'FATAL');
   check('an unknown model is fatal', classify(err(404, 'model not found')).kind === 'FATAL');

@@ -1465,6 +1465,51 @@ section('the modules in an import cycle can each be loaded first');
 // the way `compact()` and `runParallel` already do, so it could not be driven
 // without a live key; the seam is added in server/agent.js alongside this
 // test so the wiring itself — not just the descriptor — is what is checked.
+section('the same read twice in a turn runs once');
+{
+  /*
+   * The report: two identical deep research calls side by side, and the docx
+   * skill read twice in a row. An identical stable read is answered from the
+   * first; deep research is capped per turn.
+   */
+  const { repeatedRead, MAX_RESEARCH_PER_TURN } = await import('../server/agent.js');
+  const dupUser = await store.createUser({ id: 'u-dup', email: 'dup@example.com', name: 'Dup', passwordHash: await hashPassword('a-sufficiently-long-password'), role: 'admin' });
+  await store.createChat(dupUser.id, { id: 'c-dup', title: 'dup' });
+  await store.appendMessage(dupUser.id, 'c-dup', { id: 'u-dup-1', role: 'user', text: 'read your notes' });
+  let calls = 0;
+  const seenResults = [];
+  const stream = async function* scripted(opts) {
+    calls += 1;
+    const last = opts.messages.at(-1);
+    if (last?.role === 'tool') seenResults.push(...last.results);
+    if (calls === 1) {
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [
+        { id: 'm1', name: 'memory_read', input: { key: 'prefs' } },
+        { id: 'm2', name: 'memory_read', input: { key: 'prefs' } },
+      ], usage: { input: 5, output: 5 } };
+    } else if (calls === 2) {
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'm3', name: 'memory_read', input: { key: 'prefs' } }], usage: { input: 5, output: 5 } };
+    } else {
+      yield { type: 'text', delta: 'done' };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+    }
+  };
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-dup', emit: () => {}, stream });
+  const repeated = seenResults.filter((r) => /already ran in this turn/.test(r.content || ''));
+  check('a duplicate in the same batch and one in the next step are both answered from the first', repeated.length === 2, `${repeated.length} of ${seenResults.length}`);
+
+  const memo = new Map();
+  const counts = {};
+  let refused = null;
+  for (let i = 0; i <= MAX_RESEARCH_PER_TURN; i += 1) {
+    const seen = repeatedRead({ name: 'deep_research', input: { question: `q${i}` } }, memo, counts);
+    if (seen?.key) memo.set(seen.key, Promise.resolve({ content: 'r', isError: false }));
+    if (seen?.refused) refused = seen.refused;
+  }
+  check(`deep research past ${MAX_RESEARCH_PER_TURN} in a turn is refused`, /already run/.test(refused || ''), refused);
+  check('volatile reads are never answered from memory', repeatedRead({ name: 'world_facts', input: { kind: 'time' } }, new Map(), {}) === null);
+}
+
 section('the progress gate: a turn cannot finish with its plan left behind');
 {
   /*

@@ -500,6 +500,28 @@ section('the plan panel: one step running after a refresh, and updates say what 
   check('a running step is a ring, a waiting one dashed, a done one ticked', planItemHtml(base[0]).includes('pmark--active') && planItemHtml(base[1]).includes('stroke-dasharray') && planItemHtml({ title: 'x', status: 'done' }).includes('pmark--done'));
 }
 
+section('a comparison card is read however the model lays it out');
+{
+  // The exact calls from the report.
+  const split = await showCardTool({
+    type: 'comparison',
+    card: { items: ['Claude Research', 'Claude Science'] },
+    recommended: 0,
+    rows: [{ label: 'Bản chất', values: ['Chế độ trong cuộc trò chuyện', 'Ứng dụng desktop riêng'] }],
+  });
+  check('rows and recommended beside the card belong to it', split.widget.card.rows.length === 1 && split.widget.card.recommended === 0, JSON.stringify(split.widget.card));
+  const arrays = buildCard('comparison', { items: ['A', 'B'], rows: [['Bản chất', 'Chế độ', 'Ứng dụng'], ['Giá', '$0', '$20']] });
+  check('a row written as [label, …values] is read', arrays.rows.length === 2 && arrays.rows[1].values.join() === '$0,$20', JSON.stringify(arrays.rows));
+  check('items nested one list too deep are flattened', buildCard('comparison', { items: [['A', 'B']], rows: [['x', '1', '2']] }).items.join() === 'A,B');
+  const keyed = buildCard('comparison', { items: ['Free', 'Pro'], rows: { Giá: ['$0', '$20'] }, recommended: 'Pro' });
+  check('rows keyed by label are read, and a recommendation by name', keyed.rows[0].label === 'Giá' && keyed.recommended === 1, JSON.stringify(keyed));
+  const byItem = buildCard('comparison', { items: ['Free', 'Pro'], rows: [{ label: 'Giá', Free: '$0', Pro: '$20' }] });
+  check('a row with one field per item is read', byItem.rows[0].values.join() === '$0,$20');
+  const { validateArguments } = await import('../server/tools/validate.js');
+  const form = { questions: [{ question: 'Q?', options: ['a', 'b'] }, { question: 'Email?', kind: 'text', options: {} }, { question: 'Pick', options: { A: 'x', B: 'y' } }] };
+  check('a form question with options {} or keyed by letter passes the check', validateArguments(TOOLS_BY_NAME.ask_options.parameters, form).ok, JSON.stringify(validateArguments(TOOLS_BY_NAME.ask_options.parameters, form).error || ''));
+}
+
 section('a quiz answer is read however the model says it');
 {
   const q = (answer, options = ['A. Lãi suất', 'B. Lạm phát', 'C. Thuế']) =>

@@ -9,6 +9,7 @@ import { keepStepShot } from '../attachments.js';
 import { redactSecrets } from '../redact.js';
 import { untrusted } from './untrusted.js';
 import { validateArguments } from './validate.js';
+import { normaliseQuestions } from './askOptions.js';
 
 const POLL_MS = 400;
 const DEFAULT_LOCAL_TIMEOUT_MS = 180_000;
@@ -249,7 +250,24 @@ export async function executeTool(args) {
   const def = TOOLS_BY_NAME[args?.name];
   let notes = [];
   if (def?.parameters) {
-    const checked = validateArguments(def.parameters, args.input);
+    let checked = validateArguments(def.parameters, args.input);
+    /*
+     * A question form is judged by the same reader that drew it.
+     *
+     * `normaliseQuestions` (askOptions.js) is what put the form in front of the
+     * person, and it reads loosely; this check is strict. So a form that had
+     * been drawn and answered was refused when the answer came back — the red
+     * "did not match" card — and the model asked the same thing again. If the
+     * form could be drawn, its answer is accepted.
+     */
+    if (!checked.ok && args.name === 'ask_options') {
+      try {
+        normaliseQuestions(args.input);
+        checked = { ok: true, input: args.input, notes: [] };
+      } catch {
+        /* genuinely unusable: refused below with the validator's sentence */
+      }
+    }
     if (!checked.ok) {
       return {
         isError: true,
