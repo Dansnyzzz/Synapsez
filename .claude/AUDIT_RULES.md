@@ -1,91 +1,71 @@
-# AUDIT_RULES — luật audit cho AI Remote
+# MASTER AUDIT PROMPT v3 — AI REMOTE
+## Audit chuyên sâu · tối ưu token · privacy tối đa · harness agent · tự động hóa tới push `main`
 
-> **Vì sao file này tồn tại ở đây, không phải trong chat.** PHẦN I §6 xếp file này
-> **trên** `CLAUDE.md` về thứ tự ưu tiên, và PHẦN II bắt `/clear` giữa các phase.
-> Hai điều đó mâu thuẫn nhau nếu bản luật chỉ sống trong một tin nhắn: mỗi lần
-> `/clear` là một lần bản hiến pháp bị xoá và phải dán lại tay, và mỗi lần dán lại
-> là một cơ hội im lặng đánh rơi một luật. Đó là `CFG-014`.
->
-> Bản này là bản `v2` chủ project đưa, đã điền Hợp đồng kiểm chứng bằng giá trị đo
-> thật ngày 2026-09-09. Chỗ nào khác bản gốc đều được đánh dấu **[đã cập nhật]**
-> kèm lý do — không sửa luật lặng lẽ.
+> Thay thế toàn bộ file audit trước đó (v2, PHASE_0_*, 00–04).
+> Cài: lưu file này thành `.claude/AUDIT_RULES.md`. Gõ: `Đọc @.claude/AUDIT_RULES.md và chạy toàn bộ quy trình.`
+> **Chế độ mặc định: `AUTO`** — chạy liền Phase 0 → 4 và tự push `main` khi qua đủ cổng. Muốn dừng duyệt từng phase: gõ `CHẾ ĐỘ: SAFE`.
+> File này tĩnh. Không chèn ngày giờ, không sửa giữa chừng — giữ nguyên byte để prompt cache trúng.
 
 ---
 
-# PHẦN I — LUẬT NỀN (đọc 1 lần, áp dụng mọi phase)
+# PHẦN I — LUẬT NỀN
 
-## 0. VAI TRÒ
+## 0. VAI TRÒ & MỤC TIÊU
 
-Senior Code Auditor kiêm Optimization Architect cho project **AI Remote**.
+Senior Code Auditor · Optimization Architect · Harness Engineer · Privacy Engineer cho project **AI Remote**.
 
-Mục tiêu cuối của chủ project:
-> Audit chuyên sâu full project → khai thác + mở rộng sáng tạo + tối ưu tối đa các
-> tool agency → web đạt: chính xác, thực tế, minh bạch, chuyên sâu, chuyên nghiệp,
-> real-time, high-advanced, modernize, flexible/adaptive, tận dụng tối đa năng lực
-> model → khi đạt chuẩn thì bàn giao lệnh push.
+Mục tiêu của chủ project, đọc kỹ, không bỏ ý nào:
+1. Audit chuyên sâu full project, không bỏ sót chi tiết nhỏ nhất.
+2. Khai thác + mở rộng sáng tạo + tối ưu tối đa các tool agency.
+3. Kết quả chính xác, thực tế, minh bạch, chuyên sâu, chuyên nghiệp, real-time, nhanh, hiệu quả, flexible/adaptive.
+4. Tối ưu token tối đa — không lãng phí, không dư thừa.
+5. Privacy tối đa: conversation của user không bị provider thu thập; web không thu thập/truyền dữ liệu thừa; vẫn tiện cho user.
+6. Cá nhân hóa nhưng không xâm phạm riêng tư.
+7. Harness agent đủ chuẩn: memory, orchestration, observability, retry, sandbox, state, tool reliability, mọi edge case (timeout, rate limit, hallucination, duplicate task, race condition…).
+8. Bảo mật, bảo vệ chất xám (repo public).
+9. Tận dụng tối đa plugin/skill đã cài.
+10. Tự bổ sung ý tưởng tiên tiến có nguồn thật.
+11. Tự động hóa toàn bộ, kể cả push `main`, khi đạt chuẩn.
 
-**Hai nguyên tắc bất di bất dịch:**
+## 1. BA SỰ THẬT PHẢI NÓI THẲNG
 
-1. **Trung thực hơn ấn tượng.** Phần nào không tối ưu thêm được trong phạm vi hợp
-   lý (thời gian/chi phí/rủi ro) thì nói rõ lý do. Cấm báo cáo "đã tối ưu 100%"
-   khi chưa thực sự vậy.
-2. **Không bỏ sót.** Mọi vấn đề phát hiện — dù nhỏ tới đâu — đều phải có dòng
-   trong Sổ theo dõi. Không có khái niệm "nhỏ quá nên bỏ qua không ghi". Quyết
-   định sửa ngay / sửa sau / không sửa là bước riêng; **ghi nhận là bắt buộc 100%**.
+1. **"0 lỗi 100%" không chứng minh được.** Không tìm thấy lỗi ≠ không có lỗi. Thay bằng định nghĩa "SẠCH" đo được ở mục 2. Cấm tuyên bố "hoàn hảo 100%".
+2. **Gửi chat cho provider bên ngoài thì provider xử lý nội dung đó.** Không có cách nào "gửi mà provider không thấy", trừ 3 đường: không gửi (model tự host), gửi bản đã khử định danh, hoặc chạy trong môi trường tính toán bảo mật (TEE) có attestation. Xem PHẦN V.
+3. **Prompt không làm model giỏi hơn chính nó.** Thứ vượt được "cách Claude làm việc mặc định" là harness quanh nó: kiểm chứng bên ngoài, evaluator độc lập ngữ cảnh mới, đo đạc trước/sau, ledger trên đĩa.
 
-## 1. HỢP ĐỒNG KIỂM CHỨNG — **[đã điền 2026-09-09]**
+## 2. ĐỊNH NGHĨA "SẠCH" (thay cho "perfect 100%")
 
-Bản gốc để `<TODO>` và bắt dừng lại hỏi. Đã đo và điền. Mỗi dòng là một lệnh đã
-chạy hoặc một file đã mở.
+Project được gọi là SẠCH khi **tất cả** đúng, mỗi dòng có bằng chứng:
+- `npm run gate`, build, lint, typecheck, test: pass. 0 test skip.
+- `.typecheck-baseline.json` không phình; lý tưởng là co lại.
+- Ledger: 0 dòng `OPEN`/`IN-PROGRESS`; 0 `CRITICAL`/`HIGH` mở (trừ `CHỜ-CHỦ` loại ngoài-repo, mục 5).
+- Bộ test edge-case harness (PHẦN VI) pass.
+- Bộ test privacy egress (PHẦN V §P8) pass.
+- Không regression token/chi phí/độ trễ so với baseline (hoặc có giải thích chấp nhận được).
+- Evaluator ngữ cảnh mới, chỉ đọc, trả `PASS`.
+
+## 3. HỢP ĐỒNG KIỂM CHỨNG (Phase 0 tự điền; trường nào không tìm ra → `[UNKNOWN]`, cấm tự chế lệnh)
 
 ```
 REPO:            D:\AI remote
-REMOTE:          https://github.com/Dansnyzzz/AI-Agency-Remote.git
-                 ← bản gốc và audit/EXPOSURE.md ghi "AI-remote.git". Sai. (EXP-004)
-VISIBILITY:      PUBLIC theo lời chủ project.
-                 [UNKNOWN] chưa xác minh độc lập — `gh` không có trên máy này.
-SHELL:           PowerShell (chính) + Bash (Git Bash) — mỗi cái cú pháp riêng
-NHÁNH:           đọc bằng `git rev-parse --abbrev-ref HEAD` mỗi phiên.
-                 ← bản gốc ghi cứng `model-capability-audit`; thực tế đã là `main`
-                   từ 2026-09-07. Ghi cứng tên nhánh trong luật là nguồn sai. (CFG-003)
-NODE:            22                                    (.nvmrc)
-CMD_INSTALL:     npm ci
-CMD_TEST:        npm test                              → 31 suite
-CMD_LINT:        npx eslint .    (npm run lint)
-CMD_TYPECHECK:   node scripts/typecheck.js  — ratchet theo .typecheck-baseline.json
-CMD_BUILD:       KHÔNG CÓ — không bundler, không build step, cố ý.
-                 Điều kiện "build pass" ở Mục 5 áp dụng bằng `npm run gate`.
-CMD_RUN_LOCAL:   node scripts/launch.js                (npm start)
-GATE:            npm run gate → gate.js STEPS.full = 5 bước, đúng thứ tự:
-                   1. npm run lint
-                   2. npm run test:hooks
-                   3. npm run eval
-                   4. npm run typecheck
-                   5. npm test
-                 Ngoài gate, chỉ CI chạy: test:ui, test:sandbox (cần trình duyệt).
-                 Con dấu ghi `full`, không ghi `everything`, đúng vì lý do đó.
-ENTRYPOINT:      server/index.js  ·  api/index.js (Vercel)
-LLM PROVIDERS:   5 — anthropic, openai, google, openrouter, orcarouter
-EXTERNAL APIS:   Exa · DuckDuckGo · Tavily · Brave (search, thử lần lượt);
-                 Resend/SMTP (email); MCP server do người dùng cấu hình
-DEPLOY:          Vercel Hobby + Neon Postgres
+VISIBILITY:      PUBLIC (chủ project xác nhận)
+SHELL CỦA AGENT: bash (Git Bash) — Claude Code trên Windows chạy lệnh bằng bash; xác minh bằng `echo $SHELL`
+NHÁNH HIỆN TẠI:  model-capability-audit   ← KHÔNG phải main
+NODE:            <đọc .nvmrc>
+CMD_INSTALL / CMD_TEST / CMD_LINT / CMD_TYPECHECK / CMD_BUILD / CMD_RUN_LOCAL: <đọc package.json>
+GATE:            npm run gate → liệt kê chính xác từng lệnh con
+ENTRYPOINT:      <server/…>
+LLM PROVIDERS:   <tên + model + endpoint + loại API key (commercial/consumer)>
+PROVIDER TERMS:  <no-training? ZDR? store=false? retention?> — ghi nguồn
+EXTERNAL APIS:   <mọi đích ngoài server nhận dữ liệu>
+DEPLOY:          <Vercel?> — push main có tự deploy production không? bằng chứng file:line
+PROD URL:        <nếu có, để smoke test sau push>
 ```
 
-**`CMD_TEST` không phải `NONE`** — có 31 suite thật. Điều kiện "test pass" ở Mục 5
-có hiệu lực. Nếu về sau nó thành `NONE`, luật gốc áp dụng: cấm ghi "test suite
-pass", phải viết smoke test ≥3 luồng lõi TRƯỚC khi sửa gì.
+**`CMD_TEST: NONE`** → cấm ghi "test pass". Viết smoke test ≥3 luồng lõi trước khi sửa.
+**`.typecheck-baseline.json`** → đếm chính xác số lỗi đang bị treo. Gate pass nhờ baseline nuốt lỗi = gate giả, phải báo.
 
-**`.typecheck-baseline.json`** treo **363 lỗi trên 43 file** (đo 2026-09-09).
-`npx tsc -p jsconfig.json --noEmit | grep -c "error TS"` cũng ra đúng **363** —
-không có lỗi nào vượt trần, ratchet đang giữ đúng. Nhưng **gate xanh nghĩa là
-"không tệ hơn", không phải "sạch"**: 363 lỗi vẫn bị nuốt, và `strictNullChecks`
-chưa bật (đo được 1.979 lỗi nếu bật). Nói rõ điều này mỗi khi báo cáo typecheck.
-
-**Gate hiện là gate THẬT.** Vòng audit 2026-09-03 tìm ra nó giả — stamp `verified:
-true` trong khi typecheck đỏ. CFG-001 đã sửa: `typecheck` và `eval` nằm trong
-`STEPS.full` từ `3382d9d`, và `hooks.test.mjs` có negative control cho việc đó.
-
-## 2. LUẬT BẰNG CHỨNG
+## 4. LUẬT BẰNG CHỨNG
 
 | Nhãn | Nghĩa | Bắt buộc kèm |
 |---|---|---|
@@ -93,516 +73,431 @@ true` trong khi typecheck đỏ. CFG-001 đã sửa: `typecheck` và `eval` nằ
 | `[INFER]` | Suy luận từ FACT | trỏ về FACT nguồn |
 | `[UNKNOWN]` | Chưa đọc / chưa đo | nói thẳng, cấm đoán |
 
-Cấm tuyệt đối:
-- Mô tả chức năng file/thư mục chỉ dựa vào tên (`worker/` phải mở ra đọc).
-- Ghi `FIXED` mà không có diff thật + lệnh kiểm chứng đã chạy.
-- Viện dẫn "chuẩn top-tier thế giới" mà không nêu nguồn thật (link repo/docs/RFC/
-  paper). Không nguồn → `[INFER] ý kiến cá nhân`.
-- Bịa số benchmark. Chưa đo → `[UNKNOWN]`.
+Cấm: mô tả file theo tên; ghi `FIXED` không có diff + lệnh kiểm chứng; viện dẫn "chuẩn top-tier" không link nguồn thật; bịa số đo.
+Nguồn bên ngoài: ưu tiên tài liệu gốc (docs provider, OWASP, OpenTelemetry, văn bản luật). Nguồn thứ cấp → ghi "thứ cấp, cần xác minh".
 
-**[đã bổ sung]** Thêm một luật rút ra từ chính vòng trước, vì nó đã tốn 3 ngày:
-- **Cấm dùng lại chính công cụ đã định nghĩa một tập để hỏi tập đó đã rỗng chưa.**
-  GAP-001 báo "90 chuỗi chưa dịch → 0, đã dịch hết"; con số 0 đến từ việc chạy lại
-  đúng cái scanner đã định nghĩa ra 90. Một scanner thứ hai tìm ra 138. Muốn
-  chứng minh một tập đã rỗng thì phải đo bằng dụng cụ khác dụng cụ đã tạo ra nó.
+## 5. CHẾ ĐỘ CHẠY
 
-**[đã bổ sung]** Và một luật về grep, rút ra từ CFG-015:
-- **Grep một con số thì phải grep cả dạng chữ.** CFG-005 đóng trên
-  `grep "24 suites"` → sạch. `ship.md:65` viết `twenty-four suites` và sống sót
-  thêm một vòng. Số, đơn vị và tên riêng đều có nhiều cách viết.
+### `AUTO` (mặc định)
+- Chạy liền Phase 0 → 1 → 2 → 3 → 4, không dừng chờ duyệt giữa phase.
+- Tự xử lý mọi ID **rủi ro thấp/trung bình**.
+- ID **rủi ro cao** → trạng thái `CHỜ-CHỦ`, không sửa, ghi phương án đề xuất, chạy tiếp phần còn lại.
+- Push `main` khi đủ toàn bộ cổng PHẦN III.
 
-## 3. VÙNG CẤM (không động nếu chưa hỏi)
+**Rủi ro cao = luôn `CHỜ-CHỦ` trong AUTO:**
+đổi kiến trúc lõi · đổi provider LLM · đổi schema/migration DB · đổi luồng dữ liệu khách hàng đang chạy thật · đụng `.claude/hooks` · đổi visibility repo · viết lại lịch sử git · thu hồi/cấp lại API key · bất kỳ thao tác ngoài repo (dashboard provider, Vercel, GitHub settings) · gửi dữ liệu thật ra ngoài để thử.
 
-- `.env`, `.env.production.local`, `.env.vercel-paste.local`, mọi secret — **chỉ
-  báo vị trí và tên biến, TUYỆT ĐỐI không in giá trị**, không commit.
-  `.claude/settings.json` đã `deny` đọc `./.env` ở tầng permission.
-- `package-lock.json` — không regenerate.
-- DB migration, schema production, `scripts/` gây tác dụng phụ (seed/deploy).
-- Mass reformat toàn repo (tạo diff rác che thay đổi thật).
-- Nâng major version dependency.
-- Xoá file — chỉ được đề xuất.
-- Git: `push`, `merge`, `reset`, `rebase`, force push, xoá nhánh — xem PHẦN III.
-- **[đã bổ sung]** Không chạy code của `worker/` với payload injection để chứng
-  minh một lỗ hổng. Một security subagent đã làm đúng việc đó và bắn hộp thoại
-  Windows thật lên màn hình chủ project. Mọi pass bảo mật là **đọc tĩnh**: không
-  `Start-Process`, không `spawn`, không `exec`, không PoC chạy được.
+**Phân loại `CHỜ-CHỦ`:**
+- `CHỜ-CHỦ/NGOÀI-REPO`: việc chỉ người làm được ngoài repo (rotate key, đổi visibility, ký ZDR). **Không chặn push** — nhưng đặt đầu báo cáo.
+- `CHỜ-CHỦ/TRONG-REPO`: thay đổi code rủi ro cao chưa làm. Mức `CRITICAL` loại này **chặn push**. Mức thấp hơn không chặn.
 
-## 4. NGÂN SÁCH & ĐIỂM DỪNG
+### `SAFE`
+Kích hoạt khi chủ project gõ `CHẾ ĐỘ: SAFE`. Dừng cuối mỗi phase chờ duyệt. Không tự push; in lệnh cho chủ project bấm.
 
-- **Mỗi phase = 1 lượt chạy độc lập.** Xong → dừng, báo cáo, chờ lệnh phase kế.
-  Cấm nhảy phase.
-- Phase 0 và 1: **cấm sửa 1 dòng code nào.** Chỉ được tạo/sửa file trong `audit/`.
-- Context còn <20% → dừng, ghi tiến độ vào ledger, báo "tiếp tục từ ID/file X ở
-  session mới".
-- 1 vấn đề thử 3 lần không xong → `BLOCKED` + lý do, đi tiếp.
-- Phát hiện vấn đề mới ngoài kế hoạch → thêm ID vào ledger, **không tự sửa** nếu
-  thuộc diện rủi ro cao.
-- **[đã bổ sung]** Subagent: dispatch ít, brief chặt, và luôn kèm câu "report
-  partial findings if you run out of budget". Trong repo này subagent đã chết vì
-  session rate limit (429) **hai lần**, mỗi lần mất trọn báo cáo của 4 agent.
+### Harness cho chính agent audit (chống tràn context khi chạy AUTO dài)
+- Sau mỗi phase và sau mỗi 5 ID: ghi `audit/PROGRESS.md` — phase hiện tại, ID đang làm, việc kế tiếp, lệnh kiểm chứng gần nhất, quyết định đã chốt.
+- Khi ngữ cảnh bị nén hoặc mở session mới: **đọc `audit/PROGRESS.md` + `audit/ISSUE_LEDGER.md` trước tiên**, tiếp tục từ đó. Cấm suy đoán tiến độ từ trí nhớ hội thoại.
+- Mỗi lượt chỉ làm 1 ID tới khi xong, commit, ghi ledger rồi mới sang ID khác.
 
-## 5. SỔ THEO DÕI VẤN ĐỀ — file `audit/ISSUE_LEDGER.md`
+## 6. VÙNG CẤM (cả 2 chế độ)
 
-Persist ra file, **không giữ trong chat** (mất khi `/clear`). Ghi ngay khi phát hiện.
+- Giá trị secret: không in, không commit, không gửi đi. Chỉ báo tên biến + vị trí.
+- `package-lock.json`: không regenerate toàn bộ. Thêm/gỡ 1 gói → chỉ thay đổi tối thiểu, ghi ID.
+- Mass reformat, nâng major version, xoá file không có ID + lý do.
+- Gửi dữ liệu user thật tới bất kỳ dịch vụ ngoài nào để thử nghiệm.
+- Git: force push, `reset --hard` trên `main`, xoá nhánh, viết lại lịch sử, bypass hook (`--no-verify`).
 
-| ID | Nhóm | Mô tả | Bằng chứng (file:line) | Prov | Mức | Trạng thái | Kiểm chứng đã fix | Commit |
-|---|---|---|---|---|---|---|---|---|
+## 7. NGÂN SÁCH & ĐIỂM DỪNG
 
-**Cột `Prov` (provenance) — [đã bổ sung], vì nó đã cứu vòng trước khỏi 6 kết luận sai:**
-`V` = lead auditor tự mở file / tự chạy lệnh và đọc output.
-`E` = do explorer agent báo, kèm file:line, **chưa tự kiểm chứng lại**.
-Một dòng `E` là **manh mối cần xác nhận ở Phase 1**, không phải sự thật đã lập.
-Sáu dòng đã bị hạ cấp hoặc bác bỏ ở vòng trước đều là dòng `E`.
+- Phase 0, 1: cấm sửa code; chỉ tạo file trong `audit/`.
+- 1 ID thử 3 lần không xong → `BLOCKED` + lý do, đi tiếp.
+- Ngữ cảnh còn <20% → ghi `PROGRESS.md`, báo "tiếp tục từ ID X".
+- Phát hiện vấn đề ngoài kế hoạch → thêm ID trước, rồi mới xử theo phân loại rủi ro.
 
-**Quy tắc bắt buộc:**
-- Tiền tố ID: `SEC-` `ARCH-` `PERF-` `ACC-`(độ chính xác) `AUTO-` `CODE-` `UX-`
-  `GAP-`(sáng tạo) `CFG-`(.claude) `EXP-`(lộ chất xám do repo public). Đánh số có
-  thứ tự, không lộn xộn.
-- Ghi nhận **ngay khi phát hiện**, kể cả chưa biết xử lý sao.
-- **KHÔNG ĐƯỢC XOÁ DÒNG KHỎI SỔ.** Không sửa → chuyển `DEFERRED` + lý do, dòng đó
-  **vẫn xuất hiện trong báo cáo cuối**.
-- `DEFERRED` chỉ hợp lệ khi **đã báo và được chủ project xác nhận bằng chữ**.
-  Cấm tự gắn để né việc.
-- Cấm gộp nhiều vấn đề khác bản chất thành 1 dòng mơ hồ ("code chưa sạch").
-- **Ngoại lệ gộp duy nhất:** `LOW` **lặp lại cùng một bản chất** trên nhiều file →
-  1 dòng ledger + **danh sách đầy đủ từng file trong `audit/LOW_ROLLUP.md`**.
-- **[đã bổ sung]** Một dòng bị chứng minh là sai thì đổi trạng thái thành
-  `DOWNGRADED` kèm **bằng chứng phản bác**, không xoá. Một audit chỉ báo cáo phần
-  nó đúng thì không phải audit.
-- Sổ cập nhật xuyên suốt Phase 0 → 4, không làm 1 lần rồi bỏ.
+## 8. SỔ THEO DÕI — `audit/ISSUE_LEDGER.md`
 
-**Mức độ:**
-- `CRITICAL` — lộ secret, lộ dữ liệu khách hàng ra repo public, injection/RCE, trả
-  kết quả SAI cho khách hàng, mất dữ liệu, crash production.
-- `HIGH` — sai kiến trúc chặn mở rộng, không xử lý lỗi ở luồng lõi, chi phí/độ trễ
-  vượt ngưỡng, hallucination không được chặn.
-- `MEDIUM` — cải thiện rõ rệt, không khẩn.
-- `LOW` — tinh chỉnh, nice-to-have.
+| ID | Nhóm | Mô tả | Bằng chứng (file:line) | Mức | Phạm vi | Rủi ro thay đổi | Trạng thái | Kiểm chứng đã fix | Commit |
+|---|---|---|---|---|---|---|---|---|---|
 
-Sắp xếp: `CRITICAL → HIGH → MEDIUM → LOW`. Cùng mức: đa-module trước đơn-file.
+- Tiền tố: `SEC-` `PRV-`(privacy) `TOK-`(token) `HAR-`(harness) `ARCH-` `PERF-` `ACC-` `AUTO-` `CODE-` `UX-` `GAP-` `CFG-`(.claude/skill) `EXP-`(lộ chất xám) `LAW-`(pháp lý).
+- Trạng thái: `OPEN` → `IN-PROGRESS` → `FIXED` | `CHỜ-CHỦ/NGOÀI-REPO` | `CHỜ-CHỦ/TRONG-REPO` | `DEFERRED` | `BLOCKED`.
+- Ghi ngay khi phát hiện. **KHÔNG ĐƯỢC XOÁ DÒNG.** Không sửa → đổi trạng thái + lý do; dòng vẫn có trong báo cáo cuối.
+- `DEFERRED` chỉ hợp lệ khi chủ project xác nhận bằng chữ.
+- Cấm gộp vấn đề khác bản chất. Ngoại lệ duy nhất: `LOW` cùng bản chất lặp nhiều file → 1 dòng + danh sách đủ từng file trong `audit/LOW_ROLLUP.md`.
+- Mức: `CRITICAL` (lộ secret · lộ dữ liệu user ra provider/log/repo · injection/RCE · kết quả sai cho khách · mất dữ liệu · crash prod) · `HIGH` · `MEDIUM` · `LOW`.
+- Thứ tự xử lý: `CRITICAL → HIGH → MEDIUM → LOW`; cùng mức thì đa-module trước.
 
-## 6. THỨ TỰ ƯU TIÊN CHỈ DẪN
+## 9. THỨ TỰ ƯU TIÊN CHỈ DẪN
 
-Repo có cài nhiều plugin/skill. Skill mang theo chỉ dẫn riêng, có cái sẽ chống lại
-luật ở đây. Thứ tự bắt buộc, cao đè thấp:
+Lệnh chủ project trong lượt hiện tại > **file này** > `claude.md` > skill/plugin/command khác.
 
-1. Lệnh trực tiếp của chủ project trong lượt hiện tại
-2. **File này** (`.claude/AUDIT_RULES.md`)
-3. `claude.md` / `CLAUDE.md` của repo
-4. Skill/plugin/command khác
+Skill **không bao giờ** được ghi đè: rào git · vùng cấm · luật bằng chứng · baseline · ledger · luật privacy PHẦN V.
+Skill xung khắc → không làm theo, ghi `CFG-`, chạy tiếp.
+Mỗi phase khai 1 dòng `Skill nạp: [...]`. Chỉ nạp skill dùng cho phase đó.
 
-**Skill KHÔNG BAO GIỜ được ghi đè 5 điều sau**, dù skill nói gì:
-- Rào git (không tự push `main` ở chế độ `SAFE`, không force push, không sửa lịch sử)
-- Vùng cấm (`.env`, lockfile, migration, mass reformat, PoC chạy được trên `worker/`)
-- Luật bằng chứng (`[FACT]/[INFER]/[UNKNOWN]` + `file:line`)
-- Bắt buộc có baseline trước khi tuyên bố tối ưu
-- Ledger persist ra file, không xoá dòng
+## 10. ĐỊNH DẠNG & TIẾT KIỆM TOKEN CỦA CHÍNH AGENT AUDIT
 
-Gặp skill xung khắc → **không im lặng làm theo**, ghi ID `CFG-` vào ledger, nêu
-tên skill + đoạn xung khắc, hỏi chủ project.
-
-**Ngân sách skill:** mỗi phase chỉ nạp skill thật sự dùng cho phase đó. Nêu rõ mỗi
-lượt đã nạp những skill nào, **đối chiếu `audit/SKILL_MAP.md`** — file đó liệt kê
-mọi skill/plugin/MCP đang cài, quyết định `DÙNG`/`KHÔNG DÙNG`/`CÓ ĐIỀU KIỆN` cho
-từng cái, và ghi 3 xung đột đã biết (`CFG-017`).
-
-## 7. ĐỊNH DẠNG TRẢ LỜI
-
-Không lời chào, không mở bài, không kết luận cảm thán. Bảng > đoạn văn. Câu ngắn.
-Kết mỗi phase bằng đúng 3 mục: `ĐÃ LÀM` / `SỐ LIỆU` / `CẦN TÔI QUYẾT ĐỊNH`.
+- Không chào, không mở bài, không tóm tắt lại điều vừa làm khi đã có trong file.
+- Chi tiết dài → ghi vào file `audit/`; chat chỉ nêu đường dẫn + số liệu chính.
+- Đọc file bằng grep/khoảng dòng khi đủ; không đọc lại file đã đọc nếu chưa đổi.
+- Kết mỗi phase: `ĐÃ LÀM` / `SỐ LIỆU` / `CHỜ-CHỦ`.
 
 ---
 
 # PHẦN II — QUY TRÌNH 5 PHASE
 
-**Luật chung mọi phase:** mở đầu mỗi lượt, khai đúng 1 dòng
-`Skill nạp lượt này: [...]` theo `audit/SKILL_MAP.md`.
+## PHASE 0 — HIỂU TOÀN BỘ (cấm sửa code)
 
-## PHASE 0 — HIỂU TOÀN BỘ + KIỂM KÊ `.claude/`
-*(cấm sửa code; chỉ được tạo file trong `audit/`)*
-
-### 0.1 An toàn — LÀM ĐẦU TIÊN
-
-```powershell
-Get-Content .gitignore
+### 0.1 An toàn — làm đầu tiên
+```bash
+cat .gitignore
 git check-ignore -v .env .env.production.local .env.vercel-paste.local
-git ls-files | Select-String -Pattern "^\.env|coverage/|node_modules/"
+git ls-files | grep -E '^\.env|^coverage/|^node_modules/|fuse_hidden'
 git log --all --oneline -- .env .env.production.local .env.vercel-paste.local
+command -v gitleaks >/dev/null && gitleaks detect --log-opts="--all" --redact --no-banner
 ```
+`.env*` từng bị commit vào repo public → `CRITICAL` `CHỜ-CHỦ/NGOÀI-REPO`: key đã lộ, phải rotate. Liệt kê **tên biến**, không in giá trị.
 
-File `.env*` nào **đang track** hoặc **từng bị commit** → `CRITICAL`, dừng, báo
-ngay. Kiểm luôn `coverage/`, `data/` và `.fuse_hidden*`. **Chỉ báo tên biến,
-không in giá trị.**
+### 0.1b Lộ chất xám — repo public
+```bash
+git remote -v
+gh repo view --json visibility,isPrivate,url 2>/dev/null
+git ls-files | wc -l
+git ls-files
+git log --all --diff-filter=A --name-only --pretty=format: | sort -u
+```
+Phân loại TỪNG file đang track → `audit/EXPOSURE.md`:
 
-> **Kết quả đã có, 2026-09-09:** sạch. Không `.env*` nào từng vào lịch sử. Hai file
-> `.fuse_hidden*` từng bị commit (`a7abc06`, gỡ ở `38b44cd`) — đã đọc nội dung ra
-> khỏi lịch sử, là bản sao cũ của `package.json` và `ci.yml`, không secret
-> (`EXP-003`). **Không cần rotate key, không cần viết lại lịch sử.**
-
-### 0.1b LỘ CHẤT XÁM — REPO ĐANG PUBLIC
-
-Chỉ được để lộ file thiết yếu; phần giá trị cốt lõi phải được che.
-
-**Bước 1 — xác nhận trạng thái thật.** `git remote -v`, `gh repo view --json
-visibility`. Không có `gh` → hỏi chủ project. **Cấm giả định private.**
-
-**Bước 2 — phân loại TỪNG file đang track → `audit/EXPOSURE.md`**, chọn 1 trong 4:
-`BẮT BUỘC CÔNG KHAI` · `NÊN CÔNG KHAI` · `KHÔNG NÊN` (know-how) ·
-`TUYỆT ĐỐI KHÔNG` (secret, dữ liệu khách hàng, log có PII).
-
-Soi kỹ 5 chỗ chất xám tập trung:
-1. `.claude/commands/`, `agents/`, `skills/` — quy trình vận hành. **File này nữa.**
-2. Prompt template trong `server/`, `api/`, `worker/` — lõi cạnh tranh
-3. `data/` — có dữ liệu khách hàng thật không? Có → `CRITICAL`
-4. `docs/`, `claude.md` — chiến lược, roadmap chưa công bố
-5. `.claude/state/` — trạng thái vận hành nội bộ (đang gitignored, đúng)
-
-**Bước 3 — quét lịch sử.** Thêm vào `.gitignore` **KHÔNG** xoá file khỏi lịch sử.
-Repo public + secret từng commit = **secret đã lộ công khai**; việc duy nhất có
-tác dụng là **thu hồi và cấp lại key**.
-
-**Bước 4 — sự thật về front-end.** `public/js`, `public/css` được gửi thẳng tới
-trình duyệt. **Ai cũng xem được, kể cả khi repo private.** Prompt, logic tính giá,
-quy tắc nghiệp vụ, API key nằm trong `public/` là lộ chất xám **không liên quan gì
-tới repo public/private**.
-
-**Bước 5 — trình 4 phương án, KHÔNG tự chọn:**
-
-| # | Phương án | Bảo vệ được gì | Mất gì | Công sức |
+| File | Giá trị cốt lõi? | Phân loại | Hành động đề xuất | Mức |
 |---|---|---|---|---|
-| A | Chuyển repo sang **private** | Toàn bộ mã nguồn phía server | Tính công khai (portfolio, community) | Rất thấp |
-| B | **Tách 2 repo**: public (shell/demo/docs) + private (lõi) | Lõi cạnh tranh, vẫn giữ mặt tiền | Quản 2 repo, xử lý phụ thuộc | Cao |
-| C | Giữ public, **rút lõi ra service/package private** | Lõi, mà vẫn 1 repo mặt tiền | Thêm tầng gọi, độ trễ, hạ tầng | Trung bình–cao |
-| D | Giữ public, chỉ dọn secret + dữ liệu khách hàng | Bí mật và dữ liệu | Know-how vẫn lộ | Thấp |
 
-**D là mức tối thiểu bắt buộc**, không phải lựa chọn thay thế. Đề xuất 1 phương án
-kèm lý do dựa trên `audit/EXPOSURE.md` thật, rồi **dừng chờ quyết định**.
+Phân loại (chọn 1): `BẮT BUỘC CÔNG KHAI` · `NÊN CÔNG KHAI` · `KHÔNG NÊN` (prompt, chiến lược agent, pipeline, tài liệu nội bộ) · `TUYỆT ĐỐI KHÔNG` (secret, dữ liệu user, log có PII).
+Soi kỹ: `.claude/commands|agents|skills|state`, prompt trong `server/ api/ worker/`, `data/` (dữ liệu thật → `CRITICAL`), `docs/`, `claude.md`.
 
-**Bước 6 — ràng buộc thi hành.** Phase 0 **chỉ báo cáo**: không sửa `.gitignore`,
-không `git rm --cached`, không đổi visibility. **Viết lại lịch sử git** chỉ làm khi
-chủ project ra lệnh bằng chữ, và phải sao lưu repo trước. Mọi file bị gỡ khỏi
-public phải có ID `EXP-`.
+Sự thật:
+- `.gitignore` không xoá lịch sử. File từng commit vẫn đọc được qua commit cũ, fork, cache.
+- `public/js` gửi thẳng tới trình duyệt; ai cũng đọc được kể cả khi repo private. Prompt/logic nghiệp vụ/key ở đó → chuyển về server.
 
-### 0.2 Điền Hợp đồng kiểm chứng
-Xem PHẦN I §1 — đã điền. Mỗi phiên chỉ cần **kiểm lại nhánh** và trả lời câu hỏi
-`.typecheck-baseline.json` bằng số đo mới.
+4 phương án (đều là `CHỜ-CHỦ/NGOÀI-REPO`, không tự chọn): A chuyển private · B tách 2 repo public shell + private core · C rút lõi thành service private · D giữ public, chỉ dọn secret + dữ liệu. **D là mức tối thiểu bắt buộc.**
+Gỡ file khỏi index cho lần push tới (`git rm --cached` + `.gitignore`) là rủi ro thấp → AUTO được làm, ID `EXP-`. Viết lại lịch sử → chỉ khi chủ project ra lệnh bằng chữ.
+
+### 0.2 Điền Hợp đồng kiểm chứng (PHẦN I §3)
+Mở `package.json`, `.c8rc.json`, `eslint.config.js`, `jsconfig.json`, `.nvmrc`, `.github/workflows/*`, `vercel.json` (nếu có).
 
 ### 0.3 Đọc hết repo theo lô
-Bỏ qua `node_modules/`, `coverage/`, `.git/`. Lô ≤12 file, mỗi lô khai
-`Lô N/M — đã đọc: [...]`. Thứ tự: `server/` → `api/` → `worker/` → `scripts/` →
-`test/` → `public/` → `data/` → `docs/`+`claude.md` → `.claude/**` → `.github/`.
-**Cấm dừng vì "phần còn lại chắc tương tự".** Chưa đọc → liệt kê dưới
-`[UNKNOWN] chưa đọc`, và dòng đó là **nợ**, phải trả ở vòng sau.
+Bỏ `node_modules/ coverage/ .git/`. Lô ≤12 file, khai `Lô N/M — đã đọc: [...]`.
+Thứ tự: `server/` → `api/` → `worker/` → `scripts/` → `test/` → `public/` → `data/` → `docs/`+`claude.md` → `.claude/**` → `.github/` + `.mcp.json.example`.
+Cấm dừng vì "phần còn lại chắc tương tự". Chưa đọc → `[UNKNOWN] chưa đọc`.
 
 ### 0.4 `audit/INVENTORY.md`
-
-| Module | File:line | Chức năng THỰC | Gọi ra ngoài | Timeout/retry? | Validate input? | Có test? | Trạng thái | Nhãn |
+| Module | File:line | Chức năng THỰC | Gọi ra ngoài | Gửi dữ liệu user? | Timeout/retry? | Validate input? | Có test? | Trạng thái |
 |---|---|---|---|---|---|---|---|---|
 
-### 0.5 `audit/CLAUDE_ASSETS.md` — bộ `.claude/` sẵn có
+### 0.5 `audit/CLAUDE_ASSETS.md`
+Mở từng file `.claude/commands|agents|hooks|skills|state`, `settings.json`, `settings.local.json`.
+- Hook nào tự `git commit/push`? → `CRITICAL`.
+- `settings*.json`: allowlist quyền nguy hiểm? `settings.local.json` có bị ignore?
+- Command trùng nhau (`verify`/`deploy-check`/`ship`…) → gộp hay giữ, lý do.
+- Chấm 6 luật L1 hợp đồng · L2 bằng chứng · L3 baseline · L4 ledger · L5 tách phase · L6 rào git — `ĐÃ CÓ`/`MỘT PHẦN`/`THIẾU`/`MÂU THUẪN`.
+- Nguyên tắc: tái dùng file sẵn có; chỉ thêm mới khi thật sự chưa có.
 
-| File | Loại | Chức năng THỰC (mở ra đọc) | Kích hoạt bằng gì | Trùng/xung đột với | Còn dùng hay chết |
-|---|---|---|---|---|---|
+### 0.5b `audit/SKILL_MAP.md`
+Liệt kê toàn bộ plugin/skill khả dụng thật (tên · mô tả thật · nguồn). Không truy cập được → `[UNKNOWN]`, cấm bịa tên.
+| Skill | Phase dùng | Việc cụ thể | Rủi ro | `DÙNG`/`KHÔNG DÙNG`/`CÓ ĐIỀU KIỆN` |
+|---|---|---|---|---|
+Gợi ý loại skill cần tìm (chỉ dùng nếu có thật): đồ thị code/impact analysis · code review đa trục · taint/dataflow · security/privacy audit · tool-design/context-engineering · evaluation · incremental/TDD · systematic debugging.
+Xung đột cần bắt: skill tự chạy git (`CRITICAL`) · tự sửa code không hỏi · bảo bỏ kiểm chứng · trùng chức năng · không liên quan project (marketing, SEO, spreadsheet → `KHÔNG DÙNG`).
 
-Ưu tiên soi: `hooks/` (**có hook nào tự `git commit`/`git push` không?**),
-`settings.json` + `settings.local.json` (allowlist quyền, **và biến `env` — xem
-`CFG-012`**), `state/`, 12 `commands/`, `agents/`, `skills/`.
+### 0.6 `audit/BASELINE.md` — đo trước khi sửa
+| Chỉ số | Cách đo | Giá trị | Nhãn |
+|---|---|---|---|
+| gate / test pass-tổng / coverage / lint / typecheck thật | chạy thật | | |
+| Lỗi treo trong `.typecheck-baseline.json` | đếm | | |
+| Số lần gọi LLM / request tiêu biểu (theo từng route) | code + log | | |
+| Token input / cache read / cache write / output / request | `usage` trả về từ API | | |
+| Cache hit rate = cache_read ÷ (cache_read + input + cache_write) | tính | | |
+| Chi phí ước tính / request (theo bảng giá provider, ghi nguồn) | tính | | |
+| Độ trễ end-to-end, TTFT (3 lần, trung vị) | đo thật | | |
+| Số điểm gửi dữ liệu user ra ngoài server | grep + DATAFLOW | | |
+| Số điểm log/trace chứa nội dung user | grep | | |
+| Số lời gọi tool/provider KHÔNG timeout / KHÔNG retry / KHÔNG idempotency | grep | | |
+| Số secret hardcode nghi vấn (chỉ đếm) | grep | | |
+| TODO/FIXME | grep | | |
 
-Chấm 6 luật, mỗi luật `ĐÃ CÓ`/`CÓ MỘT PHẦN`/`THIẾU`/`MÂU THUẪN` + file:line:
-L1 Hợp đồng · L2 Bằng chứng · L3 Baseline · L4 Ledger persist · L5 Tách phase ·
-L6 Rào git + vùng cấm.
-
-**Nguyên tắc hợp nhất:** tái dùng file sẵn có, chỉ thêm mới khi thật sự chưa có.
-
-### 0.5b KIỂM KÊ PLUGIN & SKILL → `audit/SKILL_MAP.md`
-
-Liệt kê **toàn bộ** plugin/skill khả dụng: `tên` — `mô tả thật` — `nguồn`. Không
-truy cập được → `[UNKNOWN]`, **đừng bịa tên skill**. Rồi bảng định tuyến
-(`DÙNG`/`KHÔNG DÙNG`/`CÓ ĐIỀU KIỆN`), rồi **phát hiện xung đột** — phần quan trọng
-nhất:
-
-- Skill nào **tự chạy git**? → `CRITICAL` với rào git, vô hiệu trong suốt audit
-- Skill nào **tự sửa code không hỏi**? → xung khắc Phase 0/1
-- Skill nào bảo "bỏ qua kiểm chứng cho nhanh"? → xung khắc luật bằng chứng
-- Hai skill trùng chức năng → chọn 1, nêu lý do
-- Skill không liên quan → `KHÔNG DÙNG`, khỏi phình context
-
-Mỗi xung đột = 1 ID `CFG-`. Cuối cùng: việc nào audit cần mà **không skill nào
-phủ** → nêu rõ, đó là phần làm tay. Cấm giả vờ có skill lo hộ.
-
-### 0.6 `audit/BASELINE.md` — ĐO TRƯỚC KHI SỬA
-
-Bảng chỉ số + cách đo + giá trị + nhãn. Tối thiểu: gate pass/fail, test pass/tổng,
-coverage, lỗi lint, **lỗi typecheck THẬT kể cả bị baseline nuốt**, số lỗi treo
-trong baseline, số dòng code, số lần gọi LLM/request, token in/out, độ trễ
-end-to-end (3 lần lấy trung vị), số API ngoài/request, số điểm gọi tool KHÔNG
-timeout/retry, số điểm hardcode secret nghi vấn, số TODO/FIXME.
-
-Không đo được → `[UNKNOWN] + lý do`. **Cấm điền số ước đoán.**
-Chỉ số cần key thật (LLM calls, token, latency) → **không tự tiêu tiền của chủ
-project**; để `[UNKNOWN]` và nói vì sao.
+Gợi ý grep (bash):
+```bash
+grep -rnE "anthropic|openai|generativelanguage|openrouter|groq|mistral|fetch\(|axios|https?://" --include=*.js server api worker public scripts | grep -v node_modules
+grep -rnE "console\.(log|info|debug)|logger\.|Sentry|posthog|mixpanel|gtag|analytics" --include=*.js server api worker public
+grep -rnE "timeout|AbortController|retry|backoff|idempot" --include=*.js server api worker
+```
+Không đo được → `[UNKNOWN] + lý do`. Cấm điền số ước đoán.
 
 ### 0.7 Sơ đồ luồng lõi
-ASCII 1 luồng request quan trọng nhất. Đánh dấu mỗi bước: `[tuần tự]` `[song song]`
-`[không timeout]` `[không validate]` `[gọi LLM]`. Giữ ở `audit/FLOW.md`.
+ASCII 1 request quan trọng nhất. Đánh dấu từng bước: `[tuần tự]` `[song song]` `[gọi LLM]` `[không timeout]` `[không validate]` `[gửi dữ liệu user ra ngoài]` `[ghi log nội dung]`.
 
-### 0.8 Khởi tạo/cập nhật `audit/ISSUE_LEDGER.md`.
+### 0.8 `audit/DATAFLOW.md` — bản đồ dữ liệu user
+Mỗi điểm dữ liệu user rời khỏi server hoặc được lưu:
+| Đích | File:line | Trường dữ liệu | Đã khử định danh? | Mục đích | Thời gian lưu (nguồn) | Xuyên biên giới? | Đánh giá |
+|---|---|---|---|---|---|---|---|
+Đích gồm: provider LLM, API ngoài, log, APM/error tracker, analytics, DB, cache, file, trình duyệt (localStorage), hàng đợi `worker/`.
 
-**ĐẦU RA PHASE 0:** 6 file trong `audit/` (`INVENTORY` `CLAUDE_ASSETS` `EXPOSURE`
-`SKILL_MAP` `BASELINE` `ISSUE_LEDGER`) + trong chat: cảnh báo an toàn (đầu tiên
-nếu có CRITICAL) → Hợp đồng → kết luận gate thật/giả → sơ đồ luồng → bảng 6 luật →
-bảng định tuyến skill + xung đột → baseline → 3 mục kết. **Dừng, chờ duyệt.**
+### 0.9 Ledger
+Ghi mọi vấn đề đã thấy, trạng thái `OPEN`. Ghi `audit/PROGRESS.md`.
 
----
+## PHASE 1 — GAP ANALYSIS (cấm sửa code)
 
-## PHASE 1 — GAP ANALYSIS
-*(vẫn cấm sửa code)*
+Chấm từng mục `ĐẠT`/`CHƯA ĐẠT`/`N/A`/`[UNKNOWN]`. Mỗi `CHƯA ĐẠT`: bằng chứng file:line · top-tier trông cụ thể ra sao · ID ledger.
 
-Chấm từng mục: `ĐẠT` / `CHƯA ĐẠT` / `N/A` / `[UNKNOWN]`. Mỗi `CHƯA ĐẠT` bắt buộc 3
-cột: **bằng chứng file:line** — **top-tier trông cụ thể như thế nào** — **ID
-ledger**. Cấm viết "cần cải thiện hơn".
+**A. Độ chính xác (`ACC-`)** — claim quan trọng có nguồn + link · đối chiếu ≥2 nguồn · nhãn tin cậy HIGH/MEDIUM/LOW/CONFLICTING · dữ liệu real-time lấy qua tool lúc chạy, có timestamp + nguồn · proposer–critic cho việc quan trọng · phát hiện nguồn mâu thuẫn · "không biết" là câu trả lời hợp lệ.
+**B. Tool-use (`AUTO-`)** — timeout · retry backoff · lỗi tường minh · structured output + validate schema · song song việc độc lập · không bước thủ công thừa · trigger/lịch · idempotent.
+**C. Kiến trúc (`ARCH-`)** — thêm agent/tool/khách mới không sửa lõi · config tách code · không magic number · provider trừu tượng hóa · không phụ thuộc vòng.
+**D. Hiệu năng (`PERF-`)** — cache có TTL · không dùng LLM cho việc code làm được · streaming · độ trễ phù hợp real-time.
+**E. Bảo mật (`SEC-`)** — đối chiếu OWASP Top 10 cho LLM Applications 2025 và OWASP Top 10 cho Agentic Applications 2026 (ASI01–ASI10), ghi ID từng hạng mục · không secret trong code/log/bundle/lịch sử · validate input · chống prompt injection gián tiếp từ web/tool output · rate limit · auth endpoint · không prompt/logic/key trong `public/`.
+**F. Code (`CODE-`)** — test logic lõi · log có trace id không chứa nội dung user · không trùng lặp · docs khớp code · lỗi phân loại retryable/fatal.
+**G. Đầu ra (`UX-`)** — định dạng nhất quán · tùy biến qua config · tách kết luận vs giả định · tiến trình + lỗi dễ hiểu.
+**H. Năng lực model (`GAP-`)** — structured output · context đủ không dư · tự kiểm trước khi trả · prompt versioned · eval cố định.
+**I. Token (`TOK-`)** — toàn bộ PHẦN IV, từng quy tắc T1–T15.
+**J. Privacy (`PRV-`)** — toàn bộ PHẦN V, từng lớp P0–P8.
+**K. Harness (`HAR-`)** — toàn bộ PHẦN VI, từng dòng H1–H20.
+**L. Pháp lý (`LAW-`)** — PHẦN V §P7. Ghi rõ "không phải tư vấn pháp lý".
+**M. Ý tưởng (`GAP-`)** — PHẦN VII; mỗi ý tưởng: tên · vấn đề giải · nguồn thật · chi phí S/M/L. Không nguồn → `[INFER]`.
 
-### A. Độ chính xác & nghiên cứu (`ACC-`)
-- [ ] Kết luận quan trọng có trích dẫn nguồn cụ thể, kèm URL/ID
-- [ ] Đối chiếu chéo ≥2 nguồn cho claim quan trọng
-- [ ] Có nhãn độ tin cậy (HIGH/MEDIUM/LOW/CONFLICTING)
-- [ ] Dữ liệu real-time lấy qua tool tại thời điểm chạy, không dùng training data cũ
-- [ ] Có phản biện nội bộ (proposer–critic) trước khi chốt việc quan trọng
-- [ ] Có phát hiện khi nguồn mâu thuẫn — không âm thầm chọn 1 nguồn
-
-### B. Tự động hóa & tool-use (`AUTO-`)
-- [ ] Mỗi tool có timeout, retry có backoff, xử lý lỗi tường minh
-- [ ] Tool trả structured output (schema/JSON), không parse text tự do
-- [ ] Validate schema đầu ra tool trước khi dùng
-- [ ] Tác vụ độc lập chạy song song, không tuần tự vô cớ
-- [ ] Không còn bước thủ công lẽ ra tự động hóa được
-- [ ] Có trigger/lịch cho việc lặp lại
-- [ ] Job chạy lại idempotent — không tạo trùng dữ liệu
-
-### C. Kiến trúc & mở rộng (`ARCH-`)
-- [ ] Thêm agent/tool/loại khách hàng mới không phải sửa lõi
-- [ ] Cấu hình theo khách hàng tách khỏi logic code
-- [ ] Không magic number / hardcode lẽ ra là config
-- [ ] Provider LLM được trừu tượng hóa — đổi model không sửa rải rác
-- [ ] Ranh giới module rõ, không phụ thuộc vòng
-
-### D. Hiệu năng & chi phí (`PERF-`)
-- [ ] Có cache cho dữ liệu lặp; có TTL và invalidate đúng chỗ
-- [ ] Không gọi LLM cho việc không cần LLM (parse, tính, lọc)
-- [ ] Có trần ngân sách token / số lời gọi mỗi request
-- [ ] Có streaming khi UX cần
-- [ ] Chọn model theo độ khó tác vụ
-- [ ] Độ trễ hợp lý so với yêu cầu real-time thật
-
-### E. Bảo mật (`SEC-`)
-- [ ] Không secret trong code/log/client bundle/lịch sử git
-- [ ] Input từ web/người dùng validate trước khi vào tool/exec/sandbox
-- [ ] Chống prompt injection từ nội dung web đưa vào model
-- [ ] Rate limit + giới hạn quyền cho lời gọi ra ngoài
-- [ ] Không log dữ liệu nhạy cảm của khách hàng
-- [ ] Endpoint có auth đúng mức
-- [ ] **Repo public:** không prompt/logic nghiệp vụ/khoá nào nằm trong `public/`
-- [ ] **Repo public:** không file nhóm `KHÔNG NÊN`/`TUYỆT ĐỐI KHÔNG` còn bị track
-
-### F. Chất lượng code & vận hành (`CODE-`)
-- [ ] Có test cho logic lõi
-- [ ] Log đủ để debug, có request/trace id
-- [ ] Không trùng lặp logic lớn giữa module
-- [ ] `docs/` + `claude.md` + `.claude/**` khớp code thật, không lỗi thời
-- [ ] Lỗi có phân loại (retryable vs fatal)
-
-### G. Trải nghiệm đầu ra (`UX-`)
-- [ ] Output nhất quán định dạng, đạt chuẩn giao khách hàng agency
-- [ ] Tùy biến theo khách hàng qua config, không sửa code
-- [ ] Phân tách rõ: kết luận chắc chắn vs giả định
-- [ ] Có trạng thái tiến trình + báo lỗi dễ hiểu cho người dùng cuối
-
-### H. Tối đa hóa năng lực model (`GAP-`)
-- [ ] Dùng structured output / tool-calling thay vì parse text
-- [ ] Context nạp đủ và không dư; có chiến lược cắt/nén khi dài
-- [ ] Có bước model tự kiểm tra lại trước khi trả kết quả quan trọng
-- [ ] Prompt tách khỏi code, versioned, có thể A/B
-- [ ] Có eval bộ case cố định để so chất lượng giữa các lần đổi prompt/model
-
-### Creative gaps — luật chống bịa
-Mỗi đề xuất bắt buộc 4 phần: `Tên` — `Vấn đề nó giải` — `Nguồn tham chiếu thật
-(link)` — `Chi phí (S/M/L)`. Không nguồn thật → `[INFER] ý kiến cá nhân`. Cấm gán
-nhãn "chuẩn ngành" cho thứ tự nghĩ ra. Tối đa 8, xếp theo giá trị/chi phí.
-
-### Phân quyền tự quyết
-
-| Nhóm | Tự sửa ở Phase 2? |
-|---|---|
-| Thêm timeout/retry/xử lý lỗi thiếu, thêm log, xoá import thừa, thêm test, tách hàm trùng trong 1 module | Có |
-| Đổi kiến trúc lõi, đổi luồng dữ liệu khách hàng, đổi schema, đổi provider, sửa automation đang chạy thật, đụng `.claude/hooks` | **Không — chờ duyệt từng ID** |
-
-**ĐẦU RA PHASE 1:** checklist đã chấm đầy đủ + ledger full đã xếp hạng (**bảng
-full, không rút gọn**) + creative gaps + **danh sách ID cần duyệt, hỏi rõ từng
-cái** + 3 mục kết. **Dừng, chờ duyệt.**
-
----
+Ghi `audit/PROGRESS.md`. AUTO: sang Phase 2 ngay.
 
 ## PHASE 2 — THỰC THI
 
-**Chỉ xử lý ID đã được duyệt. ID chưa duyệt = không động.**
-
-### 2.0 Lưới an toàn trước khi sửa dòng đầu tiên
-```powershell
-git tag backup/pre-optimize-$(Get-Date -Format 'yyyyMMdd-HHmm')
-git checkout -b optimize/$(Get-Date -Format 'yyyy-MM-dd')
+### 2.0 Lưới an toàn
+```bash
+git status --porcelain            # phải rỗng; không rỗng → commit WIP riêng hoặc báo
+git tag "backup/pre-optimize-$(date +%Y%m%d-%H%M)"
+git checkout -b "optimize/$(date +%Y-%m-%d)"
+git log --oneline origin/main..HEAD   # commit sẵn có trên nhánh hiện tại sẽ theo vào main — ghi vào báo cáo
 ```
-Không có lưới thì không refactor.
+`CMD_TEST: NONE` → viết smoke test ≥3 luồng lõi trước, commit riêng.
 
 ### 2.1 Vòng lặp mỗi ID
-Thứ tự: hết `CRITICAL` → hết `HIGH` → hết `MEDIUM` → hết `LOW`. Còn 1 dòng `OPEN`
-mức cao → **cấm xuống mức thấp hơn**.
-
-6 bước mỗi ID:
-1. Trạng thái → `IN-PROGRESS`
-2. 1 dòng: sửa gì, file nào, rủi ro gì
-3. Sửa — **chỉ trong phạm vi ID đó**
-4. Thêm/cập nhật test đúng cho thay đổi này
-5. Chạy `CMD_TEST` + `CMD_LINT` + `CMD_TYPECHECK`. Fail → sửa tiếp, cấm bỏ qua
-6. Commit riêng `<type>(<scope>): <mô tả> [ID]` → ghi hash vào ledger → `FIXED`
-
-**Cấm gộp nhiều ID vào 1 commit. Cấm dồn cập nhật ledger tới cuối.**
-
-**[đã bổ sung]** Test phải **cắn**: phá cái vừa sửa một cách có chủ đích, chạy
-test, xác nhận nó đỏ và gọi đúng tên case. Một test chưa từng đỏ là một test chưa
-được chứng minh là hoạt động. Nếu harness chặn thao tác phá đó (nó có thể chặn,
-đúng thôi), thì thay bằng **quan sát trực tiếp cả các trạng thái** và dán output.
+Thứ tự `CRITICAL → HIGH → MEDIUM → LOW`. Còn `OPEN` mức cao (không phải `CHỜ-CHỦ`/`DEFERRED`) → cấm xuống mức thấp.
+1. `IN-PROGRESS` · 2. một dòng: sửa gì, file nào, rủi ro · 3. sửa đúng phạm vi ID · 4. thêm/cập nhật test · 5. chạy test + lint + typecheck, fail thì sửa tiếp · 6. commit riêng `<type>(<scope>): <mô tả> [ID]` → hash vào ledger → `FIXED`.
+Cấm gộp ID vào 1 commit. Cấm dồn cập nhật ledger. Cấm `--no-verify`.
 
 ### 2.2 Tình huống
-
-| Tình huống | Hành động |
-|---|---|
-| Phát hiện vấn đề mới | Thêm ID mới `OPEN`. Rủi ro thấp → xử ngay. Cao → hỏi |
-| Thử 3 lần không xong | `BLOCKED` + lý do, đi tiếp |
-| Sửa làm hỏng chỗ khác | Revert commit đó ngay, ghi lại, hỏi |
-| Cần đụng vùng cấm | Dừng, hỏi |
-| Context <20% | Dừng, ghi tiến độ, báo "tiếp tục từ ID X" |
-
-Sau khi đóng xong mỗi mức, in: `Mức | Tổng | FIXED | DEFERRED | BLOCKED | OPEN`.
-
-**ĐẦU RA PHASE 2:** ledger cập nhật, mỗi FIXED có hash + `git log --oneline` +
-danh sách BLOCKED + 3 mục kết. **Cấm push ở phase này.**
-
----
+| Tình huống | AUTO | SAFE |
+|---|---|---|
+| Vấn đề mới | Thêm ID; rủi ro thấp/TB → xử; cao → `CHỜ-CHỦ` | Thêm ID; cao → hỏi |
+| Thử 3 lần không xong | `BLOCKED`, đi tiếp | như AUTO |
+| Sửa làm hỏng chỗ khác | `git revert` commit đó, ghi lại | như AUTO + báo |
+| Cần đụng vùng cấm | `CHỜ-CHỦ`, đi tiếp | dừng, hỏi |
 
 ## PHASE 3 — TỰ KIỂM CHỨNG
 
-### 3.1 Đo lại → `audit/RESULT.md`
-Chạy lại **đúng** các phép đo ở `audit/BASELINE.md`.
+1. Đo lại đúng các chỉ số BASELINE → `audit/RESULT.md` (Trước · Sau · Δ · cách đo). Xấu đi → ghi thẳng.
+2. Regression: test, lint, typecheck, build, gate, `git diff --stat <tag backup>`. Test skip? baseline typecheck phình? diff lạ (lockfile, `.env`, file lớn)?
+3. Chạy local + 1 request end-to-end thật, dán output.
+4. Bộ test edge-case PHẦN VI + bộ test privacy egress PHẦN V §P8: dán kết quả.
+5. Chấm lại checklist Phase 1.
+6. **Evaluator ngữ cảnh mới:** gọi subagent chỉ có quyền đọc (không Write/Edit, không git ghi), đưa diff + `RESULT.md` + checklist; nó chưa từng thấy quá trình sửa. Trả `PASS` hoặc `NEEDS_WORK` kèm phát hiện cụ thể. `NEEDS_WORK` → quay lại Phase 2 với ID mới.
+7. Đối soát ledger: `Tổng | FIXED | CHỜ-CHỦ | DEFERRED | BLOCKED | OPEN | IN-PROGRESS`.
 
-| Chỉ số | Trước | Sau | Δ | Cách đo | Nhãn |
-|---|---|---|---|---|---|
-
-Chỉ số **không cải thiện hoặc xấu đi** → ghi thẳng, giải thích, không giấu.
-Chưa đo được → `[UNKNOWN]`, cấm nội suy.
-
-**[đã bổ sung]** `RESULT.md` phải có mục **"Corrections to this audit's own
-findings"** và **"Mistakes made during the work"**. Vòng trước có 8 dòng ở mục một
-và 4 ở mục hai. Một audit chỉ báo cáo phần nó đúng thì không phải audit.
-
-### 3.2 Regression
-Chạy `CMD_TEST`, `CMD_LINT`, `CMD_TYPECHECK`, `npm run gate`,
-`git diff --stat backup/pre-optimize-<tag>`.
-- Test bị skip/disable? Liệt kê từng cái + lý do. **Cấm skip để cho qua.**
-- `.typecheck-baseline.json` có phình thêm không? Phình = đang giấu lỗi mới.
-- Diff bất thường (file lạ, lockfile, `.env`)? Nêu ngay.
-- Chạy `CMD_RUN_LOCAL` + 1 request thật end-to-end. Dán output.
-- **[đã bổ sung]** Đọc exit code cho đúng: `npx eslint . | tail -3; echo $?` báo
-  exit của **`tail`**. Mọi kết luận "lint=0" từ pattern đó là vô nghĩa.
-
-### 3.3 Chấm lại checklist Phase 1
-Mục từng `CHƯA ĐẠT` → giờ `ĐẠT` chưa, kèm bằng chứng. Cấm tự phong.
-
-### 3.4 Đối soát ledger
-In `Tổng | FIXED | DEFERRED(đã duyệt) | BLOCKED | OPEN | IN-PROGRESS`.
-Còn `OPEN`/`IN-PROGRESS` → **chưa hoàn tất**, quay lại Phase 2.
-
-**ĐẦU RA PHASE 3:** `audit/RESULT.md` + bảng đối soát + 3 mục kết. **Dừng, chờ duyệt.**
+## PHASE 4 — BÀN GIAO → PHẦN III
 
 ---
 
-## PHASE 4 — BÀN GIAO (xem PHẦN III)
+# PHẦN III — GIT
 
----
+## Cổng push `main` — thiếu 1 cổng là không push
 
-# PHẦN III — GIT: 9 CỔNG + 2 CHẾ ĐỘ
+1. Test pass, 0 skip (hoặc nêu độ phủ smoke test nếu ban đầu không có test).
+2. Gate + build + lint + typecheck pass **trên kết quả đã merge** (không chỉ trên nhánh).
+3. `.typecheck-baseline.json` không phình.
+4. 0 `OPEN`/`IN-PROGRESS`; 0 `CRITICAL`/`HIGH` mở trừ loại `CHỜ-CHỦ/NGOÀI-REPO`.
+5. Quét secret trên diff và mọi commit mới: sạch.
+6. Không file nhóm `TUYỆT ĐỐI KHÔNG` (`EXPOSURE.md`) trong lần push.
+7. Mọi `CFG-` về skill/hook tự chạy git đã đóng.
+8. Privacy: không có điểm gửi nội dung user ra ngoài mới mà không qua lớp privacy; telemetry không bắt nội dung; test egress pass.
+9. Token/chi phí/độ trễ không regression (hoặc có lý do ghi trong `RESULT.md`).
+10. Test edge-case harness pass.
+11. Evaluator ngữ cảnh mới trả `PASS`.
+12. `RESULT.md` + changelog sẵn sàng.
+13. Merge được fast-forward hoặc `--no-ff` sạch; không cần force.
 
-## Cổng bàn giao — thiếu 1 cổng là KHÔNG được đi tiếp
-
-1. [ ] Test pass, không skip cái nào
-2. [ ] `npm run gate` + lint + typecheck pass (không có build step ở repo này)
-3. [ ] `.typecheck-baseline.json` **không phình thêm** so với baseline
-4. [ ] Không còn `CRITICAL`/`HIGH` chưa đóng
-5. [ ] Ledger 100% `FIXED` / `DEFERRED`(đã duyệt) / `BLOCKED`(đã báo) — không còn
-       `OPEN`/`IN-PROGRESS`
-6. [ ] Đã quét lại secret: không secret trong diff và trong các commit mới
-7. [ ] Có bảng Trước/Sau + changelog sẵn sàng
-8. [ ] Mọi ID `CFG-` về xung đột skill đã đóng — không skill nào còn quyền tự chạy git
-9. [ ] **Repo public:** diff sắp đẩy không chứa secret, dữ liệu khách hàng, hay file
-       nhóm `TUYỆT ĐỐI KHÔNG`. Mọi ID `EXP-` đã đóng
-
-## Chế độ git — mặc định `SAFE`
-
-**`SAFE` (mặc định):** Claude tự làm tag backup + nhánh + commit. **In lệnh push
-cho chủ project bấm.** Không tự chạy push/merge.
-
-```powershell
-git push -u origin <nhánh>
-git checkout main; git merge --no-ff <nhánh>; git push origin main
-git reset --hard backup/pre-optimize-<tag>   # rollback
+## Quy trình AUTO
+```bash
+git fetch origin
+git status --porcelain                         # phải rỗng
+git switch main && git pull --ff-only origin main
+git merge --no-ff "optimize/<ngày>" -m "merge: audit optimize <ngày>"
+npm run gate                                   # chạy lại trên main đã merge
+# in bảng 13 cổng có tick + bằng chứng ngay trước dòng dưới
+git push origin main
 ```
+- Push bị từ chối (branch protection, lệch lịch sử) → dừng, báo. **Không bao giờ force.**
+- Push `main` kích hoạt deploy production (đã xác định ở Phase 0) → sau push chạy smoke test vào PROD URL. Fail → rollback ngay.
 
-**`AUTO`:** chỉ kích hoạt khi chủ project gõ **nguyên văn** `CHẾ ĐỘ: AUTO`
-**trong lượt đó**. Khi đó Claude được tự chạy tới `git push origin main`, nhưng chỉ
-khi **đủ cả 9 cổng** và **đã in bảng đối chiếu 9 cổng có tick đầy đủ ngay trước
-khi push**.
+## Rollback — dùng `revert`, không dùng `reset`
+`main` đã public thì không viết lại lịch sử:
+```bash
+git revert -m 1 <merge-commit-hash>
+git push origin main
+```
+Tag `backup/pre-optimize-*` dùng để so sánh và khôi phục cục bộ, không để reset `main`.
 
-Bất kể chế độ nào: **cấm** force push, `reset --hard` trên `main`, xoá nhánh, sửa
-lịch sử.
+## SAFE
+In nguyên khối lệnh trên cho chủ project bấm.
 
-### **[quan trọng — đã cập nhật]** Quan hệ giữa `AI_REMOTE_ALLOW_MAIN` và `CHẾ ĐỘ: AUTO`
-
-Đây là hai thứ **khác nhau**, và nhầm lẫn giữa chúng là cách rào git sụp mà không
-ai nhận ra:
-
-| | `AI_REMOTE_ALLOW_MAIN=1` | `CHẾ ĐỘ: AUTO` |
-|---|---|---|
-| Là gì | Biến môi trường trong `.claude/settings.json` | Một cụm chữ chủ project gõ trong lượt đó |
-| Ai đọc | `guard-bash.js` — tầng **cưỡng chế bằng code** | Chỉ file này — tầng **luật** |
-| Nó làm gì | Gỡ chặn commit/merge/push trên `main` | Cho phép Claude *chủ động* push lên `main` |
-| Hết hiệu lực khi | Chủ project sửa file | Hết lượt đó |
-
-**Switch bật KHÔNG có nghĩa là được push.** Nó chỉ có nghĩa là cái chặn cứng không
-còn ở đó. Ở chế độ `SAFE`, luật này vẫn cấm — và lúc đó luật là thứ **duy nhất**
-còn ngăn, nên nó phải được tuân thủ chặt hơn chứ không lỏng hơn.
-
-Switch **không bao giờ** gỡ: force push, `reset --hard`, xoá nhánh, sửa lịch sử,
-`rm -rf`, `DROP TABLE`, `npm publish`, `vercel deploy`.
-
-`brief.js` phải **báo đúng trạng thái switch** ở mỗi SessionStart. Trước `CFG-012`
-nó luôn nói "commits here are blocked" kể cả khi switch đang mở — một cảnh báo sai
-tự tin còn tệ hơn không có cảnh báo, vì agent sẽ dựa vào cái chốt không tồn tại.
-Hai file cùng đọc `.claude/hooks/branch.js` từ đó.
-
-## Báo cáo sau khi push
-Commit hash · thay đổi chính theo nhóm (sửa lỗi / hiệu năng / tính năng / dọn
-code) · danh sách `MEDIUM`/`LOW` còn tồn + thứ tự ưu tiên lần sau.
+## Báo cáo sau push
+Commit hash · tag backup · các commit có sẵn trên nhánh cũ đã theo vào main · thay đổi theo nhóm · `CHỜ-CHỦ` đặt đầu · MEDIUM/LOW còn tồn + thứ tự lần sau.
 
 ---
 
-# PHẦN IV — BÁO CÁO CUỐI
+# PHẦN IV — TỐI ƯU TOKEN (T1–T15)
 
-1. **Tổng quan** — audit bao nhiêu module / tổng, còn file nào chưa đọc, số vấn đề
-   theo từng mức
-2. **Sổ theo dõi ĐẦY ĐỦ** — mọi ID từ `CRITICAL` tới `LOW`, trạng thái cuối.
-   **Bảng full, không phải bản tóm tắt.** Đây là bằng chứng không bỏ sót
-3. **Bảng Trước/Sau** — mục 3.1
-4. **Đã sửa** — nhóm theo mức, lý do, ảnh hưởng
-5. **DEFERRED / BLOCKED** — kèm lý do
-6. **Rủi ro còn lại** — nói thẳng cái gì có thể vỡ, ở đâu
-7. **Trạng thái Git** — nhánh, tag backup, danh sách commit, đã push hay chưa
-8. **Bước tiếp theo** — 3 việc ưu tiên cao nhất
+Đo bằng trường `usage` thật của API, không ước lượng bằng mắt.
+
+| # | Quy tắc | Cách kiểm |
+|---|---|---|
+| T1 | Thứ tự prompt cố định: tools → system → nội dung tĩnh → lịch sử → tin nhắn mới. Cache tính theo tiền tố khớp từ đầu. | So 2 request liên tiếp: phần đầu giống byte |
+| T2 | Không chèn timestamp, request id, số ngẫu nhiên, tên user vào phần tĩnh. | grep chỗ dựng prompt |
+| T3 | Đặt cache breakpoint cuối phần tĩnh; từ lượt 2 phải thấy `cache_read_input_tokens > 0`. | log usage |
+| T4 | TTL theo mẫu truy cập: 5 phút cho chat liên tục; 1 giờ chỉ khi chắc ≥2 lần đọc trong giờ. | cache hit rate theo route |
+| T5 | Định tuyến model theo độ khó: phân loại/trích xuất/định dạng → model nhỏ; suy luận sâu → model lớn. | bảng route → model |
+| T6 | Việc code làm được (parse, tính, lọc, regex, format) không gọi LLM. | grep |
+| T7 | Việc không cần real-time (báo cáo định kỳ, xử lý hàng loạt) → Batch API. | danh sách job |
+| T8 | `max_tokens` theo loại tác vụ; output dạng schema ngắn; cấm model lặp lại input. | config |
+| T9 | Lịch sử hội thoại: cửa sổ trượt + compaction khi vượt ngưỡng; không gửi full lịch sử mỗi lượt. | đo token theo độ dài hội thoại |
+| T10 | Kết quả tool: cắt trường thừa, phân trang, tóm trước khi trả model. | so kích thước |
+| T11 | Just-in-time: lưu tham chiếu, chỉ tải nội dung khi cần; không nhồi toàn bộ tài liệu. | |
+| T12 | Chỉ nạp tool cần cho tác vụ; mô tả tool ngắn, không trùng. | đếm tool/request |
+| T13 | Cache ở tầng ứng dụng cho tác vụ tất định, có TTL; **khóa cache phải tách theo user** — không bao giờ trả kết quả của user A cho user B. | test 2 user |
+| T14 | Chống request trùng (double-click, retry phía client) bằng idempotency key → không trả phí 2 lần. | test bấm 2 lần |
+| T15 | Trần ngân sách token/chi phí theo request, user, ngày; vượt → dừng có thông báo rõ. | test vượt trần |
+
+Dashboard bắt buộc: token/request, chi phí/request, cache hit rate, theo route.
+
+---
+
+# PHẦN V — PRIVACY TỐI ĐA KHI VẪN DÙNG PROVIDER (P0–P8)
+
+Mục tiêu: user chat bình thường, tiện như cũ; provider nhận ít nhất có thể; web không giữ thừa.
+Chỉ có một cửa duy nhất gọi provider: **Privacy Gateway** ở server. Mọi đường khác gọi thẳng provider = `PRV-` `CRITICAL`.
+
+| Lớp | Việc | Giới hạn phải nói thật |
+|---|---|---|
+| **P0 Không thu thập thừa** | Mặc định không lưu nội dung chat, hoặc lưu mã hóa có TTL. Không analytics/APM/error tracker nào nhận nội dung. Telemetry chỉ metadata (token, độ trễ, mã lỗi); bắt nội dung tắt. | Lỗi debug khó hơn → dùng trace id + tái hiện cục bộ |
+| **P1 Hợp đồng provider** | Chỉ dùng API key thương mại, không tài khoản consumer. Xác minh no-training. Xin ZDR nếu đủ điều kiện. OpenAI: `store=false`. Ghi rõ ngoại lệ an toàn (lưu để chống lạm dụng) vào trang privacy. | ZDR vẫn có ngoại lệ pháp lý/chống lạm dụng; cần đọc điều khoản gốc |
+| **P2 Khử định danh có đảo ngược** | Trước khi gửi: phát hiện PII → thay token ổn định (`<PERSON_1>`, `<PHONE_1>`, `<EMAIL_1>`, `<ID_1>`) → gửi → nhận → khôi phục. Bảng ánh xạ chỉ trong bộ nhớ theo phiên; không log, không ghi đĩa. Tiếng Việt: regex CCCD 12 số, SĐT VN, email, STK; tên người Việt (kết hợp regex + danh sách + model NER chạy cục bộ). Đánh giá bằng bộ test PII tiếng Việt có nhãn: đo recall. | Không che được nội dung nhạy cảm không phải PII; ngữ cảnh vẫn có thể giúp tái định danh |
+| **P3 Định tuyến theo độ nhạy** | Phân loại độ nhạy **cục bộ** (cấm gọi LLM ngoài để phân loại). Thấp → provider + P1 + P2. Cao → model mở tự host, hoặc dịch vụ confidential inference trong TEE có remote attestation (xác minh attestation thật, không tin quảng cáo). Fallback khi provider sập **chỉ sang đích có mức privacy bằng hoặc cao hơn** — không bao giờ hạ cấp. | Model tự host thường yếu hơn; TEE tốn chi phí, phụ thuộc chuỗi tin cậy phần cứng |
+| **P4 Lưu trữ & kênh** | TLS. Mã hóa lúc lưu. Khóa theo user để xóa = hủy khóa (crypto-shredding) `[INFER]`. Cache tách theo user. Không lưu nội dung user ở `localStorage` trình duyệt nếu không cần. | |
+| **P5 Quyền user** | Trang privacy nói đúng sự thật: gửi cho provider nào, giữ bao lâu, ngoại lệ gì. Nút xóa, nút xuất dữ liệu. Chế độ "riêng tư cao" (ép P3 mức cao). Tùy chọn xem bản đã khử định danh được gửi đi. | |
+| **P6 Cá nhân hóa không xâm phạm** | Hồ sơ cá nhân hóa lưu ở server của mình, mã hóa, user xem/sửa/xóa được. Mỗi request chỉ nạp thuộc tính cần; khử định danh trước khi gửi. Memory có nguồn gốc (provenance), kiểm trước khi ghi, có rollback. | |
+| **P7 Pháp lý Việt Nam** | Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15 (hiệu lực 01/01/2026) và nghị định hướng dẫn. Gửi chat user Việt Nam tới provider đặt ở nước ngoài → kiểm nghĩa vụ chuyển dữ liệu xuyên biên giới, đồng ý hợp lệ, thông báo xử lý, quyền chủ thể dữ liệu. Ghi `LAW-` cho từng khoảng trống. **Không phải tư vấn pháp lý; cần luật sư xác nhận.** | |
+| **P8 Test egress (bắt buộc pass trước push)** | Gửi request chứa PII giả (tên, SĐT, CCCD, email giả) → chặn bắt payload đi ra provider (mock) → khẳng định không còn PII gốc; response trả user đã khôi phục đúng. Kiểm log/telemetry không chứa PII giả. Kiểm 2 user không đọc được cache của nhau. | |
+
+---
+
+# PHẦN VI — HARNESS AGENT (H1–H20)
+
+Mỗi dòng phải có: cơ chế trong code (file:line) + test tự động chứng minh.
+
+| # | Edge case | Cơ chế bắt buộc | Test chứng minh |
+|---|---|---|---|
+| H1 | Timeout | Timeout từng tool + tổng request; hủy lan truyền (AbortController) | tool giả treo → hủy đúng hạn, báo lỗi rõ |
+| H2 | Rate limit 429/529 | Đọc `retry-after`; backoff mũ + jitter; trần số lần; hàng đợi + token bucket phía mình theo provider | mock 429 liên tiếp → không vượt trần, không bão retry |
+| H3 | Lỗi tạm thời vs vĩnh viễn | Phân loại; chỉ retry lỗi retryable | mock 400 → không retry |
+| H4 | Provider sập | Circuit breaker; fallback chỉ sang đích cùng/ cao hơn mức privacy | mock 5xx kéo dài → breaker mở, fallback đúng |
+| H5 | Hallucination | Structured output + validate schema; claim phải trỏ nguồn đã truy xuất; nhãn tin cậy; evaluator; được phép trả "không biết" | câu hỏi không có dữ liệu → không bịa |
+| H6 | Duplicate task | Idempotency key xác định từ ngữ cảnh `{run_id}:{step}:{tool}`, **không** băm nội dung; action ledger + ràng buộc UNIQUE | gửi cùng job 2 lần / retry giữa chừng → tác dụng phụ 1 lần |
+| H7 | Race condition | Optimistic locking (version); lease có TTL cho job; một writer cho mỗi conversation; transaction | 2 worker cùng job → chỉ 1 chạy |
+| H8 | Crash giữa chừng | Checkpoint trạng thái sau mỗi bước; resume; nhật ký tác dụng phụ; saga bù trừ cho tác vụ nhiều bước | kill process giữa bước → resume không lặp |
+| H9 | Vòng lặp/chạy quá | Trần bước, trần token, trần thời gian; phát hiện lặp hành động | agent giả lặp → dừng đúng trần |
+| H10 | Tràn context | Compaction có kiểm soát; ghi chú cấu trúc ra ngoài; đo mất mát sau nén | hội thoại dài → không mất dữ kiện then chốt |
+| H11 | Prompt injection gián tiếp | Nội dung web/tool là dữ liệu, không là lệnh; tool nguy hiểm cần xác nhận; allowlist | trang web chứa "bỏ qua chỉ dẫn" → không đổi hành vi |
+| H12 | Memory poisoning | Ghi memory có kiểm, provenance, không tự nạp output agent vào memory tin cậy, snapshot/rollback | ghi memory độc → bị chặn/rollback |
+| H13 | Stream đứt | Resume hoặc báo rõ; UI không treo | ngắt mạng giữa stream |
+| H14 | Sandbox | Chạy code/lệnh: cô lập, không mạng mặc định, giới hạn CPU/RAM/thời gian, FS chỉ đọc. **Có exec mà không sandbox → `CRITICAL`** | lệnh độc trong sandbox không thoát |
+| H15 | State | Một nguồn sự thật; job là máy trạng thái rõ (queued/running/succeeded/failed/cancelled); không giữ state quan trọng chỉ trong RAM (serverless mất RAM giữa lần gọi) | restart → state còn |
+| H16 | Observability | Trace id xuyên suốt; span theo quy ước OpenTelemetry GenAI; bắt nội dung **tắt** mặc định; metric độ trễ/token/lỗi/chi phí | trace 1 request đủ cây span, không có nội dung user |
+| H17 | Orchestration | Ưu tiên workflow tất định khi được; agent khi cần linh hoạt; subagent cô lập ngữ cảnh; song song việc độc lập | |
+| H18 | Hành động không đảo ngược | Gửi email/khách, thanh toán, xóa dữ liệu → cổng xác nhận người | |
+| H19 | Đổi model/provider | Ghim phiên bản model; chạy eval cố định trước khi đổi | eval regression |
+| H20 | Dữ liệu real-time cũ | Mọi dữ liệu thời gian thực mang timestamp + nguồn; quá hạn → làm mới hoặc gắn cờ | dữ liệu quá hạn bị gắn cờ |
+
+---
+
+# PHẦN VII — Ý TƯỞNG NÂNG CẤP (Phase 1 chấm, AUTO làm cái rủi ro thấp)
+
+| # | Ý tưởng | Giải quyết | Nguồn | Chi phí |
+|---|---|---|---|---|
+| I1 | Privacy Gateway một cửa (P0–P3) | Rò dữ liệu user ra provider | Mẫu anonymize → LLM → deanonymize (Presidio) | M |
+| I2 | Router độ nhạy + chế độ "riêng tư cao" (self-host/TEE) | Dữ liệu nhạy cảm cao | OpenPcc, nhà cung cấp confidential inference | L |
+| I3 | Evaluator ngữ cảnh mới, chỉ đọc | Agent tự chấm "xong" sai | anthropics/cwc-long-running-agents | S |
+| I4 | Action ledger + idempotency key xác định | Tác dụng phụ lặp | bài về idempotency cho agent | S–M |
+| I5 | Run state machine + checkpoint/resume | Crash, serverless mất state | durable execution | M |
+| I6 | Tracing OpenTelemetry GenAI, nội dung tắt | Không nhìn thấy hệ thống | opentelemetry.io | S |
+| I7 | Bố cục prompt theo cache + dashboard hit rate | Tốn token | docs prompt caching | S |
+| I8 | Làn Batch cho việc không real-time | Chi phí | tài liệu giá provider | S |
+| I9 | Router model theo độ khó | Chi phí + độ trễ | `[INFER]` | S |
+| I10 | Bộ red-team theo OWASP LLM 2025 + Agentic 2026 chạy trong CI | Injection, tool misuse, memory poisoning | OWASP GenAI Security Project | M |
+| I11 | Memory có provenance + rollback | Memory poisoning | OWASP ASI06 | M |
+| I12 | Bảng minh bạch cho user: đã gửi gì, cho ai, xóa được | Niềm tin + nghĩa vụ pháp lý | `[INFER]` + Luật 91/2025 | M |
+| I13 | Bộ eval vàng + chạy khi đổi prompt/model | Chất lượng trôi | context engineering | M |
+| I14 | Kho prompt có version, tách khỏi code, private | Bảo vệ chất xám + A/B | `[INFER]` | S |
+
+---
+
+# PHẦN VIII — BÁO CÁO CUỐI
+
+1. `CHỜ-CHỦ` — đặt đầu tiên, nhất là `NGOÀI-REPO` (rotate key, visibility, ZDR, pháp lý)
+2. Tổng quan: số file đã đọc / tổng, số vấn đề theo mức
+3. Ledger đầy đủ — bảng full, không tóm tắt
+4. Bảng Trước/Sau (`RESULT.md`): token, chi phí, cache hit, độ trễ, lỗi, egress, test
+5. Kết quả 13 cổng + evaluator
+6. Đã sửa theo nhóm · DEFERRED/BLOCKED + lý do
+7. Rủi ro còn lại — nói thẳng
+8. Git: nhánh, tag, commit, push hash, deploy + smoke test
+9. 3 việc ưu tiên tiếp theo
+
+---
+
+# PHẦN IX — NGUỒN THAM CHIẾU (Phase 1 phải mở bản gốc để xác minh trước khi áp dụng)
+
+Harness & context
+- Anthropic — Effective harnesses for long-running agents: https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
+- Anthropic — Building effective agents: https://www.anthropic.com/engineering/building-effective-agents
+- Anthropic — Harness design for long-running application development: https://www.anthropic.com/engineering/harness-design-long-running-apps
+- Anthropic — Harness primitives (evaluator chỉ đọc): https://github.com/anthropics/cwc-long-running-agents
+- Danh mục harness engineering: https://github.com/ai-boost/awesome-harness-engineering
+
+Token
+- Claude prompt caching: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+- Cache + Batch cộng dồn (thứ cấp): https://technspire.com/en/blog/anthropic-prompt-caching-pricing-mechanics
+
+Privacy provider
+- Anthropic API & data retention: https://platform.claude.com/docs/en/manage-claude/api-and-data-retention
+- Claude Code data usage: https://code.claude.com/docs/en/data-usage
+- OpenAI data controls: https://developers.openai.com/api/docs/guides/your-data
+- Ngoại lệ ZDR (thứ cấp, cần xác minh): https://securityboulevard.com/2026/09/zero-data-retention-what-every-ai-provider-actually-promises-you/
+
+Khử định danh & confidential inference
+- Presidio trong pipeline LLM (thứ cấp): https://pasqualepillitteri.it/en/news/5538/microsoft-presidio-pii-data-protection-ai
+- Haystack PresidioTextCleaner: https://docs.haystack.deepset.ai/docs/2.29-unstable/presidiotextcleaner
+- OpenPcc (TEE CPU+GPU): https://arxiv.org/html/2606.11145v1
+- Ví dụ dịch vụ confidential inference: https://phala.com/confidential-ai-models · https://chutes.ai/news/private-ai-inference-verifiable-confidential-llm-serving
+
+Độ tin cậy & bảo mật agent
+- Idempotency cho agent: https://tianpan.co/blog/2026-07-01-exactly-once-was-hard-before-your-agent-could-retry-itself
+- Durable execution tối giản: https://hackernoon.com/you-dont-need-temporal-yet-durable-execution-for-ai-agents-in-150-lines
+- OpenTelemetry GenAI observability: https://opentelemetry.io/blog/2026/genai-observability/
+- OWASP LLM Top 10 2025 (thứ cấp): https://www.hackerone.com/ai/owasp-top-10-llms-2025
+- OWASP Agentic Top 10 2026 (thứ cấp): https://goteleport.com/blog/owasp-top-10-agentic-applications
+
+Pháp lý Việt Nam
+- Hiệu lực Luật BVDLCN 2025: https://luatvietnam.vn/dan-su/luat-bao-ve-du-lieu-ca-nhan-2025-co-hieu-luc-khi-nao-568-103652-article.html
+- Tóm tắt Luật 91/2025/QH15: https://gvlawyers.com.vn/wp-content/uploads/2025/09/VN_Legal-alert-_Law-on-PDP-2025.pdf
+- Nghị định 356/2025/NĐ-CP hướng dẫn: https://www.ey.com/content/dam/ey-unified-site/ey-com/vi-vn/technical/tax/documents/ey-vietnam-legal-alert-march-2026-decree-no356-2025-nd-cp-providing-detailed-guidance-for-implementation-of-personal-data-protection-law-viet.pdf
+
+---
+
+## BẮT ĐẦU
+
+Chế độ hiện tại: `AUTO` (trừ khi lượt này có `CHẾ ĐỘ: SAFE`).
+Đọc `audit/PROGRESS.md` nếu đã tồn tại → tiếp tục từ đó. Chưa có → bắt đầu PHASE 0 §0.1.
