@@ -1269,7 +1269,10 @@ section('copying and editing what you said');
   check('and stores the new wording', after.stored.join('|') === rewritten, after.stored.join('|'));
   check('the address in it is still a link afterwards', after.href === 'https://example.com/paper.pdf', after.href);
 
-  // When it was sent, beside its copy button, in this device's own time zone.
+  // When it was sent, beside its copy button, in this device's own time zone —
+  // and, like the buttons, only while you are pointing at the message.
+  await page.mouse.move(20, 20);
+  await page.waitForTimeout(350);
   const stamp = await page.evaluate(() => {
     const time = document.querySelector('#messages .msg--user .msg__actions .msg__time');
     if (!time) return null;
@@ -1279,11 +1282,15 @@ section('copying and editing what you said');
       tooltip: time.title,
       recent: Math.abs(Date.now() - at.getTime()) < 10 * 60_000,
       year: String(new Date().getFullYear()),
-      visible: getComputedStyle(time).opacity !== '0',
+      opacity: getComputedStyle(time).opacity,
     };
   });
   check('a sent message says when it was sent', !!stamp?.recent && stamp.text.includes(stamp.year), JSON.stringify(stamp));
-  check('  shown without hovering, the buttons still only on hover', !!stamp?.visible);
+  check('  hidden while you are not pointing at it', stamp?.opacity === '0', stamp?.opacity);
+  await page.hover('#messages .msg--user');
+  await page.waitForTimeout(350);
+  const hovered = await page.evaluate(() => getComputedStyle(document.querySelector('#messages .msg--user .msg__actions .msg__time')).opacity);
+  check('  and shown with the buttons when you do', hovered === '1', hovered);
   check('  with the full date and the time zone on its tooltip', /\d{2}:\d{2}:\d{2}/.test(stamp?.tooltip || ''), stamp?.tooltip);
   check('and still opens away from the conversation', after.target === '_blank', after.target);
   // `textContent` has to read back exactly what was typed, or copying and

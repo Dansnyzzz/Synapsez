@@ -1484,11 +1484,11 @@ section('the same read twice in a turn runs once');
     if (last?.role === 'tool') seenResults.push(...last.results);
     if (calls === 1) {
       yield { type: 'done', stopReason: 'tool_use', toolCalls: [
-        { id: 'm1', name: 'memory_read', input: { key: 'prefs' } },
-        { id: 'm2', name: 'memory_read', input: { key: 'prefs' } },
+        { id: 'm1', name: 'skill_read', input: { name: 'docx' } },
+        { id: 'm2', name: 'skill_read', input: { name: 'docx' } },
       ], usage: { input: 5, output: 5 } };
     } else if (calls === 2) {
-      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'm3', name: 'memory_read', input: { key: 'prefs' } }], usage: { input: 5, output: 5 } };
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'm3', name: 'skill_read', input: { name: 'docx' } }], usage: { input: 5, output: 5 } };
     } else {
       yield { type: 'text', delta: 'done' };
       yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
@@ -1508,6 +1508,8 @@ section('the same read twice in a turn runs once');
   }
   check(`deep research past ${MAX_RESEARCH_PER_TURN} in a turn is refused`, /already run/.test(refused || ''), refused);
   check('volatile reads are never answered from memory', repeatedRead({ name: 'world_facts', input: { kind: 'time' } }, new Map(), {}) === null);
+  // A note written earlier in the turn changes what memory_read says.
+  check('memory_read is never answered from an earlier read', repeatedRead({ name: 'memory_read', input: {} }, new Map(), {}) === null);
 }
 
 section('the progress gate: a turn cannot finish with its plan left behind');

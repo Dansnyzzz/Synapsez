@@ -3,6 +3,7 @@ import { getStore } from '../store/index.js';
 import { currentUser, parseCookies } from '../auth.js';
 import { faviconFor, cleanHost } from '../favicon.js';
 import { proxiedImage, mapTile } from '../imageProxy.js';
+import { audit } from '../audit.js';
 
 /**
  * A conversation shared by link.
@@ -227,9 +228,15 @@ export function mountChatShareRoutes(api, { wrap }) {
       const store = getStore();
       const chat = await store.getChat(req.user.id, req.params.id);
       if (!chat) return res.status(404).json({ error: 'Chat not found' });
+      // A link outlives the conversation's own day-long life and can be copied
+      // anywhere — the opposite of what incognito promised.
+      if (chat.incognito) {
+        return res.status(400).json({ error: 'An incognito conversation cannot be shared.' });
+      }
       // The same link every time; sharing again only moves the snapshot on.
       const shared = await store.setChatShare(req.user.id, chat.id, chat.share_token || newChatShareToken());
       gateCache.delete(shared.token);
+      await audit(req, req.user.id, 'chat_shared');
       res.json({ shared: true, path: chatSharePath(shared.token), sharedAt: shared.sharedAt });
     }),
   );
@@ -241,7 +248,10 @@ export function mountChatShareRoutes(api, { wrap }) {
       const chat = await store.getChat(req.user.id, req.params.id);
       if (!chat) return res.status(404).json({ error: 'Chat not found' });
       await store.setChatShare(req.user.id, chat.id, null);
-      if (chat.share_token) gateCache.delete(chat.share_token);
+      if (chat.share_token) {
+        gateCache.delete(chat.share_token);
+        await audit(req, req.user.id, 'chat_unshared');
+      }
       res.json({ shared: false });
     }),
   );

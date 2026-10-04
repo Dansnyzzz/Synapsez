@@ -83,6 +83,21 @@ section('vercel.json');
     conf.rewrites?.some((r) => r.source === '/api/(.*)' && r.destination === '/api/index.js'),
   );
 
+  /*
+   * The frontend is served by the CDN, not by Express, so the security headers
+   * Express sets never reached the app's own page in production — no CSP, no
+   * frame-ancestors, no Referrer-Policy. vercel.json now declares them for every
+   * non-API path; this keeps the two lists identical.
+   */
+  const { SECURITY_HEADERS, HSTS } = await import('../server/securityHeaders.js');
+  const staticRule = (conf.headers || []).find((h) => h.source === '/((?!api/).*)');
+  const declared = Object.fromEntries((staticRule?.headers || []).map((h) => [h.key, h.value]));
+  check('the static frontend has a header rule that leaves /api to Express', !!staticRule, JSON.stringify(conf.headers || []).slice(0, 120));
+  const expected = { ...SECURITY_HEADERS, 'Strict-Transport-Security': HSTS };
+  const drift = Object.keys({ ...expected, ...declared }).filter((k) => expected[k] !== declared[k]);
+  check('  carrying exactly the headers Express sets', drift.length === 0, drift.join(', ') || 'identical');
+  check('  including the strict script policy', /script-src 'self'(;|$)/.test(declared['Content-Security-Policy'] || ''));
+
   const crons = (conf.crons || []).map((c) => c.path);
   check('scheduled tasks have a cron', crons.includes('/api/cron/run-tasks'), crons.join(', '));
   check('the model library has one too', crons.includes('/api/cron/refresh-models'));

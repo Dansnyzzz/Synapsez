@@ -185,6 +185,19 @@ export const api = {
   changePassword: (current, next) => request('POST', '/api/account/password', { current, next }),
   usage: () => request('GET', '/api/account/usage'),
 
+  // Memory, the security record, and the account's data (server/routes/account.js).
+  memory: () => request('GET', '/api/memory'),
+  saveNote: (scope, key, content) =>
+    request('PUT', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`, { content }),
+  deleteNote: (scope, key) => request('DELETE', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`),
+  clearMemory: () => request('DELETE', '/api/memory'),
+  importMemory: (text) => request('POST', '/api/memory/import', { text }),
+  activity: () => request('GET', '/api/account/activity'),
+  adminActivity: () => request('GET', '/api/admin/activity'),
+  importConversations: (conversations, memory) =>
+    request('POST', '/api/account/import', { conversations, ...(memory?.length ? { memory } : {}) }),
+  deleteAccount: (password, code) => request('DELETE', '/api/account', { password, code }),
+
   startTwoFactor: () => request('POST', '/api/account/2fa/setup'),
   confirmTwoFactor: (code) => request('POST', '/api/account/2fa/confirm', { code }),
   disableTwoFactor: (password, code) => request('POST', '/api/account/2fa/disable', { password, code }),
@@ -229,7 +242,20 @@ export const api = {
   archived: () => request('GET', '/api/chats/archived'),
   /** Whether scheduled work runs with the web closed — see the route. */
   heartbeat: () => request('GET', '/api/heartbeat'),
-  createChat: (model, projectId) => request('POST', '/api/chats', { model, projectId }),
+  createChat: (model, projectId, incognito = false) =>
+    request('POST', '/api/chats', { model, projectId, ...(incognito ? { incognito: true } : {}) }),
+  /**
+   * Throw an incognito conversation away as its owner leaves it. `keepalive`,
+   * so the request outlives a tab being closed — that is exactly when it is
+   * sent — and nothing is read back, because nobody is left to read it.
+   */
+  discardChat: (id) => {
+    try {
+      fetch(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE', keepalive: true, headers: { 'X-Language': currentLanguage() } }).catch(() => {});
+    } catch {
+      /* the sweep removes it within a day regardless */
+    }
+  },
   chat: (id) => request('GET', `/api/chats/${id}`),
   searchChats: (q) => request('GET', `/api/chats/search?q=${encodeURIComponent(q)}`),
   updateChat: (id, patch) => request('PATCH', `/api/chats/${id}`, patch),

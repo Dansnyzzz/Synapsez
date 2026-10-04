@@ -873,3 +873,29 @@ ALTER TABLE attachments ADD COLUMN IF NOT EXISTS vision_text TEXT;
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS share_token TEXT;
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS chats_share_token_idx ON chats (share_token) WHERE share_token IS NOT NULL;
+-- ── 28: incognito conversations, and a record of what happened to an account ─
+-- `incognito`: a conversation kept out of history. It is never listed, never
+-- searched, never exported, reads and writes no memory, and is deleted a day
+-- after it was last used — or the moment its owner leaves it. A constant
+-- default, so adding it to a populated table is a catalogue change, not a
+-- rewrite. The partial index is the sweep's: it only ever asks for these rows.
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS incognito BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS chats_incognito_idx ON chats (updated_at) WHERE incognito;
+
+-- `audit_events`: the security record an account owner can read back — signing
+-- in, a password or two-factor change, a key added, an export, a share link.
+-- What happened, never what was said: no message text, no secret, and the
+-- address only as its network (an IPv4 /24, an IPv6 /48), which is enough to
+-- tell "my phone" from "somewhere else" without keeping where somebody lives.
+-- Goes with the account (ON DELETE CASCADE) and is pruned after 180 days.
+CREATE TABLE IF NOT EXISTS audit_events (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL,
+  detail     JSONB NOT NULL DEFAULT '{}'::jsonb,
+  network    TEXT,
+  agent      TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS audit_events_user_idx ON audit_events (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS audit_events_created_idx ON audit_events (created_at);

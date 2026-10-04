@@ -71,10 +71,39 @@ export const DEFAULT_PREFS = {
    * not to see it again — including on the phone they sign in on next.
    */
   onboarded: false,
+  /**
+   * Memory and privacy — Settings → Memory.
+   *
+   * `memory`: the assistant reads its saved notes at the start of a turn and may
+   * write new ones. Off means neither, and the notes stay where they are until
+   * deleted. `memorySensitive`: health, beliefs, politics, ethnicity and
+   * sexuality may be remembered — off by default, as Claude has it; identifiers
+   * are refused whatever this says (see server/memory.js). `chatSearch`: the
+   * assistant may look back through earlier conversations.
+   */
+  memory: true,
+  memorySensitive: false,
+  chatSearch: true,
+  /**
+   * Days after its last use that a conversation is deleted; 0 keeps everything.
+   * Pinned conversations are always kept. See `deleteChatsOlderThan`.
+   */
+  retentionDays: 0,
+  /**
+   * `strict` asks OpenRouter to route only to providers that neither store nor
+   * train on prompts (`provider: { data_collection: "deny", zdr: true }`). Off by default
+   * because many free models are served only by providers that log, and strict
+   * makes those unavailable — a choice the person has to make knowingly.
+   */
+  providerPrivacy: 'standard',
 };
 
 /** The languages the interface has strings for. See public/js/locales/. */
 const LANGUAGES = new Set(['vi', 'en']);
+
+/** The retention periods Settings offers, in days; 0 is "keep everything". */
+export const RETENTION_DAYS = [0, 30, 90, 180, 365];
+export const PROVIDER_PRIVACY = ['standard', 'strict'];
 
 /**
  * Deployment-wide keys. These act as a shared fallback: handy for a private
@@ -155,7 +184,39 @@ async function usableDefaultModel(userId, fallback) {
   return fallback;
 }
 
+/**
+ * The account's provider-privacy choice, for the provider layer.
+ *
+ * Asked on every model call — each step of every turn, every research role —
+ * so it reads the stored row directly rather than through `getPrefs`, which may
+ * resolve a default model on the way, and remembers the answer for a minute.
+ * `setPrefs` forgets it, so a change applies to the very next call on this
+ * instance; another warm instance catches up within the minute.
+ */
+const PRIVACY_CACHE = new Map();
+const PRIVACY_TTL_MS = 60_000;
+export async function providerPrivacyFor(userId) {
+  if (!userId) return 'standard';
+  const hit = PRIVACY_CACHE.get(userId);
+  if (hit && Date.now() - hit.at < PRIVACY_TTL_MS) return hit.value;
+  let stored;
+  try {
+    stored = (await getStore().getUserSetting(userId, PREFS_KEY)) || {};
+  } catch {
+    // No store (a test driving the provider layer alone) or a blip: the
+    // standard route, which is what every account had before this setting —
+    // unless this instance already knows better, in which case a stale "strict"
+    // beats a guessed "standard". Not remembered, so the next call asks again.
+    return hit?.value || 'standard';
+  }
+  const value = stored.providerPrivacy === 'strict' ? 'strict' : 'standard';
+  PRIVACY_CACHE.set(userId, { value, at: Date.now() });
+  if (PRIVACY_CACHE.size > 500) PRIVACY_CACHE.delete(PRIVACY_CACHE.keys().next().value);
+  return value;
+}
+
 export async function setPrefs(userId, patch) {
+  PRIVACY_CACHE.delete(userId);
   const next = { ...(await getPrefs(userId)), ...patch };
 
   // Validated here rather than at the route, because this is the only way into
@@ -165,6 +226,17 @@ export async function setPrefs(userId, patch) {
     throw new Error(`"${patch.language}" is not a language this interface has. Use one of: ${[...LANGUAGES].join(', ')}.`);
   }
   if ('onboarded' in patch) next.onboarded = !!patch.onboarded;
+  for (const flag of ['memory', 'memorySensitive', 'chatSearch']) if (flag in patch) next[flag] = !!patch[flag];
+  if ('retentionDays' in patch) {
+    const days = Number(patch.retentionDays);
+    if (!RETENTION_DAYS.includes(days)) {
+      throw new Error(`Keep conversations for one of: ${RETENTION_DAYS.join(', ')} days (0 keeps everything).`);
+    }
+    next.retentionDays = days;
+  }
+  if ('providerPrivacy' in patch && !PROVIDER_PRIVACY.includes(patch.providerPrivacy)) {
+    throw new Error(`Provider privacy is one of: ${PROVIDER_PRIVACY.join(', ')}.`);
+  }
   /**
    * A zone that Intl does not recognise is worse than none at all.
    *

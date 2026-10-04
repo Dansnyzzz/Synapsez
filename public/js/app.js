@@ -32,6 +32,7 @@ import { normalisePlan, planItemHtml } from './plan.js';
 import { createAttachments } from './attachments.js';
 import { createModelNews } from './model-news.js';
 import { createTwoFactor } from './two-factor.js';
+import { createPrivacy } from './privacy.js';
 
 // Before anything is drawn. The language is guessed from storage and the browser
 // at module load, so the first paint is already right rather than a page of
@@ -1933,6 +1934,8 @@ function followBackground(id, seen) {
 }
 
 async function openChat(id) {
+  // Leaving an incognito conversation for another is the moment it goes.
+  leaveIncognito(id);
   clearTimeout(backgroundFollow);
   backgroundFollow = null;
   setComposeMode(null);
@@ -2150,6 +2153,7 @@ function setComposeMode(mode) {
 $('composer-mode-clear').addEventListener('click', () => setComposeMode(null));
 
 function startBlankChat(project = null) {
+  leaveIncognito();
   // Same reason as `openChat`: the run carries on, but its nodes come off the
   // page so they are not sitting in the blank conversation now on screen.
   hideRun();
@@ -2207,6 +2211,55 @@ function startBlankChat(project = null) {
 $('new-chat').addEventListener('click', () => {
   closeSidebar();
   startBlankChat();
+});
+
+/* ── incognito ─────────────────────────────────────────────────────
+ *
+ * A conversation that is not kept. Chosen on a blank conversation outside a
+ * project, before anything is sent; from then on the server keeps it out of
+ * every list, search, export and memory, and the browser deletes it the moment
+ * its owner leaves it — another conversation, a new one, or the tab closing.
+ * The server's sweep removes any that slipped past (a crashed browser) within
+ * a day.
+ */
+state.incognito = false;
+state.incognitoChat = null;
+
+function renderIncognito() {
+  const inside = !!state.incognitoChat && state.chatId === state.incognitoChat;
+  const blank = !state.chatId && !state.pendingProject;
+  const on = inside || (blank && state.incognito);
+  const toggle = /** @type {HTMLButtonElement} */ ($('incognito-toggle'));
+  toggle.hidden = !(blank || inside);
+  toggle.setAttribute('aria-pressed', String(on));
+  // Fixed once it exists: a conversation cannot be made to have been kept.
+  toggle.disabled = inside;
+  $('incognito-banner').hidden = !on;
+  document.body.classList.toggle('is-incognito', on);
+}
+
+/** Throw away the incognito conversation being left, unless `nextId` is it. */
+function leaveIncognito(nextId = null) {
+  const id = state.incognitoChat;
+  if (id && id !== nextId) {
+    api.discardChat(id);
+    state.incognitoChat = null;
+  }
+  if (nextId !== id) state.incognito = false;
+}
+
+$('incognito-toggle').addEventListener('click', () => {
+  if (state.chatId) return;
+  state.incognito = !state.incognito;
+  renderIncognito();
+  toast(t(state.incognito ? 'incognito.on' : 'incognito.off'));
+  $('input').focus();
+});
+
+// Closing the tab or reloading is leaving too. `pagehide` fires where
+// `unload` does not (mobile Safari, the back-forward cache).
+window.addEventListener('pagehide', () => {
+  if (state.incognitoChat) api.discardChat(state.incognitoChat);
 });
 
 /*
@@ -2875,13 +2928,17 @@ $('composer').addEventListener('submit', async (event) => {
     // one of them started a second, unasked-for run on whatever was on screen.
     let chatId = state.chatId;
     if (!chatId) {
-      const { chat } = await api.createChat(state.model, state.pendingProject?.id || null);
+      const project = state.pendingProject?.id || null;
+      const { chat } = await api.createChat(state.model, project, !project && state.incognito);
       chatId = chat.id;
+      // Remembered so leaving it throws it away — see `leaveIncognito`.
+      if (chat.incognito) state.incognitoChat = chat.id;
       // Only claimed for the screen if nobody went elsewhere meanwhile.
       if (!state.chatId) {
         state.chatId = chatId;
         state.pendingProject = null;
       }
+      renderIncognito();
     }
     const here = () => state.chatId === chatId;
     const node = userMessage(text, sending, null, new Date());
@@ -3791,6 +3848,7 @@ function renderTopbar() {
   const open = state.chats?.find((c) => c.id === state.chatId) || null;
   const chev = $('chat-menu');
   chev.hidden = !open;
+  renderIncognito();
 
   /**
    * The project this conversation is filed under — now the only thing that says
@@ -4432,6 +4490,11 @@ function selectTab(name) {
   for (const panel of document.querySelectorAll('.panel')) {
     panel.classList.toggle('is-active', panel.dataset.panel === name);
   }
+  // Read when looked at, not every time Settings opens: each is a request, and
+  // the notes and the security record are the two lists most likely to have
+  // changed since the last look.
+  if (name === 'memory') privacy.loadMemory();
+  if (name === 'account') privacy.loadActivity();
 }
 
 /**
@@ -4641,6 +4704,7 @@ function fillSettings() {
   $('account-name').value = me.name || '';
   renderTwoFactor();
   renderUsagePanel($('usage-card'), state.boot.usage);
+  privacy.fillMemory();
 
   $('tab-admin').hidden = me.role !== 'admin';
   if (!$('tab-admin').hidden) loadAdmin();
@@ -4961,9 +5025,19 @@ $('save-name').addEventListener('click', async () => {
 
 const { renderTwoFactor } = createTwoFactor({ state, fillSettings: () => fillSettings() });
 
+/* ── memory, privacy, and the account's data ───────────────────────── */
+
+const privacy = createPrivacy({
+  state,
+  armed,
+  // An import adds conversations; the sidebar should show them without a reload.
+  onImported: () => refreshChats().catch(() => {}),
+});
+
 /* ── admin ─────────────────────────────────────────────────────── */
 
 async function loadAdmin() {
+  privacy.loadAdminActivity();
   try {
     const { users } = await api.users();
 

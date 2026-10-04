@@ -220,7 +220,8 @@ section('schema.sql and SCHEMA_VERSION move together');
   // The failure message suggests the next number up because it assumes the
   // version was not bumped; it was, in the same change as the schema, so 21 is
   // the version that owns this file.
-  const STAMPED = { version: 27, fingerprint: '93f26ae30e7b08e8' };
+  // 28: chats.incognito and audit_events.
+  const STAMPED = { version: 28, fingerprint: '5e40e52c1f2b5eaa' };
 
   check(
     'the recorded version matches the code',

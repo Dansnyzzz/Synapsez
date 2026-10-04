@@ -313,6 +313,20 @@ export function markPromptCache(params, model) {
   return params;
 }
 
+/**
+ * OpenRouter's data policy for one request.
+ *
+ * `data_collection: "deny"` leaves out every endpoint that stores prompts or may
+ * train on them; `zdr: true` keeps only endpoints with a Zero Data Retention
+ * agreement. Both are per request and can only tighten what the OpenRouter
+ * account already enforces, never loosen it. Nothing for any other router: an
+ * unknown field is at best ignored, and OrcaRouter documents no equivalent.
+ */
+export function privacyParams({ router, privacy }) {
+  if (router !== 'openrouter' || privacy !== 'strict') return {};
+  return { provider: { data_collection: 'deny', zdr: true } };
+}
+
 export async function* streamOpenAICompatible({
   apiKey,
   baseURL,
@@ -328,6 +342,8 @@ export async function* streamOpenAICompatible({
   effort = 'high',
   maxTokens = 32000,
   signal,
+  /** 'strict' routes OpenRouter only to endpoints that keep and train on nothing. */
+  privacy = 'standard',
 }) {
   // maxRetries: 0 hands all retrying to streamCompletion, which is the layer
   // that knows about the account's other keys. The SDK's own default of 2 would
@@ -353,6 +369,7 @@ export async function* streamOpenAICompatible({
   }
   Object.assign(params, reasoningParams({ router, model, entry, effort }));
   if (markCache) markPromptCache(params, model);
+  Object.assign(params, privacyParams({ router, privacy }));
 
   let stream;
   for (let attempt = 0; ; attempt += 1) {

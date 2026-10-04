@@ -676,8 +676,42 @@ export async function sweep() {
     // A task whose invocation was killed mid-run is stopped for a person rather
     // than left to re-claim itself every hour for ever.
     store.reapStalledTasks(),
+    // Incognito conversations a day after their last use — the half of that
+    // promise the browser cannot keep when a tab is simply closed.
+    store.sweepIncognito(INCOGNITO_TTL_MS),
+    // The security record keeps half a year, then lets go.
+    store.pruneAudit(AUDIT_KEEP_DAYS),
+    applyRetention(store),
   ]);
 }
+
+/** How long an untouched incognito conversation survives. */
+export const INCOGNITO_TTL_MS = 24 * 3600_000;
+/** How many days of the security record are kept. */
+export const AUDIT_KEEP_DAYS = 180;
+
+/**
+ * Each account's own retention period, applied at most hourly per instance.
+ *
+ * The sweep runs every minute on a laptop and every few minutes on a
+ * deployment; deleting by a period counted in days does not need either
+ * cadence, and every account with a period set is one query.
+ */
+let retentionAt = 0;
+async function applyRetention(store, now = Date.now()) {
+  if (now - retentionAt < 3600_000) return 0;
+  retentionAt = now;
+  let removed = 0;
+  for (const { userId, days } of await store.listRetentionAccounts()) {
+    removed += await store.deleteChatsOlderThan(userId, days).catch((err) => {
+      log.error('retention sweep failed for an account', err);
+      return 0;
+    });
+  }
+  if (removed) log.info('retention sweep', { removed });
+  return removed;
+}
+export const __retention = { applyRetention, reset: () => { retentionAt = 0; } };
 
 let timer = null;
 

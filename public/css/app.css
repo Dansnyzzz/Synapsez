@@ -2114,13 +2114,18 @@ textarea {
   height: 26px;
   margin-top: 3px;
 }
-/* The buttons fade in on hover; the time beside them is always there, quiet. */
-.msg__actions .msg__action {
+/* The buttons and the time beside them fade in together on hover. A date under
+   every turn of a long conversation was a column of furniture to read past;
+   it is there the moment you point at the message you want to date. */
+.msg__actions .msg__action,
+.msg__actions .msg__time {
   opacity: 0;
   transition: opacity 0.14s ease, background 0.14s, color 0.14s;
 }
 .msg--user:hover .msg__actions .msg__action,
-.msg--assistant:hover .msg__actions .msg__action {
+.msg--assistant:hover .msg__actions .msg__action,
+.msg--user:hover .msg__actions .msg__time,
+.msg--assistant:hover .msg__actions .msg__time {
   opacity: 1;
 }
 /* When it was sent, or when the reply finished — in the device's own zone. */
@@ -2149,7 +2154,9 @@ textarea {
  * clicked here", which is exactly the one wanted.
  */
 .msg--user:has(.msg__action:focus-visible) .msg__actions .msg__action,
-.msg--assistant:has(.msg__action:focus-visible) .msg__actions .msg__action {
+.msg--assistant:has(.msg__action:focus-visible) .msg__actions .msg__action,
+.msg--user:has(.msg__action:focus-visible) .msg__actions .msg__time,
+.msg--assistant:has(.msg__action:focus-visible) .msg__actions .msg__time {
   opacity: 1;
 }
 .msg--user.is-editing .msg__actions { visibility: hidden; }
@@ -2191,7 +2198,8 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
 .msg__action.is-done { color: var(--ok); }
 /* No hover on a touch screen, so there is nothing to reveal — they simply stay. */
 @media (hover: none) {
-  .msg__actions .msg__action { opacity: 1; }
+  .msg__actions .msg__action,
+  .msg__actions .msg__time { opacity: 1; }
 }
 
 /* The bubble while it is being rewritten. */
@@ -8828,3 +8836,79 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 }
 .mdvideo__title:hover { text-decoration: underline; }
 .mdvideo__src { color: var(--text-faint); font-size: 12px; }
+
+/* ── Memory & privacy, the account's data, incognito ─────────────────────── */
+/* A checkbox with its label beside it — the settings' on/off rows. The box
+   keeps a 20px target and the whole label is pressable. */
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 500;
+}
+.check input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+
+/* A destructive action reads as one before it is pressed. */
+.btn--danger {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn--danger:hover { background: var(--danger); color: #fff; }
+.provider--danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line-soft)); }
+#panel-account .provider__row { flex-wrap: wrap; align-items: center; }
+#panel-account .provider__row input { min-width: 12rem; }
+
+/* One saved note: its name and where it applies, what it says, and the two
+   things that can be done to it. The text wraps rather than scrolls sideways. */
+.note-group { margin: 6px 0 14px; }
+.note-group__head { color: var(--text-dim); font-size: 12.5px; font-weight: 600; margin: 0 0 6px; }
+.note {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.note__head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.note__key { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.note__date { color: var(--text-faint); font-size: 12px; }
+.note__body { color: var(--text-dim); font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note__edit {
+  width: 100%;
+  min-height: 5.5rem;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.note__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.note__actions button { min-height: 32px; }
+
+/* The security record: one line per event, newest first. */
+.activity__when { color: var(--text-faint); font-size: 12px; white-space: nowrap; }
+.activity__where { color: var(--text-faint); font-size: 12px; overflow-wrap: anywhere; }
+
+/* Incognito: the toggle shows its state, and the conversation says what it is. */
+.incognito-toggle[aria-pressed='true'] { color: var(--accent); background: var(--surface-2); }
+.incognito-toggle:disabled { opacity: 1; cursor: default; }
+.incognito-banner {
+  margin: 12px auto 0;
+  max-width: 46rem;
+  padding: 8px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  text-align: center;
+}
+body.is-incognito .composer { border-style: dashed; }

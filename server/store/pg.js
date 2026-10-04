@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -213,8 +214,10 @@ export function splitStatements(sql) {
  *      or a scan for a model that cannot look itself
  *  27  chats.share_token and .shared_at — a conversation shared by link, as it
  *      was at the moment it was shared
+ *  28  chats.incognito — a conversation kept out of history and memory, swept
+ *      a day after its last use; audit_events — the account's security record
  */
-export const SCHEMA_VERSION = 27;
+export const SCHEMA_VERSION = 28;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -814,6 +817,8 @@ export function createPgStore(connectionString) {
           -- Archived conversations are not gone, they are put away. They are
           -- listed on the Archive shelf instead (listArchivedChats).
           WHERE c.user_id = $1 AND c.archived_at IS NULL
+            -- An incognito conversation is never history, so never listed.
+            AND NOT c.incognito
             AND (m.message_count > 0 OR l.chat_id IS NOT NULL)
           ORDER BY c.pinned DESC, c.updated_at DESC
           LIMIT 200`,
@@ -835,7 +840,7 @@ export function createPgStore(connectionString) {
                 (SELECT COUNT(*)::int FROM messages m WHERE m.chat_id = c.id) AS message_count
            FROM chats c
            LEFT JOIN projects p ON p.id = c.project_id AND p.user_id = c.user_id
-          WHERE c.user_id = $1 AND c.archived_at IS NOT NULL
+          WHERE c.user_id = $1 AND c.archived_at IS NOT NULL AND NOT c.incognito
           ORDER BY c.archived_at DESC
           LIMIT 500`,
         [userId],
@@ -858,7 +863,7 @@ export function createPgStore(connectionString) {
       return rows.length > 0;
     },
     async createChat(userId, chat) {
-      await q('INSERT INTO chats (id, user_id, title, model, project_id) VALUES ($1, $2, $3, $4, $5)', [
+      await q('INSERT INTO chats (id, user_id, title, model, project_id, incognito) VALUES ($1, $2, $3, $4, $5, $6)', [
         chat.id,
         userId,
         chat.title,
@@ -867,6 +872,10 @@ export function createPgStore(connectionString) {
         // instructions and sources it was answered under are part of what the
         // transcript means.
         chat.projectId ?? null,
+        // Never in a project: a project is a place that remembers, and an
+        // incognito conversation is a promise that nothing is. The route
+        // refuses the pair; this is the second lock.
+        !!chat.incognito && !chat.projectId,
       ]);
       return this.getChat(userId, chat.id);
     },
@@ -901,7 +910,7 @@ export function createPgStore(connectionString) {
                   WHERE m.chat_id = c.id AND m.content::text ILIKE $2 ESCAPE '\\'
                   ORDER BY m.seq LIMIT 1) AS snippet
            FROM chats c
-          WHERE c.user_id = $1
+          WHERE c.user_id = $1 AND NOT c.incognito
             AND (c.title ILIKE $2 ESCAPE '\\'
                  OR EXISTS (SELECT 1 FROM messages m
                              WHERE m.chat_id = c.id AND m.content::text ILIKE $2 ESCAPE '\\'))
@@ -909,6 +918,269 @@ export function createPgStore(connectionString) {
           LIMIT $3`,
         [userId, like, limit],
       );
+    },
+
+    /**
+     * Earlier conversations, for the assistant to recall from — `search_chats`.
+     *
+     * Different from `searchChats` above in three ways that each matter. It
+     * reads only what was *said* — user and assistant text — not tool results,
+     * which are other people's pages and would make a search for "deposit"
+     * return every contract the assistant ever opened. It is scoped the way
+     * Claude scopes it: inside a project, that project's conversations; outside,
+     * only conversations outside every project, so a client's matter never
+     * surfaces in somebody else's. And it never reaches an incognito
+     * conversation, which is the whole of that feature's promise.
+     *
+     * Every word has to appear (in the message or the title), which is what a
+     * person means by a few words; the caller falls back to any word when that
+     * finds nothing. Rows come back per message, newest conversation first; the
+     * caller groups and cuts them.
+     *
+     * @param terms  up to five words, already trimmed
+     * @param mode   'all' | 'any'
+     */
+    async recallChats(userId, { terms = [], projectId = null, excludeChatId = null, mode = 'all', limit = 60 } = {}) {
+      const params = [userId, projectId, excludeChatId || ''];
+      const escape = (term) => `%${String(term).replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      const tests = terms.slice(0, 5).map((term) => {
+        params.push(escape(term));
+        const n = params.length;
+        return `((m.content->>'text') ILIKE $${n} ESCAPE '\\' OR c.title ILIKE $${n} ESCAPE '\\')`;
+      });
+      params.push(Math.min(Math.max(Number(limit) || 60, 1), 200));
+      const where = tests.length ? `AND (${tests.join(mode === 'any' ? ' OR ' : ' AND ')})` : '';
+      /*
+       * At most two matching messages per conversation. Without the cap one
+       * long conversation that mentions the word sixty times fills the whole
+       * page, and every other conversation that mentions it once is never seen.
+       */
+      return q(
+        `SELECT id, title, updated_at, role, seq, text FROM (
+           SELECT c.id, c.title, c.updated_at, m.role, m.seq, LEFT(m.content->>'text', 4000) AS text,
+                  ROW_NUMBER() OVER (PARTITION BY c.id ORDER BY m.seq) AS nth
+             FROM chats c
+             JOIN messages m ON m.chat_id = c.id
+            WHERE c.user_id = $1
+              AND NOT c.incognito
+              AND c.project_id IS NOT DISTINCT FROM $2::text
+              AND c.id <> $3
+              AND m.role IN ('user', 'assistant')
+              AND COALESCE(m.content->>'text', '') <> ''
+              ${where}
+         ) hits
+          WHERE nth <= 2
+          ORDER BY updated_at DESC, seq ASC
+          LIMIT $${params.length}`,
+        params,
+      );
+    },
+
+    /**
+     * The newest conversations in the same scope, with how each one opened —
+     * `search_chats` with no query, for "what were we working on last week".
+     */
+    async recentChats(userId, { projectId = null, excludeChatId = null, limit = 10 } = {}) {
+      return q(
+        `SELECT c.id, c.title, c.updated_at,
+                (SELECT LEFT(m.content->>'text', 400) FROM messages m
+                  WHERE m.chat_id = c.id AND m.role = 'user' ORDER BY m.seq LIMIT 1) AS opening
+           FROM chats c
+          WHERE c.user_id = $1
+            AND NOT c.incognito
+            AND c.project_id IS NOT DISTINCT FROM $2::text
+            AND c.id <> $3
+            AND EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = c.id)
+          ORDER BY c.updated_at DESC
+          LIMIT $4`,
+        [userId, projectId, excludeChatId || '', Math.min(Math.max(Number(limit) || 10, 1), 30)],
+      );
+    },
+
+    /**
+     * Incognito conversations nobody has touched for `olderThanMs`, deleted with
+     * their files. The sweep's half of the promise; the browser deletes one the
+     * moment its owner leaves it, and this catches the tab that was closed.
+     *
+     * @returns how many went
+     */
+    async sweepIncognito(olderThanMs = 24 * 3600_000) {
+      const cutoff = String(Math.max(0, Number(olderThanMs) || 0));
+      // One statement, so the conversations and their files go together: a
+      // chat touched between two separate deletes would keep its rows and lose
+      // its files. (`attachments.chat_id` has no foreign key — see deleteChat.)
+      const rows = await q(
+        `WITH gone AS (
+           DELETE FROM chats
+            WHERE incognito AND updated_at <= NOW() - ($1 || ' milliseconds')::interval
+              AND run_lock_by IS NULL
+        RETURNING id, user_id
+         ), files AS (
+           DELETE FROM attachments a USING gone
+            WHERE a.chat_id = gone.id AND a.user_id = gone.user_id
+         )
+         SELECT id FROM gone`,
+        [cutoff],
+      );
+      return rows.length;
+    },
+
+    /**
+     * Conversations past the account's own retention period, deleted with their
+     * files. Measured from the last time anything happened in one, so a long
+     * project discussion that is still going is never cut off at its start.
+     * Pinned conversations are kept: pinning is the person saying "this one
+     * stays", and a retention rule that ignored it would delete exactly the
+     * conversations somebody chose to keep. Not one with a turn running.
+     *
+     * @returns how many went
+     */
+    async deleteChatsOlderThan(userId, days) {
+      const n = Math.floor(Number(days));
+      if (!Number.isFinite(n) || n < 1) return 0;
+      // One statement, for the same reason as sweepIncognito.
+      const rows = await q(
+        `WITH gone AS (
+           DELETE FROM chats c
+            WHERE c.user_id = $1 AND NOT c.pinned AND c.run_lock_by IS NULL
+              AND c.updated_at <= NOW() - make_interval(days => $2)
+        RETURNING c.id, c.user_id
+         ), files AS (
+           DELETE FROM attachments a USING gone
+            WHERE a.chat_id = gone.id AND a.user_id = gone.user_id
+         )
+         SELECT id FROM gone`,
+        [userId, n],
+      );
+      return rows.length;
+    },
+
+    /** Accounts that set a retention period, and what they set — see the sweep. */
+    async listRetentionAccounts() {
+      const rows = await q(
+        `SELECT user_id, value->>'retentionDays' AS days FROM user_settings
+          WHERE key = 'prefs' AND COALESCE(value->>'retentionDays', '0') ~ '^[0-9]+$'
+            AND (value->>'retentionDays')::int > 0`,
+      );
+      return rows.map((row) => ({ userId: row.user_id, days: Number(row.days) }));
+    },
+
+    /**
+     * Every set of notes on the account — its own and each project's — in one
+     * read, for the Memory settings page and the export.
+     *
+     * @returns `[{ key, value }]`, `key` being `memory` or `memory:<projectId>`
+     */
+    async listMemoryBuckets(userId) {
+      return q(
+        `SELECT key, value FROM user_settings
+          WHERE user_id = $1 AND (key = 'memory' OR key LIKE 'memory:%')
+          ORDER BY key`,
+        [userId],
+      );
+    },
+
+    /** Forget everything: every set of notes on the account. Returns how many sets went. */
+    async deleteAllMemory(userId) {
+      const rows = await q(
+        `DELETE FROM user_settings WHERE user_id = $1 AND (key = 'memory' OR key LIKE 'memory:%') RETURNING key`,
+        [userId],
+      );
+      return rows.length;
+    },
+
+    /**
+     * One page of the account's conversations for an export, oldest first and
+     * keyed by `(created_at, id)` so a page boundary can never skip or repeat a
+     * row. Incognito ones are not part of the record and are left out.
+     */
+    async exportChats(userId, { after = null, limit = 50 } = {}) {
+      const params = [userId, Math.min(Math.max(Number(limit) || 50, 1), 200)];
+      let cursor = '';
+      if (after?.createdAt && after?.id) {
+        params.push(after.createdAt, after.id);
+        cursor = 'AND (c.created_at, c.id) > ($3::timestamptz, $4::text)';
+      }
+      return q(
+        `SELECT c.id, c.title, c.model, c.pinned, c.created_at, c.updated_at, c.archived_at, c.project_id, c.chat_group,
+                c.created_at::text AS cursor_at
+           FROM chats c
+          WHERE c.user_id = $1 AND NOT c.incognito ${cursor}
+          ORDER BY c.created_at, c.id
+          LIMIT $2`,
+        params,
+      );
+    },
+
+    /**
+     * A whole conversation brought in from an export, in one statement per
+     * table rather than one round trip per message.
+     *
+     * The original times are kept — an imported conversation from March should
+     * sort as March — and `next_seq` is set past the last message so the next
+     * thing said in it is numbered after the import rather than on top of it.
+     *
+     * @param chat      `{ id, title, createdAt, updatedAt }`
+     * @param messages  `[{ id, role: 'user'|'assistant', text, createdAt }]`
+     */
+    async importChat(userId, chat, messages) {
+      const list = Array.isArray(messages) ? messages : [];
+      await q(
+        `INSERT INTO chats (id, user_id, title, created_at, updated_at, next_seq)
+         VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()), COALESCE($5::timestamptz, $4::timestamptz, NOW()), $6)`,
+        [chat.id, userId, chat.title, chat.createdAt || null, chat.updatedAt || null, list.length],
+      );
+      if (!list.length) return;
+      const values = [];
+      const params = [chat.id];
+      list.forEach((m, i) => {
+        params.push(m.id, i, m.role, toJson({ text: m.text }), m.createdAt || null);
+        const b = params.length - 4;
+        values.push(`($${b}, $1, $${b + 1}, $${b + 2}, $${b + 3}, COALESCE($${b + 4}::timestamptz, NOW()))`);
+      });
+      await q(`INSERT INTO messages (id, chat_id, seq, role, content, created_at) VALUES ${values.join(', ')}`, params);
+    },
+
+    // ── the account's security record ───────────────────────────────
+    /**
+     * @param event `{ kind, detail?, network?, agent? }` — never message text
+     *   and never a secret; see the table's comment in schema.sql.
+     */
+    async recordAudit(userId, event) {
+      await q(
+        `INSERT INTO audit_events (id, user_id, kind, detail, network, agent) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          crypto.randomUUID(),
+          userId,
+          String(event.kind).slice(0, 60),
+          toJson(event.detail || {}),
+          event.network ? String(event.network).slice(0, 64) : null,
+          event.agent ? String(event.agent).slice(0, 120) : null,
+        ],
+      );
+    },
+    async listAudit(userId, limit = 50) {
+      return q(
+        `SELECT id, kind, detail, network, agent, created_at FROM audit_events
+          WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+        [userId, Math.min(Math.max(Number(limit) || 50, 1), 200)],
+      );
+    },
+    /** Across every account, for an administrator — with whose account it was. */
+    async listAuditAll(limit = 200) {
+      return q(
+        `SELECT e.id, e.kind, e.detail, e.network, e.agent, e.created_at, u.email, u.name
+           FROM audit_events e JOIN users u ON u.id = e.user_id
+          ORDER BY e.created_at DESC LIMIT $1`,
+        [Math.min(Math.max(Number(limit) || 200, 1), 500)],
+      );
+    },
+    async pruneAudit(days = 180) {
+      const rows = await q(
+        `DELETE FROM audit_events WHERE created_at < NOW() - make_interval(days => $1) RETURNING id`,
+        [Math.max(1, Math.floor(Number(days) || 180))],
+      );
+      return rows.length;
     },
 
     async getChat(userId, id) {

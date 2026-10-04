@@ -604,6 +604,39 @@ const MAX_PROJECT_IMAGES = 4;
  * @returns {Promise<string|null>} the passages as text, or null when the
  *   project has nothing readable.
  */
+/**
+ * Where in its file a passage sits, as a person would cite it.
+ *
+ * A PDF's text carries `--- page N ---` before each page (see pdf.js) and a
+ * deck's carries `## Slide N`, so those give "p. 12" or "slides 3–4" — the
+ * form the grounding rules ask the model to cite in. Anything else gets its
+ * line range, which is still a place a person can find. Without this the model
+ * could only cite the file, and "it is in the 300-page contract" is not a
+ * citation anybody can check.
+ */
+export function passageLocation(text, at, end) {
+  const body = String(text || '');
+  const marks = (re) => {
+    const found = [];
+    for (const m of body.matchAll(re)) found.push({ at: m.index, n: Number(m[1]) });
+    return found;
+  };
+  for (const [re, one, many] of [
+    [/--- page (\d+) ---/g, 'p.', 'pp.'],
+    [/^## Slide (\d+)/gm, 'slide', 'slides'],
+  ]) {
+    const found = marks(re);
+    if (!found.length) continue;
+    const startMark = [...found].reverse().find((m) => m.at <= at + 4) || found[0];
+    const endMark = [...found].reverse().find((m) => m.at < end) || startMark;
+    return startMark.n === endMark.n ? `${one} ${startMark.n}` : `${many} ${startMark.n}–${endMark.n}`;
+  }
+  const lineAt = (offset) => body.slice(0, offset).split('\n').length;
+  const first = lineAt(at);
+  const last = lineAt(Math.max(at, end - 1));
+  return first === last ? `line ${first}` : `lines ${first}–${last}`;
+}
+
 export async function searchProject(userId, projectId, query, limit = 6) {
   const store = getStore();
   const files = (await store.readProjectFiles(userId, projectId)).filter((f) => f.kind !== 'image' && f.text);
@@ -619,5 +652,11 @@ export async function searchProject(userId, projectId, query, limit = 6) {
   // Grouped by id, not name: two sources may share a name, and by name their
   // passages interleaved as though they were one document.
   hits.sort((a, b) => (a.fileId === b.fileId ? a.at - b.at : a.file.localeCompare(b.file) || String(a.fileId).localeCompare(String(b.fileId))));
-  return hits.map((h) => `[${h.file}]\n${h.text}`).join('\n\n---\n\n');
+  // Each passage headed by the citation itself — `[report.pdf, p. 12]` — so
+  // the model copies a checkable reference rather than composing one.
+  const byId = new Map(files.map((f) => [f.id, f.text]));
+  return (
+    hits.map((h) => `[${h.file}, ${passageLocation(byId.get(h.fileId), h.at, h.end)}]\n${h.text}`).join('\n\n---\n\n') +
+    '\n\nCite a passage by the reference above it, exactly as written.'
+  );
 }

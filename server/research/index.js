@@ -32,6 +32,12 @@ const DEFAULT_CAP = 250_000;
 /** Wall-clock limits for one run: well inside the 300s function on a deployment. */
 const SERVERLESS_TIME_MS = 150_000;
 const LOCAL_TIME_MS = 600_000;
+/**
+ * The share of the clock kept back for the debate: a draft, one critique and
+ * revision, and the arbiter, on a free model that can take fifteen seconds a
+ * call. Page reading stops starting new reads once only this much is left.
+ */
+const DEBATE_RESERVE_MS = 75_000;
 
 /** The ledger as the store keeps it: an array, not a Map. */
 const ledgerToArray = (ledger) =>
@@ -94,21 +100,29 @@ export async function runDeepResearch({ question, userId, user, chatId, signal, 
     // Carried only so the searches can be attributed: a run makes up to six of
     // them on a deployment-wide key that no per-account quota covers.
     userId,
+    question,
+    // Reading stops opening new pages once only the debate's share of the
+    // clock is left — the evidence is worth nothing if there is no time to
+    // reason over it.
+    deadline: deadline - DEBATE_RESERVE_MS,
     ...(search ? { search } : {}),
     ...(deps.readPage ? { readPage: deps.readPage } : {}),
   });
 
   let claims = [];
   let transcript = [];
+  let cut = false;
   // Only debate if the budget has not already gone and there is something to
   // reason over; with no evidence there is nothing honest to synthesise.
   if (!overBudget()) {
-    ({ claims, transcript } = await runDebate({
+    ({ claims, transcript, cut } = await runDebate({
       question, findings, ledger, userId, entry, stream, budget, signal, chatId,
     }));
+  } else {
+    cut = true;
   }
 
-  const status = overBudget() ? 'budget' : 'complete';
+  const status = cut || overBudget() ? 'budget' : 'complete';
   const report = buildReport({ question, claims, ledger, status });
 
   await store.saveResearchRun(userId, {

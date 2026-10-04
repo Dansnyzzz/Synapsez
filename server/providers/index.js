@@ -9,6 +9,7 @@ import {
   markKeyDead,
   keyRestingUntil,
   liftKeyRest,
+  providerPrivacyFor,
 } from '../settings.js';
 import { resolveModel, PROVIDERS } from './catalog.js';
 
@@ -389,6 +390,8 @@ export async function* streamCompletion(opts) {
   let refused = null;
   // Worked out once: the prompt does not change between keys or attempts.
   let maxTokens = opts.maxTokens ?? outputBudget(entry, estimatePromptTokens(opts));
+  // Only OpenRouter takes a per-request data policy; see `providerPrivacy`.
+  const privacy = provider === 'openrouter' ? (opts.privacy ?? (await providerPrivacyFor(userId))) : 'standard';
   let shrunk = false;
 
   for (let round = 0; round < ROUNDS; round += 1) {
@@ -426,6 +429,7 @@ export async function* streamCompletion(opts) {
         apiKey: key,
         model: entry.model,
         entry,
+        privacy,
         baseURL: baseUrlFor(provider),
         // Whatever this model actually produces and the window still has room
         // for, rather than the 32000 every adapter used to fall back to.

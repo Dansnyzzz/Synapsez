@@ -321,6 +321,17 @@ section('what actually reaches the prompt');
   check('  and never above the cap', shelfBudget(2_000_000) <= 40_000);
   check('searchProject is exported for search_docs', typeof searchProject === 'function');
 
+  // Where a passage sits, so the model can cite `[report.pdf, p. 12]`.
+  const { passageLocation } = await import('../server/projects.js');
+  const pdf = '--- page 1 ---\nIntro text.\n\n--- page 2 ---\nThe deposit is two months.\n\n--- page 3 ---\nEnd.';
+  const at = pdf.indexOf('The deposit');
+  check('a PDF passage names its page', passageLocation(pdf, at, at + 26) === 'p. 2', passageLocation(pdf, at, at + 26));
+  check('  and a passage across pages names the range', passageLocation(pdf, at, pdf.indexOf('End.') + 2) === 'pp. 2–3');
+  const deck = '## Slide 1: Title\nHello\n\n## Slide 2: Plan\nThe plan.';
+  check('a slide deck passage names its slide', passageLocation(deck, deck.indexOf('The plan'), deck.length) === 'slide 2');
+  const text = 'line one\nline two\nline three\nline four';
+  check('anything else names its lines', passageLocation(text, text.indexOf('line two'), text.indexOf('line three') + 5) === 'lines 2–3');
+
   const loose = renderProject({
     project: { name: 'Exam', instructions: '', grounded: false },
     names: ['rules.md'],

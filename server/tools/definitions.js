@@ -1209,7 +1209,8 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: false,
     description:
-      'Save a durable note that persists across conversations. Use it for user preferences, project facts, and lessons learned — not for scratch state within one task. Inside a project the note is filed under that project and read back by its conversations only; outside one it is filed against the account and read everywhere.',
+      'Save a durable note that persists across conversations — it is shown to you at the start of every later one. Use it for user preferences, project facts, and lessons learned — not for scratch state within one task. Inside a project the note is filed under that project and read back by its conversations only; outside one it is filed against the account and read everywhere. ' +
+      'Never save identity, passport, tax, bank or card numbers, criminal records or immigration status, even when asked; health, religion, politics, ethnicity and sexuality only when the account allows sensitive topics — the tool refuses otherwise, and you tell the user why.',
     parameters: {
       type: 'object',
       properties: {
@@ -1807,6 +1808,36 @@ export const TOOLS = [
       type: 'object',
       properties: { key: { type: 'string', description: 'The note key, exactly as memory_read lists it.' } },
       required: ['key'],
+    },
+  },
+  {
+    name: 'memory_search',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Find saved notes about something, by what they say. The notes that fit are already in your prompt; use this for one it names but does not show, or to check whether anything was saved about a subject before saying nothing was.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What the note would be about, e.g. "invoice layout".' },
+        limit: { type: 'integer', description: 'How many notes to return. Default 8, max 20.' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'search_chats',
+    scope: 'cloud',
+    readOnly: true,
+    description:
+      'Search the user\'s earlier conversations for what was said — when they refer to something discussed before ("the plan we made last week", "what did I say about the deposit") and it is not in your notes. ' +
+      'Inside a project it searches that project\'s conversations; outside, conversations outside projects. With no query it lists the most recent ones. Never reaches incognito conversations.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A few distinctive words that would appear in what was said. Omit to list recent conversations.' },
+        limit: { type: 'integer', description: 'How many conversations to return. Default 5, max 10.' },
+      },
     },
   },
   {
@@ -3099,6 +3130,10 @@ const INDEX_GROUPS = [
     names: ['index_folder', 'list_indexed', 'forget_docs'],
     text: 'The index `search_docs` reads: add a folder of documents, list what is indexed, remove a folder.',
   },
+  {
+    names: ['memory_read', 'memory_edit', 'memory_delete', 'memory_search'],
+    text: 'Saved notes: read one in full, correct part of one, delete a stale one, find notes about a subject.',
+  },
 ];
 
 /** One line per deferred tool, or per family when two or more of it are held. */
@@ -3179,6 +3214,11 @@ const DEFERRABLE = new Set([
   'schedule_task', 'list_tasks', 'cancel_task',
   // Composite fan-outs. Expensive to run and never the first thing tried.
   'deep_research', 'run_parallel',
+  // Memory housekeeping. The notes themselves arrive in the prompt now, so
+  // reading one back is rare, and correcting or deleting one is rarer; writing
+  // stays loaded because noticing something worth keeping is a moment, not a
+  // plan. Looking back through earlier conversations is a deliberate act.
+  'memory_read', 'memory_edit', 'memory_delete', 'memory_search', 'search_chats',
   // Reading a video. A real job and a rare one — most turns never see a link
   // to one, and the schema is pure cost on all of them.
   'youtube_transcript',
@@ -3262,6 +3302,13 @@ export function availableTools({
    * provider rather than only the one with a native mechanism for it.
    */
   activated = null,
+  /**
+   * Names this conversation must not be given at all — memory in an incognito
+   * conversation, chat search on an account that switched it off. Filtered
+   * here, before anything is deferred, so a withheld tool is not even listed in
+   * `load_tools` for the model to ask for.
+   */
+  withhold = null,
 }) {
   // Planning is reading with a different brief: the model still needs to look
   // at everything, and `update_plan` is read-only, so the same filter serves.
@@ -3272,6 +3319,7 @@ export function availableTools({
     // Tools that exist for the interface rather than for the model. Offering
     // both halves of the same job is a decision it has to make for no reason.
     if (t.hidden) return false;
+    if (withhold?.has(t.name)) return false;
     // Composite tools that themselves fan out — a sub-agent must never reach one,
     // or one job becomes an exponential tree of API calls.
     if (subagent && t.noSubagent) return false;

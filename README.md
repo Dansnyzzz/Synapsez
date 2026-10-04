@@ -39,7 +39,7 @@ internet ever connects inward to your machine.
 | **Scheduled tasks** | Daily or weekly work that runs unattended, into a conversation you read later. |
 | **Workflows** | Several steps in order, run unattended, where each step sees what the last produced. It keeps its position: a run cut off at step three carries on at step three rather than sending the same email twice — and a step that was interrupted mid-flight is never repeated automatically, because nothing can tell you whether it had already happened. The shelf names the step that stopped and why. |
 | **Sub-agents** | Fan a job out to several read-only agents at once and gather the answers. |
-| **Deep research** | For a question where being right matters more than being fast: it searches several angles, cross-checks sources, and answers through an internal proposer–critic–arbiter debate. Every conclusion carries a confidence — HIGH / MEDIUM / LOW / CONFLICTING, counted from independent sources, not guessed — and a cited source list, and any claim with no source is flagged as such. The full debate transcript is kept for audit. Runs on the conversation's own model, so it is affordable on a free one. |
+| **Deep research** | For a question where being right matters more than being fast: it searches several angles, cross-checks sources, and answers through an internal proposer–critic–arbiter debate. Searches run in parallel; eight pages are opened and read (a page that refuses is replaced by the next, spread across independent sites), and only the passages that bear on the question are kept. Every conclusion carries a confidence — HIGH / MEDIUM / LOW / CONFLICTING, counted from independent sources, not guessed — and is checked against the page it cites: a figure the page never states marks the conclusion down. Any claim with no source is flagged. It keeps time for the debate and always finishes with a report — from the last draft if the clock runs out. The full transcript is kept for audit. Runs on the conversation's own model, so it is affordable on a free one. |
 | **Light and dark** | Follows your system by default; `Settings → Behaviour` overrides it per browser. |
 | **Your computers** | Pair as many machines as you like with an eight-character code. Sign in anywhere and they are there. |
 | **New-model alerts** | The daily scan spots a genuinely new release and tells you once, with the details — take it as your default or turn it down. |
@@ -61,7 +61,10 @@ internet ever connects inward to your machine.
 | **Auto-compact** | Long conversations fold their older turns into a summary before the window fills. A ring in the header shows how full it is. |
 | **Live plan** | The assistant keeps a visible task list as it works through multi-step jobs. |
 | **Reasoning** | Streamed and collapsible, for models that expose it. |
-| **Memory** | Durable notes that carry across conversations. |
+| **Memory** | Notes read back at the start of every conversation, project notes first, within a budget; `memory_search` for the rest. Identifiers are never saved and sensitive topics only if you allow it. Every note editable in Settings → Memory & privacy. |
+| **Earlier conversations** | `search_chats` looks back through what was said, scoped to the project you are in, as Claude's chat search does. Switchable. |
+| **Incognito** | A conversation kept out of history, search, export and memory, deleted when you leave it. |
+| **Your data** | Export everything as one file; import conversations from Claude, ChatGPT or another Synapsez; delete the account; a security record of sign-ins, key and privacy changes; automatic deletion after 30–365 days if you want it. |
 | **Phone-first** | Responsive down to small screens, safe-area aware, installable to the home screen. |
 | **Cost** | Token counts every turn, and dollar estimates where pricing is known. |
 
@@ -1336,13 +1339,71 @@ silently does nothing is worse than one that asks.
 
 ## Memory, and what never goes into it
 
-Notes carry across conversations, which is what makes them useful and also what makes a credential
-in one dangerous — it would be read back into every future context. `memory_write` strips API keys,
-`NAME=secret` assignments, passwords in URLs, bearer headers and private keys before storing, and
-says what it removed rather than editing silently.
+**Notes are read back at the start of every conversation.** The assistant saves a note with
+`memory_write` when it learns something worth keeping — how you like answers, a fact about a project,
+a decision. From the next conversation on, the notes are in its prompt: a project's notes first (they
+win where they disagree), then the account's, newest first, within about 1,500 tokens. Notes past that
+budget are named rather than quoted, and `memory_search` finds them by subject — the same shape as
+Claude Code's MEMORY.md. They sit in the cached part of the prompt, so after the first step they cost
+a tenth of their size on the providers that cache.
 
-It is a filter, not a guarantee: it catches the shapes credentials usually come in and will miss one
-that looks like an ordinary word. A safety net under a rule you still have to follow.
+Inside a project, notes are filed under the project and read only there. Outside, they belong to the
+account and are read everywhere.
+
+**What is never written into a note:**
+
+| Never, even when asked | Only if Settings → Memory allows sensitive topics |
+|---|---|
+| Identity, passport, tax, social-security numbers; bank account numbers and IBANs; card numbers (checked by Luhn); criminal records; immigration status | Health, religion, politics, ethnicity, sexuality |
+
+Credentials are stripped too — API keys, `NAME=secret` assignments, passwords in URLs, bearer headers
+and private keys — and the assistant is told what was removed so it can say so. The guard matches
+Vietnamese with its accents on, so "đồng tình" (agree) is not mistaken for "đồng tính". It is a filter,
+not a guarantee: it misses what is said obliquely. The tool descriptions carry the same rule.
+
+**Settings → Memory & privacy** has the switches and the notes:
+
+- **Use memory** — off means nothing is read or saved; the notes stay until deleted.
+- **Remember sensitive topics** — off by default.
+- **Search earlier conversations** — lets the assistant use `search_chats` to look back through what
+  was said (user and assistant text only, never tool output). Inside a project it searches that
+  project's conversations; outside, conversations outside projects.
+- **Keep conversations** — forever, or delete conversations not continued for 30/90/180/365 days, with
+  their files. Pinned conversations are always kept.
+- **Provider privacy** — Strict asks OpenRouter to route only to zero-data-retention endpoints that
+  neither store nor train on prompts (`provider: { data_collection: "deny", zdr: true }`). Many free
+  models are not served that way and stop working while it is on; the error says so.
+- Every note, grouped by where it applies, with Edit and Delete, a Delete-all, and a box to paste in
+  what Claude or ChatGPT says it remembers about you.
+
+### Incognito conversations
+
+The mask beside the model chip, on a blank conversation outside a project, makes the next conversation
+incognito. It is never listed, searched, exported or shared; it reads no notes and writes none, cannot
+search earlier conversations, and cannot save a skill. The browser deletes it the moment you leave it —
+another conversation, a new one, or closing the tab — and the server sweeps any that slipped through a
+day after their last use.
+
+### Your data: export, import, leave
+
+Settings → Account → **Your data**:
+
+- **Export my data** downloads one JSON file — profile, preferences, notes, skills, projects with their
+  source text, scheduled tasks, workflows and every conversation with its messages. Streamed, so a large
+  account does not hit the host's response limit. API keys, connector tokens and uploaded files' bytes
+  are not in it; incognito conversations are not part of the record.
+- **Import conversations** reads `conversations.json` from Claude or ChatGPT (only the branch ChatGPT
+  kept, not abandoned edits) or a Synapsez export, in the browser, and sends it fifty conversations at a
+  time. Only user and assistant text comes in; original dates are kept.
+- **Delete account** asks for the password, and the authenticator code when two-factor is on, then
+  removes everything at once. The last administrator of a shared deployment must hand over first.
+
+### Security activity
+
+Settings → Account lists sign-ins (and failed attempts on your account), password and two-factor
+changes, keys added and removed, exports, imports, shared links and privacy changes — never what was
+said. Addresses are kept only to their network (an IPv4 /24, an IPv6 /48) and the browser only by
+family. Kept 180 days. Administrators see the record across accounts in Settings → People.
 
 ---
 

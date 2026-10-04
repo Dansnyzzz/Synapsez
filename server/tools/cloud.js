@@ -36,64 +36,45 @@ import { search, formatResults } from '../search.js';
 import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText, answerSummary } from './askOptions.js';
+import {
+  MEMORY_KEY, MAX_NOTE_CHARS, memoryScope, readBothScopes, noteName, memoryRefusal, refusalMessage, rankNotes,
+} from '../memory.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
 
-const MEMORY_KEY = 'memory';
+/*
+ * Which set of notes a conversation means, and what may be written into one,
+ * live in server/memory.js — the prompt reads them back from there too, so the
+ * rules for writing and the rules for reading cannot drift apart.
+ */
 
 /**
- * Which set of notes this conversation is talking about.
+ * Whether this conversation may touch memory at all, and if it may, whether
+ * sensitive topics are allowed in it.
  *
- * Memory used to be one flat set per account, and that was wrong in a way that
- * got worse the more somebody used the app. A project *is* a working context:
- * how this client wants their reports laid out, which court a case is in, the
- * house style for these slides. Those are facts about the project, not about
- * the person — and pooled into one account-wide list they contradict each
- * other, so the assistant either applies the wrong project's conventions or
- * learns nothing rather than risk it.
- *
- * So: a project keeps its own notes, in its own row, named after it. A
- * conversation outside every project uses the account's, as before.
- *
- * The account's notes are not *replaced* by a project's, they are underneath
- * them — this is a sub-set, not a separate world. Reads return both, the
- * project's first and marked as such, so "always answer in Vietnamese" learned
- * once still holds inside every project. A name in both is the project's: the
- * narrower context is the more specific instruction, which is the whole reason
- * for having one.
- *
- * Writes go to the narrower of the two, because that is the side that is safe
- * to be wrong about. A project fact saved account-wide leaks into unrelated
- * work; an account fact saved into a project is merely learned again elsewhere.
- * `scope: 'account'` overrides it for the model that knows it has a genuinely
- * general fact in hand.
+ * The tools are withheld from an incognito conversation and from an account that
+ * switched memory off, so this is the second lock rather than the first: a call
+ * that reaches here anyway — a resumed turn, a model that names a tool it saw
+ * earlier — is refused rather than quietly obeyed.
  */
-const projectMemoryKey = (projectId) => `${MEMORY_KEY}:${projectId}`;
-
-async function memoryScope({ userId, chatId, scope = null }) {
-  const account = { key: MEMORY_KEY, projectId: null, where: 'this account' };
-  if (scope === 'account' || !chatId) return account;
-
-  const chat = await getStore().getChat(userId, chatId).catch(() => null);
-  const projectId = chat?.project_id || null;
-  if (!projectId) return account;
-
-  const project = await getStore().getProject(userId, projectId).catch(() => null);
-  return {
-    key: projectMemoryKey(projectId),
-    projectId,
-    where: project?.name ? `the project "${project.name}"` : 'this project',
-  };
+async function memoryAllowed(userId, chatId) {
+  const prefs = await getPrefs(userId).catch(() => ({}));
+  if (prefs.memory === false) {
+    throw new Error('Memory is switched off for this account (Settings → Memory), so nothing is saved or read. Tell the user if it matters.');
+  }
+  if (chatId) {
+    const chat = await getStore().getChat(userId, chatId).catch(() => null);
+    if (chat?.incognito) {
+      throw new Error('This is an incognito conversation: nothing in it is remembered, and saved notes are not used here.');
+    }
+  }
+  return { allowSensitive: prefs.memorySensitive === true };
 }
 
-/** Both sets, with the narrower one winning a clash. */
-async function readBothScopes({ userId, chatId }) {
-  const store = getStore();
-  const here = await memoryScope({ userId, chatId });
-  const account = (await store.getUserSetting(userId, MEMORY_KEY)) || {};
-  if (!here.projectId) return { here, account, project: {}, merged: account };
-  const project = (await store.getUserSetting(userId, here.key)) || {};
-  return { here, account, project, merged: { ...account, ...project } };
+/** Refuse a note the guard rejects, in words the model passes on. */
+function guardNote(text, allowed) {
+  const refusal = memoryRefusal(text, allowed);
+  if (refusal) throw new Error(refusalMessage(refusal));
 }
 
 /** Crude but dependency-free HTML → text. Good enough to feed a model. */
@@ -308,7 +289,15 @@ function picturesNote(images) {
 const PAGE_CHARS = 20_000;
 const DOC_CHARS = 60_000;
 
-async function webFetch({ url, max_chars: maxChars }) {
+/**
+ * Fetch a page or a document and read it to text — the half of `web_fetch` that
+ * deep research needs too. Research used to call `web_fetch` itself and keep the
+ * first 4,000 characters of what came back, which was the address line, the
+ * opening of the untrusted envelope (its closing tag cut off), and the site's
+ * navigation: the part of the article that answered the question was usually
+ * past the cut. It now takes the whole text and picks the passages that match.
+ */
+async function fetchReadable(url, { timeoutMs = 30_000 } = {}) {
   let parsed;
   try {
     parsed = new URL(url);
@@ -325,7 +314,7 @@ async function webFetch({ url, max_chars: maxChars }) {
       'User-Agent': 'Mozilla/5.0 (compatible; AI-Remote/1.0)',
       Accept: 'text/html,application/pdf,*/*',
     },
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`${parsed.host} returned HTTP ${res.status} ${res.statusText}`);
 
@@ -349,6 +338,16 @@ async function webFetch({ url, max_chars: maxChars }) {
   }
 
   const { text, note, html } = await readBody(buffer, { format, type, host: parsed.host });
+  return { parsed, text, note, html, truncated, cap };
+}
+
+/** The readable text of a page, plain — no envelope, no notes. See `fetchReadable`. */
+export async function readPageText(url, { timeoutMs = 15_000 } = {}) {
+  return (await fetchReadable(url, { timeoutMs })).text;
+}
+
+async function webFetch({ url, max_chars: maxChars }) {
+  const { parsed, text, note, html, truncated, cap } = await fetchReadable(url);
 
   // A document gets a larger default than a page. 20,000 characters is a
   // generous slice of an article and a third of an exam paper, and a model that
@@ -838,32 +837,29 @@ async function fileVersionsTool({ file_id: fileId, revision, restore }, { userId
 }
 
 // Notes are per-account: one user's memory must never leak into another's
-// context on the next conversation.
-/**
- * The name of a note, checked once for every memory tool.
- *
- * Memory is one JSON object keyed by note name. `__proto__` used as a key sets the
- * object's prototype instead of adding an entry — the note disappears on
- * serialisation while the tool reports it saved — and `constructor` and
- * `prototype` shadow the object's own machinery. None of the four memory tools
- * checked (CODE-023). One function so a fifth cannot forget.
- */
-function noteName(key) {
-  const name = String(key ?? '').trim();
-  if (!name || name === '__proto__' || name === 'constructor' || name === 'prototype') {
-    throw new Error(`"${key}" cannot be used as a note name. Pick a plain descriptive name.`);
-  }
-  return name;
+// context on the next conversation. `noteName` (server/memory.js) is checked by
+// every memory tool, so a fifth cannot forget it.
+
+/** A note is read into every conversation, so one may not grow without limit. */
+function boundedNote(text) {
+  if (text.length <= MAX_NOTE_CHARS) return text;
+  throw new Error(
+    `That note would be ${text.length.toLocaleString('en')} characters; the limit is ${MAX_NOTE_CHARS.toLocaleString('en')}, ` +
+      'because every note is read into every conversation. Keep the facts that will matter later and drop the rest, or split it by subject.',
+  );
 }
 
 async function memoryWrite({ key, content, scope }, { userId, chatId }) {
   const store = getStore();
+  const allowed = await memoryAllowed(userId, chatId);
   const where = await memoryScope({ userId, chatId, scope });
 
   // A note outlives the conversation it came from and is read back into every
   // future one, so a credential that lands here keeps escaping. Strip them on
   // the way in, and say so rather than silently editing what was asked for.
   const { text, found } = redactSecrets(content);
+  guardNote(text, allowed);
+  boundedNote(text);
 
   /*
    * Merged, not read-modify-written — the fix its three neighbours already have.
@@ -902,11 +898,12 @@ async function memoryWrite({ key, content, scope }, { userId, chatId }) {
  * distinction the split exists to make.
  */
 async function memoryRead({ key }, { userId, chatId }) {
+  await memoryAllowed(userId, chatId);
   const { here, account, project, merged } = await readBothScopes({ userId, chatId });
 
   if (key) {
-    const note = merged[key];
-    return note ? note.content : `No note saved under "${key}".`;
+    const note = Object.hasOwn(merged, key) ? merged[key] : null;
+    return typeof note?.content === 'string' ? note.content : `No note saved under "${key}".`;
   }
 
   const line = (notes, k) => `- ${k}: ${notes[k].content.slice(0, 120)}`;
@@ -1260,16 +1257,18 @@ async function chartTool({ title, type, data, format, x_label: xLabel, y_label: 
 async function memoryAppend({ key: rawKey, content, scope }, { userId, chatId }) {
   const key = noteName(rawKey);
   const store = getStore();
+  const allowed = await memoryAllowed(userId, chatId);
   const where = await memoryScope({ userId, chatId, scope });
   const { text, found } = redactSecrets(content);
   if (!String(text || '').trim()) throw new Error('There is nothing to append.');
+  guardNote(text, allowed);
 
   const memory = (await store.getUserSetting(userId, where.key)) || {};
   const existing = memory[key]?.content || '';
   // A blank line between entries, so an appended list stays readable rather than
   // running together into one paragraph.
   memory[key] = {
-    content: existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text,
+    content: boundedNote(existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text),
     updatedAt: new Date().toISOString(),
   };
   // Merged, not overwritten: the agent runs up to four tool calls at once, so
@@ -1296,6 +1295,7 @@ async function memoryAppend({ key: rawKey, content, scope }, { userId, chatId })
 async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newString }, { userId, chatId }) {
   const key = noteName(rawKey);
   const store = getStore();
+  const allowed = await memoryAllowed(userId, chatId);
   /*
    * Edited where it lives, which is not always where a write would land.
    *
@@ -1306,10 +1306,10 @@ async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newS
    * note rather than the caller.
    */
   const { here, account, project } = await readBothScopes({ userId, chatId });
-  const inProject = here.projectId && key in project;
+  const inProject = here.projectId && Object.hasOwn(project, key);
   const target = inProject ? here.key : MEMORY_KEY;
   const memory = inProject ? project : account;
-  const note = memory[key];
+  const note = Object.hasOwn(memory, key) && typeof memory[key]?.content === 'string' ? memory[key] : null;
   if (!note) {
     const keys = [...new Set([...Object.keys(project), ...Object.keys(account)])];
     throw new Error(
@@ -1332,7 +1332,10 @@ async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newS
   }
 
   const { text, found } = redactSecrets(String(newString ?? ''));
-  memory[key] = { content: note.content.replace(find, text), updatedAt: new Date().toISOString() };
+  guardNote(text, allowed);
+  // A function, not the string: `replace` reads `$&` and `` $` `` in a string
+  // replacement as patterns, so a note edited to say "costs $&5" came out wrong.
+  memory[key] = { content: boundedNote(note.content.replace(find, () => text)), updatedAt: new Date().toISOString() };
   // Only this note, so a concurrent write to a different one is not undone.
   await store.mergeUserSetting(userId, target, { [key]: memory[key] });
 
@@ -1341,12 +1344,16 @@ async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newS
     : `Updated "${key}".`;
 }
 
-async function memoryDelete({ key }, { userId, chatId }) {
+async function memoryDelete({ key: rawKey }, { userId, chatId }) {
   const store = getStore();
+  const key = noteName(rawKey);
+  await memoryAllowed(userId, chatId);
   // Same reasoning as `memoryEdit`: the note is deleted where it actually is.
+  // Own keys only — `"toString" in {}` is true, and would "delete" a note that
+  // was never there.
   const { here, account, project } = await readBothScopes({ userId, chatId });
-  const inProject = here.projectId && key in project;
-  if (!inProject && !(key in account)) {
+  const inProject = here.projectId && Object.hasOwn(project, key);
+  if (!inProject && !Object.hasOwn(account, key)) {
     const keys = [...new Set([...Object.keys(project), ...Object.keys(account)])];
     throw new Error(
       keys.length
@@ -1360,6 +1367,132 @@ async function memoryDelete({ key }, { userId, chatId }) {
   await store.removeUserSettingKey(userId, inProject ? here.key : MEMORY_KEY, key);
   const scope = inProject ? ` from ${here.where}` : '';
   return `Deleted the note "${key}"${scope}. It will not be read into future conversations any more.`;
+}
+
+/**
+ * Find the notes about something, rather than reading every note.
+ *
+ * The prompt carries as many notes as fit its budget and names the rest; this is
+ * how one of the named ones is found by what it is about. Cheap on purpose —
+ * notes are short and the words somebody asks with are nearly always in them.
+ */
+async function memorySearch({ query, limit }, { userId, chatId }) {
+  await memoryAllowed(userId, chatId);
+  const wanted = String(query ?? '').trim();
+  if (!wanted) throw new Error('Say what to look for.');
+  const { here, account, project } = await readBothScopes({ userId, chatId });
+  const row = (scope) => ([key, note]) => ({
+    key,
+    scope,
+    content: String(note?.content ?? ''),
+    updatedAt: note?.updatedAt || null,
+  });
+  const notes = [
+    ...Object.entries(project).map(row('project')),
+    ...Object.entries(account).filter(([key]) => !(key in project)).map(row('account')),
+  ];
+  if (!notes.length) return 'No notes saved yet.';
+
+  const hits = rankNotes(notes, wanted, limit);
+  if (!hits.length) {
+    const names = notes.map((n) => n.key);
+    return `No note matches "${wanted}". The notes there are: ${names.slice(0, 80).join(', ')}${names.length > 80 ? ', …' : ''}.`;
+  }
+  return hits
+    .map((n) => {
+      const where = n.scope === 'project' ? ` — ${here.where}` : '';
+      const date = n.updatedAt ? ` (${String(n.updatedAt).slice(0, 10)})` : '';
+      const body = n.content.length > 1500 ? `${n.content.slice(0, 1500)}… [memory_read "${n.key}" for the rest]` : n.content;
+      return `- ${n.key}${where}${date}: ${body}`;
+    })
+    .join('\n');
+}
+
+/**
+ * The words of a recall query worth matching on — at most five, two letters or more.
+ *
+ * Stop words go first, or "what did we say about the deposit" would require
+ * every message to contain "what", "did" and "we".
+ */
+const RECALL_STOP = new Set([
+  'the', 'and', 'what', 'did', 'we', 'say', 'said', 'about', 'that', 'this', 'with', 'for', 'from', 'was', 'were', 'our',
+  'you', 'me', 'my', 'last', 'time', 'chat', 'conversation', 'talked', 'discussed',
+  'chúng', 'ta', 'mình', 'đã', 'nói', 'về', 'cái', 'gì', 'lần', 'trước', 'hôm', 'cuộc', 'trò', 'chuyện', 'những', 'các', 'của', 'và', 'là',
+]);
+const recallTerms = (text) =>
+  [...new Set(String(text ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u))]
+    .filter((w) => w.length > 1 && !RECALL_STOP.has(w))
+    .slice(0, 5);
+
+/** A window of text around the first place any of the words appears. */
+function excerpt(text, terms, width = 320) {
+  const body = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (body.length <= width) return body;
+  const lowered = body.toLowerCase();
+  const at = terms.map((t) => lowered.indexOf(t)).filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? 0;
+  const start = Math.max(0, at - Math.floor(width / 3));
+  return `${start > 0 ? '…' : ''}${body.slice(start, start + width)}${start + width < body.length ? '…' : ''}`;
+}
+
+/**
+ * Look back through earlier conversations — Claude's chat search.
+ *
+ * Notes hold what the assistant decided was worth keeping; this reaches what it
+ * did not think to keep. Scoped like Claude's: from inside a project, only that
+ * project's conversations; from outside, only conversations outside every
+ * project. Never this conversation, never an incognito one, and only what the
+ * person and the assistant said — not tool output.
+ *
+ * What comes back is still somebody's earlier words, so it travels in the same
+ * envelope as anything else read from outside this turn: an instruction found in
+ * an old conversation is a quote, not an order.
+ */
+async function searchChatsTool({ query, limit }, { userId, chatId }) {
+  const prefs = await getPrefs(userId).catch(() => ({}));
+  if (prefs.chatSearch === false) {
+    throw new Error('Searching earlier conversations is switched off for this account (Settings → Memory). Say so if it matters.');
+  }
+  const store = getStore();
+  const chat = chatId ? await store.getChat(userId, chatId).catch(() => null) : null;
+  if (chat?.incognito) {
+    throw new Error('This is an incognito conversation, so earlier conversations are not searched from it.');
+  }
+  const scope = { projectId: chat?.project_id || null, excludeChatId: chatId || null };
+  const wanted = Math.min(Math.max(Number(limit) || 5, 1), 10);
+  const where = scope.projectId ? 'in this project' : 'outside projects';
+
+  const terms = recallTerms(query);
+  if (!terms.length) {
+    const recent = await store.recentChats(userId, { ...scope, limit: wanted });
+    if (!recent.length) return `There are no earlier conversations ${where}.`;
+    const body = recent
+      .map((c) => `- "${c.title}" (${new Date(c.updated_at).toISOString().slice(0, 10)})${c.opening ? `: ${excerpt(c.opening, [], 200)}` : ''}`)
+      .join('\n');
+    return `The ${recent.length} most recent conversation${recent.length === 1 ? '' : 's'} ${where}:\n${untrusted('earlier conversations', body)}`;
+  }
+
+  let rows = await store.recallChats(userId, { ...scope, terms, mode: 'all' });
+  let loose = false;
+  if (!rows.length && terms.length > 1) {
+    rows = await store.recallChats(userId, { ...scope, terms, mode: 'any' });
+    loose = rows.length > 0;
+  }
+  if (!rows.length) return `No earlier conversation ${where} mentions ${terms.map((t) => `"${t}"`).join(' and ')}.`;
+
+  const chats = new Map();
+  for (const row of rows) {
+    if (!chats.has(row.id)) {
+      if (chats.size >= wanted) continue;
+      chats.set(row.id, { title: row.title, updated: row.updated_at, lines: [] });
+    }
+    const entry = chats.get(row.id);
+    if (entry.lines.length < 2) entry.lines.push(`  ${row.role === 'user' ? 'They said' : 'You said'}: ${excerpt(row.text, terms)}`);
+  }
+  const body = [...chats.values()]
+    .map((c) => `- "${c.title}" (${new Date(c.updated).toISOString().slice(0, 10)})\n${c.lines.join('\n')}`)
+    .join('\n');
+  const note = loose ? ' (no conversation had every word, so these have some of them)' : '';
+  return `${chats.size} earlier conversation${chats.size === 1 ? '' : 's'} ${where}${note}:\n${untrusted('earlier conversations', body)}`;
 }
 
 /**
@@ -1463,12 +1596,13 @@ async function deepResearchTool({ question }, { userId, user, chatId, signal }) 
     user,
     chatId,
     signal,
-    // The research pass reads its best few sources rather than trusting the
-    // search engine's blurb. Passed in from here because web_fetch lives in
-    // this file and importing it the other way would close a cycle. It is the
-    // same guarded reader the model gets: safeFetch, so a page cannot redirect
-    // the run at the local network or the cloud metadata service.
-    deps: { readPage: (target) => webFetch({ url: target, max_chars: 12_000 }) },
+    // The research pass reads its best sources rather than trusting the search
+    // engine's blurb. Passed in from here because the reader lives in this file
+    // and importing it the other way would close a cycle. It is the same guarded
+    // reader `web_fetch` uses — safeFetch, so a page cannot redirect the run at
+    // the local network or the cloud metadata service — returning plain text,
+    // from which research picks the passages that match the question.
+    deps: { readPage: (target) => readPageText(target, { timeoutMs: 15_000 }) },
   });
   return content;
 }
@@ -2446,6 +2580,8 @@ export const CLOUD_IMPLEMENTATIONS = {
   memory_append: memoryAppend,
   memory_edit: memoryEdit,
   memory_delete: memoryDelete,
+  memory_search: memorySearch,
+  search_chats: searchChatsTool,
   update_plan: updatePlan,
   skill_read: skillRead,
   skill_write: skillWrite,

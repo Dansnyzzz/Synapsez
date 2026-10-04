@@ -29,6 +29,14 @@ export const LIMITS = {
   // its own: enough for a computer to poll every two seconds for ten minutes,
   // and nowhere near enough to guess an eight-character code.
   pair: { limit: 400, windowMs: 15 * 60_000 },
+  // An export reads the whole account; a dozen an hour is generous for a person
+  // and a ceiling for a stolen session trying to drain one.
+  export: { limit: 12, windowMs: 60 * 60_000 },
+  // An import arrives in batches of up to fifty conversations, so a large
+  // Claude or ChatGPT archive is a few hundred requests — not unlimited.
+  import: { limit: 400, windowMs: 60 * 60_000 },
+  // Deleting the account checks a password: the same guessing ceiling as signing in.
+  'delete-account': { limit: 10, windowMs: 15 * 60_000 },
 };
 
 /**

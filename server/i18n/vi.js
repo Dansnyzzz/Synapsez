@@ -896,4 +896,74 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'op is team, league, day or player.': 'op là team, league, day hoặc player.',
   "Pass content (the whole new file, or the next part with append) or edits (the parts that change).":
     "Hãy gửi content (toàn bộ tệp mới, hoặc phần tiếp theo kèm append) hoặc edits (chỉ những phần thay đổi).",
+
+  // ── memory, privacy, your data, incognito ──
+  "Enter the current code from your authenticator app.":
+    "Nhập mã hiện tại trong ứng dụng xác thực của bạn.",
+  "the page took too long to load":
+    "trang tải quá lâu",
+  "A note cannot be empty. Delete it instead.":
+    "Ghi chú không được để trống. Hãy xoá nó thay vì vậy.",
+  "A note can be at most {0} characters.":
+    "Một ghi chú dài tối đa {0} ký tự.",
+  "Paste the text to import.":
+    "Hãy dán văn bản cần nhập.",
+  "Nothing to import was sent.":
+    "Không có gì được gửi lên để nhập.",
+  "Send at most 50 conversations at a time.":
+    "Mỗi lần chỉ gửi tối đa 50 cuộc trò chuyện.",
+  "You are the only administrator. Make someone else an administrator in Settings → People before deleting your account.":
+    "Bạn là quản trị viên duy nhất. Hãy đặt người khác làm quản trị viên trong Cài đặt → Mọi người trước khi xoá tài khoản.",
+  "the download was cancelled":
+    "đã huỷ tải xuống",
+  "An incognito conversation cannot be shared.":
+    "Cuộc trò chuyện ẩn danh không thể được chia sẻ.",
+  "An incognito conversation cannot be part of a project.":
+    "Cuộc trò chuyện ẩn danh không thể thuộc một dự án.",
+  "Keep conversations for one of: {0} days (0 keeps everything).":
+    "Thời gian giữ cuộc trò chuyện phải là một trong: {0} ngày (0 là giữ tất cả).",
+  "Provider privacy is one of: {0}.":
+    "Quyền riêng tư với nhà cung cấp phải là một trong: {0}.",
+  "Memory is switched off for this account (Settings → Memory), so nothing is saved or read. Tell the user if it matters.":
+    "Bộ nhớ đang tắt cho tài khoản này (Cài đặt → Bộ nhớ), nên không lưu và không đọc gì. Hãy báo người dùng nếu điều đó quan trọng.",
+  "This is an incognito conversation: nothing in it is remembered, and saved notes are not used here.":
+    "Đây là cuộc trò chuyện ẩn danh: không ghi nhớ gì từ nó, và các ghi chú đã lưu không được dùng ở đây.",
+  "That note would be {0} characters; the limit is {1}, because every note is read into every conversation. Keep the facts that will matter later and drop the rest, or split it by subject.":
+    "Ghi chú đó sẽ dài {0} ký tự; giới hạn là {1}, vì mọi ghi chú đều được đọc vào mọi cuộc trò chuyện. Hãy giữ những điều sẽ cần sau này và bỏ phần còn lại, hoặc tách theo chủ đề.",
+  "Say what to look for.":
+    "Hãy nói cần tìm gì.",
+  "Searching earlier conversations is switched off for this account (Settings → Memory). Say so if it matters.":
+    "Tìm trong các cuộc trò chuyện trước đang tắt cho tài khoản này (Cài đặt → Bộ nhớ). Hãy nói rõ nếu điều đó quan trọng.",
+  "This is an incognito conversation, so earlier conversations are not searched from it.":
+    "Đây là cuộc trò chuyện ẩn danh, nên không tìm trong các cuộc trò chuyện trước từ đây.",
+  "No provider serving this model promises not to store or train on what you send, so the strict privacy setting kept it from running. Pick another model, or set Provider privacy back to Standard in Settings → Memory.":
+    "Không nhà cung cấp nào phục vụ mô hình này cam kết không lưu hay huấn luyện trên nội dung bạn gửi, nên chế độ riêng tư nghiêm ngặt đã chặn nó. Hãy chọn mô hình khác, hoặc đặt Quyền riêng tư với nhà cung cấp về Tiêu chuẩn trong Cài đặt → Bộ nhớ.",
+  "Not saved: the note contains {0}. Notes never hold identity, passport, tax, bank or card numbers, criminal records or immigration status — not even when the user asks, because a note is read into every future conversation. Save the useful part without that detail if there is one, and tell the user plainly what was left out and why.":
+    "Không lưu: ghi chú chứa {0}. Ghi chú không bao giờ chứa số căn cước, hộ chiếu, mã số thuế, tài khoản ngân hàng hay số thẻ, tiền án hoặc tình trạng cư trú — kể cả khi người dùng yêu cầu, vì ghi chú được đọc vào mọi cuộc trò chuyện sau này. Hãy lưu phần hữu ích mà không có chi tiết đó nếu có, và nói rõ với người dùng phần nào bị bỏ và vì sao.",
+  "Not saved: the note is about {0}, a sensitive topic, and remembering sensitive topics is switched off for this account. Tell the user that, and that they can switch it on in Settings → Memory. Do not save it another way.":
+    "Không lưu: ghi chú nói về {0}, một chủ đề nhạy cảm, và việc ghi nhớ chủ đề nhạy cảm đang tắt cho tài khoản này. Hãy báo người dùng điều đó, và rằng họ có thể bật trong Cài đặt → Bộ nhớ. Đừng lưu theo cách khác.",
+  "a payment card number":
+    "số thẻ thanh toán",
+  "a bank account number (IBAN)":
+    "số tài khoản ngân hàng (IBAN)",
+  "a social security number":
+    "số an sinh xã hội",
+  "an identity document number":
+    "số giấy tờ tuỳ thân",
+  "a bank or card number":
+    "số tài khoản ngân hàng hoặc số thẻ",
+  "a criminal record":
+    "tiền án",
+  "immigration status":
+    "tình trạng cư trú",
+  "health":
+    "sức khoẻ",
+  "religion":
+    "tôn giáo",
+  "politics":
+    "chính trị",
+  "ethnicity":
+    "dân tộc",
+  "sexuality":
+    "xu hướng tính dục",
 };

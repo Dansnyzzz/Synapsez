@@ -51,7 +51,10 @@ const { buildSystemPrompt, promptVersion } = await import('../../server/agent.js
  * they still pass for the reason they claim, then update the value and say in the
  * commit what the prompt change was for.
  */
-const PROMPT_STAMP = '89c0026eebf6';
+// ecd004bc42ae: the memory line now says notes are shown at the start of each
+// conversation (they are, since server/memory.js) and forbids IDs and
+// sensitive details in a note, not only credentials.
+const PROMPT_STAMP = 'ecd004bc42ae';
 
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;

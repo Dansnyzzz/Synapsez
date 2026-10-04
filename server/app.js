@@ -58,6 +58,9 @@ import {
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
 import { redactSecrets } from './redact.js';
+import { audit } from './audit.js';
+import { mountAccountRoutes } from './routes/account.js';
+import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { withTrace, newTraceId, annotate, log, mark, since } from './util/trace.js';
 import {
 } from './artifactStorage.js';
@@ -136,6 +139,8 @@ const HEARTBEAT_HEALTHY_MS = 20 * 60_000;
  */
 const MODEL_GONE =
   /no longer available|is not found|not found for api version|does not exist|no longer supported|has been (?:retired|deprecated|shut down)|deprecat\w*|testing period/i;
+/** OpenRouter refusing a request because no endpoint meets `data_collection: deny` / `zdr`. */
+const DATA_POLICY = /matching your data policy|no endpoints? (?:found )?(?:that )?(?:match|meet)\w* (?:your )?(?:data|privacy|zdr)/i;
 
 /**
  * The zone to read "six this morning" in: the account's own setting, else the
@@ -172,6 +177,15 @@ export function readableFailure(error) {
   }
 
   message = message.replace(/\s+/g, ' ').trim();
+
+  /*
+   * Strict provider privacy found nobody to serve the model. OpenRouter says
+   * "No endpoints found matching your data policy", which reads as a fault
+   * rather than as the setting doing exactly what it was asked.
+   */
+  if (DATA_POLICY.test(message)) {
+    return 'No provider serving this model promises not to store or train on what you send, so the strict privacy setting kept it from running. Pick another model, or set Provider privacy back to Standard in Settings → Memory.';
+  }
 
   // The one failure worth rewriting: a model that is gone reads as a mistake
   // the user made, and it is not — it is a catalogue entry that expired.
@@ -238,46 +252,16 @@ export function createApp() {
   app.use(express.json({ limit: '48mb' }));
 
   /**
-   * Baseline response headers.
-   *
-   * The app has no build step and no third-party scripts, so a strict policy
-   * costs nothing here and closes the usual holes: an injected `<script>` has
-   * nowhere to load from, the page cannot be framed, and a URL is never leaked
-   * to another origin through the referrer.
-   *
-   * `'unsafe-inline'` covers the inline `style=` attributes the UI sets for
-   * layout measurements; script-src has no such escape hatch, which is the half
-   * that matters.
+   * Baseline response headers — the list, and why each is there, live in
+   * server/securityHeaders.js, which vercel.json mirrors for the static
+   * frontend the CDN serves without passing through here.
    */
   app.use((req, res, next) => {
-    res.setHeader(
-      'Content-Security-Policy',
-      [
-        "default-src 'self'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        // The cloud browser's live screen streams from the account's own
-        // machine, at an address Vercel gives it under vercel.run.
-        "img-src 'self' data: blob: https://*.vercel.run",
-        "font-src 'self'",
-        // A YouTube link in a reply plays in place, from the no-cookie domain only.
-        "frame-src 'self' https://www.youtube-nocookie.com",
-        "connect-src 'self'",
-        "frame-ancestors 'none'",
-        "base-uri 'self'",
-        "form-action 'self'",
-        "object-src 'none'",
-      ].join('; '),
-    );
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), interest-cohort=()');
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
     // Only over TLS: sending HSTS from a plain-HTTP LAN address would make the
     // phone that saw it refuse to reach the app at all.
     if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
-      res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+      res.setHeader('Strict-Transport-Security', HSTS);
     }
     next();
   });
@@ -396,10 +380,26 @@ export function createApp() {
     wrap(async (req, res) => {
       try {
         const user = await loginUser(body(req), req, res);
-        if (!user) return res.status(401).json({ error: 'Wrong email or password.' });
+        if (!user) {
+          /*
+           * Written to the account that was tried, when there is one, so its
+           * owner can see somebody guessing. The answer is the same either way
+           * — the record is server-side and invisible to whoever is guessing.
+           */
+          // Not awaited: an extra insert only for accounts that exist would make
+          // the refusal measurably slower for them — an enumeration oracle.
+          waitUntil(
+            getStore()
+              .getUserByEmail(String(req.body?.email || '').trim().toLowerCase())
+              .then((tried) => tried && audit(req, tried.id, 'sign_in_failed'))
+              .catch(() => {}),
+          );
+          return res.status(401).json({ error: 'Wrong email or password.' });
+        }
         // A correct sign-in clears the tally, so a forgetful morning does not
         // cost somebody their afternoon.
         await forgive(req, 'login', req.body?.email);
+        await audit(req, user.id, 'sign_in');
         res.json({ user: publicUser(user) });
       } catch (err) {
         res.status(err.status || 400).json({ error: err.message, code: err.code });
@@ -424,12 +424,13 @@ export function createApp() {
     rateLimit('reset', (req) => req.body?.email),
     wrap(async (req, res) => {
       try {
-        await resetPassword({
+        const user = await resetPassword({
           token: req.body?.token,
           code: req.body?.code,
           email: req.body?.email,
           password: req.body?.password,
         });
+        if (user?.id) await audit(req, user.id, 'password_reset');
         res.json({ ok: true });
       } catch (err) {
         res.status(400).json({ error: err.message });
@@ -867,6 +868,11 @@ export function createApp() {
         'autoPreview',
         'language',
         'onboarded',
+        'memory',
+        'memorySensitive',
+        'chatSearch',
+        'retentionDays',
+        'providerPrivacy',
       ];
       const patch = {};
       for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
@@ -890,7 +896,15 @@ export function createApp() {
         patch.maxSteps = Math.min(Math.max(Number(patch.maxSteps) || DEFAULT_PREFS.maxSteps, 1), 100);
       }
       try {
-        res.json(await setPrefs(req.user.id, patch));
+        const saved = await setPrefs(req.user.id, patch);
+        // Privacy choices are part of the security record: switching memory
+        // off, or retention down to thirty days, is something an owner may want
+        // to see they did — or did not — do.
+        const privacy = ['memory', 'memorySensitive', 'chatSearch', 'retentionDays', 'providerPrivacy'].filter((k) => k in patch);
+        if (privacy.length) {
+          await audit(req, req.user.id, 'settings_privacy', Object.fromEntries(privacy.map((k) => [k, saved[k]])));
+        }
+        res.json(saved);
       } catch (err) {
         // A rejected language is the caller's mistake, not a server fault.
         res.status(400).json({ error: err.message });
@@ -901,7 +915,10 @@ export function createApp() {
   api.put(
     '/providers/:provider/key',
     wrap(async (req, res) => {
-      await setApiKey(req.user.id, req.params.provider, String(req.body?.apiKey || '').trim());
+      const apiKey = String(req.body?.apiKey || '').trim();
+      await setApiKey(req.user.id, req.params.provider, apiKey);
+      // Which provider, never the key. An empty key is how the box is cleared.
+      await audit(req, req.user.id, apiKey ? 'key_added' : 'key_removed', { provider: String(req.params.provider).slice(0, 40) });
       res.json(await providerStatus(req.user.id));
     }),
   );
@@ -918,6 +935,7 @@ export function createApp() {
     wrap(async (req, res) => {
       try {
         await addApiKey(req.user.id, req.params.provider, String(req.body?.apiKey || '').trim());
+        await audit(req, req.user.id, 'key_added', { provider: String(req.params.provider).slice(0, 40) });
         res.status(201).json(await providerStatus(req.user.id));
       } catch (err) {
         res.status(400).json({ error: err.message });
@@ -935,6 +953,7 @@ export function createApp() {
         // to `splice(0, 1)` — silently destroying the account's *first* key and
         // answering 200. See the matching guard in `removeApiKey`.
         await removeApiKey(req.user.id, req.params.provider, Number.parseInt(req.params.position, 10) - 1);
+        await audit(req, req.user.id, 'key_removed', { provider: String(req.params.provider).slice(0, 40) });
         res.json(await providerStatus(req.user.id));
       } catch (err) {
         res.status(400).json({ error: err.message });
@@ -1123,6 +1142,7 @@ export function createApp() {
         // cookie for the browser that did it, so doing the right thing does not
         // bounce you to the sign-in screen.
         await refreshSession(req, res, req.user.id);
+        await audit(req, req.user.id, 'password_changed');
         res.json({ ok: true, signedOutOtherDevices: true });
       } catch (err) {
         res.status(400).json({ error: err.message });
@@ -1154,6 +1174,7 @@ export function createApp() {
     wrap(async (req, res) => {
       try {
         const codes = await confirmTotpSetup(req.user, req.body?.code);
+        await audit(req, req.user.id, 'two_factor_on');
         res.json({ ok: true, recoveryCodes: codes });
       } catch (err) {
         res.status(400).json({ error: err.message });
@@ -1167,6 +1188,7 @@ export function createApp() {
     wrap(async (req, res) => {
       try {
         await disableTotp(req.user, { password: req.body?.password, code: req.body?.code });
+        await audit(req, req.user.id, 'two_factor_off');
         res.json({ ok: true });
       } catch (err) {
         res.status(400).json({ error: err.message });
@@ -1535,7 +1557,8 @@ export function createApp() {
       const account = req.query.scope === 'account';
       const bucket = account ? 'memory' : `memory:${project.id}`;
       const notes = (await store.getUserSetting(req.user.id, bucket)) || {};
-      if (!(req.params.key in notes)) return res.status(404).json({ error: 'No such note.' });
+      // Own keys only: `"constructor" in {}` is true.
+      if (!Object.hasOwn(notes, req.params.key)) return res.status(404).json({ error: 'No such note.' });
 
       await store.removeUserSettingKey(req.user.id, bucket, req.params.key);
       res.json({ ok: true });
@@ -1810,6 +1833,14 @@ export function createApp() {
   // Lifted into server/routes/chats.js.
   mountChatRoutes(api, { wrap, body, isRunning });
 
+  // Memory, the security record, export, import and leaving — server/routes/account.js.
+  // The admin router is created here, guard first, so the account's own pages
+  // and the administrator's view of them can live in one file; the rest of its
+  // routes are added further down and it is mounted under /admin there.
+  const admin = express.Router();
+  admin.use(requireAdmin);
+  mountAccountRoutes(api, admin, { wrap });
+
   // ── the agent stream ────────────────────────────────────────────────
   /**
    * Stop whatever is running in this conversation.
@@ -2063,8 +2094,7 @@ export function createApp() {
 
 
   // ── admin ───────────────────────────────────────────────────────────
-  const admin = express.Router();
-  admin.use(requireAdmin);
+  // The router itself, and its guard, are created above mountAccountRoutes.
 
   admin.get(
     '/users',

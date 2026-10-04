@@ -1,5 +1,65 @@
 # Changelog
 
+## 2026-10-04 (late) — memory that is read, privacy you control, research that reads
+
+### Fixed
+
+- **Saved notes were never read back.** The prompt and every memory tool said a note "is read into every future
+  conversation"; nothing did it, so a new conversation knew nothing unless the model happened to call
+  `memory_read`. Notes now open every turn's prompt — project notes first, newest first, within ~1,500 tokens, the
+  rest named for `memory_search` — in the cached part of the prompt.
+- **Deep research read 3 of 35 sources, and the 3 badly.** It kept the first 4,000 characters of `web_fetch`'s
+  output: the address line, an untrusted envelope with its closing tag cut off, and the site's navigation. It now
+  opens eight pages (a failed one is replaced by the next, spread across independent sites), keeps the passages
+  that match the question, and closes every envelope.
+- **Deep research stopped half way.** The clock was checked only between model calls, so one slow call could run
+  past the budget and take the turn's 300-second function with it. Each call is now bounded by the run's deadline,
+  reading leaves 75 seconds for the debate, a round is not started that cannot finish, and a run out of time
+  reports from its last draft instead of returning nothing.
+- The debate's evidence repeated every search summary twice (sources, then "findings"); the duplicate is gone.
+- `memory_read` was answered from an earlier read in the same turn, so a read after a write showed the list from
+  before it. It always runs now.
+- `memory_edit` treated `$&` in the replacement as a pattern; `memory_read`/`memory_delete` treated `toString`
+  and other inherited names as notes. Both fixed.
+- A duplicate `id` attribute on the People tab.
+- **Production served the app's own page with no security headers.** On Vercel the frontend comes from the CDN,
+  not Express, so the CSP, `frame-ancestors` (clickjacking), `Referrer-Policy` and `Permissions-Policy` that Express
+  sets never reached it. `vercel.json` now declares the same list (`server/securityHeaders.js`), kept identical by
+  `test/deploy`.
+- **The quick launcher did nothing**: its whole behaviour was an inline script, which the app's own
+  `script-src 'self'` refuses. It is `public/js/launcher.js` now.
+- Retention and the incognito sweep delete a conversation and its files in one statement, so nothing touched
+  between two deletes can be half-removed.
+
+### Added
+
+- **What is never remembered.** Identity, passport, tax and bank numbers, card numbers (Luhn-checked), criminal
+  records and immigration status are refused always; health, religion, politics, ethnicity and sexuality unless
+  the account allows sensitive topics. Matched with Vietnamese accents on, so "đồng tình" is not "đồng tính".
+- **`memory_search`** and **`search_chats`** — search notes by subject, and earlier conversations by what was
+  said, scoped like Claude's chat search (a project's own conversations inside it; never incognito ones).
+- **Settings → Memory & privacy**: switch memory, sensitive topics and chat search; keep conversations forever or
+  30–365 days (pinned ones always kept); strict provider privacy (`data_collection: deny` + `zdr` on OpenRouter);
+  every note listed, editable and deletable; Delete all; import what Claude or ChatGPT remembers.
+- **Incognito conversations**: never listed, searched, exported or shared; no memory, no chat search, no
+  `skill_write`; deleted when you leave, swept after a day otherwise.
+- **Your data**: streamed export of the whole account (no keys, no tokens); import from Claude's or ChatGPT's
+  `conversations.json` or a Synapsez export, in batches; delete the account with password and code.
+- **Security activity** (schema 28, `audit_events`): sign-ins and failed attempts, password and two-factor
+  changes, keys, exports, imports, shared links, privacy changes — with the address cut to its network. Kept 180
+  days; administrators see every account's.
+- **Citations that point somewhere**: `search_docs` heads each project passage with `[file.pdf, p. 12]`,
+  `[deck.pptx, slide 3]` or `[notes.md, lines 40–58]`; deep research checks each conclusion against the page it
+  cites and marks down one whose figures the page does not state.
+
+### Changed
+
+- Memory housekeeping (`memory_read`, `memory_edit`, `memory_delete`, `memory_search`) and `search_chats` are
+  deferred behind `load_tools`; the per-step catalogue is ~160 tokens smaller even with the two new tools.
+- Deep research searches in parallel and its role prompts say that source text is data, not instructions.
+- **A message's date and time appear when you point at it**, with its copy and edit buttons, instead of under
+  every turn all the time (always shown on touch screens, where there is no pointing).
+
 ## 2026-10-04 (night, 4) — PDF and print that work; copy a link
 
 ### Changed

@@ -105,7 +105,9 @@ const CITE_BARE = String.raw`${CITE_FILE}(?!\()`;
  * starts with a word meaning "where in it" (page, trang, slide, chương…): a
  * name alone in parentheses is too often ordinary prose ("(xem report.pdf)").
  */
-const CITE_LOCATOR = String.raw`(?:tr|trang|p|pp|pg|page|pages|slide|slides|mục|chương|chapter|ch|sheet|sec|section|§)\.?\s*[\w\d]`;
+// `line`/`lines`/`dòng` because search_docs heads a passage from a text file
+// with its line range (server/projects.js `passageLocation`).
+const CITE_LOCATOR = String.raw`(?:tr|trang|p|pp|pg|page|pages|slide|slides|line|lines|dòng|mục|chương|chapter|ch|sheet|sec|section|§)\.?\s*[\w\d]`;
 const CITE_PAREN_ENTRY = String.raw`[^\[\]\n\/\\,;()]{1,120}?\.(?:${CITE_EXT})${CITE_WHERE_SEP}${CITE_LOCATOR}[^\[\]\n;,()]{0,38}`;
 const CITE_PAREN_FILE = String.raw`\(\s*${CITE_LEAD}(${CITE_PAREN_ENTRY}(?:\s*;\s*${CITE_PAREN_ENTRY})*)\s*\)`;
 /** `[openrouter.ai](https://…)` — a link whose words are a bare domain names its source. */

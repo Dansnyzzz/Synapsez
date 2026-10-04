@@ -133,8 +133,21 @@ section('the launcher page is reachable and self-contained');
   const external = references.filter((value) => /^https?:\/\//i.test(value));
   check('and nothing is fetched from another host', external.length === 0, external.join(', '));
 
-  check('it hands off with both the chat and the run flag', /\?chat=\$\{[^}]+\}&run=1/.test(html), 'the app needs to know to pick the run up');
-  check('Escape closes it', /Escape/.test(html));
+  /*
+   * No inline script. The page is served under `script-src 'self'`, which
+   * refuses one outright — the box used to draw and then do nothing at all,
+   * because its whole behaviour lived in a `<script>` the browser would not run.
+   */
+  const inline = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>/gi)];
+  check('it has no inline script for the CSP to refuse', inline.length === 0, `${inline.length} inline`);
+  const policy = res.headers.get('content-security-policy') || '';
+  check('  and the policy it is served under is the strict one', /script-src 'self'(;|$)/.test(policy), policy.slice(0, 80));
+  const scriptRes = await fetch(`${base}/js/launcher.js`);
+  check('its script is served from this origin', scriptRes.status === 200, `HTTP ${scriptRes.status}`);
+  const script = await scriptRes.text();
+
+  check('it hands off with both the chat and the run flag', /\?chat=\$\{[^}]+\}&run=1/.test(script), 'the app needs to know to pick the run up');
+  check('Escape closes it', /Escape/.test(script));
 }
 
 section('the endpoints it calls exist');

@@ -263,6 +263,8 @@ const STEP_VERBS = {
   memory_edit: 'step.memory_edit',
   memory_read: 'step.memory_read',
   memory_delete: 'step.memory_delete',
+  memory_search: 'step.memory_search',
+  search_chats: 'step.search_chats',
   skill_read: 'step.skill_read',
   skill_write: 'step.skill_write',
   load_tools: 'step.load_tools',

@@ -26,6 +26,7 @@ import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { validZone } from './util/zone.js';
 import { sandboxConfigured } from './sandbox.js';
 import { lendEyes } from './vision.js';
+import { memoryForTurn, withheldTools } from './memory.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
@@ -98,9 +99,12 @@ export function promptVersion() {
  *   project?: string,
  *   mcpServers?: Array<{ id: string, tools?: number, error?: string }>,
  *   timezone?: string,
+ *   memory?: string,
+ *   recall?: boolean,
+ *   incognito?: boolean,
  * }} options
  */
-export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills, connectors, project, mcpServers, timezone }) {
+export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills, connectors, project, mcpServers, timezone, memory, recall, incognito }) {
   const lines = [
     'You are Synapsez — an agentic assistant the user drives from their phone, tablet, or laptop.',
     'Work autonomously: use your tools to find things out rather than asking the user to look them up.',
@@ -304,7 +308,7 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
     '- Read before you write. Never edit a file you have not read in this conversation.',
     '- Prefer `edit_file` over `write_file` when changing part of a file, and `multi_edit` over several `edit_file` calls on the same file — it is one round trip, and it writes nothing at all if any edit fails to match.',
     '- Search the web whenever the answer depends on current information; do not answer from memory on things that change.',
-    '- Save durable facts and user preferences with `memory_write` so future conversations start informed, and `memory_delete` one that has gone stale — a note you leave behind is read into every future conversation. Never write a credential into a note.',
+    '- Save durable facts and user preferences with `memory_write` so future conversations start informed — your notes are shown to you at the start of each one — and `memory_delete` one that has gone stale. Never write a credential, an ID or account number, or a sensitive personal detail into a note.',
     '- When they teach you how they want a recurring job done, save it with `skill_write` rather than letting it evaporate with the conversation.',
     '- Run tools that do not depend on each other in the same turn — they execute together.',
     '- For a job that fans out — several files to read, several sites to check — send the parts to `run_parallel` instead of grinding through them one at a time. Only for parts that do not depend on each other.',
@@ -382,6 +386,32 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
   lines.push('', UNTRUSTED_RULE);
 
   if (extra?.trim()) lines.push('', '## User instructions', extra.trim());
+
+  /**
+   * What the assistant remembers, after the person's own instructions and
+   * before the project — the notes are the assistant's words about the person,
+   * so they rank below what the person wrote and above nothing. In the stable
+   * part of the prompt: they change only when a note is written, so the cached
+   * prefix holds across a whole conversation.
+   *
+   * An incognito conversation gets the opposite: one paragraph saying nothing is
+   * kept, so the model does not cheerfully promise to remember.
+   */
+  if (incognito) {
+    lines.push(
+      '',
+      '## Incognito',
+      'This conversation is incognito: it is not kept in their history, nothing in it is saved to memory, and saved notes and earlier conversations are not used. Do not offer to remember anything; if they ask you to, say this conversation cannot.',
+    );
+  } else {
+    if (memory?.trim()) lines.push('', memory.trim());
+    if (recall) {
+      lines.push(
+        '',
+        'When they refer to something discussed in an earlier conversation that your notes do not cover, `search_chats` (via `load_tools`) finds what was said.',
+      );
+    }
+  }
 
   // Last, and deliberately: a project's sources are what this particular
   // conversation is about, and they sit closest to the question being asked.
@@ -690,6 +720,19 @@ export function policyRefusal(call, policy) {
   };
 }
 
+/** A call to a tool this conversation was deliberately not given — see `withheldTools`. */
+export function withheldRefusal(call) {
+  return {
+    toolCallId: call.id,
+    name: call.name,
+    content:
+      `"${call.name}" is not available in this conversation — it is incognito, or the account has switched memory or ` +
+      'chat search off — so it was not run. Carry on without it, and say so if the user asked for it.',
+    isError: true,
+    ms: 0,
+  };
+}
+
 /**
  * Tools whose effect lands on somebody other than the person in the chat.
  */
@@ -856,9 +899,15 @@ export function resumableCalls(toolCalls, startedIds = []) {
  * after a long wait in a queue. Volatile reads — the time, prices, a live
  * browser page, a file that may just have been rewritten — are left out.
  */
+/*
+ * Not `memory_read`: a note written earlier in the same turn changes what it
+ * says, and answering the second read from the first handed the model the list
+ * from before its own write — "already ran, use it" — as if the write had not
+ * happened. It is a cheap read with no network behind it, so it simply runs.
+ */
 const STABLE_READS = new Set([
   'deep_research', 'skill_read', 'web_search', 'web_fetch', 'search_docs', 'encyclopedia',
-  'image_search', 'extract', 'youtube_transcript', 'list_indexed', 'memory_read',
+  'image_search', 'extract', 'youtube_transcript', 'list_indexed', 'search_chats',
 ]);
 /** Deep research runs at most this many times in one turn; each is minutes of work. */
 export const MAX_RESEARCH_PER_TURN = 3;
@@ -895,14 +944,19 @@ export function repeatedRead(call, memo, counts) {
   return key ? { key } : null;
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, answers, memo = null, counts = {} }) {
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, answers, memo = null, counts = {}, withhold = null }) {
   const results = await mapWithLimit(
     toolCalls,
     MAX_PARALLEL_TOOLS,
     async (call) => {
       // The policy's promise, enforced where the call would actually run. See
-      // `policyRefusal`.
-      const refused = policyRefusal(call, policy) || outboundRefusal(call, policy, sent);
+      // `policyRefusal`. A withheld tool is refused the same way: not offering
+      // it is what the catalogue promises, and only Anthropic will not emit a
+      // name it was not offered.
+      const refused =
+        (withhold?.has(call.name) ? withheldRefusal(call) : null) ||
+        policyRefusal(call, policy) ||
+        outboundRefusal(call, policy, sent);
       if (refused) {
         emit('tool_result', refused);
         return refused;
@@ -1114,7 +1168,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // the sources are chosen after the transcript is known rather than before.
   const asked = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
 
-  const [worker, skills, connectors, project, providerKeys, mcp] = await Promise.all([
+  const [worker, skills, connectors, project, providerKeys, mcp, memory] = await Promise.all([
     workerStatus(user, prefs),
     skillMenu(userId),
     connectorSummary(userId),
@@ -1124,7 +1178,11 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // assistant's own tools away with it — `mcpTools` records the failure and
     // carries on, and this catch is the belt to that braces.
     mcpTools(userId).catch(() => ({ tools: [], servers: [] })),
+    // Nor is memory: a turn that cannot read its notes is still a turn.
+    memoryForTurn(userId, chat, prefs).catch(() => ''),
   ]);
+  // What this conversation may not be given — see `withheldTools`.
+  const withhold = withheldTools({ chat, prefs });
   const workerOnline = worker.online;
   /**
    * The account's setting, unless this particular run was given one.
@@ -1152,6 +1210,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     project: project?.briefing,
     mcpServers: mcp.servers,
     timezone: prefs.timezone,
+    memory,
+    recall: !withhold.has('search_chats'),
+    incognito: !!chat.incognito,
   });
   /**
    * Tools the model has asked for this turn.
@@ -1201,6 +1262,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     hosted: hostCapabilities(),
     // Tools from outside this repository, already in the same shape.
     extra: mcp.tools,
+    withhold,
     // A question with nobody to answer it only ends the run.
   }).filter((t) => !(unattended && t.name === 'ask_options'));
 
@@ -1238,6 +1300,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         context: 0,
         hosted: hostCapabilities(),
         extra: mcp.tools,
+        withhold,
       }).map((t) => t.name),
     );
 
@@ -1317,7 +1380,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: answered, memo: turnReads, counts: turnCounts })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: answered, memo: turnReads, counts: turnCounts, withhold })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -1766,7 +1829,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // No answers on this path: a well-formed question pauses above rather than
     // reaching here, so anything named `ask_options` that gets this far is a
     // malformed call on its way to becoming a tool error.
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: null, memo: turnReads, counts: turnCounts });
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: null, memo: turnReads, counts: turnCounts, withhold });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {

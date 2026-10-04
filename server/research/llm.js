@@ -40,7 +40,19 @@ export async function askModel({
   let text = '';
   let spent = null;
 
-  for await (const ev of stream({ userId, entry, system, messages, effort, signal })) {
+  /*
+   * Bounded by the run's clock as well as by the caller's stop. The deadline
+   * was checked only between calls, so one slow call from a free model started
+   * at 140 seconds ran on past the 150-second budget and took the whole turn's
+   * 300-second function with it — the run "stopped half way" with nothing to
+   * show. Now a call that would outlive the run is cut at the deadline and the
+   * debate reports from what it has.
+   */
+  const left = budget?.deadline ? budget.deadline - Date.now() : null;
+  const clock = left != null ? AbortSignal.timeout(Math.max(1_000, left)) : null;
+  const bounded = clock && signal && typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, clock]) : clock || signal;
+
+  for await (const ev of stream({ userId, entry, system, messages, effort, signal: bounded })) {
     if (ev.type === 'text') text += ev.delta ?? '';
     else if (ev.type === 'done' && ev.usage) {
       spent = ev.usage;

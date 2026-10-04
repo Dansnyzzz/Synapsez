@@ -355,6 +355,21 @@ export async function disableTotp(user, { password, code }) {
   await getStore().disableTotp(user.id);
 }
 
+/**
+ * Prove it is really the owner, for something that cannot be undone — deleting
+ * the account. The same two things a sign-in asks for: the password, and the
+ * live code when two-factor is on. A session alone is not enough, because a
+ * session is exactly what a borrowed laptop or a stolen cookie has.
+ */
+export async function confirmIdentity(user, { password, code }) {
+  if (!(await verifyPassword(password, user.password_hash))) {
+    throw new Error('Your password is not correct.');
+  }
+  if (user.totp_enabled_at && !(await verifySecondFactor(user, code))) {
+    throw new Error('Enter the current code from your authenticator app.');
+  }
+}
+
 /** Resolve the session cookie to a live user, or null. */
 export async function currentUser(req) {
   const payload = verify(parseCookies(req.headers.cookie)[COOKIE]);

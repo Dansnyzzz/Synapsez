@@ -1,4 +1,6 @@
 import { search as defaultSearch } from '../search.js';
+import { STOPWORDS } from '../rag.js';
+import { mapWithLimit } from '../util/parallel.js';
 import { registrableDomain, RANK_ORDER } from './confidence.js';
 
 /**
@@ -73,82 +75,270 @@ export function rankSource(url) {
 }
 
 /**
- * Run every query and fold the results into one ledger, deduped by url so a
- * source cited twice does not count as two independent ones. Each source keeps
- * a stable `S#` id that the draft cites and the report lists.
+ * How many sources a run opens and reads — and the ceiling on how many it will
+ * try to get there.
  *
- * A search that throws does not stop the run — it becomes a finding that records
- * why, so a missing engine reads as "this angle found nothing" rather than
- * taking the whole question down with it.
+ * Three was the number, and it showed: a run listed 35 sources and read 3, so 32
+ * citations were search blurbs and five conclusions in six could only ever be
+ * graded LOW. Eight is enough for two or three independent sources per angle
+ * of a typical four-to-six-query plan, which is what the grader looks for. A
+ * page that will not load is replaced by the next candidate rather than leaving
+ * a hole, up to the attempt ceiling — paywalls and 403s are common, and a
+ * fixed list of three meant one bad site cost a third of the evidence.
  *
- * @param search injectable; defaults to the real four-engine chain.
- * @returns { ledger: Map<id,{url,rank,title,published,snippet}>, findings: [{id,query,snippet}] }
+ * Reading costs fetches, not model calls, and each page is cut to the passages
+ * that match the question (see `relevantPassages`), so more pages buys accuracy
+ * without a matching rise in tokens.
  */
+export const READ_TARGET = 8;
+const READ_ATTEMPTS = 14;
+/** Pages read at once — enough to finish a wave in one slow page's time. */
+const READ_CONCURRENCY = 6;
+/** Searches at once — the engines rate-limit a burst, so not all six together. */
+const SEARCH_CONCURRENCY = 3;
+/** Each page's share of the debate's evidence, after relevance selection. */
+export const PASSAGE_CHARS = 2_400;
+/** The most text from one page that is worth scanning for passages. */
+const SCAN_CHARS = 200_000;
+
+/* ── what a page says about the question ─────────────────────────────── */
+
+// Two letters and up: a Vietnamese syllable carries meaning at that length.
+const termsOf = (text) =>
+  [...new Set(String(text || '').toLowerCase().split(/[^\p{L}\p{N}]+/u))].filter(
+    (w) => w.length > 1 && !STOPWORDS.has(w),
+  );
+
 /**
- * How many of the gathered sources are actually opened and read.
+ * The parts of a page that bear on the question, in the page's own order.
  *
- * Reading costs a fetch each and a great deal of prompt, so this is not "all of
- * them". Three is enough to corroborate a claim across independent domains,
- * which is what the confidence grader is looking for, and small enough that a
- * run does not turn into a crawl.
+ * A page is mostly not the answer: navigation, a cookie notice, related links,
+ * the comments. The first 4,000 characters — what research used to keep — were
+ * usually that, and the paragraph with the figure in it was past the cut. Here
+ * every paragraph is scored by the question's words it contains (each word once,
+ * weighted by how rare it is on this page), with a little extra for a paragraph
+ * holding a number, because the facts research is asked to check are so often
+ * figures and dates. The best are kept up to the budget and put back in order,
+ * joined by `[…]` so nothing reads as continuous that was not.
+ *
+ * No model call, no dependency — the same kind of lexical scoring the project
+ * shelf uses, which is crude and entirely adequate for "which paragraph is this
+ * page's answer".
  */
-const READ_LIMIT = 3;
+export function relevantPassages(text, terms, budget = PASSAGE_CHARS) {
+  const body = String(text || '').slice(0, SCAN_CHARS).replace(/\r\n/g, '\n').trim();
+  if (body.length <= budget) return body;
 
-/** How much of each page travels into the debate. Whole articles do not. */
-const BODY_CHARS = 4000;
+  const paragraphs = body
+    .split(/\n{2,}|\n(?=[-*•#]|\d+[.)]\s)/)
+    .map((p) => p.replace(/[ \t]+/g, ' ').trim())
+    .filter((p) => p.length >= 40);
+  if (!paragraphs.length) return body.slice(0, budget);
+
+  const lowered = paragraphs.map((p) => p.toLowerCase());
+  const df = new Map(terms.map((t) => [t, lowered.filter((p) => p.includes(t)).length]));
+  const scored = paragraphs.map((p, i) => {
+    let score = 0;
+    for (const t of terms) {
+      const seen = df.get(t) || 0;
+      if (seen && lowered[i].includes(t)) score += Math.log(1 + paragraphs.length / seen);
+    }
+    if (score > 0 && /\d/.test(p)) score *= 1.15;
+    // A very long block is often a dump of links or a table of contents.
+    if (p.length > 1500) score *= 0.8;
+    return { i, p, score };
+  });
+
+  const best = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score);
+  // Nothing on the page shares a word with the question: its opening is the
+  // honest fallback, labelled as such by the caller's "read" flag staying true.
+  if (!best.length) return body.slice(0, budget);
+
+  const keep = [];
+  let used = 0;
+  for (const s of best) {
+    const room = budget - used - 5;
+    if (room < 120) break;
+    let piece = s.p;
+    if (piece.length > room) {
+      // A later, shorter match may still fit; only the best one is ever cut.
+      if (keep.length) continue;
+      piece = `${piece.slice(0, room - 1)}…`;
+    }
+    keep.push({ ...s, p: piece });
+    used += piece.length + 5;
+  }
+  keep.sort((a, b) => a.i - b.i);
+  let out = '';
+  let previous = -2;
+  for (const k of keep) {
+    if (out) out += k.i === previous + 1 ? '\n\n' : '\n\n[…]\n\n';
+    else if (k.i > 0) out += '[…]\n\n';
+    out += k.p;
+    previous = k.i;
+  }
+  return out;
+}
+
+/* ── which pages to open ─────────────────────────────────────────────── */
 
 /**
- * Open the best few sources and keep what they actually say.
+ * The order in which sources are worth opening.
  *
- * Everything here used to be the search engine's own blurb. The report cited a
- * URL for every claim and no page behind any of those URLs was ever opened, so
- * "two independent reputable sources" meant two snippets from two domains — and
- * a snippet is written to make you click, not to be accurate.
+ * By standing first (a government page before a blog), then by how many of the
+ * plan's queries found the same page — several angles landing on one source is
+ * evidence it is central — then by how high it ranked in the search that found
+ * it. Then spread across sites: one page per registrable domain until every
+ * domain has had a turn, because HIGH needs two *independent* sources and three
+ * pages of one outlet are one source three times.
+ */
+export function readingOrder(ledger, findings) {
+  const hits = new Map();
+  const position = new Map();
+  const perQuery = new Map();
+  for (const f of findings) {
+    if (!f.id) continue;
+    hits.set(f.id, (hits.get(f.id) || 0) + 1);
+    const seen = perQuery.get(f.query) || 0;
+    perQuery.set(f.query, seen + 1);
+    if (!position.has(f.id)) position.set(f.id, seen);
+  }
+  const ranked = [...ledger.keys()].sort((a, b) => {
+    const sa = ledger.get(a);
+    const sb = ledger.get(b);
+    return (
+      (RANK_ORDER[sb.rank] ?? 0) - (RANK_ORDER[sa.rank] ?? 0) ||
+      (hits.get(b) || 0) - (hits.get(a) || 0) ||
+      (position.get(a) ?? 99) - (position.get(b) ?? 99)
+    );
+  });
+
+  const order = [];
+  const taken = new Set();
+  for (let perDomain = 1; order.length < ranked.length; perDomain += 1) {
+    const counts = new Map();
+    for (const id of order) {
+      const d = registrableDomain(ledger.get(id).url);
+      counts.set(d, (counts.get(d) || 0) + 1);
+    }
+    let added = false;
+    for (const id of ranked) {
+      if (taken.has(id)) continue;
+      const d = registrableDomain(ledger.get(id).url);
+      if ((counts.get(d) || 0) >= perDomain) continue;
+      counts.set(d, (counts.get(d) || 0) + 1);
+      order.push(id);
+      taken.add(id);
+      added = true;
+    }
+    if (!added) break;
+  }
+  return order;
+}
+
+/** A read that gives up on its own clock, whatever the reader does. */
+function withTimeout(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('the page took too long to load')), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Open the best sources and keep what they actually say about the question.
+ *
+ * In waves: as many as are still wanted, in parallel; a page that fails is
+ * replaced by the next in the reading order, until the target is met, the
+ * attempt ceiling is reached, or the clock says the debate needs the time.
  *
  * Failures are recorded on the source rather than dropped, because "the page
  * would not load" and "the page does not say" are different answers and the
  * grader has to be able to tell them apart.
  */
-async function readSources(ledger, readPage) {
+async function readSources(ledger, findings, readPage, { terms, target, deadline, timeoutMs }) {
   if (typeof readPage !== 'function') return;
+  const queue = readingOrder(ledger, findings);
+  let read = 0;
+  let tried = 0;
 
-  const best = [...ledger.entries()]
-    .sort(([, a], [, b]) => (RANK_ORDER[b.rank] ?? 0) - (RANK_ORDER[a.rank] ?? 0))
-    .slice(0, READ_LIMIT);
-
-  await Promise.all(
-    best.map(async ([, source]) => {
+  while (read < target && tried < READ_ATTEMPTS && queue.length) {
+    if (deadline && Date.now() >= deadline) break;
+    const wave = queue.splice(0, Math.min(target - read, READ_ATTEMPTS - tried));
+    tried += wave.length;
+    const left = deadline ? Math.max(1_000, deadline - Date.now()) : timeoutMs;
+    await mapWithLimit(wave, READ_CONCURRENCY, async (id) => {
+      const source = ledger.get(id);
       try {
-        const text = await readPage(source.url);
-        const body = String(text || '').trim();
+        const text = await withTimeout(Promise.resolve(readPage(source.url)), Math.min(timeoutMs, left));
+        const body = relevantPassages(text, terms);
         if (body) {
-          source.body = body.slice(0, BODY_CHARS);
+          source.body = body;
           source.read = true;
+          read += 1;
         } else {
           source.readError = 'the page returned nothing';
         }
       } catch (err) {
-        source.readError = err?.message || 'the page could not be read';
+        source.readError = String(err?.message || 'the page could not be read').slice(0, 160);
       }
-    }),
-  );
+    });
+  }
 }
 
-export async function gatherEvidence(queries, { search = defaultSearch, readPage, userId = null } = {}) {
+/**
+ * Run every query and fold the results into one ledger, deduped by url so a
+ * source cited twice does not count as two independent ones. Each source keeps
+ * a stable `S#` id that the draft cites and the report lists.
+ *
+ * The searches run three at a time rather than one after another — six queries
+ * in series was most of a run's wall clock — and are folded in the plan's order
+ * afterwards, so the ids do not depend on which engine answered first.
+ *
+ * A search that throws does not stop the run — it becomes a finding that records
+ * why, so a missing engine reads as "this angle found nothing" rather than
+ * taking the whole question down with it.
+ *
+ * `search` is injectable and defaults to the real four-engine chain. `question`
+ * is the question itself, whose words choose each page's passages along with
+ * the queries'. `deadline` is the epoch ms after which no new page is opened, so
+ * the debate keeps the time it needs. The ledger maps `S#` to
+ * `{url, rank, title, published, snippet, body?, read?}`.
+ *
+ * @param {string[]} queries
+ * @param {{
+ *   search?: (query: string, options?: any) => Promise<any>,
+ *   readPage?: (url: string) => Promise<string>,
+ *   userId?: string|null, question?: string, deadline?: number|null, target?: number, timeoutMs?: number,
+ * }} [options]
+ * @returns {Promise<{ ledger: Map<string, any>, findings: Array<{ id: string|null, query: string, snippet: string }> }>}
+ */
+export async function gatherEvidence(
+  queries,
+  { search = defaultSearch, readPage, userId = null, question = '', deadline = null, target = READ_TARGET, timeoutMs = 15_000 } = {},
+) {
   const ledger = new Map();
   const byUrl = new Map();
   const findings = [];
   let n = 0;
 
-  for (const query of queries) {
-    let out;
+  const answers = await mapWithLimit(queries, SEARCH_CONCURRENCY, async (query) => {
     try {
-      out = await search(query, { userId });
+      return { query, out: await search(query, { userId }) };
     } catch (err) {
-      findings.push({ id: null, query, snippet: `(search failed: ${err.message})` });
+      return { query, error: err };
+    }
+  });
+
+  for (const { query, out, error } of answers) {
+    if (error) {
+      findings.push({ id: null, query, snippet: `(search failed: ${error.message})` });
       continue;
     }
-    for (const r of out.results || []) {
+    for (const r of out?.results || []) {
+      if (!r?.url) continue;
       let id = byUrl.get(r.url);
       if (!id) {
         id = `S${(n += 1)}`;
@@ -165,7 +355,8 @@ export async function gatherEvidence(queries, { search = defaultSearch, readPage
     }
   }
 
-  await readSources(ledger, readPage);
+  const terms = termsOf([question, ...queries].join(' '));
+  await readSources(ledger, findings, readPage, { terms, target, deadline, timeoutMs });
 
   return { ledger, findings };
 }

@@ -332,6 +332,16 @@
             <!-- What was made here. Hidden until there is something in it, so
                  an ordinary conversation carries no extra furniture. -->
             <button class="chip chip--files" id="files-chip" type="button" hidden></button>
+            <!-- Incognito: offered on a blank conversation outside a project,
+                 and shown pressed (and fixed) inside one that is incognito. -->
+            <button class="icon-btn incognito-toggle" id="incognito-toggle" type="button" hidden aria-pressed="false"
+                    title="Incognito chat" aria-label="Incognito chat" data-i18n-title="incognito.toggle" data-i18n-aria-label="incognito.toggle">
+              <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 9.5h14M5.2 9.5l1.3-4.6h7l1.3 4.6" />
+                <circle cx="6.5" cy="13.6" r="2.3" /><circle cx="13.5" cy="13.6" r="2.3" />
+                <path d="M8.8 13.4c.8-.5 1.6-.5 2.4 0" />
+              </svg>
+            </button>
             <button class="chip chip--model" id="model-chip"></button>
             <button class="icon-btn" id="detail-toggle" type="button" data-i18n-title="topbar.panel" title="Progress and screen" aria-label="Progress and screen">
               <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -429,6 +439,11 @@
         </section>
 
         <div class="thread scroll-quiet" id="thread" tabindex="-1">
+          <!-- Said once, at the top, for as long as the conversation is
+               incognito — the promise is only worth something if it is visible. -->
+          <p class="incognito-banner" id="incognito-banner" role="note" hidden data-i18n="incognito.banner">
+            Incognito chat — not saved to your history, nothing is remembered, and it is deleted when you leave it.
+          </p>
           <div class="empty" id="empty-state">
             <h2 data-i18n="empty.title">What should we work on?</h2>
             <p data-i18n="empty.body">
@@ -1168,12 +1183,13 @@
         <button class="tab is-active" type="button" data-tab="providers" role="tab" id="tab-providers" aria-controls="panel-providers" aria-selected="true" tabindex="0" data-i18n="settings.tab.providers">Providers</button>
         <button class="tab" type="button" data-tab="languages" role="tab" id="tab-languages" aria-controls="panel-languages" aria-selected="false" tabindex="-1" data-i18n="settings.tab.languages">Languages</button>
         <button class="tab" type="button" data-tab="behaviour" role="tab" id="tab-behaviour" aria-controls="panel-behaviour" aria-selected="false" tabindex="-1" data-i18n="settings.tab.behaviour">Behaviour</button>
+        <button class="tab" type="button" data-tab="memory" role="tab" id="tab-memory" aria-controls="panel-memory" aria-selected="false" tabindex="-1" data-i18n="settings.tab.memory">Memory &amp; privacy</button>
         <button class="tab" type="button" data-tab="skills" role="tab" id="tab-skills" aria-controls="panel-skills" aria-selected="false" tabindex="-1" data-i18n="settings.tab.skills">Skills</button>
         <button class="tab" type="button" data-tab="tasks" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected="false" tabindex="-1" data-i18n="settings.tab.tasks">Scheduled</button>
         <button class="tab" type="button" data-tab="connectors" role="tab" id="tab-connectors" aria-controls="panel-connectors" aria-selected="false" tabindex="-1" data-i18n="settings.tab.connectors">Connectors</button>
         <button class="tab" type="button" data-tab="mcp" role="tab" id="tab-mcp" aria-controls="panel-mcp" aria-selected="false" tabindex="-1" data-i18n="settings.tab.mcp">MCP servers</button>
         <button class="tab" type="button" data-tab="account" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1" data-i18n="settings.tab.account">Account</button>
-        <button class="tab" type="button" data-tab="admin" role="tab" id="tab-admin" aria-controls="panel-admin" aria-selected="false" tabindex="-1" id="tab-admin" hidden data-i18n="settings.tab.people">People</button>
+        <button class="tab" type="button" data-tab="admin" role="tab" id="tab-admin" aria-controls="panel-admin" aria-selected="false" tabindex="-1" hidden data-i18n="settings.tab.people">People</button>
       </div>
 
       <div class="sheet__body">
@@ -1260,6 +1276,88 @@
           </div>
           <button class="btn btn--primary" id="save-behaviour" type="button" data-i18n="action.save">Save</button>
           <span class="hint" id="behaviour-status"></span>
+        </section>
+
+        <section class="panel" data-panel="memory" id="panel-memory" role="tabpanel" aria-labelledby="tab-memory">
+          <p class="hint" data-i18n="memory.lede">
+            What the assistant remembers between conversations, and what it may look back at. All of it stays
+            in this app's database; it reaches the model you chose only as part of a conversation.
+          </p>
+          <div class="field">
+            <label class="check" for="memory-on">
+              <input type="checkbox" id="memory-on" />
+              <span data-i18n="memory.use">Use memory</span>
+            </label>
+            <p class="hint" data-i18n="memory.useHint">
+              Saved notes are read at the start of each conversation, and new ones are saved when something is
+              worth keeping. Off: nothing is read or saved, and the notes stay until you delete them.
+            </p>
+          </div>
+          <div class="field">
+            <label class="check" for="memory-sensitive">
+              <input type="checkbox" id="memory-sensitive" />
+              <span data-i18n="memory.sensitive">Remember sensitive topics</span>
+            </label>
+            <p class="hint" data-i18n="memory.sensitiveHint">
+              Health, religion, politics, ethnicity and sexuality are not saved unless this is on. Identity,
+              passport, tax, bank and card numbers, criminal records and immigration status are never saved.
+            </p>
+          </div>
+          <div class="field">
+            <label class="check" for="chat-search">
+              <input type="checkbox" id="chat-search" />
+              <span data-i18n="memory.chatSearch">Search earlier conversations</span>
+            </label>
+            <p class="hint" data-i18n="memory.chatSearchHint">
+              When you mention something discussed before, the assistant may look it up. Inside a project it
+              searches only that project; incognito conversations are never searched.
+            </p>
+          </div>
+          <div class="field">
+            <label for="retention" data-i18n="memory.retention">Keep conversations</label>
+            <select id="retention">
+              <option value="0" data-i18n="memory.retention.forever">Until I delete them</option>
+              <option value="30" data-i18n="memory.retention.30">30 days after last use</option>
+              <option value="90" data-i18n="memory.retention.90">90 days after last use</option>
+              <option value="180" data-i18n="memory.retention.180">180 days after last use</option>
+              <option value="365" data-i18n="memory.retention.365">One year after last use</option>
+            </select>
+            <p class="hint" data-i18n="memory.retentionHint">
+              Conversations not continued for this long are deleted with their files. Pinned conversations are
+              always kept.
+            </p>
+          </div>
+          <div class="field">
+            <label for="provider-privacy" data-i18n="memory.providerPrivacy">Provider privacy</label>
+            <select id="provider-privacy">
+              <option value="standard" data-i18n="memory.providerPrivacy.standard">Standard</option>
+              <option value="strict" data-i18n="memory.providerPrivacy.strict">Strict — only providers that keep and train on nothing</option>
+            </select>
+            <p class="hint" data-i18n="memory.providerPrivacyHint">
+              For models reached through OpenRouter. Strict sends requests only to zero-data-retention endpoints
+              that neither store nor train on what you send. Many free models are not served that way, so they
+              will stop working while this is on.
+            </p>
+          </div>
+          <button class="btn btn--primary" id="save-memory-prefs" type="button" data-i18n="action.save">Save</button>
+          <span class="hint" id="memory-status" role="status" aria-live="polite"></span>
+
+          <h3 data-i18n="memory.notes">Saved notes</h3>
+          <div id="memory-list"></div>
+          <div class="row">
+            <button class="btn btn--ghost" id="memory-clear" type="button" data-i18n="memory.clear">Delete all memory</button>
+          </div>
+
+          <h3 data-i18n="memory.importTitle">Bring memory from another assistant</h3>
+          <p class="hint" data-i18n="memory.importHint">
+            Ask Claude or ChatGPT to "write out everything you remember about me", paste the answer here, and it
+            becomes one note you can read and edit above.
+          </p>
+          <div class="field">
+            <label for="memory-import-text" class="sr-only" data-i18n="memory.importLabel">Memory to import</label>
+            <textarea id="memory-import-text" rows="4"></textarea>
+          </div>
+          <button class="btn btn--ghost" id="memory-import" type="button" data-i18n="memory.import">Import</button>
         </section>
 
         <section class="panel" data-panel="skills" id="panel-skills" role="tabpanel" aria-labelledby="tab-skills">
@@ -1415,6 +1513,41 @@
           <h3 data-i18n="account.usage">Usage this month</h3>
           <div id="usage-card"></div>
 
+          <h3 data-i18n="data.title">Your data</h3>
+          <div class="provider">
+            <p class="hint" data-i18n="data.hint">
+              Download everything this account holds as one file, or bring in conversations exported from Claude
+              or ChatGPT (their conversations.json) or from another Synapsez. Keys and connector tokens are never
+              exported.
+            </p>
+            <div class="provider__row">
+              <a class="btn btn--ghost" id="data-export" href="/api/account/export" download data-i18n="data.export">Export my data</a>
+              <label class="btn btn--ghost" for="data-import-file" data-i18n="data.import">Import conversations</label>
+              <input type="file" id="data-import-file" accept=".json,application/json" class="sr-only" />
+            </div>
+            <p class="hint" id="data-import-status" role="status" aria-live="polite"></p>
+          </div>
+
+          <h3 data-i18n="activity.title">Security activity</h3>
+          <p class="hint" data-i18n="activity.hint">
+            Sign-ins, password and two-factor changes, keys, exports and shared links on this account — never what
+            was said. Addresses are kept only to their network. Kept for 180 days.
+          </p>
+          <div id="activity-list"></div>
+
+          <h3 data-i18n="leave.title">Delete account</h3>
+          <div class="provider provider--danger">
+            <p class="hint" data-i18n="leave.hint">
+              Deletes the account and everything in it — conversations, files, notes, projects, keys and tasks —
+              at once and for good. Export your data first if you want a copy.
+            </p>
+            <div class="provider__row">
+              <input type="password" id="leave-password" autocomplete="current-password" placeholder="Your password" aria-label="Your password" data-i18n-placeholder="account.yourPassword" data-i18n-aria-label="account.yourPassword" />
+              <input type="text" id="leave-code" inputmode="numeric" autocomplete="one-time-code" hidden placeholder="Authenticator code" aria-label="Authenticator code" data-i18n-placeholder="twofa.code" data-i18n-aria-label="twofa.code" />
+              <button class="btn btn--danger" id="leave-account" type="button" data-i18n="leave.button">Delete my account</button>
+            </div>
+          </div>
+
           <button class="btn btn--ghost" id="logout" type="button" data-i18n="account.signOut">Sign out</button>
         </section>
 
@@ -1426,6 +1559,9 @@
             registration once everyone you want is in.
           </p>
           <div id="user-list"></div>
+          <h3 data-i18n="activity.title">Security activity</h3>
+          <p class="hint" data-i18n="activity.adminHint">The newest events across every account on this deployment.</p>
+          <div id="admin-activity"></div>
         </section>
       </div>
     </dialog>

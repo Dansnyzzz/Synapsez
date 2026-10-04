@@ -11,6 +11,7 @@ import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { getStore } from './store/index.js';
 import { searchProject } from './projects.js';
 import { untrusted } from './tools/untrusted.js';
+import { withheldTools } from './memory.js';
 
 /**
  * Sub-agents — several independent investigations at once.
@@ -278,10 +279,11 @@ export async function runParallel({
   // an id that cannot resolve — a sub-agent run must not crash because the
   // account's model is set to Auto.
   const entry = await resolveForUser(user.id, modelId || prefs.defaultModel);
-  const [worker, connectors, providerKeys] = await Promise.all([
+  const [worker, connectors, providerKeys, chat] = await Promise.all([
     workerStatus(user, prefs),
     connectorSummary(user.id),
     providerStatus(user.id),
+    chatId ? getStore().getChat(user.id, chatId).catch(() => null) : null,
   ]);
 
   // Read-only, and desktop control withheld entirely: a sub-agent has no screen
@@ -307,6 +309,8 @@ export async function runParallel({
     providers: Object.entries(providerKeys)
       .filter(([, status]) => status?.configured)
       .map(([provider]) => provider),
+    // An incognito conversation's helpers remember nothing either.
+    withhold: withheldTools({ chat, prefs }),
   });
 
   const context = await projectContext(user.id, chatId);

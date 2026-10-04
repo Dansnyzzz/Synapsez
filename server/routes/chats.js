@@ -96,12 +96,20 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       if (projectId && !(await store.getProject(req.user.id, projectId))) {
         return res.status(404).json({ error: 'No such project.' });
       }
+      // An incognito conversation remembers nothing, and a project is a place
+      // that remembers — its notes, its sources, its history. The pair is a
+      // contradiction, so it is refused rather than half-honoured.
+      const incognito = req.body?.incognito === true;
+      if (incognito && projectId) {
+        return res.status(400).json({ error: 'An incognito conversation cannot be part of a project.' });
+      }
 
       const chat = await store.createChat(req.user.id, {
         id: crypto.randomUUID(),
-        title: req.body?.title || 'New chat',
+        title: String(req.body?.title || 'New chat').slice(0, 200),
         model: req.body?.model || prefs.defaultModel,
         projectId,
+        incognito,
       });
       res.status(201).json({ chat });
     }),
@@ -267,6 +275,14 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         const projectId = req.body.projectId ? String(req.body.projectId) : null;
         if (projectId && !(await store.getProject(req.user.id, projectId))) {
           return res.status(404).json({ error: 'No such project.' });
+        }
+        // Same contradiction as at creation: moving an incognito conversation
+        // into a project would file it somewhere that keeps things.
+        if (projectId) {
+          const current = await store.getChat(req.user.id, req.params.id);
+          if (current?.incognito) {
+            return res.status(400).json({ error: 'An incognito conversation cannot be part of a project.' });
+          }
         }
         patch.projectId = projectId;
       }
