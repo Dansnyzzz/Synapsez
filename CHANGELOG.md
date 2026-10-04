@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-04 (night, 4) — PDF and print that work; copy a link
+
+### Changed
+
+- The file viewer's ⋯ menu: **Copy link** (the file's public share link) replaces "No computer connected", and
+  printing is two entries — **Save as PDF** and **Print**.
+
+### Fixed
+
+- **Printing a document gave a blank preview.** Save as PDF and Print now print a clean copy of just the document,
+  styled for paper and named after the file.
+- **The ⋯ menu of a full-size viewer opened behind it.**
+- **Grey scrollbars with arrows inside tool output** — they now use the app's clear scrollbar.
 ## 2026-10-04 (night, 3) — fewer interruptions; times on messages
 
 ### Added

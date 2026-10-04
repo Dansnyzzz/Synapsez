@@ -3429,7 +3429,8 @@ section('the file viewer');
     document.getElementById('viewer-expand').click();
     document.body.classList.add('is-printing');
   });
-  await page.emulateMedia({ media: 'print' });
+  // The dark theme, where the bug was: its text colours are near-white.
+  await page.emulateMedia({ media: 'print', colorScheme: 'dark' });
   await page.waitForTimeout(200);
   const printed = await page.evaluate(() => {
     // Asked as "is it laid out", not "what is its display" — a computed style
@@ -3445,6 +3446,11 @@ section('the file viewer');
       composer: shown('.composer'),
       chrome: shown('#filepane .filepane__bar'),
       background: getComputedStyle(document.getElementById('filepane')).backgroundColor,
+      // The colour of the words themselves. White text on white paper printed
+      // a 37-page document that looked blank in the preview.
+      ink: [...document.querySelectorAll('#viewer-body h1, #viewer-body h2, #viewer-body p, #viewer-body td, #viewer-body li')]
+        .slice(0, 6)
+        .map((node) => getComputedStyle(node).color),
     };
   });
   await page.emulateMedia({ media: 'screen' });
@@ -3454,6 +3460,11 @@ section('the file viewer');
   check('and leaves the app behind', !printed.sidebar && !printed.composer, JSON.stringify(printed));
   check('including the viewer\'s own buttons', !printed.chrome);
   check('on white, not on the dark theme', /255, 255, 255/.test(printed.background), printed.background);
+  const dark = (rgb) => {
+    const [r, g, b] = (rgb.match(/\d+/g) || []).map(Number);
+    return r + g + b < 3 * 110;
+  };
+  check('in dark ink, so the words show on paper', printed.ink.length > 0 && printed.ink.every(dark), printed.ink.join(' | '));
 
   /**
    * The bug that made Save as PDF useless: page one and nothing else.
@@ -3483,6 +3494,57 @@ section('the file viewer');
   });
   await page.emulateMedia({ media: 'screen' });
   await page.evaluate(() => document.body.classList.remove('is-printing'));
+
+  /*
+   * Save as PDF, end to end: the button builds a clean copy of the document in
+   * a frame of its own and prints that. The report was a 37-page preview with
+   * nothing on any page, from printing the live app; here the copy the button
+   * prints is put through Chrome's real PDF pipeline and its words read back.
+   */
+  {
+    await page.evaluate(() => document.body.classList.remove('is-printing'));
+    await page.emulateMedia({ media: 'screen' });
+    const screenText = (await page.evaluate(() => document.getElementById('viewer-body').innerText)).replace(/\s+/g, ' ').trim();
+    await page.evaluate(() => {
+      window.__printCopy = null;
+      new window.MutationObserver((changes, observer) => {
+        for (const change of changes) {
+          for (const node of change.addedNodes) {
+            if (node.tagName === 'IFRAME' && node.srcdoc) {
+              window.__printCopy = node.srcdoc;
+              observer.disconnect();
+            }
+          }
+        }
+      }).observe(document.body, { childList: true });
+    });
+    // A menu left open by the check before would be closed by this click.
+    if (!(await page.isVisible('[data-label="Save as PDF"]'))) await page.click('#viewer-more');
+    await page.waitForSelector('[data-label="Save as PDF"]', { state: 'visible', timeout: 5000 });
+    await page.click('[data-label="Save as PDF"]');
+    await page.waitForTimeout(800);
+    const copy = await page.evaluate(() => window.__printCopy);
+    check('Save as PDF builds a copy of just the document', !!copy && !/class="sidebar|id="app"/.test(copy), copy ? `${copy.length} chars` : 'no copy');
+    const titled = /<title>([^<]*)<\/title>/.exec(copy || '')?.[1] || '';
+    check('  named after the file, which is what the PDF is called', titled.length > 0 && !/Synapsez/.test(titled), titled);
+
+    let pdfText = '';
+    if (copy) {
+      const paperContext = await browser.newContext();
+      const paper = await paperContext.newPage();
+      await paper.setContent(copy);
+      const pdf = await paper.pdf({ format: 'A4' });
+      await paperContext.close();
+      const { extractPdfText } = await import('../server/pdf.js');
+      pdfText = ((await extractPdfText(pdf))?.text || '').replace(/\s+/g, ' ').trim();
+    }
+    const sample = screenText.split(' ').filter((w) => w.length > 4).slice(0, 4);
+    check(
+      '  and the PDF carries the document\'s words',
+      sample.length > 0 && sample.every((w) => pdfText.includes(w)),
+      `looked for ${sample.join(', ')} in "${pdfText.slice(0, 120)}"`,
+    );
+  }
 
   check('the panel is not pinned to one screen', layout.position === 'static', layout.position);
   check('  nor clipping what did not fit', layout.overflow === 'visible', layout.overflow);

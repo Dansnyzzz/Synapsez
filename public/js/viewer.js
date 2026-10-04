@@ -7,6 +7,33 @@ import { toast } from './render.js';
 import { humanSize } from './format.js';
 
 /** Google Drive's mark, in its own colours — fixed markup, never data. */
+/**
+ * Paper, and nothing else: what a printed or saved document looks like. Kept
+ * deliberately plain — black on white, the document's own structure, tables
+ * that repeat their header and do not split a row.
+ */
+const PRINT_CSS = `
+  @page { margin: 18mm 16mm; }
+  html, body { background: #fff; color: #111; }
+  body { margin: 0; font: 11.5pt/1.55 -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif; }
+  .doc, .grid-wrap, .slides { max-width: none; padding: 0; margin: 0; }
+  h1 { font-size: 20pt; margin: 0 0 10pt; } h2 { font-size: 15pt; margin: 16pt 0 6pt; } h3 { font-size: 12.5pt; margin: 12pt 0 4pt; }
+  h1, h2, h3 { break-after: avoid; color: #000; }
+  p, li { orphans: 2; widows: 2; }
+  a { color: #000; text-decoration: underline; }
+  table { width: 100%; border-collapse: collapse; margin: 8pt 0 12pt; font-size: 10pt; }
+  th, td { border: 1px solid #bbb; padding: 4pt 6pt; text-align: left; vertical-align: top; color: #111; background: none; }
+  thead { display: table-header-group; } th { background: #f0f0f0; font-weight: 600; }
+  tr { break-inside: avoid; }
+  img { max-width: 100%; height: auto; }
+  .figure { break-inside: avoid; text-align: center; }
+  pre, code { font-family: Consolas, "Courier New", monospace; font-size: 9.5pt; white-space: pre-wrap; word-break: break-word; }
+  button, .grid__corner { display: none; }
+  .slide { break-after: page; border: 1px solid #ccc; padding: 12pt; margin-bottom: 12pt; }
+`;
+
+const LINK_ICON =
+  '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8.5 11.5a3.2 3.2 0 0 0 4.5 0l2.6-2.6a3.2 3.2 0 0 0-4.5-4.5l-1 1"/><path d="M11.5 8.5a3.2 3.2 0 0 0-4.5 0L4.4 11.1a3.2 3.2 0 0 0 4.5 4.5l1-1"/></svg>';
 const DRIVE_ICON =
   '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="#0f9d58" d="M7.7 3.5h8.6l5.2 9h-8.6z"/><path fill="#ffc107" d="M2.5 16.5 6.8 9l4.3 7.5-4.3 4z"/><path fill="#1a73e8" d="M6.8 20.5 11.1 13h10.4l-4.3 7.5z"/></svg>';
 
@@ -719,19 +746,53 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
    * for both, and a browser that does not send it would leave the app looking
    * printed forever.
    */
-  function printIt() {
-    const wasExpanded = expanded;
-    if (!wasExpanded) expand(true);
-    document.body.classList.add('is-printing');
-
-    const done = () => {
-      document.body.classList.remove('is-printing');
-      if (!wasExpanded) expand(false);
-      window.removeEventListener('afterprint', done);
-    };
-    window.addEventListener('afterprint', done);
-    setTimeout(done, 60_000);
-    window.print();
+  /**
+   * @param {{ pdf?: boolean }} [options]  `pdf`: the person wants a file, not
+   *   paper. A page cannot choose the dialog's destination for them, so it
+   *   says which one to pick — and names the document, because the browser
+   *   uses the page title as the PDF's file name ("Synapsez.pdf" otherwise).
+   */
+  function printIt({ pdf = false } = {}) {
+    const name = String(current?.file?.name || '').replace(/\.[^.]+$/, '') || 'document';
+    if (pdf) toast(t('viewer.savePdfHint'));
+    /*
+     * A clean copy of the document, printed from a frame of its own.
+     *
+     * Printing the live app meant every rule of the app — the theme, the
+     * fixed layout, the glass, whatever sat over the page — had to be undone
+     * for paper, and one that was not produced a 37-page preview with nothing
+     * on it. Here the frame holds only the document, styled for paper and
+     * nothing else, so there is nothing to undo. Its title is the file's
+     * name, which is what the browser names the PDF.
+     */
+    const content = bodyNode.querySelector('.doc, .grid-wrap, .slides, .viewer__code') || bodyNode;
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.tabIndex = -1;
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+    frame.srcdoc =
+      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(name)}</title>` +
+      `<base href="${escapeHtml(window.location.origin)}/"><style>${PRINT_CSS}</style></head>` +
+      `<body>${content.outerHTML}</body></html>`;
+    const done = () => setTimeout(() => frame.remove(), 1000);
+    frame.addEventListener('load', async () => {
+      const win = frame.contentWindow;
+      if (!win) return done();
+      // Pictures in the document finish loading before the page is laid out.
+      const settled = (img) =>
+        img.complete
+          ? null
+          : new Promise((resolve) => {
+              img.addEventListener('load', resolve, { once: true });
+              img.addEventListener('error', resolve, { once: true });
+            });
+      await Promise.all([...win.document.images].map(settled));
+      win.addEventListener('afterprint', done, { once: true });
+      win.focus();
+      win.print();
+      setTimeout(done, 120_000);
+    }, { once: true });
+    document.body.append(frame);
   }
 
   /* ── events ───────────────────────────────────────────────────── */
@@ -805,17 +866,32 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
       });
     }
     // Nothing worth printing in a frame we do not control, or in a picture.
+    // Two entries for two intentions: a PDF to keep, and paper. Both go through
+    // the browser's print dialog — with "Save as PDF" already chosen for the
+    // first, which is the only way a page can ask for it.
     if (current.preview.kind !== 'pdf' && current.preview.kind !== 'image') {
-      items.push({ label: t('viewer.print'), icon: '⎙', run: printIt });
+      items.push({ label: t('viewer.savePdf'), icon: '⤓', run: () => printIt({ pdf: true }) });
+      items.push({ label: t('viewer.print'), icon: '⎙', run: () => printIt() });
     }
-    if (!opener) {
-      items.push(null, {
-        label: t('viewer.noComputer'),
-        icon: '·',
-        run: () =>
-          toast(t('viewer.noComputerHint'), 'error'),
-      });
-    }
+    /*
+     * A link anyone can open, copied — the share link the file card offers,
+     * one press from the viewer. This slot used to say "No computer paired",
+     * left over from when files could be opened on a paired machine.
+     */
+    items.push(null, {
+      label: t('viewer.copyLink'),
+      icon: LINK_ICON,
+      run: async () => {
+        try {
+          const { path } = await api.shareFile(current.file.id);
+          const link = new URL(path, window.location.origin).href;
+          await navigator.clipboard.writeText(link);
+          toast(t('viewer.linkCopied'), 'ok');
+        } catch (err) {
+          toast(err?.message || t('clipboard.failed'), 'error');
+        }
+      },
+    });
     openMenu(moreNode, items);
   });
 

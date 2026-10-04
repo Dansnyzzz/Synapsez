@@ -2542,7 +2542,6 @@ details.block pre {
   background: transparent;
   max-height: 320px;
   overflow: auto;
-  scrollbar-width: thin;
   font-family: var(--mono);
   font-size: 12.2px;
   line-height: 1.55;
@@ -2731,7 +2730,6 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
   background: transparent;
   max-height: 320px;
   overflow: auto;
-  scrollbar-width: thin;
   font-family: var(--mono);
   font-size: 12px;
   white-space: pre-wrap;
@@ -5592,6 +5590,30 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
      does the same by another route, and every `overflow` in the chain
      clips whatever did not fit. A document that printed page one and
      silently dropped the other eleven is the failure this prevents. */
+  /* Ink for paper, whatever the theme. Everything inside the pane colours
+     itself from these variables, and in the dark theme they are near-white:
+     a document printed 37 pages of white text on white paper. */
+  body.is-printing,
+  body.is-printing #filepane {
+    --text: #111 !important;
+    --text-dim: #333 !important;
+    --text-faint: #555 !important;
+    --line: #c8c8c8 !important;
+    --line-soft: #dddddd !important;
+    --surface: #ffffff !important;
+    --surface-2: #f3f3f3 !important;
+    --bg: #ffffff !important;
+    --bg-elev: #ffffff !important;
+    --tint: #f5f5f5 !important;
+    --accent: #3b2dbf !important;
+    --info: #1a56b0 !important;
+    background: #fff !important;
+    color: #111 !important;
+  }
+  body.is-printing #filepane * {
+    text-shadow: none !important;
+    -webkit-text-fill-color: currentColor;
+  }
   body.is-printing #filepane {
     position: static !important;
     inset: auto !important;
@@ -6697,7 +6719,9 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 /* The menu it opens. Positioned by script against the card it belongs to. */
 .cardmenu {
   position: fixed;
-  z-index: 40;
+  /* Above a full-size viewer (50), whose own ⋯ menu otherwise opened underneath
+     it; below the toasts (60). */
+  z-index: 55;
   min-width: 190px;
   padding: 6px;
   border: 1px solid var(--glass-line);
@@ -8706,7 +8730,6 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
   margin: 12px 0 16px;
   overflow-x: auto;
   scroll-snap-type: x proximity;
-  scrollbar-width: thin;
 }
 .mdgallery__item {
   position: relative;
@@ -8746,7 +8769,7 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 }
 
 /* A YouTube link on its own line: thumbnail, title, and play in place. */
-.mdvideos { display: flex; gap: 12px; margin: 12px 0 16px; overflow-x: auto; scrollbar-width: thin; }
+.mdvideos { display: flex; gap: 12px; margin: 12px 0 16px; overflow-x: auto; }
 .mdvideos .mdvideo { margin: 0; flex: none; width: min(320px, 78vw); }
 .mdvideo {
   margin: 12px 0 16px;

@@ -500,6 +500,25 @@ section('the plan panel: one step running after a refresh, and updates say what 
   check('a running step is a ring, a waiting one dashed, a done one ticked', planItemHtml(base[0]).includes('pmark--active') && planItemHtml(base[1]).includes('stroke-dasharray') && planItemHtml({ title: 'x', status: 'done' }).includes('pmark--done'));
 }
 
+section('tool boxes keep the app\'s own clear scrollbar');
+{
+  /*
+   * `scrollbar-width` on an element makes Chromium draw the native Windows
+   * scrollbar there — a grey trough with arrows — and ignore the app's
+   * ::-webkit-scrollbar styling. It was added to the tool output boxes and
+   * brought exactly that back.
+   */
+  const fs = await import('node:fs');
+  const css = fs.readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
+  const rule = (selector) => {
+    const at = css.indexOf(`${selector} {`);
+    return at < 0 ? '' : css.slice(at, css.indexOf('}', at));
+  };
+  for (const selector of ['details.block pre', '.step__out pre', '.mdgallery']) {
+    check(`${selector} does not opt into the native scrollbar`, !/scrollbar-width/.test(rule(selector)), rule(selector).slice(0, 80));
+  }
+}
+
 section('a comparison card is read however the model lays it out');
 {
   // The exact calls from the report.
