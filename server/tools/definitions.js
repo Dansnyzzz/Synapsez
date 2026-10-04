@@ -1507,7 +1507,7 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: true,
     description:
-      'Convert a quantity between units. Length, weight, temperature, area (sào, mẫu, ha), volume, speed, time, data size, energy, pressure, power.',
+      'Convert a quantity between units. Length, weight, temperature, area (sào, mẫu, ha), volume, speed, time, data size, energy, pressure, power — and money between currencies (USD, VND, EUR… at the day\'s reference rate).',
     parameters: {
       type: 'object',
       properties: {

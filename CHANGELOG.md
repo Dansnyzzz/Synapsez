@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-04 (late) — work that finishes itself in the cloud
+
+### Fixed
+
+- **"Interrupted — not repeated" on a workflow step that only read** (the morning report's deep research). The
+  heartbeat now reopens such parked runs and the step carries on; a step cut off while sending an email still waits
+  for a person.
+- **A conversation turn cut off by the 300 s limit** (e.g. a long deep research) is finished by the cloud heartbeat
+  with the web closed — `server/resume.js`. Only turns whose lease is still held but no longer renewed; a stopped
+  turn is left stopped.
+- **Deep research** stops at a wall-clock deadline (150 s on a deployment) and reports what it gathered, instead
+  of outliving the function.
+- **A tool card with no recorded result showed a green tick.** It now says the step was cut off, in red.
+- `convert_units` converts money between currencies at the day's reference rate.
+- Tool output boxes are clear with a border instead of grey, long output scrolls inside its own box, and the
+  `<untrusted>` marker meant for the model is not drawn on screen.
+
+### Removed
+
+- The green "runs in the cloud 24/7" line on the Scheduled and Workflows shelves; only the warning remains.
 ## 2026-10-04 (night) — archive cards, full context windows, looking at an attachment
 
 ### Fixed

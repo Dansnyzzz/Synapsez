@@ -1841,8 +1841,13 @@ function showStage(run) {
   runs.show(run, $('messages'));
 }
 
-/** Rebuild the stored transcript into `host`. */
-function drawTranscript(host, messages) {
+/**
+ * Rebuild the stored transcript into `host`.
+ *
+ * @param live  the conversation is still answering: a call in its newest turn
+ *   without a result is still running, not lost.
+ */
+function drawTranscript(host, messages, { live = false } = {}) {
   host.innerHTML = '';
 
   // Tool results live in their own message, so index them by call id first.
@@ -1851,19 +1856,20 @@ function drawTranscript(host, messages) {
     if (m.role === 'tool') for (const r of m.results || []) resultsByCallId.set(r.toolCallId, r);
   }
 
-  for (const m of messages) {
+  const newest = messages.findLastIndex((m) => m.role === 'assistant');
+  messages.forEach((m, i) => {
     if (m.role === 'user') host.append(userMessage(m.text, m.attachments || [], m.id));
     // A summary is what the model reads in place of the older turns; the
     // person still has those turns, so it is not drawn among them.
-    else if (m.role === 'summary') continue;
+    else if (m.role === 'summary') return;
     // Placed before it is filled, so a step that only read pages can join the
     // web card the step before it ended on — see `webCard` in render.js.
     else if (m.role === 'assistant') {
       const turn = assistantMessage();
       host.append(turn.node);
-      turn.hydrate(m, resultsByCallId);
+      turn.hydrate(m, resultsByCallId, { pending: live && i === newest });
     }
-  }
+  });
 }
 
 /**
@@ -1907,7 +1913,7 @@ function followBackground(id, seen) {
       const scroller = host.closest('.thread') || document.scrollingElement;
       const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120;
       host.setAttribute('aria-busy', 'true');
-      drawTranscript(host, data.messages || []);
+      drawTranscript(host, data.messages || [], { live: true });
       host.setAttribute('aria-busy', 'false');
       setEmpty(!(data.messages || []).length);
       // Stay with the newest step unless they scrolled up to read something.
@@ -1984,7 +1990,7 @@ async function openChat(id) {
    * than narrating the construction.
    */
   host.setAttribute('aria-busy', 'true');
-  drawTranscript(host, messages);
+  drawTranscript(host, messages, { live: !!running || !!background });
 
   /**
    * If this conversation is mid-answer in this tab, its live nodes go back on

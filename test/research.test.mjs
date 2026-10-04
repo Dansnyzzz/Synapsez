@@ -125,7 +125,7 @@ section('the report enforces a citation on every claim');
   check('an uncited claim is flagged, not passed', /Unsupported claim.*LOW — no source/s.test(report), report);
   check('a disputed claim is marked CONFLICTING', /Disputed.*CONFLICTING/s.test(report));
   check('the sources are listed with urls', /reuters\.com/.test(report) && /apnews\.com/.test(report));
-  check('the budget status is announced when set', /Stopped at the token budget/.test(
+  check('the budget status is announced when set', /Stopped at its token or time limit/.test(
     buildReport({ question: 'Q', claims: [], ledger, status: 'budget' }),
   ));
 }
@@ -359,8 +359,17 @@ section('the whole pipeline, end to end with fakes');
     question: 'Q3?', userId: uid, user: { id: uid }, chatId: 'c3',
     deps: { search: fakeSearch, stream: byRole, entry: { provider: 'x' }, cap: 1 },
   });
-  check('a hit budget is reported, not hidden', /token budget/i.test(capped.content), capped.content.slice(0, 120));
+  check('a hit budget is reported, not hidden', /token or time limit/i.test(capped.content), capped.content.slice(0, 120));
   check('and the capped run is still saved', (await store.getResearchRun(uid, capped.runId))?.status === 'budget');
+
+  // A run out of time stops the same way: on a deployment the whole turn lives in one
+  // 300-second function, and a research run that ate it left no result at all.
+  const timed = await runDeepResearch({
+    question: 'Q4?', userId: uid, user: { id: uid }, chatId: 'c4',
+    deps: { search: fakeSearch, stream: byRole, entry: { provider: 'x' }, timeMs: 0 },
+  });
+  check('a run past its time limit ends with a report, not a cut-off turn', /token or time limit/i.test(timed.content), timed.content.slice(0, 120));
+  check('  and is saved as stopped at its limit', (await store.getResearchRun(uid, timed.runId))?.status === 'budget');
 }
 
 section('deep_research is a top-level tool, never handed to a sub-agent');

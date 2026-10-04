@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { getStore } from '../store/index.js';
+import { getStore, isServerless } from '../store/index.js';
 import { getPrefs } from '../settings.js';
 import { resolveForUser } from '../autoPick.js';
 import { planQuestions } from './plan.js';
@@ -29,6 +29,9 @@ import { buildReport } from './report.js';
  * spending control.
  */
 const DEFAULT_CAP = 250_000;
+/** Wall-clock limits for one run: well inside the 300s function on a deployment. */
+const SERVERLESS_TIME_MS = 150_000;
+const LOCAL_TIME_MS = 600_000;
 
 /** The ledger as the store keeps it: an array, not a Map. */
 const ledgerToArray = (ledger) =>
@@ -52,7 +55,7 @@ const ledgerToArray = (ledger) =>
  * @param {{
  *   question: string, userId?: string, user?: any, chatId?: string|null, signal?: AbortSignal,
  *   deps?: {
- *     store?: any, stream?: any, search?: any, entry?: any, cap?: number,
+ *     store?: any, stream?: any, search?: any, entry?: any, cap?: number, timeMs?: number,
  *     readPage?: (url: string) => Promise<string>,
  *   },
  * }} args
@@ -64,10 +67,18 @@ export async function runDeepResearch({ question, userId, user, chatId, signal, 
   const cap = deps.cap || DEFAULT_CAP;
 
   const entry = deps.entry || (await resolveForUser(userId, (await getPrefs(userId)).defaultModel));
-  const budget = { spent: 0, cap, tokensIn: 0, tokensOut: 0 };
+  /*
+   * A clock as well as a token cap. On a deployment the whole turn lives in
+   * one 300-second function, and a run that took 200s of it left the turn cut
+   * off with no result recorded — the card said "no result" under a green
+   * tick. Past the deadline the debate stops and the report is written from
+   * what was gathered, marked as such.
+   */
+  const deadline = Date.now() + (deps.timeMs ?? (isServerless() ? SERVERLESS_TIME_MS : LOCAL_TIME_MS));
+  const budget = { spent: 0, cap, tokensIn: 0, tokensOut: 0, deadline };
   const id = crypto.randomUUID();
 
-  const overBudget = () => budget.spent >= budget.cap;
+  const overBudget = () => budget.spent >= budget.cap || Date.now() >= budget.deadline;
 
   const queries = await planQuestions(question, { userId, entry, stream, budget, signal, chatId });
 

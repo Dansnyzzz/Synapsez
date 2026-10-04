@@ -54,6 +54,20 @@ const ms = (n) => (n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`);
  * status line under the transcript, and four more of them spinning in four
  * different places is noise rather than information.
  */
+/**
+ * A tool's answer as a person reads it.
+ *
+ * Outside content reaches the model wrapped in `<untrusted source=…>` (see
+ * server/tools/untrusted.js). That boundary is for the model; on screen the tags
+ * were noise around the page text — the source is already the card's headline.
+ */
+export function forDisplay(text) {
+  return String(text ?? '')
+    .replace(/<untrusted source="[^"]*">\n?/g, '')
+    .replace(/\n?<\/untrusted>/g, '')
+    .trim();
+}
+
 const MARK_PENDING = '<span class="mark mark--pending" aria-hidden="true"></span>';
 
 /** The tools drawn as the web card rather than as cards of their own. */
@@ -1645,7 +1659,7 @@ export function assistantMessage() {
         // call and its arguments for whoever opens it.
         out.append(toolCallDetail(call));
         const pre = el('pre');
-        pre.textContent = result.content || t('chat.noOutput');
+        pre.textContent = forDisplay(result.content) || t('chat.noOutput');
         out.append(pre);
         item.append(out);
 
@@ -1982,7 +1996,7 @@ export function assistantMessage() {
             `<span class="mark">${result.isError ? '✗' : '✓'}</span>`,
             result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '',
           );
-          output.textContent = result.content || t('chat.noOutput');
+          output.textContent = forDisplay(result.content) || t('chat.noOutput');
 
           /**
            * A document came out of this call.
@@ -2024,7 +2038,11 @@ export function assistantMessage() {
     },
 
     /** Rebuild from a persisted message when reloading a conversation. */
-    hydrate(message, resultsByCallId) {
+    /**
+     * @param pending  this turn is still running, so a call with no result yet
+     *   is waiting for one rather than lost.
+     */
+    hydrate(message, resultsByCallId, { pending = false } = {}) {
       if (message.thinking) {
         api.appendThinking(message.thinking);
         api.finishThinking();
@@ -2033,7 +2051,15 @@ export function assistantMessage() {
         if (call.name === 'update_plan') api.setPlan(call.input?.steps);
         const handle = api.startTool(call);
         const result = resultsByCallId?.get(call.id);
-        handle.complete(result || { content: t('chat.noResult'), isError: false });
+        /*
+         * No result, and nothing still running: the server was cut off before
+         * the call could answer (a long deep research past the time limit).
+         * That was drawn as a green tick over "no result" — a success that
+         * never happened. It is said for what it is; a turn still running
+         * leaves the card spinning until its result arrives.
+         */
+        if (result) handle.complete(result);
+        else if (!pending) handle.complete({ content: t('chat.cutOff'), isError: true });
       }
       if (message.text) api.appendText(message.text);
       api.finish();

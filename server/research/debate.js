@@ -104,7 +104,8 @@ export async function runDebate({
 }) {
   const transcript = [];
   const evidence = evidenceBlock(question, findings, ledger);
-  const overBudget = () => budget && budget.cap && budget.spent >= budget.cap;
+  // Tokens or the clock, whichever runs out first — see deadline in index.js.
+  const overBudget = () => !!budget && ((!!budget.cap && budget.spent >= budget.cap) || (!!budget.deadline && Date.now() >= budget.deadline));
 
   let draft = await askModel({
     userId, entry, system: PROPOSER, prompt: evidence, stream, budget, signal,

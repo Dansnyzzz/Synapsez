@@ -56,6 +56,7 @@ import {
   sweep,
 } from './scheduler.js';
 import { runDueWorkflows } from './workflows.js';
+import { resumeCutOffTurns } from './resume.js';
 import { redactSecrets } from './redact.js';
 import { withTrace, newTraceId, annotate, log, mark, since } from './util/trace.js';
 import {
@@ -502,7 +503,10 @@ export function createApp() {
       advanced: [],
       error: String(err?.message || err).slice(0, 200),
     }));
-    return { ran, workflows };
+    // Conversations whose turn the 300s limit cut off, finished with nobody
+    // watching — see server/resume.js.
+    const resumed = await resumeCutOffTurns({ budgetMs: remaining() }).catch(() => []);
+    return { ran, workflows, resumed };
   }
 
   app.post(

@@ -442,6 +442,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '{0} took more than {1}s to send that file, so it was stopped. The server is slow or the file is very large — try once more, or look for another copy (a publisher or library page), or read it as text with web_fetch.':
     '{0} mất hơn {1} giây để gửi tệp đó nên đã bị dừng. Máy chủ chậm hoặc tệp rất lớn — thử lại một lần, hoặc tìm bản khác (trang nhà xuất bản hay thư viện), hoặc đọc dạng văn bản bằng web_fetch.',
   '{0} has no file at that address (HTTP 404). Check the link, and that spaces are written %20.': '{0} không có tệp ở địa chỉ đó (HTTP 404). Kiểm tra lại liên kết, và dấu cách phải viết là %20.',
+  'There is no rate from {0} to {1} today.': 'Hôm nay không có tỷ giá từ {0} sang {1}.',
   '{0} needs at least {1} argument(s).': '{0} cần ít nhất {1} đối số.',
   'A factorial is of a whole number from 0 up.': 'Giai thừa chỉ tính cho số nguyên từ 0 trở lên.',
   'That factorial is too large to be a finite number.': 'Giai thừa đó quá lớn, không còn là số hữu hạn.',

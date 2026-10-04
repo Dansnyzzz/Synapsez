@@ -1095,6 +1095,26 @@ export function createPgStore(connectionString) {
      * this in its `finally`, and without the sequence it would release the lease
      * out from under the reconnection that had just taken it over.
      */
+    /**
+     * Conversations whose turn was cut off rather than finished or stopped.
+     *
+     * A run that ends — however it ends — releases its lease, and Stop clears
+     * it. Only an invocation that was killed (the 300s function limit, a crash)
+     * leaves `run_lock_by` set with nothing renewing `run_lock_at`. Those are
+     * the turns the cloud heartbeat finishes with every browser closed. Recent
+     * ones only: a turn cut off yesterday is not picked up out of the blue.
+     */
+    async listCutOffRuns({ staleMs = RUN_LEASE_STALE_MS, withinMs = 6 * 3600_000, limit = 3 } = {}) {
+      return q(
+        `SELECT id, user_id, run_lock_by, run_lock_at FROM chats
+          WHERE run_lock_by IS NOT NULL
+            AND run_lock_at <= NOW() - ($1 || ' milliseconds')::interval
+            AND run_lock_at > NOW() - ($2 || ' milliseconds')::interval
+          ORDER BY run_lock_at
+          LIMIT $3`,
+        [String(staleMs), String(withinMs), limit],
+      );
+    },
     async releaseChatRun(userId, chatId, runId, seq = null) {
       await q(
         `UPDATE chats SET run_lock_at = NULL, run_lock_by = NULL
@@ -2872,6 +2892,28 @@ export function createPgStore(connectionString) {
           WHERE user_id = $1 AND workflow_id = $2 AND status = 'running'
           ORDER BY started_at LIMIT 1`,
         [userId, workflowId],
+      );
+      return rows[0] ?? null;
+    },
+    /** Recent runs stopped for a person, newest first — see `recoverParkedRuns`. */
+    async listParkedWorkflowRuns({ withinHours = 48, limit = 5 } = {}) {
+      return q(
+        `SELECT * FROM workflow_runs
+          WHERE status = 'needs_attention'
+            AND finished_at > NOW() - ($1 || ' hours')::interval
+          ORDER BY finished_at DESC
+          LIMIT $2`,
+        [String(withinHours), limit],
+      );
+    },
+    /** Put a parked run back in the queue, unclaimed and unfinished, with the steps given. */
+    async reopenWorkflowRun(id, steps) {
+      const rows = await q(
+        `UPDATE workflow_runs
+            SET status = 'running', steps = $2::jsonb, lease_until = NULL, finished_at = NULL
+          WHERE id = $1 AND status = 'needs_attention'
+      RETURNING *`,
+        [id, toJson(steps)],
       );
       return rows[0] ?? null;
     },

@@ -935,6 +935,78 @@ section('deleting');
   check('and is then a 404', after.status === 404, `${after.status}`);
 }
 
+
+section('a run parked by an interruption it did not need is put back to work');
+{
+  /*
+   * The report: the morning report's deep-research step said "interrupted — not
+   * repeated" and the run sat waiting for a person. It was parked by code that
+   * stopped every cut-off step; reading has nothing to repeat by accident, so
+   * the run is reopened and carries on in the cloud.
+   */
+  const { recoverParkedRuns } = await import('../server/workflows.js');
+  const steps = ['gather the news', 'deep research it', 'email the report'];
+  const wf = await store.createWorkflow(aliceId, { id: 'wf-parked', title: 'Morning', steps: normaliseSteps(steps), nextRunAt: null });
+  const chat = await store.createChat(aliceId, { id: 'c-parked', title: 'Morning' });
+  await store.appendMessage(aliceId, chat.id, { id: 'u-p2', role: 'user', text: steps[1] });
+  await store.appendMessage(aliceId, chat.id, { id: 'a-p2', role: 'assistant', text: '', toolCalls: [{ id: 'dr-p', name: 'deep_research', input: { question: 'q' } }] });
+  const parked = await store.createWorkflowRun(aliceId, {
+    id: 'run-parked', workflowId: wf.id, chatId: chat.id, status: 'running', cursor: 1,
+    steps: [
+      { id: 's1', status: 'done' },
+      { id: 's2', status: 'unknown', error: 'This step was interrupted while running.' },
+      { id: 's3', status: 'pending' },
+    ],
+  });
+  await store.saveWorkflowRun(parked.id, { status: 'needs_attention', leaseUntil: null, finished: true });
+
+  const reopened = await recoverParkedRuns();
+  check('the parked run is reopened', reopened.includes('run-parked'), JSON.stringify(reopened));
+  const back = await store.getWorkflowRun(aliceId, 'run-parked');
+  check('  as running, unclaimed, not finished', back.status === 'running' && !back.finished_at && !back.lease_until, `${back.status} ${back.finished_at}`);
+  check('  with its step ready to carry on', back.steps[1].status === 'running' && !back.steps[1].error);
+  check('the next nudge would pick it up', (await store.claimWorkflowRun({ id: 'run-parked', leaseUntil: new Date(Date.now() + 60_000).toISOString() }))?.id === 'run-parked');
+
+  // One that sent an email half-way stays with a person.
+  const chat2 = await store.createChat(aliceId, { id: 'c-parked-2', title: 'Morning' });
+  await store.appendMessage(aliceId, chat2.id, { id: 'u-p3', role: 'user', text: steps[2] });
+  await store.appendMessage(aliceId, chat2.id, { id: 'a-p3', role: 'assistant', text: '', toolCalls: [{ id: 'em-p', name: 'send_email', input: { subject: 's', body: 'b' } }] });
+  const wf2 = await store.createWorkflow(aliceId, { id: 'wf-parked-2', title: 'Mail', steps: normaliseSteps(steps), nextRunAt: null });
+  const mail = await store.createWorkflowRun(aliceId, {
+    id: 'run-parked-mail', workflowId: wf2.id, chatId: chat2.id, status: 'running', cursor: 2,
+    steps: [{ id: 's1', status: 'done' }, { id: 's2', status: 'done' }, { id: 's3', status: 'unknown' }],
+  });
+  await store.saveWorkflowRun(mail.id, { status: 'needs_attention', leaseUntil: null, finished: true });
+  check('a step cut off mid-email is not reopened', !(await recoverParkedRuns()).includes('run-parked-mail'));
+}
+
+section('a conversation turn cut off by the time limit is finished in the cloud');
+{
+  const { resumeCutOffTurns } = await import('../server/resume.js');
+  const chat = await store.createChat(aliceId, { id: 'c-cutoff', title: 'Long research' });
+  await store.appendMessage(aliceId, chat.id, { id: 'u-cut', role: 'user', text: 'research this deeply' });
+  // Exactly what a killed invocation leaves: the lease names a run nobody renews.
+  check('the dead run held the lease', (await store.claimChatRun(aliceId, chat.id, 'dead-run')) > 0);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  const seen = [];
+  const out = await resumeCutOffTurns({
+    staleMs: 1,
+    run: async ({ chatId, userId }) => {
+      seen.push({ chatId, userId, lease: (await store.getChat(userId, chatId)).run_lock_by });
+    },
+  });
+  check('the cut-off turn is picked up', seen.length === 1 && seen[0].chatId === 'c-cutoff', JSON.stringify(out));
+  check('  under a lease of its own, so a browser coming back joins rather than races', !!seen[0]?.lease && seen[0].lease !== 'dead-run');
+  check('  and the lease is let go afterwards', (await store.getChat(aliceId, chat.id)).run_lock_by === null);
+
+  // A stopped run cleared its lease, so there is nothing to pick up.
+  await store.claimChatRun(aliceId, chat.id, 'stopped-run');
+  await store.stopChatRun(aliceId, chat.id);
+  const none = await resumeCutOffTurns({ staleMs: 1, run: async () => seen.push('ran') });
+  check('a run somebody stopped is left stopped', none.length === 0 && seen.length === 1);
+}
+
 removeTemp(process.env.DATA_DIR);
 console.log(
   failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll workflow checks passed.\x1b[0m\n',

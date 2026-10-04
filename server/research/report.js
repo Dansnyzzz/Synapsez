@@ -23,7 +23,7 @@ export function markerIds(text) {
 export function buildReport({ question, claims, ledger, status }) {
   const lines = [`# ${question}`, ''];
   if (status === 'budget') {
-    lines.push('_Stopped at the token budget; this is what was gathered so far._', '');
+    lines.push('_Stopped at its token or time limit; this is what was gathered so far._', '');
   }
 
   lines.push('## Conclusions', '');

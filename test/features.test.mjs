@@ -460,6 +460,17 @@ section('a page\'s own pictures can be shown, and nothing else can');
   check('a signature for a private address still fetches nothing', (await proxiedImage('https://127.0.0.1/x.png', new URL(signedImagePath('https://127.0.0.1/x.png'), 'https://a.b').searchParams.get('s'))) === null);
 }
 
+section('what people see of a tool answer, and money in convert_units');
+{
+  const { forDisplay } = await import('../public/js/render.js');
+  const { untrusted } = await import('../server/tools/untrusted.js');
+  const shown = forDisplay(untrusted('the page in the cloud browser', 'Page: Example Domain\nhttps://example.com/'));
+  check('the untrusted envelope is the model\'s, not drawn on screen', !/untrusted/.test(shown) && shown.startsWith('Page: Example Domain'), shown);
+  const { currencyCode } = await import('../server/tools/library.js');
+  check('currency codes and names are recognised', currencyCode('USD') === 'USD' && currencyCode('đồng') === 'VND' && currencyCode('€') === 'EUR');
+  check('  and a unit is not mistaken for money', currencyCode('km') === null && currencyCode('kWh') === null);
+}
+
 section('a tool cut off by its own deadline says so, not just "aborted"');
 {
   const { timedOutSentence } = await import('../server/tools/execute.js');

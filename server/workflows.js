@@ -415,6 +415,36 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
 }
 
 /**
+ * Runs that stopped for a person when they did not need to.
+ *
+ * Before steps could be resumed, every step cut off by the time limit parked
+ * its run as "interrupted — not repeated", reading-only steps included — the
+ * morning report's deep-research step among them, which then sat waiting for
+ * somebody until the next morning. A parked run whose interrupted step did
+ * nothing that changes anything is put back in the queue, and the step
+ * carries on where it stopped (see the orphan handling in `advanceRun`). Only
+ * the newest run of its workflow, so a fresh run is never raced by an old one.
+ */
+export async function recoverParkedRuns({ limit = 5 } = {}) {
+  const store = getStore();
+  const reopened = [];
+  for (const run of await store.listParkedWorkflowRuns({ limit }).catch(() => [])) {
+    const steps = Array.isArray(run.steps) ? run.steps : [];
+    const at = steps.findIndex((s) => s.status === 'unknown');
+    if (at < 0 || (Number(steps[at].attempts) || 0) >= MAX_RESUMES || !run.chat_id) continue;
+    const [newest] = await store.listWorkflowRuns(run.user_id, run.workflow_id, 1);
+    if (newest?.id !== run.id) continue;
+    const workflow = await store.getWorkflow(run.user_id, run.workflow_id);
+    if (!workflow || !(await store.getChat(run.user_id, run.chat_id))) continue;
+    const instruction = normaliseSteps(workflow.steps)[at]?.instruction;
+    if ((await interruptedChanges(run.user_id, run.chat_id, instruction)).length) continue;
+    const fixed = steps.map((s, i) => (i === at ? { ...s, status: 'running', error: '', finished_at: null } : s));
+    if (await store.reopenWorkflowRun(run.id, fixed)) reopened.push(run.id);
+  }
+  return reopened;
+}
+
+/**
  * Everything that is due, and everything already in flight.
  *
  * Two phases on purpose. Due workflows only *create* runs — cheap, and it means
@@ -428,6 +458,10 @@ export async function runDueWorkflows({ limit = 3, userId = null, budgetMs = STA
   const deadline = Date.now() + budgetMs;
   const started = [];
   const advanced = [];
+
+  // Runs parked for no good reason go back in the queue first, so the loop
+  // below picks them up in this same pass.
+  await recoverParkedRuns().catch(() => []);
 
   for (let i = 0; i < limit; i += 1) {
     const workflow = await store.claimDueWorkflow(nowIso(), userId);

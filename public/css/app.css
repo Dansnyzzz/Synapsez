@@ -2514,15 +2514,18 @@ details.block:has(> summary .mark--pending) {
   --card-line: color-mix(in srgb, var(--accent) 45%, var(--line));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), 0 0 18px -6px color-mix(in srgb, var(--accent) 45%, transparent);
 }
-/* Output and arguments: glass on glass, readable in both themes — the fixed
-   near-black this used was a slab on the light theme. */
+/* Output and arguments: clear, with an edge — the grey fill read as a slab
+   over the glass card. Long output scrolls inside its own box, the way the
+   arguments always did, instead of making the transcript a page long. */
 details.block pre {
   margin: 0;
   padding: 11px 12px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-  overflow-x: auto;
+  background: transparent;
+  max-height: 320px;
+  overflow: auto;
+  scrollbar-width: thin;
   font-family: var(--mono);
   font-size: 12.2px;
   line-height: 1.55;
@@ -2706,10 +2709,12 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
 .step__out pre {
   margin: 4px 0 2px;
   padding: 9px 11px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: 9px;
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-  overflow-x: auto;
+  background: transparent;
+  max-height: 320px;
+  overflow: auto;
+  scrollbar-width: thin;
   font-family: var(--mono);
   font-size: 12px;
   white-space: pre-wrap;
@@ -6352,9 +6357,8 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   font-size: 13.5px;
 }
 .notice__say { flex: 1; color: var(--text-dim); }
-/* Whether work on a clock really runs with the web closed: green when the cloud
-   heartbeat is arriving, amber with the three steps to set it up when not. */
-.notice--ok { border-color: color-mix(in srgb, var(--ok) 40%, var(--line-soft)); }
+/* Work on a clock that will not run with the web closed: amber, with the three
+   steps to set it up. Nothing is shown when all is well. */
 .notice--warn {
   flex-direction: column;
   align-items: stretch;

@@ -242,7 +242,51 @@ export function convertUnits(value, from, to) {
   }`;
 }
 
+/** Money, by the names and signs people use, as an ISO code — or null when it is not money. */
+const CURRENCY_NAMES = {
+  $: 'USD', usd: 'USD', dollar: 'USD', dollars: 'USD', 'đô': 'USD', 'đô la': 'USD',
+  vnd: 'VND', 'đ': 'VND', '₫': 'VND', 'đồng': 'VND', dong: 'VND', 'vnđ': 'VND',
+  '€': 'EUR', eur: 'EUR', euro: 'EUR', euros: 'EUR',
+  '£': 'GBP', gbp: 'GBP', pound: 'GBP',
+  '¥': 'JPY', jpy: 'JPY', yen: 'JPY', 'yên': 'JPY',
+  cny: 'CNY', rmb: 'CNY', yuan: 'CNY', 'nhân dân tệ': 'CNY', krw: 'KRW', won: 'KRW',
+};
+export function currencyCode(raw) {
+  const text = String(raw || '').trim();
+  const named = CURRENCY_NAMES[text.toLowerCase()];
+  if (named) return named;
+  return /^[A-Z]{3}$/.test(text) ? text : null;
+}
+
+/**
+ * Units, and money too.
+ *
+ * "1 USD → VND" is a conversion to anybody asking, and the model reached for
+ * this tool, failed on "USD is not a unit", and had to find the exchange-rate
+ * one on a second try. Two currencies are converted here at the day's
+ * reference rate (open.er-api.com, keyless) instead.
+ */
 async function convertUnitsTool({ value, from, to }) {
+  const a = currencyCode(from);
+  const b = currencyCode(to);
+  let unitA = null;
+  try {
+    unitA = findUnit(from);
+  } catch {
+    unitA = null;
+  }
+  if (a && b && !unitA) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) throw new Error('Give the value as a number.');
+    const data = await getJson(`https://open.er-api.com/v6/latest/${a}`);
+    const rate = Number(data?.rates?.[b]);
+    if (!Number.isFinite(rate)) throw new Error(`There is no rate from ${a} to ${b} today.`);
+    return (
+      `${fmt(amount)} ${a} = ${fmt(Number((amount * rate).toPrecision(12)))} ${b} ` +
+      `(1 ${a} = ${fmt(Number(rate.toPrecision(10)))} ${b}, updated ${data?.time_last_update_utc || 'today'}). ` +
+      'A mid-market reference rate from open.er-api.com, not what a bank or exchange will quote.'
+    );
+  }
   return convertUnits(value, from, to);
 }
 

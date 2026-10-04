@@ -272,12 +272,8 @@ export function createPages({
    * at Vercel's own cron — and nothing on screen said so.
    */
   function cloudNoticeHtml() {
-    if (!heartbeat || !heartbeat.serverless || state.localOnly) return '';
-    if (heartbeat.healthy) {
-      return `<div class="notice notice--ok"><span class="notice__say">☁ ${escapeHtml(
-        t('pages.cloud.on', { when: ago(heartbeat.lastAt) }),
-      )}</span></div>`;
-    }
+    // Said only when something needs doing: all being well is not news.
+    if (!heartbeat || !heartbeat.serverless || state.localOnly || heartbeat.healthy) return '';
     const steps = [
       t('pages.cloud.step1'),
       t('pages.cloud.step2', { url: heartbeat.endpoint }),
