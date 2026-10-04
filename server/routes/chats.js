@@ -60,6 +60,30 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
     }),
   );
 
+  /**
+   * The Archive shelf: conversations and projects put away, in one request.
+   * Registered before `/chats/:id` so "archived" is never read as an id.
+   */
+  api.get(
+    '/chats/archived',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const chats = await store.listArchivedChats(req.user.id);
+      const projects = await store.listProjects(req.user.id, { archived: true });
+      res.json({
+        chats,
+        projects: projects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          archived_at: p.archived_at,
+          updated_at: p.updated_at,
+          file_count: p.file_count,
+          chat_count: p.chat_count,
+        })),
+      });
+    }),
+  );
+
   api.post(
     '/chats',
     wrap(async (req, res) => {

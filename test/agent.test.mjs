@@ -221,6 +221,54 @@ section('a sub-agent cannot start sub-agents');
   check('  and the sub-agent still finishes with its own report', out.includes('Reported instead.'));
 }
 
+section('a sub-agent in a project can read the project sources');
+{
+  /*
+   * The report: "Sub-agent (run_parallel) KHÔNG truy cập được nguồn dự án —
+   * phải tự gọi search_docs." Sub-agents ran with chatId null, so search_docs
+   * could not find the project, and nothing about the shelf was in the task.
+   */
+  const { addSource } = await import('../server/projects.js');
+  const project = await store.createProject(user.id, { id: 'p-sub', name: 'Đầu tư tài chính', instructions: 'Trả lời bằng tiếng Việt.' });
+  const text = 'Chapter 1 The Investment Environment. Real assets versus financial assets: the material wealth of a society is determined by its real assets.';
+  await addSource(user.id, project.id, { name: 'bkm-ch1.txt', mime: 'text/plain', data: Buffer.from(text).toString('base64') });
+  await store.createChat(user.id, { id: 'c-sub-proj', title: 'p', model: 'anthropic/claude-opus-5', projectId: project.id });
+
+  const firsts = [];
+  const results = [];
+  let calls = 0;
+  const stream = async function* projectAware(opts) {
+    calls += 1;
+    if (calls === 1) {
+      firsts.push(opts.messages[0].text);
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 's1', name: 'search_docs', input: { query: 'material wealth real assets' } }], usage: { input: 10, output: 5 } };
+      return;
+    }
+    results.push((opts.messages.find((m) => m.role === 'tool')?.results || [])[0]);
+    yield { type: 'text', delta: 'Real assets.' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+  };
+
+  await runParallel({ user, chatId: 'c-sub-proj', tasks: ['What determines the material wealth of a society?'], stream });
+  check('the sub-agent is told which project it is in', /Đầu tư tài chính/.test(firsts[0] || ''), (firsts[0] || '').slice(0, 120));
+  check('  with its instructions and source names', /Trả lời bằng tiếng Việt/.test(firsts[0] || '') && /bkm-ch1\.txt/.test(firsts[0] || ''));
+  check('  and the matching passage handed over up front', /material wealth of a society is determined by its real assets/.test(firsts[0] || ''));
+  check('  inside the untrusted envelope', /<untrusted/.test(firsts[0] || ''));
+  check(
+    'its own search_docs reads the project shelf',
+    results[0] && !results[0].isError && /real assets/.test(results[0].content || ''),
+    String(results[0]?.content || '').slice(0, 120),
+  );
+
+  const outside = [];
+  const plain = async function* noProject(opts) {
+    outside.push(opts.messages[0].text);
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 1, output: 1 } };
+  };
+  await runParallel({ user, chatId: null, tasks: ['just the task'], stream: plain });
+  check('outside a project the task is sent as it was', outside[0] === 'just the task', outside[0]);
+}
+
 // ── the transcript reordering the main loop depends on ───────────────
 section('normaliseOrder edge cases');
 {

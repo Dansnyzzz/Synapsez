@@ -848,10 +848,19 @@ section('a conversation can be filed, archived, grouped');
   check('archiving stamps a time rather than destroying it', !!archived.body?.chat?.archived_at, String(archived.body?.chat?.archived_at));
   const after = await alice.call('GET', '/api/chats');
   check('and it leaves the list', !(after.body?.chats || []).some((c) => c.id === chatId));
+  // "Out of the list, not deleted" needs somewhere it can be found again.
+  const shelf = await alice.call('GET', '/api/chats/archived');
+  check('the Archive shelf lists it', shelf.status === 200 && (shelf.body?.chats || []).some((c) => c.id === chatId), `${shelf.status}`);
+  check('  with when it was put away', !!(shelf.body?.chats || []).find((c) => c.id === chatId)?.archived_at);
+  check('  and the archived projects beside it', Array.isArray(shelf.body?.projects));
+  const theirs = await carol2.call('GET', '/api/chats/archived');
+  check("another account's Archive does not show it", !(theirs.body?.chats || []).some((c) => c.id === chatId));
   const back = await alice.call('PATCH', `/api/chats/${chatId}`, { archived: false });
   check('un-archiving brings it back', back.body?.chat?.archived_at === null, String(back.body?.chat?.archived_at));
   const restored = await alice.call('GET', '/api/chats');
   check('to the list it left', (restored.body?.chats || []).some((c) => c.id === chatId));
+  const shelfAfter = await alice.call('GET', '/api/chats/archived');
+  check('and off the Archive shelf', !(shelfAfter.body?.chats || []).some((c) => c.id === chatId));
 }
 
 removeTemp(process.env.DATA_DIR);

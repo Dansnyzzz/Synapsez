@@ -15,14 +15,84 @@
  * load.
  */
 
+import { asList, unwrapLists } from './validate.js';
+
 export const CARD_TYPES = ['recipe', 'itinerary', 'comparison', 'quiz', 'flashcards', 'translation', 'steps'];
+
+/** What a model calls each type when it does not use the name. */
+const TYPE_ALIASES = {
+  flashcard: 'flashcards',
+  cards: 'flashcards',
+  trip: 'itinerary',
+  travel: 'itinerary',
+  compare: 'comparison',
+  table: 'comparison',
+  howto: 'steps',
+  how_to: 'steps',
+  guide: 'steps',
+  instructions: 'steps',
+  test: 'quiz',
+  mcq: 'quiz',
+  multiple_choice: 'quiz',
+  translate: 'translation',
+};
 
 const MAX_TEXT = 1200;
 const MAX_LIST = 60;
 
-const str = (v, max = MAX_TEXT) => String(v ?? '').replace(/\s+$/g, '').slice(0, max).trim();
-const list = (v, max = MAX_LIST) => (Array.isArray(v) ? v.slice(0, max) : []);
+/** The text of a value that may be a string, a number or `{ text: … }`. */
+const textOf = (v) => {
+  if (v === null || v === undefined) return '';
+  if (typeof v !== 'object') return String(v);
+  for (const k of ['text', 'label', 'title', 'value', 'option', 'content', 'name', 'answer']) {
+    if (typeof v[k] === 'string' || typeof v[k] === 'number') return String(v[k]);
+  }
+  return '';
+};
+const str = (v, max = MAX_TEXT) => textOf(v).replace(/\s+$/g, '').slice(0, max).trim();
+/**
+ * A list, in any of the shapes a list arrives in — see `asList` — or, for an
+ * object keyed by letters (`{ A: "…", B: "…" }`), its values in order.
+ */
+const list = (v, max = MAX_LIST) => {
+  const direct = asList(v);
+  if (direct) return direct.slice(0, max);
+  if (v && typeof v === 'object') return Object.values(v).slice(0, max);
+  if (typeof v === 'string' && v.includes('\n')) return v.split('\n').map((s) => s.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '')).filter((s) => s.trim()).slice(0, max);
+  return [];
+};
 const strings = (v, max) => list(v, max).map((s) => str(s)).filter(Boolean);
+/** The first field present under any of these names. */
+const pick = (o, ...names) => {
+  if (!o || typeof o !== 'object') return undefined;
+  for (const n of names) if (o[n] !== undefined && o[n] !== null) return o[n];
+  return undefined;
+};
+
+/** "A.", "(b)", "3)" at the start of an option — the label, not the answer. */
+const LABEL = /^\s*(?:\(?([A-Fa-f])[.)]|\(?([1-6])[.)])\s+/;
+
+/**
+ * Which option is right, from however the model said it.
+ *
+ * The schema asks for an index from 0, and models also send the letter ("B"),
+ * the option's own text, `"1"`, or a 1-based number with a lettered option
+ * list. Each is unambiguous given the options; anything else is no answer.
+ */
+function answerIndex(raw, options) {
+  if (raw === undefined || raw === null || raw === '') return -1;
+  if (typeof raw === 'number') return Number.isInteger(raw) ? raw : -1;
+  const s = String(textOf(raw)).trim();
+  if (/^-?\d+$/.test(s)) return Number(s);
+  const letter = /^\(?([A-Fa-f])\)?[.):]?$/.exec(s) || /^(?:option|answer|đáp án)\s+([A-Fa-f])\b/i.exec(s);
+  if (letter) return letter[1].toUpperCase().charCodeAt(0) - 65;
+  const plain = (x) => x.replace(LABEL, '').trim().toLowerCase();
+  const byText = options.findIndex((o) => plain(o) === plain(s));
+  if (byText >= 0) return byText;
+  const lead = LABEL.exec(s);
+  if (lead?.[1]) return lead[1].toUpperCase().charCodeAt(0) - 65;
+  return -1;
+}
 
 function need(ok, message) {
   if (!ok) throw new Error(message);
@@ -64,19 +134,28 @@ const SHAPES = {
     return { items, rows, verdict: str(c.verdict, 600), recommended: best };
   },
   quiz(c) {
-    const questions = list(c.questions, 50)
-      .map((q) => {
-        const options = strings(q?.options, 6);
-        const answer = Number(q?.answer);
-        return { question: str(q?.question, 600), options, answer, explanation: str(q?.explanation, 600) };
+    const problems = [];
+    const questions = list(pick(c, 'questions', 'items', 'quiz'), 50)
+      .map((q, i) => {
+        const options = strings(pick(q, 'options', 'choices', 'answers', 'alternatives'), 6);
+        const answer = answerIndex(pick(q, 'answer', 'correct', 'correct_answer', 'correctAnswer', 'answer_index', 'correctIndex', 'correct_index', 'correct_option'), options);
+        const out = { question: str(pick(q, 'question', 'q', 'prompt', 'text'), 600), options, answer, explanation: str(pick(q, 'explanation', 'why', 'reason', 'rationale'), 600) };
+        if (!out.question) problems.push(`question ${i + 1} has no text`);
+        else if (options.length < 2) problems.push(`question ${i + 1} has ${options.length} option(s), needs 2–6`);
+        else if (!(answer >= 0 && answer < options.length)) problems.push(`question ${i + 1}'s answer is not an index from 0 to ${options.length - 1}`);
+        return out;
       })
-      .filter((q) => q.question && q.options.length >= 2 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < q.options.length);
-    need(questions.length, 'A quiz needs `questions`: [{ question, options: [2–6], answer: index of the right option from 0, explanation }].');
+      .filter((q) => q.question && q.options.length >= 2 && q.answer >= 0 && q.answer < q.options.length);
+    need(
+      questions.length,
+      'A quiz needs `questions`: [{ question, options: [2–6 strings], answer: index of the right option from 0, explanation }]' +
+        (problems.length ? ` — ${problems.slice(0, 3).join('; ')}.` : '.'),
+    );
     return { questions };
   },
   flashcards(c) {
-    const cards = list(c.cards, 100)
-      .map((k) => ({ front: str(k?.front, 400), back: str(k?.back, 800) }))
+    const cards = list(pick(c, 'cards', 'flashcards', 'items'), 100)
+      .map((k) => ({ front: str(pick(k, 'front', 'term', 'question', 'word', 'q'), 400), back: str(pick(k, 'back', 'definition', 'answer', 'meaning', 'a'), 800) }))
       .filter((k) => k.front && k.back);
     need(cards.length, 'Flashcards need `cards`: [{ front, back }].');
     return { cards };
@@ -108,15 +187,29 @@ const SHAPES = {
  * @param {any} data  whatever the model sent; nothing about it is assumed
  */
 export function buildCard(type, data = {}) {
-  need(CARD_TYPES.includes(type), `type is one of: ${CARD_TYPES.join(', ')}.`);
+  const wanted = String(type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const kind = CARD_TYPES.includes(wanted) ? wanted : TYPE_ALIASES[wanted];
+  need(kind, `type is one of: ${CARD_TYPES.join(', ')}.`);
   /** @type {any} */
-  const input = data && typeof data === 'object' ? data : {};
-  return { type, title: str(input.title, 160), subtitle: str(input.subtitle, 240), ...SHAPES[type](input) };
+  let input = data;
+  // The card sent as its own JSON text, which some models do for a nested object.
+  if (typeof input === 'string') {
+    try {
+      input = JSON.parse(input);
+    } catch {
+      input = {};
+    }
+  }
+  input = input && typeof input === 'object' && !Array.isArray(input) ? unwrapLists(input) : {};
+  return { type: kind, title: str(input.title, 160), subtitle: str(input.subtitle, 240), ...SHAPES[kind](input) };
 }
 
 /** @param {{ type?: string, card?: object }} input */
-export async function showCardTool({ type, card }) {
-  const built = buildCard(String(type || ''), card);
+export async function showCardTool(input) {
+  // The card's fields put beside `type` instead of inside `card` are the same card.
+  const { type: asked, card, ...rest } = input || {};
+  const built = buildCard(String(asked || ''), card ?? rest);
+  const type = built.type;
   const interactive = type === 'quiz' || type === 'flashcards';
   return {
     content:

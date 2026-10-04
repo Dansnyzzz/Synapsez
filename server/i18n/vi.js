@@ -431,14 +431,25 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'That is {0} tasks; {1} at once is the limit. Do the most important ones first.':
     'Đó là {0} việc; tối đa {1} việc một lần. Hãy làm những việc quan trọng nhất trước.',
   '"{0}" is not a number this can read.': '"{0}" không phải con số đọc được.',
-  '"{0}" has no meaning in a calculation. Use numbers, + - * / ^ ( ), lists and the named functions.':
-    '"{0}" không có nghĩa trong phép tính. Dùng số, + - * / ^ ( ), danh sách và các hàm có tên.',
+  '"{0}" has no meaning in a calculation. Use numbers, + - * / ^ % ! ( ), lists and the named functions.':
+    '"{0}" không có nghĩa trong phép tính. Dùng số, + - * / ^ % ! ( ), danh sách và các hàm có tên.',
   'Expected {0} in "{1}" — the expression is incomplete or mis-bracketed.':
     'Cần {0} trong "{1}" — biểu thức chưa đầy đủ hoặc sai ngoặc.',
   '"{0}" ends before it is finished.': '"{0}" kết thúc khi chưa hoàn chỉnh.',
   'A list on its own is not a number. Use it inside a function, like sum([1, 2, 3]).':
     'Một danh sách đứng riêng không phải con số. Hãy dùng trong một hàm, ví dụ sum([1, 2, 3]).',
-  '"{0}" is not a function this knows. Available: {1}.': '"{0}" không phải hàm được biết. Hiện có: {1}.',
+  '"{0}" is not a function this knows. Available: {1}; constants {2}.': '"{0}" không phải hàm được biết. Hiện có: {1}; hằng số {2}.',
+  '{0} took more than {1}s to send that file, so it was stopped. The server is slow or the file is very large — try once more, or look for another copy (a publisher or library page), or read it as text with web_fetch.':
+    '{0} mất hơn {1} giây để gửi tệp đó nên đã bị dừng. Máy chủ chậm hoặc tệp rất lớn — thử lại một lần, hoặc tìm bản khác (trang nhà xuất bản hay thư viện), hoặc đọc dạng văn bản bằng web_fetch.',
+  '{0} has no file at that address (HTTP 404). Check the link, and that spaces are written %20.': '{0} không có tệp ở địa chỉ đó (HTTP 404). Kiểm tra lại liên kết, và dấu cách phải viết là %20.',
+  '{0} needs at least {1} argument(s).': '{0} cần ít nhất {1} đối số.',
+  'A factorial is of a whole number from 0 up.': 'Giai thừa chỉ tính cho số nguyên từ 0 trở lên.',
+  'That factorial is too large to be a finite number.': 'Giai thừa đó quá lớn, không còn là số hữu hạn.',
+  'pmt needs a number of periods other than 0.': 'pmt cần số kỳ khác 0.',
+  'irr needs at least one negative and one positive cash flow.': 'irr cần ít nhất một dòng tiền âm và một dòng tiền dương.',
+  'irr found no rate that brings these cash flows to zero.': 'irr không tìm được lãi suất nào đưa các dòng tiền này về 0.',
+  'geomean needs positive numbers.': 'geomean cần các số dương.',
+  'mod by zero has no answer.': 'mod cho 0 không có kết quả.',
   '"{0}" has something where a number should be.': '"{0}" có thứ gì đó ở chỗ lẽ ra là con số.',
   'That divides by zero, which has no answer. Check the denominator.': 'Phép tính chia cho 0, không có kết quả. Kiểm tra mẫu số.',
   '"{0}" has something left over after the expression — check the brackets and operators.':

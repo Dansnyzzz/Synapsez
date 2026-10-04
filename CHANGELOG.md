@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-10-04 — an Archive shelf; no more computer pairing; tools that read what models send
+
+### Added
+
+- **Archive** in the sidebar, where Workspace was. It lists every archived conversation (and, behind the
+  filter, archived projects) with when it was put away; opening one reads it, **Restore** puts it back in
+  the sidebar, Delete removes it for good. Route: `GET /api/chats/archived`. Archiving used to promise
+  "out of the list, not deleted" with nowhere to find it again.
+- `calculate` reads arithmetic as it is written: implicit multiplication (`(1.5)(1.1)`, `2(3+4)`, `2pi`),
+  × ÷ − and `**`, a leading `=`, `15%`, remainders, `5!`, √, constants pi/e, and many more functions —
+  exp, ln, log, pow, floor/ceil, var/stdevp, comb/perm, and Excel-order finance: fv, pv, pmt, npv, irr, effect.
+
+### Fixed
+
+- **A list sent wrapped is read, not refused** — any tool. Models that write calls as XML arrive as
+  `{ "questions": { "item": [ … ] } }`; `show_card` refused a full quiz over it. Schema arrays now accept
+  that wrapper, an index-keyed object, a list sent as JSON text, or one value for a list of one; free-form
+  objects are unwrapped at any depth. Quiz answers are read as an index, a letter, or the option's text,
+  options may be `{ text }` objects or keyed by letter, and a refusal names which question failed and why.
+- **Sub-agents can read the project.** `run_parallel` ran with no conversation, so `search_docs` could not
+  find the project shelf. Each sub-agent is now told the project, its instructions and sources, is handed the
+  best-matching passages up front, and its own tool calls carry the conversation.
+- `look_at` on a big PDF by URL: 90 s and 48 MB instead of 30 s and 12 MB, PDFs served as
+  octet-stream are recognised, and a timeout or a 404 says what happened instead of "aborted".
+- Any tool cut off by its own deadline now tells the model it was slow and to change approach, rather than a
+  bare "aborted".
+
+### Removed
+
+- Connecting a computer from the interface: Settings → Computers, the pairing sheet, and the Workspace file
+  browser (`devices.js`, `workspace.js` and 93 strings). The cloud computer and sandbox do this work. The
+  server routes are untouched, so a machine already paired, and `npm run connect` from a terminal, still work.
+
 ## 2026-09-28 (night) — the web as one card of sites
 
 ### Changed

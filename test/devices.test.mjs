@@ -244,12 +244,15 @@ section('the manual token path is gone');
 
   const html = await (await fetch(`${base}/index.html`)).text();
   check('and the button is out of the interface', !/gen-worker-token/.test(html));
-  check('replaced by a pairing sheet', /id="pair"/.test(html));
-  // Settings, not the header. The chip there was a standing invitation to a
-  // thing most accounts do once, in the row that carries the conversation title.
-  check('reachable from Settings', /id="open-pair"/.test(html));
-  check('and no longer from the header', !/id="pair-chip"/.test(html));
-  check('with a copy button for the code', /id="pair-copy"/.test(html));
+  /*
+   * Pairing a computer is out of the interface altogether (2026-10-04): the
+   * cloud computer and the sandbox do what a paired machine did, so the owner
+   * asked for the Computers tab, the pairing sheet and the Workspace browser to
+   * go. The routes above stay for a machine already paired.
+   */
+  check('no pairing sheet', !/id="pair"/.test(html));
+  check('no Settings → Computers tab', !/data-tab="worker"/.test(html) && !/id="open-pair"/.test(html));
+  check('nor a pairing chip in the header', !/id="pair-chip"/.test(html));
 }
 
 // ── the token works, and only for its owner ─────────────────────────

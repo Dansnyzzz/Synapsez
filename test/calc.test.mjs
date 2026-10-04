@@ -60,6 +60,52 @@ section('the statistics a report actually needs');
   check('nested calls', near(val('round(avg([1, 2, 4]), 2)'), 2.33));
 }
 
+section('arithmetic as people and models actually write it');
+{
+  // The exact call that failed in a portfolio-variance answer: the `*` between
+  // bracketed factors was left out, as every textbook leaves it out.
+  const variance = val('round(((1.1)^2-(1.5)(1.1)(0.46))/((1.5)^2+(1.1)^2-2*(1.5)(1.1)(0.46)),4)');
+  check('implicit multiplication between brackets', near(variance, 0.2322), String(variance));
+  check('a number before a bracket', val('2(3 + 4)') === 14);
+  check('a bracket before a number', val('(3 + 4)2') === 14);
+  check('a number before a constant', near(val('2pi'), 2 * Math.PI));
+  check('a number before a function', val('2sqrt(9)') === 6);
+  check('implicit × binds like ×, not tighter than ^', val('2(3)^2') === 18);
+  check('subtraction is not mistaken for a product', val('(5) - 3') === 2);
+  check('× and ÷ signs', val('6 × 2 ÷ 3') === 4);
+  check('a typographic minus', val('10 − 4') === 6);
+  check('** as a power', val('2 ** 3') === 8);
+  check('a spreadsheet = in front', val('=SUM(1, 2)') === 3);
+  check('function names in capitals', near(val('ROUND(PI, 2)'), 3.14));
+  check('a per cent', near(val('15% * 200'), 30));
+  check('a remainder', val('17 % 5') === 2);
+  check('a factorial', val('5!') === 120);
+  check('√ as a square root', val('√16') === 4);
+}
+
+section('the maths a finance or statistics answer reaches for');
+{
+  check('exp and ln undo each other', near(val('ln(exp(2))'), 2));
+  check('log is base 10, as in a spreadsheet', near(val('log(1000)'), 3));
+  check('log with a base', near(val('log(8, 2)'), 3));
+  check('pow', val('pow(2, 10)') === 1024);
+  check('floor, ceil, trunc', val('floor(2.7)') === 2 && val('ceil(2.1)') === 3 && val('trunc(-2.7)') === -2);
+  check('mod follows the divisor sign', val('mod(-1, 3)') === 2);
+  check('combinations', val('comb(5, 2)') === 10);
+  check('permutations', val('perm(5, 2)') === 20);
+  check('sample and population variance', near(val('var([2, 4, 4, 4, 5, 5, 7, 9])'), 32 / 7) && near(val('varp([2, 4, 4, 4, 5, 5, 7, 9])'), 4));
+  check('population stdev', near(val('stdevp([2, 4, 4, 4, 5, 5, 7, 9])'), 2));
+  check('geometric mean', near(val('geomean([1.1, 1.2])'), Math.sqrt(1.32)));
+  // Excel: =FV(0.05, 10, -100) is 1257.789…; =PV(0.08, 5, -1000) is 3992.71…
+  check('future value, Excel convention', near(val('round(fv(0.05, 10, -100), 4)'), 1257.7893), String(val('fv(0.05, 10, -100)')));
+  check('present value, Excel convention', near(val('round(pv(0.08, 5, -1000), 2)'), 3992.71), String(val('pv(0.08, 5, -1000)')));
+  check('payment, Excel convention', near(val('round(pmt(0.06/12, 360, 200000), 2)'), -1199.1), String(val('pmt(0.06/12, 360, 200000)')));
+  check('net present value', near(val('round(npv(0.1, -1000, 300, 400, 500), 4)'), -19.1244), String(val('npv(0.1, -1000, 300, 400, 500)')));
+  check('internal rate of return', near(val('round(irr(-1000, 300, 400, 500), 6)'), 0.088963), String(val('irr(-1000, 300, 400, 500)')));
+  check('effective annual rate', near(val('round(effect(0.12, 12), 6)'), 0.126825));
+  check('irr with no sign change says why', /negative and one positive/.test(err('irr(1, 2, 3)')), err('irr(1, 2, 3)'));
+}
+
 section('it is a calculator, not a code runner');
 {
   // The prompt-injection case: a page tells the model to compute something that

@@ -23,7 +23,6 @@ import { createModelBrowser } from './models.js';
 import { createScreen } from './screen.js';
 import { createViewer } from './viewer.js';
 import { shouldAutoPreview } from './autopreview.js';
-import { createWorkspace } from './workspace.js';
 import { createPages } from './pages.js';
 import { createProjectPage } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES } from './i18n.js';
@@ -31,7 +30,6 @@ import { createOnboarding } from './onboarding.js';
 import { humanSize } from './format.js';
 import { createAttachments } from './attachments.js';
 import { createModelNews } from './model-news.js';
-import { createDevices } from './devices.js';
 import { createTwoFactor } from './two-factor.js';
 
 // Before anything is drawn. The language is guessed from storage and the browser
@@ -650,7 +648,6 @@ async function start() {
 
   renderSuggestions();
   renderTopbar();
-  renderWorker();
   fillSettings();
   // Where scheduled work actually runs differs between a local run and a
   // deployment, and the shelf says which rather than implying either.
@@ -2405,6 +2402,8 @@ const pages = createPages({
   // The sidebar keeps its own short list of scheduled work; a task written
   // anywhere has to reach it.
   onTasksChanged: () => refreshTasks().catch(() => {}),
+  // Restored or deleted on the Archive shelf: the sidebar list changes with it.
+  onChatsChanged: () => refreshChats().catch(() => {}),
   // The rail holds one thing at a time, the same rule as a file: open it if it
   // was closed, and let whatever else was in it stand down.
   onPaneOpen: () => {
@@ -2503,12 +2502,10 @@ $('open-workflows').addEventListener('click', () => {
   gotoShelf('workflows');
 });
 
-/** The folder on the machine: browse it, edit a file, save it, delete one. */
-const workspaceFiles = createWorkspace();
-
-$('open-workspace').addEventListener('click', () => {
+/** Everything archived, with the way back. Opening one reads it; Restore puts it back. */
+$('open-archive').addEventListener('click', () => {
   closeSidebar();
-  workspaceFiles.open('.');
+  gotoShelf('archive');
 });
 
 /** A conversation started from inside a project belongs to it from the first word. */
@@ -3989,173 +3986,8 @@ async function refreshWorker() {
     // every twenty seconds, per open tab, to decide the colour of one dot.
     const { worker } = await api.workerStatus();
     state.boot.worker = worker;
-    renderWorker();
   } catch {
     /* transient — the indicator keeps its last state */
-  }
-}
-
-/** Whether an address points back at the machine the browser is running on. */
-const LOOPBACK = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i;
-
-/**
- * How to connect a computer to *this* app, with the address already filled in.
- *
- * This used to be two hard-coded lines of markup ending in `npm start`, and on a
- * deployment that instruction was wrong in a way nobody could see. `npm start`
- * brings up a second copy of the app on the other machine and points the worker
- * at it, so the pairing code shown lands in that machine's own database — while
- * the person types it into a deployment backed by an entirely different one. The
- * code is rejected, correctly, and the message says the code is invalid, which
- * sends everybody looking in the wrong place.
- *
- * So the command is generated, it names this deployment, and it is copyable —
- * because retyping a URL by hand is the other half of the same failure.
- */
-function renderConnectSteps() {
-  const host = $('connect-steps');
-  if (!host) return;
-
-  const url = state.boot.runtime?.publicUrl || '';
-  // Serverless is the certain case. A local server reached over a tunnel or a
-  // LAN address is the same situation for anyone adding a *different* machine,
-  // so it gets the same instruction.
-  const remote = !!state.boot.runtime?.serverless || (!!url && !LOOPBACK.test(url));
-  const command = remote && url ? `npm run connect -- ${url}` : 'npm start';
-
-  const step = (html) => `<li>${html}</li>`;
-  const code = `<code class="connect__cmd">${escapeHtml(command)}</code>`;
-
-  host.innerHTML = [
-    step(t('connect.step.clone')),
-    step(
-      t('connect.step.run', { code }) +
-        ` <button class="btn btn--ghost btn--tiny" id="copy-connect" type="button" ` +
-        `data-command="${escapeHtml(command)}">${escapeHtml(t('worker.copy'))}</button>`,
-    ),
-    step(
-      remote
-        ? t('connect.step.codeRemote')
-        : `${t('connect.step.codeLocal')} ${t('connect.step.codeLocalMore')}`,
-    ),
-  ].join('');
-}
-
-/**
- * A one-line setup command for a computer that is not paired yet.
- *
- * Generated on demand rather than shown by default: it carries a live token for
- * this account, and a secret sitting on screen behind a settings tab is a secret
- * somebody will screenshot. It expires, and the panel says when.
- *
- * The warning is not decoration. This token flows *toward* a machine, so it can
- * be passed to somebody who was told it does something else — and the honest
- * thing is to say plainly that pasting it hands the machine over. The installer
- * repeats the same warning with the account named, and refuses to go on without
- * a typed YES.
- */
-/**
- * Ask for a setup line and draw it.
- *
- * Wired to two buttons, because there are two doors into "add a computer" and
- * the first version only put this behind one of them. **Computers** in the
- * header is the one people actually press; Settings → Computers is the one that
- * had the button. So the easy path existed and nobody could find it.
- */
-async function renderSetupLink(button, host) {
-  button.disabled = true;
-  try {
-    const link = await api.enrolmentLink();
-    const minutes = Math.max(1, Math.round((link.expiresInSec || 600) / 60));
-    const windows = escapeHtml(link.windows);
-    const unix = escapeHtml(link.unix);
-
-    host.hidden = false;
-    host.innerHTML =
-      `<p class="hint warn-text">${escapeHtml(t('setup.warning'))}</p>` +
-      `<label class="device__label">Windows (PowerShell)</label>` +
-      `<pre class="setup__cmd" data-copy="${windows}">${windows}</pre>` +
-      `<button class="btn btn--ghost btn--tiny" data-copy-setup="windows">${escapeHtml(t('worker.copy'))}</button>` +
-      `<label class="device__label">macOS / Linux</label>` +
-      `<pre class="setup__cmd" data-copy="${unix}">${unix}</pre>` +
-      `<button class="btn btn--ghost btn--tiny" data-copy-setup="unix">${escapeHtml(t('worker.copy'))}</button>` +
-      `<p class="hint">${escapeHtml(t('setup.expires').replace('{n}', String(minutes)))}</p>`;
-  } catch (err) {
-    toast(err.message, 'error');
-  } finally {
-    button.disabled = false;
-  }
-}
-
-for (const [buttonId, hostId] of [
-  ['make-setup-link', 'setup-link'],
-  ['make-setup-link-dialog', 'setup-link-dialog'],
-]) {
-  $(buttonId)?.addEventListener('click', (event) => renderSetupLink(event.target, $(hostId)));
-}
-
-document.addEventListener('click', async (event) => {
-  const copySetup = event.target.closest('[data-copy-setup]');
-  if (copySetup) {
-    const pre = copySetup.previousElementSibling;
-    try {
-      await navigator.clipboard.writeText(pre?.dataset.copy || pre?.textContent || '');
-      copySetup.textContent = t('worker.copied');
-      setTimeout(() => {
-        copySetup.textContent = t('worker.copy');
-      }, 1400);
-    } catch {
-      toast(t('clipboard.failed'), 'error');
-    }
-    return;
-  }
-
-  const button = event.target.closest('#copy-connect');
-  if (!button) return;
-  try {
-    await navigator.clipboard.writeText(button.dataset.command || '');
-    button.textContent = t('worker.copied');
-    setTimeout(() => {
-      button.textContent = t('worker.copy');
-    }, 1400);
-  } catch {
-    toast(t('clipboard.failed'), 'error');
-  }
-});
-
-function renderWorker() {
-  const { worker } = state.boot;
-  renderConnectSteps();
-
-  const card = $('worker-status-card');
-  if (card) {
-    // Spell out how far the assistant's reach extends on this machine. These
-    // are the two settings that decide it, and neither is obvious from the app.
-    const reach = worker.online
-      ? [
-          worker.info?.fullDisk
-            ? t('worker.fullDisk')
-            : t('worker.workspaceOnly'),
-          worker.info?.desktop
-            ? t('worker.desktopOn')
-            : t('worker.desktopOff'),
-        ].join('<br />')
-      : '';
-
-    card.innerHTML = worker.online
-      ? `<div class="provider"><div class="provider__head"><span class="provider__name">${escapeHtml(t('worker.connected'))}</span>
-           <span class="badge badge--ok">${escapeHtml(t('devices.online'))}</span></div>
-           <div class="hint">${escapeHtml(worker.info?.platform || '')} · Node ${escapeHtml(worker.info?.node || '')}<br />
-           ${escapeHtml(t('worker.workspaceLabel'))} <code>${escapeHtml(worker.info?.workspace || '')}</code><br />${reach}</div></div>`
-      : `<div class="provider"><div class="provider__head"><span class="provider__name">${escapeHtml(t('worker.notConnected'))}</span>
-           <span class="badge">${escapeHtml(t('devices.offline'))}</span></div>
-           <div class="hint">${
-             // "Run a worker" is unhelpful advice when the real reason is that
-             // this computer belongs to somebody else's account.
-             worker.reason === 'not-the-owner'
-               ? escapeHtml(t('worker.notTheOwner'))
-               : t('worker.noTools')
-           }</div></div>`;
   }
 }
 
@@ -4799,11 +4631,9 @@ function fillSettings() {
 
   // These three each hit the network, so they load alongside rather than
   // blocking the sheet from opening. A failure in one must not blank the rest.
-  for (const load of [loadSkills, loadTasks, loadConnectors, loadDevices]) {
+  for (const load of [loadSkills, loadTasks, loadConnectors]) {
     load().catch((err) => console.error('[settings]', err.message));
   }
-
-  renderWorker();
 }
 
 /* ── skills, schedules, connectors ─────────────────────────────── */
@@ -5287,15 +5117,6 @@ answerOwnership((chatId) => {
   const run = runs.get(chatId);
   return !!run && !run.following;
 });
-
-/* ── your computers ────────────────────────────────────────────── */
-
-const devices = createDevices({
-  state,
-  refreshWorker: () => refreshWorker(),
-  armed,
-});
-const { loadDevices } = devices;
 
 /* ── a new model has arrived ───────────────────────────────────── */
 

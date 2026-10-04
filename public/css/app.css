@@ -2690,31 +2690,13 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
   word-break: break-word;
 }
 
-/* A small button beside a line of prose — the copy control on the connect
-   command, where a full-size button would tower over the sentence. */
+/* A small button beside a line of prose, where a full-size one would tower
+   over the sentence. */
 .btn--tiny {
   padding: 1px 7px;
   font-size: 11.5px;
   border-radius: 6px;
   vertical-align: middle;
-}
-.connect__cmd { user-select: all; }
-
-/* The setup command carries a live token, so it is shown to be copied rather
-   than read — select-all on click, and wrapping instead of a scrollbar, because
-   a line that runs off the edge is one people copy half of. */
-.setup__cmd {
-  margin: 4px 0 6px;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #0d1216;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-  user-select: all;
 }
 
 .spinner {
@@ -4452,26 +4434,6 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 .fold > :not(summary) { padding: 0 14px; }
 .fold > :last-child { padding-bottom: 14px; }
 
-/* The label above each computer's working-folder box. Small and quiet: the row
-   below it is the thing you interact with. */
-.device__label {
-  display: block;
-  margin: 14px 0 6px;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-/* The status dot sits inline with a computer's name here, so it must not be
-   stretched by the flex row it lives in. */
-.provider__name > .dot {
-  display: inline-block;
-  flex: none;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-
 /* ─────────────────────────────────────────────────────────────
    Attached photos and files
 
@@ -4486,7 +4448,6 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   max-width: 780px;
   margin: 0 auto 8px;
 }
-
 
 /* One thing waiting to go. A picture or a PDF is shown as itself — its name
    and size told nobody anything the picture did not; anything else is its name
@@ -4675,55 +4636,6 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   text-underline-offset: 3px;
 }
 .bubble__text a:hover { color: var(--info); }
-
-/* ── the pairing sheet, reached from Settings → Computers ───── */
-
-.sheet--pair { width: min(520px, 100%); }
-.sheet--pair .sheet__body { padding: 20px 22px 24px; }
-.sheet--pair h3 { margin: 22px 0 6px; font-size: 14px; }
-.sheet--pair h3:first-of-type { margin-top: 0; }
-
-/* The code this machine is offering. Big and monospaced because it is meant to
-   be read across a room or typed on a phone. */
-.pair-offer {
-  margin-bottom: 22px;
-  padding: 16px;
-  border: 1px solid var(--accent-dim);
-  border-radius: 12px;
-  background: var(--accent-glow);
-}
-.pair-offer .hint { margin: 0 0 10px; }
-.pair-offer .hint:last-child { margin: 10px 0 0; }
-
-.pair-code {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.pair-code code {
-  flex: 1;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg-elev);
-  color: var(--accent);
-  font-family: var(--mono);
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  text-align: center;
-  user-select: all;
-}
-.pair-code .btn { flex: none; }
-
-/* The code box, typed into rather than read from. */
-#pair-code {
-  font-family: var(--mono);
-  font-size: 16px;
-  letter-spacing: 0.14em;
-  text-align: center;
-  text-transform: uppercase;
-}
 
 /* The composer's "this model cannot see images" line.
    Amber rather than red: nothing has failed yet, and it is still perfectly
@@ -6042,124 +5954,6 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 }
 .badge--bad { color: var(--danger); border-color: var(--danger); }
 
-/* ── the workspace, from the interface ──────────────────────── */
-
-.sheet--workspace { width: min(920px, 100%); }
-.workspace__body { padding: 0; }
-
-/* Where you are, and the way back up. */
-.crumbs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--line-soft);
-  overflow-x: auto;
-  scrollbar-width: none;
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-.crumbs::-webkit-scrollbar { display: none; }
-.crumbs__step {
-  padding: 2px 6px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  color: var(--text-dim);
-  font: inherit;
-  cursor: pointer;
-}
-.crumbs__step:hover { background: var(--tint); color: var(--text); }
-.crumbs__sep { color: var(--text-faint); }
-.crumbs__here { padding: 2px 6px; color: var(--accent); }
-
-.entries { display: grid; }
-
-.entry {
-  display: flex;
-  align-items: center;
-  border-bottom: 1px solid var(--line-soft);
-}
-.entry:hover { background: var(--tint); }
-
-.entry__main,
-.entry--up {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  flex: 1;
-  min-width: 0;
-  padding: 9px 16px;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.entry--up { border-bottom: 1px solid var(--line-soft); color: var(--text-faint); }
-
-.entry__icon {
-  width: 20px;
-  flex: none;
-  color: var(--text-faint);
-  font-size: 13px;
-  text-align: center;
-}
-.entry--dir .entry__icon { color: var(--warn); }
-
-.entry__name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 13.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.entry__link {
-  padding: 0 5px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--text-faint);
-  font-size: 10px;
-}
-.entry__meta,
-.entry__when {
-  flex: none;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-}
-.entry__meta { width: 64px; text-align: right; }
-.entry__when { width: 64px; text-align: right; }
-
-.entry__drop {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  margin-right: 8px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: transparent;
-  font-size: 12px;
-  cursor: pointer;
-}
-/* Hidden until the row is under the pointer: a delete button on every line of a
-   file listing is an accident looking for somewhere to happen. */
-.entry:hover .entry__drop { color: var(--text-faint); }
-.entry__drop:hover { background: var(--surface-2); color: var(--danger); }
-.entry__drop.is-armed {
-  width: auto;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: var(--danger);
-  color: #0b0e11 !important; /* the global .is-armed paints text danger-red, which on this fill was invisible */
-  font-size: 11px;
-}
-
 /* ─────────────────────────────────────────────────────────────
    Shelves: Projects, Artifacts, Scheduled
 
@@ -6727,89 +6521,6 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   .cards { grid-template-columns: 1fr; }
   .ideas { grid-template-columns: 1fr; }
 }
-
-/* ── searching across the workspace ─────────────────────────── */
-
-/* The workspace header keeps its field always visible — unlike a shelf, you
-   come here already knowing you want to grep. */
-.workspace__find {
-  width: 230px;
-  padding: 8px 13px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 12.5px;
-  outline: none;
-}
-.workspace__find:focus { border-color: var(--accent-dim); }
-
-.hits { margin-bottom: 14px; }
-.hits__count { padding: 12px 16px 4px; }
-.hits__file {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 16px;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  font-family: var(--mono);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-.hits__file:hover { background: var(--tint); }
-.hits__n {
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text-faint);
-  font-size: 10.5px;
-}
-.hits__line {
-  display: flex;
-  gap: 12px;
-  width: 100%;
-  padding: 4px 16px 4px 30px;
-  border: 0;
-  background: none;
-  color: var(--text-dim);
-  font: inherit;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  text-align: left;
-  cursor: pointer;
-}
-.hits__line:hover { background: var(--tint); color: var(--text); }
-.hits__no { flex: none; width: 40px; color: var(--text-faint); text-align: right; }
-.hits__text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: pre;
-}
-.hits__text mark { background: var(--accent-glow); color: var(--accent); border-radius: 3px; }
-
-/* Rename and move are one control, because they are one operation. */
-.entry__act {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: transparent;
-  font-size: 13px;
-  cursor: pointer;
-}
-.entry:hover .entry__act { color: var(--text-faint); }
-.entry__act:hover { background: var(--surface-2); color: var(--accent); }
 
 /* ── the search field a shelf grows when you ask for one ────── */
 

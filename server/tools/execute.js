@@ -479,6 +479,27 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
       Math.min(Number(input?.timeout_ms) || DEFAULT_LOCAL_TIMEOUT_MS, 600_000) + GRACE_MS;
     return await runViaWorker({ user, userId, name, input: input || {}, chatId, timeoutMs, signal, deviceHint });
   } catch (err) {
-    return { isError: true, content: `${name} failed: ${safeError(err) || String(err)}` };
+    return { isError: true, content: `${name} failed: ${timedOutSentence(err, signal) || safeError(err) || String(err)}` };
   }
+}
+
+/**
+ * "aborted", said so the model can act on it.
+ *
+ * A request cut off by its own deadline surfaces from node as a bare `aborted`
+ * or "The operation was aborted due to timeout" — true, and useless: the model
+ * read it as a broken tool and sent the same call again. When the turn itself
+ * was not stopped, the cause is the far end being slow, and that is what the
+ * sentence says, with the two moves that usually work.
+ */
+export function timedOutSentence(err, signal) {
+  if (signal?.aborted) return '';
+  const name = String(err?.name || '');
+  const message = String(err?.message || err || '');
+  const cut = name === 'AbortError' || name === 'TimeoutError' || /^(the operation was )?aborted|timed? ?out|ETIMEDOUT|socket hang up/i.test(message);
+  if (!cut) return '';
+  return (
+    'it took too long and was stopped — the site or service did not answer in time, or the file was too large. ' +
+    'Try once more; if it fails again, use a smaller request or a different source rather than repeating it.'
+  );
 }

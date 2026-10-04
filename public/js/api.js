@@ -225,6 +225,8 @@ export const api = {
   removeKey: (provider, position) => request('DELETE', `/api/providers/${provider}/keys/${position}`),
 
   chats: () => request('GET', '/api/chats'),
+  /** The Archive shelf: conversations and projects put away. */
+  archived: () => request('GET', '/api/chats/archived'),
   createChat: (model, projectId) => request('POST', '/api/chats', { model, projectId }),
   chat: (id) => request('GET', `/api/chats/${id}`),
   searchChats: (q) => request('GET', `/api/chats/search?q=${encodeURIComponent(q)}`),

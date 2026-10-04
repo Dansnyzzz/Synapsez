@@ -721,27 +721,17 @@ section('the interface can name this deployment');
     !/clone this repo.*npm start/s.test(html),
     'public/index.html still tells everyone to run npm start',
   );
-  check('and the steps are filled in from script', /id="connect-steps"/.test(html));
-
-  /**
-   * The setup line has to be behind *both* doors.
-   *
-   * It was added to the Settings tab only, while the button most people press is
-   * "Computers" in the header — a different dialog entirely. So the one-line path
-   * existed and the people who needed it were staring at the pairing-code box,
-   * asking why there was no setup option.
+  /*
+   * Connecting a computer is no longer offered in the interface (2026-10-04) —
+   * the cloud computer and sandbox replaced it. The setup line and the connect
+   * steps went with the Computers tab; `npm run connect` below still works for
+   * anyone doing it from a terminal.
    */
-  for (const id of ['make-setup-link', 'setup-link', 'make-setup-link-dialog', 'setup-link-dialog']) {
-    check(`the page has #${id}`, html.includes(`id="${id}"`));
+  for (const id of ['connect-steps', 'make-setup-link', 'setup-link', 'make-setup-link-dialog', 'setup-link-dialog']) {
+    check(`the page no longer has #${id}`, !html.includes(`id="${id}"`));
   }
   const appJs = read('public/js/app.js');
-  for (const id of ['make-setup-link', 'make-setup-link-dialog']) {
-    check(`#${id} is wired up`, appJs.includes(`'${id}'`));
-  }
-  check(
-    'and both use the same renderer rather than a second copy',
-    (appJs.match(/async function renderSetupLink/g) || []).length === 1,
-  );
+  check('and nothing in app.js still reaches for it', !/renderSetupLink|renderConnectSteps|createDevices/.test(appJs));
 
   const pkg = json('package.json');
   check('there is a command to run on the other machine', typeof pkg.scripts?.connect === 'string', pkg.scripts?.connect);

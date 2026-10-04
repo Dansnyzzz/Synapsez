@@ -803,18 +803,18 @@ section('the panels move rather than snap');
   check('over a real duration', parseFloat(eased.duration) > 0.1, eased.duration);
 }
 
-section('pairing is a settings job, not a permanent header button');
+section('connecting a computer is not offered anywhere');
 {
+  // The cloud computer and the sandbox replaced a paired machine (2026-10-04),
+  // so the sidebar pill, the header chip and Settings → Computers all went.
   const said = await page.evaluate(() => ({
     inSidebar: !!document.getElementById('worker-pill'),
     inHeader: !!document.getElementById('pair-chip'),
-    inSettings: !!document.getElementById('open-pair'),
+    inSettings: !!document.getElementById('open-pair') || !!document.querySelector('.tab[data-tab="worker"]'),
   }));
   check('the sidebar carries no worker pill', !said.inSidebar);
-  // "Add a computer" sat permanently in the row that also holds the
-  // conversation's title, and pushed it into the chips beside it.
-  check('and the header carries no pairing chip', !said.inHeader);
-  check('Settings is where it is reached', said.inSettings);
+  check('the header carries no pairing chip', !said.inHeader);
+  check('and Settings has no Computers tab', !said.inSettings);
 }
 
 /**
@@ -2335,87 +2335,19 @@ section('a chosen tab scrolls itself into view');
   check('but the first tab stays against its own edge', first.atStart, JSON.stringify(first));
 }
 
-section('pairing a computer');
+section('the Settings tabs no longer include Computers');
 {
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
   });
-  await page.waitForTimeout(300);
-
-  /**
-   * The way in is Settings → Computers.
-   *
-   * It used to be a chip in the header, first in the row, reading "Add a
-   * computer" for every account that had not paired one — a permanent
-   * advertisement for a once-in-a-lifetime action, in the row that also has to
-   * fit the conversation's title. The header row is for what changes with the
-   * conversation; this does not.
-   */
-  const row = await page.evaluate(() => ({
-    order: [...document.querySelector('.topbar__right').children].map((c) => c.id),
-  }));
-  check('the header row carries no pairing chip', !row.order.includes('pair-chip'), row.order.join(', '));
-  check('nor a second name for the project', !row.order.includes('project-chip'), row.order.join(', '));
-
   await page.click('#open-settings');
   await page.waitForTimeout(400);
-  await page.click('.tab[data-tab="worker"]');
-  await page.waitForTimeout(300);
-  await page.click('#open-pair');
-  await page.waitForTimeout(500);
-  const sheet = await page.evaluate(() => {
-    const d = document.getElementById('pair');
-    const box = d.getBoundingClientRect();
-    return {
-      open: d.open,
-      centred: Math.abs(box.left + box.width / 2 - window.innerWidth / 2) < 3,
-      hasInput: !!document.getElementById('pair-code'),
-      hasButton: !!document.getElementById('pair-submit'),
-      hasList: !!document.getElementById('device-list'),
-      hasCopy: !!document.getElementById('pair-copy'),
-      offerHidden: document.getElementById('pair-offer').hidden,
-    };
-  });
-  check('Settings opens the pairing sheet', sheet.open);
-  check('centred', sheet.centred);
-  check('with a code box', sheet.hasInput);
-  check('a Pair button', sheet.hasButton);
-  check('the list of computers', sheet.hasList);
-  check('and a copy button for this machine\'s own code', sheet.hasCopy);
-  check(
-    'the offer is hidden when this machine is not waiting to be added',
-    sheet.offerHidden,
-    'the test server runs no worker',
-  );
-
-  check(
-    'the device list has an honest empty state',
-    /no computers paired/i.test((await page.textContent('#device-list')) || ''),
-    (await page.textContent('#device-list'))?.slice(0, 60),
-  );
-
-  // A wrong code has to fail visibly rather than silently.
-  await page.fill('#pair-code', 'ZZZZ-ZZZZ');
-  await page.click('#pair-submit');
-  await page.waitForTimeout(900);
-  check(
-    'a code nobody is showing says so',
-    /not valid|expired|already been used/i.test((await page.textContent('#pair-status')) || ''),
-    (await page.textContent('#pair-status'))?.slice(0, 70),
-  );
-
-  await page.evaluate(() => document.getElementById('pair').close());
-}
-
-section('the manual token path is gone from the interface');
-{
+  const tabs = await page.evaluate(() => [...document.querySelectorAll('.sheet__tabs .tab')].map((b) => b.dataset.tab));
+  check('no worker tab', !tabs.includes('worker'), tabs.join(', '));
+  check('no pairing sheet in the page', !(await page.$('#pair')));
   check('no "generate worker token" button', !(await page.$('#gen-worker-token')));
-  check('and no token output box', !(await page.$('#worker-token-out')));
-  check(
-    'the Computers tab points at pairing instead',
-    !!(await page.$('#open-pair')),
-    'one way in, not two',
-  );
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.waitForTimeout(200);
 }
 
 section('the new-model modal');
@@ -3082,72 +3014,51 @@ section('a shelf is searched from one field, not two');
 }
 
 /**
- * The workspace, edited by hand.
+ * The Archive shelf, which took the Workspace slot in the sidebar.
  *
- * The routes are covered elsewhere; what this proves is the part no route test
- * can — that somebody can open the folder in the interface, click into it, type
- * into a file and have the bytes on disk change.
+ * "Archived. It is out of the list, not deleted" used to be a promise with no
+ * place to keep it — nothing listed an archived conversation again. What this
+ * proves is the round trip: archive from the menu, find it on the shelf, and
+ * Restore puts it back in the sidebar.
  */
-section('the workspace file browser');
+section('the Archive shelf');
 {
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
   });
+  check('the sidebar has Archive where Workspace was', !!(await page.$('#open-archive')) && !(await page.$('#open-workspace')));
 
-  await page.click('#open-workspace');
+  const made = await page.evaluate(async () => {
+    const post = async (url, body, method = 'POST') =>
+      (await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+    const { chat } = await post('/api/chats', {});
+    await post(`/api/chats/${chat.id}`, { title: 'Ôn thi chương 1' }, 'PATCH');
+    await post(`/api/chats/${chat.id}`, { archived: true }, 'PATCH');
+    return chat.id;
+  });
+
+  await page.click('#open-archive');
   await page.waitForTimeout(900);
+  const shelf = await page.evaluate((id) => ({
+    title: document.getElementById('page-title').textContent,
+    row: !!document.querySelector(`[data-archived="${id}"]`),
+    newHidden: document.getElementById('page-new').hidden,
+  }), made);
+  check('it opens as a shelf', /Archive|Lưu trữ/.test(shelf.title), shelf.title);
+  check('listing the archived conversation', shelf.row);
+  check('with no New button — nothing is made here', shelf.newHidden);
 
-  const listed = await page.evaluate(() => ({
-    open: document.getElementById('workspace').open,
-    where: document.getElementById('workspace-where').textContent,
-    names: [...document.querySelectorAll('.entry__name')].map((n) => n.textContent.trim()),
-  }));
-  check('it opens from the menu bar', listed.open);
-  check('and says which folder it is showing', /ai-remote-ui-workspace/.test(listed.where), listed.where);
-  check('listing what is in it, folders first', listed.names[0] === 'src', listed.names.join(', '));
-
-  // Into the folder and back out, through the breadcrumb.
-  await page.click('[data-open-dir$="src"]');
-  await page.waitForTimeout(600);
-  const inside = await page.evaluate(() => document.querySelectorAll('.entry--up').length);
-  check('a folder opens, with a way back up', inside === 1, String(inside));
-  await page.click('.crumbs__step');
-  await page.waitForTimeout(600);
-
-  await page.click('[data-open-file$="readme.md"]');
-  await page.waitForTimeout(700);
-
-  const opened = await page.evaluate(() => ({
-    editor: !!document.getElementById('workspace-editor'),
-    content: document.getElementById('workspace-editor')?.value || '',
-  }));
-  check('a file opens in an editor', opened.editor);
-  check('with its real contents', /Ghi chú/.test(opened.content), opened.content.slice(0, 30));
-
-  await page.fill('#workspace-editor', '# Đã sửa trong trình duyệt\n');
-  await page.click('#workspace-save');
-  await page.waitForTimeout(900);
-
-  const onDisk = fs.readFileSync(path.join(process.env.WORKSPACE, 'readme.md'), 'utf8');
-  check('saving writes the file on the machine', /Đã sửa trong trình duyệt/.test(onDisk), onDisk.slice(0, 40));
-  check(
-    'and the accents survive the round trip',
-    onDisk.includes('Đã sửa'),
-    'the one thing a text editor must not get wrong',
-  );
-
-  await page.evaluate(() => document.getElementById('workspace').close());
-  await page.waitForTimeout(200);
+  await page.click(`[data-restore="${made}"]`);
+  await page.waitForTimeout(1200);
+  const after = await page.evaluate(async (id) => ({
+    onShelf: !!document.querySelector(`[data-archived="${id}"]`),
+    // An empty conversation is never listed in the sidebar, so ask the chat itself.
+    listed: (await (await fetch(`/api/chats/${id}`)).json()).chat?.archived_at === null,
+  }), made);
+  check('Restore takes it off the shelf', !after.onShelf);
+  check('and it is no longer archived', after.listed);
 }
 
-/**
- * Full screen has to actually be full screen.
- *
- * `position: fixed` escapes overflow but not a stacking context, and the panel
- * lives inside the detail rail, which has one — so "full screen" was drawn
- * underneath the sidebar, and disappeared altogether when the rail was closed,
- * because a closed rail hides its contents.
- */
 section('the sandbox, full screen');
 {
   await page.evaluate(() => {

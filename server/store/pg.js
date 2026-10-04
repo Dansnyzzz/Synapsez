@@ -811,13 +811,34 @@ export function createPgStore(connectionString) {
                 SELECT COUNT(*)::int AS message_count FROM messages m WHERE m.chat_id = c.id
            ) m ON TRUE
            LEFT JOIN live l ON l.chat_id = c.id
-          -- Archived conversations are not gone, they are put away. The one
-          -- place they still appear is the Projects shelf's archived filter.
+          -- Archived conversations are not gone, they are put away. They are
+          -- listed on the Archive shelf instead (listArchivedChats).
           WHERE c.user_id = $1 AND c.archived_at IS NULL
             AND (m.message_count > 0 OR l.chat_id IS NOT NULL)
           ORDER BY c.pinned DESC, c.updated_at DESC
           LIMIT 200`,
         [userId, RUN_LEASE_STALE_MS / 1000],
+      );
+    },
+    /**
+     * The conversations put away with Archive, newest put away first.
+     *
+     * Archiving promised "out of the list, not deleted", and nothing anywhere
+     * listed them again — the only way back was a URL nobody had. This is the
+     * Archive shelf's list, with the project name so a row can say where it
+     * belongs once it is restored.
+     */
+    async listArchivedChats(userId) {
+      return q(
+        `SELECT c.id, c.title, c.model, c.created_at, c.updated_at, c.archived_at, c.project_id,
+                p.name AS project_name,
+                (SELECT COUNT(*)::int FROM messages m WHERE m.chat_id = c.id) AS message_count
+           FROM chats c
+           LEFT JOIN projects p ON p.id = c.project_id AND p.user_id = c.user_id
+          WHERE c.user_id = $1 AND c.archived_at IS NOT NULL
+          ORDER BY c.archived_at DESC
+          LIMIT 500`,
+        [userId],
       );
     },
     /**

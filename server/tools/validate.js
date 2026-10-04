@@ -102,8 +102,94 @@ function unwrapText(value) {
   return strings.length === 1 ? strings[0] : null;
 }
 
+/**
+ * Keys a list arrives wrapped in when a model writes its call as XML and the
+ * provider turns that into JSON: `<questions><item>…</item></questions>` comes
+ * out as `{ "questions": { "item": [ … ] } }`. One item comes out as an object
+ * rather than a one-element list, which is why the singular names wrap.
+ */
+const LIST_WRAPPERS = new Set(['item', 'items', 'element', 'elements', 'li', 'entry', 'entries', 'list', 'array', 'value', 'values']);
+const SINGULAR = new Set(['item', 'element', 'li', 'entry', 'value']);
+
+/**
+ * The list a value plainly is, or null when it is not one.
+ *
+ * `show_card` was refused with every question present, because they arrived as
+ * `{ item: [...] }`; the error said "needs questions", the model sent the same
+ * shape again, and the card was never drawn. The shapes read here each mean
+ * exactly one list, so reading them is not a guess:
+ *
+ *   - `{ item: [...] }` or `{ item: {...} }` — the XML wrapper above;
+ *   - `{ "0": a, "1": b }` — an array that went through an object on the way;
+ *   - `"[1, 2]"` — the list sent as its own JSON text.
+ */
+export function asList(value, { loose = true } = {}) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value);
+    const wrapper = keys.length === 1 && LIST_WRAPPERS.has(keys[0].toLowerCase());
+    // Without a schema saying a list belongs here, `{ value: … }` and `{ list: … }`
+    // are as likely to be real data as wrappers; only the XML item names count.
+    if (wrapper && (loose || /^(item|items|element|elements|li|entry|entries)$/i.test(keys[0]))) {
+      const inner = value[keys[0]];
+      if (Array.isArray(inner)) return inner;
+      if (SINGULAR.has(keys[0].toLowerCase()) && inner !== undefined && inner !== null) return [inner];
+      return null;
+    }
+    if (keys.length && keys.every((k, i) => k === String(i))) return keys.map((k) => value[k]);
+    return null;
+  }
+  if (typeof value === 'string' && /^\s*\[[\s\S]*\]\s*$/.test(value)) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Every wrapped list inside a free-form object, unwrapped.
+ *
+ * A parameter declared only as `type: object` — `show_card`'s `card` — has no
+ * schema below it to say where a list belongs, so the wrapper is recognised by
+ * its own shape at any depth. The object handed in keeps its own keys; only
+ * the values beneath are read.
+ */
+export function unwrapLists(value, depth = 0) {
+  if (depth > 12 || !value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((v) => unwrapLists(v, depth + 1));
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    const list = v && typeof v === 'object' && !Array.isArray(v) ? asList(v, { loose: false }) : null;
+    out[k] = unwrapLists(list ?? v, depth + 1);
+  }
+  return out;
+}
+
 function check(value, schema, where, notes = []) {
   if (!schema || typeof schema !== 'object') return { ok: true, value };
+
+  const types = schema.type ? (Array.isArray(schema.type) ? schema.type : [schema.type]) : [];
+  if (types.includes('array') && !Array.isArray(value) && value !== undefined && value !== null) {
+    const list = asList(value);
+    const scalar = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+    const itemType = schema.items?.type;
+    if (list) {
+      const note = `${where.replace(/\[\d+\]/g, '[…]')} was sent wrapped; it was read as a list. Send a plain JSON array next time.`;
+      if (!notes.includes(note)) notes.push(note);
+      value = list;
+    } else if (scalar && !types.includes(typeof value) && (itemType === 'string' || itemType === 'number' || itemType === 'integer')) {
+      // One value where a list of them was wanted is a list of one.
+      value = [value];
+    }
+  }
+  // A free-form object: nothing below says where a list goes, so read wrappers by shape.
+  if (types.includes('object') && !schema.properties && value && typeof value === 'object' && !Array.isArray(value)) {
+    value = unwrapLists(value);
+  }
 
   const wantsString = schema.type === 'string' || (Array.isArray(schema.type) && schema.type.length === 1 && schema.type[0] === 'string');
   if (wantsString && value && typeof value === 'object' && !Array.isArray(value)) {
@@ -122,8 +208,7 @@ function check(value, schema, where, notes = []) {
     }
   }
 
-  if (schema.type) {
-    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (types.length) {
     let coerced = null;
     for (const type of types) {
       const attempt = coerce(value, type);

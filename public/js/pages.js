@@ -104,6 +104,8 @@ export function createPages({
   onPaneClose = () => {},
   /** Open the page shell — the moves the app makes before showing any shelf. */
   onShowPage = () => {},
+  /** A conversation was restored or deleted from the Archive; the sidebar redraws. */
+  onChatsChanged = () => {},
 }) {
   const page = $('page');
   const title = $('page-title');
@@ -232,6 +234,8 @@ export function createPages({
     title.textContent = view.title;
     newButton.textContent = view.newLabel;
     newButton.classList.toggle('page__new--menu', !!view.newMenu);
+    // A shelf that makes nothing — the Archive — has no New button at all.
+    newButton.hidden = !view.newLabel;
 
     lede.hidden = !view.lede;
     if (view.lede) lede.innerHTML = view.lede;
@@ -656,6 +660,120 @@ export function createPages({
     onNew: () => openTaskForm(),
   };
 
+  /* ── archive ──────────────────────────────────────────────────── */
+
+  /**
+   * Everything put away with Archive, and the way back.
+   *
+   * "Archived. It is out of the list, not deleted" was a promise with nowhere
+   * to keep it: archived conversations were listed nowhere, so the only route
+   * back was a link nobody had. This shelf lists them — conversations first,
+   * archived projects behind the filter — with Restore beside each, and opening
+   * one reads it without restoring it.
+   */
+  views.archive = {
+    get title() {
+      return t('pages.archive.title');
+    },
+    // No "New": nothing is made here, only put back.
+    newLabel: '',
+    get lede() {
+      return escapeHtml(t('pages.archive.lede'));
+    },
+    get orderLabel() {
+      return t('pages.filterBy');
+    },
+    get orders() {
+      return [
+        { id: 'chat', label: t('pages.archive.chats'), pill: t('pages.archive.chats') },
+        { id: 'project', label: t('pages.archive.projects'), pill: t('pages.archive.projects') },
+      ];
+    },
+    load: async () => {
+      const { chats = [], projects = [] } = await api.archived();
+      return [
+        ...chats.map((chat) => ({ ...chat, kind: 'chat' })),
+        ...projects.map((project) => ({ ...project, kind: 'project', title: project.name })),
+      ];
+    },
+    matches: (item, q) => `${item.title || ''} ${item.project_name || ''}`.toLowerCase().includes(q),
+    sort: (list, by) => list.filter((item) => item.kind === by),
+    render: (list) => {
+      if (!list.length) {
+        return blank(
+          archiveMark,
+          query ? t('pages.archive.noneMatch') : order === 'project' ? t('pages.projects.archivedNone') : t('pages.archive.none'),
+          query ? '' : t('pages.archive.noneHint'),
+        );
+      }
+      return list
+        .map((item) => {
+          const facts = [
+            t('pages.archive.when', { when: ago(item.archived_at) }),
+            item.kind === 'chat' && item.project_name ? `📁 ${item.project_name}` : '',
+            item.kind === 'chat' ? counted(item.message_count || 0, 'count.messages') : counted(item.chat_count || 0, 'count.conversations'),
+          ].filter(Boolean);
+          const id = escapeHtml(item.id);
+          return `
+        <div class="task archived" data-archived="${id}" data-kind="${item.kind}">
+          <span class="task__dot"></span>
+          <div class="task__body">
+            <button class="task__name archived__open" type="button" data-open-archived="${id}">${escapeHtml(item.title || t('chat.untitled'))}</button>
+            <div class="task__when">${facts.map(escapeHtml).join(' · ')}</div>
+          </div>
+          <button class="task__act" type="button" data-restore="${id}">${escapeHtml(t('pages.archive.restore'))}</button>
+          ${
+            item.kind === 'chat'
+              ? `<button class="task__act" type="button" data-drop-archived="${id}">${escapeHtml(t('pages.archive.delete'))}</button>`
+              : ''
+          }
+        </div>`;
+        })
+        .join('');
+    },
+    wire: () => {
+      const byId = new Map(items.map((item) => [item.id, item]));
+      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-open-archived]'))) {
+        button.addEventListener('click', () => {
+          const item = byId.get(button.dataset.openArchived);
+          if (!item) return;
+          // Read where it is; opening is not restoring.
+          if (item.kind === 'project') {
+            onLeave();
+            openProject(item.id);
+          } else {
+            onLeave();
+            openChat(item.id);
+          }
+        });
+      }
+      for (const button of /** @type {NodeListOf<HTMLButtonElement>} */ (body.querySelectorAll('[data-restore]'))) {
+        button.addEventListener('click', async () => {
+          const item = byId.get(button.dataset.restore);
+          if (!item) return;
+          button.disabled = true;
+          try {
+            if (item.kind === 'project') await api.updateProject(item.id, { archived: false });
+            else await api.updateChat(item.id, { archived: false });
+            toast(t('pages.archive.restored', { name: item.title || t('chat.untitled') }), 'ok');
+            onChatsChanged();
+            await load();
+          } catch (err) {
+            button.disabled = false;
+            toast(err.message, 'error');
+          }
+        });
+      }
+      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-drop-archived]'))) {
+        armed(button, t('pages.archive.deleteConfirm'), async () => {
+          await api.deleteChat(button.dataset.dropArchived);
+          onChatsChanged();
+          await load();
+        });
+      }
+    },
+  };
+
   /* ── workflows ────────────────────────────────────────────────── */
 
   // The fourth shelf, and the only one whose contents live in their own file:
@@ -784,6 +902,8 @@ export function createPages({
     '<svg viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="20" cy="22" r="13"/><path d="M20 15v7l4.5 2.8M15 4.5 11 7.5M25 4.5l4 3"/></svg>';
   const folderMark =
     '<svg viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 11a3 3 0 0 1 3-3h6.5l3 3.6H32a3 3 0 0 1 3 3V29a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3Z"/></svg>';
+  const archiveMark =
+    '<svg viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="6" y="8" width="28" height="8" rx="2"/><path d="M8.5 16v14a3 3 0 0 0 3 3h17a3 3 0 0 0 3-3V16"/><path d="M16.5 22.5h7" stroke-linecap="round"/></svg>';
   const artifactMark =
     '<svg viewBox="0 0 40 40" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M23 5H11a3 3 0 0 0-3 3v24a3 3 0 0 0 3 3h18a3 3 0 0 0 3-3V14Z"/><path d="M23 5v9h9"/><path d="m16 21-3 3 3 3M24 21l3 3-3 3" stroke-linecap="round"/></svg>';
 

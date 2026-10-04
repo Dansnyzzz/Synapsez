@@ -393,6 +393,77 @@ section('a list of strings sent as objects is read, not refused six times');
   check('plain strings are untouched', validateArguments(schema, { tasks: ['x', 'y'] }).input.tasks.join() === 'x,y');
 }
 
+section('a list sent wrapped as XML-turned-JSON is read, not refused');
+{
+  const { validateArguments } = await import('../server/tools/validate.js');
+  // The exact show_card call from the report: every list as { item: [...] }.
+  const call = {
+    type: 'quiz',
+    card: {
+      title: 'Ôn nhanh Chương 1: The Investment Environment',
+      subtitle: '10 câu trắc nghiệm',
+      questions: {
+        item: [
+          {
+            question: 'Sự giàu có vật chất của một xã hội phụ thuộc vào điều gì?',
+            options: { item: ['Tất cả tài sản tài chính', 'Tất cả tài sản thực', 'Tất cả tài sản tài chính và tài sản thực', 'Tất cả tài sản hữu hình'] },
+            answer: 1,
+            explanation: 'Tài sản thực tạo ra của cải.',
+          },
+          { question: 'Câu một đáp án', options: { item: 'chỉ một' }, answer: 0 },
+        ],
+      },
+    },
+  };
+  const checked = validateArguments(TOOLS_BY_NAME.show_card.parameters, call);
+  check('the call passes validation', checked.ok, checked.error);
+  const drawn = await showCardTool(checked.input);
+  check('and the quiz is drawn from the wrapped lists', drawn.widget.card.questions.length === 1, JSON.stringify(drawn.widget.card.questions));
+  check('  with its four options', drawn.widget.card.questions[0].options.length === 4);
+  check('buildCard unwraps on its own too', buildCard('quiz', call.card).questions.length === 1);
+
+  const arr = validateArguments(TOOLS_BY_NAME.run_parallel.parameters, { tasks: { item: ['a', 'b'] } });
+  check('a schema array sent as { item: [...] } is read as the list', arr.ok && arr.input.tasks.join() === 'a,b', JSON.stringify(arr));
+  check('  and the model is told to send a plain array', /plain JSON array/.test(arr.notes.join(' ')));
+  const one = validateArguments(TOOLS_BY_NAME.run_parallel.parameters, { tasks: { item: 'only' } });
+  check('one wrapped item is a list of one', one.ok && one.input.tasks.length === 1 && one.input.tasks[0] === 'only');
+  const text = validateArguments(TOOLS_BY_NAME.run_parallel.parameters, { tasks: '["x", "y"]' });
+  check('a list sent as its own JSON text is parsed', text.ok && text.input.tasks.join() === 'x,y');
+  const bare = validateArguments(TOOLS_BY_NAME.run_parallel.parameters, { tasks: 'just one' });
+  check('a single string where a list of strings is wanted is a list of one', bare.ok && bare.input.tasks[0] === 'just one');
+  const indexed = validateArguments(TOOLS_BY_NAME.run_parallel.parameters, { tasks: { 0: 'a', 1: 'b' } });
+  check('an index-keyed object is read in order', indexed.ok && indexed.input.tasks.join() === 'a,b');
+}
+
+section('a tool cut off by its own deadline says so, not just "aborted"');
+{
+  const { timedOutSentence } = await import('../server/tools/execute.js');
+  check('a bare "aborted" becomes a sentence the model can act on', /took too long/.test(timedOutSentence(new Error('aborted'))));
+  const timeout = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  check('so does a TimeoutError', /different source/.test(timedOutSentence(timeout)));
+  const stopped = new AbortController();
+  stopped.abort();
+  check('but not when the person pressed Stop', timedOutSentence(new Error('aborted'), stopped.signal) === '');
+  check('and any other failure keeps its own words', timedOutSentence(new Error('HTTP 500')) === '');
+}
+
+section('a quiz answer is read however the model says it');
+{
+  const q = (answer, options = ['A. Lãi suất', 'B. Lạm phát', 'C. Thuế']) =>
+    buildCard('quiz', { questions: [{ question: 'q', options, answer }] }).questions[0]?.answer;
+  check('a letter', q('B') === 1);
+  check('a letter with punctuation', q('(c)') === 2);
+  check('the option text', q('Lạm phát') === 1);
+  check('the option text with its label', q('B. Lạm phát') === 1);
+  check('a numeric string', q('2') === 2);
+  check('options keyed by letter', buildCard('quiz', { questions: [{ question: 'q', options: { A: 'x', B: 'y' }, correct: 'B' }] }).questions[0].answer === 1);
+  check('options as { text } objects', buildCard('quiz', { questions: [{ question: 'q', options: [{ text: 'x' }, { text: 'y' }], answer: 0 }] }).questions[0].options.join() === 'x,y');
+  const why = await throws(() => buildCard('quiz', { questions: [{ question: 'q', options: ['a', 'b'], answer: 'z' }] }));
+  check('a refusal says which question and why', /question 1's answer/.test(why), why);
+  check('flashcards accept term/definition', buildCard('flashcards', { cards: [{ term: 't', definition: 'd' }] }).cards[0].back === 'd');
+  check('a type alias is understood', buildCard('flashcard', { cards: [{ front: 'f', back: 'b' }] }).type === 'flashcards');
+}
+
 section('the live copy of a file is never numbered the same as a saved draft');
 {
   const { liveRevision } = await import('../server/attachments.js');

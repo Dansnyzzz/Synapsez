@@ -2151,6 +2151,17 @@ async function slackPostTool({ channel, text }, { userId }) {
 }
 
 const LOOK_MAX_BYTES = 12 * 1024 * 1024;
+/** A whole textbook is 20–40MB; the pages asked for are rendered from it, never all of it. */
+const LOOK_MAX_PDF_BYTES = 48 * 1024 * 1024;
+const LOOK_FETCH_MS = 90_000;
+/** A file name from a URL, readable, and never a throw over a stray %. */
+const safeDecode = (s) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
 const LOOKABLE = /^(image\/(png|jpe?g|webp|gif)|application\/pdf)$/i;
 
 /**
@@ -2182,16 +2193,52 @@ async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, c
     } catch {
       throw new Error(`"${url}" is not a valid URL.`);
     }
-    // The same guard as web_fetch: public addresses only, every hop checked.
-    const res = await safeFetch(parsed, { headers: { Accept: 'image/*,application/pdf;q=0.9,*/*;q=0.5' }, signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) throw new Error(`${parsed.host} returned HTTP ${res.status}.`);
+    /*
+     * A textbook PDF on a slow university server is the ordinary case, not the
+     * edge: 30 seconds and 12MB failed it with a bare "aborted" and the model
+     * retried the same thing. A PDF gets longer and more room; the turn's own
+     * Stop still cancels at once.
+     */
+    const timer = AbortSignal.timeout(LOOK_FETCH_MS);
+    const both = signal ? AbortSignal.any([signal, timer]) : timer;
+    const host = parsed.host;
+    const slow = () =>
+      new Error(
+        `${host} took more than ${LOOK_FETCH_MS / 1000}s to send that file, so it was stopped. The server is slow or the file is very large — ` +
+          'try once more, or look for another copy (a publisher or library page), or read it as text with web_fetch.',
+      );
+    let res;
+    try {
+      // The same guard as web_fetch: public addresses only, every hop checked.
+      res = await safeFetch(parsed, { headers: { Accept: 'image/*,application/pdf;q=0.9,*/*;q=0.5' }, signal: both });
+    } catch (err) {
+      if (timer.aborted && !signal?.aborted) throw slow();
+      throw err;
+    }
+    if (res.status === 404) throw new Error(`${host} has no file at that address (HTTP 404). Check the link, and that spaces are written %20.`);
+    if (!res.ok) throw new Error(`${host} returned HTTP ${res.status}.`);
     const type = String(res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (!LOOKABLE.test(type)) throw new Error(`That address is ${type || 'not a picture'}, not an image or a PDF — use web_fetch for a page.`);
-    const { buffer, truncated } = await readCapped(res, LOOK_MAX_BYTES);
-    if (truncated) throw new Error('That file is over 12MB, too large to look at.');
+    // Some servers label a PDF as a download; the address and the bytes say what it is.
+    const isPdf = type === 'application/pdf' || ((type === 'application/octet-stream' || type === 'binary/octet-stream' || !type) && /\.pdf$/i.test(parsed.pathname));
+    if (!isPdf && !LOOKABLE.test(type)) throw new Error(`That address is ${type || 'not a picture'}, not an image or a PDF — use web_fetch for a page.`);
+    const cap = isPdf ? LOOK_MAX_PDF_BYTES : LOOK_MAX_BYTES;
+    let buffer;
+    let truncated;
+    try {
+      ({ buffer, truncated } = await readCapped(res, cap));
+    } catch (err) {
+      if (timer.aborted && !signal?.aborted) throw slow();
+      throw err;
+    }
+    if (truncated) {
+      throw new Error(
+        `That file is over ${Math.round(cap / 1024 / 1024)}MB, too large to look at whole. ` +
+          (isPdf ? 'Search for the chapter or page you need as its own file, or read it as text with web_fetch.' : 'Find a smaller version of the picture.'),
+      );
+    }
     source = parsed.href;
     const data = buffer.toString('base64');
-    item = type === 'application/pdf' ? { pdf: { data, name: parsed.pathname.split('/').pop() || 'document.pdf', pages: wantPages } } : { images: [{ mime: type, data, name: parsed.href }] };
+    item = isPdf ? { pdf: { data, name: safeDecode(parsed.pathname.split('/').pop() || '') || 'document.pdf', pages: wantPages } } : { images: [{ mime: type, data, name: parsed.href }] };
   } else {
     throw new Error('Give a `file_id` (an attachment, a made file or a step screenshot) or a `url` of an image or PDF.');
   }

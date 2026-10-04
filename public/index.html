@@ -67,7 +67,6 @@
     <link rel="modulepreload" href="/js/screen.js" />
     <link rel="modulepreload" href="/js/viewer.js" />
     <link rel="modulepreload" href="/js/autopreview.js" />
-    <link rel="modulepreload" href="/js/workspace.js" />
     <link rel="modulepreload" href="/js/workflows.js" />
     <link rel="modulepreload" href="/js/project-page.js" />
     <link rel="modulepreload" href="/js/pages.js" />
@@ -270,15 +269,17 @@
             <span class="rail__label" data-i18n="nav.workflows">Workflows</span>
           </button>
 
-          <!-- The folder on the machine the assistant works in. The assistant
-               has been able to read and write it from the beginning; this is
-               the same thing for the person sitting in front of it. -->
-          <button class="rail__item" id="open-workspace" type="button" title="Workspace files" data-i18n-title="nav.workspaceFiles">
+          <!-- Everything put away with Archive, and the way back. It took the
+               Workspace slot: the cloud machine and the sandbox do the work a
+               paired computer used to, so a local folder browser had nothing
+               left to browse, while archived conversations had nowhere at all. -->
+          <button class="rail__item" id="open-archive" type="button" title="Archived conversations and projects" data-i18n-title="nav.archiveTitle">
             <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
-              <path d="M2.5 5.4a1.6 1.6 0 0 1 1.6-1.6h3.1l1.6 1.9h5.6a1.6 1.6 0 0 1 1.6 1.6v7.3a1.6 1.6 0 0 1-1.6 1.6H4.1a1.6 1.6 0 0 1-1.6-1.6Z" />
-              <path d="M8 11.6 6.6 13l1.4 1.4M12 11.6 13.4 13 12 14.4" stroke-linecap="round" />
+              <rect x="2.5" y="3.5" width="15" height="4.5" rx="1.2" />
+              <path d="M4 8v7.2a1.6 1.6 0 0 0 1.6 1.6h8.8a1.6 1.6 0 0 0 1.6-1.6V8" />
+              <path d="M8.2 11.2h3.6" stroke-linecap="round" />
             </svg>
-            <span class="rail__label" data-i18n="nav.workspace">Workspace</span>
+            <span class="rail__label" data-i18n="nav.archive">Archive</span>
           </button>
         </nav>
 
@@ -430,8 +431,8 @@
           <div class="empty" id="empty-state">
             <h2 data-i18n="empty.title">What should we work on?</h2>
             <p data-i18n="empty.body">
-              Pick a model, ask for anything. With the worker running on your computer, the
-              assistant can read files, edit code and run commands there.
+              Pick a model, ask for anything. The assistant can search the web, read your files,
+              and run code on its own cloud computer.
             </p>
             <div class="suggestions" id="suggestions"></div>
           </div>
@@ -761,70 +762,6 @@
          one you made an hour ago. -->
     <div class="menu menu--files" id="files-menu" role="menu" hidden></div>
 
-    <!-- ── Pair a computer ─────────────────────────────────────────── -->
-    <!-- The whole job in one small sheet, reachable from the header: the code
-         this machine is offering (when there is one), a box to type somebody
-         else's, and what is already connected. -->
-    <dialog id="pair" class="sheet sheet--pair" aria-labelledby="pair-title">
-      <form method="dialog" class="sheet__head">
-        <h2 id="pair-title" data-i18n="topbar.computers">Computers</h2>
-        <button class="icon-btn" value="close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
-      </form>
-
-      <div class="sheet__body">
-        <!-- Shown only when this browser and an unpaired worker are the same
-             machine — then the code is right here rather than in a terminal. -->
-        <section class="pair-offer" id="pair-offer" hidden>
-          <p class="hint" data-i18n="pair.offer">This computer is waiting to be added. Enter this code from any device:</p>
-          <div class="pair-code">
-            <code id="pair-offer-code">––––-––––</code>
-            <button class="btn btn--ghost" id="pair-copy" type="button" title="Copy the code" data-i18n-title="pair.copyCode">
-              <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect x="7" y="7" width="10" height="10" rx="2" />
-                <path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
-              </svg>
-              <span id="pair-copy-label" data-i18n="devices.copy">Copy</span>
-            </button>
-          </div>
-          <p class="hint" id="pair-offer-note"></p>
-        </section>
-
-        <h3 data-i18n="devices.add">Add a computer</h3>
-        <p class="hint" data-i18n="pair.oneLine">
-          One line to paste on the machine you want to use. It downloads Synapsez, connects it to
-          this account, and sets it to start when you log in.
-        </p>
-        <!-- The primary way in, and it belongs *here*.
-             It was only on the Settings tab at first, while the button most
-             people press is "Computers" in the header — which opens this dialog.
-             So the easy path existed and the people who needed it were looking
-             at the hard one. Both places now offer it; see `renderSetupLink`. -->
-        <button class="btn btn--primary" id="make-setup-link-dialog" type="button" data-i18n="pair.setUp">Set up a computer</button>
-        <div id="setup-link-dialog" hidden></div>
-
-        <h3 data-i18n="pair.orType">Or type a pairing code</h3>
-        <p class="hint" data-i18n="pair.codeHint">
-          If that computer is already running Synapsez, it shows an eight-character code. It does
-          not have to be your own account, and this works from a phone.
-        </p>
-        <div class="provider__row">
-          <input
-            id="pair-code"
-            type="text"
-            placeholder="ABCD-2K7M"
-            autocomplete="off"
-            autocapitalize="characters"
-            spellcheck="false"
-            maxlength="9" data-i18n-title="pair.codeInput" aria-label="Pairing code from your computer" />
-          <button class="btn btn--ghost" id="pair-submit" type="button" data-i18n="pair.submit">Pair</button>
-        </div>
-        <p class="hint" id="pair-status"></p>
-
-        <h3 data-i18n="pair.yours">Your computers</h3>
-        <div id="device-list"></div>
-      </div>
-    </dialog>
-
     <!-- ── A new model has arrived ──────────────────────────────────── -->
     <!-- Centred and modal, because it asks a question. Shown once per account
          per model: both answers are decisions, and neither gets asked twice. -->
@@ -946,34 +883,6 @@
          left behind as markup no JavaScript referenced: neither #artifacts nor
          #artifact-list appeared anywhere, so its permanent "Loading…" could
          never be replaced by anything. -->
-
-    <!-- ── Workspace files ──────────────────────────────────────────────
-         The folder the assistant works in, on the machine running the worker.
-         Browse it, open a file, edit it, save it, delete it — through the same
-         worker tools the assistant uses, so the workspace confinement and the
-         per-account scoping are the same ones. -->
-    <dialog id="workspace" class="sheet sheet--tall sheet--workspace" aria-labelledby="workspace-title">
-      <form method="dialog" class="sheet__head">
-        <div class="viewer__ident">
-          <h2 id="workspace-title" data-i18n="nav.workspace">Workspace</h2>
-          <span class="viewer__meta" id="workspace-where"></span>
-        </div>
-        <div class="viewer__actions">
-          <!-- Plain text, not a pattern: somebody typing `a.b` means those
-               three characters. A real regular expression is one line away in
-               the chat, where `grep` already lives. -->
-          <input class="workspace__find" id="workspace-find" type="search"
-                 placeholder="Search in these files…  ↵" autocomplete="off" data-i18n-title="workspace.findInput" aria-label="Search in these files" data-i18n-placeholder="ws.findPlaceholder" />
-          <button class="btn btn--ghost" id="workspace-new" type="button" formnovalidate data-i18n="ws.newFile">New file</button>
-          <button class="icon-btn" value="close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
-        </div>
-      </form>
-
-      <!-- Where you are, and the way back up. -->
-      <div class="crumbs" id="workspace-crumbs"></div>
-
-      <div class="sheet__body workspace__body" id="workspace-body"></div>
-    </dialog>
 
     <!-- ── Create a project ────────────────────────────────────────────
          Two questions, because they are the two that make a project worth
@@ -1259,7 +1168,6 @@
         <button class="tab" type="button" data-tab="tasks" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected="false" tabindex="-1" data-i18n="settings.tab.tasks">Scheduled</button>
         <button class="tab" type="button" data-tab="connectors" role="tab" id="tab-connectors" aria-controls="panel-connectors" aria-selected="false" tabindex="-1" data-i18n="settings.tab.connectors">Connectors</button>
         <button class="tab" type="button" data-tab="mcp" role="tab" id="tab-mcp" aria-controls="panel-mcp" aria-selected="false" tabindex="-1" data-i18n="settings.tab.mcp">MCP servers</button>
-        <button class="tab" type="button" data-tab="worker" role="tab" id="tab-worker" aria-controls="panel-worker" aria-selected="false" tabindex="-1" data-i18n="settings.tab.worker">Computers</button>
         <button class="tab" type="button" data-tab="account" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1" data-i18n="settings.tab.account">Account</button>
         <button class="tab" type="button" data-tab="admin" role="tab" id="tab-admin" aria-controls="panel-admin" aria-selected="false" tabindex="-1" id="tab-admin" hidden data-i18n="settings.tab.people">People</button>
       </div>
@@ -1467,32 +1375,6 @@
 
           <h3 data-i18n="mcp.connected">Connected</h3>
           <div id="mcp-list"></div>
-        </section>
-
-        <section class="panel" data-panel="worker" id="panel-worker" role="tabpanel" aria-labelledby="tab-worker">
-          <div id="worker-status-card"></div>
-
-          <h3 data-i18n="devices.add">Add a computer</h3>
-          <p class="hint" data-i18n="worker.lede">
-            Run Synapsez on the machine you want the assistant to work on. It shows an
-            eight-character code — enter it and that computer is yours from any device you sign in
-            on, for good. Nothing on the internet connects inward: the computer polls outward.
-          </p>
-          <!-- One line, generated per request, because it carries a setup token
-               for this account. The alternative — read an eight-character code
-               off a terminal and type it into a browser — still exists below for
-               anyone who would rather not paste a script. -->
-          <button class="btn btn--primary" id="make-setup-link" type="button" data-i18n="pair.setUp">Set up a computer</button>
-          <div id="setup-link" hidden></div>
-
-          <h4 data-i18n="worker.byHand">Or do it by hand</h4>
-          <!-- Filled from script, because the second step contains this
-               deployment's own address and a hard-coded `npm start` was the
-               reason a deployed app could never be connected to a computer:
-               `npm start` points the worker at localhost, so the pairing code
-               went into a database the deployment cannot see. -->
-          <ol class="steps" id="connect-steps"></ol>
-          <button class="btn btn--ghost" id="open-pair" type="button" data-i18n="worker.enterCode">Enter a pairing code</button>
         </section>
 
         <section class="panel" data-panel="account" id="panel-account" role="tabpanel" aria-labelledby="tab-account">

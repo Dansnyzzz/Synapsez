@@ -1,8 +1,8 @@
 {
-  "total": 341,
+  "total": 317,
   "files": {
     "public/js/api.js": 4,
-    "public/js/app.js": 135,
+    "public/js/app.js": 133,
     "public/js/i18n.js": 1,
     "public/js/models.js": 14,
     "public/js/onboarding.js": 7,
@@ -12,7 +12,6 @@
     "public/js/search.js": 1,
     "public/js/viewer.js": 15,
     "public/js/workflows.js": 15,
-    "public/js/workspace.js": 22,
     "scripts/launch.js": 1,
     "server/attachments.js": 1,
     "server/compact.js": 1,

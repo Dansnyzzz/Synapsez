@@ -1673,8 +1673,11 @@ export const TOOLS = [
       'Use it for every figure that matters — totals, averages, percentage changes, growth rates — because a sum that is ' +
       'slightly wrong in a report puts every other number in doubt. ' +
       '\n\n' +
-      'Operators + - * / ^ and brackets; lists like [1, 2, 3]; functions sum, avg, mean, median, min, max, count, abs, ' +
-      'sqrt, round(x, places), stdev. Example: `round((1200 - 950) / 950 * 100, 1)` for a percentage change.',
+      'Operators + - * / ^ % (15% = 0.15; 17 % 5 = remainder) ! and brackets; (a)(b) and 2(x) multiply; lists like [1, 2, 3]; ' +
+      'constants pi, e. Functions: sum avg median min max count product geomean stdev stdevp var varp, abs sqrt cbrt pow exp ln ' +
+      'log(x[, base]) floor ceil trunc round(x, places) mod sign, sin cos tan, fact comb perm, and finance in Excel order — ' +
+      'fv(rate, nper, pmt[, pv]) pv(rate, nper, pmt[, fv]) pmt(rate, nper, pv) npv(rate, cf1, cf2…) irr(cf0, cf1…) effect(nominal, n). ' +
+      'One call per figure. Example: `round((1200 - 950) / 950 * 100, 1)` for a percentage change.',
     parameters: {
       type: 'object',
       properties: {
@@ -1877,7 +1880,7 @@ export const TOOLS = [
     // just asserted in a comment in subagents.js.
     noSubagent: true,
     description:
-      'Hand several INDEPENDENT questions to sub-agents that work at the same time, and get all the answers back together. Right for fan-out — read these six files, check these four sites, summarise each of these folders. Wrong for anything sequential: sub-agents cannot see each other, so a chain of steps must stay with you. They are read-only; they report, you act.',
+      'Hand several INDEPENDENT questions to sub-agents that work at the same time, and get all the answers back together. Right for fan-out — read these six files, check these four sites, summarise each of these folders. Wrong for anything sequential: sub-agents cannot see each other, so a chain of steps must stay with you. They are read-only; they report, you act. In a project they read its sources themselves (the best passages are handed to each, and their search_docs searches the shelf); put any other file id they need in the task.',
     parameters: {
       type: 'object',
       properties: {

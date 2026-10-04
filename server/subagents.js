@@ -8,6 +8,9 @@ import { record as recordUsage } from './usage.js';
 import { workerStatus } from './localTools.js';
 import { priceTurn } from './providers/catalog.js';
 import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
+import { getStore } from './store/index.js';
+import { searchProject } from './projects.js';
+import { untrusted } from './tools/untrusted.js';
 
 /**
  * Sub-agents — several independent investigations at once.
@@ -66,10 +69,54 @@ const SYSTEM = [
 /** A sub-agent's effort: low, or medium when the conversation is set to think hardest. */
 export const subagentEffort = (effort) => (effort === 'xhigh' || effort === 'max' ? 'medium' : 'low');
 
-async function runOne({ userId, user, entry, prefs, tools, task, signal, stream }) {
+/**
+ * What a sub-agent needs to know about the project its conversation is in.
+ *
+ * Sub-agents used to start with nothing but the task text and `chatId: null`,
+ * so `search_docs` — which finds the project through the conversation — had no
+ * conversation to find it through and searched only the folder index. In a
+ * project holding the very textbook the question was about, every sub-agent
+ * reported that it had no access to the sources, and the main agent had to go
+ * back and do the reading itself.
+ *
+ * Now each one is told the project's name, instructions and source names, its
+ * own tool calls carry the conversation, and the passages that best match its
+ * task are handed to it up front — the same ranking `search_docs` uses, so the
+ * first step is spent answering rather than searching.
+ */
+async function projectContext(userId, chatId) {
+  if (!chatId) return null;
+  const chat = await getStore().getChat(userId, chatId).catch(() => null);
+  if (!chat?.project_id) return null;
+  const project = await getStore().getProject(userId, chat.project_id).catch(() => null);
+  if (!project) return null;
+  const files = await getStore().readProjectFiles(userId, project.id).catch(() => []);
+  return { project, names: files.map((f) => f.name) };
+}
+
+/** The task as the sub-agent reads it: the project's passages first, when there is one. */
+async function briefFor(userId, context, task) {
+  if (!context) return String(task);
+  const found = context.names.length
+    ? await searchProject(userId, context.project.id, task, 6).catch(() => null)
+    : null;
+  const lines = [
+    `This task belongs to the project "${context.project.name}".`,
+    context.project.instructions ? `Project instructions: ${String(context.project.instructions).slice(0, 2000)}` : '',
+    context.names.length
+      ? `Its sources: ${context.names.slice(0, 40).join(', ')}${context.names.length > 40 ? ', …' : ''}. ` +
+        'You can read them: the passages that best match your task are below, and search_docs searches all of them for more.'
+      : '',
+    found ? untrusted('project sources', found) : '',
+    `Your task: ${String(task)}`,
+  ];
+  return lines.filter(Boolean).join('\n\n');
+}
+
+async function runOne({ userId, user, chatId = null, entry, prefs, tools, task, brief = null, signal, stream }) {
   // The names this sub-agent was given. See the membership check in the tool loop.
   const offered = new Set((tools || []).map((t) => t.name));
-  const messages = [{ id: `sub-${Date.now()}`, role: 'user', text: String(task) }];
+  const messages = [{ id: `sub-${Date.now()}`, role: 'user', text: brief ?? String(task) }];
   let answer = '';
   /**
    * Cached reads and the provider's own invoice ride along with the totals.
@@ -189,7 +236,9 @@ async function runOne({ userId, user, entry, prefs, tools, task, signal, stream 
             isError: true,
           };
         }
-        const out = await executeTool({ user, name: call.name, input: call.input, chatId: null, signal });
+        // The conversation travels with the call, so `search_docs` reads its
+        // project's shelf and a file id from it resolves as it would for the parent.
+        const out = await executeTool({ user, name: call.name, input: call.input, chatId, signal });
         return { toolCallId: call.id, name: call.name, content: out.content, isError: out.isError };
       },
     );
@@ -260,9 +309,23 @@ export async function runParallel({
       .map(([provider]) => provider),
   });
 
+  const context = await projectContext(user.id, chatId);
   const started = Date.now();
   const results = await Promise.all(
-    list.map((task) => runOne({ userId: user.id, user, entry, prefs, tools, task, signal, stream })),
+    list.map(async (task) =>
+      runOne({
+        userId: user.id,
+        user,
+        chatId,
+        entry,
+        prefs,
+        tools,
+        task,
+        brief: await briefFor(user.id, context, task),
+        signal,
+        stream,
+      }),
+    ),
   );
 
   const usage = results.reduce(
