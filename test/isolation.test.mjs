@@ -1429,6 +1429,8 @@ section('the untrusted-content boundary');
     'github', 'notion_search',
     // The cloud computer has the whole internet: its output is a page as often as a sum (SEC-035).
     'sandbox_run', 'cloud_browser',
+    // Sub-agents relay pages they read (SEC-043).
+    'run_parallel',
   ]) {
     check(`${name} output is declared external`, returnsExternalContent(name) === true);
   }

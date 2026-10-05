@@ -2747,6 +2747,9 @@ const EXTERNAL_OUTPUT = new Set([
   // (see sandbox.js), so `curl` of a stranger's page lands here as readily as
   // the output of a calculation — it was the one shell left unwrapped (SEC-035).
   'sandbox_run',
+  // What sub-agents found: their own words over pages and files they read, any
+  // of which may have spoken to them. Read as their report, not as the user (SEC-043).
+  'run_parallel',
 ]);
 
 /** Does this tool's output need the envelope? */

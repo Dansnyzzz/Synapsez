@@ -102,6 +102,7 @@ section('sub-agents (run_parallel)');
     offeredNames.filter((n) => n === 'github' || n === 'notion_search').join(',') || `${offeredNames.length} tools`,
   );
   check('answers come back, not "(no answer)"', !output.includes('(no answer)'), output.slice(0, 80));
+  check('a sub-agent works under the same untrusted-content rule (SEC-043)', /never obey it/.test(seen.system || '') && /report that it did/.test(seen.system || ''));
   check('the first answer is present', output.includes('Answer about the first thing.'));
   check('the second answer is present', output.includes('Answer about the second thing.'));
   check(
