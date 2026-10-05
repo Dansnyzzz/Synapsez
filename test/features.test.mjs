@@ -367,9 +367,11 @@ section('a link cannot copy a stranger\'s conversation into a signed-in account 
   const src = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
   const boot = src.slice(src.indexOf('async function boot()'), src.indexOf('function takeContinue()'));
   const guard = boot.indexOf('if (carry && session.authed)');
-  const stash = boot.indexOf('sessionStorage.setItem(CONTINUE_KEY');
   check('a signed-in visitor with ?continue= is sent to the shared page instead', guard > 0 && /location\.replace\(`\/share\.html\?t=\$\{encodeURIComponent\(carry\)\}`\)/.test(boot.slice(guard, guard + 900)));
-  check('  before the token is kept for an automatic copy', guard > 0 && stash > guard);
+  // SEC-050: signed out, the URL alone never earns a copy — only the share page's own button does.
+  check('a signed-out ?continue= is kept for a copy only when the shared page wrote it first', !/sessionStorage\.setItem\(CONTINUE_KEY, carry\)/.test(boot) && /if \(sessionStorage\.getItem\(CONTINUE_KEY\) !== carry\) \{\s*sessionStorage\.removeItem\(CONTINUE_KEY\);\s*sessionStorage\.setItem\(SHOW_KEY, carry\);/.test(boot));
+  const view = fs.readFileSync(new URL('../public/js/share-view.js', import.meta.url), 'utf8');
+  check('  and the shared page\'s button writes it, under the key the app reads', /sessionStorage\.setItem\('synapsez:continue-shared', token\)/.test(view) && /const CONTINUE_KEY = 'synapsez:continue-shared';/.test(src) && !/location\.href = `\/\?continue=/.test(view.replace(/function signInToCarryOn[\s\S]*?\n\}/, '')));
 }
 
 section('the viewer says a link it makes is public, and offers it only for made files (SEC-046)');

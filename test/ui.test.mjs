@@ -6642,6 +6642,39 @@ section('the empty composer is one straight line, however narrow');
   check('and comes back when there is room', narrow.restored === narrow.wide.placeholder, narrow.restored);
 }
 
+section('a bare ?continue= link is shown after signing in, never copied (SEC-050)');
+{
+  // A fresh, signed-out browser: somebody whose session has expired.
+  const token = 'tokBareContinueLink0000000000000000000000_0';
+  const visit = async (pressed) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const tab = await context.newPage();
+    const forks = [];
+    tab.on('request', (req) => {
+      if (/\/api\/shared-chat\/[^/]+\/fork$/.test(req.url())) forks.push(req.url());
+    });
+    if (pressed) {
+      // What the shared page's own button does before it sends the visitor here.
+      await tab.goto(`http://127.0.0.1:${PORT}/share.html?t=${token}`, { waitUntil: 'domcontentloaded' });
+      await tab.evaluate((t) => sessionStorage.setItem('synapsez:continue-shared', t), token);
+    }
+    await tab.goto(`http://127.0.0.1:${PORT}/?continue=${token}`, { waitUntil: 'domcontentloaded' });
+    await tab.waitForTimeout(600);
+    await tab.fill('#gate-email', 'ui@test.local');
+    await tab.fill('#gate-password', 'a-long-enough-password');
+    await tab.click('#gate-submit');
+    await tab.waitForTimeout(2500);
+    const where = new URL(tab.url());
+    await context.close();
+    return { path: where.pathname, t: where.searchParams.get('t'), forks: forks.length };
+  };
+  const bare = await visit(false);
+  check('a link nobody pressed opens the shared page after sign-in', bare.path === '/share.html' && bare.t === token, JSON.stringify(bare));
+  check('  and asks for no copy', bare.forks === 0, JSON.stringify(bare));
+  const pressed = await visit(true);
+  check('the shared page\'s own button still carries it on after sign-in', pressed.forks === 1 && pressed.path === '/', JSON.stringify(pressed));
+}
+
 await browser.close();
 server.close();
 removeTemp(process.env.DATA_DIR);

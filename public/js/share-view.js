@@ -18,6 +18,23 @@ const token = new URLSearchParams(location.search).get('t') || '';
 
 applyI18n();
 
+/**
+ * To the app to sign in, with this conversation to be carried on afterwards.
+ *
+ * The token is written into this tab first, under the key the app reads
+ * (`CONTINUE_KEY` in app.js). That is what tells the app a person pressed this
+ * button: a bare `/?continue=` link anybody can write arrives without it, and
+ * is shown after sign-in rather than copied (SEC-050).
+ */
+function signInToCarryOn() {
+  try {
+    sessionStorage.setItem('synapsez:continue-shared', token);
+  } catch {
+    /* no storage: after signing in they are shown the conversation and press again */
+  }
+  location.href = `/?continue=${encodeURIComponent(token)}`;
+}
+
 /** Carry on: copy into this account (or open one's own), then go there. */
 async function carryOn(button) {
   button.disabled = true;
@@ -27,7 +44,7 @@ async function carryOn(button) {
       headers: { 'X-Language': currentLanguage() },
     });
     if (res.status === 401) {
-      location.href = `/?continue=${encodeURIComponent(token)}`;
+      signInToCarryOn();
       return;
     }
     const body = await res.json().catch(() => ({}));
@@ -83,7 +100,7 @@ async function show() {
   $('share-note').textContent = viewer.isOwner ? t('sharechat.ownerNote') : viewer.signedIn ? t('sharechat.copyNote') : t('sharechat.signInNote');
   go.addEventListener('click', () => {
     if (!viewer.signedIn) {
-      location.href = `/?continue=${encodeURIComponent(token)}`;
+      signInToCarryOn();
       return;
     }
     carryOn(go);
