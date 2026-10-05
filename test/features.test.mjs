@@ -291,6 +291,15 @@ section('one schedule save at a time, and the last word wins (CODE-036, UX-005)'
   check('  and the Repeat menu waits for the choice to settle, then gives focus back', /setTimeout\(async \(\) => \{[\s\S]{0,400}FREQUENCY_SETTLE_MS/.test(pages) && /\[data-s="frequency"\]'\)\)\?\.focus\(\)/.test(pages));
 }
 
+section('every schedule field shows where focus is (ACC-009)');
+{
+  const css = fs.readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
+  // Rings on fields are off app-wide (the owner's exception); the border carries focus instead.
+  check('the Repeat menu and the date field turn their border on focus', /\.spane__row select:focus,\s*\.spane__row input\[type='date'\]:focus \{ border-color: var\(--accent\); \}/.test(css));
+  check('  and so do the number and time fields', /\.spane__num input:focus,\s*\.spane__times input:focus,\s*\.spane__row input\[type='time'\]:focus \{ border-color: var\(--accent\); \}/.test(css));
+  check('  rather than an outline the app-wide rule would cancel', !/\.spane__(row|num|times)[^{]*:focus-visible \{ outline/.test(css));
+}
+
 section('Escape in a sketch label drops the label, not the sketch (UX-006)');
 {
   const src = fs.readFileSync(new URL('../public/js/sketch.js', import.meta.url), 'utf8');

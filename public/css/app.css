@@ -7585,8 +7585,11 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 }
 .spane__row select:hover,
 .spane__row input[type='date']:hover { background: var(--surface-2); }
-.spane__row select:focus-visible,
-.spane__row input[type='date']:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The border, not a ring: rings on fields are switched off app-wide by the
+   owner's exception further down, which left these with no focus mark at all
+   (ACC-009). The border is how every other field shows focus. */
+.spane__row select:focus,
+.spane__row input[type='date']:focus { border-color: var(--accent); }
 .spane__row select option { background: var(--surface); color: var(--text); }
 .spane__meta { display: grid; gap: 6px; color: var(--text-dim); font-size: 13px; justify-items: start; }
 .spane__meta strong { color: var(--text); font-weight: 600; }
@@ -7625,9 +7628,9 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   text-align: right;
   color-scheme: light dark;
 }
-.spane__num input:focus-visible,
-.spane__times input:focus-visible,
-.spane__row input[type='time']:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.spane__num input:focus,
+.spane__times input:focus,
+.spane__row input[type='time']:focus { border-color: var(--accent); }
 
 /* Rows whose control is a set rather than one value sit under their label. */
 .spane__row--stack { flex-direction: column; align-items: stretch; gap: 10px; padding-block: 12px; }
