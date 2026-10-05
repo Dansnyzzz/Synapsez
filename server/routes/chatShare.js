@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { currentUser, parseCookies } from '../auth.js';
-import { faviconFor, cleanHost } from '../favicon.js';
+import { faviconFor, cleanHost, siteOf } from '../favicon.js';
 import { proxiedImage, mapTile } from '../imageProxy.js';
 import { audit } from '../audit.js';
 
@@ -134,6 +134,118 @@ export function referencedFiles(messages) {
   return ids;
 }
 
+const ADDRESS = /https?:\/\/[^\s"'<>`)\]]+/gi;
+const SIGNED_PICTURE = /\/api\/image\?u=([^&\s"'<>)\]]+)/g;
+
+/** The video id the page's video card is drawn for (public/js/markdown.js `youtubeId`), or null. */
+function youtubeId(url) {
+  const host = url.hostname.replace(/^(www|m|music)\./, '');
+  let id = null;
+  if (host === 'youtu.be') id = url.pathname.slice(1, 12);
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    id = url.pathname === '/watch' ? url.searchParams.get('v') : /^\/(?:shorts|embed|live|v)\/([\w-]{11})/.exec(url.pathname)?.[1] || null;
+  }
+  return id && /^[\w-]{11}$/.test(id) ? id : null;
+}
+
+/** A map widget's places and route, as the page centres them (public/js/cards.js `mapFigure`). */
+function mapPlaces(widget) {
+  const points = (Array.isArray(widget.points) ? widget.points : [])
+    .map((p) => [Number(p?.lat), Number(p?.lon)])
+    .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon))
+    .slice(0, 20);
+  const line = (Array.isArray(widget.line) ? widget.line : [])
+    .filter((p) => Array.isArray(p) && p.length >= 2)
+    .map(([lat, lon]) => [Number(lat), Number(lon)])
+    .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon));
+  return points.length ? [...points, ...line] : [];
+}
+
+/**
+ * What a published transcript draws from elsewhere: the sites whose icons it
+ * shows, the pictures it shows, and where its maps are (SEC-038).
+ *
+ * The share cookie lets somebody with no account use the icon, picture and map
+ * proxies — to draw this page, and only that. A cookie anybody can mint by
+ * sharing a conversation of their own was otherwise an anonymous fetcher for
+ * every site's icon and every map tile there is.
+ */
+export function drawnFrom(messages) {
+  const sites = new Set();
+  const pictures = new Set();
+  const maps = [];
+  const read = (text) => {
+    // A gallery's or a scores card's picture is a whole value of its widget.
+    if (/^https?:\/\//i.test(text) && text.length <= 4096) pictures.add(text);
+    for (const [, encoded] of text.matchAll(SIGNED_PICTURE)) {
+      try {
+        pictures.add(decodeURIComponent(encoded));
+      } catch {
+        /* not an address the page could have drawn either */
+      }
+    }
+    for (const [address] of text.matchAll(ADDRESS)) {
+      let url;
+      try {
+        url = new URL(address);
+      } catch {
+        continue;
+      }
+      const host = cleanHost(url.hostname);
+      if (host) sites.add(siteOf(host));
+      const video = youtubeId(url);
+      if (video) pictures.add(`https://i.ytimg.com/vi/${video}/hqdefault.jpg`);
+    }
+  };
+  const walk = (value) => {
+    if (typeof value === 'string') read(value);
+    else if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === 'object') Object.values(value).forEach(walk);
+  };
+  for (const m of messages) {
+    walk(m);
+    for (const r of m.results || []) {
+      if (r?.widget?.kind !== 'map') continue;
+      const places = mapPlaces(r.widget);
+      if (places.length) maps.push(places);
+    }
+  }
+  return { sites, pictures, maps };
+}
+
+const TILE = 256;
+/**
+ * How far from a map's centre its tiles can be drawn, in pixels at any zoom. The
+ * map is 300px tall and as wide as the column; this allows a window several
+ * times wider. Its zoom buttons keep the centre where it is (cards.js), so this
+ * bounds every tile a shared map can ask for.
+ */
+const MAP_REACH_X = 1600;
+const MAP_REACH_Y = 600;
+
+/** Web Mercator, as public/js/cards.js `project`. */
+function project(lat, lon, zoom) {
+  const scale = TILE * 2 ** zoom;
+  const s = Math.sin((Math.max(-85.0511, Math.min(85.0511, lat)) * Math.PI) / 180);
+  return { x: ((lon + 180) / 360) * scale, y: (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * scale };
+}
+
+/** Whether one of these maps draws tile `z/x/y`. */
+export function mapShows(maps, z, x, y) {
+  const [zoom, col, row] = [z, x, y].map(Number);
+  if (![zoom, col, row].every(Number.isInteger) || zoom < 0 || zoom > 19) return false;
+  const world = TILE * 2 ** zoom;
+  return maps.some((places) => {
+    const ps = places.map(([lat, lon]) => project(lat, lon, zoom));
+    const cx = (Math.min(...ps.map((p) => p.x)) + Math.max(...ps.map((p) => p.x))) / 2;
+    const cy = (Math.min(...ps.map((p) => p.y)) + Math.max(...ps.map((p) => p.y))) / 2;
+    // Columns wrap round the world on the page, so the nearest copy counts.
+    let dx = Math.abs(col * TILE + TILE / 2 - cx) % world;
+    dx = Math.min(dx, world - dx);
+    return dx <= MAP_REACH_X + TILE && Math.abs(row * TILE + TILE / 2 - cy) <= MAP_REACH_Y + TILE;
+  });
+}
+
 /** The shared chat and the files it may serve, remembered a minute per token. */
 const gateCache = new Map();
 async function sharedScope(token) {
@@ -143,9 +255,8 @@ async function sharedScope(token) {
   const chat = TOKEN.test(token || '') ? await store.getSharedChat(token) : null;
   // The files of the published transcript, not of the stored one: a picture a
   // withheld step produced (a screenshot of a signed-in page) is not the visitor's to fetch.
-  const scope = chat
-    ? { chat, files: referencedFiles(publicTranscript(await store.listSharedMessages(chat.id, chat.shared_at))) }
-    : null;
+  const published = chat ? publicTranscript(await store.listSharedMessages(chat.id, chat.shared_at)) : null;
+  const scope = published ? { chat, files: referencedFiles(published), drawn: drawnFrom(published) } : null;
   if (gateCache.size > 500) gateCache.delete(gateCache.keys().next().value);
   gateCache.set(token, { scope, until: Date.now() + 60_000 });
   return scope;
@@ -189,11 +300,11 @@ export function mountPublicChatShare(app, { wrap }) {
   /**
    * Files, pictures, icons and map tiles, for a visitor with no session.
    *
-   * A signed-in request goes straight on to the ordinary routes. A visitor is
-   * served only what the shared conversation refers to: an attachment must be
-   * the owner's and named in the transcript; icons, search pictures and map
-   * tiles are the proxies the page's cards draw with, which a share-cookie
-   * holder may use and nobody else.
+   * The owner goes straight on to the ordinary routes. A visitor is served
+   * only what the shared conversation refers to: an attachment must be the
+   * owner's and named in the transcript; an icon must be for a site it names, a
+   * picture one it shows, a map tile one of its maps draws (`drawnFrom`).
+   * Anything else is passed on, so a signed-in reader still gets their own.
    */
   /*
    * Signed in or not, a reader of the link sees its files (CODE-031). This used
@@ -244,9 +355,10 @@ export function mountPublicChatShare(app, { wrap }) {
   app.get(
     '/api/favicon/:host',
     wrap(async (req, res, next) => {
-      if (!(await visitorScope(req))) return next();
+      const scope = await visitorScope(req);
       const host = cleanHost(req.params.host);
-      const icon = host ? await faviconFor(host) : null;
+      if (!scope || !host || !scope.drawn.sites.has(siteOf(host))) return next();
+      const icon = await faviconFor(host);
       if (!icon) return res.status(404).json({ error: 'Not found' });
       sendPicture(res, icon);
     }),
@@ -254,7 +366,8 @@ export function mountPublicChatShare(app, { wrap }) {
   app.get(
     '/api/image',
     wrap(async (req, res, next) => {
-      if (!(await visitorScope(req))) return next();
+      const scope = await visitorScope(req);
+      if (!scope || !scope.drawn.pictures.has(String(req.query.u ?? ''))) return next();
       const picture = await proxiedImage(req.query.u, req.query.s);
       if (!picture) return res.status(404).json({ error: 'Not found' });
       sendPicture(res, picture);
@@ -263,7 +376,8 @@ export function mountPublicChatShare(app, { wrap }) {
   app.get(
     '/api/map/:z/:x/:y',
     wrap(async (req, res, next) => {
-      if (!(await visitorScope(req))) return next();
+      const scope = await visitorScope(req);
+      if (!scope || !mapShows(scope.drawn.maps, req.params.z, req.params.x, req.params.y)) return next();
       const tile = await mapTile(req.params.z, req.params.x, req.params.y);
       if (!tile) return res.status(404).json({ error: 'Not found' });
       sendPicture(res, tile);

@@ -231,6 +231,62 @@ section('a shared conversation opens with no account, and shows only its own fil
     check('  and still nothing outside the conversation', stillNot.status === 401);
     const owned = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie: `${cookie}; ${await sessionOf(owner.id)}` } });
     check('the owner is sent on to their own routes', owned.status === 401);
+
+    // SEC-038: the proxies draw this page, not anything a cookie holder asks for.
+    const { __testing: shareGate, drawnFrom, mapShows } = await import('../server/routes/chatShare.js');
+    const { __testing: icons } = await import('../server/favicon.js');
+    const { __testing: pictures } = await import('../server/imageProxy.js');
+    const shown = 'https://upload.wikimedia.org/wikipedia/commons/a/a1/Cau_Rong_(Da_Nang).jpg';
+    await store.appendMessage(owner.id, 'c-sc', {
+      id: 'sc-2', role: 'assistant', text: 'Xem [VietNamNet](https://vietnamnet.vn/du-lich) và https://youtu.be/dQw4w9WgXcQ',
+      toolCalls: [{ id: 'k1', name: 'place_lookup', input: {} }, { id: 'k2', name: 'image_search', input: {} }],
+    });
+    await store.appendMessage(owner.id, 'c-sc', {
+      id: 'sc-3', role: 'tool', results: [
+        { toolCallId: 'k1', name: 'place_lookup', content: 'Đà Nẵng', widget: { kind: 'map', points: [{ lat: 16.0544, lon: 108.2022 }] } },
+        { toolCallId: 'k2', name: 'image_search', content: 'pictures', widget: { kind: 'images', items: [{ src: shown }] } },
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    await store.setChatShare(owner.id, 'c-sc', token);
+    shareGate.gateCache.delete(token);
+
+    // Served from the caches, so nothing here leaves the machine.
+    const png = { type: 'image/png', data: Buffer.from('png!') };
+    icons.cache.set('vietnamnet.vn', png);
+    icons.cache.set('evil.example', png);
+    pictures.cache.set(shown, png);
+    pictures.cache.set('https://upload.wikimedia.org/wikipedia/commons/b/b2/Elsewhere.jpg', png);
+    pictures.cache.set('https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg', png);
+    const z = 14;
+    const n = 2 ** z;
+    const tx = Math.floor(((108.2022 + 180) / 360) * n);
+    const s = Math.sin((16.0544 * Math.PI) / 180);
+    const ty = Math.floor((0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n);
+    pictures.cache.set(`tile:${z}/${tx}/${ty}`, png);
+    pictures.cache.set(`tile:${z}/${(tx + n / 2) % n}/${ty}`, png);
+    const as = (path, c = cookie) => fetch(`${base}${path}`, { headers: { cookie: c } });
+
+    check('an icon for a site the conversation names is served', (await as('/api/favicon/vietnamnet.vn')).status === 200);
+    check('  and for one of its subdomains, which shares its icon', (await as('/api/favicon/news.vietnamnet.vn')).status === 200);
+    check('an icon for any other site is passed on, not fetched', (await as('/api/favicon/evil.example')).status === 401);
+    const imageOf = (u) => `/api/image?u=${encodeURIComponent(u)}`;
+    check('a picture the conversation shows is served', (await as(imageOf(shown))).status === 200);
+    check('  as is the thumbnail of a video it links', (await as(imageOf('https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg'))).status === 200);
+    check('a picture from the same host that it does not show is passed on', (await as(imageOf('https://upload.wikimedia.org/wikipedia/commons/b/b2/Elsewhere.jpg'))).status === 401);
+    check('a map tile its map draws is served', (await as(`/api/map/${z}/${tx}/${ty}`)).status === 200);
+    check('  a tile on the far side of the world is passed on', (await as(`/api/map/${z}/${(tx + n / 2) % n}/${ty}`)).status === 401);
+    check('a signed-in reader asking for another icon is passed on to their own routes', (await as('/api/favicon/evil.example', both)).status === 401);
+
+    const drawn = drawnFrom([{ role: 'assistant', text: '![x](/api/image?u=https%3A%2F%2Fshop.example%2Fa.jpg&s=sig) [doc](https://docs.example.co.uk/p)' }]);
+    check('a signed picture in the text counts as shown', drawn.pictures.has('https://shop.example/a.jpg'), [...drawn.pictures].join(' '));
+    check('  and a cited site by its registrable name', drawn.sites.has('example.co.uk') && !drawn.sites.has('docs.example.co.uk'),[...drawn.sites].join(' '));
+    check('a conversation with no map draws no tiles', !mapShows([], 0, 0, 0));
+    check('a tile beside a map\'s centre is drawn at every zoom it can show', [2, 8, 14, 18].every((zz) => {
+      const nn = 2 ** zz;
+      const ss = Math.sin((16.0544 * Math.PI) / 180);
+      return mapShows([[[16.0544, 108.2022]]], zz, Math.floor(((108.2022 + 180) / 360) * nn) + (zz > 2 ? 3 : 0), Math.floor((0.5 - Math.log((1 + ss) / (1 - ss)) / (4 * Math.PI)) * nn));
+    }));
   } finally {
     server.close();
   }
