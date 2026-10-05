@@ -2188,6 +2188,34 @@ section('a shared conversation publishes the answer, not what was read of the ac
   check('  while the earlier, own read stays published', resultOf('g-4').content === '# mine');
   check('an id used twice in one message is withheld for both', !repeatedPage.includes('SECRET-TWIN-KEY') && !repeatedPage.includes('SECRET-TWIN-NOTE'));
   check('a result naming a different tool from its call is withheld', !repeatedPage.includes('SECRET-MISNAMED'));
+
+  // PRV-010: update_file rewrites a made file by id from anywhere on the account.
+  const rewrites = [
+    { id: 'u-1', role: 'assistant', text: '', toolCalls: [{ id: 'u-made', name: 'create_file', input: { name: 'mine.md' } }] },
+    { id: 'u-2', role: 'tool', results: [{ toolCallId: 'u-made', name: 'create_file', content: 'Made mine.md', file: { id: 'att-mine-u', name: 'mine.md' } }] },
+    { id: 'u-3', role: 'assistant', text: '', toolCalls: [
+      { id: 'u-own', name: 'update_file', input: { file_id: 'att-mine-u', content: '# mine, edited' } },
+      { id: 'u-other', name: 'update_file', input: { file_id: 'att-other-chat-u', content: 'SECRET-REWRITE-TEXT' } },
+    ] },
+    { id: 'u-4', role: 'tool', results: [
+      { toolCallId: 'u-own', name: 'update_file', content: 'Updated mine.md', file: { id: 'att-mine-u', name: 'mine.md' } },
+      { toolCallId: 'u-other', name: 'update_file', content: 'Updated SECRET-OTHER-NAME', file: { id: 'att-other-chat-u', name: 'theirs.md' } },
+    ] },
+    // A read of that other file afterwards must not be let through by the rewrite.
+    { id: 'u-5', role: 'assistant', text: '', toolCalls: [{ id: 'u-read', name: 'read_generated_file', input: { file_id: 'att-other-chat-u' } }] },
+    { id: 'u-6', role: 'tool', results: [{ toolCallId: 'u-read', name: 'read_generated_file', content: 'SECRET-OTHER-SOURCE' }] },
+  ];
+  const rewritten = publicTranscript(rewrites);
+  const rewrittenPage = JSON.stringify(rewritten);
+  check('a rewrite of another conversation\'s file is withheld, text and name', !/SECRET-REWRITE-TEXT|SECRET-OTHER-NAME/.test(rewrittenPage));
+  check('  its file is not one the visitor may fetch or a fork copies', !referencedFiles(rewritten).has('att-other-chat-u'));
+  check('  and it does not make a later read of that file publishable', !rewrittenPage.includes('SECRET-OTHER-SOURCE'));
+  check('a rewrite of a file this conversation made is still published', rewritten.find((m) => m.id === 'u-4').results[0].content === 'Updated mine.md' && referencedFiles(rewritten).has('att-mine-u'));
+
+  // Every publishable tool that takes a file id is guarded, so a new one cannot slip past.
+  const { PUBLISHABLE_TOOLS, __testing: shareInternals } = await import('../server/routes/chatShare.js');
+  const byId = TOOLS.filter((t) => PUBLISHABLE_TOOLS.has(t.name) && Object.keys(t.input_schema?.properties || t.parameters?.properties || {}).includes('file_id'));
+  check('every publishable tool that takes a file_id is guarded by it', byId.length >= 3 && byId.every((t) => shareInternals.READS_A_FILE[t.name] === 'file_id'), byId.map((t) => t.name).join(', '));
 }
 
 section('a share link opens one file, and only its owner can make or take it back');

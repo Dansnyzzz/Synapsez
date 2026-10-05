@@ -62,8 +62,14 @@ export const PUBLISHABLE_TOOLS = new Set([
  * the shared conversation's own: sent in it, or made in it by a published tool
  * (PRV-007). Without an id, `read_generated_file` lists this conversation's own
  * files, and `analyze_data` reads data written into the call; both stay public.
+ *
+ * `update_file` too (PRV-010): it rewrites a made file by id from anywhere on
+ * the account, and its call carries the new text while its result names the
+ * file — which the visitor could then fetch, and a fork would copy. A rewrite
+ * of a file this conversation made is still published. Every publishable tool
+ * that takes a `file_id` must be listed here; isolation.test checks it.
  */
-const READS_A_FILE = { analyze_data: 'file_id', read_generated_file: 'file_id' };
+const READS_A_FILE = { analyze_data: 'file_id', read_generated_file: 'file_id', update_file: 'file_id' };
 
 /**
  * Which tool calls may be published, decided message by message (PRV-008).
@@ -543,4 +549,4 @@ export async function forkSharedChat(userId, token) {
   return { chatId: newChatId, own: false, messages: messages.length, files: moved.size };
 }
 
-export const __testing = { gateCache, TOKEN };
+export const __testing = { gateCache, TOKEN, READS_A_FILE };
