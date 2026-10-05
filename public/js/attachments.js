@@ -19,6 +19,7 @@ import { humanSize } from './format.js';
 import { prepareUpload, shrinkable, MAX_SHRINKABLE_BYTES } from './shrink.js';
 import { thumbnailFor } from './thumbnail.js';
 import { openSketch } from './sketch.js';
+import { newestOnly } from './serial.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -155,8 +156,18 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     await upload(entry, new File([blob], name, { type: 'image/png' }));
   }
 
+  /**
+   * Per staged entry, which of its uploads is the newest. A picture edited while
+   * its original is still on the way is two uploads, and whichever finished
+   * last used to set the id: the tray showed the edit while the message could
+   * carry the original (CODE-037). Only the newest may land now.
+   */
+  const uploads = new WeakMap();
+
   /** Upload one staged file, shrinking it first where that is honest. */
   async function upload(entry, file) {
+    if (!uploads.has(entry)) uploads.set(entry, newestOnly());
+    const current = uploads.get(entry)();
     renderStaged();
     refreshSendState();
     try {
@@ -175,11 +186,13 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
         prepareUpload(file),
         entry.isImage || entry.isPdf ? thumbnailFor(file).catch(() => ({ thumb: null })) : { thumb: null },
       ]);
+      if (!current()) return;
       if (drawn.thumb && entry.isPdf && staged.includes(entry)) {
         entry.thumb = drawn.thumb;
         renderStaged();
       }
       const { attachment } = await api.uploadAttachment({ ...ready, thumb: drawn.thumb || undefined });
+      if (!current()) return;
       entry.id = attachment.id;
       entry.name = ready.name;
       // Said out loud rather than done quietly: what was sent is not quite
@@ -187,6 +200,7 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       // needs to know it went as text.
       if (ready.note) entry.note = describeShrink(ready.note);
     } catch (err) {
+      if (!current()) return;
       entry.failed = err.message;
     }
     renderStaged();

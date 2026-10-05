@@ -415,6 +415,32 @@ section('one schedule save at a time, and the last word wins (CODE-036, UX-005)'
   check('  and the Repeat menu waits for the choice to settle, then gives focus back', /setTimeout\(async \(\) => \{[\s\S]{0,400}FREQUENCY_SETTLE_MS/.test(pages) && /\[data-s="frequency"\]'\)\)\?\.focus\(\)/.test(pages));
 }
 
+section('a picture edited mid-upload sends the edit, not the original (CODE-037)');
+{
+  const { newestOnly } = await import('../public/js/serial.js');
+  // The staged entry's upload, as attachments.js runs it: the original is slow,
+  // the edit made while it is on the way is quick.
+  const entry = { id: null };
+  const start = newestOnly();
+  const upload = async (id, ms) => {
+    const current = start();
+    await new Promise((r) => setTimeout(r, ms));
+    if (!current()) return;
+    entry.id = id;
+  };
+  const original = upload('original', 40);
+  await new Promise((r) => setTimeout(r, 5));
+  await Promise.all([original, upload('edited', 10)]);
+  check('the original finishing last does not replace the edit', entry.id === 'edited', entry.id);
+  const once = newestOnly()();
+  check('  and a single upload still lands', once() === true);
+
+  const source = fs.readFileSync(new URL('../public/js/attachments.js', import.meta.url), 'utf8');
+  const body = source.slice(source.indexOf('async function upload('), source.indexOf('async function stageFiles('));
+  check('the upload checks it is still the newest before every write to the entry',
+    (body.match(/if \(!current\(\)\) return;/g) || []).length === 3 && body.indexOf('if (!current()) return;') < body.indexOf('entry.thumb =') && /if \(!current\(\)\) return;\s*entry\.failed/.test(body));
+}
+
 section('every schedule field shows where focus is (ACC-009)');
 {
   const css = fs.readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');

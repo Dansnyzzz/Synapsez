@@ -39,3 +39,22 @@ export function latestWins(run) {
     return inFlight;
   };
 }
+
+/**
+ * Only the newest of overlapping runs may act on what it got back.
+ *
+ * `start()` returns a check that stays true until `start()` is called again.
+ * Unlike `latestWins`, nothing waits: a picture edited while its original is
+ * still uploading starts its own upload at once, and the original's answer,
+ * whenever it arrives, is dropped rather than put in place of the edit
+ * (CODE-037).
+ *
+ * @returns {() => () => boolean}
+ */
+export function newestOnly() {
+  let latest = 0;
+  return () => {
+    const mine = ++latest;
+    return () => mine === latest;
+  };
+}
