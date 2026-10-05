@@ -54,3 +54,5 @@
 
 - Ledger v3 nối tiếp ID cũ: SEC-033+, CODE-031+, PERF-014+, AUTO-010+, ARCH-010+, UX-005+, GAP-012+, EXP-005+, ACC-008+, CFG-024+; tiền tố mới PRV-001+, TOK-001+, HAR-001+, LAW-001+.
 - Vercel insights chỉ nạp khi server báo đang chạy trên Vercel (`/api/session` → `insights`), chỉ trên app chính (`index.html`), không trên `share.html`/`launcher.html`; `beforeSend` cắt query + hash; bỏ qua khi GPC/DNT bật.
+
+- Ghi chú lịch sử commit SEC-039: code nằm trong `7ba763b` (tiêu đề sai: 'ledger SEC-039 fixed in 928d162'); `d266ed1` mang đúng message mô tả SEC-039 nhưng chỉ chứa dòng ledger trỏ về `7ba763b`. Nguyên nhân: lệnh commit lỗi vì dấu ngoặc kép PowerShell. Từ đây mọi ID dùng `scratchpad/fix.ps1` (dừng nếu commit code lỗi).
