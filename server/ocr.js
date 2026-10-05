@@ -32,8 +32,78 @@ const BUNDLED = path.join(HERE, 'assets', 'tessdata');
  */
 const TARGET_WIDTH = 1800;
 const MAX_SCALE = 3;
-/** Past this a picture is read as it is; scaling a poster up helps nothing. */
+/**
+ * The most pixels the canvas Tesseract reads may have — scaled down to this
+ * when bigger, never scaled up past it. It used to be a test on the *input*
+ * only: a narrow strip just under it was still scaled 3× (600×40,000 became
+ * 216 MP, ~864 MB of RGBA), and anything over it was drawn at full size, however
+ * large (PERF-018).
+ */
 const MAX_PIXELS = 24_000_000;
+/**
+ * Past this a picture is not read at all: decoding it costs four bytes a pixel
+ * before anything can be scaled, on a function with two gigabytes. Measured from
+ * the file's own header, so the refusal costs nothing.
+ */
+const MAX_INPUT_PIXELS = 50_000_000;
+
+/**
+ * Width and height from a PNG, GIF, JPEG or WebP header, or null for anything
+ * else (which is then left to the decoder). Only the header is read.
+ *
+ * @param {Buffer} bytes
+ * @returns {{ width: number, height: number } | null}
+ */
+export function imageSize(bytes) {
+  const b = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+  if (b.length >= 24 && b.readUInt32BE(0) === 0x89504e47 && b.readUInt32BE(4) === 0x0d0a1a0a) {
+    return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+  }
+  if (b.length >= 10 && b.toString('latin1', 0, 4) === 'GIF8') {
+    return { width: b.readUInt16LE(6), height: b.readUInt16LE(8) };
+  }
+  if (b.length >= 30 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') {
+    const chunk = b.toString('latin1', 12, 16);
+    if (chunk === 'VP8X') return { width: 1 + b.readUIntLE(24, 3), height: 1 + b.readUIntLE(27, 3) };
+    if (chunk === 'VP8 ') return { width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff };
+    if (chunk === 'VP8L') {
+      const bits = b.readUInt32LE(21);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+    }
+    return null;
+  }
+  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) {
+        i += 1;
+        continue;
+      }
+      const marker = b[i + 1];
+      // Start of frame — every SOF except DHT (C4), JPG (C8) and DAC (CC).
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { width: b.readUInt16BE(i + 7), height: b.readUInt16BE(i + 5) };
+      }
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0xff) {
+        i += marker === 0xff ? 1 : 2;
+        continue;
+      }
+      i += 2 + b.readUInt16BE(i + 2);
+    }
+  }
+  return null;
+}
+
+/**
+ * How much to scale a picture before reading it: up to 3× to reach a readable
+ * width, and never so far that the canvas passes MAX_PIXELS — below 1 when the
+ * picture is already bigger than that.
+ */
+export function ocrScale(width, height) {
+  const up = Math.min(MAX_SCALE, Math.max(1, TARGET_WIDTH / Math.max(1, width)));
+  const cap = Math.sqrt(MAX_PIXELS / Math.max(1, width * height));
+  return Math.min(up, cap);
+}
 
 /** @type {Promise<any> | null} */
 let starting = null;
@@ -74,10 +144,9 @@ export async function prepareForOcr(bytes) {
     return { bytes, scale: 1 };
   }
   const image = await canvasApi.loadImage(bytes);
-  const scale =
-    image.width * image.height > MAX_PIXELS ? 1 : Math.min(MAX_SCALE, Math.max(1, TARGET_WIDTH / Math.max(1, image.width)));
-  const width = Math.round(image.width * scale);
-  const height = Math.round(image.height * scale);
+  const scale = ocrScale(image.width, image.height);
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
   const canvas = canvasApi.createCanvas(width, height);
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#ffffff';
@@ -95,6 +164,11 @@ export async function prepareForOcr(bytes) {
  */
 export async function ocrImage(image) {
   const raw = Buffer.isBuffer(image) ? image : Buffer.from(String(image || ''), 'base64');
+  // Before either decoder sees it: the canvas and, failing that, Tesseract's own.
+  const size = imageSize(raw);
+  if (size && size.width * size.height > MAX_INPUT_PIXELS) {
+    throw new Error('That picture is too large to read for text. Crop it to the part that matters, or send a smaller copy.');
+  }
   const prepared = await prepareForOcr(raw).catch(() => ({ bytes: raw, scale: 1 }));
   const w = await worker();
   const { data } = await w.recognize(prepared.bytes);
@@ -115,4 +189,4 @@ export async function stopOcr() {
   await w?.terminate?.().catch(() => {});
 }
 
-export const __testing = { BUNDLED, LANGS, TARGET_WIDTH };
+export const __testing = { BUNDLED, LANGS, TARGET_WIDTH, MAX_PIXELS, MAX_INPUT_PIXELS };

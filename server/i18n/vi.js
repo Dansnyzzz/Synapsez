@@ -871,6 +871,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Chỉ những gì trợ lý tạo ra mới chia sẻ được bằng link. Tệp tải lên luôn được giữ riêng tư.',
   'Give the `file_id` of a file you made — create_file returns it.': 'Hãy đưa `file_id` của tệp đã tạo — create_file trả về giá trị này.',
   'There is no file {0} made in this account.': 'Không có tệp {0} nào được tạo trong tài khoản này.',
+  'That picture is too large to read for text. Crop it to the part that matters, or send a smaller copy.':
+    'Ảnh này quá lớn để đọc chữ. Hãy cắt lấy phần cần đọc, hoặc gửi bản nhỏ hơn.',
   'That pattern took too long on this text: it backtracks without end (nested repeats such as (a+)+). Simplify it.':
     'Mẫu này chạy quá lâu trên đoạn văn bản: nó quay lui không dứt (lặp lồng nhau kiểu (a+)+). Hãy đơn giản hoá mẫu.',
   'This command on the cloud computer looks like it sends data out or destroys something.':

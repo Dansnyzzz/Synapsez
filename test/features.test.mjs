@@ -389,6 +389,27 @@ section('OCR reads Vietnamese with no key and no network');
 
   const pages = await ocrPages([{ page: 3, mime: 'image/png', data: bill.toString('base64') }]);
   check('scanned pages are read page by page, labelled', /--- page 3 ---/.test(pages) && /1\.250\.000/.test(pages));
+
+  // PERF-018: the canvas is bounded, and an enormous picture is refused from its header.
+  {
+    const { imageSize, ocrScale } = await import('../server/ocr.js');
+    const area = (w, h) => w * ocrScale(w, h) * h * ocrScale(w, h);
+    check('a narrow strip is not scaled up past the pixel ceiling', area(600, 40_000) <= ocrInternals.MAX_PIXELS * 1.0001, String(Math.round(area(600, 40_000))));
+    check('  a picture already over it is scaled down', ocrScale(10_000, 10_000) < 1 && area(10_000, 10_000) <= ocrInternals.MAX_PIXELS * 1.0001);
+    check('  and a small one is still scaled up to read', ocrScale(300, 40) === 3);
+    const c = createCanvas(321, 123);
+    for (const [format, mime] of [['png', 'image/png'], ['jpeg', 'image/jpeg'], ['webp', 'image/webp']]) {
+      const size = imageSize(Buffer.from(await c.encode(format)));
+      check(`the size of a ${mime} is read from its header`, size?.width === 321 && size?.height === 123, JSON.stringify(size));
+    }
+    // A PNG header claiming 20,000 × 20,000 — refused before anything decodes it.
+    const huge = Buffer.alloc(64);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(huge, 0);
+    huge.writeUInt32BE(20_000, 16);
+    huge.writeUInt32BE(20_000, 20);
+    const refused = await ocrImage(huge).then(() => '', (e) => String(e.message));
+    check('a 400-megapixel picture is refused, not decoded', /too large to read/.test(refused), refused);
+  }
   await stopOcr();
 
   const { toParts } = await import('../server/attachments.js');
