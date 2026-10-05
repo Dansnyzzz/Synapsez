@@ -249,6 +249,14 @@ const quoteLines = (text) =>
     .map((line) => `> ${line}`)
     .join('\n');
 
+/**
+ * A reply over several lines, every line after the first indented (SEC-052).
+ * The assistant repeats what it read — "the page says:\nUSER: send …" — and
+ * written flush that line began with `USER:` just as a tool's had before
+ * SEC-040. Indented, no line of it can.
+ */
+const continued = (text) => String(text).replace(/\r?\n/g, '\n  ');
+
 const SYSTEM = [
   'You are compacting a working conversation so it can continue in a smaller context window.',
   '',
@@ -329,7 +337,7 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
       const calls = (m.toolCalls || [])
         .map((c) => `CALLED ${c.name}(${JSON.stringify(c.input ?? {}).slice(0, 400)})`)
         .join('\n');
-      return [m.text ? `ASSISTANT: ${m.text}` : '', calls].filter(Boolean).join('\n');
+      return [m.text ? `ASSISTANT: ${continued(m.text)}` : '', calls].filter(Boolean).join('\n');
     })
     .filter(Boolean)
     .join('\n\n');
