@@ -332,20 +332,19 @@ export function mountPublicChatShare(app, { wrap }) {
   );
 
   /**
-   * Files, pictures, icons and map tiles, for a visitor with no session.
+   * Files, pictures, icons and map tiles, for anyone reading the link who is not
+   * its owner — signed in or not.
    *
-   * The owner goes straight on to the ordinary routes. A visitor is served
-   * only what the shared conversation refers to: an attachment must be the
-   * owner's and named in the transcript; an icon must be for a site it names, a
-   * picture one it shows, a map tile one of its maps draws (`drawnFrom`).
-   * Anything else is passed on, so a signed-in reader still gets their own.
-   */
-  /*
-   * Signed in or not, a reader of the link sees its files (CODE-031). This used
-   * to step aside for any session, so somebody signed in to their own account
-   * reached the ordinary routes, which look files up under *their* id — and every
-   * picture and file card on the shared page was a broken tile. Only the owner
-   * is sent on: their own routes already serve them everything.
+   * The owner goes straight on to the ordinary routes, which already serve them
+   * everything. Anybody else is served only what the shared conversation refers
+   * to: an attachment must be the owner's and named in the transcript; an icon
+   * must be for a site it names, a picture one it shows, a map tile one of its
+   * maps draws (`drawnFrom`). Anything else is passed on, so a signed-in reader
+   * still gets their own.
+   *
+   * Signed-in readers used to be stepped aside for too (CODE-031): the ordinary
+   * routes look files up under *their* id, so every picture and file card on the
+   * shared page was a broken tile.
    */
   const visitorScope = async (req) => {
     const token = parseCookies(req.headers.cookie)[SHARE_COOKIE];
