@@ -11,6 +11,9 @@ import { humanSize, counted, cronParts } from './format.js';
 import { WEEK, LIMITS } from './schedule-grammar.js';
 import { latestWins } from './serial.js';
 
+/** How long the Repeat menu must sit on a choice before it is saved (UX-005). */
+const FREQUENCY_SETTLE_MS = 700;
+
 /**
  * The shelves: Projects, Artifacts, Scheduled.
  *
@@ -1487,7 +1490,14 @@ export function createPages({
 
     // A new frequency brings different controls, so the panel is drawn again
     // once the row has its new schedule — or stays as it was if that was refused.
-    q('frequency').addEventListener('change', async () => {
+    //
+    // Saved once the choice settles, not on every `change` (UX-005): arrow keys
+    // on a closed select fire one per option in Chrome on Windows and Firefox,
+    // so passing "every 30 minutes" on the way to "daily" saved a schedule that
+    // runs — and spends — every half hour, and the redraw that followed dropped
+    // keyboard focus to the page. Focus is put back on the select afterwards.
+    let settling = null;
+    q('frequency').addEventListener('change', () => {
       // "Weekly" chosen over weekdays or every day would carry all five or
       // seven days with it, save as that again, and the menu would jump back.
       // It starts from one day instead.
@@ -1497,7 +1507,14 @@ export function createPages({
         days.forEach((b, i) => b.setAttribute('aria-pressed', String(i === 0)));
       }
       layout();
-      if (await saveSchedule()) await showScheduleInPane(kind, row.id, { after: paneAfter });
+      clearTimeout(settling);
+      settling = setTimeout(async () => {
+        const hadFocus = document.activeElement === q('frequency');
+        if (await saveSchedule()) {
+          await showScheduleInPane(kind, row.id, { after: paneAfter });
+          if (hadFocus) /** @type {HTMLElement|null} */ (document.querySelector('[data-s="frequency"]'))?.focus();
+        }
+      }, FREQUENCY_SETTLE_MS);
     });
     for (const name of ['everyMinutes', 'everyHours', 'everyDays', 'minute', 'date', 'onceTime', 'start', 'tz']) {
       q(name)?.addEventListener('change', saveSchedule);

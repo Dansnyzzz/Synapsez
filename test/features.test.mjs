@@ -288,6 +288,7 @@ section('one schedule save at a time, and the last word wins (CODE-036, UX-005)'
   check('  and every caller hears the final result', answers.every((a) => a === '17:30'), answers.join(','));
   const pages = fs.readFileSync(new URL('../public/js/pages.js', import.meta.url), 'utf8');
   check('the schedule pane saves through it', /const saveSchedule = latestWins\(/.test(pages));
+  check('  and the Repeat menu waits for the choice to settle, then gives focus back', /setTimeout\(async \(\) => \{[\s\S]{0,400}FREQUENCY_SETTLE_MS/.test(pages) && /\[data-s="frequency"\]'\)\)\?\.focus\(\)/.test(pages));
 }
 
 section('Escape in a sketch label drops the label, not the sketch (UX-006)');
