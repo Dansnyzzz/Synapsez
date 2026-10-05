@@ -271,7 +271,14 @@ export function mountAccountRoutes(api, admin, { wrap }) {
             by: note?.by || null,
             chatId: note?.chatId || null,
             ...(typeof note?.previous?.content === 'string'
-              ? { previous: { content: note.previous.content, updatedAt: note.previous.updatedAt || null, by: note.previous.by || null } }
+              ? {
+                  previous: {
+                    content: note.previous.content,
+                    updatedAt: note.previous.updatedAt || null,
+                    by: note.previous.by || null,
+                    chatId: note.previous.chatId || null,
+                  },
+                }
               : {}),
           });
         }

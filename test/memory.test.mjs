@@ -230,6 +230,13 @@ section('memory tools obey the guard and the account');
     await run('memory_edit', { key: 'language', old_string: 'Vietnamese.', new_string: 'Vietnamese. I have diabetes.' });
     const exported = (await alice.call('GET', '/api/account/export')).body?.memory?.find((n) => n.key === 'language');
     check('the export carries the earlier version an assistant change kept', exported?.previous?.content === 'Answer in Vietnamese.' && exported?.by === 'assistant', JSON.stringify(exported));
+    // PRV-009: everything stored about that earlier version, its conversation included.
+    await store.mergeUserSetting(aliceId, 'memory', {
+      tone: memory.stampNote('Be brief.', { by: 'assistant', chatId: 'c-later', before: { content: 'Be thorough.', updatedAt: '2026-10-01T00:00:00.000Z', by: 'assistant', chatId: 'c-earlier' } }),
+    });
+    const toneOut = (await alice.call('GET', '/api/account/export')).body?.memory?.find((n) => n.key === 'tone');
+    check('  with every field kept about it, the conversation it came from included', toneOut?.chatId === 'c-later' && toneOut?.previous?.chatId === 'c-earlier' && toneOut?.previous?.by === 'assistant', JSON.stringify(toneOut?.previous));
+    await store.removeUserSettingKey(aliceId, 'memory', 'tone');
     // …but the person's own edit keeps nothing of what they took out, and clears that.
     await alice.call('PUT', '/api/memory/account/language', { content: 'Answer in Vietnamese, briefly.' });
     const typed = (await store.getUserSetting(aliceId, 'memory')).language;
