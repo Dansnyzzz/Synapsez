@@ -22,14 +22,14 @@ them touch `audit/` only). Every row is a command that was run and an output tha
 
 | Thing | Before | After | How measured |
 |---|---|---|---|
-| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the evaluator's follow-ups **exit 0, 224 s** on `12ee0b8` | `npm run gate`, logs `scratchpad/gate-final.log`, `gate-final2.log` |
+| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f` | `npm run gate`, logs `scratchpad/gate-final{,2,3}.log` |
 | lint | exit 0 | **exit 0** | gate step 1 |
 | `test:hooks` | 168/168 | **168/168** | gate step 2 |
 | eval (scripted) | 13/13, `PROMPT_STAMP ecd004bc42ae` | **13/13, same stamp** — the main system prompt did not change | gate step 3; server log `promptVersion=ecd004bc42ae` |
 | typecheck ratchet | 315 outstanding, ceiling 315 | **315, ceiling 315** — `.typecheck-baseline.json` did not grow | gate step 4 |
-| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
+| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
 | Suites in `npm test` | 47 | **48** (+`egress.test`) | `scripts.test` |
-| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050) (real Edge) | `node test/ui.test.mjs` |
+| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008; the commits after it touch no page) (real Edge) | `node test/ui.test.mjs` |
 | `npm run test:sandbox` | — | **exit 0, 31 ✓** | not in the gate |
 | Coverage (c8, `all:true`) | statements 64.09 · branches 75.42 · functions 67.03 · lines 64.09 | **64.87 · 75.95 · 68.45 · 64.87** — up on all four; functions was 0.03 above its threshold and is now 1.45 above | `npm run coverage`, exit 0, 221 s |
 
@@ -43,7 +43,7 @@ them touch `audit/` only). Every row is a command that was run and an output tha
 | New files over 300 KB | none (the one over is `test/ui.test.mjs`, which already was) |
 | Secret shapes in every added line of the 129 commits | **0** (Anthropic, OpenRouter, OpenAI, OrcaRouter, Google, GitHub, Slack, AWS, PEM, Postgres URL with password) |
 | Outbound calls with a timeout (`server/`, `api/`) | **45/45**, unchanged; the one the scan flags, `server/email.js:146`, has its signal at `:161` |
-| `console.log/info/debug` in server+api+worker | 64 → **63** |
+| `console.log/info/debug` in server+api+worker | **unchanged**: 63 on both the tag and the branch by one method (`git grep -c -E "console\.(log\|info\|debug)\("`), and the diff adds or removes no such line. (A first version of this row said 64 → 63, comparing the baseline's count by another method with this one; corrected after the second evaluator pass.) |
 | Analytics / APM in code | 0 → **Vercel Web Analytics + Speed Insights** in `public/js/insights.js` (GAP-012, asked for). `@sentry` appears only as a name in the MCP catalogue, as before |
 | TODO/FIXME/XXX/HACK in tracked source | **0** |
 
@@ -76,17 +76,27 @@ one on a test is not this audit's to do. `insights=null` is correct off Vercel.
 `node test/egress.test.mjs`, all pass:
 
 ```
+the watch on the network sees more than fetch (HAR-006)
+  ✓ a request through node:https is caught, not only fetch — socket egress-probe.example:443
+  ✓ and so is a name lookup on its own — dns egress-probe-2.example
 a turn with personal data reaches the provider and nothing else
   ✓ the provider receives the message as written (no de-identifying layer yet — PRV-003)
-  ✓ no other request leaves the process during the turn
+  ✓ no other request, connection or name lookup leaves the process during the turn
   ✓ nothing the process printed carries the personal data
   ✓ nothing in the security record carries it
 strict privacy reaches the wire, standard does not
   ✓ a strict account is sent with OpenRouter's no-storage routing
   ✓ a standard account is not
+  ✓ the strict request's body asks OpenRouter to keep nothing — {"data_collection":"deny","zdr":true}
+  ✓ and the standard one carries no such routing
 one account is never answered from another account's results
   ✓ each account read its own / and neither saw the other's
 ```
+
+The first version of this test watched `fetch` only, while `safeFetch` (web tools, icons, pictures) goes
+through `node:http`/`https`; and "strict reaches the wire" read only the dispatcher's argument. Both were
+widened after the second evaluator pass (HAR-006): every socket connection and name lookup is watched, a probe
+proves the watch catches them, and the strict case reads the body the real adapter sends.
 
 It proves where personal data goes and that no log keeps it. It does **not** prove de-identification, because
 there is none yet (PRV-003, CHỜ-CHỦ). The H1–H20 harness checks live in `agent`, `fallback`, `workflow`,
@@ -129,12 +139,12 @@ first version of this table overstated the sub-agent row as ≈ +280 tokens and 
 
 | Total | FIXED | CHỜ-CHỦ (in repo) | CHỜ-CHỦ (outside repo) | DEFERRED | BLOCKED | OPEN | IN-PROGRESS |
 |---|---|---|---|---|---|---|---|
-| 78 | 64 | 12 | 2 | 0 | 0 | **0** | **0** |
+| 86 | 70 | 14 | 2 | 0 | 0 | **0** | **0** |
 
-(74 rows from Phases 1–2, plus the four the evaluator's first pass raised — below.)
+(74 rows from Phases 1–2, four raised by the evaluator's first pass and eight by its second — below.)
 
-No CRITICAL or HIGH is open. The 14 not fixed are 6 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
-LAW-001) and 8 LOW, every one CHỜ-CHỦ with the reason and the options in its row.
+No CRITICAL or HIGH is open. The 16 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
+CFG-032, LAW-001) and 9 LOW, every one CHỜ-CHỦ with the reason and the options in its row.
 
 ## The fresh-context evaluator
 
@@ -152,7 +162,23 @@ new IDs, each with a test that fails on the code before it:
 | `.claude/settings.json` was edited by the agent (CFG-026: deny reading `.env.*`) | kept — it only narrows what the agent may read — and named in the hand-over for the owner, who may restore `.env.example` (CFG-024) and would then want to allow that one name |
 | The hosted `script.js` Vercel serves was not checked | outside the repository; the app passes it only the trimmed address, and nothing else the page holds |
 
-**Second pass:** recorded below once run.
+**Second pass (a new reviewer, no memory of the first): `NEEDS_WORK`.** It re-checked the four new rows and
+a different sample (SEC-036/037/041/042/044/046, CODE-031, HAR-003, CFG-026, PERF-016/017, GAP-012), which
+held, and found one blocking flaw and seven smaller ones. All acted on:
+
+| Finding | Disposition |
+|---|---|
+| PRV-007 decided publication by tool-call id, and ids repeat in a transcript (the adapters invent `gcall_0_<tool>` / `call_<tool>` when a provider sends none); the result side had dropped the tool-name check | **PRV-008** `383ff2d`: decided per message, a result judged only against the call just before it, twin ids withheld, the name checked; three checks fail on the PRV-007 code |
+| The egress test watched `fetch` only, and "strict reaches the wire" read only the dispatcher's argument | **HAR-006** `3ccd8e7`: sockets and name lookups watched, a probe proves it; the real adapter's body checked |
+| GAP_ANALYSIS scored "secrets outside the repo" as passing, though only the Read tool is denied | re-scored MỘT PHẦN; the shell side needs a hook → **CFG-032**, CHỜ-CHỦ |
+| This file's logging-call row said 64 → 63 | corrected: unchanged, measured one way on both sides |
+| A test cut `boot()` at a function SEC-050 removed, and so checked the whole file | **CODE-050** `2e7c612` |
+| SEC-050 never cleared a bare link's key when the button was used later in the tab | **UX-008** `9b80bd5`, proven in real Edge |
+| The Vercel insight packages sat in `dependencies` | **CFG-030** `bc5c01d`, lockfile +4/−2 |
+| PRV-006's export left out the earlier version's conversation id | **PRV-009** `b699b4a` |
+| CODE-046 was FIXED with one site left for the owner | split out as **CFG-031**, CHỜ-CHỦ |
+
+**Third pass:** recorded below once run.
 
 ## Not measured, and why
 

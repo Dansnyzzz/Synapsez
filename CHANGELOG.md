@@ -2,8 +2,8 @@
 
 ## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
 
-An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 78 findings, 64 fixed with a test
-that fails without the fix, 14 left for the owner with the reason written down. Nothing here needs a new paid
+An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 86 findings, 70 fixed with a test
+that fails without the fix, 16 left for the owner with the reason written down. Nothing here needs a new paid
 service; everything stays on the free tiers.
 
 ### Security and privacy
@@ -12,7 +12,8 @@ service; everything stays on the free tiers.
   an inbox or a Drive the assistant read on the way to its answer. Only tools that read the open web or made the
   conversation's own work are published now; the rest are named, with their content left out, and a fork of the
   link gets the same (PRV-001). A read of a file by id — a spreadsheet's rows, a generated file's source — is
-  published only when that file was sent or made in the shared conversation (PRV-007).
+  published only when that file was sent or made in the shared conversation, judged against the call in its own
+  turn rather than by an id two turns can share (PRV-007, PRV-008).
 - **Editing a note yourself left the text you removed in the database.** Only a change the assistant made keeps
   what it replaced, for one undo; your own edit keeps nothing and clears it, the export includes it, and
   Settings says so (PRV-006).
@@ -80,8 +81,9 @@ service; everything stays on the free tiers.
 
 PRV-003 (de-identifying before sending), HAR-001 (the sandbox's open network), HAR-004 and HAR-005, CODE-032,
 CODE-034 (two platform-only test skips), CFG-024, CFG-025, CFG-028 (a Windows CI job costs Actions minutes),
-PERF-022, SEC-047 (`ACCESS_TOKEN` as a fallback for both secrets), SEC-049 (nodemailer needs a major upgrade);
-outside the repository: EXP-005, LAW-001. Each row in the ledger says why and what the choices are.
+PERF-022, SEC-047 (`ACCESS_TOKEN` as a fallback for both secrets), SEC-049 (nodemailer needs a major upgrade),
+CFG-031 (a stale count in a hook's comment) and CFG-032 (blocking a shell read of `.env` files needs a hook
+change); outside the repository: EXP-005, LAW-001. Each row in the ledger says why and what the choices are.
 
 ## 2026-10-04 (late) — memory that is read, privacy you control, research that reads
 

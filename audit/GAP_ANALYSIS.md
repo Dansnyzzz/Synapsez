@@ -327,7 +327,7 @@ Mỗi dòng trỏ về ID ledger đã FIXED (commit trong ledger) hoặc lý do 
 | E LLM02 lộ thông tin nhạy cảm | CHƯA ĐẠT | **ĐẠT** | PRV-001 (link chia sẻ chỉ công bố tool công khai), SEC-034 (favicon chỉ tên đăng ký), SEC-038 (proxy cho khách chỉ vẽ trang đó), SEC-041, SEC-046 |
 | E LLM06/ASI02 quyền tool | MỘT PHẦN | MỘT PHẦN | SEC-036 FIXED (sandbox chạm hồ sơ trình duyệt → hỏi); còn HAR-001 (mạng sandbox mở) CHỜ-CHỦ |
 | E ASI06 memory poisoning | MỘT PHẦN | **ĐẠT** | HAR-002: mỗi ghi chú mang `by`/`chatId`, một bước hoàn tác, giao diện cho xem nguồn |
-| E Secret ngoài repo agent đọc được | CHƯA ĐẠT | **ĐẠT** | CFG-026 (deny `Read(./.env.*)`, `Read(./worker/.env.*)`) |
+| E Secret ngoài repo agent đọc được | CHƯA ĐẠT | MỘT PHẦN | CFG-026 chặn công cụ Read (`Read(./.env.*)`, `Read(./worker/.env.*)`); đọc qua shell chưa bị `guard-bash.js` chặn → CFG-032 (CHỜ-CHỦ, cần sửa hook). Chấm lại sau evaluator lần 2 (lần đầu ghi ĐẠT là quá tay) |
 | E Secret at rest | MỘT PHẦN | **ĐẠT** | SEC-037 (khoá cloud browser niêm phong bằng `encryptSecret`) — nội dung chat vẫn không mã hoá tầng ứng dụng, chấm ở P4 |
 | P0 không thu thập thừa | ĐẠT (trước GAP-012) | **ĐẠT** (sau GAP-012) | analytics chỉ gửi origin + path, không cookie, tắt khi GPC/DNT, không nạp ngoài Vercel; `features.test` khẳng định token trong query/hash không đi ra |
 | P3 không hạ cấp | CHƯA ĐẠT | MỘT PHẦN | PRV-002 (lỗi đọc cài đặt → strict), PRV-005 (vision dưới strict chỉ OpenRouter/OCR); vẫn không có route self-host/TEE |

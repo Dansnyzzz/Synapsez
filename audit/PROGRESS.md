@@ -5,7 +5,7 @@
 
 ## Trạng thái
 
-- **Phase hiện tại:** 3 (kiểm chứng), lần 2 — evaluator lần 1 trả `NEEDS_WORK` (2 chặn + 5 không chặn) → quay lại Phase 2 với ID mới PRV-006 `3a773b5`, PRV-007 `4fb2530`, SEC-050 `0588530`, CODE-049 `80588d7`; sửa bảng token trong RESULT.md. Ledger v3 = 78 dòng = 64 FIXED + 12 CHỜ-CHỦ/TRONG-REPO + 2 CHỜ-CHỦ/NGOÀI-REPO, 0 OPEN. Kế tiếp: gate lại → evaluator ngữ cảnh mới lần 2 → Phase 4.
+- **Phase hiện tại:** 3 (kiểm chứng), lần 2 — evaluator lần 1 trả `NEEDS_WORK` (2 chặn + 5 không chặn) → quay lại Phase 2 với ID mới PRV-006 `3a773b5`, PRV-007 `4fb2530`, SEC-050 `0588530`, CODE-049 `80588d7`; sửa bảng token trong RESULT.md. Evaluator lần 2 (agent mới) cũng `NEEDS_WORK` (1 chặn + 7) → PRV-008 `383ff2d` (chặn: quyết định công bố theo id trùng), HAR-006 `3ccd8e7`, CODE-050 `2e7c612`, UX-008 `9b80bd5`, CFG-030 `bc5c01d`, PRV-009 `b699b4a`; CFG-031, CFG-032 → CHỜ-CHỦ; sửa GAP (secret ngoài repo → MỘT PHẦN) và RESULT (dòng console.log). Ledger v3 = 86 dòng = 70 FIXED + 14 CHỜ-CHỦ/TRONG-REPO + 2 NGOÀI-REPO, 0 OPEN. Kế tiếp: gate lần 3 → evaluator ngữ cảnh mới lần 3 → Phase 4.
 - **Nhánh:** `optimize/2026-10-05` (tách từ `main` @ `58b1ab4`).
 - **Yêu cầu thêm của chủ project (lượt 2026-10-04):** "web tôi xài full free như vercel free" +
   `npm i @vercel/analytics`, `npm i @vercel/speed-insights` → làm trong Phase 2 dưới ID riêng.
