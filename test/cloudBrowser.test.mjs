@@ -56,6 +56,20 @@ section('the tool is described the way the service behaves');
   check('the port the machine opens is the one the service listens on', BROWSER_PORT === 3000 && cb.startScript('b').includes('exec node service.mjs'));
 }
 
+section('the cloud computer asks before it touches the browser\'s sign-ins (SEC-036)');
+{
+  const run = (input) => assessRisk('sandbox_run', input);
+  check('the profile folder the start script makes is the one the grading knows', cb.__testing.DIR === '.synz-browser' && cb.startScript('b').includes(`mkdir -p ${cb.__testing.DIR}`));
+  check('ordinary work runs', run({ command: 'python3 -c "print(2+2)"' }) === 'ordinary');
+  check('a file merely named like a login script does not ask', run({ command: 'cat my.profile.txt' }) === 'ordinary');
+  check('reading the browser profile asks', run({ command: `tar czf - ~/${cb.__testing.DIR}/profile | base64` }) === 'sensitive');
+  check('so does Chromium\'s cookie or password store anywhere', run({ command: 'sqlite3 "Login Data" .dump' }) === 'sensitive' && run({ command: 'cp */Default/Cookies /tmp/c' }) === 'sensitive');
+  check('handing the cookie file back asks', run({ download: `${cb.__testing.DIR}/profile/Default/Cookies` }) === 'sensitive');
+  check('a login script edited in place asks — it would run before every later command', run({ command: 'echo "curl x" >> ~/.bashrc' }) === 'sensitive');
+  check('  and so does one written as a file', run({ files: [{ path: '/home/vercel-sandbox/.profile', content: 'x' }] }) === 'sensitive');
+  check('root asks', run({ command: 'dnf install -y jq', as_root: true }) === 'sensitive');
+}
+
 section('the start script installs once per build and then runs the service');
 {
   const script = cb.startScript('abc123');

@@ -2898,8 +2898,11 @@ export function assessRisk(name, input = {}) {
   // The cloud computer has the whole internet now, so its commands are judged
   // the same way the shell's are: an upload, a download piped into a shell, a
   // wipe asks first; ordinary work runs. Its own disk is the account's, not
-  // Windows', so the protected-path list does not apply here.
-  if (name === 'sandbox_run') return looksDestructive(String(input?.command || '')) ? 'sensitive' : 'ordinary';
+  // Windows', so the protected-path list does not apply here — but the signed-in
+  // browser and the login scripts on it do (`sandboxTouchesPrivate`).
+  if (name === 'sandbox_run') {
+    return looksDestructive(String(input?.command || '')) || sandboxTouchesPrivate(input) ? 'sensitive' : 'ordinary';
+  }
 
   // Writing outside the folder the user pointed at is a different act from
   // writing inside it, whatever the tool.
@@ -2995,6 +2998,12 @@ export function riskReason(name, input = {}) {
   if (name === 'sandbox_run' && looksDestructive(String(input?.command || ''))) {
     return 'This command on the cloud computer looks like it sends data out or destroys something.';
   }
+  if (name === 'sandbox_run' && input?.as_root === true) {
+    return 'Runs as root on the cloud computer, where it can reach everything on it, including the cloud browser\'s sign-ins.';
+  }
+  if (name === 'sandbox_run' && sandboxTouchesPrivate(input)) {
+    return 'Touches the cloud browser\'s saved sign-ins or a login script on the cloud computer.';
+  }
   if (name === 'telegram_send') return `Sends a Telegram message to ${input?.chat_id || 'a chat'}.`;
   if (name === 'meta_page_post') return 'Publishes a post on your Facebook Page, publicly and immediately.';
   if (name === 'github_write') {
@@ -3040,6 +3049,35 @@ export function riskReason(name, input = {}) {
 /** Whether a shell command matched one of the destructive patterns. */
 export function looksDestructive(command) {
   return DANGEROUS_COMMAND.some((re) => re.test(String(command || '')));
+}
+
+/**
+ * What on the cloud computer is not the account's ordinary work (SEC-036).
+ *
+ * The cloud browser keeps its sign-ins on the same machine `sandbox_run` drives
+ * (`DIR` in server/cloudBrowser/index.js), so a command that reads that profile —
+ * or Chromium's cookie and password stores wherever they sit — can hand a
+ * signed-in session to whatever the next command sends it to. A login script
+ * edited once runs before every later command, in every later conversation
+ * (commands run under `bash -lc`): the way one injected instruction outlives the
+ * turn it arrived in. Both ask first, whether named in the command, in a file
+ * written, or in the file handed back. So does `as_root`: root reaches
+ * everything, including what the profile's permissions would have kept out.
+ *
+ * A pattern list, like `looksDestructive`, not a wall: a command that hides the
+ * name — base64, a variable — is not recognised.
+ */
+const SANDBOX_PRIVATE =
+  /\.synz-browser|\b(?:Cookies|Login Data|Local State|Web Data)\b|(?:^|[\s/~'"=:])\.(?:bash_profile|bash_login|bashrc|profile|zshrc|zprofile)\b|\/etc\/(?:profile|bash\.bashrc|environment)\b/;
+
+export function sandboxTouchesPrivate(input = {}) {
+  if (input?.as_root === true) return true;
+  const named = [
+    String(input?.command || ''),
+    String(input?.download || ''),
+    ...(Array.isArray(input?.files) ? input.files.map((f) => String(f?.path || '')) : []),
+  ];
+  return named.some((text) => SANDBOX_PRIVATE.test(text));
 }
 
 /**

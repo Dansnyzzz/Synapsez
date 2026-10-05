@@ -873,6 +873,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'There is no file {0} made in this account.': 'Không có tệp {0} nào được tạo trong tài khoản này.',
   'This command on the cloud computer looks like it sends data out or destroys something.':
     'Lệnh này trên máy tính đám mây có vẻ gửi dữ liệu ra ngoài hoặc xoá thứ gì đó.',
+  "Runs as root on the cloud computer, where it can reach everything on it, including the cloud browser's sign-ins.":
+    'Chạy với quyền root trên máy tính đám mây — tới được mọi thứ trên máy, kể cả phiên đăng nhập của trình duyệt đám mây.',
+  "Touches the cloud browser's saved sign-ins or a login script on the cloud computer.":
+    'Chạm vào phiên đăng nhập đã lưu của trình duyệt đám mây hoặc tệp khởi động shell trên máy tính đám mây.',
   'Makes this file public: anyone with the link can open it without signing in.':
     'Công khai tệp này: ai có link đều mở được mà không cần đăng nhập.',
   // Scatter charts.

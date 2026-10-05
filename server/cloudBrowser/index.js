@@ -323,4 +323,4 @@ export async function closeCloudBrowser(userId) {
   await getStore().setUserSetting(userId, SETTING, null);
 }
 
-export const __testing = { service, readConnection, saveConnection, SETTING };
+export const __testing = { service, readConnection, saveConnection, SETTING, DIR };
