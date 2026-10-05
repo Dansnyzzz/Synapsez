@@ -5,8 +5,8 @@
  * an email — is driven end to end against a provider that answers without a
  * network. What is pinned:
  *
- *   - the provider is the only thing that receives it: no other request, socket
- *     connection or name lookup leaves the process during the turn (`offline`);
+ *   - the provider is the only thing that receives it: no other request, TCP/TLS
+ *     connection or `dns.lookup` leaves the process during the turn (`offline`);
  *   - nothing the process prints, and nothing in the account's security record,
  *     carries it;
  *   - a strict account's request reaches the wire with OpenRouter's no-storage
@@ -34,7 +34,9 @@ import { removeTemp } from './lib/tmp.mjs';
  * Not only `fetch` (HAR-006): `safeFetch` — web tools, icons, pictures — goes
  * through `node:http`/`https` after a `node:dns` lookup. Every TCP or TLS
  * connection, whichever library opens it, goes through `net.Socket#connect`, so
- * that is where the door is watched, along with the name lookups before it.
+ * that is where the door is watched, along with `dns.lookup` — the lookup net,
+ * http, https and safeFetch use. Not watched: `dns.resolve*` and UDP sockets,
+ * which nothing on a turn's path calls.
  */
 async function offline(fn) {
   const outbound = [];
@@ -133,7 +135,7 @@ section('a turn with personal data reaches the provider and nothing else');
     yield { type: 'text', delta: 'Xin chào!' };
     yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 50, output: 5 } };
   };
-  // Every request, connection or name lookup that tries to leave the process during the turn.
+  // Every request, TCP/TLS connection or dns.lookup that tries to leave the process during the turn.
   let outbound = [];
   try {
     outbound = await offline(() => runAgent({ userId: user.id, user, chatId: 'c-egress', emit: () => {}, stream }));
@@ -142,7 +144,7 @@ section('a turn with personal data reaches the provider and nothing else');
   }
 
   check('the provider receives the message as written (no de-identifying layer yet — PRV-003)', received.length === 1 && leaks(received[0]).length === 4, leaks(received[0] || '').join(', '));
-  check('no other request, connection or name lookup leaves the process during the turn', outbound.length === 0, outbound.join(', '));
+  check('no other request, TCP/TLS connection or dns.lookup leaves the process during the turn', outbound.length === 0, outbound.join(', '));
   check('nothing the process printed carries the personal data', printed.every((line) => !leaks(line).length), printed.find((line) => leaks(line).length)?.slice(0, 120));
   const record = JSON.stringify(await store.listAudit(user.id, 200));
   check('nothing in the security record carries it', !leaks(record).length);

@@ -2,8 +2,9 @@
 
 ## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
 
-An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 86 findings, 70 fixed with a test
-that fails without the fix, 16 left for the owner with the reason written down. Nothing here needs a new paid
+An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 90 findings, 74 fixed and 16 left
+for the owner with the reason written down. Each fix to code comes with a test that fails without it; fixes to
+comments, documents, configuration and CI say in the ledger how they were checked instead. Nothing here needs a new paid
 service; everything stays on the free tiers.
 
 ### Security and privacy
@@ -40,7 +41,8 @@ service; everything stays on the free tiers.
   assistant's last change can be undone (HAR-002).
 - Clearing one value an artifact stored no longer erases a value saved at the same moment (CODE-042).
 - A picture edited while still uploading sends the edit, not the original (CODE-037).
-- A pinned source card stays open while a reply streams, moving with its chip (UX-007).
+- A pinned source card stays open while the transcript scrolls under it, moving with its chip (UX-007) — the
+  reply being written included, whose chips are redrawn every frame (UX-009).
 - Home and End on a scatter chart reach the first and last visible point (CODE-038).
 - A ChatGPT export whose messages loop back is imported instead of hanging the tab (CODE-035).
 - Deep research no longer counts `gov.attacker.com` or `notarxiv.org` as a primary source (ACC-008).
@@ -63,8 +65,10 @@ service; everything stays on the free tiers.
 ### Performance
 
 - Feed, page and regex work that a hostile input could make quadratic is linear or time-boxed (PERF-016, 017);
-  pictures and PDF pages are capped before decoding (PERF-018, 019); citation matching 9.1 s → 0.37 s on a long
-  reply (PERF-020); a large photo or PDF is no longer decoded twice at once on upload (PERF-021).
+  a picture's size is checked before it is decoded for OCR (PERF-018) and a PDF page's canvas is capped
+  (PERF-019) — parsing a hostile PDF is still unbounded (PERF-022, left for the owner); citation matching
+  9.1 s → 0.37 s on a long reply (PERF-020); a large photo or PDF is no longer decoded twice at once on upload
+  (PERF-021).
 
 ### Added
 

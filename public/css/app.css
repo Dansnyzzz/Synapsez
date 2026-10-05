@@ -33,7 +33,7 @@
    * sky rather than a tint, and all three light enough to carry text.
    */
   --accent: #a78bfa;
-  /* Text and icons on an --accent fill. Dark here, 7:1 on this light violet:
+  /* Text and icons on an --accent fill. Dark here, 6.96:1 on this light violet:
      white on it was 2.7:1 (ACC-013). The light theme's deep violet takes white. */
   --on-accent: #120d24;
   --accent-dim: #6d5bc4;

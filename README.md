@@ -677,7 +677,8 @@ machine.
 | Browser sandbox, page animating | 34–48 fps, ~10KB per frame |
 
 `SCREEN_WIDTH` (default 1280) is the biggest lever on both bandwidth and rate; `SCREEN_FPS`
-(default 10) caps the desktop mirror; `SCREEN_QUALITY` (default 55) sets JPEG quality.
+(default 10) caps the desktop mirror; `SCREEN_QUALITY` sets JPEG quality — default 55 for the desktop mirror
+and a still screenshot, 58 for the browser's live view.
 
 ---
 
