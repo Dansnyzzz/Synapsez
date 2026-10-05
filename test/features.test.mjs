@@ -309,6 +309,14 @@ section('an archive row\'s actions are not inside its button (ACC-010)');
   check('  and the keyboard opens it from there', /\(card\.querySelector\('\.task__main'\)\)\?\.addEventListener\('keydown'/.test(pages));
 }
 
+section('a map\'s zoom buttons are reachable by a screen reader (ACC-011)');
+{
+  const cardsSrc = fs.readFileSync(new URL('../public/js/cards.js', import.meta.url), 'utf8');
+  check('the stage that holds the buttons is not an image', !/stage\.setAttribute\('role', 'img'\)/.test(cardsSrc));
+  check('  the tile layer is, with the places as its name', /tiles\.setAttribute\('role', 'img'\)/.test(cardsSrc) && /tiles\.setAttribute\('aria-label'/.test(cardsSrc));
+  check('  and the marker layer is hidden from it', /overlay\.setAttribute\('aria-hidden', 'true'\)/.test(cardsSrc));
+}
+
 section('Escape in a sketch label drops the label, not the sketch (UX-006)');
 {
   const src = fs.readFileSync(new URL('../public/js/sketch.js', import.meta.url), 'utf8');
