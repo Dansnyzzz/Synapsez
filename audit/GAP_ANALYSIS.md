@@ -312,3 +312,35 @@ Bằng chứng là `file:line` đã mở trong vòng này hoặc đã kiểm ở
 | I10 red-team OWASP trong CI | một phần — `isolation.test`; thêm test cho SEC-034/035 ở Phase 2 | |
 | I11 memory provenance | `HAR-002` | |
 | I12 bảng minh bạch | một phần — Activity log (`privacy.js`) | |
+
+
+---
+
+# VÒNG v3 — Phase 3: chấm lại (2026-10-05, nhánh `optimize/2026-10-05`)
+
+Chỉ liệt kê mục **đổi trạng thái** so với bảng Phase 1 ở trên. Mục không nêu = giữ nguyên.
+Mỗi dòng trỏ về ID ledger đã FIXED (commit trong ledger) hoặc lý do còn lại.
+
+| Mục | Phase 1 | Phase 3 | Vì sao |
+|---|---|---|---|
+| E LLM01 injection gián tiếp | CHƯA ĐẠT | **ĐẠT** | SEC-035/043/044 (sandbox, sub-agent, research vào `EXTERNAL_OUTPUT`), SEC-040 (compaction trích dẫn kết quả tool), SEC-042 (nguồn project bọc), SEC-045 (chú thích ảnh trong envelope), SEC-039 (chấm rủi ro trên tham số đã chuẩn hoá) |
+| E LLM02 lộ thông tin nhạy cảm | CHƯA ĐẠT | **ĐẠT** | PRV-001 (link chia sẻ chỉ công bố tool công khai), SEC-034 (favicon chỉ tên đăng ký), SEC-038 (proxy cho khách chỉ vẽ trang đó), SEC-041, SEC-046 |
+| E LLM06/ASI02 quyền tool | MỘT PHẦN | MỘT PHẦN | SEC-036 FIXED (sandbox chạm hồ sơ trình duyệt → hỏi); còn HAR-001 (mạng sandbox mở) CHỜ-CHỦ |
+| E ASI06 memory poisoning | MỘT PHẦN | **ĐẠT** | HAR-002: mỗi ghi chú mang `by`/`chatId`, một bước hoàn tác, giao diện cho xem nguồn |
+| E Secret ngoài repo agent đọc được | CHƯA ĐẠT | **ĐẠT** | CFG-026 (deny `Read(./.env.*)`, `Read(./worker/.env.*)`) |
+| E Secret at rest | MỘT PHẦN | **ĐẠT** | SEC-037 (khoá cloud browser niêm phong bằng `encryptSecret`) — nội dung chat vẫn không mã hoá tầng ứng dụng, chấm ở P4 |
+| P0 không thu thập thừa | ĐẠT (trước GAP-012) | **ĐẠT** (sau GAP-012) | analytics chỉ gửi origin + path, không cookie, tắt khi GPC/DNT, không nạp ngoài Vercel; `features.test` khẳng định token trong query/hash không đi ra |
+| P3 không hạ cấp | CHƯA ĐẠT | MỘT PHẦN | PRV-002 (lỗi đọc cài đặt → strict), PRV-005 (vision dưới strict chỉ OpenRouter/OCR); vẫn không có route self-host/TEE |
+| P5 quyền user | MỘT PHẦN | MỘT PHẦN | PRV-004 FIXED (nói rõ provider nào giữ gì); còn thiếu "xem bản đã khử định danh" vì chưa có P2 |
+| P6 cá nhân hoá không xâm phạm | MỘT PHẦN | **ĐẠT** | HAR-002 (provenance + rollback) |
+| P8 test egress | CHƯA ĐẠT | MỘT PHẦN | HAR-003: `test/egress.test.mjs` khẳng định đích (một cửa, strict → ZDR) và log/telemetry không chứa PII giả; không khẳng định khử định danh vì P2 chưa có (PRV-003 CHỜ-CHỦ) |
+| H4 provider sập, không hạ cấp privacy | MỘT PHẦN | **ĐẠT** | PRV-002, PRV-005 |
+| H11 injection gián tiếp | CHƯA ĐẠT | **ĐẠT** | như LLM01 |
+| H12 memory poisoning | MỘT PHẦN | **ĐẠT** | HAR-002 |
+| H14 sandbox | MỘT PHẦN | MỘT PHẦN | SEC-036 FIXED; HAR-001 CHỜ-CHỦ |
+| Hiệu năng (PHẦN II D, ngoài bảng trên) | — | cải thiện đo được | PERF-016 regex có trần 1 s; PERF-017 HTML/feed tuyến tính (2–394 ms trên đầu vào thù địch); PERF-018/019 trần pixel OCR/PDF; PERF-020 9077 → 367 ms; PERF-021 không giải mã đôi |
+| Tiếp cận (WCAG) | — | cải thiện | ACC-008..016: tương phản `--on-accent` ≥ 5.67:1 mọi theme, vòng focus cho nút nhập, share không đọc cả hội thoại, trình vẽ dùng được bằng bàn phím (đã chạy trong trình duyệt thật) |
+
+**Còn lại không đổi và vì sao:** P2 khử định danh (PRV-003), P7 pháp lý (LAW-001), H16 OTel (HAR-004),
+T5 định tuyến theo độ khó (MỘT PHẦN, v2), T7 Batch (chấp nhận), dashboard theo route (MỘT PHẦN) — đều
+là CHỜ-CHỦ hoặc đã ghi là chấp nhận ở Phase 1.
