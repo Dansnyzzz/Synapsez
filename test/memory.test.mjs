@@ -539,6 +539,17 @@ section('strict provider privacy reaches OpenRouter, and only OpenRouter');
     check('  and it is not remembered: the next call asks again', (await providerPrivacyFor('u-privacy-never-asked')) === 'standard');
   }
   await alice.call('PUT', '/api/prefs', { providerPrivacy: 'standard' });
+  // PRV-004: the page tells the truth about what Standard and a free Gemini key mean.
+  {
+    const fsMod = await import('node:fs');
+    for (const lang of ['en', 'vi']) {
+      const text = fsMod.readFileSync(new URL(`../public/js/locales/${lang}.js`, import.meta.url), 'utf8');
+      const hint = text.match(/'memory\.providerPrivacyHint': "([^"]+)"/)?.[1] || '';
+      const standard = text.match(/'memory\.providerPrivacy\.standard': "([^"]+)"/)?.[1] || '';
+      check(`${lang}: Standard says providers may keep or train on what is sent`, lang === 'en' ? /train/.test(standard) && /store or train/.test(hint) : /huấn luyện/.test(standard) && /lưu lại hoặc huấn luyện/.test(hint));
+      check(`${lang}: a free-tier Gemini key is named for what it means`, /Gemini/.test(hint) && (lang === 'en' ? /free tier/.test(hint) && /people may read it/.test(hint) : /miễn phí/.test(hint) && /người duyệt/.test(hint)));
+    }
+  }
   const { readableFailure } = await import('../server/app.js');
   const said = readableFailure(new Error('404 {"error":{"message":"No endpoints found matching your data policy (Free model publication). Configure: https://openrouter.ai/settings/privacy"}}'));
   check('the refusal is explained as the setting, not a fault', /strict privacy setting/.test(said), said);
