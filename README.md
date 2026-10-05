@@ -2036,24 +2036,26 @@ npm run make-admin -- you@example.com        # promote an account to administrat
 npm run pair                  # the same thing, under its older name
 npm run lint                  # eslint
 npm run check                 # lint + every fast suite — the one to run before pushing
-npm test                      # all six fast suites
+npm test                      # every fast suite
+npm run gate                  # lint, hook tests, eval, type-check, npm test — what "done" means here
 npm run test:deploy           # just the Vercel paths
 npm run test:ui               # the real app in a real browser: layout, theme, filtering
 ```
 
-`npm test` runs six suites, and they are worth knowing apart:
+`npm test` runs every fast suite, one file per area. Six of them are worth knowing apart, and each
+has a script of its own:
 
 | | |
 |---|---|
-| `test:isolation` | **273 checks.** Real SQL against an in-process Postgres, then deliberate attempts to cross the boundary between two accounts. Also the crypto, the risk classifier, redaction, and the SSRF guards. |
-| `test:agent` | **52 checks.** The loop itself, driven with a stubbed provider — sub-agents, transcript re-ordering, approval gating, and the compaction that keeps a long conversation inside the window. It exists because `run_parallel` shipped calling an async generator with `await`, which silently did nothing at all, and no test would have noticed. |
-| `test:http` | **74 checks.** The app as something on a port: which routes need a session, which need an admin, that a password change really ends the other sessions, that guessing gets throttled, that a conversation runs in one place. |
-| `test:devices` | **100 checks.** Pairing, several computers on one account, moving a working folder from the app, and the new-model announcement. Two pairing endpoints are unauthenticated by necessity, so what an unclaimed pairing *cannot* do is pinned down hard. |
-| `test:attachments` | **74 checks.** Photos and files: what is accepted, where the bytes live, who may fetch them, and what each provider adapter finally builds out of them. |
-| `test:deploy` | **69 checks.** The app with `VERCEL=1`, plus the static checks that decide whether a build boots at all. Local and hosted are genuinely different programs here — the store, the screen transport, the scheduler and the local-tool path all fork on it — and production is the worst place to discover which half is wrong. |
+| `test:isolation` | Real SQL against an in-process Postgres, then deliberate attempts to cross the boundary between two accounts. Also the crypto, the risk classifier, redaction, and the SSRF guards. |
+| `test:agent` | The loop itself, driven with a stubbed provider — sub-agents, transcript re-ordering, approval gating, and the compaction that keeps a long conversation inside the window. It exists because `run_parallel` shipped calling an async generator with `await`, which silently did nothing at all, and no test would have noticed. |
+| `test:http` | The app as something on a port: which routes need a session, which need an admin, that a password change really ends the other sessions, that guessing gets throttled, that a conversation runs in one place. |
+| `test:devices` | Pairing, several computers on one account, moving a working folder from the app, and the new-model announcement. Two pairing endpoints are unauthenticated by necessity, so what an unclaimed pairing *cannot* do is pinned down hard. |
+| `test:attachments` | Photos and files: what is accepted, where the bytes live, who may fetch them, and what each provider adapter finally builds out of them. |
+| `test:deploy` | The app with `VERCEL=1`, plus the static checks that decide whether a build boots at all. Local and hosted are genuinely different programs here — the store, the screen transport, the scheduler and the local-tool path all fork on it — and production is the worst place to discover which half is wrong. |
 
-All six are fast and need no network, no keys and no browser. 642 checks in a few seconds; run them
-constantly. `npm run test:ui` adds 169 more in a real browser.
+None of them needs the network, a key or a browser; run them constantly. `npm run test:ui` adds
+the checks that do need a real browser.
 
 `npm run test:ui` drives the real app in a real browser. It uses Chrome or Edge if you have one and
 falls back to Playwright's own Chromium, so `npx playwright install chromium` makes it work anywhere.
