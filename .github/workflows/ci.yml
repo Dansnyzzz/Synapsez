@@ -57,8 +57,18 @@ jobs:
       # The interface suite drives the real app in a real browser. It skips
       # itself when there is nothing to drive, so it is installed explicitly
       # here rather than left to chance.
+      #
+      # With the lockfile's own playwright-core, into the same place the test
+      # steps look (PLAYWRIGHT_BROWSERS_PATH=0). `npx playwright install` fetched
+      # an unpinned `playwright` — the lockfile has only playwright-core — and
+      # installed into ~/.cache, where the tests, pointed at node_modules, never
+      # looked; they ran only because the runner image happens to carry Chrome
+      # (CFG-027). The suites now fail under CI rather than skip when no
+      # browser launches, so that luck cannot turn into a silent green.
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright-core install --with-deps chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: '0'
 
       - name: Interface suite
         run: npm run test:ui
@@ -74,6 +84,7 @@ jobs:
         run: npm run test:sandbox
         env:
           PLAYWRIGHT_BROWSERS_PATH: '0'
+
 
   audit:
     runs-on: ubuntu-latest

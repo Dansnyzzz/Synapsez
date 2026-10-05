@@ -70,9 +70,11 @@ for (const options of [{ channel: 'chrome' }, { channel: 'msedge' }, {}]) {
 }
 if (!browser) {
   realLog('\n  Skipped: no Chrome, Edge or bundled Chromium to drive.');
-  realLog('  Run `npx playwright install chromium` to enable this suite.\n');
+  realLog('  Run `npx playwright-core install chromium` to enable this suite.\n');
   server.close();
-  process.exit(0);
+  // In CI a browser was installed on purpose; not finding one is a failure,
+  // not a reason to report success for having tested nothing (CFG-027).
+  process.exit(process.env.CI ? 1 : 0);
 }
 
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
