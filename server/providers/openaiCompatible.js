@@ -182,9 +182,25 @@ export function stepDown(params) {
   return false;
 }
 
+/**
+ * What a provider says when it refuses the level, or the setting itself:
+ * `reasoning_effort`, `reasoning.effort`, xAI's `reasoningEffort`, a thinking
+ * budget, or reasoning named as unsupported.
+ *
+ * Not any 400 that mentions reasoning (TOK-001). That also matched a refused
+ * `reasoning_details` replay, or a context error counting reasoning tokens, and
+ * each of those spent three more requests stepping down a dial that was never
+ * the problem before the real error was shown.
+ */
+const EFFORT_REFUSAL =
+  /reasoning[_ .-]?effort|\beffort\b|thinking[_ .-]?budget|budget_tokens|\b(not supported|unsupported|does not support|doesn't support)\b[^.]*\breasoning\b|\breasoning\b[^.]*\b(not supported|unsupported)\b/i;
+
 /** A 400 about the reasoning setting, as opposed to anything else wrong with the request. */
-const refusedEffort = (err) =>
-  Number(err?.status) === 400 && /reasoning|effort|thinking/i.test(String(err?.message || err?.error?.message || ''));
+export const refusedEffort = (err) =>
+  Number(err?.status) === 400 &&
+  // OpenRouter puts the upstream provider's own words in `metadata.raw`; its
+  // `message` is then only "Provider returned error".
+  EFFORT_REFUSAL.test([err?.message, err?.error?.message, err?.error?.metadata?.raw].filter(Boolean).map(String).join(' '));
 
 /**
  * `reasoning_details` arrive in pieces, each tagged with the block it belongs

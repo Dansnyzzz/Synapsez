@@ -485,6 +485,28 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
   while (stepDown(p)) steps.push(p.reasoning_effort ?? '(none)');
   check('a refused level steps down, then goes', steps.join(' → ') === 'xhigh → high → (none)', steps.join(' → '));
 
+  // TOK-001: only a refusal of the setting steps down; other 400s surface at once.
+  const { refusedEffort } = await import('../server/providers/openaiCompatible.js');
+  const bad = (message, extra = {}) => ({ status: 400, message, ...extra });
+  const refusals = [
+    "Unsupported value: 'reasoning_effort' does not support 'xhigh' with this model.",
+    'Unrecognized request argument supplied: reasoning_effort',
+    "Unsupported value: 'xhigh' is not supported with this model for 'reasoning.effort'.",
+    'Model grok-3 does not support parameter reasoningEffort.',
+    'thinking.budget_tokens: Input should be greater than or equal to 1024',
+    'Reasoning is not supported for this model',
+  ];
+  check('a refusal of the level or the setting is recognised', refusals.every((m) => refusedEffort(bad(m))), refusals.filter((m) => !refusedEffort(bad(m))).join(' | '));
+  check('  including one OpenRouter passes on from the provider', refusedEffort(bad('400 Provider returned error', { error: { message: 'Provider returned error', metadata: { raw: '{"error":{"message":"reasoning_effort is not supported"}}' } } })));
+  const others = [
+    'messages.1.content.0: Invalid reasoning_details signature',
+    "This endpoint's maximum context length is 131072 tokens, including reasoning. However, you requested 150000 tokens.",
+    'messages: thinking blocks in the latest assistant message cannot be modified',
+    'Invalid schema for function web_search',
+  ];
+  check('any other 400 is not, so it is shown rather than retried', others.every((m) => !refusedEffort(bad(m))), others.filter((m) => refusedEffort(bad(m))).join(' | '));
+  check('  and nor is a refusal that is not a 400', !refusedEffort({ status: 429, message: 'reasoning_effort rate limited' }));
+
   const merged = oa.mergeDetails([], [{ type: 'reasoning.text', text: 'Let me ', index: 0 }]);
   oa.mergeDetails(merged, [{ type: 'reasoning.text', text: 'think.', index: 0, signature: 'sig' }]);
   check('streamed reasoning pieces are joined into one block', merged.length === 1 && merged[0].text === 'Let me think.' && merged[0].signature === 'sig');
