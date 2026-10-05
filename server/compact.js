@@ -242,10 +242,17 @@ export function activeTranscript(messages) {
   ];
 }
 
+/**
+ * Every way a line can end: CRLF, LF, a lone CR, and the Unicode line and
+ * paragraph separators, which a model reading the transcript may take as a
+ * new line as readily as LF (SEC-053).
+ */
+const LINE_BREAK = /\r\n|[\n\r\u2028\u2029]/;
+
 /** Every line of `text` as a quotation, so none of it can pose as a speaker. */
 const quoteLines = (text) =>
   text
-    .split(/\r?\n/)
+    .split(LINE_BREAK)
     .map((line) => `> ${line}`)
     .join('\n');
 
@@ -255,7 +262,7 @@ const quoteLines = (text) =>
  * written flush that line began with `USER:` just as a tool's had before
  * SEC-040. Indented, no line of it can.
  */
-const continued = (text) => String(text).replace(/\r?\n/g, '\n  ');
+const continued = (text) => String(text).split(LINE_BREAK).join('\n  ');
 
 const SYSTEM = [
   'You are compacting a working conversation so it can continue in a smaller context window.',
