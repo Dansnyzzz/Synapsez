@@ -12,6 +12,7 @@
  *   node test/features.test.mjs
  */
 import http from 'node:http';
+import fs from 'node:fs';
 import express from 'express';
 import { PGlite } from '@electric-sql/pglite';
 
@@ -216,6 +217,18 @@ section('a shared conversation opens with no account, and shows only its own fil
   } finally {
     server.close();
   }
+}
+
+section('a link cannot copy a stranger\'s conversation into a signed-in account (SEC-041)');
+{
+  // public/js/app.js is a browser module; the boot order is read from its source.
+  // The interface suite drives it for real in CI.
+  const src = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+  const boot = src.slice(src.indexOf('async function boot()'), src.indexOf('function takeContinue()'));
+  const guard = boot.indexOf('if (carry && session.authed)');
+  const stash = boot.indexOf('sessionStorage.setItem(CONTINUE_KEY');
+  check('a signed-in visitor with ?continue= is sent to the shared page instead', guard > 0 && /location\.replace\(`\/share\.html\?t=\$\{encodeURIComponent\(carry\)\}`\)/.test(boot.slice(guard, guard + 900)));
+  check('  before the token is kept for an automatic copy', guard > 0 && stash > guard);
 }
 
 section('the effort dial reaches every model that reasons, in each wire\'s own words');

@@ -372,6 +372,18 @@ async function boot() {
   }
 
   const carry = takeUrlToken('continue');
+  if (carry && session.authed) {
+    /*
+     * Already signed in: show the conversation, do not copy it (SEC-041). The
+     * shared page sends only signed-out visitors here; somebody signed in carries
+     * a conversation on with its own button. Honoured here, a link anyone can
+     * write — `/?continue=<their token>` — copied a stranger's conversation into
+     * this account and opened it, its "user" turns included, so the next message
+     * typed was read against a history the person never wrote.
+     */
+    location.replace(`/share.html?t=${encodeURIComponent(carry)}`);
+    return;
+  }
   if (carry) {
     try {
       sessionStorage.setItem(CONTINUE_KEY, carry);
