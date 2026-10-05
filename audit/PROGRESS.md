@@ -10,6 +10,14 @@
 - **Yêu cầu thêm của chủ project (lượt 2026-10-04):** "web tôi xài full free như vercel free" +
   `npm i @vercel/analytics`, `npm i @vercel/speed-insights` → làm trong Phase 2 dưới ID riêng.
 
+## Phase 2 — đang chạy trên `optimize/2026-10-05` (tag `backup/pre-optimize-20261005-0736` = `58b1ab4`)
+
+- FIXED: SEC-034 `53e2457` · PRV-001 `49309a8` · SEC-035 `a555a73` · SEC-036 `fae2ae2` (mỗi ID một commit code + một commit ledger).
+- Kế tiếp (MEDIUM): PRV-002 → PRV-005 → SEC-037 → PRV-004 → CODE-031 → HAR-002 → CFG-026 → HAR-003; rồi LOW: SEC-038, CODE-033, CODE-035, GAP-012 (Vercel insights).
+- Lệnh kiểm chứng mỗi ID: test file liên quan + `npx eslint <files>` + `npm run typecheck` (2 s). Script ledger: `scratchpad/ledger.mjs <ID> <STATUS> <verify> <commit>`.
+- Ghi chú: `811d44c` có tiêu đề "ledger SEC-034" nhưng thực chất chỉ thêm 2 dòng HAR-003/HAR-004 (đã nói rõ trong `2c616fa`).
+- 3 sub-agent (đọc vùng [UNKNOWN] từ snapshot `58b1ab4`) chạy nền từ 2026-10-05 sáng; kết quả → thêm ID mới.
+
 ## Đã xong
 
 - 0.1 an toàn: `.env*` chưa từng commit; `.fuse_hidden*` không track; gitleaks không cài. → `CONTRACT.md`, `EXPOSURE.md` (cần thêm mục v3).

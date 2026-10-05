@@ -504,6 +504,23 @@ section('strict provider privacy reaches OpenRouter, and only OpenRouter');
   check('a change applies to the very next call', (await providerPrivacyFor(aliceId)) === 'strict');
   const bad = await alice.call('PUT', '/api/prefs', { providerPrivacy: 'paranoid' });
   check('an unknown level is refused', bad.status === 400);
+  {
+    // The database unreachable and nothing remembered: the answer is unknown,
+    // and unknown must not route somebody who chose strict to a provider that
+    // may keep what they wrote (PRV-002).
+    const { getStore } = await import('../server/store/index.js');
+    const live = getStore();
+    const original = live.getUserSetting;
+    live.getUserSetting = async () => {
+      throw new Error('connection reset');
+    };
+    try {
+      check('a store that cannot answer fails closed, to strict', (await providerPrivacyFor('u-privacy-never-asked')) === 'strict');
+    } finally {
+      live.getUserSetting = original;
+    }
+    check('  and it is not remembered: the next call asks again', (await providerPrivacyFor('u-privacy-never-asked')) === 'standard');
+  }
   await alice.call('PUT', '/api/prefs', { providerPrivacy: 'standard' });
   const { readableFailure } = await import('../server/app.js');
   const said = readableFailure(new Error('404 {"error":{"message":"No endpoints found matching your data policy (Free model publication). Configure: https://openrouter.ai/settings/privacy"}}'));
