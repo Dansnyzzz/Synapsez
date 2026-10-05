@@ -594,6 +594,35 @@ section('Home and End on a scatter chart reach the first and last visible point 
   check('any other key is not a move', keyStep('Escape', 3, 9) === undefined);
 }
 
+section('a doc comment sits on the code it describes (CODE-039)');
+{
+  // A declaration slipped in between a doc block and its code leaves two doc
+  // blocks back to back: the first now describes the wrong thing, and an editor
+  // or the type-checker reads the second. Some of the existing ones are fine (a
+  // banner before a doc, a doc before an inline cast), so this is a ceiling
+  // that may only come down, not a ban.
+  const CEILING = 93;
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const found = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== 'node_modules' && e.name !== 'vendor') walk(p);
+      } else if (/\.m?js$/.test(e.name)) {
+        const text = fs.readFileSync(p, 'utf8');
+        for (const m of text.matchAll(/\*\/[ \t]*\r?\n[ \t]*\/\*\*/g)) found.push(`${path.relative(root, p)}:${text.slice(0, m.index).split('\n').length}`);
+      }
+    }
+  };
+  for (const dir of ['public/js', 'server', 'worker', 'scripts']) walk(path.join(root, dir));
+  check(`back-to-back doc blocks do not grow past ${CEILING}`, found.length <= CEILING, `${found.length}: ${found.slice(-5).join(' ')}`);
+  const src = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+  check('the four the audit named are on their code', /\*\/\r?\nconst MARK_PENDING/.test(src('public/js/render.js')) && /\*\/\r?\nexport function assistantMessage/.test(src('public/js/render.js')) && /\*\/\r?\nfunction openToolPane/.test(src('public/js/app.js')) && /\*\/\r?\nconst DRIVE_ICON/.test(src('public/js/viewer.js')));
+}
+
 section('the effort dial reaches every model that reasons, in each wire\'s own words');
 {
   const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');

@@ -86,10 +86,6 @@ const rail = createRail({
 });
 
 /**
- * What one tool did, in the side panel over the plan — the same place a task
- * opens, and it gives the panel back when closed.
- */
-/**
  * Whether the side area was open before a panel borrowed it — null while
  * nothing has. A task or a tool opens the area to show itself; closing it used
  * to leave the area open on the plan underneath, so it took two closes to get
@@ -105,6 +101,10 @@ function returnDetail() {
   detailBefore = null;
 }
 
+/**
+ * What one tool did, in the side panel over the plan — the same place a task
+ * opens, and it gives the panel back when closed.
+ */
 function openToolPane(title, html) {
   if (pages.taskPaneOpen()) pages.closeTaskPane();
   $('toolpane-title').textContent = title;

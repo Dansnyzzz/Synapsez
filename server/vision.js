@@ -76,10 +76,6 @@ async function freeVisionRows() {
 }
 
 /**
- * The models that could look at this for this account, best first — each one
- * only if the account can actually reach its provider.
- */
-/**
  * Whether a picture may be lent to a model on `provider`, given the account's
  * provider-privacy choice (PRV-005).
  *
@@ -94,6 +90,10 @@ export function lendableUnder(privacy, provider) {
   return privacy !== 'strict' || provider === 'openrouter';
 }
 
+/**
+ * The models that could look at this for this account, best first — each one
+ * only if the account can actually reach its provider.
+ */
 export async function visionEngines(userId) {
   // Unknown is strict, the same rule providerPrivacyFor follows (PRV-002).
   const privacy = await providerPrivacyFor(userId).catch(() => 'strict');

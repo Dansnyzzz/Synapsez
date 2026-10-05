@@ -6,7 +6,6 @@ import { openMenu } from './menu.js';
 import { toast } from './render.js';
 import { humanSize } from './format.js';
 
-/** Google Drive's mark, in its own colours — fixed markup, never data. */
 /**
  * Paper, and nothing else: what a printed or saved document looks like. Kept
  * deliberately plain — black on white, the document's own structure, tables
@@ -34,6 +33,7 @@ const PRINT_CSS = `
 
 const LINK_ICON =
   '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8.5 11.5a3.2 3.2 0 0 0 4.5 0l2.6-2.6a3.2 3.2 0 0 0-4.5-4.5l-1 1"/><path d="M11.5 8.5a3.2 3.2 0 0 0-4.5 0L4.4 11.1a3.2 3.2 0 0 0 4.5 4.5l1-1"/></svg>';
+/** Google Drive's mark, in its own colours — fixed markup, never data. */
 const DRIVE_ICON =
   '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="#0f9d58" d="M7.7 3.5h8.6l5.2 9h-8.6z"/><path fill="#ffc107" d="M2.5 16.5 6.8 9l4.3 7.5-4.3 4z"/><path fill="#1a73e8" d="M6.8 20.5 11.1 13h10.4l-4.3 7.5z"/></svg>';
 

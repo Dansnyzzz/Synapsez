@@ -46,15 +46,6 @@ const el = (tag, className, html) => {
 const ms = (n) => (n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`);
 
 /**
- * The mark at the head of a card: waiting, or done.
- *
- * A fixed-width slot in both states, so the title does not jump sideways when
- * the tick lands. Pending is a hollow ring rather than a spinning one — see the
- * note in `appendThinking`: the turn already has one moving indicator, the
- * status line under the transcript, and four more of them spinning in four
- * different places is noise rather than information.
- */
-/**
  * A tool's answer as a person reads it.
  *
  * Outside content reaches the model wrapped in `<untrusted source=…>` (see
@@ -68,11 +59,20 @@ export function forDisplay(text) {
     .trim();
 }
 
+/**
+ * The mark at the head of a card: waiting, or done.
+ *
+ * A fixed-width slot in both states, so the title does not jump sideways when
+ * the tick lands. Pending is a hollow ring rather than a spinning one — see the
+ * note in `appendThinking`: the turn already has one moving indicator, the
+ * status line under the transcript, and four more of them spinning in four
+ * different places is noise rather than information.
+ */
 const MARK_PENDING = '<span class="mark mark--pending" aria-hidden="true"></span>';
+const MARK_DONE = '<span class="mark">✓</span>';
 
 /** The tools drawn as the web card rather than as cards of their own. */
 const WEB_TOOLS = new Set(['web_search', 'web_fetch', 'extract', 'http_request', 'read_feed']);
-const MARK_DONE = '<span class="mark">✓</span>';
 
 /** The nearest ancestor that actually scrolls sideways, if there is one. */
 function sidewaysScroller(node) {
@@ -1359,11 +1359,6 @@ export function userMessage(text, files = [], id = null, at = null) {
 }
 
 /**
- * An assistant turn. Reasoning, tool calls and prose all land in one block so
- * the transcript reads as a single continuous action rather than a pile of
- * disconnected cards.
- */
-/**
  * The newest web card and the block it is in, so the next step's block can
  * add to it rather than draw another beside it (see `webCard`). Module-level
  * because each step is a separate `assistantMessage`.
@@ -1371,6 +1366,11 @@ export function userMessage(text, files = [], id = null, at = null) {
  */
 let lastWebCard = null;
 
+/**
+ * An assistant turn. Reasoning, tool calls and prose all land in one block so
+ * the transcript reads as a single continuous action rather than a pile of
+ * disconnected cards.
+ */
 export function assistantMessage() {
   // No "ASSISTANT" label. In a two-party conversation where one side is in a
   // bubble on the right and the other is not, saying which is which every turn

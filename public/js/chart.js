@@ -60,13 +60,6 @@ export function formatValue(value, format = 'number') {
 const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300'];
 
 /**
- * @param {{ title?: string, markup: string, spec: { type: string, format?: string,
- *   labels: string[], series: { name: string, values: number[] }[],
- *   groups?: string[], group?: number[] } }} widget  `groups`/`group`: scatter only
- * @returns {HTMLElement | null} null when the markup is not a chart, so the
- *   caller can fall back to the plain frame.
- */
-/**
  * The point a key moves the reading to, among points `0..last`.
  *
  * Undefined for a key that does not move it; null when it has nowhere to go.
@@ -91,6 +84,13 @@ export function keyStep(key, active, last, hidden = () => false) {
   return next < 0 || next > last ? null : next;
 }
 
+/**
+ * @param {{ title?: string, markup: string, spec: { type: string, format?: string,
+ *   labels: string[], series: { name: string, values: number[] }[],
+ *   groups?: string[], group?: number[] } }} widget  `groups`/`group`: scatter only
+ * @returns {HTMLElement | null} null when the markup is not a chart, so the
+ *   caller can fall back to the plain frame.
+ */
 export function chartFigure(widget) {
   const svg = cleanSvg(widget?.markup);
   if (!svg) return null;
