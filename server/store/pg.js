@@ -1703,6 +1703,39 @@ export function createPgStore(connectionString) {
       return rows[0] ?? null;
     },
     /**
+     * A file as it stood at `at` — for a conversation shared as a snapshot
+     * (PRV-011). The messages of a shared link stop at `shared_at`; its files
+     * were read live, so a rewrite made afterwards — the owner's edit, a later
+     * turn, `update_file` from another conversation — reached every visitor and
+     * every copy carried on.
+     *
+     * A rewrite (`replaceAttachment`, the only path that changes a file's bytes)
+     * files the outgoing copy as a version stamped with when *that* copy was
+     * written, and stamps the file itself with the time of the rewrite. So the
+     * file as it was at `at` is the file itself if it was last written by then,
+     * otherwise the newest version written by then. Null when neither exists —
+     * a history pruned past that point is refused, not guessed at.
+     */
+    async getAttachmentAt(userId, id, at) {
+      const found = await q(
+        `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, created_at
+           FROM attachments WHERE id = $1 AND user_id = $2`,
+        [id, userId],
+      );
+      const current = found[0] ?? null;
+      if (!current) return null;
+      if (!at || new Date(current.created_at) <= new Date(at)) return current;
+      const rows = await q(
+        `SELECT name, mime, kind, bytes, data, source, created_at
+           FROM attachment_versions
+          WHERE user_id = $1 AND attachment_id = $2 AND created_at <= $3
+          ORDER BY created_at DESC, revision DESC
+          LIMIT 1`,
+        [userId, id, at],
+      );
+      return rows[0] ? { ...current, ...rows[0] } : null;
+    },
+    /**
      * Give a file the assistant made a public link, or take it back (`token`
      * null). Only a generated file, only the owner's: an upload is somebody's
      * own document and is never published this way. Returns the token now in

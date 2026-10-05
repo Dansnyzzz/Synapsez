@@ -25,6 +25,8 @@ import { audit } from '../audit.js';
  * cookie holding the token (HttpOnly, path /api, a day), and a gate in front of
  * those routes lets a visitor fetch exactly the files the shared conversation
  * refers to — owned by its owner, named in its messages — and nothing else.
+ * Each as it stood at `shared_at`, like the messages: a file rewritten since is
+ * served, and copied into a fork, from its history (`getAttachmentAt`, PRV-011).
  */
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -399,7 +401,8 @@ export function mountPublicChatShare(app, { wrap }) {
         if (!m) return res.status(404).json({ error: 'Not found' });
         return sendPicture(res, { type: m[1], data: Buffer.from(m[2], 'base64') });
       }
-      const file = await store.getAttachment(scope.chat.user_id, req.params.id);
+      // As it stood when the link was made, like the messages (PRV-011).
+      const file = await store.getAttachmentAt(scope.chat.user_id, req.params.id, scope.chat.shared_at);
       if (!file) return res.status(404).json({ error: 'Not found' });
       const inline = req.query.download !== '1' && INLINE_SAFE.test(file.mime);
       res.setHeader('Content-Type', inline ? file.mime : 'application/octet-stream');
@@ -519,7 +522,8 @@ export async function forkSharedChat(userId, token) {
 
   const moved = new Map();
   for (const oldId of referencedFiles(messages)) {
-    const file = await store.getAttachment(chat.user_id, oldId);
+    // The file as it was when the link was made, not as it is now (PRV-011).
+    const file = await store.getAttachmentAt(chat.user_id, oldId, chat.shared_at);
     if (!file) continue;
     const id = crypto.randomUUID();
     await store.createAttachment(userId, {

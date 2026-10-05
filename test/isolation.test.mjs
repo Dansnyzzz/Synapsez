@@ -2212,6 +2212,27 @@ section('a shared conversation publishes the answer, not what was read of the ac
   check('  and it does not make a later read of that file publishable', !rewrittenPage.includes('SECRET-OTHER-SOURCE'));
   check('a rewrite of a file this conversation made is still published', rewritten.find((m) => m.id === 'u-4').results[0].content === 'Updated mine.md' && referencedFiles(rewritten).has('att-mine-u'));
 
+  // PRV-011: a file as it stood at a moment, from its history when it has been rewritten since.
+  {
+    const pause = () => new Promise((r) => setTimeout(r, 25));
+    const enc = (s) => Buffer.from(s).toString('base64');
+    const atStore = { id: 'att-at-1', name: 'plan.md', mime: 'text/markdown', kind: 'text', origin: 'generated' };
+    await store.createAttachment(owner.id, { ...atStore, bytes: 5, data: enc('first') });
+    await pause();
+    const sharedAt = (await store.setChatShare(owner.id, 'c-pv', 'tokPrivateShare000000000000000000000000_000')).sharedAt;
+    await pause();
+    await store.replaceAttachment(owner.id, 'att-at-1', { data: enc('second, written after sharing'), bytes: 29 });
+    await pause();
+    await store.replaceAttachment(owner.id, 'att-at-1', { data: enc('third'), bytes: 5 });
+    const asShared = await store.getAttachmentAt(owner.id, 'att-at-1', sharedAt);
+    const asNow = await store.getAttachmentAt(owner.id, 'att-at-1', new Date().toISOString());
+    const decode = (f) => (f ? Buffer.from(f.data, 'base64').toString() : null);
+    check('a file rewritten after the moment is read as it stood then', decode(asShared) === 'first', decode(asShared));
+    check('  and as it is now, read now', decode(asNow) === 'third', decode(asNow));
+    check('  a moment before the file existed has nothing', (await store.getAttachmentAt(owner.id, 'att-at-1', '2000-01-01T00:00:00Z')) === null);
+    check('  and another account reaches none of it', (await store.getAttachmentAt(reader.id, 'att-at-1', sharedAt)) === null);
+  }
+
   // Every publishable tool that takes a file id is guarded, so a new one cannot slip past.
   const { PUBLISHABLE_TOOLS, __testing: shareInternals } = await import('../server/routes/chatShare.js');
   const byId = TOOLS.filter((t) => PUBLISHABLE_TOOLS.has(t.name) && Object.keys(t.input_schema?.properties || t.parameters?.properties || {}).includes('file_id'));

@@ -287,6 +287,26 @@ section('a shared conversation opens with no account, and shows only its own fil
       const ss = Math.sin((16.0544 * Math.PI) / 180);
       return mapShows([[[16.0544, 108.2022]]], zz, Math.floor(((108.2022 + 180) / 360) * nn) + (zz > 2 ? 3 : 0), Math.floor((0.5 - Math.log((1 + ss) / (1 - ss)) / (4 * Math.PI)) * nn));
     }));
+
+    // PRV-011: a made file is served, and copied into a fork, as it stood when the link was made.
+    const enc = (s) => Buffer.from(s).toString('base64');
+    await store.createAttachment(owner.id, { id: 'made-sc', name: 'plan.md', mime: 'text/markdown', kind: 'text', origin: 'generated', bytes: 13, data: enc('as it was then'), chatId: 'c-sc' });
+    await store.appendMessage(owner.id, 'c-sc', { id: 'sc-4', role: 'assistant', text: '', toolCalls: [{ id: 'k3', name: 'create_file', input: { name: 'plan.md' } }] });
+    await store.appendMessage(owner.id, 'c-sc', { id: 'sc-5', role: 'tool', results: [{ toolCallId: 'k3', name: 'create_file', content: 'Made plan.md', file: { id: 'made-sc', name: 'plan.md' } }] });
+    await new Promise((r) => setTimeout(r, 25));
+    await store.setChatShare(owner.id, 'c-sc', token);
+    shareGate.gateCache.delete(token);
+    await new Promise((r) => setTimeout(r, 25));
+    // Afterwards — the owner's edit, a later turn, update_file from another chat all land here.
+    await store.replaceAttachment(owner.id, 'made-sc', { data: enc('SECRET written after sharing'), bytes: 28 });
+    const served = await fetch(`${base}/api/attachments/made-sc`, { headers: { cookie } });
+    const servedText = await served.text();
+    check('a visitor downloads a made file as it was when the link was made', served.status === 200 && servedText === 'as it was then', `${served.status} ${servedText}`);
+    const { forkSharedChat } = await import('../server/routes/chatShare.js');
+    const forked = await forkSharedChat(reader.id, token);
+    const copies = (await Promise.all((await store.listMessages(reader.id, forked.chatId)).flatMap((m) => (m.results || []).map((r) => r.file?.id)).filter(Boolean).map((id) => store.getAttachment(reader.id, id)))).filter(Boolean);
+    const copied = copies.map((f) => Buffer.from(f.data, 'base64').toString());
+    check('  and a fork copies that version, not the rewrite', copied.includes('as it was then') && !copied.some((t) => t.includes('SECRET')), copied.join(' | '));
   } finally {
     server.close();
   }
