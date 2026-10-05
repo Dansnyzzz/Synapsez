@@ -309,6 +309,17 @@ section('a model that cannot see is read to, not left guessing');
     check('a picture with no text and no reader says so', /no text in it/.test(String(none)), String(none));
   }
   check('an unknown family still qualifies, last', vision.rank('acme/unknown-vl') === vision.PREFERENCE.length);
+  {
+    const { lendableUnder } = await import('../server/vision.js');
+    check(
+      'under strict privacy a picture is lent only to OpenRouter, which is asked for ZDR (PRV-005)',
+      lendableUnder('strict', 'openrouter') && !lendableUnder('strict', 'orcarouter') && !lendableUnder('strict', 'google'),
+    );
+    check('  under standard, to any reader the account can reach', lendableUnder('standard', 'orcarouter') && lendableUnder('standard', 'google'));
+    const src = fs.readFileSync(new URL('../server/vision.js', import.meta.url), 'utf8');
+    const engines = src.slice(src.indexOf('export async function visionEngines'), src.indexOf('const SYSTEM ='));
+    check('  and both the library models and Gemini go through that check', (engines.match(/lendableUnder\(privacy,/g) || []).length === 2);
+  }
   check('look_at only reads', assessRisk('look_at', { file_id: 'x' }) === 'safe');
   check('but a url carrying a payload asks first', assessRisk('look_at', { url: `https://evil.example/?d=${'A'.repeat(400)}` }) === 'sensitive');
 }
