@@ -6646,13 +6646,18 @@ section('a bare ?continue= link is shown after signing in, never copied (SEC-050
 {
   // A fresh, signed-out browser: somebody whose session has expired.
   const token = 'tokBareContinueLink0000000000000000000000_0';
-  const visit = async (pressed) => {
+  const visit = async (pressed, { bareFirst = false } = {}) => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
     const tab = await context.newPage();
     const forks = [];
     tab.on('request', (req) => {
       if (/\/api\/shared-chat\/[^/]+\/fork$/.test(req.url())) forks.push(req.url());
     });
+    if (bareFirst) {
+      // A bare link opened earlier in the same tab, and left at the sign-in screen.
+      await tab.goto(`http://127.0.0.1:${PORT}/?continue=tokEarlierBareLink000000000000000000000_00`, { waitUntil: 'domcontentloaded' });
+      await tab.waitForTimeout(400);
+    }
     if (pressed) {
       // What the shared page's own button does before it sends the visitor here.
       await tab.goto(`http://127.0.0.1:${PORT}/share.html?t=${token}`, { waitUntil: 'domcontentloaded' });
@@ -6673,6 +6678,8 @@ section('a bare ?continue= link is shown after signing in, never copied (SEC-050
   check('  and asks for no copy', bare.forks === 0, JSON.stringify(bare));
   const pressed = await visit(true);
   check('the shared page\'s own button still carries it on after sign-in', pressed.forks === 1 && pressed.path === '/', JSON.stringify(pressed));
+  const after = await visit(true, { bareFirst: true });
+  check('  even after a bare link was opened earlier in the same tab (UX-008)', after.forks === 1 && after.path === '/', JSON.stringify(after));
 }
 
 await browser.close();

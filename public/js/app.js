@@ -404,6 +404,10 @@ async function boot() {
       if (sessionStorage.getItem(CONTINUE_KEY) !== carry) {
         sessionStorage.removeItem(CONTINUE_KEY);
         sessionStorage.setItem(SHOW_KEY, carry);
+      } else {
+        // Pressed: a bare link opened earlier in this tab no longer decides
+        // where signing in leads (UX-008).
+        sessionStorage.removeItem(SHOW_KEY);
       }
     } catch {
       /* no storage: nothing is copied; they press Continue again after signing in */
