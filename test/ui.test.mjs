@@ -4950,6 +4950,33 @@ section('a citation chip opens its list of sources');
   await page.keyboard.press('Escape');
   await page.evaluate(() => document.querySelector('.prose .cite')?.closest('.prose')?.remove());
 
+  // UX-007: a pinned card follows its chip when the transcript scrolls under it,
+  // and goes only when the chip leaves the view.
+  const scroll = await page.evaluate(async () => {
+    const { renderMarkdown } = await import('/js/markdown.js');
+    const box = document.createElement('div');
+    box.className = 'prose';
+    box.style.cssText = 'position:fixed;top:80px;left:80px;z-index:2000;width:600px;height:300px;overflow:auto;background:var(--bg)';
+    box.innerHTML = `${renderMarkdown('Một câu. ([OpenRouter](https://openrouter.ai/a))')}<div style="height:2000px"></div>`;
+    document.body.append(box);
+    const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    box.querySelector('.cite').click();
+    await frame();
+    const pop = /** @type {HTMLElement} */ (document.querySelector('.cite-pop'));
+    const before = pop.getBoundingClientRect().top;
+    box.scrollTop = 20;
+    await frame();
+    const after = { open: !pop.hidden, moved: Math.round(before - pop.getBoundingClientRect().top) };
+    box.scrollTop = 600;
+    await frame();
+    const gone = pop.hidden;
+    box.remove();
+    return { ...after, gone };
+  });
+  check('a pinned card stays open while the transcript scrolls a little', scroll.open, JSON.stringify(scroll));
+  check('  moving with its chip', scroll.moved === 20, JSON.stringify(scroll));
+  check('  and closes once the chip has scrolled out of view', scroll.gone, JSON.stringify(scroll));
+
   // A source the conversation cannot account for is marked, on the chip and in the card.
   const audit = await page.evaluate(async () => {
     const { renderMarkdown } = await import('/js/markdown.js');

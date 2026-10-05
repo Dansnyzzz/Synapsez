@@ -291,9 +291,25 @@ if (typeof document !== 'undefined') {
     }
   });
 
-  // A card left floating over a transcript that moved under it points at the wrong line.
+  /**
+   * The transcript moving under a card — a person scrolling, or the view
+   * following a reply as it streams — moves the card with its chip. Closing it
+   * on every scroll shut a card somebody had just pinned at the next streamed
+   * line (UX-007). It goes once its chip has gone, or left the part of the
+   * page that scrolled.
+   */
+  let following = 0;
   document.addEventListener('scroll', (event) => {
-    if (pop && !pop.hidden && !pop.contains(/** @type {Node} */ (event.target))) hide();
+    if (!pop || pop.hidden || pop.contains(/** @type {Node} */ (event.target)) || following) return;
+    const scroller = event.target instanceof Element ? event.target : null;
+    following = requestAnimationFrame(() => {
+      following = 0;
+      if (!pop || pop.hidden || !current) return;
+      const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const chip = current.getBoundingClientRect();
+      if (!current.isConnected || !chip.height || chip.bottom <= view.top || chip.top >= view.bottom) hide();
+      else place(current, pop);
+    });
   }, true);
   window.addEventListener('resize', hide);
 
