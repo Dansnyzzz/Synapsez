@@ -792,6 +792,12 @@ section('OCR reads Vietnamese with no key and no network');
     const installed = fs.readFileSync(path.join(pkg, manifest[lang].set, `${lang}.traineddata.gz`));
     check(`the ${lang} model shipped with the server is the installed one`, shipped.equals(installed) && crypto.createHash('sha256').update(shipped).digest('hex') === manifest[lang].sha256);
   }
+  // CODE-045: nothing else is shipped, and the copy script reads the same list.
+  const shippedFiles = fs.readdirSync(ocrInternals.BUNDLED).sort().join(',');
+  const expected = [...ocrInternals.LANGS.map((l) => `${l}.traineddata.gz`), 'MANIFEST.json'].sort().join(',');
+  check('only the languages the server reads are shipped', shippedFiles === expected && Object.keys(manifest).sort().join() === [...ocrInternals.LANGS].sort().join(), shippedFiles);
+  const vendorScript = fs.readFileSync(new URL('../scripts/vendor-tessdata.js', import.meta.url), 'utf8');
+  check('  the copy script takes its list from the server and empties the folder first', /import \{ LANGS \} from '\.\.\/server\/ocr\.js'/.test(vendorScript) && !/const LANGS =/.test(vendorScript) && /fs\.rmSync\(out, \{ recursive: true, force: true \}\)/.test(vendorScript));
 
   const { createCanvas } = await import('@napi-rs/canvas');
   const draw = async (w, h, size, lines, transparent = false) => {

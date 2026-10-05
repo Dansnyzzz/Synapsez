@@ -21,7 +21,8 @@ import { fileURLToPath } from 'node:url';
  * most of the cost, and a warm instance should not pay it twice.
  */
 
-const LANGS = ['vie', 'eng'];
+/** The languages read, and shipped: scripts/vendor-tessdata.js copies exactly these. */
+export const LANGS = ['vie', 'eng'];
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED = path.join(HERE, 'assets', 'tessdata');
 
