@@ -54,6 +54,38 @@ export const PUBLISHABLE_TOOLS = new Set([
   // a picture from the web. Not `edit_image`: it works on the person's own disk.
 ]);
 
+/**
+ * Publishable tools that read a file by id, and the argument naming it.
+ *
+ * The id reaches any file on the account — a project shelf's spreadsheet, a file
+ * made in another conversation — so a read is published only when the file is
+ * the shared conversation's own: sent in it, or made in it by a published tool
+ * (PRV-007). Without an id, `read_generated_file` lists this conversation's own
+ * files, and `analyze_data` reads data written into the call; both stay public.
+ */
+const READS_A_FILE = { analyze_data: 'file_id', read_generated_file: 'file_id' };
+
+/** The ids of the tool calls a transcript may publish with their arguments and results. */
+function publishedCalls(messages) {
+  const own = new Set();
+  for (const m of messages) {
+    for (const a of m.attachments || []) if (a?.id) own.add(String(a.id));
+    for (const r of m.results || []) {
+      if (PUBLISHABLE_TOOLS.has(r.name) && !READS_A_FILE[r.name] && r.file?.id) own.add(String(r.file.id));
+    }
+  }
+  const ids = new Set();
+  for (const m of messages) {
+    for (const c of m.toolCalls || []) {
+      if (!PUBLISHABLE_TOOLS.has(c.name)) continue;
+      const file = READS_A_FILE[c.name] ? c.input?.[READS_A_FILE[c.name]] : null;
+      if (file && !own.has(String(file))) continue;
+      ids.add(c.id);
+    }
+  }
+  return ids;
+}
+
 /** What a model reading a carried-on copy is told about a step that was left out. */
 const LEFT_OUT = 'Not part of the shared copy: this step read the original account\'s own data.';
 
@@ -67,11 +99,12 @@ const LEFT_OUT = 'Not part of the shared copy: this step read the original accou
  * read — a note, an email — on its way to the answer.
  *
  * @param {any} m
- * @param {{ placeholder?: string }} [options]  `placeholder` replaces a
- *   withheld result's text (a copy the model will read); without it the text is
- *   empty and `hidden` says why (a page the visitor's browser words itself).
+ * @param {{ placeholder?: string, shown?: Set<string> }} [options]  `placeholder`
+ *   replaces a withheld result's text (a copy the model will read); without it
+ *   the text is empty and `hidden` says why (a page the visitor's browser words
+ *   itself). `shown` is `publishedCalls` of the whole transcript.
  */
-function publicMessage(m, { placeholder = '' } = {}) {
+function publicMessage(m, { placeholder = '', shown = new Set() } = {}) {
   if (m.role === 'user') {
     return {
       id: m.id,
@@ -88,7 +121,7 @@ function publicMessage(m, { placeholder = '' } = {}) {
       toolCalls: (m.toolCalls || []).map((c) => ({
         id: c.id,
         name: c.name,
-        input: PUBLISHABLE_TOOLS.has(c.name) ? c.input : {},
+        input: shown.has(c.id) ? c.input : {},
       })),
     };
   }
@@ -97,7 +130,7 @@ function publicMessage(m, { placeholder = '' } = {}) {
       id: m.id,
       role: 'tool',
       results: (m.results || []).map((r) =>
-        PUBLISHABLE_TOOLS.has(r.name)
+        shown.has(r.toolCallId)
           ? {
               toolCallId: r.toolCallId,
               name: r.name,
@@ -118,7 +151,8 @@ function publicMessage(m, { placeholder = '' } = {}) {
 
 /** The transcript as a visitor sees it — see `publicMessage`. */
 export function publicTranscript(messages, options = {}) {
-  return messages.map((m) => publicMessage(m, options)).filter(Boolean);
+  const shown = publishedCalls(messages);
+  return messages.map((m) => publicMessage(m, { ...options, shown })).filter(Boolean);
 }
 
 /** Every file a transcript refers to: what was sent, what was made, what a step saw. */

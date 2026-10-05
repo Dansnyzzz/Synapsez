@@ -2121,6 +2121,45 @@ section('a shared conversation publishes the answer, not what was read of the ac
   check('carrying it on copies the published transcript, not the stored one', !/SECRET-/.test(copied), copied.match(/SECRET-[A-Z-]+/)?.[0] || '');
   check('  so the reader\'s model is told a step was left out', /Not part of the shared copy/.test(copied));
   check('  and the withheld screenshot is not copied into the reader\'s account', forked.files === 1, String(forked.files));
+
+  // PRV-007: a read by file id is published only for the conversation's own files.
+  const reads = publicTranscript([
+    { id: 'r-1', role: 'user', text: 'Look at these', attachments: [{ id: 'att-sent', name: 'sales.csv', kind: 'text' }] },
+    {
+      id: 'r-2',
+      role: 'assistant',
+      text: '',
+      toolCalls: [
+        { id: 'r-own-csv', name: 'analyze_data', input: { op: 'describe', file_id: 'att-sent' } },
+        { id: 'r-shelf-csv', name: 'analyze_data', input: { op: 'top', file_id: 'att-elsewhere-shelf' } },
+        { id: 'r-inline', name: 'analyze_data', input: { op: 'describe', data: 'a,b\n1,2' } },
+        { id: 'r-made', name: 'create_file', input: { name: 'plan.md' } },
+        { id: 'r-read-made', name: 'read_generated_file', input: { file_id: 'att-made-here' } },
+        { id: 'r-read-other', name: 'read_generated_file', input: { file_id: 'att-other-chat' } },
+        { id: 'r-list', name: 'read_generated_file', input: {} },
+      ],
+    },
+    {
+      id: 'r-3',
+      role: 'tool',
+      results: [
+        { toolCallId: 'r-own-csv', name: 'analyze_data', content: 'rows: 12' },
+        { toolCallId: 'r-shelf-csv', name: 'analyze_data', content: 'SECRET-SHELF-ROWS' },
+        { toolCallId: 'r-inline', name: 'analyze_data', content: 'a: 1' },
+        { toolCallId: 'r-made', name: 'create_file', content: 'Made plan.md', file: { id: 'att-made-here', name: 'plan.md' } },
+        { toolCallId: 'r-read-made', name: 'read_generated_file', content: '# Plan' },
+        { toolCallId: 'r-read-other', name: 'read_generated_file', content: 'SECRET-OTHER-FILE' },
+        { toolCallId: 'r-list', name: 'read_generated_file', content: 'plan.md' },
+      ],
+    },
+  ]);
+  const readsPage = JSON.stringify(reads);
+  const shownOf = (id) => reads.find((m) => m.role === 'tool').results.find((r) => r.toolCallId === id);
+  check('a read of a file from elsewhere on the account is withheld', !readsPage.includes('SECRET-SHELF-ROWS') && !readsPage.includes('att-elsewhere-shelf') && shownOf('r-shelf-csv').hidden === true);
+  check('  and so is the source of a file made in another conversation', !readsPage.includes('SECRET-OTHER-FILE') && !readsPage.includes('att-other-chat') && shownOf('r-read-other').hidden === true);
+  check('a read of a file sent in the conversation is published', shownOf('r-own-csv').content === 'rows: 12');
+  check('  as is one of a file the conversation made', shownOf('r-read-made').content === '# Plan');
+  check('  and a read of data written into the call, or a listing of this conversation\'s files', shownOf('r-inline').content === 'a: 1' && shownOf('r-list').content === 'plan.md');
 }
 
 section('a share link opens one file, and only its owner can make or take it back');
