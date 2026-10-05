@@ -22,14 +22,14 @@ them touch `audit/` only). Every row is a command that was run and an output tha
 
 | Thing | Before | After | How measured |
 |---|---|---|---|
-| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f` | `npm run gate`, logs `scratchpad/gate-final{,2,3}.log` |
+| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f`; after the third's **475 s** on `7726301` — same suites; wall time on this machine varies with what else it is doing, and the suite count rose by one check file's worth only | `npm run gate`, logs `scratchpad/gate-final{,2,3,4}.log` |
 | lint | exit 0 | **exit 0** | gate step 1 |
 | `test:hooks` | 168/168 | **168/168** | gate step 2 |
 | eval (scripted) | 13/13, `PROMPT_STAMP ecd004bc42ae` | **13/13, same stamp** — the main system prompt did not change | gate step 3; server log `promptVersion=ecd004bc42ae` |
 | typecheck ratchet | 315 outstanding, ceiling 315 | **315, ceiling 315** — `.typecheck-baseline.json` did not grow | gate step 4 |
-| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
+| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **4,568 ✓** (`7726301`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
 | Suites in `npm test` | 47 | **48** (+`egress.test`) | `scripts.test` |
-| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008; the commits after it touch no page) (real Edge) | `node test/ui.test.mjs` |
+| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008); **915 ✓, 0 failures** with UX-009 (+2) at `be1ec2b` — the commits after it touch no page but `serial.js`, checked in features (real Edge) | `node test/ui.test.mjs` |
 | `npm run test:sandbox` | — | **exit 0, 31 ✓** | not in the gate |
 | Coverage (c8, `all:true`) | statements 64.09 · branches 75.42 · functions 67.03 · lines 64.09 | **64.87 · 75.95 · 68.45 · 64.87** — up on all four; functions was 0.03 above its threshold and is now 1.45 above | `npm run coverage`, exit 0, 221 s |
 
@@ -37,11 +37,11 @@ them touch `audit/` only). Every row is a command that was run and an output tha
 
 | Check | Result |
 |---|---|
-| `git diff --shortstat backup/pre-optimize-20261005-0736 HEAD` | 89 files, +4,154 / −312 (includes the vendored Vercel scripts) |
-| `package-lock.json` | +85 / −3: `@vercel/analytics`, `@vercel/speed-insights`, and `qs` 6.16.0 (SEC-048). Not regenerated |
+| `git diff --shortstat backup/pre-optimize-20261005-0736 HEAD` | 91 files, +4,955 / −324 at `7726301`, 161 commits (includes the vendored Vercel scripts). First measured at 89 files, +4,154 / −312 before the evaluator rounds |
+| `package-lock.json` | +87 / −3: `@vercel/analytics`, `@vercel/speed-insights` (then moved to devDependencies, CFG-030: +4/−2 of that), and `qs` 6.16.0 (SEC-048). Never regenerated |
 | `.env` files in the diff | none |
 | New files over 300 KB | none (the one over is `test/ui.test.mjs`, which already was) |
-| Secret shapes in every added line of the 129 commits | **0** (Anthropic, OpenRouter, OpenAI, OrcaRouter, Google, GitHub, Slack, AWS, PEM, Postgres URL with password) |
+| Secret shapes in every added line of the branch's commits (129, re-run at 161) | **0** (Anthropic, OpenRouter, OpenAI, OrcaRouter, Google, GitHub, Slack, AWS, PEM, Postgres URL with password) |
 | Outbound calls with a timeout (`server/`, `api/`) | **45/45**, unchanged; the one the scan flags, `server/email.js:146`, has its signal at `:161` |
 | `console.log/info/debug` in server+api+worker | **unchanged**: 63 on both the tag and the branch by one method (`git grep -c -E "console\.(log\|info\|debug)\("`), and the diff adds or removes no such line. (A first version of this row said 64 → 63, comparing the baseline's count by another method with this one; corrected after the second evaluator pass.) |
 | Analytics / APM in code | 0 → **Vercel Web Analytics + Speed Insights** in `public/js/insights.js` (GAP-012, asked for). `@sentry` appears only as a name in the MCP catalogue, as before |
@@ -139,11 +139,12 @@ first version of this table overstated the sub-agent row as ≈ +280 tokens and 
 
 | Total | FIXED | CHỜ-CHỦ (in repo) | CHỜ-CHỦ (outside repo) | DEFERRED | BLOCKED | OPEN | IN-PROGRESS |
 |---|---|---|---|---|---|---|---|
-| 86 | 70 | 14 | 2 | 0 | 0 | **0** | **0** |
+| 90 | 74 | 14 | 2 | 0 | 0 | **0** | **0** |
 
-(74 rows from Phases 1–2, four raised by the evaluator's first pass and eight by its second — below.)
+(74 rows from Phases 1–2; four raised by the evaluator's first pass, eight by its second, four by its third —
+below.)
 
-No CRITICAL or HIGH is open. The 16 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
+No CRITICAL or HIGH is open (PRV-010 was MEDIUM, and is fixed). The 16 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
 CFG-032, LAW-001) and 9 LOW, every one CHỜ-CHỦ with the reason and the options in its row.
 
 ## The fresh-context evaluator
@@ -178,7 +179,20 @@ held, and found one blocking flaw and seven smaller ones. All acted on:
 | PRV-006's export left out the earlier version's conversation id | **PRV-009** `b699b4a` |
 | CODE-046 was FIXED with one site left for the owner | split out as **CFG-031**, CHỜ-CHỦ |
 
-**Third pass:** recorded below once run.
+**Third pass (another new reviewer): `NEEDS_WORK`.** Its first attempt died on the account's session rate limit
+before reporting and was re-run. It confirmed PRV-008's per-message logic against the transcripts the store
+really holds (resumed runs, interleaved messages, a tool message with no call before it, the fork and the
+visitor gate) and held the sample PERF-018/019/021, CODE-035/036/043, ACC-013/016, CFG-029, SEC-048, CODE-047.
+It found:
+
+| Finding | Disposition |
+|---|---|
+| `update_file` is publishable and rewrites a made file by id from anywhere on the account — its text, its file (fetchable, copied by a fork), and a later read of that file all got through | **PRV-010** `879438d`: guarded like the reads; a test now fails if any publishable tool taking a `file_id` is left unguarded |
+| UX-007 held only for chips in earlier messages; a chip in the reply being written is redrawn every frame | **UX-009** `be1ec2b`: the card finds its chip again in the same prose; real Edge, fails on the previous code |
+| `latestWins` dropped the queued save when the one before it failed | **CODE-051** `7f15dcf` |
+| The CHANGELOG said every fix has a failing-first test (not so for comment, README, settings and CI fixes); PERF-019 "capped before decoding"; a CSS comment said 7:1 for 6.96:1; "every name lookup" for `dns.lookup`; this file's diff and lockfile figures were stale; a README default predating the branch | **CODE-052** `4e60f60`, and the figures above |
+
+**Fourth pass:** recorded below once run.
 
 ## Not measured, and why
 
