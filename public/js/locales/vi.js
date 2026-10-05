@@ -744,6 +744,7 @@ export const vi = {
   'chat.shareStopped': 'Đã ngừng chia sẻ; link cũ không mở được nữa.',
   'sharechat.loading': 'Đang tải cuộc trò chuyện…',
   'sharechat.gone': 'Link này không tồn tại hoặc đã bị thu hồi.',
+  'sharechat.loaded': 'Đã tải xong cuộc trò chuyện: {title}',
   'sharechat.goneTitle': 'Không tìm thấy',
   'sharechat.untitled': 'Cuộc trò chuyện',
   'sharechat.hidden': 'Không có trong bản chia sẻ — bước này đọc dữ liệu riêng của chủ cuộc trò chuyện.',

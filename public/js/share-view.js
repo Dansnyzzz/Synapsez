@@ -42,9 +42,12 @@ async function carryOn(button) {
 async function show() {
   const res = await fetch(`/api/shared-chat/${encodeURIComponent(token)}`, { headers: { 'X-Language': currentLanguage() } }).catch(() => null);
   const thread = $('share-thread');
+  const status = $('share-status');
   if (!res || !res.ok) {
     thread.replaceChildren(Object.assign(document.createElement('p'), { className: 'sharepage__loading', textContent: t('sharechat.gone') }));
     $('share-title').textContent = t('sharechat.goneTitle');
+    thread.setAttribute('aria-busy', 'false');
+    status.textContent = t('sharechat.gone');
     return;
   }
   const data = await res.json();
@@ -71,6 +74,8 @@ async function show() {
   }
   // Reading only: the copy and edit controls belong to the owner's app.
   for (const node of thread.querySelectorAll('.msg__action[data-act="edit"], .filecard__btn[data-no-open]')) node.remove();
+  thread.setAttribute('aria-busy', 'false');
+  status.textContent = t('sharechat.loaded', { title: data.title || t('sharechat.untitled') });
 
   const go = $('share-go');
   const viewer = data.viewer || {};

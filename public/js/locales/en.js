@@ -533,6 +533,7 @@ export const en = {
   'chat.shareStopped': 'Sharing stopped; the old link no longer opens.',
   'sharechat.loading': 'Loading the conversation…',
   'sharechat.gone': 'This link does not exist, or was taken back.',
+  'sharechat.loaded': 'Conversation loaded: {title}',
   'sharechat.goneTitle': 'Not found',
   'sharechat.untitled': 'Conversation',
   'sharechat.hidden': 'Left out of the shared copy — this step read the owner\'s own data.',

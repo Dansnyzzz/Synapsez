@@ -472,6 +472,19 @@ section('the import button shows focus when its hidden file input has it (ACC-01
   check('the import label sits right before its input, which that selector needs', /<label class="btn[^"]*" for="data-import-file"[^>]*>[^<]*<\/label>\s*<input type="file" id="data-import-file"/.test(html));
 }
 
+section('a shared conversation is not read aloud whole when it loads (ACC-015)');
+{
+  const page = fs.readFileSync(new URL('../public/share.html', import.meta.url), 'utf8');
+  const view = fs.readFileSync(new URL('../public/js/share-view.js', import.meta.url), 'utf8');
+  const main = /<main\b[^>]*>/.exec(page)?.[0] || '';
+  check('the transcript is not a live region', main.includes('id="share-thread"') && !/aria-live|role="(status|log|alert)"/.test(main), main);
+  check('  a short status line outside it is', /<p class="sr-only" id="share-status" role="status"><\/p>/.test(page) && page.indexOf('id="share-status"') < page.indexOf('<main'));
+  check('  and says the conversation loaded, or that the link is gone', /status\.textContent = t\('sharechat\.loaded'/.test(view) && /status\.textContent = t\('sharechat\.gone'\)/.test(view));
+  const { en } = await import('../public/js/locales/en.js');
+  const { vi } = await import('../public/js/locales/vi.js');
+  check('  in both languages', /\{title\}/.test(en['sharechat.loaded'] || '') && /\{title\}/.test(vi['sharechat.loaded'] || ''));
+}
+
 section('every schedule field shows where focus is (ACC-009)');
 {
   const css = fs.readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');

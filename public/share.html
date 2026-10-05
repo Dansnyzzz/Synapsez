@@ -26,7 +26,10 @@
       </div>
     </header>
 
-    <main class="sharepage__thread" id="share-thread" aria-live="polite">
+    <!-- Announced here, not on the transcript: a live region round it read the
+         whole conversation aloud the moment it loaded (ACC-015). -->
+    <p class="sr-only" id="share-status" role="status"></p>
+    <main class="sharepage__thread" id="share-thread" aria-busy="true">
       <p class="sharepage__loading" data-i18n="sharechat.loading">Loading the conversation…</p>
     </main>
 
