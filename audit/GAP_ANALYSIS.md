@@ -207,3 +207,108 @@ when this round found the Phase 1 verdict itself was wrong.
 What is left is not hidden in "một phần": the one `CHƯA ĐẠT` (H3) and G4's hole
 are features awaiting a decision; H1/H4/H5 and D8 each wait on something only the
 owner can authorise — a live key and spend. None of those is claimed as done.
+
+---
+
+# VÒNG v3 — Phase 1 (2026-10-05) · chấm theo AUDIT_RULES v3 PHẦN II/IV/V/VI
+
+Nhãn: ĐẠT / CHƯA ĐẠT / MỘT PHẦN / N/A / [UNKNOWN]. Mỗi CHƯA ĐẠT có ID ledger (mục "VÒNG v3").
+Bằng chứng là `file:line` đã mở trong vòng này hoặc đã kiểm ở vòng trước và file không đổi kể từ `6e526f1`.
+
+## A–H (tóm tắt, chỉ mục có thay đổi so với v2)
+
+| Mục | Kết quả | Bằng chứng / ID |
+|---|---|---|
+| A Độ chính xác: nguồn + link, nhãn tin cậy, "không biết" hợp lệ | ĐẠT | `server/research/*` proposer/critic/arbiter + `citationSupport` (CHANGELOG 2026-10-04); system prompt "Cite as you go" (`agent.js` diff) |
+| A Dữ liệu real-time có timestamp + nguồn | ĐẠT | `world_facts` "rates updated …, Source: open.er-api.com" (`tools/cloud.js:1168-1170`) |
+| B Tool-use: timeout mọi lời gọi ngoài | ĐẠT | 45/45 `fetch/safeFetch` có signal (`audit/BASELINE.md` v3) |
+| B Retry backoff + lỗi tường minh | ĐẠT | `providers/index.js:201-202,381-526` (retry-after, phân loại, key resting) |
+| B Idempotent / chống chạy lại tác dụng phụ | ĐẠT | `agent.js:870-891` `resumableCalls` + `startedCalls` |
+| C Provider trừu tượng hoá | ĐẠT | một cửa `streamCompletion` (`providers/index.js:381`); ngoại lệ duy nhất: tạo ảnh Gemini `tools/cloud.js:2303` |
+| D Cache có TTL | ĐẠT | favicon 6 h miss / 500 mục (`favicon.js:18-21`), image 24 MB LRU (`imageProxy.js:76-90`), privacy 60 s (`settings.js:196-197`) |
+| E Bảo mật — LLM01 prompt injection gián tiếp | **CHƯA ĐẠT** | `SEC-035` (sandbox_run không bọc), `SEC-034` (favicon exfil) |
+| E LLM02 lộ thông tin nhạy cảm | **CHƯA ĐẠT** | `PRV-001` (link chia sẻ công bố kết quả tool riêng tư), `SEC-034` |
+| E LLM06 / ASI02 quyền quá mức của tool | **MỘT PHẦN** | `SEC-036` (sandbox đọc được hồ sơ trình duyệt), `HAR-001` |
+| E ASI06 memory poisoning | **MỘT PHẦN** | `HAR-002` |
+| E Secret trong code/log/bundle/lịch sử | ĐẠT | 0 hình dạng key (BASELINE v3); `trace.js` `cleanFields` redact mọi field |
+| E Secret ngoài repo nhưng agent đọc được | **CHƯA ĐẠT** | `CFG-026` |
+| E Secret at rest | **MỘT PHẦN** | API key mã hoá; khoá cloud browser không (`SEC-037`) |
+| E Rate limit + auth endpoint mới | ĐẠT | export/import/delete-account có `rateLimit` (`routes/account.js:188,265,338`); public share chỉ token 256-bit (`share.js:29`, `chatShare.js:33`) |
+| F Log có trace id, không nội dung user | ĐẠT | `util/trace.js` (AsyncLocalStorage), email không log địa chỉ trên Vercel (`email.js:216-220`) |
+| F Lỗi retryable/fatal | ĐẠT | `providers/index.js` `classify` |
+| G Đầu ra: tiến trình + lỗi dễ hiểu | ĐẠT | `progress.js`; `readableFailure` dịch lỗi data-policy (`app.js` diff) |
+| H Prompt versioned + eval cố định | ĐẠT | `test/eval/run.mjs:57,265-315` PROMPT_STAMP |
+
+## I — Token (T1–T15)
+
+| # | Kết quả | Bằng chứng / ID |
+|---|---|---|
+| T1 thứ tự tĩnh → động | ĐẠT | system tĩnh, memory (đổi khi ghi), project, ngày cuối cùng (`agent.js:405-426`) |
+| T2 không timestamp/id trong phần tĩnh | ĐẠT | chỉ *ngày* theo múi giờ (`agent.js:420-425`), comment ghi rõ lý do cache |
+| T3 cache breakpoint | ĐẠT (Anthropic) / [UNKNOWN] hit rate thật | `providers/anthropic.js:73,137`; OpenRouter→Claude dùng root `cache_control` (`openaiCompatible.js:298`); hit rate cần key thật |
+| T4 TTL theo mẫu truy cập | ĐẠT | `ephemeral` (5 phút) cho chat liên tục |
+| T5 định tuyến theo độ khó | MỘT PHẦN | `server/roleModel.js` (compaction/extract/plan → model nhỏ, chỉ khi rẻ hơn chứng minh được) — v2 |
+| T6 việc code làm được không gọi LLM | ĐẠT | `calculate`, lịch âm, đơn vị, `schedule-grammar.js` là code thuần |
+| T7 Batch API cho việc không real-time | CHƯA ĐẠT — chấp nhận | Hobby + free model; Batch API không có trên OpenRouter free. Không mở ID (không có hành động khả thi miễn phí) |
+| T8 `max_tokens` theo tác vụ | ĐẠT | `outputBudget` (`providers/index.js:67,392`) |
+| T9 cửa sổ trượt + compaction | ĐẠT | `compact.js:88,163` `measure`/`shouldCompact` |
+| T10 cắt kết quả tool | ĐẠT | `MAX_OUTPUT_CHARS` sandbox 16k (`sandbox.js:33,173-178`), web 20k mặc định |
+| T11 just-in-time | ĐẠT | memory quá ngân sách → chỉ nêu tên, `memory_read` khi cần (`memory.js:330-405`) |
+| T12 chỉ nạp tool cần | ĐẠT | `load_tools` + tool hoãn (`definitions.js:175`) |
+| T13 cache tầng ứng dụng tách theo user | ĐẠT | memo đọc lặp theo **lượt** (`agent.js` `repeatedRead`); cache favicon/ảnh là nội dung công khai, khoá theo URL. Rủi ro khoá: `CODE-033` (tiềm ẩn) |
+| T14 chống request trùng | ĐẠT | lease một-writer-mỗi-chat → 409 (`app.js:1914-1915`) |
+| T15 trần token | ĐẠT | `turnLimit` (`agent.js:1451`), `DEFAULT_MONTHLY_TOKEN_LIMIT` (`index.js:114`), `MAX_RESEARCH_PER_TURN` |
+| Dashboard token/chi phí/cache-hit theo route | MỘT PHẦN | usage line + bảng `usage` có `role`; không có dashboard theo route |
+
+## J — Privacy (P0–P8)
+
+| Lớp | Kết quả | Bằng chứng / ID |
+|---|---|---|
+| P0 không thu thập thừa | ĐẠT (trước GAP-012) | 0 analytics; audit IP /24, UA họ trình duyệt (`audit.js:27-64`); log redact |
+| P1 hợp đồng provider | MỘT PHẦN | strict OpenRouter có (`openaiCompatible.js:319-327`); Gemini free tier train; OrcaRouter [UNKNOWN] → `PRV-004`, `PRV-005` |
+| P2 khử định danh | **CHƯA ĐẠT** | `PRV-003` (CHỜ-CHỦ) |
+| P3 định tuyến theo độ nhạy, không hạ cấp | **CHƯA ĐẠT** | `PRV-002`, `PRV-005`; không có route self-host/TEE (CHỜ-CHỦ, chi phí) |
+| P4 lưu trữ & kênh | MỘT PHẦN | TLS + HSTS; key mã hoá; nội dung chat không mã hoá tầng ứng dụng; `SEC-037` |
+| P5 quyền user | MỘT PHẦN | xoá/xuất/nhập/incognito/retention có (`routes/account.js`); thông báo provider thiếu → `PRV-004` |
+| P6 cá nhân hoá không xâm phạm | MỘT PHẦN | memory xem/sửa/xoá được, guard nhạy cảm; thiếu provenance → `HAR-002` |
+| P7 pháp lý VN | **[cần luật sư]** | `LAW-001` (CHỜ-CHỦ/NGOÀI-REPO) |
+| P8 test egress | **CHƯA ĐẠT** | không có test chặn payload ra provider với PII giả; P2 chưa có nên test chỉ có thể khẳng định *đích* và *log*, không khẳng định khử định danh → viết trong Phase 2 (`HAR-003`) |
+
+## K — Harness (H1–H20)
+
+| # | Cơ chế | Test | Kết quả |
+|---|---|---|---|
+| H1 timeout + huỷ lan truyền | `stallGuard`, `AbortSignal.any` (`cloudBrowser/index.js:112-119`), signal mọi fetch | `agent.test`, `search.test` ("a download stops on the signal") | ĐẠT |
+| H2 429 retry-after, trần | `providers/index.js:201-202,340-345,524` | `fallback.test` | ĐẠT |
+| H3 retryable vs fatal | `classify` | `fallback.test` | ĐẠT |
+| H4 provider sập, không hạ cấp privacy | key resting/dead; **fallback vision hạ cấp** | — | MỘT PHẦN (`PRV-005`, `PRV-002`) |
+| H5 hallucination | citations, `citationSupport`, research arbiter | `research.test` | ĐẠT |
+| H6 tác dụng phụ trùng | `startedCalls` + `resumableCalls` (`agent.js:848-891`) | `agent.test` | ĐẠT |
+| H7 race | lease `claimChatRun`/`touchChatRun` (`resume.js:57-78`), `claimTask` | `live-runs.test`, `workflow.test` | ĐẠT |
+| H8 crash giữa chừng | mỗi bước ghi DB + `resumeCutOffTurns` (`resume.js`) | `workflow.test` | ĐẠT |
+| H9 vòng lặp/chạy quá | `maxSteps` ≤100, `turnLimit`, `MAX_RESEARCH_PER_TURN`, `repeatedRead`, `OUTBOUND_PER_TURN` (`agent.js:739-776`) | `agent.test` | ĐẠT |
+| H10 tràn context | `compact.js` | `agent.test`/`features.test` | ĐẠT |
+| H11 injection gián tiếp | `untrusted()` + `EXTERNAL_OUTPUT` | `isolation.test` | **CHƯA ĐẠT** (`SEC-035`, `SEC-034`) |
+| H12 memory poisoning | guard + khung "background" | `memory.test` | MỘT PHẦN (`HAR-002`) |
+| H13 stream đứt | `retry` event; lease cho phép quay lại | `agent.test` | ĐẠT |
+| H14 sandbox | microVM Firecracker, 2 vCPU, timeout ≤300 s; **mạng mở, đĩa bền** | `cloudBrowser.test` | MỘT PHẦN (`HAR-001`, `SEC-036`) |
+| H15 state | DB là nguồn sự thật; RAM chỉ là gợi ý (`settings.js` cursor/resting) | `live-runs.test` | ĐẠT |
+| H16 observability | trace id ALS; **không có span OpenTelemetry GenAI** | — | MỘT PHẦN (`HAR-004`) |
+| H17 orchestration | workflow tất định + agent + sub-agent | `workflow.test` | ĐẠT |
+| H18 hành động không đảo ngược | `ALWAYS_SENSITIVE`, `OUTBOUND`, `publish_file` sensitive (`definitions.js:2862-2866`) | `isolation.test` | ĐẠT |
+| H19 đổi model | PROMPT_STAMP + eval 13 case; id model theo alias (`anthropic/claude-opus-5`) | `eval` | MỘT PHẦN — chưa ghim phiên bản model cụ thể (ghi nhận, không mở ID: alias là chủ ý của catalog) |
+| H20 dữ liệu real-time cũ | `world_facts` ghi thời điểm cập nhật + nguồn | `world.test` | ĐẠT |
+
+## M — Ý tưởng (PHẦN VII) — chấm nhanh
+
+| # | Trạng thái | Ghi chú |
+|---|---|---|
+| I1 Privacy Gateway một cửa | một nửa | cửa duy nhất đã có (`streamCompletion`); thiếu P2 → `PRV-003` |
+| I3 evaluator ngữ cảnh mới | làm ở Phase 3 | |
+| I4 action ledger | có (`startedCalls`) | |
+| I5 run state machine | có (lease + `run_lock_by`, workflow runs) | |
+| I6 OTel GenAI | `HAR-004` | |
+| I7 bố cục prompt theo cache | có | |
+| I10 red-team OWASP trong CI | một phần — `isolation.test`; thêm test cho SEC-034/035 ở Phase 2 | |
+| I11 memory provenance | `HAR-002` | |
+| I12 bảng minh bạch | một phần — Activity log (`privacy.js`) | |

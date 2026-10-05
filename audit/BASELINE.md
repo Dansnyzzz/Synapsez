@@ -1,5 +1,30 @@
 # BASELINE — measured before any change
 
+## Vòng v3 — 2026-10-04, `main` @ `58b1ab4`, cây sạch
+
+Đo trước khi sửa bất cứ thứ gì trong vòng v3. Đây là cột Phase 3 phải so sánh.
+
+| Chỉ số | Cách đo | Giá trị | Nhãn |
+|---|---|---|---|
+| `npm run gate` (full) | chạy thật, log `scratchpad/gate-baseline.log` | **exit 0, 255 s**, stamp `2026-10-04T15:50:09Z` trên `58b1ab4` | [FACT] |
+| lint | bước 1 của gate | exit 0 | [FACT] |
+| test:hooks | bước 2 | **168/168** | [FACT] |
+| eval (scripted) | bước 3 | **13/13**, PROMPT_STAMP `ecd004bc42ae` | [FACT] |
+| typecheck thật | bước 4 | **315 lỗi treo, trần 315**, 39 file (vòng trước @6e526f1: 349 / 43 file → co 34) | [FACT] `.typecheck-baseline.json` |
+| `npm test` | bước 5 | exit 0 · **4.282 dấu ✓** trong log · **1 skip**: `desktop.test.mjs` "window listing, clicking and typing (those go through host.ps1 on Windows)" | [FACT] |
+| Suite trong `npm test` | `scripts.test.split('&&')` | 47 (trên 50 file `*.test.mjs`; `ui`, `sandbox` chạy trong CI; xem CODE- về `capabilities`) | [FACT] |
+| coverage | `npm run coverage` (c8, `all:true`), exit 0 | **statements 64.09% (46175/72042) · branches 75.42% · functions 67.03% · lines 64.09%** — ngưỡng `.c8rc.json` 56/73/67/56; functions chỉ hơn ngưỡng 0,03 điểm | [FACT] `scratchpad/coverage-baseline.log` |
+| Lời gọi LLM / request, token input/cache/output, cache hit, chi phí, độ trễ, TTFT | cần key thật + request thật | **[UNKNOWN]** — máy này không có key provider trong env của agent (`.env` bị chặn đọc, đúng luật); bảng `usage` production không truy cập được từ repo; đo bằng dữ liệu người dùng thật bị cấm (§6). Đo được tĩnh: xem `audit/RESULT.md` mục token theo code. | [UNKNOWN] |
+| Điểm gửi dữ liệu ra ngoài (fetch/safeFetch/https.request) trong `server/`+`api/` | `scratchpad/fetch-scan.mjs` | **45 lời gọi**, 45/45 có `signal`/timeout (1 cảnh báo giả: `server/email.js:146`, signal ở `:161`) | [FACT] |
+| Host bên ngoài nhận dữ liệu | grep `https://` trong `server/` | xem `audit/DATAFLOW.md` | [FACT] |
+| Điểm log nội dung | grep `console.log/info/debug` server+api+worker | 64 dòng (phần lớn `worker/` CLI); `console.warn/error` trong server: 2 | [FACT]; phân loại nội dung → DATAFLOW |
+| Analytics/APM/error tracker trong code | grep Sentry/posthog/gtag/@vercel/analytics | **0 SDK** (chỉ tên Sentry trong catalogue MCP) | [FACT] |
+| Secret hardcode (hình dạng key) | regex `sk-ant-/sk-or-/sk-proj-/sk-orca-…`, `AIza…`, `ghp_…`, `xoxb-/xoxp-…`, PEM | **0** | [FACT] |
+| TODO/FIXME/XXX/HACK | grep | 1 | [FACT] |
+| Prod | `HEAD https://synapsez.vercel.app/` | 200, CSP đúng `vercel.json`, `X-Vercel-Cache: HIT` | [FACT] |
+
+---
+
 Two baselines are kept. The 2026-09-03 column is the one the earlier audit round
 was measured against; the 2026-09-09 column is this session's re-measurement and
 is the one Phase 2 and Phase 3 must be compared to. Nothing here is estimated
