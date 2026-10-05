@@ -365,7 +365,11 @@ section('a link cannot copy a stranger\'s conversation into a signed-in account 
   // public/js/app.js is a browser module; the boot order is read from its source.
   // The interface suite drives it for real in CI.
   const src = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
-  const boot = src.slice(src.indexOf('async function boot()'), src.indexOf('function takeContinue()'));
+  // Cut at the next function after boot, and refuse to run against the rest of
+  // the file when that marker is gone (CODE-050: it once was, silently).
+  const bootEnd = src.indexOf('function takeStored(');
+  const boot = src.slice(src.indexOf('async function boot()'), bootEnd);
+  check('the boot function is found and cut where it ends', bootEnd > src.indexOf('async function boot()') && boot.length < 8000, `${boot.length} chars`);
   const guard = boot.indexOf('if (carry && session.authed)');
   check('a signed-in visitor with ?continue= is sent to the shared page instead', guard > 0 && /location\.replace\(`\/share\.html\?t=\$\{encodeURIComponent\(carry\)\}`\)/.test(boot.slice(guard, guard + 900)));
   // SEC-050: signed out, the URL alone never earns a copy — only the share page's own button does.
