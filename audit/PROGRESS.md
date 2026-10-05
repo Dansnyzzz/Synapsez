@@ -5,19 +5,23 @@
 
 ## Trạng thái
 
-- **Phase hiện tại:** 0 → 1 (đọc theo lô phần thay đổi kể từ audit trước).
-- **Nhánh:** `main` @ `58b1ab4` (chưa tạo nhánh optimize — Phase 2 mới tạo).
+- **Phase hiện tại:** 2 (sửa theo ledger) — mọi HIGH/MEDIUM đã FIXED hoặc CHỜ-CHỦ; đang làm LOW.
+- **Nhánh:** `optimize/2026-10-05` (tách từ `main` @ `58b1ab4`).
 - **Yêu cầu thêm của chủ project (lượt 2026-10-04):** "web tôi xài full free như vercel free" +
   `npm i @vercel/analytics`, `npm i @vercel/speed-insights` → làm trong Phase 2 dưới ID riêng.
 
 ## Phase 2 — đang chạy trên `optimize/2026-10-05` (tag `backup/pre-optimize-20261005-0736` = `58b1ab4`)
 
-- FIXED: SEC-034 `53e2457` · PRV-001 `49309a8` · SEC-035 `a555a73` · SEC-036 `fae2ae2` · PRV-002 `74226b5` · SEC-039 `7ba763b` · SEC-040 `1c2917a` · SEC-041 `f1f4913` · PERF-015 `4598974` · SEC-042 `0851a37` · SEC-043 `75f5e50` · SEC-044 `bbb6c49` · PRV-005 `7247353` · SEC-037 `0c4499c` · CODE-031 `ee10f6d`.
+- FIXED (ledger là nguồn chuẩn; danh sách này đối chiếu lại từ ledger lúc cập nhật 2026-10-05):
+  - HIGH/MEDIUM: SEC-034 `53e2457` · PRV-001 `49309a8` · SEC-035 `a555a73` · SEC-036 `fae2ae2` · PRV-002 `74226b5` · SEC-039 `7ba763b` · SEC-040 `1c2917a` · SEC-041 `f1f4913` · PERF-015 `4598974` · SEC-042 `0851a37` · SEC-043 `75f5e50` · SEC-044 `bbb6c49` · PRV-005 `7247353` · SEC-037 `0c4499c` · CODE-031 `ee10f6d` · PERF-016 `516bf10` · PERF-017 `28c6b94` · PERF-018 `64bdf0a` · PERF-019 `71ab750` · ACC-008 `37e309d` · HAR-002 `2ea90ea` · PRV-004 `3101fef` · CFG-026 `aedd6e2` · HAR-003 `58b9b1f` · SEC-046 `c7af02a` · UX-005 `b929640` · UX-006 `0d0b3fc` · ACC-009 `fdeed7e` · ACC-010 `95ca45c` · ACC-011 `1b8ffc2` · ACC-012 `30db765` · PERF-020 `7d4177a` · CODE-036 `2815cb9` · CFG-027 `3b48180` · CODE-040 `b14ba6c` · CODE-041 `9a8ecf3`.
+  - LOW: GAP-012 `2c134ec` (Vercel Analytics + Speed Insights) · SEC-048 `c92373b` · CODE-033 `fe2b24a` · CODE-035 `7ea1630` · CODE-042 `e78fc7a` · SEC-038 `005516f` · SEC-045 `5f8ca6d` · TOK-001 `b77ad2a` · CODE-037 `c6eae69`.
+- CHỜ-CHỦ: PRV-003, HAR-001, HAR-004, HAR-005, CODE-032, CODE-034, CFG-024, CFG-025, PERF-022, SEC-049; NGOÀI-REPO: EXP-005, LAW-001.
 - 3 sub-agent đọc vùng [UNKNOWN] đã báo cáo (44 dòng mới trong ledger, `928d162`); mọi HIGH của chúng đã xác minh + sửa.
-- Kế tiếp (MEDIUM): PERF-016 → PERF-017 → PERF-018 → ACC-008 → HAR-002 → PRV-004 → CFG-026 → HAR-003 → SEC-046 → UX-006 → UX-005 → ACC-009..012 → PERF-020 → CODE-036 → CFG-027 → CODE-040 → CODE-041 → PERF-019; rồi LOW (gồm GAP-012 Vercel insights).
+- Kế tiếp (LOW, theo thứ tự): ACC-013 → ACC-014 → ACC-015 → ACC-016 → PERF-021 → UX-007 → CODE-038 → CODE-039 → CFG-029 → CODE-044 → CODE-045 → CODE-046 → CODE-047; rồi xếp CHỜ-CHỦ có lý do: SEC-047, CODE-043, CFG-028. Sau đó Phase 3.
+- CODE-042: test đầu tiên (6 lần lưu song song qua HTTP) pass cả trên code cũ vì PGlite chạy từng truy vấn một → bỏ; thay bằng test ép lần lưu rơi đúng vào khe đọc–ghi (fail trên code cũ, pass trên code mới).
+- Ghi chú ledger: mô tả của SEC-039 và PERF-017 chứa `|` chưa escape làm lệch cột bảng → đã escape `\|` (2026-10-05).
 - Lệnh kiểm chứng mỗi ID: test file liên quan + `npx eslint <files>` + `npm run typecheck` (2 s). Script ledger: `scratchpad/ledger.mjs <ID> <STATUS> <verify> <commit>`.
 - Ghi chú: `811d44c` có tiêu đề "ledger SEC-034" nhưng thực chất chỉ thêm 2 dòng HAR-003/HAR-004 (đã nói rõ trong `2c616fa`).
-- 3 sub-agent (đọc vùng [UNKNOWN] từ snapshot `58b1ab4`) chạy nền từ 2026-10-05 sáng; kết quả → thêm ID mới.
 
 ## Đã xong
 
