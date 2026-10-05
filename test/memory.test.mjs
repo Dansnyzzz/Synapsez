@@ -226,9 +226,17 @@ section('memory tools obey the guard and the account');
     const back = (await store.getUserSetting(aliceId, 'memory')).language;
     check('undo puts the note back as it was', undo.status === 200 && back.content === 'Answer in Vietnamese.' && !back.previous, JSON.stringify(back));
     check('  and there is nothing further to undo', (await alice.call('POST', '/api/memory/account/language/undo')).status === 400);
+    // PRV-006: an assistant change keeps what it replaced, and the export carries it…
+    await run('memory_edit', { key: 'language', old_string: 'Vietnamese.', new_string: 'Vietnamese. I have diabetes.' });
+    const exported = (await alice.call('GET', '/api/account/export')).body?.memory?.find((n) => n.key === 'language');
+    check('the export carries the earlier version an assistant change kept', exported?.previous?.content === 'Answer in Vietnamese.' && exported?.by === 'assistant', JSON.stringify(exported));
+    // …but the person's own edit keeps nothing of what they took out, and clears that.
     await alice.call('PUT', '/api/memory/account/language', { content: 'Answer in Vietnamese, briefly.' });
     const typed = (await store.getUserSetting(aliceId, 'memory')).language;
-    check('a note corrected by hand is marked as the person\'s', typed.by === 'user' && typed.previous?.content === 'Answer in Vietnamese.', JSON.stringify(typed));
+    check('a note corrected by hand is marked as the person\'s', typed.by === 'user', JSON.stringify(typed));
+    check('  and keeps no copy of the text they removed (PRV-006)', !typed.previous && !JSON.stringify(typed).includes('diabetes'), JSON.stringify(typed));
+    await alice.call('PUT', '/api/memory/account/language', { content: 'Answer in Vietnamese.' });
+    check('  nor of their own earlier wording', !(await store.getUserSetting(aliceId, 'memory')).language.previous);
     check('an unknown note cannot be undone', (await alice.call('POST', '/api/memory/account/nope/undo')).status === 404);
   }
   const proto = await run('memory_delete', { key: 'toString' });

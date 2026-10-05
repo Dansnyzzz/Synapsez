@@ -108,7 +108,7 @@ export function createPrivacy({ state, armed, onImported }) {
                   <div class="note__body">${escapeHtml(note.content)}</div>
                   <div class="note__actions">
                     <button class="btn btn--ghost" type="button" data-note-edit>${escapeHtml(t('memory.edit'))}</button>
-                    ${note.canUndo ? `<button class="btn btn--ghost" type="button" data-note-undo>${escapeHtml(t('memory.undo'))}</button>` : ''}
+                    ${note.canUndo ? `<button class="btn btn--ghost" type="button" data-note-undo title="${escapeHtml(t('memory.undoHint'))}">${escapeHtml(t('memory.undo'))}</button>` : ''}
                     <button class="btn btn--ghost" type="button" data-note-delete>${escapeHtml(t('action.delete'))}</button>
                   </div>
                 </div>`,

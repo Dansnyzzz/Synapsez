@@ -88,8 +88,14 @@ export const MAX_NOTE_CHARS = 8_000;
  * so nobody could tell one the person typed from one the assistant saved in the
  * middle of reading a stranger's page, and a bad change could only be deleted,
  * not taken back. Now each carries `by` ('assistant', 'user' or 'import'), the
- * conversation it was saved in, and the version it replaced — one step of undo,
- * offered in Settings → Memory.
+ * conversation it was saved in, and — when the assistant changed it — the
+ * version it replaced: one step of undo, offered in Settings → Memory.
+ *
+ * Only an assistant's change keeps what it replaced (PRV-006). The undo exists
+ * for a change the person did not make; a person's own edit is their decision,
+ * and keeping the text they just removed — "diabetes" taken out of a note — is
+ * the opposite of what an edit is for. Their edit, or an import, keeps no earlier
+ * version, and so also clears one an assistant change left behind.
  *
  * @param {string} content
  * @param {{ by: 'assistant'|'user'|'import', chatId?: string|null, before?: any }} origin
@@ -98,7 +104,7 @@ export const MAX_NOTE_CHARS = 8_000;
 export function stampNote(content, { by, chatId = null, before = null }) {
   const note = { content, updatedAt: new Date().toISOString(), by };
   if (chatId) note.chatId = chatId;
-  if (before && typeof before.content === 'string' && before.content !== content) {
+  if (by === 'assistant' && before && typeof before.content === 'string' && before.content !== content) {
     // One step back, never a chain: the previous version, without its own past.
     note.previous = {
       content: before.content,

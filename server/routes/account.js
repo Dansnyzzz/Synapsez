@@ -265,6 +265,14 @@ export function mountAccountRoutes(api, admin, { wrap }) {
             key: name,
             content: String(note?.content ?? ''),
             updatedAt: note?.updatedAt || null,
+            // Everything the account holds about a note, the earlier version an
+            // assistant change left included (PRV-006): an export that leaves
+            // out stored text is not the whole of what is kept.
+            by: note?.by || null,
+            chatId: note?.chatId || null,
+            ...(typeof note?.previous?.content === 'string'
+              ? { previous: { content: note.previous.content, updatedAt: note.previous.updatedAt || null, by: note.previous.by || null } }
+              : {}),
           });
         }
       }
