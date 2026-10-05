@@ -221,9 +221,14 @@ section('the clipboard round-trips, and is put back');
      * the case being excused, or if the write failed, which the check above
      * already caught.
      */
+    // Except one case that is not a neighbour's (CODE-043): the clipboard still
+    // holding this suite's own probe means the restore did not happen at all, and
+    // that fails. Only something else — neither the original nor the probe — is
+    // excused as somebody else's copy.
     const putBack = before === null || restored.includes(before.slice(0, 40));
-    if (putBack) {
-      check('and the original is restored', true);
+    const stillOurs = restored.includes(probe);
+    if (putBack || stillOurs) {
+      check('and the original is restored', putBack && !stillOurs, `clipboard: ${String(restored).slice(0, 60)}`);
     } else {
       console.log(
         '  \x1b[33m–\x1b[0m  skipped: something else on this machine took the clipboard mid-test',
