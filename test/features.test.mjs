@@ -300,6 +300,15 @@ section('every schedule field shows where focus is (ACC-009)');
   check('  rather than an outline the app-wide rule would cancel', !/\.spane__(row|num|times)[^{]*:focus-visible \{ outline/.test(css));
 }
 
+section('an archive row\'s actions are not inside its button (ACC-010)');
+{
+  const pages = fs.readFileSync(new URL('../public/js/pages.js', import.meta.url), 'utf8');
+  const row = pages.slice(pages.indexOf('<div class="task archived"'), pages.indexOf('data-restore="${id}"'));
+  check('the row itself is not a button', !/<div class="task archived"[^>]*role="button"/.test(row));
+  check('  its dot-and-title area is, and it closes before Restore', /<div class="task__main" role="button" tabindex="0"/.test(row) && (row.match(/<\/div>/g) || []).length >= 3);
+  check('  and the keyboard opens it from there', /\(card\.querySelector\('\.task__main'\)\)\?\.addEventListener\('keydown'/.test(pages));
+}
+
 section('Escape in a sketch label drops the label, not the sketch (UX-006)');
 {
   const src = fs.readFileSync(new URL('../public/js/sketch.js', import.meta.url), 'utf8');

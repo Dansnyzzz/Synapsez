@@ -753,12 +753,13 @@ export function createPages({
           ].filter(Boolean);
           const id = escapeHtml(item.id);
           return `
-        <div class="task archived" data-archived="${id}" data-kind="${item.kind}" data-open-archived="${id}"
-             role="button" tabindex="0" aria-label="${escapeHtml(t('pages.archive.open', { name: item.title || t('chat.untitled') }))}">
-          <span class="task__dot"></span>
-          <div class="task__body">
-            <span class="task__name">${escapeHtml(item.title || t('chat.untitled'))}</span>
-            <div class="task__when">${facts.map(escapeHtml).join(' · ')}</div>
+        <div class="task archived" data-archived="${id}" data-kind="${item.kind}" data-open-archived="${id}">
+          <div class="task__main" role="button" tabindex="0" aria-label="${escapeHtml(t('pages.archive.open', { name: item.title || t('chat.untitled') }))}">
+            <span class="task__dot"></span>
+            <div class="task__body">
+              <span class="task__name">${escapeHtml(item.title || t('chat.untitled'))}</span>
+              <div class="task__when">${facts.map(escapeHtml).join(' · ')}</div>
+            </div>
           </div>
           <button class="task__act" type="button" data-restore="${id}">${escapeHtml(t('pages.archive.restore'))}</button>
           ${
@@ -786,8 +787,14 @@ export function createPages({
           if (/** @type {HTMLElement} */ (event.target).closest('button')) return;
           open();
         });
-        card.addEventListener('keydown', (event) => {
-          if (event.target !== card || (event.key !== 'Enter' && event.key !== ' ')) return;
+        /*
+         * The keyboard's way in is the dot-and-title area, a button of its own
+         * beside Restore and Delete rather than around them (ACC-010). A
+         * `role="button"` wrapping other buttons makes them presentational, so
+         * screen readers flattened or hid the two actions on every row.
+         */
+        /** @type {HTMLElement|null} */ (card.querySelector('.task__main'))?.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
           open();
         });
