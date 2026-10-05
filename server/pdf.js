@@ -24,6 +24,9 @@ import { createRequire } from 'node:module';
 /** Enough of a long document to work with, without eating the whole window. */
 const MAX_CHARS = 120_000;
 const MAX_PAGES = 200;
+/** The most pixels one rendered page may have, whatever its shape. */
+const MAX_RENDER_PIXELS = 12_000_000;
+const MAX_RENDER_SIDE = 16_000;
 
 let pdfjs = null;
 
@@ -133,8 +136,18 @@ export async function renderPdfPages(file, { pages = null, max = 8, width = 1400
       const page = await doc.getPage(n);
       const base = page.getViewport({ scale: 1 });
       // Wide enough for small print to survive, capped so a poster-sized page
-      // does not become a forty-megapixel request.
-      const scale = Math.min(3, width / base.width);
+      // does not become a forty-megapixel request — and capped by area too
+      // (PERF-019): the width cap alone let a page 100 pt wide and a million
+      // tall become a 300 × 3,000,000 canvas, ~3.6 GB of pixels.
+      // A side is capped as well: JPEG cannot hold one past 65,535 pixels, and the
+      // encoder fails outright rather than shrinking.
+      const area = Math.max(1, base.width * base.height);
+      const scale = Math.min(
+        3,
+        width / Math.max(1, base.width),
+        Math.sqrt(MAX_RENDER_PIXELS / area),
+        MAX_RENDER_SIDE / Math.max(1, base.width, base.height),
+      );
       const viewport = page.getViewport({ scale });
       const canvas = canvasApi.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
       const context = canvas.getContext('2d');

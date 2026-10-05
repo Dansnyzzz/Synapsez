@@ -492,6 +492,33 @@ section('OCR reads Vietnamese with no key and no network');
     huge.writeUInt32BE(20_000, 20);
     const refused = await ocrImage(huge).then(() => '', (e) => String(e.message));
     check('a 400-megapixel picture is refused, not decoded', /too large to read/.test(refused), refused);
+
+    // PERF-019: a page's shape cannot make the canvas enormous.
+    const { renderPdfPages } = await import('../server/pdf.js');
+    const pdfOf = (box) => {
+      const objects = [
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${box}] /Resources << >> /Contents 4 0 R >>`,
+        '<< /Length 0 >>\nstream\n\nendstream',
+      ];
+      let body = '%PDF-1.4\n';
+      const offsets = [];
+      objects.forEach((o, i) => {
+        offsets.push(body.length);
+        body += `${i + 1} 0 obj\n${o}\nendobj\n`;
+      });
+      const xref = body.length;
+      body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+      body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+      return Buffer.from(body, 'latin1');
+    };
+    const tall = await renderPdfPages(pdfOf('100 1000000'));
+    const drawn = tall?.pages?.[0] ? imageSize(Buffer.from(tall.pages[0].data, 'base64')) : null;
+    check('a page a million points tall is drawn within the pixel ceiling', !!drawn && drawn.width * drawn.height <= 12_000_000 * 1.01, JSON.stringify(drawn));
+    const a4 = await renderPdfPages(pdfOf('595 842'));
+    const a4Size = a4?.pages?.[0] ? imageSize(Buffer.from(a4.pages[0].data, 'base64')) : null;
+    check('  while an A4 page is still drawn 1400 wide', a4Size?.width === 1400, JSON.stringify(a4Size));
   }
   await stopOcr();
 
