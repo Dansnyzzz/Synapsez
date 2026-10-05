@@ -3,10 +3,151 @@
 Every row is a command that was run and an output that was read. Where something
 could not be measured it says so; nothing here is interpolated.
 
-Two rounds are recorded. **Round 2** (this section) is the server/worker audit:
+Three rounds are recorded. **Round 3** (audit v3, 2026-10-05) is first; the rounds before it follow unchanged.
+
+**Round 2** is the server/worker audit:
 before = `audit/BASELINE.md` 2026-09-09 column, `main` at `3e8273e`; after =
 `audit/server-worker-2026-09-09` at `9db11a2` plus the audit documents, measured
 2026-09-14. **Round 1** follows unchanged below.
+
+---
+
+# Round 3 — audit v3, 2026-10-04 → 2026-10-05
+
+Before = `audit/BASELINE.md` section "Vòng v3", `main` at `58b1ab4` (tag `backup/pre-optimize-20261005-0736`).
+After = branch `optimize/2026-10-05`, 129 commits, measured at `f39f419`–`d6d1ea7` (the commits between
+them touch `audit/` only). Every row is a command that was run and an output that was read.
+
+## The gate, and what runs outside it
+
+| Thing | Before | After | How measured |
+|---|---|---|---|
+| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** — "Gate green (full)", stamped on `f39f419` | `npm run gate`, log `scratchpad/gate-final.log` |
+| lint | exit 0 | **exit 0** | gate step 1 |
+| `test:hooks` | 168/168 | **168/168** | gate step 2 |
+| eval (scripted) | 13/13, `PROMPT_STAMP ecd004bc42ae` | **13/13, same stamp** — the main system prompt did not change | gate step 3; server log `promptVersion=ecd004bc42ae` |
+| typecheck ratchet | 315 outstanding, ceiling 315 | **315, ceiling 315** — `.typecheck-baseline.json` did not grow | gate step 4 |
+| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓, 0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
+| Suites in `npm test` | 47 | **48** (+`egress.test`) | `scripts.test` |
+| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** (real Edge) | `node test/ui.test.mjs` at `d6d1ea7` |
+| `npm run test:sandbox` | — | **exit 0, 31 ✓** | not in the gate |
+| Coverage (c8, `all:true`) | statements 64.09 · branches 75.42 · functions 67.03 · lines 64.09 | **64.87 · 75.95 · 68.45 · 64.87** — up on all four; functions was 0.03 above its threshold and is now 1.45 above | `npm run coverage`, exit 0, 221 s |
+
+## Regression checks
+
+| Check | Result |
+|---|---|
+| `git diff --shortstat backup/pre-optimize-20261005-0736 HEAD` | 89 files, +4,154 / −312 (includes the vendored Vercel scripts) |
+| `package-lock.json` | +85 / −3: `@vercel/analytics`, `@vercel/speed-insights`, and `qs` 6.16.0 (SEC-048). Not regenerated |
+| `.env` files in the diff | none |
+| New files over 300 KB | none (the one over is `test/ui.test.mjs`, which already was) |
+| Secret shapes in every added line of the 129 commits | **0** (Anthropic, OpenRouter, OpenAI, OrcaRouter, Google, GitHub, Slack, AWS, PEM, Postgres URL with password) |
+| Outbound calls with a timeout (`server/`, `api/`) | **45/45**, unchanged; the one the scan flags, `server/email.js:146`, has its signal at `:161` |
+| `console.log/info/debug` in server+api+worker | 64 → **63** |
+| Analytics / APM in code | 0 → **Vercel Web Analytics + Speed Insights** in `public/js/insights.js` (GAP-012, asked for). `@sentry` appears only as a name in the MCP catalogue, as before |
+| TODO/FIXME/XXX/HACK in tracked source | **0** |
+
+## End to end, locally (Phase 3 step 3)
+
+A real server (`node server/index.js`, throwaway `DATA_DIR`, port 5199, database URLs and every provider key
+blank, secrets and local access defaults passed in so nothing was appended to `.env`), driven over HTTP:
+
+```
+server up: true
+GET /api/session (anonymous): authed=false insights=null
+POST /api/register: 201 cookie=set
+GET /api/session (signed in): authed=true email=e2e@example.com
+POST /api/chats: created
+POST /api/chats/:id/messages: 201
+POST /api/chats/:id/run: 200 text/event-stream; charset=utf-8; 4 SSE events; last={"stopReason":"error"}
+POST /api/chats/:id/share: /share.html?t=<token>
+GET /api/shared-chat/:token (no account): 200 messages=1 signedIn=false
+visitor GET /api/favicon/evil.example (not in the chat, SEC-038): 401 (passed on, not fetched)
+visitor GET /api/map tile (chat has no map, SEC-038): 401
+GET / CSP: script-src 'self' | connect-src 'self'
+server log: turn failed … errMsg=No API key for Anthropic. Add one in Settings → Providers. ms=80
+```
+
+The turn ends on the readable no-key error by design: there is no provider key on this machine, and spending
+one on a test is not this audit's to do. `insights=null` is correct off Vercel.
+
+## Privacy egress (PHẦN V §P8) and the harness (PHẦN VI)
+
+`node test/egress.test.mjs`, all pass:
+
+```
+a turn with personal data reaches the provider and nothing else
+  ✓ the provider receives the message as written (no de-identifying layer yet — PRV-003)
+  ✓ no other request leaves the process during the turn
+  ✓ nothing the process printed carries the personal data
+  ✓ nothing in the security record carries it
+strict privacy reaches the wire, standard does not
+  ✓ a strict account is sent with OpenRouter's no-storage routing
+  ✓ a standard account is not
+one account is never answered from another account's results
+  ✓ each account read its own / and neither saw the other's
+```
+
+It proves where personal data goes and that no log keeps it. It does **not** prove de-identification, because
+there is none yet (PRV-003, CHỜ-CHỦ). The H1–H20 harness checks live in `agent`, `fallback`, `workflow`,
+`live-runs`, `isolation`, `memory` and `research`, all green inside the gate; the re-score is at the end of
+`audit/GAP_ANALYSIS.md`.
+
+## Measured, each a test that failed before its fix
+
+| ID | Before | After |
+|---|---|---|
+| CODE-042 | a save landing between a delete's read and write was lost: `{"kept":"2"}` | kept: `{"kept":"2","fresh":"3"}`. The first test written (six saves in parallel over HTTP) passed on the old code too, because PGlite runs one query at a time; it was replaced by one that forces the interleaving |
+| SEC-038 | a share cookie fetched any icon, allow-listed picture or map tile | off-page requests pass on to the sign-in check (401); four checks fail on the old code |
+| PERF-020 | citation matching on a long reply 9,077 ms | **367 ms** |
+| PERF-017 | quadratic on hostile feeds and pages | 2–394 ms on 150k–2M-character hostile inputs |
+| PERF-016 | a catastrophic regex ran unbounded | stops at **1,008 ms** |
+| PERF-021 | a large photo decoded twice at once | the thumbnail is drawn from the 938 KB copy preparing made (real Edge) |
+| ACC-013 | white on `#a78bfa` 2.7:1; send buttons 2.9 and 3.4:1 in the light theme | `--on-accent` 6.96 / 5.67 / 5.67 / 9.08:1, computed from the stylesheet by a test |
+| CODE-043 | the clipboard restore check could not fail | fails when the probe is still on the clipboard |
+
+## Token cost
+
+Not measured with live usage: no provider key here (as at baseline, `[UNKNOWN]`). What changed is fixed
+prompt text, measured by characters:
+
+| Where | Change | Why it is worth it |
+|---|---|---|
+| Sub-agent system prompt | +452 chars of text plus the 659-char untrusted-content rule, ≈ +280 tokens per sub-agent call | SEC-043: a sub-agent read web pages with no rule telling it a page's instructions are data |
+| Compaction prompt | +461 chars, ≈ +115 tokens per compaction | SEC-040: tool output was summarised as if it were the conversation |
+| `web_fetch` with pictures | ≈ +19 tokens per call | SEC-045: the page's captions sit inside an envelope |
+| Effort step-down | up to 3 needless retries per unrelated 400 → none | TOK-001 |
+
+The main system prompt is byte-identical (`PROMPT_STAMP` unchanged), so prompt caching is unaffected.
+
+## Ledger reconciliation
+
+| Total | FIXED | CHỜ-CHỦ (in repo) | CHỜ-CHỦ (outside repo) | DEFERRED | BLOCKED | OPEN | IN-PROGRESS |
+|---|---|---|---|---|---|---|---|
+| 74 | 60 | 12 | 2 | 0 | 0 | **0** | **0** |
+
+No CRITICAL or HIGH is open. The 14 not fixed are 6 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
+LAW-001) and 8 LOW, every one CHỜ-CHỦ with the reason and the options in its row.
+
+## Not measured, and why
+
+- Live token use, cache hit rate, cost and latency per turn: needs a provider key and real requests (§6).
+- Production after the push: Phase 4 (smoke test against the live URL).
+- The two Linux-only test branches on this machine: no bash, no WSL distribution; installing one is outside the
+  repository. They run in CI on every push.
+- The Windows-only `.ps1` checks in CI: CI is Linux only (CFG-028, CHỜ-CHỦ). They run here, in every gate.
+
+## Mistakes made during the work
+
+- SEC-039's code landed in `7ba763b` under a ledger-commit title; `d266ed1` holds the right message. A quoting
+  failure in PowerShell; every commit since went through a message file.
+- `612daa8` carried the CODE-048 ledger row cut off at its first double quote (PowerShell 5.1 splits arguments
+  there); `143be92` writes it whole, from a file.
+- `keyStep` (CODE-038) was first placed between `chartFigure` and its JSDoc, which dropped `chartFigure`'s
+  parameter types; `lendableUnder` (PRV-005) did the same to `visionEngines`. Both found by the CODE-039 scan and
+  moved in `d58d92a`.
+- A first CI-comment fix (CODE-046) said the type-check count lives in `scripts/typecheck.js`; it lives in
+  `.typecheck-baseline.json`. Caught before commit.
 
 ---
 

@@ -1,5 +1,83 @@
 # Changelog
 
+## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
+
+An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 74 findings, 60 fixed with a test
+that fails without the fix, 14 left for the owner with the reason written down. Nothing here needs a new paid
+service; everything stays on the free tiers.
+
+### Security and privacy
+
+- **A shared conversation published every tool's arguments and results**, including notes, other conversations,
+  an inbox or a Drive the assistant read on the way to its answer. Only tools that read the open web or made the
+  conversation's own work are published now; the rest are named, with their content left out, and a fork of the
+  link gets the same (PRV-001).
+- **Text a page wrote could reach the model as if the app had said it**: sandbox output, a sub-agent's or a deep
+  research run's report, project sources, a compacted summary of tool output, and the captions of pictures on a
+  fetched page. All of it now arrives inside the untrusted envelope (SEC-035, 040, 042, 043, 044, 045).
+- **Risk was graded on the raw arguments, before they were tidied**, so a command wrapped in an object ran without
+  asking. Grading now looks at what will actually run (SEC-039). Sandbox commands that touch the browser profile,
+  root or login scripts ask first (SEC-036).
+- **A favicon lookup could carry data out** in a hostname the model chose; only the site's registrable name is
+  fetched now (SEC-034). A share link's cookie no longer works as an anonymous fetcher for any icon, picture or
+  map tile: it draws that page only (SEC-038).
+- Strict provider privacy holds when the settings cannot be read, and a picture is only lent to a model the
+  strict promise covers (PRV-002, PRV-005). Settings says which provider keeps what (PRV-004).
+- Opening a share link while signed in shows it first, instead of silently copying it into your account
+  (SEC-041). "Copy public link" says it makes the file public, and appears only for files the app made (SEC-046).
+- The cloud browser's keys are stored encrypted (SEC-037). `qs` patched (SEC-048). The agent's own settings deny
+  it reading `.env.*` files (CFG-026).
+
+### Fixed
+
+- Saved notes say who wrote them (you, the assistant, an import) and from which conversation, and the
+  assistant's last change can be undone (HAR-002).
+- Clearing one value an artifact stored no longer erases a value saved at the same moment (CODE-042).
+- A picture edited while still uploading sends the edit, not the original (CODE-037).
+- A pinned source card stays open while a reply streams, moving with its chip (UX-007).
+- Home and End on a scatter chart reach the first and last visible point (CODE-038).
+- A ChatGPT export whose messages loop back is imported instead of hanging the tab (CODE-035).
+- Deep research no longer counts `gov.attacker.com` or `notarxiv.org` as a primary source (ACC-008).
+- Someone signed in to their own account sees a shared conversation's pictures and files (CODE-031).
+- The schedule pane saves the time you typed, not a half-typed one that arrived last, and the Repeat menu waits
+  for your choice instead of saving every arrow key (CODE-036, UX-005). Escape in a sketch label drops the label,
+  not the whole sketch (UX-006).
+- A memoised repeated read keys on nested arguments too (CODE-033).
+- Only a provider's refusal of the effort setting lowers it; any other error is shown at once (TOK-001).
+- `npm run storage -- --apply` asks before deleting across every account (CODE-044).
+
+### Accessibility
+
+- Text on the accent colour is at least 5.67:1 in every theme (it was 2.7:1 on the selected day chip, and under
+  4.5:1 on both send buttons in the light theme) (ACC-013).
+- The schedule fields and the import button show focus; archive rows no longer hide their Restore and Delete
+  buttons from screen readers; map zoom buttons and quiz answers are reachable; a shared conversation no longer
+  reads itself aloud whole; the picture editor names its colours and works from the keyboard (ACC-009 to 016).
+
+### Performance
+
+- Feed, page and regex work that a hostile input could make quadratic is linear or time-boxed (PERF-016, 017);
+  pictures and PDF pages are capped before decoding (PERF-018, 019); citation matching 9.1 s → 0.37 s on a long
+  reply (PERF-020); a large photo or PDF is no longer decoded twice at once on upload (PERF-021).
+
+### Added
+
+- **Vercel Web Analytics and Speed Insights**, served from this origin and loaded on Vercel only. What is sent is
+  the page's path, never its query or hash (where reset, share and chat tokens live), with no cookies, and nothing
+  at all from a browser set to Do Not Track or Global Privacy Control. `INSIGHTS=off` turns both off;
+  `SPEED_INSIGHTS_SAMPLE_RATE` lowers the speed sample (GAP-012). Turn both on once in the Vercel dashboard.
+- Every environment variable the server and worker read is in the README, and a test keeps it that way (CODE-047).
+- Tests: an egress test that sends fake personal data through a mocked provider and checks where it goes and
+  that no log carries it (HAR-003); the capabilities suite runs in CI, whose browser now installs where the tests
+  look (CODE-040, CFG-027); the artifact storage and picture-proxy routes are covered (CODE-041).
+
+### Left for the owner
+
+PRV-003 (de-identifying before sending), HAR-001 (the sandbox's open network), HAR-004 and HAR-005, CODE-032,
+CODE-034 (two platform-only test skips), CFG-024, CFG-025, CFG-028 (a Windows CI job costs Actions minutes),
+PERF-022, SEC-047 (`ACCESS_TOKEN` as a fallback for both secrets), SEC-049 (nodemailer needs a major upgrade);
+outside the repository: EXP-005, LAW-001. Each row in the ledger says why and what the choices are.
+
 ## 2026-10-04 (late) — memory that is read, privacy you control, research that reads
 
 ### Fixed
