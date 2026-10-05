@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import vm from 'node:vm';
 import QRCode from 'qrcode';
 import { safeFetch, readCapped } from '../util/safeFetch.js';
 import { validZone } from '../util/zone.js';
@@ -615,6 +616,38 @@ async function readFeedTool({ url, limit }) {
 /** Vietnamese without its marks: "Hà Nội" → "Ha Noi". */
 export const stripAccents = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 
+/** How long a pattern the model or the person wrote may run before it is stopped. */
+const REGEX_MS = 1000;
+const FIRST_MATCHES = `const out = [];
+for (const m of s.matchAll(re)) {
+  out.push({ text: m[0], index: m.index, groups: m.length > 1 ? Array.from(m).slice(1) : null });
+  if (out.length >= 50) break;
+}
+out;`;
+
+/**
+ * The first fifty matches of `re` in `s`, in a context that can be stopped
+ * (PERF-016).
+ *
+ * The pattern comes from the model, or from a page that talked to it.
+ * `(a+)+$` over forty characters is 2^40 steps of backtracking, and on the
+ * request's own thread it held the event loop until the function was killed at
+ * 300 s — this turn, and every other request on the instance. A `vm` timeout
+ * interrupts a regular expression mid-backtrack; nothing else in Node does
+ * short of a worker. Stopping after fifty also bounds the work for a pattern
+ * that matches everywhere.
+ */
+function matchesWithin(s, re) {
+  try {
+    return vm.runInNewContext(FIRST_MATCHES, { s, re }, { timeout: REGEX_MS });
+  } catch (err) {
+    if (err?.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+      throw new Error('That pattern took too long on this text: it backtracks without end (nested repeats such as (a+)+). Simplify it.');
+    }
+    throw err;
+  }
+}
+
 /** A line diff by longest common subsequence — small inputs only. */
 export function lineDiff(a, b) {
   const x = String(a).split('\n');
@@ -674,9 +707,9 @@ async function textToolsTool({ op, text = '', text2 = '', pattern, flags, algori
       } catch (err) {
         throw new Error(`Not a valid regular expression: ${err.message}`);
       }
-      const hits = [...s.matchAll(re)].slice(0, 50);
+      const hits = matchesWithin(s, re);
       return hits.length
-        ? `${hits.length} match(es):\n${hits.map((m) => `- "${m[0]}" at ${m.index}${m.length > 1 ? `, groups: ${JSON.stringify(m.slice(1))}` : ''}`).join('\n')}`
+        ? `${hits.length} match(es):\n${hits.map((m) => `- "${m.text}" at ${m.index}${m.groups ? `, groups: ${JSON.stringify(m.groups)}` : ''}`).join('\n')}`
         : 'No matches.';
     }
     case 'diff':

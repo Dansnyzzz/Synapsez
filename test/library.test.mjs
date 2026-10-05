@@ -100,6 +100,18 @@ section('feeds, text and tables are read correctly');
   check('invalid JSON says why', /Not valid JSON/.test(await fails(() => L.text_tools({ op: 'json_format', text: '{bad' }))));
   const re = await L.text_tools({ op: 'regex', text: 'mã 0901234567 và 0912345678', pattern: '09\\d{8}' });
   check('a regex finds every match', /2 match/.test(re), re);
+  check('  and reports its groups', /groups: \["0901"\]/.test(await L.text_tools({ op: 'regex', text: 'mã 0901234567', pattern: '(09\\d{2})\\d{6}' })));
+  {
+    // PERF-016: catastrophic backtracking is stopped, not left to hold the
+    // event loop until the function is killed.
+    const started = Date.now();
+    const slow = await fails(() => L.text_tools({ op: 'regex', text: `${'a'.repeat(40)}!`, pattern: '(a+)+$' }));
+    const took = Date.now() - started;
+    check('a pattern that backtracks without end is stopped', /took too long/.test(slow), slow);
+    check('  within a couple of seconds', took < 3000, `${took} ms`);
+    const many = await L.text_tools({ op: 'regex', text: 'x'.repeat(10_000), pattern: 'x' });
+    check('a pattern that matches everywhere reports the first fifty', /^50 match/.test(many), many.slice(0, 20));
+  }
 
   check('numbers in either convention', lib.toNumber('1.234.567,5') === 1234567.5 && lib.toNumber('1,234,567.5') === 1234567.5 && lib.toNumber('12%') === 12);
   const csv = 'Tỉnh;Doanh thu;Kênh\nHà Nội;"1.200,5";Online\nHCM;2.000;Online\nHà Nội;300;Cửa hàng\n';
