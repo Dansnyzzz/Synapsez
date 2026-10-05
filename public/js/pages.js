@@ -1426,7 +1426,21 @@ export function createPages({
   /** What opened the panel wants redrawn after a change there, if anything. */
   let paneAfter = null;
 
+  /**
+   * A Repeat choice still sitting out its pause (UX-005), saved now — before the
+   * panel it was made in is redrawn or closed (UX-010). The save reads the
+   * panel's own fields, so once they are gone a choice made a moment before
+   * moving on was lost without a word.
+   */
+  let settlePending = null;
+  function flushSettling() {
+    const save = settlePending;
+    settlePending = null;
+    return save ? save() : null;
+  }
+
   async function showScheduleInPane(kind, id, { after = null } = {}) {
+    flushSettling();
     paneAfter = after;
     const { row, project } = await fetchSchedule(kind, id);
     const pane = $('taskpane');
@@ -1515,9 +1529,20 @@ export function createPages({
       }
       layout();
       clearTimeout(settling);
+      const menu = q('frequency');
+      settlePending = () => {
+        clearTimeout(settling);
+        return saveSchedule();
+      };
       settling = setTimeout(async () => {
-        const hadFocus = document.activeElement === q('frequency');
+        settlePending = null;
+        const hadFocus = document.activeElement === menu;
         if (await saveSchedule()) {
+          // Somebody who moved on within the pause stays where they went: the
+          // change they made here is saved, but this schedule is not reopened
+          // over whatever the panel shows now (UX-010). Any redraw of the panel
+          // detaches this menu.
+          if (!menu.isConnected) return;
           await showScheduleInPane(kind, row.id, { after: paneAfter });
           if (hadFocus) /** @type {HTMLElement|null} */ (document.querySelector('[data-s="frequency"]'))?.focus();
         }
@@ -1664,6 +1689,7 @@ export function createPages({
   const showTaskInPane = (id) => showScheduleInPane('task', id);
 
   function closeTaskPane() {
+    flushSettling();
     $('taskpane').hidden = true;
     $('taskpane-body').innerHTML = '';
     onPaneClose();

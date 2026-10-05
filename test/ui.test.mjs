@@ -4344,6 +4344,22 @@ section('a schedule set up in a conversation is a card that opens it');
   const ended = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.ends_on);
   check('an end date set in the panel is kept', ended === '2999-12-31', String(ended));
 
+  // UX-010: changing the repeat and leaving within the pause. The change is saved
+  // on the way out, and the panel is not reopened behind the person's back.
+  const cronBefore = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.cron);
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await page.click('#taskpane-close');
+  await page.waitForTimeout(1500);
+  const movedOn = await page.evaluate(async () => ({
+    closed: document.getElementById('taskpane').hidden,
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+  }));
+  check('a repeat changed just before closing the panel is still saved (UX-010)', !!movedOn.cron && movedOn.cron !== cronBefore, `${cronBefore} → ${movedOn.cron}`);
+  check('  and the panel is not reopened behind the person\'s back', movedOn.closed, JSON.stringify(movedOn));
+  // Back to where the checks below expect to start: the task open in the panel.
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(1200);
+
   await page.click('#taskpane-close');
   check('its close button gives the panel back', await page.evaluate(() => document.getElementById('taskpane').hidden));
   // The side area was closed before the task opened, so one close ends both —
