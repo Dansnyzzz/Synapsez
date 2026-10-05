@@ -877,9 +877,14 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
      * A link anyone can open, copied — the share link the file card offers,
      * one press from the viewer. This slot used to say "No computer paired",
      * left over from when files could be opened on a paired machine.
+     *
+     * Named for what it does (SEC-046): it makes the file public. "Copy link"
+     * read like a private address for oneself, and the warning only arrived in
+     * the toast after the file was already out. Offered only for what the
+     * assistant made — an upload cannot be shared, and the server says so.
      */
-    items.push(null, {
-      label: t('viewer.copyLink'),
+    if (current.file?.origin === 'generated') items.push(null, {
+      label: t('viewer.copyPublicLink'),
       icon: LINK_ICON,
       run: async () => {
         try {

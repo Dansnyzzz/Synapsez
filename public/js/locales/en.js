@@ -410,7 +410,7 @@ export const en = {
   'viewer.print': 'Print',
   'viewer.savePdf': 'Save as PDF',
   'viewer.savePdfHint': 'In the dialog, choose “Save as PDF” as the destination.',
-  'viewer.copyLink': 'Copy link',
+  'viewer.copyPublicLink': 'Copy public link (anyone can open)',
   'viewer.linkCopied': 'Link copied — anyone with it can open the file.',
   'viewer.nothingToCopy': 'There is nothing in this one to copy.',
   'viewer.copiedRich': 'Copied — paste into Word and it keeps its formatting.',

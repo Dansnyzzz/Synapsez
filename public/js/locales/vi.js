@@ -620,7 +620,7 @@ export const vi = {
   'viewer.print': 'In',
   'viewer.savePdf': 'Lưu thành PDF',
   'viewer.savePdfHint': 'Trong hộp thoại, chọn “Lưu dưới dạng PDF” ở mục Máy in đích.',
-  'viewer.copyLink': 'Sao chép liên kết',
+  'viewer.copyPublicLink': 'Sao chép liên kết công khai (ai có link đều mở được)',
   'viewer.linkCopied': 'Đã sao chép liên kết — ai có liên kết đều mở được tệp.',
   'viewer.nothingToCopy': 'Tệp này không có gì để sao chép.',
   'viewer.copiedRich': 'Đã sao chép — dán vào Word là giữ nguyên định dạng.',

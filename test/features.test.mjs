@@ -248,6 +248,17 @@ section('a link cannot copy a stranger\'s conversation into a signed-in account 
   check('  before the token is kept for an automatic copy', guard > 0 && stash > guard);
 }
 
+section('the viewer says a link it makes is public, and offers it only for made files (SEC-046)');
+{
+  const src = fs.readFileSync(new URL('../public/js/viewer.js', import.meta.url), 'utf8');
+  check('the menu item is guarded by the file being the assistant\'s', /if \(current\.file\?\.origin === 'generated'\) items\.push\(null, \{\s*label: t\('viewer\.copyPublicLink'\)/.test(src));
+  for (const lang of ['en', 'vi']) {
+    const text = fs.readFileSync(new URL(`../public/js/locales/${lang}.js`, import.meta.url), 'utf8');
+    const label = text.match(/'viewer\.copyPublicLink': '([^']+)'/)?.[1] || '';
+    check(`${lang}: its label says the link is public`, lang === 'en' ? /public/.test(label) : /công khai/.test(label), label);
+  }
+}
+
 section('the effort dial reaches every model that reasons, in each wire\'s own words');
 {
   const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');
