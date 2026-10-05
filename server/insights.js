@@ -36,7 +36,18 @@ export function sameOriginClientConfig(raw) {
     return null;
   }
   if (!parsed || typeof parsed !== 'object') return null;
-  const sameOrigin = (value) => typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.includes('..');
+  // Decided by the URL parser, not by prefixes: "/\evil.example" reads as
+  // "//evil.example" to it, and to a browser (SEC-051). A path that stays on a
+  // fixed base's origin stays on this one.
+  const BASE = 'https://this-origin.invalid';
+  const sameOrigin = (value) => {
+    if (typeof value !== 'string' || !value.startsWith('/') || value.includes('..')) return false;
+    try {
+      return new URL(value, BASE).origin === BASE;
+    } catch {
+      return false;
+    }
+  };
   for (const section of ['analytics', 'speedInsights']) {
     const values = parsed[section];
     if (values == null) continue;

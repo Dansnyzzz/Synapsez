@@ -321,6 +321,8 @@ section('page views and speed: on Vercel only, the path only, never against the 
   check('  the speed sample can be lowered, and nonsense is ignored', insightsConfig({ VERCEL: '1', SPEED_INSIGHTS_SAMPLE_RATE: '0.25' }).sampleRate === 0.25 && insightsConfig({ VERCEL: '1', SPEED_INSIGHTS_SAMPLE_RATE: '7' }).sampleRate === 1);
   check('Vercel\'s own client config is passed on when it stays on this origin', JSON.parse(sameOriginClientConfig('{"analytics":{"scriptSrc":"/abc/script.js","viewEndpoint":"/abc/view"}}')).analytics.scriptSrc === '/abc/script.js');
   check('  and dropped when any address leaves it', sameOriginClientConfig('{"analytics":{"scriptSrc":"https://evil.example/s.js"}}') === null && sameOriginClientConfig('{"speedInsights":{"endpoint":"//evil.example/v"}}') === null && sameOriginClientConfig('not json') === null);
+  // SEC-051: spellings a prefix check misses, which a URL parser reads as another host.
+  check('  including "/\\\\host" and a tab or newline after the slash', ['/\\evil.example/s.js', '/\t/evil.example/s.js', '/\n/evil.example/s.js'].every((p) => sameOriginClientConfig(JSON.stringify({ analytics: { scriptSrc: p } })) === null));
 
   const { pathOnly, analyticsFilter, speedFilter, trackingRefused } = await import('../public/js/insights.js');
   check('only origin and path leave — tokens in the query and the hash do not', pathOnly('https://synapsez.vercel.app/?reset=SECRET&t=TOKEN#chat') === 'https://synapsez.vercel.app/');
