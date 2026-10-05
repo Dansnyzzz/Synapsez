@@ -581,6 +581,19 @@ section('a file that must be shrunk is not decoded twice at once (PERF-021)');
   check('the composer uses it rather than starting both at once', /await preparedWithThumb\(file, /.test(src) && !/Promise\.all\(\[\s*prepareUpload/.test(src));
 }
 
+section('Home and End on a scatter chart reach the first and last visible point (CODE-038)');
+{
+  const { keyStep } = await import('../public/js/chart.js');
+  // Ten points; the first and last belong to a series set aside.
+  const hidden = (i) => i === 0 || i === 9;
+  check('Home from a later point goes to the first visible one', keyStep('Home', 5, 9, hidden) === 1, String(keyStep('Home', 5, 9, hidden)));
+  check('End from an earlier point goes to the last visible one', keyStep('End', 2, 9, hidden) === 8, String(keyStep('End', 2, 9, hidden)));
+  check('  and with nothing hidden, to the very ends', keyStep('Home', 5, 9) === 0 && keyStep('End', 2, 9) === 9);
+  check('arrows skip hidden points and stop at the edge', keyStep('ArrowLeft', 1, 9, hidden) === null && keyStep('ArrowRight', 9, 9) === 9 && keyStep('ArrowRight', 3, 9, (i) => i === 4) === 5);
+  check('with nothing read yet, an arrow starts at the first point', keyStep('ArrowLeft', -1, 9) === 0 && keyStep('ArrowRight', -1, 9, hidden) === 1);
+  check('any other key is not a move', keyStep('Escape', 3, 9) === undefined);
+}
+
 section('the effort dial reaches every model that reasons, in each wire\'s own words');
 {
   const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');

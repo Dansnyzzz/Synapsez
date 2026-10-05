@@ -66,6 +66,31 @@ const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300
  * @returns {HTMLElement | null} null when the markup is not a chart, so the
  *   caller can fall back to the plain frame.
  */
+/**
+ * The point a key moves the reading to, among points `0..last`.
+ *
+ * Undefined for a key that does not move it; null when it has nowhere to go.
+ * Home searches forward from the first point and End back from the last, past
+ * any point in a series set aside. The direction used to be guessed from
+ * `next < active`, so Home from a later point searched backwards from 0 and
+ * End from an earlier one forwards past the end — and when the first or last
+ * point was hidden, neither did anything (CODE-038).
+ *
+ * @param {string} key
+ * @param {number} active  the point being read, or -1 for none yet
+ * @param {number} last
+ * @param {(i: number) => boolean} [hidden]
+ */
+export function keyStep(key, active, last, hidden = () => false) {
+  const dir = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: 1, End: -1 }[key];
+  if (dir === undefined) return undefined;
+  // With nothing read yet, an arrow starts at the first point.
+  const [start, step] = key === 'Home' ? [0, 1] : key === 'End' ? [last, -1] : active < 0 ? [0, 1] : [active + dir, dir];
+  let next = Math.max(0, Math.min(last, start));
+  while (next >= 0 && next <= last && hidden(next)) next += step;
+  return next < 0 || next > last ? null : next;
+}
+
 export function chartFigure(widget) {
   const svg = cleanSvg(widget?.markup);
   if (!svg) return null;
@@ -229,20 +254,15 @@ export function chartFigure(widget) {
   stage.addEventListener('pointerleave', clear);
   stage.addEventListener('blur', clear);
   stage.addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
-    const last = spec.labels.length - 1;
-    let next = { ArrowRight: active + 1, ArrowDown: active + 1, ArrowLeft: active - 1, ArrowUp: active - 1, Home: 0, End: last }[event.key];
     // Keys skip the points of a series set aside, the same as the eye does.
-    if (isScatter && next !== undefined && off.size) {
-      const step = next < active ? -1 : 1;
-      while (next >= 0 && next <= last && off.has(spec.group[next])) next += step;
-      if (next < 0 || next > last) return event.preventDefault();
-    }
-    if (next === undefined) {
+    const hidden = isScatter && off.size ? (/** @type {number} */ i) => off.has(spec.group[i]) : undefined;
+    const i = keyStep(event.key, active, spec.labels.length - 1, hidden);
+    if (i === undefined) {
       if (event.key === 'Escape') clear();
       return;
     }
     event.preventDefault();
-    const i = Math.max(0, Math.min(last, active < 0 && next < 0 ? 0 : next));
+    if (i === null) return;
     show(i, hits.find((h) => h.getAttribute('data-i') === String(i)));
   });
 
