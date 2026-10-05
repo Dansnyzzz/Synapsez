@@ -4977,6 +4977,39 @@ section('a citation chip opens its list of sources');
   check('  moving with its chip', scroll.moved === 20, JSON.stringify(scroll));
   check('  and closes once the chip has scrolled out of view', scroll.gone, JSON.stringify(scroll));
 
+  // UX-009: in the reply being written, the prose is rewritten every frame and the
+  // chip with it. A pinned card follows the chip that replaced it, and closes only
+  // once no chip at that place cites the same sources.
+  const streaming = await page.evaluate(async () => {
+    const { renderMarkdown } = await import('/js/markdown.js');
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;top:80px;left:80px;z-index:2000;width:600px;height:300px;overflow:auto;background:var(--bg)';
+    const prose = document.createElement('div');
+    prose.className = 'prose';
+    box.append(prose);
+    document.body.append(box);
+    const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const said = 'Một câu. ([OpenRouter](https://openrouter.ai/a))';
+    prose.innerHTML = `${renderMarkdown(said)}<div style="height:2000px"></div>`;
+    prose.querySelector('.cite').click();
+    await frame();
+    const pop = /** @type {HTMLElement} */ (document.querySelector('.cite-pop'));
+    // The next streamed frame: the same words and more, drawn afresh.
+    prose.innerHTML = `${renderMarkdown(`${said} Câu tiếp theo đang được viết`)}<div style="height:2000px"></div>`;
+    box.scrollTop = 10;
+    await frame();
+    const kept = { open: !pop.hidden, expanded: prose.querySelector('.cite')?.getAttribute('aria-expanded') };
+    // A frame where that citation is no longer there.
+    prose.innerHTML = `${renderMarkdown('Một câu khác, không trích dẫn.')}<div style="height:2000px"></div>`;
+    box.scrollTop = 20;
+    await frame();
+    const gone = pop.hidden;
+    box.remove();
+    return { ...kept, gone };
+  });
+  check('a card pinned on the reply being written survives its repaint (UX-009)', streaming.open && streaming.expanded === 'true', JSON.stringify(streaming));
+  check('  and closes once that citation is no longer there', streaming.gone, JSON.stringify(streaming));
+
   // A source the conversation cannot account for is marked, on the chip and in the card.
   const audit = await page.evaluate(async () => {
     const { renderMarkdown } = await import('/js/markdown.js');

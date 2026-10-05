@@ -162,6 +162,28 @@ let current = null;
 let pinned = false;
 let showTimer = 0;
 let hideTimer = 0;
+/** Where the open card's chip sits: its prose, its place there, and what it cites. */
+let anchor = null;
+
+/**
+ * The open card's chip — found again if a streaming reply has repainted it.
+ *
+ * While a reply streams, its prose is rewritten every frame, so the chip a card
+ * was pinned on is replaced by an identical one; a card that only checked
+ * `isConnected` closed on the next scroll, and UX-007's fix held only for chips
+ * in earlier messages (UX-009). The prose element itself survives — only what is
+ * inside it is replaced — so the chip is the one at the same place there, citing
+ * the same sources. Null when there is no such chip any more.
+ */
+function stillCurrent() {
+  if (!current) return null;
+  if (current.isConnected) return current;
+  const again = anchor?.host?.isConnected ? anchor.host.querySelectorAll('.cite')[anchor.index] : null;
+  if (!again || (again.getAttribute('aria-label') || '') !== anchor.label) return null;
+  current = /** @type {HTMLElement} */ (again);
+  current.setAttribute('aria-expanded', 'true');
+  return current;
+}
 
 function popover() {
   if (pop) return pop;
@@ -208,6 +230,8 @@ function show(chip, { pin = false } = {}) {
   if (current !== chip) {
     current?.setAttribute('aria-expanded', 'false');
     current = chip;
+    const host = chip.closest('.prose') || chip.parentElement;
+    anchor = { host, index: [...(host?.querySelectorAll('.cite') || [])].indexOf(chip), label: chip.getAttribute('aria-label') || '' };
     // Checked again now, not only when the reply finished: a project's shelf
     // or a tool's result may have arrived since.
     auditCitations(chip);
@@ -227,6 +251,7 @@ function hide() {
   clearTimeout(showTimer);
   current?.setAttribute('aria-expanded', 'false');
   current = null;
+  anchor = null;
   pinned = false;
   if (pop) pop.hidden = true;
 }
@@ -243,9 +268,9 @@ if (typeof document !== 'undefined') {
   document.addEventListener('pointerover', (event) => {
     if (event.pointerType !== 'mouse') return;
     // A streaming reply repaints its prose every frame, so the chip a card was
-    // opened from can be replaced under it; a card for a chip that is gone is
-    // a card pointing at nothing.
-    if (current && !current.isConnected) hide();
+    // opened from can be replaced under it: found again if it is still there
+    // (UX-009), and a card for a chip that is gone is a card pointing at nothing.
+    if (current && !stillCurrent()) hide();
     const chip = chipOf(event.target);
     if (!chip) return;
     clearTimeout(hideTimer);
@@ -267,6 +292,7 @@ if (typeof document !== 'undefined') {
     const chip = chipOf(event.target);
     if (chip) {
       event.preventDefault();
+      stillCurrent();
       // A tap opens it and a second tap closes it. With a mouse the hover has
       // usually opened it already, so the click only makes it stay.
       if (current === chip && pinned) hide();
@@ -306,9 +332,10 @@ if (typeof document !== 'undefined') {
       following = 0;
       if (!pop || pop.hidden || !current) return;
       const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
-      const chip = current.getBoundingClientRect();
-      if (!current.isConnected || !chip.height || chip.bottom <= view.top || chip.top >= view.bottom) hide();
-      else place(current, pop);
+      const live = stillCurrent();
+      const chip = live?.getBoundingClientRect();
+      if (!live || !chip.height || chip.bottom <= view.top || chip.top >= view.bottom) hide();
+      else place(live, pop);
     });
   }, true);
   window.addEventListener('resize', hide);
