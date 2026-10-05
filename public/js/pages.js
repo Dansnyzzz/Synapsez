@@ -1436,7 +1436,8 @@ export function createPages({
   function flushSettling() {
     const save = settlePending;
     settlePending = null;
-    return save ? save() : null;
+    // Nobody waits on this one; a failure is already said in the pane's status.
+    return save ? Promise.resolve(save()).catch(() => false) : null;
   }
 
   async function showScheduleInPane(kind, id, { after = null } = {}) {
@@ -1444,12 +1445,19 @@ export function createPages({
     paneAfter = after;
     const { row, project } = await fetchSchedule(kind, id);
     const pane = $('taskpane');
-    const root = $('taskpane-body');
     $('taskpane-title').textContent = row.title;
     // No pencil in the header: every field below is edited in place, and a
     // workflow's steps have their own button inside.
-    root.innerHTML = scheduleEditorHtml(kind, row, project);
-    wireScheduleEditor(root, kind, row, project);
+    //
+    // Drawn into an element of its own each time, not straight into the shared
+    // panel body (UX-011). A save still in flight when the panel moves on reads
+    // its fields from here — detached, but with the values this schedule had —
+    // instead of from whatever the body holds by then, which is how one
+    // schedule's settings could be saved into another.
+    const view = document.createElement('div');
+    view.innerHTML = scheduleEditorHtml(kind, row, project);
+    $('taskpane-body').replaceChildren(view);
+    wireScheduleEditor(view, kind, row, project);
     refreshCards(kind, row);
     pane.hidden = false;
     onPaneOpen();
@@ -1477,7 +1485,12 @@ export function createPages({
         const result = await update(patch);
         const fresh = result.task || result.workflow;
         Object.assign(row, fresh);
-        $('taskpane-title').textContent = row.title;
+        // The panel's own words only while it is still the one on screen
+        // (UX-011): after a close or a switch, writing the title would put this
+        // schedule's name over another's. The cards and the lists hear of the
+        // change either way — they used to be skipped, so a closed panel left
+        // the conversation's card saying the old schedule.
+        if (root.isConnected) $('taskpane-title').textContent = row.title;
         q('next').textContent = nextText(row);
         status.textContent = t('pane.saved');
         status.classList.add('is-ok');
@@ -1691,7 +1704,7 @@ export function createPages({
   function closeTaskPane() {
     flushSettling();
     $('taskpane').hidden = true;
-    $('taskpane-body').innerHTML = '';
+    $('taskpane-body').replaceChildren();
     onPaneClose();
   }
 

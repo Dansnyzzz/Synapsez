@@ -4347,15 +4347,19 @@ section('a schedule set up in a conversation is a card that opens it');
   // UX-010: changing the repeat and leaving within the pause. The change is saved
   // on the way out, and the panel is not reopened behind the person's back.
   const cronBefore = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.cron);
+  const cardBefore = await page.evaluate(() => document.querySelector('#messages .schedcard__rows')?.textContent || '');
   await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
   await page.click('#taskpane-close');
   await page.waitForTimeout(1500);
   const movedOn = await page.evaluate(async () => ({
     closed: document.getElementById('taskpane').hidden,
     cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+    card: document.querySelector('#messages .schedcard__rows')?.textContent || '',
   }));
   check('a repeat changed just before closing the panel is still saved (UX-010)', !!movedOn.cron && movedOn.cron !== cronBefore, `${cronBefore} → ${movedOn.cron}`);
   check('  and the panel is not reopened behind the person\'s back', movedOn.closed, JSON.stringify(movedOn));
+  // UX-011: and the card in the conversation follows, though its panel is gone.
+  check('  the schedule card in the conversation shows the change too (UX-011)', movedOn.card !== cardBefore && movedOn.card.length > 0, `${cardBefore} → ${movedOn.card}`);
   // Back to where the checks below expect to start: the task open in the panel.
   await page.click('#messages .schedcard__pill');
   await page.waitForTimeout(1200);
