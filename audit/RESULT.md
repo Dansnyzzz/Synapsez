@@ -81,7 +81,7 @@ the watch on the network sees more than fetch (HAR-006)
   ✓ and so is a name lookup on its own — dns egress-probe-2.example
 a turn with personal data reaches the provider and nothing else
   ✓ the provider receives the message as written (no de-identifying layer yet — PRV-003)
-  ✓ no other request, connection or name lookup leaves the process during the turn
+  ✓ no other request, TCP/TLS connection or dns.lookup leaves the process during the turn
   ✓ nothing the process printed carries the personal data
   ✓ nothing in the security record carries it
 strict privacy reaches the wire, standard does not
@@ -95,8 +95,10 @@ one account is never answered from another account's results
 
 The first version of this test watched `fetch` only, while `safeFetch` (web tools, icons, pictures) goes
 through `node:http`/`https`; and "strict reaches the wire" read only the dispatcher's argument. Both were
-widened after the second evaluator pass (HAR-006): every socket connection and name lookup is watched, a probe
-proves the watch catches them, and the strict case reads the body the real adapter sends.
+widened after the second evaluator pass (HAR-006): every TCP/TLS connection (`net.Socket#connect`, which
+fetch, http, https and tls all use) and every `dns.lookup` is watched — not `dns.resolve*` or UDP, which nothing
+on a turn's path calls — a probe proves the watch catches them, and the strict case reads the body the real
+adapter sends. (This paragraph said "every socket connection and name lookup" until the fourth evaluator pass.)
 
 It proves where personal data goes and that no log keeps it. It does **not** prove de-identification, because
 there is none yet (PRV-003, CHỜ-CHỦ). The H1–H20 harness checks live in `agent`, `fallback`, `workflow`,

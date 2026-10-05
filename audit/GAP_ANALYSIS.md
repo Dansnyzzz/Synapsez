@@ -339,7 +339,7 @@ Mỗi dòng trỏ về ID ledger đã FIXED (commit trong ledger) hoặc lý do 
 | H12 memory poisoning | MỘT PHẦN | **ĐẠT** | HAR-002 |
 | H14 sandbox | MỘT PHẦN | MỘT PHẦN | SEC-036 FIXED; HAR-001 CHỜ-CHỦ |
 | Hiệu năng (PHẦN II D, ngoài bảng trên) | — | cải thiện đo được | PERF-016 regex có trần 1 s; PERF-017 HTML/feed tuyến tính (2–394 ms trên đầu vào thù địch); PERF-018/019 trần pixel OCR/PDF; PERF-020 9077 → 367 ms; PERF-021 không giải mã đôi |
-| Tiếp cận (WCAG) | — | cải thiện | ACC-008..016: tương phản `--on-accent` ≥ 5.67:1 mọi theme, vòng focus cho nút nhập, share không đọc cả hội thoại, trình vẽ dùng được bằng bàn phím (đã chạy trong trình duyệt thật) |
+| Tiếp cận (WCAG) | — | cải thiện | ACC-009..016 (ACC-008 là độ chính xác — research xếp nguồn chính — nằm ở mục A): tương phản `--on-accent` ≥ 5.67:1 mọi theme, vòng focus cho nút nhập, share không đọc cả hội thoại, trình vẽ dùng được bằng bàn phím (đã chạy trong trình duyệt thật) |
 
 **Còn lại không đổi và vì sao:** P2 khử định danh (PRV-003), P7 pháp lý (LAW-001), H16 OTel (HAR-004),
 T5 định tuyến theo độ khó (MỘT PHẦN, v2), T7 Batch (chấp nhận), dashboard theo route (MỘT PHẦN) — đều

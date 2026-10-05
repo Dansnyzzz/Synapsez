@@ -2,7 +2,7 @@
 
 ## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
 
-An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 90 findings, 74 fixed and 16 left
+An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 96 findings, 80 fixed and 16 left
 for the owner with the reason written down. Each fix to code comes with a test that fails without it; fixes to
 comments, documents, configuration and CI say in the ledger how they were checked instead. Nothing here needs a new paid
 service; everything stays on the free tiers.
@@ -14,7 +14,9 @@ service; everything stays on the free tiers.
   conversation's own work are published now; the rest are named, with their content left out, and a fork of the
   link gets the same (PRV-001). A read of a file by id — a spreadsheet's rows, a generated file's source — is
   published only when that file was sent or made in the shared conversation, judged against the call in its own
-  turn rather than by an id two turns can share (PRV-007, PRV-008).
+  turn rather than by an id two turns can share — rewrites with `update_file` included (PRV-007, PRV-008,
+  PRV-010). And a shared conversation's files are served, and copied into a fork, as they stood when the link
+  was made, like its messages: an edit afterwards no longer reaches a visitor (PRV-011).
 - **Editing a note yourself left the text you removed in the database.** Only a change the assistant made keeps
   what it replaced, for one undo; your own edit keeps nothing and clears it, the export includes it, and
   Settings says so (PRV-006).
