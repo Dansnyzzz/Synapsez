@@ -65,8 +65,19 @@ export const PUBLISHABLE_TOOLS = new Set([
  */
 const READS_A_FILE = { analyze_data: 'file_id', read_generated_file: 'file_id' };
 
-/** The ids of the tool calls a transcript may publish with their arguments and results. */
-function publishedCalls(messages) {
+/**
+ * Which tool calls may be published, decided message by message (PRV-008).
+ *
+ * A Map from each assistant and tool message to its calls' decisions, by id:
+ * `{ name, ok }`. A tool message is judged against the assistant message just
+ * before it — the calls it answers — and nothing else. Ids are not unique across
+ * a transcript: when a provider sends none, the adapters make one from position
+ * and tool name (`gcall_0_read_generated_file` in google.js, `call_analyze_data`
+ * in openaiCompatible.js), so two turns' reads share an id and a decision taken
+ * for one must never reach the other's result. An id that appears twice in one
+ * message is withheld for both.
+ */
+function publishDecisions(messages) {
   const own = new Set();
   for (const m of messages) {
     for (const a of m.attachments || []) if (a?.id) own.add(String(a.id));
@@ -74,16 +85,22 @@ function publishedCalls(messages) {
       if (PUBLISHABLE_TOOLS.has(r.name) && !READS_A_FILE[r.name] && r.file?.id) own.add(String(r.file.id));
     }
   }
-  const ids = new Set();
+  const byMessage = new Map();
+  let calls = new Map();
   for (const m of messages) {
-    for (const c of m.toolCalls || []) {
-      if (!PUBLISHABLE_TOOLS.has(c.name)) continue;
-      const file = READS_A_FILE[c.name] ? c.input?.[READS_A_FILE[c.name]] : null;
-      if (file && !own.has(String(file))) continue;
-      ids.add(c.id);
+    if (m.role === 'assistant') {
+      calls = new Map();
+      for (const c of m.toolCalls || []) {
+        const file = READS_A_FILE[c.name] ? c.input?.[READS_A_FILE[c.name]] : null;
+        const ok = PUBLISHABLE_TOOLS.has(c.name) && !(file && !own.has(String(file)));
+        calls.set(c.id, calls.has(c.id) ? { name: c.name, ok: false } : { name: c.name, ok });
+      }
+      byMessage.set(m, calls);
+    } else if (m.role === 'tool') {
+      byMessage.set(m, calls);
     }
   }
-  return ids;
+  return byMessage;
 }
 
 /** What a model reading a carried-on copy is told about a step that was left out. */
@@ -99,12 +116,13 @@ const LEFT_OUT = 'Not part of the shared copy: this step read the original accou
  * read — a note, an email — on its way to the answer.
  *
  * @param {any} m
- * @param {{ placeholder?: string, shown?: Set<string> }} [options]  `placeholder`
- *   replaces a withheld result's text (a copy the model will read); without it
- *   the text is empty and `hidden` says why (a page the visitor's browser words
- *   itself). `shown` is `publishedCalls` of the whole transcript.
+ * @param {{ placeholder?: string, calls?: Map<string, { name: string, ok: boolean }> }} [options]
+ *   `placeholder` replaces a withheld result's text (a copy the model will
+ *   read); without it the text is empty and `hidden` says why (a page the
+ *   visitor's browser words itself). `calls` is this message's entry in
+ *   `publishDecisions`.
  */
-function publicMessage(m, { placeholder = '', shown = new Set() } = {}) {
+function publicMessage(m, { placeholder = '', calls = new Map() } = {}) {
   if (m.role === 'user') {
     return {
       id: m.id,
@@ -121,7 +139,7 @@ function publicMessage(m, { placeholder = '', shown = new Set() } = {}) {
       toolCalls: (m.toolCalls || []).map((c) => ({
         id: c.id,
         name: c.name,
-        input: shown.has(c.id) ? c.input : {},
+        input: calls.get(c.id)?.ok ? c.input : {},
       })),
     };
   }
@@ -129,8 +147,10 @@ function publicMessage(m, { placeholder = '', shown = new Set() } = {}) {
     return {
       id: m.id,
       role: 'tool',
-      results: (m.results || []).map((r) =>
-        shown.has(r.toolCallId)
+      results: (m.results || []).map((r) => {
+        // The call this answers, in the message just before — and the same tool.
+        const call = calls.get(r.toolCallId);
+        return call?.ok && call.name === r.name && PUBLISHABLE_TOOLS.has(r.name)
           ? {
               toolCallId: r.toolCallId,
               name: r.name,
@@ -142,8 +162,8 @@ function publicMessage(m, { placeholder = '', shown = new Set() } = {}) {
               ...(r.shot ? { shot: r.shot } : {}),
               ...(r.answered ? { answered: r.answered } : {}),
             }
-          : { toolCallId: r.toolCallId, name: r.name, content: placeholder, isError: !!r.isError, ms: r.ms, hidden: true },
-      ),
+          : { toolCallId: r.toolCallId, name: r.name, content: placeholder, isError: !!r.isError, ms: r.ms, hidden: true };
+      }),
     };
   }
   return null;
@@ -151,8 +171,8 @@ function publicMessage(m, { placeholder = '', shown = new Set() } = {}) {
 
 /** The transcript as a visitor sees it — see `publicMessage`. */
 export function publicTranscript(messages, options = {}) {
-  const shown = publishedCalls(messages);
-  return messages.map((m) => publicMessage(m, { ...options, shown })).filter(Boolean);
+  const decisions = publishDecisions(messages);
+  return messages.map((m) => publicMessage(m, { ...options, calls: decisions.get(m) })).filter(Boolean);
 }
 
 /** Every file a transcript refers to: what was sent, what was made, what a step saw. */

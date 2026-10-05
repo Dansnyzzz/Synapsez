@@ -2160,6 +2160,34 @@ section('a shared conversation publishes the answer, not what was read of the ac
   check('a read of a file sent in the conversation is published', shownOf('r-own-csv').content === 'rows: 12');
   check('  as is one of a file the conversation made', shownOf('r-read-made').content === '# Plan');
   check('  and a read of data written into the call, or a listing of this conversation\'s files', shownOf('r-inline').content === 'a: 1' && shownOf('r-list').content === 'plan.md');
+
+  // PRV-008: ids repeat across a transcript when a provider sends none (google.js
+  // makes `gcall_0_<tool>`), so a result is judged against its own turn's call.
+  const same = 'gcall_0_read_generated_file';
+  const repeated = publicTranscript([
+    { id: 'g-1', role: 'assistant', text: '', toolCalls: [{ id: 'gcall_0_create_file', name: 'create_file', input: { name: 'a.md' } }] },
+    { id: 'g-2', role: 'tool', results: [{ toolCallId: 'gcall_0_create_file', name: 'create_file', content: 'Made a.md', file: { id: 'att-mine', name: 'a.md' } }] },
+    { id: 'g-3', role: 'assistant', text: '', toolCalls: [{ id: same, name: 'read_generated_file', input: { file_id: 'att-mine' } }] },
+    { id: 'g-4', role: 'tool', results: [{ toolCallId: same, name: 'read_generated_file', content: '# mine' }] },
+    { id: 'g-5', role: 'assistant', text: '', toolCalls: [{ id: same, name: 'read_generated_file', input: { file_id: 'att-another-chat' } }] },
+    { id: 'g-6', role: 'tool', results: [{ toolCallId: same, name: 'read_generated_file', content: 'SECRET-SAME-ID-SOURCE' }] },
+    // One message reusing an id for two calls, and a result naming another tool.
+    { id: 'g-7', role: 'assistant', text: '', toolCalls: [
+      { id: 'call_x', name: 'web_search', input: { query: 'q' } },
+      { id: 'call_x', name: 'memory_read', input: { key: 'SECRET-TWIN-KEY' } },
+      { id: 'call_y', name: 'web_search', input: { query: 'q2' } },
+    ] },
+    { id: 'g-8', role: 'tool', results: [
+      { toolCallId: 'call_x', name: 'memory_read', content: 'SECRET-TWIN-NOTE' },
+      { toolCallId: 'call_y', name: 'memory_read', content: 'SECRET-MISNAMED' },
+    ] },
+  ]);
+  const repeatedPage = JSON.stringify(repeated);
+  const resultOf = (msgId) => repeated.find((m) => m.id === msgId).results[0];
+  check('a withheld read is withheld even when an earlier published read had the same id', !repeatedPage.includes('SECRET-SAME-ID-SOURCE') && !repeatedPage.includes('att-another-chat') && resultOf('g-6').hidden === true);
+  check('  while the earlier, own read stays published', resultOf('g-4').content === '# mine');
+  check('an id used twice in one message is withheld for both', !repeatedPage.includes('SECRET-TWIN-KEY') && !repeatedPage.includes('SECRET-TWIN-NOTE'));
+  check('a result naming a different tool from its call is withheld', !repeatedPage.includes('SECRET-MISNAMED'));
 }
 
 section('a share link opens one file, and only its owner can make or take it back');
