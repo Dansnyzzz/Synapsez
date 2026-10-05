@@ -78,6 +78,38 @@ export function noteName(key) {
 /** The largest a single note may grow. A note is read into every conversation. */
 export const MAX_NOTE_CHARS = 8_000;
 
+/**
+ * A note as it is stored: what it says, who wrote it, where, and what it said
+ * before (HAR-002).
+ *
+ * A note is read into every later conversation, so one the assistant was talked
+ * into writing — by a page, an email, a file — keeps steering it long after the
+ * page is gone (OWASP ASI06). Notes carried no record of where they came from,
+ * so nobody could tell one the person typed from one the assistant saved in the
+ * middle of reading a stranger's page, and a bad change could only be deleted,
+ * not taken back. Now each carries `by` ('assistant', 'user' or 'import'), the
+ * conversation it was saved in, and the version it replaced — one step of undo,
+ * offered in Settings → Memory.
+ *
+ * @param {string} content
+ * @param {{ by: 'assistant'|'user'|'import', chatId?: string|null, before?: any }} origin
+ *   `before` is the stored note this replaces, if any.
+ */
+export function stampNote(content, { by, chatId = null, before = null }) {
+  const note = { content, updatedAt: new Date().toISOString(), by };
+  if (chatId) note.chatId = chatId;
+  if (before && typeof before.content === 'string' && before.content !== content) {
+    // One step back, never a chain: the previous version, without its own past.
+    note.previous = {
+      content: before.content,
+      updatedAt: before.updatedAt || null,
+      ...(before.by ? { by: before.by } : {}),
+      ...(before.chatId ? { chatId: before.chatId } : {}),
+    };
+  }
+  return note;
+}
+
 /* ── what may never be remembered ──────────────────────────────────── */
 
 /**

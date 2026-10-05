@@ -214,6 +214,23 @@ section('memory tools obey the guard and the account');
   check('an edit keeps "$&" literally — no replacement patterns', !edited.isError && after.includes('($& kept)'), after);
   const sneaky = await run('memory_edit', { key: 'language', old_string: 'Vietnamese', new_string: 'Vietnamese. SSN 123-45-6789' });
   check('an edit cannot smuggle an identifier in', sneaky.isError);
+
+  // HAR-002: where a note came from, and one step back.
+  {
+    const stored = (await store.getUserSetting(aliceId, 'memory')).language;
+    check('a note the assistant saved says so', stored.by === 'assistant', JSON.stringify({ by: stored.by, chatId: stored.chatId }));
+    check('  and keeps the version it replaced', stored.previous?.content === 'Answer in Vietnamese.', JSON.stringify(stored.previous));
+    const listed = (await alice.call('GET', '/api/memory')).body.groups.flatMap((g) => g.notes).find((n) => n.key === 'language');
+    check('Settings is told who wrote it and that it can be undone', listed?.by === 'assistant' && listed?.canUndo === true, JSON.stringify(listed));
+    const undo = await alice.call('POST', '/api/memory/account/language/undo');
+    const back = (await store.getUserSetting(aliceId, 'memory')).language;
+    check('undo puts the note back as it was', undo.status === 200 && back.content === 'Answer in Vietnamese.' && !back.previous, JSON.stringify(back));
+    check('  and there is nothing further to undo', (await alice.call('POST', '/api/memory/account/language/undo')).status === 400);
+    await alice.call('PUT', '/api/memory/account/language', { content: 'Answer in Vietnamese, briefly.' });
+    const typed = (await store.getUserSetting(aliceId, 'memory')).language;
+    check('a note corrected by hand is marked as the person\'s', typed.by === 'user' && typed.previous?.content === 'Answer in Vietnamese.', JSON.stringify(typed));
+    check('an unknown note cannot be undone', (await alice.call('POST', '/api/memory/account/nope/undo')).status === 404);
+  }
   const proto = await run('memory_delete', { key: 'toString' });
   check('"toString" is not a note that exists', proto.isError && /No note saved/.test(proto.content), proto.content);
   const big = await run('memory_write', { key: 'huge', content: 'x'.repeat(memory.MAX_NOTE_CHARS + 1) });

@@ -6,7 +6,7 @@ import { limit as rateLimit } from '../ratelimit.js';
 import { redactSecrets } from '../redact.js';
 import { audit } from '../audit.js';
 import { log } from '../util/trace.js';
-import { MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage } from '../memory.js';
+import { MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage, stampNote } from '../memory.js';
 import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.js';
 
 /**
@@ -43,7 +43,15 @@ export function mountAccountRoutes(api, admin, { wrap }) {
           const projectId = key === MEMORY_KEY ? null : key.slice(MEMORY_KEY.length + 1);
           const notes = Object.entries(value || {})
             .filter(([, note]) => note && typeof note.content === 'string')
-            .map(([name, note]) => ({ key: name, content: note.content, updatedAt: note.updatedAt || null }))
+            .map(([name, note]) => ({
+              key: name,
+              content: note.content,
+              updatedAt: note.updatedAt || null,
+              // Where it came from, and whether there is a change to take back (HAR-002).
+              by: note.by || null,
+              chatId: note.chatId || null,
+              canUndo: typeof note.previous?.content === 'string',
+            }))
             .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
           return {
             scope: projectId ? 'project' : 'account',
@@ -94,7 +102,35 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       }
       const refusal = memoryRefusal(text, { allowSensitive: true });
       if (refusal) return res.status(400).json({ error: refusalMessage(refusal) });
-      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: { content: text, updatedAt: new Date().toISOString() } });
+      const before = ((await getStore().getUserSetting(req.user.id, bucket)) || {})[key] || null;
+      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: stampNote(text, { by: 'user', before }) });
+      res.json({ ok: true });
+    }),
+  );
+
+  /**
+   * Take back the last change to a note (HAR-002): the version it replaced
+   * becomes the note again. One step only, and the undone text is not kept —
+   * undoing is the person deciding that change should not have happened.
+   */
+  api.post(
+    '/memory/:scope/:key/undo',
+    wrap(async (req, res) => {
+      const bucket = await bucketFor(req);
+      if (!bucket) return res.status(404).json({ error: 'No such project.' });
+      const notes = (await getStore().getUserSetting(req.user.id, bucket)) || {};
+      const note = Object.hasOwn(notes, req.params.key) ? notes[req.params.key] : null;
+      if (!note) return res.status(404).json({ error: 'No such note.' });
+      const previous = note.previous;
+      if (typeof previous?.content !== 'string') return res.status(400).json({ error: 'There is no earlier version of this note.' });
+      await getStore().mergeUserSetting(req.user.id, bucket, {
+        [req.params.key]: {
+          content: previous.content,
+          updatedAt: new Date().toISOString(),
+          ...(previous.by ? { by: previous.by } : {}),
+          ...(previous.chatId ? { chatId: previous.chatId } : {}),
+        },
+      });
       res.json({ ok: true });
     }),
   );
@@ -144,7 +180,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         return res.status(400).json({ error: `A note can be at most ${MAX_NOTE_CHARS} characters.` });
       }
       await store.mergeUserSetting(req.user.id, MEMORY_KEY, {
-        'imported-memory': { content, updatedAt: new Date().toISOString() },
+        'imported-memory': stampNote(content, { by: 'import', before: notes['imported-memory'] || null }),
       });
       await audit(req, req.user.id, 'data_imported', { notes: 1 });
       res.json({ ok: true });
@@ -309,7 +345,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
             const { text } = redactSecrets(String(n?.content ?? ''));
             if (!text.trim() || text.length > MAX_NOTE_CHARS) continue;
             if (memoryRefusal(text, { allowSensitive: prefs.memorySensitive === true })) continue;
-            patch[key] = { content: text, updatedAt: new Date().toISOString() };
+            patch[key] = stampNote(text, { by: 'import' });
             notes += 1;
           } catch {
             /* an unusable note name: skipped, the rest still come in */

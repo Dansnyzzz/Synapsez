@@ -87,6 +87,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'This conversation is still answering, so it cannot be rewritten underneath itself. Press Stop above the composer, then try again.':
     'Cuộc trò chuyện này vẫn đang trả lời, nên không thể sửa nội dung ngay bên dưới nó. Hãy bấm Dừng ở phía trên ô nhập rồi thử lại.',
   'No such note.': 'Không có ghi chú này.',
+  'There is no earlier version of this note.': 'Ghi chú này không có phiên bản trước để quay lại.',
   'A message cannot be empty.': 'Tin nhắn không được để trống.',
   'Message not found': 'Không tìm thấy tin nhắn',
   'There is not enough here yet to be worth folding up.': 'Chưa đủ nội dung để đáng gộp lại.',

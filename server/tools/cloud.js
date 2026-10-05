@@ -37,7 +37,7 @@ import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText, answerSummary } from './askOptions.js';
 import {
-  MEMORY_KEY, MAX_NOTE_CHARS, memoryScope, readBothScopes, noteName, memoryRefusal, refusalMessage, rankNotes,
+  MEMORY_KEY, MAX_NOTE_CHARS, memoryScope, readBothScopes, noteName, memoryRefusal, refusalMessage, rankNotes, stampNote,
 } from '../memory.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
@@ -885,8 +885,10 @@ async function memoryWrite({ key, content, scope }, { userId, chatId }) {
    * note, which then vanishes on serialisation while the tool reports it saved.
    */
   const name = noteName(key);
+  // What it replaces, kept one step back so a bad write can be undone (HAR-002).
+  const before = ((await store.getUserSetting(userId, where.key).catch(() => null)) || {})[name] || null;
   await store.mergeUserSetting(userId, where.key, {
-    [name]: { content: text, updatedAt: new Date().toISOString() },
+    [name]: stampNote(text, { by: 'assistant', chatId, before }),
   });
 
   if (!found.length) return `Saved note "${name}" for ${where.where}.`;
@@ -1274,10 +1276,11 @@ async function memoryAppend({ key: rawKey, content, scope }, { userId, chatId })
   const existing = memory[key]?.content || '';
   // A blank line between entries, so an appended list stays readable rather than
   // running together into one paragraph.
-  memory[key] = {
-    content: boundedNote(existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text),
-    updatedAt: new Date().toISOString(),
-  };
+  memory[key] = stampNote(boundedNote(existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text), {
+    by: 'assistant',
+    chatId,
+    before: memory[key] || null,
+  });
   // Merged, not overwritten: the agent runs up to four tool calls at once, so
   // two memory writes in one step both read the same object and a whole-value
   // write meant the second silently erased the first — while both reported
@@ -1342,7 +1345,7 @@ async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newS
   guardNote(text, allowed);
   // A function, not the string: `replace` reads `$&` and `` $` `` in a string
   // replacement as patterns, so a note edited to say "costs $&5" came out wrong.
-  memory[key] = { content: boundedNote(note.content.replace(find, () => text)), updatedAt: new Date().toISOString() };
+  memory[key] = stampNote(boundedNote(note.content.replace(find, () => text)), { by: 'assistant', chatId, before: note });
   // Only this note, so a concurrent write to a different one is not undone.
   await store.mergeUserSetting(userId, target, { [key]: memory[key] });
 

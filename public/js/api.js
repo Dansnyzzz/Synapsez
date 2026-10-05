@@ -190,6 +190,7 @@ export const api = {
   saveNote: (scope, key, content) =>
     request('PUT', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`, { content }),
   deleteNote: (scope, key) => request('DELETE', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`),
+  undoNote: (scope, key) => request('POST', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}/undo`),
   clearMemory: () => request('DELETE', '/api/memory'),
   importMemory: (text) => request('POST', '/api/memory/import', { text }),
   activity: () => request('GET', '/api/account/activity'),
