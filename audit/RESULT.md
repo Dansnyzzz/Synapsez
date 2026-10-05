@@ -22,14 +22,14 @@ them touch `audit/` only). Every row is a command that was run and an output tha
 
 | Thing | Before | After | How measured |
 |---|---|---|---|
-| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f`; after the third's **475 s** on `7726301` — same suites; wall time on this machine varies with what else it is doing, and the suite count rose by one check file's worth only | `npm run gate`, logs `scratchpad/gate-final{,2,3,4}.log` |
+| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f`; after the third's **475 s** on `7726301` (wall time on this machine varies with what else it is doing); after the fourth's **207 s** on `0a24f12` | `npm run gate`, logs `scratchpad/gate-final{,2,3,4,5}.log` |
 | lint | exit 0 | **exit 0** | gate step 1 |
 | `test:hooks` | 168/168 | **168/168** | gate step 2 |
 | eval (scripted) | 13/13, `PROMPT_STAMP ecd004bc42ae` | **13/13, same stamp** — the main system prompt did not change | gate step 3; server log `promptVersion=ecd004bc42ae` |
 | typecheck ratchet | 315 outstanding, ceiling 315 | **315, ceiling 315** — `.typecheck-baseline.json` did not grow | gate step 4 |
-| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **4,568 ✓** (`7726301`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
+| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **4,568 ✓** (`7726301`), **4,578 ✓** (`0a24f12`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
 | Suites in `npm test` | 47 | **48** (+`egress.test`) | `scripts.test` |
-| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008); **915 ✓, 0 failures** with UX-009 (+2) at `be1ec2b` — the commits after it touch no page but `serial.js`, checked in features (real Edge) | `node test/ui.test.mjs` |
+| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008); **915 ✓, 0 failures** with UX-009 (+2) at `be1ec2b`; **917 ✓, 0 failures** with UX-010 (+2) at `de8c0d7` — the commits after it touch no page (real Edge) | `node test/ui.test.mjs` |
 | `npm run test:sandbox` | — | **exit 0, 31 ✓** | not in the gate |
 | Coverage (c8, `all:true`) | statements 64.09 · branches 75.42 · functions 67.03 · lines 64.09 | **64.87 · 75.95 · 68.45 · 64.87** — up on all four; functions was 0.03 above its threshold and is now 1.45 above | `npm run coverage`, exit 0, 221 s |
 
@@ -141,10 +141,10 @@ first version of this table overstated the sub-agent row as ≈ +280 tokens and 
 
 | Total | FIXED | CHỜ-CHỦ (in repo) | CHỜ-CHỦ (outside repo) | DEFERRED | BLOCKED | OPEN | IN-PROGRESS |
 |---|---|---|---|---|---|---|---|
-| 90 | 74 | 14 | 2 | 0 | 0 | **0** | **0** |
+| 96 | 80 | 14 | 2 | 0 | 0 | **0** | **0** |
 
-(74 rows from Phases 1–2; four raised by the evaluator's first pass, eight by its second, four by its third —
-below.)
+(74 rows from Phases 1–2; four raised by the evaluator's first pass, eight by its second, four by its third,
+six by its fourth — below.)
 
 No CRITICAL or HIGH is open (PRV-010 was MEDIUM, and is fixed). The 16 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
 CFG-032, LAW-001) and 9 LOW, every one CHỜ-CHỦ with the reason and the options in its row.
@@ -194,7 +194,20 @@ It found:
 | `latestWins` dropped the queued save when the one before it failed | **CODE-051** `7f15dcf` |
 | The CHANGELOG said every fix has a failing-first test (not so for comment, README, settings and CI fixes); PERF-019 "capped before decoding"; a CSS comment said 7:1 for 6.96:1; "every name lookup" for `dns.lookup`; this file's diff and lockfile figures were stale; a README default predating the branch | **CODE-052** `4e60f60`, and the figures above |
 
-**Fourth pass:** recorded below once run.
+**Fourth pass (another new reviewer): `NEEDS_WORK`.** It went through all 28 publishable tools and the whole
+share path end to end, and held the sample SEC-039/040, CODE-033/040/041/044/045, ACC-014/015, PERF-020,
+UX-005/006, CFG-027, HAR-002 and GAP-012's server half. It found:
+
+| Finding | Disposition |
+|---|---|
+| A shared conversation's messages are a snapshot but its files were read live: a rewrite after sharing reached visitors and forks (older than this branch) | **PRV-011** `9a708fd`: served and forked as they stood at `shared_at`, from the file's version history; no schema change; fails on the previous code |
+| RESULT.md still made the egress claim CODE-052 had narrowed in the test; GAP filed ACC-008 under accessibility; the changelog did not name PRV-010 | **CODE-053** `6f50c7a` |
+| `insights.js` accepted `"/\evil.example"` as same-origin | **SEC-051** `9f6931d`: decided by the URL parser |
+| The Repeat timer could reopen the old schedule after moving on | **UX-010** `de8c0d7`. Its browser test found worse: the choice was lost when the panel closed, and switching schedules could save the new one's fields into the old row. A pending choice is now saved before the panel goes |
+| The assistant's own reply could still put a `USER:` line before the summariser | **SEC-052** `4a7d99a` |
+| The storage test's safety rested on empty variables reaching its child process | **CODE-054** `9896f0f`: a report-only run must show the temporary database first; and probed: on Windows an empty variable does reach the child |
+
+**Fifth pass:** recorded below once run.
 
 ## Not measured, and why
 
@@ -215,6 +228,15 @@ It found:
   moved in `d58d92a`.
 - A first CI-comment fix (CODE-046) said the type-check count lives in `scripts/typecheck.js`; it lives in
   `.typecheck-baseline.json`. Caught before commit.
+- While checking CODE-054 by hand, `scripts/storage.js` was run in report-only mode from PowerShell with
+  `$env:DATABASE_URL = ''` meant to blank it. In PowerShell that *deletes* the variable, so the script's `.env`
+  loader was free to fill it: had `.env` named a real database, the report — which opens the store, and so
+  applies pending migrations — would have reached it. It reported the local PGlite file; nothing else was
+  touched. The test itself passes empty values from Node, which, probed, do reach a child on Windows.
+- Each evaluator pass after the first found something the previous round's own checks had passed: the share
+  path three times over (PRV-007 by id, PRV-008 by repeated id, PRV-010 by a tool missed from the list), and
+  claims in this file that ran ahead of the evidence. Read-only review by a reviewer that had not seen the work
+  earned its place every time.
 
 ---
 
