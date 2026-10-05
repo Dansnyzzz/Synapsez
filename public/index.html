@@ -1281,7 +1281,14 @@
         <section class="panel" data-panel="memory" id="panel-memory" role="tabpanel" aria-labelledby="tab-memory">
           <p class="hint" data-i18n="memory.lede">
             What the assistant remembers between conversations, and what it may look back at. All of it stays
-            in this app's database; it reaches the model you chose only as part of a conversation.
+            in this app's database; it reaches the model you chose only as part of a conversation — and that
+            model's provider handles it under its own terms.
+          </p>
+          <!-- Shown by app.js only where the deployment measures (on Vercel), so it is never untrue. -->
+          <p class="hint" id="insights-note" data-i18n="memory.insights" hidden>
+            On this deployment, page views and page speed are counted by Vercel Web Analytics and Speed
+            Insights: no cookies, only the page's address without anything after ? or #, never what you write.
+            A browser set to Do Not Track or Global Privacy Control is not counted.
           </p>
           <div class="field">
             <label class="check" for="memory-on">

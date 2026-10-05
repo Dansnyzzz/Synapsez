@@ -1,4 +1,5 @@
 import { api, runAgent } from './api.js';
+import { startInsights } from './insights.js';
 import { follow, answerOwnership, someoneElseIsRunning } from './mirror.js';
 import { createRuns } from './runs.js';
 import { makeResizable } from './resize.js';
@@ -363,6 +364,11 @@ const CONTINUE_KEY = 'synapsez:continue-shared';
 
 async function boot() {
   session = await api.session();
+  // Page views and speed on a Vercel deployment, path only — public/js/insights.js.
+  // Settings → Memory & privacy says so only where it is true.
+  startInsights(session.insights);
+  const insightsNote = document.getElementById('insights-note');
+  if (insightsNote) insightsNote.hidden = !session.insights;
 
   resetToken = takeUrlToken('reset');
   if (resetToken) {

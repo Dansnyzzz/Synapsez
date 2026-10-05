@@ -236,6 +236,74 @@ section('a shared conversation opens with no account, and shows only its own fil
   }
 }
 
+section('page views and speed: on Vercel only, the path only, never against the browser\'s wish (GAP-012)');
+{
+  const { insightsConfig, sameOriginClientConfig } = await import('../server/insights.js');
+  check('a self-hosted server measures nothing', insightsConfig({}) === null);
+  check('a Vercel deployment does, at the full sample by default', JSON.stringify(insightsConfig({ VERCEL: '1' })) === '{"sampleRate":1,"clientConfig":null}');
+  check('  INSIGHTS=off turns both off', insightsConfig({ VERCEL: '1', INSIGHTS: 'off' }) === null);
+  check('  the speed sample can be lowered, and nonsense is ignored', insightsConfig({ VERCEL: '1', SPEED_INSIGHTS_SAMPLE_RATE: '0.25' }).sampleRate === 0.25 && insightsConfig({ VERCEL: '1', SPEED_INSIGHTS_SAMPLE_RATE: '7' }).sampleRate === 1);
+  check('Vercel\'s own client config is passed on when it stays on this origin', JSON.parse(sameOriginClientConfig('{"analytics":{"scriptSrc":"/abc/script.js","viewEndpoint":"/abc/view"}}')).analytics.scriptSrc === '/abc/script.js');
+  check('  and dropped when any address leaves it', sameOriginClientConfig('{"analytics":{"scriptSrc":"https://evil.example/s.js"}}') === null && sameOriginClientConfig('{"speedInsights":{"endpoint":"//evil.example/v"}}') === null && sameOriginClientConfig('not json') === null);
+
+  const { pathOnly, analyticsFilter, speedFilter, trackingRefused } = await import('../public/js/insights.js');
+  check('only origin and path leave — tokens in the query and the hash do not', pathOnly('https://synapsez.vercel.app/?reset=SECRET&t=TOKEN#chat') === 'https://synapsez.vercel.app/');
+  const filter = analyticsFilter();
+  const first = filter({ type: 'pageview', url: 'https://synapsez.vercel.app/?continue=TOKEN' });
+  check('a page view is sent with the path only', first?.url === 'https://synapsez.vercel.app/', JSON.stringify(first));
+  check('  and the same page rewriting its own address is not another view', filter({ type: 'pageview', url: 'https://synapsez.vercel.app/' }) === null);
+  check('  while a different page is', filter({ type: 'pageview', url: 'https://synapsez.vercel.app/share.html?t=X' })?.url === 'https://synapsez.vercel.app/share.html');
+  check('a speed measurement is cut to its path too', speedFilter()({ type: 'vital', url: 'https://synapsez.vercel.app/?chat=abc', value: 1 })?.url === 'https://synapsez.vercel.app/');
+  check('Global Privacy Control or Do Not Track turns it off', trackingRefused({ globalPrivacyControl: true }, {}) && trackingRefused({ doNotTrack: '1' }, {}) && trackingRefused({}, { doNotTrack: '1' }) && !trackingRefused({ doNotTrack: '0' }, {}));
+
+  // The vendored copies are the installed packages, and stay inside the page's policy.
+  const { createRequire } = await import('node:module');
+  const require = createRequire(import.meta.url);
+  const vendored = fs.readFileSync(new URL('../public/vendor/vercel/VERSION', import.meta.url), 'utf8');
+  for (const pkg of ['@vercel/analytics', '@vercel/speed-insights']) {
+    const installed = JSON.parse(fs.readFileSync(require.resolve(`${pkg}/package.json`), 'utf8')).version;
+    check(`${pkg} vendored is the installed ${installed} — else run npm run vendor:insights`, vendored.includes(`${pkg} ${installed}`), vendored.trim());
+  }
+  const analyticsSrc = fs.readFileSync(new URL('../public/vendor/vercel/analytics.mjs', import.meta.url), 'utf8');
+  const speedSrc = fs.readFileSync(new URL('../public/vendor/vercel/speed-insights.mjs', import.meta.url), 'utf8');
+  check('the scripts they add come from this origin, which `script-src \'self\'` allows', analyticsSrc.includes('return "/_vercel/insights/script.js"') && speedSrc.includes('return "/_vercel/speed-insights/script.js"'));
+  const csp = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value;
+  check('  and the policy was not widened for them', /script-src 'self';/.test(csp) && /connect-src 'self';/.test(csp));
+  const appSrc = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  check('the app starts it from the session, and says so only where it measures', /startInsights\(session\.insights\)/.test(appSrc) && /insightsNote\.hidden = !session\.insights/.test(appSrc) && /id="insights-note" data-i18n="memory\.insights" hidden/.test(html));
+  const serverApp = fs.readFileSync(new URL('../server/app.js', import.meta.url), 'utf8');
+  check('the session tells the browser', /insights: insightsConfig\(\),/.test(serverApp));
+
+  // The vendored code itself, run against the smallest DOM it touches.
+  const appended = [];
+  const fakeDocument = {
+    head: { querySelector: () => null, appendChild: (node) => appended.push(node) },
+    createElement: () => ({ dataset: {} }),
+  };
+  const saved = { window: globalThis.window, document: globalThis.document, navigator: globalThis.navigator };
+  try {
+    globalThis.window = /** @type {any} */ ({});
+    globalThis.document = /** @type {any} */ (fakeDocument);
+    Object.defineProperty(globalThis, 'navigator', { value: { doNotTrack: null }, configurable: true });
+    const fresh = await import(`../public/js/insights.js?run=${Date.now()}`);
+    await fresh.startInsights({ sampleRate: 0.5, clientConfig: null });
+    const sources = appended.map((s) => s.src);
+    check('started, it adds exactly the two same-origin scripts', sources.join(',') === '/_vercel/insights/script.js,/_vercel/speed-insights/script.js', sources.join(','));
+    check('  with the speed sample rate', appended[1]?.dataset?.sampleRate === '0.5');
+    check('  and both filters registered before anything is sent', (globalThis.window.vaq || []).some((c) => c[0] === 'beforeSend') && (globalThis.window.siq || []).some((c) => c[0] === 'beforeSend'));
+    appended.length = 0;
+    Object.defineProperty(globalThis, 'navigator', { value: { globalPrivacyControl: true }, configurable: true });
+    const refusing = await import(`../public/js/insights.js?gpc=${Date.now()}`);
+    await refusing.startInsights({ sampleRate: 1, clientConfig: null });
+    check('with Global Privacy Control on, nothing is added', appended.length === 0);
+  } finally {
+    globalThis.window = saved.window;
+    globalThis.document = saved.document;
+    Object.defineProperty(globalThis, 'navigator', { value: saved.navigator, configurable: true });
+  }
+}
+
 section('a link cannot copy a stranger\'s conversation into a signed-in account (SEC-041)');
 {
   // public/js/app.js is a browser module; the boot order is read from its source.

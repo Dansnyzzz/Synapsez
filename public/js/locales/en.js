@@ -1433,6 +1433,7 @@ export const en = {
   'incognito.on': "Incognito is on for this conversation.",
   'incognito.off': "Incognito is off.",
   'memory.lede': "What the assistant remembers between conversations, and what it may look back at. All of it stays in this app's database; it reaches the model you chose only as part of a conversation — and that model's provider handles it under its own terms.",
+  'memory.insights': "On this deployment, page views and page speed are counted by Vercel Web Analytics and Speed Insights: no cookies, only the page's address without anything after ? or #, never what you write. A browser set to Do Not Track or Global Privacy Control is not counted.",
   'memory.use': "Use memory",
   'memory.useHint': "Saved notes are read at the start of each conversation, and new ones are saved when something is worth keeping. Off: nothing is read or saved, and the notes stay until you delete them.",
   'memory.sensitive': "Remember sensitive topics",

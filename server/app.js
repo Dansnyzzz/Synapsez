@@ -61,6 +61,7 @@ import { redactSecrets } from './redact.js';
 import { audit } from './audit.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
+import { insightsConfig } from './insights.js';
 import { withTrace, newTraceId, annotate, log, mark, since } from './util/trace.js';
 import {
 } from './artifactStorage.js';
@@ -366,6 +367,8 @@ export function createApp() {
         needsSetup: (await store.countUsers()) === 0,
         signupOpen: signupOpen(),
         emailBackend: emailBackend(),
+        // Page views and page speed, on Vercel only — see server/insights.js.
+        insights: insightsConfig(),
       });
     }),
   );

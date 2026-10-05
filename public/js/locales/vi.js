@@ -1423,6 +1423,7 @@ export const vi = {
   'incognito.on': "Đã bật ẩn danh cho cuộc trò chuyện này.",
   'incognito.off': "Đã tắt ẩn danh.",
   'memory.lede': "Những gì trợ lý ghi nhớ giữa các cuộc trò chuyện và những gì nó được phép xem lại. Tất cả nằm trong cơ sở dữ liệu của ứng dụng này; chỉ được gửi tới mô hình bạn chọn như một phần của cuộc trò chuyện — và nhà cung cấp mô hình đó xử lý nó theo điều khoản riêng của họ.",
+  'memory.insights': "Trên bản triển khai này, lượt xem trang và tốc độ trang được Vercel Web Analytics và Speed Insights đếm: không cookie, chỉ địa chỉ trang bỏ hết phần sau dấu ? hoặc #, không bao giờ là nội dung bạn viết. Trình duyệt bật Do Not Track hoặc Global Privacy Control thì không được đếm.",
   'memory.use': "Dùng bộ nhớ",
   'memory.useHint': "Ghi chú đã lưu được đọc ở đầu mỗi cuộc trò chuyện, và ghi chú mới được lưu khi có điều đáng giữ. Tắt: không đọc, không lưu gì, các ghi chú vẫn còn cho tới khi bạn xoá.",
   'memory.sensitive': "Ghi nhớ chủ đề nhạy cảm",

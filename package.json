@@ -81,7 +81,8 @@
     "test:webfetch": "node test/webfetch.test.mjs",
     "test:steps": "node test/steps.test.mjs",
     "vendor:pdfjs": "node scripts/vendor-pdfjs.js",
-    "vendor:tessdata": "node scripts/vendor-tessdata.js"
+    "vendor:tessdata": "node scripts/vendor-tessdata.js",
+    "vendor:insights": "node scripts/vendor-insights.js"
   },
   "engines": {
     "node": ">=20"
@@ -91,8 +92,10 @@
     "@google/genai": "^2.20.0",
     "@napi-rs/canvas": "^1.0.9",
     "@neondatabase/serverless": "^1.0.2",
+    "@vercel/analytics": "^2.0.1",
     "@vercel/functions": "^3.9.9",
     "@vercel/sandbox": "^3.5.1",
+    "@vercel/speed-insights": "^2.0.0",
     "express": "^5.1.0",
     "nodemailer": "^9.1.1",
     "openai": "^7.9.0",

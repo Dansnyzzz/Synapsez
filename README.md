@@ -1517,9 +1517,21 @@ sets `DATABASE_URL` for you. The schema is created automatically on first reques
 | `TAVILY_API_KEY` or `BRAVE_API_KEY` | recommended | Reliable web search. Without one, search scrapes DuckDuckGo, which is best-effort. |
 | `ANTHROPIC_API_KEY` etc. | **usually leave blank** | A shared fallback every account without its own key spends against. See the warning above. |
 | `PUBLIC_URL` | recommended | Your deployment URL. Used to build links in emails; without it they are guessed from the request. |
+| `INSIGHTS` | optional | `off` stops the app loading Vercel Web Analytics and Speed Insights. On by default on Vercel only — see below. |
+| `SPEED_INSIGHTS_SAMPLE_RATE` | optional | Share of page loads whose speed is sent, `0`–`1` (default `1`). Lower it if Speed Insights nears its free allowance. |
 
 Worker tokens are not environment variables: each person generates their own in the app, under
 **Settings → Worker**.
+
+**Page views and page speed.** On Vercel the app loads Vercel Web Analytics and Speed Insights
+(`@vercel/analytics`, `@vercel/speed-insights`, copied into `public/vendor/vercel` by
+`npm run vendor:insights`). Turn both on once in the dashboard (**Analytics** and **Speed Insights**
+tabs). Both are free on Hobby within their allowance — 50,000 analytics events a month and 10,000
+speed events over a rolling 30 days; past either, collection pauses and nothing is billed. What is
+sent is only the page's address cut to its path (this app keeps reset, share and chat tokens after
+`?`, and those never leave), no cookies, and nothing at all from a browser set to Do Not Track or
+Global Privacy Control. Settings → Memory & privacy tells people so. A self-hosted copy loads
+neither.
 
 Get one of the three required ones wrong and the deployment says so plainly — every request answers
 `503` naming the variable that is missing, rather than a platform error page with the reason buried
