@@ -1539,6 +1539,32 @@ in a log. `npm run test:deploy` checks the same things locally before you push: 
 declares the files read at runtime, that the schema migrates an existing database rather than
 assuming a fresh one, and that the serverless-only branches behave.
 
+<details>
+<summary><b>Everything else the server reads</b> — none of it needed; each has a default that suits the free tier</summary>
+
+| Variable | What it changes |
+|---|---|
+| `POSTGRES_URL` | Read when `DATABASE_URL` is not set; some integrations use this name. |
+| `DATA_DIR` | Local runs only: where the in-process Postgres keeps its files. Default `data/`. |
+| `PORT` | Local runs only: the port the app listens on. Default `5173`. |
+| `MAX_TURN_TOKENS` | Tokens one turn may spend before it stops: 2,000,000 by default on a shared key, no limit on an account's own key. `0` turns the limit off. |
+| `PRICE_MARKUP` | The markup shown on top of provider prices, as a fraction — `0.1` (ten percent) by default. A value outside 0–1 is ignored. Stored costs stay the provider's own. |
+| `STREAM_STALL_FIRST_MS` / `STREAM_STALL_MS` | How long a reply may stay silent before it counts as stalled: before its first token (default `150000`) and between tokens (default `90000`). |
+| `IMAGE_MODEL` | The model `generate_image` uses. Default `gemini-3.1-flash-image`. |
+| `GOOGLE_SEARCH_MODEL` | The Gemini model behind grounded web search. Default `gemini-2.5-flash`. `GOOGLE_API_KEY` is read when `GEMINI_API_KEY` is not set. |
+| `GOOGLE_REDIRECT_URI` | Overrides the Google connector's callback, `<your origin>/api/connectors/google/callback` by default. See [docs/google.md](docs/google.md). |
+| `ANTHROPIC_BASE_URL` | Sends Anthropic requests to another endpoint, such as a proxy — what `OPENAI_BASE_URL` does for OpenAI. |
+| `THESPORTSDB_KEY` | Your own TheSportsDB key for the scores card. Default is their free test key. |
+| `RESEARCH_REPUTABLE_DOMAINS` | Comma-separated sites deep research counts as reputable, on top of its built-in list. |
+| `SANDBOX_DISABLED` | `1` hides the cloud sandbox. On Vercel it is offered automatically; elsewhere it needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`. |
+| `CLOUD_ACTIONS_PER_DAY` / `CLOUD_ACTIONS_TOTAL_PER_DAY` | Cloud browser and sandbox actions a day, per account (default `60`) and in all (default `400`) — sized to Hobby's CPU allowance. Raise them on a paid plan. |
+| `WORKER_IDLE_SLEEP_MS` | How long a connected computer's poll waits while its account is idle: `4000` on Vercel, `0` elsewhere. It saves function calls on the free tier; `0` turns it off. |
+| `ALLOW_MCP_STDIO` | `true` lets connectors start programs on the server (stdio MCP). Off by default, and never on Vercel: on a shared server that is running a command somebody typed. |
+| `LOG_LEVEL` / `LOG_FORMAT` | `debug` adds debug lines. `json` or `text` overrides the format, which is JSON on Vercel and readable text elsewhere. |
+| `REPO_URL` | The repository the "connect a computer" command clones. Default this project's; set it on a fork. |
+
+</details>
+
 ### 5. Create the first account
 
 Open the deployment. With no users yet, the gate offers to create the first account — **it becomes the
@@ -2046,6 +2072,20 @@ you exercise the relay end to end.
 
 `OPENAI_BASE_URL` points the OpenAI provider anywhere OpenAI-compatible — Ollama, LM Studio, vLLM —
 so you can run a local model with the same agent loop.
+
+The machine worker reads a few of its own. `npm run connect` writes the first three for you.
+
+| Variable | What it changes |
+|---|---|
+| `SERVER_URL` | The app it connects to. Default `http://localhost:5173`. |
+| `WORKER_TOKEN` / `WORKER_ID` | Its credential and its name for itself, from pairing. |
+| `DEVICE_NAME` | What the app calls this computer. Default its hostname. |
+| `ALLOW_INSECURE_SERVER` | `true` lets it reach a public address over plain `http`. Without it, `http` works only to this machine and (with a warning) to a private network: anywhere else the token would cross the internet in the clear. |
+| `WORKER_CONCURRENCY` | Jobs run at once, `1`–`12`. Default `4`. |
+| `WORKER_ALLOW_MULTIPLE` | `true` allows a second worker on the same machine, which otherwise stops: two would fight over one browser and one job queue. |
+| `FILES_DIR` | Where files from a conversation land on this machine. |
+| `BROWSER_CDP_URL` / `BROWSER_CDP_PORT` | The Chrome DevTools endpoint used to reach your own browser. Default port `9222`. |
+| `SCREEN_HD_SCALE` / `SCREEN_HD_QUALITY` / `STEP_SHOT_QUALITY` | Scale and JPEG quality of the live screen in HD (`2`, `72`) and of each step's screenshot (`45`). |
 
 ---
 

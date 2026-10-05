@@ -658,6 +658,39 @@ section('deleting stored files across every account is asked for first (CODE-044
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+section('every setting the server and worker read is in the README (CODE-047)');
+{
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  // Set by the operating system or the platform, or read only by the cloud
+  // browser service (whose header documents them) — not things a person sets.
+  const NOT_SETTINGS = new Set([
+    'COMPUTERNAME', 'HOSTNAME', 'SHELL', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'NODE_ENV',
+    'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
+    'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_VIEW_KEY', 'SYNZ_PROFILE', 'SYNZ_LOCALE',
+    // SEC-047: whether this fallback should exist at all is the owner's call.
+    'ACCESS_TOKEN',
+  ]);
+  const read = new Map();
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!['node_modules', 'vendor', 'assets'].includes(e.name)) walk(p);
+      } else if (/\.m?js$/.test(e.name)) {
+        for (const m of fs.readFileSync(p, 'utf8').matchAll(/process\.env\.([A-Z][A-Z0-9_]+)|process\.env\[['"]([A-Z][A-Z0-9_]+)['"]\]|env\.([A-Z][A-Z0-9_]{2,})\b/g)) {
+          read.set(m[1] || m[2] || m[3], path.relative(root, p));
+        }
+      }
+    }
+  };
+  for (const dir of ['server', 'worker']) walk(path.join(root, dir));
+  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+  const missing = [...read].filter(([name]) => !NOT_SETTINGS.has(name) && !new RegExp(`\\b${name}\\b`).test(readme));
+  check('each is documented, or named here as not a setting', read.size > 50 && missing.length === 0, missing.map(([n, f]) => `${n} (${f})`).join(', '));
+}
+
 section('the effort dial reaches every model that reasons, in each wire\'s own words');
 {
   const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');
