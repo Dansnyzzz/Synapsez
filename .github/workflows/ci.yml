@@ -85,6 +85,15 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: '0'
 
+      # The only coverage of edit_image, download_file's refusals and
+      # run_background's dead-on-start detection, and it ran nowhere (CODE-040).
+      # It needs the internet and a browser, which the runner has. Advisory
+      # while it proves itself stable here: a red step is reported, not blocking.
+      - name: Capabilities suite
+        run: npm run test:capabilities
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: '0'
 
   audit:
     runs-on: ubuntu-latest
