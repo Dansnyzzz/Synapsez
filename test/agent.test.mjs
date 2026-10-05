@@ -1507,7 +1507,10 @@ section('the same read twice in a turn runs once');
    * skill read twice in a row. An identical stable read is answered from the
    * first; deep research is capped per turn.
    */
-  const { repeatedRead, MAX_RESEARCH_PER_TURN } = await import('../server/agent.js');
+  const { repeatedRead, MAX_RESEARCH_PER_TURN, callKey } = await import('../server/agent.js');
+  // CODE-033: nested arguments are part of the key, and key order is not.
+  check('a nested argument tells two calls apart', callKey({ name: 'extract', input: { url: 'u', opts: { site: 'a' } } }) !== callKey({ name: 'extract', input: { url: 'u', opts: { site: 'b' } } }));
+  check('  while the order arguments came in does not', callKey({ name: 'web_search', input: { query: 'q', count: 3 } }) === callKey({ name: 'web_search', input: { count: 3, query: 'q' } }));
   const dupUser = await store.createUser({ id: 'u-dup', email: 'dup@example.com', name: 'Dup', passwordHash: await hashPassword('a-sufficiently-long-password'), role: 'admin' });
   await store.createChat(dupUser.id, { id: 'c-dup', title: 'dup' });
   await store.appendMessage(dupUser.id, 'c-dup', { id: 'u-dup-1', role: 'user', text: 'read your notes' });
