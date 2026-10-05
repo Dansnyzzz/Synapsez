@@ -1724,23 +1724,30 @@ export function createPgStore(connectionString) {
      * a history pruned past that point is refused, not guessed at.
      */
     async getAttachmentAt(userId, id, at) {
+      // No moment, no snapshot: refused rather than read live (CODE-055).
+      if (!at) return null;
+      // Compared by the database, not as JS dates cut to the millisecond. A
+      // moment handed in as a JS Date is itself cut to the millisecond, which
+      // can only exclude a write, never admit one written after it.
       const found = await q(
-        `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, created_at
+        `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, created_at,
+                created_at <= $3::timestamptz AS settled
            FROM attachments WHERE id = $1 AND user_id = $2`,
-        [id, userId],
+        [id, userId, at],
       );
       const current = found[0] ?? null;
       if (!current) return null;
-      if (!at || new Date(current.created_at) <= new Date(at)) return current;
+      const { settled, ...file } = current;
+      if (settled) return file;
       const rows = await q(
         `SELECT name, mime, kind, bytes, data, source, created_at
            FROM attachment_versions
-          WHERE user_id = $1 AND attachment_id = $2 AND created_at <= $3
+          WHERE user_id = $1 AND attachment_id = $2 AND created_at <= $3::timestamptz
           ORDER BY created_at DESC, revision DESC
           LIMIT 1`,
         [userId, id, at],
       );
-      return rows[0] ? { ...current, ...rows[0] } : null;
+      return rows[0] ? { ...file, ...rows[0] } : null;
     },
     /**
      * Give a file the assistant made a public link, or take it back (`token`

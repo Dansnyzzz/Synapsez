@@ -2231,6 +2231,8 @@ section('a shared conversation publishes the answer, not what was read of the ac
     check('  and as it is now, read now', decode(asNow) === 'third', decode(asNow));
     check('  a moment before the file existed has nothing', (await store.getAttachmentAt(owner.id, 'att-at-1', '2000-01-01T00:00:00Z')) === null);
     check('  and another account reaches none of it', (await store.getAttachmentAt(reader.id, 'att-at-1', sharedAt)) === null);
+    // CODE-055: no moment is no snapshot — refused, never the file as it is now.
+    check('  with no moment given, nothing — not the file as it is now', (await store.getAttachmentAt(owner.id, 'att-at-1', null)) === null && (await store.getAttachmentAt(owner.id, 'att-at-1', undefined)) === null);
   }
 
   // PRV-012: an edit to a message after sharing is not part of the snapshot.
