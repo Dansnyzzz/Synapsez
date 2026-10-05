@@ -9,6 +9,7 @@ import { workflowsView, workflowForm } from './workflows.js';
 import { toast, scheduleCard } from './render.js';
 import { humanSize, counted, cronParts } from './format.js';
 import { WEEK, LIMITS } from './schedule-grammar.js';
+import { latestWins } from './serial.js';
 
 /**
  * The shelves: Projects, Artifacts, Scheduled.
@@ -1481,7 +1482,8 @@ export function createPages({
       if (f === 'monthly') return { frequency: f, monthDays: pressed('data-mday').map((d) => (d === 'last' ? d : Number(d))), times };
       return { frequency: f, times };
     };
-    const saveSchedule = () => save({ schedule: spec(), tz: q('tz').value });
+    // One save in flight, the controls read again when it lands (CODE-036).
+    const saveSchedule = latestWins(() => save({ schedule: spec(), tz: q('tz').value }));
 
     // A new frequency brings different controls, so the panel is drawn again
     // once the row has its new schedule — or stays as it was if that was refused.

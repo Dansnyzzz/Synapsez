@@ -259,6 +259,37 @@ section('the viewer says a link it makes is public, and offers it only for made 
   }
 }
 
+section('one schedule save at a time, and the last word wins (CODE-036, UX-005)');
+{
+  const { latestWins } = await import('../public/js/serial.js');
+  let field = '09:00';
+  const sent = [];
+  let inFlight = 0;
+  let overlapped = false;
+  const save = latestWins(async () => {
+    inFlight += 1;
+    if (inFlight > 1) overlapped = true;
+    const value = field;
+    await new Promise((r) => setTimeout(r, 20));
+    sent.push(value);
+    inFlight -= 1;
+    return value;
+  });
+  // Chrome's time field fires once per completed segment while typing 17:30.
+  const calls = [];
+  for (const typed of ['01:00', '17:00', '17:03', '17:30']) {
+    field = typed;
+    calls.push(save());
+  }
+  const answers = await Promise.all(calls);
+  check('never two saves in flight', !overlapped);
+  check('the last thing the server is sent is what the field shows', sent.at(-1) === '17:30', sent.join(' → '));
+  check('  in two requests, not four', sent.length === 2, sent.join(' → '));
+  check('  and every caller hears the final result', answers.every((a) => a === '17:30'), answers.join(','));
+  const pages = fs.readFileSync(new URL('../public/js/pages.js', import.meta.url), 'utf8');
+  check('the schedule pane saves through it', /const saveSchedule = latestWins\(/.test(pages));
+}
+
 section('Escape in a sketch label drops the label, not the sketch (UX-006)');
 {
   const src = fs.readFileSync(new URL('../public/js/sketch.js', import.meta.url), 'utf8');
