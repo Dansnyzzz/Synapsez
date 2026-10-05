@@ -474,6 +474,21 @@ section('import reads Claude, ChatGPT and Synapsez exports');
       },
     },
   ];
+  // CODE-035: a ChatGPT export with no recorded leaf whose children loop back is read, not looped on.
+  {
+    const looping = [{
+      title: 'Loop',
+      create_time: 1767225600,
+      mapping: {
+        root: { id: 'root', message: null, parent: null, children: ['x'] },
+        x: { id: 'x', parent: 'root', children: ['y'], message: { author: { role: 'user' }, content: { parts: ['hi'] } } },
+        y: { id: 'y', parent: 'x', children: ['x'], message: { author: { role: 'assistant' }, content: { parts: ['hello'] } } },
+      },
+    }];
+    const started = Date.now();
+    const read = normaliseImport(looping);
+    check('an export whose children loop back is read, not hung on', Date.now() - started < 1000 && Array.isArray(read.conversations), `${Date.now() - started} ms`);
+  }
   check('Claude is recognised', detectSource(claude) === 'claude');
   check('ChatGPT is recognised', detectSource(chatgpt) === 'chatgpt');
   check('Synapsez is recognised', detectSource(globalThis.exported) === 'synapsez');
