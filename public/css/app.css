@@ -7969,6 +7969,15 @@ select:focus-visible {
   outline: none !important;
 }
 
+/* A file picker drawn as its label, a button (ACC-014). Tab reaches the input,
+   which is `.sr-only` and, as an input, ringless by the exception above — so
+   focus went somewhere nobody could see. The ring goes on the button instead;
+   Space or Enter then opens the picker as before. */
+label.btn:has(+ input[type='file']:focus-visible) {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px;
+}
+
 /* ── a scheduled task: the form, the rows, the page ───────────────────
  *
  * The form asks two questions with menus rather than with a time typed in

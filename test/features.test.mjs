@@ -463,6 +463,15 @@ section('text on the accent colour is readable in every theme (ACC-013)');
   check('no accent fill picks its own text colour', !/background: var\(--accent\);\s*color: (?!var\(--on-accent\))/.test(css) && !/background: var\(--accent\); color: (?!var\(--on-accent\))/.test(css));
 }
 
+section('the import button shows focus when its hidden file input has it (ACC-014)');
+{
+  const css = fs.readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  check('the ring is drawn on the label-button beside a focused file input', /label\.btn:has\(\+ input\[type='file'\]:focus-visible\) \{\s*outline: 2px solid var\(--accent\) !important;/.test(css));
+  check('  and comes after the rule that takes rings off inputs, so it is not undone', css.indexOf("label.btn:has(+ input[type='file']") > css.indexOf('select:focus-visible {\n  outline: none !important;'));
+  check('the import label sits right before its input, which that selector needs', /<label class="btn[^"]*" for="data-import-file"[^>]*>[^<]*<\/label>\s*<input type="file" id="data-import-file"/.test(html));
+}
+
 section('every schedule field shows where focus is (ACC-009)');
 {
   const css = fs.readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
