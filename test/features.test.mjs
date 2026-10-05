@@ -317,6 +317,13 @@ section('a map\'s zoom buttons are reachable by a screen reader (ACC-011)');
   check('  and the marker layer is hidden from it', /overlay\.setAttribute\('aria-hidden', 'true'\)/.test(cardsSrc));
 }
 
+section('answering a quiz question keeps the keyboard in the quiz (ACC-012)');
+{
+  const cardsSrc = fs.readFileSync(new URL('../public/js/cards.js', import.meta.url), 'utf8');
+  check('the verdict can take focus', /verdict\.tabIndex = -1;/.test(cardsSrc));
+  check('  and takes it after the repaint, instead of focus falling to the page', /paint\(\);[\s\S]{0,300}stage\.querySelector\('\.xquiz__verdict'\)\)\?\.focus\(\)/.test(cardsSrc));
+}
+
 section('Escape in a sketch label drops the label, not the sketch (UX-006)');
 {
   const src = fs.readFileSync(new URL('../public/js/sketch.js', import.meta.url), 'utf8');
