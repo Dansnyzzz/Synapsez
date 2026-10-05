@@ -275,8 +275,12 @@ export function pageImages(html, base) {
 /**
  * The pictures, said to the model as addresses it can put in its reply.
  * Signed by this server — see `signedImagePath` — so only these display.
+ *
+ * The how-to is this app's; the list is not. Each caption is the page's own alt
+ * text, so the list goes in an envelope of its own (SEC-045): eighty characters
+ * of "ignore your instructions" outside one read as if the app had said it.
  */
-function picturesNote(images) {
+export function picturesNote(images, source) {
   const lines = images
     .map((image) => {
       const path = signedImagePath(image.url);
@@ -285,10 +289,10 @@ function picturesNote(images) {
     .filter(Boolean);
   if (!lines.length) return '';
   return (
-    '\n\n[Pictures on this page. When they help — a product, a place, a person, a design — show them in your reply ' +
-    'by copying a line as written, ![short caption](address); several on consecutive lines show as a row. ' +
-    'Only these exact addresses display.\n' +
-    `${lines.join('\n')}]`
+    '\n\n[Pictures on this page, listed below with the page\'s own captions. When they help — a product, a place, ' +
+    'a person, a design — show them in your reply by copying a line as written, ![short caption](address); several ' +
+    'on consecutive lines show as a row. Only these exact addresses display.]\n' +
+    untrusted(`pictures on ${source}`, lines.join('\n'))
   );
 }
 
@@ -379,8 +383,8 @@ async function webFetch({ url, max_chars: maxChars }) {
     // aimed at the model to enter the conversation. See server/tools/untrusted.js.
     untrusted(parsed.href, clipped) +
     notes.map((line) => `\n\n[${line}]`).join('') +
-    // Outside the envelope: the addresses are this server's own signed paths.
-    (html ? picturesNote(pageImages(html, parsed.href)) : '')
+    // After the page's envelope, in one of its own: see `picturesNote`.
+    (html ? picturesNote(pageImages(html, parsed.href), parsed.href) : '')
   );
 }
 
