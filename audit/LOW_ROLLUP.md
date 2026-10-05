@@ -127,3 +127,29 @@ module import would be deferred past first paint. Correct as written.
   `http://127.0.0.2` or an IPv4-mapped IPv6 loopback reads as remote.
 - `server/research/confidence.js:28-36` — `registrableDomain` treats `a.co.uk` and `b.co.uk` as one
   domain. The comment argues this errs safe by under-counting independence, which is correct.
+
+
+---
+
+# Vòng v3 (2026-10-05)
+
+Unlike the entries above, every instance here was re-read by the lead auditor before it was acted on.
+
+## CODE-046 — comments that say something no longer true
+
+| Where | Said | True now | State |
+|---|---|---|---|
+| `scripts/vendor-katex.js:8` | `test/markdown.test.mjs` checks the vendored version | the check is in `test/markdown-math.test.mjs:108-111` | fixed |
+| `scripts/vendor-pdfjs.js:12-21` | pdfjs is loaded only by the project page; a server cannot have a canvas | the composer (`attachments.js`) and `shrink.js` load it too; `server/pdf.js` draws pages onto `@napi-rs/canvas` | fixed |
+| `.github/workflows/ci.yml:30` | "the 429 pre-existing errors" | the ceiling is 315, in `.typecheck-baseline.json` | fixed, without a number that drifts |
+| `test/capabilities.test.mjs:144` | the project "keeps nine" dependencies | `package.json` has 15 | fixed, without a number |
+| `.claude/hooks/gate.js:116` | "the thirty-one suites" | `npm test` runs 48 | **CHỜ-CHỦ** — `.claude/hooks` is the owner's to change (AUDIT_RULES); a one-word comment edit, nothing else |
+
+## CODE-039 — a doc block cut off from its code
+
+The four the ledger named are fixed, and two more this branch had introduced (`public/js/chart.js`
+`keyStep`, `server/vision.js` `lendableUnder`). The same pattern — two doc blocks back to back —
+occurs 93 times across `public/js`, `server`, `worker` and `scripts`. Some are fine (a section
+banner before a function's doc; `public/js/pages.js:795` is a comment before an inline cast). They
+were not re-placed one by one: forty files of comment moves is the mass edit the rules rule out.
+`test/features.test.mjs` holds the count at 93 as a ceiling that may only come down.

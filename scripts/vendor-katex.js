@@ -5,7 +5,7 @@
  * The page has no build step and a Content-Security-Policy of `script-src
  * 'self'`, so a CDN is out and so is importing from node_modules at runtime —
  * on Vercel, `public/` is served as static files and node_modules is not. The
- * files are copied here and committed; `test/markdown.test.mjs` fails when the
+ * files are copied here and committed; `test/markdown-math.test.mjs` fails when the
  * copy's version no longer matches the installed package, so upgrading KaTeX
  * without re-running this cannot go unnoticed.
  *

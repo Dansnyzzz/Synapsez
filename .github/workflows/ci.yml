@@ -27,8 +27,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # A ratchet, not a wall: the 429 pre-existing errors are frozen per file
-      # and this fails only when the count goes up. See scripts/typecheck.js.
+      # A ratchet, not a wall: the pre-existing errors are frozen per file and
+      # this fails only when the count goes up. The count is in
+      # .typecheck-baseline.json and only ever comes down; see scripts/typecheck.js.
       - name: Type-check
         run: npm run typecheck
 

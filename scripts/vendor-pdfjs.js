@@ -9,16 +9,17 @@
  * fails when the copy's version no longer matches the installed package, so
  * upgrading pdfjs without re-running this cannot go unnoticed.
  *
- * What it is *for* is narrow, and worth being clear about: drawing the first
- * page of a PDF once, in the browser that is uploading it, so the shelf has a
- * picture to show. It is not a viewer — the app still hands a PDF to the
- * browser's own reader, which is better than anything this could build. So it
- * is loaded on demand, only by someone adding a PDF to a project, and never by
- * anyone else.
+ * What it is *for* is narrow, and worth being clear about: in the browser that
+ * is uploading a PDF — to a project's shelf or to the composer — it draws the
+ * first page once as a thumbnail, and reads the text of one too large to send
+ * (public/js/thumbnail.js, shrink.js). It is not a viewer — the app still hands
+ * a PDF to the browser's own reader, which is better than anything this could
+ * build. So it is loaded on demand, only by someone adding a PDF.
  *
- * Doing it in the browser rather than on the server is not a preference. pdfjs
- * renders to a canvas, and a canvas in Node is a native module — the one thing
- * a free serverless deployment cannot have.
+ * The thumbnail is drawn here rather than on the server so it is made once, by
+ * a browser that already has a canvas. The server's own pdfjs (server/pdf.js)
+ * draws pages only for a model to look at, onto `@napi-rs/canvas`, and says
+ * "cannot look" on a platform where that native module will not load.
  *
  *   node scripts/vendor-pdfjs.js
  */
