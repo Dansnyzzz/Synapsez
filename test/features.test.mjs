@@ -419,6 +419,29 @@ section('one schedule save at a time, and the last word wins (CODE-036, UX-005)'
   const pages = fs.readFileSync(new URL('../public/js/pages.js', import.meta.url), 'utf8');
   check('the schedule pane saves through it', /const saveSchedule = latestWins\(/.test(pages));
   check('  and the Repeat menu waits for the choice to settle, then gives focus back', /setTimeout\(async \(\) => \{[\s\S]{0,400}FREQUENCY_SETTLE_MS/.test(pages) && /\[data-s="frequency"\]'\)\)\?\.focus\(\)/.test(pages));
+
+  // CODE-051: a failed save does not drop the one queued behind it.
+  let attempt = 0;
+  const reached = [];
+  let value = '09:00';
+  const flaky = latestWins(async () => {
+    attempt += 1;
+    const v = value;
+    await new Promise((r) => setTimeout(r, 15));
+    if (attempt === 1) throw new Error('network blip');
+    reached.push(v);
+    return v;
+  });
+  const firstCall = flaky();
+  value = '17:30';
+  const secondCall = flaky();
+  const outcomes = await Promise.allSettled([firstCall, secondCall]);
+  check('a save that fails while another is queued still lets that one go', reached.join() === '17:30', `${reached.join()} · ${outcomes.map((o) => o.status).join(',')}`);
+  check('  and its callers hear the final result, not the blip', outcomes.every((o) => o.status === 'fulfilled' && o.value === '17:30'), outcomes.map((o) => o.status).join(','));
+  const failing = latestWins(async () => {
+    throw new Error('server down');
+  });
+  check('a failure with nothing after it is still reported', await failing().then(() => false, (err) => /server down/.test(err.message)));
 }
 
 section('a picture edited mid-upload sends the edit, not the original (CODE-037)');

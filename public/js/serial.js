@@ -28,10 +28,21 @@ export function latestWins(run) {
     }
     inFlight = (async () => {
       let result;
+      let failure = null;
       do {
         again = false;
-        result = await run();
+        // A run that fails while another is wanted is not the last word: the
+        // next one still goes, with the controls as they are now. Throwing out
+        // of the loop dropped it, and the field kept showing a value the server
+        // never received (CODE-051). Only the final run's failure is reported.
+        try {
+          result = await run();
+          failure = null;
+        } catch (err) {
+          failure = err;
+        }
       } while (again);
+      if (failure) throw failure;
       return result;
     })().finally(() => {
       inFlight = null;
