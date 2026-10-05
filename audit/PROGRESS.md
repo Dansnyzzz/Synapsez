@@ -12,8 +12,9 @@
 
 ## Phase 2 — đang chạy trên `optimize/2026-10-05` (tag `backup/pre-optimize-20261005-0736` = `58b1ab4`)
 
-- FIXED: SEC-034 `53e2457` · PRV-001 `49309a8` · SEC-035 `a555a73` · SEC-036 `fae2ae2` (mỗi ID một commit code + một commit ledger).
-- Kế tiếp (MEDIUM): PRV-002 → PRV-005 → SEC-037 → PRV-004 → CODE-031 → HAR-002 → CFG-026 → HAR-003; rồi LOW: SEC-038, CODE-033, CODE-035, GAP-012 (Vercel insights).
+- FIXED: SEC-034 `53e2457` · PRV-001 `49309a8` · SEC-035 `a555a73` · SEC-036 `fae2ae2` · PRV-002 `74226b5` · SEC-039 `7ba763b` · SEC-040 `1c2917a` · SEC-041 `f1f4913` · PERF-015 `4598974` · SEC-042 `0851a37` · SEC-043 `75f5e50` · SEC-044 `bbb6c49` · PRV-005 `7247353` · SEC-037 `0c4499c` · CODE-031 `ee10f6d`.
+- 3 sub-agent đọc vùng [UNKNOWN] đã báo cáo (44 dòng mới trong ledger, `928d162`); mọi HIGH của chúng đã xác minh + sửa.
+- Kế tiếp (MEDIUM): PERF-016 → PERF-017 → PERF-018 → ACC-008 → HAR-002 → PRV-004 → CFG-026 → HAR-003 → SEC-046 → UX-006 → UX-005 → ACC-009..012 → PERF-020 → CODE-036 → CFG-027 → CODE-040 → CODE-041 → PERF-019; rồi LOW (gồm GAP-012 Vercel insights).
 - Lệnh kiểm chứng mỗi ID: test file liên quan + `npx eslint <files>` + `npm run typecheck` (2 s). Script ledger: `scratchpad/ledger.mjs <ID> <STATUS> <verify> <commit>`.
 - Ghi chú: `811d44c` có tiêu đề "ledger SEC-034" nhưng thực chất chỉ thêm 2 dòng HAR-003/HAR-004 (đã nói rõ trong `2c616fa`).
 - 3 sub-agent (đọc vùng [UNKNOWN] từ snapshot `58b1ab4`) chạy nền từ 2026-10-05 sáng; kết quả → thêm ID mới.
