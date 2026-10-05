@@ -2,7 +2,7 @@
 
 ## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
 
-An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 74 findings, 60 fixed with a test
+An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 78 findings, 64 fixed with a test
 that fails without the fix, 14 left for the owner with the reason written down. Nothing here needs a new paid
 service; everything stays on the free tiers.
 
@@ -11,7 +11,11 @@ service; everything stays on the free tiers.
 - **A shared conversation published every tool's arguments and results**, including notes, other conversations,
   an inbox or a Drive the assistant read on the way to its answer. Only tools that read the open web or made the
   conversation's own work are published now; the rest are named, with their content left out, and a fork of the
-  link gets the same (PRV-001).
+  link gets the same (PRV-001). A read of a file by id — a spreadsheet's rows, a generated file's source — is
+  published only when that file was sent or made in the shared conversation (PRV-007).
+- **Editing a note yourself left the text you removed in the database.** Only a change the assistant made keeps
+  what it replaced, for one undo; your own edit keeps nothing and clears it, the export includes it, and
+  Settings says so (PRV-006).
 - **Text a page wrote could reach the model as if the app had said it**: sandbox output, a sub-agent's or a deep
   research run's report, project sources, a compacted summary of tool output, and the captions of pictures on a
   fetched page. All of it now arrives inside the untrusted envelope (SEC-035, 040, 042, 043, 044, 045).
@@ -23,8 +27,9 @@ service; everything stays on the free tiers.
   map tile: it draws that page only (SEC-038).
 - Strict provider privacy holds when the settings cannot be read, and a picture is only lent to a model the
   strict promise covers (PRV-002, PRV-005). Settings says which provider keeps what (PRV-004).
-- Opening a share link while signed in shows it first, instead of silently copying it into your account
-  (SEC-041). "Copy public link" says it makes the file public, and appears only for files the app made (SEC-046).
+- Opening a share link shows it first instead of silently copying it into your account — signed in (SEC-041), or
+  signing in on the way, unless you pressed the shared page's own button to carry it on (SEC-050). "Copy public
+  link" says it makes the file public, and appears only for files the app made (SEC-046).
 - The cloud browser's keys are stored encrypted (SEC-037). `qs` patched (SEC-048). The agent's own settings deny
   it reading `.env.*` files (CFG-026).
 

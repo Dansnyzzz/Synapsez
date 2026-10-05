@@ -22,14 +22,14 @@ them touch `audit/` only). Every row is a command that was run and an output tha
 
 | Thing | Before | After | How measured |
 |---|---|---|---|
-| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** — "Gate green (full)", stamped on `f39f419` | `npm run gate`, log `scratchpad/gate-final.log` |
+| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the evaluator's follow-ups **exit 0, 224 s** on `12ee0b8` | `npm run gate`, logs `scratchpad/gate-final.log`, `gate-final2.log` |
 | lint | exit 0 | **exit 0** | gate step 1 |
 | `test:hooks` | 168/168 | **168/168** | gate step 2 |
 | eval (scripted) | 13/13, `PROMPT_STAMP ecd004bc42ae` | **13/13, same stamp** — the main system prompt did not change | gate step 3; server log `promptVersion=ecd004bc42ae` |
 | typecheck ratchet | 315 outstanding, ceiling 315 | **315, ceiling 315** — `.typecheck-baseline.json` did not grow | gate step 4 |
-| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓, 0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
+| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
 | Suites in `npm test` | 47 | **48** (+`egress.test`) | `scripts.test` |
-| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** (real Edge) | `node test/ui.test.mjs` at `d6d1ea7` |
+| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050) (real Edge) | `node test/ui.test.mjs` |
 | `npm run test:sandbox` | — | **exit 0, 31 ✓** | not in the gate |
 | Coverage (c8, `all:true`) | statements 64.09 · branches 75.42 · functions 67.03 · lines 64.09 | **64.87 · 75.95 · 68.45 · 64.87** — up on all four; functions was 0.03 above its threshold and is now 1.45 above | `npm run coverage`, exit 0, 221 s |
 
@@ -113,21 +113,46 @@ prompt text, measured by characters:
 
 | Where | Change | Why it is worth it |
 |---|---|---|
-| Sub-agent system prompt | +452 chars of text plus the 659-char untrusted-content rule, ≈ +280 tokens per sub-agent call | SEC-043: a sub-agent read web pages with no rule telling it a page's instructions are data |
-| Compaction prompt | +461 chars, ≈ +115 tokens per compaction | SEC-040: tool output was summarised as if it were the conversation |
+| Sub-agent system prompt | +≈843 chars (the 659-char untrusted-content rule, one 181-char line, two line breaks), ≈ +210 tokens per sub-agent call | SEC-043: a sub-agent read web pages with no rule telling it a page's instructions are data |
+| Compaction prompt | +≈461 chars, ≈ +115 tokens, once per compaction | SEC-040: tool output was summarised as if it were the conversation |
+| The summary re-entered after a compaction | +≈104 chars ("The app wrote it, not the user…"), ≈ +26 tokens on **every turn** after a compaction | SEC-040: the summary must not read as the user's words |
+| Project sources in the prompt | +51 chars plus the source's name, per source, ≈ +13–20 tokens per source on **every turn** that carries the shelf or its passages | SEC-042: a source's text is wrapped as untrusted |
 | `web_fetch` with pictures | ≈ +19 tokens per call | SEC-045: the page's captions sit inside an envelope |
 | Effort step-down | up to 3 needless retries per unrelated 400 → none | TOK-001 |
 
-The main system prompt is byte-identical (`PROMPT_STAMP` unchanged), so prompt caching is unaffected.
+The main *static* system prompt is byte-identical (`PROMPT_STAMP` unchanged), so its cache prefix is unaffected.
+The two per-turn rows above sit after it; they are small, fixed per source or per summary, and stable from
+turn to turn, so they cache with the rest of that turn's prefix. (Corrected after the Phase 3 evaluator: the
+first version of this table overstated the sub-agent row as ≈ +280 tokens and left out the two per-turn rows.)
 
 ## Ledger reconciliation
 
 | Total | FIXED | CHỜ-CHỦ (in repo) | CHỜ-CHỦ (outside repo) | DEFERRED | BLOCKED | OPEN | IN-PROGRESS |
 |---|---|---|---|---|---|---|---|
-| 74 | 60 | 12 | 2 | 0 | 0 | **0** | **0** |
+| 78 | 64 | 12 | 2 | 0 | 0 | **0** | **0** |
+
+(74 rows from Phases 1–2, plus the four the evaluator's first pass raised — below.)
 
 No CRITICAL or HIGH is open. The 14 not fixed are 6 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
 LAW-001) and 8 LOW, every one CHỜ-CHỦ with the reason and the options in its row.
+
+## The fresh-context evaluator
+
+**First pass: `NEEDS_WORK`.** A read-only reviewer that had not seen the work sampled 15 FIXED rows and the
+analytics addition; 13 held. Two findings blocked, five did not. Every one was acted on, back in Phase 2 under
+new IDs, each with a test that fails on the code before it:
+
+| Finding | Disposition |
+|---|---|
+| HAR-002's one-step undo kept the text a person removed by their own edit, and the export left it out | **PRV-006** `3a773b5`: only an assistant's change keeps what it replaced; the person's edit keeps nothing and clears it; the export carries it; Settings says so (en, vi) |
+| PRV-001 still published `analyze_data` by `file_id` and `read_generated_file`, which read any file on the account | **PRV-007** `4fb2530`: such a read is published only when its file was sent or made in the shared conversation |
+| SEC-041 covered signed-in visitors only; a signed-out one was still copied a stranger's conversation after signing in | **SEC-050** `0588530`: only the shared page's own button earns a copy; a bare link is shown. Proven in real Edge |
+| A stale comment, laid out as the CODE-039 pattern | **CODE-049** `80588d7` |
+| This file's token table overstated one row and left out two per-turn costs | corrected above, with the measurements |
+| `.claude/settings.json` was edited by the agent (CFG-026: deny reading `.env.*`) | kept — it only narrows what the agent may read — and named in the hand-over for the owner, who may restore `.env.example` (CFG-024) and would then want to allow that one name |
+| The hosted `script.js` Vercel serves was not checked | outside the repository; the app passes it only the trimmed address, and nothing else the page holds |
+
+**Second pass:** recorded below once run.
 
 ## Not measured, and why
 

@@ -5,7 +5,7 @@
 
 ## Trạng thái
 
-- **Phase hiện tại:** 3 (kiểm chứng) — Phase 2 xong: 74 dòng v3 = 60 FIXED + 12 CHỜ-CHỦ/TRONG-REPO + 2 CHỜ-CHỦ/NGOÀI-REPO, 0 OPEN.
+- **Phase hiện tại:** 3 (kiểm chứng), lần 2 — evaluator lần 1 trả `NEEDS_WORK` (2 chặn + 5 không chặn) → quay lại Phase 2 với ID mới PRV-006 `3a773b5`, PRV-007 `4fb2530`, SEC-050 `0588530`, CODE-049 `80588d7`; sửa bảng token trong RESULT.md. Ledger v3 = 78 dòng = 64 FIXED + 12 CHỜ-CHỦ/TRONG-REPO + 2 CHỜ-CHỦ/NGOÀI-REPO, 0 OPEN. Kế tiếp: gate lại → evaluator ngữ cảnh mới lần 2 → Phase 4.
 - **Nhánh:** `optimize/2026-10-05` (tách từ `main` @ `58b1ab4`).
 - **Yêu cầu thêm của chủ project (lượt 2026-10-04):** "web tôi xài full free như vercel free" +
   `npm i @vercel/analytics`, `npm i @vercel/speed-insights` → làm trong Phase 2 dưới ID riêng.
