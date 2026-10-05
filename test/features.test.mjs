@@ -623,6 +623,41 @@ section('a doc comment sits on the code it describes (CODE-039)');
   check('the four the audit named are on their code', /\*\/\r?\nconst MARK_PENDING/.test(src('public/js/render.js')) && /\*\/\r?\nexport function assistantMessage/.test(src('public/js/render.js')) && /\*\/\r?\nfunction openToolPane/.test(src('public/js/app.js')) && /\*\/\r?\nconst DRIVE_ICON/.test(src('public/js/viewer.js')));
 }
 
+section('deleting stored files across every account is asked for first (CODE-044)');
+{
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const { createPgliteStore } = await import('../server/store/pglite.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-storage-'));
+  const seed = await createPgliteStore(dir);
+  await seed.init();
+  const owner = await seed.createUser({ id: 'u-st', email: 'st@example.com', passwordHash: 'x', name: 'S', role: 'user' });
+  // Labelled with a conversation that does not exist: what the report calls detached.
+  await seed.createAttachment(owner.id, { id: 'att-orphan', name: 'a.png', mime: 'image/png', kind: 'image', bytes: 4, data: 'cG5nIQ==', chatId: 'c-gone' });
+  await seed.close();
+
+  const script = fileURLToPath(new URL('../scripts/storage.js', import.meta.url));
+  // Empty, not absent: the script fills in from .env only what is unset, and
+  // this must never reach a real database.
+  const env = { ...process.env, DATA_DIR: dir, DATABASE_URL: '', POSTGRES_URL: '', VERCEL: '' };
+  const run = (...args) => spawnSync(process.execPath, [script, ...args], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+  const left = async () => {
+    const s = await createPgliteStore(dir);
+    await s.init();
+    const n = (await s.storageReport()).detached.count;
+    await s.close();
+    return n;
+  };
+
+  const asked = run('--apply');
+  check('--apply with no terminal to ask in deletes nothing', asked.status === 0 && /Nothing was deleted/.test(asked.stdout) && (await left()) === 1, `${asked.status} ${asked.stdout.slice(-200)} ${asked.stderr.slice(-200)}`);
+  const meant = run('--apply', '--yes');
+  check('  --yes is the deliberate way past the question', meant.status === 0 && /Deleted 1 file\(s\)/.test(meant.stdout) && (await left()) === 0, `${meant.status} ${meant.stdout.slice(-200)} ${meant.stderr.slice(-200)}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 section('the effort dial reaches every model that reasons, in each wire\'s own words');
 {
   const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');
