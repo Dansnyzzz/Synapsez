@@ -441,6 +441,28 @@ section('a picture edited mid-upload sends the edit, not the original (CODE-037)
     (body.match(/if \(!current\(\)\) return;/g) || []).length === 3 && body.indexOf('if (!current()) return;') < body.indexOf('entry.thumb =') && /if \(!current\(\)\) return;\s*entry\.failed/.test(body));
 }
 
+section('text on the accent colour is readable in every theme (ACC-013)');
+{
+  const css = fs.readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
+  const channel = (v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  const luminance = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => channel(parseInt(hex.slice(i, i + 2), 16) / 255));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const ratio = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  // Every theme that sets the accent sets the ink for it, a few lines on.
+  const themes = [...css.matchAll(/--accent:\s*(#[0-9a-f]{6})\b/gi)].map((m) => ({
+    accent: m[1],
+    ink: /--on-accent:\s*(#[0-9a-f]{6})\b/i.exec(css.slice(m.index, m.index + 400))?.[1],
+  }));
+  check('each theme that sets the accent sets the ink on it', themes.length >= 4 && themes.every((th) => th.ink), JSON.stringify(themes));
+  check('  at 4.5:1 or better', themes.every((th) => th.ink && ratio(th.accent, th.ink) >= 4.5), themes.map((th) => `${th.accent}/${th.ink}=${th.ink ? ratio(th.accent, th.ink).toFixed(2) : '-'}`).join(' '));
+  check('no accent fill picks its own text colour', !/background: var\(--accent\);\s*color: (?!var\(--on-accent\))/.test(css) && !/background: var\(--accent\); color: (?!var\(--on-accent\))/.test(css));
+}
+
 section('every schedule field shows where focus is (ACC-009)');
 {
   const css = fs.readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
