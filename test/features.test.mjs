@@ -214,6 +214,23 @@ section('a shared conversation opens with no account, and shows only its own fil
     check('and nothing is served without the link', noCookie.status === 401);
     const forged = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie: 'synz_share=forgedforgedforgedforgedforgedforgedforged1' } });
     check('nor with a made-up token', forged.status === 401);
+
+    // CODE-031: somebody signed in to their own account reads the link too.
+    process.env.SESSION_SECRET ||= 'test-session-secret-for-the-features-suite';
+    const { refreshSession } = await import('../server/auth.js');
+    const sessionOf = async (userId) => {
+      let header = '';
+      await refreshSession({ headers: {} }, { setHeader: (n, v) => (header = v) }, userId);
+      return header.split(';')[0];
+    };
+    const reader = await store.createUser({ id: 'u-sc-reader', email: 'sc-reader@example.com', passwordHash: 'x', name: 'R', role: 'user' });
+    const both = `${cookie}; ${await sessionOf(reader.id)}`;
+    const signedIn = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie: both } });
+    check('a signed-in reader who is not the owner is served the file too', signedIn.status === 200 && (await signedIn.text()) === 'png!', String(signedIn.status));
+    const stillNot = await fetch(`${base}/api/attachments/elsewhere`, { headers: { cookie: both } });
+    check('  and still nothing outside the conversation', stillNot.status === 401);
+    const owned = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie: `${cookie}; ${await sessionOf(owner.id)}` } });
+    check('the owner is sent on to their own routes', owned.status === 401);
   } finally {
     server.close();
   }

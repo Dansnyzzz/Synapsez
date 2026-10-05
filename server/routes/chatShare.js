@@ -195,10 +195,19 @@ export function mountPublicChatShare(app, { wrap }) {
    * tiles are the proxies the page's cards draw with, which a share-cookie
    * holder may use and nobody else.
    */
+  /*
+   * Signed in or not, a reader of the link sees its files (CODE-031). This used
+   * to step aside for any session, so somebody signed in to their own account
+   * reached the ordinary routes, which look files up under *their* id — and every
+   * picture and file card on the shared page was a broken tile. Only the owner
+   * is sent on: their own routes already serve them everything.
+   */
   const visitorScope = async (req) => {
-    if (await currentUser(req).catch(() => null)) return null;
     const token = parseCookies(req.headers.cookie)[SHARE_COOKIE];
-    return token ? sharedScope(token) : null;
+    const scope = token ? await sharedScope(token) : null;
+    if (!scope) return null;
+    const viewer = await currentUser(req).catch(() => null);
+    return viewer && viewer.id === scope.chat.user_id ? null : scope;
   };
   const sendPicture = (res, picture) => {
     res.setHeader('Content-Type', picture.type);
