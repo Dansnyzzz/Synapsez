@@ -702,10 +702,24 @@ section('deleting stored files across every account is asked for first (CODE-044
     return n;
   };
 
-  const asked = run('--apply');
-  check('--apply with no terminal to ask in deletes nothing', asked.status === 0 && /Nothing was deleted/.test(asked.stdout) && (await left()) === 1, `${asked.status} ${asked.stdout.slice(-200)} ${asked.stderr.slice(-200)}`);
-  const meant = run('--apply', '--yes');
-  check('  --yes is the deliberate way past the question', meant.status === 0 && /Deleted 1 file\(s\)/.test(meant.stdout) && (await left()) === 0, `${meant.status} ${meant.stdout.slice(-200)} ${meant.stderr.slice(-200)}`);
+  // Before anything that deletes: the child must report the temporary local
+  // database and exactly the one file seeded into it (CODE-054). Pointed
+  // anywhere else, the deleting runs are never started.
+  const preview = run();
+  const onTemp =
+    preview.status === 0 && /\(pglite \(local file\)\)/.test(preview.stdout) && /Of a deleted conversation\s+1 ·/.test(preview.stdout);
+  check('the script, run from the test, is on the temporary database and no other', onTemp, `${preview.status} ${preview.stdout.slice(0, 300)} ${preview.stderr.slice(-200)}`);
+  // And the guard tells: pointed at any other database, it does not pass.
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-storage-other-'));
+  const other = spawnSync(process.execPath, [script], { env: { ...env, DATA_DIR: elsewhere }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
+  check('  a database without that one file does not pass the guard', !/Of a deleted conversation\s+1 ·/.test(other.stdout), other.stdout.slice(0, 200));
+  fs.rmSync(elsewhere, { recursive: true, force: true });
+  if (onTemp) {
+    const asked = run('--apply');
+    check('--apply with no terminal to ask in deletes nothing', asked.status === 0 && /Nothing was deleted/.test(asked.stdout) && (await left()) === 1, `${asked.status} ${asked.stdout.slice(-200)} ${asked.stderr.slice(-200)}`);
+    const meant = run('--apply', '--yes');
+    check('  --yes is the deliberate way past the question', meant.status === 0 && /Deleted 1 file\(s\)/.test(meant.stdout) && (await left()) === 0, `${meant.status} ${meant.stdout.slice(-200)} ${meant.stderr.slice(-200)}`);
+  }
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
