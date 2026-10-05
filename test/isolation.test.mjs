@@ -1969,6 +1969,42 @@ section('concurrent writes to one setting compose instead of racing');
   check('or the other artifact', inner?.['art-two']?.beta === '"2"', JSON.stringify(inner?.['art-two']));
 }
 
+section('clearing one stored value beside a save keeps the save');
+{
+  // CODE-042. A delete that reads the setting, drops a key and writes the whole
+  // value back erases any save landing between its read and its write. PGlite
+  // runs one query at a time, so two calls in parallel never interleave here on
+  // their own: the save is made to land in exactly that gap instead.
+  const { initStore, getStore } = await import('../server/store/index.js');
+  const { deleteArtifactValue } = await import('../server/artifactStorage.js');
+  await initStore({ driver });
+  const live = getStore();
+  const owner = await store.createUser({
+    id: 'u-clear-race', email: 'clear-race@example.com', passwordHash: 'x', name: 'Clear', role: 'user',
+  });
+  await store.mergeUserSettingIn(owner.id, 'artifactStorage', 'art-c', { old: '1', kept: '2' });
+
+  const save = () => store.mergeUserSettingIn(owner.id, 'artifactStorage', 'art-c', { fresh: '3' });
+  const read = live.getUserSetting;
+  let saved = false;
+  live.getUserSetting = async (...args) => {
+    const snapshot = await read.apply(live, args);
+    if (!saved) { saved = true; await save(); }
+    return snapshot;
+  };
+  try {
+    await deleteArtifactValue(owner.id, 'art-c', 'old');
+  } finally {
+    live.getUserSetting = read;
+  }
+  if (!saved) await save();
+
+  const after = (await store.getUserSetting(owner.id, 'artifactStorage'))?.['art-c'] || {};
+  check('a save made while a key is being cleared survives', after.fresh === '3', JSON.stringify(after));
+  check('  the cleared key is gone', !('old' in after), JSON.stringify(after));
+  check('  and the key nobody touched stays', after.kept === '2', JSON.stringify(after));
+}
+
 section('a shared conversation: a snapshot for anyone, a copy for whoever carries it on');
 {
   const { forkSharedChat, referencedFiles, publicTranscript } = await import('../server/routes/chatShare.js');

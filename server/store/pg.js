@@ -753,6 +753,21 @@ export function createPgStore(connectionString) {
       );
       return rows[0]?.value ?? null;
     },
+    /**
+     * Remove one entry one level down — `value[entry][inner]` — without reading
+     * the setting first: the delete-side twin of `mergeUserSettingIn` (CODE-042).
+     * A read-all-then-write delete running beside a write to the same setting
+     * erased that write.
+     */
+    async removeUserSettingKeyIn(userId, key, entry, inner) {
+      const rows = await q(
+        `UPDATE user_settings SET value = value #- ARRAY[$3::text, $4::text]
+          WHERE user_id = $1 AND key = $2
+      RETURNING value`,
+        [userId, key, String(entry), String(inner)],
+      );
+      return rows[0]?.value ?? null;
+    },
 
     // ── deployment-wide settings ────────────────────────────────────
     async getSetting(key) {
