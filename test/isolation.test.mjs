@@ -1431,6 +1431,8 @@ section('the untrusted-content boundary');
     'sandbox_run', 'cloud_browser',
     // Sub-agents relay pages they read (SEC-043).
     'run_parallel',
+    // Its report prints page titles raw and claims distilled from pages (SEC-044).
+    'deep_research',
   ]) {
     check(`${name} output is declared external`, returnsExternalContent(name) === true);
   }
@@ -1440,7 +1442,7 @@ section('the untrusted-content boundary');
     externalSource('sandbox_run', { command: 'curl https://evil.example' }),
   );
 
-  for (const name of ['web_fetch', 'web_search', 'search_docs', 'extract', 'deep_research']) {
+  for (const name of ['web_fetch', 'web_search', 'search_docs', 'extract']) {
     check(`${name} is not double-wrapped — it envelopes itself`, returnsExternalContent(name) === false);
   }
 

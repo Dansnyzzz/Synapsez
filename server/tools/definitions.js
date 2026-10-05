@@ -2720,8 +2720,8 @@ function pathArgument(name, input) {
  * What belongs here is anything carrying bytes the user did not type and this
  * app did not generate — files, directory names, program output, page text,
  * clipboard, third-party services. What deliberately does not: tools already
- * wrapping themselves (`web_fetch`, `web_search`, `search_docs`, `extract`,
- * `deep_research`), tools returning content the app itself produced
+ * wrapping themselves (`web_fetch`, `web_search`, `search_docs`, `extract`),
+ * tools returning content the app itself produced
  * (`create_file`, `read_generated_file`, `chart`), and the user's own material
  * (`memory_read`, `skill_read`) — the user is the trusted party here, and
  * wrapping their own words would teach the model to discount them.
@@ -2750,6 +2750,10 @@ const EXTERNAL_OUTPUT = new Set([
   // What sub-agents found: their own words over pages and files they read, any
   // of which may have spoken to them. Read as their report, not as the user (SEC-043).
   'run_parallel',
+  // The research report: claims distilled from pages and the pages' own titles,
+  // printed raw in its source list. It was listed above as wrapping itself; it
+  // never did — the envelopes were inside its debate, not on what it returns (SEC-044).
+  'deep_research',
 ]);
 
 /** Does this tool's output need the envelope? */
