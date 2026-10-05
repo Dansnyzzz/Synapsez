@@ -1417,9 +1417,16 @@ section('the untrusted-content boundary');
     'run_command', 'run_background_logs',
     'browser_look', 'browser_tabs', 'clipboard_read', 'desktop_look',
     'github', 'notion_search',
+    // The cloud computer has the whole internet: its output is a page as often as a sum (SEC-035).
+    'sandbox_run', 'cloud_browser',
   ]) {
     check(`${name} output is declared external`, returnsExternalContent(name) === true);
   }
+  check(
+    'and the cloud computer\'s envelope names the command, like the local shell\'s',
+    externalSource('sandbox_run', { command: 'curl https://evil.example' }) === 'the output of curl https://evil.example',
+    externalSource('sandbox_run', { command: 'curl https://evil.example' }),
+  );
 
   for (const name of ['web_fetch', 'web_search', 'search_docs', 'extract', 'deep_research']) {
     check(`${name} is not double-wrapped — it envelopes itself`, returnsExternalContent(name) === false);

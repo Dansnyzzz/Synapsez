@@ -2741,6 +2741,10 @@ const EXTERNAL_OUTPUT = new Set([
   'github', 'notion_search',
   // Any page on the web, read by the browser on the cloud computer.
   'cloud_browser',
+  // Whatever a program on the cloud computer printed. It has the whole internet
+  // (see sandbox.js), so `curl` of a stranger's page lands here as readily as
+  // the output of a calculation — it was the one shell left unwrapped (SEC-035).
+  'sandbox_run',
 ]);
 
 /** Does this tool's output need the envelope? */
@@ -2760,7 +2764,7 @@ export function externalSource(name, input = {}) {
   if (name === 'desktop_look') return 'the screen';
   if (name === 'github') return 'GitHub';
   if (name === 'notion_search') return 'Notion';
-  if (name === 'run_command' || name === 'run_background_logs') {
+  if (name === 'run_command' || name === 'run_background_logs' || name === 'sandbox_run') {
     return `the output of ${String(input?.command || 'a command').slice(0, 80)}`;
   }
   return path ? String(path).slice(0, 200) : `the output of ${name}`;
