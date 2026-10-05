@@ -90,6 +90,24 @@ const fold = (s) => String(s || '').normalize('NFC').toLowerCase().trim();
 /** `slides.pdf.txt`, `slides.pdf` and `slides.txt` are one document. */
 const stemOf = (name) => fold(name).replace(/(\.[a-z0-9]{1,5}){1,2}$/, '');
 
+/**
+ * The conversation's tool text, folded once (PERF-020).
+ *
+ * It is every page and file the tools read in the conversation — megabytes on a
+ * long one — and it was normalised and lower-cased up to twice per cited file,
+ * on every hydrate and every background poll. One audit passes the same text
+ * for every citation in it, so remembering the last fold turns that into once.
+ */
+let lastText = null;
+let lastFolded = '';
+function foldedText(text) {
+  if (text !== lastText) {
+    lastText = text;
+    lastFolded = fold(text);
+  }
+  return lastFolded;
+}
+
 /** Whether a cited file is one the conversation had, given what it had. */
 export function fileWasSeen(name, { files, text }) {
   if (!files) return true;
@@ -97,7 +115,8 @@ export function fileWasSeen(name, { files, text }) {
   const stem = stemOf(name);
   if (files.some((f) => fold(f) === want || stemOf(f) === stem)) return true;
   // A file a tool read or listed: named in its result, the index, the machine.
-  return fold(text).includes(want) || (stem.length >= 4 && fold(text).includes(stem));
+  const haystack = foldedText(text);
+  return haystack.includes(want) || (stem.length >= 4 && haystack.includes(stem));
 }
 
 /** Whether a cited address was searched, read, or given in the conversation. */
