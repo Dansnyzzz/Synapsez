@@ -430,6 +430,36 @@ section('attaching photos and files');
   const redoable = await page.evaluate(() => !document.querySelector('.sketch [data-k="redo"]').disabled);
   check('  and redone', redoable);
   await page.click('.sketch [data-k="redo"]');
+
+  // ACC-016: the colours and tools work from the keyboard, and text can be placed without a pointer.
+  await page.focus('.sketch__color[aria-checked="true"]');
+  await page.keyboard.press('ArrowRight');
+  const stepped = await page.evaluate(() => {
+    const on = document.querySelector('.sketch__color[aria-checked="true"]');
+    return {
+      label: on?.getAttribute('aria-label') || '',
+      focused: document.activeElement === on,
+      stops: [...document.querySelectorAll('.sketch__color')].filter((b) => /** @type {HTMLElement} */ (b).tabIndex === 0).length,
+      group: document.querySelector('.sketch__colors')?.getAttribute('aria-label') || '',
+    };
+  });
+  check('an arrow key moves the colour, named in words', stepped.focused && !/^#/.test(stepped.label) && !!stepped.label, JSON.stringify(stepped));
+  check('  in a named group that is one Tab stop', stepped.stops === 1 && !!stepped.group, JSON.stringify(stepped));
+  await page.focus('.sketch__tool[data-tool="pen"]');
+  await page.keyboard.press('ArrowRight');
+  await page.focus('.sketch__canvas');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(100);
+  const typing = await page.evaluate(() => document.activeElement?.classList.contains('sketch__type'));
+  check('with Text chosen, Enter on the picture opens a text box', typing);
+  await page.keyboard.type('Hi');
+  await page.keyboard.press('Enter');
+  const written = await page.evaluate(() => ({
+    undo: !document.querySelector('.sketch [data-k="undo"]').disabled,
+    back: document.activeElement?.classList.contains('sketch__canvas'),
+  }));
+  check('  and Enter writes it, with focus back on the picture', written.undo && written.back, JSON.stringify(written));
+
   await page.click('.sketch [data-k="save"]');
   await page.waitForTimeout(1500);
   const saved = await page.evaluate(() => ({

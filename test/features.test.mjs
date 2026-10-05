@@ -525,6 +525,24 @@ section('Escape in a sketch label drops the label, not the sketch (UX-006)');
   check('the label\'s Escape is kept from the dialog\'s cancel', /e\.preventDefault\(\)/.test(handler) && /input\.remove\(\)/.test(handler));
 }
 
+section('the sketch can be used from the keyboard and a screen reader (ACC-016)');
+{
+  const { radioStep } = await import('../public/js/sketch.js');
+  check('arrow keys step round a radio group, both ways', radioStep('ArrowRight', 6, 7) === 0 && radioStep('ArrowLeft', 0, 7) === 6 && radioStep('ArrowDown', 2, 7) === 3 && radioStep('ArrowUp', 2, 7) === 1);
+  check('  Home and End go to the ends, and other keys do nothing', radioStep('Home', 4, 7) === 0 && radioStep('End', 0, 7) === 6 && radioStep('Enter', 3, 7) === null);
+
+  const src = fs.readFileSync(new URL('../public/js/sketch.js', import.meta.url), 'utf8');
+  check('colours are named in words, not by hex code', !/aria-label="\$\{c\}"/.test(src) && /setAttribute\('aria-label', t\(b\.getAttribute\('data-name'\)\)\)/.test(src));
+  check('  both radio groups have a name', /\[data-group="colors"\]'\)\.setAttribute\('aria-label', t\('sketch\.colors'\)\)/.test(src) && /\[data-group="tools"\]'\)\.setAttribute\('aria-label', t\('sketch\.tools'\)\)/.test(src));
+  check('  only the chosen radio is a Tab stop', /b\.tabIndex = on \? 0 : -1;/.test(src));
+  check('the picture takes focus, and Enter on it places text', /<canvas class="sketch__canvas" tabindex="0">/.test(src) && /tool !== 'text' \|\| \(e\.key !== 'Enter' && e\.key !== ' '\)/.test(src) && /placeText\(\{ clientX:/.test(src));
+
+  const { en } = await import('../public/js/locales/en.js');
+  const { vi } = await import('../public/js/locales/vi.js');
+  const names = [...src.matchAll(/\['#[0-9a-f]{6}', '(sketch\.\w+)'\]/g)].map((m) => m[1]);
+  check('every colour has a name in both languages', names.length === 7 && names.every((k) => en[k] && vi[k]), names.filter((k) => !en[k] || !vi[k]).join(','));
+}
+
 section('the effort dial reaches every model that reasons, in each wire\'s own words');
 {
   const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');
