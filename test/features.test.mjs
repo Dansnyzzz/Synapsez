@@ -259,6 +259,13 @@ section('the viewer says a link it makes is public, and offers it only for made 
   }
 }
 
+section('Escape in a sketch label drops the label, not the sketch (UX-006)');
+{
+  const src = fs.readFileSync(new URL('../public/js/sketch.js', import.meta.url), 'utf8');
+  const handler = src.slice(src.indexOf("if (e.key === 'Escape') {"), src.indexOf("if (e.key === 'Escape') {") + 400);
+  check('the label\'s Escape is kept from the dialog\'s cancel', /e\.preventDefault\(\)/.test(handler) && /input\.remove\(\)/.test(handler));
+}
+
 section('the effort dial reaches every model that reasons, in each wire\'s own words');
 {
   const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');

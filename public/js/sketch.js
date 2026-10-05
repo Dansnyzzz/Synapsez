@@ -146,6 +146,10 @@ export function openSketch(src) {
         e.stopPropagation();
         if (e.key === 'Enter') commitText();
         if (e.key === 'Escape') {
+          // Only the label being typed is dropped. Without preventDefault the
+          // dialog's own cancel still fired and closed the whole sketch, every
+          // mark with it (UX-006) — stopPropagation does not reach that.
+          e.preventDefault();
           editor = null;
           input.remove();
         }
