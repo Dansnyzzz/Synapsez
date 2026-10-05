@@ -1641,8 +1641,15 @@ export function createPgStore(connectionString) {
        * Doing it here too makes each statement independently correct rather
        * than correct-in-context.
        */
+      /*
+       * Stamped with the time of the edit (PRV-012). What it says was written
+       * now, and a conversation shared by link is a snapshot of what had been
+       * written by `shared_at` — `listSharedMessages` filters on this column.
+       * Kept at its first time, an edit made after sharing reached every
+       * visitor and every copy carried on. Order is by `seq`, so nothing moves.
+       */
       await q(
-        `UPDATE messages SET content = $1
+        `UPDATE messages SET content = $1, created_at = NOW()
           WHERE id = $2 AND chat_id = $3
             AND EXISTS (SELECT 1 FROM chats c WHERE c.id = $3 AND c.user_id = $4)`,
         [toJson(content), messageId, chatId, userId],

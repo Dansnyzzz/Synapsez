@@ -26,7 +26,10 @@ import { audit } from '../audit.js';
  * those routes lets a visitor fetch exactly the files the shared conversation
  * refers to — owned by its owner, named in its messages — and nothing else.
  * Each as it stood at `shared_at`, like the messages: a file rewritten since is
- * served, and copied into a fork, from its history (`getAttachmentAt`, PRV-011).
+ * served, and copied into a fork, from its history (`getAttachmentAt`, PRV-011),
+ * and a message edited since is stamped with its edit and so falls after the
+ * snapshot (`editUserMessage`, PRV-012). The one thing still read live is the
+ * conversation's title (PRV-013 — keeping it needs a column, the owner's call).
  */
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;

@@ -2233,6 +2233,24 @@ section('a shared conversation publishes the answer, not what was read of the ac
     check('  and another account reaches none of it', (await store.getAttachmentAt(reader.id, 'att-at-1', sharedAt)) === null);
   }
 
+  // PRV-012: an edit to a message after sharing is not part of the snapshot.
+  {
+    const pause = () => new Promise((r) => setTimeout(r, 25));
+    await store.createChat(owner.id, { id: 'c-edit-after', title: 'Edited later', model: 'm' });
+    await store.appendMessage(owner.id, 'c-edit-after', { id: 'ea-1', role: 'user', text: 'What we said then' });
+    await store.appendMessage(owner.id, 'c-edit-after', { id: 'ea-2', role: 'assistant', text: 'And the answer then' });
+    await pause();
+    const shared = await store.setChatShare(owner.id, 'c-edit-after', 'tokEditedAfterSharing000000000000000000_000');
+    await pause();
+    await store.editUserMessage(owner.id, 'c-edit-after', 'ea-1', 'SECRET written after sharing');
+    const seen = await store.listSharedMessages('c-edit-after', shared.sharedAt);
+    const seenText = JSON.stringify(seen);
+    check('an edit made after sharing does not reach the shared copy', !seenText.includes('SECRET written after sharing'), seenText);
+    check('  nor does the old text it replaced, which is no longer stored', !seenText.includes('What we said then'), seenText);
+    const own = await store.listMessages(owner.id, 'c-edit-after');
+    check('  while the owner sees the edit, in its place', own.length === 1 && own[0].text === 'SECRET written after sharing', JSON.stringify(own));
+  }
+
   // Every publishable tool that takes a file id is guarded, so a new one cannot slip past.
   const { PUBLISHABLE_TOOLS, __testing: shareInternals } = await import('../server/routes/chatShare.js');
   const byId = TOOLS.filter((t) => PUBLISHABLE_TOOLS.has(t.name) && Object.keys(t.input_schema?.properties || t.parameters?.properties || {}).includes('file_id'));
