@@ -4,7 +4,7 @@ import { escapeHtml } from './markdown.js';
 import { openMenu } from './menu.js';
 import { toast } from './render.js';
 import { counted, repeatsAs } from './format.js';
-import { prepareUpload } from './shrink.js';
+import { preparedWithThumb } from './shrink.js';
 import { thumbnailFor } from './thumbnail.js';
 
 /**
@@ -1117,11 +1117,11 @@ export function createProjectPage({
         // not on a serverless function — see public/js/thumbnail.js. Never
         // fatal: a file whose picture could not be drawn still becomes a
         // source, and its card shows a type badge instead.
-        const { thumb } = await thumbnailFor(file);
         // The same preparation the composer does: a big photo is re-encoded, a
         // big PDF is sent as its text. Without it the host refuses the request
-        // at the edge and the shelf reports a JSON parse error.
-        const ready = await prepareUpload(file);
+        // at the edge and the shelf reports a JSON parse error. A big file is
+        // decoded once at a time (see `preparedWithThumb`).
+        const [ready, { thumb }] = await preparedWithThumb(file, thumbnailFor);
         await api.addProjectFile(data.project.id, { ...ready, thumb });
         added += 1;
       } catch (err) {

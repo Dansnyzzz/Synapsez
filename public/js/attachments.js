@@ -16,7 +16,7 @@ import { escapeHtml } from './markdown.js';
 import { toast } from './render.js';
 import { t } from './i18n.js';
 import { humanSize } from './format.js';
-import { prepareUpload, shrinkable, MAX_SHRINKABLE_BYTES } from './shrink.js';
+import { preparedWithThumb, shrinkable, MAX_SHRINKABLE_BYTES } from './shrink.js';
 import { thumbnailFor } from './thumbnail.js';
 import { openSketch } from './sketch.js';
 import { newestOnly } from './serial.js';
@@ -182,10 +182,7 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
        */
       // The small picture is drawn alongside the upload and kept with the file,
       // so the sent message shows the same tile without fetching the whole file.
-      const [ready, drawn] = await Promise.all([
-        prepareUpload(file),
-        entry.isImage || entry.isPdf ? thumbnailFor(file).catch(() => ({ thumb: null })) : { thumb: null },
-      ]);
+      const [ready, drawn] = await preparedWithThumb(file, entry.isImage || entry.isPdf ? thumbnailFor : null);
       if (!current()) return;
       if (drawn.thumb && entry.isPdf && staged.includes(entry)) {
         entry.thumb = drawn.thumb;

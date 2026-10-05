@@ -5019,8 +5019,22 @@ section('an oversized upload is made to fit, or refused in words');
       refused = err.message;
     }
 
+    // PERF-021: the big photo is shrunk first, and its thumbnail drawn from the shrunk copy.
+    const { preparedWithThumb } = await import('/js/shrink.js');
+    const { thumbnailFor } = await import('/js/thumbnail.js');
+    // The thumbnail being handed the shrunk copy is the proof of order: that
+    // copy does not exist until preparing has finished.
+    const seen = [];
+    const [readyBig, drawnBig] = await preparedWithThumb(big, async (f) => {
+      seen.push({ size: f.size, type: f.type });
+      return thumbnailFor(f);
+    });
+
     const bytesOf = (b64) => Math.floor((b64.length * 3) / 4);
     return {
+      oneAtATime: seen.length === 1 && seen[0].size === atob(readyBig.data).length && seen[0].size < big.size && seen[0].type === 'image/jpeg',
+      seen,
+      thumbDrawn: /^data:image\/jpeg;base64,/.test(drawnBig?.thumb || ''),
       limit: MAX_UPLOAD_BYTES,
       // A small file is passed through: nothing is re-encoded for the sake of
       // it, because a 200KB PNG through a JPEG round trip comes out worse.
@@ -5039,6 +5053,8 @@ section('an oversized upload is made to fit, or refused in words');
   check('an oversized photo is re-encoded to fit', out.shrunkTo !== null && out.shrunkTo <= out.limit, `${out.shrunkTo}`);
   check('and says it was resized', out.shrunkKind === 'image', String(out.shrunkKind));
   check('under a name that matches what was sent', out.shrunkName === 'photo.jpg', out.shrunkName);
+  check('its thumbnail is drawn from the shrunk copy, not by decoding the original again (PERF-021)', out.oneAtATime, JSON.stringify(out.seen));
+  check('  and is still drawn', out.thumbDrawn);
   // Nothing can shrink a deck honestly, so the refusal names the file, its
   // size, what fits, and what to do — rather than a JSON parse error.
   check('what cannot be shrunk is refused in words', /slides\.pptx/.test(out.refused || ''), out.refused);

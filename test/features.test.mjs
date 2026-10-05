@@ -543,6 +543,44 @@ section('the sketch can be used from the keyboard and a screen reader (ACC-016)'
   check('every colour has a name in both languages', names.length === 7 && names.every((k) => en[k] && vi[k]), names.filter((k) => !en[k] || !vi[k]).join(','));
 }
 
+section('a file that must be shrunk is not decoded twice at once (PERF-021)');
+{
+  const { preparedWithThumb, fileOf, MAX_UPLOAD_BYTES } = await import('../public/js/shrink.js');
+  const back = fileOf({ name: 'p.jpg', mime: 'image/jpeg', data: Buffer.from('jpeg!').toString('base64') });
+  check('what was prepared becomes a file again, to draw from', back.name === 'p.jpg' && back.type === 'image/jpeg' && (await back.text()) === 'jpeg!');
+
+  let drawnWhile = 0;
+  const thumb = async () => {
+    drawnWhile += 1;
+    return { thumb: 'x' };
+  };
+  // Over the limit and nothing can shrink it: preparing fails, and nothing was drawn meanwhile.
+  const huge = new File([new Uint8Array(MAX_UPLOAD_BYTES + 1)], 'clip.mov', { type: 'video/quicktime' });
+  const refused = await preparedWithThumb(huge, thumb).then(() => null, (err) => err.message);
+  check('a file over the limit is prepared before anything is drawn', !!refused && drawnWhile === 0, `${refused} / drawn ${drawnWhile}`);
+  // The browser's reader, as much of it as preparing a small file uses.
+  const hadReader = 'FileReader' in globalThis;
+  globalThis.FileReader ||= class {
+    readAsDataURL(blob) {
+      blob.arrayBuffer().then(
+        (b) => {
+          this.result = `data:${blob.type};base64,${Buffer.from(b).toString('base64')}`;
+          this.onload?.();
+        },
+        (err) => this.onerror?.(err),
+      );
+    }
+  };
+  const small = new File(['hello'], 'a.txt', { type: 'text/plain' });
+  const [ready, drawn] = await preparedWithThumb(small, thumb);
+  check('a small file still does both', ready.name === 'a.txt' && drawn.thumb === 'x' && drawnWhile === 1);
+  const [, none] = await preparedWithThumb(small, null);
+  check('  and a file with nothing to draw draws nothing', none.thumb === null && drawnWhile === 1);
+  if (!hadReader) delete globalThis.FileReader;
+  const src = fs.readFileSync(new URL('../public/js/attachments.js', import.meta.url), 'utf8');
+  check('the composer uses it rather than starting both at once', /await preparedWithThumb\(file, /.test(src) && !/Promise\.all\(\[\s*prepareUpload/.test(src));
+}
+
 section('the effort dial reaches every model that reasons, in each wire\'s own words');
 {
   const { reasoningParams, stepDown, EFFORTS, __testing: oa } = await import('../server/providers/openaiCompatible.js');
