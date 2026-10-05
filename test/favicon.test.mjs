@@ -16,7 +16,34 @@ const check = (l, ok, d = '') => {
   if (!ok) failures += 1;
 };
 
-const { cleanHost, faviconFor, __testing } = await import('../server/favicon.js');
+const { cleanHost, faviconFor, siteOf, __testing } = await import('../server/favicon.js');
+
+section('only the registrable name is ever asked for (SEC-034)');
+for (const [input, want] of [
+  ['vnexpress.net', 'vnexpress.net'],
+  ['news.bbc.co.uk', 'bbc.co.uk'],
+  ['dantri.com.vn', 'dantri.com.vn'],
+  ['tuoitre.vn', 'tuoitre.vn'],
+  ['docs.google.com', 'google.com'],
+  ['bmFtZTogTGFuLCBwaG9uZSAwOTEy.attacker.example', 'attacker.example'],
+  ['a.b.c.d.attacker.example', 'attacker.example'],
+  // A country code whose "co" is open to registration is not on the list, so
+  // a name bought there cannot be used to keep a data-carrying label.
+  ['c2VjcmV0.co.ws', 'co.ws'],
+  ['c2VjcmV0.evil.co.uk', 'evil.co.uk'],
+]) {
+  check(`${input} → ${want}`, siteOf(input) === want, String(siteOf(input)));
+}
+{
+  // Answered from the registrable name's cache entry: the long label never
+  // becomes a key, a lookup or a request.
+  const icon = { type: 'image/png', data: Buffer.from([9]) };
+  __testing.cache.set('attacker.example', icon);
+  const got = await faviconFor('c2VjcmV0LW5vdGVz.attacker.example');
+  check('a data-carrying subdomain is served the site icon from memory', got === icon);
+  check('and nothing was cached under the long name', !__testing.cache.has('c2VjcmV0LW5vdGVz.attacker.example'));
+  __testing.cache.clear();
+}
 
 section('only a bare hostname is asked for');
 for (const [input, want] of [
