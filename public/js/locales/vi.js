@@ -746,6 +746,7 @@ export const vi = {
   'sharechat.gone': 'Link này không tồn tại hoặc đã bị thu hồi.',
   'sharechat.goneTitle': 'Không tìm thấy',
   'sharechat.untitled': 'Cuộc trò chuyện',
+  'sharechat.hidden': 'Không có trong bản chia sẻ — bước này đọc dữ liệu riêng của chủ cuộc trò chuyện.',
   'sharechat.meta': 'Được chia sẻ · bản chụp lúc {when}',
   'sharechat.signIn': 'Đăng nhập để tiếp tục',
   'sharechat.carryOn': 'Tiếp tục cuộc trò chuyện',

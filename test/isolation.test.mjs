@@ -2000,6 +2000,72 @@ section('a shared conversation: a snapshot for anyone, a copy for whoever carrie
   check('  and a copy can no longer be made from it', (await forkSharedChat(reader.id, token)).status === 404);
 }
 
+section('a shared conversation publishes the answer, not what was read of the account (PRV-001)');
+{
+  const { forkSharedChat, referencedFiles, publicTranscript } = await import('../server/routes/chatShare.js');
+  const owner = await store.createUser({ id: 'u-pv-owner', email: 'pv-owner@example.com', passwordHash: 'x', name: 'Owner', role: 'user' });
+  const reader = await store.createUser({ id: 'u-pv-reader', email: 'pv-reader@example.com', passwordHash: 'x', name: 'Reader', role: 'user' });
+  await store.createChat(owner.id, { id: 'c-pv', title: 'Notes', model: 'm' });
+  const png = Buffer.from('png!').toString('base64');
+  await store.createAttachment(owner.id, { id: 'att-pv-shot', name: 'inbox.jpg', mime: 'image/jpeg', kind: 'image', bytes: 4, data: png, chatId: 'c-pv' });
+  await store.createAttachment(owner.id, { id: 'att-pv-made', name: 'report.md', mime: 'text/markdown', kind: 'text', bytes: 4, data: png, chatId: 'c-pv', origin: 'generated' });
+  await store.appendMessage(owner.id, 'c-pv', { id: 'pv-1', role: 'user', text: 'What do my notes say, and the weather?' });
+  await store.appendMessage(owner.id, 'c-pv', {
+    id: 'pv-2',
+    role: 'assistant',
+    text: '',
+    thinking: 'The note reads SECRET-NOTE-123, so…',
+    toolCalls: [
+      { id: 'pv-t1', name: 'memory_read', input: { key: 'SECRET-KEY-NAME' } },
+      { id: 'pv-t2', name: 'web_search', input: { query: 'weather Hanoi' } },
+      { id: 'pv-t3', name: 'cloud_browser', input: { action: 'look' } },
+      { id: 'pv-t4', name: 'create_file', input: { name: 'report.md' } },
+      { id: 'pv-t5', name: 'mcp__crm__lookup', input: { customer: 'SECRET-CUSTOMER' } },
+    ],
+  });
+  await store.appendMessage(owner.id, 'c-pv', {
+    id: 'pv-3',
+    role: 'tool',
+    results: [
+      { toolCallId: 'pv-t1', name: 'memory_read', content: 'bank: SECRET-NOTE-123' },
+      { toolCallId: 'pv-t2', name: 'web_search', content: 'Hanoi: sunny, 31°C' },
+      { toolCallId: 'pv-t3', name: 'cloud_browser', content: 'Inbox — SECRET-PAGE', shot: { id: 'att-pv-shot' } },
+      { toolCallId: 'pv-t4', name: 'create_file', content: 'Made report.md', file: { id: 'att-pv-made', name: 'report.md' } },
+      { toolCallId: 'pv-t5', name: 'mcp__crm__lookup', content: 'SECRET-CRM-ROW' },
+    ],
+  });
+  await store.appendMessage(owner.id, 'c-pv', { id: 'pv-4', role: 'assistant', text: 'Sunny in Hanoi; your note is about your bank.' });
+  const token = 'tokPrivateShare000000000000000000000000_000';
+  await store.setChatShare(owner.id, 'c-pv', token);
+  const chat = await store.getSharedChat(token);
+  const snapshot = await store.listSharedMessages(chat.id, chat.shared_at);
+  const visible = publicTranscript(snapshot);
+  const page = JSON.stringify(visible);
+
+  for (const secret of ['SECRET-NOTE-123', 'SECRET-KEY-NAME', 'SECRET-PAGE', 'SECRET-CUSTOMER', 'SECRET-CRM-ROW']) {
+    check(`the page does not carry ${secret}`, !page.includes(secret));
+  }
+  check('  nor the reasoning', !visible.some((m) => 'thinking' in m));
+  const results = visible.find((m) => m.role === 'tool').results;
+  check('a web search is published as it was', results.find((r) => r.name === 'web_search')?.content === 'Hanoi: sunny, 31°C');
+  check('  and so is the document the assistant made', results.find((r) => r.name === 'create_file')?.file?.id === 'att-pv-made');
+  check(
+    'a step that read the account is named, and marked withheld',
+    ['memory_read', 'cloud_browser', 'mcp__crm__lookup'].every((n) => results.find((r) => r.name === n)?.hidden === true),
+  );
+  check('  with its arguments left out too', visible.find((m) => m.role === 'assistant').toolCalls.find((c) => c.name === 'memory_read').input && Object.keys(visible.find((m) => m.role === 'assistant').toolCalls.find((c) => c.name === 'memory_read').input).length === 0);
+  const files = referencedFiles(visible);
+  check('the visitor may fetch the made document', files.has('att-pv-made'));
+  check('  but not the screenshot a withheld step took', !files.has('att-pv-shot'));
+
+  const forked = await forkSharedChat(reader.id, token);
+  const copy = await store.listMessages(reader.id, forked.chatId);
+  const copied = JSON.stringify(copy);
+  check('carrying it on copies the published transcript, not the stored one', !/SECRET-/.test(copied), copied.match(/SECRET-[A-Z-]+/)?.[0] || '');
+  check('  so the reader\'s model is told a step was left out', /Not part of the shared copy/.test(copied));
+  check('  and the withheld screenshot is not copied into the reader\'s account', forked.files === 1, String(forked.files));
+}
+
 section('a share link opens one file, and only its owner can make or take it back');
 {
   /*

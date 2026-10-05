@@ -535,6 +535,7 @@ export const en = {
   'sharechat.gone': 'This link does not exist, or was taken back.',
   'sharechat.goneTitle': 'Not found',
   'sharechat.untitled': 'Conversation',
+  'sharechat.hidden': 'Left out of the shared copy — this step read the owner\'s own data.',
   'sharechat.meta': 'Shared · snapshot from {when}',
   'sharechat.signIn': 'Sign in to continue',
   'sharechat.carryOn': 'Continue this conversation',

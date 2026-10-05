@@ -34,48 +34,91 @@ export const newChatShareToken = () => crypto.randomBytes(32).toString('base64ur
 export const chatSharePath = (token) => `/share.html?t=${token}`;
 
 /**
- * The transcript as a visitor sees it: what was said, what the tools did and
- * drew — and none of the machinery. Provider payloads (signatures, raw blocks)
- * stay behind; a summary the model reads in place of older turns is not a
- * message anybody wrote.
+ * The tools whose calls and results may be published with a conversation: what
+ * they read is the open web, or what they made is the conversation's own work.
+ *
+ * Everything else read the *account*: saved notes (`memory_*`), other
+ * conversations (`search_chats`), project sources (`search_docs`), an inbox, a
+ * Drive, a connected service, the person's computer, a signed-in cloud browser.
+ * Somebody sharing an answer is sharing the answer, not every private thing the
+ * assistant looked at on the way to it — so those steps are published by name
+ * only, with their arguments and results left out (PRV-001). A list of what may
+ * go, rather than of what may not, so a tool added tomorrow starts private.
  */
-export function publicTranscript(messages) {
-  const out = [];
-  for (const m of messages) {
-    if (m.role === 'user') {
-      out.push({
-        id: m.id,
-        role: 'user',
-        text: m.text || '',
-        attachments: (m.attachments || []).map((a) => ({ id: a.id, name: a.name, kind: a.kind, mime: a.mime, bytes: a.bytes })),
-      });
-    } else if (m.role === 'assistant') {
-      out.push({
-        id: m.id,
-        role: 'assistant',
-        text: m.text || '',
-        thinking: m.thinking || '',
-        toolCalls: (m.toolCalls || []).map((c) => ({ id: c.id, name: c.name, input: c.input })),
-      });
-    } else if (m.role === 'tool') {
-      out.push({
-        id: m.id,
-        role: 'tool',
-        results: (m.results || []).map((r) => ({
-          toolCallId: r.toolCallId,
-          name: r.name,
-          content: r.content,
-          isError: !!r.isError,
-          ms: r.ms,
-          ...(r.file ? { file: r.file } : {}),
-          ...(r.widget ? { widget: r.widget } : {}),
-          ...(r.shot ? { shot: r.shot } : {}),
-          ...(r.answered ? { answered: r.answered } : {}),
-        })),
-      });
-    }
+export const PUBLISHABLE_TOOLS = new Set([
+  'web_search', 'web_fetch', 'extract', 'deep_research', 'image_search', 'encyclopedia', 'read_feed',
+  'youtube_transcript', 'world_facts', 'market_data', 'sports', 'place_lookup', 'calculate', 'convert_units',
+  'date_calc', 'text_tools', 'analyze_data', 'make_qr', 'chart', 'show_card', 'show_widget', 'create_file',
+  'update_file', 'read_generated_file', 'generate_image', 'update_plan', 'ask_options', 'load_tools',
+  // Not `look_at`: it reads a browser or desktop step's screenshot as readily as
+  // a picture from the web. Not `edit_image`: it works on the person's own disk.
+]);
+
+/** What a model reading a carried-on copy is told about a step that was left out. */
+const LEFT_OUT = 'Not part of the shared copy: this step read the original account\'s own data.';
+
+/**
+ * One message as it may leave the owner's account, or null when it may not.
+ *
+ * What was said, what the publishable tools did and drew — and none of the
+ * machinery. Provider payloads (signatures, raw blocks) stay behind; a summary
+ * the model reads in place of older turns is not a message anybody wrote; and
+ * reasoning stays behind too, because it is where the model restates whatever it
+ * read — a note, an email — on its way to the answer.
+ *
+ * @param {any} m
+ * @param {{ placeholder?: string }} [options]  `placeholder` replaces a
+ *   withheld result's text (a copy the model will read); without it the text is
+ *   empty and `hidden` says why (a page the visitor's browser words itself).
+ */
+function publicMessage(m, { placeholder = '' } = {}) {
+  if (m.role === 'user') {
+    return {
+      id: m.id,
+      role: 'user',
+      text: m.text || '',
+      attachments: (m.attachments || []).map((a) => ({ id: a.id, name: a.name, kind: a.kind, mime: a.mime, bytes: a.bytes })),
+    };
   }
-  return out;
+  if (m.role === 'assistant') {
+    return {
+      id: m.id,
+      role: 'assistant',
+      text: m.text || '',
+      toolCalls: (m.toolCalls || []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        input: PUBLISHABLE_TOOLS.has(c.name) ? c.input : {},
+      })),
+    };
+  }
+  if (m.role === 'tool') {
+    return {
+      id: m.id,
+      role: 'tool',
+      results: (m.results || []).map((r) =>
+        PUBLISHABLE_TOOLS.has(r.name)
+          ? {
+              toolCallId: r.toolCallId,
+              name: r.name,
+              content: r.content,
+              isError: !!r.isError,
+              ms: r.ms,
+              ...(r.file ? { file: r.file } : {}),
+              ...(r.widget ? { widget: r.widget } : {}),
+              ...(r.shot ? { shot: r.shot } : {}),
+              ...(r.answered ? { answered: r.answered } : {}),
+            }
+          : { toolCallId: r.toolCallId, name: r.name, content: placeholder, isError: !!r.isError, ms: r.ms, hidden: true },
+      ),
+    };
+  }
+  return null;
+}
+
+/** The transcript as a visitor sees it — see `publicMessage`. */
+export function publicTranscript(messages, options = {}) {
+  return messages.map((m) => publicMessage(m, options)).filter(Boolean);
 }
 
 /** Every file a transcript refers to: what was sent, what was made, what a step saw. */
@@ -98,7 +141,11 @@ async function sharedScope(token) {
   if (hit && hit.until > Date.now()) return hit.scope;
   const store = getStore();
   const chat = TOKEN.test(token || '') ? await store.getSharedChat(token) : null;
-  const scope = chat ? { chat, files: referencedFiles(await store.listSharedMessages(chat.id, chat.shared_at)) } : null;
+  // The files of the published transcript, not of the stored one: a picture a
+  // withheld step produced (a screenshot of a signed-in page) is not the visitor's to fetch.
+  const scope = chat
+    ? { chat, files: referencedFiles(publicTranscript(await store.listSharedMessages(chat.id, chat.shared_at))) }
+    : null;
   if (gateCache.size > 500) gateCache.delete(gateCache.keys().next().value);
   gateCache.set(token, { scope, until: Date.now() + 60_000 });
   return scope;
@@ -281,7 +328,10 @@ export async function forkSharedChat(userId, token) {
   if (!chat) return { status: 404, error: 'This link does not exist, or was taken back.' };
   if (chat.user_id === userId) return { chatId: chat.id, own: true };
 
-  const messages = await store.listSharedMessages(chat.id, chat.shared_at);
+  // The copy is made from what the link publishes, never from the stored
+  // transcript: carrying a conversation on must not hand a stranger the steps
+  // the shared page leaves out, or the reasoning it does not show.
+  const messages = publicTranscript(await store.listSharedMessages(chat.id, chat.shared_at), { placeholder: LEFT_OUT });
   const newChatId = crypto.randomUUID();
   await store.createChat(userId, { id: newChatId, title: chat.title, model: null });
 

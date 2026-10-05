@@ -54,7 +54,12 @@ async function show() {
   $('share-meta').textContent = t('sharechat.meta', { when });
 
   const results = new Map();
-  for (const m of data.messages) if (m.role === 'tool') for (const r of m.results || []) results.set(r.toolCallId, r);
+  // A step that read the owner's own data comes with its result left out (see
+  // publicTranscript); it says so in the visitor's language instead of "no output".
+  for (const m of data.messages) {
+    if (m.role !== 'tool') continue;
+    for (const r of m.results || []) results.set(r.toolCallId, r.hidden ? { ...r, content: t('sharechat.hidden') } : r);
+  }
   thread.replaceChildren();
   for (const m of data.messages) {
     if (m.role === 'user') thread.append(userMessage(m.text, m.attachments || [], m.id, m.createdAt));
