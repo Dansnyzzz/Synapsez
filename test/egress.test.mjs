@@ -5,8 +5,8 @@
  * an email — is driven end to end against a provider that answers without a
  * network. What is pinned:
  *
- *   - the provider is the only thing that receives it: no other request leaves
- *     the process during the turn;
+ *   - the provider is the only thing that receives it: no other request, socket
+ *     connection or name lookup leaves the process during the turn (`offline`);
  *   - nothing the process prints, and nothing in the account's security record,
  *     carries it;
  *   - a strict account's request reaches the wire with OpenRouter's no-storage
@@ -22,7 +22,55 @@
  */
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
+import dns from 'node:dns';
+import dnsPromises from 'node:dns/promises';
+import https from 'node:https';
 import { removeTemp } from './lib/tmp.mjs';
+
+/**
+ * Everything that tries to leave the process while `fn` runs, refused and named.
+ *
+ * Not only `fetch` (HAR-006): `safeFetch` — web tools, icons, pictures — goes
+ * through `node:http`/`https` after a `node:dns` lookup. Every TCP or TLS
+ * connection, whichever library opens it, goes through `net.Socket#connect`, so
+ * that is where the door is watched, along with the name lookups before it.
+ */
+async function offline(fn) {
+  const outbound = [];
+  const realFetch = globalThis.fetch;
+  const realConnect = net.Socket.prototype.connect;
+  const realLookup = dns.lookup;
+  const realLookupP = dnsPromises.lookup;
+  globalThis.fetch = async (input) => {
+    outbound.push(`fetch ${String(input?.url || input)}`);
+    throw new Error('network is off in this test');
+  };
+  net.Socket.prototype.connect = function connect(...args) {
+    const to = args[0] && typeof args[0] === 'object' ? `${args[0].host || args[0].path || ''}:${args[0].port || ''}` : String(args[0]);
+    outbound.push(`socket ${to}`);
+    process.nextTick(() => this.destroy(new Error('network is off in this test')));
+    return this;
+  };
+  dns.lookup = (host, ...rest) => {
+    outbound.push(`dns ${host}`);
+    const cb = rest.find((x) => typeof x === 'function');
+    process.nextTick(() => cb?.(new Error('network is off in this test')));
+  };
+  dnsPromises.lookup = async (host) => {
+    outbound.push(`dns ${host}`);
+    throw new Error('network is off in this test');
+  };
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = realFetch;
+    net.Socket.prototype.connect = realConnect;
+    dns.lookup = realLookup;
+    dnsPromises.lookup = realLookupP;
+  }
+  return outbound;
+}
 
 process.env.ENCRYPTION_KEY ||= 'egress-test-encryption-key';
 process.env.SESSION_SECRET ||= 'egress-test-session-secret';
@@ -55,20 +103,26 @@ const leaks = (text) => Object.values(PII).filter((v) => String(text).includes(v
 
 const makeUser = (id) => store.createUser({ id, email: `${id}@example.com`, name: id, passwordHash: 'x', role: 'user' });
 
+section('the watch on the network sees more than fetch (HAR-006)');
+{
+  const seen = await offline(async () => {
+    await new Promise((resolve) => {
+      const req = https.get('https://egress-probe.example/', () => resolve());
+      req.on('error', () => resolve());
+    });
+    await dnsPromises.lookup('egress-probe-2.example').catch(() => {});
+  });
+  check('a request through node:https is caught, not only fetch', seen.some((s) => /^(dns|socket) egress-probe\.example/.test(s)), seen.join(', '));
+  check('  and so is a name lookup on its own', seen.includes('dns egress-probe-2.example'), seen.join(', '));
+}
+
 section('a turn with personal data reaches the provider and nothing else');
 {
   const user = await makeUser('u-egress');
   await store.createChat(user.id, { id: 'c-egress', title: 'egress', model: 'anthropic/claude-opus-5' });
   await store.appendMessage(user.id, 'c-egress', { id: 'm-egress-1', role: 'user', text: message });
 
-  // Every request that tries to leave the process during the turn is recorded.
-  const outbound = [];
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    outbound.push(String(input?.url || input));
-    throw new Error('network is off in this test');
-  };
-  // And everything the process prints.
+  // Everything the process prints.
   const printed = [];
   const real = { log: console.log, info: console.info, warn: console.warn, error: console.error };
   for (const level of Object.keys(real)) console[level] = (...args) => printed.push(args.map(String).join(' '));
@@ -79,15 +133,16 @@ section('a turn with personal data reaches the provider and nothing else');
     yield { type: 'text', delta: 'Xin chào!' };
     yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 50, output: 5 } };
   };
+  // Every request, connection or name lookup that tries to leave the process during the turn.
+  let outbound = [];
   try {
-    await runAgent({ userId: user.id, user, chatId: 'c-egress', emit: () => {}, stream });
+    outbound = await offline(() => runAgent({ userId: user.id, user, chatId: 'c-egress', emit: () => {}, stream }));
   } finally {
-    globalThis.fetch = realFetch;
     Object.assign(console, real);
   }
 
   check('the provider receives the message as written (no de-identifying layer yet — PRV-003)', received.length === 1 && leaks(received[0]).length === 4, leaks(received[0] || '').join(', '));
-  check('no other request leaves the process during the turn', outbound.length === 0, outbound.join(', '));
+  check('no other request, connection or name lookup leaves the process during the turn', outbound.length === 0, outbound.join(', '));
   check('nothing the process printed carries the personal data', printed.every((line) => !leaks(line).length), printed.find((line) => leaks(line).length)?.slice(0, 120));
   const record = JSON.stringify(await store.listAudit(user.id, 200));
   check('nothing in the security record carries it', !leaks(record).length);
@@ -112,6 +167,30 @@ section('strict privacy reaches the wire, standard does not');
   await run(standard.id);
   check('a strict account is sent with OpenRouter\'s no-storage routing', sent[0]?.provider === 'openrouter' && sent[0]?.privacy === 'strict', JSON.stringify({ ...sent[0], key: undefined }));
   check('a standard account is not', sent[1]?.privacy === 'standard');
+
+  // And on the wire itself: the body the real OpenRouter adapter sends, caught
+  // at fetch and refused before it leaves.
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const body = init.body ?? (input instanceof Request ? await input.clone().text() : null);
+    bodies.push(JSON.parse(String(body || '{}')));
+    return new Response(JSON.stringify({ error: { message: 'network is off in this test' } }), { status: 400, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    for (const userId of [strict.id, standard.id]) {
+      try {
+        for await (const ev of streamCompletion({ userId, entry, system: 's', messages: [{ id: 'x', role: 'user', text: message }], tools: [] })) void ev;
+      } catch {
+        /* refused above, as intended */
+      }
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const [strictBody, standardBody] = bodies;
+  check('the strict request\'s body asks OpenRouter to keep nothing', strictBody?.provider?.data_collection === 'deny' && strictBody?.provider?.zdr === true, JSON.stringify(strictBody?.provider));
+  check('  and the standard one carries no such routing', bodies.length === 2 && !standardBody?.provider?.zdr, JSON.stringify(standardBody?.provider));
 }
 
 section('one account is never answered from another account\'s results');
