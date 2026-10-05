@@ -41,6 +41,7 @@ import {
 } from '../memory.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
+import { dropElements, stripTags } from '../util/markup.js';
 
 /*
  * Which set of notes a conversation means, and what may be written into one,
@@ -77,16 +78,20 @@ function guardNote(text, allowed) {
   if (refusal) throw new Error(refusalMessage(refusal));
 }
 
-/** Crude but dependency-free HTML → text. Good enough to feed a model. */
+/**
+ * Crude but dependency-free HTML → text. Good enough to feed a model.
+ *
+ * Scripts, styles and comments are cut out by searching forward rather than by
+ * lazy regular expressions, and tags are stripped with `[^<>]` — every step
+ * here is linear, because the body is a stranger's and arrives at up to 8 MB
+ * before anything is clipped (PERF-017; see util/markup.js).
+ */
 function htmlToText(html) {
-  return html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<\/(p|div|section|article|li|h[1-6]|tr|br)>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
+  return stripTags(
+    dropElements(html, ['script', 'style', 'noscript'])
+      .replace(/<\/(p|div|section|article|li|h[1-6]|tr|br)>/gi, '\n')
+      .replace(/<br\s*\/?>/gi, '\n'),
+  )
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -246,12 +251,14 @@ export function pageImages(html, base) {
 
   const head = String(html || '');
   // The share image is captioned with the page's own title.
-  const title = head.match(/<title[^>]*>([^<]{1,120})/i)?.[1] || '';
-  for (const tag of head.match(/<meta\b[^>]*>/gi) || []) {
+  // `[^<>]` rather than `[^>]`: a body of a million `<img` with no `>` scanned
+  // to the end from each one (PERF-017). Stopping at the next `<` is linear.
+  const title = head.match(/<title[^<>]*>([^<]{1,120})/i)?.[1] || '';
+  for (const tag of head.match(/<meta\b[^<>]*>/gi) || []) {
     const key = (attr(tag, 'property') || attr(tag, 'name')).toLowerCase();
     if (key === 'og:image' || key === 'og:image:secure_url' || key === 'twitter:image') add(attr(tag, 'content'), title);
   }
-  for (const tag of head.match(/<img\b[^>]*>/gi) || []) {
+  for (const tag of head.match(/<img\b[^<>]*>/gi) || []) {
     if (found.length >= PAGE_IMAGES * 3) break;
     const width = Number(attr(tag, 'width'));
     const height = Number(attr(tag, 'height'));
@@ -638,8 +645,8 @@ export function nameForFile({ name, filename, file_name: fileName, title, conten
   if (given) return given.trim();
   const text = String(content || '');
   const heading =
-    text.match(/<title[^>]*>([^<]{1,120})<\/title>/i)?.[1] ||
-    text.match(/<h1[^>]*>([^<]{1,120})<\/h1>/i)?.[1] ||
+    text.match(/<title[^<>]*>([^<]{1,120})<\/title>/i)?.[1] ||
+    text.match(/<h1[^<>]*>([^<]{1,120})<\/h1>/i)?.[1] ||
     text.match(/^#{1,3}\s+(.{1,120})$/m)?.[1];
   return heading ? heading.trim() : 'Document';
 }

@@ -92,6 +92,32 @@ section('feeds, text and tables are read correctly');
   const atom = lib.parseFeed('<feed><title>A</title><entry><title>E</title><link href="https://e.x/1"/><updated>2026-09-27</updated></entry></feed>');
   check('Atom entries, link from its href', atom.items[0].link === 'https://e.x/1');
 
+  // PERF-017: input built to defeat a lazy regular expression costs one pass.
+  const timed = (fn) => {
+    const started = Date.now();
+    fn();
+    return Date.now() - started;
+  };
+  const items = timed(() => lib.parseFeed(`<rss>${'<item><title>x'.repeat(150_000)}</rss>`));
+  check('a feed of unclosed items is read in one pass', items < 1500, `${items} ms`);
+  const cdata = timed(() => lib.parseFeed(`<rss><item><title>${'<![CDATA['.repeat(200_000)}</title></item></rss>`));
+  check('  and so is a title of unclosed CDATA', cdata < 1500, `${cdata} ms`);
+  const past = lib.parseFeed('<rss><item><title>a&#1114112;b</title></item></rss>').items[0]?.title;
+  check('a code point past the last one does not take the feed down', past === 'a b', String(past));
+  {
+    const { pageImages } = await import('../server/tools/cloud.js');
+    const { dropElements, stripTags } = await import('../server/util/markup.js');
+    const comments = timed(() => dropElements('<!--'.repeat(300_000), ['script', 'style', 'noscript']));
+    check('a page of unclosed comments is cleaned in one pass', comments < 1500, `${comments} ms`);
+    const scripts = timed(() => dropElements('<script>'.repeat(150_000), ['script', 'style', 'noscript']));
+    check('  and of unclosed scripts', scripts < 1500, `${scripts} ms`);
+    const tags = timed(() => stripTags('<'.repeat(2_000_000)));
+    check('  and tag stripping over a body of bare <', tags < 1500, `${tags} ms`);
+    const imgs = timed(() => pageImages('<img '.repeat(300_000), 'https://x.example/'));
+    check('a page of unclosed <img is scanned in one pass', imgs < 1500, `${imgs} ms`);
+    check('what is closed is still removed', dropElements('a<script>x</script>b<!-- c -->d', ['script']) === 'a b d');
+  }
+
   check('Vietnamese accents stripped, đ included', lib.stripAccents('Đường Hà Nội') === 'Duong Ha Noi');
   check('a slug', (await L.text_tools({ op: 'slug', text: 'Bản tin tài chính sáng!' })) === 'ban-tin-tai-chinh-sang');
   check('a hash', (await L.text_tools({ op: 'hash', text: 'abc', algorithm: 'md5' })) === 'md5: 900150983cd24fb0d6963f7d28e17f72');
