@@ -13,6 +13,7 @@ import { runInSandbox } from '../sandbox.js';
 import { cloudBrowser } from '../cloudBrowser/index.js';
 import { shareFile } from '../routes/share.js';
 import { see } from '../vision.js';
+import { groundedImage } from '../imageGround.js';
 import { evaluate } from './calc.js';
 import { extractFromPage } from './extract.js';
 import { resolveForUser } from '../autoPick.js';
@@ -2457,7 +2458,9 @@ async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, c
       throw new Error(`${row.name} is not a picture or a PDF — read it with read_generated_file or as text instead.`);
     }
     source = row.name;
-    item = row.kind === 'image' ? { images: [{ mime: row.mime, data: row.data, name: row.name }] } : { pdf: { data: row.data, name: row.name, pages: wantPages } };
+    // A transparent picture on a ground the reading model can see it against.
+    const picture = row.kind === 'image' ? await groundedImage(row) : null;
+    item = picture ? { images: [{ mime: picture.mime, data: picture.data, name: row.name }] } : { pdf: { data: row.data, name: row.name, pages: wantPages } };
   } else if (url) {
     let parsed;
     try {

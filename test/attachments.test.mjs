@@ -659,6 +659,56 @@ section('the interface can ask before somebody attaches anything');
   check('and it needs a session', (await anon.call('GET', '/api/models/resolve?id=x')).status === 401);
 }
 
+section('a transparent picture reaches the model on a ground it can see');
+{
+  const { loadForTranscript, toParts } = await import('../server/attachments.js');
+  const { mayBeTransparent } = await import('../server/imageGround.js');
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+  const aliceId = (await store.getUserByEmail('alice@example.com')).id;
+  const drawing = (stroke, opaque = false) => {
+    const c = createCanvas(80, 60);
+    const ctx = c.getContext('2d');
+    if (opaque) {
+      ctx.fillStyle = '#336699';
+      ctx.fillRect(0, 0, 80, 60);
+    }
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 6;
+    ctx.strokeRect(20, 15, 40, 30);
+    return c.toBuffer('image/png');
+  };
+  const add = async (id, bytes) => {
+    await store.createAttachment(aliceId, { id, name: `${id}.png`, mime: 'image/png', kind: 'image', bytes: bytes.length, data: bytes.toString('base64') });
+    return { id, name: `${id}.png`, kind: 'image', mime: 'image/png' };
+  };
+  const dark = await add('ground-dark-lines', drawing('#111111'));
+  const light = await add('ground-light-lines', drawing('#ffffff'));
+  const solidBytes = drawing('#ffffff', true);
+  const solid = await add('ground-opaque', solidBytes);
+  const message = { attachments: [dark, light, solid] };
+  const loaded = await loadForTranscript(aliceId, [message]);
+  const parts = toParts(message, loaded);
+  const corner = async (part) => {
+    const picture = await loadImage(Buffer.from(part.data, 'base64'));
+    const c = createCanvas(picture.width, picture.height);
+    c.getContext('2d').drawImage(picture, 0, 0);
+    return [...c.getContext('2d').getImageData(2, 2, 1, 1).data].join(',');
+  };
+  const darkCorner = await corner(parts[0]);
+  const lightCorner = await corner(parts[1]);
+  check('dark lines on nothing reach the model on white', darkCorner === '255,255,255,255', darkCorner);
+  check('  white lines on nothing on a dark ground, which white would erase', lightCorner === '31,35,40,255', lightCorner);
+  check('  and a picture with nothing see-through goes exactly as it was', parts[2].data === solidBytes.toString('base64'));
+  // A header claiming a picture too large to decode safely is sent untouched.
+  const huge = Buffer.from(drawing('#111111'));
+  huge.writeUInt32BE(60_000, 16);
+  huge.writeUInt32BE(60_000, 20);
+  check('  a picture whose header claims billions of pixels is not decoded', !!mayBeTransparent(huge) && 60_000 * 60_000 > 24_000_000);
+  const { groundedImage } = await import('../server/imageGround.js');
+  const untouched = await groundedImage({ mime: 'image/png', data: huge.toString('base64') });
+  check('    and goes as it was', untouched.data === huge.toString('base64'));
+}
+
 section('a step screenshot is kept for the assistant, not shelved as a file');
 {
   const { keepStepShot } = await import('../server/attachments.js');

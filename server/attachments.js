@@ -4,6 +4,7 @@ import { MAX_ATTACHMENT_BYTES } from './store/pg.js';
 import { extractPdfText } from './pdf.js';
 import { isLegacyOffice, officeFormat, readOffice, readOfficeAsync } from './office/index.js';
 import { log } from './util/trace.js';
+import { groundedImage } from './imageGround.js';
 
 /**
  * Photos and files — the ones sent with a message, and the ones the assistant
@@ -381,6 +382,7 @@ export async function loadForTranscript(userId, messages, { extractText = false,
       if (row.text === undefined && (row.kind === 'office' || (extractText && row.kind === 'document'))) {
         row.text = await readDocument(row);
       }
+      await onGround(row);
       loaded.set(id, row);
     }
     return loaded;
@@ -412,9 +414,22 @@ export async function loadForTranscript(userId, messages, { extractText = false,
     if (row.kind === 'office' || (extractText && row.kind === 'document')) {
       row.text = await readDocument(row);
     }
+    await onGround(row);
     loaded.set(id, row);
   }
   return loaded;
+}
+
+/**
+ * A transparent picture goes to the model on a ground it can see it against
+ * (imageGround.js) — once per row, which the turn's cache keeps across steps.
+ */
+async function onGround(row) {
+  if (row.kind !== 'image' || row.grounded) return;
+  const grounded = await groundedImage(row);
+  row.mime = grounded.mime;
+  row.data = grounded.data;
+  row.grounded = true;
 }
 
 /** The most of an Office document's text sent to a model — the same bound as a PDF's (pdf.js). */
