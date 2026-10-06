@@ -47,20 +47,20 @@ const configured = () =>
 // found twice elsewhere.
 const reputable = () => new Set([...GLOBAL, ...REGIONAL, ...configured()]);
 /**
+ * Which hosts are primary sources.
+ *
  * Anchored to the end of the name (ACC-008). `gov` or `edu` must be the suffix
  * itself — `.gov`, or `.gov.vn` under a country code — and the named bodies
  * must be the whole registrable name or a subdomain of it. It matched fragments:
  * `gov.attacker.com`, `x.edu.attacker.net`, `notarxiv.org` and `fakeeuropa.eu`
  * all ranked primary, so a claim planted on two such hosts counted as two
  * independent primary sources and could be graded HIGH.
- */
-/**
- * Which country codes keep a second level for real institutions (ACC-017).
  *
- * `gov.<cc>` and `edu.<cc>` were primary under any country code, and some
- * registries sell those names to anyone — so `x.edu.<cc>` there was a primary
- * source somebody could buy. These are the registries known to restrict the
- * name to government bodies, universities and schools (`ac` and `go` are the
+ * And only under country codes that keep the name for real institutions
+ * (ACC-017). `gov.<cc>` and `edu.<cc>` were primary under any country code, and
+ * some registries sell those names to anyone — so `x.edu.<cc>` there was a
+ * primary source somebody could buy. These are the registries known to restrict
+ * the name to government bodies, universities and schools (`ac` and `go` are the
  * same idea in other naming traditions). A country code not listed is not
  * primary: an unlisted real ministry ranks lower than it should, which costs a
  * little confidence; a listed fake would be counted as independent evidence.
