@@ -1483,12 +1483,15 @@ export function createPages({
      * again (UX-015). A day, a time or Pause pressed in it during the fetch sent
      * a save this open had not waited for; the redraw then showed the row from
      * before that save, and the next edit wrote the old value back. `inert`
-     * rather than disabling each control: one switch, nothing to forget, and it
-     * comes off again if this open is overtaken or fails.
+     * rather than disabling each control: one switch, nothing to forget. Each
+     * open holding it is counted, and it comes off when the last of them is done
+     * — whether that open drew, was overtaken, or failed — if the view is still
+     * there; one that draws replaces it anyway.
      */
     const showing = /** @type {HTMLElement | null} */ ($('taskpane-body').firstElementChild);
     const holding = showing?.dataset.schedule === key ? showing : null;
     if (holding) {
+      holding.dataset.holds = String((Number(holding.dataset.holds) || 0) + 1);
       holding.inert = true;
       holding.setAttribute('aria-busy', 'true');
     }
@@ -1501,9 +1504,13 @@ export function createPages({
       await flushSettling(key);
       ({ row, project } = await fetchSchedule(kind, id));
     } finally {
-      if (holding?.isConnected && turn === paneTurn) {
-        holding.inert = false;
-        holding.removeAttribute('aria-busy');
+      if (holding) {
+        const left = Math.max(0, (Number(holding.dataset.holds) || 1) - 1);
+        holding.dataset.holds = String(left);
+        if (!left && holding.isConnected) {
+          holding.inert = false;
+          holding.removeAttribute('aria-busy');
+        }
       }
     }
     // Another schedule opened, or the panel closed, while this one waited:

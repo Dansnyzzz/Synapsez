@@ -4604,6 +4604,32 @@ section('a schedule set up in a conversation is a card that opens it');
   check('  so nothing pressed in it then is saved behind the redraw', heldSaves === 0, `${heldSaves} saves`);
   check('  and the redrawn one can be used again', released);
 
+  // The hold comes off when the open that set it is done, even when that open
+  // was overtaken: here by another schedule whose fetch fails, so nothing is
+  // drawn over the held view and it would have stayed frozen.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'GET') await new Promise((r) => setTimeout(r, 1200));
+    await route.continue();
+  });
+  await page.route('**/api/tasks/t-card2', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not load the schedule (hold test).' }) });
+    } else await route.continue();
+  });
+  await pillOf(0);
+  await page.waitForTimeout(150);
+  await pillOf(1);
+  await page.waitForTimeout(1800);
+  await page.unroute('**/api/tasks/t-card');
+  await page.unroute('**/api/tasks/t-card2');
+  const overtaken = await page.evaluate(() => {
+    const view = /** @type {HTMLElement | null} */ (document.querySelector('#taskpane-body > div'));
+    return { schedule: view?.dataset.schedule, inert: !!view?.inert, busy: view?.getAttribute('aria-busy') };
+  });
+  check('  and a hold whose open was overtaken does not leave the panel frozen', overtaken.schedule === 'task:t-card' && !overtaken.inert && !overtaken.busy, JSON.stringify(overtaken));
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+
   // CODE-062: the Repeat timer's reopen that cannot fetch the schedule says so,
   // rather than failing where nobody sees.
   await page.route('**/api/tasks/t-card', async (route) => {
