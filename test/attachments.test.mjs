@@ -475,6 +475,17 @@ section('reading a PDF for a model that cannot be handed one');
   let failed = null;
   await extractPdfText(Buffer.from('not a pdf').toString('base64')).catch((err) => (failed = err));
   check('and a corrupt file fails as itself', failed?.code === 'pdf_unreadable', failed?.message);
+
+  // PERF-022: the read runs on a worker with a deadline, so a file that takes
+  // too long is stopped instead of holding the server's thread. A deadline of
+  // one millisecond stands in for a hostile file here.
+  let late = null;
+  await extractPdfText(tinyPdf('slow enough'), { timeoutMs: 1 }).catch((err) => (late = err));
+  check('a PDF that takes longer than its deadline is stopped', late?.code === 'pdf_unreadable' && /took longer/.test(late?.message || ''), late?.message);
+  const again = await extractPdfText(tinyPdf('and the next one still reads'));
+  check('  and the next PDF reads as usual', /next one still reads/.test(again?.text || ''), again?.text);
+  const { readPdfText } = await import('../server/pdf.js');
+  check('the same read is there on this thread, where no worker can start', /in thread/.test((await readPdfText(tinyPdf('in thread')))?.text || ''));
 }
 
 section('a PDF on a model that cannot read one');

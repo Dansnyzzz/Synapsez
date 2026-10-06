@@ -20,6 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { Worker } from 'node:worker_threads';
 
 /** Enough of a long document to work with, without eating the whole window. */
 const MAX_CHARS = 120_000;
@@ -164,17 +165,71 @@ export async function renderPdfPages(file, { pages = null, max = 8, width = 1400
   }
 }
 
+/** How long one PDF's text may take, and how much memory its read may hold (PERF-022). */
+const TEXT_MS = 25_000;
+const TEXT_HEAP_MB = 384;
+
 /**
- * Pull the text out of a PDF.
+ * Pull the text out of a PDF, on a worker thread with a deadline (PERF-022).
+ *
+ * pdfjs parses on the thread that calls it, with no timeout and no way to stop
+ * it, so a crafted file — an endless content stream, a compression bomb — could
+ * hold the server's event loop, and every other request with it. The read runs
+ * in pdfText.worker.mjs instead: stopped after `timeoutMs`, and with a heap of
+ * its own capped at TEXT_HEAP_MB, so the worst a file can do is end its own read.
+ * Where a worker cannot be started at all, it reads on this thread as before —
+ * never worse than it was.
  *
  * @param file the bytes, either as the base64 an attachment is stored as or as
  *   a `Buffer` — `web_fetch` has just downloaded one and encoding 30MB to
  *   base64 only for this to decode it again is a copy nobody needs.
+ * @param {{ timeoutMs?: number }} [options]
  * @returns `{ text, pages, truncated }`, or null when there is no text to be
  *   had — a scan, a poster, anything that is pictures all the way down. Null is
  *   a real answer here: it means "say you could not read it", not "try harder".
  */
-export async function extractPdfText(file) {
+export async function extractPdfText(file, { timeoutMs = TEXT_MS } = {}) {
+  const bytes = Buffer.isBuffer(file) ? file : Buffer.from(String(file || ''), 'base64');
+  let worker;
+  try {
+    worker = new Worker(new URL('./pdfText.worker.mjs', import.meta.url), {
+      workerData: { bytes: Uint8Array.from(bytes) },
+      resourceLimits: { maxOldGenerationSizeMb: TEXT_HEAP_MB },
+    });
+  } catch {
+    return readPdfText(bytes);
+  }
+  const unreadable = (message) => Object.assign(new Error(message), { code: 'pdf_unreadable' });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      worker.terminate().catch(() => {});
+      fn(value);
+    };
+    const timer = setTimeout(
+      () => finish(reject, unreadable(`That PDF took longer than ${Math.max(1, Math.round(timeoutMs / 1000))}s to read, so reading it was stopped.`)),
+      timeoutMs,
+    );
+    worker.once('message', (out) => {
+      if (out?.ok) finish(resolve, out.result ?? null);
+      else finish(reject, Object.assign(new Error(out?.message || 'That PDF could not be read.'), { code: out?.code || 'pdf_unreadable' }));
+    });
+    // Its heap running out is an `error` here, and the main thread carries on.
+    worker.once('error', (err) => finish(reject, unreadable(`That PDF could not be read: ${err?.message || err}`)));
+    worker.once('exit', (code) => finish(reject, unreadable(`That PDF could not be read: its reader stopped (${code}).`)));
+  });
+}
+
+/**
+ * The read itself, on whatever thread calls it — the worker's, or this one's
+ * where no worker can be started. See `extractPdfText`.
+ *
+ * @param {Buffer | string} file
+ */
+export async function readPdfText(file) {
   const { getDocument } = await engine();
   const bytes = Buffer.isBuffer(file) ? file : Buffer.from(String(file || ''), 'base64');
 

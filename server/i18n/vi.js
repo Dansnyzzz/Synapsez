@@ -391,6 +391,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '{0} uses compression method {1}, which is not supported.': '{0} dùng phương thức nén {1}, chưa được hỗ trợ.',
   '{0} could not be decompressed: {1}': 'Không giải nén được {0}: {1}',
   'That PDF could not be opened: {0}': 'Không mở được tệp PDF đó: {0}',
+  'That PDF took longer than {0}s to read, so reading it was stopped.': 'Tệp PDF đó đọc quá {0} giây nên đã dừng đọc.',
+  'That PDF could not be read: {0}': 'Không đọc được tệp PDF đó: {0}',
+  'That PDF could not be read: its reader stopped ({0}).': 'Không đọc được tệp PDF đó: trình đọc đã dừng ({0}).',
+  'That PDF could not be read.': 'Không đọc được tệp PDF đó.',
   '{0} is an image. A source has to be something the assistant can quote — send pictures in a message instead, where it can look at them.':
     '{0} là hình ảnh. Nguồn phải là thứ trợ lý trích dẫn được — hãy gửi ảnh trong tin nhắn, nơi trợ lý có thể nhìn thấy.',
   '{0} has no text in it — it may be empty, protected, or made entirely of pictures. Nothing in it can be quoted, so it would be a source in name only.':
