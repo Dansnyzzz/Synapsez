@@ -378,26 +378,32 @@ export async function addModelById(rawId, userId) {
  */
 export async function resolve(id) {
   if (CATALOG.some((m) => m.id === id)) return resolveModel(id);
-  const row = await getStore().getSharedModel(id);
+  const store = getStore();
+  const row = await store.getSharedModel(id);
   if (row && !hasExpired(row)) return resolveModel(id, row);
 
   /**
    * The model has gone — past its end date, or no longer listed at all.
    *
-   * A `:free` id is the case that happens: a free period ends, OpenRouter
-   * drops the variant, and every account that chose it would otherwise fail on
-   * every turn with the provider's 404. It moves to the free router, which is
-   * free too, and carries `retiredFrom` so the turn says so out loud. It never
-   * moves to the paid version of the same model — that would start billing
-   * somebody who chose a free model, without asking.
+   * A free period ends, a stealth preview closes, a provider withdraws a
+   * model; every account that chose it would otherwise fail on every turn with
+   * the provider's 404 — and so would every scheduled task and workflow on it.
+   * It moves to the free router, and carries `retiredFrom` so the turn says so
+   * out loud. Never to the paid version of the same model: that would start
+   * billing somebody without asking. The account itself is moved to Auto by
+   * `settleAccountModel` (modelRetirement.js) — this is the per-turn net.
+   *
+   * "No longer listed" needs the library to know the provider: a row missing
+   * from an empty library (a first deploy) is not a withdrawal. A `:free` id is
+   * taken as gone even then, as it always was — free variants are what end.
    */
-  const wasFree = row ? !!row.is_free : /:free$/.test(String(id));
-  if (wasFree && String(id).startsWith('openrouter/')) {
-    return { ...AUTO_ROUTER, retiredFrom: row?.label || String(id).replace(/^openrouter\//, '') };
-  }
-  if (row) {
-    const day = new Date(row.expires_at).toISOString().slice(0, 10);
-    throw new Error(`${row.label || id} was retired by its provider on ${day}. Pick another model.`);
+  const label = row?.label || String(id).replace(/^(openrouter|orcarouter)\//, '');
+  if (row) return { ...AUTO_ROUTER, retiredFrom: label };
+  const provider = String(id).split('/')[0];
+  if (provider === 'openrouter' && /:free$/.test(String(id))) return { ...AUTO_ROUTER, retiredFrom: label };
+  if (CATALOGUE_SOURCES.some((source) => source.provider === provider)) {
+    const known = await store.listSharedModels({ provider, limit: 1 }).catch(() => []);
+    if (known.length) return { ...AUTO_ROUTER, retiredFrom: label };
   }
   return resolveModel(id, null);
 }

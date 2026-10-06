@@ -2061,6 +2061,76 @@ section('a run nobody is watching is not told to ask');
   check('  and the prompt carries no setup note', !/ask_options/.test(sentText), sentText.slice(-160));
 }
 
+section('a model that has gone is replaced by Auto, at the start of a turn or in the middle of one');
+{
+  const { setApiKey, getPrefs } = await import('../server/settings.js');
+  const { AUTO_ROUTER } = await import('../server/autoPick.js');
+  const moved = await store.createUser({
+    id: 'u-moved',
+    email: 'moved@example.com',
+    name: 'Moved',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'admin',
+  });
+  // Auto needs an OpenRouter key to be offered; nothing here reaches the network.
+  await setApiKey(moved.id, 'openrouter', 'sk-or-v1-agent-suite-placeholder');
+  // The library knows OpenRouter and has one live model in it.
+  await store.upsertModels([
+    {
+      id: 'openrouter/lab/live', provider: 'openrouter', model: 'lab/live', family: 'lab', label: 'Live',
+      description: null, context: 64_000, maxOutput: 8192, priceIn: 0, priceOut: 0, isFree: true, vision: false,
+      releasedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  /** One turn on its own conversation; what the provider was handed, and what was said. */
+  const turn = async (chatId, script, extra = {}) => {
+    await store.createChat(moved.id, { id: chatId, title: 'model' });
+    await store.appendMessage(moved.id, chatId, { id: `${chatId}-u`, role: 'user', text: 'Hello.' });
+    const entries = [];
+    const events = [];
+    let calls = 0;
+    const stream = async function* scripted(opts) {
+      entries.push(opts.entry?.id);
+      const step = script[calls] || { text: 'Hi.' };
+      calls += 1;
+      if (step.throws) throw new Error(step.throws);
+      yield { type: 'text', delta: step.text };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+    };
+    let thrown = '';
+    try {
+      await runAgent({ userId: moved.id, user: moved, chatId, emit: (type, payload) => events.push({ type, payload }), stream, ...extra });
+    } catch (err) {
+      thrown = err.message;
+    }
+    return { entries, events, thrown, reply: (await store.listMessages(moved.id, chatId)).find((m) => m.role === 'assistant')?.text };
+  };
+
+  // Gone before the turn: the stealth preview the owner's workflow was on.
+  await setPrefs(moved.id, { defaultModel: 'openrouter/stealth/space-bunny-alpha', modelNotice: null });
+  const before = await turn('c-gone-before', [{ text: 'Answered on Auto.' }]);
+  check('a turn on a model that has gone runs on Auto', before.entries[0] === AUTO_ROUTER.id && before.reply === 'Answered on Auto.', JSON.stringify(before.entries));
+  check('  and says so, naming the model', before.events.some((e) => e.type === 'model_switched' && e.payload?.from === 'space-bunny-alpha' && e.payload?.to === 'auto'));
+  const afterBefore = await getPrefs(moved.id);
+  check('  and the account is on Auto from now on, with the notice left for the app', afterBefore.defaultModel === 'auto' && afterBefore.modelNotice?.from === 'space-bunny-alpha');
+
+  // Gone during the turn: the library still lists it, the provider does not.
+  await setPrefs(moved.id, { defaultModel: 'openrouter/lab/live', modelNotice: null });
+  const during = await turn('c-gone-during', [{ throws: '404 No endpoints found for lab/live.' }, { text: 'Carried on.' }]);
+  check('a model the provider withdraws mid-turn is replaced and the step tried again', during.entries.length === 2 && during.entries[0] === 'openrouter/lab/live' && during.entries[1] === AUTO_ROUTER.id, JSON.stringify(during.entries));
+  check('  so the reply arrives rather than a 404', during.reply === 'Carried on.' && !during.thrown, during.thrown || during.reply);
+  check('  said, and stored on the account', during.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'auto');
+
+  // Not every refusal is a model going away.
+  await setPrefs(moved.id, { defaultModel: 'openrouter/lab/live', modelNotice: null });
+  const strict = await turn('c-strict', [{ throws: 'No endpoints found matching your data policy' }]);
+  check('the strict privacy setting refusing every endpoint does not move the account', !strict.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'openrouter/lab/live', strict.thrown);
+  // A caller's explicit model is not the account's to change.
+  const pinned = await turn('c-pinned', [{ throws: '404 No endpoints found for lab/live.' }], { modelId: 'openrouter/lab/live' });
+  check('an explicit model that fails is not swapped for the account', !pinned.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'openrouter/lab/live', pinned.thrown);
+}
+
 // Last, after every section that uses the database: it was removed midway, and
 // the sections after it ran against pages PGlite happened to still hold.
 removeTemp(process.env.DATA_DIR);

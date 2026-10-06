@@ -218,13 +218,49 @@ section('a model leaves the library on the day its provider ends it');
   check('  and it is free', moved.price?.in === 0 && moved.price?.out === 0);
   const vanished = await resolve('openrouter/some/withdrawn:free');
   check('a free id the library no longer has also goes to the free router', vanished.id === AUTO_ROUTER.id, vanished.id);
-  let paidError = '';
-  try {
-    await resolve('openrouter/lab/paid-ended');
-  } catch (err) {
-    paidError = err.message;
+  // Owner's call, 2026-10-06: a model that has gone moves to Auto whatever it
+  // cost — refusing in words left every scheduled task on it failing for ever.
+  // Auto is free, so this can only ever lower a bill, never start one.
+  const paid = await resolve('openrouter/lab/paid-ended');
+  check('an ended paid model also resolves to the free router', paid.id === AUTO_ROUTER.id && !!paid.retiredFrom, `${paid.id} ${paid.retiredFrom}`);
+  check('  which is free', paid.price?.in === 0 && paid.price?.out === 0);
+  // A stealth preview has no `:free` in its id and was not caught: its row is
+  // pruned when OpenRouter stops listing it, and the next call is a 404.
+  const stealth = await resolve('openrouter/stealth/space-bunny-alpha');
+  check('a withdrawn model without :free in its id goes to the free router too', stealth.id === AUTO_ROUTER.id && stealth.retiredFrom === 'stealth/space-bunny-alpha', `${stealth.id} ${stealth.retiredFrom}`);
+  // An empty half of the library proves nothing — a first deploy, a refresh that
+  // never landed. OrcaRouter's half is emptied here to be that.
+  await store.pruneMissingModels('orcarouter', ['orcarouter/nothing-listed']);
+  check('  (OrcaRouter\'s half of the library is empty for the next checks)', (await store.listSharedModels({ provider: 'orcarouter', limit: 5 })).length === 0);
+  const unknown = await resolve('orcarouter/some/model');
+  check('an id from a provider the library knows nothing about is left alone', unknown.id !== AUTO_ROUTER.id && !unknown.retiredFrom, unknown.id);
+
+  section('the account is moved off a model that has gone, and told once');
+  {
+    const { goneModel, isModelGoneError, settleAccountModel } = await import('../server/modelRetirement.js');
+    const { getPrefs, setPrefs } = await import('../server/settings.js');
+    check('an ended model is gone', (await goneModel('openrouter/nex-agi/ended:free'))?.label === 'openrouter/nex-agi/ended:free');
+    check('a pruned one is gone', (await goneModel('openrouter/stealth/space-bunny-alpha'))?.label === 'space-bunny-alpha');
+    check('one with a week left is not', (await goneModel('openrouter/lab/ending-soon:free')) === null);
+    check('a built-in is never gone here — it has a successor', (await goneModel('anthropic/claude-opus-5')) === null);
+    check('Auto is never gone', (await goneModel('auto')) === null);
+    check('nor is a model from an empty half of the library', (await goneModel('orcarouter/some/model')) === null);
+
+    check('"No endpoints found for <model>" means the model has gone', isModelGoneError(new Error('404 No endpoints found for stealth/space-bunny-alpha.')));
+    check('  and so does a provider\'s retirement notice', isModelGoneError('This model has been deprecated. Thank you for participating in the testing period.'));
+    check('  but the strict privacy setting refusing every endpoint does not', !isModelGoneError('No endpoints found matching your data policy (Free model publication)'));
+    check('  nor does an ordinary failure', !isModelGoneError(new Error('429 Too Many Requests')) && !isModelGoneError(new Error('500 Internal Server Error')));
+
+    await setPrefs(uid, { defaultModel: 'openrouter/stealth/space-bunny-alpha' });
+    const settled = await settleAccountModel(uid, await getPrefs(uid));
+    check('an account on a gone model is moved to Auto', settled.defaultModel === 'auto', settled.defaultModel);
+    check('  and left a notice naming what it was on', settled.modelNotice?.from === 'space-bunny-alpha' && !!settled.modelNotice?.at, JSON.stringify(settled.modelNotice));
+    const stored = await getPrefs(uid);
+    check('  stored, so the next visit and the next scheduled run see it', stored.defaultModel === 'auto' && stored.modelNotice?.from === 'space-bunny-alpha');
+    await setPrefs(uid, { defaultModel: 'openrouter/lab/ending-soon:free', modelNotice: null });
+    const kept = await settleAccountModel(uid, await getPrefs(uid));
+    check('an account on a live model is left exactly where it is', kept.defaultModel === 'openrouter/lab/ending-soon:free' && !kept.modelNotice);
   }
-  check('an ended paid model is refused in words, not swapped', /retired by its provider/.test(paidError), paidError);
 
   // Fresh as of six this morning, the asking person's time.
   const status = await store.modelLibraryStatus();

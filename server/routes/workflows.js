@@ -2,7 +2,6 @@ import { parseSchedule, schedulePatch, validZone } from '../scheduler.js';
 import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { normaliseSteps, runWorkflowNow } from '../workflows.js';
-import { getPrefs } from '../settings.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 
 /**
@@ -81,12 +80,12 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
           ({ cron, nextRunAt } = parseSchedule(req.body.when, { once: req.body?.repeat === false, tz }));
         }
 
-        const prefs = await getPrefs(req.user.id);
         const workflow = await getStore().createWorkflow(req.user.id, {
           id: crypto.randomUUID(),
           title: String(req.body?.title || '').trim() || 'Workflow',
           steps,
-          model: req.body?.model || prefs.defaultModel,
+          // Not pinned: each run uses the account's model at the time it runs.
+          model: null,
           cron,
           tz,
           nextRunAt,

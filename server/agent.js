@@ -7,7 +7,8 @@ import { streamCompletion } from './providers/index.js';
 import { withMarkup } from './pricing.js';
 import { budgetStop } from './providers/stop.js';
 import { resolve as resolveModelId } from './models.js';
-import { isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
+import { AUTO_ID, isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
+import { settleAccountModel, isModelGoneError, moveAccountToAuto } from './modelRetirement.js';
 import { availableTools, assessRisk, riskReason, TOOLS_BY_NAME } from './tools/definitions.js';
 import { UNTRUSTED_RULE } from './tools/untrusted.js';
 import { executeTool } from './tools/execute.js';
@@ -1145,6 +1146,20 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * come out of cooldown. With no usable OpenRouter key the turn stops with a
    * plain message rather than quietly falling back to a paid model.
    */
+  /**
+   * The account's own choice, moved to Auto first if its model has gone — so a
+   * scheduled run at three in the morning works on the day a free model ends,
+   * and the conversation's chip changes with it rather than naming a model
+   * that no longer answers. See modelRetirement.js.
+   */
+  const followsAccount = !modelId;
+  if (followsAccount) {
+    const settled = await settleAccountModel(userId, prefs);
+    if (settled.defaultModel !== prefs.defaultModel) {
+      Object.assign(prefs, settled);
+      emit('model_switched', { from: settled.modelNotice?.from || '', to: AUTO_ID });
+    }
+  }
   const wantModel = modelId || prefs.defaultModel;
   let entry;
   if (isAuto(wantModel)) {
@@ -1454,6 +1469,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   let progressGate = null;
   let progressGated = false;
 
+  /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
+  let movedToAuto = false;
   for (let step = 0; step < prefs.maxSteps; step += 1) {
     if (signal?.aborted) {
       emit('done', { stopReason: 'aborted' });
@@ -1683,6 +1700,28 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         }
         emit('done', { stopReason: 'aborted' });
         return;
+      }
+      /**
+       * The provider says the model is gone, before it said anything else.
+       *
+       * The library can be a day behind a withdrawal — the refresh runs once a
+       * day — so the first sign is often this: a 404 that names the model. On
+       * the account's own choice that moves the account to Auto, says so, and
+       * runs this same step again there, once. An explicit model (a sub-agent's,
+       * a caller's override) is not the account's to change and fails as before.
+       */
+      if (followsAccount && !movedToAuto && !isAuto(prefs.defaultModel) && !assistant.text && isModelGoneError(err)) {
+        const auto = await pickAutoModel(userId);
+        if (auto) {
+          movedToAuto = true;
+          const from = entry?.label || String(prefs.defaultModel || '');
+          await moveAccountToAuto(userId, from).catch((e) => log.error('could not move the account to Auto', e));
+          prefs.defaultModel = AUTO_ID;
+          entry = auto;
+          emit('model_switched', { from, to: AUTO_ID });
+          step -= 1;
+          continue;
+        }
       }
       throw err;
     } finally {

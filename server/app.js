@@ -27,6 +27,7 @@ import { publicUrlFor } from './util/net.js';
 import { emailBackend } from './email.js';
 import { summary as usageSummary, limitFor } from './usage.js';
 import { getPrefs, setPrefs, setApiKey, addApiKey, removeApiKey, providerStatus, DEFAULT_PREFS } from './settings.js';
+import { MODEL_GONE, settleAccountModel } from './modelRetirement.js';
 import { getStore, initStore, isServerless } from './store/index.js';
 import { RUN_LEASE_STALE_MS } from './store/pg.js';
 import { workerStatus, usesInProcessTools, handleIndexPayload } from './localTools.js';
@@ -129,17 +130,13 @@ const HEARTBEAT_HEALTHY_MS = 20 * 60_000;
  * to memory writes, which is the one place a secret was *expected* to appear.
  * This is the place it appears by accident, which is the worse one.
  */
-/**
- * A failure that means "this model is not there any more".
- *
- * Deliberately wider than a status code. A provider that has retired a model
- * answers 404 with prose — a thank-you for taking part in a preview, a pointer
- * at the successor — and none of it parses as an error; `deprecat` and
- * `retired` and `testing period` are the words those notices actually use.
- * Everything here has been seen in the wild from Google, OpenAI or OpenRouter.
+/*
+ * A failure that means "this model is not there any more" is `MODEL_GONE`, kept
+ * in modelRetirement.js beside the code that moves an account off such a model,
+ * so the words that rewrite the message and the words that switch the model
+ * cannot drift apart. It now includes OpenRouter's "No endpoints found for
+ * <model>", which reached the Workflows page raw.
  */
-const MODEL_GONE =
-  /no longer available|is not found|not found for api version|does not exist|no longer supported|has been (?:retired|deprecated|shut down)|deprecat\w*|testing period/i;
 /** OpenRouter refusing a request because no endpoint meets `data_collection: deny` / `zdr`. */
 const DATA_POLICY = /matching your data policy|no endpoints? (?:found )?(?:that )?(?:match|meet)\w* (?:your )?(?:data|privacy|zdr)/i;
 
@@ -787,7 +784,9 @@ export function createApp() {
     '/bootstrap',
     wrap(async (req, res) => {
       const store = getStore();
-      const prefs = await getPrefs(req.user.id);
+      // A model that has gone since the last visit is replaced by Auto before the
+      // chip is drawn, and `prefs.modelNotice` says so once — see modelRetirement.js.
+      const prefs = await settleAccountModel(req.user.id, await getPrefs(req.user.id));
 
       /**
        * Remember which clock this person keeps.
@@ -876,9 +875,12 @@ export function createApp() {
         'chatSearch',
         'retentionDays',
         'providerPrivacy',
+        'modelNotice',
       ];
       const patch = {};
       for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
+      // The browser may only clear the notice it has shown; only the server writes one.
+      if ('modelNotice' in patch && patch.modelNotice !== null) delete patch.modelNotice;
       if ('autoPreview' in patch) patch.autoPreview = !!patch.autoPreview;
       // One of the five rungs, or nothing is saved: an unknown string reached
       // every provider as-is, and Anthropic refuses the whole turn for it.
@@ -1718,12 +1720,13 @@ export function createApp() {
         // What it may do with nobody watching. Null means the account default.
         const policy = TASK_POLICIES.has(String(req.body?.policy)) ? String(req.body.policy) : null;
 
-        const prefs = await getPrefs(req.user.id);
         const task = await getStore().createTask(req.user.id, {
           id: crypto.randomUUID(),
           title: String(req.body?.title || '').trim() || 'Scheduled task',
           prompt,
-          model: req.body?.model || prefs.defaultModel,
+          // Not pinned: a run uses whatever model the account is on when it runs
+          // (see `runTask`), so a task outlives the model it was made on.
+          model: null,
           cron,
           nextRunAt,
           tz,

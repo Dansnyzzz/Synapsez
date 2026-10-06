@@ -824,6 +824,8 @@ export const en = {
   'model.free.tooltip':
     '{model} — a free model. Fine for everyday questions; rate-limited and weaker at long multi-step jobs. Press to change.',
   'model.switched': 'Now using {model}.',
+  'model.retired': '{model} is no longer offered by its provider, so you have been moved to Auto — the free router. Your conversations, scheduled tasks and workflows carry on there. Pick another model from the chip at the top whenever you like.',
+  'model.retiredUnnamed': 'The model you had chosen',
 
   /* ── onboarding ────────────────────────────────────────────────── */
   'onb.title': 'Getting started with Synapsez',

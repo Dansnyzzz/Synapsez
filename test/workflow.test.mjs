@@ -394,6 +394,32 @@ section('a failing step stops the run instead of marching on');
   check('and the lease is released', after.lease_until === null);
 }
 
+section('a run uses the model the account is on now, not the one it was made on');
+{
+  // The owner's workflow failed every morning with "404 No endpoints found for
+  // stealth/space-bunny-alpha": the model it was made on was pinned to it and
+  // kept being called after it was withdrawn. Pinned to OpenRouter here, with
+  // the account on an Anthropic model — and no key for either in this suite, so
+  // the step's error names whichever provider it actually tried.
+  const { setPrefs } = await import('../server/settings.js');
+  await setPrefs(aliceId, { defaultModel: 'anthropic/claude-opus-5' });
+  const workflow = await store.createWorkflow(aliceId, {
+    id: 'wf-follows-account',
+    title: 'Made on a stealth preview',
+    steps: normaliseSteps(['ask the model something']),
+    model: 'openrouter/stealth/space-bunny-alpha',
+    nextRunAt: null,
+  });
+  const run = await startRun(aliceId, workflow);
+  const after = await advanceRun(run, { deadline: Date.now() + 60_000 });
+  const said = String(after.steps[0].error || '');
+  check('the step is run on the account\'s model', /Anthropic/i.test(said) && !/OpenRouter/i.test(said), said.slice(0, 120));
+
+  // And a workflow made now is not pinned to anything at all.
+  const made = await alice.call('POST', '/api/workflows', { title: 'Fresh', steps: ['do a thing'] });
+  check('a new workflow is not pinned to a model', made.status === 201 && made.body?.workflow?.model == null, JSON.stringify(made.body?.workflow?.model));
+}
+
 /* ── the mistakes found by auditing the first version ───────────── */
 
 section('a second press does not start a second run');

@@ -811,6 +811,8 @@ export const vi = {
   'model.free.tooltip':
     '{model} — model miễn phí. Đủ cho hỏi đáp thường ngày; bị giới hạn số lần gọi và yếu hơn ở việc nhiều bước. Bấm để đổi.',
   'model.switched': 'Đang dùng {model}.',
+  'model.retired': '{model} đã ngừng được nhà cung cấp phục vụ, nên bạn đã được tự chuyển sang Auto — bộ định tuyến miễn phí. Các cuộc trò chuyện, việc chạy theo giờ và chuỗi việc của bạn tiếp tục chạy trên Auto. Bạn có thể chọn model khác ở nút phía trên bất cứ lúc nào.',
+  'model.retiredUnnamed': 'Model bạn đã chọn',
 
   /* ── onboarding ────────────────────────────────────────────────── */
   'onb.title': 'Bắt đầu với Synapsez',

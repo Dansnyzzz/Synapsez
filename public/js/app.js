@@ -686,6 +686,7 @@ async function start() {
 
   renderSuggestions();
   renderTopbar();
+  if (state.boot.prefs.modelNotice) noteModelRetired(state.boot.prefs.modelNotice.from);
   fillSettings();
   // Where scheduled work actually runs differs between a local run and a
   // deployment, and the shelf says which rather than implying either.
@@ -3636,6 +3637,9 @@ async function streamOnce(run, decision, answers) {
           block().adoptThinkingAsReply(text);
           maybeScroll(run);
         },
+        // The account's model was withdrawn; the server moved it to Auto and
+        // carries on there. The chip follows whichever conversation is on screen.
+        model_switched: ({ from }) => noteModelRetired(from),
         message: () => {
           run.turn.finishThinking();
           run.sealed = true;
@@ -5144,6 +5148,30 @@ const browser = createModelBrowser({
     }
   },
 });
+
+/**
+ * The account's model has gone, and the server has moved it to Auto.
+ *
+ * Arrives from the boot data (`prefs.modelNotice`, left by whatever noticed —
+ * a scheduled run at night, the library refresh) or mid-turn as
+ * `model_switched`. Before this the chip went on naming a model that no longer
+ * answered while the picker no longer listed it, which read as the app being
+ * broken. Said once, long enough to read, and the notice is cleared so the
+ * next visit is quiet. See server/modelRetirement.js.
+ *
+ * @param {string} from  the gone model's name
+ */
+function noteModelRetired(from) {
+  state.model = 'auto';
+  if (state.boot?.prefs) {
+    state.boot.prefs.defaultModel = 'auto';
+    state.boot.prefs.modelNotice = null;
+  }
+  renderTopbar();
+  refreshModelFacts();
+  toast(t('model.retired', { model: from || t('model.retiredUnnamed') }), 'info', { ms: 15000 });
+  api.savePrefs({ modelNotice: null }).catch(() => {});
+}
 
 // The one way in to the picker, now that Settings no longer carries a second
 // copy of the same control.

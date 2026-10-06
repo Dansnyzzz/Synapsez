@@ -656,8 +656,6 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Google không trả về hình nào và không nêu lý do. Hãy thử mô tả theo cách khác.',
   "{0}: this conversation ({1} tokens) no longer fits this model's {2}-token window. Compact it, start a new one, or pick a model with a larger window.":
     '{0}: cuộc trò chuyện này ({1} token) không còn vừa cửa sổ {2} token của model. Hãy thu gọn nó, mở cuộc mới, hoặc chọn model có cửa sổ lớn hơn.',
-  '{0} was retired by its provider on {1}. Pick another model.':
-    '{0} đã bị nhà cung cấp ngừng từ ngày {1}. Hãy chọn model khác.',
   '{0} has no stored source to add to. Pass the complete content instead.':
     '{0} không có nội dung gốc để nối thêm. Hãy gửi toàn bộ nội dung thay vào đó.',
   "No rate from {0} to {1}. Use ISO codes like USD, VND, EUR.":

@@ -228,7 +228,7 @@ export async function startRun(userId, workflow, { chatTitle } = {}) {
     await store.createChat(userId, {
       id: chatId,
       title: chatTitle || workflow.title,
-      model: workflow.model || prefs.defaultModel,
+      model: prefs.defaultModel,
     });
   }
 
@@ -320,7 +320,15 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
   }
 
   let cursor = Number(run.cursor) || 0;
-  const modelId = workflow.model || null;
+  /**
+   * The account's model now, not the one it was on when the workflow was made —
+   * the same rule as scheduled tasks (see `runTask`). `workflow.model` used to
+   * win, which is how a workflow made on a stealth preview kept failing with
+   * "404 No endpoints found" after the preview closed. Null lets the agent loop
+   * follow the account, move it to Auto when its model has gone, and switch
+   * mid-step when the provider says so.
+   */
+  const modelId = null;
 
   /**
    * The conversation a run writes into can be gone by the time a step starts.
@@ -335,7 +343,7 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
    */
   if (run.chat_id && !(await store.getChat(user.id, run.chat_id))) {
     const prefs = await getPrefs(user.id);
-    await store.createChat(user.id, { id: run.chat_id, title: workflow.title, model: workflow.model || prefs.defaultModel });
+    await store.createChat(user.id, { id: run.chat_id, title: workflow.title, model: prefs.defaultModel });
     const earlier = state
       .slice(0, cursor)
       .map((s, i) => (s.summary ? `Step ${i + 1}: ${s.summary}` : ''))
