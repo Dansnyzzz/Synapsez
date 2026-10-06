@@ -232,6 +232,16 @@ section('a shared conversation opens with no account, and shows only its own fil
     const owned = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie: `${cookie}; ${await sessionOf(owner.id)}` } });
     check('the owner is sent on to their own routes', owned.status === 401);
 
+    // CODE-032: taken back on another instance — in the database, not in this
+    // instance's memory — the file stops being served here at once.
+    const warm = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie } });
+    await store.setChatShare(owner.id, 'c-sc', null);
+    const afterRevoke = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie } });
+    check('a link taken back on another instance stops serving here at once', warm.status === 200 && afterRevoke.status === 401, `${warm.status} then ${afterRevoke.status}`);
+    const pageAfter = await fetch(`${base}/api/shared-chat/${token}`);
+    check('  and its page is gone', pageAfter.status === 404, String(pageAfter.status));
+    await store.setChatShare(owner.id, 'c-sc', token);
+
     // SEC-038: the proxies draw this page, not anything a cookie holder asks for.
     const { __testing: shareGate, drawnFrom, mapShows } = await import('../server/routes/chatShare.js');
     const { __testing: icons } = await import('../server/favicon.js');
