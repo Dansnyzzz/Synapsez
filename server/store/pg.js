@@ -1431,8 +1431,13 @@ export function createPgStore(connectionString) {
      */
     async setChatShare(userId, chatId, token) {
       const rows = await q(
+        // The title is kept as it stands now, like the messages and the files
+        // (PRV-013): renaming the conversation afterwards renames it for its
+        // owner, not for whoever opens the link. Sharing again moves it on.
         `UPDATE chats
-            SET share_token = $3, shared_at = CASE WHEN $3::text IS NULL THEN NULL ELSE NOW() END
+            SET share_token = $3,
+                shared_at = CASE WHEN $3::text IS NULL THEN NULL ELSE NOW() END,
+                shared_title = CASE WHEN $3::text IS NULL THEN NULL ELSE title END
           WHERE id = $1 AND user_id = $2
       RETURNING share_token, shared_at`,
         [chatId, userId, token],
@@ -1446,7 +1451,9 @@ export function createPgStore(connectionString) {
     async getSharedChat(token) {
       if (!token) return null;
       const rows = await q(
-        'SELECT id, user_id, title, shared_at, created_at FROM chats WHERE share_token = $1 AND shared_at IS NOT NULL',
+        // The title as shared; a link made before `shared_title` existed reads
+        // the live one until it is shared again.
+        'SELECT id, user_id, COALESCE(shared_title, title) AS title, shared_at, created_at FROM chats WHERE share_token = $1 AND shared_at IS NOT NULL',
         [token],
       );
       return rows[0] ?? null;

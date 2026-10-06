@@ -29,8 +29,9 @@ import { audit } from '../audit.js';
  * served, and copied into a fork, from its history (`getAttachmentAt`, PRV-011),
  * and a message edited since is stamped with its edit, so the snapshot ends
  * before it — an edit deletes the turns after it anyway — and never shows the
- * edit (`editUserMessage`, PRV-012). The one thing still read live is the
- * conversation's title (PRV-013 — keeping it needs a column, the owner's call).
+ * edit (`editUserMessage`, PRV-012). Its title too is the one it had when it
+ * was shared (`chats.shared_title`, PRV-013); renaming it afterwards renames it
+ * for the owner only.
  */
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;

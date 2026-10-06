@@ -2279,6 +2279,20 @@ section('a shared conversation publishes the answer, not what was read of the ac
     check('  while the owner sees the edit, in its place', own.length === 1 && own[0].text === 'SECRET written after sharing', JSON.stringify(own));
   }
 
+  // PRV-013: the title is the one it had when it was shared.
+  {
+    const token = 'tokRenamedAfterSharing00000000000000000_000';
+    await store.createChat(owner.id, { id: 'c-renamed', title: 'Quarterly plan', model: 'm' });
+    await store.setChatShare(owner.id, 'c-renamed', token);
+    await store.updateChat(owner.id, 'c-renamed', { title: 'SECRET name given after sharing' });
+    check('a conversation renamed after sharing keeps its shared title for visitors', (await store.getSharedChat(token))?.title === 'Quarterly plan', (await store.getSharedChat(token))?.title);
+    check('  while its owner sees the new name', (await store.getChat(owner.id, 'c-renamed'))?.title === 'SECRET name given after sharing');
+    await store.setChatShare(owner.id, 'c-renamed', token);
+    check('  and sharing again brings the link up to date', (await store.getSharedChat(token))?.title === 'SECRET name given after sharing');
+    await store.setChatShare(owner.id, 'c-renamed', null);
+    check('  and taking it back clears the kept title with the link', (await store.getSharedChat(token)) === null);
+  }
+
   // Every publishable tool that takes a file id is guarded, so a new one cannot slip past.
   const { PUBLISHABLE_TOOLS, __testing: shareInternals } = await import('../server/routes/chatShare.js');
   const byId = TOOLS.filter((t) => PUBLISHABLE_TOOLS.has(t.name) && Object.keys(t.input_schema?.properties || t.parameters?.properties || {}).includes('file_id'));
