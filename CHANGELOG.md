@@ -1,5 +1,63 @@
 # Changelog
 
+## 2026-10-06 — MCP servers on the cloud computer, a model that goes away, and what was left for the owner
+
+Asked for by the owner on 2026-10-06, with everything left for them in the 2026-10-05 audit that could be
+fixed in the repository. Nothing here needs a paid service.
+
+### MCP
+
+- **A stdio MCP server — `npx -y gitnexus@latest mcp` — now works on the deployment.** It runs on the
+  account's own cloud computer (the Vercel Sandbox), never on the server, behind a small bridge with a key of
+  its own; the machine starts only when one of its tools is called, and the program stays warm between turns.
+  Any account may add one, since it runs on that account's machine; one that would run beside the server stays
+  administrator-only.
+- **Added once, ready for everybody.** The first time anybody adds a command it is installed and checked on a
+  scratch machine that belongs to nobody, and what it offers is kept; the next account to add the same command
+  is connected at once. Only the command and its arguments are shared — never a token.
+
+### Models, scheduled tasks and workflows
+
+- **A model its provider withdraws moves the account to Auto, and says so.** On the day it goes, or the first
+  time a provider answers that it has gone ("No endpoints found for …"), the account is moved to Auto — the
+  free router — the chip changes, and a notice says which model it was. A step that hit the withdrawal is run
+  again on Auto instead of failing.
+- **Scheduled tasks and workflows run on the model the account is on when they run**, not the one they were
+  made on — which is how a workflow kept failing every morning with "404 No endpoints found for
+  stealth/space-bunny-alpha".
+
+### Interface
+
+- No white dashed frame around the composer in an incognito conversation; Settings no longer has a second
+  Scheduled tab (the Scheduled page is where schedules live); what a connector did opens on the panel's own
+  ground; and the last tool in the side panel's Context list is no longer cut in half.
+- The schedule panel holds still while it reloads, says when a save fails as the panel moves on, and reports
+  a reload that cannot fetch (UX-015, UX-016, CODE-062).
+
+### Security and privacy
+
+- **A memory note asks first in a turn that has read something from outside** — a page, a search result, a
+  server — under the default policy, so a page cannot plant a standing instruction in every later
+  conversation (HAR-005).
+- A shared conversation keeps the title it had when it was shared, like its messages and files (PRV-013).
+- `nodemailer` 10 and `proxy-addr` 2.0.8: `npm audit` reports nothing (SEC-049).
+- The repository is public: its whole history was scanned for secret-shaped values, and the five found are
+  test placeholders.
+
+### Performance and CI
+
+- A PDF's text is read on a worker thread with a deadline and a memory cap, so a hostile file cannot hold the
+  server (PERF-022). Drawing scanned pages for a vision model is not moved yet (PERF-023).
+- CI also runs the suites on Windows, where the desktop worker's PowerShell scripts are checked (CFG-028).
+
+### Not done here
+
+- `.env.example` is written but not in the repository: the agent's own permission rule on `.env.*` files stops
+  it writing one, and it does not loosen its own permissions. The content is ready to copy in (CFG-024).
+- Still for the owner: PRV-003 (de-identifying before a provider sees it), HAR-001 (the sandbox's network),
+  LAW-001 (Vietnam's data law), SEC-047, CODE-032, CODE-034, HAR-004, CFG-025, CFG-031 — each with its reason
+  in `audit/ISSUE_LEDGER.md`.
+
 ## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
 
 An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 115 findings, 94 fixed, 17 left
