@@ -16,9 +16,10 @@ service; everything stays on the free tiers.
   published only when that file was sent or made in the shared conversation, judged against the call in its own
   turn rather than by an id two turns can share — rewrites with `update_file` included (PRV-007, PRV-008,
   PRV-010). And a shared conversation is a snapshot in its files and its messages alike: a file rewritten
-  afterwards is served, and copied into a fork, as it stood when the link was made (PRV-011), and a message
-  edited afterwards falls after the snapshot instead of replacing what visitors see (PRV-012). Its title is the
-  one thing still read live (PRV-013, left for the owner: it needs a new column).
+  afterwards is served, and copied into a fork, as it stood when the link was made (PRV-011). A message edited
+  afterwards is never shown in its edited form: editing a message removes the turns after it, as it always has,
+  so the shared copy then ends before that message (PRV-012); sharing again brings it up to date. Its title is
+  the one thing still read live (PRV-013, left for the owner: it needs a new column).
 - **Editing a note yourself left the text you removed in the database.** Only a change the assistant made keeps
   what it replaced, for one undo; your own edit keeps nothing and clears it, the export includes it, and
   Settings says so (PRV-006).

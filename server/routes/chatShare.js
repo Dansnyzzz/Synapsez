@@ -27,8 +27,9 @@ import { audit } from '../audit.js';
  * refers to — owned by its owner, named in its messages — and nothing else.
  * Each as it stood at `shared_at`, like the messages: a file rewritten since is
  * served, and copied into a fork, from its history (`getAttachmentAt`, PRV-011),
- * and a message edited since is stamped with its edit and so falls after the
- * snapshot (`editUserMessage`, PRV-012). The one thing still read live is the
+ * and a message edited since is stamped with its edit, so the snapshot ends
+ * before it — an edit deletes the turns after it anyway — and never shows the
+ * edit (`editUserMessage`, PRV-012). The one thing still read live is the
  * conversation's title (PRV-013 — keeping it needs a column, the owner's call).
  */
 

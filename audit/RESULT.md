@@ -215,7 +215,7 @@ CODE-038/039, ACC-009..012, PRV-004, CODE-048, and found no regression in its sk
 | Finding | Disposition |
 |---|---|
 | UX-010 read the panel's fields from the shared panel body: a save in flight could still put the next schedule's fields into the old row; after a close the card was never refreshed; after a switch the old title could be written over the new panel | **UX-011** `e3373b1`: each schedule drawn into its own element; the card check fails on the previous code (real Edge) |
-| A shared conversation's messages were not a snapshot either: editing one after sharing rewrote it in place under its first timestamp (older than this branch); this file and the changelog claimed the opposite | **PRV-012** `6d17c57`: an edit is stamped with its own time and falls after the snapshot; the claims now say so, with the one exception, the title (**PRV-013**, CHỜ-CHỦ: needs a column) |
+| A shared conversation's messages were not a snapshot either: editing one after sharing rewrote it in place under its first timestamp (older than this branch); this file and the changelog claimed the opposite | **PRV-012** `6d17c57`: an edit is stamped with its own time, so the shared copy ends before the edited message (the edit already deletes the turns after it) and never shows the edit; the claims now say so, with the one exception, the title (**PRV-013**, CHỜ-CHỦ: needs a column) |
 | `getAttachmentAt` returned the live file with no moment, and compared times in JS | **CODE-055** `2e91871` |
 | A lone CR or U+2028/U+2029 escaped the transcript's quoting | **SEC-053** `9e81771` |
 | `(gov\|edu)\.[a-z]{2}` admits names under open country domains | **ACC-017**, DEFERRED with its reason |
