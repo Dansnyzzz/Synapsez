@@ -22,14 +22,14 @@ them touch `audit/` only). Every row is a command that was run and an output tha
 
 | Thing | Before | After | How measured |
 |---|---|---|---|
-| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f`; after the third's **475 s** on `7726301` (wall time on this machine varies with what else it is doing); after the fourth's **207 s** on `0a24f12` | `npm run gate`, logs `scratchpad/gate-final{,2,3,4,5}.log` |
+| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f`; after the third's **475 s** on `7726301` (wall time on this machine varies with what else it is doing); after the fourth's **207 s** on `0a24f12`; after the fifth's **203 s** on `00b0ae6` | `npm run gate`, logs `scratchpad/gate-final{,2,3,4,5,6}.log` |
 | lint | exit 0 | **exit 0** | gate step 1 |
 | `test:hooks` | 168/168 | **168/168** | gate step 2 |
 | eval (scripted) | 13/13, `PROMPT_STAMP ecd004bc42ae` | **13/13, same stamp** — the main system prompt did not change | gate step 3; server log `promptVersion=ecd004bc42ae` |
 | typecheck ratchet | 315 outstanding, ceiling 315 | **315, ceiling 315** — `.typecheck-baseline.json` did not grow | gate step 4 |
-| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **4,568 ✓** (`7726301`), **4,578 ✓** (`0a24f12`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
+| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **4,568 ✓** (`7726301`), **4,578 ✓** (`0a24f12`), **4,583 ✓** (`00b0ae6`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
 | Suites in `npm test` | 47 | **48** (+`egress.test`) | `scripts.test` |
-| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008); **915 ✓, 0 failures** with UX-009 (+2) at `be1ec2b`; **917 ✓, 0 failures** with UX-010 (+2) at `de8c0d7` — the commits after it touch no page (real Edge) | `node test/ui.test.mjs` |
+| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008); **915 ✓, 0 failures** with UX-009 (+2) at `be1ec2b`; **917 ✓, 0 failures** with UX-010 (+2) at `de8c0d7`; **918 ✓, 0 failures** with UX-011 (+1) at `e3373b1` — the commits after it touch no page (real Edge) | `node test/ui.test.mjs` |
 | `npm run test:sandbox` | — | **exit 0, 31 ✓** | not in the gate |
 | Coverage (c8, `all:true`) | statements 64.09 · branches 75.42 · functions 67.03 · lines 64.09 | **64.87 · 75.95 · 68.45 · 64.87** — up on all four; functions was 0.03 above its threshold and is now 1.45 above | `npm run coverage`, exit 0, 221 s |
 
@@ -141,13 +141,14 @@ first version of this table overstated the sub-agent row as ≈ +280 tokens and 
 
 | Total | FIXED | CHỜ-CHỦ (in repo) | CHỜ-CHỦ (outside repo) | DEFERRED | BLOCKED | OPEN | IN-PROGRESS |
 |---|---|---|---|---|---|---|---|
-| 96 | 80 | 14 | 2 | 0 | 0 | **0** | **0** |
+| 102 | 84 | 15 | 2 | 1 | 0 | **0** | **0** |
 
 (74 rows from Phases 1–2; four raised by the evaluator's first pass, eight by its second, four by its third,
-six by its fourth — below.)
+six by its fourth, six by its fifth — below.)
 
-No CRITICAL or HIGH is open (PRV-010 was MEDIUM, and is fixed). The 16 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
-CFG-032, LAW-001) and 9 LOW, every one CHỜ-CHỦ with the reason and the options in its row.
+No CRITICAL or HIGH is open. The 18 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
+CFG-032, LAW-001) and 11 LOW: 17 CHỜ-CHỦ with the reason and the options in the row, and one DEFERRED (ACC-017,
+a judgement on which country domains keep `edu`/`gov` for real institutions, left with its reason).
 
 ## The fresh-context evaluator
 
@@ -207,7 +208,19 @@ UX-005/006, CFG-027, HAR-002 and GAP-012's server half. It found:
 | The assistant's own reply could still put a `USER:` line before the summariser | **SEC-052** `4a7d99a` |
 | The storage test's safety rested on empty variables reaching its child process | **CODE-054** `9896f0f`: a report-only run must show the temporary database first; and probed: on Windows an empty variable does reach the child |
 
-**Fifth pass:** recorded below once run.
+**Fifth pass (another new reviewer): `NEEDS_WORK`.** It held PRV-011 against every write to a file and its
+history (the prune, a restore, a rename, uploads, thumbnails), held SEC-051/052, CODE-053/054, the sample
+CODE-038/039, ACC-009..012, PRV-004, CODE-048, and found no regression in its skim of the whole diff. It found:
+
+| Finding | Disposition |
+|---|---|
+| UX-010 read the panel's fields from the shared panel body: a save in flight could still put the next schedule's fields into the old row; after a close the card was never refreshed; after a switch the old title could be written over the new panel | **UX-011** `e3373b1`: each schedule drawn into its own element; the card check fails on the previous code (real Edge) |
+| A shared conversation's messages were not a snapshot either: editing one after sharing rewrote it in place under its first timestamp (older than this branch); this file and the changelog claimed the opposite | **PRV-012** `6d17c57`: an edit is stamped with its own time and falls after the snapshot; the claims now say so, with the one exception, the title (**PRV-013**, CHỜ-CHỦ: needs a column) |
+| `getAttachmentAt` returned the live file with no moment, and compared times in JS | **CODE-055** `2e91871` |
+| A lone CR or U+2028/U+2029 escaped the transcript's quoting | **SEC-053** `9e81771` |
+| `(gov\|edu)\.[a-z]{2}` admits names under open country domains | **ACC-017**, DEFERRED with its reason |
+
+**Sixth pass:** recorded below once run.
 
 ## Not measured, and why
 

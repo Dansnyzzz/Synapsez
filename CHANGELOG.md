@@ -2,8 +2,8 @@
 
 ## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
 
-An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 96 findings, 80 fixed and 16 left
-for the owner with the reason written down. Each fix to code comes with a test that fails without it; fixes to
+An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 102 findings, 84 fixed, 17 left
+for the owner and one deferred, each with the reason written down. Each fix to code comes with a test that fails without it; fixes to
 comments, documents, configuration and CI say in the ledger how they were checked instead. Nothing here needs a new paid
 service; everything stays on the free tiers.
 
@@ -52,8 +52,10 @@ service; everything stays on the free tiers.
 - Deep research no longer counts `gov.attacker.com` or `notarxiv.org` as a primary source (ACC-008).
 - Someone signed in to their own account sees a shared conversation's pictures and files (CODE-031).
 - The schedule pane saves the time you typed, not a half-typed one that arrived last, and the Repeat menu waits
-  for your choice instead of saving every arrow key (CODE-036, UX-005). Escape in a sketch label drops the label,
-  not the whole sketch (UX-006).
+  for your choice instead of saving every arrow key (CODE-036, UX-005). A choice made just before closing the
+  panel or opening another schedule is saved, to the schedule it was made in, and the conversation's card shows
+  it; a save that fails no longer drops the one queued behind it (UX-010, UX-011, CODE-051). Escape in a sketch
+  label drops the label, not the whole sketch (UX-006).
 - A memoised repeated read keys on nested arguments too (CODE-033).
 - Only a provider's refusal of the effort setting lowers it; any other error is shown at once (TOK-001).
 - `npm run storage -- --apply` asks before deleting across every account (CODE-044).
@@ -90,8 +92,9 @@ service; everything stays on the free tiers.
 PRV-003 (de-identifying before sending), HAR-001 (the sandbox's open network), HAR-004 and HAR-005, CODE-032,
 CODE-034 (two platform-only test skips), CFG-024, CFG-025, CFG-028 (a Windows CI job costs Actions minutes),
 PERF-022, SEC-047 (`ACCESS_TOKEN` as a fallback for both secrets), SEC-049 (nodemailer needs a major upgrade),
-CFG-031 (a stale count in a hook's comment) and CFG-032 (blocking a shell read of `.env` files needs a hook
-change); outside the repository: EXP-005, LAW-001. Each row in the ledger says why and what the choices are.
+CFG-031 (a stale count in a hook's comment), CFG-032 (blocking a shell read of `.env` files needs a hook
+change) and PRV-013 (keeping a shared conversation's title as it was needs a column); outside the repository:
+EXP-005, LAW-001. Deferred: ACC-017. Each row in the ledger says why and what the choices are.
 
 ## 2026-10-04 (late) — memory that is read, privacy you control, research that reads
 
