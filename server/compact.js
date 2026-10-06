@@ -264,6 +264,16 @@ const quoteLines = (text) =>
  */
 const continued = (text) => String(text).split(LINE_BREAK).join('\n  ');
 
+/**
+ * A tool call's arguments on one line (SEC-054). `JSON.stringify` escapes LF
+ * and CR but writes U+2028 and U+2029 as they are, so text a reply copied from
+ * a page into an argument could still start a line `USER:`. Those two are
+ * escaped here as well. Built from char codes, not literals, so no editor can
+ * turn the escapes back into the characters.
+ */
+const SEPARATORS = [0x2028, 0x2029].map((code) => [String.fromCharCode(code), `${String.fromCharCode(92)}u${code.toString(16)}`]);
+const oneLine = (value) => SEPARATORS.reduce((text, [raw, escaped]) => text.replaceAll(raw, escaped), JSON.stringify(value));
+
 const SYSTEM = [
   'You are compacting a working conversation so it can continue in a smaller context window.',
   '',
@@ -342,7 +352,7 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
           .join('\n');
       }
       const calls = (m.toolCalls || [])
-        .map((c) => `CALLED ${c.name}(${JSON.stringify(c.input ?? {}).slice(0, 400)})`)
+        .map((c) => `CALLED ${c.name}(${oneLine(c.input ?? {}).slice(0, 400)})`)
         .join('\n');
       return [m.text ? `ASSISTANT: ${continued(m.text)}` : '', calls].filter(Boolean).join('\n');
     })
