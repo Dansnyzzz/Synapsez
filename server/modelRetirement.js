@@ -100,8 +100,10 @@ export async function moveAccountToAuto(userId, from) {
  * starting — the choice is simply left as it was, and the turn's own fallback
  * (`resolve`, and the retry in the agent loop) still catches a gone model.
  *
+ * @template {{ defaultModel?: string }} P
  * @param {string} userId
- * @param {{ defaultModel?: string }} prefs
+ * @param {P} prefs
+ * @returns {Promise<P & { modelNotice?: { from: string, at: string } }>}
  */
 export async function settleAccountModel(userId, prefs) {
   try {

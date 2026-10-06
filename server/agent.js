@@ -1140,13 +1140,6 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   let messages = await store.listMessages(userId, chatId);
 
   /**
-   * Resolve the model, expanding the special `auto` id to OpenRouter's free
-   * router, which picks a free model per request — including one that reads
-   * images when the turn carries one. Checked per turn because keys go into and
-   * come out of cooldown. With no usable OpenRouter key the turn stops with a
-   * plain message rather than quietly falling back to a paid model.
-   */
-  /**
    * The account's own choice, moved to Auto first if its model has gone — so a
    * scheduled run at three in the morning works on the day a free model ends,
    * and the conversation's chip changes with it rather than naming a model
@@ -1160,6 +1153,14 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       emit('model_switched', { from: settled.modelNotice?.from || '', to: AUTO_ID });
     }
   }
+
+  /**
+   * Resolve the model, expanding the special `auto` id to OpenRouter's free
+   * router, which picks a free model per request — including one that reads
+   * images when the turn carries one. Checked per turn because keys go into and
+   * come out of cooldown. With no usable OpenRouter key the turn stops with a
+   * plain message rather than quietly falling back to a paid model.
+   */
   const wantModel = modelId || prefs.defaultModel;
   let entry;
   if (isAuto(wantModel)) {
