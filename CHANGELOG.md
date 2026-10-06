@@ -19,6 +19,10 @@ fixed in the repository. Nothing here needs a paid service.
 - The server treats the account's machine as the account's: it follows no redirect from it, reads a capped
   reply, and never sends a tool call twice when it cannot tell whether the first one arrived. The cloud
   browser's calls get the same treatment.
+- Checking a command nobody has added before takes a machine of its own, so it has a small daily budget of
+  its own: five a day per account and thirty for the app (`CLOUD_CHECKS_PER_DAY`,
+  `CLOUD_CHECKS_TOTAL_PER_DAY`). A server removed or switched off while its first call was starting stays
+  that way.
 
 ### Models, scheduled tasks and workflows
 
@@ -27,9 +31,11 @@ fixed in the repository. Nothing here needs a paid service.
   free router — the chip changes, and a notice says which model it was. A step that hit the withdrawal is run
   again on Auto instead of failing. Only for the library's models (OpenRouter, OrcaRouter) and only with an
   OpenRouter key for Auto to run on: a built-in model the key cannot reach is not "withdrawn", and stays.
-- **Scheduled tasks and workflows run on the model the account is on when they run**, not the one they were
-  made on — which is how a workflow kept failing every morning with "404 No endpoints found for
-  stealth/space-bunny-alpha".
+  A tab left open while the account was moved is told with its next message, and a provider reply only
+  counts as "gone" when it is a 404 or 410 about the model.
+- **Scheduled tasks, workflows and a cut-off turn finished in the cloud run on the model the account is on
+  when they run**, not the one they were made on — which is how a workflow kept failing every morning with
+  "404 No endpoints found for stealth/space-bunny-alpha".
 
 ### Interface
 
