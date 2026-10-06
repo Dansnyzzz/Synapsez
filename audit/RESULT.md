@@ -278,10 +278,22 @@ the UX-013 code and that the second schedule's card changes no earlier check; an
 
 Phase 3 ends here, after nine passes.
 
+## Phase 4 — merge, push, production
+
+| Step | Result |
+|---|---|
+| `origin/main` before the merge | `58b1ab4` = the branch's merge base (nothing to pull) |
+| `git merge --no-ff optimize/2026-10-05` | `ba85616`, no conflict; `git diff optimize/2026-10-05 main` empty |
+| `npm run gate` on `main` | **green (full), 213 s**, 4,586 ✓, 0 failures, the same two platform skips; hooks 168/168, eval 13/13, typecheck 315/315 |
+| `git push origin main` | `58b1ab4..ba85616`, no force |
+| Production smoke (`scratchpad/prod-smoke.mjs`, GET/HEAD only, no account, no data sent), after 53 s | the new deployment serving (`/api/session` carries `insights`, `{"sampleRate":1,"clientConfig":null}` — only this branch's code answers with it); `GET /` 200; CSP `script-src 'self'`, `connect-src 'self'`, `frame-ancestors` present; `/_vercel/insights/script.js`, `/_vercel/speed-insights/script.js`, both vendored modules and `/js/insights.js` 200 `application/javascript`; a made-up share token 404; `/api/favicon` without a session 401 (SEC-038) |
+| Rollback | not needed |
+
 ## Not measured, and why
 
 - Live token use, cache hit rate, cost and latency per turn: needs a provider key and real requests (§6).
-- Production after the push: Phase 4 (smoke test against the live URL).
+- Whether Vercel Analytics and Speed Insights record visits: they are switched on in the Vercel dashboard
+  (Project → Analytics / Speed Insights → Enable), which is outside the repository. The scripts are served.
 - The two Linux-only test branches on this machine: no bash, no WSL distribution; installing one is outside the
   repository. They run in CI on every push.
 - The Windows-only `.ps1` checks in CI: CI is Linux only (CFG-028, CHỜ-CHỦ). They run here, in every gate.
