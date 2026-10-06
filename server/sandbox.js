@@ -61,6 +61,7 @@ const PORTS = [BROWSER_PORT, MCP_PORT];
  */
 const DAY_MS = 24 * 60 * 60 * 1000;
 class LimitError extends Error {}
+const hours = (ms) => Math.max(1, Math.ceil(ms / 3_600_000));
 export function cloudBudgets(env = process.env) {
   return {
     perAccount: Math.max(1, Number(env.CLOUD_ACTIONS_PER_DAY) || 60),
@@ -79,7 +80,6 @@ export async function chargeCloud(userId) {
   const store = getStore();
   if (typeof store.hitRateLimit !== 'function') return;
   const { perAccount, total } = cloudBudgets();
-  const hours = (ms) => Math.max(1, Math.ceil(ms / 3_600_000));
   try {
     const mine = await store.hitRateLimit(`cloud:acct:${userId}`, perAccount, DAY_MS);
     if (!mine.allowed) {
@@ -93,6 +93,54 @@ export async function chargeCloud(userId) {
       throw new LimitError(
         `The cloud computers are at today's limit for the whole app; they open again in about ${hours(all.retryAfterMs)}h. ` +
           'Tell the user plainly, and offer what can be done without it.',
+      );
+    }
+  } catch (err) {
+    if (err instanceof LimitError) throw err;
+  }
+}
+
+/**
+ * How many new MCP servers one account, and the whole app, may check a day.
+ *
+ * A check (`checkOnScratch` in mcp/cloud.js) is a fresh machine that installs a
+ * package and starts it: a minute or more of two vCPUs, a hundred CPU-seconds
+ * or so, where a browser action is one to three. Counted as one action, an
+ * account trying command after command could spend a large share of the month.
+ * A check happens once per command for everybody — what it finds is shared — so
+ * ordinary use never meets this. CLOUD_CHECKS_PER_DAY / CLOUD_CHECKS_TOTAL_PER_DAY.
+ */
+export function checkBudgets(env = process.env) {
+  return {
+    perAccount: Math.max(1, Number(env.CLOUD_CHECKS_PER_DAY) || 5),
+    total: Math.max(1, Number(env.CLOUD_CHECKS_TOTAL_PER_DAY) || 30),
+  };
+}
+
+/**
+ * Count one check of a new MCP server: an action like any other, and one of the
+ * day's checks. Throws a sentence to show when either is spent.
+ *
+ * @param {string} userId
+ */
+export async function chargeCloudCheck(userId) {
+  await chargeCloud(userId);
+  const store = getStore();
+  if (typeof store.hitRateLimit !== 'function') return;
+  const { perAccount, total } = checkBudgets();
+  try {
+    const mine = await store.hitRateLimit(`cloud:check:${userId}`, perAccount, DAY_MS);
+    if (!mine.allowed) {
+      throw new LimitError(
+        `This account has checked ${perAccount} new MCP servers on the cloud computer today; it can check another in about ${hours(mine.retryAfterMs)}h. ` +
+          'A server somebody has already added is still ready at once.',
+      );
+    }
+    const all = await store.hitRateLimit('cloud:check:all', total, DAY_MS);
+    if (!all.allowed) {
+      throw new LimitError(
+        `New MCP servers are at today's limit for the whole app; another can be checked in about ${hours(all.retryAfterMs)}h. ` +
+          'A server somebody has already added is still ready at once.',
       );
     }
   } catch (err) {

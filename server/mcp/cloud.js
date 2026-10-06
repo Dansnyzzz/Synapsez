@@ -282,6 +282,12 @@ export function cloudTransport(config, { userId, conn: given = null } = {}) {
         return out.status === 200 ? out.body?.message ?? null : null;
       }
       if (out.status === 500) throw new Error(out.body?.error || 'The server on the cloud computer failed.');
+      // It answered, and the answer was past the ceiling: the connection is fine,
+      // and a tool that ran is not run again.
+      if (out.status === 413) {
+        lastOk = Date.now();
+        throw new Error(`The server on the cloud computer answered with more than ${MAX_REPLY_BYTES / (1024 * 1024)} MB, which was not read.`);
+      }
       const safeAgain = out.redirected || NOT_REACHED.has(out.status) || (MAYBE_REACHED.has(out.status) && message.method !== 'tools/call');
       if (!safeAgain || given) break;
       stale = conn;

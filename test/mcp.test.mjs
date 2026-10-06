@@ -673,6 +673,37 @@ section('a server added once is ready for the next account, offered without star
     const result = await registry.callMcpTool(user.id, 'mcp__stub__echo', { message: 'lần đầu' }, 30_000);
     check('the first call starts it on the account\'s own computer, and it answers', result.text === 'echo: lần đầu', result.text);
 
+    // That first call can take minutes while `npx` installs. Keeping the list it
+    // brings back must not bring back a server removed meanwhile, nor switch one
+    // back on that was switched off.
+    const whileConnecting = async (rowId, name, meanwhile) => {
+      await store.saveMcpServer(user.id, { id: rowId, name, config: registry.sealConfig({ ...config, tools: probe.keep.slice(0, 1) }), enabled: true });
+      registry.forgetMcp(user.id);
+      const plainFetch = globalThis.fetch;
+      let pending = true;
+      globalThis.fetch = async (url, init) => {
+        // Once, during the greeting: before the list is kept, not after it.
+        if (pending && String(url).includes('/rpc')) {
+          pending = false;
+          await meanwhile();
+        }
+        return plainFetch(url, init);
+      };
+      try {
+        await registry.callMcpTool(user.id, `mcp__${registry.slugify(name)}__echo`, { message: 'x' }, 30_000).catch(() => null);
+      } finally {
+        globalThis.fetch = plainFetch;
+      }
+      return store.getMcpServer(user.id, rowId);
+    };
+    const removed = await whileConnecting('mcp-cloud-removed', 'stubremoved', () => store.deleteMcpServer(user.id, 'mcp-cloud-removed'));
+    check('a server removed while its first call connected stays removed', removed === null, JSON.stringify(removed?.config?.tools?.length));
+    const switchedOff = await whileConnecting('mcp-cloud-off', 'stuboff', () => store.setMcpServerEnabled(user.id, 'mcp-cloud-off', false));
+    check('  one switched off meanwhile stays off', switchedOff?.enabled === false, String(switchedOff?.enabled));
+    check('  and still has its new list kept', switchedOff?.config?.tools?.length === 5, String(switchedOff?.config?.tools?.length));
+    await store.deleteMcpServer(user.id, 'mcp-cloud-off');
+    registry.forgetMcp(user.id);
+
     // Over HTTP: any account may add one here, because it runs on its own machine.
     const port = await freePort();
     const app = createApp().listen(port);
@@ -728,6 +759,29 @@ section('a server added once is ready for the next account, offered without star
         check('  and the connection is dropped, so the next turn starts afresh', !!transport.closed, String(transport.closed));
       } finally {
         lossy.close();
+      }
+
+      // An answer past the ceiling did arrive: it says so, is not sent again,
+      // and the connection is kept.
+      let sentHuge = 0;
+      const huge = http.createServer((req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        if (req.url === '/health') return res.end('{"ok":true}');
+        sentHuge += 1;
+        return res.end(`{"message":{"jsonrpc":"2.0","id":1,"result":{"x":"${'a'.repeat(9 * 1024 * 1024)}"}}}`);
+      });
+      const hugePort = await freePort();
+      await new Promise((r) => huge.listen(hugePort, '127.0.0.1', r));
+      try {
+        const hugeKey = 'huge-bridge-key'.padEnd(32, 'k');
+        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${hugePort}`, key: encryptSecret(hugeKey), build: cloud.__testing.bridgeSource().build });
+        const transport = cloud.cloudTransport({ command: process.execPath, args: [STUB] }, { userId: memberRow.id });
+        let told = '';
+        await transport.request('tools/call', { name: 'echo', arguments: { message: 'big' } }, 10_000).catch((err) => (told = err.message));
+        check('an answer past the ceiling says so', /more than 8 MB/.test(told) && sentHuge === 1, `${sentHuge} sent: ${told}`);
+        check('  and keeps the connection', !transport.closed, String(transport.closed));
+      } finally {
+        huge.close();
       }
     } finally {
       app.close();

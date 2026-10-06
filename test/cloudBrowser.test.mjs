@@ -208,6 +208,21 @@ section('the daily budgets are per account and for the whole app');
   process.env.CLOUD_ACTIONS_TOTAL_PER_DAY = before.CLOUD_ACTIONS_TOTAL_PER_DAY ?? '';
   if (!before.CLOUD_ACTIONS_PER_DAY) delete process.env.CLOUD_ACTIONS_PER_DAY;
   if (!before.CLOUD_ACTIONS_TOTAL_PER_DAY) delete process.env.CLOUD_ACTIONS_TOTAL_PER_DAY;
+
+  // A check of a new MCP server is a machine of its own installing a package:
+  // a budget of its own on top of being an action.
+  const { chargeCloudCheck, checkBudgets } = await import('../server/sandbox.js');
+  process.env.CLOUD_CHECKS_PER_DAY = '1';
+  process.env.CLOUD_CHECKS_TOTAL_PER_DAY = '2';
+  check('the check budget is read from the environment, with small defaults', checkBudgets().perAccount === 1 && checkBudgets({}).perAccount === 5 && checkBudgets({}).total === 30);
+  await chargeCloudCheck('u-check-a');
+  const second = await throws(() => chargeCloudCheck('u-check-a'));
+  check('a second new server checked the same day is refused for that account', /checked 1 new MCP servers/.test(second), second);
+  check('  saying a server somebody already added is still ready', /already added is still ready/.test(second));
+  await chargeCloudCheck('u-check-b');
+  const third = await throws(() => chargeCloudCheck('u-check-c'));
+  check('  and the whole app has a check budget of its own', /New MCP servers are at today's limit/.test(third), third);
+  for (const k of ['CLOUD_CHECKS_PER_DAY', 'CLOUD_CHECKS_TOTAL_PER_DAY']) delete process.env[k];
 }
 
 section('the panel never starts a machine');

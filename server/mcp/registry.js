@@ -2,7 +2,7 @@ import { getStore } from '../store/index.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
 import { connectMcp } from './client.js';
 import { stdioPlace, mcpSignature, checkOnScratch } from './cloud.js';
-import { chargeCloud } from '../sandbox.js';
+import { chargeCloudCheck } from '../sandbox.js';
 import { log } from '../util/trace.js';
 
 /**
@@ -390,8 +390,10 @@ async function connectInCloud(userId, row) {
     mine.set(id, { connection, tools: usable.map((tool) => advertised(id, row, tool)), skipped, error: null, at: Date.now() });
     const now = keptTools(connection.tools);
     if (JSON.stringify(now) !== JSON.stringify(row.config?.tools || [])) {
+      // Only the list: the row may have been removed, switched off or edited
+      // while this connected (see setMcpServerTools).
       await getStore()
-        .saveMcpServer(userId, { id: row.id, name: row.name, enabled: row.enabled !== false, config: { ...row.config, tools: now } })
+        .setMcpServerTools(userId, row.id, now, { from: row.config })
         .catch((err) => log.warn('mcp: could not keep the new tool list', { server: id, err: err?.message }));
     }
   } catch (err) {
@@ -450,7 +452,8 @@ async function probeInCloud(config, userId) {
     await store.noteSharedMcpUse(signature).catch(() => {});
     return describeProbe(known.server, known.tools, { shared: true });
   }
-  if (userId) await chargeCloud(userId);
+  // A machine of its own that installs a package: far more than one action.
+  if (userId) await chargeCloudCheck(userId);
   try {
     const found = await checkOnScratch(config, connectMcp);
     await store

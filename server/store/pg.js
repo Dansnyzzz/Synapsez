@@ -3508,6 +3508,23 @@ export function createPgStore(connectionString) {
       if (!saved) throw new Error('That server id belongs to another account.');
       return saved;
     },
+    /**
+     * Keep a cloud server's new tool list on its row, and change nothing else.
+     *
+     * The list comes back from a first call that can take minutes while `npx`
+     * installs. Saving the whole row as it was read before that would bring back
+     * a server removed meanwhile — stored environment and all — switch a disabled
+     * one back on, or undo an edit. So: an update, never an insert; only
+     * `config.tools`; and only while the rest of the config is still the one the
+     * list came from.
+     */
+    async setMcpServerTools(userId, id, tools, { from }) {
+      await q(
+        `UPDATE mcp_servers SET config = jsonb_set(config, '{tools}', $3::jsonb)
+          WHERE user_id = $1 AND id = $2 AND (config - 'tools') = ($4::jsonb - 'tools')`,
+        [userId, id, toJson(tools ?? []), toJson(from ?? {})],
+      );
+    },
     async setMcpServerEnabled(userId, id, enabled) {
       await q('UPDATE mcp_servers SET enabled = $3 WHERE user_id = $1 AND id = $2', [userId, id, !!enabled]);
       return this.getMcpServer(userId, id);

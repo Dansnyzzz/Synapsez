@@ -624,6 +624,14 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Cuộc trò chuyện này đã đọc nội dung từ bên ngoài — một trang web, kết quả tìm kiếm hay một máy chủ. Ghi chú lưu lúc này sẽ được đọc ở đầu mọi cuộc trò chuyện sau, nên hãy kiểm tra để chắc nó không mang theo gì từ nguồn đó.',
   'The MCP bridge on the cloud computer did not come up in time.':
     'Cầu nối MCP trên máy tính đám mây không khởi động kịp.',
+  'The connection to the cloud computer was lost.':
+    'Kết nối tới máy tính đám mây đã bị mất.',
+  'The server on the cloud computer answered with more than {0} MB, which was not read.':
+    'Máy chủ trên máy tính đám mây trả lời dài quá {0} MB nên câu trả lời không được đọc.',
+  'This account has checked {0} new MCP servers on the cloud computer today; it can check another in about {1}h. A server somebody has already added is still ready at once.':
+    'Hôm nay tài khoản này đã kiểm tra {0} máy chủ MCP mới trên máy tính đám mây; khoảng {1} giờ nữa mới kiểm tra thêm được. Máy chủ người khác đã thêm trước đó vẫn dùng được ngay.',
+  "New MCP servers are at today's limit for the whole app; another can be checked in about {0}h. A server somebody has already added is still ready at once.":
+    'Việc kiểm tra máy chủ MCP mới đã chạm giới hạn hôm nay của toàn ứng dụng; khoảng {0} giờ nữa mới kiểm tra thêm được. Máy chủ người khác đã thêm trước đó vẫn dùng được ngay.',
   'The cloud computer for this server is not running.':
     'Máy tính đám mây cho máy chủ này đang không chạy.',
   'The cloud computer for this server could not be reached.':
