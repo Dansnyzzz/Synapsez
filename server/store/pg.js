@@ -1726,9 +1726,13 @@ export function createPgStore(connectionString) {
     async getAttachmentAt(userId, id, at) {
       // No moment, no snapshot: refused rather than read live (CODE-055).
       if (!at) return null;
-      // Compared by the database, not as JS dates cut to the millisecond. A
-      // moment handed in as a JS Date is itself cut to the millisecond, which
-      // can only exclude a write, never admit one written after it.
+      // Compared by the database. A moment handed in as a JS Date is cut to the
+      // millisecond, which can only exclude the file itself (its time is the
+      // database's own). Versions filed before CODE-056 carry times cut the same
+      // way, so one may read up to a millisecond early: a version is taken only
+      // when it is at least a millisecond older than the moment. That can refuse
+      // a copy written in the last millisecond before sharing; it cannot admit
+      // one written after.
       const found = await q(
         `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, created_at,
                 created_at <= $3::timestamptz AS settled
@@ -1742,7 +1746,7 @@ export function createPgStore(connectionString) {
       const rows = await q(
         `SELECT name, mime, kind, bytes, data, source, created_at
            FROM attachment_versions
-          WHERE user_id = $1 AND attachment_id = $2 AND created_at <= $3::timestamptz
+          WHERE user_id = $1 AND attachment_id = $2 AND created_at <= $3::timestamptz - interval '1 millisecond'
           ORDER BY created_at DESC, revision DESC
           LIMIT 1`,
         [userId, id, at],
@@ -1912,22 +1916,15 @@ export function createPgStore(connectionString) {
       // The first rewrite files two rows: what was there originally becomes
       // revision 1. Without that the history would start at the second draft
       // and "go back to the first one" would be impossible.
+      // Copied inside the database, not through JS (CODE-056): a time read back
+      // into a JS Date is cut to the millisecond, and a version stamped a little
+      // earlier than it was written could be taken for the copy a conversation
+      // was shared with.
       await q(
         `INSERT INTO attachment_versions (id, attachment_id, user_id, revision, name, mime, kind, bytes, data, source, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [
-          `${id}-v${seen[0].n + 1}`,
-          id,
-          userId,
-          seen[0].n + 1,
-          current.name,
-          current.mime,
-          current.kind,
-          current.bytes,
-          current.data,
-          current.source ?? null,
-          current.created_at,
-        ],
+         SELECT $1, id, user_id, $4, name, mime, kind, bytes, data, source, created_at
+           FROM attachments WHERE id = $2 AND user_id = $3`,
+        [`${id}-v${seen[0].n + 1}`, id, userId, seen[0].n + 1],
       );
 
       const rows = await q(
