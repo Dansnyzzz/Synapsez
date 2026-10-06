@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { encryptSecret, decryptSecret } from './crypto.js';
+import { signingRoot } from './secrets.js';
 
 /**
  * Google — Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks, Contacts.
@@ -47,7 +48,12 @@ export const googleConfigured = () => !!(process.env.GOOGLE_CLIENT_ID && process
 export const redirectUri = (origin) =>
   String(process.env.GOOGLE_REDIRECT_URI || `${origin}/api/connectors/google/callback`).trim();
 
-const stateKey = () => String(process.env.SESSION_SECRET || process.env.ENCRYPTION_KEY || '');
+const stateKey = () => {
+  const root = signingRoot();
+  // An empty key signs nothing: anybody could compute the signature.
+  if (!root) throw new Error('Set SESSION_SECRET — refusing to sign a Google sign-in without one.');
+  return root;
+};
 const sign = (payload) => crypto.createHmac('sha256', stateKey()).update(payload).digest('base64url');
 
 /**

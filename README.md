@@ -1513,6 +1513,7 @@ sets `DATABASE_URL` for you. The schema is created automatically on first reques
 | `DATABASE_URL` | **yes** | Set for you by the Neon integration. |
 | `SESSION_SECRET` | **yes** | Signs session cookies. Long and random. Changing it signs everyone out. |
 | `ENCRYPTION_KEY` | **yes** | Encrypts stored provider keys. Changing it makes existing ones unreadable. |
+| `ACCESS_TOKEN` | legacy | One value standing in for both of the above, from before they were separate. Still honoured — the two keys are derived apart from it — but it cannot be rotated in halves, so the server warns at boot. Set `SESSION_SECRET` and `ENCRYPTION_KEY` instead. |
 | `CRON_SECRET` | **yes** | Authenticates the cron endpoints — the scheduler and the model-library refresh. Any long random string. Without it both refuse every call, so scheduled tasks never run. |
 | `GMAIL_USER` + `GMAIL_APP_PASSWORD`, **or** `RESEND_API_KEY`, **or** `SMTP_*` | optional | Sends password-reset codes and the assistant's emails. Without one, reset links go to the server log and `send_email` says it cannot send. |
 | `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` | optional | Lets accounts connect Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts. See [docs/google.md](docs/google.md). |

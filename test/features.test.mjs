@@ -747,8 +747,6 @@ section('every setting the server and worker read is in the README (CODE-047)');
     'COMPUTERNAME', 'HOSTNAME', 'SHELL', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'NODE_ENV',
     'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
     'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_VIEW_KEY', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY',
-    // SEC-047: whether this fallback should exist at all is the owner's call.
-    'ACCESS_TOKEN',
   ]);
   const read = new Map();
   const walk = (dir) => {

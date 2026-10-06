@@ -17,7 +17,14 @@ import { assertSecrets } from '../server/secrets.js';
  */
 let misconfigured = null;
 try {
-  assertSecrets();
+  const legacy = assertSecrets();
+  // SEC-047: it works, and one value cannot be rotated in two halves.
+  if (legacy.length) {
+    console.warn(
+      `[ai-remote] ${legacy.join(' and ')} come from ACCESS_TOKEN. Set them separately — rotating one value ` +
+        'to sign everyone out would also make every stored API key unreadable.',
+    );
+  }
 } catch (err) {
   misconfigured = err.message;
   console.error('[ai-remote] refusing to start:', err.message);
