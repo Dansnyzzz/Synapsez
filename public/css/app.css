@@ -7495,6 +7495,10 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   background: var(--surface);
 }
 .taskpane[hidden] { display: none; }
+/* What a tool did sits on the panel's own ground, as the progress panel does —
+   not on a grey card. Everything else in the panel is hidden while it is open
+   (see `.is-taskpane` above), so nothing shows through. */
+#toolpane { background: transparent; }
 .taskpane__bar {
   display: flex;
   align-items: center;
@@ -8437,7 +8441,10 @@ label.btn:has(+ input[type='file']:focus-visible) {
 .railsec__count { color: var(--text-faint); font-weight: 500; font-size: 13px; }
 .railsec__chev { color: var(--text-faint); transition: transform 0.18s; }
 .railsec__head[aria-expanded='false'] .railsec__chev { transform: rotate(-90deg); }
-.railsec__body { display: grid; gap: 2px; padding: 4px 0 6px; max-height: 340px; overflow-y: auto; }
+/* No height of its own: the panel scrolls as one. A 340px box with its own
+   scrollbar cut the last row of tools in half, with the panel's padding showing
+   as a dark band below it, and a scroll inside a scroll is easy to miss. */
+.railsec__body { display: grid; gap: 2px; padding: 4px 0 6px; }
 .railsec__body[hidden] { display: none; }
 .railrow {
   display: flex;
@@ -8931,4 +8938,6 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
   font-size: 12.5px;
   text-align: center;
 }
-body.is-incognito .composer { border-style: dashed; }
+/* The banner says it, so the composer is left alone. A `border-style` here on
+   `.composer`, which has no border of its own, drew a 3px white dashed frame —
+   the browser's default width and the text colour — around the whole dock. */

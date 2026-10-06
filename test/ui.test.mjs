@@ -2019,11 +2019,15 @@ section('the model is one setting, with one control');
     button: !!document.getElementById('pick-default-model'),
     modelsTab: !!document.querySelector('.tab[data-tab="models"]'),
     languagesTab: !!document.querySelector('.tab[data-tab="languages"]'),
+    tasksTab: !!document.querySelector('.tab[data-tab="tasks"]') || !!document.getElementById('panel-tasks'),
   }));
   check('Settings no longer carries a second copy of the model', !settingsPanel.field);
   check('nor a second way to change it', !settingsPanel.button);
   check('the Models tab is gone', !settingsPanel.modelsTab);
   check('and Languages has taken its place', settingsPanel.languagesTab);
+  // The same rule for schedules: the Scheduled page is where they are made and
+  // changed, and a second copy in Settings was the owner's "dư thừa".
+  check('Settings has no Scheduled tab either', !settingsPanel.tasksTab);
 
   // The reload is what used to expose the disagreement.
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -4119,12 +4123,32 @@ section('what a project made is a row of pages, newest first');
     await new Promise((r) => setTimeout(r, 1200));
     /** @type {any} */ (window).__foldsDrawn = document.querySelectorAll('#messages .compacted').length;
     const railRows = [...document.querySelectorAll('#rail-extra [data-rail="outputs"] .railrow')];
-    /** @type {any} */ (window).__rail = { rows: railRows.length, first: railRows[0]?.textContent?.trim(), count: document.querySelector('#rail-extra .railsec__count')?.textContent };
+    /** @type {any} */ (window).__rail = {
+      rows: railRows.length,
+      first: railRows[0]?.textContent?.trim(),
+      count: document.querySelector('#rail-extra .railsec__count')?.textContent,
+      // Every section's list has the panel's scroll, not one of its own that cut
+      // the last row of tools in half.
+      ownScroll: [...document.querySelectorAll('#rail-extra .railsec__body')].map((b) => getComputedStyle(b).maxHeight).filter((h) => h !== 'none'),
+    };
+    // Incognito says so in its banner; the dock around the composer gets no frame.
+    document.body.classList.add('is-incognito');
+    const dock = getComputedStyle(/** @type {HTMLElement} */ (document.querySelector('.composer')));
+    /** @type {any} */ (window).__incognitoFrame = `${dock.borderTopStyle} ${dock.borderTopWidth}`;
+    document.body.classList.remove('is-incognito');
     const chip = /** @type {HTMLElement | null} */ (document.querySelector('#rail-extra [data-tool="web_search"]'));
     chip?.click();
     await new Promise((r) => setTimeout(r, 200));
     const group = /** @type {HTMLDetailsElement | null} */ (document.querySelector('#toolpane .toolgrp'));
-    const info = { chip: !!chip, open: !document.getElementById('toolpane').hidden, groups: document.querySelectorAll('#toolpane .toolgrp').length, hits: document.querySelectorAll('#toolpane .webrow').length, folded: false };
+    const info = {
+      chip: !!chip,
+      open: !document.getElementById('toolpane').hidden,
+      groups: document.querySelectorAll('#toolpane .toolgrp').length,
+      hits: document.querySelectorAll('#toolpane .webrow').length,
+      folded: false,
+      // The panel's own ground, as the progress panel has — not a grey card.
+      ground: getComputedStyle(/** @type {HTMLElement} */ (document.getElementById('toolpane'))).backgroundColor,
+    };
     /** @type {HTMLElement | null} */ (group?.querySelector('summary'))?.click();
     info.folded = group ? !group.open : false;
     document.getElementById('toolpane-close')?.click();
@@ -4149,6 +4173,10 @@ section('what a project made is a row of pages, newest first');
   check('a web search the conversation used is listed as a connector', searched?.chip === true, JSON.stringify(searched));
   check('  and opens every search, grouped by the message that asked', searched?.groups === 1 && searched?.hits === 2, JSON.stringify(searched));
   check('  each group folds on a press', searched?.folded === true, JSON.stringify(searched));
+  check('  on the panel\'s own ground, not a grey card', searched?.ground === 'rgba(0, 0, 0, 0)', String(searched?.ground));
+  check('no list in the side panel scrolls on its own', railed?.ownScroll?.length === 0, JSON.stringify(railed?.ownScroll));
+  const frame = await page.evaluate(() => /** @type {any} */ (window).__incognitoFrame);
+  check('an incognito conversation draws no frame around the composer', /^none /.test(String(frame)), String(frame));
   check('the side panel lists what this conversation made', railed?.rows === 7 && railed?.count === '7', JSON.stringify(railed));
   check('  newest first', /page-6/.test(railed?.first || ''), railed?.first);
   check('every output is a card in one row', first.count === 7, String(first.count));

@@ -4753,14 +4753,14 @@ function fillSettings() {
   $('tab-admin').hidden = me.role !== 'admin';
   if (!$('tab-admin').hidden) loadAdmin();
 
-  // These three each hit the network, so they load alongside rather than
+  // These each hit the network, so they load alongside rather than
   // blocking the sheet from opening. A failure in one must not blank the rest.
-  for (const load of [loadSkills, loadTasks, loadConnectors]) {
+  for (const load of [loadSkills, loadConnectors]) {
     load().catch((err) => console.error('[settings]', err.message));
   }
 }
 
-/* ── skills, schedules, connectors ─────────────────────────────── */
+/* ── skills, connectors ──────────────────────────────────────── */
 
 const relativeWhen = (iso) => {
   const then = new Date(iso);
@@ -4818,77 +4818,6 @@ $('skill-save').addEventListener('click', async () => {
     $('skill-description').value = '';
     $('skill-instructions').value = '';
     loadSkills();
-  } catch (err) {
-    status.textContent = err.message;
-  }
-});
-
-async function loadTasks() {
-  const { tasks } = await api.tasks();
-  $('task-list').innerHTML = tasks.length
-    ? `<div class="rows">${tasks
-        // Named `task`, not `t` — the parameter used to shadow the translator,
-        // which is why every string in this block stayed English.
-        .map((task) => {
-          const when = task.cron ? t('tasks.everyCron', { cron: escapeHtml(task.cron) }) : t('tasks.once');
-          const last = task.last_status
-            ? ` · ${t('tasks.last', { status: escapeHtml(task.last_status).slice(0, 40) })}`
-            : '';
-          return `<div class="rows__item">
-            <span class="grow">${escapeHtml(task.title)}
-              <span class="muted">· ${when} · ${
-                task.enabled
-                  ? escapeHtml(t('tasks.next', { when: relativeWhen(task.next_run_at) }))
-                  : escapeHtml(t('tasks.paused'))
-              }${last}</span>
-            </span>
-            ${
-              task.last_chat
-                ? `<button data-task-open="${escapeHtml(task.last_chat)}">${escapeHtml(t('tasks.openResult'))}</button>`
-                : ''
-            }
-            <button data-task-toggle="${escapeHtml(task.id)}" data-on="${!!task.enabled}">${escapeHtml(
-              task.enabled ? t('tasks.pause') : t('tasks.resume'),
-            )}</button>
-            <button data-task-del="${escapeHtml(task.id)}">${escapeHtml(t('action.remove'))}</button>
-          </div>`;
-        })
-        .join('')}</div>`
-    : `<p class="hint">${escapeHtml(t('tasks.empty'))}</p>`;
-
-  for (const btn of $('task-list').querySelectorAll('[data-task-toggle]')) {
-    btn.addEventListener('click', async () => {
-      await api.setTaskEnabled(btn.dataset.taskToggle, btn.dataset.on !== 'true');
-      loadTasks();
-    });
-  }
-  for (const btn of $('task-list').querySelectorAll('[data-task-open]')) {
-    btn.addEventListener('click', () => {
-      $('settings').close();
-      openChat(btn.dataset.taskOpen);
-    });
-  }
-  for (const btn of $('task-list').querySelectorAll('[data-task-del]')) {
-    armed(btn, t('action.reallyRemove'), async () => {
-      await api.deleteTask(btn.dataset.taskDel);
-      loadTasks();
-    });
-  }
-}
-
-$('task-save').addEventListener('click', async () => {
-  const status = $('task-status');
-  try {
-    const { task } = await api.createTask({
-      title: $('task-title').value,
-      prompt: $('task-prompt').value,
-      when: $('task-when').value,
-      repeat: $('task-repeat').checked,
-    });
-    status.textContent = t('tasks.scheduled', { when: relativeWhen(task.next_run_at) });
-    $('task-title').value = '';
-    $('task-prompt').value = '';
-    loadTasks();
   } catch (err) {
     status.textContent = err.message;
   }
