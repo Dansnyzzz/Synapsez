@@ -2050,6 +2050,57 @@ section('the model is one setting, with one control');
 }
 
 /**
+ * A model that has gone moves the account to Auto, and the interface says so
+ * (server/modelRetirement.js). Before this the chip went on naming a model the
+ * picker no longer listed, and every message failed.
+ */
+section('a model that has gone: the chip moves to Auto, and the person is told');
+{
+  const { setPrefs, getPrefs } = await import('../server/settings.js');
+  const { getStore } = await import('../server/store/index.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  const kept = (await getPrefs(me.id)).defaultModel;
+  const seen = () =>
+    page.evaluate(() => ({
+      chip: document.getElementById('model-chip')?.textContent?.trim() || '',
+      told: [...document.querySelectorAll('#toasts-alert > *, #toasts > *')].map((n) => n.textContent).join(' | '),
+    }));
+
+  // Moved while the person was away — by a scheduled run overnight, say.
+  await setPrefs(me.id, { defaultModel: 'auto', modelNotice: { from: 'space-bunny-alpha', at: new Date().toISOString() } });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
+  const atOpen = await seen();
+  check('a move made while away shows Auto on the chip', atOpen.chip === 'Auto', atOpen.chip);
+  check('  and says which model went', /space-bunny-alpha/.test(atOpen.told), atOpen.told);
+  await page.waitForTimeout(800);
+  check('  once: the notice is cleared after it is shown', (await getPrefs(me.id)).modelNotice == null);
+
+  // Moved in the middle of a turn: the server's `model_switched`.
+  await setPrefs(me.id, { defaultModel: kept, modelNotice: null });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
+  await page.route('**/api/chats/*/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: 'event: model_switched\ndata: {"from":"Lab Live","to":"auto"}\n\nevent: done\ndata: {"stopReason":"end_turn"}\n\n',
+    }),
+  );
+  await page.fill('#input', 'still there?');
+  await page.press('#input', 'Enter');
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/chats/*/run');
+  const midTurn = await seen();
+  check('a switch in the middle of a turn moves the chip to Auto', midTurn.chip === 'Auto', midTurn.chip);
+  check('  and names the model that went', /Lab Live/.test(midTurn.told), midTurn.told);
+
+  await setPrefs(me.id, { defaultModel: kept, modelNotice: null });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
+}
+
+/**
  * Many tabs in the sandbox must be reachable.
  *
  * The strip had `overflow-x: auto` with the scrollbar hidden on both engines, so

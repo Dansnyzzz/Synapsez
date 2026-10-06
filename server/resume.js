@@ -83,9 +83,10 @@ export async function resumeCutOffTurns({ budgetMs = 240_000, limit = 2, run = r
         userId: user.id,
         user,
         chatId: row.id,
-        // Nothing a person said on the way in: the turn carries on as it was.
-        // The model the conversation was being answered with, not the account default.
-        modelId: (await store.getChat(user.id, row.id).catch(() => null))?.model || null,
+        // Nothing a person said on the way in: the turn carries on as it was,
+        // on the account's model — one model per account (see runAgent), and a
+        // model that has gone meanwhile is moved off like anywhere else.
+        modelId: null,
         decision: null,
         decisionFor: null,
         answers: null,

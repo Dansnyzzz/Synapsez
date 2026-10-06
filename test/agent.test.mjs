@@ -2126,9 +2126,26 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   await setPrefs(moved.id, { defaultModel: 'openrouter/lab/live', modelNotice: null });
   const strict = await turn('c-strict', [{ throws: 'No endpoints found matching your data policy' }]);
   check('the strict privacy setting refusing every endpoint does not move the account', !strict.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'openrouter/lab/live', strict.thrown);
-  // A caller's explicit model is not the account's to change.
+  // What the browser sends with every turn: the model on its chip, which is the
+  // account's own. That is the account's choice, not an override, and follows it.
+  await setPrefs(moved.id, { defaultModel: 'openrouter/lab/live', modelNotice: null });
+  const sent = await turn('c-sent', [{ throws: '404 No endpoints found for lab/live.' }, { text: 'Carried on.' }], { modelId: 'openrouter/lab/live' });
+  check("a turn from the browser, naming the account's model, is moved mid-turn too", sent.entries[1] === AUTO_ROUTER.id && sent.reply === 'Carried on.' && sent.events.some((e) => e.type === 'model_switched'), `${JSON.stringify(sent.entries)} ${sent.thrown}`);
+  await setPrefs(moved.id, { defaultModel: 'openrouter/stealth/space-bunny-alpha', modelNotice: null });
+  const sentGone = await turn('c-sent-gone', [{ text: 'On Auto.' }], { modelId: 'openrouter/stealth/space-bunny-alpha' });
+  check('  and at the start of one, once its model has gone', sentGone.entries[0] === AUTO_ROUTER.id && (await getPrefs(moved.id)).defaultModel === 'auto' && sentGone.events.some((e) => e.type === 'model_switched' && e.payload?.from === 'space-bunny-alpha'), JSON.stringify(sentGone.entries));
+  // A tab left open while a scheduled run moved the account overnight still
+  // names the old model.
+  await setPrefs(moved.id, { defaultModel: 'auto', modelNotice: null });
+  const stale = await turn('c-stale-tab', [{ text: 'On Auto.' }], { modelId: 'openrouter/stealth/space-bunny-alpha' });
+  check("a tab still naming a model that has gone runs on the account's Auto", stale.entries[0] === AUTO_ROUTER.id && stale.reply === 'On Auto.', JSON.stringify(stale.entries));
+  check('  and is told, so its chip changes', stale.events.some((e) => e.type === 'model_switched' && e.payload?.from === 'space-bunny-alpha'));
+  // A model other than the account's — one picked a moment ago whose save has
+  // not landed — is run as asked, and is not the account's to change.
+  await setPrefs(moved.id, { defaultModel: 'anthropic/claude-opus-5', modelNotice: null });
   const pinned = await turn('c-pinned', [{ throws: '404 No endpoints found for lab/live.' }], { modelId: 'openrouter/lab/live' });
-  check('an explicit model that fails is not swapped for the account', !pinned.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'openrouter/lab/live', pinned.thrown);
+  check("a model other than the account's is run as asked", pinned.entries[0] === 'openrouter/lab/live', JSON.stringify(pinned.entries));
+  check('  and when it fails it is not swapped for Auto', !pinned.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'anthropic/claude-opus-5', pinned.thrown);
   // A built-in the account's key cannot reach is not a withdrawn model: moving
   // it would send the conversation to a provider the person never chose.
   await setPrefs(moved.id, { defaultModel: 'anthropic/claude-opus-5', modelNotice: null });
@@ -2136,6 +2153,45 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   check('a built-in the key cannot reach is not moved to Auto', !noAccess.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'anthropic/claude-opus-5', noAccess.thrown);
   const { isModelGoneError } = await import('../server/modelRetirement.js');
   check('  and "you do not have access" never reads as a model that has gone', !isModelGoneError('The model `gpt-x` does not exist or you do not have access to it.'));
+
+  // An account on its own OrcaRouter key, moved to Auto mid-turn, lands on the
+  // deployment's OpenRouter key: the shared key's limits apply from there.
+  const orca = await store.createUser({ id: 'u-orca', email: 'orca@example.com', name: 'Orca', passwordHash: 'x', role: 'user' });
+  await setApiKey(orca.id, 'orcarouter', 'sk-orca-agent-suite-placeholder');
+  await store.upsertModels([
+    {
+      id: 'orcarouter/lab/orca', provider: 'orcarouter', model: 'lab/orca', family: 'lab', label: 'Orca',
+      description: null, context: 64_000, maxOutput: 8192, priceIn: 0, priceOut: 0, isFree: true, vision: false,
+      releasedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  await setPrefs(orca.id, { defaultModel: 'orcarouter/lab/orca', modelNotice: null });
+  await store.createChat(orca.id, { id: 'c-orca', title: 'model' });
+  await store.appendMessage(orca.id, 'c-orca', { id: 'c-orca-u', role: 'user', text: 'Hello.' });
+  await store.updateUser(orca.id, { monthlyTokenLimit: 100 });
+  await store.recordUsage(orca.id, { id: 'usage-orca', chatId: 'c-orca', model: 'orcarouter/lab/orca', inputTokens: 100, outputTokens: 50, costUsd: 0 });
+  const priorShared = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'sk-or-v1-shared-placeholder';
+  const orcaEntries = [];
+  const orcaEvents = [];
+  try {
+    await runAgent({
+      userId: orca.id,
+      user: await store.getUserById(orca.id),
+      chatId: 'c-orca',
+      emit: (type, payload) => orcaEvents.push({ type, payload }),
+      stream: async function* scripted(opts) {
+        orcaEntries.push(opts.entry?.id);
+        if (orcaEntries.length === 1) throw new Error('404 No endpoints found for lab/orca.');
+        yield { type: 'text', delta: 'Spent on the shared key.' };
+        yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+      },
+    });
+  } finally {
+    if (priorShared === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = priorShared;
+  }
+  check('an own-key account over its shared allowance, moved to Auto, stops at the shared limit', orcaEvents.some((e) => e.type === 'error' && e.payload?.code === 'quota_exceeded') && orcaEntries.length === 1, JSON.stringify(orcaEntries));
 }
 
 section('a memory note asks first in a turn that has read something from outside (HAR-005)');

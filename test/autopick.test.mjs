@@ -250,6 +250,10 @@ section('a model leaves the library on the day its provider ends it');
     check('  and so does a provider\'s retirement notice', isModelGoneError('This model has been deprecated. Thank you for participating in the testing period.'));
     check('  but the strict privacy setting refusing every endpoint does not', !isModelGoneError('No endpoints found matching your data policy (Free model publication)'));
     check('  nor does an ordinary failure', !isModelGoneError(new Error('429 Too Many Requests')) && !isModelGoneError(new Error('500 Internal Server Error')));
+  // It moves an account for good, so the words alone are not enough.
+  check('  nor a 400 that says "deprecated" about a parameter', !isModelGoneError(Object.assign(new Error('400 The `functions` parameter is deprecated; use `tools`.'), { status: 400 })));
+  check('  nor those words about something that is not the model', !isModelGoneError('The image URL does not exist.'));
+  check('  while a 404 carrying the notice is the model gone', isModelGoneError(Object.assign(new Error('This model has been retired.'), { status: 404 })));
 
     // With no OpenRouter key, Auto cannot run: the account is left as it is,
     // and the turn says the model has gone and to pick another.

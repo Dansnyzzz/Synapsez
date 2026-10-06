@@ -1009,7 +1009,8 @@ section('a run parked by an interruption it did not need is put back to work');
 section('a conversation turn cut off by the time limit is finished in the cloud');
 {
   const { resumeCutOffTurns } = await import('../server/resume.js');
-  const chat = await store.createChat(aliceId, { id: 'c-cutoff', title: 'Long research' });
+  // Started on a model the account may since have left, or that may have gone.
+  const chat = await store.createChat(aliceId, { id: 'c-cutoff', title: 'Long research', model: 'openrouter/lab/started-on' });
   await store.appendMessage(aliceId, chat.id, { id: 'u-cut', role: 'user', text: 'research this deeply' });
   // Exactly what a killed invocation leaves: the lease names a run nobody renews.
   check('the dead run held the lease', (await store.claimChatRun(aliceId, chat.id, 'dead-run')) > 0);
@@ -1018,11 +1019,12 @@ section('a conversation turn cut off by the time limit is finished in the cloud'
   const seen = [];
   const out = await resumeCutOffTurns({
     staleMs: 1,
-    run: async ({ chatId, userId }) => {
-      seen.push({ chatId, userId, lease: (await store.getChat(userId, chatId)).run_lock_by });
+    run: async ({ chatId, userId, modelId }) => {
+      seen.push({ chatId, userId, modelId, lease: (await store.getChat(userId, chatId)).run_lock_by });
     },
   });
   check('the cut-off turn is picked up', seen.length === 1 && seen[0].chatId === 'c-cutoff', JSON.stringify(out));
+  check("  on the account's model, not the one the conversation started on", seen[0]?.modelId === null, String(seen[0]?.modelId));
   check('  under a lease of its own, so a browser coming back joins rather than races', !!seen[0]?.lease && seen[0].lease !== 'dead-run');
   check('  and the lease is let go afterwards', (await store.getChat(aliceId, chat.id)).run_lock_by === null);
 

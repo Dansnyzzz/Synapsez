@@ -8,7 +8,7 @@ import { withMarkup } from './pricing.js';
 import { budgetStop } from './providers/stop.js';
 import { resolve as resolveModelId } from './models.js';
 import { AUTO_ID, isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
-import { settleAccountModel, isModelGoneError, isLibraryModel, moveAccountToAuto } from './modelRetirement.js';
+import { settleAccountModel, goneModel, isModelGoneError, isLibraryModel, moveAccountToAuto } from './modelRetirement.js';
 import { availableTools, assessRisk, riskReason, TOOLS_BY_NAME } from './tools/definitions.js';
 import { UNTRUSTED_RULE } from './tools/untrusted.js';
 import { executeTool } from './tools/execute.js';
@@ -1179,9 +1179,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * Models showed two different names, both live, with no way to tell from
    * looking which one the next turn would actually use.
    *
-   * `modelId` is still honoured, because that is an explicit per-request override
-   * (a sub-agent) rather than a stale preference. Scheduled tasks and workflows
-   * pass none: they run on the account's choice at the time they run.
+   * `modelId` is what the browser's chip names: the account's own choice, or one
+   * just picked whose save has not landed yet. That second case is honoured as
+   * asked. Scheduled tasks, workflows and a resumed turn pass none: they run on
+   * the account's choice at the time they run.
    */
   let messages = await store.listMessages(userId, chatId);
 
@@ -1190,13 +1191,23 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * scheduled run at three in the morning works on the day a free model ends,
    * and the conversation's chip changes with it rather than naming a model
    * that no longer answers. See modelRetirement.js.
+   *
+   * The browser sends the model on its chip with every turn, and that is the
+   * account's choice, not an override of it: the same id follows the account.
+   * So does one that has gone — a tab left open while a scheduled run moved the
+   * account to Auto overnight still names the old model, and nobody can mean to
+   * pick a model that is no longer there.
    */
-  const followsAccount = !modelId;
+  const senderGone = modelId && modelId !== prefs.defaultModel ? await goneModel(modelId).catch(() => null) : null;
+  const followsAccount = !modelId || modelId === prefs.defaultModel || Boolean(senderGone);
   if (followsAccount) {
     const settled = await settleAccountModel(userId, prefs);
     if (settled.defaultModel !== prefs.defaultModel) {
       Object.assign(prefs, settled);
       emit('model_switched', { from: settled.modelNotice?.from || '', to: AUTO_ID });
+    } else if (senderGone && isAuto(prefs.defaultModel)) {
+      // Already moved; this tab had not heard. Its chip changes now.
+      emit('model_switched', { from: senderGone.label, to: AUTO_ID });
     }
   }
 
@@ -1207,7 +1218,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * come out of cooldown. With no usable OpenRouter key the turn stops with a
    * plain message rather than quietly falling back to a paid model.
    */
-  const wantModel = modelId || prefs.defaultModel;
+  const wantModel = followsAccount ? prefs.defaultModel : modelId;
   let entry;
   if (isAuto(wantModel)) {
     entry = await pickAutoModel(userId);
@@ -1221,10 +1232,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   }
 
   // Refuse before spending anything, and say plainly how to lift the cap.
-  const usingSharedKey = await usesSharedKey(userId, entry.provider);
+  // Worked out again if the turn moves to Auto part-way (see the retry below):
+  // an account on its own key can land on the deployment's.
+  let usingSharedKey = await usesSharedKey(userId, entry.provider);
   const quota = await checkQuota(user, { usingSharedKey });
   // Per turn, alongside the monthly quota above. See `turnTokenLimit`.
-  const turnLimit = turnTokenLimit({ usingSharedKey });
+  let turnLimit = turnTokenLimit({ usingSharedKey });
   let turnTokens = 0;
   if (!quota.allowed) {
     emit('error', { message: quota.reason, code: 'quota_exceeded' });
@@ -1773,6 +1786,15 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           prefs.defaultModel = AUTO_ID;
           entry = auto;
           emit('model_switched', { from, to: AUTO_ID });
+          // The shared key's limits, if Auto runs on it and the old model did not.
+          usingSharedKey = await usesSharedKey(userId, entry.provider);
+          turnLimit = turnTokenLimit({ usingSharedKey });
+          const allowed = await checkQuota(user, { usingSharedKey });
+          if (!allowed.allowed) {
+            emit('error', { message: allowed.reason, code: 'quota_exceeded' });
+            emit('done', { stopReason: 'quota_exceeded' });
+            return;
+          }
           step -= 1;
           continue;
         }

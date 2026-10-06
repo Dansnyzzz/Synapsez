@@ -79,10 +79,23 @@ const DATA_POLICY = /matching your data policy|no endpoints? (?:found )?(?:that 
  */
 const NO_ACCESS = /do not have access|don't have access|not have access to|permission|not allowed to access|unauthori[sz]ed/i;
 
-/** @param {unknown} error */
+/**
+ * Whether a provider's failure says the model itself has gone.
+ *
+ * This moves an account to Auto for good, so the words are not enough on their
+ * own: "deprecated" or "does not exist" also turn up in a 400 about a parameter,
+ * a tool or an image. A failure that carries a status is a model gone only as
+ * 404 or 410; one without needs to be about the model or its endpoints.
+ *
+ * @param {unknown} error
+ */
 export function isModelGoneError(error) {
-  const message = String(/** @type {any} */ (error)?.message || error || '');
-  return MODEL_GONE.test(message) && !DATA_POLICY.test(message) && !NO_ACCESS.test(message);
+  const failure = /** @type {any} */ (error);
+  const message = String(failure?.message || error || '');
+  if (!MODEL_GONE.test(message) || DATA_POLICY.test(message) || NO_ACCESS.test(message)) return false;
+  const status = Number(failure?.status) || Number(/^(\d{3})\b/.exec(message)?.[1]) || 0;
+  if (status) return status === 404 || status === 410;
+  return /\bmodel\b|no endpoints found for /i.test(message);
 }
 
 /** Models from the shared library, the ones that are withdrawn: OpenRouter's and OrcaRouter's. */
