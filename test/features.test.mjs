@@ -983,6 +983,14 @@ section('OCR reads Vietnamese with no key and no network');
     const a4 = await renderPdfPages(pdfOf('595 842'));
     const a4Size = a4?.pages?.[0] ? imageSize(Buffer.from(a4.pages[0].data, 'base64')) : null;
     check('  while an A4 page is still drawn 1400 wide', a4Size?.width === 1400, JSON.stringify(a4Size));
+
+    // PERF-023: drawn on a worker with a deadline, and on this thread where the
+    // worker's code is missing.
+    let late = null;
+    await renderPdfPages(pdfOf('595 842'), { timeoutMs: 1 }).catch((err) => (late = err));
+    check('drawing a scan\'s pages that takes too long is stopped', /took longer than 1s to draw/.test(late?.message || ''), late?.message);
+    const here = await renderPdfPages(pdfOf('595 842'), { workerUrl: new URL('../server/no-such-pages.worker.mjs', import.meta.url) }).catch((err) => ({ error: err.message }));
+    check('  and a page worker whose code is missing draws on this thread instead', here?.pages?.length === 1, JSON.stringify(here).slice(0, 120));
   }
   await stopOcr();
 
