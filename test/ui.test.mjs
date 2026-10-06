@@ -4395,6 +4395,63 @@ section('a schedule set up in a conversation is a card that opens it');
   await page.click('#messages .schedcard__pill');
   await page.waitForTimeout(1200);
 
+  // UX-013: opened again after the pause, while the save it ended with is still
+  // on its way — the open waits for that too, not only for a save not yet sent.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await page.waitForTimeout(1000);
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/tasks/t-card');
+  const inFlight = await page.evaluate(async () => ({
+    shown: /** @type {HTMLSelectElement} */ (document.querySelector('#taskpane [data-s="frequency"]'))?.value,
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+  }));
+  check('reopened while its save is still on the way, the panel shows the choice too (UX-013)', inFlight.shown === 'daily', JSON.stringify(inFlight));
+
+  // And closed while that open is still waiting, the panel stays closed: the
+  // open that was waiting does not draw itself back over the close.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    await new Promise((r) => setTimeout(r, route.request().method() === 'PATCH' ? 1500 : 600));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'weekly');
+  await page.waitForTimeout(1000);
+  await page.click('#messages .schedcard__pill');
+  await page.click('#taskpane-close');
+  await page.waitForTimeout(3000);
+  await page.unroute('**/api/tasks/t-card');
+  const stayed = await page.evaluate(async () => ({
+    closed: document.getElementById('taskpane').hidden,
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+  }));
+  check('  and closed while that open waits, it stays closed (UX-013)', stayed.closed, JSON.stringify(stayed));
+  check('  with the choice saved all the same', !!stayed.cron && stayed.cron !== inFlight.cron, `${inFlight.cron} → ${stayed.cron}`);
+
+  // UX-012's Pause: pressed just before closing, it is kept, and the panel is
+  // not reopened over the close when the answer comes back.
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(1200);
+  const enabledBefore = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.enabled);
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 900));
+    await route.continue();
+  });
+  await page.click('#taskpane [data-s="toggle"]');
+  await page.click('#taskpane-close');
+  await page.waitForTimeout(1800);
+  await page.unroute('**/api/tasks/t-card');
+  const paused = await page.evaluate(async () => ({
+    closed: document.getElementById('taskpane').hidden,
+    enabled: (await (await fetch('/api/tasks/t-card')).json()).task?.enabled,
+  }));
+  check('Pause pressed just before closing is kept, and the panel stays closed (UX-012)', paused.closed && paused.enabled === !enabledBefore, `${enabledBefore} → ${JSON.stringify(paused)}`);
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(1200);
+
   await page.click('#taskpane-close');
   check('its close button gives the panel back', await page.evaluate(() => document.getElementById('taskpane').hidden));
   // The side area was closed before the task opened, so one close ends both —

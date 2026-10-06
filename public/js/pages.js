@@ -1433,21 +1433,50 @@ export function createPages({
    * moving on was lost without a word.
    */
   let settlePending = null;
+
+  /**
+   * Saves sent from the panel and not answered yet (UX-013). A save already on
+   * its way when the panel moves on is waited for as well as one still in its
+   * pause: the pause ends by sending, so the save was only out of sight.
+   *
+   * @type {Set<Promise<unknown>>}
+   */
+  const landing = new Set();
+  /**
+   * @template T
+   * @param {Promise<T>} request
+   * @returns {Promise<T>}
+   */
+  function sent(request) {
+    landing.add(request);
+    const done = () => landing.delete(request);
+    request.then(done, done);
+    return request;
+  }
+
   function flushSettling() {
     const save = settlePending;
     settlePending = null;
     // A failure says itself: in the panel's status while it is on screen, in a
     // toast once it is not (see `save`). Nothing here throws on to the caller.
-    return save ? Promise.resolve(save()).catch(() => false) : null;
+    const started = save ? Promise.resolve(save()).catch(() => false) : null;
+    return Promise.all([started, ...[...landing].map((request) => request.catch(() => false))]);
   }
 
+  /** Counted on every open and close, so that only the latest one draws (UX-013). */
+  let paneTurn = 0;
+
   async function showScheduleInPane(kind, id, { after = null } = {}) {
+    const turn = ++paneTurn;
     // Waited for (UX-012): opening the same schedule again within the pause
     // fetched it before the save had landed, drew the old Repeat, and the next
     // edit there wrote that old value back over the choice just saved.
     await flushSettling();
-    paneAfter = after;
     const { row, project } = await fetchSchedule(kind, id);
+    // Another schedule opened, or the panel closed, while this one waited:
+    // that is where the person went, and this is not drawn over it.
+    if (turn !== paneTurn) return;
+    paneAfter = after;
     const pane = $('taskpane');
     $('taskpane-title').textContent = row.title;
     // No pencil in the header: every field below is edited in place, and a
@@ -1470,7 +1499,7 @@ export function createPages({
   function wireScheduleEditor(root, kind, row, project) {
     const q = (name) => /** @type {HTMLInputElement} */ (root.querySelector(`[data-s="${name}"]`));
     const status = q('status');
-    const update = (patch) => (kind === 'workflow' ? api.updateWorkflow(row.id, patch) : api.updateTask(row.id, patch));
+    const update = (patch) => sent(kind === 'workflow' ? api.updateWorkflow(row.id, patch) : api.updateTask(row.id, patch));
 
     /** Show only the rows the chosen frequency uses. */
     const layout = () => {
@@ -1717,6 +1746,7 @@ export function createPages({
 
   function closeTaskPane() {
     flushSettling();
+    paneTurn++;
     $('taskpane').hidden = true;
     $('taskpane-body').replaceChildren();
     onPaneClose();
