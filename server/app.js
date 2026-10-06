@@ -28,6 +28,7 @@ import { emailBackend } from './email.js';
 import { summary as usageSummary, limitFor } from './usage.js';
 import { getPrefs, setPrefs, setApiKey, addApiKey, removeApiKey, providerStatus, DEFAULT_PREFS } from './settings.js';
 import { MODEL_GONE, settleAccountModel } from './modelRetirement.js';
+import { stdioPlace } from './mcp/cloud.js';
 import { getStore, initStore, isServerless } from './store/index.js';
 import { RUN_LEASE_STALE_MS } from './store/pg.js';
 import { workerStatus, usesInProcessTools, handleIndexPayload } from './localTools.js';
@@ -829,6 +830,9 @@ export function createApp() {
           storage: store.kind,
           serverless: isServerless(),
           localMachine: !!store.local,
+          // Where a stdio MCP server would run: 'cloud' (the account's own
+          // cloud computer), 'local' (beside this server), or null (nowhere).
+          mcpStdio: stdioPlace(),
           // So the Computers tab can print the one command that actually works
           // on this deployment, with its address already filled in.
           publicUrl: publicUrlFor(req),

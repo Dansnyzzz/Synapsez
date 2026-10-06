@@ -731,11 +731,12 @@ section('every setting the server and worker read is in the README (CODE-047)');
   const { fileURLToPath } = await import('node:url');
   const root = fileURLToPath(new URL('..', import.meta.url));
   // Set by the operating system or the platform, or read only by the cloud
-  // browser service (whose header documents them) — not things a person sets.
+  // browser service or the MCP bridge on the cloud computer (whose headers
+  // document them, and which the server sets itself) — not things a person sets.
   const NOT_SETTINGS = new Set([
     'COMPUTERNAME', 'HOSTNAME', 'SHELL', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'NODE_ENV',
     'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
-    'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_VIEW_KEY', 'SYNZ_PROFILE', 'SYNZ_LOCALE',
+    'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_VIEW_KEY', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY',
     // SEC-047: whether this fallback should exist at all is the owner's call.
     'ACCESS_TOKEN',
   ]);

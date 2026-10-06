@@ -37,6 +37,10 @@ const DOWNLOAD_BYTES = 10 * 1024 * 1024;
 const SNAPSHOT_DAYS = 30;
 /** The port the cloud browser listens on — see server/cloudBrowser. */
 export const BROWSER_PORT = 3000;
+/** The port the MCP bridge listens on — see server/mcp/cloud.js. */
+export const MCP_PORT = 3100;
+/** Every port a machine opens, so neither service waits on a reconfigure. */
+const PORTS = [BROWSER_PORT, MCP_PORT];
 
 /**
  * How much of the shared allotment one account, and the whole app, may use a
@@ -215,11 +219,70 @@ async function machineFor(name, { signal } = {}) {
     persistent: true,
     keepLastSnapshots: { count: 1, expiration: SNAPSHOT_DAYS * 24 * 60 * 60 * 1000, deleteEvicted: true },
     tags: { app: 'synapsez' },
-    // The browser's port, reachable as https://….vercel.run. Machines made
-    // before the browser existed gain it in `machineForUser`.
-    ports: [BROWSER_PORT],
+    // The browser's and the MCP bridge's ports, reachable as https://….vercel.run.
+    // Machines made before either existed gain them in `portAddress`.
+    ports: PORTS,
     signal,
   });
+}
+
+/**
+ * A machine for one job and nobody's in particular, deleted afterwards.
+ *
+ * Used to try an MCP server the first time anybody adds it (server/mcp/cloud.js),
+ * so the tools it lists can be offered to the next account without that account
+ * waiting. Not the adding account's own machine on purpose: that account has
+ * root on its machine, and whatever it listed there would be shown to everyone
+ * after it. Nothing is kept: no disk, no snapshot.
+ *
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export async function scratchMachine({ signal } = {}) {
+  const { Sandbox } = await loadSdk();
+  try {
+    return await Sandbox.create({
+      ...credentials(),
+      timeout: 6 * 60 * 1000,
+      resources: { vcpus: 2 },
+      networkPolicy: 'allow-all',
+      persistent: false,
+      tags: { app: 'synapsez', role: 'mcp-check' },
+      ports: [MCP_PORT],
+      signal,
+    });
+  } catch (err) {
+    throw machineStartError(err);
+  }
+}
+
+/** Stop and delete a scratch machine; never throws — it is cleanup. @param {any} machine */
+export async function discardMachine(machine) {
+  try {
+    await machine?.stop?.();
+  } catch {
+    /* already stopped */
+  }
+  try {
+    await machine?.delete?.();
+  } catch {
+    /* it expires by itself */
+  }
+}
+
+/**
+ * The https address of one of a machine's ports, opening it on an older machine.
+ *
+ * @param {any} machine
+ * @param {number} port
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export async function portAddress(machine, port, { signal } = {}) {
+  try {
+    return machine.domain(port);
+  } catch {
+    await machine.update({ ports: PORTS }, { signal });
+    return machine.domain(port);
+  }
 }
 
 /**
@@ -245,12 +308,9 @@ export async function machineForUser(userId, { signal } = {}) {
  * @param {{ signal?: AbortSignal }} [options]
  */
 export async function browserAddress(machine, { signal } = {}) {
-  try {
-    return machine.domain(BROWSER_PORT);
-  } catch {
-    await machine.update({ ports: [BROWSER_PORT] }, { signal });
-    return machine.domain(BROWSER_PORT);
-  }
+  // Every port at once: updating to the browser's alone would close the MCP
+  // bridge's on a machine that had both.
+  return portAddress(machine, BROWSER_PORT, { signal });
 }
 
 /**

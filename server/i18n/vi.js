@@ -610,10 +610,20 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     ' ngay lập tức',
 
   /* ── MCP, tệp, nhà cung cấp, cơ sở dữ liệu ── */
-  'stdio MCP servers cannot run on this deployment: they spawn a local command, which shared serverless infrastructure must not do. Use an http server instead.':
-    'Máy chủ MCP stdio không chạy được trên bản triển khai này: chúng khởi chạy lệnh cục bộ, điều hạ tầng serverless dùng chung không được phép làm. Hãy dùng máy chủ http.',
-  "stdio MCP servers are off by default because they run a command with access to the server's secrets. Set ALLOW_MCP_STDIO=1 to enable them on a machine you trust, or use an http server.":
-    'Máy chủ MCP stdio mặc định bị tắt vì chúng chạy lệnh có quyền truy cập bí mật của máy chủ. Đặt ALLOW_MCP_STDIO=1 để bật trên máy bạn tin tưởng, hoặc dùng máy chủ http.',
+  "stdio MCP servers run on each account's cloud computer, and this deployment has none: the Vercel Sandbox is switched off (SANDBOX_DISABLED). Use an http server, or switch the sandbox back on.":
+    'Máy chủ MCP stdio chạy trên máy tính đám mây của từng tài khoản, nhưng bản triển khai này không có: Vercel Sandbox đang bị tắt (SANDBOX_DISABLED). Hãy dùng máy chủ http, hoặc bật lại sandbox.',
+  'stdio MCP servers need either the cloud computer (VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID) or ALLOW_MCP_STDIO=1 on a machine you trust. Or use an http server.':
+    'Máy chủ MCP stdio cần máy tính đám mây (VERCEL_TOKEN, VERCEL_TEAM_ID và VERCEL_PROJECT_ID) hoặc ALLOW_MCP_STDIO=1 trên máy bạn tin tưởng. Hoặc dùng máy chủ http.',
+  'stdio servers need either the cloud computer (the Vercel Sandbox) or ALLOW_MCP_STDIO on a machine you trust, and this deployment has neither. An http server works everywhere.':
+    'Máy chủ stdio cần máy tính đám mây (Vercel Sandbox) hoặc ALLOW_MCP_STDIO trên máy bạn tin tưởng, mà bản triển khai này không có cái nào. Máy chủ http thì chạy ở đâu cũng được.',
+  'The MCP bridge on the cloud computer did not come up in time.':
+    'Cầu nối MCP trên máy tính đám mây không khởi động kịp.',
+  'The cloud computer for this server is not running.':
+    'Máy tính đám mây cho máy chủ này đang không chạy.',
+  'The cloud computer for this server could not be reached.':
+    'Không liên lạc được với máy tính đám mây cho máy chủ này.',
+  'The server on the cloud computer failed.':
+    'Máy chủ trên máy tính đám mây bị lỗi.',
   'The "{0}" MCP server is not reachable: {1}':
     'Không kết nối được máy chủ MCP "{0}": {1}',
   'There is no MCP server called "{0}" on this account.':

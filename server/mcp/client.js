@@ -1,26 +1,25 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { assertPublic, safeFetch } from '../util/safeFetch.js';
+import { cloudTransport, stdioPlace } from './cloud.js';
 
 /**
- * Whether this deployment may start a stdio MCP server.
+ * Whether this process may start a stdio MCP server as a child of its own.
  *
- * A stdio server is a command this process spawns, and the child inherits the
- * server's environment — including `ENCRYPTION_KEY`, the one key every stored
- * account's provider keys are encrypted under. So "add an MCP server" is, for a
- * stdio server, "run a program on the server with the keys to everything", and
- * on a deployment several tenants share it is one account reading them all.
+ * A stdio server spawned here inherits the server's environment — including
+ * `ENCRYPTION_KEY`, the one key every stored account's provider keys are
+ * encrypted under. So on this process it is "run a program on the server with
+ * the keys to everything", and on a deployment several tenants share it is one
+ * account reading them all.
  *
  * Denied by default for that reason, on the same opt-in principle as
  * `FILE_ACCESS=full` and `ALLOW_PRIVATE_FETCH`: the safe case is the one you get
  * without deciding. `ALLOW_MCP_STDIO` turns it on for a single-owner machine
- * that wants it. Serverless is never allowed at all — `process.env.VERCEL`
- * marks shared, ephemeral infrastructure, where arbitrary local commands have
- * no business running whatever the switch says.
+ * that wants it, and serverless never. Everywhere else a stdio server runs on
+ * the account's own cloud computer instead — see cloud.js and `stdioPlace`.
  */
 export function stdioAllowed() {
-  if (process.env.VERCEL) return false;
-  return /^(1|true|yes)$/i.test(process.env.ALLOW_MCP_STDIO || '');
+  return stdioPlace() === 'local';
 }
 
 /**
@@ -58,6 +57,8 @@ const CLIENT_INFO = { name: 'ai-remote', version: '1.0.0' };
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** A server that will not greet us in this long is not going to. */
 const HANDSHAKE_TIMEOUT_MS = 20_000;
+/** The same, on the cloud computer, where the first start installs the package. */
+const CLOUD_HANDSHAKE_MS = 150_000;
 
 /** JSON-RPC ids only have to be unique per connection. */
 let nextId = 1;
@@ -375,14 +376,20 @@ export async function connectMcp(config) {
     await assertPublic(new URL(config.url));
     transport = httpTransport({ url: config.url, headers: config.headers });
   } else {
-    if (!stdioAllowed()) {
+    // A stdio server runs where this deployment allows: as a child of this
+    // process on a single-owner machine, or on the account's own cloud computer.
+    const place = config.place || stdioPlace();
+    if (place === 'cloud') {
+      transport = cloudTransport(config, { userId: config.userId, conn: config.bridge || null });
+    } else if (place === 'local') {
+      transport = stdioTransport({ command: config.command, args: config.args, env: config.env, cwd: config.cwd });
+    } else {
       throw new Error(
         process.env.VERCEL
-          ? 'stdio MCP servers cannot run on this deployment: they spawn a local command, which shared serverless infrastructure must not do. Use an http server instead.'
-          : 'stdio MCP servers are off by default because they run a command with access to the server\'s secrets. Set ALLOW_MCP_STDIO=1 to enable them on a machine you trust, or use an http server.',
+          ? 'stdio MCP servers run on each account\'s cloud computer, and this deployment has none: the Vercel Sandbox is switched off (SANDBOX_DISABLED). Use an http server, or switch the sandbox back on.'
+          : 'stdio MCP servers need either the cloud computer (VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID) or ALLOW_MCP_STDIO=1 on a machine you trust. Or use an http server.',
       );
     }
-    transport = stdioTransport({ command: config.command, args: config.args, env: config.env, cwd: config.cwd });
   }
 
   try {
@@ -395,7 +402,9 @@ export async function connectMcp(config) {
         capabilities: {},
         clientInfo: CLIENT_INFO,
       },
-      HANDSHAKE_TIMEOUT_MS,
+      // On the cloud computer the first greeting can include `npx` fetching the
+      // package, which takes a minute; a program already warm answers at once.
+      transport.kind === 'cloud' ? CLOUD_HANDSHAKE_MS : HANDSHAKE_TIMEOUT_MS,
     );
 
     transport.notify('notifications/initialized', {});

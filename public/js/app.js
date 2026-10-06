@@ -4227,6 +4227,7 @@ function renderMcp({ servers, status }) {
             <strong>${escapeHtml(server.name)}</strong> ${reach}
           </div>
           <div class="hint" style="word-break:break-all">${escapeHtml(where || '')}</div>
+          ${server.runsOn === 'cloud' ? `<div class="hint">${escapeHtml(t('mcp.runsOnCloud'))}</div>` : ''}
           ${state?.error ? `<div class="hint" style="color:var(--warn)">${escapeHtml(state.error)}</div>` : ''}
           <div class="row">
             <button class="btn btn--ghost" data-mcp-toggle="${escapeHtml(server.id)}" type="button">
@@ -4318,7 +4319,27 @@ async function loadMcpCatalogue() {
     host.innerHTML = '';
   }
 }
+/**
+ * Say where a stdio server runs on this deployment.
+ *
+ * On Vercel it is the account's own cloud computer, not "this computer" — the
+ * old words described the server's machine, and "Máy chủ MCP stdio không chạy
+ * được trên bản triển khai này" was what anybody who believed them got. The
+ * strings swap their keys, so a language change keeps the right ones.
+ */
+function describeStdioPlace() {
+  const cloud = state.boot?.runtime?.mcpStdio === 'cloud';
+  const option = /** @type {HTMLElement | null} */ (document.querySelector('#mcp-transport option[value="stdio"]'));
+  const hint = $('mcp-command-hint');
+  for (const [node, key] of [[option, cloud ? 'mcp.transport.cloud' : 'mcp.transport.stdio'], [hint, cloud ? 'mcp.command.cloudHint' : 'mcp.command.hint']]) {
+    if (!node) continue;
+    node.dataset.i18n = key;
+    node.textContent = t(key);
+  }
+}
+
 async function loadMcp() {
+  describeStdioPlace();
   try {
     renderMcp(await api.mcpServers());
   } catch (err) {
@@ -4356,11 +4377,12 @@ $('mcp-add').addEventListener('click', async () => {
 
   const button = $('mcp-add');
   button.disabled = true;
-  // Starting a server can mean npx fetching a package, which is not instant.
-  status.textContent = t('mcp.trying');
+  // Starting a server can mean npx fetching a package, which is not instant —
+  // and on the cloud computer, the first time, a machine starting as well.
+  status.textContent = t(transport === 'stdio' && state.boot?.runtime?.mcpStdio === 'cloud' ? 'mcp.tryingCloud' : 'mcp.trying');
   try {
     const { found } = await api.addMcpServer(body);
-    status.textContent = t('mcp.added', { n: found?.tools?.length || 0 });
+    status.textContent = t(found?.shared ? 'mcp.addedShared' : 'mcp.added', { n: found?.tools?.length || 0 });
     $('mcp-name').value = '';
     $('mcp-command').value = '';
     $('mcp-url').value = '';

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { sealConfig, forgetMcp, probeMcpServer, mcpStatus, slugify } from '../mcp/registry.js';
 import { searchCatalogue } from '../mcp/catalogue.js';
+import { stdioPlace } from '../mcp/cloud.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 
 /**
@@ -56,6 +57,9 @@ export function mountMcpRoutes(api, { wrap, body }) {
         prefix: `mcp__${slugify(row.name)}__`,
         enabled: row.enabled !== false,
         transport: row.config?.transport === 'http' ? 'http' : 'stdio',
+        // Where a stdio server runs here: on the account's cloud computer, or
+        // as a program beside the server on a single-owner machine.
+        runsOn: row.config?.transport === 'http' ? null : stdioPlace(),
         command: row.config?.command ?? null,
         args: row.config?.args ?? [],
         url: row.config?.url ?? null,
@@ -130,7 +134,19 @@ export function mountMcpRoutes(api, { wrap, body }) {
        * machine the owner is the administrator. http servers are unaffected:
        * they are screened for private addresses and spawn nothing.
        */
-      if (transport === 'stdio' && req.user?.role !== 'admin') {
+      /*
+       * …on the server itself. On the cloud computer it is the account's own
+       * machine, which it can already run any command on (`sandbox_run`), with
+       * none of the server's secrets — so any account may add one there.
+       */
+      const place = transport === 'stdio' ? stdioPlace() : null;
+      if (transport === 'stdio' && !place) {
+        return res.status(400).json({
+          error:
+            'stdio servers need either the cloud computer (the Vercel Sandbox) or ALLOW_MCP_STDIO on a machine you trust, and this deployment has neither. An http server works everywhere.',
+        });
+      }
+      if (place === 'local' && req.user?.role !== 'admin') {
         return res.status(403).json({
           error:
             'A stdio server runs a program on this server with access to everyone’s stored keys, so only an administrator can add one. An http server works for any account.',
@@ -163,23 +179,26 @@ export function mountMcpRoutes(api, { wrap, body }) {
        */
       let probe;
       try {
-        probe = await probeMcpServer(config);
+        probe = await probeMcpServer(config, { userId: req.user.id });
       } catch (err) {
         return res.status(400).json({ error: `That server did not start: ${err.message}` });
       }
 
+      // A server on the cloud computer is offered from this list on every turn,
+      // without starting anything (see registry.js `mcpTools`).
+      const { keep, ...found } = probe;
       const saved = await getStore().saveMcpServer(req.user.id, {
         id: req.body?.id || crypto.randomUUID(),
         name,
-        config: sealConfig(config),
+        config: sealConfig(place === 'cloud' ? { ...config, tools: keep } : config),
         enabled: req.body?.enabled !== false,
       });
       // The cached connections are keyed by slug, and the set has changed.
       forgetMcp(req.user.id);
 
       return res.status(201).json({
-        server: { id: saved.id, name: saved.name, enabled: saved.enabled },
-        found: probe,
+        server: { id: saved.id, name: saved.name, enabled: saved.enabled, runsOn: place },
+        found,
       });
     }),
   );
@@ -197,7 +216,7 @@ export function mountMcpRoutes(api, { wrap, body }) {
        * be disabled and re-enabled straight past it.
        */
       const enabling = req.body?.enabled !== false;
-      if (enabling && existing.config?.transport !== 'http' && req.user?.role !== 'admin') {
+      if (enabling && existing.config?.transport !== 'http' && stdioPlace() === 'local' && req.user?.role !== 'admin') {
         return res.status(403).json({
           error:
             'A stdio server runs a program on this server with access to everyone’s stored keys, so only an administrator can switch one on.',

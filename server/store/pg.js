@@ -216,8 +216,11 @@ export function splitStatements(sql) {
  *      was at the moment it was shared
  *  28  chats.incognito — a conversation kept out of history and memory, swept
  *      a day after its last use; audit_events — the account's security record
+ *  29  mcp_shared — a stdio MCP server checked once on a scratch machine, so
+ *      the next account adds it at once; chats.shared_title — a shared
+ *      conversation's title as it stood when shared (PRV-013)
  */
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 29;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -3504,6 +3507,33 @@ export function createPgStore(connectionString) {
     },
     async deleteMcpServer(userId, id) {
       await q('DELETE FROM mcp_servers WHERE user_id = $1 AND id = $2', [userId, id]);
+    },
+
+    /**
+     * An MCP server as checked once for everybody — `mcp_shared` in schema.sql.
+     *
+     * Not scoped to an account, and on purpose, like `shared_models`: a row is
+     * what a program said about itself when started on a scratch machine that
+     * belongs to nobody, keyed by its command and arguments — never by an
+     * environment variable, which can hold a token. Each account still runs the
+     * program on its own machine; only the description is shared.
+     */
+    async getSharedMcp(signature) {
+      const rows = await q('SELECT * FROM mcp_shared WHERE signature = $1', [signature]);
+      return rows[0] ?? null;
+    },
+    async saveSharedMcp(entry) {
+      const rows = await q(
+        `INSERT INTO mcp_shared (signature, transport, target, server, tools, uses, checked_at)
+         VALUES ($1, $2, $3, $4, $5, 1, NOW())
+         ON CONFLICT (signature) DO UPDATE SET server = EXCLUDED.server, tools = EXCLUDED.tools, checked_at = NOW()
+         RETURNING *`,
+        [entry.signature, entry.transport, String(entry.target || '').slice(0, 1000), toJson(entry.server ?? {}), toJson(entry.tools ?? [])],
+      );
+      return rows[0];
+    },
+    async noteSharedMcpUse(signature) {
+      await q('UPDATE mcp_shared SET uses = uses + 1 WHERE signature = $1', [signature]);
     },
 
     async getSharedModel(id) {
