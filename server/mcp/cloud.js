@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getStore } from '../store/index.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
+import { readCapped } from '../util/safeFetch.js';
 import { chargeCloud, machineForUser, portAddress, sandboxConfigured, scratchMachine, discardMachine, MCP_PORT } from '../sandbox.js';
 
 /**
@@ -40,7 +41,14 @@ const SETTING = 'mcpBridge';
 const DIR = '.synz-mcp';
 const START_MS = 45_000;
 const PEEK_MS = 3_000;
-const CHECK_MS = 240_000;
+/**
+ * How long a scratch machine may take to be created. With the bridge's start
+ * (START_MS) and the first handshake (client.js CLOUD_HANDSHAKE_MS) it stays
+ * inside the function's 300s (vercel.json `maxDuration`).
+ */
+const CHECK_MS = 90_000;
+/** Quiet this long, and a tool call checks the bridge is still there before it is sent. */
+const QUIET_MS = 60_000;
 
 /**
  * Where a stdio server can run here, if anywhere.
@@ -97,9 +105,21 @@ export function bridgeStartScript() {
 
 const newKey = () => crypto.randomBytes(24).toString('base64url');
 
+/** The most a bridge's reply may be. A tool's answer is cut at 60k characters (client.js `flatten`). */
+const MAX_REPLY_BYTES = 8 * 1024 * 1024;
+
 /**
  * One request to a bridge. `{ status, body }`, or `{ status: 0 }` when nothing
  * answered — a stopped machine, a bridge not yet up.
+ *
+ * **Never follows a redirect.** The machine at the other end is the account's
+ * own, with root (cloud.js says so above), so whatever answers on its port can
+ * be the account's own listener rather than the bridge — and a 302 from it
+ * would send this server's next request wherever it pointed, from inside the
+ * deployment. A redirect is an answer from something that is not the bridge,
+ * and is read as one: not reached. The reply is read up to a ceiling for the
+ * same reason. (The http transport refuses redirects for the same cause; see
+ * `httpTransport` in client.js.)
  *
  * @param {{ url: string, key: string }} conn
  * @param {string} route
@@ -112,11 +132,15 @@ export async function bridgeCall(conn, route, body, timeoutMs) {
       method: body === undefined ? 'GET' : 'POST',
       headers: { 'x-synz-key': conn.key, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (res.status >= 300 && res.status < 400) return { status: res.status, body: null, redirected: true };
     let parsed = null;
+    const { buffer, truncated } = await readCapped(res, MAX_REPLY_BYTES);
+    if (truncated) return { status: 413, body: null };
     try {
-      parsed = await res.json();
+      parsed = JSON.parse(buffer.toString('utf8'));
     } catch {
       /* the platform's own error page */
     }
@@ -164,27 +188,51 @@ async function saveBridge(userId, conn) {
   await getStore().setUserSetting(userId, SETTING, { ...conn, key: encryptSecret(conn.key) });
 }
 
+/** Starts in progress on this instance, by account, so parallel calls share one. */
+const starting = new Map();
+
 /**
  * The account's bridge: the one already running, or a new one on its machine.
  *
+ * `stale` is a bridge that just failed to answer. The one on file is read again
+ * first: another instance may have started a new bridge since, under a new key —
+ * and starting yet another would stop that one, and the programs it keeps warm.
+ * On this instance, two calls that both need a new bridge share one start.
+ *
  * @param {string} userId
- * @param {{ fresh?: boolean, signal?: AbortSignal }} [options]  `fresh` skips the one on file
+ * @param {{ stale?: { key: string } | null, signal?: AbortSignal }} [options]
  */
-export async function bridgeFor(userId, { fresh = false, signal } = {}) {
-  const known = fresh ? null : await readBridge(userId).catch(() => null);
-  if (known && known.build === bridgeSource().build && (await bridgeCall(known, '/health', undefined, PEEK_MS)).status === 200) {
-    return known;
+export async function bridgeFor(userId, { stale = null, signal } = {}) {
+  const known = await readBridge(userId).catch(() => null);
+  const usable = known && known.build === bridgeSource().build && (!stale || known.key !== stale.key);
+  if (usable && (await bridgeCall(known, '/health', undefined, PEEK_MS)).status === 200) return known;
+  if (!starting.has(userId)) {
+    const start = (async () => {
+      // Starting a machine is what the daily cloud budget counts.
+      await chargeCloud(userId);
+      const machine = await machineForUser(userId, { signal });
+      const conn = await startBridge(machine, { signal });
+      await saveBridge(userId, conn);
+      return conn;
+    })().finally(() => starting.delete(userId));
+    starting.set(userId, start);
   }
-  // Starting a machine is what the daily cloud budget counts.
-  await chargeCloud(userId);
-  const machine = await machineForUser(userId, { signal });
-  const conn = await startBridge(machine, { signal });
-  await saveBridge(userId, conn);
-  return conn;
+  return starting.get(userId);
 }
 
-/** Statuses that mean the request never reached a live bridge, so trying again is safe. */
-const NOT_REACHED = new Set([0, 401, 404, 410, 502, 503, 504]);
+/**
+ * Statuses that mean a request never reached a live bridge.
+ *
+ * Only some of them are certain. 401, 404, 410, 503 and a redirect come from
+ * something that is not a live bridge holding our key, so nothing ran. A dropped
+ * connection (0), a 502 or a 504 can come after the request had arrived — the
+ * program may have run it — so they are safe to repeat only for what changes
+ * nothing: the handshake, the tool list, a notification. Never `tools/call`: a
+ * tool that sends or deletes something must not run twice because a reply was
+ * lost on the way back.
+ */
+const NOT_REACHED = new Set([401, 404, 410, 503]);
+const MAYBE_REACHED = new Set([0, 502, 504]);
 
 /**
  * A transport, in the shape client.js expects, to a program behind a bridge.
@@ -192,8 +240,9 @@ const NOT_REACHED = new Set([0, 401, 404, 410, 502, 503, 504]);
  * `conn` is a bridge already started (a scratch machine); without it, the
  * account's own bridge is found or started on the first request. A request that
  * did not reach a live bridge — the machine paused, the bridge restarted with a
- * new key — starts it again and is sent once more; one that reached it and
- * failed is the program's answer and is not repeated.
+ * new key — starts it again and is sent once more; one that may have reached it
+ * is sent again only if it changes nothing (see NOT_REACHED), and one that
+ * reached it and failed is the program's answer and is not repeated.
  *
  * Closing leaves the program running: the next turn finds it warm, and the
  * bridge stops it after a quiet spell.
@@ -207,21 +256,40 @@ export function cloudTransport(config, { userId, conn: given = null } = {}) {
   let conn = given;
   let closed = null;
   let localId = 0;
+  /** When the bridge last answered; a tool called after QUIET_MS checks it is still there first. */
+  let lastOk = Date.now();
 
   async function send(message, timeoutMs) {
     if (closed) throw new Error(closed);
+    let stale = null;
+    // A tool called after a quiet spell asks whether the bridge is still there
+    // before sending it — a paused machine is found out by a health check, which
+    // runs nothing, rather than by a tool call that cannot safely be repeated.
+    if (conn && userId && !given && message.method === 'tools/call' && Date.now() - lastOk > QUIET_MS) {
+      if ((await bridgeCall(conn, '/health', undefined, PEEK_MS)).status !== 200) {
+        stale = conn;
+        conn = null;
+      }
+    }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (!conn) {
         if (!userId) throw new Error('The cloud computer for this server is not running.');
-        conn = await bridgeFor(userId, { fresh: attempt > 0 });
+        conn = await bridgeFor(userId, { stale });
       }
       const out = await bridgeCall(conn, '/rpc', { id, spec, message, timeoutMs }, timeoutMs + 10_000);
-      if (out.status === 200) return out.body?.message ?? null;
-      if (out.status === 202) return null;
+      if (out.status === 200 || out.status === 202) {
+        lastOk = Date.now();
+        return out.status === 200 ? out.body?.message ?? null : null;
+      }
       if (out.status === 500) throw new Error(out.body?.error || 'The server on the cloud computer failed.');
-      if (!NOT_REACHED.has(out.status) || given) break;
+      const safeAgain = out.redirected || NOT_REACHED.has(out.status) || (MAYBE_REACHED.has(out.status) && message.method !== 'tools/call');
+      if (!safeAgain || given) break;
+      stale = conn;
       conn = null;
     }
+    // Not trusted again after this: the registry drops a closed connection and
+    // the next turn connects afresh, through the handshake that can be repeated.
+    closed = 'The connection to the cloud computer was lost.';
     throw new Error('The cloud computer for this server could not be reached.');
   }
 
@@ -271,4 +339,4 @@ export async function checkOnScratch(config, connect) {
   }
 }
 
-export const __testing = { bridgeSource, NOT_REACHED, SETTING };
+export const __testing = { bridgeSource, NOT_REACHED, MAYBE_REACHED, SETTING };

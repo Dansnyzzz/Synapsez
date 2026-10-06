@@ -155,7 +155,20 @@ function stored(row) {
  * Its tools are offered from the list kept when it was added, and the machine
  * starts only when one of them is called.
  */
-const runsInCloud = (row) => row?.config?.transport !== 'http' && stdioPlace() === 'cloud';
+const runsInCloud = (row) =>
+  row?.config?.transport !== 'http' && (row?.config?.place === 'cloud' || (!row?.config?.place && stdioPlace() === 'cloud'));
+
+/** How long a server checked for everybody is trusted before it is checked again — `@latest` moves. */
+const SHARED_FOR_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * What `mcp_shared.target` holds for a person reading the table: the program's
+ * name only — never its arguments, which is where a key often goes
+ * (`--api-key …`, `--header "Authorization: Bearer …"`).
+ *
+ * @param {{ command?: string }} config
+ */
+export const sharedTarget = (config) => String(config?.command || '').trim().split(/[\\/]/).pop() || 'program';
 
 /** A server's tools as kept on its row and in `mcp_shared`: the parts a model is offered. */
 export function keptTools(tools) {
@@ -431,7 +444,9 @@ async function probeInCloud(config, userId) {
   const store = getStore();
   const signature = mcpSignature(config);
   const known = await store.getSharedMcp(signature).catch(() => null);
-  if (known && Array.isArray(known.tools) && known.tools.length) {
+  const listed = known && Array.isArray(known.tools) && known.tools.length;
+  const recent = listed && Date.now() - new Date(known.checked_at).getTime() < SHARED_FOR_MS;
+  if (recent) {
     await store.noteSharedMcpUse(signature).catch(() => {});
     return describeProbe(known.server, known.tools, { shared: true });
   }
@@ -439,10 +454,12 @@ async function probeInCloud(config, userId) {
   try {
     const found = await checkOnScratch(config, connectMcp);
     await store
-      .saveSharedMcp({ signature, transport: 'stdio', target: [config.command, ...(config.args || [])].join(' '), server: found.server, tools: keptTools(found.tools) })
+      .saveSharedMcp({ signature, transport: 'stdio', target: sharedTarget(config), server: found.server, tools: keptTools(found.tools) })
       .catch((err) => log.warn('mcp: could not share a checked server', { err: err?.message }));
     return describeProbe(found.server, found.tools, { shared: false });
   } catch (err) {
+    // Checked before and failing now: the older list is still the best there is.
+    if (listed) return describeProbe(known.server, known.tools, { shared: true });
     if (!userId || !config.env || !Object.keys(config.env).length) throw err;
     const connection = await connectMcp({ ...config, userId, place: 'cloud' });
     try {

@@ -59,7 +59,7 @@ export function mountMcpRoutes(api, { wrap, body }) {
         transport: row.config?.transport === 'http' ? 'http' : 'stdio',
         // Where a stdio server runs here: on the account's cloud computer, or
         // as a program beside the server on a single-owner machine.
-        runsOn: row.config?.transport === 'http' ? null : stdioPlace(),
+        runsOn: row.config?.transport === 'http' ? null : row.config?.place || stdioPlace(),
         command: row.config?.command ?? null,
         args: row.config?.args ?? [],
         url: row.config?.url ?? null,
@@ -190,7 +190,10 @@ export function mountMcpRoutes(api, { wrap, body }) {
       const saved = await getStore().saveMcpServer(req.user.id, {
         id: req.body?.id || crypto.randomUUID(),
         name,
-        config: sealConfig(place === 'cloud' ? { ...config, tools: keep } : config),
+        // Where it runs is kept with it: a server an ordinary account added to
+        // run on its own cloud computer must never later start beside the
+        // server because ALLOW_MCP_STDIO was switched on (client.js `connectMcp`).
+        config: sealConfig(place === 'cloud' ? { ...config, place, tools: keep } : place ? { ...config, place } : config),
         enabled: req.body?.enabled !== false,
       });
       // The cached connections are keyed by slug, and the set has changed.
@@ -216,7 +219,8 @@ export function mountMcpRoutes(api, { wrap, body }) {
        * be disabled and re-enabled straight past it.
        */
       const enabling = req.body?.enabled !== false;
-      if (enabling && existing.config?.transport !== 'http' && stdioPlace() === 'local' && req.user?.role !== 'admin') {
+      const runsBeside = existing.config?.place ? existing.config.place === 'local' : stdioPlace() === 'local';
+      if (enabling && existing.config?.transport !== 'http' && runsBeside && req.user?.role !== 'admin') {
         return res.status(403).json({
           error:
             'A stdio server runs a program on this server with access to everyone’s stored keys, so only an administrator can switch one on.',

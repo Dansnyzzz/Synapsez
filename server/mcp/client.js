@@ -57,8 +57,12 @@ const CLIENT_INFO = { name: 'ai-remote', version: '1.0.0' };
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** A server that will not greet us in this long is not going to. */
 const HANDSHAKE_TIMEOUT_MS = 20_000;
-/** The same, on the cloud computer, where the first start installs the package. */
-const CLOUD_HANDSHAKE_MS = 150_000;
+/**
+ * The same, on the cloud computer, where the first start installs the package.
+ * With a scratch machine's creation and the bridge's start it stays inside the
+ * function's 300s — see CHECK_MS in cloud.js.
+ */
+const CLOUD_HANDSHAKE_MS = 120_000;
 
 /** JSON-RPC ids only have to be unique per connection. */
 let nextId = 1;
@@ -376,9 +380,13 @@ export async function connectMcp(config) {
     await assertPublic(new URL(config.url));
     transport = httpTransport({ url: config.url, headers: config.headers });
   } else {
-    // A stdio server runs where this deployment allows: as a child of this
-    // process on a single-owner machine, or on the account's own cloud computer.
-    const place = config.place || stdioPlace();
+    // A stdio server runs where it was added to run, as its row records — on
+    // the account's own cloud computer, or as a child of this process on a
+    // single-owner machine — and a row added to run beside the server runs there
+    // only while that is still allowed. A row from before rows recorded it runs
+    // where this deployment allows now.
+    const here = stdioPlace();
+    const place = config.place === 'cloud' ? 'cloud' : config.place === 'local' ? (here === 'local' ? 'local' : null) : here;
     if (place === 'cloud') {
       transport = cloudTransport(config, { userId: config.userId, conn: config.bridge || null });
     } else if (place === 'local') {

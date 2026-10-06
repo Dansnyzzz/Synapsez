@@ -47,9 +47,14 @@ function authorised(req) {
   return KEY.length >= 16 && got.length === want.length && crypto.timingSafeEqual(got, want);
 }
 
-function stop(id, reason) {
+/**
+ * Stop a program. With `only`, only if that program is still the one under
+ * this id — a program that has just exited late must not take down the one
+ * started in its place.
+ */
+function stop(id, reason, only = null) {
   const program = programs.get(id);
-  if (!program) return;
+  if (!program || (only && program !== only)) return;
   programs.delete(id);
   program.closed = reason;
   for (const [, waiting] of program.pending) {
@@ -112,31 +117,15 @@ function start(id, spec) {
   });
   const ended = (why) => {
     const tail = program.stderr.trim().split('\n').slice(-4).join(' ');
-    stop(id, `${why}${tail ? ` It said: ${tail}` : ''}`);
+    stop(id, `${why}${tail ? ` It said: ${tail}` : ''}`, program);
   };
   child.on('error', (err) => ended(`Could not start "${command}": ${err.message}.`));
   child.on('close', (code) => ended(`The server process exited${code == null ? '' : ` with code ${code}`}.`));
   return program;
 }
 
-/** One JSON-RPC message to one program; its answer, or `{ failed }`. */
-async function deliver(id, spec, message, timeoutMs) {
-  let program = programs.get(id);
-  if (!program || program.closed) program = start(id, spec);
-  program.usedAt = Date.now();
-
-  if (message.method === 'initialize' && program.init) {
-    return { message: { jsonrpc: '2.0', id: message.id, result: program.init } };
-  }
-  if (message.id === undefined) {
-    if (message.method === 'notifications/initialized') {
-      if (program.initialized) return { accepted: true };
-      program.initialized = true;
-    }
-    program.child.stdin.write(`${JSON.stringify(message)}\n`);
-    return { accepted: true };
-  }
-
+/** One request to a program, renumbered with its own id; the answer, or `{ failed }`. */
+function ask(program, message, timeoutMs) {
   program.seq += 1;
   const own = program.seq;
   const wait = Math.min(Math.max(Number(timeoutMs) || 30_000, 1000), MAX_WAIT_MS);
@@ -148,9 +137,68 @@ async function deliver(id, spec, message, timeoutMs) {
     program.pending.set(own, { resolve, timer, callerId: message.id });
   });
   program.child.stdin.write(`${JSON.stringify({ ...message, id: own })}\n`);
-  const out = await answer;
-  if (message.method === 'initialize' && out.message?.result) program.init = out.message.result;
+  return answer;
+}
+
+/**
+ * Greet a program, once, and tell it the greeting is done.
+ *
+ * `notifications/initialized` is sent here, straight after the answer, rather
+ * than when the caller's own arrives: that is a separate request, and it can
+ * reach the bridge after the caller's `tools/list` — which a server not yet
+ * told it is initialised may refuse. The caller's copy is then dropped.
+ */
+async function greet(program, message, timeoutMs) {
+  // Two callers greeting a program that has just started share the one
+  // greeting: a second `initialize` would be refused by the program.
+  if (program.greeting) {
+    await program.greeting;
+    return program.init
+      ? { message: { jsonrpc: '2.0', id: message.id, result: program.init } }
+      : { failed: 'The server refused to start a session.' };
+  }
+  program.greeting = ask(program, message, timeoutMs);
+  const out = await program.greeting;
+  program.greeting = null;
+  if (out.message?.result && !program.init) {
+    program.init = out.message.result;
+    program.initialized = true;
+    program.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+  }
   return out;
+}
+
+/** What the bridge says when it has to greet a program itself. */
+const BRIDGE_HELLO = { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'synapsez-bridge', version: '1.0.0' } };
+
+/** One JSON-RPC message to one program; its answer, or `{ failed }`. */
+async function deliver(id, spec, message, timeoutMs) {
+  let program = programs.get(id);
+  if (!program || program.closed) program = start(id, spec);
+  program.usedAt = Date.now();
+
+  if (message.method === 'initialize') {
+    if (program.init) return { message: { jsonrpc: '2.0', id: message.id, result: program.init } };
+    return greet(program, message, timeoutMs);
+  }
+  if (message.id === undefined) {
+    // Already sent by `greet`; any other notification passes through.
+    if (message.method === 'notifications/initialized') return { accepted: true };
+    program.child.stdin.write(`${JSON.stringify(message)}\n`);
+    return { accepted: true };
+  }
+  /*
+   * A program started for a request that is not the greeting — it was stopped
+   * after a quiet spell, or the bridge restarted, while the server still holds
+   * the connection it greeted earlier. A server refuses requests before it has
+   * been initialised, so the bridge greets it first.
+   */
+  if (!program.init) {
+    const hello = await greet(program, { jsonrpc: '2.0', id: '__bridge_hello', method: 'initialize', params: BRIDGE_HELLO }, timeoutMs);
+    if (hello.failed) return hello;
+    if (!program.init) return { failed: 'The server refused to start a session.' };
+  }
+  return ask(program, message, timeoutMs);
 }
 
 function reply(res, status, body) {

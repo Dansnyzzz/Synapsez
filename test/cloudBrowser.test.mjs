@@ -74,6 +74,33 @@ section('the keys that drive the browser are sealed at rest (SEC-037)');
   await store.setUserSetting('u-cb', cb.__testing.SETTING, null);
 }
 
+section('a redirect from the machine is not followed');
+{
+  // The machine is the account's own, with root: what answers on its port can
+  // be the account's listener rather than the service. A redirect from it would
+  // otherwise send this server's next request wherever it pointed.
+  let reached = 0;
+  const inside = http.createServer((req, res) => {
+    reached += 1;
+    res.end('{}');
+  });
+  await new Promise((r) => inside.listen(0, '127.0.0.1', r));
+  const insidePort = /** @type {import('node:net').AddressInfo} */ (inside.address()).port;
+  const bouncer = http.createServer((req, res) => {
+    res.writeHead(302, { location: `http://127.0.0.1:${insidePort}/internal` });
+    res.end();
+  });
+  await new Promise((r) => bouncer.listen(0, '127.0.0.1', r));
+  const bouncerPort = /** @type {import('node:net').AddressInfo} */ (bouncer.address()).port;
+  try {
+    const answer = await cb.__testing.call({ url: `http://127.0.0.1:${bouncerPort}`, key: 'k' }, '/health', undefined, { timeout: 5000 });
+    check('a 302 from the machine reads as no service, and is not followed', answer === null && reached === 0, `${JSON.stringify(answer)} · ${reached} reached`);
+  } finally {
+    inside.close();
+    bouncer.close();
+  }
+}
+
 section('the cloud computer asks before it touches the browser\'s sign-ins (SEC-036)');
 {
   const run = (input) => assessRisk('sandbox_run', input);

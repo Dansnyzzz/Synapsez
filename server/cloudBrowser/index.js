@@ -6,6 +6,7 @@ import { getStore } from '../store/index.js';
 import { saveGenerated } from '../attachments.js';
 import { browserAddress, chargeCloud, machineForUser } from '../sandbox.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
+import { readCapped } from '../util/safeFetch.js';
 
 /**
  * A real browser on the account's cloud computer, which the assistant drives
@@ -38,6 +39,8 @@ const FIRST_START_MS = 180_000;
 const START_MS = 40_000;
 const ACT_MS = 75_000;
 const PEEK_MS = 3_000;
+/** The most one answer from the service may be: a page's text and a screenshot, with room to spare. */
+const MAX_REPLY_BYTES = 32 * 1024 * 1024;
 const EXTEND_EVERY_MS = 5 * 60_000;
 const EXTEND_BY_MS = 15 * 60_000;
 
@@ -130,14 +133,24 @@ async function saveConnection(userId, value) {
 async function call(conn, route, body, { timeout = ACT_MS, signal } = {}) {
   const signals = [AbortSignal.timeout(timeout), ...(signal ? [signal] : [])];
   try {
+    /*
+     * No redirect followed, and the reply read up to a ceiling. The machine is
+     * the account's own, with root: what answers on its port can be the
+     * account's own listener rather than the service, and a 302 from it would
+     * send this server's next request wherever it pointed, from inside the
+     * deployment. A redirect is not the service, so it reads as "not there".
+     */
     const res = await fetch(`${conn.url}${route}`, {
       method: body === undefined ? 'GET' : 'POST',
       headers: { 'x-synz-key': conn.key, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: 'manual',
       signal: AbortSignal.any(signals),
     });
     if (!res.ok) return null;
-    return await res.json();
+    const { buffer, truncated } = await readCapped(res, MAX_REPLY_BYTES);
+    if (truncated) return null;
+    return JSON.parse(buffer.toString('utf8'));
   } catch (err) {
     if (signal?.aborted) throw err;
     return null;
@@ -342,4 +355,4 @@ export async function closeCloudBrowser(userId) {
   await getStore().setUserSetting(userId, SETTING, null);
 }
 
-export const __testing = { service, readConnection, saveConnection, SETTING, DIR };
+export const __testing = { service, readConnection, saveConnection, call, SETTING, DIR };

@@ -20,6 +20,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
+import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { removeTemp } from './lib/tmp.mjs';
 
@@ -576,6 +577,52 @@ section('a stdio server on the cloud computer, behind the bridge');
   const gitnexus = { command: 'npx', args: ['-y', 'gitnexus@latest', 'mcp'] };
   check('a command is the same server for every account, whatever its token', cloud.mcpSignature({ ...gitnexus, env: { TOKEN: 'secret' } }) === cloud.mcpSignature(gitnexus));
   check('  and another argument is another server', cloud.mcpSignature(gitnexus) !== cloud.mcpSignature({ command: 'npx', args: ['-y', 'repomix@latest', '--mcp'] }));
+  const { sharedTarget } = await import('../server/mcp/registry.js');
+  check('what is kept for everybody names the program, never its arguments', sharedTarget({ command: 'npx', args: ['-y', '@upstash/context7-mcp', '--api-key', 'ctx7-SECRET'] }) === 'npx');
+
+  // A program the bridge starts for a request that is not the greeting — the
+  // bridge restarted, or stopped it after a quiet spell, while the server still
+  // holds its greeted connection — is greeted by the bridge first.
+  const cold = await cloud.bridgeCall(conn, '/rpc', {
+    id: 'cold-start',
+    spec: { command: process.execPath, args: [STUB], env: { MCP_STUB_MODE: 'strictinit' } },
+    message: { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'echo', arguments: { message: 'không chào trước' } } },
+    timeoutMs: 20_000,
+  }, 30_000);
+  check('a program started for a tool call is greeted by the bridge first', cold.status === 200 && /không chào trước/.test(JSON.stringify(cold.body?.message?.result)), JSON.stringify(cold.body).slice(0, 200));
+  check('  and the caller gets its own id back', cold.body?.message?.id === 7, String(cold.body?.message?.id));
+
+  // The machine is the account's own, with root: what answers on its port can
+  // be the account's listener, not the bridge. A redirect from it is not followed.
+  const hits = { target: 0 };
+  const target = http.createServer((req, res) => {
+    hits.target += 1;
+    res.end('{}');
+  });
+  const big = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(`{"x":"${'a'.repeat(9 * 1024 * 1024)}"}`);
+  });
+  const targetPort = await freePort();
+  const bigPort = await freePort();
+  await new Promise((r) => target.listen(targetPort, '127.0.0.1', r));
+  await new Promise((r) => big.listen(bigPort, '127.0.0.1', r));
+  const redirector = http.createServer((req, res) => {
+    res.writeHead(307, { location: `http://127.0.0.1:${targetPort}/internal` });
+    res.end();
+  });
+  const redirectPort = await freePort();
+  await new Promise((r) => redirector.listen(redirectPort, '127.0.0.1', r));
+  try {
+    const bounced = await cloud.bridgeCall({ url: `http://127.0.0.1:${redirectPort}`, key: bridgeKey }, '/rpc', { id: 'x', message: {} }, 5000);
+    check('a redirect from the machine is not followed', bounced.redirected === true && hits.target === 0, JSON.stringify({ ...bounced, hits: hits.target }));
+    const huge = await cloud.bridgeCall({ url: `http://127.0.0.1:${bigPort}`, key: bridgeKey }, '/health', undefined, 10_000);
+    check('  and a reply past its ceiling is not read', huge.status === 413 && huge.body === null, String(huge.status));
+  } finally {
+    target.close();
+    big.close();
+    redirector.close();
+  }
 }
 
 section('a server added once is ready for the next account, offered without starting anything');
@@ -649,6 +696,39 @@ section('a server added once is ready for the next account, offered without star
       for (const k of ['VERCEL_TOKEN', 'VERCEL_TEAM_ID', 'VERCEL_PROJECT_ID']) delete process.env[k];
       const local = await add(member, 'stub2');
       check('but not one that would run beside the server, with everybody\'s keys', local.status === 403, `${local.status}`);
+
+      // Its row says where it runs, so switching ALLOW_MCP_STDIO on does not move
+      // the ordinary account's server to beside the server.
+      const memberRow = await store.getUserByEmail('member@mcp.test');
+      registry.forgetMcp(memberRow.id);
+      const stillThere = await registry.mcpTools(memberRow.id);
+      check('a server added to run on the cloud computer stays there when stdio is allowed beside the server', stillThere.servers.find((s) => s.id === 'stub')?.runsOn === 'cloud', JSON.stringify(stillThere.servers));
+
+      // A tool call whose reply may have been lost after it arrived is not sent
+      // again: a tool that sends or deletes something must not run twice.
+      let rpcs = 0;
+      const lossy = http.createServer((req, res) => {
+        if (req.url === '/health') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          return res.end('{"ok":true}');
+        }
+        rpcs += 1;
+        res.writeHead(502);
+        return res.end();
+      });
+      const lossyPort = await freePort();
+      await new Promise((r) => lossy.listen(lossyPort, '127.0.0.1', r));
+      try {
+        const lossyKey = 'lossy-bridge-key'.padEnd(32, 'k');
+        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${lossyPort}`, key: encryptSecret(lossyKey), build: cloud.__testing.bridgeSource().build });
+        const transport = cloud.cloudTransport({ command: process.execPath, args: [STUB] }, { userId: memberRow.id });
+        let lost = '';
+        await transport.request('tools/call', { name: 'echo', arguments: { message: 'once' } }, 5000).catch((err) => (lost = err.message));
+        check('a tool call that may have arrived is not sent twice', rpcs === 1 && /could not be reached/.test(lost), `${rpcs} sent: ${lost}`);
+        check('  and the connection is dropped, so the next turn starts afresh', !!transport.closed, String(transport.closed));
+      } finally {
+        lossy.close();
+      }
     } finally {
       app.close();
     }
