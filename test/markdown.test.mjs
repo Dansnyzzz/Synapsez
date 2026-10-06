@@ -359,6 +359,18 @@ section('whether a cited source was actually in front of the assistant');
   check('a file nobody gave is not', !fileWasSeen('Chap005.pdf', seen));
   check('and nothing is marked while the shelf is unknown', fileWasSeen('Chap005.pdf', { files: null, text: '' }));
 
+  // PERF-020: a long conversation's tool text is folded once per audit, not per citation.
+  {
+    const big = { files: [], text: `${'Trang web dài. '.repeat(400_000)}Báo Cáo Q4.xlsx` };
+    const started = Date.now();
+    let found = 0;
+    for (let i = 0; i < 200; i += 1) if (fileWasSeen(`missing-${i}.pdf`, big) || fileWasSeen('báo cáo q4.xlsx', big)) found += 1;
+    const took = Date.now() - started;
+    check('two hundred citations against a 6 MB conversation stay quick', took < 3000, `${took} ms`);
+    check('  and the answer is the same', found === 200);
+    check('  and a different conversation is not answered from the last one', !fileWasSeen('báo cáo q4.xlsx', { files: [], text: 'other' }));
+  }
+
   rememberSearch('1. Rate limits\n   https://openrouter.ai/docs/limits\n   20 requests per minute.');
   check('a page from a search', pageWasSeen('https://openrouter.ai/docs/limits/', { text: '' }));
   check('a page the person pasted', pageWasSeen('https://vnexpress.net/a-123.html', { text: 'đọc giúp tôi https://vnexpress.net/a-123.html' }));

@@ -18,6 +18,23 @@ const token = new URLSearchParams(location.search).get('t') || '';
 
 applyI18n();
 
+/**
+ * To the app to sign in, with this conversation to be carried on afterwards.
+ *
+ * The token is written into this tab first, under the key the app reads
+ * (`CONTINUE_KEY` in app.js). That is what tells the app a person pressed this
+ * button: a bare `/?continue=` link anybody can write arrives without it, and
+ * is shown after sign-in rather than copied (SEC-050).
+ */
+function signInToCarryOn() {
+  try {
+    sessionStorage.setItem('synapsez:continue-shared', token);
+  } catch {
+    /* no storage: after signing in they are shown the conversation and press again */
+  }
+  location.href = `/?continue=${encodeURIComponent(token)}`;
+}
+
 /** Carry on: copy into this account (or open one's own), then go there. */
 async function carryOn(button) {
   button.disabled = true;
@@ -27,7 +44,7 @@ async function carryOn(button) {
       headers: { 'X-Language': currentLanguage() },
     });
     if (res.status === 401) {
-      location.href = `/?continue=${encodeURIComponent(token)}`;
+      signInToCarryOn();
       return;
     }
     const body = await res.json().catch(() => ({}));
@@ -42,9 +59,12 @@ async function carryOn(button) {
 async function show() {
   const res = await fetch(`/api/shared-chat/${encodeURIComponent(token)}`, { headers: { 'X-Language': currentLanguage() } }).catch(() => null);
   const thread = $('share-thread');
+  const status = $('share-status');
   if (!res || !res.ok) {
     thread.replaceChildren(Object.assign(document.createElement('p'), { className: 'sharepage__loading', textContent: t('sharechat.gone') }));
     $('share-title').textContent = t('sharechat.goneTitle');
+    thread.setAttribute('aria-busy', 'false');
+    status.textContent = t('sharechat.gone');
     return;
   }
   const data = await res.json();
@@ -54,7 +74,12 @@ async function show() {
   $('share-meta').textContent = t('sharechat.meta', { when });
 
   const results = new Map();
-  for (const m of data.messages) if (m.role === 'tool') for (const r of m.results || []) results.set(r.toolCallId, r);
+  // A step that read the owner's own data comes with its result left out (see
+  // publicTranscript); it says so in the visitor's language instead of "no output".
+  for (const m of data.messages) {
+    if (m.role !== 'tool') continue;
+    for (const r of m.results || []) results.set(r.toolCallId, r.hidden ? { ...r, content: t('sharechat.hidden') } : r);
+  }
   thread.replaceChildren();
   for (const m of data.messages) {
     if (m.role === 'user') thread.append(userMessage(m.text, m.attachments || [], m.id, m.createdAt));
@@ -66,6 +91,8 @@ async function show() {
   }
   // Reading only: the copy and edit controls belong to the owner's app.
   for (const node of thread.querySelectorAll('.msg__action[data-act="edit"], .filecard__btn[data-no-open]')) node.remove();
+  thread.setAttribute('aria-busy', 'false');
+  status.textContent = t('sharechat.loaded', { title: data.title || t('sharechat.untitled') });
 
   const go = $('share-go');
   const viewer = data.viewer || {};
@@ -73,7 +100,7 @@ async function show() {
   $('share-note').textContent = viewer.isOwner ? t('sharechat.ownerNote') : viewer.signedIn ? t('sharechat.copyNote') : t('sharechat.signInNote');
   go.addEventListener('click', () => {
     if (!viewer.signedIn) {
-      location.href = `/?continue=${encodeURIComponent(token)}`;
+      signInToCarryOn();
       return;
     }
     carryOn(go);

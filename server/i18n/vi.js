@@ -87,6 +87,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'This conversation is still answering, so it cannot be rewritten underneath itself. Press Stop above the composer, then try again.':
     'Cuộc trò chuyện này vẫn đang trả lời, nên không thể sửa nội dung ngay bên dưới nó. Hãy bấm Dừng ở phía trên ô nhập rồi thử lại.',
   'No such note.': 'Không có ghi chú này.',
+  'There is no earlier version of this note.': 'Ghi chú này không có phiên bản trước để quay lại.',
   'A message cannot be empty.': 'Tin nhắn không được để trống.',
   'Message not found': 'Không tìm thấy tin nhắn',
   'There is not enough here yet to be worth folding up.': 'Chưa đủ nội dung để đáng gộp lại.',
@@ -871,8 +872,16 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Chỉ những gì trợ lý tạo ra mới chia sẻ được bằng link. Tệp tải lên luôn được giữ riêng tư.',
   'Give the `file_id` of a file you made — create_file returns it.': 'Hãy đưa `file_id` của tệp đã tạo — create_file trả về giá trị này.',
   'There is no file {0} made in this account.': 'Không có tệp {0} nào được tạo trong tài khoản này.',
+  'That picture is too large to read for text. Crop it to the part that matters, or send a smaller copy.':
+    'Ảnh này quá lớn để đọc chữ. Hãy cắt lấy phần cần đọc, hoặc gửi bản nhỏ hơn.',
+  'That pattern took too long on this text: it backtracks without end (nested repeats such as (a+)+). Simplify it.':
+    'Mẫu này chạy quá lâu trên đoạn văn bản: nó quay lui không dứt (lặp lồng nhau kiểu (a+)+). Hãy đơn giản hoá mẫu.',
   'This command on the cloud computer looks like it sends data out or destroys something.':
     'Lệnh này trên máy tính đám mây có vẻ gửi dữ liệu ra ngoài hoặc xoá thứ gì đó.',
+  "Runs as root on the cloud computer, where it can reach everything on it, including the cloud browser's sign-ins.":
+    'Chạy với quyền root trên máy tính đám mây — tới được mọi thứ trên máy, kể cả phiên đăng nhập của trình duyệt đám mây.',
+  "Touches the cloud browser's saved sign-ins or a login script on the cloud computer.":
+    'Chạm vào phiên đăng nhập đã lưu của trình duyệt đám mây hoặc tệp khởi động shell trên máy tính đám mây.',
   'Makes this file public: anyone with the link can open it without signing in.':
     'Công khai tệp này: ai có link đều mở được mà không cần đăng nhập.',
   // Scatter charts.

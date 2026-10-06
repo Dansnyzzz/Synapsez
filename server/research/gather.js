@@ -46,7 +46,15 @@ const configured = () =>
 // without depending on module load order — the import-time freeze this audit
 // found twice elsewhere.
 const reputable = () => new Set([...GLOBAL, ...REGIONAL, ...configured()]);
-const PRIMARY = /(^|\.)gov($|\.)|(^|\.)edu($|\.)|europa\.eu$|who\.int$|arxiv\.org$/;
+/**
+ * Anchored to the end of the name (ACC-008). `gov` or `edu` must be the suffix
+ * itself — `.gov`, or `.gov.vn` under a country code — and the named bodies
+ * must be the whole registrable name or a subdomain of it. It matched fragments:
+ * `gov.attacker.com`, `x.edu.attacker.net`, `notarxiv.org` and `fakeeuropa.eu`
+ * all ranked primary, so a claim planted on two such hosts counted as two
+ * independent primary sources and could be graded HIGH.
+ */
+const PRIMARY = /(^|\.)(gov|edu)(\.[a-z]{2})?$|(^|\.)(europa\.eu|who\.int|arxiv\.org)$/;
 const SOCIAL = /(^|\.)(twitter|x|reddit|facebook|instagram|tiktok|medium)\.com$/;
 
 /**

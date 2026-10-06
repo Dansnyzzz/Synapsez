@@ -9,6 +9,10 @@ import { workflowsView, workflowForm } from './workflows.js';
 import { toast, scheduleCard } from './render.js';
 import { humanSize, counted, cronParts } from './format.js';
 import { WEEK, LIMITS } from './schedule-grammar.js';
+import { latestWins } from './serial.js';
+
+/** How long the Repeat menu must sit on a choice before it is saved (UX-005). */
+const FREQUENCY_SETTLE_MS = 700;
 
 /**
  * The shelves: Projects, Artifacts, Scheduled.
@@ -749,12 +753,13 @@ export function createPages({
           ].filter(Boolean);
           const id = escapeHtml(item.id);
           return `
-        <div class="task archived" data-archived="${id}" data-kind="${item.kind}" data-open-archived="${id}"
-             role="button" tabindex="0" aria-label="${escapeHtml(t('pages.archive.open', { name: item.title || t('chat.untitled') }))}">
-          <span class="task__dot"></span>
-          <div class="task__body">
-            <span class="task__name">${escapeHtml(item.title || t('chat.untitled'))}</span>
-            <div class="task__when">${facts.map(escapeHtml).join(' · ')}</div>
+        <div class="task archived" data-archived="${id}" data-kind="${item.kind}" data-open-archived="${id}">
+          <div class="task__main" role="button" tabindex="0" aria-label="${escapeHtml(t('pages.archive.open', { name: item.title || t('chat.untitled') }))}">
+            <span class="task__dot"></span>
+            <div class="task__body">
+              <span class="task__name">${escapeHtml(item.title || t('chat.untitled'))}</span>
+              <div class="task__when">${facts.map(escapeHtml).join(' · ')}</div>
+            </div>
           </div>
           <button class="task__act" type="button" data-restore="${id}">${escapeHtml(t('pages.archive.restore'))}</button>
           ${
@@ -782,8 +787,14 @@ export function createPages({
           if (/** @type {HTMLElement} */ (event.target).closest('button')) return;
           open();
         });
-        card.addEventListener('keydown', (event) => {
-          if (event.target !== card || (event.key !== 'Enter' && event.key !== ' ')) return;
+        /*
+         * The keyboard's way in is the dot-and-title area, a button of its own
+         * beside Restore and Delete rather than around them (ACC-010). A
+         * `role="button"` wrapping other buttons makes them presentational, so
+         * screen readers flattened or hid the two actions on every row.
+         */
+        /** @type {HTMLElement|null} */ (card.querySelector('.task__main'))?.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
           open();
         });
@@ -1415,16 +1426,83 @@ export function createPages({
   /** What opened the panel wants redrawn after a change there, if anything. */
   let paneAfter = null;
 
+  /**
+   * A Repeat choice still sitting out its pause (UX-005), saved now — before the
+   * panel it was made in is redrawn or closed (UX-010). The save reads the
+   * panel's own fields, so once they are gone a choice made a moment before
+   * moving on was lost without a word.
+   */
+  let settlePending = null;
+
+  /**
+   * Changes sent from the panel and not answered yet, by the schedule they
+   * change (UX-013). Opening a schedule waits for its own: one already on its
+   * way is as unsettled as a choice still in its pause, and the row fetched
+   * before it lands is the old one. Not for another schedule's (UX-014) —
+   * waiting on those only held the open back, long enough for the Repeat timer
+   * to reopen the schedule just left.
+   *
+   * @type {Set<{ key: string, request: Promise<unknown> }>}
+   */
+  const landing = new Set();
+  /**
+   * @template T
+   * @param {string} key  `kind:id`, the schedule the request changes
+   * @param {Promise<T>} request
+   * @returns {Promise<T>}
+   */
+  function sent(key, request) {
+    const entry = { key, request };
+    landing.add(entry);
+    const done = () => landing.delete(entry);
+    request.then(done, done);
+    return request;
+  }
+
+  /**
+   * Sends a choice still in its pause now, and resolves once everything sent
+   * for the schedule `key` names has been answered. Never rejects.
+   *
+   * @param {string} [key]
+   */
+  function flushSettling(key) {
+    const save = settlePending;
+    settlePending = null;
+    // A failure says itself: in the panel's status while it is on screen, in a
+    // toast once it is not (see `save`). Nothing here throws on to the caller.
+    if (save) Promise.resolve(save()).catch(() => false);
+    const own = [...landing].filter((entry) => entry.key === key);
+    return Promise.all(own.map((entry) => entry.request.catch(() => false)));
+  }
+
+  /** Counted on every open and close, so that only the latest one draws (UX-013). */
+  let paneTurn = 0;
+
   async function showScheduleInPane(kind, id, { after = null } = {}) {
-    paneAfter = after;
+    const turn = ++paneTurn;
+    // Waited for (UX-012): opening the same schedule again within the pause
+    // fetched it before the save had landed, drew the old Repeat, and the next
+    // edit there wrote that old value back over the choice just saved.
+    await flushSettling(`${kind}:${id}`);
     const { row, project } = await fetchSchedule(kind, id);
+    // Another schedule opened, or the panel closed, while this one waited:
+    // that is where the person went, and this is not drawn over it.
+    if (turn !== paneTurn) return;
+    paneAfter = after;
     const pane = $('taskpane');
-    const root = $('taskpane-body');
     $('taskpane-title').textContent = row.title;
     // No pencil in the header: every field below is edited in place, and a
     // workflow's steps have their own button inside.
-    root.innerHTML = scheduleEditorHtml(kind, row, project);
-    wireScheduleEditor(root, kind, row, project);
+    //
+    // Drawn into an element of its own each time, not straight into the shared
+    // panel body (UX-011). A save still in flight when the panel moves on reads
+    // its fields from here — detached, but with the values this schedule had —
+    // instead of from whatever the body holds by then, which is how one
+    // schedule's settings could be saved into another.
+    const view = document.createElement('div');
+    view.innerHTML = scheduleEditorHtml(kind, row, project);
+    $('taskpane-body').replaceChildren(view);
+    wireScheduleEditor(view, kind, row, project);
     refreshCards(kind, row);
     pane.hidden = false;
     onPaneOpen();
@@ -1433,7 +1511,8 @@ export function createPages({
   function wireScheduleEditor(root, kind, row, project) {
     const q = (name) => /** @type {HTMLInputElement} */ (root.querySelector(`[data-s="${name}"]`));
     const status = q('status');
-    const update = (patch) => (kind === 'workflow' ? api.updateWorkflow(row.id, patch) : api.updateTask(row.id, patch));
+    const key = `${kind}:${row.id}`;
+    const update = (patch) => sent(key, kind === 'workflow' ? api.updateWorkflow(row.id, patch) : api.updateTask(row.id, patch));
 
     /** Show only the rows the chosen frequency uses. */
     const layout = () => {
@@ -1452,7 +1531,12 @@ export function createPages({
         const result = await update(patch);
         const fresh = result.task || result.workflow;
         Object.assign(row, fresh);
-        $('taskpane-title').textContent = row.title;
+        // The panel's own words only while it is still the one on screen
+        // (UX-011): after a close or a switch, writing the title would put this
+        // schedule's name over another's. The cards and the lists hear of the
+        // change either way — they used to be skipped, so a closed panel left
+        // the conversation's card saying the old schedule.
+        if (root.isConnected) $('taskpane-title').textContent = row.title;
         q('next').textContent = nextText(row);
         status.textContent = t('pane.saved');
         status.classList.add('is-ok');
@@ -1463,6 +1547,9 @@ export function createPages({
       } catch (err) {
         status.textContent = err.message;
         status.classList.add('is-error');
+        // A save that fails after its panel has gone — closed, or another
+        // schedule opened — has no status line anyone can see (UX-012).
+        if (!root.isConnected) toast(err.message, 'error');
         return false;
       }
     };
@@ -1481,11 +1568,22 @@ export function createPages({
       if (f === 'monthly') return { frequency: f, monthDays: pressed('data-mday').map((d) => (d === 'last' ? d : Number(d))), times };
       return { frequency: f, times };
     };
-    const saveSchedule = () => save({ schedule: spec(), tz: q('tz').value });
+    // One save in flight, the controls read again when it lands (CODE-036).
+    // Counted as sent for as long as `latestWins` is busy, so a run queued
+    // behind the one on the wire is waited for too (UX-014).
+    const saveLatest = latestWins(() => save({ schedule: spec(), tz: q('tz').value }));
+    const saveSchedule = () => sent(key, saveLatest());
 
     // A new frequency brings different controls, so the panel is drawn again
     // once the row has its new schedule — or stays as it was if that was refused.
-    q('frequency').addEventListener('change', async () => {
+    //
+    // Saved once the choice settles, not on every `change` (UX-005): arrow keys
+    // on a closed select fire one per option in Chrome on Windows and Firefox,
+    // so passing "every 30 minutes" on the way to "daily" saved a schedule that
+    // runs — and spends — every half hour, and the redraw that followed dropped
+    // keyboard focus to the page. Focus is put back on the select afterwards.
+    let settling = null;
+    q('frequency').addEventListener('change', () => {
       // "Weekly" chosen over weekdays or every day would carry all five or
       // seven days with it, save as that again, and the menu would jump back.
       // It starts from one day instead.
@@ -1495,7 +1593,27 @@ export function createPages({
         days.forEach((b, i) => b.setAttribute('aria-pressed', String(i === 0)));
       }
       layout();
-      if (await saveSchedule()) await showScheduleInPane(kind, row.id, { after: paneAfter });
+      clearTimeout(settling);
+      const menu = q('frequency');
+      settlePending = () => {
+        clearTimeout(settling);
+        return saveSchedule();
+      };
+      settling = setTimeout(async () => {
+        settlePending = null;
+        const hadFocus = document.activeElement === menu;
+        const turn = paneTurn;
+        if (await saveSchedule()) {
+          // Somebody who moved on within the pause stays where they went: the
+          // change they made here is saved, but this schedule is not reopened
+          // over whatever the panel shows now (UX-010). Any redraw of the panel
+          // detaches this menu; an open or a close since counts as well, though
+          // the schedule opened may not have drawn yet (UX-014).
+          if (!menu.isConnected || turn !== paneTurn) return;
+          await showScheduleInPane(kind, row.id, { after: paneAfter });
+          if (hadFocus) /** @type {HTMLElement|null} */ (document.querySelector('[data-s="frequency"]'))?.focus();
+        }
+      }, FREQUENCY_SETTLE_MS);
     });
     for (const name of ['everyMinutes', 'everyHours', 'everyDays', 'minute', 'date', 'onceTime', 'start', 'tz']) {
       q(name)?.addEventListener('change', saveSchedule);
@@ -1575,11 +1693,19 @@ export function createPages({
 
     // A manual task has no pause: it never runs by itself to begin with.
     q('toggle')?.addEventListener('click', async () => {
-      if (kind === 'workflow') await api.updateWorkflow(row.id, { enabled: !row.enabled });
-      else await api.setTaskEnabled(row.id, !row.enabled);
+      const turn = paneTurn;
+      try {
+        if (kind === 'workflow') await sent(key, api.updateWorkflow(row.id, { enabled: !row.enabled }));
+        else await sent(key, api.setTaskEnabled(row.id, !row.enabled));
+      } catch (err) {
+        toast(err.message, 'error');
+        return;
+      }
       onTasksChanged();
       paneAfter?.();
-      await showScheduleInPane(kind, row.id, { after: paneAfter });
+      // Not reopened over whatever the panel shows by now, or once it is closed
+      // (UX-012, UX-014: the same rule as the Repeat timer).
+      if (root.isConnected && turn === paneTurn) await showScheduleInPane(kind, row.id, { after: paneAfter });
     });
 
     armed(q('drop'), t('pages.tasks.removeConfirm'), async () => {
@@ -1638,8 +1764,10 @@ export function createPages({
   const showTaskInPane = (id) => showScheduleInPane('task', id);
 
   function closeTaskPane() {
+    flushSettling();
+    paneTurn++;
     $('taskpane').hidden = true;
-    $('taskpane-body').innerHTML = '';
+    $('taskpane-body').replaceChildren();
     onPaneClose();
   }
 

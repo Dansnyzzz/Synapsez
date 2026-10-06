@@ -70,9 +70,11 @@ for (const options of [{ channel: 'chrome' }, { channel: 'msedge' }, {}]) {
 }
 if (!browser) {
   realLog('\n  Skipped: no Chrome, Edge or bundled Chromium to drive.');
-  realLog('  Run `npx playwright install chromium` to enable this suite.\n');
+  realLog('  Run `npx playwright-core install chromium` to enable this suite.\n');
   server.close();
-  process.exit(0);
+  // In CI a browser was installed on purpose; not finding one is a failure,
+  // not a reason to report success for having tested nothing (CFG-027).
+  process.exit(process.env.CI ? 1 : 0);
 }
 
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
@@ -428,6 +430,36 @@ section('attaching photos and files');
   const redoable = await page.evaluate(() => !document.querySelector('.sketch [data-k="redo"]').disabled);
   check('  and redone', redoable);
   await page.click('.sketch [data-k="redo"]');
+
+  // ACC-016: the colours and tools work from the keyboard, and text can be placed without a pointer.
+  await page.focus('.sketch__color[aria-checked="true"]');
+  await page.keyboard.press('ArrowRight');
+  const stepped = await page.evaluate(() => {
+    const on = document.querySelector('.sketch__color[aria-checked="true"]');
+    return {
+      label: on?.getAttribute('aria-label') || '',
+      focused: document.activeElement === on,
+      stops: [...document.querySelectorAll('.sketch__color')].filter((b) => /** @type {HTMLElement} */ (b).tabIndex === 0).length,
+      group: document.querySelector('.sketch__colors')?.getAttribute('aria-label') || '',
+    };
+  });
+  check('an arrow key moves the colour, named in words', stepped.focused && !/^#/.test(stepped.label) && !!stepped.label, JSON.stringify(stepped));
+  check('  in a named group that is one Tab stop', stepped.stops === 1 && !!stepped.group, JSON.stringify(stepped));
+  await page.focus('.sketch__tool[data-tool="pen"]');
+  await page.keyboard.press('ArrowRight');
+  await page.focus('.sketch__canvas');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(100);
+  const typing = await page.evaluate(() => document.activeElement?.classList.contains('sketch__type'));
+  check('with Text chosen, Enter on the picture opens a text box', typing);
+  await page.keyboard.type('Hi');
+  await page.keyboard.press('Enter');
+  const written = await page.evaluate(() => ({
+    undo: !document.querySelector('.sketch [data-k="undo"]').disabled,
+    back: document.activeElement?.classList.contains('sketch__canvas'),
+  }));
+  check('  and Enter writes it, with focus back on the picture', written.undo && written.back, JSON.stringify(written));
+
   await page.click('.sketch [data-k="save"]');
   await page.waitForTimeout(1500);
   const saved = await page.evaluate(() => ({
@@ -4193,6 +4225,46 @@ section('a schedule set up in a conversation is a card that opens it');
       },
     ],
   });
+  // A second schedule further down the same conversation, for moving from one
+  // schedule to another (UX-014). Every check below that means the first card
+  // finds it first.
+  const other = await store.createTask(user.id, {
+    id: 't-card2',
+    title: 'Bản tin tối',
+    prompt: 'Tóm tắt tin buổi tối',
+    cron: '19:00',
+    nextRunAt: new Date(Date.now() + 86_400_000).toISOString(),
+    tz: 'Asia/Ho_Chi_Minh',
+  });
+  await store.appendMessage(user.id, 'c-sched', {
+    id: 'm-s4',
+    role: 'assistant',
+    text: '',
+    toolCalls: [{ id: 'call-s2', name: 'schedule_task', input: { title: other.title, when: '19:00' } }],
+  });
+  await store.appendMessage(user.id, 'c-sched', {
+    id: 'm-s5',
+    role: 'tool',
+    results: [
+      {
+        toolCallId: 'call-s2',
+        name: 'schedule_task',
+        content: 'Scheduled.',
+        isError: false,
+        schedule: {
+          kind: 'task',
+          id: other.id,
+          title: other.title,
+          cron: other.cron,
+          nextRunAt: other.next_run_at,
+          tz: other.tz,
+          enabled: true,
+          prompt: other.prompt,
+          existing: false,
+        },
+      },
+    ],
+  });
 
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
@@ -4312,6 +4384,168 @@ section('a schedule set up in a conversation is a card that opens it');
   const ended = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.ends_on);
   check('an end date set in the panel is kept', ended === '2999-12-31', String(ended));
 
+  // UX-010: changing the repeat and leaving within the pause. The change is saved
+  // on the way out, and the panel is not reopened behind the person's back.
+  const cronBefore = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.cron);
+  const cardBefore = await page.evaluate(() => document.querySelector('#messages .schedcard__rows')?.textContent || '');
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await page.click('#taskpane-close');
+  await page.waitForTimeout(1500);
+  const movedOn = await page.evaluate(async () => ({
+    closed: document.getElementById('taskpane').hidden,
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+    card: document.querySelector('#messages .schedcard__rows')?.textContent || '',
+  }));
+  check('a repeat changed just before closing the panel is still saved (UX-010)', !!movedOn.cron && movedOn.cron !== cronBefore, `${cronBefore} → ${movedOn.cron}`);
+  check('  and the panel is not reopened behind the person\'s back', movedOn.closed, JSON.stringify(movedOn));
+  // UX-011: and the card in the conversation follows, though its panel is gone.
+  check('  the schedule card in the conversation shows the change too (UX-011)', movedOn.card !== cardBefore && movedOn.card.length > 0, `${cardBefore} → ${movedOn.card}`);
+  // Back to where the checks below expect to start: the task open in the panel.
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(1200);
+
+  // UX-012: the same schedule opened again within the pause, while its save is
+  // slow to land, shows the choice — not the old value, ready to be saved back.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 900));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'weekly');
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/tasks/t-card');
+  const reopened = await page.evaluate(async () => ({
+    shown: /** @type {HTMLSelectElement} */ (document.querySelector('#taskpane [data-s="frequency"]'))?.value,
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+  }));
+  check('reopened within the pause, the panel shows the choice just made (UX-012)', reopened.shown === 'weekly', JSON.stringify(reopened));
+
+  // And a save that fails once its panel has gone says so where it can be seen.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not save the schedule (test).' }) });
+    } else await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await page.click('#taskpane-close');
+  await page.waitForTimeout(1200);
+  await page.unroute('**/api/tasks/t-card');
+  const told = await page.evaluate(() => [...document.querySelectorAll('#toasts-alert > *, #toasts > *')].map((n) => n.textContent).join(' | '));
+  check('  and a save that fails after the panel closed is said in a toast', /Could not save the schedule \(test\)/.test(told), told);
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(1200);
+
+  // UX-013: opened again after the pause, while the save it ended with is still
+  // on its way — the open waits for that too, not only for a save not yet sent.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await page.waitForTimeout(1000);
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/tasks/t-card');
+  const inFlight = await page.evaluate(async () => ({
+    shown: /** @type {HTMLSelectElement} */ (document.querySelector('#taskpane [data-s="frequency"]'))?.value,
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+  }));
+  check('reopened while its save is still on the way, the panel shows the choice too (UX-013)', inFlight.shown === 'daily', JSON.stringify(inFlight));
+
+  // And closed while that open is still waiting, the panel stays closed: the
+  // open that was waiting does not draw itself back over the close.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    await new Promise((r) => setTimeout(r, route.request().method() === 'PATCH' ? 1500 : 600));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'weekly');
+  await page.waitForTimeout(1000);
+  await page.click('#messages .schedcard__pill');
+  await page.click('#taskpane-close');
+  await page.waitForTimeout(3000);
+  await page.unroute('**/api/tasks/t-card');
+  const stayed = await page.evaluate(async () => ({
+    closed: document.getElementById('taskpane').hidden,
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+  }));
+  check('  and closed while that open waits, it stays closed (UX-013)', stayed.closed, JSON.stringify(stayed));
+  check('  with the choice saved all the same', !!stayed.cron && stayed.cron !== inFlight.cron, `${inFlight.cron} → ${stayed.cron}`);
+
+  // UX-012's Pause: pressed just before closing, it is kept, and the panel is
+  // not reopened over the close when the answer comes back.
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(1200);
+  const enabledBefore = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.enabled);
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 900));
+    await route.continue();
+  });
+  await page.click('#taskpane [data-s="toggle"]');
+  await page.click('#taskpane-close');
+  await page.waitForTimeout(1800);
+  await page.unroute('**/api/tasks/t-card');
+  const paused = await page.evaluate(async () => ({
+    closed: document.getElementById('taskpane').hidden,
+    enabled: (await (await fetch('/api/tasks/t-card')).json()).task?.enabled,
+  }));
+  check('Pause pressed just before closing is kept, and the panel stays closed (UX-012)', paused.closed && paused.enabled === !enabledBefore, `${enabledBefore} → ${JSON.stringify(paused)}`);
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(1200);
+
+  // UX-014: another schedule opened while the save is on its way is the one
+  // shown. Its open does not wait on the first schedule's save, and the Repeat
+  // timer, answered before the other schedule has drawn, does not reopen the
+  // schedule just left.
+  const pillOf = (n) => page.evaluate((i) => /** @type {HTMLElement} */ ([...document.querySelectorAll('#messages .schedcard__pill')][i]).click(), n);
+  const cronBeforeMove = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.cron);
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 1200));
+    await route.continue();
+  });
+  await page.route('**/api/tasks/t-card2', async (route) => {
+    await new Promise((r) => setTimeout(r, 2000));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await page.waitForTimeout(1000);
+  await pillOf(1);
+  await page.waitForTimeout(3500);
+  await page.unroute('**/api/tasks/t-card');
+  await page.unroute('**/api/tasks/t-card2');
+  const moved = await page.evaluate(async () => ({
+    open: !document.getElementById('taskpane').hidden,
+    title: document.getElementById('taskpane-title')?.textContent || '',
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+  }));
+  check('another schedule opened while a save is on its way is the one shown (UX-014)', moved.open && moved.title === 'Bản tin tối', JSON.stringify(moved));
+  check('  and the change made before leaving is saved', !!moved.cron && moved.cron !== cronBeforeMove, `${cronBeforeMove} → ${moved.cron}`);
+
+  // And Pause/Resume pressed just before opening another schedule does not
+  // pull the panel back when its answer comes.
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+  const enabledBeforeMove = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.enabled);
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 900));
+    await route.continue();
+  });
+  await page.route('**/api/tasks/t-card2', async (route) => {
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  await page.click('#taskpane [data-s="toggle"]');
+  await pillOf(1);
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/tasks/t-card');
+  await page.unroute('**/api/tasks/t-card2');
+  const toggledAway = await page.evaluate(async () => ({
+    title: document.getElementById('taskpane-title')?.textContent || '',
+    enabled: (await (await fetch('/api/tasks/t-card')).json()).task?.enabled,
+  }));
+  check('  and so is one opened just after Pause/Resume, which is kept (UX-014)', toggledAway.title === 'Bản tin tối' && toggledAway.enabled === !enabledBeforeMove, `${enabledBeforeMove} → ${JSON.stringify(toggledAway)}`);
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+
   await page.click('#taskpane-close');
   check('its close button gives the panel back', await page.evaluate(() => document.getElementById('taskpane').hidden));
   // The side area was closed before the task opened, so one close ends both —
@@ -4320,6 +4554,7 @@ section('a schedule set up in a conversation is a card that opens it');
   check('one close, not two: the side area is left as it was found', detailNow === detailWasOpen, `before ${detailWasOpen}, after ${detailNow}`);
 
   await store.deleteTask(user.id, task.id);
+  await store.deleteTask(user.id, other.id);
 }
 
 /**
@@ -4918,6 +5153,66 @@ section('a citation chip opens its list of sources');
   await page.keyboard.press('Escape');
   await page.evaluate(() => document.querySelector('.prose .cite')?.closest('.prose')?.remove());
 
+  // UX-007: a pinned card follows its chip when the transcript scrolls under it,
+  // and goes only when the chip leaves the view.
+  const scroll = await page.evaluate(async () => {
+    const { renderMarkdown } = await import('/js/markdown.js');
+    const box = document.createElement('div');
+    box.className = 'prose';
+    box.style.cssText = 'position:fixed;top:80px;left:80px;z-index:2000;width:600px;height:300px;overflow:auto;background:var(--bg)';
+    box.innerHTML = `${renderMarkdown('Một câu. ([OpenRouter](https://openrouter.ai/a))')}<div style="height:2000px"></div>`;
+    document.body.append(box);
+    const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    box.querySelector('.cite').click();
+    await frame();
+    const pop = /** @type {HTMLElement} */ (document.querySelector('.cite-pop'));
+    const before = pop.getBoundingClientRect().top;
+    box.scrollTop = 20;
+    await frame();
+    const after = { open: !pop.hidden, moved: Math.round(before - pop.getBoundingClientRect().top) };
+    box.scrollTop = 600;
+    await frame();
+    const gone = pop.hidden;
+    box.remove();
+    return { ...after, gone };
+  });
+  check('a pinned card stays open while the transcript scrolls a little', scroll.open, JSON.stringify(scroll));
+  check('  moving with its chip', scroll.moved === 20, JSON.stringify(scroll));
+  check('  and closes once the chip has scrolled out of view', scroll.gone, JSON.stringify(scroll));
+
+  // UX-009: in the reply being written, the prose is rewritten every frame and the
+  // chip with it. A pinned card follows the chip that replaced it, and closes only
+  // once no chip at that place cites the same sources.
+  const streaming = await page.evaluate(async () => {
+    const { renderMarkdown } = await import('/js/markdown.js');
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;top:80px;left:80px;z-index:2000;width:600px;height:300px;overflow:auto;background:var(--bg)';
+    const prose = document.createElement('div');
+    prose.className = 'prose';
+    box.append(prose);
+    document.body.append(box);
+    const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const said = 'Một câu. ([OpenRouter](https://openrouter.ai/a))';
+    prose.innerHTML = `${renderMarkdown(said)}<div style="height:2000px"></div>`;
+    prose.querySelector('.cite').click();
+    await frame();
+    const pop = /** @type {HTMLElement} */ (document.querySelector('.cite-pop'));
+    // The next streamed frame: the same words and more, drawn afresh.
+    prose.innerHTML = `${renderMarkdown(`${said} Câu tiếp theo đang được viết`)}<div style="height:2000px"></div>`;
+    box.scrollTop = 10;
+    await frame();
+    const kept = { open: !pop.hidden, expanded: prose.querySelector('.cite')?.getAttribute('aria-expanded') };
+    // A frame where that citation is no longer there.
+    prose.innerHTML = `${renderMarkdown('Một câu khác, không trích dẫn.')}<div style="height:2000px"></div>`;
+    box.scrollTop = 20;
+    await frame();
+    const gone = pop.hidden;
+    box.remove();
+    return { ...kept, gone };
+  });
+  check('a card pinned on the reply being written survives its repaint (UX-009)', streaming.open && streaming.expanded === 'true', JSON.stringify(streaming));
+  check('  and closes once that citation is no longer there', streaming.gone, JSON.stringify(streaming));
+
   // A source the conversation cannot account for is marked, on the chip and in the card.
   const audit = await page.evaluate(async () => {
     const { renderMarkdown } = await import('/js/markdown.js');
@@ -4987,8 +5282,22 @@ section('an oversized upload is made to fit, or refused in words');
       refused = err.message;
     }
 
+    // PERF-021: the big photo is shrunk first, and its thumbnail drawn from the shrunk copy.
+    const { preparedWithThumb } = await import('/js/shrink.js');
+    const { thumbnailFor } = await import('/js/thumbnail.js');
+    // The thumbnail being handed the shrunk copy is the proof of order: that
+    // copy does not exist until preparing has finished.
+    const seen = [];
+    const [readyBig, drawnBig] = await preparedWithThumb(big, async (f) => {
+      seen.push({ size: f.size, type: f.type });
+      return thumbnailFor(f);
+    });
+
     const bytesOf = (b64) => Math.floor((b64.length * 3) / 4);
     return {
+      oneAtATime: seen.length === 1 && seen[0].size === atob(readyBig.data).length && seen[0].size < big.size && seen[0].type === 'image/jpeg',
+      seen,
+      thumbDrawn: /^data:image\/jpeg;base64,/.test(drawnBig?.thumb || ''),
       limit: MAX_UPLOAD_BYTES,
       // A small file is passed through: nothing is re-encoded for the sake of
       // it, because a 200KB PNG through a JPEG round trip comes out worse.
@@ -5007,6 +5316,8 @@ section('an oversized upload is made to fit, or refused in words');
   check('an oversized photo is re-encoded to fit', out.shrunkTo !== null && out.shrunkTo <= out.limit, `${out.shrunkTo}`);
   check('and says it was resized', out.shrunkKind === 'image', String(out.shrunkKind));
   check('under a name that matches what was sent', out.shrunkName === 'photo.jpg', out.shrunkName);
+  check('its thumbnail is drawn from the shrunk copy, not by decoding the original again (PERF-021)', out.oneAtATime, JSON.stringify(out.seen));
+  check('  and is still drawn', out.thumbDrawn);
   // Nothing can shrink a deck honestly, so the refusal names the file, its
   // size, what fits, and what to do — rather than a JSON parse error.
   check('what cannot be shrunk is refused in words', /slides\.pptx/.test(out.refused || ''), out.refused);
@@ -6565,6 +6876,46 @@ section('the empty composer is one straight line, however narrow');
     `${narrow.tight.placeholder} — field ${narrow.wide.w}px → ${narrow.tight.w}px — changes: ${narrow.seen.join(' | ')}`,
   );
   check('and comes back when there is room', narrow.restored === narrow.wide.placeholder, narrow.restored);
+}
+
+section('a bare ?continue= link is shown after signing in, never copied (SEC-050)');
+{
+  // A fresh, signed-out browser: somebody whose session has expired.
+  const token = 'tokBareContinueLink0000000000000000000000_0';
+  const visit = async (pressed, { bareFirst = false } = {}) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const tab = await context.newPage();
+    const forks = [];
+    tab.on('request', (req) => {
+      if (/\/api\/shared-chat\/[^/]+\/fork$/.test(req.url())) forks.push(req.url());
+    });
+    if (bareFirst) {
+      // A bare link opened earlier in the same tab, and left at the sign-in screen.
+      await tab.goto(`http://127.0.0.1:${PORT}/?continue=tokEarlierBareLink000000000000000000000_00`, { waitUntil: 'domcontentloaded' });
+      await tab.waitForTimeout(400);
+    }
+    if (pressed) {
+      // What the shared page's own button does before it sends the visitor here.
+      await tab.goto(`http://127.0.0.1:${PORT}/share.html?t=${token}`, { waitUntil: 'domcontentloaded' });
+      await tab.evaluate((t) => sessionStorage.setItem('synapsez:continue-shared', t), token);
+    }
+    await tab.goto(`http://127.0.0.1:${PORT}/?continue=${token}`, { waitUntil: 'domcontentloaded' });
+    await tab.waitForTimeout(600);
+    await tab.fill('#gate-email', 'ui@test.local');
+    await tab.fill('#gate-password', 'a-long-enough-password');
+    await tab.click('#gate-submit');
+    await tab.waitForTimeout(2500);
+    const where = new URL(tab.url());
+    await context.close();
+    return { path: where.pathname, t: where.searchParams.get('t'), forks: forks.length };
+  };
+  const bare = await visit(false);
+  check('a link nobody pressed opens the shared page after sign-in', bare.path === '/share.html' && bare.t === token, JSON.stringify(bare));
+  check('  and asks for no copy', bare.forks === 0, JSON.stringify(bare));
+  const pressed = await visit(true);
+  check('the shared page\'s own button still carries it on after sign-in', pressed.forks === 1 && pressed.path === '/', JSON.stringify(pressed));
+  const after = await visit(true, { bareFirst: true });
+  check('  even after a bare link was opened earlier in the same tab (UX-008)', after.forks === 1 && after.path === '/', JSON.stringify(after));
 }
 
 await browser.close();

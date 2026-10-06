@@ -141,7 +141,7 @@ section('editing an image');
    * Done through a canvas rather than by adding `sharp`.
    *
    * `sharp` means a native module with prebuilt binaries per platform and per Node
-   * version — a real dependency in a project that keeps nine. The browser is
+   * version — a real dependency in a project that keeps few. The browser is
    * already installed and has both a decoder and an encoder.
    */
   const logo = path.join(WORKSPACE, 'logo.png');

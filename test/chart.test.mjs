@@ -20,7 +20,21 @@ const check = (l, ok, d = '') => {
 };
 
 const { renderChart, __testing } = await import('../server/tools/chart.js');
-const { formatValue, PALETTE } = __testing;
+const { formatValue, PALETTE, axisTicks } = __testing;
+
+section('an axis for very small numbers ends (PERF-015)');
+{
+  // A step under 0.0005 used to round back onto the same tick for ever.
+  const tiny = axisTicks(0.0000121);
+  check('a coin priced at 0.000012 gets a handful of ticks', tiny.length >= 2 && tiny.length <= 6, JSON.stringify(tiny));
+  check('  rising, and reaching the largest value', tiny.every((t, i) => i === 0 || t > tiny[i - 1]) && tiny[tiny.length - 1] >= 0.0000121, JSON.stringify(tiny));
+  check('round numbers are kept round', JSON.stringify(axisTicks(1750)) === '[0,500,1000,1500,2000]', JSON.stringify(axisTicks(1750)));
+  check('and a decimal step has no float noise', JSON.stringify(axisTicks(0.7)) === '[0,0.2,0.4,0.6,0.8]', JSON.stringify(axisTicks(0.7)));
+  for (const type of ['bar', 'hbar', 'line', 'stacked']) {
+    const svg = renderChart({ type, title: 'SHIB', data: { labels: ['Mon', 'Tue', 'Wed'], series: [{ name: 'USD', values: [0.0000121, 0.0000118, 0.0000125] }] } });
+    check(`a ${type} chart of them is drawn rather than hanging`, typeof svg === 'string' && svg.includes('<svg'));
+  }
+}
 
 const scores = { labels: ['ADA', 'FIL', 'WLD', 'ENA'], series: [{ name: 'Tổng điểm', values: [36, 26, 27, 34] }] };
 /** The heights of the drawn bars, in document order. */

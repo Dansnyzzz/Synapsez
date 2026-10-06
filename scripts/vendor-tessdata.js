@@ -20,13 +20,17 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+// The one list of languages, so the models shipped are the ones the server reads.
+import { LANGS } from '../server/ocr.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
-const LANGS = ['vie', 'eng'];
 const SET = '4.0.0_best_int';
 const out = path.join(ROOT, 'server', 'assets', 'tessdata');
 
+// Emptied first, as the katex and pdfjs copies are: a language taken off the
+// list would otherwise stay in the repository and in every deployment.
+fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
 const manifest = {};
 for (const lang of LANGS) {

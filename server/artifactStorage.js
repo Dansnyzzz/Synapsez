@@ -102,18 +102,20 @@ export async function setArtifactValue(userId, artifactId, key, value) {
   return Object.keys(bucket).length;
 }
 
+/**
+ * Removed in place, never read-all-then-written (CODE-042): the same lost update
+ * `setArtifactValue` was fixed for. A page clearing one key while saving
+ * another — `removeItem` and `setItem` are fire-and-forget, so in parallel is
+ * the ordinary case — used to erase the save.
+ */
 export async function deleteArtifactValue(userId, artifactId, key) {
   const store = getStore();
-  const all = await readAll(userId);
-  const bucket = { ...(all[artifactId] || {}) };
   if (key == null) {
-    delete all[artifactId];
-    await store.setUserSetting(userId, KEY, all);
+    await store.removeUserSettingKey(userId, KEY, artifactId);
     return 0;
   }
-  delete bucket[String(key)];
-  await store.setUserSetting(userId, KEY, { ...all, [artifactId]: bucket });
-  return Object.keys(bucket).length;
+  const value = await store.removeUserSettingKeyIn(userId, KEY, artifactId, String(key));
+  return Object.keys(value?.[artifactId] || {}).length;
 }
 
 /**

@@ -677,7 +677,8 @@ machine.
 | Browser sandbox, page animating | 34–48 fps, ~10KB per frame |
 
 `SCREEN_WIDTH` (default 1280) is the biggest lever on both bandwidth and rate; `SCREEN_FPS`
-(default 10) caps the desktop mirror; `SCREEN_QUALITY` (default 55) sets JPEG quality.
+(default 10) caps the desktop mirror; `SCREEN_QUALITY` sets JPEG quality — default 55 for the desktop mirror
+and a still screenshot, 58 for the browser's live view.
 
 ---
 
@@ -1517,15 +1518,53 @@ sets `DATABASE_URL` for you. The schema is created automatically on first reques
 | `TAVILY_API_KEY` or `BRAVE_API_KEY` | recommended | Reliable web search. Without one, search scrapes DuckDuckGo, which is best-effort. |
 | `ANTHROPIC_API_KEY` etc. | **usually leave blank** | A shared fallback every account without its own key spends against. See the warning above. |
 | `PUBLIC_URL` | recommended | Your deployment URL. Used to build links in emails; without it they are guessed from the request. |
+| `INSIGHTS` | optional | `off` stops the app loading Vercel Web Analytics and Speed Insights. On by default on Vercel only — see below. |
+| `SPEED_INSIGHTS_SAMPLE_RATE` | optional | Share of page loads whose speed is sent, `0`–`1` (default `1`). Lower it if Speed Insights nears its free allowance. |
 
 Worker tokens are not environment variables: each person generates their own in the app, under
 **Settings → Worker**.
+
+**Page views and page speed.** On Vercel the app loads Vercel Web Analytics and Speed Insights
+(`@vercel/analytics`, `@vercel/speed-insights`, copied into `public/vendor/vercel` by
+`npm run vendor:insights`). Turn both on once in the dashboard (**Analytics** and **Speed Insights**
+tabs). Both are free on Hobby within their allowance — 50,000 analytics events a month and 10,000
+speed events over a rolling 30 days; past either, collection pauses and nothing is billed. What is
+sent is only the page's address cut to its path (this app keeps reset, share and chat tokens after
+`?`, and those never leave), no cookies, and nothing at all from a browser set to Do Not Track or
+Global Privacy Control. Settings → Memory & privacy tells people so. A self-hosted copy loads
+neither.
 
 Get one of the three required ones wrong and the deployment says so plainly — every request answers
 `503` naming the variable that is missing, rather than a platform error page with the reason buried
 in a log. `npm run test:deploy` checks the same things locally before you push: that `vercel.json`
 declares the files read at runtime, that the schema migrates an existing database rather than
 assuming a fresh one, and that the serverless-only branches behave.
+
+<details>
+<summary><b>Everything else the server reads</b> — none of it needed; each has a default that suits the free tier</summary>
+
+| Variable | What it changes |
+|---|---|
+| `POSTGRES_URL` | Read when `DATABASE_URL` is not set; some integrations use this name. |
+| `DATA_DIR` | Local runs only: where the in-process Postgres keeps its files. Default `data/`. |
+| `PORT` | Local runs only: the port the app listens on. Default `5173`. |
+| `MAX_TURN_TOKENS` | Tokens one turn may spend before it stops: 2,000,000 by default on a shared key, no limit on an account's own key. `0` turns the limit off. |
+| `PRICE_MARKUP` | The markup shown on top of provider prices, as a fraction — `0.1` (ten percent) by default. A value outside 0–1 is ignored. Stored costs stay the provider's own. |
+| `STREAM_STALL_FIRST_MS` / `STREAM_STALL_MS` | How long a reply may stay silent before it counts as stalled: before its first token (default `150000`) and between tokens (default `90000`). |
+| `IMAGE_MODEL` | The model `generate_image` uses. Default `gemini-3.1-flash-image`. |
+| `GOOGLE_SEARCH_MODEL` | The Gemini model behind grounded web search. Default `gemini-2.5-flash`. `GOOGLE_API_KEY` is read when `GEMINI_API_KEY` is not set. |
+| `GOOGLE_REDIRECT_URI` | Overrides the Google connector's callback, `<your origin>/api/connectors/google/callback` by default. See [docs/google.md](docs/google.md). |
+| `ANTHROPIC_BASE_URL` | Sends Anthropic requests to another endpoint, such as a proxy — what `OPENAI_BASE_URL` does for OpenAI. |
+| `THESPORTSDB_KEY` | Your own TheSportsDB key for the scores card. Default is their free test key. |
+| `RESEARCH_REPUTABLE_DOMAINS` | Comma-separated sites deep research counts as reputable, on top of its built-in list. |
+| `SANDBOX_DISABLED` | `1` hides the cloud sandbox. On Vercel it is offered automatically; elsewhere it needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`. |
+| `CLOUD_ACTIONS_PER_DAY` / `CLOUD_ACTIONS_TOTAL_PER_DAY` | Cloud browser and sandbox actions a day, per account (default `60`) and in all (default `400`) — sized to Hobby's CPU allowance. Raise them on a paid plan. |
+| `WORKER_IDLE_SLEEP_MS` | How long a connected computer's poll waits while its account is idle: `4000` on Vercel, `0` elsewhere. It saves function calls on the free tier; `0` turns it off. |
+| `ALLOW_MCP_STDIO` | `true` lets connectors start programs on the server (stdio MCP). Off by default, and never on Vercel: on a shared server that is running a command somebody typed. |
+| `LOG_LEVEL` / `LOG_FORMAT` | `debug` adds debug lines. `json` or `text` overrides the format, which is JSON on Vercel and readable text elsewhere. |
+| `REPO_URL` | The repository the "connect a computer" command clones. Default this project's; set it on a fork. |
+
+</details>
 
 ### 5. Create the first account
 
@@ -1998,24 +2037,26 @@ npm run make-admin -- you@example.com        # promote an account to administrat
 npm run pair                  # the same thing, under its older name
 npm run lint                  # eslint
 npm run check                 # lint + every fast suite — the one to run before pushing
-npm test                      # all six fast suites
+npm test                      # every fast suite
+npm run gate                  # lint, hook tests, eval, type-check, npm test — what "done" means here
 npm run test:deploy           # just the Vercel paths
 npm run test:ui               # the real app in a real browser: layout, theme, filtering
 ```
 
-`npm test` runs six suites, and they are worth knowing apart:
+`npm test` runs every fast suite, one file per area. Six of them are worth knowing apart, and each
+has a script of its own:
 
 | | |
 |---|---|
-| `test:isolation` | **273 checks.** Real SQL against an in-process Postgres, then deliberate attempts to cross the boundary between two accounts. Also the crypto, the risk classifier, redaction, and the SSRF guards. |
-| `test:agent` | **52 checks.** The loop itself, driven with a stubbed provider — sub-agents, transcript re-ordering, approval gating, and the compaction that keeps a long conversation inside the window. It exists because `run_parallel` shipped calling an async generator with `await`, which silently did nothing at all, and no test would have noticed. |
-| `test:http` | **74 checks.** The app as something on a port: which routes need a session, which need an admin, that a password change really ends the other sessions, that guessing gets throttled, that a conversation runs in one place. |
-| `test:devices` | **100 checks.** Pairing, several computers on one account, moving a working folder from the app, and the new-model announcement. Two pairing endpoints are unauthenticated by necessity, so what an unclaimed pairing *cannot* do is pinned down hard. |
-| `test:attachments` | **74 checks.** Photos and files: what is accepted, where the bytes live, who may fetch them, and what each provider adapter finally builds out of them. |
-| `test:deploy` | **69 checks.** The app with `VERCEL=1`, plus the static checks that decide whether a build boots at all. Local and hosted are genuinely different programs here — the store, the screen transport, the scheduler and the local-tool path all fork on it — and production is the worst place to discover which half is wrong. |
+| `test:isolation` | Real SQL against an in-process Postgres, then deliberate attempts to cross the boundary between two accounts. Also the crypto, the risk classifier, redaction, and the SSRF guards. |
+| `test:agent` | The loop itself, driven with a stubbed provider — sub-agents, transcript re-ordering, approval gating, and the compaction that keeps a long conversation inside the window. It exists because `run_parallel` shipped calling an async generator with `await`, which silently did nothing at all, and no test would have noticed. |
+| `test:http` | The app as something on a port: which routes need a session, which need an admin, that a password change really ends the other sessions, that guessing gets throttled, that a conversation runs in one place. |
+| `test:devices` | Pairing, several computers on one account, moving a working folder from the app, and the new-model announcement. Two pairing endpoints are unauthenticated by necessity, so what an unclaimed pairing *cannot* do is pinned down hard. |
+| `test:attachments` | Photos and files: what is accepted, where the bytes live, who may fetch them, and what each provider adapter finally builds out of them. |
+| `test:deploy` | The app with `VERCEL=1`, plus the static checks that decide whether a build boots at all. Local and hosted are genuinely different programs here — the store, the screen transport, the scheduler and the local-tool path all fork on it — and production is the worst place to discover which half is wrong. |
 
-All six are fast and need no network, no keys and no browser. 642 checks in a few seconds; run them
-constantly. `npm run test:ui` adds 169 more in a real browser.
+None of them needs the network, a key or a browser; run them constantly. `npm run test:ui` adds
+the checks that do need a real browser.
 
 `npm run test:ui` drives the real app in a real browser. It uses Chrome or Edge if you have one and
 falls back to Playwright's own Chromium, so `npx playwright install chromium` makes it work anywhere.
@@ -2034,6 +2075,20 @@ you exercise the relay end to end.
 
 `OPENAI_BASE_URL` points the OpenAI provider anywhere OpenAI-compatible — Ollama, LM Studio, vLLM —
 so you can run a local model with the same agent loop.
+
+The machine worker reads a few of its own. `npm run connect` writes the first three for you.
+
+| Variable | What it changes |
+|---|---|
+| `SERVER_URL` | The app it connects to. Default `http://localhost:5173`. |
+| `WORKER_TOKEN` / `WORKER_ID` | Its credential and its name for itself, from pairing. |
+| `DEVICE_NAME` | What the app calls this computer. Default its hostname. |
+| `ALLOW_INSECURE_SERVER` | `true` lets it reach a public address over plain `http`. Without it, `http` works only to this machine and (with a warning) to a private network: anywhere else the token would cross the internet in the clear. |
+| `WORKER_CONCURRENCY` | Jobs run at once, `1`–`12`. Default `4`. |
+| `WORKER_ALLOW_MULTIPLE` | `true` allows a second worker on the same machine, which otherwise stops: two would fight over one browser and one job queue. |
+| `FILES_DIR` | Where files from a conversation land on this machine. |
+| `BROWSER_CDP_URL` / `BROWSER_CDP_PORT` | The Chrome DevTools endpoint used to reach your own browser. Default port `9222`. |
+| `SCREEN_HD_SCALE` / `SCREEN_HD_QUALITY` / `STEP_SHOT_QUALITY` | Scale and JPEG quality of the live screen in HD (`2`, `72`) and of each step's screenshot (`45`). |
 
 ---
 

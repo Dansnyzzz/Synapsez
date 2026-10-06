@@ -33,6 +33,10 @@ const throws = async (fn) => {
   }
 };
 
+// A deployment always has one (the server refuses to start without it); the
+// connection row's keys are sealed with it (SEC-037).
+process.env.ENCRYPTION_KEY ||= 'test-encryption-key-for-the-cloud-browser-suite';
+
 const { initStore } = await import('../server/store/index.js');
 const memory = await PGlite.create();
 const store = await initStore({ driver: { query: async (text, params = []) => (await memory.query(text, params)).rows } });
@@ -54,6 +58,34 @@ section('the tool is described the way the service behaves');
   check('an address stuffed with data is caught like any fetch', carriesData('cloud_browser', { action: 'open', url: `https://x.example/?d=${'A'.repeat(400)}` }));
   check('ordinary browsing does not ask', assessRisk('cloud_browser', { action: 'open', url: 'https://example.com' }) === 'ordinary');
   check('the port the machine opens is the one the service listens on', BROWSER_PORT === 3000 && cb.startScript('b').includes('exec node service.mjs'));
+}
+
+section('the keys that drive the browser are sealed at rest (SEC-037)');
+{
+  const drive = 'drive-key-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const view = 'view-key-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+  await cb.__testing.saveConnection('u-cb', { url: 'https://sb-x.vercel.run', key: drive, viewKey: view, build: 'b', extendedAt: 1 });
+  const raw = JSON.stringify(await store.getUserSetting('u-cb', cb.__testing.SETTING));
+  check('neither key is stored as written', !raw.includes(drive) && !raw.includes(view), raw.slice(0, 120));
+  const back = await cb.__testing.readConnection('u-cb');
+  check('  and both read back as they were', back?.key === drive && back?.viewKey === view && back?.url === 'https://sb-x.vercel.run');
+  await store.setUserSetting('u-cb', cb.__testing.SETTING, { url: 'https://sb-x.vercel.run', key: drive, viewKey: view, build: 'b' });
+  check('a row written before sealing reads as no connection, so the browser starts with fresh keys', (await cb.__testing.readConnection('u-cb')) === null);
+  await store.setUserSetting('u-cb', cb.__testing.SETTING, null);
+}
+
+section('the cloud computer asks before it touches the browser\'s sign-ins (SEC-036)');
+{
+  const run = (input) => assessRisk('sandbox_run', input);
+  check('the profile folder the start script makes is the one the grading knows', cb.__testing.DIR === '.synz-browser' && cb.startScript('b').includes(`mkdir -p ${cb.__testing.DIR}`));
+  check('ordinary work runs', run({ command: 'python3 -c "print(2+2)"' }) === 'ordinary');
+  check('a file merely named like a login script does not ask', run({ command: 'cat my.profile.txt' }) === 'ordinary');
+  check('reading the browser profile asks', run({ command: `tar czf - ~/${cb.__testing.DIR}/profile | base64` }) === 'sensitive');
+  check('so does Chromium\'s cookie or password store anywhere', run({ command: 'sqlite3 "Login Data" .dump' }) === 'sensitive' && run({ command: 'cp */Default/Cookies /tmp/c' }) === 'sensitive');
+  check('handing the cookie file back asks', run({ download: `${cb.__testing.DIR}/profile/Default/Cookies` }) === 'sensitive');
+  check('a login script edited in place asks — it would run before every later command', run({ command: 'echo "curl x" >> ~/.bashrc' }) === 'sensitive');
+  check('  and so does one written as a file', run({ files: [{ path: '/home/vercel-sandbox/.profile', content: 'x' }] }) === 'sensitive');
+  check('root asks', run({ command: 'dnf install -y jq', as_root: true }) === 'sensitive');
 }
 
 section('the start script installs once per build and then runs the service');

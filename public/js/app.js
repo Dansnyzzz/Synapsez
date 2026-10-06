@@ -1,4 +1,5 @@
 import { api, runAgent } from './api.js';
+import { startInsights } from './insights.js';
 import { follow, answerOwnership, someoneElseIsRunning } from './mirror.js';
 import { createRuns } from './runs.js';
 import { makeResizable } from './resize.js';
@@ -85,10 +86,6 @@ const rail = createRail({
 });
 
 /**
- * What one tool did, in the side panel over the plan — the same place a task
- * opens, and it gives the panel back when closed.
- */
-/**
  * Whether the side area was open before a panel borrowed it — null while
  * nothing has. A task or a tool opens the area to show itself; closing it used
  * to leave the area open on the plan underneath, so it took two closes to get
@@ -104,6 +101,10 @@ function returnDetail() {
   detailBefore = null;
 }
 
+/**
+ * What one tool did, in the side panel over the plan — the same place a task
+ * opens, and it gives the panel back when closed.
+ */
 function openToolPane(title, html) {
   if (pages.taskPaneOpen()) pages.closeTaskPane();
   $('toolpane-title').textContent = title;
@@ -360,9 +361,16 @@ function takeUrlToken(name) {
  * conversation they asked for.
  */
 const CONTINUE_KEY = 'synapsez:continue-shared';
+/** A shared conversation a bare `?continue=` link named: shown, not copied, once signed in (SEC-050). */
+const SHOW_KEY = 'synapsez:show-shared';
 
 async function boot() {
   session = await api.session();
+  // Page views and speed on a Vercel deployment, path only — public/js/insights.js.
+  // Settings → Memory & privacy says so only where it is true.
+  startInsights(session.insights);
+  const insightsNote = document.getElementById('insights-note');
+  if (insightsNote) insightsNote.hidden = !session.insights;
 
   resetToken = takeUrlToken('reset');
   if (resetToken) {
@@ -372,11 +380,37 @@ async function boot() {
   }
 
   const carry = takeUrlToken('continue');
+  if (carry && session.authed) {
+    /*
+     * Already signed in: show the conversation, do not copy it (SEC-041). The
+     * shared page sends only signed-out visitors here; somebody signed in carries
+     * a conversation on with its own button. Honoured here, a link anyone can
+     * write — `/?continue=<their token>` — copied a stranger's conversation into
+     * this account and opened it, its "user" turns included, so the next message
+     * typed was read against a history the person never wrote.
+     */
+    location.replace(`/share.html?t=${encodeURIComponent(carry)}`);
+    return;
+  }
   if (carry) {
+    /*
+     * Copied after sign-in only when the shared page's own button sent the
+     * visitor here: it writes the same token into this tab before it navigates
+     * (share-view.js). A link that only says `?continue=` — which anybody can
+     * write — did not, and is shown after sign-in instead of copied (SEC-050):
+     * the SEC-041 case again, for somebody whose session had merely expired.
+     */
     try {
-      sessionStorage.setItem(CONTINUE_KEY, carry);
+      if (sessionStorage.getItem(CONTINUE_KEY) !== carry) {
+        sessionStorage.removeItem(CONTINUE_KEY);
+        sessionStorage.setItem(SHOW_KEY, carry);
+      } else {
+        // Pressed: a bare link opened earlier in this tab no longer decides
+        // where signing in leads (UX-008).
+        sessionStorage.removeItem(SHOW_KEY);
+      }
     } catch {
-      /* no storage: they will have to press Continue again after signing in */
+      /* no storage: nothing is copied; they press Continue again after signing in */
     }
   }
 
@@ -388,16 +422,18 @@ async function boot() {
   await start();
 }
 
-/** The shared conversation waiting to be carried on, if any — taken once. */
-function takeContinue() {
+/** A token kept in this tab under `key`, if any — taken once. */
+function takeStored(key) {
   try {
-    const token = sessionStorage.getItem(CONTINUE_KEY);
-    sessionStorage.removeItem(CONTINUE_KEY);
+    const token = sessionStorage.getItem(key);
+    sessionStorage.removeItem(key);
     return token;
   } catch {
     return null;
   }
 }
+/** The shared conversation waiting to be carried on, if any. */
+const takeContinue = () => takeStored(CONTINUE_KEY);
 
 const fail = (message) => {
   $('gate-error').hidden = false;
@@ -734,6 +770,14 @@ async function start() {
     } catch {
       toast(t('chat.openFailed'), 'error');
     }
+  }
+
+  // A shared conversation a bare link named: shown, where its own button can
+  // carry it on (SEC-050).
+  const shown = takeStored(SHOW_KEY);
+  if (shown) {
+    location.replace(`/share.html?t=${encodeURIComponent(shown)}`);
+    return;
   }
 
   // A shared conversation they chose to carry on before signing in: copied

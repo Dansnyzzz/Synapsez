@@ -1,6 +1,6 @@
 import { streamCompletion } from './providers/index.js';
 import { resolveModel, priceTurn } from './providers/catalog.js';
-import { getApiKeys } from './settings.js';
+import { getApiKeys, providerPrivacyFor } from './settings.js';
 import { getStore } from './store/index.js';
 import { record as recordUsage } from './usage.js';
 import { renderPdfPages } from './pdf.js';
@@ -76,10 +76,27 @@ async function freeVisionRows() {
 }
 
 /**
+ * Whether a picture may be lent to a model on `provider`, given the account's
+ * provider-privacy choice (PRV-005).
+ *
+ * Strict is a promise that what the person sends goes only where nothing is kept
+ * or trained on. `streamCompletion` keeps it for OpenRouter by asking for ZDR
+ * endpoints, and nowhere else — OrcaRouter has no such switch, and a Google key
+ * on the free tier is one whose content Google may use and have people read.
+ * Lending eyes is the one path that sends a photo to a model the person did not
+ * pick, so under strict it stays on OpenRouter or on the local OCR.
+ */
+export function lendableUnder(privacy, provider) {
+  return privacy !== 'strict' || provider === 'openrouter';
+}
+
+/**
  * The models that could look at this for this account, best first — each one
  * only if the account can actually reach its provider.
  */
 export async function visionEngines(userId) {
+  // Unknown is strict, the same rule providerPrivacyFor follows (PRV-002).
+  const privacy = await providerPrivacyFor(userId).catch(() => 'strict');
   const engines = [];
   const reach = new Map();
   const canReach = async (provider) => {
@@ -94,6 +111,7 @@ export async function visionEngines(userId) {
     .sort((a, b) => rank(a.model) - rank(b.model) || (Number(b.context) || 0) - (Number(a.context) || 0));
   for (const row of rows) {
     if (engines.length >= MAX_TRIES) break;
+    if (!lendableUnder(privacy, row.provider)) continue;
     if (!(await canReach(row.provider))) continue;
     try {
       engines.push(resolveModel(row.id, row));
@@ -102,7 +120,7 @@ export async function visionEngines(userId) {
     }
   }
   // Gemini only where a key happens to exist already; nobody is asked for one.
-  if (await canReach('google')) engines.push(resolveModel('google/gemini-flash-latest'));
+  if (lendableUnder(privacy, 'google') && (await canReach('google'))) engines.push(resolveModel('google/gemini-flash-latest'));
   return engines;
 }
 

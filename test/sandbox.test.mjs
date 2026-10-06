@@ -78,7 +78,8 @@ try {
 if (!browser) {
   console.log('\n  Skipped: no Chrome, Edge or bundled Chromium to drive.\n');
   server.close();
-  process.exit(0);
+  // In CI a browser was installed on purpose; not finding one is a failure (CFG-027).
+  process.exit(process.env.CI ? 1 : 0);
 }
 
 /**

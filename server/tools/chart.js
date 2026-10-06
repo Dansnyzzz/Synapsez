@@ -62,9 +62,18 @@ function axisTicks(max, count = 4) {
    * a 500-step axis was scaled against 1,500 and drawn past the top of the
    * plot, through the title, with its own value label hidden behind it.
    */
+  /*
+   * Each tick is `i × step`, rounded to the step's own precision. It was the
+   * previous tick plus a step rounded to three decimals — so a step under
+   * 0.0005 (a coin priced at 0.000012) rounded back to the same tick, the loop
+   * never advanced, and the array grew until the process ran out of memory
+   * (PERF-015). The cap is a second wall: with a step of max/count there are
+   * never more than count + 1 ticks.
+   */
+  const places = Math.min(20, Math.max(0, 2 - Math.floor(Math.log10(step))));
   const ticks = [0];
-  while (ticks[ticks.length - 1] < max - step * 0.001) {
-    ticks.push(Math.round((ticks[ticks.length - 1] + step) * 1000) / 1000);
+  for (let i = 1; i <= 50 && ticks[ticks.length - 1] < max - step * 0.001; i += 1) {
+    ticks.push(Number((i * step).toFixed(places)));
   }
   return ticks;
 }

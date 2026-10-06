@@ -164,6 +164,49 @@ let textId;
   check('uploading needs a session', (await anon.call('POST', '/api/attachments', { name: 'x.png', mime: 'image/png', data: PNG })).status === 401);
 }
 
+// ── an artifact's own storage, and the picture proxies (CODE-041) ────
+section('an artifact\'s storage is its owner\'s, and bounded');
+{
+  const base = `/api/attachments/${imageId}/storage`;
+  const put = await alice.call('PUT', base, { key: 'score', value: { best: 42, names: ['An', 'Bình'] } });
+  check('the owner can save a value', put.status === 200 && put.json?.keys === 1, JSON.stringify(put.json));
+  const one = await alice.call('GET', `${base}?key=score`);
+  check('  and read it back with its shape', one.status === 200 && one.json?.value?.best === 42 && one.json?.value?.names?.[1] === 'Bình', JSON.stringify(one.json));
+  const all = await alice.call('GET', base);
+  check('  and list the bucket', all.status === 200 && all.json?.values?.score?.best === 42);
+  for (const [method, body] of [['GET', undefined], ['PUT', { key: 'x', value: 1 }], ['DELETE', undefined]]) {
+    const theirs = await bob.call(method, base, body);
+    check(`another account gets 404 on ${method}`, theirs.status === 404, `got ${theirs.status}`);
+  }
+  check('nobody signed out reaches it', (await anon.call('GET', base)).status === 401);
+  const big = await alice.call('PUT', base, { key: 'big', value: 'x'.repeat(70 * 1024) });
+  check('one value over 64 KB is refused, saying the limit', big.status === 400 && /limit/.test(big.json?.error || ''), big.json?.error);
+  check('an empty key is refused', (await alice.call('PUT', base, { key: '', value: 1 })).status === 400);
+  for (let i = 1; i < 100; i += 1) await alice.call('PUT', base, { key: `k${i}`, value: i });
+  const over = await alice.call('PUT', base, { key: 'one-too-many', value: 1 });
+  check('the hundred-and-first key is refused', over.status === 400 && /100 stored keys/.test(over.json?.error || ''), over.json?.error);
+  check('  while an existing key can still change', (await alice.call('PUT', base, { key: 'k5', value: 'five' })).status === 200);
+  const dropOne = await alice.call('DELETE', `${base}?key=score`);
+  check('a key can be removed', dropOne.status === 200 && dropOne.json?.keys === 99, JSON.stringify(dropOne.json));
+  const dropAll = await alice.call('DELETE', base);
+  check('  and the whole bucket cleared', dropAll.status === 200 && dropAll.json?.keys === 0 && Object.keys((await alice.call('GET', base)).json?.values || {}).length === 0);
+}
+
+section('the picture proxies refuse what they must not fetch, before fetching');
+{
+  const unsigned = await alice.call('GET', `/api/image?u=${encodeURIComponent('https://evil.example/?d=notes')}`);
+  check('an address off the list and unsigned is not fetched', unsigned.status === 404);
+  const forged = await alice.call('GET', `/api/image?u=${encodeURIComponent('https://evil.example/a.png')}&s=AAAAAAAAAAAAAAAAAAAAAA`);
+  check('  nor with a made-up signature', forged.status === 404);
+  check('a map tile outside the world is refused', (await alice.call('GET', '/api/map/3/9/0')).status === 404);
+  check('  and so is a zoom past the last level', (await alice.call('GET', '/api/map/25/0/0')).status === 404);
+  check('an icon for an IP address is refused', (await alice.call('GET', '/api/favicon/169.254.169.254')).status === 400);
+  check('the proxies need a session', (await anon.call('GET', '/api/map/1/0/0')).status === 401);
+  const drive = await alice.call('POST', `/api/attachments/${imageId}/drive`);
+  check('saving to Drive without Drive connected says so', drive.status === 400 && /Drive/.test(drive.json?.error || ''), drive.json?.error);
+  check('  and another account cannot even ask', (await bob.call('POST', `/api/attachments/${imageId}/drive`)).status === 404);
+}
+
 // ── whose file is it ────────────────────────────────────────────────
 section('an attachment belongs to one account');
 {

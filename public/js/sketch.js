@@ -13,12 +13,35 @@
 
 import { t } from './i18n.js';
 
-const COLORS = ['#111111', '#f05252', '#f5c518', '#3fcf74', '#3fb6d8', '#d94fe8', '#bdbdbd'];
+/** Each colour with the name a screen reader says for it — not its hex code (ACC-016). */
+const PALETTE = [
+  ['#111111', 'sketch.black'],
+  ['#f05252', 'sketch.red'],
+  ['#f5c518', 'sketch.yellow'],
+  ['#3fcf74', 'sketch.green'],
+  ['#3fb6d8', 'sketch.blue'],
+  ['#d94fe8', 'sketch.purple'],
+  ['#bdbdbd', 'sketch.grey'],
+];
+const COLORS = PALETTE.map(([hex]) => hex);
 
 /** The long edge the drawing is kept at: sharp enough to read, small enough to send. */
 const MAX_EDGE = 2400;
 
 let dialog = null;
+
+/**
+ * Where an arrow key moves within a radio group of `count`, from `index`: on
+ * round, both directions, Home and End to the ends. Null for any other key.
+ */
+export function radioStep(key, index, count) {
+  if (!count) return null;
+  if (key === 'ArrowRight' || key === 'ArrowDown') return (index + 1) % count;
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return (index - 1 + count) % count;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  return null;
+}
 
 function build() {
   const d = document.createElement('dialog');
@@ -32,12 +55,12 @@ function build() {
       <button class="icon-btn" type="button" data-k="redo" disabled>↷</button>
       <button class="btn btn--primary sketch__save" type="button" data-k="save"></button>
     </div>
-    <div class="sketch__stage"><canvas class="sketch__canvas"></canvas></div>
-    <div class="sketch__colors" role="radiogroup">${COLORS.map(
-      (c, i) => `<button class="sketch__color" type="button" role="radio" data-color="${c}" style="--c:${c}"
-                   aria-checked="${i === 1}" aria-label="${c}"></button>`,
+    <div class="sketch__stage"><canvas class="sketch__canvas" tabindex="0"></canvas></div>
+    <div class="sketch__colors" role="radiogroup" data-group="colors">${PALETTE.map(
+      ([c, name], i) => `<button class="sketch__color" type="button" role="radio" data-color="${c}" data-name="${name}"
+                   style="--c:${c}" aria-checked="${i === 1}"></button>`,
     ).join('')}</div>
-    <div class="sketch__tools" role="radiogroup">
+    <div class="sketch__tools" role="radiogroup" data-group="tools">
       <button class="sketch__tool" type="button" role="radio" data-tool="pen" aria-checked="true">
         <span class="sketch__toolmark" aria-hidden="true">✎</span><span data-l="pen"></span></button>
       <button class="sketch__tool" type="button" role="radio" data-tool="text" aria-checked="false">
@@ -68,6 +91,10 @@ export function openSketch(src) {
   q('[data-k="save"]').textContent = t('sketch.save');
   q('[data-l="pen"]').textContent = t('sketch.pen');
   q('[data-l="text"]').textContent = t('sketch.text');
+  q('[data-group="colors"]').setAttribute('aria-label', t('sketch.colors'));
+  q('[data-group="tools"]').setAttribute('aria-label', t('sketch.tools'));
+  for (const b of d.querySelectorAll('[data-name]')) b.setAttribute('aria-label', t(b.getAttribute('data-name')));
+  q('.sketch__canvas').setAttribute('aria-label', t('sketch.canvas'));
   d.setAttribute('aria-label', t('sketch.title'));
 
   /** @type {Array<{type:'path', color:string, width:number, points:number[][]} | {type:'text', color:string, x:number, y:number, size:number, text:string}>} */
@@ -126,31 +153,48 @@ export function openSketch(src) {
     if (text) add({ type: 'text', color, x, y, size: Math.round(28 * scale()), text });
   };
 
+  /**
+   * Open the text box at a point on the screen — where the pointer went down,
+   * or the middle of the picture when Enter is pressed on it (ACC-016: text
+   * could only be placed with a pointer).
+   */
+  const placeText = (point) => {
+    commitText();
+    const [x, y] = at(point);
+    const input = document.createElement('input');
+    input.className = 'sketch__type';
+    input.placeholder = t('sketch.typeHere');
+    input.setAttribute('aria-label', t('sketch.text'));
+    const stage = q('.sketch__stage');
+    const s = stage.getBoundingClientRect();
+    input.style.left = `${point.clientX - s.left}px`;
+    input.style.top = `${point.clientY - s.top}px`;
+    input.style.color = color;
+    stage.append(input);
+    editor = { input, x, y };
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        commitText();
+        canvas.focus();
+      }
+      if (e.key === 'Escape') {
+        // Only the label being typed is dropped. Without preventDefault the
+        // dialog's own cancel still fired and closed the whole sketch, every
+        // mark with it (UX-006) — stopPropagation does not reach that.
+        e.preventDefault();
+        editor = null;
+        input.remove();
+        canvas.focus();
+      }
+    });
+    setTimeout(() => input.focus(), 0);
+  };
+
   const onDown = (event) => {
     if (event.button !== 0) return;
     if (tool === 'text') {
-      commitText();
-      const [x, y] = at(event);
-      const input = document.createElement('input');
-      input.className = 'sketch__type';
-      input.placeholder = t('sketch.typeHere');
-      input.setAttribute('aria-label', t('sketch.text'));
-      const stage = q('.sketch__stage');
-      const s = stage.getBoundingClientRect();
-      input.style.left = `${event.clientX - s.left}px`;
-      input.style.top = `${event.clientY - s.top}px`;
-      input.style.color = color;
-      stage.append(input);
-      editor = { input, x, y };
-      input.addEventListener('keydown', (e) => {
-        e.stopPropagation();
-        if (e.key === 'Enter') commitText();
-        if (e.key === 'Escape') {
-          editor = null;
-          input.remove();
-        }
-      });
-      setTimeout(() => input.focus(), 0);
+      placeText(event);
       event.preventDefault();
       return;
     }
@@ -180,8 +224,13 @@ export function openSketch(src) {
     redraw();
   };
 
+  /** Check one radio of a group; only the checked one is a Tab stop, as a radio group's is. */
   const pick = (attr, value) => {
-    for (const b of d.querySelectorAll(`[${attr}]`)) b.setAttribute('aria-checked', String(b.getAttribute(attr) === value));
+    for (const b of /** @type {NodeListOf<HTMLElement>} */ (d.querySelectorAll(`[${attr}]`))) {
+      const on = b.getAttribute(attr) === value;
+      b.setAttribute('aria-checked', String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
   };
   pick('data-color', color);
   pick('data-tool', tool);
@@ -224,6 +273,24 @@ export function openSketch(src) {
         canvas.classList.toggle('is-text', tool === 'text');
       });
     }
+    // Arrow keys move the choice within a group, as they do in any radio group.
+    for (const group of d.querySelectorAll('[role="radiogroup"]')) {
+      on(group, 'keydown', (/** @type {KeyboardEvent} */ e) => {
+        const radios = /** @type {HTMLElement[]} */ ([...group.querySelectorAll('[role="radio"]')]);
+        const next = radioStep(e.key, radios.indexOf(/** @type {HTMLElement} */ (e.target)), radios.length);
+        if (next == null) return;
+        e.preventDefault();
+        radios[next].click();
+        radios[next].focus();
+      });
+    }
+    // With Text chosen, Enter or Space on the picture opens the text box in its middle.
+    on(canvas, 'keydown', (/** @type {KeyboardEvent} */ e) => {
+      if (tool !== 'text' || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      const r = canvas.getBoundingClientRect();
+      placeText({ clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 });
+    });
     on(d, 'keydown', (/** @type {KeyboardEvent} */ e) => {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {

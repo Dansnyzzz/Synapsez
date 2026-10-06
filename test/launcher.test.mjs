@@ -62,6 +62,33 @@ section('the hotkey script');
   check('the here-string terminator is at column zero', /\n'@\r?\n/.test(text), 'an indented one is a parse error');
 }
 
+// CFG-029: the same two guarantees for every PowerShell script in the repository.
+// The desktop host and camera lost their marks in a rename and nothing noticed,
+// because only the hotkey script was checked.
+section('every PowerShell script parses under any code page');
+{
+  const scripts = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== 'node_modules' && !e.name.startsWith('.')) walk(p);
+      } else if (e.name.endsWith('.ps1')) scripts.push(p);
+    }
+  };
+  for (const dir of ['scripts', 'worker']) walk(path.join(root, dir));
+  check('the desktop host and camera are among them', ['host.ps1', 'capture.ps1'].every((n) => scripts.some((s) => s.endsWith(n))), scripts.map((s) => path.relative(root, s)).join(' '));
+  for (const script of scripts) {
+    const bytes = fs.readFileSync(script);
+    const exotic = [...bytes.toString('utf8').replace(/^\uFEFF/, '')].filter((ch) => ch.codePointAt(0) > 127);
+    check(
+      `${path.relative(root, script)} carries a UTF-8 mark and is pure ASCII`,
+      bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf && exotic.length === 0,
+      exotic.join(' '),
+    );
+  }
+}
+
 section('claiming a real key combination');
 {
   if (process.platform !== 'win32') {

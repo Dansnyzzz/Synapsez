@@ -214,6 +214,38 @@ section('memory tools obey the guard and the account');
   check('an edit keeps "$&" literally — no replacement patterns', !edited.isError && after.includes('($& kept)'), after);
   const sneaky = await run('memory_edit', { key: 'language', old_string: 'Vietnamese', new_string: 'Vietnamese. SSN 123-45-6789' });
   check('an edit cannot smuggle an identifier in', sneaky.isError);
+
+  // HAR-002: where a note came from, and one step back.
+  {
+    const stored = (await store.getUserSetting(aliceId, 'memory')).language;
+    check('a note the assistant saved says so', stored.by === 'assistant', JSON.stringify({ by: stored.by, chatId: stored.chatId }));
+    check('  and keeps the version it replaced', stored.previous?.content === 'Answer in Vietnamese.', JSON.stringify(stored.previous));
+    const listed = (await alice.call('GET', '/api/memory')).body.groups.flatMap((g) => g.notes).find((n) => n.key === 'language');
+    check('Settings is told who wrote it and that it can be undone', listed?.by === 'assistant' && listed?.canUndo === true, JSON.stringify(listed));
+    const undo = await alice.call('POST', '/api/memory/account/language/undo');
+    const back = (await store.getUserSetting(aliceId, 'memory')).language;
+    check('undo puts the note back as it was', undo.status === 200 && back.content === 'Answer in Vietnamese.' && !back.previous, JSON.stringify(back));
+    check('  and there is nothing further to undo', (await alice.call('POST', '/api/memory/account/language/undo')).status === 400);
+    // PRV-006: an assistant change keeps what it replaced, and the export carries it…
+    await run('memory_edit', { key: 'language', old_string: 'Vietnamese.', new_string: 'Vietnamese. I have diabetes.' });
+    const exported = (await alice.call('GET', '/api/account/export')).body?.memory?.find((n) => n.key === 'language');
+    check('the export carries the earlier version an assistant change kept', exported?.previous?.content === 'Answer in Vietnamese.' && exported?.by === 'assistant', JSON.stringify(exported));
+    // PRV-009: everything stored about that earlier version, its conversation included.
+    await store.mergeUserSetting(aliceId, 'memory', {
+      tone: memory.stampNote('Be brief.', { by: 'assistant', chatId: 'c-later', before: { content: 'Be thorough.', updatedAt: '2026-10-01T00:00:00.000Z', by: 'assistant', chatId: 'c-earlier' } }),
+    });
+    const toneOut = (await alice.call('GET', '/api/account/export')).body?.memory?.find((n) => n.key === 'tone');
+    check('  with every field kept about it, the conversation it came from included', toneOut?.chatId === 'c-later' && toneOut?.previous?.chatId === 'c-earlier' && toneOut?.previous?.by === 'assistant', JSON.stringify(toneOut?.previous));
+    await store.removeUserSettingKey(aliceId, 'memory', 'tone');
+    // …but the person's own edit keeps nothing of what they took out, and clears that.
+    await alice.call('PUT', '/api/memory/account/language', { content: 'Answer in Vietnamese, briefly.' });
+    const typed = (await store.getUserSetting(aliceId, 'memory')).language;
+    check('a note corrected by hand is marked as the person\'s', typed.by === 'user', JSON.stringify(typed));
+    check('  and keeps no copy of the text they removed (PRV-006)', !typed.previous && !JSON.stringify(typed).includes('diabetes'), JSON.stringify(typed));
+    await alice.call('PUT', '/api/memory/account/language', { content: 'Answer in Vietnamese.' });
+    check('  nor of their own earlier wording', !(await store.getUserSetting(aliceId, 'memory')).language.previous);
+    check('an unknown note cannot be undone', (await alice.call('POST', '/api/memory/account/nope/undo')).status === 404);
+  }
   const proto = await run('memory_delete', { key: 'toString' });
   check('"toString" is not a note that exists', proto.isError && /No note saved/.test(proto.content), proto.content);
   const big = await run('memory_write', { key: 'huge', content: 'x'.repeat(memory.MAX_NOTE_CHARS + 1) });
@@ -457,6 +489,21 @@ section('import reads Claude, ChatGPT and Synapsez exports');
       },
     },
   ];
+  // CODE-035: a ChatGPT export with no recorded leaf whose children loop back is read, not looped on.
+  {
+    const looping = [{
+      title: 'Loop',
+      create_time: 1767225600,
+      mapping: {
+        root: { id: 'root', message: null, parent: null, children: ['x'] },
+        x: { id: 'x', parent: 'root', children: ['y'], message: { author: { role: 'user' }, content: { parts: ['hi'] } } },
+        y: { id: 'y', parent: 'x', children: ['x'], message: { author: { role: 'assistant' }, content: { parts: ['hello'] } } },
+      },
+    }];
+    const started = Date.now();
+    const read = normaliseImport(looping);
+    check('an export whose children loop back is read, not hung on', Date.now() - started < 1000 && Array.isArray(read.conversations), `${Date.now() - started} ms`);
+  }
   check('Claude is recognised', detectSource(claude) === 'claude');
   check('ChatGPT is recognised', detectSource(chatgpt) === 'chatgpt');
   check('Synapsez is recognised', detectSource(globalThis.exported) === 'synapsez');
@@ -504,7 +551,35 @@ section('strict provider privacy reaches OpenRouter, and only OpenRouter');
   check('a change applies to the very next call', (await providerPrivacyFor(aliceId)) === 'strict');
   const bad = await alice.call('PUT', '/api/prefs', { providerPrivacy: 'paranoid' });
   check('an unknown level is refused', bad.status === 400);
+  {
+    // The database unreachable and nothing remembered: the answer is unknown,
+    // and unknown must not route somebody who chose strict to a provider that
+    // may keep what they wrote (PRV-002).
+    const { getStore } = await import('../server/store/index.js');
+    const live = getStore();
+    const original = live.getUserSetting;
+    live.getUserSetting = async () => {
+      throw new Error('connection reset');
+    };
+    try {
+      check('a store that cannot answer fails closed, to strict', (await providerPrivacyFor('u-privacy-never-asked')) === 'strict');
+    } finally {
+      live.getUserSetting = original;
+    }
+    check('  and it is not remembered: the next call asks again', (await providerPrivacyFor('u-privacy-never-asked')) === 'standard');
+  }
   await alice.call('PUT', '/api/prefs', { providerPrivacy: 'standard' });
+  // PRV-004: the page tells the truth about what Standard and a free Gemini key mean.
+  {
+    const fsMod = await import('node:fs');
+    for (const lang of ['en', 'vi']) {
+      const text = fsMod.readFileSync(new URL(`../public/js/locales/${lang}.js`, import.meta.url), 'utf8');
+      const hint = text.match(/'memory\.providerPrivacyHint': "([^"]+)"/)?.[1] || '';
+      const standard = text.match(/'memory\.providerPrivacy\.standard': "([^"]+)"/)?.[1] || '';
+      check(`${lang}: Standard says providers may keep or train on what is sent`, lang === 'en' ? /train/.test(standard) && /store or train/.test(hint) : /huấn luyện/.test(standard) && /lưu lại hoặc huấn luyện/.test(hint));
+      check(`${lang}: a free-tier Gemini key is named for what it means`, /Gemini/.test(hint) && (lang === 'en' ? /free tier/.test(hint) && /people may read it/.test(hint) : /miễn phí/.test(hint) && /người duyệt/.test(hint)));
+    }
+  }
   const { readableFailure } = await import('../server/app.js');
   const said = readableFailure(new Error('404 {"error":{"message":"No endpoints found matching your data policy (Free model publication). Configure: https://openrouter.ai/settings/privacy"}}'));
   check('the refusal is explained as the setting, not a fault', /strict privacy setting/.test(said), said);

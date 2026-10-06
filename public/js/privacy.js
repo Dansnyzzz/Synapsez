@@ -71,6 +71,14 @@ export function createPrivacy({ state, armed, onImported }) {
   /** A group's address in the API: `account`, or the project's id. */
   const scopeOf = (group) => (group.scope === 'account' ? 'account' : group.projectId);
 
+  /**
+   * Who wrote a note, so one the assistant saved while reading somebody else's
+   * page can be told from one the person typed (HAR-002). Notes saved before
+   * this was recorded say nothing rather than guessing.
+   */
+  const origin = (by) =>
+    by === 'assistant' ? t('memory.byAssistant') : by === 'user' ? t('memory.byYou') : by === 'import' ? t('memory.byImport') : '';
+
   async function loadMemory() {
     const host = $('memory-list');
     host.setAttribute('aria-busy', 'true');
@@ -95,11 +103,12 @@ export function createPrivacy({ state, armed, onImported }) {
                 (note) => `<div class="note" data-scope="${escapeHtml(scopeOf(group))}" data-key="${escapeHtml(note.key)}">
                   <div class="note__head">
                     <span class="note__key">${escapeHtml(note.key)}</span>
-                    <span class="note__date">${escapeHtml(when(note.updatedAt))}</span>
+                    <span class="note__date">${escapeHtml([origin(note.by), when(note.updatedAt)].filter(Boolean).join(' · '))}</span>
                   </div>
                   <div class="note__body">${escapeHtml(note.content)}</div>
                   <div class="note__actions">
                     <button class="btn btn--ghost" type="button" data-note-edit>${escapeHtml(t('memory.edit'))}</button>
+                    ${note.canUndo ? `<button class="btn btn--ghost" type="button" data-note-undo title="${escapeHtml(t('memory.undoHint'))}">${escapeHtml(t('memory.undo'))}</button>` : ''}
                     <button class="btn btn--ghost" type="button" data-note-delete>${escapeHtml(t('action.delete'))}</button>
                   </div>
                 </div>`,
@@ -125,6 +134,17 @@ export function createPrivacy({ state, armed, onImported }) {
       await api.deleteNote(scope, key);
       toast(t('memory.deleted', { key }));
       loadMemory();
+    });
+
+    // Take back the last change — the note goes back to what it said before it.
+    card.querySelector('[data-note-undo]')?.addEventListener('click', async () => {
+      try {
+        await api.undoNote(scope, key);
+        toast(t('memory.undone', { key }), 'ok');
+        loadMemory();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
     });
 
     card.querySelector('[data-note-edit]').addEventListener('click', () => {

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { getStore } from '../store/index.js';
 import { saveGenerated } from '../attachments.js';
 import { browserAddress, chargeCloud, machineForUser } from '../sandbox.js';
+import { encryptSecret, decryptSecret } from '../crypto.js';
 
 /**
  * A real browser on the account's cloud computer, which the assistant drives
@@ -91,13 +92,31 @@ export function startScript(build) {
 
 const key = () => crypto.randomBytes(24).toString('base64url');
 
+/**
+ * Where the browser is and the keys that drive and watch it — the keys sealed
+ * the way provider keys are (SEC-037).
+ *
+ * The driving key is a signed-in browser: whoever holds it can act as the person
+ * on every site the cloud browser has a session for. It was stored as plain text
+ * while API keys beside it were encrypted, so a database dump alone handed it
+ * over. A row that cannot be opened — one written before this, or after the
+ * encryption key changed — reads as no connection, and the next action starts
+ * the browser with fresh keys.
+ */
 async function readConnection(userId) {
   const value = await getStore().getUserSetting(userId, SETTING);
-  return value && typeof value === 'object' && value.url && value.key ? value : null;
+  if (!value || typeof value !== 'object' || !value.url || !value.key) return null;
+  const key = decryptSecret(value.key);
+  const viewKey = decryptSecret(value.viewKey);
+  return key && viewKey ? { ...value, key, viewKey } : null;
 }
 
 async function saveConnection(userId, value) {
-  await getStore().setUserSetting(userId, SETTING, value);
+  await getStore().setUserSetting(userId, SETTING, {
+    ...value,
+    key: encryptSecret(value.key),
+    viewKey: encryptSecret(value.viewKey),
+  });
 }
 
 /**
@@ -323,4 +342,4 @@ export async function closeCloudBrowser(userId) {
   await getStore().setUserSetting(userId, SETTING, null);
 }
 
-export const __testing = { service, readConnection, saveConnection, SETTING };
+export const __testing = { service, readConnection, saveConnection, SETTING, DIR };

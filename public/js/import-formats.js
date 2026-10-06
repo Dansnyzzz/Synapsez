@@ -108,7 +108,13 @@ function fromChatGPT(list) {
       // thread as it was first written.
       const root = Object.keys(mapping).find((k) => !mapping[k]?.parent);
       leaf = root;
-      while (leaf && mapping[leaf]?.children?.length) leaf = mapping[leaf].children[0];
+      // A file is somebody else's output; one whose children loop back must not
+      // hang the tab (CODE-035), the same guard chatgptBranch keeps.
+      const walked = new Set();
+      while (leaf && mapping[leaf]?.children?.length && !walked.has(leaf)) {
+        walked.add(leaf);
+        leaf = mapping[leaf].children[0];
+      }
     }
     const messages = chatgptBranch(mapping, leaf)
       .map((node) => node?.message)

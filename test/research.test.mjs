@@ -150,6 +150,12 @@ section('gathering builds a deduped, ranked source ledger');
   check('a wire service ranks reputable', rankSource('https://www.reuters.com/a') === 'reputable');
   check('an unknown blog ranks blog', rankSource('https://x.wordpress.com/b') === 'blog');
   check('a government host ranks primary', rankSource('https://data.gov/x') === 'primary');
+// ACC-008: the suffix, not a fragment of the name.
+check('  and so do a national one and a university', rankSource('https://chinhphu.gov.vn/a') === 'primary' && rankSource('https://www.hust.edu.vn/a') === 'primary' && rankSource('https://mit.edu/a') === 'primary');
+check('  and the named bodies and their subdomains', rankSource('https://arxiv.org/abs/1') === 'primary' && rankSource('https://ec.europa.eu/x') === 'primary' && rankSource('https://www.who.int/x') === 'primary');
+for (const fake of ['https://gov.attacker.com/x', 'https://x.edu.attacker.net/x', 'https://notarxiv.org/x', 'https://fakeeuropa.eu/x', 'https://govtrack.us/x']) {
+  check(`${new URL(fake).hostname} is not primary`, rankSource(fake) !== 'primary', rankSource(fake));
+}
 
   /*
    * A Vietnamese question answered from Vietnamese national press could never

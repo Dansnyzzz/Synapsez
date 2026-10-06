@@ -74,11 +74,18 @@ export function mapFigure(widget) {
 
   const figure = shell('map', widget.title || t('card.map'));
   const stage = h('div', 'xmap');
-  stage.setAttribute('role', 'img');
-  stage.setAttribute('aria-label', points.map((p) => p.detail || p.label).join(' · '));
   const tiles = h('div', 'xmap__tiles');
+  /*
+   * The picture is the tile layer, not the whole stage (ACC-011). The zoom
+   * buttons live in the stage, and a `role="img"` around them made them
+   * presentational — a screen reader could not find or press them. The places
+   * are named here and listed again, in words, under the map.
+   */
+  tiles.setAttribute('role', 'img');
+  tiles.setAttribute('aria-label', points.map((p) => p.detail || p.label).join(' · '));
   const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   overlay.setAttribute('class', 'xmap__overlay');
+  overlay.setAttribute('aria-hidden', 'true');
   stage.append(tiles, overlay);
 
   const all = [...points.map((p) => [Number(p.lat), Number(p.lon)]), ...line];
@@ -341,6 +348,10 @@ function quiz(card, body) {
       b.addEventListener('click', () => {
         answers[at] = i;
         paint();
+        // The pressed option is gone with the repaint; focus goes to the
+        // verdict, which is read out, rather than falling to the top of the
+        // page (ACC-012).
+        /** @type {HTMLElement|null} */ (stage.querySelector('.xquiz__verdict'))?.focus();
       });
       options.append(b);
     });
@@ -348,6 +359,7 @@ function quiz(card, body) {
     if (answers[at] != null) {
       const right = answers[at] === q.answer;
       const verdict = h('p', `xquiz__verdict ${right ? 'is-right' : 'is-wrong'}`, right ? t('card.correct') : t('card.wrong', { answer: q.options[q.answer] }));
+      verdict.tabIndex = -1;
       stage.append(verdict);
       if (q.explanation) stage.append(h('p', 'xquiz__why', q.explanation));
     }

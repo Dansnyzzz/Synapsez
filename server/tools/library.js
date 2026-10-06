@@ -1,10 +1,12 @@
 import crypto from 'node:crypto';
+import vm from 'node:vm';
 import QRCode from 'qrcode';
 import { safeFetch, readCapped } from '../util/safeFetch.js';
 import { validZone } from '../util/zone.js';
 import { getStore } from '../store/index.js';
 import { saveGenerated } from '../attachments.js';
 import { untrusted } from './untrusted.js';
+import { asciiLower, openAt, elementSpans, firstInner, firstAttr, stripTags } from '../util/markup.js';
 import { solarToLunar, lunarToSolar, yearName, dayName } from './lunar.js';
 
 /**
@@ -470,28 +472,51 @@ async function placeLookupTool({ op, place, from, to }) {
  * every one of them in the summary.
  */
 const decode = (s) =>
-  String(s || '')
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (w, n) => String.fromCodePoint(Number(n)))
-    .replace(/&amp;/g, '&')
-    .replace(/<[^>]+>/g, ' ')
+  stripTags(
+    unwrapCdata(String(s || ''))
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'")
+      // A number past the last code point is not a character; it used to throw
+      // out of fromCodePoint and take the whole feed with it.
+      .replace(/&#(\d{1,7});/g, (w, n) => (Number(n) <= 0x10ffff ? String.fromCodePoint(Number(n)) : ' '))
+      .replace(/&amp;/g, '&'),
+  )
     .replace(/\s+/g, ' ')
     .trim();
 
-const tag = (block, name) => block.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)</${name}>`, 'i'))?.[1] ?? '';
+/** `<![CDATA[x]]>` as `x`, by searching forward — see util/markup.js (PERF-017). */
+function unwrapCdata(text) {
+  let out = '';
+  let from = 0;
+  for (;;) {
+    const open = text.indexOf('<![CDATA[', from);
+    if (open === -1) return out + text.slice(from);
+    const close = text.indexOf(']]>', open + 9);
+    if (close === -1) return out + text.slice(from);
+    out += text.slice(from, open) + text.slice(open + 9, close);
+    from = close + 3;
+  }
+}
 
-/** RSS <item>s or Atom <entry>s, newest first as the feed gives them. */
+/**
+ * RSS <item>s or Atom <entry>s, newest first as the feed gives them.
+ *
+ * Read by searching forward, not with lazy regular expressions: a feed of a
+ * hundred thousand `<item` with no `</item>` cost a pass of the whole 2 MB per
+ * opening (PERF-017).
+ */
 export function parseFeed(xml) {
   const text = String(xml || '');
-  const title = decode(tag(text.replace(/<(item|entry)\b[\s\S]*$/i, ''), 'title'));
-  const blocks = text.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi) || [];
+  const lower = asciiLower(text);
+  const firstItem = [openAt(lower, 'item'), openAt(lower, 'entry')].filter((at) => at !== -1);
+  const title = decode(firstInner(firstItem.length ? text.slice(0, Math.min(...firstItem)) : text, 'title'));
+  const blocks = elementSpans(text, ['item', 'entry']);
+  const tag = firstInner;
   const items = blocks.map((b) => ({
     title: decode(tag(b, 'title')),
-    link: decode(tag(b, 'link')) || b.match(/<link\b[^>]*href="([^"]+)"/i)?.[1] || '',
+    link: decode(tag(b, 'link')) || firstAttr(b, 'link', 'href'),
     date: decode(tag(b, 'pubDate') || tag(b, 'updated') || tag(b, 'published') || tag(b, 'dc:date')),
     summary: decode(tag(b, 'description') || tag(b, 'summary') || tag(b, 'content')).slice(0, 280),
   }));
@@ -515,12 +540,14 @@ async function fetchFeedText(target) {
  */
 export function feedLinks(html, base) {
   const found = [];
-  for (const m of String(html).matchAll(/<link\b[^>]*>/gi)) {
-    if (!/type=["']application\/(rss|atom)\+xml["']/i.test(m[0])) continue;
-    const href = m[0].match(/href=["']([^"']+)["']/i)?.[1];
+  // Bounded at every step (PERF-017): a tag ends at the next `<`, an absurdly
+  // long one is skipped, and an address is at most 2 KB.
+  for (const m of String(html).matchAll(/<link\b[^<>]*>/gi)) {
+    if (m[0].length > 4096 || !/type=["']application\/(rss|atom)\+xml["']/i.test(m[0])) continue;
+    const href = m[0].match(/href=["']([^"']{1,2048})["']/i)?.[1];
     if (href) found.push(href);
   }
-  for (const m of String(html).matchAll(/href=["']([^"'#?]+\.(?:rss|atom)(?:\?[^"']*)?)["']/gi)) found.push(m[1]);
+  for (const m of String(html).matchAll(/href=["']([^"'#?<>\s]{1,2048}\.(?:rss|atom)(?:\?[^"'<>\s]{0,512})?)["']/gi)) found.push(m[1]);
   const out = [];
   for (const href of found) {
     try {
@@ -615,6 +642,38 @@ async function readFeedTool({ url, limit }) {
 /** Vietnamese without its marks: "Hà Nội" → "Ha Noi". */
 export const stripAccents = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 
+/** How long a pattern the model or the person wrote may run before it is stopped. */
+const REGEX_MS = 1000;
+const FIRST_MATCHES = `const out = [];
+for (const m of s.matchAll(re)) {
+  out.push({ text: m[0], index: m.index, groups: m.length > 1 ? Array.from(m).slice(1) : null });
+  if (out.length >= 50) break;
+}
+out;`;
+
+/**
+ * The first fifty matches of `re` in `s`, in a context that can be stopped
+ * (PERF-016).
+ *
+ * The pattern comes from the model, or from a page that talked to it.
+ * `(a+)+$` over forty characters is 2^40 steps of backtracking, and on the
+ * request's own thread it held the event loop until the function was killed at
+ * 300 s — this turn, and every other request on the instance. A `vm` timeout
+ * interrupts a regular expression mid-backtrack; nothing else in Node does
+ * short of a worker. Stopping after fifty also bounds the work for a pattern
+ * that matches everywhere.
+ */
+function matchesWithin(s, re) {
+  try {
+    return vm.runInNewContext(FIRST_MATCHES, { s, re }, { timeout: REGEX_MS });
+  } catch (err) {
+    if (err?.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+      throw new Error('That pattern took too long on this text: it backtracks without end (nested repeats such as (a+)+). Simplify it.');
+    }
+    throw err;
+  }
+}
+
 /** A line diff by longest common subsequence — small inputs only. */
 export function lineDiff(a, b) {
   const x = String(a).split('\n');
@@ -674,9 +733,9 @@ async function textToolsTool({ op, text = '', text2 = '', pattern, flags, algori
       } catch (err) {
         throw new Error(`Not a valid regular expression: ${err.message}`);
       }
-      const hits = [...s.matchAll(re)].slice(0, 50);
+      const hits = matchesWithin(s, re);
       return hits.length
-        ? `${hits.length} match(es):\n${hits.map((m) => `- "${m[0]}" at ${m.index}${m.length > 1 ? `, groups: ${JSON.stringify(m.slice(1))}` : ''}`).join('\n')}`
+        ? `${hits.length} match(es):\n${hits.map((m) => `- "${m.text}" at ${m.index}${m.groups ? `, groups: ${JSON.stringify(m.groups)}` : ''}`).join('\n')}`
         : 'No matches.';
     }
     case 'diff':

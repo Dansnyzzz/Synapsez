@@ -37,10 +37,11 @@ import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText, answerSummary } from './askOptions.js';
 import {
-  MEMORY_KEY, MAX_NOTE_CHARS, memoryScope, readBothScopes, noteName, memoryRefusal, refusalMessage, rankNotes,
+  MEMORY_KEY, MAX_NOTE_CHARS, memoryScope, readBothScopes, noteName, memoryRefusal, refusalMessage, rankNotes, stampNote,
 } from '../memory.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
+import { dropElements, stripTags } from '../util/markup.js';
 
 /*
  * Which set of notes a conversation means, and what may be written into one,
@@ -77,16 +78,20 @@ function guardNote(text, allowed) {
   if (refusal) throw new Error(refusalMessage(refusal));
 }
 
-/** Crude but dependency-free HTML → text. Good enough to feed a model. */
+/**
+ * Crude but dependency-free HTML → text. Good enough to feed a model.
+ *
+ * Scripts, styles and comments are cut out by searching forward rather than by
+ * lazy regular expressions, and tags are stripped with `[^<>]` — every step
+ * here is linear, because the body is a stranger's and arrives at up to 8 MB
+ * before anything is clipped (PERF-017; see util/markup.js).
+ */
 function htmlToText(html) {
-  return html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<\/(p|div|section|article|li|h[1-6]|tr|br)>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
+  return stripTags(
+    dropElements(html, ['script', 'style', 'noscript'])
+      .replace(/<\/(p|div|section|article|li|h[1-6]|tr|br)>/gi, '\n')
+      .replace(/<br\s*\/?>/gi, '\n'),
+  )
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -246,12 +251,14 @@ export function pageImages(html, base) {
 
   const head = String(html || '');
   // The share image is captioned with the page's own title.
-  const title = head.match(/<title[^>]*>([^<]{1,120})/i)?.[1] || '';
-  for (const tag of head.match(/<meta\b[^>]*>/gi) || []) {
+  // `[^<>]` rather than `[^>]`: a body of a million `<img` with no `>` scanned
+  // to the end from each one (PERF-017). Stopping at the next `<` is linear.
+  const title = head.match(/<title[^<>]*>([^<]{1,120})/i)?.[1] || '';
+  for (const tag of head.match(/<meta\b[^<>]*>/gi) || []) {
     const key = (attr(tag, 'property') || attr(tag, 'name')).toLowerCase();
     if (key === 'og:image' || key === 'og:image:secure_url' || key === 'twitter:image') add(attr(tag, 'content'), title);
   }
-  for (const tag of head.match(/<img\b[^>]*>/gi) || []) {
+  for (const tag of head.match(/<img\b[^<>]*>/gi) || []) {
     if (found.length >= PAGE_IMAGES * 3) break;
     const width = Number(attr(tag, 'width'));
     const height = Number(attr(tag, 'height'));
@@ -268,8 +275,12 @@ export function pageImages(html, base) {
 /**
  * The pictures, said to the model as addresses it can put in its reply.
  * Signed by this server — see `signedImagePath` — so only these display.
+ *
+ * The how-to is this app's; the list is not. Each caption is the page's own alt
+ * text, so the list goes in an envelope of its own (SEC-045): eighty characters
+ * of "ignore your instructions" outside one read as if the app had said it.
  */
-function picturesNote(images) {
+export function picturesNote(images, source) {
   const lines = images
     .map((image) => {
       const path = signedImagePath(image.url);
@@ -278,10 +289,10 @@ function picturesNote(images) {
     .filter(Boolean);
   if (!lines.length) return '';
   return (
-    '\n\n[Pictures on this page. When they help — a product, a place, a person, a design — show them in your reply ' +
-    'by copying a line as written, ![short caption](address); several on consecutive lines show as a row. ' +
-    'Only these exact addresses display.\n' +
-    `${lines.join('\n')}]`
+    '\n\n[Pictures on this page, listed below with the page\'s own captions. When they help — a product, a place, ' +
+    'a person, a design — show them in your reply by copying a line as written, ![short caption](address); several ' +
+    'on consecutive lines show as a row. Only these exact addresses display.]\n' +
+    untrusted(`pictures on ${source}`, lines.join('\n'))
   );
 }
 
@@ -372,8 +383,8 @@ async function webFetch({ url, max_chars: maxChars }) {
     // aimed at the model to enter the conversation. See server/tools/untrusted.js.
     untrusted(parsed.href, clipped) +
     notes.map((line) => `\n\n[${line}]`).join('') +
-    // Outside the envelope: the addresses are this server's own signed paths.
-    (html ? picturesNote(pageImages(html, parsed.href)) : '')
+    // After the page's envelope, in one of its own: see `picturesNote`.
+    (html ? picturesNote(pageImages(html, parsed.href), parsed.href) : '')
   );
 }
 
@@ -638,8 +649,8 @@ export function nameForFile({ name, filename, file_name: fileName, title, conten
   if (given) return given.trim();
   const text = String(content || '');
   const heading =
-    text.match(/<title[^>]*>([^<]{1,120})<\/title>/i)?.[1] ||
-    text.match(/<h1[^>]*>([^<]{1,120})<\/h1>/i)?.[1] ||
+    text.match(/<title[^<>]*>([^<]{1,120})<\/title>/i)?.[1] ||
+    text.match(/<h1[^<>]*>([^<]{1,120})<\/h1>/i)?.[1] ||
     text.match(/^#{1,3}\s+(.{1,120})$/m)?.[1];
   return heading ? heading.trim() : 'Document';
 }
@@ -878,8 +889,10 @@ async function memoryWrite({ key, content, scope }, { userId, chatId }) {
    * note, which then vanishes on serialisation while the tool reports it saved.
    */
   const name = noteName(key);
+  // What it replaces, kept one step back so a bad write can be undone (HAR-002).
+  const before = ((await store.getUserSetting(userId, where.key).catch(() => null)) || {})[name] || null;
   await store.mergeUserSetting(userId, where.key, {
-    [name]: { content: text, updatedAt: new Date().toISOString() },
+    [name]: stampNote(text, { by: 'assistant', chatId, before }),
   });
 
   if (!found.length) return `Saved note "${name}" for ${where.where}.`;
@@ -1267,10 +1280,11 @@ async function memoryAppend({ key: rawKey, content, scope }, { userId, chatId })
   const existing = memory[key]?.content || '';
   // A blank line between entries, so an appended list stays readable rather than
   // running together into one paragraph.
-  memory[key] = {
-    content: boundedNote(existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text),
-    updatedAt: new Date().toISOString(),
-  };
+  memory[key] = stampNote(boundedNote(existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text), {
+    by: 'assistant',
+    chatId,
+    before: memory[key] || null,
+  });
   // Merged, not overwritten: the agent runs up to four tool calls at once, so
   // two memory writes in one step both read the same object and a whole-value
   // write meant the second silently erased the first — while both reported
@@ -1335,7 +1349,7 @@ async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newS
   guardNote(text, allowed);
   // A function, not the string: `replace` reads `$&` and `` $` `` in a string
   // replacement as patterns, so a note edited to say "costs $&5" came out wrong.
-  memory[key] = { content: boundedNote(note.content.replace(find, () => text)), updatedAt: new Date().toISOString() };
+  memory[key] = stampNote(boundedNote(note.content.replace(find, () => text)), { by: 'assistant', chatId, before: note });
   // Only this note, so a concurrent write to a different one is not undone.
   await store.mergeUserSetting(userId, target, { [key]: memory[key] });
 

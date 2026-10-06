@@ -203,11 +203,14 @@ export async function providerPrivacyFor(userId) {
   try {
     stored = (await getStore().getUserSetting(userId, PREFS_KEY)) || {};
   } catch {
-    // No store (a test driving the provider layer alone) or a blip: the
-    // standard route, which is what every account had before this setting —
-    // unless this instance already knows better, in which case a stale "strict"
-    // beats a guessed "standard". Not remembered, so the next call asks again.
-    return hit?.value || 'standard';
+    // A blip, or no store at all: the answer is unknown, and an unknown answer
+    // is the strict one (PRV-002). Guessing "standard" sent somebody who chose
+    // strict to a provider that may keep and train on what they wrote, for as
+    // long as the database stayed unreachable; guessing "strict" costs a
+    // standard account at most one refusal it can read ("No provider serving
+    // this model promises…") on a turn that a database outage was about to
+    // fail anyway. Not remembered, so the next call asks again.
+    return hit?.value || 'strict';
   }
   const value = stored.providerPrivacy === 'strict' ? 'strict' : 'standard';
   PRIVACY_CACHE.set(userId, { value, at: Date.now() });

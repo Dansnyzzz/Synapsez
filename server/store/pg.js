@@ -753,6 +753,21 @@ export function createPgStore(connectionString) {
       );
       return rows[0]?.value ?? null;
     },
+    /**
+     * Remove one entry one level down — `value[entry][inner]` — without reading
+     * the setting first: the delete-side twin of `mergeUserSettingIn` (CODE-042).
+     * A read-all-then-write delete running beside a write to the same setting
+     * erased that write.
+     */
+    async removeUserSettingKeyIn(userId, key, entry, inner) {
+      const rows = await q(
+        `UPDATE user_settings SET value = value #- ARRAY[$3::text, $4::text]
+          WHERE user_id = $1 AND key = $2
+      RETURNING value`,
+        [userId, key, String(entry), String(inner)],
+      );
+      return rows[0]?.value ?? null;
+    },
 
     // ── deployment-wide settings ────────────────────────────────────
     async getSetting(key) {
@@ -1626,8 +1641,15 @@ export function createPgStore(connectionString) {
        * Doing it here too makes each statement independently correct rather
        * than correct-in-context.
        */
+      /*
+       * Stamped with the time of the edit (PRV-012). What it says was written
+       * now, and a conversation shared by link is a snapshot of what had been
+       * written by `shared_at` — `listSharedMessages` filters on this column.
+       * Kept at its first time, an edit made after sharing reached every
+       * visitor and every copy carried on. Order is by `seq`, so nothing moves.
+       */
       await q(
-        `UPDATE messages SET content = $1
+        `UPDATE messages SET content = $1, created_at = NOW()
           WHERE id = $2 AND chat_id = $3
             AND EXISTS (SELECT 1 FROM chats c WHERE c.id = $3 AND c.user_id = $4)`,
         [toJson(content), messageId, chatId, userId],
@@ -1686,6 +1708,50 @@ export function createPgStore(connectionString) {
         [id, userId],
       );
       return rows[0] ?? null;
+    },
+    /**
+     * A file as it stood at `at` — for a conversation shared as a snapshot
+     * (PRV-011). The messages of a shared link stop at `shared_at`; its files
+     * were read live, so a rewrite made afterwards — the owner's edit, a later
+     * turn, `update_file` from another conversation — reached every visitor and
+     * every copy carried on.
+     *
+     * A rewrite (`replaceAttachment`, the only path that changes a file's bytes)
+     * files the outgoing copy as a version stamped with when *that* copy was
+     * written, and stamps the file itself with the time of the rewrite. So the
+     * file as it was at `at` is the file itself if it was last written by then,
+     * otherwise the newest version written by then. Null when neither exists —
+     * a history pruned past that point is refused, not guessed at.
+     */
+    async getAttachmentAt(userId, id, at) {
+      // No moment, no snapshot: refused rather than read live (CODE-055).
+      if (!at) return null;
+      // Compared by the database. A moment handed in as a JS Date is cut to the
+      // millisecond, which can only exclude the file itself (its time is the
+      // database's own). Versions filed before CODE-056 carry times cut the same
+      // way, so one may read up to a millisecond early: a version is taken only
+      // when it is at least a millisecond older than the moment. That can refuse
+      // a copy written in the last millisecond before sharing; it cannot admit
+      // one written after.
+      const found = await q(
+        `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, created_at,
+                created_at <= $3::timestamptz AS settled
+           FROM attachments WHERE id = $1 AND user_id = $2`,
+        [id, userId, at],
+      );
+      const current = found[0] ?? null;
+      if (!current) return null;
+      const { settled, ...file } = current;
+      if (settled) return file;
+      const rows = await q(
+        `SELECT name, mime, kind, bytes, data, source, created_at
+           FROM attachment_versions
+          WHERE user_id = $1 AND attachment_id = $2 AND created_at <= $3::timestamptz - interval '1 millisecond'
+          ORDER BY created_at DESC, revision DESC
+          LIMIT 1`,
+        [userId, id, at],
+      );
+      return rows[0] ? { ...file, ...rows[0] } : null;
     },
     /**
      * Give a file the assistant made a public link, or take it back (`token`
@@ -1847,25 +1913,19 @@ export function createPgStore(connectionString) {
         'SELECT COALESCE(MAX(revision), 0)::int AS n FROM attachment_versions WHERE attachment_id = $1 AND user_id = $2',
         [id, userId],
       );
-      // The first rewrite files two rows: what was there originally becomes
-      // revision 1. Without that the history would start at the second draft
-      // and "go back to the first one" would be impossible.
+      // Each rewrite files what it replaces as the next revision, so the first
+      // one files the original as revision 1. Without that the history would
+      // start at the second draft and "go back to the first one" would be
+      // impossible.
+      // Copied inside the database, not through JS (CODE-056): a time read back
+      // into a JS Date is cut to the millisecond, and a version stamped a little
+      // earlier than it was written could be taken for the copy a conversation
+      // was shared with.
       await q(
         `INSERT INTO attachment_versions (id, attachment_id, user_id, revision, name, mime, kind, bytes, data, source, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [
-          `${id}-v${seen[0].n + 1}`,
-          id,
-          userId,
-          seen[0].n + 1,
-          current.name,
-          current.mime,
-          current.kind,
-          current.bytes,
-          current.data,
-          current.source ?? null,
-          current.created_at,
-        ],
+         SELECT $1, id, user_id, $4, name, mime, kind, bytes, data, source, created_at
+           FROM attachments WHERE id = $2 AND user_id = $3`,
+        [`${id}-v${seen[0].n + 1}`, id, userId, seen[0].n + 1],
       );
 
       const rows = await q(

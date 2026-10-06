@@ -1,4 +1,4 @@
-# Synapsez - desktop capture host.
+﻿# Synapsez - desktop capture host.
 #
 # Deliberately a separate process from host.ps1. Reading the screen through UI
 # Automation regularly takes most of a second, and PowerShell is single

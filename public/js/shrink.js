@@ -322,6 +322,37 @@ export async function prepareUpload(file) {
   throw new Error(tooBig(name, file.size, 'other'));
 }
 
+/** What `prepareUpload` made, as a file again: something to draw a thumbnail from. */
+export function fileOf(ready) {
+  const bytes = Uint8Array.from(atob(ready.data), (c) => c.charCodeAt(0));
+  return new File([bytes], ready.name, { type: ready.mime });
+}
+
+/**
+ * The file made ready to send, and its thumbnail — one decode at a time for a
+ * file that has to be shrunk (PERF-021).
+ *
+ * Both used to start at once. For a 60MB PDF that is two copies of its bytes
+ * and two pdfjs documents in memory together; for a large photo, two decodes
+ * of every pixel. A phone tab runs out of memory on exactly the files this
+ * path exists for. So a file over the send limit is prepared first and drawn
+ * after, and a photo is drawn from the 1600px copy just made rather than by
+ * decoding the original again. A small file still does both at once.
+ *
+ * @param {File} file
+ * @param {((file: File) => Promise<any>) | null} thumbnail  null for a file with nothing to draw
+ */
+export async function preparedWithThumb(file, thumbnail) {
+  const none = { thumb: null };
+  if (!thumbnail) return [await prepareUpload(file), none];
+  if (file.size <= MAX_UPLOAD_BYTES) {
+    return Promise.all([prepareUpload(file), thumbnail(file).catch(() => none)]);
+  }
+  const ready = await prepareUpload(file);
+  const source = ready.note?.kind === 'image' ? fileOf(ready) : file;
+  return [ready, await thumbnail(source).catch(() => none)];
+}
+
 /** Why this one could not be sent, and what would work. */
 function tooBig(name, size, why) {
   const mb = (n) => `${(n / 1024 / 1024).toFixed(1)}MB`;
