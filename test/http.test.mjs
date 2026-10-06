@@ -946,6 +946,8 @@ section('opening the app on a model that has gone moves the account to Auto, and
       releasedAt: '2026-01-01T00:00:00.000Z',
     },
   ]);
+  // Auto needs an OpenRouter key; without one the account is left as it is.
+  await alice.call('PUT', '/api/providers/openrouter/key', { apiKey: 'sk-or-v1-http-suite-placeholder' });
   await alice.call('PUT', '/api/prefs', { defaultModel: 'openrouter/stealth/space-bunny-alpha' });
   const boot = await alice.call('GET', '/api/bootstrap');
   check('the app opens on Auto', boot.json?.prefs?.defaultModel === 'auto', boot.json?.prefs?.defaultModel);

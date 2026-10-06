@@ -5175,7 +5175,7 @@ const browser = createModelBrowser({
  * The account's model has gone, and the server has moved it to Auto.
  *
  * Arrives from the boot data (`prefs.modelNotice`, left by whatever noticed —
- * a scheduled run at night, the library refresh) or mid-turn as
+ * opening the app, or a scheduled run or workflow at night) or mid-turn as
  * `model_switched`. Before this the chip went on naming a model that no longer
  * answered while the picker no longer listed it, which read as the app being
  * broken. Said once, long enough to read, and the notice is cleared so the

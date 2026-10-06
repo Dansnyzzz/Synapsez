@@ -251,6 +251,18 @@ section('a model leaves the library on the day its provider ends it');
     check('  but the strict privacy setting refusing every endpoint does not', !isModelGoneError('No endpoints found matching your data policy (Free model publication)'));
     check('  nor does an ordinary failure', !isModelGoneError(new Error('429 Too Many Requests')) && !isModelGoneError(new Error('500 Internal Server Error')));
 
+    // With no OpenRouter key, Auto cannot run: the account is left as it is,
+    // and the turn says the model has gone and to pick another.
+    const { setApiKey: setKey } = await import('../server/settings.js');
+    await setKey(uid, 'openrouter', '');
+    const savedShared = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    await setPrefs(uid, { defaultModel: 'openrouter/stealth/space-bunny-alpha', modelNotice: null });
+    const unmoved = await settleAccountModel(uid, await getPrefs(uid));
+    check('without an OpenRouter key the account is not moved to an Auto it cannot run', unmoved.defaultModel === 'openrouter/stealth/space-bunny-alpha' && !unmoved.modelNotice, unmoved.defaultModel);
+    if (savedShared !== undefined) process.env.OPENROUTER_API_KEY = savedShared;
+    await setKey(uid, 'openrouter', 'sk-or-v1-autopick-placeholder');
+
     await setPrefs(uid, { defaultModel: 'openrouter/stealth/space-bunny-alpha' });
     const settled = await settleAccountModel(uid, await getPrefs(uid));
     check('an account on a gone model is moved to Auto', settled.defaultModel === 'auto', settled.defaultModel);

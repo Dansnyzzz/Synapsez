@@ -2129,6 +2129,13 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   // A caller's explicit model is not the account's to change.
   const pinned = await turn('c-pinned', [{ throws: '404 No endpoints found for lab/live.' }], { modelId: 'openrouter/lab/live' });
   check('an explicit model that fails is not swapped for the account', !pinned.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'openrouter/lab/live', pinned.thrown);
+  // A built-in the account's key cannot reach is not a withdrawn model: moving
+  // it would send the conversation to a provider the person never chose.
+  await setPrefs(moved.id, { defaultModel: 'anthropic/claude-opus-5', modelNotice: null });
+  const noAccess = await turn('c-no-access', [{ throws: '404 The model `claude-opus-5` does not exist or you do not have access to it.' }]);
+  check('a built-in the key cannot reach is not moved to Auto', !noAccess.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'anthropic/claude-opus-5', noAccess.thrown);
+  const { isModelGoneError } = await import('../server/modelRetirement.js');
+  check('  and "you do not have access" never reads as a model that has gone', !isModelGoneError('The model `gpt-x` does not exist or you do not have access to it.'));
 }
 
 section('a memory note asks first in a turn that has read something from outside (HAR-005)');

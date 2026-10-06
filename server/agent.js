@@ -8,7 +8,7 @@ import { withMarkup } from './pricing.js';
 import { budgetStop } from './providers/stop.js';
 import { resolve as resolveModelId } from './models.js';
 import { AUTO_ID, isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
-import { settleAccountModel, isModelGoneError, moveAccountToAuto } from './modelRetirement.js';
+import { settleAccountModel, isModelGoneError, isLibraryModel, moveAccountToAuto } from './modelRetirement.js';
 import { availableTools, assessRisk, riskReason, TOOLS_BY_NAME } from './tools/definitions.js';
 import { UNTRUSTED_RULE } from './tools/untrusted.js';
 import { executeTool } from './tools/execute.js';
@@ -1180,7 +1180,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * looking which one the next turn would actually use.
    *
    * `modelId` is still honoured, because that is an explicit per-request override
-   * (a sub-agent, a scheduled task) rather than a stale preference.
+   * (a sub-agent) rather than a stale preference. Scheduled tasks and workflows
+   * pass none: they run on the account's choice at the time they run.
    */
   let messages = await store.listMessages(userId, chatId);
 
@@ -1756,8 +1757,14 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * the account's own choice that moves the account to Auto, says so, and
        * runs this same step again there, once. An explicit model (a sub-agent's,
        * a caller's override) is not the account's to change and fails as before.
+       *
+       * Only a model from the shared library (OpenRouter, OrcaRouter) — the
+       * ones that are withdrawn, and whose account already talks to the router
+       * Auto runs on. A built-in that answers 404 is a key that cannot reach it
+       * ("does not exist or you do not have access"), and moving that account
+       * would send its conversation to a provider it never chose.
        */
-      if (followsAccount && !movedToAuto && !isAuto(prefs.defaultModel) && !assistant.text && isModelGoneError(err)) {
+      if (followsAccount && !movedToAuto && !isAuto(prefs.defaultModel) && isLibraryModel(entry) && !assistant.text && isModelGoneError(err)) {
         const auto = await pickAutoModel(userId);
         if (auto) {
           movedToAuto = true;

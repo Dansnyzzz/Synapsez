@@ -2,7 +2,7 @@ import { getStore } from './store/index.js';
 import { CATALOG } from './providers/catalog.js';
 import { setPrefs } from './settings.js';
 import { hasExpired } from './models.js';
-import { AUTO_ID, isAuto } from './autoPick.js';
+import { AUTO_ID, isAuto, pickAutoModel } from './autoPick.js';
 
 /**
  * A model the account chose, gone from the provider — and what happens then.
@@ -71,12 +71,22 @@ export async function goneModel(id) {
 export const MODEL_GONE =
   /no longer available|is not found|not found for api version|does not exist|no longer supported|has been (?:retired|deprecated|shut down)|deprecat\w*|testing period|no endpoints found for /i;
 const DATA_POLICY = /matching your data policy|no endpoints? (?:found )?(?:that )?(?:match|meet)\w* (?:your )?(?:data|privacy|zdr)/i;
+/**
+ * A key that cannot reach a model is not a model that has gone. OpenAI says
+ * "The model `x` does not exist or you do not have access to it" for both, and
+ * moving that account to Auto would send its conversation to a provider it never
+ * chose, on the deployment's key.
+ */
+const NO_ACCESS = /do not have access|don't have access|not have access to|permission|not allowed to access|unauthori[sz]ed/i;
 
 /** @param {unknown} error */
 export function isModelGoneError(error) {
   const message = String(/** @type {any} */ (error)?.message || error || '');
-  return MODEL_GONE.test(message) && !DATA_POLICY.test(message);
+  return MODEL_GONE.test(message) && !DATA_POLICY.test(message) && !NO_ACCESS.test(message);
 }
+
+/** Models from the shared library, the ones that are withdrawn: OpenRouter's and OrcaRouter's. */
+export const isLibraryModel = (entry) => LIBRARY_PROVIDERS.has(String(entry?.provider || String(entry?.id || '').split('/')[0]));
 
 /**
  * Move the account to Auto and leave the notice the interface shows once.
@@ -109,6 +119,11 @@ export async function settleAccountModel(userId, prefs) {
   try {
     const gone = await goneModel(prefs?.defaultModel);
     if (!gone) return prefs;
+    // Only where Auto can run: it needs an OpenRouter key. Without one the
+    // account is left as it is, and the turn says the model has gone and to pick
+    // another (`readableFailure`) — better than a notice saying it carries on on
+    // Auto, followed by "Auto needs an OpenRouter key" on every message.
+    if (!(await pickAutoModel(userId))) return prefs;
     return { ...prefs, ...(await moveAccountToAuto(userId, gone.label)) };
   } catch {
     return prefs;
