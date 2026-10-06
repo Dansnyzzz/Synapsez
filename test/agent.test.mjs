@@ -2140,6 +2140,12 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   const stale = await turn('c-stale-tab', [{ text: 'On Auto.' }], { modelId: 'openrouter/stealth/space-bunny-alpha' });
   check("a tab still naming a model that has gone runs on the account's Auto", stale.entries[0] === AUTO_ROUTER.id && stale.reply === 'On Auto.', JSON.stringify(stale.entries));
   check('  and is told, so its chip changes', stale.events.some((e) => e.type === 'model_switched' && e.payload?.from === 'space-bunny-alpha'));
+  // The same tab, when the library still lists the model it names — the move
+  // came from the provider's 404 overnight, before the daily refresh.
+  const staleLive = await turn('c-stale-live', [{ throws: '404 No endpoints found for lab/live.' }, { text: 'Carried on.' }], { modelId: 'openrouter/lab/live' });
+  check('a stale tab on a model the library still lists carries on on Auto', staleLive.entries[1] === AUTO_ROUTER.id && staleLive.reply === 'Carried on.', `${JSON.stringify(staleLive.entries)} ${staleLive.thrown}`);
+  const afterStale = await getPrefs(moved.id);
+  check('  is told, and nothing is written to an account already on Auto', staleLive.events.some((e) => e.type === 'model_switched') && afterStale.defaultModel === 'auto' && afterStale.modelNotice == null, JSON.stringify(afterStale.modelNotice));
   // A model other than the account's — one picked a moment ago whose save has
   // not landed — is run as asked, and is not the account's to change.
   await setPrefs(moved.id, { defaultModel: 'anthropic/claude-opus-5', modelNotice: null });

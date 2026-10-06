@@ -1768,8 +1768,11 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * The library can be a day behind a withdrawal — the refresh runs once a
        * day — so the first sign is often this: a 404 that names the model. On
        * the account's own choice that moves the account to Auto, says so, and
-       * runs this same step again there, once. An explicit model (a sub-agent's,
-       * a caller's override) is not the account's to change and fails as before.
+       * runs this same step again there, once. A model other than the account's
+       * (one picked a moment ago) is not the account's to change and fails as
+       * before — unless the account is on Auto already: that is a tab that had
+       * not heard (moved overnight, while the library still lists the model), and
+       * the step goes where the account already is, with nothing written.
        *
        * Only a model from the shared library (OpenRouter, OrcaRouter) — the
        * ones that are withdrawn, and whose account already talks to the router
@@ -1777,12 +1780,14 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * ("does not exist or you do not have access"), and moving that account
        * would send its conversation to a provider it never chose.
        */
-      if (followsAccount && !movedToAuto && !isAuto(prefs.defaultModel) && isLibraryModel(entry) && !assistant.text && isModelGoneError(err)) {
+      const accountOnAuto = isAuto(prefs.defaultModel);
+      const switchable = followsAccount ? !accountOnAuto : accountOnAuto;
+      if (switchable && !movedToAuto && isLibraryModel(entry) && !assistant.text && isModelGoneError(err)) {
         const auto = await pickAutoModel(userId);
         if (auto) {
           movedToAuto = true;
           const from = entry?.label || String(prefs.defaultModel || '');
-          await moveAccountToAuto(userId, from).catch((e) => log.error('could not move the account to Auto', e));
+          if (followsAccount) await moveAccountToAuto(userId, from).catch((e) => log.error('could not move the account to Auto', e));
           prefs.defaultModel = AUTO_ID;
           entry = auto;
           emit('model_switched', { from, to: AUTO_ID });
