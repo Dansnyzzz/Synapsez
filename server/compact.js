@@ -315,7 +315,7 @@ const SYSTEM = [
  *   onProgress?: (p: { folding: number }) => void,
  * }} args
  *
- *  is optional and was not marked so: the agent loop passes one because
+ * `signal` is optional and was not marked so: the agent loop passes one because
  * a turn can be stopped, and the chat route does not because a compaction the
  * user asked for by pressing a button has nothing to cancel it.
  */

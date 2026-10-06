@@ -1913,9 +1913,10 @@ export function createPgStore(connectionString) {
         'SELECT COALESCE(MAX(revision), 0)::int AS n FROM attachment_versions WHERE attachment_id = $1 AND user_id = $2',
         [id, userId],
       );
-      // The first rewrite files two rows: what was there originally becomes
-      // revision 1. Without that the history would start at the second draft
-      // and "go back to the first one" would be impossible.
+      // Each rewrite files what it replaces as the next revision, so the first
+      // one files the original as revision 1. Without that the history would
+      // start at the second draft and "go back to the first one" would be
+      // impossible.
       // Copied inside the database, not through JS (CODE-056): a time read back
       // into a JS Date is cut to the millisecond, and a version stamped a little
       // earlier than it was written could be taken for the copy a conversation
