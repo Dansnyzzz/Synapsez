@@ -14,14 +14,19 @@ fixed in the repository. Nothing here needs a paid service.
   administrator-only.
 - **Added once, ready for everybody.** The first time anybody adds a command it is installed and checked on a
   scratch machine that belongs to nobody, and what it offers is kept; the next account to add the same command
-  is connected at once. Only the command and its arguments are shared — never a token.
+  is connected at once. What is shared is a fingerprint of the command and what the program says about itself —
+  never its arguments, its environment or a token. A list older than two weeks is checked again.
+- The server treats the account's machine as the account's: it follows no redirect from it, reads a capped
+  reply, and never sends a tool call twice when it cannot tell whether the first one arrived. The cloud
+  browser's calls get the same treatment.
 
 ### Models, scheduled tasks and workflows
 
 - **A model its provider withdraws moves the account to Auto, and says so.** On the day it goes, or the first
   time a provider answers that it has gone ("No endpoints found for …"), the account is moved to Auto — the
   free router — the chip changes, and a notice says which model it was. A step that hit the withdrawal is run
-  again on Auto instead of failing.
+  again on Auto instead of failing. Only for the library's models (OpenRouter, OrcaRouter) and only with an
+  OpenRouter key for Auto to run on: a built-in model the key cannot reach is not "withdrawn", and stays.
 - **Scheduled tasks and workflows run on the model the account is on when they run**, not the one they were
   made on — which is how a workflow kept failing every morning with "404 No endpoints found for
   stealth/space-bunny-alpha".
@@ -36,8 +41,8 @@ fixed in the repository. Nothing here needs a paid service.
 
 ### Security and privacy
 
-- **A memory note asks first in a turn that has read something from outside** — a page, a search result, a
-  server — under the default policy, so a page cannot plant a standing instruction in every later
+- **A memory note asks first in a conversation that has read something from outside** — a page, a search
+  result, a server — under the default policy, so a page cannot plant a standing instruction in every later
   conversation (HAR-005).
 - A shared conversation keeps the title it had when it was shared, like its messages and files (PRV-013).
 - `nodemailer` 10 and `proxy-addr` 2.0.8: `npm audit` reports nothing (SEC-049).
@@ -47,7 +52,8 @@ fixed in the repository. Nothing here needs a paid service.
 ### Performance and CI
 
 - A PDF's text is read on a worker thread with a deadline and a memory cap, so a hostile file cannot hold the
-  server (PERF-022). Drawing scanned pages for a vision model is not moved yet (PERF-023).
+  server (PERF-022); where the worker's code cannot load, it reads on the server's thread as before. Drawing
+  scanned pages for a vision model is not moved yet (PERF-023).
 - CI also runs the suites on Windows, where the desktop worker's PowerShell scripts are checked (CFG-028).
 
 ### Not done here
