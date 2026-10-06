@@ -394,6 +394,32 @@ section('a failing step stops the run instead of marching on');
   check('and the lease is released', after.lease_until === null);
 }
 
+section('a run uses the model the account is on now, not the one it was made on');
+{
+  // The owner's workflow failed every morning with "404 No endpoints found for
+  // stealth/space-bunny-alpha": the model it was made on was pinned to it and
+  // kept being called after it was withdrawn. Pinned to OpenRouter here, with
+  // the account on an Anthropic model — and no key for either in this suite, so
+  // the step's error names whichever provider it actually tried.
+  const { setPrefs } = await import('../server/settings.js');
+  await setPrefs(aliceId, { defaultModel: 'anthropic/claude-opus-5' });
+  const workflow = await store.createWorkflow(aliceId, {
+    id: 'wf-follows-account',
+    title: 'Made on a stealth preview',
+    steps: normaliseSteps(['ask the model something']),
+    model: 'openrouter/stealth/space-bunny-alpha',
+    nextRunAt: null,
+  });
+  const run = await startRun(aliceId, workflow);
+  const after = await advanceRun(run, { deadline: Date.now() + 60_000 });
+  const said = String(after.steps[0].error || '');
+  check('the step is run on the account\'s model', /Anthropic/i.test(said) && !/OpenRouter/i.test(said), said.slice(0, 120));
+
+  // And a workflow made now is not pinned to anything at all.
+  const made = await alice.call('POST', '/api/workflows', { title: 'Fresh', steps: ['do a thing'] });
+  check('a new workflow is not pinned to a model', made.status === 201 && made.body?.workflow?.model == null, JSON.stringify(made.body?.workflow?.model));
+}
+
 /* ── the mistakes found by auditing the first version ───────────── */
 
 section('a second press does not start a second run');
@@ -983,7 +1009,8 @@ section('a run parked by an interruption it did not need is put back to work');
 section('a conversation turn cut off by the time limit is finished in the cloud');
 {
   const { resumeCutOffTurns } = await import('../server/resume.js');
-  const chat = await store.createChat(aliceId, { id: 'c-cutoff', title: 'Long research' });
+  // Started on a model the account may since have left, or that may have gone.
+  const chat = await store.createChat(aliceId, { id: 'c-cutoff', title: 'Long research', model: 'openrouter/lab/started-on' });
   await store.appendMessage(aliceId, chat.id, { id: 'u-cut', role: 'user', text: 'research this deeply' });
   // Exactly what a killed invocation leaves: the lease names a run nobody renews.
   check('the dead run held the lease', (await store.claimChatRun(aliceId, chat.id, 'dead-run')) > 0);
@@ -992,11 +1019,12 @@ section('a conversation turn cut off by the time limit is finished in the cloud'
   const seen = [];
   const out = await resumeCutOffTurns({
     staleMs: 1,
-    run: async ({ chatId, userId }) => {
-      seen.push({ chatId, userId, lease: (await store.getChat(userId, chatId)).run_lock_by });
+    run: async ({ chatId, userId, modelId }) => {
+      seen.push({ chatId, userId, modelId, lease: (await store.getChat(userId, chatId)).run_lock_by });
     },
   });
   check('the cut-off turn is picked up', seen.length === 1 && seen[0].chatId === 'c-cutoff', JSON.stringify(out));
+  check("  on the account's model, not the one the conversation started on", seen[0]?.modelId === null, String(seen[0]?.modelId));
   check('  under a lease of its own, so a browser coming back joins rather than races', !!seen[0]?.lease && seen[0].lease !== 'dead-run');
   check('  and the lease is let go afterwards', (await store.getChat(aliceId, chat.id)).run_lock_by === null);
 

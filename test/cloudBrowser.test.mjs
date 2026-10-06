@@ -74,6 +74,33 @@ section('the keys that drive the browser are sealed at rest (SEC-037)');
   await store.setUserSetting('u-cb', cb.__testing.SETTING, null);
 }
 
+section('a redirect from the machine is not followed');
+{
+  // The machine is the account's own, with root: what answers on its port can
+  // be the account's listener rather than the service. A redirect from it would
+  // otherwise send this server's next request wherever it pointed.
+  let reached = 0;
+  const inside = http.createServer((req, res) => {
+    reached += 1;
+    res.end('{}');
+  });
+  await new Promise((r) => inside.listen(0, '127.0.0.1', r));
+  const insidePort = /** @type {import('node:net').AddressInfo} */ (inside.address()).port;
+  const bouncer = http.createServer((req, res) => {
+    res.writeHead(302, { location: `http://127.0.0.1:${insidePort}/internal` });
+    res.end();
+  });
+  await new Promise((r) => bouncer.listen(0, '127.0.0.1', r));
+  const bouncerPort = /** @type {import('node:net').AddressInfo} */ (bouncer.address()).port;
+  try {
+    const answer = await cb.__testing.call({ url: `http://127.0.0.1:${bouncerPort}`, key: 'k' }, '/health', undefined, { timeout: 5000 });
+    check('a 302 from the machine reads as no service, and is not followed', answer === null && reached === 0, `${JSON.stringify(answer)} · ${reached} reached`);
+  } finally {
+    inside.close();
+    bouncer.close();
+  }
+}
+
 section('the cloud computer asks before it touches the browser\'s sign-ins (SEC-036)');
 {
   const run = (input) => assessRisk('sandbox_run', input);
@@ -181,6 +208,28 @@ section('the daily budgets are per account and for the whole app');
   process.env.CLOUD_ACTIONS_TOTAL_PER_DAY = before.CLOUD_ACTIONS_TOTAL_PER_DAY ?? '';
   if (!before.CLOUD_ACTIONS_PER_DAY) delete process.env.CLOUD_ACTIONS_PER_DAY;
   if (!before.CLOUD_ACTIONS_TOTAL_PER_DAY) delete process.env.CLOUD_ACTIONS_TOTAL_PER_DAY;
+
+  // A check of a new MCP server is a machine of its own installing a package:
+  // a budget of its own on top of being an action.
+  const { chargeCloudCheck, checkBudgets } = await import('../server/sandbox.js');
+  process.env.CLOUD_CHECKS_PER_DAY = '1';
+  process.env.CLOUD_CHECKS_TOTAL_PER_DAY = '2';
+  check('the check budget is read from the environment, with small defaults', checkBudgets().perAccount === 1 && checkBudgets({}).perAccount === 5 && checkBudgets({}).total === 30);
+  await chargeCloudCheck('u-check-a');
+  const second = await throws(() => chargeCloudCheck('u-check-a'));
+  check('a second new server checked the same day is refused for that account', /checked 1 new MCP servers/.test(second), second);
+  check('  saying a server somebody already added is still ready', /already added is still ready/.test(second));
+  await chargeCloudCheck('u-check-b');
+  const third = await throws(() => chargeCloudCheck('u-check-c'));
+  check('  and the whole app has a check budget of its own', /New MCP servers are at today's limit/.test(third), third);
+  // The scarcer budget first: a refused check spends none of the day's actions.
+  process.env.CLOUD_ACTIONS_PER_DAY = '1';
+  const refusedCheck = await throws(() => chargeCloudCheck('u-check-d'));
+  check('  (refused here by the app-wide check budget)', /New MCP servers/.test(refusedCheck), refusedCheck);
+  const stillOne = await throws(() => chargeCloud('u-check-d'));
+  check('  a refused check spends none of the account\'s actions', stillOne === '', stillOne);
+  delete process.env.CLOUD_ACTIONS_PER_DAY;
+  for (const k of ['CLOUD_CHECKS_PER_DAY', 'CLOUD_CHECKS_TOTAL_PER_DAY']) delete process.env[k];
 }
 
 section('the panel never starts a machine');

@@ -221,7 +221,7 @@ section('schema.sql and SCHEMA_VERSION move together');
   // version was not bumped; it was, in the same change as the schema, so 21 is
   // the version that owns this file.
   // 28: chats.incognito and audit_events.
-  const STAMPED = { version: 28, fingerprint: '5e40e52c1f2b5eaa' };
+  const STAMPED = { version: 29, fingerprint: 'a391b754d4a3041b' };
 
   check(
     'the recorded version matches the code',

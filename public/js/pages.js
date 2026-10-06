@@ -1423,9 +1423,6 @@ export function createPages({
     }
   }
 
-  /** What opened the panel wants redrawn after a change there, if anything. */
-  let paneAfter = null;
-
   /**
    * A Repeat choice still sitting out its pause (UX-005), saved now — before the
    * panel it was made in is redrawn or closed (UX-010). The save reads the
@@ -1480,15 +1477,45 @@ export function createPages({
 
   async function showScheduleInPane(kind, id, { after = null } = {}) {
     const turn = ++paneTurn;
-    // Waited for (UX-012): opening the same schedule again within the pause
-    // fetched it before the save had landed, drew the old Repeat, and the next
-    // edit there wrote that old value back over the choice just saved.
-    await flushSettling(`${kind}:${id}`);
-    const { row, project } = await fetchSchedule(kind, id);
+    const key = `${kind}:${id}`;
+    /**
+     * The same schedule, already on screen, is held still while it is fetched
+     * again (UX-015). A day, a time or Pause pressed in it during the fetch sent
+     * a save this open had not waited for; the redraw then showed the row from
+     * before that save, and the next edit wrote the old value back. `inert`
+     * rather than disabling each control: one switch, nothing to forget. Each
+     * open holding it is counted, and it comes off when the last of them is done
+     * — whether that open drew, was overtaken, or failed — if the view is still
+     * there; one that draws replaces it anyway.
+     */
+    const showing = /** @type {HTMLElement | null} */ ($('taskpane-body').firstElementChild);
+    const holding = showing?.dataset.schedule === key ? showing : null;
+    if (holding) {
+      holding.dataset.holds = String((Number(holding.dataset.holds) || 0) + 1);
+      holding.inert = true;
+      holding.setAttribute('aria-busy', 'true');
+    }
+    let row;
+    let project;
+    try {
+      // Waited for (UX-012): opening the same schedule again within the pause
+      // fetched it before the save had landed, drew the old Repeat, and the next
+      // edit there wrote that old value back over the choice just saved.
+      await flushSettling(key);
+      ({ row, project } = await fetchSchedule(kind, id));
+    } finally {
+      if (holding) {
+        const left = Math.max(0, (Number(holding.dataset.holds) || 1) - 1);
+        holding.dataset.holds = String(left);
+        if (!left && holding.isConnected) {
+          holding.inert = false;
+          holding.removeAttribute('aria-busy');
+        }
+      }
+    }
     // Another schedule opened, or the panel closed, while this one waited:
     // that is where the person went, and this is not drawn over it.
     if (turn !== paneTurn) return;
-    paneAfter = after;
     const pane = $('taskpane');
     $('taskpane-title').textContent = row.title;
     // No pencil in the header: every field below is edited in place, and a
@@ -1500,16 +1527,30 @@ export function createPages({
     // instead of from whatever the body holds by then, which is how one
     // schedule's settings could be saved into another.
     const view = document.createElement('div');
+    view.dataset.schedule = key;
     view.innerHTML = scheduleEditorHtml(kind, row, project);
     $('taskpane-body').replaceChildren(view);
-    wireScheduleEditor(view, kind, row, project);
+    wireScheduleEditor(view, kind, row, project, { turn, after });
     refreshCards(kind, row);
     pane.hidden = false;
     onPaneOpen();
   }
 
-  function wireScheduleEditor(root, kind, row, project) {
+  /**
+   * @param {HTMLElement} root  this schedule's own view (UX-011)
+   * @param {{ turn?: number, after?: (() => void) | null }} [drawn]  the open
+   *   that drew it, and what that open wants redrawn after a change here — kept
+   *   with the view, so a save landing after a switch tells this schedule's
+   *   list, not the next one's (CODE-062)
+   */
+  function wireScheduleEditor(root, kind, row, project, drawn = {}) {
+    const drawnTurn = drawn.turn ?? paneTurn;
+    const drawnAfter = drawn.after ?? null;
     const q = (name) => /** @type {HTMLInputElement} */ (root.querySelector(`[data-s="${name}"]`));
+    /** Whether this view is still what the panel shows, with nothing opened or closed since. */
+    const current = () => root.isConnected && drawnTurn === paneTurn;
+    /** A reopen that cannot fetch says so, rather than failing where nobody sees (CODE-062). */
+    const reopen = () => showScheduleInPane(kind, row.id, { after: drawnAfter }).catch((err) => toast(err.message, 'error'));
     const status = q('status');
     const key = `${kind}:${row.id}`;
     const update = (patch) => sent(key, kind === 'workflow' ? api.updateWorkflow(row.id, patch) : api.updateTask(row.id, patch));
@@ -1542,14 +1583,16 @@ export function createPages({
         status.classList.add('is-ok');
         refreshCards(kind, row);
         onTasksChanged();
-        paneAfter?.();
+        drawnAfter?.();
         return true;
       } catch (err) {
         status.textContent = err.message;
         status.classList.add('is-error');
         // A save that fails after its panel has gone — closed, or another
-        // schedule opened — has no status line anyone can see (UX-012).
-        if (!root.isConnected) toast(err.message, 'error');
+        // schedule opened — has no status line anyone can see (UX-012). Nor
+        // does one failing while the next open is on its way: this view is
+        // still on screen for that moment, then replaced, status and all (UX-016).
+        if (!current()) toast(err.message, 'error');
         return false;
       }
     };
@@ -1610,7 +1653,7 @@ export function createPages({
           // detaches this menu; an open or a close since counts as well, though
           // the schedule opened may not have drawn yet (UX-014).
           if (!menu.isConnected || turn !== paneTurn) return;
-          await showScheduleInPane(kind, row.id, { after: paneAfter });
+          await reopen();
           if (hadFocus) /** @type {HTMLElement|null} */ (document.querySelector('[data-s="frequency"]'))?.focus();
         }
       }, FREQUENCY_SETTLE_MS);
@@ -1702,19 +1745,18 @@ export function createPages({
         return;
       }
       onTasksChanged();
-      paneAfter?.();
+      drawnAfter?.();
       // Not reopened over whatever the panel shows by now, or once it is closed
       // (UX-012, UX-014: the same rule as the Repeat timer).
-      if (root.isConnected && turn === paneTurn) await showScheduleInPane(kind, row.id, { after: paneAfter });
+      if (root.isConnected && turn === paneTurn) await reopen();
     });
 
     armed(q('drop'), t('pages.tasks.removeConfirm'), async () => {
       if (kind === 'workflow') await api.deleteWorkflow(row.id);
       else await api.deleteTask(row.id);
       onTasksChanged();
-      const after = paneAfter;
       closeTaskPane();
-      after?.();
+      drawnAfter?.();
     });
 
     q('project')?.addEventListener('click', () => {

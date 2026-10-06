@@ -2019,11 +2019,15 @@ section('the model is one setting, with one control');
     button: !!document.getElementById('pick-default-model'),
     modelsTab: !!document.querySelector('.tab[data-tab="models"]'),
     languagesTab: !!document.querySelector('.tab[data-tab="languages"]'),
+    tasksTab: !!document.querySelector('.tab[data-tab="tasks"]') || !!document.getElementById('panel-tasks'),
   }));
   check('Settings no longer carries a second copy of the model', !settingsPanel.field);
   check('nor a second way to change it', !settingsPanel.button);
   check('the Models tab is gone', !settingsPanel.modelsTab);
   check('and Languages has taken its place', settingsPanel.languagesTab);
+  // The same rule for schedules: the Scheduled page is where they are made and
+  // changed, and a second copy in Settings was the owner's "dư thừa".
+  check('Settings has no Scheduled tab either', !settingsPanel.tasksTab);
 
   // The reload is what used to expose the disagreement.
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -2043,6 +2047,57 @@ section('the model is one setting, with one control');
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
   });
   await page.waitForTimeout(300);
+}
+
+/**
+ * A model that has gone moves the account to Auto, and the interface says so
+ * (server/modelRetirement.js). Before this the chip went on naming a model the
+ * picker no longer listed, and every message failed.
+ */
+section('a model that has gone: the chip moves to Auto, and the person is told');
+{
+  const { setPrefs, getPrefs } = await import('../server/settings.js');
+  const { getStore } = await import('../server/store/index.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  const kept = (await getPrefs(me.id)).defaultModel;
+  const seen = () =>
+    page.evaluate(() => ({
+      chip: document.getElementById('model-chip')?.textContent?.trim() || '',
+      told: [...document.querySelectorAll('#toasts-alert > *, #toasts > *')].map((n) => n.textContent).join(' | '),
+    }));
+
+  // Moved while the person was away — by a scheduled run overnight, say.
+  await setPrefs(me.id, { defaultModel: 'auto', modelNotice: { from: 'space-bunny-alpha', at: new Date().toISOString() } });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
+  const atOpen = await seen();
+  check('a move made while away shows Auto on the chip', atOpen.chip === 'Auto', atOpen.chip);
+  check('  and says which model went', /space-bunny-alpha/.test(atOpen.told), atOpen.told);
+  await page.waitForTimeout(800);
+  check('  once: the notice is cleared after it is shown', (await getPrefs(me.id)).modelNotice == null);
+
+  // Moved in the middle of a turn: the server's `model_switched`.
+  await setPrefs(me.id, { defaultModel: kept, modelNotice: null });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
+  await page.route('**/api/chats/*/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: 'event: model_switched\ndata: {"from":"Lab Live","to":"auto"}\n\nevent: done\ndata: {"stopReason":"end_turn"}\n\n',
+    }),
+  );
+  await page.fill('#input', 'still there?');
+  await page.press('#input', 'Enter');
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/chats/*/run');
+  const midTurn = await seen();
+  check('a switch in the middle of a turn moves the chip to Auto', midTurn.chip === 'Auto', midTurn.chip);
+  check('  and names the model that went', /Lab Live/.test(midTurn.told), midTurn.told);
+
+  await setPrefs(me.id, { defaultModel: kept, modelNotice: null });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
 }
 
 /**
@@ -4119,12 +4174,32 @@ section('what a project made is a row of pages, newest first');
     await new Promise((r) => setTimeout(r, 1200));
     /** @type {any} */ (window).__foldsDrawn = document.querySelectorAll('#messages .compacted').length;
     const railRows = [...document.querySelectorAll('#rail-extra [data-rail="outputs"] .railrow')];
-    /** @type {any} */ (window).__rail = { rows: railRows.length, first: railRows[0]?.textContent?.trim(), count: document.querySelector('#rail-extra .railsec__count')?.textContent };
+    /** @type {any} */ (window).__rail = {
+      rows: railRows.length,
+      first: railRows[0]?.textContent?.trim(),
+      count: document.querySelector('#rail-extra .railsec__count')?.textContent,
+      // Every section's list has the panel's scroll, not one of its own that cut
+      // the last row of tools in half.
+      ownScroll: [...document.querySelectorAll('#rail-extra .railsec__body')].map((b) => getComputedStyle(b).maxHeight).filter((h) => h !== 'none'),
+    };
+    // Incognito says so in its banner; the dock around the composer gets no frame.
+    document.body.classList.add('is-incognito');
+    const dock = getComputedStyle(/** @type {HTMLElement} */ (document.querySelector('.composer')));
+    /** @type {any} */ (window).__incognitoFrame = `${dock.borderTopStyle} ${dock.borderTopWidth}`;
+    document.body.classList.remove('is-incognito');
     const chip = /** @type {HTMLElement | null} */ (document.querySelector('#rail-extra [data-tool="web_search"]'));
     chip?.click();
     await new Promise((r) => setTimeout(r, 200));
     const group = /** @type {HTMLDetailsElement | null} */ (document.querySelector('#toolpane .toolgrp'));
-    const info = { chip: !!chip, open: !document.getElementById('toolpane').hidden, groups: document.querySelectorAll('#toolpane .toolgrp').length, hits: document.querySelectorAll('#toolpane .webrow').length, folded: false };
+    const info = {
+      chip: !!chip,
+      open: !document.getElementById('toolpane').hidden,
+      groups: document.querySelectorAll('#toolpane .toolgrp').length,
+      hits: document.querySelectorAll('#toolpane .webrow').length,
+      folded: false,
+      // The panel's own ground, as the progress panel has — not a grey card.
+      ground: getComputedStyle(/** @type {HTMLElement} */ (document.getElementById('toolpane'))).backgroundColor,
+    };
     /** @type {HTMLElement | null} */ (group?.querySelector('summary'))?.click();
     info.folded = group ? !group.open : false;
     document.getElementById('toolpane-close')?.click();
@@ -4149,6 +4224,10 @@ section('what a project made is a row of pages, newest first');
   check('a web search the conversation used is listed as a connector', searched?.chip === true, JSON.stringify(searched));
   check('  and opens every search, grouped by the message that asked', searched?.groups === 1 && searched?.hits === 2, JSON.stringify(searched));
   check('  each group folds on a press', searched?.folded === true, JSON.stringify(searched));
+  check('  on the panel\'s own ground, not a grey card', searched?.ground === 'rgba(0, 0, 0, 0)', String(searched?.ground));
+  check('no list in the side panel scrolls on its own', railed?.ownScroll?.length === 0, JSON.stringify(railed?.ownScroll));
+  const frame = await page.evaluate(() => /** @type {any} */ (window).__incognitoFrame);
+  check('an incognito conversation draws no frame around the composer', /^none /.test(String(frame)), String(frame));
   check('the side panel lists what this conversation made', railed?.rows === 7 && railed?.count === '7', JSON.stringify(railed));
   check('  newest first', /page-6/.test(railed?.first || ''), railed?.first);
   check('every output is a card in one row', first.count === 7, String(first.count));
@@ -4543,6 +4622,103 @@ section('a schedule set up in a conversation is a card that opens it');
     enabled: (await (await fetch('/api/tasks/t-card')).json()).task?.enabled,
   }));
   check('  and so is one opened just after Pause/Resume, which is kept (UX-014)', toggledAway.title === 'Bản tin tối' && toggledAway.enabled === !enabledBeforeMove, `${enabledBeforeMove} → ${JSON.stringify(toggledAway)}`);
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+
+  // UX-015: the schedule on screen is held still while it is fetched again, so
+  // an edit made in it then cannot be drawn over by the older row.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'GET') await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  let heldSaves = 0;
+  const countSaves = (request) => {
+    if (request.method() === 'PATCH' && /\/api\/tasks\/t-card$/.test(request.url())) heldSaves += 1;
+  };
+  page.on('request', countSaves);
+  await pillOf(0);
+  await page.waitForTimeout(200);
+  const held = await page.evaluate(() => {
+    const view = /** @type {HTMLElement | null} */ (document.querySelector('#taskpane-body > div'));
+    const box = view?.querySelector('[data-s="toggle"]')?.getBoundingClientRect();
+    return { inert: !!view?.inert, busy: view?.getAttribute('aria-busy'), x: box ? box.x + box.width / 2 : 0, y: box ? box.y + box.height / 2 : 0 };
+  });
+  // Pressed in the old view with the pointer, as a person would while the
+  // reopen loads. (A script's `element.click()` is not a person: the platform
+  // runs it on an inert element all the same.)
+  await page.mouse.click(held.x, held.y);
+  await page.waitForTimeout(1800);
+  page.off('request', countSaves);
+  await page.unroute('**/api/tasks/t-card');
+  const released = await page.evaluate(() => !(/** @type {HTMLElement | null} */ (document.querySelector('#taskpane-body > div')))?.inert);
+  check('a schedule being fetched again is held still (UX-015)', held.inert && held.busy === 'true' && held.x > 0, JSON.stringify(held));
+  check('  so nothing pressed in it then is saved behind the redraw', heldSaves === 0, `${heldSaves} saves`);
+  check('  and the redrawn one can be used again', released);
+
+  // The hold comes off when the open that set it is done, even when that open
+  // was overtaken: here by another schedule whose fetch fails, so nothing is
+  // drawn over the held view and it would have stayed frozen.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'GET') await new Promise((r) => setTimeout(r, 1200));
+    await route.continue();
+  });
+  await page.route('**/api/tasks/t-card2', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not load the schedule (hold test).' }) });
+    } else await route.continue();
+  });
+  await pillOf(0);
+  await page.waitForTimeout(150);
+  await pillOf(1);
+  await page.waitForTimeout(1800);
+  await page.unroute('**/api/tasks/t-card');
+  await page.unroute('**/api/tasks/t-card2');
+  const overtaken = await page.evaluate(() => {
+    const view = /** @type {HTMLElement | null} */ (document.querySelector('#taskpane-body > div'));
+    return { schedule: view?.dataset.schedule, inert: !!view?.inert, busy: view?.getAttribute('aria-busy') };
+  });
+  check('  and a hold whose open was overtaken does not leave the panel frozen', overtaken.schedule === 'task:t-card' && !overtaken.inert && !overtaken.busy, JSON.stringify(overtaken));
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+
+  // CODE-062: the Repeat timer's reopen that cannot fetch the schedule says so,
+  // rather than failing where nobody sees.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not load the schedule (CODE-062 test).' }) });
+    } else await route.continue();
+  });
+  const unseen = [];
+  const onPageError = (err) => unseen.push(String(err?.message || err));
+  page.on('pageerror', onPageError);
+  await page.selectOption('#taskpane [data-s="frequency"]', 'weekly');
+  await page.waitForTimeout(2200);
+  page.off('pageerror', onPageError);
+  await page.unroute('**/api/tasks/t-card');
+  const toldReopen = await page.evaluate(() => [...document.querySelectorAll('#toasts-alert > *, #toasts > *')].map((n) => n.textContent).join(' | '));
+  check('a reopen that cannot fetch the schedule says so in a toast (CODE-062)', /Could not load the schedule \(CODE-062 test\)/.test(toldReopen), toldReopen);
+  check('  and leaves nothing unhandled', !unseen.some((m) => /CODE-062 test/.test(m)), unseen.join(' | '));
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+
+  // UX-016: a choice flushed on the way to another schedule, failing before that
+  // one has drawn, used to report into a view about to be replaced.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not save the schedule (UX-016 test).' }) });
+    } else await route.continue();
+  });
+  await page.route('**/api/tasks/t-card2', async (route) => {
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await pillOf(1);
+  await page.waitForTimeout(2200);
+  await page.unroute('**/api/tasks/t-card');
+  await page.unroute('**/api/tasks/t-card2');
+  const toldSwitch = await page.evaluate(() => [...document.querySelectorAll('#toasts-alert > *, #toasts > *')].map((n) => n.textContent).join(' | '));
+  check('a save that fails while the next schedule is on its way is said in a toast (UX-016)', /Could not save the schedule \(UX-016 test\)/.test(toldSwitch), toldSwitch);
   await pillOf(0);
   await page.waitForTimeout(1200);
 

@@ -11,6 +11,8 @@
  *   MCP_STUB_MODE=slow      never answers tools/list, to exercise the timeout
  *   MCP_STUB_MODE=nogreet   fails initialize, to exercise the handshake failure
  *   MCP_STUB_MODE=noisy     prints a banner to stdout first, as many servers do
+ *   MCP_STUB_MODE=strictinit refuses a second initialize, as real servers do —
+ *                           the cloud bridge has to answer that one itself
  */
 const MODE = process.env.MCP_STUB_MODE || 'normal';
 
@@ -54,6 +56,7 @@ function handle(message) {
 
   if (method === 'initialize') {
     if (MODE === 'nogreet') return fail(id, -32603, 'This server refuses to initialise.');
+    if (MODE === 'strictinit' && initialised) return fail(id, -32600, 'Already initialised.');
     initialised = true;
     return ok(id, {
       protocolVersion: '2025-06-18',

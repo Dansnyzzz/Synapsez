@@ -18,6 +18,20 @@
  */
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
+import net from 'node:net';
+import http from 'node:http';
+import { spawn } from 'node:child_process';
+import { removeTemp } from './lib/tmp.mjs';
+
+// The cloud sections at the end keep a bridge connection and a shared row in a
+// real store, in a throwaway directory.
+process.env.ENCRYPTION_KEY ||= 'mcp-test-encryption-key';
+process.env.SESSION_SECRET ||= 'mcp-test-session-secret';
+process.env.DATA_DIR = path.join(os.tmpdir(), `ai-remote-mcp-test-${process.pid}`);
+delete process.env.DATABASE_URL;
+delete process.env.POSTGRES_URL;
+removeTemp(process.env.DATA_DIR);
 
 let failures = 0;
 const section = (name) => console.log(`\n\x1b[1m${name}\x1b[0m`);
@@ -213,8 +227,10 @@ section('stdio runs a real command, so it is off unless switched on');
   check('a stdio server is refused when nobody opted in', /ALLOW_MCP_STDIO/.test(refused), refused);
   process.env.ALLOW_MCP_STDIO = saved;
 
-  // Shared infrastructure never runs an arbitrary command, opt-in or not: on a
-  // multi-tenant deployment one account's command reads every account's secrets.
+  // Shared infrastructure never runs an arbitrary command beside the server,
+  // opt-in or not: on a multi-tenant deployment one account's command would
+  // read every account's secrets. There it goes to the account's own cloud
+  // computer instead — which, with no account named here, is refused too.
   const savedVercel = process.env.VERCEL;
   process.env.VERCEL = '1';
   let onServerless = '';
@@ -223,7 +239,7 @@ section('stdio runs a real command, so it is off unless switched on');
   } catch (err) {
     onServerless = err.message;
   }
-  check('and refused on serverless even with the switch on', onServerless.length > 0, onServerless);
+  check('and never started beside the server on serverless, even with the switch on', /cloud computer/.test(onServerless), onServerless);
   if (savedVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = savedVercel;
 }
@@ -443,30 +459,8 @@ section('a server plugged in reaches the assistant');
 
   forgetMcp(mine.id);
   forgetMcp(theirs.id);
-  await store.close?.();
-
-  /**
-   * Tidying up must not be able to fail the suite.
-   *
-   * On Windows a file cannot be unlinked while a handle is still open on it, and
-   * PGlite's WASM layer releases its handles a moment after `close()` resolves.
-   * `rmSync` in that window throws ENOTEMPTY, the suite exits non-zero, and the
-   * gate reports a failure in which every single check passed — which trains
-   * people to re-run a red gate rather than read it, and that is the habit the
-   * ledger exists to prevent.
-   *
-   * A few retries cover the gap. If the directory genuinely will not go, it is
-   * a temp directory named after this process id: the operating system clears
-   * it eventually, and nothing about it is worth a false red.
-   */
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      fsp.rmSync(dir, { recursive: true, force: true });
-      break;
-    } catch {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
+  // The store stays open for the cloud sections below; it is closed, and its
+  // directory removed, at the very end of the suite.
 }
 
 /* ── the browser derives the same slug the server does ─────────── */
@@ -507,6 +501,350 @@ section('a server plugged in reaches the assistant');
       differ.length === 0,
       differ.map((n) => `${JSON.stringify(n)}: ${theirs(n)} vs ${slugify(n)}`).join('; '),
     );
+  }
+}
+
+/* ── stdio servers on the cloud computer ────────────────────────────
+ *
+ * The bridge that runs on an account's Vercel Sandbox (server/mcp/bridge.mjs)
+ * is plain Node, so it is started here as a local process and driven exactly as
+ * the server drives it over https. Nothing below reaches a sandbox or the
+ * network.
+ */
+const freePort = () =>
+  new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = /** @type {import('node:net').AddressInfo} */ (probe.address());
+      probe.close(() => resolve(port));
+    });
+  });
+const bridgePort = await freePort();
+const bridgeKey = 'bridge-test-key-'.padEnd(32, 'k');
+const bridge = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'server', 'mcp', 'bridge.mjs')], {
+  env: { ...process.env, SYNZ_MCP_KEY: bridgeKey, PORT: String(bridgePort) },
+  stdio: ['ignore', 'ignore', 'ignore'],
+});
+// Whatever happens below, the bridge does not outlive the suite.
+process.on('exit', () => bridge.kill());
+const conn = { url: `http://127.0.0.1:${bridgePort}`, key: bridgeKey };
+const cloud = await import('../server/mcp/cloud.js');
+for (let i = 0; i < 60 && (await cloud.bridgeCall(conn, '/health', undefined, 1000)).status !== 200; i += 1) {
+  await new Promise((r) => setTimeout(r, 100));
+}
+let stubTools = [];
+
+section('a stdio server on the cloud computer, behind the bridge');
+{
+  check('the bridge answers its key', (await cloud.bridgeCall(conn, '/health', undefined, 2000)).status === 200);
+  check('  and nobody else', (await cloud.bridgeCall({ ...conn, key: 'not-the-key'.padEnd(32, 'x') }, '/health', undefined, 2000)).status === 401);
+
+  const viaBridge = (mode) => ({ transport: 'stdio', command: process.execPath, args: [STUB], env: mode ? { MCP_STUB_MODE: mode } : {}, place: 'cloud', bridge: conn });
+  const first = await connectMcp(viaBridge('strictinit'));
+  stubTools = first.tools;
+  check('a stdio server is reached through it', first.tools.length === 5, `${first.tools.length} tools`);
+  const echoed = await first.call('echo', { message: 'qua cầu' });
+  check('  and its tools run', echoed.text === 'echo: qua cầu', echoed.text);
+  first.close();
+
+  // Every serverless turn connects afresh and says `initialize` again; the
+  // program, still running, refuses a second one (as real servers do).
+  const again = await connectMcp(viaBridge('strictinit'));
+  check('a later connection is greeted from the first handshake', again.tools.length === 5 && again.server?.name === 'stub', JSON.stringify(again.server));
+  const health = await cloud.bridgeCall(conn, '/health', undefined, 2000);
+  check('  on the same program, kept warm between turns', health.body?.programs === 1, JSON.stringify(health.body));
+  // Two server instances talking to one program at once both count ids from one.
+  const other = await connectMcp(viaBridge('strictinit'));
+  const [a, b] = await Promise.all([again.call('echo', { message: 'một' }), other.call('echo', { message: 'hai' })]);
+  check('two callers at once each get their own answer', a.text === 'echo: một' && b.text === 'echo: hai', `${a.text} / ${b.text}`);
+  again.close();
+  other.close();
+
+  let died = '';
+  try {
+    await connectMcp({ transport: 'stdio', command: process.execPath, args: ['-e', 'process.stderr.write("boom: no config here\\n");process.exit(3)'], place: 'cloud', bridge: conn });
+  } catch (err) {
+    died = err.message;
+  }
+  check('a program that will not start says why, from the cloud computer', /boom: no config here/.test(died) && /code 3/.test(died), died);
+  check('  and the bridge carries on for the others', (await cloud.bridgeCall(conn, '/health', undefined, 2000)).status === 200);
+
+  check('on Vercel a stdio server runs on the cloud computer', cloud.stdioPlace({ VERCEL: '1' }) === 'cloud');
+  check('  even with ALLOW_MCP_STDIO set — never beside the server there', cloud.stdioPlace({ VERCEL: '1', ALLOW_MCP_STDIO: '1' }) === 'cloud');
+  check('on a trusted single-owner machine, beside the server', cloud.stdioPlace({ ALLOW_MCP_STDIO: '1' }) === 'local');
+  check('elsewhere on the cloud computer when one is configured', cloud.stdioPlace({ VERCEL_TOKEN: 't', VERCEL_TEAM_ID: 'x', VERCEL_PROJECT_ID: 'p' }) === 'cloud');
+  check('and nowhere when neither is', cloud.stdioPlace({}) === null && cloud.stdioPlace({ VERCEL: '1', SANDBOX_DISABLED: '1' }) === null);
+  const gitnexus = { command: 'npx', args: ['-y', 'gitnexus@latest', 'mcp'] };
+  check('a command is the same server for every account, whatever its token', cloud.mcpSignature({ ...gitnexus, env: { TOKEN: 'secret' } }) === cloud.mcpSignature(gitnexus));
+  check('  and another argument is another server', cloud.mcpSignature(gitnexus) !== cloud.mcpSignature({ command: 'npx', args: ['-y', 'repomix@latest', '--mcp'] }));
+  const { sharedTarget } = await import('../server/mcp/registry.js');
+  check('what is kept for everybody names the program, never its arguments', sharedTarget({ command: 'npx', args: ['-y', '@upstash/context7-mcp', '--api-key', 'ctx7-SECRET'] }) === 'npx');
+
+  // A program the bridge starts for a request that is not the greeting — the
+  // bridge restarted, or stopped it after a quiet spell, while the server still
+  // holds its greeted connection — is greeted by the bridge first.
+  const cold = await cloud.bridgeCall(conn, '/rpc', {
+    id: 'cold-start',
+    spec: { command: process.execPath, args: [STUB], env: { MCP_STUB_MODE: 'strictinit' } },
+    message: { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'echo', arguments: { message: 'không chào trước' } } },
+    timeoutMs: 20_000,
+  }, 30_000);
+  check('a program started for a tool call is greeted by the bridge first', cold.status === 200 && /không chào trước/.test(JSON.stringify(cold.body?.message?.result)), JSON.stringify(cold.body).slice(0, 200));
+  check('  and the caller gets its own id back', cold.body?.message?.id === 7, String(cold.body?.message?.id));
+
+  // The machine is the account's own, with root: what answers on its port can
+  // be the account's listener, not the bridge. A redirect from it is not followed.
+  const hits = { target: 0 };
+  const target = http.createServer((req, res) => {
+    hits.target += 1;
+    res.end('{}');
+  });
+  const big = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(`{"x":"${'a'.repeat(9 * 1024 * 1024)}"}`);
+  });
+  const targetPort = await freePort();
+  const bigPort = await freePort();
+  await new Promise((r) => target.listen(targetPort, '127.0.0.1', r));
+  await new Promise((r) => big.listen(bigPort, '127.0.0.1', r));
+  const redirector = http.createServer((req, res) => {
+    res.writeHead(307, { location: `http://127.0.0.1:${targetPort}/internal` });
+    res.end();
+  });
+  const redirectPort = await freePort();
+  await new Promise((r) => redirector.listen(redirectPort, '127.0.0.1', r));
+  try {
+    const bounced = await cloud.bridgeCall({ url: `http://127.0.0.1:${redirectPort}`, key: bridgeKey }, '/rpc', { id: 'x', message: {} }, 5000);
+    check('a redirect from the machine is not followed', bounced.redirected === true && hits.target === 0, JSON.stringify({ ...bounced, hits: hits.target }));
+    const huge = await cloud.bridgeCall({ url: `http://127.0.0.1:${bigPort}`, key: bridgeKey }, '/health', undefined, 10_000);
+    check('  and a reply past its ceiling is not read', huge.status === 413 && huge.body === null, String(huge.status));
+  } finally {
+    target.close();
+    big.close();
+    redirector.close();
+  }
+}
+
+section('a server added once is ready for the next account, offered without starting anything');
+{
+  // As a deployment with the cloud computer and no local stdio.
+  const before = { ...process.env };
+  delete process.env.ALLOW_MCP_STDIO;
+  Object.assign(process.env, { VERCEL_TOKEN: 'test-token', VERCEL_TEAM_ID: 'team_test', VERCEL_PROJECT_ID: 'prj_test' });
+  const { initStore } = await import('../server/store/index.js');
+  const store = await initStore();
+  const { hashPassword, encryptSecret } = await import('../server/crypto.js');
+  const registry = await import('../server/mcp/registry.js');
+  const { createApp } = await import('../server/app.js');
+  const config = { transport: 'stdio', command: process.execPath, args: [STUB] };
+  try {
+    // As if another account had added it first: checked on a scratch machine and kept.
+    await store.saveSharedMcp({
+      signature: cloud.mcpSignature(config),
+      transport: 'stdio',
+      target: 'stub',
+      server: { name: 'stub', version: '0.0.1' },
+      tools: registry.keptTools(stubTools),
+    });
+
+    const user = await store.createUser({ id: 'u-mcp-cloud', email: 'cloud@mcp.test', name: 'Cloud', passwordHash: await hashPassword('a-sufficiently-long-password'), role: 'user' });
+    const realFetch = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = async (...args) => {
+      requests += 1;
+      return realFetch(...args);
+    };
+    let probe;
+    let offered;
+    try {
+      probe = await registry.probeMcpServer(config, { userId: user.id });
+      await store.saveMcpServer(user.id, { id: 'mcp-cloud-row', name: 'stub', config: registry.sealConfig({ ...config, tools: probe.keep }), enabled: true });
+      offered = await registry.mcpTools(user.id);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    check('a server another account added is connected at once', probe.shared === true && probe.tools.length === 5, JSON.stringify({ shared: probe.shared, n: probe.tools.length }));
+    check('a turn offers its tools from the kept list', offered.tools.filter((tool) => tool.name.startsWith('mcp__stub__')).length === 5, offered.tools.map((tool) => tool.name).join(', '));
+    check('  saying it runs on the cloud computer', offered.servers.find((s) => s.id === 'stub')?.runsOn === 'cloud', JSON.stringify(offered.servers));
+    check('  and neither started a machine nor asked one anything', requests === 0, `${requests} requests`);
+
+    // The first call is what starts it — here the account's bridge is the local one above.
+    await store.setUserSetting(user.id, cloud.__testing.SETTING, { url: conn.url, key: encryptSecret(conn.key), build: cloud.__testing.bridgeSource().build });
+    const result = await registry.callMcpTool(user.id, 'mcp__stub__echo', { message: 'lần đầu' }, 30_000);
+    check('the first call starts it on the account\'s own computer, and it answers', result.text === 'echo: lần đầu', result.text);
+
+    // That first call can take minutes while `npx` installs. Keeping the list it
+    // brings back must not bring back a server removed meanwhile, nor switch one
+    // back on that was switched off.
+    const whileConnecting = async (rowId, name, meanwhile) => {
+      await store.saveMcpServer(user.id, { id: rowId, name, config: registry.sealConfig({ ...config, tools: probe.keep.slice(0, 1) }), enabled: true });
+      registry.forgetMcp(user.id);
+      const plainFetch = globalThis.fetch;
+      let pending = true;
+      globalThis.fetch = async (url, init) => {
+        // Once, during the greeting: before the list is kept, not after it.
+        if (pending && String(url).includes('/rpc')) {
+          pending = false;
+          await meanwhile();
+        }
+        return plainFetch(url, init);
+      };
+      try {
+        await registry.callMcpTool(user.id, `mcp__${registry.slugify(name)}__echo`, { message: 'x' }, 30_000).catch(() => null);
+      } finally {
+        globalThis.fetch = plainFetch;
+      }
+      return store.getMcpServer(user.id, rowId);
+    };
+    const removed = await whileConnecting('mcp-cloud-removed', 'stubremoved', () => store.deleteMcpServer(user.id, 'mcp-cloud-removed'));
+    check('a server removed while its first call connected stays removed', removed === null, JSON.stringify(removed?.config?.tools?.length));
+    const switchedOff = await whileConnecting('mcp-cloud-off', 'stuboff', () => store.setMcpServerEnabled(user.id, 'mcp-cloud-off', false));
+    check('  one switched off meanwhile stays off', switchedOff?.enabled === false, String(switchedOff?.enabled));
+    check('  and still has its new list kept', switchedOff?.config?.tools?.length === 5, String(switchedOff?.config?.tools?.length));
+    await store.deleteMcpServer(user.id, 'mcp-cloud-off');
+    registry.forgetMcp(user.id);
+
+    // Today's checks spent, and the shared list past its two weeks: that list is
+    // still the best there is, and the command is added from it — nothing starts.
+    const { chargeCloudCheck } = await import('../server/sandbox.js');
+    process.env.CLOUD_CHECKS_PER_DAY = '1';
+    await chargeCloudCheck(user.id);
+    // Every shared list counts as old; and nothing here may reach a real
+    // machine — a check that was not refused would try to start one.
+    registry.__testing.setSharedFor(0);
+    const guardedFetch = globalThis.fetch;
+    const outside = [];
+    globalThis.fetch = async (url, init) => {
+      if (!/^http:\/\/127\.0\.0\.1[:/]/.test(String(url))) {
+        outside.push(String(url).slice(0, 80));
+        throw new Error('No network in this test.');
+      }
+      return guardedFetch(url, init);
+    };
+    let aged;
+    try {
+      aged = await registry.probeMcpServer(config, { userId: user.id }).catch((err) => ({ error: err.message }));
+    } finally {
+      globalThis.fetch = guardedFetch;
+      registry.__testing.setSharedFor(14 * 24 * 60 * 60 * 1000);
+      delete process.env.CLOUD_CHECKS_PER_DAY;
+    }
+    check('with the day\'s checks spent, an older shared list is still used', aged?.shared === true && aged?.tools?.length === 5, JSON.stringify(aged).slice(0, 200));
+    check('  and no machine is started for it', outside.length === 0, outside.join(' '));
+
+    // Over HTTP: any account may add one here, because it runs on its own machine.
+    const port = await freePort();
+    const app = createApp().listen(port);
+    await new Promise((r) => app.once('listening', r));
+    try {
+      const base = `http://127.0.0.1:${port}`;
+      const session = async (email) => {
+        const res = await fetch(`${base}/api/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: 'a-long-enough-password', name: email }) });
+        return (res.headers.get('set-cookie') || '').split(';')[0];
+      };
+      await session('owner@mcp.test');
+      const member = await session('member@mcp.test');
+      const add = (cookie, name) =>
+        fetch(`${base}/api/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ name, transport: 'stdio', command: process.execPath, args: [STUB] }) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+      const added = await add(member, 'stub');
+      check('an ordinary account can add a stdio server that runs on its own cloud computer', added.status === 201 && added.body?.found?.shared === true && added.body?.server?.runsOn === 'cloud', JSON.stringify(added.body).slice(0, 200));
+      check('  and the browser is not sent the whole tool list', added.body?.found?.keep === undefined);
+
+      // The old rule still holds where the program would run beside the server.
+      process.env.ALLOW_MCP_STDIO = '1';
+      for (const k of ['VERCEL_TOKEN', 'VERCEL_TEAM_ID', 'VERCEL_PROJECT_ID']) delete process.env[k];
+      const local = await add(member, 'stub2');
+      check('but not one that would run beside the server, with everybody\'s keys', local.status === 403, `${local.status}`);
+
+      // Its row says where it runs, so switching ALLOW_MCP_STDIO on does not move
+      // the ordinary account's server to beside the server.
+      const memberRow = await store.getUserByEmail('member@mcp.test');
+      registry.forgetMcp(memberRow.id);
+      const stillThere = await registry.mcpTools(memberRow.id);
+      check('a server added to run on the cloud computer stays there when stdio is allowed beside the server', stillThere.servers.find((s) => s.id === 'stub')?.runsOn === 'cloud', JSON.stringify(stillThere.servers));
+
+      // A tool call whose reply may have been lost after it arrived is not sent
+      // again: a tool that sends or deletes something must not run twice.
+      let rpcs = 0;
+      const lossy = http.createServer((req, res) => {
+        if (req.url === '/health') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          return res.end('{"ok":true}');
+        }
+        rpcs += 1;
+        res.writeHead(502);
+        return res.end();
+      });
+      const lossyPort = await freePort();
+      await new Promise((r) => lossy.listen(lossyPort, '127.0.0.1', r));
+      try {
+        const lossyKey = 'lossy-bridge-key'.padEnd(32, 'k');
+        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${lossyPort}`, key: encryptSecret(lossyKey), build: cloud.__testing.bridgeSource().build });
+        const transport = cloud.cloudTransport({ command: process.execPath, args: [STUB] }, { userId: memberRow.id });
+        let lost = '';
+        await transport.request('tools/call', { name: 'echo', arguments: { message: 'once' } }, 5000).catch((err) => (lost = err.message));
+        check('a tool call that may have arrived is not sent twice', rpcs === 1 && /could not be reached/.test(lost), `${rpcs} sent: ${lost}`);
+        check('  and the connection is dropped, so the next turn starts afresh', !!transport.closed, String(transport.closed));
+      } finally {
+        lossy.close();
+      }
+
+      // An answer past the ceiling did arrive: it says so, is not sent again,
+      // and the connection is kept.
+      let sentHuge = 0;
+      const huge = http.createServer((req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        if (req.url === '/health') return res.end('{"ok":true}');
+        sentHuge += 1;
+        return res.end(`{"message":{"jsonrpc":"2.0","id":1,"result":{"x":"${'a'.repeat(9 * 1024 * 1024)}"}}}`);
+      });
+      const hugePort = await freePort();
+      await new Promise((r) => huge.listen(hugePort, '127.0.0.1', r));
+      try {
+        const hugeKey = 'huge-bridge-key'.padEnd(32, 'k');
+        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${hugePort}`, key: encryptSecret(hugeKey), build: cloud.__testing.bridgeSource().build });
+        const transport = cloud.cloudTransport({ command: process.execPath, args: [STUB] }, { userId: memberRow.id });
+        let told = '';
+        await transport.request('tools/call', { name: 'echo', arguments: { message: 'big' } }, 10_000).catch((err) => (told = err.message));
+        check('an answer past the ceiling says so', /more than 8 MB/.test(told) && sentHuge === 1, `${sentHuge} sent: ${told}`);
+        check('  and keeps the connection', !transport.closed, String(transport.closed));
+      } finally {
+        huge.close();
+      }
+    } finally {
+      app.close();
+    }
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in before)) delete process.env[k];
+    Object.assign(process.env, before);
+  }
+}
+
+bridge.kill();
+{
+  const { getStore } = await import('../server/store/index.js');
+  await getStore().close?.();
+  /**
+   * Tidying up must not be able to fail the suite.
+   *
+   * On Windows a file cannot be unlinked while a handle is still open on it, and
+   * PGlite's WASM layer releases its handles a moment after `close()` resolves.
+   * `rmSync` in that window throws ENOTEMPTY, the suite exits non-zero, and the
+   * gate reports a failure in which every single check passed — which trains
+   * people to re-run a red gate rather than read it, and that is the habit the
+   * ledger exists to prevent.
+   *
+   * A few retries cover the gap. If the directory genuinely will not go, it is
+   * a temp directory named after this process id: the operating system clears
+   * it eventually, and nothing about it is worth a false red.
+   */
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+      break;
+    } catch {
+      await new Promise((r) => setTimeout(r, 200));
+    }
   }
 }
 

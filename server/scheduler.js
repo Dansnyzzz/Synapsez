@@ -484,7 +484,7 @@ async function runTask(task) {
       await store.createChat(user.id, {
         id: chatId,
         title: deriveTitle(task.title) || task.title,
-        model: task.model || prefs.defaultModel,
+        model: prefs.defaultModel,
         // A task made inside a project runs inside it: same standing
         // instructions, same shelf. Without this, "summarise this week's filings"
         // answered from nothing at all — which is worse than failing, because it
@@ -506,7 +506,15 @@ async function runTask(task) {
       userId: user.id,
       user,
       chatId,
-      modelId: task.model || prefs.defaultModel,
+      /**
+       * The model the account is on now, not the one it was on when the task
+       * was made. `task.model` used to win, so a task made on a free model kept
+       * calling it after the model was withdrawn — every run a 404, for ever,
+       * while the person had long since moved on to another model. Left unset,
+       * the agent loop follows the account's choice, moves it to Auto if that
+       * model has gone, and switches mid-run if the provider says so.
+       */
+      modelId: null,
       // What this run may do unwatched. The task's own choice where it made
       // one, the account's default otherwise — see `policyFor` in the loop.
       policy: task.policy || null,

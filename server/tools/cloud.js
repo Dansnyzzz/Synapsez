@@ -1792,7 +1792,8 @@ async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed 
     id: crypto.randomUUID(),
     title,
     prompt,
-    model: prefs.defaultModel,
+    // Not pinned: a run uses the account's model when it runs (see `runTask`).
+    model: null,
     cron,
     nextRunAt,
     tz,
@@ -1938,7 +1939,8 @@ async function workflowWriteTool({ action, id, title, steps, when, repeat, enabl
     id: crypto.randomUUID(),
     title: String(title || '').trim() || 'Workflow',
     steps: ordered,
-    model: prefs.defaultModel,
+    // Not pinned: a run uses the account's model when it runs (see `runTask`).
+    model: null,
     cron: schedule.cron,
     nextRunAt: schedule.nextRunAt,
     tz,

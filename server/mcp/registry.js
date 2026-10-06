@@ -1,6 +1,8 @@
 import { getStore } from '../store/index.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
 import { connectMcp } from './client.js';
+import { stdioPlace, mcpSignature, checkOnScratch } from './cloud.js';
+import { chargeCloudCheck } from '../sandbox.js';
 import { log } from '../util/trace.js';
 
 /**
@@ -148,6 +150,53 @@ function stored(row) {
   return config;
 }
 
+/**
+ * A stdio server that runs on the account's cloud computer here (cloud.js).
+ * Its tools are offered from the list kept when it was added, and the machine
+ * starts only when one of them is called.
+ */
+const runsInCloud = (row) =>
+  row?.config?.transport !== 'http' && (row?.config?.place === 'cloud' || (!row?.config?.place && stdioPlace() === 'cloud'));
+
+/**
+ * How long a server checked for everybody is trusted before it is checked again
+ * — `@latest` moves. Fourteen days; a test sets it to 0 to stand in an old list.
+ */
+let sharedForMs = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * What `mcp_shared.target` holds for a person reading the table: the program's
+ * name only — never its arguments, which is where a key often goes
+ * (`--api-key …`, `--header "Authorization: Bearer …"`).
+ *
+ * @param {{ command?: string }} config
+ */
+export const sharedTarget = (config) => String(config?.command || '').trim().split(/[\\/]/).pop() || 'program';
+
+/** A server's tools as kept on its row and in `mcp_shared`: the parts a model is offered. */
+export function keptTools(tools) {
+  return (Array.isArray(tools) ? tools : []).slice(0, 500).map((tool) => ({
+    name: tool?.name,
+    ...(tool?.title ? { title: tool.title } : {}),
+    description: tool?.description || '',
+    inputSchema: tool?.inputSchema || { type: 'object', properties: {} },
+  }));
+}
+
+/** One of a server's tools, as the model is offered it. */
+function advertised(id, row, tool) {
+  return {
+    name: `${PREFIX}${id}${'__'}${tool.name}`,
+    scope: 'mcp',
+    // Everything from outside is treated as changing something. See
+    // `assessRisk`: an unrecognised tool is already graded sensitive, and
+    // that is the behaviour wanted here rather than an exception to it.
+    readOnly: false,
+    description: `[${row.name}] ${tool.description || tool.title || 'No description given by the server.'}`.slice(0, 1024),
+    parameters: tool.inputSchema || { type: 'object', properties: {} },
+  };
+}
+
 /** Encrypt the parts of a config that are secrets, for storage. */
 export function sealConfig(config = {}) {
   const out = { ...config };
@@ -259,29 +308,34 @@ export async function mcpTools(userId) {
 
       if (current?.connection) {
         tools.push(...current.tools);
-        servers.push({ id, name: row.name, tools: current.tools.length, skipped: current.skipped, server: current.connection.server });
+        servers.push({ id, name: row.name, tools: current.tools.length, skipped: current.skipped, server: current.connection.server, ...(runsInCloud(row) ? { runsOn: 'cloud' } : {}) });
+        return;
+      }
+
+      /*
+       * On the cloud computer, nothing is started to answer "what can you do":
+       * the list kept when the server was added is offered, and the machine
+       * starts when a tool is actually called (`callMcpTool`). Starting it on
+       * every message would spend the shared allowance on turns that never use
+       * the server, and keep somebody waiting for a machine they did not need.
+       */
+      if (runsInCloud(row) && Array.isArray(row.config?.tools)) {
+        const { usable, skipped } = offerable(id, row.config.tools);
+        const offered = usable.map((tool) => advertised(id, row, tool));
+        tools.push(...offered);
+        servers.push({ id, name: row.name, tools: offered.length, skipped, runsOn: 'cloud' });
         return;
       }
 
       try {
-        const connection = await connectMcp(stored(row));
+        const connection = await connectMcp({ ...stored(row), userId });
         const { usable, skipped } = offerable(id, connection.tools);
-        const advertised = usable.map((tool) => ({
-          name: `${PREFIX}${id}${'__'}${tool.name}`,
-          scope: 'mcp',
-          // Everything from outside is treated as changing something. See
-          // `assessRisk`: an unrecognised tool is already graded sensitive, and
-          // that is the behaviour wanted here rather than an exception to it.
-          readOnly: false,
-          description:
-            `[${row.name}] ${tool.description || tool.title || 'No description given by the server.'}`.slice(0, 1024),
-          parameters: tool.inputSchema || { type: 'object', properties: {} },
-        }));
+        const offered = usable.map((tool) => advertised(id, row, tool));
         if (skipped.length) log.warn('mcp: tools not offered', { server: id, skipped });
 
-        mine.set(id, { connection, tools: advertised, skipped, error: null, at: Date.now() });
-        tools.push(...advertised);
-        servers.push({ id, name: row.name, tools: advertised.length, skipped, server: connection.server });
+        mine.set(id, { connection, tools: offered, skipped, error: null, at: Date.now() });
+        tools.push(...offered);
+        servers.push({ id, name: row.name, tools: offered.length, skipped, server: connection.server });
       } catch (err) {
         mine.set(id, { connection: null, tools: [], error: err.message, at: Date.now() });
         servers.push({ id, name: row.name, error: err.message, tools: 0 });
@@ -298,8 +352,14 @@ export async function callMcpTool(userId, name, input, timeoutMs) {
   if (!split) throw new Error(`"${name}" is not a valid MCP tool name.`);
 
   // Connect if this is the first call of the process — the agent loop lists tools
-  // before calling them, so normally the connection is already here.
-  if (!live.get(userId)?.get(split.server)?.connection) await mcpTools(userId);
+  // before calling them, so normally the connection is already here. A server on
+  // the cloud computer is the exception: its tools were offered from the kept
+  // list, and this call is what starts it.
+  if (!live.get(userId)?.get(split.server)?.connection) {
+    const row = (await getStore().listMcpServers(userId)).find((r) => r.enabled !== false && slugify(r.name) === split.server);
+    if (row && runsInCloud(row)) await connectInCloud(userId, row);
+    else await mcpTools(userId);
+  }
 
   const held = live.get(userId)?.get(split.server);
   if (!held?.connection) {
@@ -314,13 +374,52 @@ export async function callMcpTool(userId, name, input, timeoutMs) {
 }
 
 /**
+ * Start one cloud server for its first call, and keep its list current.
+ *
+ * What it lists now replaces what was kept on its row, so a server updated
+ * upstream (`@latest`) is offered with its new tools from the next turn.
+ *
+ * @param {string} userId
+ * @param {any} row
+ */
+async function connectInCloud(userId, row) {
+  const id = slugify(row.name);
+  if (!live.has(userId)) live.set(userId, new Map());
+  evictIfCrowded(userId);
+  const mine = live.get(userId);
+  try {
+    const connection = await connectMcp({ ...stored(row), userId, place: 'cloud' });
+    const { usable, skipped } = offerable(id, connection.tools);
+    mine.set(id, { connection, tools: usable.map((tool) => advertised(id, row, tool)), skipped, error: null, at: Date.now() });
+    const now = keptTools(connection.tools);
+    if (JSON.stringify(now) !== JSON.stringify(row.config?.tools || [])) {
+      // Only the list: the row may have been removed, switched off or edited
+      // while this connected (see setMcpServerTools).
+      await getStore()
+        .setMcpServerTools(userId, row.id, now, { from: row.config })
+        .catch((err) => log.warn('mcp: could not keep the new tool list', { server: id, err: err?.message }));
+    }
+  } catch (err) {
+    mine.set(id, { connection: null, tools: [], error: err.message, at: Date.now() });
+  }
+}
+
+/**
  * Try a configuration without saving it.
  *
  * What the interface needs before storing anything: does it start, and what does
  * it offer. Saving a server that cannot start would put a permanent error in
  * somebody's settings for them to work out later.
+ *
+ * `keep` is the full list to store on the row, for a server that will be
+ * offered from it (one on the cloud computer); `shared` says it was already
+ * known and nothing had to start.
+ *
+ * @param {any} config
+ * @param {{ userId?: string }} [options]
  */
-export async function probeMcpServer(config) {
+export async function probeMcpServer(config, { userId } = {}) {
+  if (config.transport !== 'http' && stdioPlace() === 'cloud') return probeInCloud(config, userId);
   const connection = await connectMcp(config);
   try {
     return {
@@ -331,6 +430,68 @@ export async function probeMcpServer(config) {
   } finally {
     connection.close();
   }
+}
+
+/**
+ * A stdio server on the cloud computer, checked once for everybody.
+ *
+ * Already in `mcp_shared`: nothing starts, the list is taken from there, and the
+ * account has the server at once. Not yet: it is started on a scratch machine
+ * with no environment (cloud.js says why not the account's own), and what it
+ * lists is kept for the next account. A server that will not start without its
+ * token — a GitHub server with no `GITHUB_PERSONAL_ACCESS_TOKEN` — is checked
+ * on the account's own machine, with the token, and that list is not shared.
+ *
+ * @param {any} config
+ * @param {string} [userId]
+ */
+async function probeInCloud(config, userId) {
+  const store = getStore();
+  const signature = mcpSignature(config);
+  const known = await store.getSharedMcp(signature).catch(() => null);
+  const listed = known && Array.isArray(known.tools) && known.tools.length;
+  const recent = listed && Date.now() - new Date(known.checked_at).getTime() < sharedForMs;
+  if (recent) {
+    await store.noteSharedMcpUse(signature).catch(() => {});
+    return describeProbe(known.server, known.tools, { shared: true });
+  }
+  // A machine of its own that installs a package: far more than one action.
+  if (userId) {
+    try {
+      await chargeCloudCheck(userId);
+    } catch (err) {
+      // Today's checks are spent: a list checked before is still the best there is.
+      if (listed) return describeProbe(known.server, known.tools, { shared: true });
+      throw err;
+    }
+  }
+  try {
+    const found = await checkOnScratch(config, connectMcp);
+    await store
+      .saveSharedMcp({ signature, transport: 'stdio', target: sharedTarget(config), server: found.server, tools: keptTools(found.tools) })
+      .catch((err) => log.warn('mcp: could not share a checked server', { err: err?.message }));
+    return describeProbe(found.server, found.tools, { shared: false });
+  } catch (err) {
+    // Checked before and failing now: the older list is still the best there is.
+    if (listed) return describeProbe(known.server, known.tools, { shared: true });
+    if (!userId || !config.env || !Object.keys(config.env).length) throw err;
+    const connection = await connectMcp({ ...config, userId, place: 'cloud' });
+    try {
+      return describeProbe(connection.server, connection.tools, { shared: false });
+    } finally {
+      connection.close();
+    }
+  }
+}
+
+function describeProbe(server, tools, { shared }) {
+  return {
+    server: server || {},
+    protocolVersion: null,
+    tools: (tools || []).map((tool) => ({ name: tool.name, description: tool.description || '' })),
+    keep: keptTools(tools),
+    shared,
+  };
 }
 
 /**
@@ -383,4 +544,13 @@ export function closeAllMcp() {
   for (const [userId] of live) forgetMcp(userId);
 }
 
-export const __testing = { live, slugify, splitMcpName, offerable };
+export const __testing = {
+  live,
+  slugify,
+  splitMcpName,
+  offerable,
+  /** @param {number} ms */
+  setSharedFor(ms) {
+    sharedForMs = ms;
+  },
+};

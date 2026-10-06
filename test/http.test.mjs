@@ -337,6 +337,10 @@ section('a dead model reads as a sentence, not as JSON');
   check('a chatty withdrawal notice is recognised', /no longer available/.test(retired), retired.slice(0, 80));
   check('and the successor it names is kept', /z-ai\/glm-5\.3-flash/.test(retired), retired);
   check('with somewhere to go next', /chip in the header/.test(retired), retired.slice(-60));
+  // What the owner's workflow showed, raw, every morning.
+  const noEndpoints = readableFailure(new Error('404 No endpoints found for stealth/space-bunny-alpha.'));
+  check('"No endpoints found for <model>" is read as the model having gone', /no longer available/.test(noEndpoints), noEndpoints.slice(0, 80));
+  check('  but the strict privacy refusal keeps its own sentence', !/no longer available/.test(readableFailure(new Error('No endpoints found matching your data policy'))));
 
   const { translateMessage } = await import('../server/i18n/index.js');
   check(
@@ -482,18 +486,30 @@ const bob = jar();
   // one ordinary user could read every other user's credentials. ALLOW_MCP_STDIO
   // was carrying the whole weight, and it answers a different question — whether
   // the machine may spawn things, not who may decide what it spawns.
-  const stdio = await bob.call('POST', '/api/mcp', {
+  // Where stdio servers run beside the server (ALLOW_MCP_STDIO on a single-owner
+  // machine) — the case this is about. On a deployment they run on each
+  // account's own cloud computer instead, which any account may use; that is
+  // tested in mcp.test.
+  const sneaky = {
     name: 'Sneaky',
     transport: 'stdio',
     command: 'node',
     args: ['-e', 'console.log(process.env.ENCRYPTION_KEY)'],
-  });
-  check('an ordinary account cannot add a stdio MCP server', stdio.status === 403, `got ${stdio.status}`);
+  };
+  const hadStdio = process.env.ALLOW_MCP_STDIO;
+  process.env.ALLOW_MCP_STDIO = '1';
+  const stdio = await bob.call('POST', '/api/mcp', sneaky);
+  if (hadStdio === undefined) delete process.env.ALLOW_MCP_STDIO;
+  else process.env.ALLOW_MCP_STDIO = hadStdio;
+  check('an ordinary account cannot add a stdio MCP server that would run beside the server', stdio.status === 403, `got ${stdio.status}`);
   check(
     '  and is told why, not just refused',
     /administrator/i.test(stdio.json?.error || ''),
     stdio.json?.error,
   );
+  // And where it could run nowhere, nobody can add one, and is told why.
+  const nowhere = await bob.call('POST', '/api/mcp', sneaky);
+  check('with neither the cloud computer nor ALLOW_MCP_STDIO, it is refused for everyone', nowhere.status === 400 && /cloud computer/.test(nowhere.json?.error || ''), `${nowhere.status} ${nowhere.json?.error}`);
 
   // http servers spawn nothing and are screened for private addresses, so they
   // stay open to everyone. Asserted so the fix above cannot be widened into
@@ -892,13 +908,16 @@ section('the default model is one the account can run');
   check('while a paid one does not', paidFacts.json?.model?.isFree === false, JSON.stringify(paidFacts.json?.model));
 
   // An explicit choice is never second-guessed: picking a model and finding it
-  // swapped would be far worse than an error message.
-  await fresh.call('PUT', '/api/prefs', { defaultModel: 'openrouter/some/model' });
+  // swapped would be far worse than an error message. The one exception is a
+  // model its provider has withdrawn — moved to Auto and said so, at the
+  // owner's request (2026-10-06; see the section on gone models below). A model
+  // that is still served but has no key here is the case this check is about.
+  await fresh.call('PUT', '/api/prefs', { defaultModel: 'anthropic/claude-opus-5' });
   await fresh.call('PUT', '/api/providers/anthropic/key', { apiKey: '' });
   const chosen = await fresh.call('GET', '/api/bootstrap');
   check(
     'an explicit choice is left alone even when it cannot run',
-    chosen.json?.prefs?.defaultModel === 'openrouter/some/model',
+    chosen.json?.prefs?.defaultModel === 'anthropic/claude-opus-5' && !chosen.json?.prefs?.modelNotice,
     chosen.json?.prefs?.defaultModel,
   );
 }
@@ -914,6 +933,34 @@ section('a failed Google sign-in carries its reason out of the URL');
   // A reason in the URL is text anyone can put in a link.
   check('  with no message in the address', !/message=/.test(where), where);
   check('  and the reason in a cookie only this origin sets', /g_err=[^;]+/.test(res.headers.get('set-cookie') || ''), res.headers.get('set-cookie'));
+}
+
+section('opening the app on a model that has gone moves the account to Auto, and says so once');
+{
+  const me = await store.getUserByEmail('alice@example.com');
+  // The library knows OpenRouter; the account's model is no longer in it.
+  await store.upsertModels([
+    {
+      id: 'openrouter/lab/still-here', provider: 'openrouter', model: 'lab/still-here', family: 'lab', label: 'Still here',
+      description: null, context: 64_000, maxOutput: 8192, priceIn: 0, priceOut: 0, isFree: true, vision: false,
+      releasedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  // Auto needs an OpenRouter key; without one the account is left as it is.
+  await alice.call('PUT', '/api/providers/openrouter/key', { apiKey: 'sk-or-v1-http-suite-placeholder' });
+  await alice.call('PUT', '/api/prefs', { defaultModel: 'openrouter/stealth/space-bunny-alpha' });
+  const boot = await alice.call('GET', '/api/bootstrap');
+  check('the app opens on Auto', boot.json?.prefs?.defaultModel === 'auto', boot.json?.prefs?.defaultModel);
+  check('  with the notice naming the model it replaced', boot.json?.prefs?.modelNotice?.from === 'space-bunny-alpha', JSON.stringify(boot.json?.prefs?.modelNotice));
+  const forged = await alice.call('PUT', '/api/prefs', { modelNotice: { from: 'made up by the browser' } });
+  check('the browser cannot write a notice of its own', forged.json?.modelNotice?.from === 'space-bunny-alpha', JSON.stringify(forged.json?.modelNotice));
+  const cleared = await alice.call('PUT', '/api/prefs', { modelNotice: null });
+  check('  only clear the one it has shown', cleared.status === 200 && cleared.json?.modelNotice == null);
+  const again = await alice.call('GET', '/api/bootstrap');
+  check('  so the next visit is quiet', again.json?.prefs?.modelNotice == null && again.json?.prefs?.defaultModel === 'auto');
+  await store.setUserSetting(me.id, 'prefs', { ...(await store.getUserSetting(me.id, 'prefs')), defaultModel: 'openrouter/lab/still-here' });
+  const live = await alice.call('GET', '/api/bootstrap');
+  check('a model that is still served is left alone', live.json?.prefs?.defaultModel === 'openrouter/lab/still-here' && !live.json?.prefs?.modelNotice);
 }
 
 // ── signing out ─────────────────────────────────────────────────────

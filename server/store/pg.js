@@ -216,8 +216,11 @@ export function splitStatements(sql) {
  *      was at the moment it was shared
  *  28  chats.incognito — a conversation kept out of history and memory, swept
  *      a day after its last use; audit_events — the account's security record
+ *  29  mcp_shared — a stdio MCP server checked once on a scratch machine, so
+ *      the next account adds it at once; chats.shared_title — a shared
+ *      conversation's title as it stood when shared (PRV-013)
  */
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 29;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1428,8 +1431,13 @@ export function createPgStore(connectionString) {
      */
     async setChatShare(userId, chatId, token) {
       const rows = await q(
+        // The title is kept as it stands now, like the messages and the files
+        // (PRV-013): renaming the conversation afterwards renames it for its
+        // owner, not for whoever opens the link. Sharing again moves it on.
         `UPDATE chats
-            SET share_token = $3, shared_at = CASE WHEN $3::text IS NULL THEN NULL ELSE NOW() END
+            SET share_token = $3,
+                shared_at = CASE WHEN $3::text IS NULL THEN NULL ELSE NOW() END,
+                shared_title = CASE WHEN $3::text IS NULL THEN NULL ELSE title END
           WHERE id = $1 AND user_id = $2
       RETURNING share_token, shared_at`,
         [chatId, userId, token],
@@ -1443,7 +1451,9 @@ export function createPgStore(connectionString) {
     async getSharedChat(token) {
       if (!token) return null;
       const rows = await q(
-        'SELECT id, user_id, title, shared_at, created_at FROM chats WHERE share_token = $1 AND shared_at IS NOT NULL',
+        // The title as shared; a link made before `shared_title` existed reads
+        // the live one until it is shared again.
+        'SELECT id, user_id, COALESCE(shared_title, title) AS title, shared_at, created_at FROM chats WHERE share_token = $1 AND shared_at IS NOT NULL',
         [token],
       );
       return rows[0] ?? null;
@@ -3498,12 +3508,56 @@ export function createPgStore(connectionString) {
       if (!saved) throw new Error('That server id belongs to another account.');
       return saved;
     },
+    /**
+     * Keep a cloud server's new tool list on its row, and change nothing else.
+     *
+     * The list comes back from a first call that can take minutes while `npx`
+     * installs. Saving the whole row as it was read before that would bring back
+     * a server removed meanwhile — stored environment and all — switch a disabled
+     * one back on, or undo an edit. So: an update, never an insert; only
+     * `config.tools`; and only while the rest of the config is still the one the
+     * list came from.
+     */
+    async setMcpServerTools(userId, id, tools, { from }) {
+      await q(
+        `UPDATE mcp_servers SET config = jsonb_set(config, '{tools}', $3::jsonb)
+          WHERE user_id = $1 AND id = $2 AND (config - 'tools') = ($4::jsonb - 'tools')`,
+        [userId, id, toJson(tools ?? []), toJson(from ?? {})],
+      );
+    },
     async setMcpServerEnabled(userId, id, enabled) {
       await q('UPDATE mcp_servers SET enabled = $3 WHERE user_id = $1 AND id = $2', [userId, id, !!enabled]);
       return this.getMcpServer(userId, id);
     },
     async deleteMcpServer(userId, id) {
       await q('DELETE FROM mcp_servers WHERE user_id = $1 AND id = $2', [userId, id]);
+    },
+
+    /**
+     * An MCP server as checked once for everybody — `mcp_shared` in schema.sql.
+     *
+     * Not scoped to an account, and on purpose, like `shared_models`: a row is
+     * what a program said about itself when started on a scratch machine that
+     * belongs to nobody, keyed by its command and arguments — never by an
+     * environment variable, which can hold a token. Each account still runs the
+     * program on its own machine; only the description is shared.
+     */
+    async getSharedMcp(signature) {
+      const rows = await q('SELECT * FROM mcp_shared WHERE signature = $1', [signature]);
+      return rows[0] ?? null;
+    },
+    async saveSharedMcp(entry) {
+      const rows = await q(
+        `INSERT INTO mcp_shared (signature, transport, target, server, tools, uses, checked_at)
+         VALUES ($1, $2, $3, $4, $5, 1, NOW())
+         ON CONFLICT (signature) DO UPDATE SET server = EXCLUDED.server, tools = EXCLUDED.tools, checked_at = NOW()
+         RETURNING *`,
+        [entry.signature, entry.transport, String(entry.target || '').slice(0, 1000), toJson(entry.server ?? {}), toJson(entry.tools ?? [])],
+      );
+      return rows[0];
+    },
+    async noteSharedMcpUse(signature) {
+      await q('UPDATE mcp_shared SET uses = uses + 1 WHERE signature = $1', [signature]);
     },
 
     async getSharedModel(id) {

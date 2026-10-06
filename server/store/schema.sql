@@ -899,3 +899,28 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE INDEX IF NOT EXISTS audit_events_user_idx ON audit_events (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS audit_events_created_idx ON audit_events (created_at);
+-- ── 29: an MCP server checked once for everybody; a shared title kept ─
+-- `mcp_shared`: a stdio MCP server — `npx -y gitnexus@latest mcp` — the first
+-- time anybody adds it, started on a scratch machine that belongs to nobody
+-- and listed: what it is and which tools it offers. The next account to add
+-- the same command gets it at once, without the minute of installing, and
+-- every turn offers its tools without starting a machine to ask. Keyed by the
+-- command and its arguments only — never an environment variable, which can
+-- hold somebody's token — and holding only what the program says about
+-- itself. Each account still runs it on its own machine. See server/mcp/cloud.js.
+CREATE TABLE IF NOT EXISTS mcp_shared (
+  signature  TEXT PRIMARY KEY,
+  transport  TEXT NOT NULL,
+  target     TEXT NOT NULL,
+  server     JSONB NOT NULL DEFAULT '{}'::jsonb,
+  tools      JSONB NOT NULL DEFAULT '[]'::jsonb,
+  uses       INTEGER NOT NULL DEFAULT 0,
+  checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- `shared_title`: a shared conversation's title as it stood when it was shared
+-- (PRV-013). Its messages and files were already that snapshot; the title was
+-- read live, so renaming a conversation after sharing it renamed what
+-- visitors and forks saw. Null on a link made before this column: those keep
+-- reading the live title until shared again.
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS shared_title TEXT;

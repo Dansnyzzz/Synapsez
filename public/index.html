@@ -1185,7 +1185,6 @@
         <button class="tab" type="button" data-tab="behaviour" role="tab" id="tab-behaviour" aria-controls="panel-behaviour" aria-selected="false" tabindex="-1" data-i18n="settings.tab.behaviour">Behaviour</button>
         <button class="tab" type="button" data-tab="memory" role="tab" id="tab-memory" aria-controls="panel-memory" aria-selected="false" tabindex="-1" data-i18n="settings.tab.memory">Memory &amp; privacy</button>
         <button class="tab" type="button" data-tab="skills" role="tab" id="tab-skills" aria-controls="panel-skills" aria-selected="false" tabindex="-1" data-i18n="settings.tab.skills">Skills</button>
-        <button class="tab" type="button" data-tab="tasks" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected="false" tabindex="-1" data-i18n="settings.tab.tasks">Scheduled</button>
         <button class="tab" type="button" data-tab="connectors" role="tab" id="tab-connectors" aria-controls="panel-connectors" aria-selected="false" tabindex="-1" data-i18n="settings.tab.connectors">Connectors</button>
         <button class="tab" type="button" data-tab="mcp" role="tab" id="tab-mcp" aria-controls="panel-mcp" aria-selected="false" tabindex="-1" data-i18n="settings.tab.mcp">MCP servers</button>
         <button class="tab" type="button" data-tab="account" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1" data-i18n="settings.tab.account">Account</button>
@@ -1395,32 +1394,6 @@
           <div id="skill-list"></div>
         </section>
 
-        <section class="panel" data-panel="tasks" id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks">
-          <p class="hint" data-i18n="tasks.lede">
-            Work that runs without you watching. Each run is a fresh conversation you can open
-            afterwards — the result is waiting rather than announced. Write the prompt as if to
-            somebody with no memory of today, because that is what it is.
-          </p>
-          <div class="field">
-            <label for="task-title" data-i18n="form.title">Title</label>
-            <input type="text" id="task-title" placeholder="Friday campaign summary" data-i18n-placeholder="tasks.titlePlaceholder" />
-          </div>
-          <div class="field">
-            <label for="task-prompt" data-i18n="tasks.what">What to do</label>
-            <textarea id="task-prompt" rows="4" placeholder="Read the reports in D:\campaigns and summarise the week." data-i18n-placeholder="tasks.promptPlaceholder"></textarea>
-          </div>
-          <div class="row">
-            <input type="text" id="task-when" placeholder="17:00 or fri 17:00" style="max-width:12rem" data-i18n-title="task.whenInput" aria-label="When to run it" data-i18n-placeholder="tasks.whenPlaceholder" />
-            <label class="row" style="gap:6px">
-              <input type="checkbox" id="task-repeat" checked /> <span data-i18n="tasks.repeat">repeat</span>
-            </label>
-            <button class="btn btn--primary" id="task-save" type="button" data-i18n="tasks.schedule">Schedule</button>
-          </div>
-          <p class="hint" id="task-status"></p>
-          <h3 data-i18n="tasks.listHeading">Scheduled</h3>
-          <div id="task-list"></div>
-        </section>
-
         <section class="panel" data-panel="connectors" id="panel-connectors" role="tabpanel" aria-labelledby="tab-connectors">
           <p class="hint" data-i18n="connectors.lede">
             Tokens are encrypted on the server and never sent back to the browser. Each is verified
@@ -1459,7 +1432,7 @@
           <div class="field" id="mcp-stdio-field">
             <label for="mcp-command" data-i18n="mcp.command">Command</label>
             <input id="mcp-command" type="text" placeholder="npx -y @modelcontextprotocol/server-filesystem D:\work" autocomplete="off" spellcheck="false" />
-            <p class="hint" data-i18n="mcp.command.hint">
+            <p class="hint" id="mcp-command-hint" data-i18n="mcp.command.hint">
               The whole command line, exactly as you would type it in a terminal. This runs a program on
               your computer, so only paste something you trust.
             </p>

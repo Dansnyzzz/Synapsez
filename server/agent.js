@@ -7,7 +7,8 @@ import { streamCompletion } from './providers/index.js';
 import { withMarkup } from './pricing.js';
 import { budgetStop } from './providers/stop.js';
 import { resolve as resolveModelId } from './models.js';
-import { isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
+import { AUTO_ID, isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
+import { settleAccountModel, goneModel, isModelGoneError, isLibraryModel, moveAccountToAuto } from './modelRetirement.js';
 import { availableTools, assessRisk, riskReason, TOOLS_BY_NAME } from './tools/definitions.js';
 import { UNTRUSTED_RULE } from './tools/untrusted.js';
 import { executeTool } from './tools/execute.js';
@@ -775,13 +776,58 @@ export function outboundRefusal(call, policy, sent) {
   };
 }
 
-export function needsApproval(toolCalls, policy) {
+/** The memory tools that write — what a page would use to plant a standing instruction. */
+const MEMORY_WRITES = new Set(['memory_write', 'memory_append', 'memory_edit']);
+
+/** Why such a write asks, said in the approval prompt (HAR-005). */
+export const READ_OUTSIDE_REASON =
+  'This conversation has read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.';
+
+/**
+ * Whether this conversation has read anything from outside (HAR-005): any tool
+ * result that arrived inside the untrusted envelope — a page, a search, a feed,
+ * an MCP server, a sub-agent's report.
+ *
+ * The whole conversation, not only this turn: what a page said two messages ago
+ * is still in front of the model now, and "ok, thanks" is all it takes for a
+ * planted instruction to be saved on the next turn.
+ *
+ * @param {Array<{ role: string, results?: Array<{ content?: unknown }> }>} messages
+ */
+export function turnReadOutside(messages) {
+  return messages.some(
+    (message) => message.role === 'tool' && (message.results || []).some((r) => String(r?.content ?? '').includes('<untrusted')),
+  );
+}
+
+/**
+ * The calls in a step that must stop for a yes.
+ *
+ * `readOutside`: under `guarded`, a memory write in a turn that has read
+ * something from outside asks first (HAR-005). Memory is read at the start of
+ * every later conversation, so a page that talked the assistant into saving "the
+ * user always wants replies forwarded to …" would have planted an instruction
+ * in all of them — the one place an injection outlives the turn it came from.
+ * A turn that read nothing from outside writes its notes as before.
+ *
+ * @param {Array<{ id: string, name: string, input?: any }>} toolCalls
+ * @param {string} policy
+ * @param {{ readOutside?: boolean }} [context]
+ */
+export function needsApproval(toolCalls, policy, { readOutside = false } = {}) {
   if (policy === 'auto' || policy === 'readonly' || policy === 'plan') return [];
   return toolCalls.filter((call) => {
+    if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return true;
     const risk = assessRisk(call.name, call.input);
     if (risk === 'safe') return false;
     return policy === 'ask' ? true : risk === 'sensitive';
   });
+}
+
+/** The reason shown for one call in an approval prompt. */
+function approvalReason(call, policy, readOutside) {
+  if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return READ_OUTSIDE_REASON;
+  return riskReason(call.name, call.input);
 }
 
 /**
@@ -1133,10 +1179,37 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * Models showed two different names, both live, with no way to tell from
    * looking which one the next turn would actually use.
    *
-   * `modelId` is still honoured, because that is an explicit per-request override
-   * (a sub-agent, a scheduled task) rather than a stale preference.
+   * `modelId` is what the browser's chip names: the account's own choice, or one
+   * just picked whose save has not landed yet. That second case is honoured as
+   * asked. Scheduled tasks, workflows and a resumed turn pass none: they run on
+   * the account's choice at the time they run.
    */
   let messages = await store.listMessages(userId, chatId);
+
+  /**
+   * The account's own choice, moved to Auto first if its model has gone — so a
+   * scheduled run at three in the morning works on the day a free model ends,
+   * and the conversation's chip changes with it rather than naming a model
+   * that no longer answers. See modelRetirement.js.
+   *
+   * The browser sends the model on its chip with every turn, and that is the
+   * account's choice, not an override of it: the same id follows the account.
+   * So does one that has gone — a tab left open while a scheduled run moved the
+   * account to Auto overnight still names the old model, and nobody can mean to
+   * pick a model that is no longer there.
+   */
+  const senderGone = modelId && modelId !== prefs.defaultModel ? await goneModel(modelId).catch(() => null) : null;
+  const followsAccount = !modelId || modelId === prefs.defaultModel || Boolean(senderGone);
+  if (followsAccount) {
+    const settled = await settleAccountModel(userId, prefs);
+    if (settled.defaultModel !== prefs.defaultModel) {
+      Object.assign(prefs, settled);
+      emit('model_switched', { from: settled.modelNotice?.from || '', to: AUTO_ID });
+    } else if (senderGone && isAuto(prefs.defaultModel)) {
+      // Already moved; this tab had not heard. Its chip changes now.
+      emit('model_switched', { from: senderGone.label, to: AUTO_ID });
+    }
+  }
 
   /**
    * Resolve the model, expanding the special `auto` id to OpenRouter's free
@@ -1145,7 +1218,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * come out of cooldown. With no usable OpenRouter key the turn stops with a
    * plain message rather than quietly falling back to a paid model.
    */
-  const wantModel = modelId || prefs.defaultModel;
+  const wantModel = followsAccount ? prefs.defaultModel : modelId;
   let entry;
   if (isAuto(wantModel)) {
     entry = await pickAutoModel(userId);
@@ -1159,10 +1232,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   }
 
   // Refuse before spending anything, and say plainly how to lift the cap.
-  const usingSharedKey = await usesSharedKey(userId, entry.provider);
+  // Worked out again if the turn moves to Auto part-way (see the retry below):
+  // an account on its own key can land on the deployment's.
+  let usingSharedKey = await usesSharedKey(userId, entry.provider);
   const quota = await checkQuota(user, { usingSharedKey });
   // Per turn, alongside the monthly quota above. See `turnTokenLimit`.
-  const turnLimit = turnTokenLimit({ usingSharedKey });
+  let turnLimit = turnTokenLimit({ usingSharedKey });
   let turnTokens = 0;
   if (!quota.allowed) {
     emit('error', { message: quota.reason, code: 'quota_exceeded' });
@@ -1331,7 +1406,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   if (last?.role === 'assistant' && last.toolCalls?.length) {
     // Re-check the policy rather than trusting that a decision was made. A run
     // cut short before it could ask must still ask on resume.
-    const stillPending = needsApproval(last.toolCalls, policy);
+    const readOutside = turnReadOutside(messages);
+    const stillPending = needsApproval(last.toolCalls, policy, { readOutside });
 
     /**
      * A question still waiting for its answer.
@@ -1365,7 +1441,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           name: c.name,
           input: c.input,
           needsApproval: stillPending.some((p) => p.id === c.id),
-          reason: riskReason(c.name, c.input),
+          reason: approvalReason(c, policy, readOutside),
         })),
       });
       return;
@@ -1454,6 +1530,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   let progressGate = null;
   let progressGated = false;
 
+  /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
+  let movedToAuto = false;
   for (let step = 0; step < prefs.maxSteps; step += 1) {
     if (signal?.aborted) {
       emit('done', { stopReason: 'aborted' });
@@ -1684,6 +1762,48 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         emit('done', { stopReason: 'aborted' });
         return;
       }
+      /**
+       * The provider says the model is gone, before it said anything else.
+       *
+       * The library can be a day behind a withdrawal — the refresh runs once a
+       * day — so the first sign is often this: a 404 that names the model. On
+       * the account's own choice that moves the account to Auto, says so, and
+       * runs this same step again there, once. A model other than the account's
+       * (one picked a moment ago) is not the account's to change and fails as
+       * before — unless the account is on Auto already: that is a tab that had
+       * not heard (moved overnight, while the library still lists the model), and
+       * the step goes where the account already is, with nothing written.
+       *
+       * Only a model from the shared library (OpenRouter, OrcaRouter) — the
+       * ones that are withdrawn, and whose account already talks to the router
+       * Auto runs on. A built-in that answers 404 is a key that cannot reach it
+       * ("does not exist or you do not have access"), and moving that account
+       * would send its conversation to a provider it never chose.
+       */
+      const accountOnAuto = isAuto(prefs.defaultModel);
+      const switchable = followsAccount ? !accountOnAuto : accountOnAuto;
+      if (switchable && !movedToAuto && isLibraryModel(entry) && !assistant.text && isModelGoneError(err)) {
+        const auto = await pickAutoModel(userId);
+        if (auto) {
+          movedToAuto = true;
+          const from = entry?.label || String(prefs.defaultModel || '');
+          if (followsAccount) await moveAccountToAuto(userId, from).catch((e) => log.error('could not move the account to Auto', e));
+          prefs.defaultModel = AUTO_ID;
+          entry = auto;
+          emit('model_switched', { from, to: AUTO_ID });
+          // The shared key's limits, if Auto runs on it and the old model did not.
+          usingSharedKey = await usesSharedKey(userId, entry.provider);
+          turnLimit = turnTokenLimit({ usingSharedKey });
+          const allowed = await checkQuota(user, { usingSharedKey });
+          if (!allowed.allowed) {
+            emit('error', { message: allowed.reason, code: 'quota_exceeded' });
+            emit('done', { stopReason: 'quota_exceeded' });
+            return;
+          }
+          step -= 1;
+          continue;
+        }
+      }
       throw err;
     } finally {
       // In a `finally` rather than after the loop: a turn that throws, or one
@@ -1822,7 +1942,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       }
     }
 
-    const pending = needsApproval(assistant.toolCalls, policy);
+    const readOutside = turnReadOutside(messages);
+    const pending = needsApproval(assistant.toolCalls, policy, { readOutside });
     if (pending.length) {
       emit('approval_required', {
         toolCalls: assistant.toolCalls.map((c) => ({
@@ -1830,7 +1951,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           name: c.name,
           input: c.input,
           needsApproval: pending.some((p) => p.id === c.id),
-          reason: riskReason(c.name, c.input),
+          reason: approvalReason(c, policy, readOutside),
         })),
       });
       return; // The client resumes by calling back with a decision.

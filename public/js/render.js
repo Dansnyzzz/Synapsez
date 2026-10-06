@@ -2217,7 +2217,12 @@ export function statusLine(text, { bar = false } = {}) {
   return node;
 }
 
-export function toast(message, kind = 'info') {
+/**
+ * @param {string} message
+ * @param {string} [kind]  'info', 'ok' or 'error'
+ * @param {{ ms?: number }} [options]  how long it stays; longer for a notice that has to be read
+ */
+export function toast(message, kind = 'info', { ms } = {}) {
   // An error goes to the assertive region: it is why the thing the user just
   // asked for did not happen, and a polite announcement queues behind whatever
   // is being read — which for a streaming reply is a long time.
@@ -2238,5 +2243,5 @@ export function toast(message, kind = 'info') {
   node.dataset.message = message;
   node.textContent = message;
   host.append(node);
-  setTimeout(() => node.remove(), kind === 'error' ? 6500 : 3200);
+  setTimeout(() => node.remove(), ms || (kind === 'error' ? 6500 : 3200));
 }

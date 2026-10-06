@@ -391,6 +391,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '{0} uses compression method {1}, which is not supported.': '{0} dùng phương thức nén {1}, chưa được hỗ trợ.',
   '{0} could not be decompressed: {1}': 'Không giải nén được {0}: {1}',
   'That PDF could not be opened: {0}': 'Không mở được tệp PDF đó: {0}',
+  'That PDF took longer than {0}s to read, so reading it was stopped.': 'Tệp PDF đó đọc quá {0} giây nên đã dừng đọc.',
+  'That PDF could not be read: {0}': 'Không đọc được tệp PDF đó: {0}',
+  'That PDF could not be read: its reader stopped ({0}).': 'Không đọc được tệp PDF đó: trình đọc đã dừng ({0}).',
+  'That PDF could not be read.': 'Không đọc được tệp PDF đó.',
   '{0} is an image. A source has to be something the assistant can quote — send pictures in a message instead, where it can look at them.':
     '{0} là hình ảnh. Nguồn phải là thứ trợ lý trích dẫn được — hãy gửi ảnh trong tin nhắn, nơi trợ lý có thể nhìn thấy.',
   '{0} has no text in it — it may be empty, protected, or made entirely of pictures. Nothing in it can be quoted, so it would be a source in name only.':
@@ -610,10 +614,30 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     ' ngay lập tức',
 
   /* ── MCP, tệp, nhà cung cấp, cơ sở dữ liệu ── */
-  'stdio MCP servers cannot run on this deployment: they spawn a local command, which shared serverless infrastructure must not do. Use an http server instead.':
-    'Máy chủ MCP stdio không chạy được trên bản triển khai này: chúng khởi chạy lệnh cục bộ, điều hạ tầng serverless dùng chung không được phép làm. Hãy dùng máy chủ http.',
-  "stdio MCP servers are off by default because they run a command with access to the server's secrets. Set ALLOW_MCP_STDIO=1 to enable them on a machine you trust, or use an http server.":
-    'Máy chủ MCP stdio mặc định bị tắt vì chúng chạy lệnh có quyền truy cập bí mật của máy chủ. Đặt ALLOW_MCP_STDIO=1 để bật trên máy bạn tin tưởng, hoặc dùng máy chủ http.',
+  "stdio MCP servers run on each account's cloud computer, and this deployment has none: the Vercel Sandbox is switched off (SANDBOX_DISABLED). Use an http server, or switch the sandbox back on.":
+    'Máy chủ MCP stdio chạy trên máy tính đám mây của từng tài khoản, nhưng bản triển khai này không có: Vercel Sandbox đang bị tắt (SANDBOX_DISABLED). Hãy dùng máy chủ http, hoặc bật lại sandbox.',
+  'stdio MCP servers need either the cloud computer (VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID) or ALLOW_MCP_STDIO=1 on a machine you trust. Or use an http server.':
+    'Máy chủ MCP stdio cần máy tính đám mây (VERCEL_TOKEN, VERCEL_TEAM_ID và VERCEL_PROJECT_ID) hoặc ALLOW_MCP_STDIO=1 trên máy bạn tin tưởng. Hoặc dùng máy chủ http.',
+  'stdio servers need either the cloud computer (the Vercel Sandbox) or ALLOW_MCP_STDIO on a machine you trust, and this deployment has neither. An http server works everywhere.':
+    'Máy chủ stdio cần máy tính đám mây (Vercel Sandbox) hoặc ALLOW_MCP_STDIO trên máy bạn tin tưởng, mà bản triển khai này không có cái nào. Máy chủ http thì chạy ở đâu cũng được.',
+  'This conversation has read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.':
+    'Cuộc trò chuyện này đã đọc nội dung từ bên ngoài — một trang web, kết quả tìm kiếm hay một máy chủ. Ghi chú lưu lúc này sẽ được đọc ở đầu mọi cuộc trò chuyện sau, nên hãy kiểm tra để chắc nó không mang theo gì từ nguồn đó.',
+  'The MCP bridge on the cloud computer did not come up in time.':
+    'Cầu nối MCP trên máy tính đám mây không khởi động kịp.',
+  'The connection to the cloud computer was lost.':
+    'Kết nối tới máy tính đám mây đã bị mất.',
+  'The server on the cloud computer answered with more than {0} MB, which was not read.':
+    'Máy chủ trên máy tính đám mây trả lời dài quá {0} MB nên câu trả lời không được đọc.',
+  'This account has checked {0} new MCP servers on the cloud computer today; it can check another in about {1}h. A server somebody has already added is still ready at once.':
+    'Hôm nay tài khoản này đã kiểm tra {0} máy chủ MCP mới trên máy tính đám mây; khoảng {1} giờ nữa mới kiểm tra thêm được. Máy chủ người khác đã thêm trước đó vẫn dùng được ngay.',
+  "New MCP servers are at today's limit for the whole app; another can be checked in about {0}h. A server somebody has already added is still ready at once.":
+    'Việc kiểm tra máy chủ MCP mới đã chạm giới hạn hôm nay của toàn ứng dụng; khoảng {0} giờ nữa mới kiểm tra thêm được. Máy chủ người khác đã thêm trước đó vẫn dùng được ngay.',
+  'The cloud computer for this server is not running.':
+    'Máy tính đám mây cho máy chủ này đang không chạy.',
+  'The cloud computer for this server could not be reached.':
+    'Không liên lạc được với máy tính đám mây cho máy chủ này.',
+  'The server on the cloud computer failed.':
+    'Máy chủ trên máy tính đám mây bị lỗi.',
   'The "{0}" MCP server is not reachable: {1}':
     'Không kết nối được máy chủ MCP "{0}": {1}',
   'There is no MCP server called "{0}" on this account.':
@@ -656,8 +680,6 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Google không trả về hình nào và không nêu lý do. Hãy thử mô tả theo cách khác.',
   "{0}: this conversation ({1} tokens) no longer fits this model's {2}-token window. Compact it, start a new one, or pick a model with a larger window.":
     '{0}: cuộc trò chuyện này ({1} token) không còn vừa cửa sổ {2} token của model. Hãy thu gọn nó, mở cuộc mới, hoặc chọn model có cửa sổ lớn hơn.',
-  '{0} was retired by its provider on {1}. Pick another model.':
-    '{0} đã bị nhà cung cấp ngừng từ ngày {1}. Hãy chọn model khác.',
   '{0} has no stored source to add to. Pass the complete content instead.':
     '{0} không có nội dung gốc để nối thêm. Hãy gửi toàn bộ nội dung thay vào đó.',
   "No rate from {0} to {1}. Use ISO codes like USD, VND, EUR.":

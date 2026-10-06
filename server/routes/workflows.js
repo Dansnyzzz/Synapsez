@@ -2,7 +2,6 @@ import { parseSchedule, schedulePatch, validZone } from '../scheduler.js';
 import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { normaliseSteps, runWorkflowNow } from '../workflows.js';
-import { getPrefs } from '../settings.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 
 /**
@@ -81,12 +80,12 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
           ({ cron, nextRunAt } = parseSchedule(req.body.when, { once: req.body?.repeat === false, tz }));
         }
 
-        const prefs = await getPrefs(req.user.id);
         const workflow = await getStore().createWorkflow(req.user.id, {
           id: crypto.randomUUID(),
           title: String(req.body?.title || '').trim() || 'Workflow',
           steps,
-          model: req.body?.model || prefs.defaultModel,
+          // Not pinned: each run uses the account's model at the time it runs.
+          model: null,
           cron,
           tz,
           nextRunAt,
@@ -106,7 +105,8 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
         if (req.body?.title !== undefined) patch.title = String(req.body.title).trim() || 'Workflow';
         if (req.body?.steps !== undefined) patch.steps = normaliseSteps(req.body.steps);
         if (req.body?.enabled !== undefined) patch.enabled = Boolean(req.body.enabled);
-        if (req.body?.model !== undefined) patch.model = req.body.model || null;
+        // No `model`: a run uses the account's model at the time (see the create
+        // route above), so a stored one would be a setting nothing reads.
 
         if (req.body?.when !== undefined) {
           const tz = validZone(req.body?.tz) ? req.body.tz : null;

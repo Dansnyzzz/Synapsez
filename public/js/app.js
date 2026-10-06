@@ -686,6 +686,7 @@ async function start() {
 
   renderSuggestions();
   renderTopbar();
+  if (state.boot.prefs.modelNotice) noteModelRetired(state.boot.prefs.modelNotice.from);
   fillSettings();
   // Where scheduled work actually runs differs between a local run and a
   // deployment, and the shelf says which rather than implying either.
@@ -3636,6 +3637,9 @@ async function streamOnce(run, decision, answers) {
           block().adoptThinkingAsReply(text);
           maybeScroll(run);
         },
+        // The account's model was withdrawn; the server moved it to Auto and
+        // carries on there. The chip follows whichever conversation is on screen.
+        model_switched: ({ from }) => noteModelRetired(from),
         message: () => {
           run.turn.finishThinking();
           run.sealed = true;
@@ -4223,6 +4227,7 @@ function renderMcp({ servers, status }) {
             <strong>${escapeHtml(server.name)}</strong> ${reach}
           </div>
           <div class="hint" style="word-break:break-all">${escapeHtml(where || '')}</div>
+          ${server.runsOn === 'cloud' ? `<div class="hint">${escapeHtml(t('mcp.runsOnCloud'))}</div>` : ''}
           ${state?.error ? `<div class="hint" style="color:var(--warn)">${escapeHtml(state.error)}</div>` : ''}
           <div class="row">
             <button class="btn btn--ghost" data-mcp-toggle="${escapeHtml(server.id)}" type="button">
@@ -4314,7 +4319,27 @@ async function loadMcpCatalogue() {
     host.innerHTML = '';
   }
 }
+/**
+ * Say where a stdio server runs on this deployment.
+ *
+ * On Vercel it is the account's own cloud computer, not "this computer" — the
+ * old words described the server's machine, and "Máy chủ MCP stdio không chạy
+ * được trên bản triển khai này" was what anybody who believed them got. The
+ * strings swap their keys, so a language change keeps the right ones.
+ */
+function describeStdioPlace() {
+  const cloud = state.boot?.runtime?.mcpStdio === 'cloud';
+  const option = /** @type {HTMLElement | null} */ (document.querySelector('#mcp-transport option[value="stdio"]'));
+  const hint = $('mcp-command-hint');
+  for (const [node, key] of [[option, cloud ? 'mcp.transport.cloud' : 'mcp.transport.stdio'], [hint, cloud ? 'mcp.command.cloudHint' : 'mcp.command.hint']]) {
+    if (!node) continue;
+    node.dataset.i18n = key;
+    node.textContent = t(key);
+  }
+}
+
 async function loadMcp() {
+  describeStdioPlace();
   try {
     renderMcp(await api.mcpServers());
   } catch (err) {
@@ -4352,11 +4377,12 @@ $('mcp-add').addEventListener('click', async () => {
 
   const button = $('mcp-add');
   button.disabled = true;
-  // Starting a server can mean npx fetching a package, which is not instant.
-  status.textContent = t('mcp.trying');
+  // Starting a server can mean npx fetching a package, which is not instant —
+  // and on the cloud computer, the first time, a machine starting as well.
+  status.textContent = t(transport === 'stdio' && state.boot?.runtime?.mcpStdio === 'cloud' ? 'mcp.tryingCloud' : 'mcp.trying');
   try {
     const { found } = await api.addMcpServer(body);
-    status.textContent = t('mcp.added', { n: found?.tools?.length || 0 });
+    status.textContent = t(found?.shared ? 'mcp.addedShared' : 'mcp.added', { n: found?.tools?.length || 0 });
     $('mcp-name').value = '';
     $('mcp-command').value = '';
     $('mcp-url').value = '';
@@ -4753,14 +4779,14 @@ function fillSettings() {
   $('tab-admin').hidden = me.role !== 'admin';
   if (!$('tab-admin').hidden) loadAdmin();
 
-  // These three each hit the network, so they load alongside rather than
+  // These each hit the network, so they load alongside rather than
   // blocking the sheet from opening. A failure in one must not blank the rest.
-  for (const load of [loadSkills, loadTasks, loadConnectors]) {
+  for (const load of [loadSkills, loadConnectors]) {
     load().catch((err) => console.error('[settings]', err.message));
   }
 }
 
-/* ── skills, schedules, connectors ─────────────────────────────── */
+/* ── skills, connectors ──────────────────────────────────────── */
 
 const relativeWhen = (iso) => {
   const then = new Date(iso);
@@ -4818,77 +4844,6 @@ $('skill-save').addEventListener('click', async () => {
     $('skill-description').value = '';
     $('skill-instructions').value = '';
     loadSkills();
-  } catch (err) {
-    status.textContent = err.message;
-  }
-});
-
-async function loadTasks() {
-  const { tasks } = await api.tasks();
-  $('task-list').innerHTML = tasks.length
-    ? `<div class="rows">${tasks
-        // Named `task`, not `t` — the parameter used to shadow the translator,
-        // which is why every string in this block stayed English.
-        .map((task) => {
-          const when = task.cron ? t('tasks.everyCron', { cron: escapeHtml(task.cron) }) : t('tasks.once');
-          const last = task.last_status
-            ? ` · ${t('tasks.last', { status: escapeHtml(task.last_status).slice(0, 40) })}`
-            : '';
-          return `<div class="rows__item">
-            <span class="grow">${escapeHtml(task.title)}
-              <span class="muted">· ${when} · ${
-                task.enabled
-                  ? escapeHtml(t('tasks.next', { when: relativeWhen(task.next_run_at) }))
-                  : escapeHtml(t('tasks.paused'))
-              }${last}</span>
-            </span>
-            ${
-              task.last_chat
-                ? `<button data-task-open="${escapeHtml(task.last_chat)}">${escapeHtml(t('tasks.openResult'))}</button>`
-                : ''
-            }
-            <button data-task-toggle="${escapeHtml(task.id)}" data-on="${!!task.enabled}">${escapeHtml(
-              task.enabled ? t('tasks.pause') : t('tasks.resume'),
-            )}</button>
-            <button data-task-del="${escapeHtml(task.id)}">${escapeHtml(t('action.remove'))}</button>
-          </div>`;
-        })
-        .join('')}</div>`
-    : `<p class="hint">${escapeHtml(t('tasks.empty'))}</p>`;
-
-  for (const btn of $('task-list').querySelectorAll('[data-task-toggle]')) {
-    btn.addEventListener('click', async () => {
-      await api.setTaskEnabled(btn.dataset.taskToggle, btn.dataset.on !== 'true');
-      loadTasks();
-    });
-  }
-  for (const btn of $('task-list').querySelectorAll('[data-task-open]')) {
-    btn.addEventListener('click', () => {
-      $('settings').close();
-      openChat(btn.dataset.taskOpen);
-    });
-  }
-  for (const btn of $('task-list').querySelectorAll('[data-task-del]')) {
-    armed(btn, t('action.reallyRemove'), async () => {
-      await api.deleteTask(btn.dataset.taskDel);
-      loadTasks();
-    });
-  }
-}
-
-$('task-save').addEventListener('click', async () => {
-  const status = $('task-status');
-  try {
-    const { task } = await api.createTask({
-      title: $('task-title').value,
-      prompt: $('task-prompt').value,
-      when: $('task-when').value,
-      repeat: $('task-repeat').checked,
-    });
-    status.textContent = t('tasks.scheduled', { when: relativeWhen(task.next_run_at) });
-    $('task-title').value = '';
-    $('task-prompt').value = '';
-    loadTasks();
   } catch (err) {
     status.textContent = err.message;
   }
@@ -5215,6 +5170,30 @@ const browser = createModelBrowser({
     }
   },
 });
+
+/**
+ * The account's model has gone, and the server has moved it to Auto.
+ *
+ * Arrives from the boot data (`prefs.modelNotice`, left by whatever noticed —
+ * opening the app, or a scheduled run or workflow at night) or mid-turn as
+ * `model_switched`. Before this the chip went on naming a model that no longer
+ * answered while the picker no longer listed it, which read as the app being
+ * broken. Said once, long enough to read, and the notice is cleared so the
+ * next visit is quiet. See server/modelRetirement.js.
+ *
+ * @param {string} from  the gone model's name
+ */
+function noteModelRetired(from) {
+  state.model = 'auto';
+  if (state.boot?.prefs) {
+    state.boot.prefs.defaultModel = 'auto';
+    state.boot.prefs.modelNotice = null;
+  }
+  renderTopbar();
+  refreshModelFacts();
+  toast(t('model.retired', { model: from || t('model.retiredUnnamed') }), 'info', { ms: 15000 });
+  api.savePrefs({ modelNotice: null }).catch(() => {});
+}
 
 // The one way in to the picker, now that Settings no longer carries a second
 // copy of the same control.

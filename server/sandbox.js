@@ -37,6 +37,10 @@ const DOWNLOAD_BYTES = 10 * 1024 * 1024;
 const SNAPSHOT_DAYS = 30;
 /** The port the cloud browser listens on — see server/cloudBrowser. */
 export const BROWSER_PORT = 3000;
+/** The port the MCP bridge listens on — see server/mcp/cloud.js. */
+export const MCP_PORT = 3100;
+/** Every port a machine opens, so neither service waits on a reconfigure. */
+const PORTS = [BROWSER_PORT, MCP_PORT];
 
 /**
  * How much of the shared allotment one account, and the whole app, may use a
@@ -57,6 +61,7 @@ export const BROWSER_PORT = 3000;
  */
 const DAY_MS = 24 * 60 * 60 * 1000;
 class LimitError extends Error {}
+const hours = (ms) => Math.max(1, Math.ceil(ms / 3_600_000));
 export function cloudBudgets(env = process.env) {
   return {
     perAccount: Math.max(1, Number(env.CLOUD_ACTIONS_PER_DAY) || 60),
@@ -75,7 +80,6 @@ export async function chargeCloud(userId) {
   const store = getStore();
   if (typeof store.hitRateLimit !== 'function') return;
   const { perAccount, total } = cloudBudgets();
-  const hours = (ms) => Math.max(1, Math.ceil(ms / 3_600_000));
   try {
     const mine = await store.hitRateLimit(`cloud:acct:${userId}`, perAccount, DAY_MS);
     if (!mine.allowed) {
@@ -94,6 +98,55 @@ export async function chargeCloud(userId) {
   } catch (err) {
     if (err instanceof LimitError) throw err;
   }
+}
+
+/**
+ * How many new MCP servers one account, and the whole app, may check a day.
+ *
+ * A check (`checkOnScratch` in mcp/cloud.js) is a fresh machine that installs a
+ * package and starts it: a minute or more of two vCPUs, a hundred CPU-seconds
+ * or so, where a browser action is one to three. Counted as one action, an
+ * account trying command after command could spend a large share of the month.
+ * A check happens once per command for everybody — what it finds is shared — so
+ * ordinary use never meets this. CLOUD_CHECKS_PER_DAY / CLOUD_CHECKS_TOTAL_PER_DAY.
+ */
+export function checkBudgets(env = process.env) {
+  return {
+    perAccount: Math.max(1, Number(env.CLOUD_CHECKS_PER_DAY) || 5),
+    total: Math.max(1, Number(env.CLOUD_CHECKS_TOTAL_PER_DAY) || 30),
+  };
+}
+
+/**
+ * Count one check of a new MCP server: one of the day's checks, and an action
+ * like any other. Throws a sentence to show when either is spent. The checks
+ * come first, being the scarcer: a refused check spends no action.
+ *
+ * @param {string} userId
+ */
+export async function chargeCloudCheck(userId) {
+  const store = getStore();
+  if (typeof store.hitRateLimit !== 'function') return;
+  const { perAccount, total } = checkBudgets();
+  try {
+    const mine = await store.hitRateLimit(`cloud:check:${userId}`, perAccount, DAY_MS);
+    if (!mine.allowed) {
+      throw new LimitError(
+        `This account has checked ${perAccount} new MCP servers on the cloud computer today; it can check another in about ${hours(mine.retryAfterMs)}h. ` +
+          'A server somebody has already added is still ready at once.',
+      );
+    }
+    const all = await store.hitRateLimit('cloud:check:all', total, DAY_MS);
+    if (!all.allowed) {
+      throw new LimitError(
+        `New MCP servers are at today's limit for the whole app; another can be checked in about ${hours(all.retryAfterMs)}h. ` +
+          'A server somebody has already added is still ready at once.',
+      );
+    }
+  } catch (err) {
+    if (err instanceof LimitError) throw err;
+  }
+  await chargeCloud(userId);
 }
 
 /**
@@ -215,11 +268,70 @@ async function machineFor(name, { signal } = {}) {
     persistent: true,
     keepLastSnapshots: { count: 1, expiration: SNAPSHOT_DAYS * 24 * 60 * 60 * 1000, deleteEvicted: true },
     tags: { app: 'synapsez' },
-    // The browser's port, reachable as https://….vercel.run. Machines made
-    // before the browser existed gain it in `machineForUser`.
-    ports: [BROWSER_PORT],
+    // The browser's and the MCP bridge's ports, reachable as https://….vercel.run.
+    // Machines made before either existed gain them in `portAddress`.
+    ports: PORTS,
     signal,
   });
+}
+
+/**
+ * A machine for one job and nobody's in particular, deleted afterwards.
+ *
+ * Used to try an MCP server the first time anybody adds it (server/mcp/cloud.js),
+ * so the tools it lists can be offered to the next account without that account
+ * waiting. Not the adding account's own machine on purpose: that account has
+ * root on its machine, and whatever it listed there would be shown to everyone
+ * after it. Nothing is kept: no disk, no snapshot.
+ *
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export async function scratchMachine({ signal } = {}) {
+  const { Sandbox } = await loadSdk();
+  try {
+    return await Sandbox.create({
+      ...credentials(),
+      timeout: 6 * 60 * 1000,
+      resources: { vcpus: 2 },
+      networkPolicy: 'allow-all',
+      persistent: false,
+      tags: { app: 'synapsez', role: 'mcp-check' },
+      ports: [MCP_PORT],
+      signal,
+    });
+  } catch (err) {
+    throw machineStartError(err);
+  }
+}
+
+/** Stop and delete a scratch machine; never throws — it is cleanup. @param {any} machine */
+export async function discardMachine(machine) {
+  try {
+    await machine?.stop?.();
+  } catch {
+    /* already stopped */
+  }
+  try {
+    await machine?.delete?.();
+  } catch {
+    /* it expires by itself */
+  }
+}
+
+/**
+ * The https address of one of a machine's ports, opening it on an older machine.
+ *
+ * @param {any} machine
+ * @param {number} port
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export async function portAddress(machine, port, { signal } = {}) {
+  try {
+    return machine.domain(port);
+  } catch {
+    await machine.update({ ports: PORTS }, { signal });
+    return machine.domain(port);
+  }
 }
 
 /**
@@ -245,12 +357,9 @@ export async function machineForUser(userId, { signal } = {}) {
  * @param {{ signal?: AbortSignal }} [options]
  */
 export async function browserAddress(machine, { signal } = {}) {
-  try {
-    return machine.domain(BROWSER_PORT);
-  } catch {
-    await machine.update({ ports: [BROWSER_PORT] }, { signal });
-    return machine.domain(BROWSER_PORT);
-  }
+  // Every port at once: updating to the browser's alone would close the MCP
+  // bridge's on a machine that had both.
+  return portAddress(machine, BROWSER_PORT, { signal });
 }
 
 /**
