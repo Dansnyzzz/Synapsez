@@ -15,21 +15,22 @@ before = `audit/BASELINE.md` 2026-09-09 column, `main` at `3e8273e`; after =
 # Round 3 — audit v3, 2026-10-04 → 2026-10-05
 
 Before = `audit/BASELINE.md` section "Vòng v3", `main` at `58b1ab4` (tag `backup/pre-optimize-20261005-0736`).
-After = branch `optimize/2026-10-05`, 129 commits, measured at `f39f419`–`d6d1ea7` (the commits between
-them touch `audit/` only). Every row is a command that was run and an output that was read.
+After = branch `optimize/2026-10-05`, first measured at 129 commits, at `f39f419`–`d6d1ea7` (the commits
+between them touch `audit/` only), and again after each evaluator pass; 203 commits at `fc9e922`, after the
+seventh. Every row is a command that was run and an output that was read.
 
 ## The gate, and what runs outside it
 
 | Thing | Before | After | How measured |
 |---|---|---|---|
-| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f`; after the third's **475 s** on `7726301` (wall time on this machine varies with what else it is doing); after the fourth's **207 s** on `0a24f12`; after the fifth's **203 s** on `00b0ae6`; after the sixth's **214 s** on `5d0fc03` | `npm run gate`, logs `scratchpad/gate-final{,2,3,4,5,6,7}.log` |
+| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f`; after the third's **475 s** on `7726301` (wall time on this machine varies with what else it is doing); after the fourth's **207 s** on `0a24f12`; after the fifth's **203 s** on `00b0ae6`; after the sixth's **214 s** on `5d0fc03`; after the seventh's **224 s** on `fc9e922` | `npm run gate`, logs `scratchpad/gate-final{,2,3,4,5,6,7,8}.log` |
 | lint | exit 0 | **exit 0** | gate step 1 |
 | `test:hooks` | 168/168 | **168/168** | gate step 2 |
 | eval (scripted) | 13/13, `PROMPT_STAMP ecd004bc42ae` | **13/13, same stamp** — the main system prompt did not change | gate step 3; server log `promptVersion=ecd004bc42ae` |
 | typecheck ratchet | 315 outstanding, ceiling 315 | **315, ceiling 315** — `.typecheck-baseline.json` did not grow | gate step 4 |
-| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **4,568 ✓** (`7726301`), **4,578 ✓** (`0a24f12`), **4,583 ✓** (`00b0ae6`), **4,586 ✓** (`5d0fc03`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
+| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **4,568 ✓** (`7726301`), **4,578 ✓** (`0a24f12`), **4,583 ✓** (`00b0ae6`), **4,586 ✓** (`5d0fc03`, and again at `fc9e922`: the seventh pass's fixes add browser checks, not suite ones), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
 | Suites in `npm test` | 47 | **48** (+`egress.test`) | `scripts.test` |
-| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008); **915 ✓, 0 failures** with UX-009 (+2) at `be1ec2b`; **917 ✓, 0 failures** with UX-010 (+2) at `de8c0d7`; **918 ✓, 0 failures** with UX-011 (+1) at `e3373b1`; **920 ✓, 0 failures** with UX-012 (+2) at `41b4b82` — the commits after it touch no page (real Edge) | `node test/ui.test.mjs` |
+| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008); **915 ✓, 0 failures** with UX-009 (+2) at `be1ec2b`; **917 ✓, 0 failures** with UX-010 (+2) at `de8c0d7`; **918 ✓, 0 failures** with UX-011 (+1) at `e3373b1`; **920 ✓, 0 failures** with UX-012 (+2) at `41b4b82`; **924 ✓, 0 failures, 281 s** with UX-013 and UX-012's Pause (+4) at `fc9e922` — the commits after it touch no page (real Edge) | `node test/ui.test.mjs` |
 | `npm run test:sandbox` | — | **exit 0, 31 ✓** | not in the gate |
 | Coverage (c8, `all:true`) | statements 64.09 · branches 75.42 · functions 67.03 · lines 64.09 | **64.87 · 75.95 · 68.45 · 64.87** — up on all four; functions was 0.03 above its threshold and is now 1.45 above | `npm run coverage`, exit 0, 221 s |
 
@@ -37,11 +38,11 @@ them touch `audit/` only). Every row is a command that was run and an output tha
 
 | Check | Result |
 |---|---|
-| `git diff --shortstat backup/pre-optimize-20261005-0736 HEAD` | 91 files, +4,955 / −324 at `7726301`, 161 commits (includes the vendored Vercel scripts). First measured at 89 files, +4,154 / −312 before the evaluator rounds |
+| `git diff --shortstat backup/pre-optimize-20261005-0736 HEAD` | 91 files, +5,483 / −357 at `fc9e922`, 203 commits (includes the vendored Vercel scripts). First measured at 89 files, +4,154 / −312 before the evaluator rounds; 91 files, +4,955 / −324 at `7726301`, 161 commits |
 | `package-lock.json` | +87 / −3: `@vercel/analytics`, `@vercel/speed-insights` (then moved to devDependencies, CFG-030: +4/−2 of that), and `qs` 6.16.0 (SEC-048). Never regenerated |
 | `.env` files in the diff | none |
 | New files over 300 KB | none (the one over is `test/ui.test.mjs`, which already was) |
-| Secret shapes in every added line of the branch's commits (129, re-run at 161) | **0** (Anthropic, OpenRouter, OpenAI, OrcaRouter, Google, GitHub, Slack, AWS, PEM, Postgres URL with password) |
+| Secret shapes in every added line of the branch's commits (129, re-run at 161 and at 203, `fc9e922`) | **0** (Anthropic, OpenRouter, OpenAI, OrcaRouter, Google, GitHub, Slack, AWS, PEM, Postgres URL with password) |
 | Outbound calls with a timeout (`server/`, `api/`) | **45/45**, unchanged; the one the scan flags, `server/email.js:146`, has its signal at `:161` |
 | `console.log/info/debug` in server+api+worker | **unchanged**: 63 on both the tag and the branch by one method (`git grep -c -E "console\.(log\|info\|debug)\("`), and the diff adds or removes no such line. (A first version of this row said 64 → 63, comparing the baseline's count by another method with this one; corrected after the second evaluator pass.) |
 | Analytics / APM in code | 0 → **Vercel Web Analytics + Speed Insights** in `public/js/insights.js` (GAP-012, asked for). `@sentry` appears only as a name in the MCP catalogue, as before |
@@ -141,10 +142,11 @@ first version of this table overstated the sub-agent row as ≈ +280 tokens and 
 
 | Total | FIXED | CHỜ-CHỦ (in repo) | CHỜ-CHỦ (outside repo) | DEFERRED | BLOCKED | OPEN | IN-PROGRESS |
 |---|---|---|---|---|---|---|---|
-| 107 | 89 | 15 | 2 | 1 | 0 | **0** | **0** |
+| 111 | 93 | 15 | 2 | 1 | 0 | **0** | **0** |
 
 (74 rows from Phases 1–2; four raised by the evaluator's first pass, eight by its second, four by its third,
-six by its fourth, six by its fifth, five by its sixth — below.)
+six by its fourth, six by its fifth, five by its sixth, four by its seventh — below. Counted from the ledger
+by a script, not by hand.)
 
 No CRITICAL or HIGH is open. The 18 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
 CFG-032, LAW-001) and 11 LOW: 17 CHỜ-CHỦ with the reason and the options in the row, and one DEFERRED (ACC-017,
@@ -234,7 +236,20 @@ every reader of a message's time. Three narrow findings and two smaller ones:
 | Unsharing clears the cache on one instance only | already **CODE-032**, CHỜ-CHỦ |
 | Push gate 1 says "0 skip" | the gate table states the two platform skips plainly rather than ticking it |
 
-**Seventh pass:** recorded below once run.
+**Seventh pass (another new reviewer): `NEEDS_WORK`.** It held all five rows from the sixth pass — CODE-056
+against every time involved (each is the database's own `NOW()`), SEC-054, UX-012, CODE-057, CODE-058 —
+re-read the whole share path and found no new way out of the account or the conversation, re-parsed the
+ledger, and re-ran the secret scan over every added line (0). One finding blocked, a claim; four did not:
+
+| Finding | Disposition |
+|---|---|
+| The changelog said every fix to code has a test that fails without it; CODE-057 has none, nor had UX-012's Pause/Resume | **CODE-059** `973042b`: the exception is named; Pause/Resume has a test now (below), which fails on the code before UX-012 (`closed:false`) |
+| UX-012 waited only for a save still in its pause: once the timer had sent it, a reopen fetched the old row again; and an open that finished late drew over a later open or a close | **UX-013** `e0a85ff`: an open waits for saves already sent too, and only the latest open or close draws. Real Edge: on the previous code exactly the two new checks fail (`shown:"weekly"`, `closed:false`) |
+| CODE-056's second check could not fail without the fix (it compared whole milliseconds) | **CODE-060** `7ccd19e`: the file's time has a sub-millisecond part; in a throwaway worktree, with only the INSERT..SELECT reverted, that check fails (`uncut:false`) |
+| This file's commit count and the diff and secret-scan figures stopped at 161 commits | updated above, at `fc9e922` |
+| Two comments wrong since before the branch (`pg.js` "files two rows"; `compact()`'s JSDoc had lost `signal`) | **CODE-061** `d4c17a6` |
+
+**Eighth pass:** recorded below once run.
 
 ## Not measured, and why
 
