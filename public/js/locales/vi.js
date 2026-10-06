@@ -443,6 +443,7 @@ export const vi = {
   'pages.kind.document': 'Văn bản',
   'pages.kind.sheet': 'Bảng tính',
   'pages.kind.deck': 'Slide',
+  'pages.kind.image': 'Ảnh',
 
   'pages.tasks.title': 'Việc chạy theo giờ',
   'pages.tasks.new': 'Việc mới',

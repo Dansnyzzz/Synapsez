@@ -2733,6 +2733,28 @@ section('artifacts');
       '</body></html>',
     ].join('');
 
+    // A picture the assistant made — dark lines on a transparent ground — and
+    // the screenshot a browser step keeps for the assistant to look back at.
+    const { createCanvas } = await import('@napi-rs/canvas');
+    const drawn = createCanvas(200, 120);
+    const pen = drawn.getContext('2d');
+    pen.strokeStyle = '#111111';
+    pen.lineWidth = 6;
+    pen.strokeRect(20, 20, 160, 80);
+    const pictureBytes = drawn.toBuffer('image/png');
+    await store.createAttachment(owner.id, {
+      id: 'shelf-picture',
+      name: 'so-do.png',
+      mime: 'image/png',
+      kind: 'image',
+      bytes: pictureBytes.length,
+      data: pictureBytes.toString('base64'),
+      origin: 'generated',
+      chatId: made.chat,
+    });
+    const { keepStepShot } = await import('../server/attachments.js');
+    const stepShot = await keepStepShot(owner.id, { data: pictureBytes.toString('base64'), mime: 'image/png' });
+
     const result = await executeTool({
       user: owner,
       chatId: made.chat,
@@ -2743,7 +2765,20 @@ section('artifacts');
 
     // Open it through the shelf, which is the way somebody would find it.
     await page.click('#open-artifacts');
-    await page.waitForTimeout(700);
+    await page.waitForTimeout(1200);
+    const pictures = await page.evaluate((stepId) => {
+      const card = document.querySelector('.card--artifact[data-file="shelf-picture"]');
+      const img = /** @type {HTMLImageElement | null} */ (card?.querySelector('.card__peek--image img') || null);
+      return {
+        shown: !!img && img.complete && img.naturalWidth > 0,
+        ground: img ? getComputedStyle(img.parentElement).backgroundColor : '',
+        step: !!document.querySelector(`.card--artifact[data-file="${stepId}"]`),
+        steps: [...document.querySelectorAll('.card--artifact .card__name')].filter((n) => /^step-\d+\.jpg$/.test(n.textContent || '')).length,
+      };
+    }, stepShot?.id || '');
+    check('a picture on the shelf shows itself, not a file icon', pictures.shown, JSON.stringify(pictures));
+    check('  on white, so a transparent one reads', pictures.ground === 'rgb(255, 255, 255)', pictures.ground);
+    check('a step screenshot is not on the shelf', !!stepShot?.id && !pictures.step && pictures.steps === 0, JSON.stringify(pictures));
 
     const listed = await page.evaluate(() => ({
       open: !document.getElementById('page').hidden,

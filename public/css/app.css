@@ -6350,6 +6350,22 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 .card__peek p, .card__peek li { margin: 0 0 5px; }
 .card__peek table { border-collapse: collapse; font-size: 11px; }
 .card__peek td, .card__peek th { border: 1px solid var(--line-soft); padding: 2px 5px; }
+/* A picture is its own preview: the whole card's window, on white so a
+   transparent one reads, and unmasked — there is no "more below" to hint at. */
+.card__peek--image {
+  padding: 0;
+  background: #fff;
+  mask-image: none;
+}
+.card__peek--image img,
+.card__peek--image iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: contain;
+  pointer-events: none;
+}
 
 .card__foot { display: flex; flex-direction: column; gap: 6px; padding: 16px 20px 18px; }
 
@@ -7095,7 +7111,7 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   pointer-events: none;
   background: #fff;
 }
-.outcard__img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.outcard__img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; background: #fff; }
 .outcard__doc { padding: 12px 13px; color: #1f2328; }
 .outcard__doctitle {
   margin-bottom: 6px;

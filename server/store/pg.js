@@ -219,8 +219,10 @@ export function splitStatements(sql) {
  *  29  mcp_shared — a stdio MCP server checked once on a scratch machine, so
  *      the next account adds it at once; chats.shared_title — a shared
  *      conversation's title as it stood when shared (PRV-013)
+ *  30  attachments.origin 'step' — the cloud browser's step screenshots, moved
+ *      off the Files shelf; the ones already stored are reclassified in place
  */
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 30;
 
 /**
  * How long a run lease may go untouched before another run may take it.

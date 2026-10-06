@@ -152,7 +152,7 @@ export async function saveUpload(userId, { name, mime, data, thumb = null }) {
  * turn without a second concept to maintain. `source` is what it was built from
  * — the Markdown, not the .docx — which is what a later edit revises.
  */
-export async function saveGenerated(userId, { name, mime, kind, data, source, chatId }) {
+export async function saveGenerated(userId, { name, mime, kind, data, source, chatId, origin = 'generated' }) {
   const base64 = String(data || '');
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
   const bytes = Math.floor((base64.length * 3) / 4) - padding;
@@ -168,7 +168,7 @@ export async function saveGenerated(userId, { name, mime, kind, data, source, ch
     kind: kind || classify(name, mime) || 'text',
     bytes,
     data: base64,
-    origin: 'generated',
+    origin,
     source: source == null ? null : String(source).slice(0, 400_000),
     chatId: chatId || null,
   });
@@ -189,6 +189,11 @@ export async function saveGenerated(userId, { name, mime, kind, data, source, ch
  * fails to save must not be, because the step itself succeeded, and turning a
  * completed browser action into a failed tool call over a missing picture would
  * make the assistant retry work it has already done.
+ *
+ * **An origin of its own**, `step`: it is the assistant's view of a screen, not
+ * a file anybody made, so it stays off the Files shelf (schema 30 moved the ones
+ * stored before this). It is still the account's, shown in the conversation and
+ * readable with `look_at`.
  */
 const MAX_SHOT_BYTES = 80 * 1024;
 
@@ -203,6 +208,7 @@ export async function keepStepShot(userId, shot) {
       mime: String(shot.mime || 'image/jpeg'),
       kind: 'image',
       data,
+      origin: 'step',
     });
     // Only the id travels on: the transcript should reference the picture, never
     // carry it.

@@ -233,6 +233,7 @@ export const en = {
   'pages.kind.document': 'Documents',
   'pages.kind.sheet': 'Spreadsheets',
   'pages.kind.deck': 'Decks',
+  'pages.kind.image': 'Images',
 
   'pages.tasks.title': 'Scheduled tasks',
   'pages.tasks.new': 'New task',

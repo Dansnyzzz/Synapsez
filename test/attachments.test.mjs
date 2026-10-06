@@ -659,6 +659,19 @@ section('the interface can ask before somebody attaches anything');
   check('and it needs a session', (await anon.call('GET', '/api/models/resolve?id=x')).status === 401);
 }
 
+section('a step screenshot is kept for the assistant, not shelved as a file');
+{
+  const { keepStepShot } = await import('../server/attachments.js');
+  const aliceId = (await store.getUserByEmail('alice@example.com')).id;
+  const kept = await keepStepShot(aliceId, { data: Buffer.from('a small step picture').toString('base64'), mime: 'image/jpeg' });
+  const row = kept ? await store.getAttachment(aliceId, kept.id) : null;
+  check('a step screenshot is stored as a step', row?.origin === 'step' && row?.kind === 'image', row?.origin);
+  const shelf = await alice.call('GET', '/api/files');
+  check('  and the Files shelf does not list it', shelf.status === 200 && !(shelf.json?.files || []).some((f) => f.id === kept?.id), `${shelf.status}`);
+  const shown = await alice.call('GET', `/api/attachments/${kept?.id}`);
+  check('  while the conversation can still show it', shown.status === 200, `${shown.status}`);
+}
+
 /* ── versions, and the two Open buttons ────────────────────────── */
 
 section('a file the assistant rewrites keeps what it was');
