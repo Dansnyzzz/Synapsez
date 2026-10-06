@@ -2,8 +2,8 @@
 
 ## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
 
-An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 112 findings, 94 fixed, 17 left
-for the owner and one deferred, each with the reason written down. Each fix to code comes with a test that fails without
+An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 115 findings, 94 fixed, 17 left
+for the owner and four deferred, each with the reason written down. Each fix to code comes with a test that fails without
 it, but one: CODE-057 only drops a database read whose answer was never used, so no test could see a difference. Fixes
 to comments, documents, configuration and CI say in the ledger how they were checked instead. Nothing here needs a new
 paid service; everything stays on the free tiers.

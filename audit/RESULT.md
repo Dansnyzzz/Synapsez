@@ -142,15 +142,16 @@ first version of this table overstated the sub-agent row as ≈ +280 tokens and 
 
 | Total | FIXED | CHỜ-CHỦ (in repo) | CHỜ-CHỦ (outside repo) | DEFERRED | BLOCKED | OPEN | IN-PROGRESS |
 |---|---|---|---|---|---|---|---|
-| 112 | 94 | 15 | 2 | 1 | 0 | **0** | **0** |
+| 115 | 94 | 15 | 2 | 4 | 0 | **0** | **0** |
 
 (74 rows from Phases 1–2; four raised by the evaluator's first pass, eight by its second, four by its third,
-six by its fourth, six by its fifth, five by its sixth, four by its seventh, one by its eighth — below. Counted from the ledger
-by a script, not by hand.)
+six by its fourth, six by its fifth, five by its sixth, four by its seventh, one by its eighth, three by its
+ninth — below. Counted from the ledger by a script, not by hand.)
 
-No CRITICAL or HIGH is open. The 18 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
-CFG-032, LAW-001) and 11 LOW: 17 CHỜ-CHỦ with the reason and the options in the row, and one DEFERRED (ACC-017,
-a judgement on which country domains keep `edu`/`gov` for real institutions, left with its reason).
+No CRITICAL or HIGH is open. The 21 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
+CFG-032, LAW-001) and 14 LOW: 17 CHỜ-CHỦ with the reason and the options in the row, and four DEFERRED —
+ACC-017 (a judgement on which country domains keep `edu`/`gov` for real institutions) and three narrow
+schedule-panel cases the ninth pass left as "could be better" (UX-015, UX-016, CODE-062), each with its reason.
 
 ## The fresh-context evaluator
 
@@ -261,7 +262,21 @@ regression UX-013 had made.
 | An open can wait without limit on a stalled request | narrowed by UX-014 to the schedule's own requests. `api.js` has no client-side timeout for any request — app-wide, older than this branch, and not taken up here |
 | The secret-scan figure depends on the patterns used | they are listed in that row; the reviewer's own scan found only test placeholders |
 
-**Ninth pass:** recorded below once run.
+**Ninth pass (another new reviewer): `PASS`.** It walked the schedule panel as a whole — the same schedule,
+another one, close, the Repeat pause, a save in flight, a queued save, Pause/Resume, delete, a failed save,
+workflows as well as tasks — and found no sequence that loses a choice made before an open, saves into the
+wrong row, or pulls the panel back to a schedule that was left; traced that the two new UX-014 checks fail on
+the UX-013 code and that the second schedule's card changes no earlier check; and re-measured every figure in
+`604e155` (commits, diff, lockfile, ledger, test counts) and the secret scan. It ran nothing. Not blocking:
+
+| Finding | Disposition |
+|---|---|
+| An edit made in the old view while the same schedule's open is fetching is drawn over, and the next edit writes the old value back (older than the branch) | **UX-015**, DEFERRED with its reason: needs a design (the old view `inert` while an open waits, or fetching again when a request for the same schedule went out meanwhile), not another patch |
+| A flushed save that fails before the next schedule has drawn reports into the old view's status line, which is then replaced: no toast | **UX-016**, DEFERRED, same reason; rarer since UX-014 |
+| A save landing after a switch calls the new schedule's `paneAfter`; the timer's and toggle's reopen leave a fetch failure unhandled (older than the branch) | **CODE-062**, DEFERRED, same reason |
+| Two parts of UX-014 have no check that fails without them: the toggle's `sent(key, …)` (only a reopen of the *same* schedule right after Pause/Resume would show it) and the queued `latestWins` run (guarded by the source check in `features.test`) | recorded here. The changelog claims neither separately; UX-014's main change has two checks that fail without it |
+
+Phase 3 ends here, after nine passes.
 
 ## Not measured, and why
 
