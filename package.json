@@ -95,7 +95,7 @@
     "@vercel/functions": "^3.9.9",
     "@vercel/sandbox": "^3.5.1",
     "express": "^5.1.0",
-    "nodemailer": "^9.1.1",
+    "nodemailer": "^10.0.15",
     "openai": "^7.9.0",
     "pdfjs-dist": "^6.3.289",
     "playwright-core": "^1.62.1",
