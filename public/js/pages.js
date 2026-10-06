@@ -1436,12 +1436,16 @@ export function createPages({
   function flushSettling() {
     const save = settlePending;
     settlePending = null;
-    // Nobody waits on this one; a failure is already said in the pane's status.
+    // A failure says itself: in the panel's status while it is on screen, in a
+    // toast once it is not (see `save`). Nothing here throws on to the caller.
     return save ? Promise.resolve(save()).catch(() => false) : null;
   }
 
   async function showScheduleInPane(kind, id, { after = null } = {}) {
-    flushSettling();
+    // Waited for (UX-012): opening the same schedule again within the pause
+    // fetched it before the save had landed, drew the old Repeat, and the next
+    // edit there wrote that old value back over the choice just saved.
+    await flushSettling();
     paneAfter = after;
     const { row, project } = await fetchSchedule(kind, id);
     const pane = $('taskpane');
@@ -1501,6 +1505,9 @@ export function createPages({
       } catch (err) {
         status.textContent = err.message;
         status.classList.add('is-error');
+        // A save that fails after its panel has gone — closed, or another
+        // schedule opened — has no status line anyone can see (UX-012).
+        if (!root.isConnected) toast(err.message, 'error');
         return false;
       }
     };
@@ -1639,11 +1646,18 @@ export function createPages({
 
     // A manual task has no pause: it never runs by itself to begin with.
     q('toggle')?.addEventListener('click', async () => {
-      if (kind === 'workflow') await api.updateWorkflow(row.id, { enabled: !row.enabled });
-      else await api.setTaskEnabled(row.id, !row.enabled);
+      try {
+        if (kind === 'workflow') await api.updateWorkflow(row.id, { enabled: !row.enabled });
+        else await api.setTaskEnabled(row.id, !row.enabled);
+      } catch (err) {
+        toast(err.message, 'error');
+        return;
+      }
       onTasksChanged();
       paneAfter?.();
-      await showScheduleInPane(kind, row.id, { after: paneAfter });
+      // Not reopened over whatever the panel shows by now, or once it is closed
+      // (UX-012, the same rule as the Repeat timer).
+      if (root.isConnected) await showScheduleInPane(kind, row.id, { after: paneAfter });
     });
 
     armed(q('drop'), t('pages.tasks.removeConfirm'), async () => {

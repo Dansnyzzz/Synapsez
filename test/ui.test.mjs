@@ -4364,6 +4364,37 @@ section('a schedule set up in a conversation is a card that opens it');
   await page.click('#messages .schedcard__pill');
   await page.waitForTimeout(1200);
 
+  // UX-012: the same schedule opened again within the pause, while its save is
+  // slow to land, shows the choice — not the old value, ready to be saved back.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 900));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'weekly');
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/tasks/t-card');
+  const reopened = await page.evaluate(async () => ({
+    shown: /** @type {HTMLSelectElement} */ (document.querySelector('#taskpane [data-s="frequency"]'))?.value,
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+  }));
+  check('reopened within the pause, the panel shows the choice just made (UX-012)', reopened.shown === 'weekly', JSON.stringify(reopened));
+
+  // And a save that fails once its panel has gone says so where it can be seen.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not save the schedule (test).' }) });
+    } else await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await page.click('#taskpane-close');
+  await page.waitForTimeout(1200);
+  await page.unroute('**/api/tasks/t-card');
+  const told = await page.evaluate(() => [...document.querySelectorAll('#toasts-alert > *, #toasts > *')].map((n) => n.textContent).join(' | '));
+  check('  and a save that fails after the panel closed is said in a toast', /Could not save the schedule \(test\)/.test(told), told);
+  await page.click('#messages .schedcard__pill');
+  await page.waitForTimeout(1200);
+
   await page.click('#taskpane-close');
   check('its close button gives the panel back', await page.evaluate(() => document.getElementById('taskpane').hidden));
   // The side area was closed before the task opened, so one close ends both —
