@@ -183,16 +183,17 @@ const TEXT_HEAP_MB = 384;
  * @param file the bytes, either as the base64 an attachment is stored as or as
  *   a `Buffer` — `web_fetch` has just downloaded one and encoding 30MB to
  *   base64 only for this to decode it again is a copy nobody needs.
- * @param {{ timeoutMs?: number }} [options]
+ * @param {{ timeoutMs?: number, workerUrl?: URL }} [options] `workerUrl` is
+ *   for tests, which stand in a worker whose code cannot be loaded.
  * @returns `{ text, pages, truncated }`, or null when there is no text to be
  *   had — a scan, a poster, anything that is pictures all the way down. Null is
  *   a real answer here: it means "say you could not read it", not "try harder".
  */
-export async function extractPdfText(file, { timeoutMs = TEXT_MS } = {}) {
+export async function extractPdfText(file, { timeoutMs = TEXT_MS, workerUrl = new URL('./pdfText.worker.mjs', import.meta.url) } = {}) {
   const bytes = Buffer.isBuffer(file) ? file : Buffer.from(String(file || ''), 'base64');
   let worker;
   try {
-    worker = new Worker(new URL('./pdfText.worker.mjs', import.meta.url), {
+    worker = new Worker(workerUrl, {
       workerData: { bytes: Uint8Array.from(bytes) },
       resourceLimits: { maxOldGenerationSizeMb: TEXT_HEAP_MB },
     });
@@ -217,8 +218,21 @@ export async function extractPdfText(file, { timeoutMs = TEXT_MS } = {}) {
       if (out?.ok) finish(resolve, out.result ?? null);
       else finish(reject, Object.assign(new Error(out?.message || 'That PDF could not be read.'), { code: out?.code || 'pdf_unreadable' }));
     });
-    // Its heap running out is an `error` here, and the main thread carries on.
-    worker.once('error', (err) => finish(reject, unreadable(`That PDF could not be read: ${err?.message || err}`)));
+    worker.once('error', (err) => {
+      /*
+       * A worker that could not load its own code is this deployment, not the
+       * file: read on this thread as before, rather than failing every PDF.
+       * Running out of its heap is the file, and is not retried here.
+       */
+      if (!settled && /ERR_MODULE_NOT_FOUND|ERR_WORKER_PATH|ERR_WORKER_INIT_FAILED|Cannot find module/.test(`${err?.code} ${err?.message}`)) {
+        settled = true;
+        clearTimeout(timer);
+        worker.terminate().catch(() => {});
+        readPdfText(bytes).then(resolve, reject);
+        return;
+      }
+      finish(reject, unreadable(`That PDF could not be read: ${err?.message || err}`));
+    });
     worker.once('exit', (code) => finish(reject, unreadable(`That PDF could not be read: its reader stopped (${code}).`)));
   });
 }

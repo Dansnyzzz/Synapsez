@@ -486,6 +486,12 @@ section('reading a PDF for a model that cannot be handed one');
   check('  and the next PDF reads as usual', /next one still reads/.test(again?.text || ''), again?.text);
   const { readPdfText } = await import('../server/pdf.js');
   check('the same read is there on this thread, where no worker can start', /in thread/.test((await readPdfText(tinyPdf('in thread')))?.text || ''));
+  // A deployment that left the worker's file behind is not the PDF's fault: it
+  // reads on this thread as before, rather than failing every PDF.
+  let fallback = null;
+  const missing = new URL('../server/no-such-pdf.worker.mjs', import.meta.url);
+  const fromThread = await extractPdfText(tinyPdf('read without its worker'), { workerUrl: missing }).catch((err) => (fallback = err));
+  check('a worker whose code is missing reads on this thread instead', /read without its worker/.test(fromThread?.text || ''), fallback?.message || fromThread?.text);
 }
 
 section('a PDF on a model that cannot read one');
