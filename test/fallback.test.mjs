@@ -260,6 +260,31 @@ section('the rotation reacts to what actually came out');
     return { seen, events, waits, budgets, error };
   };
 
+  // HAR-004: every attempt is a GenAI span in the log — model, tokens, outcome,
+  // time — and never a word of what was said.
+  {
+    const lines = [];
+    const original = { info: console.info, warn: console.warn, log: console.log };
+    const capture = (...args) => lines.push(args.map(String).join(' '));
+    console.info = capture;
+    console.warn = capture;
+    console.log = capture;
+    let run;
+    try {
+      run = await drive([
+        { throw: err(429, 'Rate limit: your prompt "the-secret-prompt-text" was too long') },
+        { emit: [{ type: 'text', delta: 'the-secret-reply-text' }, { type: 'done', stopReason: 'end_turn', usage: { input: 120, output: 7, cacheRead: 100 } }] },
+      ]);
+    } finally {
+      Object.assign(console, original);
+    }
+    const spans = lines.filter((l) => l.includes('gen_ai.span'));
+    check('each attempt is a GenAI span', spans.length === 2 && !run.error, `${spans.length} spans`);
+    check('  named by the convention, with the model, tokens and finish reason', /gen_ai\.operation\.name=chat/.test(spans[1]) && /gen_ai\.provider\.name=openrouter/.test(spans[1]) && /gen_ai\.request\.model=x\/y:free/.test(spans[1]) && /gen_ai\.usage\.input_tokens=120/.test(spans[1]) && /gen_ai\.usage\.output_tokens=7/.test(spans[1]) && /gen_ai\.response\.finish_reasons=\["end_turn"\]/.test(spans[1]) && /duration_ms=\d+/.test(spans[1]), spans[1]);
+    check('  the refused one with its error type, not its words', /error\.type=429/.test(spans[0]), spans[0]);
+    check('  and no content anywhere in them', !lines.some((l) => /the-secret-(prompt|reply)-text/.test(l)), lines.find((l) => /the-secret/.test(l)) || '');
+  }
+
   // Nothing was shown, so nothing is lost: the second key picks the turn up and
   // the reader never learns there was a first.
   {

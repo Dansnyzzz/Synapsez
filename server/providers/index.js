@@ -12,6 +12,7 @@ import {
   providerPrivacyFor,
 } from '../settings.js';
 import { resolveModel, PROVIDERS } from './catalog.js';
+import { startChatSpan } from '../util/genaiSpan.js';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 const ORCAROUTER_BASE = 'https://api.orcarouter.ai/v1';
@@ -442,20 +443,29 @@ export async function* streamCompletion(opts) {
         // of those makes a restart visible.
         const emitted = { text: 0, thinking: 0, toolCalls: 0 };
         let failure = null;
+        // Each attempt is its own span (HAR-004): a retried call is two calls.
+        const span = startChatSpan({ provider, model: entry.model, maxTokens, shared });
+        let done = null;
 
         try {
           for await (const event of stallGuard(dispatch(entry, common))) {
             if (event.type === 'text') emitted.text += 1;
             else if (event.type === 'thinking') emitted.thinking += 1;
             else if (event.type === 'tool_call_start') emitted.toolCalls += 1;
+            else if (event.type === 'done') done = event;
             yield event;
           }
+          span.end({ done });
           // This one worked; start here next time rather than rediscovering the
           // dead keys ahead of it on every turn.
           if (!shared) rememberWorkingKey(userId, provider, index);
           return;
         } catch (err) {
           failure = err;
+          span.end({ error: err });
+        } finally {
+          // The consumer stopped reading (a stop, a turn ending early).
+          span.end({ done, aborted: true });
         }
 
         // They pressed stop. This is not a failure to grade, and none of the
