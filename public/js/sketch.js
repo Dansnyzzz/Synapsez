@@ -4,7 +4,8 @@
  * Opened from a picture waiting above the composer. Two tools — a pen and
  * text — seven colours, undo and redo, and Save, which hands back a PNG that
  * replaces the picture. Everything done is kept as a list of marks over the
- * untouched original, so undo is exact and nothing is ever painted twice.
+ * untouched original, so undo is exact and nothing is ever painted twice. A
+ * transparent picture is drawn, and saved, on white.
  *
  * The dialog is built here rather than in index.html, so its labels are the
  * script's to translate and the page carries no markup for something most
@@ -107,7 +108,11 @@ export function openSketch(src) {
   const base = new Image();
 
   const redraw = () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // White under the picture, so a transparent PNG — a diagram of dark lines on
+    // nothing — is readable here and in what is saved, rather than dark on the
+    // dark dialog and black on black for a model that composites onto black.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(base, 0, 0, canvas.width, canvas.height);
     for (const m of drawing ? [...marks, drawing] : marks) {
       if (m.type === 'path') {

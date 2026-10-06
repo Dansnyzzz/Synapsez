@@ -472,6 +472,52 @@ section('attaching photos and files');
   check('  sent as a PNG', /\.png$/.test(saved.title), saved.title);
   await page.click('.stage__remove');
   await page.waitForTimeout(300);
+
+  // A tall picture with a transparent ground — a diagram exported from a
+  // drawing tool. The canvas used to spill down over the colours and tools, so
+  // every press on them drew a dot on the picture instead.
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const tall = createCanvas(600, 2400);
+  const draw = tall.getContext('2d');
+  draw.strokeStyle = '#111111';
+  draw.lineWidth = 8;
+  draw.strokeRect(100, 100, 400, 2200);
+  await page.setInputFiles('#file-input', { name: 'so-do.png', mimeType: 'image/png', buffer: tall.toBuffer('image/png') });
+  await page.waitForTimeout(1200);
+  const tile = await page.evaluate(() => getComputedStyle(document.querySelector('#attachments .stage__img')).backgroundColor);
+  check('a transparent picture waits above the composer on white', tile === 'rgb(255, 255, 255)', tile);
+  await page.click('#attachments .stage__open');
+  await page.waitForTimeout(800);
+  const layout = await page.evaluate(() => {
+    const box = (sel) => document.querySelector(sel).getBoundingClientRect();
+    const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('.sketch__canvas'));
+    const pixel = [...canvas.getContext('2d').getImageData(10, 10, 1, 1).data];
+    return { canvasBottom: box('.sketch__canvas').bottom, colorsTop: box('.sketch__colors').top, pixel };
+  });
+  check('the picture stays above the colours', layout.canvasBottom <= layout.colorsTop + 1, JSON.stringify(layout));
+  check('  and its transparent ground is drawn white', layout.pixel.join(',') === '255,255,255,255', layout.pixel.join(','));
+  const pressAt = async (selector) => {
+    const r = await page.$eval(selector, (el) => {
+      const b = el.getBoundingClientRect();
+      return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+    });
+    await page.mouse.click(r.x, r.y);
+    await page.waitForTimeout(150);
+  };
+  await pressAt('.sketch__color[data-color="#3fcf74"]');
+  await pressAt('.sketch__tool[data-tool="text"]');
+  const chosen = await page.evaluate(() => ({
+    color: document.querySelector('.sketch__color[aria-checked="true"]')?.getAttribute('data-color'),
+    tool: document.querySelector('.sketch__tool[aria-checked="true"]')?.getAttribute('data-tool'),
+    drew: !document.querySelector('.sketch [data-k="undo"]').disabled,
+  }));
+  check('a colour can be chosen by pressing it', chosen.color === '#3fcf74', JSON.stringify(chosen));
+  check('  and Text by pressing it', chosen.tool === 'text', JSON.stringify(chosen));
+  check('  without either press drawing on the picture', !chosen.drew, JSON.stringify(chosen));
+  await page.click('.sketch [data-k="back"]');
+  await page.waitForTimeout(300);
+  await page.click('.stage__remove');
+  await page.waitForTimeout(300);
 }
 
 section('the approval policy sits beside send');
