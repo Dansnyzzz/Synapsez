@@ -4574,6 +4574,77 @@ section('a schedule set up in a conversation is a card that opens it');
   await pillOf(0);
   await page.waitForTimeout(1200);
 
+  // UX-015: the schedule on screen is held still while it is fetched again, so
+  // an edit made in it then cannot be drawn over by the older row.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'GET') await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  let heldSaves = 0;
+  const countSaves = (request) => {
+    if (request.method() === 'PATCH' && /\/api\/tasks\/t-card$/.test(request.url())) heldSaves += 1;
+  };
+  page.on('request', countSaves);
+  await pillOf(0);
+  await page.waitForTimeout(200);
+  const held = await page.evaluate(() => {
+    const view = /** @type {HTMLElement | null} */ (document.querySelector('#taskpane-body > div'));
+    const box = view?.querySelector('[data-s="toggle"]')?.getBoundingClientRect();
+    return { inert: !!view?.inert, busy: view?.getAttribute('aria-busy'), x: box ? box.x + box.width / 2 : 0, y: box ? box.y + box.height / 2 : 0 };
+  });
+  // Pressed in the old view with the pointer, as a person would while the
+  // reopen loads. (A script's `element.click()` is not a person: the platform
+  // runs it on an inert element all the same.)
+  await page.mouse.click(held.x, held.y);
+  await page.waitForTimeout(1800);
+  page.off('request', countSaves);
+  await page.unroute('**/api/tasks/t-card');
+  const released = await page.evaluate(() => !(/** @type {HTMLElement | null} */ (document.querySelector('#taskpane-body > div')))?.inert);
+  check('a schedule being fetched again is held still (UX-015)', held.inert && held.busy === 'true' && held.x > 0, JSON.stringify(held));
+  check('  so nothing pressed in it then is saved behind the redraw', heldSaves === 0, `${heldSaves} saves`);
+  check('  and the redrawn one can be used again', released);
+
+  // CODE-062: the Repeat timer's reopen that cannot fetch the schedule says so,
+  // rather than failing where nobody sees.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not load the schedule (CODE-062 test).' }) });
+    } else await route.continue();
+  });
+  const unseen = [];
+  const onPageError = (err) => unseen.push(String(err?.message || err));
+  page.on('pageerror', onPageError);
+  await page.selectOption('#taskpane [data-s="frequency"]', 'weekly');
+  await page.waitForTimeout(2200);
+  page.off('pageerror', onPageError);
+  await page.unroute('**/api/tasks/t-card');
+  const toldReopen = await page.evaluate(() => [...document.querySelectorAll('#toasts-alert > *, #toasts > *')].map((n) => n.textContent).join(' | '));
+  check('a reopen that cannot fetch the schedule says so in a toast (CODE-062)', /Could not load the schedule \(CODE-062 test\)/.test(toldReopen), toldReopen);
+  check('  and leaves nothing unhandled', !unseen.some((m) => /CODE-062 test/.test(m)), unseen.join(' | '));
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+
+  // UX-016: a choice flushed on the way to another schedule, failing before that
+  // one has drawn, used to report into a view about to be replaced.
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not save the schedule (UX-016 test).' }) });
+    } else await route.continue();
+  });
+  await page.route('**/api/tasks/t-card2', async (route) => {
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await pillOf(1);
+  await page.waitForTimeout(2200);
+  await page.unroute('**/api/tasks/t-card');
+  await page.unroute('**/api/tasks/t-card2');
+  const toldSwitch = await page.evaluate(() => [...document.querySelectorAll('#toasts-alert > *, #toasts > *')].map((n) => n.textContent).join(' | '));
+  check('a save that fails while the next schedule is on its way is said in a toast (UX-016)', /Could not save the schedule \(UX-016 test\)/.test(toldSwitch), toldSwitch);
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+
   await page.click('#taskpane-close');
   check('its close button gives the panel back', await page.evaluate(() => document.getElementById('taskpane').hidden));
   // The side area was closed before the task opened, so one close ends both —
