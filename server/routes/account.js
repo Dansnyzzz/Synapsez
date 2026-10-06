@@ -102,8 +102,9 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       }
       const refusal = memoryRefusal(text, { allowSensitive: true });
       if (refusal) return res.status(400).json({ error: refusalMessage(refusal) });
-      const before = ((await getStore().getUserSetting(req.user.id, bucket)) || {})[key] || null;
-      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: stampNote(text, { by: 'user', before }) });
+      // No earlier version to read: a person's own edit keeps none (PRV-006),
+      // so fetching the note first was a database round trip for nothing (CODE-057).
+      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: stampNote(text, { by: 'user' }) });
       res.json({ ok: true });
     }),
   );
