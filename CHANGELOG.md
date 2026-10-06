@@ -2,7 +2,7 @@
 
 ## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
 
-An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 111 findings, 93 fixed, 17 left
+An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 112 findings, 94 fixed, 17 left
 for the owner and one deferred, each with the reason written down. Each fix to code comes with a test that fails without
 it, but one: CODE-057 only drops a database read whose answer was never used, so no test could see a difference. Fixes
 to comments, documents, configuration and CI say in the ledger how they were checked instead. Nothing here needs a new
@@ -59,7 +59,8 @@ paid service; everything stays on the free tiers.
   it; a save that fails no longer drops the one queued behind it (UX-010, UX-011, CODE-051). Opening the same
   schedule again before that save has landed shows the new choice, not the old one ready to be saved back; a save
   that fails once its panel has gone says so in a toast; and the panel no longer reopens itself over a close or
-  another schedule after a save or Pause/Resume (UX-012, UX-013). Escape in a sketch label drops the label, not
+  another schedule after a save or Pause/Resume, and opening another schedule does not wait on the first one's
+  save (UX-012, UX-013, UX-014). Escape in a sketch label drops the label, not
   the whole sketch (UX-006).
 - A memoised repeated read keys on nested arguments too (CODE-033).
 - Only a provider's refusal of the effort setting lowers it; any other error is shown at once (TOK-001).

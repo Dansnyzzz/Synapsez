@@ -4225,6 +4225,46 @@ section('a schedule set up in a conversation is a card that opens it');
       },
     ],
   });
+  // A second schedule further down the same conversation, for moving from one
+  // schedule to another (UX-014). Every check below that means the first card
+  // finds it first.
+  const other = await store.createTask(user.id, {
+    id: 't-card2',
+    title: 'Bản tin tối',
+    prompt: 'Tóm tắt tin buổi tối',
+    cron: '19:00',
+    nextRunAt: new Date(Date.now() + 86_400_000).toISOString(),
+    tz: 'Asia/Ho_Chi_Minh',
+  });
+  await store.appendMessage(user.id, 'c-sched', {
+    id: 'm-s4',
+    role: 'assistant',
+    text: '',
+    toolCalls: [{ id: 'call-s2', name: 'schedule_task', input: { title: other.title, when: '19:00' } }],
+  });
+  await store.appendMessage(user.id, 'c-sched', {
+    id: 'm-s5',
+    role: 'tool',
+    results: [
+      {
+        toolCallId: 'call-s2',
+        name: 'schedule_task',
+        content: 'Scheduled.',
+        isError: false,
+        schedule: {
+          kind: 'task',
+          id: other.id,
+          title: other.title,
+          cron: other.cron,
+          nextRunAt: other.next_run_at,
+          tz: other.tz,
+          enabled: true,
+          prompt: other.prompt,
+          existing: false,
+        },
+      },
+    ],
+  });
 
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
@@ -4452,6 +4492,60 @@ section('a schedule set up in a conversation is a card that opens it');
   await page.click('#messages .schedcard__pill');
   await page.waitForTimeout(1200);
 
+  // UX-014: another schedule opened while the save is on its way is the one
+  // shown. Its open does not wait on the first schedule's save, and the Repeat
+  // timer, answered before the other schedule has drawn, does not reopen the
+  // schedule just left.
+  const pillOf = (n) => page.evaluate((i) => /** @type {HTMLElement} */ ([...document.querySelectorAll('#messages .schedcard__pill')][i]).click(), n);
+  const cronBeforeMove = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.cron);
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 1200));
+    await route.continue();
+  });
+  await page.route('**/api/tasks/t-card2', async (route) => {
+    await new Promise((r) => setTimeout(r, 2000));
+    await route.continue();
+  });
+  await page.selectOption('#taskpane [data-s="frequency"]', 'daily');
+  await page.waitForTimeout(1000);
+  await pillOf(1);
+  await page.waitForTimeout(3500);
+  await page.unroute('**/api/tasks/t-card');
+  await page.unroute('**/api/tasks/t-card2');
+  const moved = await page.evaluate(async () => ({
+    open: !document.getElementById('taskpane').hidden,
+    title: document.getElementById('taskpane-title')?.textContent || '',
+    cron: (await (await fetch('/api/tasks/t-card')).json()).task?.cron,
+  }));
+  check('another schedule opened while a save is on its way is the one shown (UX-014)', moved.open && moved.title === 'Bản tin tối', JSON.stringify(moved));
+  check('  and the change made before leaving is saved', !!moved.cron && moved.cron !== cronBeforeMove, `${cronBeforeMove} → ${moved.cron}`);
+
+  // And Pause/Resume pressed just before opening another schedule does not
+  // pull the panel back when its answer comes.
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+  const enabledBeforeMove = await page.evaluate(async () => (await (await fetch('/api/tasks/t-card')).json()).task?.enabled);
+  await page.route('**/api/tasks/t-card', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((r) => setTimeout(r, 900));
+    await route.continue();
+  });
+  await page.route('**/api/tasks/t-card2', async (route) => {
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  await page.click('#taskpane [data-s="toggle"]');
+  await pillOf(1);
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/tasks/t-card');
+  await page.unroute('**/api/tasks/t-card2');
+  const toggledAway = await page.evaluate(async () => ({
+    title: document.getElementById('taskpane-title')?.textContent || '',
+    enabled: (await (await fetch('/api/tasks/t-card')).json()).task?.enabled,
+  }));
+  check('  and so is one opened just after Pause/Resume, which is kept (UX-014)', toggledAway.title === 'Bản tin tối' && toggledAway.enabled === !enabledBeforeMove, `${enabledBeforeMove} → ${JSON.stringify(toggledAway)}`);
+  await pillOf(0);
+  await page.waitForTimeout(1200);
+
   await page.click('#taskpane-close');
   check('its close button gives the panel back', await page.evaluate(() => document.getElementById('taskpane').hidden));
   // The side area was closed before the task opened, so one close ends both —
@@ -4460,6 +4554,7 @@ section('a schedule set up in a conversation is a card that opens it');
   check('one close, not two: the side area is left as it was found', detailNow === detailWasOpen, `before ${detailWasOpen}, after ${detailNow}`);
 
   await store.deleteTask(user.id, task.id);
+  await store.deleteTask(user.id, other.id);
 }
 
 /**

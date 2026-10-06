@@ -1435,32 +1435,44 @@ export function createPages({
   let settlePending = null;
 
   /**
-   * Saves sent from the panel and not answered yet (UX-013). A save already on
-   * its way when the panel moves on is waited for as well as one still in its
-   * pause: the pause ends by sending, so the save was only out of sight.
+   * Changes sent from the panel and not answered yet, by the schedule they
+   * change (UX-013). Opening a schedule waits for its own: one already on its
+   * way is as unsettled as a choice still in its pause, and the row fetched
+   * before it lands is the old one. Not for another schedule's (UX-014) —
+   * waiting on those only held the open back, long enough for the Repeat timer
+   * to reopen the schedule just left.
    *
-   * @type {Set<Promise<unknown>>}
+   * @type {Set<{ key: string, request: Promise<unknown> }>}
    */
   const landing = new Set();
   /**
    * @template T
+   * @param {string} key  `kind:id`, the schedule the request changes
    * @param {Promise<T>} request
    * @returns {Promise<T>}
    */
-  function sent(request) {
-    landing.add(request);
-    const done = () => landing.delete(request);
+  function sent(key, request) {
+    const entry = { key, request };
+    landing.add(entry);
+    const done = () => landing.delete(entry);
     request.then(done, done);
     return request;
   }
 
-  function flushSettling() {
+  /**
+   * Sends a choice still in its pause now, and resolves once everything sent
+   * for the schedule `key` names has been answered. Never rejects.
+   *
+   * @param {string} [key]
+   */
+  function flushSettling(key) {
     const save = settlePending;
     settlePending = null;
     // A failure says itself: in the panel's status while it is on screen, in a
     // toast once it is not (see `save`). Nothing here throws on to the caller.
-    const started = save ? Promise.resolve(save()).catch(() => false) : null;
-    return Promise.all([started, ...[...landing].map((request) => request.catch(() => false))]);
+    if (save) Promise.resolve(save()).catch(() => false);
+    const own = [...landing].filter((entry) => entry.key === key);
+    return Promise.all(own.map((entry) => entry.request.catch(() => false)));
   }
 
   /** Counted on every open and close, so that only the latest one draws (UX-013). */
@@ -1471,7 +1483,7 @@ export function createPages({
     // Waited for (UX-012): opening the same schedule again within the pause
     // fetched it before the save had landed, drew the old Repeat, and the next
     // edit there wrote that old value back over the choice just saved.
-    await flushSettling();
+    await flushSettling(`${kind}:${id}`);
     const { row, project } = await fetchSchedule(kind, id);
     // Another schedule opened, or the panel closed, while this one waited:
     // that is where the person went, and this is not drawn over it.
@@ -1499,7 +1511,8 @@ export function createPages({
   function wireScheduleEditor(root, kind, row, project) {
     const q = (name) => /** @type {HTMLInputElement} */ (root.querySelector(`[data-s="${name}"]`));
     const status = q('status');
-    const update = (patch) => sent(kind === 'workflow' ? api.updateWorkflow(row.id, patch) : api.updateTask(row.id, patch));
+    const key = `${kind}:${row.id}`;
+    const update = (patch) => sent(key, kind === 'workflow' ? api.updateWorkflow(row.id, patch) : api.updateTask(row.id, patch));
 
     /** Show only the rows the chosen frequency uses. */
     const layout = () => {
@@ -1556,7 +1569,10 @@ export function createPages({
       return { frequency: f, times };
     };
     // One save in flight, the controls read again when it lands (CODE-036).
-    const saveSchedule = latestWins(() => save({ schedule: spec(), tz: q('tz').value }));
+    // Counted as sent for as long as `latestWins` is busy, so a run queued
+    // behind the one on the wire is waited for too (UX-014).
+    const saveLatest = latestWins(() => save({ schedule: spec(), tz: q('tz').value }));
+    const saveSchedule = () => sent(key, saveLatest());
 
     // A new frequency brings different controls, so the panel is drawn again
     // once the row has its new schedule — or stays as it was if that was refused.
@@ -1586,12 +1602,14 @@ export function createPages({
       settling = setTimeout(async () => {
         settlePending = null;
         const hadFocus = document.activeElement === menu;
+        const turn = paneTurn;
         if (await saveSchedule()) {
           // Somebody who moved on within the pause stays where they went: the
           // change they made here is saved, but this schedule is not reopened
           // over whatever the panel shows now (UX-010). Any redraw of the panel
-          // detaches this menu.
-          if (!menu.isConnected) return;
+          // detaches this menu; an open or a close since counts as well, though
+          // the schedule opened may not have drawn yet (UX-014).
+          if (!menu.isConnected || turn !== paneTurn) return;
           await showScheduleInPane(kind, row.id, { after: paneAfter });
           if (hadFocus) /** @type {HTMLElement|null} */ (document.querySelector('[data-s="frequency"]'))?.focus();
         }
@@ -1675,9 +1693,10 @@ export function createPages({
 
     // A manual task has no pause: it never runs by itself to begin with.
     q('toggle')?.addEventListener('click', async () => {
+      const turn = paneTurn;
       try {
-        if (kind === 'workflow') await api.updateWorkflow(row.id, { enabled: !row.enabled });
-        else await api.setTaskEnabled(row.id, !row.enabled);
+        if (kind === 'workflow') await sent(key, api.updateWorkflow(row.id, { enabled: !row.enabled }));
+        else await sent(key, api.setTaskEnabled(row.id, !row.enabled));
       } catch (err) {
         toast(err.message, 'error');
         return;
@@ -1685,8 +1704,8 @@ export function createPages({
       onTasksChanged();
       paneAfter?.();
       // Not reopened over whatever the panel shows by now, or once it is closed
-      // (UX-012, the same rule as the Repeat timer).
-      if (root.isConnected) await showScheduleInPane(kind, row.id, { after: paneAfter });
+      // (UX-012, UX-014: the same rule as the Repeat timer).
+      if (root.isConnected && turn === paneTurn) await showScheduleInPane(kind, row.id, { after: paneAfter });
     });
 
     armed(q('drop'), t('pages.tasks.removeConfirm'), async () => {
