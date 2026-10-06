@@ -2,10 +2,11 @@
 
 ## 2026-10-05 (audit) — what leaves the account, what a page can make the assistant do, and Vercel's page analytics
 
-An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 107 findings, 89 fixed, 17 left
-for the owner and one deferred, each with the reason written down. Each fix to code comes with a test that fails without it; fixes to
-comments, documents, configuration and CI say in the ledger how they were checked instead. Nothing here needs a new paid
-service; everything stays on the free tiers.
+An audit of everything since 2026-09-28 (`audit/ISSUE_LEDGER.md`, section v3): 111 findings, 93 fixed, 17 left
+for the owner and one deferred, each with the reason written down. Each fix to code comes with a test that fails without
+it, but one: CODE-057 only drops a database read whose answer was never used, so no test could see a difference. Fixes
+to comments, documents, configuration and CI say in the ledger how they were checked instead. Nothing here needs a new
+paid service; everything stays on the free tiers.
 
 ### Security and privacy
 
@@ -55,8 +56,11 @@ service; everything stays on the free tiers.
 - The schedule pane saves the time you typed, not a half-typed one that arrived last, and the Repeat menu waits
   for your choice instead of saving every arrow key (CODE-036, UX-005). A choice made just before closing the
   panel or opening another schedule is saved, to the schedule it was made in, and the conversation's card shows
-  it; a save that fails no longer drops the one queued behind it (UX-010, UX-011, CODE-051). Escape in a sketch
-  label drops the label, not the whole sketch (UX-006).
+  it; a save that fails no longer drops the one queued behind it (UX-010, UX-011, CODE-051). Opening the same
+  schedule again before that save has landed shows the new choice, not the old one ready to be saved back; a save
+  that fails once its panel has gone says so in a toast; and the panel no longer reopens itself over a close or
+  another schedule after a save or Pause/Resume (UX-012, UX-013). Escape in a sketch label drops the label, not
+  the whole sketch (UX-006).
 - A memoised repeated read keys on nested arguments too (CODE-033).
 - Only a provider's refusal of the effort setting lowers it; any other error is shown at once (TOK-001).
 - `npm run storage -- --apply` asks before deleting across every account (CODE-044).
