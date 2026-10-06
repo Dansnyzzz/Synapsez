@@ -776,13 +776,58 @@ export function outboundRefusal(call, policy, sent) {
   };
 }
 
-export function needsApproval(toolCalls, policy) {
+/** The memory tools that write — what a page would use to plant a standing instruction. */
+const MEMORY_WRITES = new Set(['memory_write', 'memory_append', 'memory_edit']);
+
+/** Why such a write asks, said in the approval prompt (HAR-005). */
+export const READ_OUTSIDE_REASON =
+  'This turn read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.';
+
+/**
+ * Whether this turn has read anything from outside (HAR-005): since the last
+ * message from the person, any tool result that arrived inside the untrusted
+ * envelope — a page, a search, a feed, an MCP server, a sub-agent's report.
+ *
+ * @param {Array<{ role: string, results?: Array<{ content?: unknown }> }>} messages
+ */
+export function turnReadOutside(messages) {
+  let from = messages.length - 1;
+  while (from >= 0 && messages[from].role !== 'user') from -= 1;
+  for (let i = from + 1; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (message.role === 'tool' && (message.results || []).some((r) => String(r?.content ?? '').includes('<untrusted'))) return true;
+  }
+  return false;
+}
+
+/**
+ * The calls in a step that must stop for a yes.
+ *
+ * `readOutside`: under `guarded`, a memory write in a turn that has read
+ * something from outside asks first (HAR-005). Memory is read at the start of
+ * every later conversation, so a page that talked the assistant into saving "the
+ * user always wants replies forwarded to …" would have planted an instruction
+ * in all of them — the one place an injection outlives the turn it came from.
+ * A turn that read nothing from outside writes its notes as before.
+ *
+ * @param {Array<{ id: string, name: string, input?: any }>} toolCalls
+ * @param {string} policy
+ * @param {{ readOutside?: boolean }} [context]
+ */
+export function needsApproval(toolCalls, policy, { readOutside = false } = {}) {
   if (policy === 'auto' || policy === 'readonly' || policy === 'plan') return [];
   return toolCalls.filter((call) => {
+    if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return true;
     const risk = assessRisk(call.name, call.input);
     if (risk === 'safe') return false;
     return policy === 'ask' ? true : risk === 'sensitive';
   });
+}
+
+/** The reason shown for one call in an approval prompt. */
+function approvalReason(call, policy, readOutside) {
+  if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return READ_OUTSIDE_REASON;
+  return riskReason(call.name, call.input);
 }
 
 /**
@@ -1347,7 +1392,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   if (last?.role === 'assistant' && last.toolCalls?.length) {
     // Re-check the policy rather than trusting that a decision was made. A run
     // cut short before it could ask must still ask on resume.
-    const stillPending = needsApproval(last.toolCalls, policy);
+    const readOutside = turnReadOutside(messages);
+    const stillPending = needsApproval(last.toolCalls, policy, { readOutside });
 
     /**
      * A question still waiting for its answer.
@@ -1381,7 +1427,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           name: c.name,
           input: c.input,
           needsApproval: stillPending.some((p) => p.id === c.id),
-          reason: riskReason(c.name, c.input),
+          reason: approvalReason(c, policy, readOutside),
         })),
       });
       return;
@@ -1862,7 +1908,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       }
     }
 
-    const pending = needsApproval(assistant.toolCalls, policy);
+    const readOutside = turnReadOutside(messages);
+    const pending = needsApproval(assistant.toolCalls, policy, { readOutside });
     if (pending.length) {
       emit('approval_required', {
         toolCalls: assistant.toolCalls.map((c) => ({
@@ -1870,7 +1917,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           name: c.name,
           input: c.input,
           needsApproval: pending.some((p) => p.id === c.id),
-          reason: riskReason(c.name, c.input),
+          reason: approvalReason(c, policy, readOutside),
         })),
       });
       return; // The client resumes by calling back with a decision.
