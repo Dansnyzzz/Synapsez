@@ -22,14 +22,14 @@ them touch `audit/` only). Every row is a command that was run and an output tha
 
 | Thing | Before | After | How measured |
 |---|---|---|---|
-| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f`; after the third's **475 s** on `7726301` (wall time on this machine varies with what else it is doing); after the fourth's **207 s** on `0a24f12`; after the fifth's **203 s** on `00b0ae6` | `npm run gate`, logs `scratchpad/gate-final{,2,3,4,5,6}.log` |
+| `npm run gate` (full) | exit 0, 255 s | **exit 0, 218 s** on `f39f419`; after the first evaluator's follow-ups **224 s** on `12ee0b8`; after the second's **215 s** on `499580f`; after the third's **475 s** on `7726301` (wall time on this machine varies with what else it is doing); after the fourth's **207 s** on `0a24f12`; after the fifth's **203 s** on `00b0ae6`; after the sixth's **214 s** on `5d0fc03` | `npm run gate`, logs `scratchpad/gate-final{,2,3,4,5,6,7}.log` |
 | lint | exit 0 | **exit 0** | gate step 1 |
 | `test:hooks` | 168/168 | **168/168** | gate step 2 |
 | eval (scripted) | 13/13, `PROMPT_STAMP ecd004bc42ae` | **13/13, same stamp** — the main system prompt did not change | gate step 3; server log `promptVersion=ecd004bc42ae` |
 | typecheck ratchet | 315 outstanding, ceiling 315 | **315, ceiling 315** — `.typecheck-baseline.json` did not grow | gate step 4 |
-| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **4,568 ✓** (`7726301`), **4,578 ✓** (`0a24f12`), **4,583 ✓** (`00b0ae6`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
+| `npm test` | 4,282 ✓, 1 skip | **4,541 ✓** (`f39f419`), **4,550 ✓** (`12ee0b8`), **4,560 ✓** (`499580f`), **4,568 ✓** (`7726301`), **4,578 ✓** (`0a24f12`), **4,583 ✓** (`00b0ae6`), **4,586 ✓** (`5d0fc03`), **0 failures, 2 skips** — both platform-only (CODE-034): `desktop.test` Linux host branch, `cloudBrowser.test` start script under bash. Both run in CI on Linux; this Windows machine has no bash (Git Bash missing) and no WSL distribution | gate step 5 |
 | Suites in `npm test` | 47 | **48** (+`egress.test`) | `scripts.test` |
-| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008); **915 ✓, 0 failures** with UX-009 (+2) at `be1ec2b`; **917 ✓, 0 failures** with UX-010 (+2) at `de8c0d7`; **918 ✓, 0 failures** with UX-011 (+1) at `e3373b1` — the commits after it touch no page (real Edge) | `node test/ui.test.mjs` |
+| `npm run test:ui` | — | **exit 0, 909 ✓, 0 failures, 249 s** at `d6d1ea7`; **912 ✓, 0 failures, 256 s** at `12ee0b8` (+3: SEC-050); **913 ✓, 0 failures** at `9b80bd5` (+1: UX-008); **915 ✓, 0 failures** with UX-009 (+2) at `be1ec2b`; **917 ✓, 0 failures** with UX-010 (+2) at `de8c0d7`; **918 ✓, 0 failures** with UX-011 (+1) at `e3373b1`; **920 ✓, 0 failures** with UX-012 (+2) at `41b4b82` — the commits after it touch no page (real Edge) | `node test/ui.test.mjs` |
 | `npm run test:sandbox` | — | **exit 0, 31 ✓** | not in the gate |
 | Coverage (c8, `all:true`) | statements 64.09 · branches 75.42 · functions 67.03 · lines 64.09 | **64.87 · 75.95 · 68.45 · 64.87** — up on all four; functions was 0.03 above its threshold and is now 1.45 above | `npm run coverage`, exit 0, 221 s |
 
@@ -141,10 +141,10 @@ first version of this table overstated the sub-agent row as ≈ +280 tokens and 
 
 | Total | FIXED | CHỜ-CHỦ (in repo) | CHỜ-CHỦ (outside repo) | DEFERRED | BLOCKED | OPEN | IN-PROGRESS |
 |---|---|---|---|---|---|---|---|
-| 102 | 84 | 15 | 2 | 1 | 0 | **0** | **0** |
+| 107 | 89 | 15 | 2 | 1 | 0 | **0** | **0** |
 
 (74 rows from Phases 1–2; four raised by the evaluator's first pass, eight by its second, four by its third,
-six by its fourth, six by its fifth — below.)
+six by its fourth, six by its fifth, five by its sixth — below.)
 
 No CRITICAL or HIGH is open. The 18 not fixed are 7 MEDIUM (PRV-003, HAR-001, HAR-005, PERF-022, SEC-049,
 CFG-032, LAW-001) and 11 LOW: 17 CHỜ-CHỦ with the reason and the options in the row, and one DEFERRED (ACC-017,
@@ -220,7 +220,21 @@ CODE-038/039, ACC-009..012, PRV-004, CODE-048, and found no regression in its sk
 | A lone CR or U+2028/U+2029 escaped the transcript's quoting | **SEC-053** `9e81771` |
 | `(gov\|edu)\.[a-z]{2}` admits names under open country domains | **ACC-017**, DEFERRED with its reason |
 
-**Sixth pass:** recorded below once run.
+**Sixth pass (another new reviewer): `NEEDS_WORK`.** It found no remaining cross-account or outside-the-
+conversation leak on the share path and no regression in its skim of the whole diff; PRV-012 held against
+every reader of a message's time. Three narrow findings and two smaller ones:
+
+| Finding | Disposition |
+|---|---|
+| A file's history was filed with a time cut to the millisecond, so a rewrite in the share's own millisecond could be taken for the snapshot — and CODE-055's comment said it could not | **CODE-056** `2e9b564`: filed inside the database, uncut; older rows taken only a millisecond clear of the moment |
+| A tool call's arguments in the compaction transcript kept U+2028/U+2029 raw | **SEC-054** `31fc494` |
+| Reopening a schedule did not wait for the flushed save, so the old Repeat could be shown and saved back; a save failing off screen was silent; the editor's Pause/Resume reopened a closed panel | **UX-012** `41b4b82`, real Edge, both checks fail on the previous code |
+| A hand edit to a note read the note first for nothing | **CODE-057** `b4bc7db` |
+| The changelog promised more than PRV-012 does (an edit removes the later turns from the copy) | **CODE-058** `c31d604` |
+| Unsharing clears the cache on one instance only | already **CODE-032**, CHỜ-CHỦ |
+| Push gate 1 says "0 skip" | the gate table states the two platform skips plainly rather than ticking it |
+
+**Seventh pass:** recorded below once run.
 
 ## Not measured, and why
 
