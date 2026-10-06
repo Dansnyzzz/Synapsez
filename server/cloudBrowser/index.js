@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getStore } from '../store/index.js';
 import { saveGenerated } from '../attachments.js';
-import { browserAddress, chargeCloud, machineForUser } from '../sandbox.js';
+import { browserAddress, chargeCloud, machineForUser, shellFor } from '../sandbox.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
 import { readCapped } from '../util/safeFetch.js';
 
@@ -170,10 +170,9 @@ async function start(userId, { signal } = {}) {
   const { source, build } = service();
   const conn = { url, key: key(), viewKey: key(), build, extendedAt: Date.now() };
 
+  // No login profile first (HAR-001, shellFor): the service's keys are in this environment.
   await machine.runCommand({
-    cmd: 'bash',
-    args: ['-lc', startScript(build)],
-    env: {
+    ...shellFor(startScript(build), {
       SYNZ_SERVICE: source.toString('base64'),
       SYNZ_KEY: conn.key,
       SYNZ_VIEW_KEY: conn.viewKey,
@@ -188,7 +187,7 @@ async function start(userId, { signal } = {}) {
        */
       VERCEL: '1',
       AWS_LAMBDA_JS_RUNTIME: 'nodejs22.x',
-    },
+    }),
     detached: true,
     signal,
   });

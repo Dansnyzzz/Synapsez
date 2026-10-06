@@ -363,6 +363,37 @@ export async function browserAddress(machine, { signal } = {}) {
 }
 
 /**
+ * How a command is run: `bash --noprofile --norc -c`, nothing loaded first (HAR-001).
+ *
+ * It was `bash -lc`, a login shell, which reads ~/.bash_profile and ~/.profile
+ * before the command — and the disk is kept between conversations. One command
+ * talked into appending to those files ran its payload ahead of every command
+ * after it, in every conversation, never shown in any of them — and ahead of
+ * the cloud browser's and the MCP bridge's start, with their keys in reach.
+ * Now the system profile alone is read (/etc/profile, root's to change, which
+ * is where the image puts node on the PATH), never the account's own files;
+ * `BASH_ENV` is cleared for the same reason; and the PATH a login profile would
+ * have added (~/.local/bin, where `pip install --user` puts things) is set here
+ * instead. A tool that needs its own profile runs as `source ~/.profile && …`,
+ * in plain view and graded like anything else.
+ *
+ * The network stays open and the disk stays kept: both are the product's
+ * choice (one computer per account, the whole internet — see the top of this
+ * file), and what leaves the machine is graded per command by `assessRisk`.
+ *
+ * @param {string} command
+ * @param {Record<string, string>} [env]
+ */
+export function shellFor(command, env = {}) {
+  const script = `source /etc/profile >/dev/null 2>&1 || true\nexport PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"\n${command}`;
+  return {
+    cmd: 'bash',
+    args: ['--noprofile', '--norc', '-c', script],
+    env: { ...env, BASH_ENV: '', ENV: '' },
+  };
+}
+
+/**
  * Run one command, having written any files first, and hand back what it said
  * — plus, when asked, one file it made, saved into the conversation.
  *
@@ -400,8 +431,7 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
     // paths in `files` and `download` land too. Root only when asked for —
     // installing a system package — so ordinary work runs as the normal user.
     const done = await machine.runCommand({
-      cmd: 'bash',
-      args: ['-lc', command],
+      ...shellFor(command),
       sudo: !!input?.as_root,
       timeoutMs: seconds * 1000,
       signal,

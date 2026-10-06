@@ -115,6 +115,37 @@ section('the cloud computer asks before it touches the browser\'s sign-ins (SEC-
   check('root asks', run({ command: 'dnf install -y jq', as_root: true }) === 'sensitive');
 }
 
+section('a command on the cloud computer reads none of the account\'s login files (HAR-001)');
+{
+  const { shellFor } = await import('../server/sandbox.js');
+  const shell = shellFor('echo hi', { SYNZ_KEY: 'k' });
+  check('bash with no profile and no rc file', shell.cmd === 'bash' && shell.args.slice(0, 3).join(' ') === '--noprofile --norc -c', JSON.stringify(shell.args.slice(0, 3)));
+  check('  the system profile alone, then the command', /^source \/etc\/profile/.test(shell.args[3]) && shell.args[3].endsWith('\necho hi') && !/\.(bash_)?profile\b(?!.*etc)|bashrc/.test(shell.args[3].replace('/etc/profile', '')), shell.args[3]);
+  check('  BASH_ENV cleared, and the caller\'s own environment kept', shell.env.BASH_ENV === '' && shell.env.ENV === '' && shell.env.SYNZ_KEY === 'k');
+  const sources = ['server/sandbox.js', 'server/cloudBrowser/index.js', 'server/mcp/cloud.js'].map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'));
+  check('  and nothing on the machine starts through a login shell any more', sources.every((s) => !/['"]-lc['"]/.test(s)));
+
+  // Where there is a bash: a planted ~/.bash_profile runs under `-lc` and not here.
+  const { spawnSync } = await import('node:child_process');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const probe = process.platform === 'win32' ? { status: 1 } : spawnSync('bash', ['-c', 'true']);
+  if (probe.status !== 0) {
+    console.log('  (skipped: no bash here — this runs in CI on Linux)');
+  } else {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-profile-'));
+    fs.writeFileSync(path.join(home, '.bash_profile'), 'echo planted > "$HOME/ran"\n');
+    const env = { ...process.env, HOME: home };
+    spawnSync('bash', ['-lc', 'true'], { env });
+    const plantedUnderLogin = fs.existsSync(path.join(home, 'ran'));
+    fs.rmSync(path.join(home, 'ran'), { force: true });
+    const safe = shellFor('true');
+    spawnSync(safe.cmd, safe.args, { env: { ...env, ...safe.env } });
+    check('a planted ~/.bash_profile, which a login shell runs, does not run here', plantedUnderLogin && !fs.existsSync(path.join(home, 'ran')));
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 section('the start script installs once per build and then runs the service');
 {
   const script = cb.startScript('abc123');
