@@ -2250,13 +2250,14 @@ section('a shared conversation publishes the answer, not what was read of the ac
        VALUES ('att-ms-v2', 'att-ms', $1, 2, 'ms.md', 'text/markdown', 'text', 14, $2, date_trunc('milliseconds', $3::timestamptz))`,
       [owner.id, enc('SECRET same-ms'), sharedMs],
     );
-    // ...and the file as it is now, written later still.
-    await driver.query(`UPDATE attachments SET data = $2, created_at = $3::timestamptz + interval '5 milliseconds' WHERE id = $1`, ['att-ms', enc('now'), sharedMs]);
+    // ...and the file as it is now, written later still — at a time with a part
+    // finer than a millisecond, which a trip through JavaScript would cut off.
+    await driver.query(`UPDATE attachments SET data = $2, created_at = $3::timestamptz + interval '5.432 milliseconds' WHERE id = $1`, ['att-ms', enc('now'), sharedMs]);
     const atMs = decode(await store.getAttachmentAt(owner.id, 'att-ms', sharedMs));
     check('a copy filed under a millisecond-cut time is not taken for the snapshot', atMs !== 'SECRET same-ms' && atMs !== 'now', String(atMs));
     // And a rewrite now files its outgoing copy with the database's own time, uncut.
     await store.replaceAttachment(owner.id, 'att-ms', { data: enc('later'), bytes: 5 });
-    const [filed] = await driver.query(`SELECT (SELECT created_at FROM attachment_versions WHERE attachment_id = 'att-ms' AND revision = 3) = $1::timestamptz + interval '5 milliseconds' AS uncut`, [sharedMs]);
+    const [filed] = await driver.query(`SELECT (SELECT created_at FROM attachment_versions WHERE attachment_id = 'att-ms' AND revision = 3) = $1::timestamptz + interval '5.432 milliseconds' AS uncut`, [sharedMs]);
     check('  and a rewrite files its outgoing copy at the database\'s own time, uncut', filed?.uncut === true, JSON.stringify(filed));
   }
 
