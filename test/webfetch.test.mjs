@@ -20,6 +20,7 @@
  *   node test/webfetch.test.mjs
  */
 import http from 'node:http';
+import fs from 'node:fs';
 
 process.env.ENCRYPTION_KEY ||= 'webfetch-test-key';
 process.env.SESSION_SECRET ||= 'webfetch-test-secret';
@@ -189,7 +190,14 @@ try {
      * fake worker failed". `globalThis.pdfjsWorker` is checked first, so
      * handing over a module imported by name both traces and skips it.
      */
+    // Since PERF-022 the read above ran on a worker thread, whose globals are its
+    // own; the same handover happens there. Read on this thread to see it here,
+    // and check the worker takes the same module path.
+    const pdf = await import('../server/pdf.js');
+    await pdf.readPdfText(bigPdf);
     check('it was handed over rather than imported by path', typeof globalThis.pdfjsWorker?.WorkerMessageHandler === 'function');
+    const workerSource = fs.readFileSync(new URL('../server/pdfText.worker.mjs', import.meta.url), 'utf8');
+    check('  and the worker thread reads through the same code', /import \{ readPdfText \} from '\.\/pdf\.js'/.test(workerSource));
   }
 
   section('a Word document behind a link is read the same way an attachment is');
