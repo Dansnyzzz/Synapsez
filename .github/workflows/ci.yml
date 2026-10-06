@@ -96,6 +96,28 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: '0'
 
+  # The Windows half: the PowerShell scripts the desktop worker runs (host.ps1,
+  # capture.ps1, hotkey.ps1) and every check that skips itself off Windows
+  # (CFG-028). The Linux job above never runs them. The repository is public,
+  # so the Windows runner costs nothing. Advisory until it has proved stable on
+  # the hosted runner: a red step is reported, not blocking — make it blocking
+  # by removing `continue-on-error` once it has been green for a while.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Test suites (Windows)
+        run: npm test
+      - name: Hook guards (Windows)
+        run: npm run test:hooks
+
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 5
