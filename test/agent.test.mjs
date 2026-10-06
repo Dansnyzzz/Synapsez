@@ -2146,7 +2146,8 @@ section('a memory note asks first in a turn that has read something from outside
   const write = [{ id: 'm1', name: 'memory_write', input: { name: 'prefs', content: 'x' } }];
   check('a turn that fetched a page has read from outside', turnReadOutside([{ role: 'user' }, { role: 'assistant' }, page]));
   check('  one that only computed has not', !turnReadOutside([{ role: 'user' }, { role: 'assistant' }, plain]));
-  check('  and a page read before the person last spoke does not count', !turnReadOutside([page, { role: 'user' }, plain]));
+  // What the page said is still in front of the model a message later.
+  check('  and a page read earlier in the conversation still counts', turnReadOutside([page, { role: 'user' }, plain]));
   check('under guarded, a note written after reading outside asks', approve(write, 'guarded', { readOutside: true }).length === 1);
   check('  and one written in a turn that read nothing does not', approve(write, 'guarded', { readOutside: false }).length === 0);
   check('  auto is left as the person chose it', approve(write, 'auto', { readOutside: true }).length === 0);

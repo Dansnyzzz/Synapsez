@@ -781,23 +781,23 @@ const MEMORY_WRITES = new Set(['memory_write', 'memory_append', 'memory_edit']);
 
 /** Why such a write asks, said in the approval prompt (HAR-005). */
 export const READ_OUTSIDE_REASON =
-  'This turn read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.';
+  'This conversation has read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.';
 
 /**
- * Whether this turn has read anything from outside (HAR-005): since the last
- * message from the person, any tool result that arrived inside the untrusted
- * envelope — a page, a search, a feed, an MCP server, a sub-agent's report.
+ * Whether this conversation has read anything from outside (HAR-005): any tool
+ * result that arrived inside the untrusted envelope — a page, a search, a feed,
+ * an MCP server, a sub-agent's report.
+ *
+ * The whole conversation, not only this turn: what a page said two messages ago
+ * is still in front of the model now, and "ok, thanks" is all it takes for a
+ * planted instruction to be saved on the next turn.
  *
  * @param {Array<{ role: string, results?: Array<{ content?: unknown }> }>} messages
  */
 export function turnReadOutside(messages) {
-  let from = messages.length - 1;
-  while (from >= 0 && messages[from].role !== 'user') from -= 1;
-  for (let i = from + 1; i < messages.length; i += 1) {
-    const message = messages[i];
-    if (message.role === 'tool' && (message.results || []).some((r) => String(r?.content ?? '').includes('<untrusted'))) return true;
-  }
-  return false;
+  return messages.some(
+    (message) => message.role === 'tool' && (message.results || []).some((r) => String(r?.content ?? '').includes('<untrusted')),
+  );
 }
 
 /**

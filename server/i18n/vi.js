@@ -620,8 +620,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Máy chủ MCP stdio cần máy tính đám mây (VERCEL_TOKEN, VERCEL_TEAM_ID và VERCEL_PROJECT_ID) hoặc ALLOW_MCP_STDIO=1 trên máy bạn tin tưởng. Hoặc dùng máy chủ http.',
   'stdio servers need either the cloud computer (the Vercel Sandbox) or ALLOW_MCP_STDIO on a machine you trust, and this deployment has neither. An http server works everywhere.':
     'Máy chủ stdio cần máy tính đám mây (Vercel Sandbox) hoặc ALLOW_MCP_STDIO trên máy bạn tin tưởng, mà bản triển khai này không có cái nào. Máy chủ http thì chạy ở đâu cũng được.',
-  'This turn read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.':
-    'Lượt này đã đọc nội dung từ bên ngoài — một trang web, kết quả tìm kiếm hay một máy chủ. Ghi chú lưu lúc này sẽ được đọc ở đầu mọi cuộc trò chuyện sau, nên hãy kiểm tra để chắc nó không mang theo gì từ nguồn đó.',
+  'This conversation has read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.':
+    'Cuộc trò chuyện này đã đọc nội dung từ bên ngoài — một trang web, kết quả tìm kiếm hay một máy chủ. Ghi chú lưu lúc này sẽ được đọc ở đầu mọi cuộc trò chuyện sau, nên hãy kiểm tra để chắc nó không mang theo gì từ nguồn đó.',
   'The MCP bridge on the cloud computer did not come up in time.':
     'Cầu nối MCP trên máy tính đám mây không khởi động kịp.',
   'The cloud computer for this server is not running.':
