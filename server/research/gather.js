@@ -54,7 +54,33 @@ const reputable = () => new Set([...GLOBAL, ...REGIONAL, ...configured()]);
  * all ranked primary, so a claim planted on two such hosts counted as two
  * independent primary sources and could be graded HIGH.
  */
-const PRIMARY = /(^|\.)(gov|edu)(\.[a-z]{2})?$|(^|\.)(europa\.eu|who\.int|arxiv\.org)$/;
+/**
+ * Which country codes keep a second level for real institutions (ACC-017).
+ *
+ * `gov.<cc>` and `edu.<cc>` were primary under any country code, and some
+ * registries sell those names to anyone — so `x.edu.<cc>` there was a primary
+ * source somebody could buy. These are the registries known to restrict the
+ * name to government bodies, universities and schools (`ac` and `go` are the
+ * same idea in other naming traditions). A country code not listed is not
+ * primary: an unlisted real ministry ranks lower than it should, which costs a
+ * little confidence; a listed fake would be counted as independent evidence.
+ */
+const INSTITUTIONAL = {
+  gov: new Set(['vn', 'uk', 'au', 'cn', 'in', 'sg', 'my', 'br', 'ar', 'za', 'hk', 'tw', 'ph', 'pk', 'bd', 'tr', 'il', 'ie', 'ng', 'eg', 'sa', 'ae', 'it', 'pl', 'lk', 'np', 'kh', 'la']),
+  edu: new Set(['vn', 'au', 'cn', 'sg', 'my', 'br', 'ar', 'hk', 'tw', 'ph', 'pk', 'tr', 'mx', 'co', 'pe', 'eg', 'sa', 'in', 'bd', 'np', 'lk', 'kh', 'la']),
+  ac: new Set(['uk', 'jp', 'kr', 'nz', 'za', 'in', 'il', 'th', 'id', 'at', 'cn']),
+  go: new Set(['jp', 'kr', 'th', 'id']),
+};
+const PRIMARY_NAMED = /(^|\.)(europa\.eu|who\.int|arxiv\.org|govt\.nz|gouv\.fr|gc\.ca|gob\.mx|gob\.es)$/;
+
+/** @param {string} host */
+function isPrimaryHost(host) {
+  // The generic `.gov` and `.edu` are restricted by their registries outright.
+  if (/(^|\.)(gov|edu)$/.test(host)) return true;
+  const national = /(?:^|\.)(gov|edu|ac|go)\.([a-z]{2})$/.exec(host);
+  if (national) return INSTITUTIONAL[national[1]].has(national[2]);
+  return PRIMARY_NAMED.test(host);
+}
 const SOCIAL = /(^|\.)(twitter|x|reddit|facebook|instagram|tiktok|medium)\.com$/;
 
 /**
@@ -76,7 +102,7 @@ export function rankSource(url) {
       return d;
     }
   })();
-  if (PRIMARY.test(host)) return 'primary';
+  if (isPrimaryHost(host)) return 'primary';
   if (reputable().has(d)) return 'reputable';
   if (SOCIAL.test(host)) return 'social';
   return 'blog';

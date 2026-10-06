@@ -156,6 +156,11 @@ check('  and the named bodies and their subdomains', rankSource('https://arxiv.o
 for (const fake of ['https://gov.attacker.com/x', 'https://x.edu.attacker.net/x', 'https://notarxiv.org/x', 'https://fakeeuropa.eu/x', 'https://govtrack.us/x']) {
   check(`${new URL(fake).hostname} is not primary`, rankSource(fake) !== 'primary', rankSource(fake));
 }
+// ACC-017: only registries that keep the name for real institutions.
+check('a university or ministry under a restricted country code is primary', ['https://www.ox.ac.uk/a', 'https://www.u-tokyo.ac.jp/a', 'https://www.mhlw.go.jp/a', 'https://www.unimelb.edu.au/a', 'https://www.gov.uk/a', 'https://www.economie.gouv.fr/a'].every((u) => rankSource(u) === 'primary'));
+for (const bought of ['https://x.edu.me/a', 'https://news.gov.ws/a', 'https://x.ac.me/a']) {
+  check(`${new URL(bought).hostname} — a name anyone may register there — is not primary`, rankSource(bought) !== 'primary', rankSource(bought));
+}
 
   /*
    * A Vietnamese question answered from Vietnamese national press could never
