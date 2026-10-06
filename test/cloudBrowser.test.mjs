@@ -222,6 +222,13 @@ section('the daily budgets are per account and for the whole app');
   await chargeCloudCheck('u-check-b');
   const third = await throws(() => chargeCloudCheck('u-check-c'));
   check('  and the whole app has a check budget of its own', /New MCP servers are at today's limit/.test(third), third);
+  // The scarcer budget first: a refused check spends none of the day's actions.
+  process.env.CLOUD_ACTIONS_PER_DAY = '1';
+  const refusedCheck = await throws(() => chargeCloudCheck('u-check-d'));
+  check('  (refused here by the app-wide check budget)', /New MCP servers/.test(refusedCheck), refusedCheck);
+  const stillOne = await throws(() => chargeCloud('u-check-d'));
+  check('  a refused check spends none of the account\'s actions', stillOne === '', stillOne);
+  delete process.env.CLOUD_ACTIONS_PER_DAY;
   for (const k of ['CLOUD_CHECKS_PER_DAY', 'CLOUD_CHECKS_TOTAL_PER_DAY']) delete process.env[k];
 }
 

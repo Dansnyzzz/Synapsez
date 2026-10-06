@@ -704,6 +704,34 @@ section('a server added once is ready for the next account, offered without star
     await store.deleteMcpServer(user.id, 'mcp-cloud-off');
     registry.forgetMcp(user.id);
 
+    // Today's checks spent, and the shared list past its two weeks: that list is
+    // still the best there is, and the command is added from it — nothing starts.
+    const { chargeCloudCheck } = await import('../server/sandbox.js');
+    process.env.CLOUD_CHECKS_PER_DAY = '1';
+    await chargeCloudCheck(user.id);
+    // Every shared list counts as old; and nothing here may reach a real
+    // machine — a check that was not refused would try to start one.
+    registry.__testing.setSharedFor(0);
+    const guardedFetch = globalThis.fetch;
+    const outside = [];
+    globalThis.fetch = async (url, init) => {
+      if (!/^http:\/\/127\.0\.0\.1[:/]/.test(String(url))) {
+        outside.push(String(url).slice(0, 80));
+        throw new Error('No network in this test.');
+      }
+      return guardedFetch(url, init);
+    };
+    let aged;
+    try {
+      aged = await registry.probeMcpServer(config, { userId: user.id }).catch((err) => ({ error: err.message }));
+    } finally {
+      globalThis.fetch = guardedFetch;
+      registry.__testing.setSharedFor(14 * 24 * 60 * 60 * 1000);
+      delete process.env.CLOUD_CHECKS_PER_DAY;
+    }
+    check('with the day\'s checks spent, an older shared list is still used', aged?.shared === true && aged?.tools?.length === 5, JSON.stringify(aged).slice(0, 200));
+    check('  and no machine is started for it', outside.length === 0, outside.join(' '));
+
     // Over HTTP: any account may add one here, because it runs on its own machine.
     const port = await freePort();
     const app = createApp().listen(port);

@@ -118,13 +118,13 @@ export function checkBudgets(env = process.env) {
 }
 
 /**
- * Count one check of a new MCP server: an action like any other, and one of the
- * day's checks. Throws a sentence to show when either is spent.
+ * Count one check of a new MCP server: one of the day's checks, and an action
+ * like any other. Throws a sentence to show when either is spent. The checks
+ * come first, being the scarcer: a refused check spends no action.
  *
  * @param {string} userId
  */
 export async function chargeCloudCheck(userId) {
-  await chargeCloud(userId);
   const store = getStore();
   if (typeof store.hitRateLimit !== 'function') return;
   const { perAccount, total } = checkBudgets();
@@ -146,6 +146,7 @@ export async function chargeCloudCheck(userId) {
   } catch (err) {
     if (err instanceof LimitError) throw err;
   }
+  await chargeCloud(userId);
 }
 
 /**

@@ -158,8 +158,11 @@ function stored(row) {
 const runsInCloud = (row) =>
   row?.config?.transport !== 'http' && (row?.config?.place === 'cloud' || (!row?.config?.place && stdioPlace() === 'cloud'));
 
-/** How long a server checked for everybody is trusted before it is checked again — `@latest` moves. */
-const SHARED_FOR_MS = 14 * 24 * 60 * 60 * 1000;
+/**
+ * How long a server checked for everybody is trusted before it is checked again
+ * — `@latest` moves. Fourteen days; a test sets it to 0 to stand in an old list.
+ */
+let sharedForMs = 14 * 24 * 60 * 60 * 1000;
 
 /**
  * What `mcp_shared.target` holds for a person reading the table: the program's
@@ -447,13 +450,21 @@ async function probeInCloud(config, userId) {
   const signature = mcpSignature(config);
   const known = await store.getSharedMcp(signature).catch(() => null);
   const listed = known && Array.isArray(known.tools) && known.tools.length;
-  const recent = listed && Date.now() - new Date(known.checked_at).getTime() < SHARED_FOR_MS;
+  const recent = listed && Date.now() - new Date(known.checked_at).getTime() < sharedForMs;
   if (recent) {
     await store.noteSharedMcpUse(signature).catch(() => {});
     return describeProbe(known.server, known.tools, { shared: true });
   }
   // A machine of its own that installs a package: far more than one action.
-  if (userId) await chargeCloudCheck(userId);
+  if (userId) {
+    try {
+      await chargeCloudCheck(userId);
+    } catch (err) {
+      // Today's checks are spent: a list checked before is still the best there is.
+      if (listed) return describeProbe(known.server, known.tools, { shared: true });
+      throw err;
+    }
+  }
   try {
     const found = await checkOnScratch(config, connectMcp);
     await store
@@ -533,4 +544,13 @@ export function closeAllMcp() {
   for (const [userId] of live) forgetMcp(userId);
 }
 
-export const __testing = { live, slugify, splitMcpName, offerable };
+export const __testing = {
+  live,
+  slugify,
+  splitMcpName,
+  offerable,
+  /** @param {number} ms */
+  setSharedFor(ms) {
+    sharedForMs = ms;
+  },
+};
