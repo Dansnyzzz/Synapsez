@@ -439,7 +439,9 @@ section('one schedule save at a time, and the last word wins (CODE-036, UX-005)'
   check('  in two requests, not four', sent.length === 2, sent.join(' → '));
   check('  and every caller hears the final result', answers.every((a) => a === '17:30'), answers.join(','));
   const pages = fs.readFileSync(new URL('../public/js/pages.js', import.meta.url), 'utf8');
-  check('the schedule pane saves through it', /const saveSchedule = latestWins\(/.test(pages));
+  // Wrapped since UX-014, so that an open of the same schedule waits for the
+  // whole of it, a run queued behind the one on the wire included.
+  check('the schedule pane saves through it', /const saveLatest = latestWins\(/.test(pages) && /const saveSchedule = \(\) => sent\(key, saveLatest\(\)\);/.test(pages));
   check('  and the Repeat menu waits for the choice to settle, then gives focus back', /setTimeout\(async \(\) => \{[\s\S]{0,1200}FREQUENCY_SETTLE_MS/.test(pages) && /\[data-s="frequency"\]'\)\)\?\.focus\(\)/.test(pages));
 
   // CODE-051: a failed save does not drop the one queued behind it.
