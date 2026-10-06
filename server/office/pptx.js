@@ -37,6 +37,7 @@ import {
   appPropsXml,
   contentTypesXml,
   corePropsXml,
+  isRel,
   mainPart,
   readRelationships,
   relsPathFor,
@@ -128,7 +129,7 @@ function readSlide(zip, path) {
   // Notes live in a part of their own, reached through this slide's rels.
   let notes = '';
   for (const [, rel] of readRelationships(zip, relsPathFor(path))) {
-    if (rel.type !== REL.notesSlide) continue;
+    if (!isRel(rel.type, 'notesSlide')) continue;
     const notesPath = resolveTarget(path, rel.target);
     if (!zip.has(notesPath)) continue;
 

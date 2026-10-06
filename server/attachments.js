@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { MAX_ATTACHMENT_BYTES } from './store/pg.js';
 import { extractPdfText } from './pdf.js';
-import { isLegacyOffice, officeFormat, readOffice } from './office/index.js';
+import { isLegacyOffice, officeFormat, readOffice, readOfficeAsync } from './office/index.js';
+import { log } from './util/trace.js';
 
 /**
  * Photos and files — the ones sent with a message, and the ones the assistant
@@ -317,15 +318,21 @@ async function readDocument(row) {
   try {
     if (row.kind === 'office') {
       const format = officeFormat(row.name, row.mime);
-      const read = readOffice(format, Buffer.from(row.data, 'base64'));
-      result = read.text ? { text: read.text, format, meta: read.meta } : null;
+      const read = await readOfficeAsync(format, Buffer.from(row.data, 'base64'));
+      result = read.text ? { text: read.text, format, meta: read.meta } : { text: '', format, failed: { code: 'empty' } };
     } else {
       result = await extractPdfText(row.data);
     }
-  } catch {
-    // Encrypted, corrupt, or something the parser will not open. Indistinguishable
-    // from a scan as far as the next step is concerned: there are no words.
-    result = null;
+  } catch (err) {
+    /*
+     * Encrypted, corrupt, or something no parser here will open. For a PDF that
+     * is indistinguishable from a scan: there are no words. An Office file keeps
+     * why, so the model can tell the person what to do — "remove the password"
+     * is an answer, "it may be empty or protected or pictures" is a shrug. Only
+     * the reason is logged, never a word of the file.
+     */
+    log.warn('attachment: could not read', { kind: row.kind, format: officeFormat(row.name, row.mime), code: err?.code || null, reason: String(err?.message || err).slice(0, 200) });
+    result = row.kind === 'office' ? { text: '', format: officeFormat(row.name, row.mime), failed: { code: err?.code || 'unreadable', message: String(err?.message || err).slice(0, 300) } } : null;
   }
 
   return remember(row.id, result);
@@ -417,8 +424,34 @@ const OFFICE_MAX_CHARS = 120_000;
 const OFFICE_NOUN = {
   docx: 'Word document',
   xlsx: 'Excel workbook',
+  xls: 'Excel 97–2003 workbook',
+  xlsb: 'Excel binary workbook',
+  ods: 'OpenDocument spreadsheet',
   pptx: 'PowerPoint deck',
 };
+
+/**
+ * What the model is told about an Office file nothing could be read from.
+ *
+ * The reason, when there is one, because it decides what the person should do:
+ * a password is removed in Excel (File → Info → Protect Workbook), a damaged
+ * file is saved again, an empty one has nothing to check. "It may be empty,
+ * protected or pictures" left the model to guess, and it guessed all three.
+ *
+ * @param {string} name
+ * @param {{ code?: string, message?: string } | undefined} failed
+ */
+function unreadableNote(name, failed) {
+  const why =
+    failed?.code === 'encrypted'
+      ? 'it is password-protected. Ask the person to remove the password (in Office: File → Info → Protect → Encrypt with Password, clear it, save) and send it again, or paste the part they want checked'
+      : failed?.code === 'empty' || failed?.code === 'no_sheets'
+        ? 'it has no text or cells with anything in them'
+        : failed?.message
+          ? `the readers here could not open it (${failed.message}). Ask the person to open it and save it again (Save As .xlsx), or paste the part they want checked`
+          : 'it may be empty, password-protected, or made entirely of pictures';
+  return `[The user attached "${name}", and nothing could be read out of it: ${why}. Say so plainly rather than guessing at its contents.]`;
+}
 
 /**
  * Turn one message's attachments into provider-neutral parts.
@@ -497,12 +530,7 @@ export function toParts(message, loaded, { vision = true, documents = true, seen
             `${cut ? body.slice(0, OFFICE_MAX_CHARS) : body}\n--- end of ${full.name} ---`,
         });
       } else {
-        parts.push({
-          type: 'text',
-          text:
-            `[The user attached "${full.name}", and nothing could be read out of it — it may be empty, ` +
-            'password-protected, or made entirely of pictures. Say so plainly rather than guessing at its contents.]',
-        });
+        parts.push({ type: 'text', text: unreadableNote(full.name, full.text?.failed) });
       }
       continue;
     }
@@ -611,7 +639,7 @@ export function toParts(message, loaded, { vision = true, documents = true, seen
 export async function previewOf(row) {
   if (row.kind === 'office') {
     const format = officeFormat(row.name, row.mime);
-    const read = readOffice(format, Buffer.from(row.data, 'base64'), {
+    const read = await readOfficeAsync(format, Buffer.from(row.data, 'base64'), {
       // The pictures are fetched one at a time from a route of their own rather
       // than inlined as data URIs. A report with thirty figures would otherwise
       // arrive as one JSON body several times the size of the document, before

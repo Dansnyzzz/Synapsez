@@ -786,9 +786,9 @@ a conversation is re-read on every step and parsing the same file forty times to
 characters is pure cost.
 
 A document **linked on a page** goes through the same two readers: `web_fetch` on a URL ending in a
-PDF, `.docx`, `.xlsx` or `.pptx` opens it and returns its text, rather than the bytes decoded as if
-they were prose. So a past exam paper or an annual report published as a PDF can be quoted directly,
-and the tool says plainly when what came back is a picture rather than pasting it in.
+PDF, `.docx`, `.xlsx`, `.xls`, `.ods` or `.pptx` opens it and returns its text, rather than the bytes
+decoded as if they were prose. So a past exam paper or an annual report published as a PDF can be
+quoted directly, and the tool says plainly when what came back is a picture rather than pasting it in.
 
 Office documents are read by a reader written for this project — no dependency, and the same code
 draws the preview. That last part is deliberate: **what you see and what the assistant answered from
@@ -796,9 +796,16 @@ are the same reading**, so the two cannot quietly disagree. A preview generated 
 eventually differ, and the difference would surface as the assistant appearing to lie about a
 document open on your screen.
 
-The old binary formats — `.doc`, `.xls` and `.ppt` — are a different thing entirely and are refused by
-name, with the fix attached: open it and *Save As* the modern one. A password-protected file says
-that it is password-protected rather than "unsupported".
+Spreadsheets have a second reader behind the first: **every Excel form people send** — `.xlsx`,
+`.xlsm`, templates, the old `.xls`, `.xlsb`, OpenDocument `.ods`, an "Excel" export that is really an
+HTML table — is read. Anything the reader here cannot open goes to [SheetJS](https://sheetjs.com)
+(`server/office/sheets.js`), on a worker thread with a deadline and a heap of its own, and comes back
+in the same shape, so the preview and the assistant still see the same thing. A formula whose result
+was never saved shows as the formula.
+
+The old binary `.doc` and `.ppt` are refused by name, with the fix attached: open it and *Save As* the
+modern one. A password-protected file says that it is password-protected — and the assistant is told
+to ask for the password to come off — rather than "unsupported".
 
 Anything else is refused by name at the moment you pick it. Six files per message, 5MB each.
 
