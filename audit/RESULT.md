@@ -275,6 +275,13 @@ ledger, and re-ran the secret scan over every added line (0). One finding blocke
   loader was free to fill it: had `.env` named a real database, the report — which opens the store, and so
   applies pending migrations — would have reached it. It reported the local PGlite file; nothing else was
   touched. The test itself passes empty values from Node, which, probed, do reach a child on Windows.
+- `8139c0e` holds the seventh pass's audit record (this file and PROGRESS.md) under CODE-059's changelog title:
+  the new message was written in the same batch of tool calls as the commit, the write was refused, and the
+  commit took the message file as it stood. Left as it is rather than rewriting the branch; the commit after it
+  says so. From here the message file is written, and read back, before the commit runs.
+- UX-012's first version waited only for a save still in its pause, and its own browser check passed because
+  that check reopened within the pause. The seventh evaluator found the case it missed, the save already sent
+  (UX-013); the new checks hold the request back past the pause.
 - Each evaluator pass after the first found something the previous round's own checks had passed: the share
   path three times over (PRV-007 by id, PRV-008 by repeated id, PRV-010 by a tool missed from the list), and
   claims in this file that ran ahead of the evidence. Read-only review by a reviewer that had not seen the work
