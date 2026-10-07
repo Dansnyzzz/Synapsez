@@ -640,7 +640,7 @@ $('gate-form').addEventListener('submit', async (event) => {
         $('gate-error').textContent = t('gate.consentNeeded');
         $('gate-error').hidden = false;
         $('gate-consent').focus();
-        submit.disabled = false;
+        /** @type {HTMLButtonElement} */ (submit).disabled = false;
         return;
       }
       const result = await api.register({
