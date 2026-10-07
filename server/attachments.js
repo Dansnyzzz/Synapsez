@@ -333,9 +333,10 @@ async function readDocument(row) {
      * is indistinguishable from a scan: there are no words. An Office file keeps
      * why, so the model can tell the person what to do — "remove the password"
      * is an answer, "it may be empty or protected or pictures" is a shrug. Only
-     * the reason is logged, never a word of the file.
+     * the kind of failure is logged: a reader's message can quote the file (a
+     * sheet name, a cell), and the log is not the place for that.
      */
-    log.warn('attachment: could not read', { kind: row.kind, format: officeFormat(row.name, row.mime), code: err?.code || null, reason: String(err?.message || err).slice(0, 200) });
+    log.warn('attachment: could not read', { kind: row.kind, format: officeFormat(row.name, row.mime), code: err?.code || 'unreadable' });
     result = row.kind === 'office' ? { text: '', format: officeFormat(row.name, row.mime), failed: { code: err?.code || 'unreadable', message: String(err?.message || err).slice(0, 300) } } : null;
   }
 

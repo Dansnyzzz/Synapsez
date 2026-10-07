@@ -18,7 +18,11 @@
  */
 
 /** Past this many pixels a picture is sent as it is — decoding it would be the problem. */
-const MAX_PIXELS = 24_000_000;
+const MAX_PIXELS = 16_000_000;
+/** The long edge a flattened picture is sent at: enough for any model to read, within every provider's size limit. */
+const MAX_EDGE = 2000;
+/** How many pictures were decoded — for the suite, which checks a huge one never is. */
+let decodes = 0;
 /** Above this mean lightness of the drawn pixels, a white ground would hide them. */
 const LIGHT_DRAWING = 0.75;
 const WHITE = '#ffffff';
@@ -78,13 +82,17 @@ export function mayBeTransparent(bytes) {
  */
 export async function groundedImage(image) {
   const key = image.id ? `${image.id}:${image.data.length}` : null;
-  if (key && cache.has(key)) return cache.get(key);
-  let out = { mime: image.mime, data: image.data };
+  const original = { mime: image.mime, data: image.data };
+  // Only a flattened picture is kept; one that went as it was is remembered as
+  // that, not as a second copy of its bytes.
+  if (key && cache.has(key)) return cache.get(key) || original;
+  let out = original;
   try {
     const bytes = Buffer.from(image.data, 'base64');
     const size = mayBeTransparent(bytes);
     if (size && size.width * size.height <= MAX_PIXELS) {
       const { createCanvas, loadImage } = await canvas();
+      decodes += 1;
       const picture = await loadImage(bytes);
       const surface = createCanvas(picture.width, picture.height);
       const ctx = surface.getContext('2d');
@@ -104,11 +112,14 @@ export async function groundedImage(image) {
       }
       if (seeThrough) {
         const ground = drawn && light / drawn > LIGHT_DRAWING ? DARK : WHITE;
-        const flat = createCanvas(picture.width, picture.height);
+        const k = Math.min(1, MAX_EDGE / Math.max(picture.width, picture.height));
+        const w = Math.max(1, Math.round(picture.width * k));
+        const h = Math.max(1, Math.round(picture.height * k));
+        const flat = createCanvas(w, h);
         const paint = flat.getContext('2d');
         paint.fillStyle = ground;
-        paint.fillRect(0, 0, picture.width, picture.height);
-        paint.drawImage(picture, 0, 0);
+        paint.fillRect(0, 0, w, h);
+        paint.drawImage(picture, 0, 0, w, h);
         out = { mime: 'image/png', data: (await flat.encode('png')).toString('base64') };
       }
     }
@@ -117,7 +128,9 @@ export async function groundedImage(image) {
   }
   if (key) {
     if (cache.size >= CACHE_SIZE) cache.delete(cache.keys().next().value);
-    cache.set(key, out);
+    cache.set(key, out === original ? null : out);
   }
   return out;
 }
+
+export const __testing = { decodes: () => decodes, MAX_PIXELS };

@@ -23,7 +23,8 @@ import { extensionOf, RUNNABLE } from '../office/index.js';
  */
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
-const INLINE_SAFE = /^(image\/(png|jpe?g|webp|gif)|application\/pdf)$/i;
+// The same raster formats as the signed-in file route (files.js): none can carry a script.
+const INLINE_SAFE = /^(image\/(png|jpe?g|webp|gif|avif|bmp|x-icon|vnd\.microsoft\.icon)|application\/pdf)$/i;
 const TEXTUAL = /^text\/|^application\/(json|xml|javascript)$/i;
 
 export const newShareToken = () => crypto.randomBytes(32).toString('base64url');

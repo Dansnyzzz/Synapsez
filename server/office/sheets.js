@@ -23,7 +23,9 @@ const WORKER_LOAD = /ERR_MODULE_NOT_FOUND|ERR_WORKER_PATH|ERR_WORKER_INIT_FAILED
  * Read a spreadsheet with the fallback reader, off this thread.
  *
  * Where no worker can start — or its code is missing from the bundle — it reads
- * on this thread instead, never worse than having no fallback at all.
+ * on this thread instead, with no deadline or heap of its own: a hostile file
+ * can then cost what it would have cost here before any of this existed. Upload
+ * size limits bound it; the worker is what makes it safe.
  *
  * @param {Buffer} buffer
  * @param {{ timeoutMs?: number, workerUrl?: URL }} [options] `workerUrl` is for

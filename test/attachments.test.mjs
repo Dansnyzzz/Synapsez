@@ -699,14 +699,22 @@ section('a transparent picture reaches the model on a ground it can see');
   check('dark lines on nothing reach the model on white', darkCorner === '255,255,255,255', darkCorner);
   check('  white lines on nothing on a dark ground, which white would erase', lightCorner === '31,35,40,255', lightCorner);
   check('  and a picture with nothing see-through goes exactly as it was', parts[2].data === solidBytes.toString('base64'));
-  // A header claiming a picture too large to decode safely is sent untouched.
+  // A header claiming a picture too large to decode safely is sent untouched —
+  // and is never decoded at all, which is the point (counted, not inferred).
   const huge = Buffer.from(drawing('#111111'));
   huge.writeUInt32BE(60_000, 16);
   huge.writeUInt32BE(60_000, 20);
-  check('  a picture whose header claims billions of pixels is not decoded', !!mayBeTransparent(huge) && 60_000 * 60_000 > 24_000_000);
-  const { groundedImage } = await import('../server/imageGround.js');
+  const { groundedImage, __testing: groundTest } = await import('../server/imageGround.js');
+  const decodedBefore = groundTest.decodes();
   const untouched = await groundedImage({ mime: 'image/png', data: huge.toString('base64') });
+  check('  a picture whose header claims billions of pixels is never decoded', !!mayBeTransparent(huge) && groundTest.decodes() === decodedBefore, `${groundTest.decodes() - decodedBefore} decodes`);
   check('    and goes as it was', untouched.data === huge.toString('base64'));
+  // A large transparent one goes at most 2000 pixels on its long edge.
+  const big = createCanvas(3200, 1600);
+  big.getContext('2d').fillRect(100, 100, 50, 50);
+  const shrunk = await groundedImage({ mime: 'image/png', data: big.toBuffer('image/png').toString('base64') });
+  const shrunkSize = await loadImage(Buffer.from(shrunk.data, 'base64'));
+  check('  a large transparent picture is flattened at no more than 2000 pixels across', shrunkSize.width === 2000 && shrunkSize.height === 1000, `${shrunkSize.width}×${shrunkSize.height}`);
 }
 
 section('a step screenshot is kept for the assistant, not shelved as a file');
