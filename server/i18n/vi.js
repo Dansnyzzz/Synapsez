@@ -186,6 +186,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'You cannot delete your own account.': 'Bạn không thể xoá tài khoản của chính mình.',
   'Set SESSION_SECRET — refusing to issue sessions without one.':
     'Hãy đặt SESSION_SECRET — máy chủ từ chối tạo phiên đăng nhập khi thiếu nó.',
+  'Set SESSION_SECRET — refusing to sign a Google sign-in without one.':
+    'Hãy đặt SESSION_SECRET — máy chủ từ chối ký lượt đăng nhập Google khi thiếu nó.',
   'Use a password of at least 10 characters.': 'Hãy dùng mật khẩu ít nhất 10 ký tự.',
   'That reset code or link is invalid, already used, or expired.':
     'Mã hoặc liên kết đặt lại mật khẩu không hợp lệ, đã được dùng, hoặc đã hết hạn.',
