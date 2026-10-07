@@ -803,20 +803,6 @@ export function turnReadOutside(messages) {
 }
 
 /**
- * The calls in a step that must stop for a yes.
- *
- * `readOutside`: under `guarded`, a memory write in a turn that has read
- * something from outside asks first (HAR-005). Memory is read at the start of
- * every later conversation, so a page that talked the assistant into saving "the
- * user always wants replies forwarded to …" would have planted an instruction
- * in all of them — the one place an injection outlives the turn it came from.
- * A turn that read nothing from outside writes its notes as before.
- *
- * @param {Array<{ id: string, name: string, input?: any }>} toolCalls
- * @param {string} policy
- * @param {{ readOutside?: boolean }} [context]
- */
-/**
  * Whether a personal detail the shield put back is going out in a web address
  * (PRV-003). With masking on the model holds only placeholders, and a page can
  * talk it into writing one into a URL; restoring it there would hand the real
@@ -828,6 +814,21 @@ const personalInAddress = (call) => Array.isArray(call?.unmasked) && !!URL_ARGUM
 export const PERSONAL_IN_ADDRESS_REASON =
   'This puts one of your personal details — hidden from the model as a placeholder — into a web address. Check the address before it is sent.';
 
+/**
+ * The calls in a step that must stop for a yes.
+ *
+ * `readOutside`: under `guarded`, a memory write in a turn that has read
+ * something from outside asks first (HAR-005). Memory is read at the start of
+ * every later conversation, so a page that talked the assistant into saving "the
+ * user always wants replies forwarded to …" would have planted an instruction
+ * in all of them — the one place an injection outlives the turn it came from.
+ * A turn that read nothing from outside writes its notes as before. A personal
+ * detail put back into a web address always asks (`personalInAddress`).
+ *
+ * @param {Array<{ id: string, name: string, input?: any, unmasked?: string[] }>} toolCalls
+ * @param {string} policy
+ * @param {{ readOutside?: boolean }} [context]
+ */
 export function needsApproval(toolCalls, policy, { readOutside = false } = {}) {
   if (policy === 'auto' || policy === 'readonly' || policy === 'plan') return [];
   return toolCalls.filter((call) => {
