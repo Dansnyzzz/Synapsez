@@ -49,8 +49,8 @@ Project được gọi là SẠCH khi **tất cả** đúng, mỗi dòng có b�
 ```
 REPO:            D:\AI remote
 VISIBILITY:      PUBLIC (chủ project xác nhận)
-SHELL CỦA AGENT: bash (Git Bash) — Claude Code trên Windows chạy lệnh bằng bash; xác minh bằng `echo $SHELL`
-NHÁNH HIỆN TẠI:  model-capability-audit   ← KHÔNG phải main
+SHELL CỦA AGENT: PowerShell 5.1 trên máy này (Git Bash không có — công cụ Bash hỏng); CI chạy bash trên Ubuntu
+NHÁNH HIỆN TẠI:  <đọc `git branch --show-current`> — việc làm trên nhánh tính năng, xong thì merge vào main và push
 NODE:            <đọc .nvmrc>
 CMD_INSTALL / CMD_TEST / CMD_LINT / CMD_TYPECHECK / CMD_BUILD / CMD_RUN_LOCAL: <đọc package.json>
 GATE:            npm run gate → liệt kê chính xác từng lệnh con
