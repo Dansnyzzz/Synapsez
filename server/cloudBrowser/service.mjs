@@ -333,8 +333,7 @@ async function settle(action) {
  * What can be pressed on the page, numbered — the numbers are stamped on the
  * elements themselves, so `click { ref: 7 }` finds exactly the element the
  * assistant was shown — and the whole page's text, and where it is scrolled.
- */
-/**
+ *
  * @param {{ stamp?: boolean }} [options]  `stamp: false` reads the text and
  *   leaves the numbers where they are: `read` shows no list, so numbering the
  *   page again behind it would have the next `click { ref: 7 }` land on
@@ -1040,7 +1039,6 @@ function kernelEnv() {
   if (RUN_HOME) env.PATH = `${env.PATH}:${RUN_HOME}/.local/bin`;
   // The service's own temporary folder is root's; the account's session uses the ordinary one.
   env.TMPDIR = asRoot() ? '/tmp' : process.env.TMPDIR || '/tmp';
-  if (process.platform === 'win32') Object.assign(env, { SYSTEMROOT: process.env.SYSTEMROOT, TEMP: process.env.TEMP, TMP: process.env.TMP });
   return env;
 }
 
