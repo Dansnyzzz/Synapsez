@@ -56,6 +56,12 @@ const EXTEND_EVERY_MS = 5 * 60_000;
 const EXTEND_BY_MS = 15 * 60_000;
 /** How long a panel token lasts. The panel asks for fresh ones well before. */
 const TOKEN_MS = 15 * 60_000;
+/**
+ * The view token is shorter-lived: it is the one that travels in an address
+ * (the MJPEG fallback's), and an address can end up in a proxy's log. It only
+ * has to last until the stream is open.
+ */
+const VIEW_TOKEN_MS = 5 * 60_000;
 
 export const ACTIONS = [
   'open', 'look', 'read', 'click', 'type', 'press', 'scroll', 'select', 'wait',
@@ -155,8 +161,14 @@ export function startScript(build, { root = false } = {}) {
      */
     `OLDPROFILE="$WORK/${DIR}/profile"`,
     'if [ ! -e profile ] && [ -d "$OLDPROFILE" ] && [ ! -L "$OLDPROFILE" ]; then',
-    '  mv "$OLDPROFILE" profile.moving && chmod 700 profile.moving && chown -R root:root profile.moving',
-    '  if command -v find >/dev/null 2>&1 && find profile.moving -type l -exec rm -f {} +; then mv profile.moving profile; else rm -rf profile.moving; fi',
+    '  mv "$OLDPROFILE" profile.moving || true',
+    // Checked again once it is here, where the account can no longer swap it:
+    // between the test above and the move it could have become a link, and
+    // `chmod` follows links.
+    '  if [ -L profile.moving ] || [ ! -d profile.moving ]; then rm -f profile.moving; else',
+    '    chmod 700 profile.moving && chown -R root:root profile.moving',
+    '    if command -v find >/dev/null 2>&1 && find profile.moving -type l -exec rm -f {} +; then mv profile.moving profile; else rm -rf profile.moving; fi',
+    '  fi',
     'fi',
     'mkdir -p profile && chmod 700 profile && chown -R root:root profile',
     `export SYNZ_PROFILE=${ROOT_DIR}/profile SYNZ_KERNEL_PATH=${ROOT_DIR}/kernel.py`,
@@ -491,7 +503,7 @@ export async function cloudBrowserState(userId, { driving = false } = {}) {
   const now = Date.now();
   return {
     open: true,
-    stream: `${conn.url}/stream?t=${encodeURIComponent(panelToken(conn.key, 'view', TOKEN_MS, now))}`,
+    stream: `${conn.url}/stream?t=${encodeURIComponent(panelToken(conn.key, 'view', VIEW_TOKEN_MS, now))}`,
     live: {
       url: `${conn.url.replace(/^http/, 'ws')}/live`,
       token: panelToken(conn.key, 'drive', TOKEN_MS, now),

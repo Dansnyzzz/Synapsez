@@ -908,7 +908,14 @@ function applyView(client, msg) {
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
 
+/** More panels than this on one machine is not a person watching: a few tabs, at most. */
+const MAX_LIVES = 8;
+
 function openLive(ws) {
+  if (wss.clients.size > MAX_LIVES) {
+    ws.close(4429, 'too many');
+    return;
+  }
   const client = { ws, scope: null, inflight: 0, sent: null, behind: false, width: 640, height: 400, driving: false, queue: [], busy: false, window: { at: 0, n: 0 } };
   const unauthenticated = setTimeout(() => ws.close(4401, 'auth'), 5000);
   ws.on('message', (data, isBinary) => {

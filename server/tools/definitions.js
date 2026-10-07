@@ -3164,8 +3164,9 @@ const SANDBOX_PRIVATE =
  *
  * A pattern list, like `looksDestructive`, not a wall.
  */
+// Any receiver: `s = requests.Session(); s.post(...)` is the same request as `requests.post(...)`.
 const PYTHON_SENDS =
-  /\b(?:requests|httpx|session|client)\.(?:post|put|patch|delete)\s*\(|\burlopen\s*\([^)]*\bdata\s*=|\bRequest\s*\([^)]*\bdata\s*=|\bhttp\.client\b|\bsocket\.socket\s*\(|\b(?:smtplib|ftplib|paramiko|telnetlib)\b/i;
+  /\b\w+\.(?:post|put|patch|delete)\s*\(|\burlopen\s*\([^)]*\bdata\s*=|\bRequest\s*\([^)]*\bdata\s*=|\bhttp\.client\b|\bsocket\.socket\s*\(|\b(?:smtplib|ftplib|paramiko|telnetlib)\b/i;
 
 export function pythonLooksRisky(code) {
   const text = String(code || '');
