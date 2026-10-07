@@ -195,6 +195,10 @@ section('a new account is shown the guide, once');
   check('and it does not come back after a reload', !(await page.$('#onboarding[open]')));
   // With the guide answered, the newest model in the list may be announced —
   // once. Answered here, the way a person would, before anything is pressed.
+  // Waited for rather than looked for once: on a loaded machine it opened a
+  // moment after this looked, stayed open as a modal over the page, and the
+  // model checks further down failed under it (seen 2026-10-07).
+  await page.waitForSelector('#model-news[open]', { timeout: 6000 }).catch(() => null);
   if (await page.$('#model-news[open]')) {
     const title = await page.evaluate(() => document.getElementById('news-title').textContent.trim());
     check('after the guide, one new model is announced', !!title, title);
