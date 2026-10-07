@@ -1,5 +1,65 @@
 # Changelog
 
+## 2026-10-07 — pictures you can draw on, every Excel file read, and the rest of the audit closed
+
+Asked for by the owner on 2026-10-06, with their approval of every audit item still open. Nothing here
+needs a paid service.
+
+### Pictures
+
+- **Drawing on a picture works on any picture.** A tall image or a screenshot spilled over the colours and
+  tools, so pressing Red, Text or Pen drew a dot on the picture instead; the canvas now fits its stage.
+- **A transparent PNG is shown on white** — above the composer, in the viewer, on the Files shelf, and in the
+  editor (and saved that way). The model gets it on a ground it can see too: white, or dark when what is drawn
+  is mostly light, so a white logo is not erased. A fully opaque picture goes as it was.
+
+### Files shelf
+
+- Every picture shows itself instead of a file icon (an SVG drawn from a blob, where no script in it can
+  run); an **Images** filter joins the others.
+- The cloud browser's step screenshots are kept for the assistant, not shelved as files you made (schema 30
+  moves the ones already stored).
+
+### Excel
+
+- **Every form of Excel file is read**: `.xlsx`, `.xlsm`, templates, the old `.xls`, `.xlsb`, `.ods`, a
+  Strict Open XML workbook, part names in the wrong case, sizes in a Zip64 field, an "Excel" export that is
+  really an HTML table. Anything the reader here cannot open goes to SheetJS on a worker with a deadline and
+  a heap of its own. A formula whose result was never saved shows as the formula.
+- A password-protected workbook says so, and the assistant asks for the password to come off; any other
+  failure tells the assistant why (and the log, without a word of the file) instead of "it may be empty,
+  protected, or pictures".
+
+### Privacy and the law
+
+- **Hide personal details from the model's provider** (Settings → Memory & privacy, off by default):
+  emails, phone numbers, CCCD/ID and account numbers, card numbers and labelled names become placeholders
+  before anything leaves, and are put back in the reply and before any tool runs (PRV-003). What it cannot
+  catch — a name with no label, an address — is said in the setting.
+- A bilingual privacy notice (`/privacy.html`), a tick to agree to it at sign-up kept in the security
+  record, and a cross-border transfer assessment template in `docs/legal/` (LAW-001). The operator fills in
+  their name and contact and has a lawyer confirm it.
+
+### Security, harness and performance
+
+- A shared link taken back stops serving on every instance at once (CODE-032).
+- On a deployment set to `ACCESS_TOKEN` alone, the Google sign-in and picture addresses were signed with an
+  empty key or a constant in this repository; both now use a real secret, and the boot says `ACCESS_TOKEN`
+  cannot be rotated in halves (SEC-047).
+- Nothing on the cloud computer runs through the account's login files, so a planted `~/.bash_profile` no
+  longer runs ahead of every command (HAR-001).
+- Every model call is an OpenTelemetry GenAI span in the log, with no content (HAR-004).
+- A scan's pages are drawn on a worker with a deadline (PERF-023); research ranks `gov`/`edu` as primary
+  only where the registry keeps those names for real institutions (ACC-017).
+- `npm audit`: 0, runtime and dev.
+
+### Not done here
+
+- `.env.example` is still the owner's to add: the agent's permission rules deny it `.env.*` files, and an
+  untracked `.env.example` in the working tree was neither read nor committed (CFG-024). Blocking shell
+  reads of `.env` (CFG-032) stays deferred because the owner allowed reading it.
+- Not tried on a live deployment: the page and sheet workers' fallbacks, and the sandbox shell change.
+
 ## 2026-10-06 — MCP servers on the cloud computer, a model that goes away, and what was left for the owner
 
 Asked for by the owner on 2026-10-06, with everything left for them in the 2026-10-05 audit that could be
