@@ -3399,11 +3399,14 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
   setStatus(t('status.thinking'), run);
   scrollToEnd();
 
+  /** How the last attempt ended; 'waiting' leaves its calls open for the answer. */
+  let ended = 'cut';
   try {
     for (let resume = 0; resume <= MAX_RESUMES; resume += 1) {
       // A decision and an answer both belong to the batch that was paused, so
       // neither is resent on a reconnect — the server already has them.
       const outcome = await streamOnce(run, resume === 0 ? decision : undefined, resume === 0 ? answers : undefined);
+      ended = outcome;
 
       // A clean finish, a question for the user, or a deliberate stop.
       if (outcome !== 'cut') break;
@@ -3441,6 +3444,16 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     // Drop the trailing empty block created by the last `message` event.
     if (run.turn && !run.turn.node.querySelector('.prose, .block, .plan')) run.turn.node.remove();
     run.turn = null;
+    /*
+     * A call that started and never answered — the turn failed, was stopped,
+     * or was cut off past its reconnects — is said to be cut off, the way a
+     * reopened conversation draws it. Left alone its row, and its run's card,
+     * span on for the rest of the conversation. A turn waiting on the person
+     * keeps its calls open for the answer.
+     */
+    if (ended !== 'waiting') {
+      for (const handle of run.toolHandles.values()) handle?.complete?.({ content: t('chat.cutOff'), isError: true });
+    }
     run.toolHandles.clear();
     // The assistant has stopped touching the screen, so stop shipping frames of
     // it. Leaves a panel the user opened, or is driving, alone.
@@ -3705,8 +3718,8 @@ async function streamOnce(run, decision, answers) {
         done: ({ stop }) => {
           outcome = 'done';
           clearDrafts();
-          // Collapse any run of steps still drawn as in progress. Without this a
-          // finished turn keeps a spinner for the rest of the conversation.
+          // Fold any run of steps still drawn open. (Its mark already follows its
+          // steps; a step that never answered is settled when the run ends.)
           // Stamped with now: this is the moment the answer finished.
           run.turn?.finish(new Date());
           /**

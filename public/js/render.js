@@ -1471,8 +1471,10 @@ export function assistantMessage() {
    * Held open while it is being added to, so you watch the work happen, and
    * collapsed the moment the run ends — at which point it is history, and eight
    * expanded browser actions between you and the answer are eight things to
-   * scroll past. `closeGroup` is what "the run ended" means, and it is called
-   * from exactly two places: prose arriving, and a step of a different family.
+   * scroll past. `closeGroup` (with `leaveRun` for a run carried in from the
+   * block before) is what "the run ended" means: prose arriving, a tool that is
+   * not a step of this family, or the turn finishing. The card's mark does not
+   * wait for that — it follows its own steps (`paintGroupSummary`).
    */
   let group = null;
 
@@ -1733,9 +1735,18 @@ export function assistantMessage() {
     return body.childElementCount === 0 ? run : null;
   }
 
-  /** This block's reasoning back out of the run it was parked in, into the block itself. */
+  /**
+   * This block's reasoning back out of the run it was parked in, into the block
+   * itself — unless a step of this block already followed it into the run, in
+   * which case it led to that step and stays where it stands, above it.
+   */
   function unnestThinking() {
     if (!thoughtHost) return;
+    if (thoughtHost.parentElement && thoughtHost.parentElement.lastElementChild !== thoughtHost) {
+      thinkingBlock?.classList.remove('think--inline');
+      thoughtHost = null;
+      return;
+    }
     if (thinkingBlock) {
       thinkingBlock.classList.remove('think--inline');
       body.append(thinkingBlock);
@@ -2276,9 +2287,10 @@ export function assistantMessage() {
     /**
      * The turn is over.
      *
-     * A run of steps that is never closed keeps its spinner and stays expanded
-     * for the rest of the conversation — a turn that finished an hour ago still
-     * drawn as though it were working.
+     * A run of steps that is never closed stays expanded for the rest of the
+     * conversation — a turn that finished an hour ago still drawn as though it
+     * were working. Its mark settles with its steps; a step that never got a
+     * result is settled by the caller (`abandonCalls` in app.js).
      */
     /** @param at  when the reply finished; shown beside its copy button. */
     finish(at = null) {
@@ -2289,6 +2301,12 @@ export function assistantMessage() {
       const when = row && !row.querySelector('.msg__time') ? timeStamp(at) : null;
       if (when) row.prepend(when);
       closeGroup();
+      // A block that holds a carried run without a step of its own — it ended
+      // on reasoning, the turn stopped there — folds that run as well.
+      if (lastStepRun?.wrap === wrap && lastStepRun.group !== group) {
+        paintGroupSummary(lastStepRun.group);
+        lastStepRun.group.node.open = false;
+      }
       // Sources the conversation cannot account for are marked once the reply
       // is whole; opening a chip checks again with whatever has loaded since.
       if (prose) auditCitations(prose);

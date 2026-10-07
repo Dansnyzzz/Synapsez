@@ -113,7 +113,8 @@
     "eslint": "^9.39.0",
     "espree": "^10.4.0",
     "katex": "^0.18.7",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "ws": "^8.21.1"
   },
   "allowScripts": {
     "@google/genai": false,

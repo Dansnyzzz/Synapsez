@@ -62,6 +62,8 @@ const TOKEN_MS = 15 * 60_000;
  * has to last until the stream is open.
  */
 const VIEW_TOKEN_MS = 5 * 60_000;
+/** The longest a Python cell may run: inside a 300-second request, with time to answer. */
+const PYTHON_MAX_MS = 240_000;
 
 export const ACTIONS = [
   'open', 'look', 'read', 'click', 'type', 'press', 'scroll', 'select', 'wait',
@@ -99,8 +101,11 @@ const installLines = (build) => [
  * **As root** (`root: true`, run with the platform's `sudo`) the service, its
  * dependencies and the browser profile live in /opt/synz, owned by root: the
  * profile is readable by nobody else, and nothing the account's own commands
- * can write is ever run by root — so a command talked into it by a web page can
- * neither read the sign-ins nor plant code the service would run with its key.
+ * can write is ever run by root — so an ordinary command talked into it by a
+ * web page can neither read the sign-ins nor plant code the service would run
+ * with its key. The platform does give the account's user passwordless `sudo`,
+ * so this keeps out the ordinary command, not one that uses sudo: those are
+ * graded `sensitive` and asked about first (`assessRisk`).
  * The profile made before this, in the account's folder, moves there once. The
  * Python session is still the account's: the service starts it as the owner of
  * the working folder.
@@ -388,15 +393,45 @@ async function keepAwake(userId, conn, { signal } = {}) {
  */
 async function serviceCall(userId, route, body, { signal, timeout } = {}) {
   let conn = await readConnection(userId);
-  let answer = conn && conn.build === service().build ? await call(conn, route, body, { signal, timeout }) : null;
-  if (!answer) {
-    conn = await start(userId, { signal });
-    answer = await call(conn, route, body, { signal, timeout });
-    if (!answer) throw new Error('The cloud computer\'s helper started but did not answer. Try once more.');
-  } else {
+  const current = conn && conn.build === service().build;
+  let answer = current ? await call(conn, route, body, { signal, timeout }) : null;
+  if (answer) {
     await keepAwake(userId, conn, { signal });
+    return answer;
   }
+  /*
+   * No answer is not the same as no service. A request that simply ran long —
+   * a batch of slow pages, a cell still computing — used to be read as a dead
+   * service: it was restarted under the work, and the same request sent again,
+   * so a form could be submitted twice and every Python session was lost.
+   * Only a service that does not answer its health check is started again.
+   */
+  if (current && (await call(conn, '/health', undefined, { timeout: PEEK_MS, signal }))) {
+    throw new Error(
+      'The cloud computer is still busy with that, or it took longer than allowed; it was not run a second time. ' +
+        'Look at the page (or ask the session) before trying again.',
+    );
+  }
+  conn = await startOnce(userId, { signal });
+  answer = await call(conn, route, body, { signal, timeout });
+  if (!answer) throw new Error('The cloud computer\'s helper started but did not answer. Try once more.');
   return answer;
+}
+
+/** Starts in progress, by account — two calls that both find the service down share one start. */
+const starting = new Map();
+/**
+ * @param {string} userId
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+function startOnce(userId, { signal } = {}) {
+  if (!starting.has(userId)) {
+    starting.set(
+      userId,
+      start(userId, { signal }).finally(() => starting.delete(userId)),
+    );
+  }
+  return starting.get(userId);
 }
 
 const kb = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
@@ -405,6 +440,7 @@ const kb = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1
 export function describePage(page) {
   const lines = [`Page: ${page.title || '(untitled)'}`, page.url || ''];
   if (Array.isArray(page.did) && page.did.length) lines.push(`Did, in order: ${page.did.join(' → ')}`);
+  if (page.notRun) lines.push(`Stopped there: one call's time ran out, and the last ${page.notRun} step(s) were not run. Look, then send what is left.`);
   const at = page.position;
   if (at && at.height > (at.viewHeight || 0) + 4) {
     const down = Math.round((100 * at.y) / Math.max(1, at.height - at.viewHeight));
@@ -448,8 +484,10 @@ export async function cloudBrowser(input, { userId, chatId, signal }) {
     return { content: 'Closed the cloud browser. Its sign-ins are kept for next time.' };
   }
 
-  await chargeCloud(userId);
-  // A batch takes longer than one action: up to ten of them.
+  // A batch is that many actions of the machine's time, and counts as that many.
+  const actions = action === 'steps' && Array.isArray(input?.steps) ? Math.min(10, Math.max(1, input.steps.length)) : 1;
+  for (let i = 0; i < actions; i += 1) await chargeCloud(userId);
+  // A batch stops itself after STEPS_MS (service.mjs) and says what is left; this waits a little longer than that.
   const timeout = action === 'steps' ? ACT_MS * 2 : ACT_MS;
   const page = await serviceCall(userId, '/act', { ...input, action }, { signal, timeout });
 
@@ -482,7 +520,9 @@ export async function cloudBrowser(input, { userId, chatId, signal }) {
  */
 export async function runPythonCell(userId, { chatId, code, reset = false, timeoutMs = 120_000, signal }) {
   const session = crypto.createHash('sha256').update(`py:${userId}:${chatId || 'none'}`).digest('hex').slice(0, 24);
-  return serviceCall(userId, '/py', { session, code, reset, timeoutMs }, { signal, timeout: timeoutMs + 20_000 });
+  // Inside the request's own limit (300s on Vercel), with room to answer.
+  const limit = Math.min(Math.max(1000, Number(timeoutMs) || 120_000), PYTHON_MAX_MS);
+  return serviceCall(userId, '/py', { session, code, reset, timeoutMs: limit }, { signal, timeout: limit + 20_000 });
 }
 
 /**
@@ -585,8 +625,11 @@ export async function cloudBrowserInput(userId, body) {
 /** @param {string} userId */
 export async function closeCloudBrowser(userId) {
   const conn = await readConnection(userId);
-  if (conn) await call(conn, '/close', {}, { timeout: PEEK_MS });
+  const answer = conn ? await call(conn, '/close', {}, { timeout: PEEK_MS }) : null;
+  // A conversation's Python session still running keeps the helper up, browser
+  // shut — and its address and key stay, or that session could not be reached.
+  if (answer?.exited === false) return;
   await getStore().setUserSetting(userId, SETTING, null);
 }
 
-export const __testing = { service, readConnection, saveConnection, call, SETTING, DIR, ROOT_DIR };
+export const __testing = { service, readConnection, saveConnection, call, serviceCall, SETTING, DIR, ROOT_DIR };

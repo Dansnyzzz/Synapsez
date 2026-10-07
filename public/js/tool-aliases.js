@@ -124,7 +124,8 @@ function browserStep(step) {
 }
 
 /** What a model writes Python in, when it means Python. */
-const PYTHONISH = /^\s*(?:import\s+\w|from\s+[\w.]+\s+import\b|def\s+\w+\s*\(|class\s+\w+|print\s*\(|[A-Za-z_]\w*\s*=\s*[^=]|for\s+\w+\s+in\s+.+:\s*$|with\s+open\()/m;
+// An assignment counts only with spaces round the `=`: `FOO=1 make` is the shell's.
+const PYTHONISH = /^\s*(?:import\s+\w|from\s+[\w.]+\s+import\b|def\s+\w+\s*\(|class\s+\w+|print\s*\(|[A-Za-z_]\w*\s+=\s+\S|for\s+\w+\s+in\s+.+:\s*$|with\s+open\()/m;
 
 /** @param {Record<string, any>} input */
 function sandboxInput(input) {

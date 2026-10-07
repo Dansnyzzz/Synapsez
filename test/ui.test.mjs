@@ -1765,180 +1765,6 @@ section('the screen panel expands to fill the window');
   check('Escape puts it back', !collapsed);
 }
 
-/**
- * Driving the cloud browser goes straight to the machine (owner, 2026-10-07).
- *
- * It lagged because every gesture was a request through the server, and it
- * could not scroll sideways because only `deltaY` was ever sent. The machine's
- * socket is played here by Playwright; everything on the page side — the app
- * opening the panel for a cloud step, the state call, the socket, the frames,
- * the gestures — is the real code.
- */
-section('the cloud browser is driven over a socket straight to the machine');
-{
-  const { createCanvas } = await import('@napi-rs/canvas');
-  const canvas = createCanvas(128, 80);
-  const g = canvas.getContext('2d');
-  g.fillStyle = '#2050e0';
-  g.fillRect(0, 0, 128, 80);
-  const jpeg = canvas.toBuffer('image/jpeg');
-
-  const said = [];
-  let socket = null;
-  await page.routeWebSocket('wss://sb-ui.vercel.run/live', (ws) => {
-    socket = ws;
-    ws.onMessage((message) => {
-      const note = JSON.parse(String(message));
-      said.push(note);
-      if (note.t === 'auth') {
-        ws.send(JSON.stringify({ t: 'meta', title: 'Đề cương', url: 'https://decuongmonhoc.example/x', tabs: [] }));
-        ws.send(jpeg);
-      }
-    });
-  });
-  const relayed = [];
-  await page.route('**/api/cloud-browser/state*', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        open: true,
-        stream: 'https://sb-ui.vercel.run/stream?t=view.1.x',
-        live: { url: 'wss://sb-ui.vercel.run/live', token: 'drive.123.sig', expiresAt: Date.now() + 60_000 },
-        title: 'x',
-        url: 'https://decuongmonhoc.example/x',
-        tabs: [],
-      }),
-    }),
-  );
-  await page.route('**/api/cloud-browser/input', async (route) => {
-    relayed.push(JSON.parse(route.request().postData() || '{}'));
-    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true,"title":"x","url":"https://x/","tabs":[]}' });
-  });
-  await page.route('**/api/chats/*/run', (route) =>
-    route.fulfill({
-      status: 200,
-      headers: { 'content-type': 'text/event-stream' },
-      body:
-        'event: tool_call\ndata: {"id":"cb1","name":"cloud_browser","input":{"action":"open","url":"https://decuongmonhoc.example/x"}}\n\n' +
-        'event: tool_result\ndata: {"toolCallId":"cb1","name":"cloud_browser","content":"Page: x","ms":900}\n\n' +
-        'event: done\ndata: {"stopReason":"end_turn"}\n\n',
-    }),
-  );
-
-  // A fresh page, as the model-switch check does, so no earlier turn is still
-  // holding the composer; then driving first, so the panel stays awake after
-  // this short turn ends.
-  const pageErrors = [];
-  page.on('pageerror', (err) => pageErrors.push(String(err?.message || err)));
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(2500);
-  await page.evaluate(() => {
-    document.getElementById('app').classList.add('is-detail');
-    document.getElementById('screen').hidden = false;
-  });
-  await page.click('#screen-drive');
-  await page.fill('#input', 'mở đề cương');
-  await page.press('#input', 'Enter');
-  const waitFor = async (test, ms = 8000) => {
-    for (let waited = 0; waited < ms; waited += 100) {
-      if (await test()) return true;
-      await page.waitForTimeout(100);
-    }
-    return false;
-  };
-  await waitFor(() => said.some((n) => n.t === 'ack'), 12_000);
-  const auth = said.find((n) => n.t === 'auth');
-  const where = await page.evaluate(() => document.getElementById('screen-source').textContent);
-  check('a cloud step opens the socket with the drive token — sent inside it, never in the address', auth?.token === 'drive.123.sig' && auth.width > 0 && auth.height > 0, `${JSON.stringify(auth)} · panel: ${where} · errors: ${pageErrors.join(' | ').slice(0, 300)}`);
-  const painted = await page.evaluate(() => ({
-    src: document.getElementById('screen-img').getAttribute('src') || '',
-    title: document.getElementById('screen-title').textContent,
-    live: document.getElementById('screen-live').classList.contains('is-live'),
-  }));
-  check('  a frame from it is painted, and acknowledged so the next can come', painted.src.startsWith('blob:') && said.some((n) => n.t === 'ack') && painted.live, painted.src.slice(0, 30));
-  check('  and the page\'s title arrives over it too', painted.title === 'Đề cương', painted.title);
-
-  const box = await page.evaluate(() => {
-    const r = document.getElementById('screen-img').getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  });
-  const inputs = () => said.filter((n) => n.t === 'input').map((n) => n.e);
-  said.length = 0;
-  await page.mouse.move(box.x, box.y);
-  await page.mouse.wheel(160, 0);
-  await waitFor(() => inputs().some((e) => e.type === 'wheel'));
-  const sideways = inputs().find((e) => e.type === 'wheel');
-  check('a sideways wheel goes as a sideways scroll', sideways?.deltaX > 0 && sideways.deltaY === 0, JSON.stringify(sideways));
-  said.length = 0;
-  await page.keyboard.down('Shift');
-  await page.mouse.wheel(0, 120);
-  await page.keyboard.up('Shift');
-  await waitFor(() => inputs().some((e) => e.type === 'wheel'));
-  const shifted = inputs().find((e) => e.type === 'wheel');
-  check('  and Shift turns a plain wheel sideways, as browsers do', shifted?.deltaX === 120 && shifted.deltaY === 0, JSON.stringify(shifted));
-
-  said.length = 0;
-  await page.mouse.move(box.x - 40, box.y);
-  await page.mouse.down();
-  await page.mouse.move(box.x + 40, box.y, { steps: 4 });
-  await page.mouse.up();
-  await waitFor(() => inputs().some((e) => e.type === 'up'));
-  const kinds = inputs().map((e) => e.type);
-  check('pressing, moving and releasing travel as they happen, so selecting text works', kinds[0] === 'move' || kinds.includes('down'), kinds.join(','));
-  check('  in order: down, moves, up', kinds.indexOf('down') < kinds.lastIndexOf('move') && kinds.lastIndexOf('move') < kinds.indexOf('up'), kinds.join(','));
-
-  said.length = 0;
-  await page.mouse.dblclick(box.x, box.y);
-  await waitFor(() => inputs().filter((e) => e.type === 'down').length >= 2);
-  const counts = inputs().filter((e) => e.type === 'down').map((e) => e.count);
-  check('a double click is a double click on the page — a word selected', counts.join(',') === '1,2', counts.join(','));
-
-  said.length = 0;
-  await page.keyboard.type('ư');
-  await page.keyboard.insertText('Việt Nam');
-  await page.keyboard.press('Control+KeyA');
-  await page.keyboard.press('Backspace');
-  await waitFor(() => inputs().some((e) => e.key === 'Backspace'));
-  const typed = inputs();
-  check('typing goes as text, accents and composed words whole', typed.some((e) => e.type === 'text' && e.text === 'ư') && typed.some((e) => e.type === 'text' && e.text === 'Việt Nam'), JSON.stringify(typed));
-  check('  shortcuts and named keys as presses', typed.some((e) => e.type === 'key' && e.key === 'Control+a') && typed.some((e) => e.type === 'key' && e.key === 'Backspace'), JSON.stringify(typed));
-  check('none of it went through the server', relayed.length === 0, `${relayed.length} relayed`);
-
-  await page.keyboard.press('Escape');
-  check('Escape gives the controls back', await page.evaluate(() => document.getElementById('screen-drive').getAttribute('aria-pressed') === 'false'));
-  check('  and the machine is told the person stopped driving', said.some((n) => n.t === 'view' && n.driving === false));
-
-  // A browser that cannot have the socket: the relay, batched.
-  socket?.close();
-  await page.waitForTimeout(400);
-  await page.unroute('**/api/chats/*/run');
-  await page.unroute('**/api/cloud-browser/input');
-  await page.unroute('**/api/cloud-browser/state*');
-  await page.route('**/api/cloud-browser/input', async (route) => {
-    relayed.push(JSON.parse(route.request().postData() || '{}'));
-    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true,"title":"x","url":"https://x/","tabs":[]}' });
-  });
-  await page.route('**/api/cloud-browser/state*', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ open: true, stream: 'https://sb-ui.vercel.run/stream?t=view.2.y', live: { url: 'wss://sb-ui.vercel.run/live-refused', token: 'drive.9.z' }, title: 'x', url: 'https://x/', tabs: [] }) }),
-  );
-  await page.routeWebSocket('wss://sb-ui.vercel.run/live-refused', (ws) => ws.close({ code: 1006 }));
-  await page.click('#screen-drive');
-  await page.waitForTimeout(1500);
-  await page.mouse.move(box.x, box.y);
-  await page.mouse.wheel(90, 0);
-  // The move goes first, in a batch of its own; the wheel follows once that one is answered.
-  await waitFor(() => relayed.flatMap((body) => body.events || []).some((e) => e.type === 'wheel'), 6000);
-  const viaRelay = relayed.flatMap((body) => body.events || []);
-  check('when the socket is refused, gestures go through the server instead — batched, sideways part kept', viaRelay.some((e) => e.type === 'wheel' && e.deltaX > 0), JSON.stringify(relayed).slice(0, 200));
-  await page.keyboard.press('Escape');
-  await page.unroute('**/api/cloud-browser/input');
-  await page.unroute('**/api/cloud-browser/state*');
-  await page.evaluate(() => {
-    document.getElementById('screen').hidden = true;
-  });
-}
-
 section('the conversation row menu');
 // It used to call prompt(), which browsers suppress after a few uses — the
 // click then silently did nothing at all.
@@ -4306,6 +4132,48 @@ section('browser steps across model steps are one card, and each settles when it
   check('  `scroll_down` drawn as a scroll down', /^(down|xuống)$/.test(stored.scrollDetail || ''), stored.scrollDetail);
   check('  and the answer keeps its own reasoning', stored.answerHasItsThought === true);
   check('a run after the person speaks is a card of its own', stored.cardsAfterAPersonSpoke === 2, `${stored.cardsAfterAPersonSpoke}`);
+
+  const edges = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const host = document.createElement('div');
+    document.body.append(host);
+    const block = () => {
+      const turn = assistantMessage();
+      host.append(turn.node);
+      return turn;
+    };
+    const out = {};
+
+    // One model step that clicks and then reads a file: the reasoning led to
+    // the click, so it stays above it in the card, not after it outside.
+    const a1 = block();
+    a1.startTool({ id: 'm1', name: 'cloud_browser', input: { action: 'open', url: 'https://x.example' } }).complete({ content: 'ok' });
+    const a2 = block();
+    a2.appendThinking('Click it, then check the file.');
+    a2.finishThinking();
+    a2.startTool({ id: 'm2', name: 'cloud_browser', input: { action: 'click', ref: 2 } }).complete({ content: 'ok' });
+    a2.startTool({ id: 'm3', name: 'read_file', input: { path: 'a.txt' } }).complete({ content: 'ok' });
+    const card = host.querySelector('.steps');
+    const rows = [...card.querySelectorAll('.steps__list > li')].map((li) => (li.classList.contains('step--thought') ? 'thought' : 'step'));
+    out.order = rows.join(',');
+    out.thoughtLeftTheBlock = !a2.node.querySelector('.msg__body > .think');
+    out.fileCardInItsBlock = !!a2.node.querySelector('.msg__body > .tool');
+    a2.finish();
+
+    // A turn that stopped on reasoning alone: the card it was parked in folds.
+    const b1 = block();
+    b1.startTool({ id: 'n1', name: 'cloud_browser', input: { action: 'look' } }).complete({ content: 'ok' });
+    const b2 = block();
+    b2.appendThinking('Then…');
+    const second = [...host.querySelectorAll('.steps')].pop();
+    out.openWhileThinking = second.open;
+    b2.finish();
+    out.foldedAfter = !second.open;
+    host.remove();
+    return out;
+  });
+  check('reasoning that led to a step stays above that step when the same step also used another tool', edges.order === 'step,thought,step' && edges.thoughtLeftTheBlock && edges.fileCardInItsBlock, JSON.stringify(edges));
+  check('a turn that stopped on reasoning folds the card that reasoning was parked in', edges.openWhileThinking === true && edges.foldedAfter === true, JSON.stringify(edges));
 }
 
 /**
@@ -7504,6 +7372,220 @@ section('a bare ?continue= link is shown after signing in, never copied (SEC-050
   check('the shared page\'s own button still carries it on after sign-in', pressed.forks === 1 && pressed.path === '/', JSON.stringify(pressed));
   const after = await visit(true, { bareFirst: true });
   check('  even after a bare link was opened earlier in the same tab (UX-008)', after.forks === 1 && after.path === '/', JSON.stringify(after));
+}
+
+/**
+ * Driving the cloud browser goes straight to the machine (owner, 2026-10-07).
+ *
+ * It lagged because every gesture was a request through the server, and it
+ * could not scroll sideways because only `deltaY` was ever sent. The machine's
+ * socket is played here by Playwright; everything on the page side — the app
+ * opening the panel for a cloud step, the state call, the socket, the frames,
+ * the gestures — is the real code.
+ *
+ * Last in the suite on purpose: it reloads the page to start from a composer
+ * no earlier turn is holding, and a reload in the middle took state from under
+ * the sections after it (the model chip was not there to press).
+ */
+section('the cloud browser is driven over a socket straight to the machine');
+{
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const canvas = createCanvas(128, 80);
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#2050e0';
+  g.fillRect(0, 0, 128, 80);
+  const jpeg = canvas.toBuffer('image/jpeg');
+
+  const said = [];
+  let socket = null;
+  await page.routeWebSocket('wss://sb-ui.vercel.run/live', (ws) => {
+    socket = ws;
+    ws.onMessage((message) => {
+      const note = JSON.parse(String(message));
+      said.push(note);
+      if (note.t === 'auth') {
+        ws.send(JSON.stringify({ t: 'meta', title: 'Đề cương', url: 'https://decuongmonhoc.example/x', tabs: [] }));
+        ws.send(jpeg);
+      }
+    });
+  });
+  const relayed = [];
+  await page.route('**/api/cloud-browser/state*', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        open: true,
+        stream: 'https://sb-ui.vercel.run/stream?t=view.1.x',
+        live: { url: 'wss://sb-ui.vercel.run/live', token: 'drive.123.sig', expiresAt: Date.now() + 60_000 },
+        title: 'x',
+        url: 'https://decuongmonhoc.example/x',
+        tabs: [],
+      }),
+    }),
+  );
+  await page.route('**/api/cloud-browser/input', async (route) => {
+    relayed.push(JSON.parse(route.request().postData() || '{}'));
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true,"title":"x","url":"https://x/","tabs":[]}' });
+  });
+  await page.route('**/api/chats/*/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body:
+        'event: tool_call\ndata: {"id":"cb1","name":"cloud_browser","input":{"action":"open","url":"https://decuongmonhoc.example/x"}}\n\n' +
+        'event: tool_result\ndata: {"toolCallId":"cb1","name":"cloud_browser","content":"Page: x","ms":900}\n\n' +
+        'event: done\ndata: {"stopReason":"end_turn"}\n\n',
+    }),
+  );
+
+  // A fresh page, as the model-switch check does, so no earlier turn is still
+  // holding the composer; then driving first, so the panel stays awake after
+  // this short turn ends.
+  const pageErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(String(err?.message || err)));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => {
+    document.getElementById('app').classList.add('is-detail');
+    document.getElementById('screen').hidden = false;
+  });
+  await page.click('#screen-drive');
+  await page.fill('#input', 'mở đề cương');
+  await page.press('#input', 'Enter');
+  const waitFor = async (test, ms = 8000) => {
+    for (let waited = 0; waited < ms; waited += 100) {
+      if (await test()) return true;
+      await page.waitForTimeout(100);
+    }
+    return false;
+  };
+  await waitFor(() => said.some((n) => n.t === 'ack'), 12_000);
+  const auth = said.find((n) => n.t === 'auth');
+  const where = await page.evaluate(() => document.getElementById('screen-source').textContent);
+  check('a cloud step opens the socket with the drive token — sent inside it, never in the address', auth?.token === 'drive.123.sig' && auth.width > 0 && auth.height > 0, `${JSON.stringify(auth)} · panel: ${where} · errors: ${pageErrors.join(' | ').slice(0, 300)}`);
+  const painted = await page.evaluate(() => ({
+    src: document.getElementById('screen-img').getAttribute('src') || '',
+    title: document.getElementById('screen-title').textContent,
+    live: document.getElementById('screen-live').classList.contains('is-live'),
+  }));
+  check('  a frame from it is painted, and acknowledged so the next can come', painted.src.startsWith('blob:') && said.some((n) => n.t === 'ack') && painted.live, painted.src.slice(0, 30));
+  check('  and the page\'s title arrives over it too', painted.title === 'Đề cương', painted.title);
+
+  const box = await page.evaluate(() => {
+    const r = document.getElementById('screen-img').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  const inputs = () => said.filter((n) => n.t === 'input').map((n) => n.e);
+  said.length = 0;
+  await page.mouse.move(box.x, box.y);
+  await page.mouse.wheel(160, 0);
+  await waitFor(() => inputs().some((e) => e.type === 'wheel'));
+  const sideways = inputs().find((e) => e.type === 'wheel');
+  check('a sideways wheel goes as a sideways scroll', sideways?.deltaX > 0 && sideways.deltaY === 0, JSON.stringify(sideways));
+  said.length = 0;
+  await page.keyboard.down('Shift');
+  await page.mouse.wheel(0, 120);
+  await page.keyboard.up('Shift');
+  await waitFor(() => inputs().some((e) => e.type === 'wheel'));
+  const shifted = inputs().find((e) => e.type === 'wheel');
+  check('  and Shift turns a plain wheel sideways, as browsers do', shifted?.deltaX === 120 && shifted.deltaY === 0, JSON.stringify(shifted));
+
+  said.length = 0;
+  await page.mouse.move(box.x - 40, box.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 40, box.y, { steps: 4 });
+  await page.mouse.up();
+  await waitFor(() => inputs().some((e) => e.type === 'up'));
+  const kinds = inputs().map((e) => e.type);
+  check('pressing, moving and releasing travel as they happen, so selecting text works', ['down', 'move', 'up'].every((k) => kinds.includes(k)), kinds.join(','));
+  check('  in order: down, moves, up', kinds.indexOf('down') < kinds.lastIndexOf('move') && kinds.lastIndexOf('move') < kinds.indexOf('up'), kinds.join(','));
+
+  said.length = 0;
+  await page.mouse.dblclick(box.x, box.y);
+  await waitFor(() => inputs().filter((e) => e.type === 'down').length >= 2);
+  const counts = inputs().filter((e) => e.type === 'down').map((e) => e.count);
+  check('a double click is a double click on the page — a word selected', counts.join(',') === '1,2', counts.join(','));
+
+  said.length = 0;
+  await page.keyboard.type('ư');
+  await page.keyboard.insertText('Việt Nam');
+  await page.keyboard.press('Control+KeyA');
+  await page.keyboard.press('Backspace');
+  await waitFor(() => inputs().some((e) => e.key === 'Backspace'));
+  const typed = inputs();
+  check('typing goes as text, accents and composed words whole', typed.some((e) => e.type === 'text' && e.text === 'ư') && typed.some((e) => e.type === 'text' && e.text === 'Việt Nam'), JSON.stringify(typed));
+  check('  shortcuts and named keys as presses', typed.some((e) => e.type === 'key' && e.key === 'Control+a') && typed.some((e) => e.type === 'key' && e.key === 'Backspace'), JSON.stringify(typed));
+  check('none of it went through the server', relayed.length === 0, `${relayed.length} relayed`);
+
+  await page.keyboard.press('Escape');
+  check('Escape gives the controls back', await page.evaluate(() => document.getElementById('screen-drive').getAttribute('aria-pressed') === 'false'));
+  check('  and the machine is told the person stopped driving', said.some((n) => n.t === 'view' && n.driving === false));
+
+  // The socket lost after frames had come — the machine restarted, the network
+  // blinked — is asked for again, not given up on until the page reloads.
+  await page.unroute('**/api/chats/*/run');
+  await page.unroute('**/api/cloud-browser/input');
+  await page.unroute('**/api/cloud-browser/state*');
+  let stateCalls = 0;
+  await page.route('**/api/cloud-browser/input', async (route) => {
+    relayed.push(JSON.parse(route.request().postData() || '{}'));
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true,"title":"x","url":"https://x/","tabs":[]}' });
+  });
+  // A browser that cannot have the socket at all — it never opens: the relay,
+  // batched. The page's own policy refuses this address, so nothing leaves the machine.
+  await page.route('**/api/cloud-browser/state*', (route) => {
+    stateCalls += 1;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ open: true, stream: 'https://sb-ui.vercel.run/stream?t=view.2.y', live: { url: 'wss://blocked.example/never-opens', token: 'drive.9.z' }, title: 'x', url: 'https://x/', tabs: [] }) });
+  });
+  socket?.close();
+  await waitFor(() => stateCalls > 0, 4000);
+  check('a socket lost after frames came is asked for again, with fresh tokens', stateCalls > 0, `${stateCalls} state calls`);
+  await page.click('#screen-drive');
+  await page.waitForTimeout(1500);
+  await page.mouse.move(box.x, box.y);
+  await page.mouse.wheel(90, 0);
+  // The move goes first, in a batch of its own; the wheel follows once that one is answered.
+  await waitFor(() => relayed.flatMap((body) => body.events || []).some((e) => e.type === 'wheel'), 6000);
+  const viaRelay = relayed.flatMap((body) => body.events || []);
+  check('when the socket is refused, gestures go through the server instead — batched, sideways part kept', viaRelay.some((e) => e.type === 'wheel' && e.deltaX > 0), JSON.stringify(relayed).slice(0, 200));
+  await page.keyboard.press('Escape');
+  await page.unroute('**/api/cloud-browser/input');
+  await page.unroute('**/api/cloud-browser/state*');
+  await page.evaluate(() => {
+    document.getElementById('screen').hidden = true;
+  });
+}
+
+/**
+ * A turn that fails with a step still running settles that step (review of
+ * 2026-10-07): its card's mark now follows its steps, so a step whose result
+ * never came would otherwise spin on for the rest of the conversation.
+ */
+section('a turn that fails mid-step leaves nothing spinning');
+{
+  await page.route('**/api/chats/*/run', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body:
+        'event: tool_call\ndata: {"id":"cbx","name":"cloud_browser","input":{"action":"open","url":"https://x.example"}}\n\n' +
+        'event: error\ndata: {"message":"The provider went away.","code":"provider_error"}\n\n',
+    }),
+  );
+  await page.fill('#input', 'mở lại trang');
+  await page.press('#input', 'Enter');
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/chats/*/run');
+  const left = await page.evaluate(() => {
+    const card = [...document.querySelectorAll('#messages .steps')].pop();
+    return {
+      card: !!card,
+      spinning: document.querySelectorAll('#messages .steps .mark--pending, #messages .steps .spinner').length,
+      cut: !!card?.querySelector('.step--error'),
+    };
+  });
+  check('the step whose result never came is marked cut off, and its card stops spinning', left.card && left.spinning === 0 && left.cut, JSON.stringify(left));
 }
 
 await browser.close();

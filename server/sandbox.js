@@ -442,14 +442,17 @@ export function shellFor(command, env = {}, { userBin = false, root = false } = 
  * ran in is the one earlier calls built up, because a model that assumes its
  * `df` is still loaded after the machine rested writes code against nothing.
  *
- * @param {{ fresh?: boolean, output?: string, result?: string | null, error?: string | null }} cell
+ * @param {{ fresh?: boolean, ended?: boolean, busy?: boolean, output?: string, result?: string | null, error?: string | null }} cell
  * @param {boolean} ran  whether there was code to run, rather than only a reset
  */
 export function pythonReport(cell, ran = true) {
+  if (cell.busy) return `[Python: ${cell.error || 'the session is still running an earlier cell.'}]`;
   const lines = [
-    cell.fresh
-      ? '[Python: a new session — nothing from earlier calls is defined (the cloud computer had rested, or the session was reset). Load what you need again.]'
-      : '[Python: the same live session — what earlier calls defined is still there.]',
+    cell.ended
+      ? '[Python: the session ended during this call — nothing from earlier calls is defined any more. The next call starts a new one; load what you need again.]'
+      : cell.fresh
+        ? '[Python: a new session — nothing from earlier calls is defined (the cloud computer had rested, or the session was reset). Load what you need again.]'
+        : '[Python: the same live session — what earlier calls defined is still there.]',
   ];
   if (!ran) return lines.join('\n');
   if (cell.output) lines.push(`output:\n${clipOutput(cell.output)}`);

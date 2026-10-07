@@ -92,13 +92,52 @@ section('the names models reach for are read as meant (owner, 2026-10-07)');
   check('  so does a shell line inside it that destroys', assessRisk('sandbox_run', { python: '!rm -rf ~/work' }) === 'sensitive');
   check('  and Python reaching for the browser\'s sign-ins', assessRisk('sandbox_run', { python: 'open(".synz-browser/profile/Default/Cookies","rb")' }) === 'sensitive');
   check('ordinary Python analysis runs', assessRisk('sandbox_run', { python: 'import pandas as pd\ndf = pd.read_csv("downloads/a.csv")\ndf.describe()' }) === 'ordinary');
+  check('  numpy and queues are analysis, not uploads', assessRisk('sandbox_run', { python: 'a = np.delete(a, 0)\nnp.put(a, [0], 1)\nq.put(item)' }) === 'ordinary');
+  // A script written with `files` and then run put nothing for the command's grading to see.
+  check('a file written to be run is graded on what it says', assessRisk('sandbox_run', { files: [{ path: 'go.sh', content: 'sudo cat /opt/synz/profile/Default/Cookies' }], command: 'bash go.sh' }) === 'sensitive');
+  check('  an ordinary file is not', assessRisk('sandbox_run', { files: [{ path: 'a.py', content: 'print(sum(range(10)))' }], command: 'python3 a.py' }) === 'ordinary');
+  check('`FOO=1 make` sent as `code` is the shell\'s, not Python', canonicalInput('sandbox_run', { code: 'FOO=1 make build' }).command === 'FOO=1 make build');
   check('a batch that opens an address stuffed with data asks', carriesData('cloud_browser', { action: 'steps', steps: [{ action: 'click', ref: 1 }, { action: 'open', url: `https://x.example/?d=${'A'.repeat(400)}` }] }));
   check('  an ordinary batch does not', assessRisk('cloud_browser', { steps: [{ action: 'goto', url: 'https://example.com' }, { action: 'fill', ref: 2, value: 'x' }] }) === 'ordinary');
+}
+
+section('a slow answer is not a dead service: nothing is restarted, nothing sent twice');
+{
+  // A service that is alive but slow: /health answers at once, /act takes long.
+  let acts = 0;
+  const slow = http.createServer((req, res) => {
+    if (req.url === '/health') return res.end('{"ok":true}');
+    if (req.url === '/act') {
+      acts += 1;
+      setTimeout(() => res.end('{"ok":true}'), 1500);
+      return undefined;
+    }
+    return res.end('{}');
+  });
+  await new Promise((r) => slow.listen(0, '127.0.0.1', r));
+  const at = `http://127.0.0.1:${slow.address().port}`;
+  await store.createUser({ id: 'u-slow', email: 'slow@example.com', passwordHash: 'x', name: 'S', role: 'user' }).catch(() => {});
+  await cb.__testing.saveConnection('u-slow', { url: at, key: 'k'.repeat(43), build: cb.__testing.service().build, extendedAt: Date.now(), mode: 'user' });
+  const said = await throws(() => cb.__testing.serviceCall('u-slow', '/act', { action: 'steps' }, { timeout: 300 }));
+  check('a request that outlives its wait is reported, not retried on a restarted service', /still busy with that.*not run a second time/s.test(said) && acts === 1, `${acts} sends · ${said}`);
+  check('  and the connection is kept — the service was never restarted', (await cb.__testing.readConnection('u-slow'))?.url === at);
+  slow.close();
+
+  // Closing the browser while a Python session lives keeps the address and key.
+  const keeper = http.createServer((req, res) => res.end(req.url === '/close' ? '{"ok":true,"exited":false}' : '{}'));
+  await new Promise((r) => keeper.listen(0, '127.0.0.1', r));
+  await cb.__testing.saveConnection('u-slow', { url: `http://127.0.0.1:${keeper.address().port}`, key: 'k'.repeat(43), build: 'b', extendedAt: 1 });
+  await cb.closeCloudBrowser('u-slow');
+  check('closing the browser with a Python session alive keeps the way back to that session', !!(await cb.__testing.readConnection('u-slow')));
+  keeper.close();
+  await store.setUserSetting('u-slow', cb.__testing.SETTING, null);
 }
 
 section('a Python cell, as the model reads it');
 {
   const { pythonReport } = await import('../server/sandbox.js');
+  check('a session that died during the call says so, not that it kept its variables', /the session ended during this call/.test(pythonReport({ fresh: false, ended: true, error: 'The Python session ended.' })) && !/same live session/.test(pythonReport({ fresh: false, ended: true })));
+  check('a cell sent while another runs is told to wait, not queued behind it', /still running an earlier cell/.test(pythonReport({ busy: true, error: 'This conversation\'s Python session is still running an earlier cell.' })));
   const fresh = pythonReport({ fresh: true, output: 'loaded 3\n', result: null, error: null });
   check('a new session says plainly that nothing from earlier is defined', /a new session — nothing from earlier calls is defined/.test(fresh) && /output:\nloaded 3/.test(fresh));
   const kept = pythonReport({ fresh: false, output: '', result: '24', error: null });
@@ -421,6 +460,17 @@ if (!chrome) {
       return res.end('<title>Wide</title><style>body{margin:0}</style><div style="width:5000px;height:300px;background:linear-gradient(90deg,#fff,#000)">wide</div>');
     }
     if (at.pathname === '/long') return res.end(`<title>Long</title><pre>${longText}</pre>`);
+    // Something that changes on screen all the time, so Chrome always has a frame to send.
+    if (at.pathname === '/moving') {
+      return res.end('<title>Moving</title><style>@keyframes s{to{transform:rotate(360deg)}}div{width:300px;height:300px;background:linear-gradient(#f00,#00f);animation:s .5s linear infinite}</style><div></div>');
+    }
+    // A banner that arrives late, above everything: numbering the page again would move every ref by one.
+    if (at.pathname === '/shift') {
+      return res.end(
+        '<title>Shift</title><button onclick="location=\'/done?name=button\'">Go</button>' +
+          '<script>setTimeout(()=>document.body.insertAdjacentHTML("afterbegin","<a href=\\"/done?name=banner\\">Banner</a>"),1200)</script>',
+      );
+    }
     if (at.pathname === '/files') return res.end('<title>Files</title><a href="/report.csv">Báo cáo</a>');
     res.end('<title>Form</title><form action="/done"><input name="name" placeholder="Your name"><button>Send</button></form><a href="/done?name=link">A link</a>');
   });
@@ -491,6 +541,14 @@ if (!chrome) {
     check('  read page 2 carries on where part 1 stopped, without the list of refs again', /Part 2 of/.test(second.content) && !/Things to click/.test(second.content) && /Dòng (?:[3-9]\d\d|1\d{3}) của/.test(second.content), second.content.slice(0, 200));
     const lastPart = await cb.cloudBrowser({ action: 'read', page: 99 }, ctx);
     check('  and a page past the end is the end', /the end of this page's text/.test(lastPart.content) && /Dòng 1400 của/.test(lastPart.content));
+
+    // `read` used to number the page again behind the model's back.
+    const shifty = await cb.cloudBrowser({ action: 'open', url: `${siteUrl}/shift` }, ctx);
+    const go = Number(/\[(\d+)\] button "Go"/.exec(shifty.content)?.[1]);
+    await new Promise((r) => setTimeout(r, 1600));
+    await cb.cloudBrowser({ action: 'read', page: 1 }, ctx);
+    const pressed = await cb.cloudBrowser({ action: 'click', ref: go }, ctx);
+    check('read keeps the numbers the model was shown, so the next click lands where it meant', /Xin chào button/.test(pressed.content), pressed.content.split('\n').slice(0, 2).join(' | '));
 
     // The step's picture after a scroll was white: it photographed the top.
     await cb.cloudBrowser({ action: 'open', url: `${siteUrl}/tall` }, ctx);
@@ -566,6 +624,28 @@ if (!chrome) {
     check('a view token watches but cannot drive', /([1-9]\d{2,})px scrolled across/.test(unmoved.content));
     viewOnly.close();
 
+    /*
+     * Flow control: a viewer that has not said it painted anything gets no
+     * more than the window (3) — however fast the page changes — and more
+     * come the moment it acknowledges. Without this, frames queue in the pipe
+     * faster than they are shown, which is the lag the owner saw.
+     */
+    await cb.cloudBrowser({ action: 'open', url: `${siteUrl}/moving` }, ctx);
+    const slowViewer = new WebSocket(state.live.url);
+    await new Promise((resolve) => slowViewer.once('open', resolve));
+    let got = 0;
+    slowViewer.on('message', (data, isBinary) => {
+      if (isBinary) got += 1;
+    });
+    slowViewer.send(JSON.stringify({ t: 'auth', token: state.live.token, width: 400, height: 250 }));
+    await new Promise((r) => setTimeout(r, 2000));
+    const unacknowledged = got;
+    check('a viewer that acknowledges nothing is sent at most three frames, however fast the page moves', unacknowledged >= 1 && unacknowledged <= 3, `${unacknowledged} frames`);
+    for (let i = 0; i < unacknowledged; i++) slowViewer.send(JSON.stringify({ t: 'ack' }));
+    for (let waited = 0; got <= unacknowledged && waited < 3000; waited += 100) await new Promise((r) => setTimeout(r, 100));
+    check('  and more come once it says it has painted them', got > unacknowledged, `${unacknowledged} → ${got}`);
+    slowViewer.close();
+
     const strangers = new WebSocket(state.live.url);
     const closed = new Promise((resolve) => strangers.once('close', (code) => resolve(code)));
     await new Promise((resolve) => strangers.once('open', resolve));
@@ -573,7 +653,8 @@ if (!chrome) {
     check('a socket with a forged token is closed', (await closed) === 4401);
 
     const moved2 = await cb.cloudBrowserInput('u-cb', { events: [{ type: 'back' }] });
-    check('the relay still drives it when the socket cannot be had, several gestures at a time', moved2.ok && /Files|Báo cáo/.test(moved2.title || ''), moved2.title);
+    // Back from the moving page to the wide one opened before it.
+    check('the relay still drives it when the socket cannot be had, several gestures at a time', moved2.ok && moved2.title === 'Wide', moved2.title);
 
     await cb.closeCloudBrowser('u-cb');
     // Chromium takes its own time to shut down — under a loaded gate more than
@@ -630,6 +711,14 @@ section('the live Python session keeps what a cell defined');
       check('  with what it set before the interrupt', after.result === '7' && after.fresh === false, JSON.stringify(after));
       const reset = await cell({ session: 'a', code: 'rows', reset: true });
       check('a reset starts afresh', reset.fresh === true && /NameError/.test(reset.error || ''));
+      const [first, second] = await Promise.all([cell({ session: 'a', code: 'import time\ntime.sleep(1.5)\n1' }), new Promise((r) => setTimeout(r, 300)).then(() => cell({ session: 'a', code: '2' }))]);
+      check('a second cell sent while one runs is answered at once as busy, not queued into a timeout', first.result === '1' && second.busy === true, JSON.stringify(second));
+      const died = await cell({ session: 'a', code: 'import os\nos._exit(3)' });
+      check('a session that dies during a cell says it ended', died.ended === true, JSON.stringify(died));
+      const after2 = await cell({ session: 'a', code: '1 + 1' });
+      check('  and the next cell starts a new one', after2.fresh === true && after2.result === '2', JSON.stringify(after2));
+      const pip = await cell({ session: 'b', code: '!echo installed\nimport json\njson.dumps([1])' });
+      check('a shell line, then an import, in one cell', /installed/.test(pip.output) && pip.result === "'[1]'", JSON.stringify(pip));
       const noKey = await fetch(`${base}/py`, { method: 'POST', body: '{"code":"1"}' });
       check('Python is the server\'s to ask: no key, no cell', noKey.status === 401);
       const secret = await cell({ session: 'a', code: 'import os\n[k for k in os.environ if k.startswith("SYNZ")]' });

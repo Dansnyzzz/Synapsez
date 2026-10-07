@@ -914,6 +914,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Lệnh này trên máy tính đám mây có vẻ gửi dữ liệu ra ngoài hoặc xoá thứ gì đó.',
   'This Python on the cloud computer looks like it sends data out, or runs a command that destroys something.':
     'Đoạn Python này trên máy tính đám mây có vẻ gửi dữ liệu ra ngoài, hoặc chạy một lệnh xoá thứ gì đó.',
+  "Writes a file on the cloud computer that, run, would send data out, destroy something, use root, or reach the browser's sign-ins.":
+    'Ghi một tệp trên máy tính đám mây mà khi chạy sẽ gửi dữ liệu ra ngoài, xoá thứ gì đó, dùng quyền root, hoặc chạm tới các phiên đăng nhập của trình duyệt.',
+  'The cloud computer is still busy with that, or it took longer than allowed; it was not run a second time. Look at the page (or ask the session) before trying again.':
+    'Máy tính đám mây vẫn đang bận việc đó, hoặc việc đó lâu hơn mức cho phép; nó không bị chạy lần thứ hai. Hãy xem lại trang (hoặc hỏi phiên Python) trước khi thử lại.',
   "Runs as root on the cloud computer, where it can reach everything on it, including the cloud browser's sign-ins.":
     'Chạy với quyền root trên máy tính đám mây — tới được mọi thứ trên máy, kể cả phiên đăng nhập của trình duyệt đám mây.',
   "Touches the cloud browser's saved sign-ins or a login script on the cloud computer.":

@@ -23,8 +23,11 @@ Asked for by the owner on 2026-10-07, with screenshots. Free tier only: nothing 
 ### Privacy and safety on the cloud computer
 
 - The browser's service starts as root where the platform allows it, so its sign-ins, its code and its key
-  are out of reach of the account's own commands (and of anything a web page talks a command into);
-  otherwise it runs as before, with the approval prompts guarding the profile.
+  are out of reach of the account's ordinary commands (and of anything a web page talks one into);
+  otherwise it runs as before. Not a wall: the platform gives the account's user `sudo` without a password,
+  so a command that uses it can still reach them — every command, Python cell or written file that names
+  `sudo` or the profile asks you first. That check reads the words, so it raises the bar rather than
+  closing the door.
 - Chromium's own reporting is off, and about thirty well-known analytics, advertising and session-recording
   hosts cannot be reached from it (`CLOUD_BROWSER_BLOCK_TRACKERS=0` to allow them).
 - `curl -F field=@file` now asks before it runs, as the rule written for it always meant.

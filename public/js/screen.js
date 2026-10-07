@@ -221,13 +221,15 @@ export function createScreen() {
   /** @type {Blob | null} */
   let waitingFrame = null;
   let reconnectTimer = null;
+  /** Sockets that closed in a row without a frame — past a few, the relay. */
+  let liveRetries = 0;
 
   /** The size the picture is drawn at, in device pixels — the size worth sending. */
   function viewSize() {
     const box = img.getBoundingClientRect();
     const scale = window.devicePixelRatio || 1;
     const width = Math.round((box.width || frame.clientWidth || 640) * scale);
-    return { width, height: Math.round((box.height || (width * 800) / 1280) * scale) };
+    return { width, height: box.height ? Math.round(box.height * scale) : Math.round((width * 800) / 1280) };
   }
 
   const liveOpen = () => !!link && link.opened && link.ws.readyState === WebSocket.OPEN;
@@ -280,14 +282,26 @@ export function createScreen() {
       if (link !== mine) return;
       link = null;
       live.classList.remove('is-live');
-      // Never opened, or refused before a single frame: this browser cannot
-      // have the socket, so the relay it is. Otherwise the machine restarted
-      // or rested — ask where it is now, with fresh tokens.
-      if (!mine.opened || !mine.frames) useRelay();
-      else if (!stopped && mode === 'cloud') {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(refreshCloud, 1000);
+      /*
+       * Never opened at all — a proxy or a policy in the way — and this browser
+       * cannot have the socket: the relay, for good. Anything else (the machine
+       * restarted under a new key, the network blinked, too many tabs) is worth
+       * asking again with fresh tokens, a few times, before settling for the
+       * slow path; one bad moment used to leave the panel on it until a reload.
+       */
+      if (!mine.opened) {
+        useRelay();
+        return;
       }
+      if (mine.frames) liveRetries = 0;
+      if (stopped || mode !== 'cloud') return;
+      liveRetries += 1;
+      if (liveRetries > 3) {
+        useRelay();
+        return;
+      }
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(refreshCloud, 800 * liveRetries);
     });
   }
 
@@ -327,6 +341,8 @@ export function createScreen() {
       if (previous) URL.revokeObjectURL(previous);
       painting = false;
       tell({ t: 'ack' });
+      // A frame that finished decoding after the panel stopped must not light it up again.
+      if (stopped) return;
       countFrame();
       if (waitingFrame && !stopped) {
         const queued = waitingFrame;
@@ -523,7 +539,9 @@ export function createScreen() {
   const send = async (event) => {
     if (mode === 'cloud') {
       if (liveOpen()) tell({ t: 'input', e: event });
-      else queueRelay(event);
+      // Through the server, a hover is a request apiece for as long as the
+      // pointer moves; only a move with a button held (a drag) is worth one.
+      else if (event.type !== 'move' || press) queueRelay(event);
       return;
     }
     try {
@@ -592,7 +610,9 @@ export function createScreen() {
     const at = spot(event);
     press = { ...at, id: event.pointerId, moved: false, touch: event.pointerType === 'touch', lastX: event.clientX, lastY: event.clientY, button: BUTTON[event.button] || 'left' };
     if (direct()) {
-      keys.focus({ preventScroll: true });
+      // Not for a finger: focusing the box opens the on-screen keyboard, and a
+      // scroll is not a reason to. A tap focuses it on release (endPress).
+      if (event.pointerType !== 'touch') keys.focus({ preventScroll: true });
       const now = performance.now();
       const near = Math.hypot(at.x - lastDown.x, at.y - lastDown.y) < 0.01;
       const count = now - lastDown.at < 450 && near ? Math.min(3, lastDown.count + 1) : 1;
@@ -644,8 +664,12 @@ export function createScreen() {
 
     if (direct()) {
       if (from.touch) {
-        // A tap that went nowhere is a click; a drag already scrolled.
-        if (!from.moved) send({ type: 'click', ...from, button: 'left', count: from.count });
+        // A tap that went nowhere is a click — and may be into a field, so the
+        // keyboard can come up; a drag already scrolled.
+        if (!from.moved) {
+          send({ type: 'click', ...from, button: 'left', count: from.count });
+          keys.focus({ preventScroll: true });
+        }
       } else {
         send({ type: 'up', ...at, button: from.button, count: from.count });
       }
@@ -720,9 +744,15 @@ export function createScreen() {
     'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
   ]);
 
-  /** A key event as the chord the page should feel: modifiers, then the key. */
+  /**
+   * A key event as the chord the page should feel: modifiers, then the key.
+   * The page runs in Chrome on Linux, where shortcuts are Control's: on a Mac,
+   * Command+A has to arrive as Control+A or it selects nothing.
+   */
+  const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
   function chordOf(event) {
-    const mods = [event.ctrlKey && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta'].filter(Boolean);
+    const control = event.ctrlKey || (MAC && event.metaKey);
+    const mods = [control && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift', !MAC && event.metaKey && 'Meta'].filter(Boolean);
     let key = event.key === ' ' ? 'Space' : event.key;
     if (key.length === 1 && (event.ctrlKey || event.metaKey || event.altKey)) {
       // Shortcuts by the key's place, so Control+A is select all on any layout.

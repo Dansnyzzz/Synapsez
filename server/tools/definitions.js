@@ -1486,22 +1486,9 @@ export const TOOLS = [
         steps: {
           type: 'array',
           description: 'For steps: up to 10 actions run in order, each shaped like this call; stops at the first that fails.',
-          items: {
-            type: 'object',
-            properties: {
-              action: { type: 'string' },
-              url: { type: 'string' },
-              ref: { type: 'integer' },
-              text: { type: 'string' },
-              value: { type: 'string' },
-              submit: { type: 'boolean' },
-              key: { type: 'string' },
-              direction: { type: 'string' },
-              amount: { type: 'integer' },
-              ms: { type: 'integer' },
-            },
-            required: ['action'],
-          },
+          // The rest of each step's fields pass through as they are: the shape is
+          // this call's own, and saying it twice was 80 tokens on every turn.
+          items: { type: 'object', properties: { action: { type: 'string' } }, required: ['action'] },
         },
       },
       required: ['action'],
@@ -2955,7 +2942,7 @@ export function assessRisk(name, rawInput = {}) {
   // Windows', so the protected-path list does not apply here — but the signed-in
   // browser and the login scripts on it do (`sandboxTouchesPrivate`).
   if (name === 'sandbox_run') {
-    return looksDestructive(String(input?.command || '')) || pythonLooksRisky(input?.python) || sandboxTouchesPrivate(input)
+    return looksDestructive(String(input?.command || '')) || pythonLooksRisky(input?.python) || sandboxTouchesPrivate(input) || filesLookRisky(input)
       ? 'sensitive'
       : 'ordinary';
   }
@@ -3085,6 +3072,9 @@ export function riskReason(name, rawInput = {}) {
   if (name === 'sandbox_run' && sandboxTouchesPrivate(input)) {
     return 'Touches the cloud browser\'s saved sign-ins or a login script on the cloud computer.';
   }
+  if (name === 'sandbox_run' && filesLookRisky(input)) {
+    return 'Writes a file on the cloud computer that, run, would send data out, destroy something, use root, or reach the browser\'s sign-ins.';
+  }
   if (name === 'telegram_send') return `Sends a Telegram message to ${input?.chat_id || 'a chat'}.`;
   if (name === 'meta_page_post') return 'Publishes a post on your Facebook Page, publicly and immediately.';
   if (name === 'github_write') {
@@ -3164,13 +3154,28 @@ const SANDBOX_PRIVATE =
  *
  * A pattern list, like `looksDestructive`, not a wall.
  */
-// Any receiver: `s = requests.Session(); s.post(...)` is the same request as `requests.post(...)`.
+// `.post(` and `.patch(` from any receiver — `s = requests.Session(); s.post(...)`
+// is the same request as `requests.post(...)`; `.put(` and `.delete(` only from
+// the HTTP ones, because `np.delete`, `np.put` and `queue.put` are analysis.
 const PYTHON_SENDS =
-  /\b\w+\.(?:post|put|patch|delete)\s*\(|\burlopen\s*\([^)]*\bdata\s*=|\bRequest\s*\([^)]*\bdata\s*=|\bhttp\.client\b|\bsocket\.socket\s*\(|\b(?:smtplib|ftplib|paramiko|telnetlib)\b/i;
+  /\b\w+\.(?:post|patch)\s*\(|\b(?:requests|httpx|aiohttp|session|client|http)\.(?:put|delete)\s*\(|\burlopen\s*\([^)]*\bdata\s*=|\bRequest\s*\([^)]*\bdata\s*=|\bhttp\.client\b|\bsocket\.socket\s*\(|\b(?:smtplib|ftplib|paramiko|telnetlib)\b/i;
 
 export function pythonLooksRisky(code) {
   const text = String(code || '');
   return !!text && (PYTHON_SENDS.test(text) || looksDestructive(text));
+}
+
+/**
+ * A file written to be run next. Writing `go.sh` with `sudo cat …/Cookies` in it
+ * and then running `bash go.sh` put nothing for the command's grading to see —
+ * the words were in the file. What a file says is graded the way a command is.
+ */
+export function filesLookRisky(input = {}) {
+  const files = Array.isArray(input?.files) ? input.files : [];
+  return files.some((f) => {
+    const text = String(f?.content ?? '');
+    return !!text && (looksDestructive(text) || PYTHON_SENDS.test(text) || SANDBOX_PRIVATE.test(text));
+  });
 }
 
 export function sandboxTouchesPrivate(input = {}) {

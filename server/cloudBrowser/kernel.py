@@ -17,11 +17,14 @@ installed yet.
 """
 import ast
 import base64
+import importlib
 import io
 import json
 import linecache
 import os
 import shlex
+import signal
+import site
 import subprocess
 import sys
 import tempfile
@@ -54,6 +57,14 @@ def _shell(command):
     done = subprocess.run(command, shell=True)
     if done.returncode:
         print("(exit %d)" % done.returncode)
+    # `!pip install x` then `import x` in the same session: the user folder pip
+    # installs into may not have existed when Python started, so it was never on
+    # the path, and the import failed until the session was restarted.
+    try:
+        site.addsitedir(site.getusersitepackages())
+    except Exception:
+        pass
+    importlib.invalidate_caches()
 
 
 namespace["__synz_shell__"] = _shell
@@ -83,18 +94,25 @@ def _show(value):
     return text[:RESULT_LIMIT]
 
 
+_cells = [0]
+
+
 def _run(code):
     """Run a cell; the value of its last line, if it is an expression, comes back."""
     source = _transform(code)
-    # So a traceback can quote the line that failed.
-    linecache.cache["<cell>"] = (len(source), None, source.splitlines(True), "<cell>")
-    tree = ast.parse(source, "<cell>", "exec")
+    # Each cell under a name of its own, kept for the traceback to quote — a
+    # function defined three cells ago fails on its own line, not on the line
+    # with the same number in the cell running now.
+    _cells[0] += 1
+    name = "<cell %d>" % _cells[0]
+    linecache.cache[name] = (len(source), None, source.splitlines(True), name)
+    tree = ast.parse(source, name, "exec")
     last = None
     if tree.body and isinstance(tree.body[-1], ast.Expr):
         last = ast.Expression(tree.body.pop().value)
-    exec(compile(tree, "<cell>", "exec"), namespace)
+    exec(compile(tree, name, "exec"), namespace)
     if last is not None:
-        value = eval(compile(last, "<cell>", "eval"), namespace)
+        value = eval(compile(last, name, "eval"), namespace)
         if value is not None:
             namespace["_"] = value
             return _show(value)
@@ -150,7 +168,21 @@ def _read_capture():
     return ("... [%d bytes cut] ...\n" % start if start else "") + text
 
 
+def _interruptible(fn, *args):
+    """Run with the time limit's interrupt switched on — and only then.
+
+    Everywhere else an interrupt is ignored: one landing while the answer is
+    being written would end the session, every variable with it.
+    """
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        return fn(*args)
+    finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
 def main():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     while True:
         try:
             raw = _requests.readline()
@@ -167,22 +199,28 @@ def main():
         result = None
         error = None
         try:
-            result = _run(str(request.get("code") or ""))
+            result = _interruptible(_run, str(request.get("code") or ""))
         except KeyboardInterrupt:
             error = "Interrupted: the cell ran past its time limit. What it had set before that point is kept."
         except SystemExit:
             error = "The cell called exit(); the session goes on."
         except BaseException:
             error = _trace()
+        # Everything after the cell catches an interrupt too: the time limit can
+        # land while a figure is still being drawn, and an interrupt escaping
+        # here would end the session — every variable with it — for a picture.
         images = []
         try:
-            images = _figures()
+            images = _interruptible(_figures)
+        except KeyboardInterrupt:
+            error = error or "Interrupted while drawing the figures: the cell ran past its time limit. What it had set is kept."
         except Exception as err:
             error = (error or "") + "\n(The figures could not be saved: %s)" % err
+        output = ""
         try:
             output = _read_capture()
-        except Exception:
-            output = ""
+        except BaseException:
+            pass
         answer = {"id": request.get("id"), "output": output, "result": result, "error": error, "images": images}
         _answers.write(json.dumps(answer) + "\n")
         _answers.flush()

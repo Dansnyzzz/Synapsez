@@ -36,10 +36,15 @@
  * Chrome only when a viewer has room for the next). The frame size is the size
  * the panel is drawn at, not the page's.
  *
- * **Private by construction.** Started as root where the platform allows it,
- * the service keeps its code, its profile — the sign-ins — and its key where
- * the account's own commands cannot read them; the Python session runs as the
- * account's ordinary user, with nothing of the service's in its environment.
+ * **Private by construction, as far as the platform allows.** Started as root
+ * where it can be, the service keeps its code, its profile — the sign-ins — and
+ * its key where the account's ordinary commands cannot read them; the Python
+ * session runs as the account's ordinary user, with nothing of the service's in
+ * its environment. Not a wall: the platform gives the account's user `sudo`
+ * without a password, so a command that uses it can still reach them — and
+ * `assessRisk` asks the person before any command, Python or file that names
+ * `sudo` or the profile runs. That is a pattern list, so it raises the bar
+ * rather than closing the door.
  * Chromium's own telemetry is switched off, and the best-known trackers are
  * unresolvable from this browser, so a page cannot report the person's visit
  * to the usual third parties. Nothing here logs a page, an address or a key.
@@ -75,8 +80,14 @@ const blockTrackers = process.env.SYNZ_TRACKERS !== '0';
 const WIDTH = 1280;
 const HEIGHT = 800;
 const IDLE_MS = 15 * 60 * 1000;
-/** One part of a page's text, as the model reads it. */
-const TEXT_PART = 8000;
+/**
+ * One part of a page's text, as the model reads it. Every step's answer stays
+ * in the conversation, so this is paid again on every later turn; the rest of
+ * a long page is a `read` away rather than in every answer.
+ */
+const TEXT_PART = 6000;
+/** How long a batch of steps may take before it stops and says what is left — inside the server's wait. */
+const STEPS_MS = 110_000;
 const MAX_TEXT = 400_000;
 /** Frames in flight to one viewer before the next waits for its acknowledgement. */
 const WINDOW = 3;
@@ -323,9 +334,19 @@ async function settle(action) {
  * elements themselves, so `click { ref: 7 }` finds exactly the element the
  * assistant was shown — and the whole page's text, and where it is scrolled.
  */
-async function describe() {
+/**
+ * @param {{ stamp?: boolean }} [options]  `stamp: false` reads the text and
+ *   leaves the numbers where they are: `read` shows no list, so numbering the
+ *   page again behind it would have the next `click { ref: 7 }` land on
+ *   whatever is seventh now, not what the model was shown as 7.
+ */
+async function describe({ stamp = true } = {}) {
   return page
-    .evaluate((maxText) => {
+    .evaluate(({ maxText, stamp }) => {
+      const text = (document.body?.innerText || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').slice(0, maxText);
+      const root = document.scrollingElement || document.documentElement;
+      const position = { x: Math.round(root.scrollLeft), y: Math.round(root.scrollTop), width: root.scrollWidth, height: root.scrollHeight, viewWidth: innerWidth, viewHeight: innerHeight };
+      if (!stamp) return { elements: [], text, position };
       for (const node of document.querySelectorAll('[data-synz-ref]')) node.removeAttribute('data-synz-ref');
       const lines = [];
       let n = 0;
@@ -361,14 +382,8 @@ async function describe() {
         lines.push(`[${n}] ${tag}${type ? `:${type}` : ''} "${label}"${filled}${where}`);
         if (n >= 160) break;
       }
-      const text = (document.body?.innerText || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').slice(0, maxText);
-      const root = document.scrollingElement || document.documentElement;
-      return {
-        elements: lines,
-        text,
-        position: { x: Math.round(root.scrollLeft), y: Math.round(root.scrollTop), width: root.scrollWidth, height: root.scrollHeight, viewWidth: innerWidth, viewHeight: innerHeight },
-      };
-    }, MAX_TEXT)
+      return { elements: lines, text, position };
+    }, { maxText: MAX_TEXT, stamp })
     .catch(() => ({ elements: [], text: '', position: null }));
 }
 
@@ -428,9 +443,9 @@ async function tabs() {
   );
 }
 
-/** @param {{ part?: number, textOnly?: boolean, did?: string[] }} [extra] */
-async function report({ part = 1, textOnly = false, did = null } = {}) {
-  const [state, shot, tabList] = await Promise.all([describe(), thumbnail(), tabs()]);
+/** @param {{ part?: number, textOnly?: boolean, did?: string[], notRun?: number }} [extra] */
+async function report({ part = 1, textOnly = false, did = null, notRun = 0 } = {}) {
+  const [state, shot, tabList] = await Promise.all([describe({ stamp: !textOnly }), thumbnail(), tabs()]);
   const files = downloaded;
   downloaded = [];
   return {
@@ -445,6 +460,7 @@ async function report({ part = 1, textOnly = false, did = null } = {}) {
     shot,
     ...(files.length ? { downloads: files } : {}),
     ...(did ? { did } : {}),
+    ...(notRun ? { notRun } : {}),
   };
 }
 
@@ -589,7 +605,16 @@ async function act(input) {
     if (!steps.length) throw new Error('Give `steps`: a list of actions, e.g. [{"action":"type","ref":3,"value":"…"},{"action":"click","ref":5}].');
     if (steps.length > 10) throw new Error(`At most 10 steps in one call; that was ${steps.length}.`);
     const did = [];
+    const started = Date.now();
+    let part = 1;
     for (const [i, step] of steps.entries()) {
+      /*
+       * A batch has a deadline of its own, inside the server's wait for it:
+       * ten slow pages could outlast that wait, and a reply that never comes
+       * reads to the server as a service that is not there. What is left is
+       * said to be left, never quietly dropped, so the model can carry on.
+       */
+      if (Date.now() - started > STEPS_MS) return report({ did, notRun: steps.length - i });
       const name = String(step.action || '');
       try {
         if (!STEP_ACTIONS.has(name)) throw new Error(`"${name}" cannot be one of the steps.`);
@@ -599,9 +624,10 @@ async function act(input) {
         const done = did.length ? ` Done before it: ${did.join('; ')}.` : '';
         throw new Error(`Step ${i + 1} of ${steps.length} (${stepLabel(step)}) failed: ${firstLine(err)}${done}`);
       }
+      if (name === 'read') part = Number(step.page) || 2;
       did.push(stepLabel(step));
     }
-    return report({ did });
+    return report({ did, part });
   }
   await perform(input);
   await settle(a);
@@ -800,7 +826,21 @@ function maybeAck() {
   }, wait);
 }
 
-async function startScreencast() {
+/**
+ * Starting and stopping happen one at a time, in order. Two restarts close
+ * together — a tab closed both by the assistant and by its own `close` event —
+ * could otherwise both pass the "already running?" test while the first was
+ * still opening its session, and the loser's session was never let go.
+ */
+let castQueue = Promise.resolve();
+const serially = (job) => {
+  castQueue = castQueue.then(job).catch(() => {});
+  return castQueue;
+};
+const startScreencast = () => serially(startNow);
+const stopScreencast = () => serially(stopNow);
+
+async function startNow() {
   if (screencast || !watching() || !page || !context) return;
   const config = wanted();
   try {
@@ -828,7 +868,7 @@ async function startScreencast() {
   }
 }
 
-async function stopScreencast() {
+async function stopNow() {
   const cdp = screencast;
   screencast = null;
   pendingAck = null;
@@ -842,7 +882,10 @@ async function stopScreencast() {
 
 function restartScreencast() {
   latestFrame = null;
-  stopScreencast().then(startScreencast);
+  serially(async () => {
+    await stopNow();
+    await startNow();
+  });
 }
 
 /** Restart only when what is wanted has actually changed. */
@@ -983,21 +1026,28 @@ const kernels = new Map();
 const MAX_KERNELS = 4;
 const KERNEL_IDLE_MS = 30 * 60 * 1000;
 
+/**
+ * What the session's environment holds: an allow-list, not the service's own
+ * minus a few names — nothing of how the service or Chromium were set up
+ * (their library path, the platform flags) is the account's business.
+ */
+const KERNEL_ENV = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TERM', 'USER', 'LOGNAME'];
 function kernelEnv() {
-  const env = { ...process.env, MPLBACKEND: 'Agg', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' };
-  if (RUN_HOME) {
-    env.HOME = RUN_HOME;
-    env.PATH = `${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}:${RUN_HOME}/.local/bin`;
-  }
+  const env = { MPLBACKEND: 'Agg', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' };
+  for (const name of KERNEL_ENV) if (process.env[name] !== undefined) env[name] = process.env[name];
+  env.PATH ||= '/usr/local/bin:/usr/bin:/bin';
+  env.HOME = RUN_HOME || process.env.HOME || WORKDIR;
+  if (RUN_HOME) env.PATH = `${env.PATH}:${RUN_HOME}/.local/bin`;
   // The service's own temporary folder is root's; the account's session uses the ordinary one.
-  if (asRoot()) env.TMPDIR = '/tmp';
+  env.TMPDIR = asRoot() ? '/tmp' : process.env.TMPDIR || '/tmp';
+  if (process.platform === 'win32') Object.assign(env, { SYSTEMROOT: process.env.SYSTEMROOT, TEMP: process.env.TEMP, TMP: process.env.TMP });
   return env;
 }
 
 function startKernel(session) {
-  const asAccount = RUN_UID != null && process.getuid?.() === 0 ? { uid: RUN_UID, gid: RUN_GID } : {};
-  const child = spawn(PYTHON, ['-u', KERNEL], { cwd: WORKDIR, env: kernelEnv(), stdio: ['pipe', 'pipe', 'pipe'], ...asAccount });
-  const kernel = { child, session, waiting: new Map(), buffer: '', stray: '', used: Date.now(), dead: false, chain: Promise.resolve(), seq: 0 };
+  const drop = asRoot() ? { uid: RUN_UID, gid: RUN_GID } : {};
+  const child = spawn(PYTHON, ['-u', KERNEL], { cwd: WORKDIR, env: kernelEnv(), stdio: ['pipe', 'pipe', 'pipe'], ...drop });
+  const kernel = { child, session, waiting: new Map(), buffer: '', stray: '', used: Date.now(), dead: false, busy: false, seq: 0 };
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk) => {
     kernel.buffer += chunk;
@@ -1023,9 +1073,12 @@ function startKernel(session) {
   const fail = (message) => {
     kernel.dead = true;
     if (kernels.get(session) === kernel) kernels.delete(session);
-    for (const resolve of kernel.waiting.values()) resolve({ error: message });
+    for (const resolve of kernel.waiting.values()) resolve({ error: message, ended: true });
     kernel.waiting.clear();
   };
+  // A write to a session that has just gone (EPIPE) is that session ending,
+  // not a reason for the whole service — the browser with it — to fall over.
+  child.stdin.on('error', () => fail('The Python session ended.'));
   child.on('error', (err) =>
     fail(
       err?.code === 'ENOENT'
@@ -1038,9 +1091,10 @@ function startKernel(session) {
   return kernel;
 }
 
+/** End a session. Only the one still registered under its name is forgotten — never a newer one. */
 function stopKernel(kernel) {
   kernel.dead = true;
-  kernels.delete(kernel.session);
+  if (kernels.get(kernel.session) === kernel) kernels.delete(kernel.session);
   try {
     kernel.child.kill('SIGKILL');
   } catch {
@@ -1050,11 +1104,10 @@ function stopKernel(kernel) {
 
 /** Ask a kernel one thing and wait for its answer, interrupting it when it runs long. */
 function ask(kernel, request, timeoutMs) {
+  if (kernel.dead) return Promise.resolve({ error: 'The Python session ended.', ended: true });
   const id = `${Date.now()}-${(kernel.seq += 1)}`;
   return new Promise((resolve) => {
-    let interrupted = false;
     const timer = setTimeout(() => {
-      interrupted = true;
       try {
         kernel.child.kill('SIGINT');
       } catch {
@@ -1065,20 +1118,33 @@ function ask(kernel, request, timeoutMs) {
         if (!kernel.waiting.has(id)) return;
         kernel.waiting.delete(id);
         stopKernel(kernel);
-        resolve({ error: 'The cell ran past its time limit and would not stop, so the Python session was restarted; its variables are gone.', lost: true });
+        resolve({ error: 'The cell ran past its time limit and would not stop, so the Python session was ended; its variables are gone.', ended: true });
       }, 5000).unref();
     }, timeoutMs);
+    // The kernel says itself whether the interrupt landed: a cell that finished
+    // just as the limit came is a finished cell, not an interrupted one.
     kernel.waiting.set(id, (reply) => {
       clearTimeout(timer);
-      resolve(interrupted && !reply.error ? { ...reply, error: 'Interrupted: the cell ran past its time limit.' } : reply);
+      resolve(reply);
     });
     kernel.child.stdin.write(`${JSON.stringify({ ...request, id })}\n`);
   });
 }
 
+/**
+ * A cell for one conversation's session.
+ *
+ * One cell at a time per session, and a second one is answered at once rather
+ * than queued: two cells sent together would otherwise wait behind each other
+ * inside one request's time limit, and the second would time out on the
+ * first's account. What one cell sets, the other cannot rely on anyway.
+ */
 async function runPython({ session, code, reset, timeoutMs }) {
   const key = String(session || 'default').slice(0, 80);
   let kernel = kernels.get(key);
+  if (kernel?.busy && !reset) {
+    return { ok: true, fresh: false, busy: true, error: 'This conversation\'s Python session is still running an earlier cell. Send this one again once that has answered.' };
+  }
   if (kernel && reset) {
     stopKernel(kernel);
     kernel = null;
@@ -1087,18 +1153,22 @@ async function runPython({ session, code, reset, timeoutMs }) {
   if (fresh) {
     // Room for this one: the session nobody has used for longest goes first.
     if (kernels.size >= MAX_KERNELS) {
-      const oldest = [...kernels.values()].sort((a, b) => a.used - b.used)[0];
+      const oldest = [...kernels.values()].filter((k) => !k.busy).sort((a, b) => a.used - b.used)[0];
       if (oldest) stopKernel(oldest);
     }
     kernel = startKernel(key);
   }
   const k = kernel;
   k.used = Date.now();
-  const run = k.chain.then(() => (code ? ask(k, { code }, clamp(Number(timeoutMs) || 120_000, 1000, 600_000)) : {}));
-  k.chain = run.catch(() => {});
-  const reply = await run;
-  k.used = Date.now();
-  return { ok: true, fresh, ...reply };
+  k.busy = true;
+  try {
+    const reply = code ? await ask(k, { code }, clamp(Number(timeoutMs) || 120_000, 1000, 600_000)) : {};
+    // A session that died during the cell has lost what earlier cells set: said so, not passed off as kept.
+    return { ok: true, fresh, ...reply, ended: !!reply.ended || k.dead };
+  } finally {
+    k.busy = false;
+    k.used = Date.now();
+  }
 }
 
 setInterval(() => {
@@ -1131,8 +1201,8 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         browser: !!context,
         viewers: viewers.size + lives.size,
-        // Whether the sign-ins are out of the account's reach (index.js reports it).
-        isolated: process.getuid?.() === 0 && RUN_UID != null && RUN_UID !== 0,
+        // Whether the sign-ins are out of the account's ordinary reach (index.js keeps it).
+        isolated: asRoot(),
         trackersBlocked: blockTrackers ? TRACKERS.length : 0,
         kernels: kernels.size,
       });
@@ -1166,12 +1236,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/close' && req.method === 'POST') {
       if (!same(key, KEY)) return send(res, 401, { error: 'no' });
-      send(res, 200, { ok: true });
+      /*
+       * Closing the browser is not closing the conversations' Python
+       * sessions: with one still alive the service stays up, browser shut,
+       * and says so — the server then keeps its address and key.
+       */
+      const exits = kernels.size === 0;
       for (const viewer of viewers) viewer.end();
       for (const client of lives) client.ws.close(1000, 'closed');
-      for (const kernel of kernels.values()) stopKernel(kernel);
+      await stopScreencast();
       await context?.close().catch(() => {});
-      process.exit(0);
+      context = null;
+      page = null;
+      send(res, 200, { ok: true, exited: exits });
+      if (exits) setTimeout(() => process.exit(0), 50);
+      return undefined;
     }
     if (url.pathname === '/meta') {
       if (!same(key, KEY) && !tokenScope(url.searchParams.get('t'))) return send(res, 401, { error: 'no' });
@@ -1180,7 +1259,16 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/stream') {
       if (!tokenScope(url.searchParams.get('t'))) return send(res, 401, { error: 'no' });
+      // Listened for before anything is awaited: a viewer that leaves while the
+      // browser is still starting must not stay counted, or the service never rests.
+      let gone = false;
+      req.on('close', () => {
+        gone = true;
+        viewers.delete(res);
+        reconfigure();
+      });
       await ensureBrowser();
+      if (gone) return undefined;
       lastUse = Date.now();
       res.writeHead(200, {
         'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
@@ -1188,10 +1276,6 @@ const server = http.createServer(async (req, res) => {
         Connection: 'keep-alive',
       });
       viewers.add(res);
-      req.on('close', () => {
-        viewers.delete(res);
-        reconfigure();
-      });
       const first = await firstFrame();
       if (first) writeMjpeg(res, first);
       if (screencast) reconfigure();
