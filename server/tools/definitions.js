@@ -23,7 +23,8 @@
  *          context window is too small to hold the whole catalogue — see
  *          `availableTools`.
  */
-import { validateArguments } from './validate.js';
+import { readArguments } from './validate.js';
+import { canonicalInput } from '../../public/js/tool-aliases.js';
 
 export const TOOLS = [
   // ── Local: filesystem ────────────────────────────────────────────────
@@ -1418,12 +1419,21 @@ export const TOOLS = [
       'Run bash on this account\'s own Linux computer in the cloud — Python, Node, git, pip, npm, full internet, root with as_root. ' +
       'Use it to compute, analyse data, call APIs, download, convert or generate files (a PDF, a chart image, a zip), or build and test code. ' +
       'It keeps its files and installed software between conversations. Write files with `files`, run with `command`, ' +
-      'and hand one file to the user with `download`. Relative paths are in its working folder. ' +
+      'and hand one file to the user with `download`. Relative paths are in its working folder; what the cloud browser downloads is in downloads/. ' +
+      '`python` runs in this conversation\'s live Python session, like a notebook: variables, imports and loaded data stay in memory between calls, ' +
+      'so load a file once and keep working on it. ' +
       'This is not the user\'s own computer — use run_command for that.',
     parameters: {
       type: 'object',
       properties: {
         command: { type: 'string', description: 'A bash command line, run in the working folder, e.g. "pip install pandas && python analyse.py".' },
+        python: {
+          type: 'string',
+          description:
+            'Python for the live session, run after `files` and `command`. The last expression\'s value is shown; matplotlib figures come back as pictures; ' +
+            'lines starting with ! run in the shell (!pip install pandas).',
+        },
+        python_reset: { type: 'boolean', description: 'Start this conversation\'s Python session afresh first, forgetting its variables.' },
         as_root: { type: 'boolean', description: 'Run as root — only to install system packages (dnf install …).' },
         files: {
           type: 'array',
@@ -1448,6 +1458,9 @@ export const TOOLS = [
       'A real Chrome on this account\'s cloud computer, shown to the user live in the screen panel — they can watch and take over. ' +
       'Use it to use websites: fill forms, click through, read pages that need JavaScript or scrolling, compare across tabs, save a page as PDF. ' +
       'Every answer lists the page\'s clickable things as numbered refs — click, type and select take a `ref` from the latest answer (or `text`). ' +
+      'Every answer already holds the whole page\'s text from the top, wherever it is scrolled — when it says the text goes on, `read` with page 2, 3… ' +
+      'rather than scrolling. Actions you can already see the refs for go in one call as `steps` (type, type, click), not one call each. ' +
+      'Files it downloads land in the cloud computer\'s downloads/ folder for sandbox_run. ' +
       'Sign-ins stay between conversations. If a login, captcha or payment is needed, ask the user to do that part in the panel. ' +
       'For reading a known article, web_fetch is faster; browser_* is the user\'s own browser on their PC.',
     parameters: {
@@ -1455,8 +1468,10 @@ export const TOOLS = [
       properties: {
         action: {
           type: 'string',
-          enum: ['open', 'look', 'click', 'type', 'press', 'scroll', 'select', 'wait', 'back', 'forward', 'reload', 'tabs', 'new_tab', 'switch_tab', 'close_tab', 'pdf', 'close'],
-          description: 'open a url · look again · click/type/select a ref · press a key · scroll · wait for text · tabs · pdf saves the page into the conversation · close.',
+          enum: ['open', 'look', 'read', 'click', 'type', 'press', 'scroll', 'select', 'wait', 'back', 'forward', 'reload', 'tabs', 'new_tab', 'switch_tab', 'close_tab', 'pdf', 'steps', 'close'],
+          description:
+            'open a url · look again · read more of the page\'s text · click/type/select a ref · press a key · scroll · wait for text · tabs · ' +
+            'pdf saves the page into the conversation · steps runs `steps` in order · close.',
         },
         url: { type: 'string', description: 'For open and new_tab.' },
         ref: { type: 'integer', description: 'The number of an element from the latest answer.' },
@@ -1464,9 +1479,30 @@ export const TOOLS = [
         value: { type: 'string', description: 'What to type, or the option to select.' },
         submit: { type: 'boolean', description: 'Press Enter after typing.' },
         key: { type: 'string', description: 'For press, e.g. "Enter", "Escape", "Control+A".' },
-        direction: { type: 'string', enum: ['down', 'up'] },
+        direction: { type: 'string', enum: ['down', 'up', 'left', 'right'] },
         amount: { type: 'integer', description: 'Pixels to scroll, default 700.' },
         index: { type: 'integer', description: 'Tab number for switch_tab.' },
+        page: { type: 'integer', description: 'For read: which part of the page\'s text, from 2.' },
+        steps: {
+          type: 'array',
+          description: 'For steps: up to 10 actions run in order, each shaped like this call; stops at the first that fails.',
+          items: {
+            type: 'object',
+            properties: {
+              action: { type: 'string' },
+              url: { type: 'string' },
+              ref: { type: 'integer' },
+              text: { type: 'string' },
+              value: { type: 'string' },
+              submit: { type: 'boolean' },
+              key: { type: 'string' },
+              direction: { type: 'string' },
+              amount: { type: 'integer' },
+              ms: { type: 'integer' },
+            },
+            required: ['action'],
+          },
+        },
       },
       required: ['action'],
     },
@@ -2618,6 +2654,10 @@ const DANGEROUS_COMMAND = [
   // request body into a file read. Without it, `-d '{"a":1}'` is an ordinary
   // POST and stays ordinary.
   /\b(curl|wget)\b[^|;&]*(--data-binary|--data-raw|--data|-d|-F)\s*["']?[@<]/i,
+  // `-F field=@file` and `--form field=<file`: the field name sits between the
+  // flag and the `@`, so the pattern above — written for `-d @file` — never
+  // reached it, and the upload this comment names ran without asking.
+  /\bcurl\b[^|;&]*(?:-F|--form|--form-string)\s*["']?[\w.[\]-]*=[@<]/i,
   // `-T` and `--upload-file` take the filename directly, so there is no `@` to
   // look for — the flag alone is the whole signal.
   /\b(curl|wget)\b[^|;&]*(--upload-file|-T)\s+["']?[\w./~\\-]/i,
@@ -2832,6 +2872,10 @@ export const URL_ARGUMENT = {
 export function carriesData(name, input) {
   const key = URL_ARGUMENT[name];
   if (!key) return false;
+  // A batch of browser steps is as many addresses as it has steps that open one.
+  if (Array.isArray(input?.steps) && input.steps.some((step) => step && typeof step === 'object' && carriesData(name, step))) {
+    return true;
+  }
   let url;
   try {
     url = new URL(String(input?.[key] || ''));
@@ -2911,7 +2955,9 @@ export function assessRisk(name, rawInput = {}) {
   // Windows', so the protected-path list does not apply here — but the signed-in
   // browser and the login scripts on it do (`sandboxTouchesPrivate`).
   if (name === 'sandbox_run') {
-    return looksDestructive(String(input?.command || '')) || sandboxTouchesPrivate(input) ? 'sensitive' : 'ordinary';
+    return looksDestructive(String(input?.command || '')) || pythonLooksRisky(input?.python) || sandboxTouchesPrivate(input)
+      ? 'sensitive'
+      : 'ordinary';
   }
 
   // Writing outside the folder the user pointed at is a different act from
@@ -2974,8 +3020,8 @@ export function assessRisk(name, rawInput = {}) {
  */
 function asWillRun(tool, input) {
   if (!tool?.parameters) return input ?? {};
-  const checked = validateArguments(tool.parameters, input);
-  return checked.ok ? checked.input : (input ?? {});
+  const checked = readArguments(tool.name, tool.parameters, input);
+  return checked.ok ? checked.input : (canonicalInput(tool.name, input) ?? {});
 }
 
 /** A short reason to show beside an approval prompt, or null when unremarkable. */
@@ -3029,6 +3075,9 @@ export function riskReason(name, rawInput = {}) {
   if (name === 'publish_file') return 'Makes this file public: anyone with the link can open it without signing in.';
   if (name === 'sandbox_run' && looksDestructive(String(input?.command || ''))) {
     return 'This command on the cloud computer looks like it sends data out or destroys something.';
+  }
+  if (name === 'sandbox_run' && pythonLooksRisky(input?.python)) {
+    return 'This Python on the cloud computer looks like it sends data out, or runs a command that destroys something.';
   }
   if (name === 'sandbox_run' && input?.as_root === true) {
     return 'Runs as root on the cloud computer, where it can reach everything on it, including the cloud browser\'s sign-ins.';
@@ -3102,10 +3151,32 @@ export function looksDestructive(command) {
 const SANDBOX_PRIVATE =
   /\.synz-browser|\b(?:Cookies|Login Data|Local State|Web Data)\b|(?:^|[\s/~'"=:])\.(?:bash_profile|bash_login|bashrc|profile|zshrc|zprofile)\b|\/etc\/(?:profile|bash\.bashrc|environment)\b/;
 
+/**
+ * Python that sends something out, or carries a shell line that destroys.
+ *
+ * The persistent Python session (`sandbox_run` with `python`) has the same
+ * internet the shell has, so it is graded on the same two questions. Reading
+ * a page or an API is ordinary work, as `curl` is; writing to one — a POST, a
+ * raw socket, mail — is the shape that carries what was read somewhere else.
+ * The shell lines inside (`!pip install …`, `os.system(…)`, `subprocess`) are
+ * read by the shell's own list, which is a text search and finds them inside
+ * the Python as readily as on their own.
+ *
+ * A pattern list, like `looksDestructive`, not a wall.
+ */
+const PYTHON_SENDS =
+  /\b(?:requests|httpx|session|client)\.(?:post|put|patch|delete)\s*\(|\burlopen\s*\([^)]*\bdata\s*=|\bRequest\s*\([^)]*\bdata\s*=|\bhttp\.client\b|\bsocket\.socket\s*\(|\b(?:smtplib|ftplib|paramiko|telnetlib)\b/i;
+
+export function pythonLooksRisky(code) {
+  const text = String(code || '');
+  return !!text && (PYTHON_SENDS.test(text) || looksDestructive(text));
+}
+
 export function sandboxTouchesPrivate(input = {}) {
   if (input?.as_root === true) return true;
   const named = [
     String(input?.command || ''),
+    String(input?.python || ''),
     String(input?.download || ''),
     ...(Array.isArray(input?.files) ? input.files.map((f) => String(f?.path || '')) : []),
   ];

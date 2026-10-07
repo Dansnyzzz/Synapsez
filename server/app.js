@@ -1302,17 +1302,19 @@ export function createApp() {
   /**
    * The cloud browser, for the screen panel.
    *
-   * The picture itself never passes through here: `state` hands the panel the
-   * machine's own stream address, with a view-only key, and the frames go
-   * straight from the machine to the person. What does pass through is a
-   * person's gestures, checked first (see `cleanInput`), because the key that
-   * drives the browser stays on the server.
+   * Neither the picture nor a person's gestures pass through here any more:
+   * `state` hands the panel the machine's socket address and short-lived
+   * tokens signed with the key that stays on this server (see `panelToken`),
+   * and the frames and gestures go straight between the machine and the
+   * person. `input` is the fallback for a browser that cannot open the socket,
+   * checked first (see `cleanInput`). `?driving=1` keeps the machine awake
+   * while somebody drives, since their gestures no longer come by to do it.
    */
   api.get(
     '/cloud-browser/state',
     wrap(async (req, res) => {
       res.set('Cache-Control', 'no-store');
-      res.json(await cloudBrowserState(req.user.id));
+      res.json(await cloudBrowserState(req.user.id, { driving: req.query?.driving === '1' }));
     }),
   );
 

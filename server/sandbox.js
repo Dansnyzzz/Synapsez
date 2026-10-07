@@ -389,11 +389,33 @@ export async function browserAddress(machine, { signal } = {}) {
  * file), and what leaves the machine is graded per command by `assessRisk`.
  * Root (`as_root`) can still change /etc/profile.d — and asks first, every time.
  *
+ * **As root** (`root: true`, the cloud browser's own start) "can the account
+ * write here" is the wrong question to ask with `-w`, which answers for root
+ * and is yes everywhere. What is kept is what only root can change: a folder
+ * owned by root that neither its group nor anyone else may write. There is no
+ * falling back to the PATH as it came — if node is not in such a folder, the
+ * start fails and the service comes up as the account instead.
+ *
  * @param {string} command
  * @param {Record<string, string>} [env]
- * @param {{ userBin?: boolean }} [options]
+ * @param {{ userBin?: boolean, root?: boolean }} [options]
  */
-export function shellFor(command, env = {}, { userBin = false } = {}) {
+export function shellFor(command, env = {}, { userBin = false, root = false } = {}) {
+  if (root) {
+    const rootPath = [
+      'source /etc/profile >/dev/null 2>&1 || true',
+      '_keep=; IFS=: read -ra _dirs <<< "$PATH"; for _d in "${_dirs[@]}"; do case "$_d" in /*) ;; *) continue ;; esac; ' +
+        '[ "$(stat -Lc %u "$_d" 2>/dev/null)" = 0 ] || continue; _m="$(stat -Lc %a "$_d" 2>/dev/null)"; ' +
+        'case "${_m: -2}" in *[2367]*) continue ;; esac; _keep="${_keep:+$_keep:}$_d"; done',
+      'export PATH="${_keep:-/usr/local/bin:/usr/bin:/bin}"',
+      'unset _keep _dirs _d _m',
+    ].join('\n');
+    return {
+      cmd: 'bash',
+      args: ['--noprofile', '--norc', '-c', `${rootPath}\n${command}`],
+      env: { ...env, BASH_ENV: '', ENV: '' },
+    };
+  }
   const systemPath = [
     'source /etc/profile >/dev/null 2>&1 || true',
     // Every entry under the account's home, relative, or writable by the account
@@ -416,18 +438,43 @@ export function shellFor(command, env = {}, { userBin = false } = {}) {
 }
 
 /**
- * Run one command, having written any files first, and hand back what it said
- * — plus, when asked, one file it made, saved into the conversation.
+ * A cell's answer, as the model reads it — first of all whether the session it
+ * ran in is the one earlier calls built up, because a model that assumes its
+ * `df` is still loaded after the machine rested writes code against nothing.
  *
- * @param {{ command?: string, files?: {path: string, content: string}[], download?: string, timeout_seconds?: number, as_root?: boolean }} input
+ * @param {{ fresh?: boolean, output?: string, result?: string | null, error?: string | null }} cell
+ * @param {boolean} ran  whether there was code to run, rather than only a reset
+ */
+export function pythonReport(cell, ran = true) {
+  const lines = [
+    cell.fresh
+      ? '[Python: a new session — nothing from earlier calls is defined (the cloud computer had rested, or the session was reset). Load what you need again.]'
+      : '[Python: the same live session — what earlier calls defined is still there.]',
+  ];
+  if (!ran) return lines.join('\n');
+  if (cell.output) lines.push(`output:\n${clipOutput(cell.output)}`);
+  if (cell.result != null) lines.push(`Out: ${clipOutput(cell.result)}`);
+  if (cell.error) lines.push(`error:\n${clipOutput(cell.error)}`);
+  if (!cell.output && cell.result == null && !cell.error) lines.push('(ran; printed nothing)');
+  return lines.join('\n');
+}
+
+/**
+ * Run one command, having written any files first, and hand back what it said
+ * — plus, when asked, one file it made, saved into the conversation. Python for
+ * the conversation's live session runs after the command, in the same folder.
+ *
+ * @param {{ command?: string, python?: string, python_reset?: boolean, files?: {path: string, content: string}[], download?: string, timeout_seconds?: number, as_root?: boolean }} input
  * @param {{ userId?: string, chatId?: string, signal?: AbortSignal }} [context]
  */
 export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   const command = String(input?.command || '').trim();
+  const python = typeof input?.python === 'string' ? input.python : '';
+  const resetPython = input?.python_reset === true;
   const files = Array.isArray(input?.files) ? input.files : [];
   const download = input?.download ? workPath(input.download) : null;
-  if (!command && !files.length && !download) {
-    throw new Error('Give a `command` to run, `files` to write, or a file to `download`.');
+  if (!command && !python.trim() && !resetPython && !files.length && !download) {
+    throw new Error('Give a `command` to run, `python` for the live session, `files` to write, or a file to `download`.');
   }
   if (files.length > MAX_FILES_IN) throw new Error(`Write at most ${MAX_FILES_IN} files per call.`);
 
@@ -438,7 +485,10 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   });
 
   await chargeCloud(String(userId));
-  const machine = await machineForUser(String(userId), { signal });
+  const seconds = Math.min(300, Math.max(5, Number(input?.timeout_seconds) || COMMAND_MS / 1000));
+  // Python alone goes straight to the machine's helper; the control API — a
+  // shared, rate-limited thing — is only asked for what needs it.
+  const machine = writes.length || command || download ? await machineForUser(String(userId), { signal }) : null;
 
   const report = [];
   if (writes.length) {
@@ -447,7 +497,6 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   }
 
   if (command) {
-    const seconds = Math.min(300, Math.max(5, Number(input?.timeout_seconds) || COMMAND_MS / 1000));
     const started = Date.now();
     // No `cwd`: the session's own working folder, which is where relative
     // paths in `files` and `download` land too. Root only when asked for —
@@ -465,6 +514,28 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
       out ? `stdout:\n${clipOutput(out)}` : 'stdout: (empty)',
       ...(err ? [`stderr:\n${clipOutput(err)}`] : []),
     );
+  }
+
+  /*
+   * The live session. Its figures are pictures the person asked for, so they
+   * are kept as the conversation's files — the first one drawn as the card,
+   * the rest named so the model can refer to them.
+   */
+  const pictures = [];
+  if (python.trim() || resetPython) {
+    const { runPythonCell } = await import('./cloudBrowser/index.js');
+    const cell = await runPythonCell(String(userId), { chatId, code: python, reset: resetPython, timeoutMs: seconds * 1000, signal });
+    report.push(pythonReport(cell, !!python.trim()));
+    const images = (Array.isArray(cell.images) ? cell.images : []).slice(0, 4);
+    for (const [i, data] of images.entries()) {
+      const saved = await saveGenerated(userId, { name: `figure-${i + 1}.png`, mime: 'image/png', kind: 'image', data, source: null, chatId });
+      pictures.push({ id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes });
+    }
+    if (pictures.length) {
+      report.push(
+        `Showed the user ${pictures.length === 1 ? 'the figure' : `${pictures.length} figures`} in the conversation: ${pictures.map((p) => `${p.name} (id ${p.id})`).join(', ')}.`,
+      );
+    }
   }
 
   let file = null;
@@ -496,15 +567,17 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
 
   let home = '';
   try {
-    home = machine.currentSession?.()?.cwd || '';
+    home = machine?.currentSession?.()?.cwd || '';
   } catch {
     /* an older SDK without sessions; the note just omits the folder */
   }
   report.push(
     `(This account's own cloud computer: it keeps its files and installs between conversations${home ? `; working folder ${home}` : ''}. ` +
-      'Full internet access; as_root: true for system packages.)',
+      'Full internet access; as_root: true for system packages. ' +
+      'The Python session keeps its variables while the computer is awake — about fifteen idle minutes.)',
   );
-  return { content: report.join('\n'), ...(file ? { file } : {}) };
+  const shown = file || pictures[0] || null;
+  return { content: report.join('\n'), ...(shown ? { file: shown } : {}) };
 }
 
 export const __testing = { SNAPSHOT_DAYS };

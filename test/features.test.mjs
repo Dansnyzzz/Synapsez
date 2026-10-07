@@ -356,7 +356,8 @@ section('page views and speed: on Vercel only, the path only, never against the 
   const speedSrc = fs.readFileSync(new URL('../public/vendor/vercel/speed-insights.mjs', import.meta.url), 'utf8');
   check('the scripts they add come from this origin, which `script-src \'self\'` allows', analyticsSrc.includes('return "/_vercel/insights/script.js"') && speedSrc.includes('return "/_vercel/speed-insights/script.js"'));
   const csp = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value;
-  check('  and the policy was not widened for them', /script-src 'self';/.test(csp) && /connect-src 'self';/.test(csp));
+  // The one addition is the cloud browser's socket to the account's own machine — nothing for these.
+  check('  and the policy was not widened for them', /script-src 'self';/.test(csp) && /connect-src 'self'(?: wss:\/\/\*\.vercel\.run)?;/.test(csp));
   const appSrc = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   check('the app starts it from the session, and says so only where it measures', /startInsights\(session\.insights\)/.test(appSrc) && /insightsNote\.hidden = !session\.insights/.test(appSrc) && /id="insights-note" data-i18n="memory\.insights" hidden/.test(html));
@@ -759,7 +760,8 @@ section('every setting the server and worker read is in the README (CODE-047)');
   const NOT_SETTINGS = new Set([
     'COMPUTERNAME', 'HOSTNAME', 'SHELL', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'NODE_ENV',
     'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
-    'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_VIEW_KEY', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY',
+    'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY', 'SYNZ_WORKDIR', 'SYNZ_RUN_UID',
+    'SYNZ_RUN_GID', 'SYNZ_RUN_HOME', 'SYNZ_PYTHON', 'SYNZ_KERNEL_PATH', 'SYNZ_TRACKERS', 'HOME', 'PATH',
   ]);
   const read = new Map();
   const walk = (dir) => {
