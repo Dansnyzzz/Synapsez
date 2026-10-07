@@ -735,6 +735,19 @@ section('deleting stored files across every account is asked for first (CODE-044
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+section('the privacy notice a new account agrees to is the one it can read (LAW-001)');
+{
+  const notice = fs.readFileSync(new URL('../public/privacy.html', import.meta.url), 'utf8');
+  const app = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+  const version = /const PRIVACY_NOTICE = '(privacy-\d{4}-\d{2}-\d{2})'/.exec(app)?.[1];
+  check('the page names the version the sign-up form sends', !!version && notice.includes(`Phiên bản ${version}`) && notice.includes(`Version ${version}`), version);
+  check('  in both languages, saying where data goes outside Vietnam and what rights there are', /ra nước ngoài/.test(notice) && /outside Vietnam/.test(notice) && /Quyền của bạn/.test(notice) && /Your rights/.test(notice));
+  check('  says it is not legal advice', /không phải tư vấn pháp lý/.test(notice) && /not legal advice/.test(notice));
+  check('  and runs no script — it is served under the page policy as it is', !/<script/i.test(notice));
+  const { AUDIT_KINDS } = await import('../server/audit.js');
+  check('agreeing is an event the security record keeps', AUDIT_KINDS.includes('consent_given'));
+}
+
 section('every setting the server and worker read is in the README (CODE-047)');
 {
   const path = await import('node:path');

@@ -13,10 +13,10 @@
  *     routing, and a standard account's does not;
  *   - one account's turn is never answered from another account's results.
  *
- * What is NOT pinned, because it does not exist yet: that the provider receives
- * the data de-identified (PRV-003). The first check below asserts the opposite —
- * that the provider gets the message as written — so the day a de-identifying
- * layer lands, this is the test that has to change with it.
+ *   - with masking off (the default) the provider gets the message as written;
+ *     with `maskPersonal` on (PRV-003) it gets placeholders, and the reply and
+ *     the tool arguments come back with the real values — through the gateway
+ *     itself, `streamCompletion`, the one door to every provider.
  *
  *   node test/egress.test.mjs
  */
@@ -143,11 +143,74 @@ section('a turn with personal data reaches the provider and nothing else');
     Object.assign(console, real);
   }
 
-  check('the provider receives the message as written (no de-identifying layer yet — PRV-003)', received.length === 1 && leaks(received[0]).length === 4, leaks(received[0] || '').join(', '));
+  check('with masking off — the default — the provider receives the message as written', received.length === 1 && leaks(received[0]).length === 4, leaks(received[0] || '').join(', '));
   check('no other request, TCP/TLS connection or dns.lookup leaves the process during the turn', outbound.length === 0, outbound.join(', '));
   check('nothing the process printed carries the personal data', printed.every((line) => !leaks(line).length), printed.find((line) => leaks(line).length)?.slice(0, 120));
   const record = JSON.stringify(await store.listAudit(user.id, 200));
   check('nothing in the security record carries it', !leaks(record).length);
+}
+
+section('with masking on, the provider never sees the personal data, and the person sees it all (PRV-003)');
+{
+  const masked = await makeUser('u-masked');
+  await setPrefs(masked.id, { maskPersonal: true });
+  const { setApiKey } = await import('../server/settings.js');
+  await setApiKey(masked.id, 'anthropic', 'sk-ant-egress-suite-placeholder');
+  const sent = [];
+  // The provider answers with the placeholders it was given — one split across
+  // two deltas — and asks to email the person by placeholder.
+  const streamOne = async function* dispatch(_entry, common) {
+    sent.push({ system: common.system, messages: JSON.stringify(common.messages) });
+    yield { type: 'text', delta: 'Chào <PERSON_1>, số <PHO' };
+    yield { type: 'text', delta: 'NE_1> và <EMAIL_1>.' };
+    yield {
+      type: 'done',
+      stopReason: 'tool_use',
+      toolCalls: [{ id: 't1', name: 'send_email', input: { to: '<EMAIL_1>', body: 'CCCD <ID_1> của <PERSON_1>' } }],
+      usage: { input: 50, output: 9 },
+    };
+  };
+  const printed = [];
+  const real = { log: console.log, info: console.info, warn: console.warn, error: console.error };
+  for (const level of Object.keys(real)) console[level] = (...args) => printed.push(args.map(String).join(' '));
+  const events = [];
+  try {
+    for await (const ev of streamCompletion({
+      userId: masked.id,
+      entry: { provider: 'anthropic', model: 'claude-opus-5', context: 200_000, maxOutput: 8192 },
+      system: `Ghi chú: email của người dùng là ${PII.email}`,
+      messages: [{ id: 'x', role: 'user', text: message }],
+      tools: [],
+      streamOne,
+    })) {
+      events.push(ev);
+    }
+  } finally {
+    Object.assign(console, real);
+  }
+  const outgoing = `${sent[0]?.system}\n${sent[0]?.messages}`;
+  check('the provider receives none of the personal data', sent.length === 1 && leaks(outgoing).length === 0, leaks(outgoing).join(', '));
+  check(
+    '  only placeholders, the same one for the same value in the system prompt and the message',
+    /<PERSON_1>/.test(sent[0]?.messages) && /<PHONE_1>/.test(sent[0]?.messages) && /<ID_1>/.test(sent[0]?.messages) && /email <EMAIL_1>/.test(sent[0]?.messages) && /^Ghi chú: email của người dùng là <EMAIL_1>/.test(sent[0]?.system || '') && !/<EMAIL_2>/.test(outgoing),
+    outgoing.slice(0, 300),
+  );
+  check('  and is told what they are', /placeholders/.test(sent[0]?.system || ''));
+  const shown = events.filter((e) => e.type === 'text').map((e) => e.delta).join('');
+  check('the reply reaches the person with the real values, even one split across deltas', shown === `Chào ${PII.name}, số ${PII.phone} và ${PII.email}.`, shown);
+  const call = events.find((e) => e.type === 'done')?.toolCalls?.[0];
+  check('  and a tool runs on the real values', call?.input?.to === PII.email && call?.input?.body === `CCCD ${PII.cccd} của ${PII.name}`, JSON.stringify(call?.input));
+  check('  while nothing printed — the span line included — carries any of it', printed.every((line) => !leaks(line).length), printed.find((line) => leaks(line).length)?.slice(0, 120));
+
+  // What it finds, and what it leaves.
+  const { createShield } = await import('../server/deidentify.js');
+  const shield = createShield();
+  const probe = shield.maskText(
+    'STK: 0123 456 789 01, CMND số 123456789, thẻ 4111 1111 1111 1111, +84 987 654 321, họ và tên: Trần Thị Bình. ' +
+      'Năm 2026 giá 1.000.000 đồng, mã đơn 4111111111111112, điện thoại bàn 1900 1234.',
+  );
+  check('a labelled account, a labelled ID, a card, an international number and a labelled name are masked', /STK: <ACCOUNT_1>/.test(probe) && /CMND số <ID_1>/.test(probe) && /thẻ <CARD_1>/.test(probe) && /<PHONE_1>/.test(probe) && /họ và tên: <PERSON_1>/.test(probe), probe);
+  check('  and a year, a price, a number that fails the card check and a hotline are not', /Năm 2026 giá 1\.000\.000 đồng, mã đơn 4111111111111112, điện thoại bàn 1900 1234/.test(probe), probe);
 }
 
 section('strict privacy reaches the wire, standard does not');

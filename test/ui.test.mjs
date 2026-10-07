@@ -146,9 +146,22 @@ check(
   await page.isHidden('#gate-remember-row'),
 );
 
+// LAW-001: agreeing to the privacy notice is a tick of the person's own.
+check('signing up asks for agreement to the privacy notice, with a link to it', (await page.isVisible('#gate-consent-row')) && (await page.getAttribute('#gate-consent-row a', 'href')) === '/privacy.html');
+await page.click('#gate-submit');
+await page.waitForTimeout(600);
+const unticked = await page.evaluate(() => ({ error: !document.getElementById('gate-error').hidden, stillGate: !!document.getElementById('gate-form') && !document.getElementById('model-chip')?.offsetParent }));
+check('  and does not go ahead without the tick', unticked.error && unticked.stillGate, JSON.stringify(unticked));
+await page.check('#gate-consent');
 await page.click('#gate-submit');
 await page.waitForTimeout(1600);
 check('the app opened', await page.isVisible('#model-chip'));
+{
+  const { getStore } = await import('../server/store/index.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  const consented = (await getStore().listAudit(me.id, 50)).find((e) => e.kind === 'consent_given');
+  check('  and the agreement is in the security record, with the notice\'s version', consented?.detail?.notice === 'privacy-2026-10-06', JSON.stringify(consented?.detail));
+}
 
 /**
  * The guide is the first thing a new account meets, and then it is gone.
@@ -2075,6 +2088,25 @@ section('the model is one setting, with one control');
   // changed, and a second copy in Settings was the owner's "dư thừa".
   check('Settings has no Scheduled tab either', !settingsPanel.tasksTab);
 
+  // PRV-003: hiding personal details from the provider is one switch, saved to the account.
+  {
+    const { getStore } = await import('../server/store/index.js');
+    const { getPrefs } = await import('../server/settings.js');
+    const me = await getStore().getUserByEmail('ui@test.local');
+    await page.click('#tab-memory');
+    await page.waitForTimeout(400);
+    const before = await page.evaluate(() => /** @type {HTMLInputElement} */ (document.getElementById('mask-personal'))?.checked);
+    await page.check('#mask-personal');
+    await page.click('#save-memory-prefs');
+    await page.waitForTimeout(800);
+    const saved = (await getPrefs(me.id)).maskPersonal;
+    check('Settings offers to hide personal details from the provider, off at first', before === false, String(before));
+    check('  and the switch is saved to the account', saved === true, String(saved));
+    await page.uncheck('#mask-personal');
+    await page.click('#save-memory-prefs');
+    await page.waitForTimeout(600);
+  }
+
   // The reload is what used to expose the disagreement.
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
@@ -3862,6 +3894,7 @@ section('the guide does not come back after a mid-way reload');
   await page.fill('#gate-name', 'Người mới');
   await page.fill('#gate-email', 'nguoi-moi@example.com');
   await page.fill('#gate-password', 'mot-mat-khau-dai');
+  await page.check('#gate-consent');
   await page.click('#gate-submit');
   await page.waitForTimeout(2600);
 

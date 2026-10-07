@@ -21,7 +21,7 @@ import { log } from './util/trace.js';
 export const AUDIT_KINDS = [
   'sign_in', 'sign_in_failed', 'password_changed', 'password_reset', 'two_factor_on', 'two_factor_off',
   'key_added', 'key_removed', 'data_exported', 'data_imported', 'memory_cleared', 'chat_shared',
-  'chat_unshared', 'settings_privacy', 'account_deleted_user',
+  'chat_unshared', 'settings_privacy', 'account_deleted_user', 'consent_given',
 ];
 
 /** The network a request came from, never the address itself. */

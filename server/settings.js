@@ -96,6 +96,14 @@ export const DEFAULT_PREFS = {
    * makes those unavailable — a choice the person has to make knowingly.
    */
   providerPrivacy: 'standard',
+  /**
+   * Personal data swapped for placeholders before anything reaches a provider,
+   * and put back on the way out (PRV-003, server/deidentify.js). Off by default:
+   * it catches what has a recognisable shape or a label, not a name dropped
+   * mid-sentence, and a model reasoning about `<EMAIL_1>` is a model working
+   * with less — a trade somebody should choose knowingly.
+   */
+  maskPersonal: false,
 };
 
 /** The languages the interface has strings for. See public/js/locales/. */
@@ -195,10 +203,11 @@ async function usableDefaultModel(userId, fallback) {
  */
 const PRIVACY_CACHE = new Map();
 const PRIVACY_TTL_MS = 60_000;
-export async function providerPrivacyFor(userId) {
-  if (!userId) return 'standard';
+
+/** Both privacy choices for the provider layer, read once and remembered together. */
+async function privacyChoices(userId) {
   const hit = PRIVACY_CACHE.get(userId);
-  if (hit && Date.now() - hit.at < PRIVACY_TTL_MS) return hit.value;
+  if (hit && Date.now() - hit.at < PRIVACY_TTL_MS) return hit;
   let stored;
   try {
     stored = (await getStore().getUserSetting(userId, PREFS_KEY)) || {};
@@ -209,13 +218,25 @@ export async function providerPrivacyFor(userId) {
     // long as the database stayed unreachable; guessing "strict" costs a
     // standard account at most one refusal it can read ("No provider serving
     // this model promises…") on a turn that a database outage was about to
-    // fail anyway. Not remembered, so the next call asks again.
-    return hit?.value || 'strict';
+    // fail anyway. The same for masking: unknown means masked. Not remembered,
+    // so the next call asks again.
+    return hit || { value: 'strict', mask: true };
   }
-  const value = stored.providerPrivacy === 'strict' ? 'strict' : 'standard';
-  PRIVACY_CACHE.set(userId, { value, at: Date.now() });
+  const choices = { value: stored.providerPrivacy === 'strict' ? 'strict' : 'standard', mask: stored.maskPersonal === true, at: Date.now() };
+  PRIVACY_CACHE.set(userId, choices);
   if (PRIVACY_CACHE.size > 500) PRIVACY_CACHE.delete(PRIVACY_CACHE.keys().next().value);
-  return value;
+  return choices;
+}
+
+export async function providerPrivacyFor(userId) {
+  if (!userId) return 'standard';
+  return (await privacyChoices(userId)).value;
+}
+
+/** Whether this account has personal data masked before a provider sees it (PRV-003). */
+export async function maskPersonalFor(userId) {
+  if (!userId) return false;
+  return (await privacyChoices(userId)).mask;
 }
 
 export async function setPrefs(userId, patch) {
@@ -229,7 +250,7 @@ export async function setPrefs(userId, patch) {
     throw new Error(`"${patch.language}" is not a language this interface has. Use one of: ${[...LANGUAGES].join(', ')}.`);
   }
   if ('onboarded' in patch) next.onboarded = !!patch.onboarded;
-  for (const flag of ['memory', 'memorySensitive', 'chatSearch']) if (flag in patch) next[flag] = !!patch[flag];
+  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal']) if (flag in patch) next[flag] = !!patch[flag];
   if ('retentionDays' in patch) {
     const days = Number(patch.retentionDays);
     if (!RETENTION_DAYS.includes(days)) {

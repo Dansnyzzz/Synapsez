@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Thông báo xử lý dữ liệu cá nhân · Privacy notice</title>
+  <meta name="robots" content="noindex" />
+  <style>
+    :root { color-scheme: light dark; --text: #1d2129; --dim: #555d6b; --bg: #ffffff; --line: #e3e6ea; --accent: #6d4ae8; }
+    @media (prefers-color-scheme: dark) { :root { --text: #e8eaee; --dim: #a6adba; --bg: #0f1115; --line: #2a2f38; --accent: #a993ff; } }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 1.6rem; line-height: 1.3; margin: 0 0 8px; }
+    h2 { font-size: 1.15rem; margin: 28px 0 8px; }
+    p, li { color: var(--text); }
+    .dim { color: var(--dim); font-size: 0.92rem; }
+    .note { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 16px 0; }
+    hr { border: 0; border-top: 1px solid var(--line); margin: 48px 0; }
+    a { color: var(--accent); }
+    ul { padding-left: 1.2em; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Thông báo xử lý dữ liệu cá nhân</h1>
+  <p class="dim">Phiên bản privacy-2026-10-06. <a href="#en">English below</a>.</p>
+
+  <div class="note">
+    Đây là bản thông báo do mã nguồn ứng dụng cung cấp, mô tả đúng những gì phần mềm làm. Bên vận hành bản
+    triển khai này cần điền thông tin của mình, đối chiếu với Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15 và văn
+    bản hướng dẫn, và nhờ luật sư xác nhận. Đây không phải tư vấn pháp lý.
+  </div>
+
+  <h2>1. Bên kiểm soát dữ liệu</h2>
+  <p>[Tên cá nhân hoặc tổ chức vận hành bản triển khai này] — liên hệ: [email]. Mọi yêu cầu về dữ liệu của bạn gửi tới địa chỉ này.</p>
+
+  <h2>2. Dữ liệu được xử lý</h2>
+  <ul>
+    <li>Tài khoản: tên, email, mật khẩu (chỉ lưu dạng băm, không ai đọc được), cài đặt của bạn.</li>
+    <li>Nội dung: tin nhắn, tệp bạn gửi, tệp trợ lý tạo ra, ghi chú trong bộ nhớ, dự án và lịch chạy bạn tạo.</li>
+    <li>Khoá API bạn tự thêm cho các nhà cung cấp mô hình — được mã hoá khi lưu.</li>
+    <li>Nhật ký bảo mật: thời điểm đăng nhập, đổi mật khẩu, xuất dữ liệu…, kèm mạng gửi yêu cầu và loại trình duyệt — không lưu nguyên địa chỉ IP.</li>
+    <li>Nếu bạn ghép máy tính của mình hoặc kết nối Google: thông tin máy và những gì bạn cho phép trợ lý đọc.</li>
+  </ul>
+
+  <h2>3. Mục đích</h2>
+  <p>Để trợ lý trả lời và làm việc bạn yêu cầu, giữ an toàn cho tài khoản, và vận hành dịch vụ. Dữ liệu của bạn không được bán, không dùng cho quảng cáo.</p>
+
+  <h2>4. Nơi dữ liệu được gửi tới, kể cả ra nước ngoài</h2>
+  <ul>
+    <li><strong>Nhà cung cấp mô hình bạn chọn</strong> — Anthropic, OpenAI, Google, OpenRouter (và nhà cung cấp mà OpenRouter định tuyến tới, gồm cả mô hình miễn phí và Auto), OrcaRouter. Tin nhắn và nội dung tệp liên quan được gửi để tạo câu trả lời. Máy chủ của họ chủ yếu ở Hoa Kỳ và các nước khác ngoài Việt Nam.</li>
+    <li><strong>Vercel</strong> (chạy ứng dụng và máy tính đám mây) và <strong>Neon</strong> (cơ sở dữ liệu) — vị trí theo cấu hình của bên vận hành.</li>
+    <li><strong>Tìm kiếm web</strong>, khi trợ lý tìm kiếm: câu truy vấn tới Exa, DuckDuckGo, Tavily, Brave hoặc Google.</li>
+    <li><strong>Email</strong>, khi bạn nhờ gửi: qua dịch vụ email bên vận hành cấu hình (Gmail, Resend hoặc SMTP).</li>
+    <li><strong>Google</strong>, chỉ khi bạn tự kết nối Gmail, Drive, Lịch…</li>
+    <li><strong>Vercel Web Analytics và Speed Insights</strong>: số liệu truy cập và tốc độ trang, ẩn danh, không có nội dung hội thoại.</li>
+  </ul>
+
+  <h2>5. Biện pháp bảo vệ bạn có thể bật</h2>
+  <ul>
+    <li><strong>Nghiêm ngặt</strong> (Cài đặt → Bộ nhớ &amp; quyền riêng tư): chỉ gửi tới nhà cung cấp không lưu và không huấn luyện trên dữ liệu (áp dụng cho OpenRouter).</li>
+    <li><strong>Che thông tin cá nhân</strong>: email, số điện thoại, số CMND/CCCD, số tài khoản, số thẻ và tên có nhãn được thay bằng mã giữ chỗ trước khi gửi cho nhà cung cấp.</li>
+    <li><strong>Hội thoại ẩn danh</strong>: không vào lịch sử, không vào bộ nhớ, tự xoá một ngày sau lần dùng cuối.</li>
+    <li>Tắt bộ nhớ, tắt tìm trong hội thoại cũ, chọn thời hạn lưu.</li>
+  </ul>
+
+  <h2>6. Thời gian lưu</h2>
+  <p>Đến khi bạn xoá, hoặc theo thời hạn bạn chọn (30, 90, 180 hoặc 365 ngày sau lần dùng cuối); hội thoại ghim luôn được giữ. Xoá tài khoản là xoá toàn bộ dữ liệu của tài khoản. Nhà cung cấp mô hình có thể lưu theo điều khoản riêng của họ — xem mục 5.</p>
+
+  <h2>7. Quyền của bạn</h2>
+  <ul>
+    <li>Biết và xem dữ liệu: mọi thứ hiện trong ứng dụng; nhật ký bảo mật ở Cài đặt → Tài khoản.</li>
+    <li>Nhận bản sao: Cài đặt → Tài khoản → Xuất dữ liệu.</li>
+    <li>Sửa, xoá: sửa hoặc xoá từng hội thoại, tệp, ghi chú; xoá tài khoản.</li>
+    <li>Rút lại đồng ý: xoá tài khoản; hoặc tắt bộ nhớ và các tính năng ở mục 5.</li>
+    <li>Yêu cầu khác, khiếu nại: gửi tới bên kiểm soát ở mục 1.</li>
+  </ul>
+
+  <hr />
+
+  <h1 id="en" lang="en">Privacy notice</h1>
+  <div lang="en">
+    <p class="dim">Version privacy-2026-10-06.</p>
+    <div class="note">
+      This notice ships with the application and describes what the software does. Whoever runs this deployment
+      must fill in their details, check it against Vietnam's Personal Data Protection Law (91/2025/QH15) and the
+      rules under it, and have a lawyer confirm it. It is not legal advice.
+    </div>
+    <h2>1. Controller</h2>
+    <p>[The person or organisation running this deployment] — contact: [email].</p>
+    <h2>2. What is processed</h2>
+    <p>Your account (name, email, a password stored only as a hash, settings); what you write and send, the files the assistant makes, memory notes, projects and schedules; API keys you add (encrypted); a security record of sign-ins and similar events with the network and browser type, never the full IP address; and, if you pair a computer or connect Google, what you allow the assistant to read there.</p>
+    <h2>3. Why</h2>
+    <p>To answer you and do what you ask, to keep your account safe, and to run the service. Your data is not sold and not used for advertising.</p>
+    <h2>4. Where it goes, including outside Vietnam</h2>
+    <p>The model provider you choose — Anthropic, OpenAI, Google, OpenRouter (and the providers it routes to, free models and Auto included), OrcaRouter — receives your messages and the content of the files involved, mostly on servers in the United States and elsewhere. Vercel runs the app and the cloud computer; Neon holds the database. Web searches go to Exa, DuckDuckGo, Tavily, Brave or Google; emails you ask for go through the email service the operator set up; Google only if you connect it. Vercel Web Analytics and Speed Insights receive anonymous page and speed figures, never conversation content.</p>
+    <h2>5. Protections you can switch on</h2>
+    <p>Strict provider privacy (OpenRouter only to providers that keep and train on nothing); hiding personal details from the provider (emails, phone, ID, account and card numbers, labelled names become placeholders); incognito conversations; turning memory and conversation search off; a retention period.</p>
+    <h2>6. How long</h2>
+    <p>Until you delete it, or for the period you choose (30, 90, 180 or 365 days after last use; pinned conversations are kept). Deleting the account deletes everything in it. Model providers may keep data under their own terms — see 5.</p>
+    <h2>7. Your rights</h2>
+    <p>See and export your data (Settings → Account, where the security record is too), correct or delete any of it, delete the account to withdraw consent, and send any other request or complaint to the controller in 1.</p>
+  </div>
+</main>
+</body>
+</html>
