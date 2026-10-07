@@ -396,13 +396,17 @@ export async function browserAddress(machine, { signal } = {}) {
 export function shellFor(command, env = {}, { userBin = false } = {}) {
   const systemPath = [
     'source /etc/profile >/dev/null 2>&1 || true',
-    // Every entry under the account's home, or relative, dropped from what the system set.
-    '_orig="$PATH"; _keep=; IFS=: read -ra _dirs <<< "$PATH"; for _d in "${_dirs[@]}"; do case "$_d" in "$HOME"*|"~"*|""|.*) ;; *) _keep="${_keep:+$_keep:}$_d" ;; esac; done',
+    // Every entry under the account's home, relative, or writable by the account
+    // dropped from what the system set — the property that matters is who can
+    // put a program there, not where the folder is.
+    '_orig="$PATH"; _keep=; _open=; IFS=: read -ra _dirs <<< "$PATH"; for _d in "${_dirs[@]}"; do case "$_d" in "$HOME"*|[!/]*|"") ;; *) if [ -w "$_d" ]; then _open="${_open:+$_open:}$_d"; else _keep="${_keep:+$_keep:}$_d"; fi ;; esac; done',
     `export PATH="\${_keep:-/usr/local/bin:/usr/bin:/bin}${userBin ? ':$HOME/.local/bin:$HOME/bin' : ''}"`,
-    // An image that keeps node under the home folder still starts its services:
-    // the original PATH comes back, after the system's, rather than nothing.
+    // An image that keeps node somewhere the account can write still starts its
+    // services: such folders outside home come back first, after the system's,
+    // and only then — node still missing — the original PATH, rather than nothing.
+    'command -v node >/dev/null 2>&1 || export PATH="$PATH${_open:+:$_open}"',
     'command -v node >/dev/null 2>&1 || export PATH="$PATH:$_orig"',
-    'unset _orig _keep _dirs _d',
+    'unset _orig _keep _open _dirs _d',
   ].join('\n');
   return {
     cmd: 'bash',

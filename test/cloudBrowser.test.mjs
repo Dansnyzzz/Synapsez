@@ -123,7 +123,7 @@ section('a command on the cloud computer reads none of the account\'s login file
   check('  the system profile alone, then the command', /^source \/etc\/profile/.test(shell.args[3]) && shell.args[3].endsWith('\necho hi') && !/\.(bash_)?profile\b(?!.*etc)|bashrc/.test(shell.args[3].replace('/etc/profile', '')), shell.args[3]);
   check('  BASH_ENV cleared, and the caller\'s own environment kept', shell.env.BASH_ENV === '' && shell.env.ENV === '' && shell.env.SYNZ_KEY === 'k');
   const userShell = shellFor('echo hi', {}, { userBin: true });
-  check('a service start keeps the account\'s own folders off its PATH', !/\.local\/bin/.test(shell.args[3]) && /case "\$_d" in "\$HOME"\*/.test(shell.args[3]), shell.args[3]);
+  check('a service start keeps the account\'s own folders off its PATH', !/\.local\/bin/.test(shell.args[3]) && /case "\$_d" in "\$HOME"\*\|\[!\/\]\*/.test(shell.args[3]) && /if \[ -w "\$_d" \]; then _open=/.test(shell.args[3]) && shell.args[3].indexOf('$_open') < shell.args[3].indexOf(':$_orig'), shell.args[3]);
   check('  and a command the account runs has them after the system\'s, never ahead', /export PATH="\$\{_keep:-[^}]*\}:\$HOME\/\.local\/bin:\$HOME\/bin"/.test(userShell.args[3]), userShell.args[3]);
   const sources = ['server/sandbox.js', 'server/cloudBrowser/index.js', 'server/mcp/cloud.js'].map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'));
   check('  and nothing on the machine starts through a login shell any more', sources.every((s) => !/['"]-lc['"]/.test(s)));
