@@ -113,8 +113,8 @@ export const branch = () => git(['rev-parse', '--abbrev-ref', 'HEAD']);
  * work, and then evaporated.
  *
  * That is not a small annoyance in a repository like this one. An audit commits
- * documentation constantly, and this cost four full runs of the thirty-one
- * suites in a single session, for markdown. The comment on `NOT_SOURCE` says
+ * documentation constantly, and this cost four full runs of every suite in a
+ * single session, for markdown. The comment on `NOT_SOURCE` says
  * exactly where that leads: it is how a gate earns its way into being switched
  * off.
  *
