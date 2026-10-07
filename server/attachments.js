@@ -199,7 +199,7 @@ export async function saveGenerated(userId, { name, mime, kind, data, source, ch
  */
 const MAX_SHOT_BYTES = 80 * 1024;
 
-export async function keepStepShot(userId, shot) {
+export async function keepStepShot(userId, shot, { chatId = null } = {}) {
   const data = String(shot?.data || '');
   if (!data) return null;
   if ((data.length * 3) / 4 > MAX_SHOT_BYTES) return null;
@@ -211,6 +211,9 @@ export async function keepStepShot(userId, shot) {
       kind: 'image',
       data,
       origin: 'step',
+      // The conversation it belongs to, so it goes when that does — deleted,
+      // retired by the retention period, or an incognito chat swept.
+      chatId,
     });
     // Only the id travels on: the transcript should reference the picture, never
     // carry it.

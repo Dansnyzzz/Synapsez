@@ -720,6 +720,17 @@ section('a step screenshot is kept for the assistant, not shelved as a file');
   check('  and the Files shelf does not list it', shelf.status === 200 && !(shelf.json?.files || []).some((f) => f.id === kept?.id), `${shelf.status}`);
   const shown = await alice.call('GET', `/api/attachments/${kept?.id}`);
   check('  while the conversation can still show it', shown.status === 200, `${shown.status}`);
+
+  // It belongs to its conversation, and goes when that does.
+  await store.createChat(aliceId, { id: 'c-steps', title: 'browsing' });
+  const ofChat = await keepStepShot(aliceId, { data: Buffer.from('another step').toString('base64'), mime: 'image/jpeg' }, { chatId: 'c-steps' });
+  check('a step screenshot is kept with its conversation', (await store.getAttachment(aliceId, ofChat?.id))?.chat_id === 'c-steps');
+  await store.deleteChat(aliceId, 'c-steps');
+  check('  and deleting the conversation deletes it', !(await store.getAttachment(aliceId, ofChat.id)));
+  // One with no conversation is left by the daily sweep until it is a month old (see schema.test).
+  const old = await keepStepShot(aliceId, { data: Buffer.from('an old step').toString('base64'), mime: 'image/jpeg' });
+  await store.pruneOrphanAttachments();
+  check('  an orphan from today survives the daily sweep', !!(await store.getAttachment(aliceId, old.id)));
 }
 
 /* ── versions, and the two Open buttons ────────────────────────── */

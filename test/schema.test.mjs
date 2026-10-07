@@ -265,6 +265,15 @@ section('a step screenshot leaves the Files shelf (schema 30)');
   );
   const shelf = (await store.listAllGeneratedFiles('u-step')).map((f) => f.id);
   check('  so the Files shelf lists what was made, not the screenshot', !shelf.includes('shot-old') && shelf.includes('picture'), shelf.join(','));
+
+  // Nothing else would ever delete one with no conversation: the daily sweep
+  // takes it after a month, and leaves a newer one and everything else.
+  await add('shot-recent', { name: 'step-1791129697470.jpg', origin: 'step' });
+  await driver.query(`UPDATE attachments SET created_at = NOW() - INTERVAL '40 days' WHERE id IN ('shot-old', 'picture')`);
+  await store.pruneOrphanAttachments();
+  const left = (await driver.query(`SELECT id FROM attachments WHERE user_id = 'u-step'`)).map((r) => r.id);
+  check('an orphaned step screenshot older than a month is swept', !left.includes('shot-old'), left.join(','));
+  check('  a newer one and a file somebody made are not', left.includes('shot-recent') && left.includes('picture'), left.join(','));
 }
 
 section('and the stamp is what decides');

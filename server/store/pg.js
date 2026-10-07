@@ -2017,6 +2017,13 @@ export function createPgStore(connectionString) {
             AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id)`,
         [String(olderThanHours)],
       );
+      // A step screenshot kept before it was tied to its conversation has nothing
+      // that would ever delete it — no conversation to go with, no shelf to be
+      // removed from. A month is long enough to look back at a run.
+      await q(
+        `DELETE FROM attachments
+          WHERE chat_id IS NULL AND origin = 'step' AND created_at < NOW() - INTERVAL '30 days'`,
+      );
     },
 
     /**

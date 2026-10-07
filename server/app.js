@@ -691,7 +691,19 @@ export function createApp() {
         // written into this row. A browsing session is dozens of these, and
         // inlining them would put megabytes of base64 into the transcript that
         // gets read back on every reload.
-        result: error ? { error } : { output, ...(shot ? { shot: await keepStepShot(req.workerUser.id, shot) } : {}) },
+        result: error
+          ? { error }
+          : {
+              output,
+              ...(shot
+                ? {
+                    shot: await keepStepShot(req.workerUser.id, shot, {
+                      // Kept with the job's conversation, so it goes when that does.
+                      chatId: (await getStore().getJob(req.workerUser.id, req.params.id).catch(() => null))?.chat_id || null,
+                    }),
+                  }
+                : {}),
+            },
       });
       res.json({ ok: true });
     }),

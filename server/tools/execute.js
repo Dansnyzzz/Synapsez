@@ -445,7 +445,7 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           // What the person answered on a question card, in their words.
           answered: result.answered,
           // A picture of the page the cloud browser is on, kept like a worker's.
-          shot: result.shot ? await keepStepShot(userId, result.shot) : undefined,
+          shot: result.shot ? await keepStepShot(userId, result.shot, { chatId }) : undefined,
         };
       }
       return { isError: false, content: String(result ?? '') };
@@ -475,7 +475,7 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
         return {
           isError: false,
           content: String(output.text ?? ''),
-          shot: output.shot ? await keepStepShot(userId, output.shot) : undefined,
+          shot: output.shot ? await keepStepShot(userId, output.shot, { chatId }) : undefined,
         };
       }
       return { isError: false, content: String(output ?? '') };
