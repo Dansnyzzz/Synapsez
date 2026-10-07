@@ -34,8 +34,10 @@ needs a paid service.
 
 - **Hide personal details from the model's provider** (Settings → Memory & privacy, off by default):
   emails, phone numbers, CCCD/ID and account numbers, card numbers and labelled names become placeholders
-  before anything leaves, and are put back in the reply and before any tool runs (PRV-003). What it cannot
-  catch — a name with no label, an address — is said in the setting.
+  before anything leaves — in text, tool results and PDFs (sent as their text while this is on) — and are put
+  back in the reply and before any tool runs (PRV-003). A placeholder is the value's keyed hash, the same all
+  conversation and unguessable; one put back into a web address asks first. What it cannot catch — a name
+  with no label, an address, a picture — is said in the setting.
 - A bilingual privacy notice (`/privacy.html`), a tick to agree to it at sign-up kept in the security
   record, and a cross-border transfer assessment template in `docs/legal/` (LAW-001). The operator fills in
   their name and contact and has a lawyer confirm it.
@@ -45,9 +47,14 @@ needs a paid service.
 - A shared link taken back stops serving on every instance at once (CODE-032).
 - On a deployment set to `ACCESS_TOKEN` alone, the Google sign-in and picture addresses were signed with an
   empty key or a constant in this repository; both now use a real secret, and the boot says `ACCESS_TOKEN`
-  cannot be rotated in halves (SEC-047).
-- Nothing on the cloud computer runs through the account's login files, so a planted `~/.bash_profile` no
-  longer runs ahead of every command (HAR-001).
+  cannot be rotated in halves (SEC-047). On such a deployment, picture links in older replies stop loading
+  and a Google sign-in started before the update fails once; nothing changes where `SESSION_SECRET` or
+  `ENCRYPTION_KEY` is set.
+- Nothing on the cloud computer runs through the account's login files, and the account's own folders never
+  come ahead of the system on its PATH, so a planted `~/.bash_profile` or `~/.local/bin/node` no longer runs
+  ahead of every command or service start (HAR-001).
+- A step screenshot belongs to its conversation and goes when that does; ones kept before are swept after a
+  month.
 - Every model call is an OpenTelemetry GenAI span in the log, with no content (HAR-004).
 - A scan's pages are drawn on a worker with a deadline (PERF-023); research ranks `gov`/`edu` as primary
   only where the registry keeps those names for real institutions (ACC-017).
