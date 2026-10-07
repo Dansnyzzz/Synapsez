@@ -347,8 +347,11 @@ if (!chrome) {
     check('a person can drive it, and hears where the page went', moved.ok && moved.title === 'Form', moved.title);
 
     await cb.closeCloudBrowser('u-cb');
-    await new Promise((r) => setTimeout(r, 500));
-    check('close stops the service and forgets the address', child.exitCode === 0 && (await cb.cloudBrowserState('u-cb')).open === false);
+    // Chromium takes its own time to shut down — under a loaded gate more than
+    // the half second this used to allow, which failed one run in two. Waited
+    // for, up to a ceiling, rather than guessed.
+    for (let waited = 0; child.exitCode === null && waited < 10_000; waited += 100) await new Promise((r) => setTimeout(r, 100));
+    check('close stops the service and forgets the address', child.exitCode === 0 && (await cb.cloudBrowserState('u-cb')).open === false, `exit ${child.exitCode}`);
   } finally {
     child.kill();
     site.close();
