@@ -29,7 +29,9 @@ export const CONTENT_SECURITY_POLICY = [
   "font-src 'self'",
   // A YouTube link in a reply plays in place, from the no-cookie domain only.
   "frame-src 'self' https://www.youtube-nocookie.com",
-  "connect-src 'self'",
+  // The cloud browser's live screen and a person's gestures, over one socket
+  // straight to the account's machine — never through this app's server.
+  "connect-src 'self' wss://*.vercel.run",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

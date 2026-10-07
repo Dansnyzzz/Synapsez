@@ -8,7 +8,7 @@ import { isMcpTool, callMcpTool, splitMcpName } from '../mcp/registry.js';
 import { keepStepShot } from '../attachments.js';
 import { redactSecrets } from '../redact.js';
 import { untrusted } from './untrusted.js';
-import { validateArguments } from './validate.js';
+import { readArguments } from './validate.js';
 import { normaliseQuestions } from './askOptions.js';
 
 const POLL_MS = 400;
@@ -250,7 +250,7 @@ export async function executeTool(args) {
   const def = TOOLS_BY_NAME[args?.name];
   let notes = [];
   if (def?.parameters) {
-    let checked = validateArguments(def.parameters, args.input);
+    let checked = readArguments(args.name, def.parameters, args.input);
     /*
      * A question form is judged by the same reader that drew it.
      *

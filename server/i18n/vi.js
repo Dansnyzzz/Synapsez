@@ -129,8 +129,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Đã đóng trình duyệt đám mây. Các phiên đăng nhập được giữ lại cho lần sau.',
   'The cloud browser did not come up in time.{0}': 'Trình duyệt đám mây không khởi động kịp.{0}',
   'Unknown action "{0}". One of: {1}.': 'Không có thao tác "{0}". Chọn một trong: {1}.',
-  'The cloud browser started but did not answer. Try once more.':
-    'Trình duyệt đám mây đã khởi động nhưng không phản hồi. Hãy thử lại một lần nữa.',
+  "The cloud computer's helper started but did not answer. Try once more.":
+    'Trình trợ giúp trên máy tính đám mây đã khởi động nhưng không phản hồi. Hãy thử lại một lần nữa.',
+  "The cloud computer's helper stopped as it started.{0}": 'Trình trợ giúp trên máy tính đám mây dừng ngay khi vừa khởi động.{0}',
   '{0}\nThe page is now: {1} {2}. Look again before the next step.':
     '{0}\nTrang hiện tại: {1} {2}. Hãy xem lại trang trước bước tiếp theo.',
   'That is not something the screen can do.': 'Màn hình không làm được thao tác đó.',
@@ -873,8 +874,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "{0} không có mã nguồn đã lưu để sửa. Hãy gửi toàn bộ nội dung thay vào đó.",
   // The cloud computer (server/sandbox.js).
   'A file needs a path, e.g. "data/input.csv".': 'Tệp cần có đường dẫn, ví dụ "data/input.csv".',
-  'Give a `command` to run, `files` to write, or a file to `download`.':
-    'Hãy đưa `command` để chạy, `files` để ghi, hoặc một tệp để `download`.',
+  'Give a `command` to run, `python` for the live session, `files` to write, or a file to `download`.':
+    'Hãy đưa `command` để chạy, `python` cho phiên Python đang mở, `files` để ghi, hoặc một tệp để `download`.',
   'Write at most {0} files per call.': 'Mỗi lần ghi tối đa {0} tệp.',
   '{0} is over 2MB; write it in parts or generate it inside the machine.':
     '{0} lớn hơn 2MB; hãy ghi từng phần hoặc tạo nó ngay trong máy.',
@@ -911,6 +912,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Mẫu này chạy quá lâu trên đoạn văn bản: nó quay lui không dứt (lặp lồng nhau kiểu (a+)+). Hãy đơn giản hoá mẫu.',
   'This command on the cloud computer looks like it sends data out or destroys something.':
     'Lệnh này trên máy tính đám mây có vẻ gửi dữ liệu ra ngoài hoặc xoá thứ gì đó.',
+  'This Python on the cloud computer looks like it sends data out, or runs a command that destroys something.':
+    'Đoạn Python này trên máy tính đám mây có vẻ gửi dữ liệu ra ngoài, hoặc chạy một lệnh xoá thứ gì đó.',
+  "Writes a file on the cloud computer that, run, would send data out, destroy something, use root, or reach the browser's sign-ins.":
+    'Ghi một tệp trên máy tính đám mây mà khi chạy sẽ gửi dữ liệu ra ngoài, xoá thứ gì đó, dùng quyền root, hoặc chạm tới các phiên đăng nhập của trình duyệt.',
+  'The cloud computer is still busy with that, or it took longer than allowed; it was not run a second time. Look at the page (or ask the session) before trying again.':
+    'Máy tính đám mây vẫn đang bận việc đó, hoặc việc đó lâu hơn mức cho phép; nó không bị chạy lần thứ hai. Hãy xem lại trang (hoặc hỏi phiên Python) trước khi thử lại.',
   "Runs as root on the cloud computer, where it can reach everything on it, including the cloud browser's sign-ins.":
     'Chạy với quyền root trên máy tính đám mây — tới được mọi thứ trên máy, kể cả phiên đăng nhập của trình duyệt đám mây.',
   "Touches the cloud browser's saved sign-ins or a login script on the cloud computer.":

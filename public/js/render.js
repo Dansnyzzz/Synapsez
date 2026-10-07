@@ -9,6 +9,7 @@ import { webRowHtml, titleFromContent } from './webrows.js';
 import { parseResults } from './rail.js';
 import { rememberSearch, rememberPage, auditCitations } from './cite.js';
 import { normalisePlan, planItemHtml, planChange } from './plan.js';
+import { canonicalInput } from './tool-aliases.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -69,7 +70,6 @@ export function forDisplay(text) {
  * different places is noise rather than information.
  */
 const MARK_PENDING = '<span class="mark mark--pending" aria-hidden="true"></span>';
-const MARK_DONE = '<span class="mark">✓</span>';
 
 /** The tools drawn as the web card rather than as cards of their own. */
 const WEB_TOOLS = new Set(['web_search', 'web_fetch', 'extract', 'http_request', 'read_feed']);
@@ -573,7 +573,67 @@ function detailNode(className, detail, href) {
   return link;
 }
 
+/** The cloud browser's actions, each with a verb of its own in the run's list. */
+const BROWSER_VERBS = new Set([
+  'open', 'look', 'read', 'click', 'type', 'press', 'scroll', 'select', 'wait', 'back', 'forward', 'reload',
+  'tabs', 'new_tab', 'switch_tab', 'close_tab', 'pdf', 'steps', 'close',
+]);
+
+/** What one cloud-browser action acted on, in a few words. */
+function browserDetail(i) {
+  const where = i.text ? `“${i.text}”` : i.ref != null ? `#${i.ref}` : '';
+  switch (i.action) {
+    case 'open':
+    case 'new_tab':
+      return clip(i.url, 72);
+    case 'click':
+      return clip(where, 64);
+    case 'type':
+      return clip([where, i.value != null ? `“${i.value}”` : ''].filter(Boolean).join(' ← '), 64);
+    case 'select':
+      return clip([where, i.value].filter(Boolean).join(' · '), 64);
+    case 'press':
+      return clip(i.key, 32);
+    case 'scroll':
+      return t(`cb.${['up', 'left', 'right'].includes(i.direction) ? i.direction : 'down'}`);
+    case 'read':
+      return t('cb.part', { n: i.page || 2 });
+    case 'wait':
+      return clip(i.text || '', 48);
+    case 'switch_tab':
+      return i.index != null ? `#${i.index}` : '';
+    case 'steps':
+      return clip(
+        (Array.isArray(i.steps) ? i.steps : [])
+          .map((s) => {
+            const action = BROWSER_VERBS.has(s?.action) ? s.action : 'look';
+            const what = browserDetail({ ...s, action });
+            return what ? `${t(`cb.${action}`)} ${what}` : t(`cb.${action}`);
+          })
+          .join(' → '),
+        96,
+      );
+    default:
+      return '';
+  }
+}
+
 export function describeStep(name, input = {}) {
+  /*
+   * A cloud-browser row says what it did — "Click #2", "Scroll down" — rather
+   * than "Used the cloud browser · click" on every line of the run, which is
+   * the card's title already (owner, 2026-10-07). Read through the same
+   * synonyms the server runs it under, so a `fill` is drawn as the typing it was.
+   */
+  if (name === 'cloud_browser') {
+    try {
+      const i = canonicalInput(name, input) || {};
+      const action = BROWSER_VERBS.has(i.action) ? i.action : 'look';
+      return { verb: t(`cb.${action}`), detail: browserDetail({ ...i, action }) || '' };
+    } catch {
+      return { verb: t('step.cloud_browser'), detail: '' };
+    }
+  }
   const key = STEP_VERBS[name];
   if (!key) return { verb: name, detail: summariseToolInput(name, input) };
 
@@ -1367,6 +1427,19 @@ export function userMessage(text, files = [], id = null, at = null) {
 let lastWebCard = null;
 
 /**
+ * The newest run of steps, and the block that last added to it — so the next
+ * step's block carries the same card on, the way `lastWebCard` does for reads.
+ *
+ * Every model step is a block of its own, so a browsing session of eight
+ * actions with a line of reasoning before each drew eight "Used the browser ·
+ * 1 step" cards, each still spinning after the answer had arrived (owner,
+ * 2026-10-07). The steps are one piece of work: they go in one card, and the
+ * reasoning between them goes inside it, as a quiet row between the actions.
+ * @type {{ group: any, wrap: HTMLElement, body: HTMLElement } | null}
+ */
+let lastStepRun = null;
+
+/**
  * An assistant turn. Reasoning, tool calls and prose all land in one block so
  * the transcript reads as a single continuous action rather than a pile of
  * disconnected cards.
@@ -1385,6 +1458,8 @@ export function assistantMessage() {
   let thinkingBody = null;
   /** Settled since its last delta, so `finishThinking` has nothing to do. */
   let thinkingDone = false;
+  /** The row inside a carried run of steps that holds this block's reasoning, while it is there. */
+  let thoughtHost = null;
   let prose = null;
   let rawText = '';
   /** Whether a repaint is already scheduled for the next frame — see appendText. */
@@ -1396,8 +1471,10 @@ export function assistantMessage() {
    * Held open while it is being added to, so you watch the work happen, and
    * collapsed the moment the run ends — at which point it is history, and eight
    * expanded browser actions between you and the answer are eight things to
-   * scroll past. `closeGroup` is what "the run ended" means, and it is called
-   * from exactly two places: prose arriving, and a step of a different family.
+   * scroll past. `closeGroup` (with `leaveRun` for a run carried in from the
+   * block before) is what "the run ended" means: prose arriving, a tool that is
+   * not a step of this family, or the turn finishing. The card's mark does not
+   * wait for that — it follows its own steps (`paintGroupSummary`).
    */
   let group = null;
 
@@ -1481,6 +1558,7 @@ export function assistantMessage() {
       lastWebCard = { card: web, wrap, body };
       return web;
     }
+    leaveRun();
     closeSteps();
     const node = el('details', 'block web');
     node.open = true;
@@ -1525,6 +1603,7 @@ export function assistantMessage() {
    * told nobody anything, least of all that a task had been added half-way.
    */
   function startPlanCard(call) {
+    leaveRun();
     closeGroup();
     const steps = normalisePlan(call.input?.steps);
     const change = planChange(previousPlan(), steps);
@@ -1602,21 +1681,95 @@ export function assistantMessage() {
 
   function closeSteps() {
     if (!group) return;
-    // The run is history now: swap the waiting mark for a tick and fold it up.
-    const mark = group.node.querySelector(':scope > summary > .mark');
-    if (mark) mark.outerHTML = MARK_DONE;
+    // The run is history now: fold it up. Its mark already says how it went.
+    paintGroupSummary(group);
     group.node.open = false;
     group = null;
   }
 
-  /** Redraw the one line somebody reads without opening the card. */
-  function paintGroupSummary() {
-    if (!group) return;
-    const label = group.family === 'desktop' ? t('steps.desktop') : t('steps.browser');
-    const count = t('steps.count').replace('{n}', String(group.count));
-    group.title.textContent = label;
-    group.tally.textContent = count;
-    if (group.failed) group.node.classList.add('steps--error');
+  /**
+   * Redraw the one line somebody reads without opening the card — and its
+   * mark, from its own steps.
+   *
+   * The mark used to wait for the run to be "closed", which only the block
+   * that drew it could do and only when the whole turn finished, so a card
+   * whose every step had long been ticked kept spinning beside the answer
+   * (owner, 2026-10-07). It spins exactly while one of its steps is still
+   * running; then it is a tick, or a cross when every step failed — a run where
+   * one step of eight failed is a tick with "1 failed" beside it, not a red
+   * title over a green tick.
+   */
+  function paintGroupSummary(run = group) {
+    if (!run) return;
+    run.title.textContent = run.family === 'desktop' ? t('steps.desktop') : t('steps.browser');
+    const tally = [t('steps.count').replace('{n}', String(run.count))];
+    if (run.failures) tally.push(t('steps.failedCount', { n: run.failures }));
+    run.tally.textContent = tally.join(' · ');
+    const working = run.pending > 0;
+    const allFailed = !working && run.count > 0 && run.failures === run.count;
+    const want = working ? MARK_PENDING : `<span class="mark">${allFailed ? '✗' : '✓'}</span>`;
+    const mark = run.node.querySelector(':scope > summary > .mark');
+    if (mark && mark.outerHTML !== want) mark.outerHTML = want;
+    run.node.classList.toggle('steps--error', allFailed);
+    run.node.classList.toggle('steps--partial', !allFailed && run.failures > 0);
+  }
+
+  /**
+   * The run the block before this one ended on, when this block can carry it
+   * on: it is the block right before (or this one already holds it), nothing
+   * was drawn after the card, and this block has drawn nothing of its own.
+   * A line of reply, another kind of tool or a user message in between is a
+   * real break, and starts a card of its own.
+   */
+  function carriedRun(family = null) {
+    const last = lastStepRun;
+    if (!last || group) return null;
+    const run = last.group;
+    if (family && run.family !== family) return null;
+    if (!run.node.isConnected) return null;
+    if (last.wrap !== wrap) {
+      if (last.wrap.nextElementSibling !== wrap) return null;
+      if (last.body !== run.node.parentElement && last.body.childElementCount !== 0) return null;
+    }
+    if (run.node.parentElement?.lastElementChild !== run.node) return null;
+    return body.childElementCount === 0 ? run : null;
+  }
+
+  /**
+   * This block's reasoning back out of the run it was parked in, into the block
+   * itself — unless a step of this block already followed it into the run, in
+   * which case it led to that step and stays where it stands, above it.
+   */
+  function unnestThinking() {
+    if (!thoughtHost) return;
+    if (thoughtHost.parentElement && thoughtHost.parentElement.lastElementChild !== thoughtHost) {
+      thinkingBlock?.classList.remove('think--inline');
+      thoughtHost = null;
+      return;
+    }
+    if (thinkingBlock) {
+      thinkingBlock.classList.remove('think--inline');
+      body.append(thinkingBlock);
+    }
+    thoughtHost.remove();
+    thoughtHost = null;
+  }
+
+  /**
+   * The run of steps is over: something other than another step is starting.
+   * The reasoning that was parked inside it belongs to whatever comes next, and
+   * the card folds — wherever it was drawn, as long as it is the one right
+   * before this block (never one in another conversation's transcript).
+   */
+  function leaveRun() {
+    unnestThinking();
+    const last = lastStepRun;
+    if (!last || (last.wrap !== wrap && last.wrap.nextElementSibling !== wrap)) return;
+    lastStepRun = null;
+    if (last.group === group) return; // ours: closeGroup folds it
+    last.group.live = false;
+    paintGroupSummary(last.group);
+    last.group.node.open = false;
   }
 
   /**
@@ -1630,7 +1783,8 @@ export function assistantMessage() {
   function startStep(call, family) {
     const run = groupFor(family);
     run.count += 1;
-    paintGroupSummary();
+    run.pending += 1;
+    paintGroupSummary(run);
 
     const { verb, detail } = describeStep(call.name, call.input);
     const href = stepLink(call.input);
@@ -1652,10 +1806,9 @@ export function assistantMessage() {
         mark.innerHTML = '';
         mark.textContent = result.isError ? '✗' : '✓';
         if (result.ms != null) time.textContent = ms(result.ms);
-        if (result.isError) {
-          run.failed = true;
-          paintGroupSummary();
-        }
+        run.pending = Math.max(0, run.pending - 1);
+        if (result.isError) run.failures += 1;
+        paintGroupSummary(run);
 
         /**
          * What the screen looked like when this step finished.
@@ -1700,12 +1853,22 @@ export function assistantMessage() {
     };
   }
 
-  /** The card this call belongs in, opening a new one if the run just started. */
+  /** The card this call belongs in: the run still going, carried on from the block before, or a new one. */
   function groupFor(family) {
     if (group && group.family === family) return group;
+    const carried = carriedRun(family);
+    if (carried) {
+      group = carried;
+      group.live = true;
+      group.node.open = true;
+      lastStepRun = { group, wrap, body };
+      return group;
+    }
+    // A step of another family, or one after a reply: the old run is over, and
+    // closeGroup ends the web card too — a browser step after a search is a
+    // new piece of work.
+    leaveRun();
     closeGroup();
-    // closeGroup ended the web card too: a browser step after a search is a new
-    // piece of work.
 
     const node = el('details', 'block steps');
     node.open = true;
@@ -1720,7 +1883,8 @@ export function assistantMessage() {
     node.append(list);
     body.append(node);
 
-    group = { family, node, list, title, tally, count: 0, failed: false };
+    group = { family, node, list, title, tally, count: 0, pending: 0, failures: 0, live: true };
+    lastStepRun = { group, wrap, body };
     return group;
   }
 
@@ -1778,7 +1942,23 @@ export function assistantMessage() {
         thinkingBody = el('div', 'think__body');
         thinkingBody.append(el('div', 'think__text'));
         thinkingBlock.append(head, thinkingBody);
-        body.append(thinkingBlock);
+        /*
+         * Between two steps of a run, the reasoning is a row inside the run's
+         * card rather than a card of its own between two half-cards. If it
+         * turns out to lead somewhere else — a reply, another tool — it moves
+         * out to stand before that (`unnestThinking`).
+         */
+        const carried = carriedRun();
+        if (carried) {
+          thoughtHost = el('li', 'step step--thought');
+          thinkingBlock.classList.add('think--inline');
+          thoughtHost.append(thinkingBlock);
+          carried.list.append(thoughtHost);
+          if (carried.live !== false) carried.node.open = true;
+          lastStepRun = { group: carried, wrap, body };
+        } else {
+          body.append(thinkingBlock);
+        }
       }
       thinkingDone = false;
       const text = thinkingBody.firstElementChild;
@@ -1823,6 +2003,8 @@ export function assistantMessage() {
       thinkingBlock.remove();
       thinkingBlock = null;
       thinkingBody = null;
+      thoughtHost?.remove();
+      thoughtHost = null;
       api.appendText(text);
       api.flushText();
     },
@@ -1856,6 +2038,7 @@ export function assistantMessage() {
         // Prose is the natural boundary between two pieces of work: the
         // assistant stopped acting and said something. Folding the steps either
         // side of that into one card would claim a structure the turn does not have.
+        leaveRun();
         closeGroup();
         prose = el('div', 'prose');
         body.append(prose);
@@ -1899,6 +2082,8 @@ export function assistantMessage() {
         thinkingBlock = null;
         thinkingBody = null;
       }
+      thoughtHost?.remove();
+      thoughtHost = null;
       // Cancel any frame still owed. Without this the queued paint would run
       // after the node was removed — harmless now that `appendText` re-checks
       // `prose`, but leaving a scheduled write to a discarded draft in flight is
@@ -1955,6 +2140,7 @@ export function assistantMessage() {
       // Browser clicks and file reads are tiny and grouped into a run of steps;
       // a draft card between them would only flicker.
       if (stepFamily(name) || WEB_TOOLS.has(name)) return null;
+      leaveRun();
       const { verb } = describeStep(name, {});
       const block = el('div', 'block tool tool--draft');
       block.setAttribute('role', 'status');
@@ -1986,6 +2172,7 @@ export function assistantMessage() {
 
       // A call that is not part of a run ends whatever run was in progress:
       // `read_file` between two browser actions really is a change of activity.
+      leaveRun();
       closeGroup();
 
       // The headline is what was done; the function name and its arguments are
@@ -2100,9 +2287,10 @@ export function assistantMessage() {
     /**
      * The turn is over.
      *
-     * A run of steps that is never closed keeps its spinner and stays expanded
-     * for the rest of the conversation — a turn that finished an hour ago still
-     * drawn as though it were working.
+     * A run of steps that is never closed stays expanded for the rest of the
+     * conversation — a turn that finished an hour ago still drawn as though it
+     * were working. Its mark settles with its steps; a step that never got a
+     * result is settled by the caller (`abandonCalls` in app.js).
      */
     /** @param at  when the reply finished; shown beside its copy button. */
     finish(at = null) {
@@ -2113,6 +2301,12 @@ export function assistantMessage() {
       const when = row && !row.querySelector('.msg__time') ? timeStamp(at) : null;
       if (when) row.prepend(when);
       closeGroup();
+      // A block that holds a carried run without a step of its own — it ended
+      // on reasoning, the turn stopped there — folds that run as well.
+      if (lastStepRun?.wrap === wrap && lastStepRun.group !== group) {
+        paintGroupSummary(lastStepRun.group);
+        lastStepRun.group.node.open = false;
+      }
       // Sources the conversation cannot account for are marked once the reply
       // is whole; opening a chip checks again with whatever has loaded since.
       if (prose) auditCitations(prose);

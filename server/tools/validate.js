@@ -45,6 +45,8 @@
  * model to act on.
  */
 
+import { canonicalInput } from '../../public/js/tool-aliases.js';
+
 export const SUPPORTED_KEYWORDS = new Set(['type', 'description', 'properties', 'required', 'enum', 'items']);
 
 const kindOf = (value) => (Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value);
@@ -300,4 +302,22 @@ export function validateArguments(schema, input) {
   const notes = [];
   const result = check(input ?? {}, schema, 'arguments', notes);
   return result.ok ? { ok: true, input: result.value, notes } : { ok: false, error: result.error };
+}
+
+/**
+ * A catalogue tool's arguments as it will run them: its plain synonyms read as
+ * meant (`fill` is `type`, `commands` is `command` — see tool-aliases.js), then
+ * checked against its schema.
+ *
+ * The one reader for both sides of the approval decision. `executeTool` runs
+ * what this returns and `assessRisk` grades what this returns, so a call cannot
+ * be graded under one spelling and run under another (SEC-039): an `rm -rf`
+ * sent as `commands: [...]` is graded as the command it becomes.
+ *
+ * @param {string} name
+ * @param {object} schema
+ * @param {unknown} input
+ */
+export function readArguments(name, schema, input) {
+  return validateArguments(schema, canonicalInput(name, input));
 }

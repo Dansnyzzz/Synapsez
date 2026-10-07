@@ -1,5 +1,65 @@
 # Changelog
 
+## 2026-10-07 (later) — the cloud browser, driven live; one card per browsing session; a live Python session
+
+Asked for by the owner on 2026-10-07, with screenshots. Free tier only: nothing here needs a paid service.
+
+### Driving the cloud browser
+
+- **Straight to the machine.** Taking control used to send every scroll tick and key through a serverless
+  function (a cold start, a database read and a decryption each), and the MJPEG frames queued in the pipe
+  faster than they could be shown. The panel now opens one WebSocket to the account's machine: frames come
+  only as fast as they are painted and at the size the panel is drawn, and gestures go the other way in
+  order. Where the socket cannot be opened, the picture falls back to MJPEG and gestures to the server,
+  batched.
+- **Pages that scroll sideways scroll sideways** — the wheel's horizontal part was dropped at every layer;
+  Shift turns a plain wheel sideways; a finger drags the page on a phone.
+- **A real mouse**: press, move and release as they happen (selecting text, sliders, hover menus), double
+  and triple clicks, right click; **a real keyboard**: shortcuts, Vietnamese typed with an input method,
+  and pasting from your own clipboard.
+- **The key never leaves the server.** The panel gets 15-minute tokens — one that only shows the screen,
+  one that drives it and only ever travels inside the socket.
+
+### Privacy and safety on the cloud computer
+
+- The browser's service starts as root where the platform allows it, so its sign-ins, its code and its key
+  are out of reach of the account's ordinary commands (and of anything a web page talks one into);
+  otherwise it runs as before. Not a wall: the platform gives the account's user `sudo` without a password,
+  so a command that uses it can still reach them — every command, Python cell or written file that names
+  `sudo` or the profile asks you first. That check reads the words, so it raises the bar rather than
+  closing the door.
+- Chromium's own reporting is off, and about thirty well-known analytics, advertising and session-recording
+  hosts cannot be reached from it (`CLOUD_BROWSER_BLOCK_TRACKERS=0` to allow them).
+- `curl -F field=@file` now asks before it runs, as the rule written for it always meant.
+
+### The assistant in the browser
+
+- **One card per browsing session.** Steps across the model's turns now join one "Used the browser" card,
+  with the reasoning between them as quiet rows inside it; each row says what it did ("Click #2", "Scroll
+  down", "Type …"). The card spins only while a step is running — it no longer spins on beside a finished
+  answer — and one failed step of several is counted, not shown as a red title over a green tick.
+- **The step picture after a scroll is of the screen**, not a white page (the screenshot was taken of the
+  top of the page).
+- **It reads a long page instead of scrolling for it.** A page's text says which part it is; `read` gets the
+  next. Several actions it can already see go in one call (`steps`). It scrolls left and right.
+- Names models reach for are read as meant — `fill`, `goto`, `scroll_down`; `commands: [...]` and `cmd` for
+  `sandbox_run` — and graded for approval as they will run.
+- Downloads land in `downloads/` of the cloud computer's working folder, where `sandbox_run` and Python
+  find them.
+
+### A live Python session
+
+- `sandbox_run` takes `python`: each conversation gets a notebook-like session on the cloud computer that
+  keeps its variables, imports and loaded data between calls (while the computer is awake), shows the last
+  expression's value, runs `!pip install …` lines, and returns matplotlib figures as pictures in the chat.
+  It runs as the account's ordinary user, with nothing of the browser service in its environment. The model
+  is told plainly when a session is new and earlier variables are gone.
+
+### Step pictures
+
+- Confirmed: the cloud browser's step pictures belong to the conversation they were taken in (and go when it
+  does) and are not listed on the Files shelf — every shelf query reads only files somebody made.
+
 ## 2026-10-07 — pictures you can draw on, every Excel file read, and the rest of the audit closed
 
 Asked for by the owner on 2026-10-06, with their approval of every audit item still open. Nothing here

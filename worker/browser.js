@@ -1414,7 +1414,7 @@ async function browserClose(input, job) {
  * viewport, and a phone showing a scaled-down mirror still lands in the right
  * place.
  */
-export async function userInput({ type, x, y, toX, toY, button = 'left', key, text, deltaY }) {
+export async function userInput({ type, x, y, toX, toY, button = 'left', key, text, deltaX, deltaY }) {
   const s = await sessionFor(null);
   if (!browserIsOpen(s)) throw new Error('Nothing is open in the sandbox.');
   const cdp = await s.page.context().newCDPSession(s.page);
@@ -1495,7 +1495,9 @@ export async function userInput({ type, x, y, toX, toY, button = 'left', key, te
         type: 'mouseWheel',
         x: px,
         y: py,
-        deltaX: 0,
+        // Sideways too: a wide table or a timetable scrolls across, and this
+        // was hard-coded to 0 (owner, 2026-10-07).
+        deltaX: Math.max(-3000, Math.min(3000, Number(deltaX) || 0)),
         deltaY: Number(deltaY) || 0,
       });
       return 'scrolled';
