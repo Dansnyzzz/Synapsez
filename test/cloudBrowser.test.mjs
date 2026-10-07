@@ -122,6 +122,9 @@ section('a command on the cloud computer reads none of the account\'s login file
   check('bash with no profile and no rc file', shell.cmd === 'bash' && shell.args.slice(0, 3).join(' ') === '--noprofile --norc -c', JSON.stringify(shell.args.slice(0, 3)));
   check('  the system profile alone, then the command', /^source \/etc\/profile/.test(shell.args[3]) && shell.args[3].endsWith('\necho hi') && !/\.(bash_)?profile\b(?!.*etc)|bashrc/.test(shell.args[3].replace('/etc/profile', '')), shell.args[3]);
   check('  BASH_ENV cleared, and the caller\'s own environment kept', shell.env.BASH_ENV === '' && shell.env.ENV === '' && shell.env.SYNZ_KEY === 'k');
+  const userShell = shellFor('echo hi', {}, { userBin: true });
+  check('a service start keeps the account\'s own folders off its PATH', !/\.local\/bin/.test(shell.args[3]) && /case "\$_d" in "\$HOME"\*/.test(shell.args[3]), shell.args[3]);
+  check('  and a command the account runs has them after the system\'s, never ahead', /export PATH="\$\{_keep:-[^}]*\}:\$HOME\/\.local\/bin:\$HOME\/bin"/.test(userShell.args[3]), userShell.args[3]);
   const sources = ['server/sandbox.js', 'server/cloudBrowser/index.js', 'server/mcp/cloud.js'].map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'));
   check('  and nothing on the machine starts through a login shell any more', sources.every((s) => !/['"]-lc['"]/.test(s)));
 
@@ -142,6 +145,12 @@ section('a command on the cloud computer reads none of the account\'s login file
     const safe = shellFor('true');
     spawnSync(safe.cmd, safe.args, { env: { ...env, ...safe.env } });
     check('a planted ~/.bash_profile, which a login shell runs, does not run here', plantedUnderLogin && !fs.existsSync(path.join(home, 'ran')));
+    // A fake `node` in ~/.local/bin, first on a PATH that names it first.
+    fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.local', 'bin', 'node'), '#!/bin/sh\necho planted\n', { mode: 0o755 });
+    const which = shellFor('command -v node || echo none');
+    const found = spawnSync(which.cmd, which.args, { env: { ...env, ...which.env, PATH: `${path.join(home, '.local', 'bin')}:${process.env.PATH}` }, encoding: 'utf8' }).stdout.trim();
+    check('  and a node planted in ~/.local/bin is not the one a service start runs', !found.startsWith(home), found);
     fs.rmSync(home, { recursive: true, force: true });
   }
 }

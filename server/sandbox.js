@@ -377,18 +377,36 @@ export async function browserAddress(machine, { signal } = {}) {
  * instead. A tool that needs its own profile runs as `source ~/.profile && …`,
  * in plain view and graded like anything else.
  *
+ * The PATH is the system's, with the account's own folders taken out — a
+ * `~/.local/bin/node` written by one ordinary command would otherwise run in
+ * place of the real one ahead of every later service start, keys in hand. A
+ * command the account runs (`userBin`) gets them back at the end, after the
+ * system's, so `pip install --user` tools still run and never shadow a system
+ * program; a service start (the cloud browser, the MCP bridge) does not.
+ *
  * The network stays open and the disk stays kept: both are the product's
  * choice (one computer per account, the whole internet — see the top of this
  * file), and what leaves the machine is graded per command by `assessRisk`.
+ * Root (`as_root`) can still change /etc/profile.d — and asks first, every time.
  *
  * @param {string} command
  * @param {Record<string, string>} [env]
+ * @param {{ userBin?: boolean }} [options]
  */
-export function shellFor(command, env = {}) {
-  const script = `source /etc/profile >/dev/null 2>&1 || true\nexport PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"\n${command}`;
+export function shellFor(command, env = {}, { userBin = false } = {}) {
+  const systemPath = [
+    'source /etc/profile >/dev/null 2>&1 || true',
+    // Every entry under the account's home, or relative, dropped from what the system set.
+    '_orig="$PATH"; _keep=; IFS=: read -ra _dirs <<< "$PATH"; for _d in "${_dirs[@]}"; do case "$_d" in "$HOME"*|"~"*|""|.*) ;; *) _keep="${_keep:+$_keep:}$_d" ;; esac; done',
+    `export PATH="\${_keep:-/usr/local/bin:/usr/bin:/bin}${userBin ? ':$HOME/.local/bin:$HOME/bin' : ''}"`,
+    // An image that keeps node under the home folder still starts its services:
+    // the original PATH comes back, after the system's, rather than nothing.
+    'command -v node >/dev/null 2>&1 || export PATH="$PATH:$_orig"',
+    'unset _orig _keep _dirs _d',
+  ].join('\n');
   return {
     cmd: 'bash',
-    args: ['--noprofile', '--norc', '-c', script],
+    args: ['--noprofile', '--norc', '-c', `${systemPath}\n${command}`],
     env: { ...env, BASH_ENV: '', ENV: '' },
   };
 }
@@ -431,7 +449,7 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
     // paths in `files` and `download` land too. Root only when asked for —
     // installing a system package — so ordinary work runs as the normal user.
     const done = await machine.runCommand({
-      ...shellFor(command),
+      ...shellFor(command, {}, { userBin: true }),
       sudo: !!input?.as_root,
       timeoutMs: seconds * 1000,
       signal,
