@@ -186,6 +186,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'You cannot delete your own account.': 'Bạn không thể xoá tài khoản của chính mình.',
   'Set SESSION_SECRET — refusing to issue sessions without one.':
     'Hãy đặt SESSION_SECRET — máy chủ từ chối tạo phiên đăng nhập khi thiếu nó.',
+  'This puts one of your personal details — hidden from the model as a placeholder — into a web address. Check the address before it is sent.':
+    'Lệnh này đưa một thông tin cá nhân của bạn — vốn được che với mô hình bằng mã giữ chỗ — vào một địa chỉ web. Hãy kiểm tra địa chỉ trước khi gửi.',
   'Set SESSION_SECRET — refusing to sign a Google sign-in without one.':
     'Hãy đặt SESSION_SECRET — máy chủ từ chối ký lượt đăng nhập Google khi thiếu nó.',
   'Use a password of at least 10 characters.': 'Hãy dùng mật khẩu ít nhất 10 ký tự.',

@@ -14,7 +14,9 @@ import {
 } from '../settings.js';
 import { resolveModel, PROVIDERS } from './catalog.js';
 import { startChatSpan } from '../util/genaiSpan.js';
+import crypto from 'node:crypto';
 import { createShield } from '../deidentify.js';
+import { signingRoot } from '../secrets.js';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 const ORCAROUTER_BASE = 'https://api.orcarouter.ai/v1';
@@ -401,7 +403,9 @@ export async function* streamCompletion(opts) {
    * provider — a turn, a fold, a sub-agent, a vision reading, a research role —
    * so nothing can reach a model around it. See deidentify.js.
    */
-  const shield = (opts.maskPersonal ?? (await maskPersonalFor(userId))) ? createShield() : null;
+  const shield = (opts.maskPersonal ?? (await maskPersonalFor(userId)))
+    ? createShield({ key: crypto.createHmac('sha256', signingRoot() || 'synapsez-local').update(`deidentify:${userId || ''}`).digest() })
+    : null;
   const outgoing = shield ? shield.protect(rest) : rest;
   let shrunk = false;
 
@@ -590,7 +594,7 @@ function restoring(shield) {
       if (thought) held.push({ type: 'thinking', delta: thought });
       const said = text.flush();
       if (said) held.push({ type: 'text', delta: said });
-      return [...held, { ...event, toolCalls: shield.restoreDeep(event.toolCalls || []) }];
+      return [...held, { ...event, toolCalls: (event.toolCalls || []).map(shield.restoreCall) }];
     }
     return [event];
   };
