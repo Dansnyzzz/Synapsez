@@ -223,10 +223,14 @@ section('the start script installs once per build and then runs the service');
   const root = cb.startScript('abc123', { root: true });
   check('as root: refuses to go on when it is not root', /if \[ "\$\(id -u\)" != 0 \]; then echo "not root" >&2; exit 3; fi/.test(root));
   check('  lives in a folder root owns, not the account\'s working folder', root.includes(`cd ${cb.__testing.ROOT_DIR}`) && /chown root:root \/opt\/synz/.test(root) && !root.includes(`cd ${cb.__testing.DIR}`));
-  check('  the sign-ins move there once and are closed to everybody else', root.indexOf('mv "$WORK/.synz-browser/profile" profile') < root.indexOf('chmod 700 profile'));
+  check('  the sign-ins move there once and are closed to everybody else', root.indexOf('mv "$OLDPROFILE" profile.moving') < root.indexOf('chmod 700 profile.moving') && root.includes('chmod 700 profile && chown -R root:root profile'));
+  check('  only a real folder moves, never a link the account planted', /\[ -d "\$OLDPROFILE" \] && \[ ! -L "\$OLDPROFILE" \]/.test(root));
+  check('  and links inside it are removed after it is shut to the account, or the old profile is dropped', root.indexOf('chown -R root:root profile.moving') < root.indexOf('find profile.moving -type l') && /else rm -rf profile\.moving; fi/.test(root));
   check('  the account the Python session runs as is the owner of the working folder', /SYNZ_RUN_UID="\$\(stat -c %u "\$WORK"\)"/.test(root));
   check('  an older service is stopped only if the account owns that process', /stat -c %u \/proc\/\$OLD/.test(root));
   check('  and nothing it executes is in a folder the account can write', !/node_modules|service\.mjs/.test(root.split('cd /opt/synz')[0]));
+  // @sparticuz/chromium runs `<tmp>/chromium` if it exists, unchecked.
+  check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/synz\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec node'));
   const { shellFor } = await import('../server/sandbox.js');
   const rootShell = shellFor('true', {}, { root: true }).args[3];
   check('as root, PATH keeps only folders root alone can write, and never falls back to the original', /stat -Lc %u/.test(rootShell) && /\*\[2367\]\*\) continue/.test(rootShell) && !rootShell.includes('_orig'), rootShell);
@@ -278,6 +282,12 @@ section('the start script really reaches the service, run under bash');
     fs.rmSync(ran, { force: true });
     const second = run();
     check('  and so does a restart over an old pid', second.status === 0 && fs.existsSync(ran), `exit ${second.status}`);
+    // Not root here: the root layout refuses at once — which is what lets the
+    // server fall back without waiting out the whole start.
+    if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+      const asRoot = spawnSync('bash', ['-c', cb.startScript('t1', { root: true })], { cwd: dir, env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}` }, timeout: 20_000 });
+      check('the root layout, started without root, stops at once and touches nothing', asRoot.status === 3 && !fs.existsSync('/opt/synz/service.mjs'), `exit ${asRoot.status}`);
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }

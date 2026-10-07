@@ -166,15 +166,41 @@ function mergeArgs(base, extra) {
   return out;
 }
 
-/** Hand a file to the account's own user, when this runs as root. */
-function own(target) {
-  if (RUN_UID == null || process.getuid?.() !== 0) return;
-  try {
-    fs.chownSync(target, RUN_UID, RUN_GID);
-  } catch {
-    /* readable either way; only deleting it would need this */
-  }
+/** Whether this runs as root on behalf of an ordinary account — the arrangement index.js prefers. */
+const asRoot = () => process.getuid?.() === 0 && RUN_UID != null && RUN_UID !== 0;
+
+/**
+ * Run a program as the account's own user, and collect what it prints.
+ * Everything this service does in the account's folders while it is root goes
+ * through here: root never writes where the account can plant a link.
+ */
+function asAccount(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { uid: RUN_UID, gid: RUN_GID, cwd: '/', env: { PATH: '/usr/bin:/bin', HOME: RUN_HOME || '/' } });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (chunk) => (out += chunk));
+    child.stderr.on('data', (chunk) => (err += chunk));
+    child.on('error', reject);
+    child.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error(err.trim() || `exit ${code}`))));
+  });
 }
+
+/**
+ * Put a file into `downloads/` under a name not yet taken, as the account —
+ * `report.csv`, then `report (2).csv`. The arguments travel as arguments, never
+ * as part of the script.
+ */
+const PLACE = [
+  'set -e',
+  'dir="$1"; src="$2"; name="$3"',
+  'mkdir -p "$dir"',
+  'case "$name" in *.*) stem="${name%.*}"; ext=".${name##*.}" ;; *) stem="$name"; ext="" ;; esac',
+  'target="$dir/$name"; n=2',
+  'while [ -e "$target" ] || [ -L "$target" ]; do target="$dir/$stem ($n)$ext"; n=$((n+1)); done',
+  'cp -- "$src" "$target"',
+  'printf %s "$target"',
+].join('\n');
 
 /* ── the browser ─────────────────────────────────────────────────── */
 
@@ -241,18 +267,41 @@ const safeName = (name) =>
     .replace(/^\.+/, '')
     .slice(0, 120) || 'download';
 
+/**
+ * Keep a download in the account's `downloads/` folder.
+ *
+ * As root, never written there directly: the folder is the account's, and a
+ * link planted at `downloads` or at the file's name would have root write a
+ * page's file wherever it pointed — over a system file, say. It lands in a
+ * folder of this service's own, and the account's user copies it across.
+ */
 function keepDownload(download) {
   const job = (async () => {
-    fs.mkdirSync(DOWNLOADS, { recursive: true });
-    own(DOWNLOADS);
     const name = safeName(download.suggestedFilename());
-    const dot = name.lastIndexOf('.');
-    const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
-    let target = path.join(DOWNLOADS, name);
-    for (let n = 2; fs.existsSync(target); n += 1) target = path.join(DOWNLOADS, `${stem} (${n})${ext}`);
-    await download.saveAs(target);
-    own(target);
-    downloaded.push({ path: path.relative(WORKDIR, target).split(path.sep).join('/'), bytes: fs.statSync(target).size });
+    let target;
+    let bytes;
+    if (asRoot()) {
+      const incoming = path.resolve('incoming');
+      fs.mkdirSync(incoming, { recursive: true, mode: 0o755 });
+      const temp = path.join(incoming, crypto.randomUUID());
+      try {
+        await download.saveAs(temp);
+        fs.chmodSync(temp, 0o644);
+        bytes = fs.statSync(temp).size;
+        target = await asAccount('bash', ['-c', PLACE, 'place', DOWNLOADS, temp, name]);
+      } finally {
+        fs.rmSync(temp, { force: true });
+      }
+    } else {
+      fs.mkdirSync(DOWNLOADS, { recursive: true });
+      const dot = name.lastIndexOf('.');
+      const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+      target = path.join(DOWNLOADS, name);
+      for (let n = 2; fs.existsSync(target); n += 1) target = path.join(DOWNLOADS, `${stem} (${n})${ext}`);
+      await download.saveAs(target);
+      bytes = fs.statSync(target).size;
+    }
+    downloaded.push({ path: path.relative(WORKDIR, target).split(path.sep).join('/'), bytes });
   })()
     .catch((err) => downloaded.push({ error: firstLine(err) }))
     .finally(() => pendingDownloads.delete(job));
@@ -584,8 +633,8 @@ function cleanGesture(event) {
       return { type, ...at };
     case 'down':
     case 'up':
-      return { type, ...at, button: BUTTONS.has(event.button) ? event.button : 'left' };
     case 'click':
+      // `count` is which click of a double or triple this is: a word or a line selected by clicking.
       return { type, ...at, button: BUTTONS.has(event.button) ? event.button : 'left', count: clamp(Math.floor(Number(event.count)) || 1, 1, 3) };
     case 'drag':
       return { type, ...at, toX: f(event.toX), toY: f(event.toY) };
@@ -623,11 +672,11 @@ async function gesture(g) {
       break;
     case 'down':
       await page.mouse.move(x, y);
-      await page.mouse.down({ button: g.button });
+      await page.mouse.down({ button: g.button, clickCount: g.count });
       break;
     case 'up':
       await page.mouse.move(x, y);
-      await page.mouse.up({ button: g.button });
+      await page.mouse.up({ button: g.button, clickCount: g.count });
       break;
     case 'click':
       await page.mouse.click(x, y, { button: g.button, clickCount: g.count });
@@ -933,6 +982,8 @@ function kernelEnv() {
     env.HOME = RUN_HOME;
     env.PATH = `${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}:${RUN_HOME}/.local/bin`;
   }
+  // The service's own temporary folder is root's; the account's session uses the ordinary one.
+  if (asRoot()) env.TMPDIR = '/tmp';
   return env;
 }
 

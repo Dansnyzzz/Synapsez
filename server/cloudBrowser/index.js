@@ -145,10 +145,28 @@ export function startScript(build, { root = false } = {}) {
     `mkdir -p ${ROOT_DIR} && chown root:root ${ROOT_DIR} && chmod 755 ${ROOT_DIR} && cd ${ROOT_DIR}`,
     ...write,
     ...installLines(build),
-    // The sign-ins, moved out of the account's folder once, and closed to it.
-    `if [ ! -d profile ] && [ -d "$WORK/${DIR}/profile" ]; then mv "$WORK/${DIR}/profile" profile; fi`,
-    'mkdir -p profile && chown -R root:root profile && chmod 700 profile',
+    /*
+     * The sign-ins, moved out of the account's folder once, and closed to it.
+     * Only a real folder moves (a link would point root's profile anywhere);
+     * it is shut to the account first, then any link inside it — planted to
+     * have root's browser write somewhere it should not — is removed. Without
+     * `find` to do that, the old profile is dropped and the person signs in
+     * again rather than root trusting it.
+     */
+    `OLDPROFILE="$WORK/${DIR}/profile"`,
+    'if [ ! -e profile ] && [ -d "$OLDPROFILE" ] && [ ! -L "$OLDPROFILE" ]; then',
+    '  mv "$OLDPROFILE" profile.moving && chmod 700 profile.moving && chown -R root:root profile.moving',
+    '  if command -v find >/dev/null 2>&1 && find profile.moving -type l -exec rm -f {} +; then mv profile.moving profile; else rm -rf profile.moving; fi',
+    'fi',
+    'mkdir -p profile && chmod 700 profile && chown -R root:root profile',
     `export SYNZ_PROFILE=${ROOT_DIR}/profile SYNZ_KERNEL_PATH=${ROOT_DIR}/kernel.py`,
+    /*
+     * A temporary folder of root's own. @sparticuz/chromium unpacks the browser
+     * to `<tmp>/chromium` and runs whatever it finds there without a check —
+     * in the shared /tmp, a file the account's commands left at that name would
+     * be run as root, key in hand.
+     */
+    `mkdir -p ${ROOT_DIR}/tmp && chmod 700 ${ROOT_DIR}/tmp && export TMPDIR=${ROOT_DIR}/tmp`,
     // A service the account started before this listens on the same port. Its pid
     // file is the account's to write, so only a process the account owns is stopped.
     `OLD="$(cat "$WORK/${DIR}/service.pid" 2>/dev/null || true)"`,
@@ -290,13 +308,14 @@ async function startAs(machine, userId, url, mode, { signal, firstTime }) {
   } catch {
     /* the log is a help, not a requirement */
   }
-  const failure = new Error(
-    exited
-      ? `The cloud computer's helper stopped as it started.${log ? `\nIts log ends:\n${log}` : ''}`
-      : `The cloud browser did not come up in time.${log ? `\nIts log ends:\n${log}` : ''}`,
+  throw Object.assign(
+    new Error(
+      exited
+        ? `The cloud computer's helper stopped as it started.${log ? `\nIts log ends:\n${log}` : ''}`
+        : `The cloud browser did not come up in time.${log ? `\nIts log ends:\n${log}` : ''}`,
+    ),
+    { exited },
   );
-  failure.exited = exited;
-  throw failure;
 }
 
 /**
@@ -507,7 +526,6 @@ export function cleanInput(event) {
       return { type, ...at };
     case 'down':
     case 'up':
-      return { type, ...at, button: BUTTONS.has(event.button) ? event.button : 'left' };
     case 'click':
       return { type, ...at, button: BUTTONS.has(event.button) ? event.button : 'left', count: Math.min(3, Math.max(1, Math.floor(Number(event.count)) || 1)) };
     case 'drag':
