@@ -1648,6 +1648,28 @@ textarea {
 .screen__frame:has(img[src]) .screen__empty { display: none; }
 .screen.is-driving .screen__frame img { cursor: grab; }
 .screen.is-driving.is-dragging .screen__frame img { cursor: grabbing; }
+/* The cloud browser takes the real press, move and release, so its pointer is
+   the page's ordinary arrow, and a finger on it scrolls the page rather than
+   the panel around it. */
+.screen.is-driving.is-direct .screen__frame img,
+.screen.is-driving.is-direct.is-dragging .screen__frame img { cursor: default; }
+.screen.is-driving .screen__frame img { touch-action: none; }
+.screen__frame { position: relative; }
+/* Where typing goes while driving the cloud browser — composed Vietnamese and
+   pastes included. Out of sight, never out of the document: a hidden field
+   cannot take focus or an input method. */
+.screen__keys {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  pointer-events: none;
+}
 .icon-btn.is-active { color: var(--accent); background: var(--accent-glow); }
 .screen.is-collapsed .screen__frame { display: none; }
 
@@ -2644,6 +2666,23 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
 .steps__title { color: var(--text); font-weight: 600; font-size: 14px; }
 .steps__tally { color: var(--text-faint); font-size: 12.5px; }
 .steps--error .steps__title { color: var(--danger); }
+/* One step of several failed: the run still did its work, so the title stays
+   as it is and only the count of failures says so. */
+.steps--partial .steps__tally { color: var(--warn); }
+
+/* The reasoning between two steps, inside the run's card: a quiet row hung
+   from a thin rule, a line or two tall until it is opened. */
+.step.step--thought { display: block; padding: 2px 0 2px 24px; }
+.think.think--inline {
+  margin: 2px 0;
+  border: 0;
+  border-left: 2px solid var(--line);
+  border-radius: 0;
+  background: none;
+}
+.think--inline .think__head { padding: 3px 10px 2px; font-size: 12.5px; font-weight: 500; }
+.think--inline .think__body { max-height: 3.3em; padding: 0 10px 4px; font-size: 12.5px; }
+.think--inline.is-open .think__body { max-height: none; }
 
 .steps__list {
   margin: 0;

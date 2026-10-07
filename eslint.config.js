@@ -64,6 +64,9 @@ const BROWSER_GLOBALS = {
   Blob: 'readonly',
   Uint8Array: 'readonly',
   EventSource: 'readonly',
+  // The cloud browser's screen and a person's gestures, straight to the machine. See public/js/screen.js.
+  WebSocket: 'readonly',
+  performance: 'readonly',
   TextDecoderStream: 'readonly',
   AbortController: 'readonly',
   ResizeObserver: 'readonly',

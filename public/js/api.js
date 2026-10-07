@@ -99,7 +99,9 @@ export const api = {
   screen: (hd = false) => request('GET', `/api/screen${hd ? '?hd=1' : ''}`),
   closeScreen: () => request('POST', '/api/screen/close'),
   screenInput: (event) => request('POST', '/api/screen/input', event),
-  cloudBrowserState: () => request('GET', '/api/cloud-browser/state'),
+  /** `driving` also keeps the machine awake: a person's gestures go straight to it and never pass the server to do that. */
+  cloudBrowserState: (driving = false) => request('GET', `/api/cloud-browser/state${driving ? '?driving=1' : ''}`),
+  /** One gesture, or `{ events: [...] }` — the relay, for when the socket to the machine cannot be opened. */
   cloudBrowserInput: (event) => request('POST', '/api/cloud-browser/input', event),
   closeCloudBrowser: () => request('POST', '/api/cloud-browser/close'),
 
