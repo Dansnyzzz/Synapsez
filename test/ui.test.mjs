@@ -146,9 +146,22 @@ check(
   await page.isHidden('#gate-remember-row'),
 );
 
+// LAW-001: agreeing to the privacy notice is a tick of the person's own.
+check('signing up asks for agreement to the privacy notice, with a link to it', (await page.isVisible('#gate-consent-row')) && (await page.getAttribute('#gate-consent-row a', 'href')) === '/privacy.html');
+await page.click('#gate-submit');
+await page.waitForTimeout(600);
+const unticked = await page.evaluate(() => ({ error: !document.getElementById('gate-error').hidden, stillGate: !!document.getElementById('gate-form') && !document.getElementById('model-chip')?.offsetParent }));
+check('  and does not go ahead without the tick', unticked.error && unticked.stillGate, JSON.stringify(unticked));
+await page.check('#gate-consent');
 await page.click('#gate-submit');
 await page.waitForTimeout(1600);
 check('the app opened', await page.isVisible('#model-chip'));
+{
+  const { getStore } = await import('../server/store/index.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  const consented = (await getStore().listAudit(me.id, 50)).find((e) => e.kind === 'consent_given');
+  check('  and the agreement is in the security record, with the notice\'s version', consented?.detail?.notice === 'privacy-2026-10-06', JSON.stringify(consented?.detail));
+}
 
 /**
  * The guide is the first thing a new account meets, and then it is gone.
@@ -470,6 +483,52 @@ section('attaching photos and files');
   }));
   check('saving closes it and keeps one picture, now the drawing', saved.closed && saved.tiles === 1 && !saved.failed, JSON.stringify(saved));
   check('  sent as a PNG', /\.png$/.test(saved.title), saved.title);
+  await page.click('.stage__remove');
+  await page.waitForTimeout(300);
+
+  // A tall picture with a transparent ground — a diagram exported from a
+  // drawing tool. The canvas used to spill down over the colours and tools, so
+  // every press on them drew a dot on the picture instead.
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const tall = createCanvas(600, 2400);
+  const draw = tall.getContext('2d');
+  draw.strokeStyle = '#111111';
+  draw.lineWidth = 8;
+  draw.strokeRect(100, 100, 400, 2200);
+  await page.setInputFiles('#file-input', { name: 'so-do.png', mimeType: 'image/png', buffer: tall.toBuffer('image/png') });
+  await page.waitForTimeout(1200);
+  const tile = await page.evaluate(() => getComputedStyle(document.querySelector('#attachments .stage__img')).backgroundColor);
+  check('a transparent picture waits above the composer on white', tile === 'rgb(255, 255, 255)', tile);
+  await page.click('#attachments .stage__open');
+  await page.waitForTimeout(800);
+  const layout = await page.evaluate(() => {
+    const box = (sel) => document.querySelector(sel).getBoundingClientRect();
+    const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('.sketch__canvas'));
+    const pixel = [...canvas.getContext('2d').getImageData(10, 10, 1, 1).data];
+    return { canvasBottom: box('.sketch__canvas').bottom, colorsTop: box('.sketch__colors').top, pixel };
+  });
+  check('the picture stays above the colours', layout.canvasBottom <= layout.colorsTop + 1, JSON.stringify(layout));
+  check('  and its transparent ground is drawn white', layout.pixel.join(',') === '255,255,255,255', layout.pixel.join(','));
+  const pressAt = async (selector) => {
+    const r = await page.$eval(selector, (el) => {
+      const b = el.getBoundingClientRect();
+      return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+    });
+    await page.mouse.click(r.x, r.y);
+    await page.waitForTimeout(150);
+  };
+  await pressAt('.sketch__color[data-color="#3fcf74"]');
+  await pressAt('.sketch__tool[data-tool="text"]');
+  const chosen = await page.evaluate(() => ({
+    color: document.querySelector('.sketch__color[aria-checked="true"]')?.getAttribute('data-color'),
+    tool: document.querySelector('.sketch__tool[aria-checked="true"]')?.getAttribute('data-tool'),
+    drew: !document.querySelector('.sketch [data-k="undo"]').disabled,
+  }));
+  check('a colour can be chosen by pressing it', chosen.color === '#3fcf74', JSON.stringify(chosen));
+  check('  and Text by pressing it', chosen.tool === 'text', JSON.stringify(chosen));
+  check('  without either press drawing on the picture', !chosen.drew, JSON.stringify(chosen));
+  await page.click('.sketch [data-k="back"]');
+  await page.waitForTimeout(300);
   await page.click('.stage__remove');
   await page.waitForTimeout(300);
 }
@@ -2029,6 +2088,25 @@ section('the model is one setting, with one control');
   // changed, and a second copy in Settings was the owner's "dư thừa".
   check('Settings has no Scheduled tab either', !settingsPanel.tasksTab);
 
+  // PRV-003: hiding personal details from the provider is one switch, saved to the account.
+  {
+    const { getStore } = await import('../server/store/index.js');
+    const { getPrefs } = await import('../server/settings.js');
+    const me = await getStore().getUserByEmail('ui@test.local');
+    await page.click('#tab-memory');
+    await page.waitForTimeout(400);
+    const before = await page.evaluate(() => /** @type {HTMLInputElement} */ (document.getElementById('mask-personal'))?.checked);
+    await page.check('#mask-personal');
+    await page.click('#save-memory-prefs');
+    await page.waitForTimeout(800);
+    const saved = (await getPrefs(me.id)).maskPersonal;
+    check('Settings offers to hide personal details from the provider, off at first', before === false, String(before));
+    check('  and the switch is saved to the account', saved === true, String(saved));
+    await page.uncheck('#mask-personal');
+    await page.click('#save-memory-prefs');
+    await page.waitForTimeout(600);
+  }
+
   // The reload is what used to expose the disagreement.
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
@@ -2687,6 +2765,28 @@ section('artifacts');
       '</body></html>',
     ].join('');
 
+    // A picture the assistant made — dark lines on a transparent ground — and
+    // the screenshot a browser step keeps for the assistant to look back at.
+    const { createCanvas } = await import('@napi-rs/canvas');
+    const drawn = createCanvas(200, 120);
+    const pen = drawn.getContext('2d');
+    pen.strokeStyle = '#111111';
+    pen.lineWidth = 6;
+    pen.strokeRect(20, 20, 160, 80);
+    const pictureBytes = drawn.toBuffer('image/png');
+    await store.createAttachment(owner.id, {
+      id: 'shelf-picture',
+      name: 'so-do.png',
+      mime: 'image/png',
+      kind: 'image',
+      bytes: pictureBytes.length,
+      data: pictureBytes.toString('base64'),
+      origin: 'generated',
+      chatId: made.chat,
+    });
+    const { keepStepShot } = await import('../server/attachments.js');
+    const stepShot = await keepStepShot(owner.id, { data: pictureBytes.toString('base64'), mime: 'image/png' });
+
     const result = await executeTool({
       user: owner,
       chatId: made.chat,
@@ -2697,7 +2797,20 @@ section('artifacts');
 
     // Open it through the shelf, which is the way somebody would find it.
     await page.click('#open-artifacts');
-    await page.waitForTimeout(700);
+    await page.waitForTimeout(1200);
+    const pictures = await page.evaluate((stepId) => {
+      const card = document.querySelector('.card--artifact[data-file="shelf-picture"]');
+      const img = /** @type {HTMLImageElement | null} */ (card?.querySelector('.card__peek--image img') || null);
+      return {
+        shown: !!img && img.complete && img.naturalWidth > 0,
+        ground: img ? getComputedStyle(img.parentElement).backgroundColor : '',
+        step: !!document.querySelector(`.card--artifact[data-file="${stepId}"]`),
+        steps: [...document.querySelectorAll('.card--artifact .card__name')].filter((n) => /^step-\d+\.jpg$/.test(n.textContent || '')).length,
+      };
+    }, stepShot?.id || '');
+    check('a picture on the shelf shows itself, not a file icon', pictures.shown, JSON.stringify(pictures));
+    check('  on white, so a transparent one reads', pictures.ground === 'rgb(255, 255, 255)', pictures.ground);
+    check('a step screenshot is not on the shelf', !!stepShot?.id && !pictures.step && pictures.steps === 0, JSON.stringify(pictures));
 
     const listed = await page.evaluate(() => ({
       open: !document.getElementById('page').hidden,
@@ -3781,6 +3894,7 @@ section('the guide does not come back after a mid-way reload');
   await page.fill('#gate-name', 'Người mới');
   await page.fill('#gate-email', 'nguoi-moi@example.com');
   await page.fill('#gate-password', 'mot-mat-khau-dai');
+  await page.check('#gate-consent');
   await page.click('#gate-submit');
   await page.waitForTimeout(2600);
 

@@ -13,6 +13,7 @@ import { runInSandbox } from '../sandbox.js';
 import { cloudBrowser } from '../cloudBrowser/index.js';
 import { shareFile } from '../routes/share.js';
 import { see } from '../vision.js';
+import { groundedImage } from '../imageGround.js';
 import { evaluate } from './calc.js';
 import { extractFromPage } from './extract.js';
 import { resolveForUser } from '../autoPick.js';
@@ -27,7 +28,7 @@ import { sendEmail, emailBackend, senderName } from '../email.js';
 import { composeMessage, KIND_NAMES } from '../mailTemplate.js';
 import { safeFetch, readCapped } from '../util/safeFetch.js';
 import { searchDocs, listSources, forgetSource } from '../rag.js';
-import { createDocument, extensionOf, readOffice } from '../office/index.js';
+import { SPREADSHEET_FORMATS, createDocument, extensionOf, readOfficeAsync } from '../office/index.js';
 import { extractPdfText } from '../pdf.js';
 import { saveGenerated, liveRevision } from '../attachments.js';
 import { record as recordUsage } from '../usage.js';
@@ -142,7 +143,11 @@ const MAX_DOC_BYTES = 32 * 1024 * 1024;
 const READABLE_DOCS = [
   { format: 'pdf', byType: /\bpdf\b/, byPath: /\.pdf$/ },
   { format: 'docx', byType: /wordprocessingml/, byPath: /\.docx$/ },
-  { format: 'xlsx', byType: /spreadsheetml/, byPath: /\.xlsx$/ },
+  { format: 'xlsx', byType: /spreadsheetml/, byPath: /\.(xlsx|xlsm)$/ },
+  // Read by SheetJS (server/office/sheets.js) — still what many sites publish.
+  { format: 'xls', byType: /^application\/vnd\.ms-excel$/, byPath: /\.xls$/ },
+  { format: 'xlsb', byType: /ms-excel\.sheet\.binary/, byPath: /\.xlsb$/ },
+  { format: 'ods', byType: /opendocument\.spreadsheet/, byPath: /\.ods$/ },
   { format: 'pptx', byType: /presentationml/, byPath: /\.pptx$/ },
 ];
 
@@ -153,6 +158,8 @@ const documentFormat = (type, pathname) =>
 function sniff(buffer) {
   if (buffer.subarray(0, 5).toString('latin1') === '%PDF-') return 'pdf';
   if (buffer[0] === 0x50 && buffer[1] === 0x4b) return 'zip';
+  // The compound-file binary an old .xls (or .doc) is.
+  if (buffer.length >= 8 && buffer.readUInt32LE(0) === 0xe011cfd0 && buffer.readUInt32LE(4) === 0xe11ab1a1) return 'cfb';
   return null;
 }
 
@@ -188,10 +195,10 @@ async function readBody(buffer, { format, type, host }) {
     };
   }
 
-  if (format && actual === 'zip') {
+  if (format && (actual === 'zip' || (actual === 'cfb' && SPREADSHEET_FORMATS.has(format)))) {
     // The same reader the chat and a project's shelf use, so a .docx linked on
     // a page and the same .docx attached to a message read identically.
-    const read = readOffice(format, buffer);
+    const read = await readOfficeAsync(format, buffer);
     if (!read.text?.trim()) throw new Error(`${host} returned a ${format} with no text in it.`);
     return { text: read.text, note: format };
   }
@@ -2451,7 +2458,9 @@ async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, c
       throw new Error(`${row.name} is not a picture or a PDF — read it with read_generated_file or as text instead.`);
     }
     source = row.name;
-    item = row.kind === 'image' ? { images: [{ mime: row.mime, data: row.data, name: row.name }] } : { pdf: { data: row.data, name: row.name, pages: wantPages } };
+    // A transparent picture on a ground the reading model can see it against.
+    const picture = row.kind === 'image' ? await groundedImage(row) : null;
+    item = picture ? { images: [{ mime: picture.mime, data: picture.data, name: row.name }] } : { pdf: { data: row.data, name: row.name, pages: wantPages } };
   } else if (url) {
     let parsed;
     try {

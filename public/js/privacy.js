@@ -42,6 +42,7 @@ export function createPrivacy({ state, armed, onImported }) {
     /** @type {HTMLInputElement} */ ($('chat-search')).checked = prefs.chatSearch !== false;
     /** @type {HTMLSelectElement} */ ($('retention')).value = String(prefs.retentionDays || 0);
     /** @type {HTMLSelectElement} */ ($('provider-privacy')).value = prefs.providerPrivacy === 'strict' ? 'strict' : 'standard';
+    /** @type {HTMLInputElement} */ ($('mask-personal')).checked = prefs.maskPersonal === true;
     // Two-factor accounts are asked for a code to leave; others are not.
     $('leave-code').hidden = !state.boot?.user?.twoFactor;
   }
@@ -56,6 +57,7 @@ export function createPrivacy({ state, armed, onImported }) {
         chatSearch: checked('chat-search'),
         retentionDays: Number(/** @type {HTMLSelectElement} */ ($('retention')).value) || 0,
         providerPrivacy: /** @type {HTMLSelectElement} */ ($('provider-privacy')).value,
+        maskPersonal: checked('mask-personal'),
       });
       $('memory-status').textContent = t('status.saved');
       setTimeout(() => ($('memory-status').textContent = ''), 2000);

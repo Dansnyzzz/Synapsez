@@ -2812,7 +2812,7 @@ function googleRiskReason(name, input = {}) {
 }
 
 /** The URL argument of every tool that makes a request to an address the model chose. */
-const URL_ARGUMENT = {
+export const URL_ARGUMENT = {
   web_fetch: 'url', extract: 'url', read_feed: 'url', youtube_transcript: 'url', http_request: 'url', look_at: 'url',
   download_file: 'url', export_pdf: 'url', browser_open: 'url', open_url: 'target', cloud_browser: 'url',
 };

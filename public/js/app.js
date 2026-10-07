@@ -258,6 +258,8 @@ const onScreen = (run) => runs.onScreen(run);
  * read-only with a job attached — look first, then say what you would do.
  */
 const POLICIES = ['guarded', 'auto', 'ask', 'plan', 'readonly'];
+/** The privacy notice a new account agrees to — public/privacy.html, by its version. */
+const PRIVACY_NOTICE = 'privacy-2026-10-06';
 
 /**
  * Looked up when drawn, not built at import.
@@ -551,6 +553,8 @@ function renderGateMode() {
   // Only sign-in offers to be remembered. Signing up already leaves you signed
   // in, and the reset screens are one-off errands on somebody else's schedule.
   $('gate-remember-row').hidden = !(gateMode === 'signin');
+  // Signing up is agreeing to the privacy notice, by a tick of the person's own (LAW-001).
+  $('gate-consent-row').hidden = !signup;
 
   // Never carry a revealed password across a mode change — the next screen is
   // often shown to explain something, and a password should not be part of it.
@@ -632,10 +636,18 @@ $('gate-form').addEventListener('submit', async (event) => {
       submit.disabled = false;
       return;
     } else if (gateMode === 'signup') {
+      if (!(/** @type {HTMLInputElement} */ ($('gate-consent')).checked)) {
+        $('gate-error').textContent = t('gate.consentNeeded');
+        $('gate-error').hidden = false;
+        $('gate-consent').focus();
+        /** @type {HTMLButtonElement} */ (submit).disabled = false;
+        return;
+      }
       const result = await api.register({
         name: $('gate-name').value.trim(),
         email: $('gate-email').value.trim(),
         password: $('gate-password').value,
+        consent: PRIVACY_NOTICE,
       });
       if (result.emailBackend === 'console') {
         toast(t('gate.note.noMail'));

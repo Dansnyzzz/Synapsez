@@ -924,3 +924,13 @@ CREATE TABLE IF NOT EXISTS mcp_shared (
 -- visitors and forks saw. Null on a link made before this column: those keep
 -- reading the live title until shared again.
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS shared_title TEXT;
+-- ── 30: a step screenshot is not a file somebody made ─
+-- The pictures the cloud browser keeps of each step, for the assistant to look
+-- back at, were stored as `generated`, so they filled the Files shelf beside the
+-- documents people asked for (owner, 2026-10-06). They have an origin of their
+-- own now (`keepStepShot` in server/attachments.js). The ones already stored are
+-- moved by the shape that function wrote: an image named `step-<ms>.jpg`, with
+-- no conversation and no source. Running it again moves nothing more.
+UPDATE attachments SET origin = 'step'
+ WHERE origin = 'generated' AND kind = 'image' AND chat_id IS NULL AND source IS NULL
+   AND name ~ '^step-[0-9]+\.jpg$';

@@ -58,6 +58,41 @@ section('the sign-in state cannot be forged, borrowed or replayed');
   check('a state older than ten minutes is refused', /too long/.test(late?.message || ''), late?.message);
 }
 
+section('a deployment on ACCESS_TOKEN alone still signs with a secret (SEC-047)');
+{
+  const { legacyFallbacks, signingRoot } = await import('../server/secrets.js');
+  const { imageSignature } = await import('../server/imageProxy.js');
+  const saved = { SESSION_SECRET: process.env.SESSION_SECRET, ENCRYPTION_KEY: process.env.ENCRYPTION_KEY, ACCESS_TOKEN: process.env.ACCESS_TOKEN };
+  const restore = () => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+  try {
+    check('the order is unchanged where the named secrets are set', signingRoot({ SESSION_SECRET: 'a', ENCRYPTION_KEY: 'b', ACCESS_TOKEN: 'c' }) === 'a' && signingRoot({ ENCRYPTION_KEY: 'b', ACCESS_TOKEN: 'c' }) === 'b');
+    check('the boot names both secrets that stand on ACCESS_TOKEN', legacyFallbacks({ ACCESS_TOKEN: 't' }).join() === 'SESSION_SECRET,ENCRYPTION_KEY' && legacyFallbacks({ ACCESS_TOKEN: 't', SESSION_SECRET: 's' }).join() === 'ENCRYPTION_KEY' && legacyFallbacks({ SESSION_SECRET: 's', ENCRYPTION_KEY: 'k' }).length === 0);
+
+    delete process.env.SESSION_SECRET;
+    delete process.env.ENCRYPTION_KEY;
+    process.env.ACCESS_TOKEN = 'legacy-access-token-for-the-suite';
+    const { state, nonce } = google.makeState('u-1', ['gmail']);
+    const [payload, mac] = state.split('.');
+    const emptyKeyMac = (await import('node:crypto')).createHmac('sha256', '').update(payload).digest('base64url');
+    check('on ACCESS_TOKEN alone the Google sign-in is signed with it, not an empty key', mac !== emptyKeyMac && google.readState(state, 'u-1', nonce).join() === 'gmail');
+    const crypto = await import('node:crypto');
+    const publicKey = crypto.createHmac('sha256', 'synapsez-dev-only').update('image-proxy-v1').digest();
+    const forgeable = crypto.createHmac('sha256', publicKey).update('https://evil.example/x.png').digest('base64url').slice(0, 22);
+    check('  and a picture address is not signed with the constant printed in this repository', imageSignature('https://evil.example/x.png') !== forgeable);
+
+    delete process.env.ACCESS_TOKEN;
+    const unsigned = await throws(() => google.makeState('u-1', ['gmail']));
+    check('with no secret at all, a Google sign-in is refused rather than signed with nothing', /SESSION_SECRET/.test(unsigned?.message || ''), unsigned?.message);
+  } finally {
+    restore();
+  }
+}
+
 section('the consent screen asks for what was ticked, offline');
 {
   const { url } = google.authUrl({ userId: 'u-1', products: ['gmail', 'calendar'], origin: 'https://app.example' });

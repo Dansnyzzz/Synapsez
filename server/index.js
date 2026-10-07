@@ -41,7 +41,14 @@ if (access.length) {
       '\n  Destructive actions still stop and ask; change the policy in Settings → Behaviour.',
   );
 }
-assertSecrets();
+const legacy = assertSecrets();
+if (legacy.length) {
+  // SEC-047, as on a deployment (api/index.js).
+  console.warn(
+    `\n  ${legacy.join(' and ')} come from ACCESS_TOKEN. Set them separately in .env — rotating one value` +
+      '\n  to sign everyone out would also make every stored API key unreadable.',
+  );
+}
 
 const port = Number(process.env.PORT) || 5173;
 

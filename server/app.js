@@ -517,6 +517,11 @@ export function createApp() {
     wrap(async (req, res) => {
       try {
         const user = await registerUser(body(req), req, res);
+        // Which privacy notice the person ticked, kept in their security record
+        // (LAW-001): consent has to be shown, not assumed. The form insists on
+        // the tick; an API client that sends none simply has none recorded.
+        const consent = typeof body(req)?.consent === 'string' ? body(req).consent.slice(0, 40) : '';
+        if (/^privacy-\d{4}-\d{2}-\d{2}$/.test(consent)) await audit(req, user.id, 'consent_given', { notice: consent });
         res.status(201).json({ user: publicUser(user), emailBackend: emailBackend() });
       } catch (err) {
         // A closed deployment is a 403, not a bad request — the client can tell
@@ -686,7 +691,19 @@ export function createApp() {
         // written into this row. A browsing session is dozens of these, and
         // inlining them would put megabytes of base64 into the transcript that
         // gets read back on every reload.
-        result: error ? { error } : { output, ...(shot ? { shot: await keepStepShot(req.workerUser.id, shot) } : {}) },
+        result: error
+          ? { error }
+          : {
+              output,
+              ...(shot
+                ? {
+                    shot: await keepStepShot(req.workerUser.id, shot, {
+                      // Kept with the job's conversation, so it goes when that does.
+                      chatId: (await getStore().getJob(req.workerUser.id, req.params.id).catch(() => null))?.chat_id || null,
+                    }),
+                  }
+                : {}),
+            },
       });
       res.json({ ok: true });
     }),
@@ -879,6 +896,7 @@ export function createApp() {
         'chatSearch',
         'retentionDays',
         'providerPrivacy',
+        'maskPersonal',
         'modelNotice',
       ];
       const patch = {};
@@ -909,7 +927,7 @@ export function createApp() {
         // Privacy choices are part of the security record: switching memory
         // off, or retention down to thirty days, is something an owner may want
         // to see they did — or did not — do.
-        const privacy = ['memory', 'memorySensitive', 'chatSearch', 'retentionDays', 'providerPrivacy'].filter((k) => k in patch);
+        const privacy = ['memory', 'memorySensitive', 'chatSearch', 'retentionDays', 'providerPrivacy', 'maskPersonal'].filter((k) => k in patch);
         if (privacy.length) {
           await audit(req, req.user.id, 'settings_privacy', Object.fromEntries(privacy.map((k) => [k, saved[k]])));
         }

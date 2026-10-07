@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { classify, saveUpload, cleanThumb } from './attachments.js';
 import { extractPdfText } from './pdf.js';
-import { isLegacyOffice, officeFormat, readOffice } from './office/index.js';
+import { isLegacyOffice, officeFormat, readOfficeAsync } from './office/index.js';
 import { STOPWORDS } from './rag.js';
 import { untrusted } from './tools/untrusted.js';
 
@@ -138,7 +138,7 @@ export async function addSource(userId, projectId, { name, mime, data, thumb }) 
     const format = officeFormat(filename, mime);
     let read;
     try {
-      read = readOffice(format, Buffer.from(base64, 'base64'));
+      read = await readOfficeAsync(format, Buffer.from(base64, 'base64'));
     } catch (err) {
       throw new Error(`${filename}: ${err.message}`);
     }

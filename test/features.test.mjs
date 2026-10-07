@@ -232,6 +232,16 @@ section('a shared conversation opens with no account, and shows only its own fil
     const owned = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie: `${cookie}; ${await sessionOf(owner.id)}` } });
     check('the owner is sent on to their own routes', owned.status === 401);
 
+    // CODE-032: taken back on another instance — in the database, not in this
+    // instance's memory — the file stops being served here at once.
+    const warm = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie } });
+    await store.setChatShare(owner.id, 'c-sc', null);
+    const afterRevoke = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie } });
+    check('a link taken back on another instance stops serving here at once', warm.status === 200 && afterRevoke.status === 401, `${warm.status} then ${afterRevoke.status}`);
+    const pageAfter = await fetch(`${base}/api/shared-chat/${token}`);
+    check('  and its page is gone', pageAfter.status === 404, String(pageAfter.status));
+    await store.setChatShare(owner.id, 'c-sc', token);
+
     // SEC-038: the proxies draw this page, not anything a cookie holder asks for.
     const { __testing: shareGate, drawnFrom, mapShows } = await import('../server/routes/chatShare.js');
     const { __testing: icons } = await import('../server/favicon.js');
@@ -725,6 +735,19 @@ section('deleting stored files across every account is asked for first (CODE-044
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+section('the privacy notice a new account agrees to is the one it can read (LAW-001)');
+{
+  const notice = fs.readFileSync(new URL('../public/privacy.html', import.meta.url), 'utf8');
+  const app = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+  const version = /const PRIVACY_NOTICE = '(privacy-\d{4}-\d{2}-\d{2})'/.exec(app)?.[1];
+  check('the page names the version the sign-up form sends', !!version && notice.includes(`Phiên bản ${version}`) && notice.includes(`Version ${version}`), version);
+  check('  in both languages, saying where data goes outside Vietnam and what rights there are', /ra nước ngoài/.test(notice) && /outside Vietnam/.test(notice) && /Quyền của bạn/.test(notice) && /Your rights/.test(notice));
+  check('  says it is not legal advice', /không phải tư vấn pháp lý/.test(notice) && /not legal advice/.test(notice));
+  check('  and runs no script — it is served under the page policy as it is', !/<script/i.test(notice));
+  const { AUDIT_KINDS } = await import('../server/audit.js');
+  check('agreeing is an event the security record keeps', AUDIT_KINDS.includes('consent_given'));
+}
+
 section('every setting the server and worker read is in the README (CODE-047)');
 {
   const path = await import('node:path');
@@ -737,8 +760,6 @@ section('every setting the server and worker read is in the README (CODE-047)');
     'COMPUTERNAME', 'HOSTNAME', 'SHELL', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'NODE_ENV',
     'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
     'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_VIEW_KEY', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY',
-    // SEC-047: whether this fallback should exist at all is the owner's call.
-    'ACCESS_TOKEN',
   ]);
   const read = new Map();
   const walk = (dir) => {
@@ -975,6 +996,14 @@ section('OCR reads Vietnamese with no key and no network');
     const a4 = await renderPdfPages(pdfOf('595 842'));
     const a4Size = a4?.pages?.[0] ? imageSize(Buffer.from(a4.pages[0].data, 'base64')) : null;
     check('  while an A4 page is still drawn 1400 wide', a4Size?.width === 1400, JSON.stringify(a4Size));
+
+    // PERF-023: drawn on a worker with a deadline, and on this thread where the
+    // worker's code is missing.
+    let late = null;
+    await renderPdfPages(pdfOf('595 842'), { timeoutMs: 1 }).catch((err) => (late = err));
+    check('drawing a scan\'s pages that takes too long is stopped', /took longer than 1s to draw/.test(late?.message || ''), late?.message);
+    const here = await renderPdfPages(pdfOf('595 842'), { workerUrl: new URL('../server/no-such-pages.worker.mjs', import.meta.url) }).catch((err) => ({ error: err.message }));
+    check('  and a page worker whose code is missing draws on this thread instead', here?.pages?.length === 1, JSON.stringify(here).slice(0, 120));
   }
   await stopOcr();
 
@@ -991,6 +1020,44 @@ section('OCR reads Vietnamese with no key and no network');
   const { see } = await import('../server/vision.js');
   const doubtful = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], ocr: async () => ({ text: 'Tong 1.25O.000', confidence: 41 }) });
   check('a hard-to-read reading says so', /hard to read/.test(doubtful.text));
+
+  // PRV-003: with personal details masked, Gemini is shown a PDF's drawn pages,
+  // never the file itself — whose bytes the shield cannot mask.
+  {
+    const { getStore } = await import('../server/store/index.js');
+    const { setApiKey, setPrefs } = await import('../server/settings.js');
+    const reader = await getStore().createUser({ id: 'u-see-pdf', email: 'see-pdf@example.com', passwordHash: 'x', name: 'S', role: 'user' });
+    const hadKey = process.env.ENCRYPTION_KEY;
+    process.env.ENCRYPTION_KEY ||= 'features-suite-encryption-key';
+    await setApiKey(reader.id, 'google', 'AIza-features-suite-placeholder-key-000000');
+    const box = '595 842';
+    const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${box}] /Resources << >> /Contents 4 0 R >>`, '<< /Length 0 >>\nstream\n\nendstream'];
+    let body = '%PDF-1.4\n';
+    const offsets = [];
+    objects.forEach((o, i) => {
+      offsets.push(body.length);
+      body += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    });
+    const xref = body.length;
+    body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    const pdf = { data: Buffer.from(body, 'latin1').toString('base64'), name: 'cv.pdf' };
+    const shown = async (mask) => {
+      await setPrefs(reader.id, { maskPersonal: mask });
+      let parts = [];
+      const stream = async function* fake(opts) {
+        parts = opts.messages.flatMap((m) => m.parts || []);
+        yield { type: 'text', delta: 'Một trang trống.' };
+        yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 3 } };
+      };
+      await see({ userId: reader.id, pdf, stream, ocr: async () => ({ text: '', confidence: 0 }) }).catch(() => null);
+      return parts.map((p) => p.type);
+    };
+    const plain = await shown(false);
+    const masked = await shown(true);
+    if (hadKey === undefined) delete process.env.ENCRYPTION_KEY;
+    check('Gemini reads a PDF as the file when masking is off', plain.includes('document'), plain.join(','));
+    check('  and as its drawn pages, never the file, when it is on', !masked.includes('document') && masked.includes('image'), masked.join(','));
+  }
 }
 
 section('a published link uses the address the person is on');

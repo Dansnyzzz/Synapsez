@@ -426,12 +426,16 @@ export function createPages({
   /* ── artifacts ────────────────────────────────────────────────── */
 
   const CODE = /\.(js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|cs|c|h|cpp|php|sh|ps1|sql|css|scss|ya?ml|toml|ini|xml|json)$/i;
+  /** A picture by its type or its name — what a browser can draw. */
+  const IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp|ico|svg)$/i;
+  const isSvg = (file) => /svg/i.test(String(file.mime || '')) || /\.svg$/i.test(String(file.name || ''));
   const kindOf = (file) => {
     const name = String(file.name || '');
+    if (/^image\//i.test(String(file.mime || '')) || IMAGE.test(name)) return 'image';
     if (/\.html?$/i.test(name)) return 'page';
     if (CODE.test(name)) return 'code';
     if (/\.(docx|md|txt|pdf)$/i.test(name)) return 'document';
-    if (/\.(xlsx|csv)$/i.test(name)) return 'sheet';
+    if (/\.(xlsx|xlsm|xls|xlsb|ods|csv|tsv)$/i.test(name)) return 'sheet';
     if (/\.pptx$/i.test(name)) return 'deck';
     return 'other';
   };
@@ -454,6 +458,7 @@ export function createPages({
         { id: 'document', label: t('pages.kind.document') },
         { id: 'sheet', label: t('pages.kind.sheet') },
         { id: 'deck', label: t('pages.kind.deck') },
+        { id: 'image', label: t('pages.kind.image') },
       ];
     },
     load: async () => (await api.files()).files,
@@ -473,11 +478,25 @@ export function createPages({
         .map((file) => {
           const kind = kindOf(file);
           const peek = file.peek || '';
+          // A picture shows itself. An SVG is fetched and drawn from a blob in
+          // `wire` — an <img> never runs a script inside one, and the file route
+          // serves it as a download rather than as a page of this origin.
+          const picture =
+            kind === 'image'
+              ? `<div class="card__peek card__peek--image">${
+                  isSvg(file)
+                    ? `<img alt="" data-svg="${escapeHtml(file.id)}">`
+                    : `<img alt="" loading="lazy" decoding="async" src="/api/attachments/${encodeURIComponent(file.id)}">`
+                }</div>`
+              : '';
           return `
         <div class="card card--artifact" data-file="${escapeHtml(file.id)}">
-          <div class="card__peek ${kind === 'code' || kind === 'page' ? 'card__peek--code' : ''} ${
-            peek ? '' : 'card__peek--empty'
-          }">${peek ? escapeHtml(peek) : artifactMark}</div>
+          ${
+            picture ||
+            `<div class="card__peek ${kind === 'code' || kind === 'page' ? 'card__peek--code' : ''} ${
+              peek ? '' : 'card__peek--empty'
+            }">${peek ? escapeHtml(peek) : artifactMark}</div>`
+          }
           <div class="card__foot">
             <span class="card__name">${escapeHtml(file.name)}</span>
             <span class="card__when">${escapeHtml(t('pages.edited', { when: ago(file.created_at) }))}${
@@ -491,6 +510,18 @@ export function createPages({
     wire: () => {
       for (const card of body.querySelectorAll('[data-file]')) {
         card.addEventListener('click', () => openViewer(card.dataset.file));
+      }
+      for (const img of /** @type {NodeListOf<HTMLImageElement>} */ (body.querySelectorAll('img[data-svg]'))) {
+        fetch(`/api/attachments/${encodeURIComponent(img.dataset.svg || '')}`)
+          .then((res) => (res.ok ? res.blob() : null))
+          .then((blob) => {
+            if (!blob) return;
+            const url = URL.createObjectURL(new Blob([blob], { type: 'image/svg+xml' }));
+            img.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+            img.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
+            img.src = url;
+          })
+          .catch(() => {});
       }
     },
     onNew: () => {

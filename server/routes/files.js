@@ -63,7 +63,9 @@ export function mountFileRoutes(api, { wrap, body }) {
    * **`?download=1`** switches the disposition to an attachment and turns off
    * the inline rendering, which is the Save button in the viewer.
    */
-  const INLINE_SAFE = /^(image\/(png|jpe?g|webp|gif)|application\/pdf)$/i;
+  // Every raster format a browser draws: none of them can carry a script. SVG
+  // can, and stays a download — the Files shelf draws one from a blob in an <img>.
+  const INLINE_SAFE = /^(image\/(png|jpe?g|webp|gif|avif|bmp|x-icon|vnd\.microsoft\.icon)|application\/pdf)$/i;
 
   /**
    * A filename for the `Content-Disposition` header.

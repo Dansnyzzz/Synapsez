@@ -10,8 +10,13 @@ import {
   keyRestingUntil,
   liftKeyRest,
   providerPrivacyFor,
+  maskPersonalFor,
 } from '../settings.js';
 import { resolveModel, PROVIDERS } from './catalog.js';
+import { startChatSpan } from '../util/genaiSpan.js';
+import crypto from 'node:crypto';
+import { createShield } from '../deidentify.js';
+import { signingRoot } from '../secrets.js';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 const ORCAROUTER_BASE = 'https://api.orcarouter.ai/v1';
@@ -392,6 +397,16 @@ export async function* streamCompletion(opts) {
   let maxTokens = opts.maxTokens ?? outputBudget(entry, estimatePromptTokens(opts));
   // Only OpenRouter takes a per-request data policy; see `providerPrivacy`.
   const privacy = provider === 'openrouter' ? (opts.privacy ?? (await providerPrivacyFor(userId))) : 'standard';
+  /**
+   * Personal data masked on the way out and restored on the way back (PRV-003),
+   * when the account asked for it. Here because this is the one door to every
+   * provider — a turn, a fold, a sub-agent, a vision reading, a research role —
+   * so nothing can reach a model around it. See deidentify.js.
+   */
+  const shield = (opts.maskPersonal ?? (await maskPersonalFor(userId)))
+    ? createShield({ key: crypto.createHmac('sha256', signingRoot() || 'synapsez-local').update(`deidentify:${userId || ''}`).digest() })
+    : null;
+  const outgoing = shield ? shield.protect(rest) : rest;
   let shrunk = false;
 
   for (let round = 0; round < ROUNDS; round += 1) {
@@ -425,7 +440,7 @@ export async function* streamCompletion(opts) {
     for (const { key, index, shared } of keys) {
       const which = shared ? 'the deployment key' : `key ${index + 1}`;
       const common = {
-        ...rest,
+        ...outgoing,
         apiKey: key,
         model: entry.model,
         entry,
@@ -442,20 +457,32 @@ export async function* streamCompletion(opts) {
         // of those makes a restart visible.
         const emitted = { text: 0, thinking: 0, toolCalls: 0 };
         let failure = null;
+        // Each attempt is its own span (HAR-004): a retried call is two calls.
+        const span = startChatSpan({ provider, model: entry.model, maxTokens, shared });
+        let done = null;
+        const restored = shield ? restoring(shield) : (event) => [event];
 
         try {
-          for await (const event of stallGuard(dispatch(entry, common))) {
-            if (event.type === 'text') emitted.text += 1;
-            else if (event.type === 'thinking') emitted.thinking += 1;
-            else if (event.type === 'tool_call_start') emitted.toolCalls += 1;
-            yield event;
+          for await (const incoming of stallGuard(dispatch(entry, common))) {
+            for (const event of restored(incoming)) {
+              if (event.type === 'text') emitted.text += 1;
+              else if (event.type === 'thinking') emitted.thinking += 1;
+              else if (event.type === 'tool_call_start') emitted.toolCalls += 1;
+              else if (event.type === 'done') done = event;
+              yield event;
+            }
           }
+          span.end({ done });
           // This one worked; start here next time rather than rediscovering the
           // dead keys ahead of it on every turn.
           if (!shared) rememberWorkingKey(userId, provider, index);
           return;
         } catch (err) {
           failure = err;
+          span.end({ error: err });
+        } finally {
+          // The consumer stopped reading (a stop, a turn ending early).
+          span.end({ done, aborted: true });
         }
 
         // They pressed stop. This is not a failure to grade, and none of the
@@ -542,6 +569,35 @@ export async function* streamCompletion(opts) {
   }
 
   throw new Error(`${label}: every key was refused${refused ? ` (${refused})` : ''}.`);
+}
+
+/**
+ * One attempt's events with the shield's placeholders given back (PRV-003): the
+ * reply and its reasoning as they stream — a placeholder split across two
+ * deltas is held until whole — and every tool call's arguments, so a tool runs
+ * on the real value. `raw`, the provider's own record, keeps the placeholders it
+ * was written with, which is what it is replayed against next step.
+ *
+ * @param {ReturnType<typeof createShield>} shield
+ */
+function restoring(shield) {
+  const text = shield.restorer();
+  const thinking = shield.restorer();
+  return (event) => {
+    if (event.type === 'text' || event.type === 'thinking') {
+      const delta = (event.type === 'text' ? text : thinking).push(event.delta);
+      return delta ? [{ ...event, delta }] : [];
+    }
+    if (event.type === 'done') {
+      const held = [];
+      const thought = thinking.flush();
+      if (thought) held.push({ type: 'thinking', delta: thought });
+      const said = text.flush();
+      if (said) held.push({ type: 'text', delta: said });
+      return [...held, { ...event, toolCalls: (event.toolCalls || []).map(shield.restoreCall) }];
+    }
+    return [event];
+  };
 }
 
 export { resolveModel, PROVIDERS };

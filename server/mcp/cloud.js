@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { getStore } from '../store/index.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
 import { readCapped } from '../util/safeFetch.js';
-import { chargeCloud, machineForUser, portAddress, sandboxConfigured, scratchMachine, discardMachine, MCP_PORT } from '../sandbox.js';
+import { chargeCloud, machineForUser, portAddress, sandboxConfigured, scratchMachine, discardMachine, shellFor, MCP_PORT } from '../sandbox.js';
 
 /**
  * stdio MCP servers on a deployment: on the account's own cloud computer.
@@ -160,10 +160,9 @@ export async function startBridge(machine, { signal } = {}) {
   const url = String(await portAddress(machine, MCP_PORT, { signal })).replace(/\/$/, '');
   const { source, build } = bridgeSource();
   const conn = { url, key: newKey(), build };
+  // No login profile first (HAR-001, shellFor): the bridge's key is in this environment.
   await machine.runCommand({
-    cmd: 'bash',
-    args: ['-lc', bridgeStartScript()],
-    env: { SYNZ_BRIDGE: source.toString('base64'), SYNZ_MCP_KEY: conn.key, PORT: String(MCP_PORT) },
+    ...shellFor(bridgeStartScript(), { SYNZ_BRIDGE: source.toString('base64'), SYNZ_MCP_KEY: conn.key, PORT: String(MCP_PORT) }),
     detached: true,
     signal,
   });

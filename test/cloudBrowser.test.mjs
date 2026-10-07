@@ -115,6 +115,46 @@ section('the cloud computer asks before it touches the browser\'s sign-ins (SEC-
   check('root asks', run({ command: 'dnf install -y jq', as_root: true }) === 'sensitive');
 }
 
+section('a command on the cloud computer reads none of the account\'s login files (HAR-001)');
+{
+  const { shellFor } = await import('../server/sandbox.js');
+  const shell = shellFor('echo hi', { SYNZ_KEY: 'k' });
+  check('bash with no profile and no rc file', shell.cmd === 'bash' && shell.args.slice(0, 3).join(' ') === '--noprofile --norc -c', JSON.stringify(shell.args.slice(0, 3)));
+  check('  the system profile alone, then the command', /^source \/etc\/profile/.test(shell.args[3]) && shell.args[3].endsWith('\necho hi') && !/\.(bash_)?profile\b(?!.*etc)|bashrc/.test(shell.args[3].replace('/etc/profile', '')), shell.args[3]);
+  check('  BASH_ENV cleared, and the caller\'s own environment kept', shell.env.BASH_ENV === '' && shell.env.ENV === '' && shell.env.SYNZ_KEY === 'k');
+  const userShell = shellFor('echo hi', {}, { userBin: true });
+  check('a service start keeps the account\'s own folders off its PATH', !/\.local\/bin/.test(shell.args[3]) && /case "\$_d" in "\$HOME"\*\|\[!\/\]\*/.test(shell.args[3]) && /if \[ -w "\$_d" \]; then _open=/.test(shell.args[3]) && shell.args[3].indexOf('$_open') < shell.args[3].indexOf(':$_orig'), shell.args[3]);
+  check('  and a command the account runs has them after the system\'s, never ahead', /export PATH="\$\{_keep:-[^}]*\}:\$HOME\/\.local\/bin:\$HOME\/bin"/.test(userShell.args[3]), userShell.args[3]);
+  const sources = ['server/sandbox.js', 'server/cloudBrowser/index.js', 'server/mcp/cloud.js'].map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'));
+  check('  and nothing on the machine starts through a login shell any more', sources.every((s) => !/['"]-lc['"]/.test(s)));
+
+  // Where there is a bash: a planted ~/.bash_profile runs under `-lc` and not here.
+  const { spawnSync } = await import('node:child_process');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const probe = process.platform === 'win32' ? { status: 1 } : spawnSync('bash', ['-c', 'true']);
+  if (probe.status !== 0) {
+    console.log('  (skipped: no bash here — this runs in CI on Linux)');
+  } else {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-profile-'));
+    fs.writeFileSync(path.join(home, '.bash_profile'), 'echo planted > "$HOME/ran"\n');
+    const env = { ...process.env, HOME: home };
+    spawnSync('bash', ['-lc', 'true'], { env });
+    const plantedUnderLogin = fs.existsSync(path.join(home, 'ran'));
+    fs.rmSync(path.join(home, 'ran'), { force: true });
+    const safe = shellFor('true');
+    spawnSync(safe.cmd, safe.args, { env: { ...env, ...safe.env } });
+    check('a planted ~/.bash_profile, which a login shell runs, does not run here', plantedUnderLogin && !fs.existsSync(path.join(home, 'ran')));
+    // A fake `node` in ~/.local/bin, first on a PATH that names it first.
+    fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.local', 'bin', 'node'), '#!/bin/sh\necho planted\n', { mode: 0o755 });
+    const which = shellFor('command -v node || echo none');
+    const found = spawnSync(which.cmd, which.args, { env: { ...env, ...which.env, PATH: `${path.join(home, '.local', 'bin')}:${process.env.PATH}` }, encoding: 'utf8' }).stdout.trim();
+    check('  and a node planted in ~/.local/bin is not the one a service start runs', !found.startsWith(home), found);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 section('the start script installs once per build and then runs the service');
 {
   const script = cb.startScript('abc123');
@@ -316,8 +356,11 @@ if (!chrome) {
     check('a person can drive it, and hears where the page went', moved.ok && moved.title === 'Form', moved.title);
 
     await cb.closeCloudBrowser('u-cb');
-    await new Promise((r) => setTimeout(r, 500));
-    check('close stops the service and forgets the address', child.exitCode === 0 && (await cb.cloudBrowserState('u-cb')).open === false);
+    // Chromium takes its own time to shut down — under a loaded gate more than
+    // the half second this used to allow, which failed one run in two. Waited
+    // for, up to a ceiling, rather than guessed.
+    for (let waited = 0; child.exitCode === null && waited < 10_000; waited += 100) await new Promise((r) => setTimeout(r, 100));
+    check('close stops the service and forgets the address', child.exitCode === 0 && (await cb.cloudBrowserState('u-cb')).open === false, `exit ${child.exitCode}`);
   } finally {
     child.kill();
     site.close();

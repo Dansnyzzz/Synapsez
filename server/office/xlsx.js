@@ -35,6 +35,7 @@ import {
   appPropsXml,
   contentTypesXml,
   corePropsXml,
+  isRel,
   mainPart,
   readRelationships,
   relsPathFor,
@@ -46,8 +47,8 @@ import {
 const MAX_TEXT_CHARS = 120_000;
 
 /** What the preview will draw. Beyond this a spreadsheet is a database. */
-const MAX_PREVIEW_ROWS = 2000;
-const MAX_PREVIEW_COLUMNS = 64;
+export const MAX_PREVIEW_ROWS = 2000;
+export const MAX_PREVIEW_COLUMNS = 64;
 
 /* ── column letters ─────────────────────────────────────────────────── */
 
@@ -267,8 +268,11 @@ export function readXlsx(buffer) {
 
   let sharedPath = null;
   for (const [, rel] of rels) {
-    if (rel.type === REL.sharedStrings) sharedPath = resolveTarget(workbookPath, rel.target);
+    if (isRel(rel.type, 'sharedStrings')) sharedPath = resolveTarget(workbookPath, rel.target);
   }
+  // A writer that left the relationship out still put the table where every
+  // writer puts it; without it every piece of text in the workbook reads blank.
+  if (!sharedPath && zip.has('xl/sharedStrings.xml')) sharedPath = 'xl/sharedStrings.xml';
 
   const strings = readSharedStrings(zip, sharedPath);
   const dateStyles = readDateStyles(zip);
@@ -312,8 +316,12 @@ export function sheetsToText(sheets) {
 
     const width = Math.max(sheet.columns, 1);
     let wrote = 0;
+    // A formula whose result was never saved — a workbook written by a library
+    // that does not calculate — is shown as the formula, rather than as a blank
+    // that reads like a missing answer.
+    const shown = (cell) => (cell?.v ? cell.v : cell?.f ? `=${cell.f}` : '');
     for (const row of sheet.rows) {
-      const cells = Array.from({ length: width }, (_, i) => (row[i]?.v ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' '));
+      const cells = Array.from({ length: width }, (_, i) => shown(row[i]).replace(/\|/g, '\\|').replace(/\n/g, ' '));
       const line = `| ${cells.join(' | ')} |`;
       if (used + line.length > MAX_TEXT_CHARS) {
         out.push(`[${sheet.rows.length - wrote} more rows not shown — the workbook is too large to include whole]`);

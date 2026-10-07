@@ -363,6 +363,59 @@ export async function browserAddress(machine, { signal } = {}) {
 }
 
 /**
+ * How a command is run: `bash --noprofile --norc -c`, nothing loaded first (HAR-001).
+ *
+ * It was `bash -lc`, a login shell, which reads ~/.bash_profile and ~/.profile
+ * before the command — and the disk is kept between conversations. One command
+ * talked into appending to those files ran its payload ahead of every command
+ * after it, in every conversation, never shown in any of them — and ahead of
+ * the cloud browser's and the MCP bridge's start, with their keys in reach.
+ * Now the system profile alone is read (/etc/profile, root's to change, which
+ * is where the image puts node on the PATH), never the account's own files;
+ * `BASH_ENV` is cleared for the same reason; and the PATH a login profile would
+ * have added (~/.local/bin, where `pip install --user` puts things) is set here
+ * instead. A tool that needs its own profile runs as `source ~/.profile && …`,
+ * in plain view and graded like anything else.
+ *
+ * The PATH is the system's, with the account's own folders taken out — a
+ * `~/.local/bin/node` written by one ordinary command would otherwise run in
+ * place of the real one ahead of every later service start, keys in hand. A
+ * command the account runs (`userBin`) gets them back at the end, after the
+ * system's, so `pip install --user` tools still run and never shadow a system
+ * program; a service start (the cloud browser, the MCP bridge) does not.
+ *
+ * The network stays open and the disk stays kept: both are the product's
+ * choice (one computer per account, the whole internet — see the top of this
+ * file), and what leaves the machine is graded per command by `assessRisk`.
+ * Root (`as_root`) can still change /etc/profile.d — and asks first, every time.
+ *
+ * @param {string} command
+ * @param {Record<string, string>} [env]
+ * @param {{ userBin?: boolean }} [options]
+ */
+export function shellFor(command, env = {}, { userBin = false } = {}) {
+  const systemPath = [
+    'source /etc/profile >/dev/null 2>&1 || true',
+    // Every entry under the account's home, relative, or writable by the account
+    // dropped from what the system set — the property that matters is who can
+    // put a program there, not where the folder is.
+    '_orig="$PATH"; _keep=; _open=; IFS=: read -ra _dirs <<< "$PATH"; for _d in "${_dirs[@]}"; do case "$_d" in "$HOME"*|[!/]*|"") ;; *) if [ -w "$_d" ]; then _open="${_open:+$_open:}$_d"; else _keep="${_keep:+$_keep:}$_d"; fi ;; esac; done',
+    `export PATH="\${_keep:-/usr/local/bin:/usr/bin:/bin}${userBin ? ':$HOME/.local/bin:$HOME/bin' : ''}"`,
+    // An image that keeps node somewhere the account can write still starts its
+    // services: such folders outside home come back first, after the system's,
+    // and only then — node still missing — the original PATH, rather than nothing.
+    'command -v node >/dev/null 2>&1 || export PATH="$PATH${_open:+:$_open}"',
+    'command -v node >/dev/null 2>&1 || export PATH="$PATH:$_orig"',
+    'unset _orig _keep _open _dirs _d',
+  ].join('\n');
+  return {
+    cmd: 'bash',
+    args: ['--noprofile', '--norc', '-c', `${systemPath}\n${command}`],
+    env: { ...env, BASH_ENV: '', ENV: '' },
+  };
+}
+
+/**
  * Run one command, having written any files first, and hand back what it said
  * — plus, when asked, one file it made, saved into the conversation.
  *
@@ -400,8 +453,7 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
     // paths in `files` and `download` land too. Root only when asked for —
     // installing a system package — so ordinary work runs as the normal user.
     const done = await machine.runCommand({
-      cmd: 'bash',
-      args: ['-lc', command],
+      ...shellFor(command, {}, { userBin: true }),
       sudo: !!input?.as_root,
       timeoutMs: seconds * 1000,
       signal,

@@ -659,6 +659,88 @@ section('the interface can ask before somebody attaches anything');
   check('and it needs a session', (await anon.call('GET', '/api/models/resolve?id=x')).status === 401);
 }
 
+section('a transparent picture reaches the model on a ground it can see');
+{
+  const { loadForTranscript, toParts } = await import('../server/attachments.js');
+  const { mayBeTransparent } = await import('../server/imageGround.js');
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+  const aliceId = (await store.getUserByEmail('alice@example.com')).id;
+  const drawing = (stroke, opaque = false) => {
+    const c = createCanvas(80, 60);
+    const ctx = c.getContext('2d');
+    if (opaque) {
+      ctx.fillStyle = '#336699';
+      ctx.fillRect(0, 0, 80, 60);
+    }
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 6;
+    ctx.strokeRect(20, 15, 40, 30);
+    return c.toBuffer('image/png');
+  };
+  const add = async (id, bytes) => {
+    await store.createAttachment(aliceId, { id, name: `${id}.png`, mime: 'image/png', kind: 'image', bytes: bytes.length, data: bytes.toString('base64') });
+    return { id, name: `${id}.png`, kind: 'image', mime: 'image/png' };
+  };
+  const dark = await add('ground-dark-lines', drawing('#111111'));
+  const light = await add('ground-light-lines', drawing('#ffffff'));
+  const solidBytes = drawing('#ffffff', true);
+  const solid = await add('ground-opaque', solidBytes);
+  const message = { attachments: [dark, light, solid] };
+  const loaded = await loadForTranscript(aliceId, [message]);
+  const parts = toParts(message, loaded);
+  const corner = async (part) => {
+    const picture = await loadImage(Buffer.from(part.data, 'base64'));
+    const c = createCanvas(picture.width, picture.height);
+    c.getContext('2d').drawImage(picture, 0, 0);
+    return [...c.getContext('2d').getImageData(2, 2, 1, 1).data].join(',');
+  };
+  const darkCorner = await corner(parts[0]);
+  const lightCorner = await corner(parts[1]);
+  check('dark lines on nothing reach the model on white', darkCorner === '255,255,255,255', darkCorner);
+  check('  white lines on nothing on a dark ground, which white would erase', lightCorner === '31,35,40,255', lightCorner);
+  check('  and a picture with nothing see-through goes exactly as it was', parts[2].data === solidBytes.toString('base64'));
+  // A header claiming a picture too large to decode safely is sent untouched —
+  // and is never decoded at all, which is the point (counted, not inferred).
+  const huge = Buffer.from(drawing('#111111'));
+  huge.writeUInt32BE(60_000, 16);
+  huge.writeUInt32BE(60_000, 20);
+  const { groundedImage, __testing: groundTest } = await import('../server/imageGround.js');
+  const decodedBefore = groundTest.decodes();
+  const untouched = await groundedImage({ mime: 'image/png', data: huge.toString('base64') });
+  check('  a picture whose header claims billions of pixels is never decoded', !!mayBeTransparent(huge) && groundTest.decodes() === decodedBefore, `${groundTest.decodes() - decodedBefore} decodes`);
+  check('    and goes as it was', untouched.data === huge.toString('base64'));
+  // A large transparent one goes at most 2000 pixels on its long edge.
+  const big = createCanvas(3200, 1600);
+  big.getContext('2d').fillRect(100, 100, 50, 50);
+  const shrunk = await groundedImage({ mime: 'image/png', data: big.toBuffer('image/png').toString('base64') });
+  const shrunkSize = await loadImage(Buffer.from(shrunk.data, 'base64'));
+  check('  a large transparent picture is flattened at no more than 2000 pixels across', shrunkSize.width === 2000 && shrunkSize.height === 1000, `${shrunkSize.width}×${shrunkSize.height}`);
+}
+
+section('a step screenshot is kept for the assistant, not shelved as a file');
+{
+  const { keepStepShot } = await import('../server/attachments.js');
+  const aliceId = (await store.getUserByEmail('alice@example.com')).id;
+  const kept = await keepStepShot(aliceId, { data: Buffer.from('a small step picture').toString('base64'), mime: 'image/jpeg' });
+  const row = kept ? await store.getAttachment(aliceId, kept.id) : null;
+  check('a step screenshot is stored as a step', row?.origin === 'step' && row?.kind === 'image', row?.origin);
+  const shelf = await alice.call('GET', '/api/files');
+  check('  and the Files shelf does not list it', shelf.status === 200 && !(shelf.json?.files || []).some((f) => f.id === kept?.id), `${shelf.status}`);
+  const shown = await alice.call('GET', `/api/attachments/${kept?.id}`);
+  check('  while the conversation can still show it', shown.status === 200, `${shown.status}`);
+
+  // It belongs to its conversation, and goes when that does.
+  await store.createChat(aliceId, { id: 'c-steps', title: 'browsing' });
+  const ofChat = await keepStepShot(aliceId, { data: Buffer.from('another step').toString('base64'), mime: 'image/jpeg' }, { chatId: 'c-steps' });
+  check('a step screenshot is kept with its conversation', (await store.getAttachment(aliceId, ofChat?.id))?.chat_id === 'c-steps');
+  await store.deleteChat(aliceId, 'c-steps');
+  check('  and deleting the conversation deletes it', !(await store.getAttachment(aliceId, ofChat.id)));
+  // One with no conversation is left by the daily sweep until it is a month old (see schema.test).
+  const old = await keepStepShot(aliceId, { data: Buffer.from('an old step').toString('base64'), mime: 'image/jpeg' });
+  await store.pruneOrphanAttachments();
+  check('  an orphan from today survives the daily sweep', !!(await store.getAttachment(aliceId, old.id)));
+}
+
 /* ── versions, and the two Open buttons ────────────────────────── */
 
 section('a file the assistant rewrites keeps what it was');

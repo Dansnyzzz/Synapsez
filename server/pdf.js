@@ -96,12 +96,14 @@ function standardFonts() {
  * JPEG rather than PNG: a scanned page is a photograph, and the same page is a
  * third of the size, which is what a request carrying eight of them needs.
  *
+ * Drawn on this thread; `renderPdfPages` below runs it on a worker.
+ *
  * @param file   base64 or a Buffer, as for `extractPdfText`
  * @param pages  1-based page numbers to draw; the first few when omitted
  * @returns `{ pages: [{ page, mime, data }], total }`, or null when the canvas
  *   is not available on this platform — a real answer, meaning "cannot look".
  */
-export async function renderPdfPages(file, { pages = null, max = 8, width = 1400 } = {}) {
+export async function drawPdfPagesHere(file, { pages = null, max = 8, width = 1400 } = {}) {
   let canvasApi;
   try {
     // A literal specifier, so the deployment tracer bundles the native module.
@@ -191,14 +193,64 @@ const TEXT_HEAP_MB = 384;
  */
 export async function extractPdfText(file, { timeoutMs = TEXT_MS, workerUrl = new URL('./pdfText.worker.mjs', import.meta.url) } = {}) {
   const bytes = Buffer.isBuffer(file) ? file : Buffer.from(String(file || ''), 'base64');
+  return onWorker(workerUrl, { bytes: Uint8Array.from(bytes) }, {
+    timeoutMs,
+    heapMb: TEXT_HEAP_MB,
+    here: () => readPdfText(bytes),
+    late: `That PDF took longer than ${Math.max(1, Math.round(timeoutMs / 1000))}s to read, so reading it was stopped.`,
+  });
+}
+
+/** How long drawing a scan's pages may take, and how much memory it may hold (PERF-023). */
+const DRAW_MS = 45_000;
+const DRAW_HEAP_MB = 512;
+
+/**
+ * Pages of a PDF as pictures, on a worker thread with a deadline (PERF-023).
+ *
+ * The same reasoning as `extractPdfText`: pdfjs draws on the thread that calls
+ * it, and a crafted scan can hold that thread. Memory was already bounded
+ * (PERF-019); now time is too, and the heap is the worker's own. The native
+ * canvas was never tried inside a worker on Vercel, so anything short of a
+ * drawing from the worker — its code missing, the canvas not loading there —
+ * draws on this thread as it always did. A deadline is not retried here: it is
+ * the file.
+ *
+ * @param file   base64 or a Buffer
+ * @param {{ pages?: number[] | null, max?: number, width?: number, timeoutMs?: number, workerUrl?: URL }} [options]
+ *   `workerUrl` is for tests, which stand in a worker whose code cannot be loaded.
+ */
+export async function renderPdfPages(file, { pages = null, max = 8, width = 1400, timeoutMs = DRAW_MS, workerUrl = new URL('./pdfPages.worker.mjs', import.meta.url) } = {}) {
+  const bytes = Buffer.isBuffer(file) ? file : Buffer.from(String(file || ''), 'base64');
+  const options = { pages, max, width };
+  const here = () => drawPdfPagesHere(bytes, options);
+  const drawn = await onWorker(workerUrl, { bytes: Uint8Array.from(bytes), options }, {
+    timeoutMs,
+    heapMb: DRAW_HEAP_MB,
+    here,
+    late: `That PDF's pages took longer than ${Math.max(1, Math.round(timeoutMs / 1000))}s to draw, so drawing them was stopped.`,
+  });
+  // Null from the worker can mean the canvas would not load there; ask here.
+  return drawn ?? here();
+}
+
+/** A worker that could not load its own code is the deployment, not the file. */
+const WORKER_LOAD = /ERR_MODULE_NOT_FOUND|ERR_WORKER_PATH|ERR_WORKER_INIT_FAILED|Cannot find module/;
+
+/**
+ * Run a PDF job on a worker with a deadline and a heap of its own, or on this
+ * thread (`here`) where no worker can start or its code cannot load.
+ *
+ * @param {URL} workerUrl
+ * @param {any} workerData
+ * @param {{ timeoutMs: number, heapMb: number, here: () => Promise<any>, late: string }} job
+ */
+function onWorker(workerUrl, workerData, { timeoutMs, heapMb, here, late }) {
   let worker;
   try {
-    worker = new Worker(workerUrl, {
-      workerData: { bytes: Uint8Array.from(bytes) },
-      resourceLimits: { maxOldGenerationSizeMb: TEXT_HEAP_MB },
-    });
+    worker = new Worker(workerUrl, { workerData, resourceLimits: { maxOldGenerationSizeMb: heapMb } });
   } catch {
-    return readPdfText(bytes);
+    return here();
   }
   const unreadable = (message) => Object.assign(new Error(message), { code: 'pdf_unreadable' });
   return new Promise((resolve, reject) => {
@@ -210,10 +262,7 @@ export async function extractPdfText(file, { timeoutMs = TEXT_MS, workerUrl = ne
       worker.terminate().catch(() => {});
       fn(value);
     };
-    const timer = setTimeout(
-      () => finish(reject, unreadable(`That PDF took longer than ${Math.max(1, Math.round(timeoutMs / 1000))}s to read, so reading it was stopped.`)),
-      timeoutMs,
-    );
+    const timer = setTimeout(() => finish(reject, unreadable(late)), timeoutMs);
     worker.once('message', (out) => {
       if (out?.ok) finish(resolve, out.result ?? null);
       else finish(reject, Object.assign(new Error(out?.message || 'That PDF could not be read.'), { code: out?.code || 'pdf_unreadable' }));
@@ -221,14 +270,14 @@ export async function extractPdfText(file, { timeoutMs = TEXT_MS, workerUrl = ne
     worker.once('error', (err) => {
       /*
        * A worker that could not load its own code is this deployment, not the
-       * file: read on this thread as before, rather than failing every PDF.
+       * file: done on this thread as before, rather than failing every PDF.
        * Running out of its heap is the file, and is not retried here.
        */
-      if (!settled && /ERR_MODULE_NOT_FOUND|ERR_WORKER_PATH|ERR_WORKER_INIT_FAILED|Cannot find module/.test(`${err?.code} ${err?.message}`)) {
+      if (!settled && WORKER_LOAD.test(`${err?.code} ${err?.message}`)) {
         settled = true;
         clearTimeout(timer);
         worker.terminate().catch(() => {});
-        readPdfText(bytes).then(resolve, reject);
+        here().then(resolve, reject);
         return;
       }
       finish(reject, unreadable(`That PDF could not be read: ${err?.message || err}`));

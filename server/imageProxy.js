@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { safeFetch, readCapped } from './util/safeFetch.js';
+import { signingRoot } from './secrets.js';
 
 /**
  * Pictures from elsewhere, fetched by this server rather than by the browser.
@@ -41,7 +42,9 @@ const IMAGE_HOSTS = [
  * cannot make a new one, so it cannot put anything into an address either.
  */
 function signingKey() {
-  const secret = process.env.SESSION_SECRET || process.env.ENCRYPTION_KEY || '';
+  // The constant is for a bare local run with no secret at all; a deployment
+  // always has one of the three (SEC-047 — ACCESS_TOKEN alone used to land here).
+  const secret = signingRoot();
   // Derived, so the image signature can never be used as anything else.
   return crypto.createHmac('sha256', secret || 'synapsez-dev-only').update('image-proxy-v1').digest();
 }

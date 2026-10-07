@@ -9,7 +9,7 @@ import { budgetStop } from './providers/stop.js';
 import { resolve as resolveModelId } from './models.js';
 import { AUTO_ID, isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
 import { settleAccountModel, goneModel, isModelGoneError, isLibraryModel, moveAccountToAuto } from './modelRetirement.js';
-import { availableTools, assessRisk, riskReason, TOOLS_BY_NAME } from './tools/definitions.js';
+import { availableTools, assessRisk, riskReason, TOOLS_BY_NAME, URL_ARGUMENT } from './tools/definitions.js';
 import { UNTRUSTED_RULE } from './tools/untrusted.js';
 import { executeTool } from './tools/execute.js';
 import { normalisePlan, PLAN_MIN_STEPS } from './tools/cloud.js';
@@ -557,9 +557,11 @@ const WAIT_NOTICE_MS = 6000;
 const READS_PDF = new Set(['anthropic', 'google']);
 export const readsPdfNatively = (entry) => READS_PDF.has(entry?.provider);
 
-function withAttachments(messages, loaded, entry) {
+function withAttachments(messages, loaded, entry, { masking = false } = {}) {
   const vision = entry?.vision !== false;
-  const documents = readsPdfNatively(entry);
+  // With personal details masked, a PDF goes as its text — which the shield can
+  // mask — rather than as the file, whose bytes it cannot (PRV-003).
+  const documents = !masking && readsPdfNatively(entry);
   // Shared across the transcript, in order, so a file attached twice goes once.
   const seen = new Set();
   return messages.map((m) =>
@@ -801,6 +803,18 @@ export function turnReadOutside(messages) {
 }
 
 /**
+ * Whether a personal detail the shield put back is going out in a web address
+ * (PRV-003). With masking on the model holds only placeholders, and a page can
+ * talk it into writing one into a URL; restoring it there would hand the real
+ * value to whoever the address points at. So that call asks first.
+ */
+const personalInAddress = (call) => Array.isArray(call?.unmasked) && !!URL_ARGUMENT[call.name] && call.unmasked.includes(URL_ARGUMENT[call.name]);
+
+/** Why such a call asks, in the approval prompt. */
+export const PERSONAL_IN_ADDRESS_REASON =
+  'This puts one of your personal details — hidden from the model as a placeholder — into a web address. Check the address before it is sent.';
+
+/**
  * The calls in a step that must stop for a yes.
  *
  * `readOutside`: under `guarded`, a memory write in a turn that has read
@@ -808,9 +822,10 @@ export function turnReadOutside(messages) {
  * every later conversation, so a page that talked the assistant into saving "the
  * user always wants replies forwarded to …" would have planted an instruction
  * in all of them — the one place an injection outlives the turn it came from.
- * A turn that read nothing from outside writes its notes as before.
+ * A turn that read nothing from outside writes its notes as before. A personal
+ * detail put back into a web address always asks (`personalInAddress`).
  *
- * @param {Array<{ id: string, name: string, input?: any }>} toolCalls
+ * @param {Array<{ id: string, name: string, input?: any, unmasked?: string[] }>} toolCalls
  * @param {string} policy
  * @param {{ readOutside?: boolean }} [context]
  */
@@ -818,6 +833,7 @@ export function needsApproval(toolCalls, policy, { readOutside = false } = {}) {
   if (policy === 'auto' || policy === 'readonly' || policy === 'plan') return [];
   return toolCalls.filter((call) => {
     if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return true;
+    if (personalInAddress(call)) return true;
     const risk = assessRisk(call.name, call.input);
     if (risk === 'safe') return false;
     return policy === 'ask' ? true : risk === 'sensitive';
@@ -827,6 +843,7 @@ export function needsApproval(toolCalls, policy, { readOutside = false } = {}) {
 /** The reason shown for one call in an approval prompt. */
 function approvalReason(call, policy, readOutside) {
   if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return READ_OUTSIDE_REASON;
+  if (personalInAddress(call)) return PERSONAL_IN_ADDRESS_REASON;
   return riskReason(call.name, call.input);
 }
 
@@ -1166,6 +1183,8 @@ export function applyStreamEvent(ev, assistant, emit) {
 export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, origin = null, policy: policyOverride = null, unattended = false, stream = streamCompletion }) {
   const store = getStore();
   const prefs = await getPrefs(userId);
+  /** Personal details masked before the provider sees them (PRV-003): files go as their text. */
+  const masking = prefs.maskPersonal === true;
 
   const chat = await store.getChat(userId, chatId);
   if (!chat) throw new Error('Chat not found.');
@@ -1659,8 +1678,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         project?.images,
       );
       const loaded = await loadForTranscript(userId, grounded, {
-        // Only worth parsing when the model cannot be shown the file itself.
-        extractText: !readsPdfNatively(entry),
+        // Only worth parsing when the model cannot be shown the file itself —
+        // or when personal details are masked, and the text is what can be.
+        extractText: masking || !readsPdfNatively(entry),
         // Read once per turn, not once per step — see loadForTranscript.
         cache: turnFiles,
       });
@@ -1672,7 +1692,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         chatId,
         loaded,
         vision: entry?.vision !== false,
-        documents: readsPdfNatively(entry),
+        documents: !masking && readsPdfNatively(entry),
         signal,
         onLooking: () => emit('status', { phase: 'tool', name: 'look_at' }),
       });
@@ -1691,7 +1711,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         // invalidate. `activeTranscript` is what makes a folded conversation
         // smaller: the page still holds every turn, and only the summary plus
         // what followed it is sent.
-        messages: withAttachments(grounded, loaded, entry),
+        messages: withAttachments(grounded, loaded, entry, { masking }),
         // Rebuilt per step: anything `load_tools` activated last step is in it
         // now. On a turn that activates nothing this returns the same list every
         // time, so the cached prefix is undisturbed.

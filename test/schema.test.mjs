@@ -221,7 +221,7 @@ section('schema.sql and SCHEMA_VERSION move together');
   // version was not bumped; it was, in the same change as the schema, so 21 is
   // the version that owns this file.
   // 28: chats.incognito and audit_events.
-  const STAMPED = { version: 29, fingerprint: 'a391b754d4a3041b' };
+  const STAMPED = { version: 30, fingerprint: '87c3bac337e4d906' };
 
   check(
     'the recorded version matches the code',
@@ -237,6 +237,43 @@ section('schema.sql and SCHEMA_VERSION move together');
         `STAMPED here to { version: ${SCHEMA_VERSION + 1}, fingerprint: '${fingerprint}' }. ` +
         'Without the bump, every database already in use skips your change.',
   );
+}
+
+section('a step screenshot leaves the Files shelf (schema 30)');
+{
+  const store = createPgStore(driver);
+  await store.init();
+  await store.createUser({ id: 'u-step', email: 'step@example.com', name: 'Step', passwordHash: 'x', role: 'user' });
+  const add = (id, extra) => store.createAttachment('u-step', { id, mime: 'image/jpeg', kind: 'image', bytes: 3, data: 'AAA', ...extra });
+  // What `keepStepShot` wrote before 30, and four things that only look like it.
+  await add('shot-old', { name: 'step-1791129697458.jpg', origin: 'generated' });
+  await add('made-in-chat', { name: 'step-1791129697459.jpg', origin: 'generated', chatId: 'c-made' });
+  await add('made-from-source', { name: 'step-1791129697460.jpg', origin: 'generated', source: 'drawn' });
+  await add('uploaded', { name: 'step-1791129697461.jpg' });
+  await add('picture', { name: 'chart.png', mime: 'image/png', origin: 'generated' });
+  // As a database that had not reached 30 yet.
+  await driver.query(`UPDATE settings SET value = '29'::jsonb WHERE key = 'schema_version'`);
+  await createPgStore(driver).init();
+  const origins = Object.fromEntries(
+    (await driver.query(`SELECT id, origin FROM attachments WHERE user_id = 'u-step'`)).map((r) => [r.id, r.origin]),
+  );
+  check('a step screenshot stored as made is moved to an origin of its own', origins['shot-old'] === 'step', JSON.stringify(origins));
+  check(
+    '  and nothing that only looks like one is',
+    origins['made-in-chat'] === 'generated' && origins['made-from-source'] === 'generated' && origins.uploaded === 'upload' && origins.picture === 'generated',
+    JSON.stringify(origins),
+  );
+  const shelf = (await store.listAllGeneratedFiles('u-step')).map((f) => f.id);
+  check('  so the Files shelf lists what was made, not the screenshot', !shelf.includes('shot-old') && shelf.includes('picture'), shelf.join(','));
+
+  // Nothing else would ever delete one with no conversation: the daily sweep
+  // takes it after a month, and leaves a newer one and everything else.
+  await add('shot-recent', { name: 'step-1791129697470.jpg', origin: 'step' });
+  await driver.query(`UPDATE attachments SET created_at = NOW() - INTERVAL '40 days' WHERE id IN ('shot-old', 'picture')`);
+  await store.pruneOrphanAttachments();
+  const left = (await driver.query(`SELECT id FROM attachments WHERE user_id = 'u-step'`)).map((r) => r.id);
+  check('an orphaned step screenshot older than a month is swept', !left.includes('shot-old'), left.join(','));
+  check('  a newer one and a file somebody made are not', left.includes('shot-recent') && left.includes('picture'), left.join(','));
 }
 
 section('and the stamp is what decides');

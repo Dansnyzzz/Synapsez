@@ -1,7 +1,7 @@
 import { streamCompletion } from './providers/index.js';
 import { resolveForUser } from './autoPick.js';
 import { executeTool } from './tools/execute.js';
-import { availableTools, assessRisk } from './tools/definitions.js';
+import { availableTools, assessRisk, URL_ARGUMENT } from './tools/definitions.js';
 import { getPrefs, providerStatus } from './settings.js';
 import { connectorSummary } from './connectors.js';
 import { record as recordUsage } from './usage.js';
@@ -230,6 +230,17 @@ async function runOne({ userId, user, chatId = null, entry, prefs, tools, task, 
             toolCallId: call.id,
             name: call.name,
             content: `"${call.name}" was not offered to this sub-agent, so it was not run. Report what needs doing instead.`,
+            isError: true,
+          };
+        }
+        // A personal detail the shield put back, going out in a web address
+        // (PRV-003): the main loop asks first; a sub-agent has nobody to ask.
+        const address = URL_ARGUMENT[call.name];
+        if (address && Array.isArray(call.unmasked) && call.unmasked.includes(address)) {
+          return {
+            toolCallId: call.id,
+            name: call.name,
+            content: `A sub-agent may not put one of the person's details into a web address. Report what you needed it for instead.`,
             isError: true,
           };
         }

@@ -219,8 +219,10 @@ export function splitStatements(sql) {
  *  29  mcp_shared — a stdio MCP server checked once on a scratch machine, so
  *      the next account adds it at once; chats.shared_title — a shared
  *      conversation's title as it stood when shared (PRV-013)
+ *  30  attachments.origin 'step' — the cloud browser's step screenshots, moved
+ *      off the Files shelf; the ones already stored are reclassified in place
  */
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 30;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -2014,6 +2016,13 @@ export function createPgStore(connectionString) {
             AND a.created_at < NOW() - ($1 || ' hours')::interval
             AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id)`,
         [String(olderThanHours)],
+      );
+      // A step screenshot kept before it was tied to its conversation has nothing
+      // that would ever delete it — no conversation to go with, no shelf to be
+      // removed from. A month is long enough to look back at a run.
+      await q(
+        `DELETE FROM attachments
+          WHERE chat_id IS NULL AND origin = 'step' AND created_at < NOW() - INTERVAL '30 days'`,
       );
     },
 

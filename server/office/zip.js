@@ -12,20 +12,60 @@
  * move: this is ECMA-376, frozen since 2006, and PKZIP's central directory is
  * older than that.
  *
- * Two things this deliberately does not do:
+ * What it is generous about, because real files do these things:
  *
- *   **Zip64.** Archives above 4GB or 65,535 parts announce themselves with
- *   sentinel values, and hitting one raises rather than reading nonsense. No
- *   document a person attaches is that.
+ *   **Zip64.** Some writers mark sizes and offsets with the 0xFFFFFFFF sentinel
+ *   and put the real numbers in a Zip64 extra field even for a small file, and
+ *   a large archive keeps its table of contents in a Zip64 record. Both are
+ *   read; a file past what memory can hold is still refused by size.
  *
- *   **Encryption.** A password-protected file fails by name, which is the only
- *   useful thing to say about it.
+ *   **Names.** OPC part names compare without case (ECMA-376 Part 2), and some
+ *   writers store `xl\worksheets\sheet1.xml` or a leading slash. A lookup that
+ *   insisted on the exact bytes found no sheets in a perfectly good workbook.
+ *
+ * And one thing it does not do: **encryption**. A password-protected file fails
+ * by name, which is the only useful thing to say about it.
  */
 import zlib from 'node:zlib';
 
 const LOCAL_SIG = 0x04034b50;
 const CENTRAL_SIG = 0x02014b50;
 const EOCD_SIG = 0x06054b50;
+const ZIP64_EOCD_SIG = 0x06064b50;
+const ZIP64_LOCATOR_SIG = 0x07064b50;
+const ZIP64_EXTRA = 0x0001;
+const SENTINEL32 = 0xffffffff;
+
+/** How a part name is looked up: separators made forward, no leading slash, any case. */
+const partKey = (name) => String(name || '').replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+
+/** A 64-bit little-endian count as a Number — every real file is far below 2^53. */
+const uint64 = (bytes, at) => Number(bytes.readBigUInt64LE(at));
+
+/**
+ * The real numbers behind 0xFFFFFFFF sentinels, from an entry's Zip64 extra
+ * field. Only the fields that were sentinels are present, in this fixed order.
+ */
+function zip64Values(bytes, extraStart, extraLength, wanted) {
+  const end = extraStart + extraLength;
+  for (let at = extraStart; at + 4 <= end; ) {
+    const id = bytes.readUInt16LE(at);
+    const size = bytes.readUInt16LE(at + 2);
+    if (id === ZIP64_EXTRA) {
+      const out = {};
+      let field = at + 4;
+      for (const name of ['size', 'compressedSize', 'localOffset']) {
+        if (!wanted[name]) continue;
+        if (field + 8 > at + 4 + size) break;
+        out[name] = uint64(bytes, field);
+        field += 8;
+      }
+      return out;
+    }
+    at += 4 + size;
+  }
+  return {};
+}
 
 /** Where the end-of-central-directory record can start hiding: 22 bytes plus a 64KB comment. */
 const EOCD_MAX_SCAN = 22 + 0xffff;
@@ -98,14 +138,24 @@ export function openZip(buffer) {
     });
   }
 
-  const total = bytes.readUInt16LE(eocd + 10);
-  const cdSize = bytes.readUInt32LE(eocd + 12);
-  const cdOffset = bytes.readUInt32LE(eocd + 16);
+  let total = bytes.readUInt16LE(eocd + 10);
+  let cdSize = bytes.readUInt32LE(eocd + 12);
+  let cdOffset = bytes.readUInt32LE(eocd + 16);
 
-  if (total === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
-    throw Object.assign(new Error('That archive uses ZIP64, which this reader does not handle.'), {
-      code: 'zip64',
-    });
+  // A Zip64 table of contents: the locator sits just before the classic record
+  // and points at the Zip64 one, which holds the real counts.
+  if (total === 0xffff || cdSize === SENTINEL32 || cdOffset === SENTINEL32) {
+    const locator = eocd - 20;
+    if (locator < 0 || bytes.readUInt32LE(locator) !== ZIP64_LOCATOR_SIG) {
+      throw Object.assign(new Error('That archive says it is ZIP64 but has no ZIP64 record — it is corrupt.'), { code: 'zip64' });
+    }
+    const record = uint64(bytes, locator + 8);
+    if (record + 56 > bytes.length || bytes.readUInt32LE(record) !== ZIP64_EOCD_SIG) {
+      throw Object.assign(new Error('That archive\'s ZIP64 record is not where it says.'), { code: 'zip64' });
+    }
+    total = uint64(bytes, record + 32);
+    cdSize = uint64(bytes, record + 40);
+    cdOffset = uint64(bytes, record + 48);
   }
   if (cdOffset + cdSize > bytes.length) throw new Error('That archive is truncated or corrupt.');
 
@@ -122,12 +172,12 @@ export function openZip(buffer) {
     // Sizes come from the central directory rather than the local header: when
     // an entry was written with a streaming data descriptor (flag bit 3) the
     // local header's copies are zero, and reading them gives an empty file.
-    const compressedSize = bytes.readUInt32LE(at + 20);
-    const size = bytes.readUInt32LE(at + 24);
+    let compressedSize = bytes.readUInt32LE(at + 20);
+    let size = bytes.readUInt32LE(at + 24);
     const nameLength = bytes.readUInt16LE(at + 28);
     const extraLength = bytes.readUInt16LE(at + 30);
     const commentLength = bytes.readUInt16LE(at + 32);
-    const localOffset = bytes.readUInt32LE(at + 42);
+    let localOffset = bytes.readUInt32LE(at + 42);
     const name = bytes.toString('utf8', at + 46, at + 46 + nameLength);
 
     if (flags & 0x01) {
@@ -136,15 +186,40 @@ export function openZip(buffer) {
       });
     }
 
+    if (size === SENTINEL32 || compressedSize === SENTINEL32 || localOffset === SENTINEL32) {
+      const real = zip64Values(bytes, at + 46 + nameLength, extraLength, {
+        size: size === SENTINEL32,
+        compressedSize: compressedSize === SENTINEL32,
+        localOffset: localOffset === SENTINEL32,
+      });
+      size = real.size ?? size;
+      compressedSize = real.compressedSize ?? compressedSize;
+      localOffset = real.localOffset ?? localOffset;
+    }
+
     // Directory entries are not parts; they exist only to carry a name.
-    if (!name.endsWith('/')) {
-      entries.set(name, { name, method, compressedSize, size, localOffset });
+    if (!name.endsWith('/') && !name.endsWith('\\')) {
+      const key = partKey(name);
+      // The first of two names that differ only by case wins, as it would in a
+      // reader that walked the table of contents in order.
+      if (!entries.has(key)) entries.set(key, { name, method, compressedSize, size, localOffset });
     }
     at += 46 + nameLength + extraLength + commentLength;
   }
 
+  /** The entry a part name means: as given, or with its %-escapes undone (a relationship target is a URI). */
+  const entryFor = (name) => {
+    const direct = entries.get(partKey(name));
+    if (direct) return direct;
+    try {
+      return entries.get(partKey(decodeURIComponent(String(name || ''))));
+    } catch {
+      return undefined;
+    }
+  };
+
   const read = (name) => {
-    const entry = entries.get(name);
+    const entry = entryFor(name);
     if (!entry) throw new Error(`This document has no part called ${name}.`);
     if (entry.size > MAX_PART_BYTES) {
       throw new Error(`${name} claims to be ${entry.size} bytes, which is too large to read.`);
@@ -171,8 +246,8 @@ export function openZip(buffer) {
   };
 
   return {
-    names: [...entries.keys()],
-    has: (name) => entries.has(name),
+    names: [...entries.values()].map((entry) => entry.name),
+    has: (name) => !!entryFor(name),
     read,
     /** A part as text. Every XML part of an OOXML package is UTF-8. */
     text: (name) => read(name).toString('utf8').replace(/^\uFEFF/, ''),

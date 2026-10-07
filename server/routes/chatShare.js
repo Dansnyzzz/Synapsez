@@ -313,13 +313,26 @@ export function mapShows(maps, z, x, y) {
   });
 }
 
-/** The shared chat and the files it may serve, remembered a minute per token. */
+/**
+ * The shared chat and the files it may serve, remembered a minute per token.
+ *
+ * What is remembered is the expensive part — the published transcript and the
+ * files it names. Whether the link still stands is asked every time, one
+ * lookup on a unique index (CODE-032): taking a link back cleared this cache
+ * only on the instance that took it, and every other warm instance went on
+ * serving the conversation's files for up to a minute. A link shared again has
+ * a new `shared_at`, so a remembered scope from before is not reused either.
+ */
 const gateCache = new Map();
 async function sharedScope(token) {
-  const hit = gateCache.get(token);
-  if (hit && hit.until > Date.now()) return hit.scope;
   const store = getStore();
   const chat = TOKEN.test(token || '') ? await store.getSharedChat(token) : null;
+  const hit = gateCache.get(token);
+  if (!chat) {
+    gateCache.delete(token);
+    return null;
+  }
+  if (hit?.scope && hit.until > Date.now() && String(hit.scope.chat.shared_at) === String(chat.shared_at)) return hit.scope;
   // The files of the published transcript, not of the stored one: a picture a
   // withheld step produced (a screenshot of a signed-in page) is not the visitor's to fetch.
   const published = chat ? publicTranscript(await store.listSharedMessages(chat.id, chat.shared_at)) : null;
@@ -329,7 +342,8 @@ async function sharedScope(token) {
   return scope;
 }
 
-const INLINE_SAFE = /^(image\/(png|jpe?g|webp|gif)|application\/pdf)$/i;
+// The same raster formats as the signed-in file route (files.js): none can carry a script.
+const INLINE_SAFE = /^(image\/(png|jpe?g|webp|gif|avif|bmp|x-icon|vnd\.microsoft\.icon)|application\/pdf)$/i;
 const asciiFilename = (name) => String(name).replace(/[\\"]/g, '').replace(/[^ -~]/g, '_') || 'file';
 
 /**

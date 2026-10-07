@@ -99,10 +99,25 @@ export function mainPart(zip, fallback) {
   for (const [, rel] of readRelationships(zip, '_rels/.rels')) {
     // The root relationships live in `_rels/`, but their targets are relative to
     // the package root — hence a root-level pseudo-part as the base.
-    if (rel.type === REL.officeDocument) return resolveTarget('.rels', rel.target);
+    if (isRel(rel.type, 'officeDocument')) return resolveTarget('.rels', rel.target);
   }
   return fallback;
 }
+
+/**
+ * Whether a relationship is of this kind, in either dialect.
+ *
+ * Transitional OOXML (what Office writes by default) names a relationship
+ * `http://schemas.openxmlformats.org/officeDocument/2006/relationships/<kind>`;
+ * Strict OOXML ("Strict Open XML Spreadsheet" in Save As) uses
+ * `http://purl.oclc.org/ooxml/officeDocument/relationships/<kind>`. Comparing
+ * whole strings read a Strict workbook as having no shared strings — every
+ * piece of text in it blank. The last segment is the kind in both.
+ *
+ * @param {string} type
+ * @param {string} kind  e.g. 'officeDocument', 'sharedStrings', 'notesSlide'
+ */
+export const isRel = (type, kind) => String(type || '').endsWith(`/${kind}`);
 
 /* ── the parts every package we write carries ───────────────────────── */
 

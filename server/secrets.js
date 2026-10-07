@@ -79,6 +79,8 @@ export function ensureLocalSecrets(root) {
 /**
  * Hosted deployments have a read-only filesystem, so nothing can be generated
  * there — fail loudly at boot rather than halfway through someone saving a key.
+ *
+ * @returns {string[]} the secrets standing on the legacy ACCESS_TOKEN (SEC-047)
  */
 export function assertSecrets() {
   const missing = Object.entries(REQUIRED)
@@ -91,4 +93,30 @@ export function assertSecrets() {
         '  Add them in your hosting dashboard and redeploy.',
     );
   }
+  return legacyFallbacks();
 }
+
+/**
+ * Which of the two secrets come from ACCESS_TOKEN, the legacy single value
+ * (SEC-047).
+ *
+ * The keys actually used are derived apart — `ai-remote:session:` and
+ * `ai-remote:keys:` (auth.js, crypto.js) — so a session key never decrypts a
+ * stored provider key, even when both come from this one value. What one value
+ * cannot do is change separately: rotating it to sign everyone out also makes
+ * every stored API key unreadable, which is the very thing the two names exist
+ * to prevent. It still works, so no deployment breaks; the boot says so.
+ */
+export function legacyFallbacks(env = process.env) {
+  if (!env.ACCESS_TOKEN) return [];
+  return Object.keys(REQUIRED).filter((name) => !env[name]);
+}
+
+/**
+ * The root a small signing key is derived from — OAuth state, signed picture
+ * addresses. SESSION_SECRET, then ENCRYPTION_KEY, as before; then the legacy
+ * ACCESS_TOKEN, which a deployment set to it alone had no key from at all — an
+ * OAuth state signed with an empty key, and picture addresses signed with a
+ * constant printed in this repository, which anybody could forge.
+ */
+export const signingRoot = (env = process.env) => String(env.SESSION_SECRET || env.ENCRYPTION_KEY || env.ACCESS_TOKEN || '');

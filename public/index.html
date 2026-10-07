@@ -143,6 +143,13 @@
           <span data-i18n="gate.remember">Remember me</span>
         </label>
 
+        <!-- Sign-up only: agreeing to the privacy notice, by ticking (LAW-001). -->
+        <div class="gate__remember" id="gate-consent-row" hidden>
+          <input type="checkbox" id="gate-consent" aria-describedby="gate-consent-text" />
+          <label for="gate-consent" id="gate-consent-text"><span data-i18n="gate.consent">I have read and agree to the</span>
+            <a href="/privacy.html" target="_blank" rel="noopener" data-i18n="gate.consentLink">privacy notice</a></label>
+        </div>
+
         <button class="btn btn--primary btn--block" type="submit" id="gate-submit" data-i18n-js>Sign in</button>
         <p class="gate__error" id="gate-error" role="alert" hidden></p>
         <p class="gate__note" id="gate-note" hidden></p>
@@ -575,7 +582,7 @@
                 type="file"
                 id="file-input"
                 multiple
-                accept="image/*,text/*,application/pdf,application/json,.md,.csv,.log,.yml,.yaml,.ts,.tsx,.js,.jsx,.py,.sql,.xml,.html,.css,.docx,.xlsx,.pptx,.docm,.xlsm,.pptm"
+                accept="image/*,text/*,application/pdf,application/json,.md,.csv,.log,.yml,.yaml,.ts,.tsx,.js,.jsx,.py,.sql,.xml,.html,.css,.docx,.xlsx,.pptx,.docm,.xlsm,.pptm,.xls,.xlsb,.xltx,.xltm,.ods,.tsv"
                 hidden data-i18n-title="composer.attachInput" aria-label="Attach files" />
               <!-- Drawn rather than typed. As the character "+" this sat
                    visibly high in its circle: a text glyph is centred on the
@@ -1346,6 +1353,21 @@
               will stop working while this is on.
             </p>
           </div>
+          <div class="field">
+            <label class="check" for="mask-personal">
+              <input type="checkbox" id="mask-personal" />
+              <span data-i18n="memory.maskPersonal">Hide personal details from the model's provider</span>
+            </label>
+            <p class="hint" data-i18n="memory.maskPersonalHint">
+              Email addresses, phone numbers, ID and bank-account numbers, card numbers, and a name written after
+              "my name is" are replaced with placeholders before anything is sent, and put back in the reply and
+              before any tool runs. A PDF goes as its text while this is on. Pictures and scanned pages go as they
+              are, and a name in the middle of a sentence, an address, or anything identifying by context is not
+              caught. The model works with the placeholders, so answers about those details can
+              be less precise.
+            </p>
+          </div>
+          <p class="hint"><a href="/privacy.html" target="_blank" rel="noopener" data-i18n="memory.notice">Privacy notice — what is processed, where it goes, and your rights</a></p>
           <button class="btn btn--primary" id="save-memory-prefs" type="button" data-i18n="action.save">Save</button>
           <span class="hint" id="memory-status" role="status" aria-live="polite"></span>
 

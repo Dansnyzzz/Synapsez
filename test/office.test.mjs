@@ -577,6 +577,129 @@ section('what an upload is allowed to be');
   check('and recognised as legacy, so the message can say so', office.isLegacyOffice('old.doc', ''));
 }
 
+section('Excel in every form a person sends it');
+{
+  const { classify, toParts } = await import('../server/attachments.js');
+  check('an old .xls is a workbook now, not a refusal', classify('so-sach.xls', 'application/vnd.ms-excel') === 'office' && !office.isLegacyOffice('so-sach.xls', ''));
+  check('  and so are .xlsb, .ods and a template', ['a.xlsb', 'a.ods', 'a.xltx'].every((name) => classify(name, '') === 'office'));
+  check('  while a .csv Windows labels as Excel stays text', classify('bang.csv', 'application/vnd.ms-excel') === 'text');
+  check('  and a .doc is still refused', classify('old.doc', 'application/msword') === null);
+
+  // Fixtures written by SheetJS, the way Excel, LibreOffice and exporters do.
+  const XLSX = await import('xlsx');
+  const book = XLSX.utils.book_new();
+  const ledger = XLSX.utils.aoa_to_sheet([
+    ['Tài khoản', 'Nợ', 'Có'],
+    ['Tiền mặt', 1000000, 0],
+    ['Doanh thu', 0, 1000000],
+  ]);
+  XLSX.utils.book_append_sheet(book, ledger, 'Bút toán');
+  const read = (format, buffer) => office.readOfficeAsync(format, buffer).then((r) => r.text, (err) => `FAILED ${err.code}: ${err.message}`);
+  for (const [bookType, format] of [['biff8', 'xls'], ['xlsb', 'xlsb'], ['ods', 'ods']]) {
+    const text = await read(format, XLSX.write(book, { type: 'buffer', bookType }));
+    check(`a .${format} reads as its sheet`, /## Bút toán/.test(text) && /\| Tiền mặt \| 1000000 \| 0 \|/.test(text), text.slice(0, 160));
+  }
+
+  // A formula whose result was never saved: shown as the formula, not a blank.
+  const uncalculated = XLSX.utils.aoa_to_sheet([['a', 'b', 'sum'], [2, 3]]);
+  uncalculated.C2 = { t: 'n', f: 'A2+B2' };
+  const calcBook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(calcBook, uncalculated, 'S');
+  const formulaText = await read('xlsx', XLSX.write(calcBook, { type: 'buffer', bookType: 'xlsx' }));
+  check('a formula with no saved result is shown as the formula', /\| 2 \| 3 \| =A2\+B2 \|/.test(formulaText), formulaText);
+
+  // Strict Open XML ("Strict Open XML Spreadsheet" in Save As): the same parts,
+  // relationship types in another namespace — and no shared-strings fallback by path.
+  const plain = writeXlsx({ sheets: [{ name: 'Strict', rows: [['Chữ', 1]] }] });
+  const plainZip = openZip(plain);
+  const TRANSITIONAL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/';
+  const STRICT = 'http://purl.oclc.org/ooxml/officeDocument/relationships/';
+  const strictParts = plainZip.names.map((name) => {
+    let data = plainZip.read(name);
+    if (name.endsWith('.rels')) data = Buffer.from(data.toString('utf8').split(TRANSITIONAL).join(STRICT).replace('sharedStrings.xml"', 'strings/shared.xml"'));
+    return { name: name === 'xl/sharedStrings.xml' ? 'xl/strings/shared.xml' : name, data };
+  });
+  const strictBytes = writeZip(strictParts);
+  const strictText = await read('xlsx', strictBytes);
+  check('a Strict Open XML workbook keeps its text', /\| Chữ \| 1 \|/.test(strictText), strictText);
+  check('  read by the reader here, not only the fallback', readXlsx(strictBytes).sheets[0]?.rows[0]?.[0]?.v === 'Chữ', JSON.stringify(readXlsx(strictBytes).sheets[0]?.rows[0]));
+
+  // Part names whose case and separators differ from the relationships that
+  // point at them — OPC says they match; a byte-exact lookup found no sheet.
+  const oddNames = writeZip(
+    plainZip.names.map((name) => ({ name: name.startsWith('xl/worksheets/') ? name.toUpperCase().replace(/\//g, '\\') : name, data: plainZip.read(name) })),
+  );
+  const oddText = await read('xlsx', oddNames);
+  check('a workbook whose part names differ in case and slashes still reads', /\| Chữ \| 1 \|/.test(oddText), oddText);
+  check('  by the reader here, not only the fallback', readXlsx(oddNames).sheets[0]?.rows[0]?.[0]?.v === 'Chữ', String(readXlsx(oddNames).sheets.length));
+
+  // Sizes kept in a Zip64 extra field behind 0xFFFFFFFF, as some writers do for every entry.
+  const zip64 = (() => {
+    const bytes = Buffer.from(plain);
+    let eocd = bytes.length - 22;
+    while (bytes.readUInt32LE(eocd) !== 0x06054b50) eocd -= 1;
+    const count = bytes.readUInt16LE(eocd + 10);
+    let at = bytes.readUInt32LE(eocd + 16);
+    const central = [];
+    for (let i = 0; i < count; i += 1) {
+      const nameLength = bytes.readUInt16LE(at + 28);
+      const extraLength = bytes.readUInt16LE(at + 30);
+      const commentLength = bytes.readUInt16LE(at + 32);
+      const head = Buffer.from(bytes.subarray(at, at + 46));
+      const name = bytes.subarray(at + 46, at + 46 + nameLength);
+      const extra = Buffer.alloc(4 + 16);
+      extra.writeUInt16LE(0x0001, 0);
+      extra.writeUInt16LE(16, 2);
+      extra.writeBigUInt64LE(BigInt(head.readUInt32LE(24)), 4);
+      extra.writeBigUInt64LE(BigInt(head.readUInt32LE(20)), 12);
+      head.writeUInt32LE(0xffffffff, 20);
+      head.writeUInt32LE(0xffffffff, 24);
+      head.writeUInt16LE(extra.length, 30);
+      head.writeUInt16LE(0, 32);
+      central.push(Buffer.concat([head, name, extra]));
+      at += 46 + nameLength + extraLength + commentLength;
+    }
+    const start = bytes.readUInt32LE(eocd + 16);
+    const table = Buffer.concat(central);
+    const end = Buffer.from(bytes.subarray(eocd, eocd + 22));
+    end.writeUInt32LE(table.length, 12);
+    end.writeUInt32LE(start, 16);
+    end.writeUInt16LE(0, 20);
+    return Buffer.concat([bytes.subarray(0, start), table, end]);
+  })();
+  let zip64First;
+  try {
+    zip64First = readXlsx(zip64).sheets[0]?.rows[0]?.[0]?.v;
+  } catch (err) {
+    zip64First = err.message;
+  }
+  check('a workbook with its sizes in a Zip64 field opens with the reader here', zip64First === 'Chữ', zip64First);
+
+  // Password-protected: an encrypted Office file is a compound file holding
+  // EncryptionInfo and EncryptedPackage. Named as such, to the model too.
+  const cfb = XLSX.CFB.utils.cfb_new();
+  XLSX.CFB.utils.cfb_add(cfb, '/EncryptionInfo', Buffer.from([4, 0, 4, 0, 0x40, 0, 0, 0]));
+  XLSX.CFB.utils.cfb_add(cfb, '/EncryptedPackage', Buffer.alloc(64, 7));
+  const locked = Buffer.from(XLSX.CFB.write(cfb, { type: 'buffer' }));
+  let lockedError = null;
+  await office.readOfficeAsync('xlsx', locked).catch((err) => (lockedError = err));
+  check('a password-protected workbook is named as one', lockedError?.code === 'encrypted', lockedError?.message);
+  const lockedNote = toParts(
+    { attachments: [{ id: 'locked', name: '24_bai.xlsx', kind: 'office' }] },
+    new Map([['locked', { id: 'locked', name: '24_bai.xlsx', kind: 'office', text: { text: '', format: 'xlsx', failed: { code: 'encrypted' } } }]]),
+  )[0].text;
+  check('  and the model is told to ask for the password to come off', /password-protected/.test(lockedNote) && /Encrypt with Password/.test(lockedNote), lockedNote);
+
+  // The fallback reader runs on a worker; one whose code is missing reads here.
+  const { readSheetsElsewhere } = await import('../server/office/sheets.js');
+  const xlsBytes = XLSX.write(book, { type: 'buffer', bookType: 'biff8' });
+  const inThread = await readSheetsElsewhere(xlsBytes, { workerUrl: new URL('../server/office/no-such.worker.mjs', import.meta.url) }).catch((err) => ({ error: err.message }));
+  check('a sheet worker whose code is missing reads on this thread instead', inThread?.sheets?.[0]?.name === 'Bút toán', JSON.stringify(inThread).slice(0, 120));
+  let late = null;
+  await readSheetsElsewhere(xlsBytes, { timeoutMs: 1 }).catch((err) => (late = err));
+  check('  and one that takes too long is stopped', /took longer/.test(late?.message || ''), late?.message);
+}
+
 // ── over HTTP ───────────────────────────────────────────────────────
 section('uploading a Word document and reading it back');
 let docxId;

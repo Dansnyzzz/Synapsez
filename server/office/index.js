@@ -23,8 +23,9 @@
 import { blockToPlainText, blocksToHtml, blocksToText, normaliseBlocks, runsToText } from './blocks.js';
 import { markdownTitle, markdownToBlocks } from './markdown.js';
 import { DOCX_MIME, readDocx, writeDocx } from './docx.js';
-import { XLSX_MIME, readXlsx, writeXlsx } from './xlsx.js';
+import { XLSX_MIME, readXlsx, sheetsToText, writeXlsx } from './xlsx.js';
 import { PPTX_MIME, readPptx, writePptx } from './pptx.js';
+import { readSheetsElsewhere } from './sheets.js';
 import { looksLikeZip } from './zip.js';
 
 export { blocksToHtml, blocksToText, normaliseBlocks } from './blocks.js';
@@ -41,6 +42,13 @@ const BY_MIME = new Map([
   ['application/vnd.ms-word.document.macroenabled.12', 'docx'],
   ['application/vnd.ms-excel.sheet.macroenabled.12', 'xlsx'],
   ['application/vnd.ms-powerpoint.presentation.macroenabled.12', 'pptx'],
+  // Templates are the same package again.
+  ['application/vnd.openxmlformats-officedocument.spreadsheetml.template', 'xlsx'],
+  ['application/vnd.ms-excel.template.macroenabled.12', 'xlsx'],
+  // The spreadsheets the in-house reader does not read, and SheetJS does (sheets.js).
+  ['application/vnd.ms-excel', 'xls'],
+  ['application/vnd.ms-excel.sheet.binary.macroenabled.12', 'xlsb'],
+  ['application/vnd.oasis.opendocument.spreadsheet', 'ods'],
 ]);
 
 const BY_EXTENSION = new Map([
@@ -48,9 +56,18 @@ const BY_EXTENSION = new Map([
   ['docm', 'docx'],
   ['xlsx', 'xlsx'],
   ['xlsm', 'xlsx'],
+  ['xltx', 'xlsx'],
+  ['xltm', 'xlsx'],
+  ['xls', 'xls'],
+  ['xlt', 'xls'],
+  ['xlsb', 'xlsb'],
+  ['ods', 'ods'],
   ['pptx', 'pptx'],
   ['pptm', 'pptx'],
 ]);
+
+/** Every format read as a spreadsheet — through `readOfficeAsync`, which can fall back to SheetJS. */
+export const SPREADSHEET_FORMATS = new Set(['xlsx', 'xls', 'xlsb', 'ods']);
 
 export const extensionOf = (name) => String(name || '').split('.').pop().toLowerCase();
 
@@ -64,6 +81,9 @@ export const extensionOf = (name) => String(name || '').split('.').pop().toLower
 export function officeFormat(name, mime) {
   const extension = extensionOf(name);
   if (BY_EXTENSION.has(extension)) return BY_EXTENSION.get(extension);
+  // Windows labels a .csv `application/vnd.ms-excel` whenever Excel is
+  // installed. A .csv is text, inlined as written — not an old workbook.
+  if (/^(csv|tsv|txt)$/.test(extension)) return null;
   return BY_MIME.get(String(mime || '').toLowerCase()) || null;
 }
 
@@ -72,11 +92,11 @@ export function officeFormat(name, mime) {
  *
  * A .doc is not a ZIP of XML — it is a 1997 compound-file binary, and nothing
  * here can read it. Worth recognising by name so the refusal can say what to do
- * about it instead of "unsupported file".
+ * about it instead of "unsupported file". An old .xls is the exception: SheetJS
+ * reads it (sheets.js), so it is accepted like any other workbook.
  */
 export const isLegacyOffice = (name, mime) =>
-  /\.(doc|xls|ppt)$/i.test(String(name || '')) ||
-  /^application\/(msword|vnd\.ms-(excel|powerpoint))$/i.test(String(mime || ''));
+  /\.(doc|ppt)$/i.test(String(name || '')) || /^application\/(msword|vnd\.ms-powerpoint)$/i.test(String(mime || ''));
 
 /**
  * Source files the assistant can write.
@@ -185,6 +205,48 @@ export function readOffice(format, buffer, { mediaSrc } = {}) {
     return { format, text, meta, preview: { kind: 'slides', slides, meta } };
   }
   throw new Error(`${format} is not a format this can read.`);
+}
+
+/**
+ * Read any Office file, spreadsheets in every format included.
+ *
+ * Word and PowerPoint go straight to `readOffice`. A spreadsheet tries the
+ * in-house Open XML reader first and, when it cannot — an old `.xls`, an
+ * `.xlsb`, an `.ods`, a workbook it found no sheet in or could not open —
+ * SheetJS on a worker (sheets.js). The model then gets the sheets instead of
+ * "nothing could be read out of it".
+ *
+ * @param {string} format  from `officeFormat`
+ * @param {Buffer} buffer
+ * @param {{ mediaSrc?: (index: number) => string }} [options]
+ */
+export async function readOfficeAsync(format, buffer, options = {}) {
+  if (!SPREADSHEET_FORMATS.has(format)) return readOffice(format, buffer, options);
+
+  let first = null;
+  if (format === 'xlsx' && looksLikeZip(buffer)) {
+    try {
+      const read = readOffice('xlsx', buffer, options);
+      if (read.meta?.sheets) return read;
+      first = Object.assign(new Error('No sheet in it could be found.'), { code: 'no_sheets' });
+    } catch (err) {
+      first = err;
+    }
+  }
+
+  try {
+    const { sheets } = await readSheetsElsewhere(buffer);
+    if (!sheets.length) throw Object.assign(new Error('That workbook has no sheet with anything in it.'), { code: 'no_sheets' });
+    const meta = { sheets: sheets.length };
+    return { format, text: sheetsToText(sheets), meta, preview: { kind: 'sheets', sheets, meta } };
+  } catch (err) {
+    // The more telling of the two: a password is the answer whichever reader
+    // found it; otherwise the in-house reader's reason, which names the part.
+    if (err?.code === 'encrypted' || first?.code === 'encrypted') {
+      throw Object.assign(new Error('That workbook is password-protected, so it cannot be read.'), { code: 'encrypted' });
+    }
+    throw first || err;
+  }
 }
 
 /* ── writing ────────────────────────────────────────────────────────── */
