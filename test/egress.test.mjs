@@ -262,12 +262,16 @@ section('with masking on, the provider never sees the personal data, and the per
         id: 'a2',
         role: 'assistant',
         text: 'mới',
+        toolCalls: [{ id: 't', name: 'send_email', input: { to: PII.email } }],
         raw: { anthropic: [{ type: 'thinking', thinking: 'nghĩ', signature: 'sig' }, { type: 'tool_use', id: 't', name: 'send_email', input: { to: PII.email } }] },
       },
+      { id: 'r2', role: 'tool', results: [{ toolCallId: 't', content: 'sent' }] },
     ],
   });
   check('an earlier reply\'s raw record, which may hold real values, is not replayed', replay.messages[0].raw === undefined);
-  check('  the last one is, with its words masked and its signed thinking as it was', replay.messages[2].raw?.anthropic?.[0]?.signature === 'sig' && !JSON.stringify(replay.messages[2].raw).includes(PII.email), JSON.stringify(replay.messages[2].raw));
+  check('  the last one, its tool calls being answered, is — words masked, signed thinking as it was', replay.messages[2].raw?.anthropic?.[0]?.signature === 'sig' && !JSON.stringify(replay.messages[2].raw).includes(PII.email), JSON.stringify(replay.messages[2].raw));
+  const settled = shield.protect({ system: 's', messages: [{ id: 'a3', role: 'assistant', text: 'xong', raw: { anthropic: [{ type: 'text', text: 'xong' }] } }, { id: 'u3', role: 'user', text: 'cảm ơn' }] });
+  check('  and a last reply no tool result is waiting on is rebuilt instead', settled.messages[0].raw === undefined);
 
   // A personal detail put back into a web address asks first — a page may have
   // talked the model into writing the placeholder there.

@@ -1020,6 +1020,44 @@ section('OCR reads Vietnamese with no key and no network');
   const { see } = await import('../server/vision.js');
   const doubtful = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], ocr: async () => ({ text: 'Tong 1.25O.000', confidence: 41 }) });
   check('a hard-to-read reading says so', /hard to read/.test(doubtful.text));
+
+  // PRV-003: with personal details masked, Gemini is shown a PDF's drawn pages,
+  // never the file itself — whose bytes the shield cannot mask.
+  {
+    const { getStore } = await import('../server/store/index.js');
+    const { setApiKey, setPrefs } = await import('../server/settings.js');
+    const reader = await getStore().createUser({ id: 'u-see-pdf', email: 'see-pdf@example.com', passwordHash: 'x', name: 'S', role: 'user' });
+    const hadKey = process.env.ENCRYPTION_KEY;
+    process.env.ENCRYPTION_KEY ||= 'features-suite-encryption-key';
+    await setApiKey(reader.id, 'google', 'AIza-features-suite-placeholder-key-000000');
+    const box = '595 842';
+    const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${box}] /Resources << >> /Contents 4 0 R >>`, '<< /Length 0 >>\nstream\n\nendstream'];
+    let body = '%PDF-1.4\n';
+    const offsets = [];
+    objects.forEach((o, i) => {
+      offsets.push(body.length);
+      body += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    });
+    const xref = body.length;
+    body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    const pdf = { data: Buffer.from(body, 'latin1').toString('base64'), name: 'cv.pdf' };
+    const shown = async (mask) => {
+      await setPrefs(reader.id, { maskPersonal: mask });
+      let parts = [];
+      const stream = async function* fake(opts) {
+        parts = opts.messages.flatMap((m) => m.parts || []);
+        yield { type: 'text', delta: 'Một trang trống.' };
+        yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 3 } };
+      };
+      await see({ userId: reader.id, pdf, stream, ocr: async () => ({ text: '', confidence: 0 }) }).catch(() => null);
+      return parts.map((p) => p.type);
+    };
+    const plain = await shown(false);
+    const masked = await shown(true);
+    if (hadKey === undefined) delete process.env.ENCRYPTION_KEY;
+    check('Gemini reads a PDF as the file when masking is off', plain.includes('document'), plain.join(','));
+    check('  and as its drawn pages, never the file, when it is on', !masked.includes('document') && masked.includes('image'), masked.join(','));
+  }
 }
 
 section('a published link uses the address the person is on');

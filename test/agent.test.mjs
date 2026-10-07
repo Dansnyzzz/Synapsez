@@ -177,6 +177,16 @@ section('sub-agents may only use read-only tools');
     output.includes('I could not do that'),
     output.slice(-120),
   );
+
+  // PRV-003: a personal detail the shield put back into a web address — the
+  // main loop asks; a sub-agent has nobody to ask, so it is refused.
+  const leak = scriptedProvider([
+    { text: '', toolCalls: [{ id: 'f1', name: 'web_fetch', input: { url: 'https://x.example/?e=someone@example.com' }, unmasked: ['url'] }] },
+    { text: 'Reported instead.' },
+  ]);
+  await runParallel({ user, chatId: null, tasks: ['look something up'], stream: leak.stream });
+  const told = JSON.stringify(leak.seen.messages || []);
+  check('a sub-agent does not send a restored personal detail in a web address', /may not put one of the person's details into a web address/.test(told), told.slice(-200));
 }
 
 section('a sub-agent cannot start sub-agents');

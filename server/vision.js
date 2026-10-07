@@ -1,6 +1,6 @@
 import { streamCompletion } from './providers/index.js';
 import { resolveModel, priceTurn } from './providers/catalog.js';
-import { getApiKeys, providerPrivacyFor } from './settings.js';
+import { getApiKeys, maskPersonalFor, providerPrivacyFor } from './settings.js';
 import { getStore } from './store/index.js';
 import { record as recordUsage } from './usage.js';
 import { renderPdfPages } from './pdf.js';
@@ -174,10 +174,13 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
   const ocrText = ocrRead.map((r) => (ocrRead.length > 1 ? `--- ${r.name} ---\n${r.text}` : r.text)).join('\n\n');
   const lowConfidence = ocrRead.some((r) => r.confidence < 70);
 
+  // With personal details masked (PRV-003) no PDF goes as the file — whose bytes
+  // the shield cannot mask — so Gemini is shown the drawn pages like everyone else.
+  const masking = pdf ? await maskPersonalFor(userId).catch(() => true) : false;
   for (const entry of engines) {
     const parts = [];
     if (pdf) {
-      if (entry.provider === 'google') {
+      if (entry.provider === 'google' && !masking) {
         parts.push({ type: 'document', name: pdf.name || 'document.pdf', mime: 'application/pdf', data: pdf.data });
       } else {
         if (!drawn?.pages?.length) {
@@ -189,7 +192,7 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
     }
     for (const img of images) parts.push({ type: 'image', name: img.name || 'image', mime: img.mime, data: img.data });
 
-    const pageNote = pdf && drawn?.pages?.length && entry.provider !== 'google'
+    const pageNote = pdf && drawn?.pages?.length && (entry.provider !== 'google' || masking)
       ? ` (pages ${drawn.pages.map((p) => p.page).join(', ')} of ${drawn.total})`
       : '';
     const prompt =

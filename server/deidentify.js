@@ -3,25 +3,28 @@
  *
  * With `maskPersonal` on (Settings → Memory & privacy), everything this server
  * sends a provider — the system prompt, the conversation, tool results, the text
- * read out of files — has personal data swapped for stable placeholders before
- * it leaves: `<EMAIL_1>`, `<PHONE_1>`, `<ID_1>`, `<ACCOUNT_1>`, `<CARD_1>`,
- * `<PERSON_1>`. What comes back is restored before anyone sees it or any tool
+ * read out of files — has personal data swapped for placeholders before it
+ * leaves: `<EMAIL_3f9a1c2b>`, `<PHONE_…>`, `<ID_…>`, `<ACCOUNT_…>`, `<CARD_…>`,
+ * `<PERSON_…>`. What comes back is restored before anyone sees it or any tool
  * runs: the reply as it streams, and every tool call's arguments. So an email
  * is still sent to the right address and the transcript reads as written, while
  * the provider holds only the placeholders.
  *
- * The map lives for one model call, in memory only — never logged, never stored.
- * It is rebuilt from the same transcript on the next step in the same order, so
- * the same value gets the same placeholder and the cached prefix stays the same.
+ * A placeholder is the value's hash under the account's key (see
+ * `createShield`), so the same value has the same placeholder in every call of
+ * the conversation — whatever order things arrive in — and the cached prefix
+ * stays the same. The map back lives for one model call, in memory only — never
+ * logged, never stored.
  *
  * What it finds, said plainly because a privacy feature that overstates itself is
  * worse than none: email addresses; Vietnamese phone numbers; a 12-digit CCCD;
  * an ID, passport or bank-account number written after its label ("CMND:",
- * "số tài khoản"); card numbers that pass the Luhn check; and a person's name
- * written after "tên tôi là", "họ và tên", "my name is". A name in the middle of
- * a sentence with no label, an address, or anything identifying by context is
- * not caught — that needs a local language model this deployment does not have.
- * Off by default, so it is somebody's informed choice.
+ * "số tài khoản"); card numbers with a card's length, an issuer's prefix and a
+ * valid Luhn check; and a person's name written after "tên tôi là", "họ và
+ * tên", "my name is". A PDF goes as its text while this is on. A name in the
+ * middle of a sentence with no label, an address, a picture, or anything
+ * identifying by context is not caught — that needs a local language model this
+ * deployment does not have. Off by default, so it is somebody's informed choice.
  */
 
 import crypto from 'node:crypto';
@@ -201,11 +204,14 @@ export function createShield({ key = 'synapsez-deidentify' } = {}) {
     messages.forEach((m, i) => {
       if (m?.role === 'assistant') last = i;
     });
+    // Only while its tool calls are being answered is the record needed: that is
+    // when a provider insists on the signed thinking that came with them.
+    const inLoop = last >= 0 && messages[last]?.toolCalls?.length > 0 && messages[last + 1]?.role === 'tool';
     return messages.map((m, i) => {
       if (!m || typeof m !== 'object') return m;
       const { raw, ...rest } = m;
       const masked = maskDeep(rest);
-      return raw && i === last ? { ...masked, raw: maskRaw(raw) } : masked;
+      return raw && i === last && inLoop ? { ...masked, raw: maskRaw(raw) } : masked;
     });
   };
 
