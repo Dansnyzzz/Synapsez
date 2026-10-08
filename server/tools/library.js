@@ -383,14 +383,6 @@ async function marketDataTool({ kind, symbols, vs, market }) {
 
 /* ── places ────────────────────────────────────────────────────── */
 
-async function geocode(name) {
-  const text = String(name || '').trim();
-  if (!text) throw new Error('Name the place.');
-  const hits = await getJson(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=0&q=${encodeURIComponent(text)}`);
-  const hit = hits?.[0];
-  if (!hit) throw new Error(`No place called "${text}" was found on OpenStreetMap.`);
-  return { name: hit.display_name, lat: Number(hit.lat), lon: Number(hit.lon), kind: hit.addresstype || hit.type };
-}
 
 /** Great-circle distance in km. */
 export function haversineKm(a, b) {
@@ -420,29 +412,368 @@ export function thinLine(coords, max = 160) {
   return Array.from({ length: max }, (_, i) => pts[Math.round(i * step)]).map(([lon, lat]) => [round(lat, 5), round(lon, 5)]);
 }
 
+/**
+ * How Vietnamese addresses are written, as Nominatim reads them. "TP.HCM" and
+ * "Q1" are how everybody writes them and not how OpenStreetMap names them, so
+ * "Bếp Mẹ Ỉn, Quận 1, TP.HCM" found nothing at all (owner, 2026-10-07).
+ */
+/** @type {[RegExp, string][]} */
+const SPELLED_OUT = [
+  [/\b(?:TP\.?\s*HCM|TPHCM|HCMC|HCM City|Sài Gòn|Sai Gon|Saigon)\b/gi, 'Thành phố Hồ Chí Minh'],
+  [/\bTP\.?\s*HN\b/gi, 'Hà Nội'],
+  [/\bTP\.?\s*ĐN\b/gi, 'Đà Nẵng'],
+  [/\bQ\.?\s?(\d{1,2})\b/g, 'Quận $1'],
+  [/\bP\.\s?(\d{1,2})\b/g, 'Phường $1'],
+  [/\bTP\.\s*/g, 'Thành phố '],
+];
+export const spellOut = (text) => SPELLED_OUT.reduce((s, [re, to]) => s.replace(re, to), String(text || '')).replace(/\s+/g, ' ').trim();
+
+async function nominatim(text) {
+  const hits = await getJson(
+    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=0&accept-language=vi,en&q=${encodeURIComponent(text)}`,
+  );
+  const hit = hits?.[0];
+  return hit ? { name: hit.display_name, lat: Number(hit.lat), lon: Number(hit.lon), kind: hit.addresstype || hit.type } : null;
+}
+
+/**
+ * Where a place is. Asked the way it was written, then with the abbreviations
+ * spelled out, then as its name and its city alone — and last, for a shop or a
+ * restaurant Nominatim's free text does not reach, by its name among the
+ * places OpenStreetMap lists in that city.
+ */
+async function geocode(name) {
+  const text = String(name || '').trim();
+  if (!text) throw new Error('Name the place — e.g. "Chợ Bến Thành" or "136 Lê Thánh Tôn, Quận 1, TP.HCM".');
+  const parts = spellOut(text).split(',').map((s) => s.trim()).filter(Boolean);
+  const tries = [...new Set([text, parts.join(', '), parts.length > 2 ? `${parts[0]}, ${parts.at(-1)}` : null].filter(Boolean))];
+  for (const [i, attempt] of tries.entries()) {
+    // Nominatim asks for one request a second from a client.
+    if (i) await new Promise((r) => setTimeout(r, 1100));
+    const hit = await nominatim(attempt).catch(() => null);
+    if (hit) return hit;
+  }
+  if (parts.length > 1) {
+    const area = await nominatim(parts.slice(1).join(', ')).catch(() => null);
+    if (area) {
+      const [named] = await overpassPlaces({ lat: area.lat, lon: area.lon }, { name: parts[0] }, 15_000, 1).catch(() => []);
+      if (named) return { name: [named.name, named.address, shortName(area.name)].filter(Boolean).join(', '), lat: named.lat, lon: named.lon, kind: named.kind };
+    }
+  }
+  throw new Error(`No place called "${text}" was found on OpenStreetMap. Try its street address, or a bigger landmark near it.`);
+}
+
+/**
+ * Kinds of place, by the words people use for them in Vietnamese and English,
+ * as OpenStreetMap tags them. The first that matches the request wins.
+ */
+/** @type {{ words: RegExp, tags: [string, string][], label: string }[]} */
+const KINDS = [
+  { words: /cà phê|cafe|café|coffee|trà sữa|milk tea|bubble tea/i, tags: [['amenity', 'cafe']], label: 'cafés' },
+  { words: /\bbar\b|\bpub\b|quán nhậu|bia hơi|beer/i, tags: [['amenity', 'bar'], ['amenity', 'pub'], ['amenity', 'biergarten']], label: 'bars' },
+  { words: /quán|nhà hàng|ăn uống|đồ ăn|món ăn|ăn ngon|restaurant|food|\beat\b|dining|lunch|dinner|bữa/i, tags: [['amenity', 'restaurant'], ['amenity', 'fast_food'], ['amenity', 'food_court']], label: 'places to eat' },
+  { words: /\batm\b|rút tiền/i, tags: [['amenity', 'atm']], label: 'ATMs' },
+  { words: /ngân hàng|\bbank/i, tags: [['amenity', 'bank']], label: 'banks' },
+  { words: /bệnh viện|hospital|phòng khám|clinic|cấp cứu|emergency/i, tags: [['amenity', 'hospital'], ['amenity', 'clinic']], label: 'hospitals and clinics' },
+  { words: /nhà thuốc|hiệu thuốc|pharmacy|drugstore|chemist/i, tags: [['amenity', 'pharmacy']], label: 'pharmacies' },
+  { words: /cây xăng|đổ xăng|gas station|petrol|\bfuel/i, tags: [['amenity', 'fuel']], label: 'fuel stations' },
+  { words: /sạc xe|charging/i, tags: [['amenity', 'charging_station']], label: 'charging stations' },
+  { words: /khách sạn|hotel|nhà nghỉ|homestay|hostel|motel|guest ?house|chỗ ở|lưu trú/i, tags: [['tourism', 'hotel'], ['tourism', 'guest_house'], ['tourism', 'hostel'], ['tourism', 'motel']], label: 'places to stay' },
+  { words: /siêu thị|supermarket|tạp hoá|tạp hóa|convenience|tiện lợi|grocery/i, tags: [['shop', 'supermarket'], ['shop', 'convenience']], label: 'shops' },
+  { words: /\bchợ\b|market/i, tags: [['amenity', 'marketplace']], label: 'markets' },
+  { words: /công viên|\bpark\b|vườn hoa/i, tags: [['leisure', 'park']], label: 'parks' },
+  { words: /trường|school|đại học|university|college/i, tags: [['amenity', 'school'], ['amenity', 'university'], ['amenity', 'college']], label: 'schools' },
+  { words: /bảo tàng|museum/i, tags: [['tourism', 'museum']], label: 'museums' },
+  { words: /tham quan|attraction|sightseeing|du lịch|điểm đến|viewpoint/i, tags: [['tourism', 'attraction'], ['tourism', 'viewpoint']], label: 'sights' },
+  { words: /gửi xe|bãi đỗ|đỗ xe|parking/i, tags: [['amenity', 'parking']], label: 'parking' },
+  { words: /nhà vệ sinh|toilet|restroom|\bwc\b/i, tags: [['amenity', 'toilets']], label: 'toilets' },
+  { words: /rạp phim|rạp chiếu|cinema|movie/i, tags: [['amenity', 'cinema']], label: 'cinemas' },
+  { words: /\bgym\b|phòng tập|fitness/i, tags: [['leisure', 'fitness_centre']], label: 'gyms' },
+  { words: /bưu điện|post office/i, tags: [['amenity', 'post_office']], label: 'post offices' },
+  { words: /công an|police/i, tags: [['amenity', 'police']], label: 'police' },
+  { words: /xe buýt|bus stop|trạm buýt/i, tags: [['highway', 'bus_stop']], label: 'bus stops' },
+  { words: /chùa|nhà thờ|đền|temple|church|pagoda|mosque/i, tags: [['amenity', 'place_of_worship']], label: 'places of worship' },
+];
+
+/**
+ * A dish named in the request: what it is called, the pattern its places put
+ * in their names, and the cuisine tag it is listed under. Places named for the
+ * dish come first — "Phở Hòa" is a phở place, a Vietnamese restaurant may not
+ * be — and the cuisine is only asked when too few are named for it.
+ */
+/** @type {[RegExp, string, string, string][]} */
+const DISHES = [
+  [/phở|\bpho\b/i, 'phở', 'phở|pho ', 'noodle'],
+  [/bún|\bbun\b/i, 'bún', 'bún|bun ', 'noodle'],
+  [/bánh mì|banh mi/i, 'bánh mì', 'bánh mì|banh mi', 'sandwich'],
+  [/cơm tấm|com tam/i, 'cơm tấm', 'cơm tấm|com tam', ''],
+  [/lẩu|hot ?pot/i, 'lẩu', 'lẩu|hot ?pot', 'hot_pot'],
+  [/nướng|bbq|barbecue/i, 'nướng', 'nướng|bbq', 'barbecue|bbq'],
+  [/hải sản|seafood|\bốc\b/i, 'hải sản', 'hải sản|seafood|ốc ', 'seafood'],
+  [/\bchay\b|vegetarian|vegan/i, 'chay', 'chay|vegetarian|vegan', 'vegetarian|vegan'],
+  [/pizza/i, 'pizza', 'pizza', 'pizza'],
+  [/sushi|nhật|japanese|ramen/i, 'Japanese food', 'sushi|ramen', 'japanese|sushi|ramen'],
+  [/hàn quốc|korean/i, 'Korean food', 'hàn quốc|korean', 'korean'],
+  [/burger|hamburger/i, 'burgers', 'burger', 'burger'],
+  [/gà rán|fried chicken/i, 'fried chicken', 'gà rán|chicken', 'chicken'],
+  [/dimsum|dim sum|trung hoa|chinese/i, 'Chinese food', 'dimsum|dim sum', 'chinese|dim_sum'],
+];
+
+/**
+ * The place a request names inside itself — "quán ăn ngon Quận 1 TP.HCM" is
+ * about Quận 1, which is narrower than the city a model also passes as `near`.
+ */
+export function placeInRequest(text) {
+  const spelled = spellOut(text);
+  // Not `\b`: it is an ASCII boundary, and there is none before "Đường".
+  const m = /(?:^|\s)((?:Quận|Huyện|Phường|Thị xã|Đường|đường|Phố|phố)\s+\S[\s\S]*)$/u.exec(spelled);
+  return m ? m[1].replace(/^(?:đường|phố)\s+/i, '').trim() : '';
+}
+
+/** A string as a literal inside an Overpass regular expression in double quotes. */
+const overpassLiteral = (s) => String(s).replace(/[\\"]/g, '').replace(/[.*+?^${}()|[\]]/g, '\\$&').slice(0, 60);
+
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+
+/** One Overpass query, on the first public server that answers. */
+async function overpass(query) {
+  let last = null;
+  for (const endpoint of OVERPASS) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA, Accept: 'application/json' },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw new Error(`OpenStreetMap's place search did not answer (${last?.message || 'no reply'}). Try again in a moment.`);
+}
+
+/** What kind of place an element is, in a few words: its cuisine, else its tag. */
+function kindOf(tags) {
+  const cuisine = tags.cuisine ? String(tags.cuisine).split(';').slice(0, 2).join(', ').replace(/_/g, ' ') : '';
+  const base = (tags.amenity || tags.shop || tags.tourism || tags.leisure || tags.highway || '').replace(/_/g, ' ');
+  return [base, cuisine].filter(Boolean).join(' · ');
+}
+
+const addressOf = (tags) =>
+  [[tags['addr:housenumber'], tags['addr:street']].filter(Boolean).join(' '), tags['addr:district'] || tags['addr:suburb'], tags['addr:city']]
+    .filter(Boolean)
+    .join(', ');
+
+/**
+ * Places around a point, nearest first.
+ *
+ * @param {{ lat: number, lon: number }} center
+ * @param {{ tags?: [string, string][], name?: string, pattern?: string, cuisine?: string }} want
+ *   `name` is the person's words, matched literally; `pattern` and `cuisine`
+ *   come only from the DISHES table here, and are regular expressions.
+ * @param {number} radius  metres
+ * @param {number} limit
+ */
+async function overpassPlaces(center, want, radius, limit) {
+  const around = `(around:${Math.round(radius)},${center.lat.toFixed(5)},${center.lon.toFixed(5)})`;
+  const name = want.name ? `["name"~"${overpassLiteral(want.name)}",i]` : want.pattern ? `["name"~"${want.pattern}",i]` : '';
+  const cuisine = want.cuisine ? `["cuisine"~"${want.cuisine}",i]` : '';
+  const clauses = [];
+  if (want.tags?.length) {
+    for (const [key, value] of want.tags) clauses.push(`nwr["${key}"="${value}"]${name}${cuisine}${around};`);
+  } else {
+    // A name and no kind: anything listed under that name that is a place of business or a sight.
+    for (const key of ['amenity', 'shop', 'tourism', 'leisure', 'office']) clauses.push(`nwr["${key}"]${name}${around};`);
+  }
+  const data = await overpass(`[out:json][timeout:20];(${clauses.join('')});out center tags 120;`);
+  const seen = new Set();
+  return (Array.isArray(data?.elements) ? data.elements : [])
+    .map((el) => {
+      const lat = Number(el.lat ?? el.center?.lat);
+      const lon = Number(el.lon ?? el.center?.lon);
+      const tags = el.tags || {};
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return {
+        name: tags.name || tags['name:vi'] || tags['name:en'] || '',
+        kind: kindOf(tags),
+        address: addressOf(tags),
+        hours: tags.opening_hours || '',
+        phone: tags.phone || tags['contact:phone'] || '',
+        website: tags.website || tags['contact:website'] || '',
+        lat,
+        lon,
+        metres: Math.round(haversineKm(center, { lat, lon }) * 1000),
+        url: `https://www.openstreetmap.org/${el.type}/${el.id}`,
+      };
+    })
+    .filter((p) => p && (p.name || !want.tags?.length || /atm|toilets|parking|bus stop/.test(p.kind)))
+    .filter((p) => {
+      const key = `${p.name}|${Math.round(p.lat * 2000)}|${Math.round(p.lon * 2000)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.metres - b.metres)
+    .slice(0, limit);
+}
+
+const metres = (m) => (m >= 1000 ? `${round(m / 1000, 1)} km` : `${m} m`);
+
+/**
+ * Where "near me" is: the person's approximate position from their connection
+ * (see whereabouts.js) — a city, not a street, and only ever used when they
+ * asked for somewhere near themselves.
+ */
+const NEAR_ME = /\bnear (?:me|here|by)\b|\bnearby\b|\baround (?:me|here)\b|gần (?:tôi|đây|mình|nhà)|quanh (?:đây|tôi)|xung quanh|chỗ tôi|ở đây/i;
+
+/**
+ * @param {{ what?: string, near?: string, radius?: number, limit?: number }} input
+ * @param {{ whereabouts?: { lat: number, lon: number, city: string } | null }} [context]
+ */
+async function nearbyTool({ what, near, radius, limit }, { whereabouts = null } = {}) {
+  const request = String(what || '').trim();
+  const kind = KINDS.find((k) => k.words.test(request));
+  const dish = DISHES.find(([re]) => re.test(request));
+  // A district or a street named in the request is where to look, narrower than a city in `near`.
+  const named = placeInRequest(request);
+  if (named) near = near && !spellOut(named).toLowerCase().includes(spellOut(near).toLowerCase()) && !placeInRequest(near) ? `${named}, ${near}` : near && placeInRequest(near) ? near : named;
+  const wantsHere = !near || (NEAR_ME.test(request) && sameArea(near, whereabouts));
+  let center;
+  let where;
+  if (wantsHere && whereabouts) {
+    center = { lat: whereabouts.lat, lon: whereabouts.lon };
+    where = whereabouts.city ? `around ${whereabouts.city} (your approximate location, from your connection — a city, not a street)` : 'around your approximate location';
+  } else if (near) {
+    const p = await geocode(near);
+    center = { lat: p.lat, lon: p.lon, label: shortName(p.name) };
+    where = `around ${p.name}`;
+  } else {
+    throw new Error('Where should I look? Name a place or an address in `near` — the person\'s location is not known here.');
+  }
+
+  // A dish is a kind of restaurant; a bare name is looked for by its name.
+  const eat = KINDS.find((k) => k.label === 'places to eat').tags;
+  const tags = kind?.tags || (dish ? eat : null);
+  const free = !kind && !dish ? request.replace(NEAR_ME, '').replace(/\b(?:best|good|top)\b|ngon|nhất|tốt/gi, '').trim() : '';
+  const count = Math.min(15, Math.max(1, Number(limit) || 8));
+  let span = Math.min(10_000, Math.max(200, Number(radius) || 1500));
+  const search = async (want) => {
+    let hits = await overpassPlaces(center, want, span, count);
+    // Too few close by: look further, once.
+    if (hits.length < 3 && span < 4000) {
+      span = 4000;
+      hits = await overpassPlaces(center, want, span, count);
+    }
+    return hits;
+  };
+  let found;
+  let note = '';
+  if (dish) {
+    found = await search({ tags, pattern: dish[2] });
+    // Few named for it: the places listed under its cuisine as well.
+    if (found.length < 3 && dish[3]) {
+      const more = await overpassPlaces(center, { tags, cuisine: dish[3] }, span, count);
+      const have = new Set(found.map((p) => p.url));
+      found = [...found, ...more.filter((p) => !have.has(p.url))].sort((a, b) => a.metres - b.metres).slice(0, count);
+    }
+    // A dish nobody names in their sign: every place to eat, said so.
+    if (!found.length) {
+      found = await overpassPlaces(center, { tags }, span, count);
+      note = `No place named for ${dish[1]} is listed nearby, so these are the places to eat around it. `;
+    }
+  } else {
+    found = await search({ tags: tags || [], name: free || undefined });
+  }
+  const label = kind?.label || (dish ? `places for ${dish[1]}` : free ? `places named like "${free}"` : 'places');
+  if (!found.length) {
+    return `No ${label} are listed on OpenStreetMap within ${metres(span)} ${where}. OpenStreetMap is thinner on small shops in some cities — web_search can find more.`;
+  }
+
+  const lines = found.map(
+    (p, i) =>
+      `${i + 1}. ${p.name || p.kind} — ${p.kind}, ${metres(p.metres)} away` +
+      `${p.address ? `; ${p.address}` : ''}${p.hours ? `; hours ${p.hours}` : ''}${p.phone ? `; ${p.phone}` : ''}${p.website ? `; ${p.website}` : ''}`,
+  );
+  return {
+    content:
+      `${note}${found.length} ${label} within ${metres(span)} ${where}, nearest first:\n${lines.join('\n')}\n` +
+      'Source: OpenStreetMap. A map with these places numbered is shown to the user. OpenStreetMap lists places, not ratings or reviews — ' +
+      'if they want the best-rated, web_search the names. Do not repeat the whole list; pick out what answers them.',
+    widget: {
+      kind: 'map',
+      // The person's own words for what they wanted, in their language; the label is the fallback.
+      title: (() => {
+        const said = request.replace(NEAR_ME, '').replace(/\s+/g, ' ').trim() || label;
+        return `${said[0].toUpperCase()}${said.slice(1)}`.slice(0, 80);
+      })(),
+      // here: the person's own approximate spot, labelled in their language by the map.
+      center: wantsHere && whereabouts ? { lat: center.lat, lon: center.lon, here: true } : { lat: center.lat, lon: center.lon, label: center.label || String(near) },
+      list: true,
+      points: found.map((p) => ({
+        lat: p.lat,
+        lon: p.lon,
+        label: p.name || p.kind,
+        detail: [p.name, p.address].filter(Boolean).join(', '),
+        meta: [p.kind, metres(p.metres), p.hours].filter(Boolean).join(' · '),
+        address: p.address,
+        url: p.url,
+      })),
+    },
+  };
+}
+
+/** Whether a place named in `near` is the city the person is in anyway. */
+function sameArea(near, whereabouts) {
+  if (!whereabouts?.city) return false;
+  const fold = (s) => spellOut(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase().replace(/^thanh pho |^city of |\bcity\b/g, '').trim();
+  const a = fold(near);
+  const b = fold(whereabouts.city);
+  return !!a && !!b && (a.includes(b) || b.includes(a));
+}
+
+/** Routing profiles, on public OSRM servers: the demo for driving, FOSSGIS for the rest. */
+const ROUTERS = {
+  driving: 'https://router.project-osrm.org/route/v1/driving',
+  walking: 'https://routing.openstreetmap.de/routed-foot/route/v1/driving',
+  cycling: 'https://routing.openstreetmap.de/routed-bike/route/v1/driving',
+};
+const MODE_WORDS = { driving: 'driving (by car — about the same by motorbike)', walking: 'walking', cycling: 'cycling' };
+
 /** The first part of a Nominatim name — "Hoàn Kiếm Lake", not the whole address. */
 const shortName = (name) => String(name || '').split(',')[0].trim();
 
-async function placeLookupTool({ op, place, from, to }) {
+async function placeLookupTool({ op, place, from, to, mode, what, near, radius, limit }, context = {}) {
+  if (op === 'nearby') return nearbyTool({ what, near, radius, limit }, context);
   if (op === 'find') {
-    const p = await geocode(place);
+    let p;
+    try {
+      p = await geocode(place);
+    } catch (err) {
+      // "quán ăn ngon Quận 1" is not one place but a kind of them.
+      if (KINDS.some((k) => k.words.test(String(place || ''))) || DISHES.some(([re]) => re.test(String(place || '')))) {
+        return nearbyTool({ what: place, near: String(place).split(',').slice(1).join(',').trim() || undefined }, context);
+      }
+      throw err;
+    }
     return {
       content: `${p.name} (${p.kind}) — lat ${round(p.lat, 5)}, lon ${round(p.lon, 5)}. Map: https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=14/${p.lat}/${p.lon}\nSource: OpenStreetMap. A map is shown to the user.`,
       widget: { kind: 'map', title: shortName(p.name), points: [{ lat: p.lat, lon: p.lon, label: shortName(p.name), detail: p.name }] },
     };
   }
   if (op === 'distance') {
+    const travel = ROUTERS[mode] ? mode : 'driving';
     const [a, b] = await Promise.all([geocode(from), geocode(to)]);
     const straight = haversineKm(a, b);
     let road = '';
     let line = [];
     try {
-      const route = await getJson(
-        `https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=simplified&geometries=geojson`,
-      );
+      const route = await getJson(`${ROUTERS[travel]}/${a.lon},${a.lat};${b.lon},${b.lat}?overview=simplified&geometries=geojson`);
       const r = route?.routes?.[0];
       if (r) {
-        road = ` By road: about ${fmt(round(r.distance / 1000, 1))} km, roughly ${hm(r.duration)} driving without traffic.`;
+        road = ` By road: about ${fmt(round(r.distance / 1000, 1))} km, roughly ${hm(r.duration)} ${MODE_WORDS[travel]}${travel === 'driving' ? ' without traffic' : ''}.`;
         line = thinLine(r.geometry?.coordinates);
       }
     } catch {
@@ -453,6 +784,7 @@ async function placeLookupTool({ op, place, from, to }) {
       widget: {
         kind: 'map',
         title: `${shortName(a.name)} → ${shortName(b.name)}`,
+        mode: travel,
         points: [
           { lat: a.lat, lon: a.lon, label: shortName(a.name), detail: a.name },
           { lat: b.lat, lon: b.lon, label: shortName(b.name), detail: b.name },
@@ -461,7 +793,7 @@ async function placeLookupTool({ op, place, from, to }) {
       },
     };
   }
-  throw new Error('op is find or distance.');
+  throw new Error('op is find, nearby or distance.');
 }
 
 /* ── feeds ─────────────────────────────────────────────────────── */

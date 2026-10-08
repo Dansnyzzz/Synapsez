@@ -259,7 +259,7 @@ const onScreen = (run) => runs.onScreen(run);
  */
 const POLICIES = ['guarded', 'auto', 'ask', 'plan', 'readonly'];
 /** The privacy notice a new account agrees to — public/privacy.html, by its version. */
-const PRIVACY_NOTICE = 'privacy-2026-10-06';
+const PRIVACY_NOTICE = 'privacy-2026-10-08';
 
 /**
  * Looked up when drawn, not built at import.

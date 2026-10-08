@@ -1567,14 +1567,20 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: true,
     description:
-      'Find a place, or the distance and driving time between two. Address, coordinates and a map link; distance in a straight line and by road.',
+      'Places, drawn on a map for the user. find: one place or address. nearby: restaurants, cafés, a dish (phở), ATMs, hospitals, hotels… around a place — ' +
+      'or around the user ("near me": leave `near` out and their approximate city is used). distance: how far and how long between two, driving, walking or cycling. ' +
+      'From OpenStreetMap: no ratings or reviews — web_search those.',
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['find', 'distance'] },
+        op: { type: 'string', enum: ['find', 'nearby', 'distance'] },
         place: { type: 'string', description: 'find: a place or address.' },
+        what: { type: 'string', description: 'nearby: what to look for, in the user\'s words — "quán ăn", "cà phê", "phở", "ATM".' },
+        near: { type: 'string', description: 'nearby: around where; leave out for near the user.' },
+        radius: { type: 'integer', description: 'nearby: metres, default 1500.' },
         from: { type: 'string', description: 'distance: where from.' },
         to: { type: 'string', description: 'distance: where to.' },
+        mode: { type: 'string', enum: ['driving', 'walking', 'cycling'], description: 'distance: default driving (also for motorbike).' },
       },
       required: ['op'],
     },
@@ -2770,6 +2776,8 @@ const EXTERNAL_OUTPUT = new Set([
   'github', 'notion_search',
   // Any page on the web, read by the browser on the cloud computer.
   'cloud_browser',
+  // Place names and opening hours from OpenStreetMap, which anyone can edit.
+  'place_lookup',
   // Whatever a program on the cloud computer printed. It has the whole internet
   // (see sandbox.js), so `curl` of a stranger's page lands here as readily as
   // the output of a calculation — it was the one shell left unwrapped (SEC-035).

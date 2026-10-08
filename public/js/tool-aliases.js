@@ -160,6 +160,89 @@ function sandboxInput(input) {
   return out;
 }
 
+/** `place_lookup` ops under the names models give them. */
+const PLACE_OPS = {
+  search: 'find',
+  lookup: 'find',
+  geocode: 'find',
+  locate: 'find',
+  where: 'find',
+  address: 'find',
+  nearby: 'nearby',
+  near: 'nearby',
+  around: 'nearby',
+  search_nearby: 'nearby',
+  nearby_search: 'nearby',
+  places: 'nearby',
+  poi: 'nearby',
+  explore: 'nearby',
+  route: 'distance',
+  directions: 'distance',
+  direction: 'distance',
+  travel: 'distance',
+  distance: 'distance',
+  find: 'find',
+};
+
+/** Words that name a kind of place rather than one place. */
+const KIND_OF_PLACE = /quán|nhà hàng|ăn uống|đồ ăn|món|restaurant|food|eat|cafe|café|cà phê|coffee|bar\b|pub\b|atm|ngân hàng|bank|khách sạn|hotel|homestay|bệnh viện|hospital|phòng khám|clinic|nhà thuốc|pharmacy|siêu thị|supermarket|cửa hàng|shop|chợ|market|cây xăng|gas station|parking|gửi xe/i;
+
+/** Text that means "where the person is", not a place to look up. */
+const HERE = /^(?:me|here|my (?:location|place|area)|current location|near me|nearby|gần (?:tôi|đây|mình)|chỗ (?:tôi|mình)|ở đây|vị trí (?:của )?(?:tôi|mình|hiện tại))$/i;
+
+/**
+ * `place_lookup`, read as meant (owner, 2026-10-07): models sent
+ * `{ location, query }` with no op, `op: "search"`, and `query` where the
+ * tool wanted `place` — four refusals in a row before an answer.
+ *
+ * @param {Record<string, any>} input
+ */
+function placeInput(input) {
+  const out = { ...input };
+  const take = (to, ...names) => {
+    if (out[to] !== undefined && out[to] !== null && out[to] !== '') return;
+    const name = names.find((k) => typeof out[k] === 'string' && out[k].trim());
+    if (name) {
+      out[to] = out[name];
+      delete out[name];
+    }
+  };
+  // A search phrased as "restaurants near me" is a search near somewhere.
+  const words = String(out.query ?? out.what ?? out.category ?? out.type ?? out.kind ?? '');
+  if (typeof out.op === 'string') {
+    const op = loose(out.op);
+    // "search" for a kind of place ("quán ăn ngon Quận 1") is a search nearby;
+    // for a name, it is finding that place.
+    out.op = op === 'search' && KIND_OF_PLACE.test(`${words} ${out.place ?? ''}`) ? 'nearby' : PLACE_OPS[op] || out.op;
+  }
+  if (!out.op) {
+    if (out.from && out.to) out.op = 'distance';
+    else if (out.what || out.category || out.type || out.kind || out.amenity || /\bnear\b|gần|quanh|xung quanh|nearby|around/i.test(words)) out.op = 'nearby';
+    else out.op = 'find';
+  }
+  if (out.op === 'find' && /\bnear me\b|gần (?:tôi|đây)|quanh đây/i.test(words) && !out.place) out.op = 'nearby';
+  if (out.op === 'nearby') {
+    take('what', 'query', 'category', 'type', 'kind', 'amenity', 'keyword', 'search', 'q');
+    take('near', 'location', 'around', 'center', 'centre', 'area', 'place', 'address', 'city');
+    if (typeof out.near === 'string' && HERE.test(out.near.trim())) delete out.near;
+  } else if (out.op === 'find') {
+    take('place', 'query', 'name', 'address', 'location', 'q', 'search');
+    // `{ query: "Bếp Mẹ Ỉn", location: "Ho Chi Minh City" }`: the place, in the city named.
+    if (typeof out.location === 'string' && out.location.trim() && typeof out.place === 'string' && !out.place.includes(out.location)) {
+      out.place = `${out.place}, ${out.location}`;
+      delete out.location;
+    }
+  } else if (out.op === 'distance') {
+    take('from', 'origin', 'start', 'source');
+    take('to', 'destination', 'end', 'target');
+    if (typeof out.mode === 'string') {
+      const mode = loose(out.mode);
+      out.mode = /^(walk|walking|foot|đi_bộ|di_bo)$/.test(mode) ? 'walking' : /^(bike|bicycle|cycling|cycle|xe_đạp|xe_dap)$/.test(mode) ? 'cycling' : 'driving';
+    }
+  }
+  return out;
+}
+
 /**
  * The call as the tool will read it. Never throws, never drops a field it does
  * not recognise — the validator is the one that refuses.
@@ -178,6 +261,7 @@ export function canonicalInput(name, input) {
     return out;
   }
   if (name === 'sandbox_run') return sandboxInput(/** @type {Record<string, any>} */ (input));
+  if (name === 'place_lookup') return placeInput(/** @type {Record<string, any>} */ (input));
   return input;
 }
 

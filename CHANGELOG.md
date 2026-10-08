@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-10-08 — connections the assistant sees at once; places near you, on a map with a list
+
+Asked for by the owner on 2026-10-07, with screenshots. Free and keyless throughout.
+
+### What is connected
+
+- **The assistant knows straight away.** The list of MCP servers and connectors was already read for every
+  message, but the model, asked, said it would only know in a new conversation — and something connected
+  while a turn was running only arrived with the next message. Now the list is checked again before every
+  step: a server or a connector added mid-turn is in the very next step's tools, the person is told the
+  assistant has it, and the prompt says plainly that the list is live.
+
+### Places and maps
+
+- **"Near me" works.** A new `nearby` search finds restaurants, cafés, a dish (phở, bánh mì, lẩu…), ATMs,
+  hospitals, hotels, markets and more around a place — or around the person: their approximate city, which
+  Vercel already attaches to each request from the network connection, rounded to about a kilometre, used
+  only for such a search and never stored or put in the prompt. From OpenStreetMap's Overpass service.
+- **A map with the results beside it**: numbered pins, a dot where the search was centred, and each place
+  with what it is, how far, its opening hours and address — beside the map where there is room, under it on a
+  phone. Pointing at a place lights its pin. OpenStreetMap has no ratings, and the answer says so.
+- **Finding a place by its name works** with the way addresses are written here: "Bếp Mẹ Ỉn, Quận 1, TP.HCM"
+  found nothing; abbreviations (TP.HCM, Q1, P.) are spelled out, the name is retried with just its city, and
+  last looked for among the places OpenStreetMap lists there.
+- **Routes on foot or by bicycle** as well as by car (and motorbike, which drives like one).
+- The calls models made that were refused — no `op`, `op: "search"`, `query` and `location` where the tool
+  took `place` — are read as meant.
+- The privacy notice now names the approximate location and the map services (version privacy-2026-10-08).
+
 ## 2026-10-07 (later) — the cloud browser, driven live; one card per browsing session; a live Python session
 
 Asked for by the owner on 2026-10-07, with screenshots. Free tier only: nothing here needs a paid service.

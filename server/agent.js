@@ -195,6 +195,13 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
     );
   }
 
+  // The model, asked whether it would know about a server added mid-conversation,
+  // guessed "only in a new conversation" — the opposite of how this works.
+  lines.push(
+    '',
+    'What is connected — MCP servers, Google and the other connectors — is read fresh for every message and checked again before each of your steps. Something the user connects or switches off during this conversation is in (or out of) your tools from your next step; a new conversation is never needed.',
+  );
+
   /**
    * Say which servers are plugged in, and say when one is broken.
    *
@@ -1020,7 +1027,7 @@ export function repeatedRead(call, memo, counts) {
   return key ? { key } : null;
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, answers, memo = null, counts = {}, withhold = null }) {
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null }) {
   const results = await mapWithLimit(
     toolCalls,
     MAX_PARALLEL_TOOLS,
@@ -1074,6 +1081,8 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         answers: answers?.get(call.id),
         // Where the person is, for a link a tool builds — see publishFileTool.
         origin,
+        // Roughly where they are, for a search near them — see whereabouts.js.
+        whereabouts,
       });
       // Remembered before it is awaited, so a duplicate in the same batch waits
       // for this run instead of starting a second one. A failure is not kept:
@@ -1176,11 +1185,29 @@ export function applyStreamEvent(ev, assistant, emit) {
 }
 
 /**
+ * What this account has plugged in, as one short fingerprint: its MCP servers
+ * (which, named how, switched on or off, configured how) and its connectors.
+ * Changes exactly when the prompt's list of them would. Nothing secret leaves
+ * here — the configuration is hashed, never returned.
+ *
+ * @param {string} userId
+ */
+export async function connectionsSignature(userId) {
+  const store = getStore();
+  const [servers, linked] = await Promise.all([store.listMcpServers(userId), store.listConnectors(userId)]);
+  const shape = JSON.stringify([
+    servers.map((r) => [r.id, r.name, r.enabled !== false, JSON.stringify(r.config ?? null)]),
+    linked.map((r) => [r.service, r.account ?? '', String(r.created_at ?? '')]),
+  ]);
+  return crypto.createHash('sha256').update(shape).digest('hex').slice(0, 24);
+}
+
+/**
  * @param stream  the provider call, injectable so the loop can be driven in a
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, origin = null, policy: policyOverride = null, unattended = false, stream = streamCompletion }) {
+export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, stream = streamCompletion }) {
   const store = getStore();
   const prefs = await getPrefs(userId);
   /** Personal details masked before the provider sees them (PRV-003): files go as their text. */
@@ -1275,7 +1302,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // the sources are chosen after the transcript is known rather than before.
   const asked = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
 
-  const [worker, skills, connectors, project, providerKeys, mcp, memory] = await Promise.all([
+  const [worker, skills, connectorsAtStart, project, providerKeys, mcpAtStart, memory] = await Promise.all([
     workerStatus(user, prefs),
     skillMenu(userId),
     connectorSummary(userId),
@@ -1288,6 +1315,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // Nor is memory: a turn that cannot read its notes is still a turn.
     memoryForTurn(userId, chat, prefs).catch(() => ''),
   ]);
+  // Re-read mid-turn when what is plugged in changes — see `refreshConnections`.
+  let connectors = connectorsAtStart;
+  let mcp = mcpAtStart;
   // What this conversation may not be given — see `withheldTools`.
   const withhold = withheldTools({ chat, prefs });
   const workerOnline = worker.online;
@@ -1304,23 +1334,47 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // Every line this turn logs from here on carries the prompt version, so a
   // change to the prompt can be measured by filtering on it. See `promptVersion`.
   annotate({ promptVersion: promptVersion() });
-  const system = buildSystemPrompt({
+  const systemArgs = {
     workerOnline,
     worker,
     policy,
     extra: prefs.systemPrompt,
     skills,
-    connectors: connectors.summary,
     // The briefing only — stable across the whole conversation, so the cached
     // prefix stays cached. The passages this question selected travel in the
     // conversation instead; see `withProjectSources`.
     project: project?.briefing,
-    mcpServers: mcp.servers,
     timezone: prefs.timezone,
     memory,
     recall: !withhold.has('search_chats'),
     incognito: !!chat.incognito,
-  });
+  };
+  let system = buildSystemPrompt({ ...systemArgs, connectors: connectors.summary, mcpServers: mcp.servers });
+
+  /**
+   * What is plugged in, re-read before each step after the first.
+   *
+   * The prompt and the catalogue are built once per turn, so a server or a
+   * connector added while a turn was running only arrived with the next
+   * message — and the model, asked about it, concluded it would need a new
+   * conversation (owner, 2026-10-07). Two small reads a step tell whether
+   * anything changed; only then is the list rebuilt (and the cached prefix with
+   * it), and the person is told the assistant now has it.
+   */
+  let connectionsSeen = await connectionsSignature(userId).catch(() => null);
+  const refreshConnections = async () => {
+    const now = await connectionsSignature(userId).catch(() => null);
+    if (!now || now === connectionsSeen) return;
+    connectionsSeen = now;
+    const before = new Set(mcp.servers.map((s) => s.id));
+    [mcp, connectors] = await Promise.all([
+      mcpTools(userId).catch(() => ({ tools: [], servers: [] })),
+      connectorSummary(userId).catch(() => connectors),
+    ]);
+    system = buildSystemPrompt({ ...systemArgs, connectors: connectors.summary, mcpServers: mcp.servers });
+    const added = mcp.servers.filter((s) => !before.has(s.id) && !s.error).map((s) => s.name || s.id);
+    if (added.length) emit('status', { message: `Now available to the assistant: ${added.join(', ')}.` });
+  };
   /**
    * Tools the model has asked for this turn.
    *
@@ -1488,7 +1542,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: answered, memo: turnReads, counts: turnCounts, withhold })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -1576,6 +1630,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     }
 
     await absorbNewMessages();
+    // Something plugged in (or taken out) since the turn began is in this step's tools.
+    if (step > 0) await refreshConnections();
 
     /**
      * Fold the older turns up before they stop fitting.
@@ -1983,7 +2039,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // No answers on this path: a well-formed question pauses above rather than
     // reaching here, so anything named `ask_options` that gets this far is a
     // malformed call on its way to becoming a tool error.
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, answers: null, memo: turnReads, counts: turnCounts, withhold });
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {

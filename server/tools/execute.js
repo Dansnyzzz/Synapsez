@@ -167,6 +167,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
  *   deliverable?: any,
  *   answers?: any,
  *   origin?: string|null,
+ *   whereabouts?: { lat: number, lon: number, city: string, region: string, country: string } | null,
  *   raw?: boolean,
  * }} ToolCallArgs
  */
@@ -367,7 +368,7 @@ export function redactedOutput(name, content) {
  * @param {ToolCallArgs} args
  * @returns {Promise<ToolResult>}
  */
-async function runTool({ user, name, input, chatId, signal, deviceHint, deliverable, answers, origin = null }) {
+async function runTool({ user, name, input, chatId, signal, deviceHint, deliverable, answers, origin = null, whereabouts = null }) {
   const userId = user.id;
 
   /**
@@ -405,7 +406,7 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
       // `deliverable` is the set of tool names this account can actually be
       // given this turn. Only `load_tools` reads it, and only so it stops
       // promising tools that will never arrive — see loadToolsTool.
-      const result = await impl(input || {}, { userId, user, chatId, signal, deliverable, answers, origin });
+      const result = await impl(input || {}, { userId, user, chatId, signal, deliverable, answers, origin, whereabouts });
 
       /**
        * A tool may hand back more than a sentence.

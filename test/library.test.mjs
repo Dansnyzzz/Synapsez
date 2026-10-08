@@ -194,6 +194,81 @@ section('the services are read the way they answer (stubbed)');
   }
 }
 
+section('places: the calls in the owner\'s screenshots, and nearby searches (stubbed)');
+{
+  const { canonicalInput } = await import('../public/js/tool-aliases.js');
+  const { approximateLocation } = await import('../server/whereabouts.js');
+  const real = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    const body = options.body ? decodeURIComponent(String(options.body).replace(/^data=/, '')) : '';
+    asked.push({ u, body });
+    let reply = [];
+    if (u.includes('nominatim')) {
+      const q = decodeURIComponent(new URL(u).searchParams.get('q') || '');
+      // Like the real one: the abbreviated address finds nothing, the spelled-out one does.
+      reply = /TP\.HCM/.test(q)
+        ? []
+        : /Bếp Mẹ Ỉn/.test(q)
+          ? [{ display_name: 'Bếp Mẹ Ỉn, 136/9 Lê Thánh Tôn, Phường Bến Thành, Thành phố Hồ Chí Minh', lat: '10.7739', lon: '106.6982', addresstype: 'amenity' }]
+          : [{ display_name: `${q}, Việt Nam`, lat: '10.776', lon: '106.701', addresstype: 'suburb' }];
+    } else if (u.includes('overpass')) {
+      const near = (dLat, name, extra = {}) => ({ type: 'node', id: Math.round(dLat * 1e6), lat: 10.776 + dLat, lon: 106.701, tags: { amenity: 'restaurant', name, ...extra } });
+      reply = {
+        elements: /"name"~"phở\|pho "/.test(body)
+          ? [near(0.004, 'Phở Hòa', { cuisine: 'noodle' }), near(0.001, 'Phở 24'), near(0.002, 'Phở Bắc Hải', { 'addr:street': 'Nguyễn Thị Minh Khai', 'addr:housenumber': '25' })]
+          : [near(0.003, 'Quán Bụi', { opening_hours: 'Mo-Su 08:00-23:00' }), near(0.0005, 'Nhà Hàng Ngon'), { type: 'node', id: 9, lat: 10.79, lon: 106.71, tags: { amenity: 'restaurant' } }],
+      };
+    } else if (u.includes('routed-foot')) {
+      reply = { routes: [{ distance: 1100, duration: 840, geometry: { coordinates: [[106.698, 10.772], [106.699, 10.779]] } }] };
+    }
+    return new Response(JSON.stringify(reply), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const run = (raw, context) => L.place_lookup(canonicalInput('place_lookup', raw), context);
+  const hcm = approximateLocation({ 'x-vercel-ip-latitude': '10.7769', 'x-vercel-ip-longitude': '106.7009', 'x-vercel-ip-city': 'Ho%20Chi%20Minh%20City', 'x-vercel-ip-country': 'vn' });
+  try {
+    check('the approximate location is rounded to about a kilometre, and its city decoded', hcm?.lat === 10.78 && hcm.lon === 106.7 && hcm.city === 'Ho Chi Minh City' && hcm.country === 'VN', JSON.stringify(hcm));
+    check('  and there is none without the platform\'s headers', approximateLocation({}) === null && approximateLocation({ 'x-vercel-ip-latitude': 'x' }) === null);
+
+    // Image 3: no op, `location` and `query` — refused as "op is required".
+    const three = await run({ location: 'Ho Chi Minh City', query: 'best restaurant near me' }, { whereabouts: hcm });
+    check('`{ location, query }` with no op is a nearby search — the image 3 call answers', /places to eat within/.test(three.content) && three.widget?.list === true, three.content?.slice(0, 120));
+    check('  "near me" in the city the person is in is centred on them, and says it is approximate', three.widget.center?.here === true && /approximate location, from your connection/.test(three.content));
+    // From the rounded centre (10.78, 106.70) Quán Bụi is the nearer of the two.
+    check('  nearest first, unnamed places left out, with hours where known', /1\. Quán Bụi .*hours Mo-Su 08:00-23:00/.test(three.content) && /2\. Nhà Hàng Ngon/.test(three.content) && three.widget.points.length === 2, three.content.split('\n').slice(0, 3).join(' | '));
+    check('  fewer than three close by: it looked further, and says how far', /within 4 km/.test(three.content));
+    check('  and it says plainly there are no ratings, and where to get them', /not ratings or reviews/.test(three.content) && /web_search/.test(three.content));
+
+    // Images 6–7: `op: "search"` with a query naming a kind of place and a district.
+    const six = await run({ op: 'search', query: 'quán ăn ngon Quận 1 TP.HCM', location: 'Ho Chi Minh City' });
+    const geocoded = asked.filter((a) => a.u.includes('nominatim')).map((a) => decodeURIComponent(new URL(a.u).searchParams.get('q')));
+    check('"search" for a kind of place is a nearby search', six.widget?.list === true, six.content?.slice(0, 80));
+    check('  centred on the district the request names, not the whole city', geocoded.some((q) => /^Quận 1/.test(q)), geocoded.join(' | '));
+
+    // Images 8–9: a restaurant's name with an abbreviated district and city.
+    const eight = await run({ op: 'find', query: 'Bếp Mẹ Ỉn', location: 'Quận 1, TP.HCM' });
+    check('a restaurant named with "TP.HCM" is found, the abbreviation spelled out', /136\/9 Lê Thánh Tôn/.test(eight.content) && eight.widget.points.length === 1, eight.content?.slice(0, 100));
+
+    const pho = await run({ op: 'nearby', what: 'phở' }, { whereabouts: hcm });
+    check('a dish finds the places named for it, not every restaurant', /places for phở/.test(pho.content) && /Phở 24/.test(pho.content) && !/Quán Bụi/.test(pho.content), pho.content?.slice(0, 160));
+    const overpassQuery = asked.filter((a) => a.u.includes('overpass')).at(-1)?.body || '';
+    check('  asked by a pattern of the table\'s own — never the person\'s words as a pattern', /\["name"~"phở\|pho ",i\]/.test(overpassQuery) && /around:1500,10\.78000,106\.70000/.test(overpassQuery), overpassQuery.slice(0, 160));
+    const odd = await run({ op: 'nearby', what: 'Bánh "x"|.*', near: 'Quận 3' });
+    const literal = asked.filter((a) => a.u.includes('overpass')).at(-1)?.body || '';
+    check('a name the person typed is matched literally, quotes and patterns escaped', !/"x"/.test(literal) && /\\\|\\\.\\\*/.test(literal), literal.slice(0, 200));
+    void odd;
+
+    const nowhere = await run({ op: 'nearby', what: 'cà phê' }, {}).catch((err) => err.message);
+    check('near me with no location known asks for a place, instead of guessing one', /Where should I look\?/.test(String(nowhere)));
+
+    const walk = await run({ op: 'route', from: 'Chợ Bến Thành', to: 'Nhà thờ Đức Bà', mode: 'đi bộ' });
+    check('a route on foot uses the walking router and says so', asked.some((a) => a.u.includes('routed-foot')) && /14 min walking/.test(walk.content) && walk.widget.mode === 'walking', walk.content?.slice(-120));
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
 section('a long route is thinned before it is stored');
 {
   const long = Array.from({ length: 5000 }, (_, i) => [105 + i / 5000, 21 + i / 10000]);

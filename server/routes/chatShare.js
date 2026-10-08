@@ -225,7 +225,10 @@ function mapPlaces(widget) {
     .filter((p) => Array.isArray(p) && p.length >= 2)
     .map(([lat, lon]) => [Number(lat), Number(lon)])
     .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon));
-  return points.length ? [...points, ...line] : [];
+  // The spot a nearby search was centred on is drawn, and fitted, too.
+  const center = [Number(widget.center?.lat), Number(widget.center?.lon)];
+  const centred = Number.isFinite(center[0]) && Number.isFinite(center[1]) ? [center] : [];
+  return points.length ? [...points, ...centred, ...line] : [];
 }
 
 /**

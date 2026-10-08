@@ -1573,6 +1573,47 @@ section('the same read twice in a turn runs once');
   check('memory_read is never answered from an earlier read', repeatedRead({ name: 'memory_read', input: {} }, new Map(), {}) === null);
 }
 
+section('something connected mid-turn is there at the next step (owner, 2026-10-07)');
+{
+  /*
+   * The owner added a connection and the assistant said it would only know in
+   * a new conversation. The list is read per message; this checks the case in
+   * between — linked while a turn is running — and that the model is told the
+   * list is live.
+   */
+  const liveUser = await store.createUser({
+    id: 'u-live-conn',
+    email: 'liveconn@example.com',
+    name: 'Live',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'user',
+  });
+  await store.createChat(liveUser.id, { id: 'c-live-conn', title: 'conn' });
+  await store.appendMessage(liveUser.id, 'c-live-conn', { id: 'c-live-conn-u', role: 'user', text: 'Check my notes, then tell me.' });
+  const systems = [];
+  let calls = 0;
+  const stream = async function* scripted(opts) {
+    systems.push(opts.system);
+    calls += 1;
+    if (calls === 1) {
+      // The person links a service while the first step is still being answered.
+      await store.saveConnector(liveUser.id, 'github', 'ghp_test_token', 'octo');
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'm1', name: 'memory_read', input: {} }], usage: { input: 10, output: 5 } };
+      return;
+    }
+    yield { type: 'text', delta: 'Done.' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+  };
+  const { connectionsSignature } = await import('../server/agent.js');
+  const before = await connectionsSignature(liveUser.id).catch(() => null);
+  await runAgent({ userId: liveUser.id, user: liveUser, chatId: 'c-live-conn', emit: () => {}, stream });
+  const text = (s) => (typeof s === 'string' ? s : JSON.stringify(s));
+  check('the first step did not have it', !/GitHub/i.test(text(systems[0]).split('## Connected services')[1] || ''), `${calls} steps`);
+  check('  the next step of the same turn does', /## Connected services[\s\S]*GitHub/i.test(text(systems[1] || '')), text(systems[1] || '').split('## Connected services')[1]?.slice(0, 120));
+  check('the fingerprint changed with it, and holds nothing of the token', before !== (await connectionsSignature(liveUser.id)) && !(await connectionsSignature(liveUser.id)).includes('ghp_'));
+  check('the model is told the list is live, so it never asks for a new conversation', /a new conversation is never needed/.test(text(systems[0])));
+}
+
 section('the progress gate: a turn cannot finish with its plan left behind');
 {
   /*

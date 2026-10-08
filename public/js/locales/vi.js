@@ -163,6 +163,7 @@ export const vi = {
   'card.zoomIn': 'Phóng to',
   'card.zoomOut': 'Thu nhỏ',
   'card.openMap': 'Mở trên OpenStreetMap',
+  'card.aroundYou': 'Vị trí gần đúng của bạn (theo kết nối mạng)',
   'card.images': 'Hình ảnh',
   'card.servings': 'Khẩu phần',
   'card.time': 'Thời gian',

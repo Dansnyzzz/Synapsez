@@ -160,7 +160,7 @@ check('the app opened', await page.isVisible('#model-chip'));
   const { getStore } = await import('../server/store/index.js');
   const me = await getStore().getUserByEmail('ui@test.local');
   const consented = (await getStore().listAudit(me.id, 50)).find((e) => e.kind === 'consent_given');
-  check('  and the agreement is in the security record, with the notice\'s version', consented?.detail?.notice === 'privacy-2026-10-06', JSON.stringify(consented?.detail));
+  check('  and the agreement is in the security record, with the notice\'s version', consented?.detail?.notice === 'privacy-2026-10-08', JSON.stringify(consented?.detail));
 }
 
 /**
@@ -4178,6 +4178,60 @@ section('browser steps across model steps are one card, and each settles when it
   });
   check('reasoning that led to a step stays above that step when the same step also used another tool', edges.order === 'step,thought,step' && edges.thoughtLeftTheBlock && edges.fileCardInItsBlock, JSON.stringify(edges));
   check('a turn that stopped on reasoning folds the card that reasoning was parked in', edges.openWhileThinking === true && edges.foldedAfter === true, JSON.stringify(edges));
+}
+
+/**
+ * A nearby search draws a map with its places listed beside it (owner,
+ * 2026-10-07, comparing with a map app's results): numbered pins, a dot where
+ * the search was centred, each place with what it is, how far and when open.
+ */
+section('places near somewhere: numbered pins, and the list beside the map');
+{
+  const map = await page.evaluate(async () => {
+    const { mapFigure } = await import('/js/cards.js');
+    const draw = async (width) => {
+      const host = document.createElement('div');
+      host.style.width = `${width}px`;
+      document.body.append(host);
+      const figure = mapFigure({
+        kind: 'map',
+        title: 'Places to eat',
+        list: true,
+        center: { lat: 10.78, lon: 106.7, here: true },
+        points: [
+          { lat: 10.779, lon: 106.701, label: 'Quán Bụi', meta: 'restaurant · 156 m · Mo-Su 08:00-23:00', address: '39 Lý Tự Trọng', url: 'https://www.openstreetmap.org/node/1' },
+          { lat: 10.7765, lon: 106.701, label: 'Nhà Hàng Ngon', meta: 'restaurant · 404 m', url: 'https://www.openstreetmap.org/node/2' },
+          { lat: 10.775, lon: 106.699, label: 'Phở 24', meta: 'restaurant · 520 m' },
+        ],
+      });
+      host.append(figure);
+      await new Promise((r) => setTimeout(r, 300));
+      const stage = figure.querySelector('.xmap').getBoundingClientRect();
+      const side = figure.querySelector('.xmap__side').getBoundingClientRect();
+      const out = {
+        rows: figure.querySelectorAll('.xmap__results > li').length,
+        numbers: [...figure.querySelectorAll('.xmap__pin text')].map((n) => n.textContent).join(','),
+        here: !!figure.querySelector('.xmap__here'),
+        hereSays: figure.querySelector('.xmap__here title')?.textContent || '',
+        link: figure.querySelector('.xmap__result-name')?.getAttribute('href') || '',
+        meta: figure.querySelector('.xmap__result-meta')?.textContent || '',
+        beside: side.left >= stage.right - 1 && Math.abs(side.top - stage.top) < 2,
+        under: side.top >= stage.bottom - 1,
+      };
+      figure.querySelectorAll('.xmap__result')[1].dispatchEvent(new PointerEvent('pointerenter'));
+      out.lit = figure.querySelector('.xmap__pin.is-lit text')?.textContent || '';
+      out.litOnTop = figure.querySelector('.xmap__overlay').lastElementChild?.classList.contains('is-lit');
+      host.remove();
+      return out;
+    };
+    return { wide: await draw(820), narrow: await draw(360) };
+  });
+  check('every place is listed, with its number on the map', map.wide.rows === 3 && map.wide.numbers === '1,2,3', JSON.stringify(map.wide));
+  check('  where the search was centred is a dot of its own, labelled in the person\'s language', map.wide.here && /approximate|gần đúng/i.test(map.wide.hereSays), map.wide.hereSays);
+  check('  each name opens the place on OpenStreetMap, with what it is, how far and when open', map.wide.link === 'https://www.openstreetmap.org/node/1' && /156 m · Mo-Su/.test(map.wide.meta));
+  check('the list sits beside the map where there is room', map.wide.beside === true, JSON.stringify(map.wide));
+  check('  and under it on a phone', map.narrow.under === true, JSON.stringify(map.narrow));
+  check('pointing at a place lights its pin, drawn on top of the others', map.wide.lit === '2' && map.wide.litOnTop === true, `${map.wide.lit} ${map.wide.litOnTop}`);
 }
 
 /**
