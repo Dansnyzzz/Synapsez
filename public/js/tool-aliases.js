@@ -15,7 +15,11 @@
  * as `rm -rf`, cannot happen when both read the call here.
  *
  * Only plain synonyms. Anything that would need a guess about what was meant is
- * left alone, and the validator says what the tool takes.
+ * left alone, and the validator says what the tool takes. One deliberate
+ * exception: `place_lookup` without an `op` takes the one its fields plainly
+ * imply (`from` and `to` are a distance; `what` or "near me" a nearby search;
+ * anything else a place to find) — models leave it out often enough that
+ * refusing cost four steps in a row (owner, 2026-10-07).
  */
 
 const loose = (value) => String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
@@ -160,6 +164,92 @@ function sandboxInput(input) {
   return out;
 }
 
+/** `place_lookup` ops under the names models give them. */
+const PLACE_OPS = {
+  search: 'find',
+  lookup: 'find',
+  geocode: 'find',
+  locate: 'find',
+  where: 'find',
+  address: 'find',
+  nearby: 'nearby',
+  near: 'nearby',
+  around: 'nearby',
+  search_nearby: 'nearby',
+  nearby_search: 'nearby',
+  places: 'nearby',
+  poi: 'nearby',
+  explore: 'nearby',
+  route: 'distance',
+  directions: 'distance',
+  direction: 'distance',
+  travel: 'distance',
+  distance: 'distance',
+  find: 'find',
+};
+
+/** Text that means "where the person is", not a place to look up. */
+const HERE = /^(?:me|here|my (?:location|place|area)|current location|near me|nearby|gần (?:tôi|đây|mình)|chỗ (?:tôi|mình)|ở đây|vị trí (?:của )?(?:tôi|mình|hiện tại))$/i;
+
+/**
+ * `place_lookup`, read as meant (owner, 2026-10-07): models sent
+ * `{ location, query }` with no op, `op: "search"`, and `query` where the
+ * tool wanted `place` — four refusals in a row before an answer.
+ *
+ * @param {Record<string, any>} input
+ */
+function placeInput(input) {
+  const out = { ...input };
+  const take = (to, ...names) => {
+    if (out[to] !== undefined && out[to] !== null && out[to] !== '') return;
+    const name = names.find((k) => typeof out[k] === 'string' && out[k].trim());
+    if (name) {
+      out[to] = out[name];
+      delete out[name];
+    }
+  };
+  // A search phrased as "restaurants near me" is a search near somewhere.
+  const words = String(out.query ?? out.what ?? out.category ?? out.type ?? out.kind ?? '');
+  // "search" is `find`, always: whether the words name one place ("Bệnh viện
+  // Chợ Rẫy") or a kind of place ("quán ăn ngon Quận 1") is decided where the
+  // kinds are known (`isKindOfPlace` in library.js), not guessed here.
+  if (typeof out.op === 'string') out.op = PLACE_OPS[loose(out.op)] || out.op;
+  if (!out.op) {
+    if (out.from && out.to) out.op = 'distance';
+    else if (out.what || out.category || out.type || out.kind || out.amenity || /\bnear\b|gần|quanh|xung quanh|nearby|around/i.test(words)) out.op = 'nearby';
+    else out.op = 'find';
+  }
+  if (out.op === 'find' && /\bnear me\b|gần (?:tôi|đây)|quanh đây/i.test(words) && !out.place) out.op = 'nearby';
+  if (out.op === 'nearby') {
+    take('what', 'query', 'category', 'type', 'kind', 'amenity', 'keyword', 'search', 'q');
+    take('near', 'location', 'around', 'center', 'centre', 'area', 'place', 'address', 'city');
+    if (typeof out.near === 'string' && HERE.test(out.near.trim())) delete out.near;
+  } else if (out.op === 'find') {
+    take('place', 'query', 'name', 'address', 'location', 'q', 'search');
+    // `{ query: "Bếp Mẹ Ỉn", location: "Ho Chi Minh City" }`: the place, in the city named.
+    if (typeof out.location === 'string' && out.location.trim() && typeof out.place === 'string' && !out.place.includes(out.location)) {
+      out.place = `${out.place}, ${out.location}`;
+      delete out.location;
+    }
+  } else if (out.op === 'distance') {
+    take('from', 'origin', 'start', 'source');
+    take('to', 'destination', 'end', 'target');
+    if (typeof out.mode === 'string') {
+      // A way of travelling it does not know (transit) is left as sent: the
+      // validator drops it with a note, rather than this calling it driving.
+      const mode = loose(out.mode);
+      out.mode = /^(walk|walking|foot|on_foot|pedestrian|đi_bộ|di_bo)$/.test(mode)
+        ? 'walking'
+        : /^(bike|bicycle|cycling|cycle|xe_đạp|xe_dap)$/.test(mode)
+          ? 'cycling'
+          : /^(drive|driving|car|motorbike|motorcycle|scooter|xe_máy|xe_may|ô_tô|o_to|ô_tô_con)$/.test(mode)
+            ? 'driving'
+            : out.mode;
+    }
+  }
+  return out;
+}
+
 /**
  * The call as the tool will read it. Never throws, never drops a field it does
  * not recognise — the validator is the one that refuses.
@@ -178,6 +268,7 @@ export function canonicalInput(name, input) {
     return out;
   }
   if (name === 'sandbox_run') return sandboxInput(/** @type {Record<string, any>} */ (input));
+  if (name === 'place_lookup') return placeInput(/** @type {Record<string, any>} */ (input));
   return input;
 }
 

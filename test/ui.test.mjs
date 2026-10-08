@@ -160,7 +160,7 @@ check('the app opened', await page.isVisible('#model-chip'));
   const { getStore } = await import('../server/store/index.js');
   const me = await getStore().getUserByEmail('ui@test.local');
   const consented = (await getStore().listAudit(me.id, 50)).find((e) => e.kind === 'consent_given');
-  check('  and the agreement is in the security record, with the notice\'s version', consented?.detail?.notice === 'privacy-2026-10-06', JSON.stringify(consented?.detail));
+  check('  and the agreement is in the security record, with the notice\'s version', consented?.detail?.notice === 'privacy-2026-10-08', JSON.stringify(consented?.detail));
 }
 
 /**
@@ -4181,6 +4181,68 @@ section('browser steps across model steps are one card, and each settles when it
 }
 
 /**
+ * A nearby search draws a map with its places listed beside it (owner,
+ * 2026-10-07, comparing with a map app's results): numbered pins, a dot where
+ * the search was centred when it was a named place, each place with what it
+ * is, how far and when open.
+ */
+section('places near somewhere: numbered pins, and the list beside the map');
+{
+  const map = await page.evaluate(async () => {
+    const { mapFigure } = await import('/js/cards.js');
+    const draw = async (width, center = { lat: 10.7725, lon: 106.698, label: 'Chợ Bến Thành' }) => {
+      const host = document.createElement('div');
+      host.style.width = `${width}px`;
+      document.body.append(host);
+      const figure = mapFigure({
+        kind: 'map',
+        title: 'Places to eat',
+        list: true,
+        ...(center ? { center } : {}),
+        points: [
+          { lat: 10.779, lon: 106.701, label: 'Quán Bụi', meta: 'restaurant · 156 m · Mo-Su 08:00-23:00', address: '39 Lý Tự Trọng', url: 'https://www.openstreetmap.org/node/1' },
+          { lat: 10.7765, lon: 106.701, label: 'Nhà Hàng Ngon', meta: 'restaurant · 404 m', url: 'https://www.openstreetmap.org/node/2' },
+          { lat: 10.775, lon: 106.699, label: 'Phở 24', meta: 'restaurant · 520 m' },
+        ],
+      });
+      host.append(figure);
+      await new Promise((r) => setTimeout(r, 300));
+      const stage = figure.querySelector('.xmap').getBoundingClientRect();
+      const side = figure.querySelector('.xmap__side').getBoundingClientRect();
+      const out = {
+        rows: figure.querySelectorAll('.xmap__results > li').length,
+        numbers: [...figure.querySelectorAll('.xmap__pin text')].map((n) => n.textContent).join(','),
+        here: !!figure.querySelector('.xmap__here'),
+        hereSays: figure.querySelector('.xmap__here title')?.textContent || '',
+        link: figure.querySelector('.xmap__result-name')?.getAttribute('href') || '',
+        meta: figure.querySelector('.xmap__result-meta')?.textContent || '',
+        beside: side.left >= stage.right - 1 && Math.abs(side.top - stage.top) < 2,
+        under: side.top >= stage.bottom - 1,
+      };
+      const tilesBefore = [...figure.querySelectorAll('.xmap__tile')];
+      figure.querySelectorAll('.xmap__result')[1].dispatchEvent(new PointerEvent('pointerenter'));
+      out.lit = figure.querySelector('.xmap__pin.is-lit text')?.textContent || '';
+      out.litOnTop = figure.querySelector('.xmap__overlay').lastElementChild?.classList.contains('is-lit');
+      const tilesAfter = [...figure.querySelectorAll('.xmap__tile')];
+      out.tilesKept = tilesBefore.length > 0 && tilesAfter.length === tilesBefore.length && tilesAfter.every((img, i) => img === tilesBefore[i]);
+      figure.querySelectorAll('.xmap__result')[1].dispatchEvent(new PointerEvent('pointerleave'));
+      out.unlit = !figure.querySelector('.xmap__pin.is-lit');
+      host.remove();
+      return out;
+    };
+    return { wide: await draw(820), narrow: await draw(360), nearMe: await draw(820, null) };
+  });
+  check('every place is listed, with its number on the map', map.wide.rows === 3 && map.wide.numbers === '1,2,3', JSON.stringify(map.wide));
+  check('  a named place the search was centred on is a dot of its own, with its name', map.wide.here && map.wide.hereSays === 'Chợ Bến Thành', map.wide.hereSays);
+  check('  and "near me" draws no centre at all — the person\'s position is not on the map', !map.nearMe.here && map.nearMe.rows === 3, JSON.stringify(map.nearMe));
+  check('  each name opens the place on OpenStreetMap, with what it is, how far and when open', map.wide.link === 'https://www.openstreetmap.org/node/1' && /156 m · Mo-Su/.test(map.wide.meta));
+  check('the list sits beside the map where there is room', map.wide.beside === true, JSON.stringify(map.wide));
+  check('  and under it on a phone', map.narrow.under === true, JSON.stringify(map.narrow));
+  check('pointing at a place lights its pin, drawn on top of the others', map.wide.lit === '2' && map.wide.litOnTop === true, `${map.wide.lit} ${map.wide.litOnTop}`);
+  check('  without redrawing the map under it — the same tiles stay, and leaving puts it out', map.wide.tilesKept === true && map.wide.unlit === true, JSON.stringify({ kept: map.wide.tilesKept, unlit: map.wide.unlit }));
+}
+
+/**
  * Formulas are typeset, under the page's own Content-Security-Policy.
  *
  * The renderer's side is covered in markdown-math.test.mjs; what only a browser
@@ -7414,20 +7476,33 @@ section('the cloud browser is driven over a socket straight to the machine');
     });
   });
   const relayed = [];
-  await page.route('**/api/cloud-browser/state*', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        open: true,
-        stream: 'https://sb-ui.vercel.run/stream?t=view.1.x',
-        live: { url: 'wss://sb-ui.vercel.run/live', token: 'drive.123.sig', expiresAt: Date.now() + 60_000 },
-        title: 'x',
-        url: 'https://decuongmonhoc.example/x',
-        tabs: [],
-      }),
-    }),
-  );
+  /*
+   * Every state answer after the first arrives late — after the socket has said
+   * what the page is, as a slow one does. Such an answer used to put its older
+   * title back over the socket's, but only when it happened to lose the race.
+   */
+  let firstStateCalls = 0;
+  let lateAnswered = 0;
+  await page.route('**/api/cloud-browser/state*', async (route) => {
+    firstStateCalls += 1;
+    const late = firstStateCalls > 1;
+    if (late) await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route
+      .fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          open: true,
+          stream: 'https://sb-ui.vercel.run/stream?t=view.1.x',
+          live: { url: 'wss://sb-ui.vercel.run/live', token: 'drive.123.sig', expiresAt: Date.now() + 60_000 },
+          title: 'x',
+          url: 'https://decuongmonhoc.example/x',
+          tabs: [],
+        }),
+      })
+      .catch(() => {});
+    if (late) lateAnswered += 1;
+  });
   await page.route('**/api/cloud-browser/input', async (route) => {
     relayed.push(JSON.parse(route.request().postData() || '{}'));
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true,"title":"x","url":"https://x/","tabs":[]}' });
@@ -7475,6 +7550,10 @@ section('the cloud browser is driven over a socket straight to the machine');
   }));
   check('  a frame from it is painted, and acknowledged so the next can come', painted.src.startsWith('blob:') && said.some((n) => n.t === 'ack') && painted.live, painted.src.slice(0, 30));
   check('  and the page\'s title arrives over it too', painted.title === 'Đề cương', painted.title);
+  await waitFor(() => lateAnswered > 0, 6000);
+  await page.waitForTimeout(200);
+  const titleAfter = await page.evaluate(() => document.getElementById('screen-title').textContent);
+  check('  and a state answer that lands after it does not put an older title back', lateAnswered > 0 && titleAfter === 'Đề cương', `${titleAfter} · ${lateAnswered} late answers of ${firstStateCalls} state calls`);
 
   const box = await page.evaluate(() => {
     const r = document.getElementById('screen-img').getBoundingClientRect();

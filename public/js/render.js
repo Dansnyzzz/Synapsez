@@ -417,7 +417,11 @@ const STEP_DETAILS = {
   date_calc: (i) => clip([i.op, i.date, i.to, i.time].filter(Boolean).join(' · '), 64),
   convert_units: (i) => clip(`${i.value} ${i.from} → ${i.to}`, 64),
   market_data: (i) => clip([].concat(i.symbols || []).join(', '), 64),
-  place_lookup: (i) => clip(i.place || [i.from, i.to].filter(Boolean).join(' → '), 64),
+  // Read the way the tool reads it, so `query`/`location` and a nearby search are labelled too.
+  place_lookup: (raw) => {
+    const i = canonicalInput('place_lookup', raw) || raw;
+    return clip(i.op === 'nearby' ? [i.what, i.near].filter(Boolean).join(' · ') : i.place || [i.from, i.to].filter(Boolean).join(' → '), 64);
+  },
   read_feed: (i) => clip(i.url, 64),
   text_tools: (i) => clip(i.op, 64),
   analyze_data: (i) => clip([i.op, i.group_by, i.column].filter(Boolean).join(' · '), 64),

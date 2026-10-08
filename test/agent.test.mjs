@@ -1573,6 +1573,82 @@ section('the same read twice in a turn runs once');
   check('memory_read is never answered from an earlier read', repeatedRead({ name: 'memory_read', input: {} }, new Map(), {}) === null);
 }
 
+section('something connected mid-turn is there at the next step (owner, 2026-10-07)');
+{
+  /*
+   * The owner added a connection and the assistant said it would only know in
+   * a new conversation. The list is read per message; this checks the case in
+   * between — linked while a turn is running — and that the model is told the
+   * list is live.
+   */
+  const liveUser = await store.createUser({
+    id: 'u-live-conn',
+    email: 'liveconn@example.com',
+    name: 'Live',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'user',
+  });
+  await store.createChat(liveUser.id, { id: 'c-live-conn', title: 'conn' });
+  await store.appendMessage(liveUser.id, 'c-live-conn', { id: 'c-live-conn-u', role: 'user', text: 'Check my notes, then tell me.' });
+  const systems = [];
+  let calls = 0;
+  const stream = async function* scripted(opts) {
+    systems.push(opts.system);
+    calls += 1;
+    if (calls === 1) {
+      // The person links a service while the first step is still being answered.
+      await store.saveConnector(liveUser.id, 'github', 'ghp_test_token', 'octo');
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'm1', name: 'memory_read', input: {} }], usage: { input: 10, output: 5 } };
+      return;
+    }
+    yield { type: 'text', delta: 'Done.' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+  };
+  const { connectionsSignature } = await import('../server/agent.js');
+  const before = await connectionsSignature(liveUser.id).catch(() => null);
+  const told = [];
+  await runAgent({ userId: liveUser.id, user: liveUser, chatId: 'c-live-conn', emit: (type, payload) => told.push({ type, payload }), stream });
+  check('the person is told the assistant now has it', told.some((e) => e.type === 'status' && /Now available to the assistant: github/.test(e.payload?.message || '')), JSON.stringify(told.filter((e) => e.type === 'status').map((e) => e.payload?.message).filter(Boolean)));
+  const text = (s) => (typeof s === 'string' ? s : JSON.stringify(s));
+  check('the first step did not have it', !/GitHub/i.test(text(systems[0]).split('## Connected services')[1] || ''), `${calls} steps`);
+  check('  the next step of the same turn does', /## Connected services[\s\S]*GitHub/i.test(text(systems[1] || '')), text(systems[1] || '').split('## Connected services')[1]?.slice(0, 120));
+  check('the fingerprint changed with it, and holds nothing of the token', before !== (await connectionsSignature(liveUser.id)) && !(await connectionsSignature(liveUser.id)).includes('ghp_'));
+  check('the model is told the list is live, so it never asks for a new conversation', /a new conversation is never needed/.test(text(systems[0])));
+
+  // The owner's own case: an MCP server added while the turn runs. One that cannot be
+  // reached is still named — "not working right now" — rather than silently absent.
+  await store.createChat(liveUser.id, { id: 'c-live-mcp', title: 'mcp' });
+  await store.appendMessage(liveUser.id, 'c-live-mcp', { id: 'c-live-mcp-u', role: 'user', text: 'Use my new server.' });
+  const mcpSystems = [];
+  const said = [];
+  let mcpCalls = 0;
+  const mcpStream = async function* scripted(opts) {
+    mcpSystems.push(opts.system);
+    mcpCalls += 1;
+    if (mcpCalls === 1) {
+      await store.saveMcpServer(liveUser.id, { id: 'srv-new', name: 'Figma Bridge', config: { transport: 'http', url: 'http://127.0.0.1:9/mcp' }, enabled: true });
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'm2', name: 'memory_read', input: {} }], usage: { input: 10, output: 5 } };
+      return;
+    }
+    if (mcpCalls === 2) {
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'm3', name: 'memory_read', input: {} }], usage: { input: 10, output: 5 } };
+      return;
+    }
+    yield { type: 'text', delta: 'Done.' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+  };
+  await runAgent({ userId: liveUser.id, user: liveUser, chatId: 'c-live-mcp', emit: (type, payload) => said.push({ type, payload }), stream: mcpStream });
+  check('an MCP server added mid-turn is in the next step\'s prompt', !/figma_bridge/.test(text(mcpSystems[0])) && /## Connected MCP servers[\s\S]*Not working right now:\*\* figma_bridge — 127\.0\.0\.1 is a private address/.test(text(mcpSystems[1] || '')), text(mcpSystems[1] || '').split('## Connected MCP servers')[1]?.trim().slice(0, 160));
+  check('  and one that cannot connect is not announced as available', !said.some((e) => /Now available/.test(e.payload?.message || '')));
+  check('  and a step with nothing changed sends exactly the prompt it sent before — the cache holds', mcpSystems.length >= 3 && text(mcpSystems[1]) === text(mcpSystems[2]), `${mcpSystems.length} steps`);
+
+  // Re-granting (Gmail ticked on an existing Google connection) stores a new token and nothing else.
+  await store.saveConnector(liveUser.id, 'google', 'sealed-token-one', 'me@example.com');
+  const granted = await connectionsSignature(liveUser.id);
+  await store.saveConnector(liveUser.id, 'google', 'sealed-token-two', 'me@example.com');
+  check('a new grant on the same connection changes the fingerprint', granted !== (await connectionsSignature(liveUser.id)));
+}
+
 section('the progress gate: a turn cannot finish with its plan left behind');
 {
   /*

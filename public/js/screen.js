@@ -111,13 +111,21 @@ export function createScreen() {
   const streamBase = (address) => String(address || '').split('?')[0];
 
   function showCloud(state) {
-    title.textContent = state?.title || (state?.open ? t('screen.title') : t('screen.cloudStarting'));
-    url.textContent = state?.url || '';
+    /*
+     * Once the socket has said what the page is, it is the page as it is now. A
+     * state call answered after that note is an older picture of it, and used to
+     * put the old title back until the next page loaded.
+     */
+    const socketSaid = liveOpen() && link.meta;
+    if (!socketSaid) {
+      title.textContent = state?.title || (state?.open ? t('screen.title') : t('screen.cloudStarting'));
+      url.textContent = state?.url || '';
+      showMeta(state);
+    }
     source.textContent = t('screen.sourceCloud');
     source.title = t('screen.cloudNote');
     closeButton.hidden = false;
     nav.hidden = false;
-    showMeta(state);
     panel.hidden = false;
     if (!state?.open || stopped) {
       live.classList.remove('is-live');
@@ -212,7 +220,7 @@ export function createScreen() {
 
   /* ── the socket to the cloud machine ─────────────────────────────── */
 
-  /** @type {{ ws: WebSocket, url: string, token: string, opened: boolean, frames: number } | null} */
+  /** @type {{ ws: WebSocket, url: string, token: string, opened: boolean, frames: number, meta: boolean } | null} */
   let link = null;
   /** The socket could not be had from here (a proxy, a policy): the relay, until the page reloads. */
   let liveFailed = false;
@@ -252,7 +260,7 @@ export function createScreen() {
       return;
     }
     ws.binaryType = 'blob';
-    const mine = { ws, url: info.url, token: info.token, opened: false, frames: 0 };
+    const mine = { ws, url: info.url, token: info.token, opened: false, frames: 0, meta: false };
     link = mine;
     const giveUp = setTimeout(() => {
       if (!mine.opened) useRelay();
@@ -268,7 +276,10 @@ export function createScreen() {
       if (typeof event.data === 'string') {
         try {
           const note = JSON.parse(event.data);
-          if (note.t === 'meta') showMeta(note);
+          if (note.t === 'meta') {
+            mine.meta = true;
+            showMeta(note);
+          }
         } catch {
           /* a note we cannot read is not worth the socket */
         }

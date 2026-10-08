@@ -12,6 +12,7 @@
 export const vi = {
   /* ── hội thoại & lượt chạy ─────────────────────────────────────── */
   'Chat not found.': 'Không tìm thấy cuộc trò chuyện.',
+  'Now available to the assistant: {0}.': 'Trợ lý giờ đã dùng được: {0}.',
   'Chat not found': 'Không tìm thấy cuộc trò chuyện',
   '{0} has been shut down by its provider, so this is using {1} instead.':
     '{0} đã bị nhà cung cấp ngừng hoạt động, nên đang dùng {1} thay thế.',
@@ -734,12 +735,22 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Hãy nêu ít nhất một mã — ví dụ BTC, ETH, AAPL, FPT, VNINDEX, gold.",
   "kind is crypto or stock.":
     "kind là crypto hoặc stock.",
-  "Name the place.":
-    "Hãy nêu địa điểm.",
-  "No place called \"{0}\" was found on OpenStreetMap.":
-    "Không tìm thấy địa điểm \"{0}\" trên OpenStreetMap.",
-  "op is find or distance.":
-    "op là find hoặc distance.",
+  "Name the place — e.g. \"Chợ Bến Thành\" or \"136 Lê Thánh Tôn, Quận 1, TP.HCM\".":
+    "Hãy nêu địa điểm — ví dụ \"Chợ Bến Thành\" hoặc \"136 Lê Thánh Tôn, Quận 1, TP.HCM\".",
+  "No place called \"{0}\" was found on OpenStreetMap. Try its street address, or a bigger landmark near it.":
+    "Không tìm thấy địa điểm \"{0}\" trên OpenStreetMap. Thử địa chỉ đường phố của nó, hoặc một địa danh lớn hơn ở gần đó.",
+  "OpenStreetMap's place search did not answer ({0}). Try again in a moment.":
+    "Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi ({0}). Hãy thử lại sau giây lát.",
+  "OpenStreetMap's place search did not answer ({0}), so \"{1}\" could not be checked. Try again in a moment.":
+    "Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi ({0}), nên chưa kiểm tra được \"{1}\". Hãy thử lại sau giây lát.",
+  "Say what to look for — \"quán ăn\", \"cà phê\", \"phở\", \"ATM\", \"bệnh viện\"…":
+    "Hãy nói cần tìm gì — \"quán ăn\", \"cà phê\", \"phở\", \"ATM\", \"bệnh viện\"…",
+  "OpenStreetMap took too long to answer, so this was stopped. Try again in a moment, or a smaller area.":
+    "OpenStreetMap phản hồi quá lâu nên đã dừng. Hãy thử lại sau giây lát, hoặc với một khu vực nhỏ hơn.",
+  "Where should I look? Name a place or an address in `near` — the person's location is not known here.":
+    "Tìm ở đâu? Hãy nêu một địa điểm hoặc địa chỉ trong `near` — ở đây không biết vị trí của người dùng.",
+  "op is find, nearby or distance.":
+    "op là find, nearby hoặc distance.",
   "That address is not an RSS or Atom feed (no items found). Try web_fetch for an ordinary page.":
     "Địa chỉ này không phải nguồn RSS hay Atom (không có mục nào). Hãy dùng web_fetch cho trang thường.",
   "Those texts are too long to diff here.":

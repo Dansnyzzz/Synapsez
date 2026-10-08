@@ -54,7 +54,7 @@ const { buildSystemPrompt, promptVersion } = await import('../../server/agent.js
 // ecd004bc42ae: the memory line now says notes are shown at the start of each
 // conversation (they are, since server/memory.js) and forbids IDs and
 // sensitive details in a note, not only credentials.
-const PROMPT_STAMP = 'ecd004bc42ae';
+const PROMPT_STAMP = 'bc830e108fcb';
 
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;

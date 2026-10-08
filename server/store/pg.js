@@ -3445,6 +3445,25 @@ export function createPgStore(connectionString) {
     // story: a stdio server is a program that runs on the machine, so one account
     // being able to read or write another's row would be one account choosing what
     // another account executes.
+    /**
+     * What this account has plugged in, as short digests — for noticing, before
+     * each step of a turn, that something was connected, switched or granted
+     * (`connectionsSignature` in agent.js). Digests only: a server's config can
+     * carry hundreds of tool schemas, and neither it nor a token leaves here. A
+     * connector's token is digested because re-granting (Gmail added to Google)
+     * stores a new one and changes nothing else.
+     */
+    async connectionDigests(userId) {
+      return q(
+        `SELECT 'mcp' AS kind, id AS key, name AS label, enabled, md5(config::text) AS digest
+           FROM mcp_servers WHERE user_id = $1
+         UNION ALL
+         SELECT 'connector', service, COALESCE(account, ''), TRUE, md5(token)
+           FROM connectors WHERE user_id = $1
+         ORDER BY 1, 2`,
+        [userId],
+      );
+    },
     async listMcpServers(userId) {
       return q('SELECT * FROM mcp_servers WHERE user_id = $1 ORDER BY created_at ASC', [userId]);
     },

@@ -4230,6 +4230,7 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 .xmap__pin path { fill: #e0463b; stroke: #fff; stroke-width: 1.5; }
 .xmap__pin circle { fill: #fff; }
 .xmap__pin text { fill: #e0463b; font: 700 9px system-ui, sans-serif; }
+.xmap-list .xmap__pin text { font-size: 8.5px; }
 .xmap__controls { position: absolute; top: 8px; right: 8px; display: grid; gap: 4px; }
 .xmap__zoom {
   width: 32px;
@@ -4259,6 +4260,32 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   font-size: 10.5px;
   font-weight: 700;
 }
+/* Where a nearby search was centred: a dot, not a pin. */
+.xmap__here circle { fill: #2f7cf6; stroke: #fff; stroke-width: 2; }
+.xmap__here .xmap__here-halo { fill: rgba(47, 124, 246, 0.22); stroke: none; }
+.xmap__pin.is-lit path { fill: #6d4de0; stroke-width: 2.5; }
+.xmap__pin.is-lit text { fill: #6d4de0; }
+
+/* The results of a nearby search, beside the map where there is room for both,
+   under it where there is not — the way a map app lists what it found. */
+.xmap__body { display: grid; grid-template-columns: minmax(0, 1fr); }
+.xmap__side { border-top: 1px solid var(--line); max-height: 300px; overflow-y: auto; }
+@container (min-width: 620px) {
+  .xmap__body { grid-template-columns: minmax(0, 1fr) minmax(240px, 300px); }
+  .xmap__body .xmap { height: 340px; }
+  .xmap__side { border-top: 0; border-left: 1px solid var(--line); max-height: 340px; }
+}
+.xcard--map.xmap-list { container-type: inline-size; }
+.xmap__results { list-style: none; margin: 0; padding: 4px 0; }
+.xmap__result { display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px; }
+.xmap__result:hover,
+.xmap__result:focus-within { background: var(--surface-2); }
+.xmap__result-body { display: grid; gap: 2px; min-width: 0; }
+.xmap__result-name { color: var(--text); font-weight: 600; font-size: 13.5px; text-decoration: none; overflow-wrap: anywhere; }
+.xmap__result-name[href]:hover { color: var(--accent); text-decoration: underline; }
+.xmap__result-meta,
+.xmap__result-addr { color: var(--text-faint); font-size: 12px; overflow-wrap: anywhere; }
+.xmap__result-meta { color: var(--text-dim); }
 .xmap__open { color: var(--accent); font-size: 12.5px; text-decoration: none; }
 .xmap__open:hover { text-decoration: underline; }
 .xmap__credit { color: var(--text-faint); font-size: 10.5px; }

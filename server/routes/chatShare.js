@@ -225,7 +225,10 @@ function mapPlaces(widget) {
     .filter((p) => Array.isArray(p) && p.length >= 2)
     .map(([lat, lon]) => [Number(lat), Number(lon)])
     .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon));
-  return points.length ? [...points, ...line] : [];
+  // The spot a nearby search was centred on is drawn, and fitted, too.
+  const center = [Number(widget.center?.lat), Number(widget.center?.lon)];
+  const centred = Number.isFinite(center[0]) && Number.isFinite(center[1]) ? [center] : [];
+  return points.length ? [...points, ...centred, ...line] : [];
 }
 
 /**
@@ -283,8 +286,8 @@ export function drawnFrom(messages) {
 const TILE = 256;
 /**
  * How far from a map's centre its tiles can be drawn, in pixels at any zoom. The
- * map is 300px tall and as wide as the column; this allows a window several
- * times wider. Its zoom buttons keep the centre where it is (cards.js), so this
+ * map is at most 340px tall (300px; 340px with a list beside it) and as wide as
+ * the column; this allows a window several times wider. Its zoom buttons keep the centre where it is (cards.js), so this
  * bounds every tile a shared map can ask for.
  */
 const MAP_REACH_X = 1600;

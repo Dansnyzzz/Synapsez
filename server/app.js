@@ -95,6 +95,7 @@ import { EFFORTS } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf } from './i18n/index.js';
+import { approximateLocation } from './whereabouts.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -2096,6 +2097,8 @@ export function createApp() {
           // no longer answers — a published file's link was built from it and
           // opened a Vercel 404 while the same file shared from the card worked.
           origin: rememberOrigin(req),
+          // Roughly where the person is, for "near me" — see whereabouts.js.
+          whereabouts: approximateLocation(req.headers),
           // Which computer the browser is sitting at, learned from the worker on
           // that machine. Per request rather than stored: preferences belong to
           // the account, so two machines with the app open would take turns

@@ -71,8 +71,17 @@ export function mapFigure(widget) {
     .slice(0, 20);
   if (!points.length) return null;
   const line = (Array.isArray(widget?.line) ? widget.line : []).filter((p) => Array.isArray(p) && p.length >= 2);
+  /*
+   * A nearby search: numbered pins, the spot it was centred on as a dot of its
+   * own, and the places listed beside the map — name, what it is, how far,
+   * when it is open — the way a map app shows the results of a search.
+   */
+  const listed = widget?.list === true;
+  const center = Number.isFinite(Number(widget?.center?.lat)) && Number.isFinite(Number(widget?.center?.lon)) ? widget.center : null;
+  const mark = (i) => (listed ? String(i + 1) : String.fromCharCode(65 + i));
 
   const figure = shell('map', widget.title || t('card.map'));
+  if (listed) figure.classList.add('xmap-list');
   const stage = h('div', 'xmap');
   const tiles = h('div', 'xmap__tiles');
   /*
@@ -88,9 +97,23 @@ export function mapFigure(widget) {
   overlay.setAttribute('aria-hidden', 'true');
   stage.append(tiles, overlay);
 
-  const all = [...points.map((p) => [Number(p.lat), Number(p.lon)]), ...line];
+  const all = [...points.map((p) => [Number(p.lat), Number(p.lon)]), ...(center ? [[Number(center.lat), Number(center.lon)]] : []), ...line];
   let zoom = null;
   let size = { w: 0, h: 0 };
+  /** The place whose row is pointed at or focused, drawn on top and larger. */
+  let lit = -1;
+  /*
+   * The lit pin larger and on top of the others, where it can be seen. Only the
+   * pins change: redrawing the whole map on every hover replaced its tiles too,
+   * and each pass along the list flickered the map and asked for them again.
+   */
+  const relight = () => {
+    for (const g of overlay.querySelectorAll('.xmap__pin')) {
+      const on = Number(g.getAttribute('data-i')) === lit;
+      g.classList.toggle('is-lit', on);
+      if (on) overlay.append(g);
+    }
+  };
 
   const draw = () => {
     const { w, h: height } = size;
@@ -130,22 +153,39 @@ export function mapFigure(widget) {
       }).join(' '));
       overlay.append(path);
     }
+    if (center) {
+      const c = project(Number(center.lat), Number(center.lon), zoom);
+      const g = document.createElementNS(ns, 'g');
+      g.setAttribute('class', 'xmap__here');
+      g.setAttribute('transform', `translate(${(c.x - left).toFixed(1)},${(c.y - top).toFixed(1)})`);
+      const halo = document.createElementNS(ns, 'circle');
+      halo.setAttribute('r', '11');
+      halo.setAttribute('class', 'xmap__here-halo');
+      const dot = document.createElementNS(ns, 'circle');
+      dot.setAttribute('r', '5.5');
+      const title = document.createElementNS(ns, 'title');
+      title.textContent = center.label || '';
+      g.append(halo, dot, title);
+      overlay.append(g);
+    }
     points.forEach((pt, i) => {
       const p = project(Number(pt.lat), Number(pt.lon), zoom);
       const g = document.createElementNS(ns, 'g');
       g.setAttribute('class', 'xmap__pin');
+      g.setAttribute('data-i', String(i));
       g.setAttribute('transform', `translate(${(p.x - left).toFixed(1)},${(p.y - top).toFixed(1)})`);
       const pin = document.createElementNS(ns, 'path');
       pin.setAttribute('d', 'M0 0 C-2 -6 -9 -10 -9 -17 A9 9 0 1 1 9 -17 C9 -10 2 -6 0 0 Z');
       const dot = document.createElementNS(ns, 'circle');
       dot.setAttribute('cy', '-17');
-      dot.setAttribute('r', '3.5');
+      // Room for a number to be read inside it, where the pins are numbered.
+      dot.setAttribute('r', listed ? '6' : '3.5');
       g.append(pin, dot);
-      if (points.length > 1) {
+      if (points.length > 1 || listed) {
         const n = document.createElementNS(ns, 'text');
         n.setAttribute('y', '-13.5');
         n.setAttribute('text-anchor', 'middle');
-        n.textContent = String.fromCharCode(65 + i);
+        n.textContent = mark(i);
         g.append(n);
       }
       const title = document.createElementNS(ns, 'title');
@@ -153,6 +193,7 @@ export function mapFigure(widget) {
       g.append(title);
       overlay.append(g);
     });
+    relight();
   };
 
   const observer = new ResizeObserver(([entry]) => {
@@ -176,22 +217,56 @@ export function mapFigure(widget) {
   stage.append(controls);
 
   const foot = h('div', 'xmap__foot');
-  const legend = h('div', 'xmap__places');
+  const legend = h(listed ? 'ol' : 'div', listed ? 'xmap__results' : 'xmap__places');
   points.forEach((pt, i) => {
+    if (listed) {
+      // Each result: its number on the map, its name (to OpenStreetMap), what
+      // it is and how far, and where. Pointing at it lights its pin.
+      const row = h('li', 'xmap__result');
+      const name = link(pt.url, pt.label || pt.detail || '', 'xmap__result-name');
+      row.append(h('span', 'xmap__letter', mark(i)));
+      const body = h('div', 'xmap__result-body');
+      body.append(name);
+      if (pt.meta) body.append(h('span', 'xmap__result-meta', String(pt.meta)));
+      if (pt.address) body.append(h('span', 'xmap__result-addr', String(pt.address)));
+      row.append(body);
+      const light = (on) => {
+        lit = on ? i : -1;
+        relight();
+      };
+      row.addEventListener('pointerenter', () => light(true));
+      row.addEventListener('pointerleave', () => light(false));
+      row.addEventListener('focusin', () => light(true));
+      row.addEventListener('focusout', () => light(false));
+      legend.append(row);
+      return;
+    }
     const row = h('div', 'xmap__place');
-    if (points.length > 1) row.append(h('span', 'xmap__letter', String.fromCharCode(65 + i)));
+    if (points.length > 1) row.append(h('span', 'xmap__letter', mark(i)));
     row.append(h('span', null, pt.label || pt.detail || ''));
     legend.append(row);
   });
-  const first = points[0];
+  // A route opens as directions, by the way it was asked for; anything else, centred on the map.
+  const engine = { walking: 'fossgis_osrm_foot', cycling: 'fossgis_osrm_bike' }[widget?.mode] || 'fossgis_osrm_car';
+  const focus = center || points[0];
   const open = link(
-    points.length > 1
-      ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${points[0].lat}%2C${points[0].lon}%3B${points[1].lat}%2C${points[1].lon}`
-      : `https://www.openstreetmap.org/?mlat=${first.lat}&mlon=${first.lon}#map=15/${first.lat}/${first.lon}`,
+    !listed && points.length > 1
+      ? `https://www.openstreetmap.org/directions?engine=${engine}&route=${points[0].lat}%2C${points[0].lon}%3B${points[1].lat}%2C${points[1].lon}`
+      : `https://www.openstreetmap.org/?mlat=${focus.lat}&mlon=${focus.lon}#map=15/${focus.lat}/${focus.lon}`,
     t('card.openMap'),
     'xmap__open',
   );
   const credit = h('span', 'xmap__credit', '© OpenStreetMap');
+  if (listed) {
+    // Beside the map where there is room, under it where there is not (CSS).
+    const body = h('div', 'xmap__body');
+    const side = h('div', 'xmap__side');
+    side.append(legend);
+    body.append(stage, side);
+    foot.append(open, credit);
+    figure.append(body, foot);
+    return figure;
+  }
   foot.append(legend, open, credit);
   figure.append(stage, foot);
   return figure;
