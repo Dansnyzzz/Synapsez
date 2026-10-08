@@ -436,6 +436,42 @@ export function unattendedStatus(status, ending, waiting) {
   return status;
 }
 
+/**
+ * What a scheduled run is told about itself, on its own request.
+ *
+ * A task's runs share one conversation, so this morning's run read yesterday's
+ * report above its prompt and nothing said which day it was now — the owner's
+ * 08/10 market report came titled 07/10 (2026-10-08). The prompt's date line is
+ * there, but a dated report in the transcript speaks louder. So each run is
+ * told the hour it started in the task's own zone, that what is above it is
+ * history, and to fetch and date everything afresh. Not stored: the next run
+ * gets its own.
+ *
+ * A workflow's later steps are told which step they are: the steps of the same
+ * run just above them are today's work, and the whole point of a workflow is
+ * that each step builds on the last.
+ *
+ * @param {{ title: string, now?: Date, timeZone?: string | null, step?: number, steps?: number }} options
+ */
+export function scheduledRunNote({ title, now = new Date(), timeZone = null, step = 1, steps = 1 }) {
+  const zone = validZone(timeZone) ? timeZone : 'UTC';
+  const part = (options) => new Intl.DateTimeFormat('en-GB', { timeZone: zone, ...options }).format(now);
+  const day = `${part({ day: '2-digit' })}/${part({ month: '2-digit' })}/${part({ year: 'numeric' })}`;
+  const time = part({ hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const which = steps > 1 ? ` — step ${step} of ${steps} —` : '';
+  const above =
+    step > 1
+      ? `The earlier steps of this same run, just above, are today's: build on what they produced. Anything before them is from earlier runs on earlier days: their figures, dates and news are history, not today's. `
+      : "Everything above this message is from earlier runs on earlier days: their figures, dates and news are history, not today's. ";
+  return (
+    `(This run of "${String(title || '').slice(0, 120)}"${which} started ${part({ weekday: 'long' })} ${day} at ${time} (${zone}). ` +
+    above +
+    `Fetch every figure and every news item again now, and date what you write by today, ${day}. ` +
+    'Where a figure is from an earlier session — a market that has not opened yet today — say which session and the time it is as of. ' +
+    'Name where each figure and claim came from; if something cannot be fetched now, say so rather than reuse an old value.)'
+  );
+}
+
 async function runTask(task) {
   const store = getStore();
   const user = await store.getUserById(task.user_id);
@@ -519,6 +555,8 @@ async function runTask(task) {
       // one, the account's default otherwise — see `policyFor` in the loop.
       policy: task.policy || null,
       unattended: true,
+      // The day and hour of this run, in the task's zone — see `scheduledRunNote`.
+      runNote: scheduledRunNote({ title: task.title, timeZone: task.tz || prefs.timezone }),
       emit(event, data) {
         // Stored in last_status and shown in the interface, so a key quoted
         // back by a provider must not survive the trip.

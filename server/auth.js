@@ -16,6 +16,7 @@ import {
   decryptSecret,
 } from './crypto.js';
 import { sendEmail, resetEmail, publicUrl } from './email.js';
+import { getPrefs } from './settings.js';
 
 const COOKIE = 'ai_remote_session';
 const MAX_AGE_SEC = 30 * 24 * 60 * 60;
@@ -158,7 +159,21 @@ async function issueLink({ user, req }) {
   });
 
   const link = `${publicUrl(req)}/?reset=${encodeURIComponent(token)}`;
-  return sendEmail({ to: user.email, ...resetEmail(link, code) });
+  return sendEmail({ to: user.email, ...resetEmail(link, code, await mailLanguage(user, req)) });
+}
+
+/**
+ * The language a message to this person is written in: the one they chose in
+ * the app, else the one the browser asking for it prefers. Null in the account
+ * means nobody has said (settings.js), and the browser on the reset page is
+ * then the best evidence there is.
+ */
+export async function mailLanguage(user, req) {
+  const chosen = await getPrefs(user.id)
+    .then((prefs) => prefs?.language)
+    .catch(() => null);
+  if (chosen === 'vi' || chosen === 'en') return chosen;
+  return /^\s*vi\b/i.test(String(req?.headers?.['accept-language'] || '')) ? 'vi' : 'en';
 }
 
 /**

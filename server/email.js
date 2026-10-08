@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import nodemailer from 'nodemailer';
 import { log } from './util/trace.js';
-import { resetMessage, LOGO_CID } from './mailTemplate.js';
+import { resetMessage, RESET_WORDS, LOGO_CID } from './mailTemplate.js';
 
 /** The logo emails embed. Under server/, so a Vercel function bundles it. */
 const LOGO_FILE = new URL('./assets/email-logo.png', import.meta.url);
@@ -265,13 +265,12 @@ export function publicUrl(req) {
  * six digits back into the tab you already have open beats bouncing out to the
  * mail app and back. The look is the shared one in mailTemplate.js.
  */
-export function resetEmail(link, code) {
+export function resetEmail(link, code, language = 'en') {
+  const lang = language === 'vi' ? 'vi' : 'en';
+  const words = RESET_WORDS[lang];
   return {
-    subject: `${code} is your ${senderName()} password reset code`,
-    html: resetMessage({ brand: senderName(), code, link }),
-    text:
-      `Your ${senderName()} password reset code is ${code}\n\n` +
-      `It expires in one hour and can only be used once. You can also open this link:\n${link}\n\n` +
-      'If you did not ask for this, ignore this message — your password has not changed.',
+    subject: words.subject(code, senderName()),
+    html: resetMessage({ brand: senderName(), code, link, language: lang }),
+    text: words.text(code, senderName(), link),
   };
 }
