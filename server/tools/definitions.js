@@ -1567,8 +1567,8 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: true,
     description:
-      'Places, drawn on a map for the user. find: one place or address. nearby: restaurants, cafés, a dish (phở), ATMs, hospitals, hotels… around a place — ' +
-      'or around the user ("near me": leave `near` out and their approximate city is used). distance: how far and how long between two, driving, walking or cycling. ' +
+      'Places and routes, drawn on a map for the user — op find (one place or address), nearby (what is around a place, or around the user when `near` is left out) or distance (how far and how long between two). ' +
+      'nearby finds restaurants, cafés, a dish (phở), ATMs, hospitals, hotels…; "near me" uses the user\'s approximate city. distance goes by car, on foot or by bicycle. ' +
       'From OpenStreetMap: no ratings or reviews — web_search those.',
     parameters: {
       type: 'object',
@@ -1577,7 +1577,7 @@ export const TOOLS = [
         place: { type: 'string', description: 'find: a place or address.' },
         what: { type: 'string', description: 'nearby: what to look for, in the user\'s words — "quán ăn", "cà phê", "phở", "ATM".' },
         near: { type: 'string', description: 'nearby: around where; leave out for near the user.' },
-        radius: { type: 'integer', description: 'nearby: metres, default 1500.' },
+        radius: { type: 'integer', description: 'nearby: metres. Left out, it starts close and widens until enough are found.' },
         from: { type: 'string', description: 'distance: where from.' },
         to: { type: 'string', description: 'distance: where to.' },
         mode: { type: 'string', enum: ['driving', 'walking', 'cycling'], description: 'distance: default driving (also for motorbike).' },

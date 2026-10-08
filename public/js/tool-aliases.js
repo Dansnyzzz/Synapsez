@@ -15,7 +15,11 @@
  * as `rm -rf`, cannot happen when both read the call here.
  *
  * Only plain synonyms. Anything that would need a guess about what was meant is
- * left alone, and the validator says what the tool takes.
+ * left alone, and the validator says what the tool takes. One deliberate
+ * exception: `place_lookup` without an `op` takes the one its fields plainly
+ * imply (`from` and `to` are a distance; `what` or "near me" a nearby search;
+ * anything else a place to find) — models leave it out often enough that
+ * refusing cost four steps in a row (owner, 2026-10-07).
  */
 
 const loose = (value) => String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
@@ -184,9 +188,6 @@ const PLACE_OPS = {
   find: 'find',
 };
 
-/** Words that name a kind of place rather than one place. */
-const KIND_OF_PLACE = /quán|nhà hàng|ăn uống|đồ ăn|món|restaurant|food|eat|cafe|café|cà phê|coffee|bar\b|pub\b|atm|ngân hàng|bank|khách sạn|hotel|homestay|bệnh viện|hospital|phòng khám|clinic|nhà thuốc|pharmacy|siêu thị|supermarket|cửa hàng|shop|chợ|market|cây xăng|gas station|parking|gửi xe/i;
-
 /** Text that means "where the person is", not a place to look up. */
 const HERE = /^(?:me|here|my (?:location|place|area)|current location|near me|nearby|gần (?:tôi|đây|mình)|chỗ (?:tôi|mình)|ở đây|vị trí (?:của )?(?:tôi|mình|hiện tại))$/i;
 
@@ -209,12 +210,10 @@ function placeInput(input) {
   };
   // A search phrased as "restaurants near me" is a search near somewhere.
   const words = String(out.query ?? out.what ?? out.category ?? out.type ?? out.kind ?? '');
-  if (typeof out.op === 'string') {
-    const op = loose(out.op);
-    // "search" for a kind of place ("quán ăn ngon Quận 1") is a search nearby;
-    // for a name, it is finding that place.
-    out.op = op === 'search' && KIND_OF_PLACE.test(`${words} ${out.place ?? ''}`) ? 'nearby' : PLACE_OPS[op] || out.op;
-  }
+  // "search" is `find`, always: whether the words name one place ("Bệnh viện
+  // Chợ Rẫy") or a kind of place ("quán ăn ngon Quận 1") is decided where the
+  // kinds are known (`isKindOfPlace` in library.js), not guessed here.
+  if (typeof out.op === 'string') out.op = PLACE_OPS[loose(out.op)] || out.op;
   if (!out.op) {
     if (out.from && out.to) out.op = 'distance';
     else if (out.what || out.category || out.type || out.kind || out.amenity || /\bnear\b|gần|quanh|xung quanh|nearby|around/i.test(words)) out.op = 'nearby';
@@ -236,8 +235,16 @@ function placeInput(input) {
     take('from', 'origin', 'start', 'source');
     take('to', 'destination', 'end', 'target');
     if (typeof out.mode === 'string') {
+      // A way of travelling it does not know (transit) is left as sent: the
+      // validator drops it with a note, rather than this calling it driving.
       const mode = loose(out.mode);
-      out.mode = /^(walk|walking|foot|đi_bộ|di_bo)$/.test(mode) ? 'walking' : /^(bike|bicycle|cycling|cycle|xe_đạp|xe_dap)$/.test(mode) ? 'cycling' : 'driving';
+      out.mode = /^(walk|walking|foot|on_foot|pedestrian|đi_bộ|di_bo)$/.test(mode)
+        ? 'walking'
+        : /^(bike|bicycle|cycling|cycle|xe_đạp|xe_dap)$/.test(mode)
+          ? 'cycling'
+          : /^(drive|driving|car|motorbike|motorcycle|scooter|xe_máy|xe_may|ô_tô|o_to|ô_tô_con)$/.test(mode)
+            ? 'driving'
+            : out.mode;
     }
   }
   return out;

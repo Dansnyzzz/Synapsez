@@ -242,7 +242,9 @@ export async function mcpTools(userId) {
      */
     const missingTable = /relation .* does not exist|no such table|undefined_table/i.test(err?.message || '');
     if (!missingTable) log.warn('mcp: could not list servers; continuing without MCP tools', { err: err?.message });
-    return { tools: [], servers: [] };
+    // `failed`, so a caller refreshing mid-turn keeps the list it had rather
+    // than adopting "nothing" from one bad read (see `refreshConnections`).
+    return { tools: [], servers: [], failed: !missingTable };
   }
 
   const enabled = rows.filter((row) => row.enabled !== false);

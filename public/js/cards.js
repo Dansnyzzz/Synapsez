@@ -102,6 +102,18 @@ export function mapFigure(widget) {
   let size = { w: 0, h: 0 };
   /** The place whose row is pointed at or focused, drawn on top and larger. */
   let lit = -1;
+  /*
+   * The lit pin larger and on top of the others, where it can be seen. Only the
+   * pins change: redrawing the whole map on every hover replaced its tiles too,
+   * and each pass along the list flickered the map and asked for them again.
+   */
+  const relight = () => {
+    for (const g of overlay.querySelectorAll('.xmap__pin')) {
+      const on = Number(g.getAttribute('data-i')) === lit;
+      g.classList.toggle('is-lit', on);
+      if (on) overlay.append(g);
+    }
+  };
 
   const draw = () => {
     const { w, h: height } = size;
@@ -152,14 +164,15 @@ export function mapFigure(widget) {
       const dot = document.createElementNS(ns, 'circle');
       dot.setAttribute('r', '5.5');
       const title = document.createElementNS(ns, 'title');
-      title.textContent = center.here ? t('card.aroundYou') : center.label || '';
+      title.textContent = center.label || '';
       g.append(halo, dot, title);
       overlay.append(g);
     }
     points.forEach((pt, i) => {
       const p = project(Number(pt.lat), Number(pt.lon), zoom);
       const g = document.createElementNS(ns, 'g');
-      g.setAttribute('class', `xmap__pin${i === lit ? ' is-lit' : ''}`);
+      g.setAttribute('class', 'xmap__pin');
+      g.setAttribute('data-i', String(i));
       g.setAttribute('transform', `translate(${(p.x - left).toFixed(1)},${(p.y - top).toFixed(1)})`);
       const pin = document.createElementNS(ns, 'path');
       pin.setAttribute('d', 'M0 0 C-2 -6 -9 -10 -9 -17 A9 9 0 1 1 9 -17 C9 -10 2 -6 0 0 Z');
@@ -180,11 +193,7 @@ export function mapFigure(widget) {
       g.append(title);
       overlay.append(g);
     });
-    // The lit pin on top of the others, where it can be seen.
-    if (lit >= 0) {
-      const top = overlay.querySelector('.xmap__pin.is-lit');
-      if (top) overlay.append(top);
-    }
+    relight();
   };
 
   const observer = new ResizeObserver(([entry]) => {
@@ -223,7 +232,7 @@ export function mapFigure(widget) {
       row.append(body);
       const light = (on) => {
         lit = on ? i : -1;
-        draw();
+        relight();
       };
       row.addEventListener('pointerenter', () => light(true));
       row.addEventListener('pointerleave', () => light(false));

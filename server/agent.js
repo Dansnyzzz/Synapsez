@@ -250,7 +250,7 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
   lines.push(
     '',
     '## Showing, not listing',
-    '- When the answer IS a recipe, a trip plan, a product comparison, a quiz, flashcards, a translation or a how-to, draw it with `show_card` rather than writing a long list. Pictures of something: `image_search`. A place or a route: `place_lookup` draws the map. Scores, fixtures, tables: `sports`. Load them with `load_tools` when they are not already there.',
+    '- When the answer IS a recipe, a trip plan, a product comparison, a quiz, flashcards, a translation or a how-to, draw it with `show_card` rather than writing a long list. Pictures of something: `image_search`. A place, what is near one or near the user ("quán ăn gần đây"), or a route: `place_lookup` draws the map with the places listed — reach for it before `web_search` when the question is where. Scores, fixtures, tables: `sports`. Load them with `load_tools` when they are not already there.',
     '- Photos of a particular product, model or place — what a shop or a news page shows — come from the page itself: `web_fetch` lists its "Pictures on this page", and copying those lines into your reply shows them as a row. A YouTube link alone on its line, `[Title](https://www.youtube.com/watch?v=…)`, shows as a playable video card. Only when a picture or a video genuinely helps.',
   );
 
@@ -1186,19 +1186,18 @@ export function applyStreamEvent(ev, assistant, emit) {
 
 /**
  * What this account has plugged in, as one short fingerprint: its MCP servers
- * (which, named how, switched on or off, configured how) and its connectors.
- * Changes exactly when the prompt's list of them would. Nothing secret leaves
- * here — the configuration is hashed, never returned.
+ * (which, named how, switched on or off, configured how) and its connectors
+ * (which, whose, with what grant — re-granting stores a new token). One small
+ * query of digests (`connectionDigests`); nothing secret leaves the database.
+ *
+ * It notices what the person changed, not a server's own health: a server that
+ * stops answering mid-turn is found at the next message, as before.
  *
  * @param {string} userId
  */
 export async function connectionsSignature(userId) {
-  const store = getStore();
-  const [servers, linked] = await Promise.all([store.listMcpServers(userId), store.listConnectors(userId)]);
-  const shape = JSON.stringify([
-    servers.map((r) => [r.id, r.name, r.enabled !== false, JSON.stringify(r.config ?? null)]),
-    linked.map((r) => [r.service, r.account ?? '', String(r.created_at ?? '')]),
-  ]);
+  const rows = await getStore().connectionDigests(userId);
+  const shape = JSON.stringify(rows.map((r) => [r.kind, r.key, r.label, r.enabled !== false, r.digest]));
   return crypto.createHash('sha256').update(shape).digest('hex').slice(0, 24);
 }
 
@@ -1302,7 +1301,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // the sources are chosen after the transcript is known rather than before.
   const asked = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
 
-  const [worker, skills, connectorsAtStart, project, providerKeys, mcpAtStart, memory] = await Promise.all([
+  const [worker, skills, connectorsAtStart, project, providerKeys, mcpAtStart, memory, seenAtStart] = await Promise.all([
     workerStatus(user, prefs),
     skillMenu(userId),
     connectorSummary(userId),
@@ -1314,7 +1313,11 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     mcpTools(userId).catch(() => ({ tools: [], servers: [] })),
     // Nor is memory: a turn that cannot read its notes is still a turn.
     memoryForTurn(userId, chat, prefs).catch(() => ''),
+    // Alongside what it fingerprints rather than after it, so a change that lands
+    // while these are read is still a change at the next step.
+    connectionsSignature(userId).catch(() => null),
   ]);
+  let connectionsSeen = seenAtStart;
   // Re-read mid-turn when what is plugged in changes — see `refreshConnections`.
   let connectors = connectorsAtStart;
   let mcp = mcpAtStart;
@@ -1357,22 +1360,30 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * The prompt and the catalogue are built once per turn, so a server or a
    * connector added while a turn was running only arrived with the next
    * message — and the model, asked about it, concluded it would need a new
-   * conversation (owner, 2026-10-07). Two small reads a step tell whether
-   * anything changed; only then is the list rebuilt (and the cached prefix with
-   * it), and the person is told the assistant now has it.
+   * conversation (owner, 2026-10-07). One small query of digests a step tells
+   * whether anything changed; only then is the list rebuilt (and the cached
+   * prefix with it — an unchanged step sends exactly what it sent before), and
+   * the person is told what the assistant now has. A rebuild that could not
+   * read the servers keeps the list it had and tries again next step.
    */
-  let connectionsSeen = await connectionsSignature(userId).catch(() => null);
   const refreshConnections = async () => {
     const now = await connectionsSignature(userId).catch(() => null);
     if (!now || now === connectionsSeen) return;
-    connectionsSeen = now;
-    const before = new Set(mcp.servers.map((s) => s.id));
-    [mcp, connectors] = await Promise.all([
-      mcpTools(userId).catch(() => ({ tools: [], servers: [] })),
-      connectorSummary(userId).catch(() => connectors),
+    const [nextMcp, nextConnectors] = await Promise.all([
+      mcpTools(userId).catch(() => ({ tools: [], servers: [], failed: true })),
+      connectorSummary(userId).catch(() => null),
     ]);
+    if (nextMcp.failed || !nextConnectors) return;
+    connectionsSeen = now;
+    const servers = new Set(mcp.servers.map((s) => s.id));
+    const linked = new Set(connectors.ids);
+    mcp = nextMcp;
+    connectors = nextConnectors;
     system = buildSystemPrompt({ ...systemArgs, connectors: connectors.summary, mcpServers: mcp.servers });
-    const added = mcp.servers.filter((s) => !before.has(s.id) && !s.error).map((s) => s.name || s.id);
+    const added = [
+      ...mcp.servers.filter((s) => !servers.has(s.id) && !s.error).map((s) => s.name || s.id),
+      ...connectors.ids.filter((id) => !linked.has(id)),
+    ];
     if (added.length) emit('status', { message: `Now available to the assistant: ${added.join(', ')}.` });
   };
   /**

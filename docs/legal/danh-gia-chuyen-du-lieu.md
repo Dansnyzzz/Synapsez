@@ -2,7 +2,7 @@
 
 > Bản mẫu do mã nguồn cung cấp (LAW-001), để bên vận hành một bản triển khai Synapsez lập hồ sơ theo Luật
 > Bảo vệ dữ liệu cá nhân số 91/2025/QH15 (hiệu lực 01/01/2026) và văn bản hướng dẫn. Phần mô tả kỹ thuật dưới
-> đây đúng với phần mềm tại phiên bản `privacy-2026-10-06`; phần pháp lý — biểu mẫu, thời hạn nộp, cơ quan tiếp
+> đây đúng với phần mềm tại phiên bản `privacy-2026-10-08`; phần pháp lý — biểu mẫu, thời hạn nộp, cơ quan tiếp
 > nhận, căn cứ điều khoản — **phải được luật sư đối chiếu với văn bản hiện hành**. Đây không phải tư vấn pháp lý.
 
 ## 1. Bên chuyển dữ liệu
@@ -16,7 +16,7 @@
 | Hạng mục | Nội dung (theo phần mềm) |
 |---|---|
 | Chủ thể dữ liệu | Người dùng có tài khoản trên bản triển khai |
-| Loại dữ liệu | Tài khoản (tên, email, mật khẩu dạng băm); nội dung hội thoại, tệp, ghi chú bộ nhớ; khoá API (mã hoá); nhật ký bảo mật (mạng, trình duyệt — không lưu IP đầy đủ) |
+| Loại dữ liệu | Tài khoản (tên, email, mật khẩu dạng băm); nội dung hội thoại, tệp, ghi chú bộ nhớ; khoá API (mã hoá); nhật ký bảo mật (mạng, trình duyệt — không lưu IP đầy đủ); vị trí gần đúng cỡ thành phố khi người dùng hỏi "gần tôi" (toạ độ làm tròn ~1 km, không lưu; tên thành phố và các địa điểm tìm được kèm khoảng cách nằm trong hội thoại) |
 | Dữ liệu nhạy cảm | Không thu thập có chủ đích; người dùng có thể tự nhập. Bộ nhớ mặc định từ chối lưu chủ đề nhạy cảm trừ khi người dùng bật |
 | Mục đích | Cung cấp trợ lý AI theo yêu cầu; an ninh tài khoản; vận hành dịch vụ |
 | Căn cứ | Đồng ý của chủ thể khi đăng ký (ghi vào nhật ký bảo mật, sự kiện `consent_given`, kèm phiên bản thông báo) |
@@ -34,6 +34,7 @@
 | Vercel | Toàn bộ dữ liệu ứng dụng khi xử lý; máy tính đám mây | Luôn | Hoa Kỳ / vùng chọn | *[điền]* |
 | Neon | Cơ sở dữ liệu | Luôn | Vùng chọn | *[điền]* |
 | Exa, DuckDuckGo, Tavily, Brave, Google | Câu truy vấn tìm kiếm | Khi trợ lý tìm kiếm web | Hoa Kỳ | *[điền]* |
+| OpenStreetMap: Nominatim (OSMF), Overpass (overpass-api.de, overpass.kumi.systems), OSRM (router.project-osrm.org, routing.openstreetmap.de — FOSSGIS) | Tên địa điểm; toạ độ nơi được tìm quanh, kể cả vị trí gần đúng (~1 km) khi hỏi "gần tôi" | Khi trợ lý tra địa điểm, tìm quanh một nơi, chỉ đường | Chủ yếu châu Âu (Đức và các nước khác) — bên vận hành kiểm tra | *[điền]* |
 | Dịch vụ email (Gmail/Resend/SMTP) | Email người dùng nhờ gửi | Khi gửi email | *[điền]* | *[điền]* |
 
 ## 4. Biện pháp bảo vệ đã có trong phần mềm

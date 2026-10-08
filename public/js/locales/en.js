@@ -721,7 +721,6 @@ export const en = {
   'card.zoomIn': 'Zoom in',
   'card.zoomOut': 'Zoom out',
   'card.openMap': 'Open in OpenStreetMap',
-  'card.aroundYou': 'Your approximate location (from your connection)',
   'card.images': 'Pictures',
   'card.servings': 'Serves',
   'card.time': 'Time',

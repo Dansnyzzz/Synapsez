@@ -41,7 +41,7 @@
     <li>Khoá API bạn tự thêm cho các nhà cung cấp mô hình — được mã hoá khi lưu.</li>
     <li>Nhật ký bảo mật: thời điểm đăng nhập, đổi mật khẩu, xuất dữ liệu…, kèm mạng gửi yêu cầu và loại trình duyệt — không lưu nguyên địa chỉ IP.</li>
     <li>Nếu bạn ghép máy tính của mình hoặc kết nối Google: thông tin máy và những gì bạn cho phép trợ lý đọc.</li>
-    <li>Vị trí gần đúng (cỡ thành phố), suy ra từ kết nối mạng của bạn — chỉ khi bạn nhờ tìm thứ gì đó "gần tôi" mà không nêu địa điểm; làm tròn khoảng 1 km, không lưu lại.</li>
+    <li>Vị trí gần đúng (cỡ thành phố), suy ra từ kết nối mạng của bạn — chỉ dùng khi bạn nhờ tìm thứ gì đó "gần tôi" mà không nêu địa điểm. Toạ độ được làm tròn khoảng 1 km và không được lưu. Câu trả lời thì nằm lại trong cuộc trò chuyện như mọi kết quả khác — tên thành phố, các địa điểm tìm được và khoảng cách tới chúng: được gửi tới nhà cung cấp mô hình, và có trong liên kết chia sẻ nếu bạn chia sẻ cuộc trò chuyện đó.</li>
   </ul>
 
   <h2>3. Mục đích</h2>
@@ -54,7 +54,7 @@
     <li><strong>Tìm kiếm web</strong>, khi trợ lý tìm kiếm: câu truy vấn tới Exa, DuckDuckGo, Tavily, Brave hoặc Google.</li>
     <li><strong>Email</strong>, khi bạn nhờ gửi: qua dịch vụ email bên vận hành cấu hình (Gmail, Resend hoặc SMTP).</li>
     <li><strong>Google</strong>, chỉ khi bạn tự kết nối Gmail, Drive, Lịch…</li>
-    <li><strong>Bản đồ OpenStreetMap</strong> (Nominatim, Overpass, OSRM), khi trợ lý tra địa điểm, tìm quanh một nơi hoặc chỉ đường: tên địa điểm, và toạ độ của nơi được tìm quanh — kể cả vị trí gần đúng ở mục 2 khi bạn hỏi "gần tôi".</li>
+    <li><strong>Bản đồ OpenStreetMap</strong> (Nominatim, Overpass, OSRM), khi trợ lý tra địa điểm, tìm quanh một nơi hoặc chỉ đường: tên địa điểm, và toạ độ của nơi được tìm quanh — kể cả vị trí gần đúng ở mục 2 khi bạn hỏi "gần tôi". Các dịch vụ này do cộng đồng OpenStreetMap vận hành, máy chủ chủ yếu ở châu Âu.</li>
     <li><strong>Vercel Web Analytics và Speed Insights</strong>: số liệu truy cập và tốc độ trang, ẩn danh, không có nội dung hội thoại.</li>
   </ul>
 
@@ -91,11 +91,11 @@
     <h2>1. Controller</h2>
     <p>[The person or organisation running this deployment] — contact: [email].</p>
     <h2>2. What is processed</h2>
-    <p>Your account (name, email, a password stored only as a hash, settings); what you write and send, the files the assistant makes, memory notes, projects and schedules; API keys you add (encrypted); a security record of sign-ins and similar events with the network and browser type, never the full IP address; if you pair a computer or connect Google, what you allow the assistant to read there; and your approximate location (about a city, from your network connection, rounded to about a kilometre and never stored) — only when you ask for something "near me" without naming a place.</p>
+    <p>Your account (name, email, a password stored only as a hash, settings); what you write and send, the files the assistant makes, memory notes, projects and schedules; API keys you add (encrypted); a security record of sign-ins and similar events with the network and browser type, never the full IP address; if you pair a computer or connect Google, what you allow the assistant to read there; and your approximate location (about a city, from your network connection) — only when you ask for something "near me" without naming a place. The coordinates are rounded to about a kilometre and never stored. The answer stays in the conversation like any other result — the city's name, the places found and how far away they are: it is sent to the model provider, and it is in the share link if you share that conversation.</p>
     <h2>3. Why</h2>
     <p>To answer you and do what you ask, to keep your account safe, and to run the service. Your data is not sold and not used for advertising.</p>
     <h2>4. Where it goes, including outside Vietnam</h2>
-    <p>The model provider you choose — Anthropic, OpenAI, Google, OpenRouter (and the providers it routes to, free models and Auto included), OrcaRouter — receives your messages and the content of the files involved, mostly on servers in the United States and elsewhere. Vercel runs the app and the cloud computer; Neon holds the database. Web searches go to Exa, DuckDuckGo, Tavily, Brave or Google; emails you ask for go through the email service the operator set up; Google only if you connect it. OpenStreetMap's services (Nominatim, Overpass, OSRM) receive place names, and the coordinates a search is centred on — your approximate location when you ask for something near you — when the assistant looks up a place, searches around one, or plans a route. Vercel Web Analytics and Speed Insights receive anonymous page and speed figures, never conversation content.</p>
+    <p>The model provider you choose — Anthropic, OpenAI, Google, OpenRouter (and the providers it routes to, free models and Auto included), OrcaRouter — receives your messages and the content of the files involved, mostly on servers in the United States and elsewhere. Vercel runs the app and the cloud computer; Neon holds the database. Web searches go to Exa, DuckDuckGo, Tavily, Brave or Google; emails you ask for go through the email service the operator set up; Google only if you connect it. OpenStreetMap's services (Nominatim, Overpass, OSRM) receive place names, and the coordinates a search is centred on — your approximate location when you ask for something near you — when the assistant looks up a place, searches around one, or plans a route; they are run by the OpenStreetMap community, on servers mostly in Europe. Vercel Web Analytics and Speed Insights receive anonymous page and speed figures, never conversation content.</p>
     <h2>5. Protections you can switch on</h2>
     <p>Strict provider privacy (OpenRouter only to providers that keep and train on nothing); hiding personal details from the provider (emails, phone, ID, account and card numbers, labelled names become placeholders in text and in PDFs; pictures and scans go as they are); incognito conversations; turning memory and conversation search off; a retention period.</p>
     <h2>6. How long</h2>

@@ -167,7 +167,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
  *   deliverable?: any,
  *   answers?: any,
  *   origin?: string|null,
- *   whereabouts?: { lat: number, lon: number, city: string, region: string, country: string } | null,
+ *   whereabouts?: { lat: number, lon: number, city: string } | null,
  *   raw?: boolean,
  * }} ToolCallArgs
  */
@@ -175,17 +175,19 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
 /**
  * What every branch hands back.
  *
- * Spelled out because the three optional fields are the ones that go missing:
- * `widget` was dropped by one branch and made two tools silently inert, and
- * `shot` had to be taught to a second branch after the first learned it. Naming
- * the shape once means the type checker notices the next time a branch forgets,
- * instead of a person noticing months later that a chart was never drawn.
+ * Spelled out because the optional fields are the ones that go missing:
+ * `widget` was dropped by one branch and made two tools silently inert,
+ * `shot` had to be taught to a second branch after the first learned it, and
+ * `note` was dropped by the cloud branch the day it was added. Naming the shape
+ * once means the type checker notices the next time a branch forgets, instead
+ * of a person noticing months later that a chart was never drawn.
  *
  * @typedef {{
  *   content: string,
  *   isError: boolean,
  *   file?: any,
  *   widget?: any,
+ *   note?: string,
  *   shot?: any,
  *   schedule?: any,
  *   answered?: string,
@@ -317,13 +319,25 @@ export async function executeTool(args) {
    * forgetting to wrap is the bug this whole change exists to close, so the
    * safe direction is the one you get by saying nothing.
    */
-  const wrapped =
+  const enveloped =
     args?.raw || result?.isError || !returnsExternalContent(args?.name)
       ? result
       : (() => {
           const content = redactedOutput(args.name, String(result?.content ?? ''));
           return content.trim() ? { ...result, content: untrusted(externalSource(args.name, args.input), content) } : result;
         })();
+  /*
+   * What the app itself says about a result — where it came from, what was
+   * shown to the person, what to do next — goes after the envelope, not in it.
+   * Inside, it is the page's words, which the model is told never to follow and
+   * to report: "do not repeat the whole list" would come back as "the result
+   * tried to instruct me".
+   */
+  let wrapped = enveloped;
+  if (typeof enveloped?.note === 'string') {
+    const { note, ...rest } = enveloped;
+    wrapped = note.trim() && !rest.isError ? { ...rest, content: `${rest.content ?? ''}\n\n${note}` } : rest;
+  }
   return withShotNote(wrapped, args);
 }
 
@@ -439,6 +453,8 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           content: String(result.content ?? ''),
           file: result.file,
           widget: result.widget,
+          // The app's own words about the result, put after its envelope in `executeTool`.
+          note: result.note,
           // Standing work just set up (or found already set up) — drawn as a
           // card with a way into it. The third field this return has had to
           // learn; see the note on `widget` above for what forgetting one costs.

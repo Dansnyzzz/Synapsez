@@ -741,6 +741,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Không tìm thấy địa điểm \"{0}\" trên OpenStreetMap. Thử địa chỉ đường phố của nó, hoặc một địa danh lớn hơn ở gần đó.",
   "OpenStreetMap's place search did not answer ({0}). Try again in a moment.":
     "Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi ({0}). Hãy thử lại sau giây lát.",
+  "OpenStreetMap's place search did not answer ({0}), so \"{1}\" could not be checked. Try again in a moment.":
+    "Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi ({0}), nên chưa kiểm tra được \"{1}\". Hãy thử lại sau giây lát.",
+  "Say what to look for — \"quán ăn\", \"cà phê\", \"phở\", \"ATM\", \"bệnh viện\"…":
+    "Hãy nói cần tìm gì — \"quán ăn\", \"cà phê\", \"phở\", \"ATM\", \"bệnh viện\"…",
+  "OpenStreetMap took too long to answer, so this was stopped. Try again in a moment, or a smaller area.":
+    "OpenStreetMap phản hồi quá lâu nên đã dừng. Hãy thử lại sau giây lát, hoặc với một khu vực nhỏ hơn.",
   "Where should I look? Name a place or an address in `near` — the person's location is not known here.":
     "Tìm ở đâu? Hãy nêu một địa điểm hoặc địa chỉ trong `near` — ở đây không biết vị trí của người dùng.",
   "op is find, nearby or distance.":
