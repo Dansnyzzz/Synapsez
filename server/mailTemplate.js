@@ -21,16 +21,19 @@
  *   - a table row starting "Tổng"/"Total" → a highlighted total;
  *   - `- [ ]` / `- [x]` → a checklist of action items;
  *   - a paragraph that is only `[label](https://…)` → a button;
- *   - `+2,1%` / `-0,48%` in a table → coloured by direction;
+ *   - `+2,1%` / `-0,48%` in a table → coloured by direction; a column of
+ *     figures → right-aligned;
  *   - a line in capitals → a section heading, capitals kept;
+ *   - a line that is only **bold** → a section heading;
  *   - "Nguồn:" / "Sources:" → small, quiet attribution.
  *
  * Email HTML is not web HTML: tables and inline styles on every element, 600px
  * at most, no images, web fonts or scripts, nothing fetched. A `<style>` block
- * adds dark mode and phone spacing for clients that honour it (Apple Mail,
- * Outlook apps); without it the inline design stands on its own (Gmail). All
- * text is escaped before any markup is added, and links are http(s) or mailto
- * only.
+ * adds dark mode, phone spacing and the header's gradient for clients that
+ * honour it; without it — Gmail's translated view, a forwarded copy, a client
+ * that strips it — the inline design stands on its own and stays readable (see
+ * GALAXY). All text is escaped before any markup is added, and links are
+ * http(s) or mailto only.
  */
 
 const BASE = {
@@ -48,14 +51,22 @@ const BASE = {
 /**
  * The galaxy look: deep indigo into violet into fuchsia.
  *
- * Every gradient is written with a solid `background-color` first. Apple Mail,
- * iOS Mail and most phone apps paint the gradient; a client that drops
- * `background-image` (Outlook for Windows renders with Word) still shows the
- * solid colour, so white text on a header is readable either way.
+ * Behind white text — the header, a button — the gradient is never inline.
+ * The Gmail apps darken a message by inverting its colours and leave a
+ * gradient as it is, so white text on an inline gradient turns black on
+ * purple wherever Gmail's own rules for it are lost: a translated message
+ * (owner, 2026-10-08), a forwarded one, a non-Google account in the Gmail app
+ * (which strips `<style>`). Inline, those carry a solid colour — inverted
+ * together with their text, so always readable — and the gradient is laid on
+ * from `<style>` only where it is safe (`adaptiveCss`). The decorative bars
+ * hold no text and keep theirs inline, after a solid colour for a client that
+ * drops gradients.
  */
 const GALAXY = {
-  hero: 'background-color:#2e1065;background-image:linear-gradient(135deg,#0f0c29 0%,#2e1065 38%,#6d28d9 72%,#c026d3 100%)',
-  button: 'background-color:#6d28d9;background-image:linear-gradient(135deg,#4f46e5 0%,#7c3aed 55%,#c026d3 100%)',
+  heroSolid: '#2e1065',
+  heroGradient: 'linear-gradient(135deg,#0f0c29 0%,#2e1065 38%,#6d28d9 72%,#c026d3 100%)',
+  buttonSolid: '#6d28d9',
+  buttonGradient: 'linear-gradient(135deg,#4f46e5 0%,#7c3aed 55%,#c026d3 100%)',
   bar: 'background-color:#7c3aed;background-image:linear-gradient(180deg,#6366f1 0%,#a855f7 55%,#d946ef 100%)',
   line: 'background-color:#7c3aed;background-image:linear-gradient(90deg,#4f46e5 0%,#7c3aed 50%,#d946ef 100%)',
 };
@@ -285,7 +296,7 @@ function isCapsHeading(line) {
 function heading(text, level, theme) {
   const bar = (size, extra = '') =>
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:26px 0 12px">` +
-    `<tr><td width="4" style="${GALAXY.bar};border-radius:2px">&nbsp;</td>` +
+    `<tr><td width="4" style="${theme.bar || GALAXY.bar};border-radius:2px">&nbsp;</td>` +
     `<td style="padding-left:12px;font-size:${size}px;line-height:1.4;font-weight:700;color:${BASE.text};${extra}">${inline(text, theme)}</td></tr></table>`;
   if (level === 'caps') return bar(14, 'letter-spacing:0.05em');
   if (level === 1) {
@@ -335,30 +346,47 @@ function factsCard(facts, theme) {
 /** A change figure: "+2,1%", "-0,48%", "▲ 12". Coloured by direction in a table. */
 const RISE = /^(\+|▲)\s?\d[\d.,]*\s?(%|đ|₫|usd|vnd|pts|điểm)?$/i;
 const FALL = /^(-|−|▼)\s?\d[\d.,]*\s?(%|đ|₫|usd|vnd|pts|điểm)?$/i;
+/**
+ * A figure: a price, a count, a change, an approximate rate ("~25.990",
+ * "≈0%", "4.185,1 USD"). A column of them is set right-aligned with digits of
+ * one width, so the units and the decimal places line up the way a price table
+ * in a newspaper does.
+ */
+const FIGURE = /^[~≈≥≤<>]?\s?[+\-−▲▼]?\s?[$€£¥₫]?\s?\d[\d.,\s]*\s?(%|đ|₫|usd|vnd|eur|pts|điểm|bp|tỷ|triệu|nghìn|k|m|bn)?$/i;
 /** The row of a table that is its total. */
 const TOTAL_ROW = /^\**\s*(tổng|tổng cộng|thành tiền|total|grand total|amount due|subtotal|tạm tính)\b/i;
 
 function tableHtml(head, rows, theme) {
-  /** @param {string} content @param {{ isHead?: boolean, zebra?: boolean, total?: boolean }} how */
-  const cell = (content, { isHead = false, zebra = false, total = false }) => {
+  // A column is figures when every cell in it that has anything is one.
+  const figures = head.map((_, c) => {
+    const cells = rows.map((row) => String(row[c] ?? '').replace(/\*\*/g, '').trim()).filter(Boolean);
+    return cells.length > 0 && cells.every((v) => FIGURE.test(v));
+  });
+  /** @param {string} content @param {{ isHead?: boolean, zebra?: boolean, total?: boolean, figure?: boolean }} how */
+  const cell = (content, { isHead = false, zebra = false, total = false, figure = false }) => {
     const rise = !isHead && RISE.test(content);
     const fall = !isHead && FALL.test(content);
-    const classes = [isHead && 'sx-th', zebra && 'sx-zebra', total && 'sx-total', rise && 'sx-up', fall && 'sx-down'].filter(Boolean).join(' ');
+    const classes = ['sx-cell', isHead && 'sx-th', zebra && 'sx-zebra', total && 'sx-total', rise && 'sx-up', fall && 'sx-down'].filter(Boolean).join(' ');
     const colour = isHead ? BASE.muted : rise ? BASE.up : fall ? BASE.down : BASE.text;
     const background = isHead ? BASE.codeBg : total ? theme.soft : zebra ? BASE.soft : '';
+    // One short word — "UPCOM-Index", "BTC" — is kept whole: beside a column of
+    // figures on a phone it was broken as "UPCO / M- / Index".
+    const word = !figure && !/\s/.test(content.trim()) && content.trim().length <= 18;
     return (
-      `<td${classes ? ` class="${classes}"` : ''} style="padding:9px 12px;border-bottom:1px solid ${BASE.line};font-size:14px;line-height:1.5;${WRAP};` +
+      `<td class="${classes}"${figure ? ' align="right"' : ''} style="padding:9px 12px;border-bottom:1px solid ${BASE.line};font-size:14px;line-height:1.5;` +
+      // A figure is never broken across lines: "1.759,0" over "8" reads as two numbers.
+      `${figure ? 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;' : word ? 'white-space:nowrap;' : `${WRAP};`}` +
       `color:${colour};${isHead || total || rise || fall ? 'font-weight:600;' : ''}${background ? `background:${background};` : ''}` +
       `${total ? `border-top:2px solid ${theme.accent};` : ''}">${inline(content, theme)}</td>`
     );
   };
   return (
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;border:1px solid ${BASE.line};border-radius:8px;border-collapse:separate;overflow:hidden">` +
-    `<tr>${head.map((h) => cell(h, { isHead: true })).join('')}</tr>` +
+    `<tr>${head.map((h, c) => cell(h, { isHead: true, figure: figures[c] })).join('')}</tr>` +
     rows
       .map((row, r) => {
         const total = TOTAL_ROW.test(row[0] || '');
-        return `<tr>${head.map((_, c) => cell(row[c] ?? '', { zebra: !total && r % 2 === 1, total })).join('')}</tr>`;
+        return `<tr>${head.map((_, c) => cell(row[c] ?? '', { zebra: !total && r % 2 === 1, total, figure: figures[c] })).join('')}</tr>`;
       })
       .join('') +
     '</table>'
@@ -376,11 +404,11 @@ const splitRow = (line) =>
 /** A paragraph that is only a link — "[Xác nhận tham dự](https://…)" — is a button. */
 const LONE_LINK = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/;
 
-function button(url, label, theme) {
+function button(url, label) {
   return (
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 22px"><tr>` +
-    `<td style="${GALAXY.button};border-radius:9px">` +
-    `<a class="sx-btn" href="${escapeHtml(url)}" style="display:inline-block;padding:12px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none">${escapeHtml(label)}</a>` +
+    `<td class="sx-btnbg" bgcolor="${GALAXY.buttonSolid}" style="background-color:${GALAXY.buttonSolid};border-radius:9px">` +
+    `<a class="sx-btn" href="${escapeHtml(url)}" style="display:inline-block;padding:12px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none">${keepWhite(escapeHtml(label))}</a>` +
     `</td></tr></table>`
   );
 }
@@ -389,11 +417,21 @@ const BULLET = /^\s*[-*•+]\s+/;
 const NUMBERED = /^\s*\d+[.)]\s+/;
 const CHECK = /^\s*[-*]\s+\[( |x|X)\]\s+/;
 
+/** Whether a table starts at line `i`: a row with a pipe, then a `|---|---|` line under it. */
+const startsTable = (lines, i) => String(lines[i] || '').includes('|') && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || '');
+
+/**
+ * A line that is only bold text — "**Chứng khoán Việt Nam**" — is a section
+ * heading. It is how models title a section as often as with ##, and set as a
+ * bold paragraph it neither stood out nor let the table under it be a table.
+ */
+const BOLD_LINE = /^\*\*([^*\n]{2,80}?)\*\*\s*:?$/;
+
 /**
  * The body of a message, Markdown in, email-safe HTML out.
  *
  * @param {string} markdown
- * @param {{ accent: string, soft: string }} [theme]  the kind's colours
+ * @param {{ accent: string, soft: string, bar?: string }} [theme]  the kind's colours
  */
 export function renderEmailBody(markdown, theme = KINDS.letter) {
   const lines = String(markdown ?? '').replace(/\r\n/g, '\n').split('\n');
@@ -431,7 +469,14 @@ export function renderEmailBody(markdown, theme = KINDS.letter) {
       continue;
     }
 
-    if (trimmed.includes('|') && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || '')) {
+    const bold = trimmed.match(BOLD_LINE);
+    if (bold) {
+      out.push(heading(bold[1].trim(), 2, theme));
+      i += 1;
+      continue;
+    }
+
+    if (startsTable(lines, i)) {
       const head = splitRow(line);
       i += 2;
       const rows = [];
@@ -504,12 +549,15 @@ export function renderEmailBody(markdown, theme = KINDS.letter) {
       continue;
     }
 
+    // A paragraph ends where another block begins, blank line or not: a table,
+    // a list or a heading written straight under a sentence is still one (the
+    // owner's market report showed its tables as rows of pipes, 2026-10-08).
     const para = [];
     while (
       i < lines.length &&
       lines[i].trim() &&
       !/^\s*(```|#{1,4}\s|>|[-*•+]\s|\d+[.)]\s)/.test(lines[i]) &&
-      !(para.length && (isCapsHeading(lines[i]) || (factOf(lines[i]) && factOf(lines[i + 1] || ''))))
+      !(para.length && (isCapsHeading(lines[i]) || BOLD_LINE.test(lines[i].trim()) || startsTable(lines, i) || (factOf(lines[i]) && factOf(lines[i + 1] || ''))))
     ) {
       para.push(lines[i++].trim());
     }
@@ -521,7 +569,7 @@ export function renderEmailBody(markdown, theme = KINDS.letter) {
       );
     } else if (LONE_LINK.test(text)) {
       const [, label, url] = text.match(LONE_LINK);
-      out.push(button(url, label, theme));
+      out.push(button(url, label));
     } else {
       out.push(`<p style="${P}">${inline(text, theme).replace(/\n/g, '<br>')}</p>`);
     }
@@ -639,11 +687,20 @@ const WORDS = {
  * every element, so the body renderer does not have to know about it.
  */
 function adaptiveCss() {
+  const gradients = `.sx-hero{background-image:${GALAXY.heroGradient}!important}.sx-btnbg{background-image:${GALAXY.buttonGradient}!important}`;
   return [
     ':root{color-scheme:light dark;supported-color-schemes:light dark}',
-    // Gmail's apps: see `keepWhite`. `u + .body` matches only inside Gmail.
+    // Gmail's apps: see `keepWhite`. `u + .body` matches only inside Gmail —
+    // Gmail turns the doctype into that <u> — and the gradient behind white
+    // text is laid on under the same condition as the rules that keep the text
+    // white, so one is never there without the other (see GALAXY).
     'u + .body .gx-s{background:#000;mix-blend-mode:screen}u + .body .gx-d{background:#000;mix-blend-mode:difference}',
-    '@media (max-width:520px){.sx-outer{padding:14px 6px!important}.sx-pad{padding-left:20px!important;padding-right:20px!important}.sx-h1{font-size:22px!important}}',
+    gradients.replace(/(^|\})\./g, '$1u + .body .'),
+    // Everyone else who reads a <style> block and a colour-scheme query (Apple
+    // Mail, Outlook, Samsung, Thunderbird) darkens nothing on their own, so the
+    // gradient is safe there. Gmail ignores this query, which is the point.
+    `@media (prefers-color-scheme:light),(prefers-color-scheme:dark){${gradients}}`,
+    '@media (max-width:520px){.sx-outer{padding:14px 6px!important}.sx-pad{padding-left:20px!important;padding-right:20px!important}.sx-h1{font-size:22px!important}.sx-cell{padding:8px 9px!important;font-size:13.5px!important}}',
     '@media (prefers-color-scheme:dark){' +
       '.sx-page{background:#0b0a14!important}' +
       '.sx-card{background:#15131f!important;border-color:#2b2740!important}' +
@@ -690,8 +747,8 @@ function brandMark(brand, size, logo) {
     );
   }
   return (
-    `<td width="${size}" height="${size}" align="center" valign="middle" style="${GALAXY.button};border-radius:${Math.round(size / 3.6)}px;` +
-    `color:#ffffff;font-size:${Math.round(size * 0.55)}px;font-weight:700;line-height:${size}px;font-family:${FONT}">${escapeHtml(brand.charAt(0).toUpperCase())}</td>`
+    `<td class="sx-btnbg" width="${size}" height="${size}" align="center" valign="middle" bgcolor="${GALAXY.buttonSolid}" style="background-color:${GALAXY.buttonSolid};border-radius:${Math.round(size / 3.6)}px;` +
+    `color:#ffffff;font-size:${Math.round(size * 0.55)}px;font-weight:700;line-height:${size}px;font-family:${FONT}">${keepWhite(escapeHtml(brand.charAt(0).toUpperCase()))}</td>`
   );
 }
 
@@ -730,7 +787,7 @@ export function layoutEmail({ brand, title, contentHtml, kind = 'newsletter', pr
     </td></tr>`;
 
   const top = card
-    ? `<tr><td class="sx-hero sx-pad" style="${GALAXY.hero};padding:22px 28px 26px">
+    ? `<tr><td class="sx-hero sx-pad" bgcolor="${GALAXY.heroSolid}" style="background-color:${GALAXY.heroSolid};padding:22px 28px 26px">
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px"><tr>
             <td width="36" height="36" align="center" valign="middle" style="background-color:#ffffff;border-radius:10px;${logo ? '' : `color:#4c1d95;font-size:15px;font-weight:700;line-height:36px`}">${
               // On the dark gradient the logo sits on a white tile, so its own deep blues do not sink into the background.
@@ -801,7 +858,7 @@ const comparable = (text) =>
 function previewLine(markdown, subject) {
   for (const raw of String(markdown ?? '').split(/\r?\n/)) {
     const line = raw.trim();
-    if (!line || /^(#{1,4}\s|\||>|```|\[)/.test(line) || /^\s*:?-{2,}/.test(line)) continue;
+    if (!line || /^(#{1,4}\s|\||>|```|\[)/.test(line) || /^\s*:?-{2,}/.test(line) || BOLD_LINE.test(line)) continue;
     if (isCapsHeading(line) || line.length < 25 || comparable(line) === comparable(subject)) continue;
     return plainTextFrom(line.replace(/^\s*([-*•+]|\d+[.)])\s+/, '')).replace(/\s+/g, ' ').slice(0, 140);
   }
@@ -867,27 +924,100 @@ export function composeMessage({ brand, subject, markdown, sender, kind = 'auto'
 }
 
 /**
+ * The person's own colours: no brand, nothing purple. Links and headings in
+ * the blue a mail client uses for links, so the message reads as theirs.
+ */
+const PERSONAL = { accent: '#1a56db', soft: '#f3f6fb', bar: 'background-color:#1a56db' };
+
+/**
+ * A message sent from the person's own mailbox (the `gmail` tool), as they
+ * would have written it: no header, no brand, no footer — only the body,
+ * formatted. It went out as plain text, so the Markdown the assistant writes
+ * in arrived as asterisks and rows of pipes.
+ *
+ * @param {{ markdown: string, language?: string }} options
+ * @returns {{ html: string, text: string }}
+ */
+export function personalMessage({ markdown, language = 'en' }) {
+  const lang = detectLanguage(markdown, language);
+  return {
+    html: `<!doctype html>
+<html lang="${lang}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+<body style="margin:0;padding:0">
+<div style="max-width:640px;font-family:${FONT};font-size:15px;line-height:1.65;color:${BASE.text}">
+${renderEmailBody(markdown, PERSONAL)}
+</div>
+</body>
+</html>`,
+    text: plainTextFrom(markdown),
+  };
+}
+
+/**
+ * The words of the password-reset message, in the account's language. It was
+ * English only, so a Vietnamese account's first email from the app was in a
+ * language it had never chosen.
+ */
+export const RESET_WORDS = {
+  en: {
+    subject: (code, brand) => `${code} is your ${brand} password reset code`,
+    title: 'Reset your password',
+    intro: 'Type this code into the app to choose a new password. It is good for one hour and works once.',
+    yourCode: 'Your code',
+    orLink: 'Or open the link instead:',
+    button: 'Choose a new password',
+    paste: 'If the button does not work, paste this into your browser:',
+    notYou: 'If you did not ask for this, ignore this message — your password has not changed.',
+    text: (code, brand, link) =>
+      `Your ${brand} password reset code is ${code}\n\nIt expires in one hour and can only be used once. You can also open this link:\n${link}\n\n` +
+      'If you did not ask for this, ignore this message — your password has not changed.',
+  },
+  vi: {
+    subject: (code, brand) => `${code} là mã đặt lại mật khẩu ${brand} của bạn`,
+    title: 'Đặt lại mật khẩu',
+    intro: 'Nhập mã này vào ứng dụng để đặt mật khẩu mới. Mã có hiệu lực trong một giờ và chỉ dùng được một lần.',
+    yourCode: 'Mã của bạn',
+    orLink: 'Hoặc mở liên kết:',
+    button: 'Đặt mật khẩu mới',
+    paste: 'Nếu nút không hoạt động, hãy dán địa chỉ này vào trình duyệt:',
+    notYou: 'Nếu bạn không yêu cầu việc này, hãy bỏ qua email — mật khẩu của bạn chưa thay đổi.',
+    text: (code, brand, link) =>
+      `Mã đặt lại mật khẩu ${brand} của bạn là ${code}\n\nMã hết hạn sau một giờ và chỉ dùng được một lần. Bạn cũng có thể mở liên kết:\n${link}\n\n` +
+      'Nếu bạn không yêu cầu việc này, hãy bỏ qua email — mật khẩu của bạn chưa thay đổi.',
+  },
+};
+
+/**
  * The password-reset message: a security card, the code large and first, then
  * a button, then the raw link for a client that will not show buttons.
+ *
+ * @param {{ brand: string, code: string, link: string, language?: string }} options
  */
-export function resetMessage({ brand, code, link }) {
+export function resetMessage({ brand, code, link, language = 'en' }) {
   const theme = KINDS.security;
+  const lang = language === 'vi' ? 'vi' : 'en';
+  const w = RESET_WORDS[lang];
   const content =
-    `<p style="${P}">Type this code into the app to choose a new password. It is good for one hour and works once.</p>` +
+    `<p style="${P}">${escapeHtml(w.intro)}</p>` +
     `<table class="sx-facts" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px;background:${theme.soft};border-radius:12px"><tr>` +
     `<td align="center" style="padding:20px">` +
-    `<div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:${BASE.muted};margin:0 0 8px">Your code</div>` +
+    `<div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:${BASE.muted};margin:0 0 8px">${escapeHtml(w.yourCode)}</div>` +
     `<div style="font-family:${MONO};font-size:34px;font-weight:700;letter-spacing:0.3em;color:${theme.accent}">${escapeHtml(code)}</div>` +
     `</td></tr></table>` +
-    `<p style="margin:0 0 12px;font-size:14px;color:${BASE.muted}">Or open the link instead:</p>` +
-    button(link, 'Choose a new password', theme) +
-    `<p class="sx-quiet" style="margin:0;font-size:12px;line-height:1.6;color:${BASE.faint};word-break:break-all">If the button does not work, paste this into your browser:<br>${escapeHtml(link)}</p>`;
+    `<p style="margin:0 0 12px;font-size:14px;color:${BASE.muted}">${escapeHtml(w.orLink)}</p>` +
+    button(link, w.button) +
+    `<p class="sx-quiet" style="margin:0;font-size:12px;line-height:1.6;color:${BASE.faint};word-break:break-all">${escapeHtml(w.paste)}<br>${escapeHtml(link)}</p>`;
   return layoutEmail({
     brand,
-    title: 'Reset your password',
+    title: w.title,
     contentHtml: content,
     kind: 'security',
-    preheader: `${code} is your ${brand} reset code`,
-    footerHtml: escapeHtml('If you did not ask for this, ignore this message — your password has not changed.'),
+    preheader: w.subject(code, brand),
+    footerHtml: escapeHtml(w.notYou),
+    language: lang,
   });
 }

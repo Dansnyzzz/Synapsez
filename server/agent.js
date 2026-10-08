@@ -515,6 +515,21 @@ function withIntentNotes(messages) {
 }
 
 /**
+ * A scheduled run's note about itself (scheduler.js `scheduledRunNote`), on the
+ * request that started it. Only sent, never stored, so each run carries its
+ * own day and the ones before it are left as they were.
+ *
+ * @param {any[]} messages
+ * @param {string | null} note
+ */
+export function withRunNote(messages, note) {
+  if (!note) return messages;
+  const last = messages.findLastIndex((m) => m.role === 'user');
+  if (last < 0) return messages;
+  return messages.map((m, i) => (i === last ? { ...m, text: `${m.text || ''}\n\n${note}` } : m));
+}
+
+/**
  * A turn picked up after it was cut off.
  *
  * Pressing Continue starts a run with no new message, so the transcript ends
@@ -1206,7 +1221,7 @@ export async function connectionsSignature(userId) {
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, stream = streamCompletion }) {
+export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion }) {
   const store = getStore();
   const prefs = await getPrefs(userId);
   /** Personal details masked before the provider sees them (PRV-003): files go as their text. */
@@ -1735,7 +1750,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        */
       // Where the plan stands rides on the tool results — see progress.js.
       const tracked = withProgressNotes(
-        unattended ? activeTranscript(normaliseOrder(messages)) : withIntentNotes(activeTranscript(normaliseOrder(messages))),
+        unattended ? withRunNote(activeTranscript(normaliseOrder(messages)), runNote) : withIntentNotes(activeTranscript(normaliseOrder(messages))),
       );
       const grounded = withProjectSources(
         // The progress gate sends the model back with its own note, in place of

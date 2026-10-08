@@ -209,5 +209,17 @@ section('a deployment with no mail provider logs no mail');
   check('  but the failure to send is', /no mail provider/.test(all), all.slice(0, 120));
 }
 
+section('the password-reset email is in the language of the person asking');
+{
+  const vi = email.resetEmail('https://app.example/?reset=t', '482913', 'vi');
+  check('a Vietnamese subject, body and plain text', /^482913 là mã đặt lại mật khẩu .+ của bạn$/.test(vi.subject) && vi.html.includes('Đặt mật khẩu mới') && /hết hạn sau một giờ/.test(vi.text), vi.subject);
+  const en = email.resetEmail('https://app.example/?reset=t', '482913');
+  check('English by default', /^482913 is your .+ password reset code$/.test(en.subject) && en.html.includes('Choose a new password'));
+  const { mailLanguage } = await import('../server/auth.js');
+  const nobody = { id: 'u-no-prefs-here' };
+  check('with no language chosen in the app, the browser asking decides', (await mailLanguage(nobody, { headers: { 'accept-language': 'vi-VN,vi;q=0.9,en;q=0.8' } })) === 'vi');
+  check('  and anything else is English', (await mailLanguage(nobody, { headers: { 'accept-language': 'fr-FR' } })) === 'en' && (await mailLanguage(nobody, {})) === 'en');
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll email checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

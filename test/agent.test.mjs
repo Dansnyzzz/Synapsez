@@ -1649,6 +1649,48 @@ section('something connected mid-turn is there at the next step (owner, 2026-10-
   check('a new grant on the same connection changes the fingerprint', granted !== (await connectionsSignature(liveUser.id)));
 }
 
+section('a scheduled run is told which day it is, and that the runs above it are history');
+{
+  /*
+   * The owner's morning report, sent on 08/10, was titled 07/10 (2026-10-08).
+   * A task's runs share one conversation, so yesterday's dated report sat above
+   * today's prompt and nothing on the request said which day this run was.
+   */
+  const { scheduledRunNote } = await import('../server/scheduler.js');
+  const note = scheduledRunNote({ title: 'Báo cáo thị trường buổi sáng', now: new Date('2026-10-08T01:49:00Z'), timeZone: 'Asia/Ho_Chi_Minh' });
+  check("the note names the day and the hour in the task's own zone", /This run of "Báo cáo thị trường buổi sáng" started Thursday 08\/10\/2026 at 08:49 \(Asia\/Ho_Chi_Minh\)/.test(note), note);
+  check('  says what is above is history, to fetch everything again, and to date it today', /history, not today's/.test(note) && /Fetch every figure and every news item again now/.test(note) && /date what you write by today, 08\/10\/2026/.test(note));
+  check('  and to name sources and say what could not be fetched rather than reuse it', /Name where each figure and claim came from/.test(note) && /rather than reuse an old value/.test(note));
+  check('a zone nobody recognises is UTC, said as UTC', /\(UTC\)/.test(scheduledRunNote({ title: 'x', timeZone: 'Mars/Olympus', now: new Date('2026-10-08T01:49:00Z') })));
+  // A workflow's step 2 builds on step 1 of the same run, just above it — that is not history.
+  const later = scheduledRunNote({ title: 'Bản tin', now: new Date('2026-10-08T01:52:00Z'), timeZone: 'Asia/Ho_Chi_Minh', step: 2, steps: 3 });
+  check("a workflow's later step is told the steps of its own run above are today's", /— step 2 of 3 —/.test(later) && /earlier steps of this same run, just above, are today's: build on what they produced/.test(later) && !/^\(.*Everything above this message/.test(later), later.slice(0, 220));
+  check('  and its first step is told everything above is history', /Everything above this message is from earlier runs/.test(scheduledRunNote({ title: 'Bản tin', step: 1, steps: 3 })));
+
+  const schedUser = await store.createUser({
+    id: 'u-sched-note',
+    email: 'schednote@example.com',
+    name: 'Sched',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'user',
+  });
+  await store.createChat(schedUser.id, { id: 'c-sched-note', title: 'Báo cáo' });
+  await store.appendMessage(schedUser.id, 'c-sched-note', { id: 'sn-1', role: 'user', text: 'Báo cáo thị trường buổi sáng' });
+  await store.appendMessage(schedUser.id, 'c-sched-note', { id: 'sn-2', role: 'assistant', text: 'Báo cáo thị trường ngày 07/10/2026: VN-Index 1.759,08.' });
+  await store.appendMessage(schedUser.id, 'c-sched-note', { id: 'sn-3', role: 'user', text: 'Báo cáo thị trường buổi sáng' });
+  let asked = null;
+  const scripted = async function* (opts) {
+    asked = opts.messages;
+    yield { type: 'text', delta: 'Báo cáo ngày 08/10/2026.' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+  };
+  await runAgent({ userId: schedUser.id, user: schedUser, chatId: 'c-sched-note', emit: () => {}, unattended: true, runNote: note, stream: scripted });
+  const requests = (asked || []).filter((m) => m.role === 'user').map((m) => String(m.text || ''));
+  check("it rides on today's request, not on yesterday's", requests.length === 2 && requests[1].includes('This run of') && !requests[0].includes('This run of'), requests.map((t) => t.slice(-60)).join(' | '));
+  const kept = await store.listMessages(schedUser.id, 'c-sched-note');
+  check('  and is never stored — the next run gets its own', !kept.some((m) => /This run of/.test(String(m.text || ''))));
+}
+
 section('the progress gate: a turn cannot finish with its plan left behind');
 {
   /*

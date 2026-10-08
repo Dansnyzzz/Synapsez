@@ -185,10 +185,16 @@ looks like a person's email; a newsletter, report, announcement, alert, invitati
 invoice, confirmation, meeting notes or welcome is a card that opens with a galaxy-gradient header (the
 logo, the kind's label and the title in white). The logo is the web app's own, scaled to 96px
 (`scripts/email-logo.js`) and embedded in the message as an inline attachment, so it shows without an
-"images are hidden" prompt. Every gradient has a solid colour first, for clients that drop them. The assistant
+"images are hidden" prompt. Behind white text (the header, a button) the colour is solid inline and the
+gradient is laid on from the `<style>` block only where it is safe, so the text stays readable when a
+mail app inverts colours and loses the styles — Gmail's translated view, a forwarded copy, a non-Google
+account in the Gmail app. The assistant
 names the kind from the request, or it is inferred from the subject, the opening words and the structure.
 Details (`Label: value`) become a card, totals are highlighted, `- [ ]` items a checklist, a lone link a
-button. The footer names the sender in the language the message is written in, beside a plain-text part. It is built from
+button, a line that is only **bold** a section heading, and a column of figures is right-aligned. The footer
+names the sender in the language the message is written in, beside a plain-text part. The password-reset
+email is in the account's language (or the browser's, when none was chosen). Mail sent through the `gmail`
+tool, from the person's own account, is formatted the same way with no header, brand or footer. It is built from
 tables and inline styles, at most 600px wide, with no images, web fonts or scripts, because that is what
 renders identically in Gmail, Outlook and phone mail apps and loads nothing a spam filter scores.
 

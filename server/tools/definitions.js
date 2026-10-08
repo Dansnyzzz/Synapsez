@@ -2137,7 +2137,7 @@ export const TOOLS = [
     description:
       "The user's own Gmail: search, read, send, reply, draft, label, trash. " +
       'search takes Gmail query syntax ("from:boss is:unread newer_than:7d"); read takes an id from search. ' +
-      'send and draft take to, subject, body (plain text) and optionally html, cc, bcc; reply_to_id replies in that thread. ' +
+      'send and draft take to, subject, body and optionally cc, bcc; reply_to_id replies in that thread. body is Markdown (**bold**, lists, tables), sent formatted as the user\'s own email — no header or signature added; html only when the user gives exact HTML. ' +
       'modify adds/removes labels (UNREAD, STARRED, IMPORTANT, INBOX to archive, or a label name).',
     parameters: {
       type: 'object',
@@ -2449,7 +2449,8 @@ export const TOOLS = [
           description:
             'The message in Markdown, laid out as a finished email automatically — never HTML. ## headings, - lists, ' +
             '**bold**, tables (a "Total"/"Tổng" row is highlighted), "Label: value" lines (become a details card), ' +
-            '"- [ ] task" checklists, a line that is only [label](https://…) (becomes a button). A letter keeps its greeting and sign-off. A briefing: per topic a ## heading, "Label: value" lines, then "Sources:" — one card each.',
+            '"- [ ] task" checklists, a line that is only [label](https://…) (becomes a button). A letter keeps its greeting and sign-off. A briefing: per topic a ## heading, "Label: value" lines, then "Sources:" — one card each. ' +
+            'A dated report is dated the day it is sent, in the subject too; figures from an earlier session say which, and the time they are as of.',
         },
         kind: {
           type: 'string',

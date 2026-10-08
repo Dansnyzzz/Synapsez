@@ -119,8 +119,17 @@ section('an email cannot carry extra headers, and Vietnamese survives');
   const [head] = raw.split('\r\n\r\n');
   check('a line break in the subject does not become a header', !/^Bcc:/m.test(head), head);
   check('a non-ASCII subject is encoded', /Subject: =\?UTF-8\?B\?/.test(head));
-  const bodyB64 = raw.split('\r\n\r\n')[1];
-  check('the body round-trips', Buffer.from(bodyB64, 'base64').toString('utf8') === 'Xin chào');
+  const part = (message, type) => {
+    const found = message.match(new RegExp(`Content-Type: ${type}; charset=UTF-8\\r\\nContent-Transfer-Encoding: base64\\r\\n\\r\\n([A-Za-z0-9+/=]+)`));
+    return found ? Buffer.from(found[1], 'base64').toString('utf8') : null;
+  };
+  check('the body round-trips, as plain text and formatted', part(raw, 'text/plain') === 'Xin chào' && /Xin chào/.test(part(raw, 'text/html') || ''));
+  // The model writes Markdown; it went out as plain text, asterisks and pipes included.
+  const report = gt.mime({ to: 'a@x.com', subject: 'Số liệu', body: '**Tuần này**\n| Kênh | Doanh thu |\n|---|---|\n| FB | 12.000.000 |' });
+  check('Markdown goes out formatted — a table, no asterisks', /<td[^>]*>FB<\/td>/.test(part(report, 'text/html') || '') && !/\*\*/.test(part(report, 'text/html') || ''));
+  check('  with a plain-text twin free of Markdown marks', !/\*\*/.test(part(report, 'text/plain') || '**') && /Tuần này/.test(part(report, 'text/plain') || ''));
+  const exact = gt.mime({ to: 'a@x.com', subject: 'S', body: 'hi', html: '<p>exact</p>' });
+  check('HTML the user gave is sent exactly as given', part(exact, 'text/html') === '<p>exact</p>');
   const html = gt.bodyText({
     mimeType: 'multipart/alternative',
     parts: [{ mimeType: 'text/html', body: { data: Buffer.from('<p>Hi&nbsp;<b>there</b></p><script>x()</script>').toString('base64url') } }],

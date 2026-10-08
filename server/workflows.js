@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { getPrefs } from './settings.js';
 import { runAgent } from './agent.js';
-import { nextRunOf } from './scheduler.js';
+import { nextRunOf, scheduledRunNote } from './scheduler.js';
 import { redactSecrets } from './redact.js';
 import { TOOLS_BY_NAME } from './tools/definitions.js';
 
@@ -120,7 +120,7 @@ const freshState = (steps) =>
  * nobody is here to approve, so the honest answer is that the run needs a
  * person — not that it failed, and certainly not that it finished.
  */
-async function runStep({ user, chatId, modelId, instruction, resume = false }) {
+async function runStep({ user, chatId, modelId, instruction, resume = false, runNote = null }) {
   const store = getStore();
 
   if (!resume) {
@@ -152,6 +152,7 @@ async function runStep({ user, chatId, modelId, instruction, resume = false }) {
       chatId,
       modelId,
       unattended: true,
+      runNote,
       emit(event, data) {
         if (event === 'error') error = clean(data?.message || 'failed', 400);
         // A question stops a step exactly as an approval does: nobody is there.
@@ -329,6 +330,9 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
    * mid-step when the provider says so.
    */
   const modelId = null;
+  // A run writes into the conversation the last one used, so each step is told
+  // the day and hour it runs — see `scheduledRunNote`.
+  const zone = (await getPrefs(user.id).catch(() => null))?.timezone || null;
 
   /**
    * The conversation a run writes into can be gone by the time a step starts.
@@ -399,6 +403,7 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
         // A step cut off last time carries on in its own transcript; its
         // instruction is already there and is not sent a second time.
         resume: resuming,
+        runNote: scheduledRunNote({ title: workflow.title, timeZone: zone, step: cursor + 1, steps: definition.length }),
       });
     } finally {
       clearInterval(heartbeat);

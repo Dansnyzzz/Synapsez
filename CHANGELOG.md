@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-10-08 (later) — emails: tables that are tables, a header that survives translation, reports dated the day they go out
+
+Asked for by the owner on 2026-10-08, with screenshots of the 08/10 morning report.
+
+### What a sent email looks like
+
+- **Tables are tables.** A table written straight under a line of text — "**Chứng khoán Việt Nam**" then the
+  rows — was swallowed into that line's paragraph and arrived as rows of pipes. A paragraph now ends where a
+  table, a list or a heading begins, blank line or not.
+- **A line that is only bold is a section heading**, as `##` is: how models title a section as often as not.
+- **Figures line up.** A column of prices, changes or rates is right-aligned with digits of one width, and a
+  figure or a short name ("UPCOM-Index") is never broken across lines on a phone.
+- **The header stays readable when Gmail translates the message.** The Gmail apps invert text colours and leave
+  gradients alone; the rules that undo that were lost in the translated view, so the white title turned black on
+  purple. Behind white text (the header, buttons) the colour is now solid inline — inverted together with its
+  text, so readable in any view — and the gradient is laid on from `<style>` only where the white-text rules
+  hold too (Gmail) or where nothing inverts (Apple Mail, Outlook, Samsung, Thunderbird). The same applies to a
+  forwarded copy and to a non-Google account in the Gmail app, which strips `<style>`. Buttons had the same flaw.
+- **The password-reset email is in the account's language** (or the browser's, when none was chosen). It was
+  English only.
+- **Mail from the person's own Gmail is formatted.** The `gmail` tool sent the body as plain text, so the
+  Markdown the assistant writes arrived as asterisks and pipes. It now goes out formatted, with a plain-text
+  twin, and with no header, brand or footer — it is the person's own email.
+
+### Reports dated the day they go out
+
+- **A scheduled run knows which day it is.** A task's runs share one conversation, so the 08/10 run read the
+  07/10 report above its prompt, and the report came titled 07/10. Each run of a task or a workflow is now told,
+  on its own request and without it being stored, the day and hour it started in the task's zone; that what is
+  above is history; to fetch every figure and news item again; to date what it writes by today; to say which
+  session a figure is from when a market has not opened yet; and to name its sources. `send_email` says the same
+  for a dated report sent by hand.
+
 ## 2026-10-08 — connections the assistant sees at once; places near you, on a map with a list
 
 Asked for by the owner on 2026-10-07, with screenshots. Free and keyless throughout.

@@ -2,6 +2,7 @@ import { googleApi } from '../google.js';
 import { getStore } from '../store/index.js';
 import { extractPdfText } from '../pdf.js';
 import { untrusted } from './untrusted.js';
+import { personalMessage } from '../mailTemplate.js';
 
 /**
  * The Google tools — one per product, each with an `action`.
@@ -51,7 +52,14 @@ const encodeHeader = (text) => (/^[\x20-\x7e]*$/.test(text) ? text : `=?UTF-8?B?
 /** Header values cannot carry a line break: that is how extra headers are smuggled in. */
 const oneLine = (text) => String(text || '').replace(/[\r\n]+/g, ' ').trim();
 
-function mime({ to, cc, bcc, subject, body, html, inReplyTo, references }) {
+/**
+ * @param {Record<string, any>} message
+ *   `body` is Markdown, sent formatted with a plain-text twin (personalMessage);
+ *   an `html` the user supplied is sent as given.
+ */
+function mime({ to, cc, bcc, subject, body, html: given, inReplyTo, references }) {
+  const formatted = !given && String(body || '').trim() ? personalMessage({ markdown: String(body) }) : null;
+  const html = given || formatted?.html;
   const headers = [
     `To: ${oneLine(list(to).join(', '))}`,
     cc ? `Cc: ${oneLine(list(cc).join(', '))}` : null,
@@ -61,7 +69,7 @@ function mime({ to, cc, bcc, subject, body, html, inReplyTo, references }) {
     references ? `References: ${oneLine(references)}` : null,
     'MIME-Version: 1.0',
   ].filter(Boolean);
-  const plain = String(body || '');
+  const plain = formatted ? formatted.text : String(body || '');
   if (!html) {
     return [...headers, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', Buffer.from(plain).toString('base64')].join('\r\n');
   }
