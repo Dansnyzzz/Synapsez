@@ -416,8 +416,9 @@ export function thinLine(coords, max = 160) {
  * How Vietnamese addresses are written, as Nominatim reads them. "TP.HCM" and
  * "Q1" are how everybody writes them and not how OpenStreetMap names them, so
  * "Bếp Mẹ Ỉn, Quận 1, TP.HCM" found nothing at all (owner, 2026-10-07).
+ *
+ * @type {[RegExp, string][]}
  */
-/** @type {[RegExp, string][]} */
 const SPELLED_OUT = [
   [/\b(?:TP\.?\s*HCM|TPHCM|HCMC|HCM City|Sài Gòn|Sai Gon|Saigon)\b/gi, 'Thành phố Hồ Chí Minh'],
   [/\bTP\.?\s*HN\b/gi, 'Hà Nội'],
@@ -466,8 +467,9 @@ async function geocode(name) {
 /**
  * Kinds of place, by the words people use for them in Vietnamese and English,
  * as OpenStreetMap tags them. The first that matches the request wins.
+ *
+ * @type {{ words: RegExp, tags: [string, string][], label: string }[]}
  */
-/** @type {{ words: RegExp, tags: [string, string][], label: string }[]} */
 const KINDS = [
   { words: /cà phê|cafe|café|coffee|trà sữa|milk tea|bubble tea/i, tags: [['amenity', 'cafe']], label: 'cafés' },
   { words: /\bbar\b|\bpub\b|quán nhậu|bia hơi|beer/i, tags: [['amenity', 'bar'], ['amenity', 'pub'], ['amenity', 'biergarten']], label: 'bars' },
@@ -500,8 +502,9 @@ const KINDS = [
  * in their names, and the cuisine tag it is listed under. Places named for the
  * dish come first — "Phở Hòa" is a phở place, a Vietnamese restaurant may not
  * be — and the cuisine is only asked when too few are named for it.
+ *
+ * @type {[RegExp, string, string, string][]}
  */
-/** @type {[RegExp, string, string, string][]} */
 const DISHES = [
   [/phở|\bpho\b/i, 'phở', 'phở|pho ', 'noodle'],
   [/bún|\bbun\b/i, 'bún', 'bún|bun ', 'noodle'],
