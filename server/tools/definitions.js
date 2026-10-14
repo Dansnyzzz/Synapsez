@@ -26,6 +26,25 @@
 import { readArguments } from './validate.js';
 import { canonicalInput } from '../../public/js/tool-aliases.js';
 
+/**
+ * What a command is for, in the model's own words — the title of its step in
+ * the transcript, the way Claude Code heads each command (owner, 2026-10-13).
+ *
+ * Only on the tools that run code, because there the arguments say nothing to
+ * a person: `cd … && py dump_text.py a888.txt | sed -n 55,75p` is what ran,
+ * "Inspecting the new manuscript" is what was happening. Optional, so a model
+ * that leaves it out loses nothing — the step is titled from the command. It
+ * is display only: risk is graded on the command, the approval prompt shows
+ * the command and never the title (`summariseToolInput` in render.js), and the
+ * transcript keeps a share of the line for the command beside it — so a
+ * reassuring title cannot stand in for what runs. One that is not text is
+ * dropped rather than refusing the command (`textTitle` in tool-aliases.js).
+ */
+const STEP_TITLE = {
+  type: 'string',
+  description: 'A few words, in the user\'s language, on what this does — shown to them as the step\'s title, e.g. "Checking which rows are empty".',
+};
+
 export const TOOLS = [
   // ── Local: filesystem ────────────────────────────────────────────────
   {
@@ -343,6 +362,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         command: { type: 'string', description: 'The command line to execute.' },
+        title: STEP_TITLE,
         cwd: { type: 'string', description: 'Workspace-relative working directory. Defaults to the workspace root.' },
         timeout_ms: { type: 'integer', description: 'Kill the command after this long. Default 120000, max 600000.' },
       },
@@ -370,6 +390,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         command: { type: 'string', description: 'The command line, e.g. "npm run dev".' },
+        title: STEP_TITLE,
         cwd: { type: 'string', description: 'Workspace-relative working directory. Defaults to the workspace root.' },
         name: { type: 'string', description: 'A short name to refer to it by, e.g. "dev". One is generated otherwise.' },
         settle_ms: {
@@ -1427,6 +1448,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         command: { type: 'string', description: 'A bash command line, run in the working folder, e.g. "pip install pandas && python analyse.py".' },
+        title: STEP_TITLE,
         python: {
           type: 'string',
           description:
