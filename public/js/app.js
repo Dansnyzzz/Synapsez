@@ -1947,9 +1947,13 @@ function drawTranscript(host, messages, { live = false } = {}) {
  */
 let backgroundFollow = null;
 const BACKGROUND_FOLLOW_MS = 2500;
+/** The conversation whose background run is being followed, while it runs — the jump button's dots. */
+let followingChat = null;
 
 function followBackground(id, seen) {
   clearTimeout(backgroundFollow);
+  followingChat = id;
+  paintJump();
   setStatus(t('status.background'));
   const signature = (messages) => `${messages.length}:${messages.at(-1)?.id || ''}`;
   let last = signature(seen);
@@ -1983,6 +1987,8 @@ function followBackground(id, seen) {
     if (data.background) {
       backgroundFollow = setTimeout(tick, BACKGROUND_FOLLOW_MS);
     } else {
+      followingChat = null;
+      paintJump();
       setStatus(null);
       refreshChats({ background: true }).catch(() => {});
     }
@@ -1995,6 +2001,7 @@ async function openChat(id) {
   leaveIncognito(id);
   clearTimeout(backgroundFollow);
   backgroundFollow = null;
+  followingChat = null;
   setComposeMode(null);
   hideRun();
   closeSidebar();
@@ -4115,7 +4122,11 @@ function renderUsage({ input, output, cost, priced, estimated, cacheRead }) {
   $('composer-meta').textContent = `${tokens}${money}${cached}`;
 }
 
+/** The conversation on screen is answering — by this tab, or by the server with this tab reconnecting. */
+let runningHere = false;
+
 function setRunning(running) {
+  runningHere = !!running;
   // Which of send and stop is showing depends on both the run and what is in
   // the box, so there is one function that decides it — see refreshSendState.
   // The box itself is never disabled: that would be the one thing that makes
@@ -4125,6 +4136,8 @@ function setRunning(running) {
   // The step in progress turns only while work is actually happening; a plan
   // left at rest after the turn ends must not look like it is still going.
   $('progress-steps').classList.toggle('is-live', !!running);
+  // The button back to the end shows its dots exactly while this is so.
+  paintJump();
 }
 
 async function refreshWorker() {
@@ -4167,6 +4180,9 @@ $('language').addEventListener('change', async (event) => {
   renderSuggestions();
   // `applyI18n` put the full hint back; the new language's may not fit either.
   fitPlaceholder();
+  // `applyI18n` also put the jump button's idle label back, which is wrong
+  // while an answer is coming; this says the one that applies.
+  paintJump();
   /**
    * And the sidebar, whose headings are built from script too.
    *
@@ -5671,8 +5687,65 @@ const thread = $('thread');
 
 /** True while the reader is at the end, so new output should follow them down. */
 let pinned = true;
+/** Where the thread was at the last scroll event — which way it has moved since. */
+let lastTop = 0;
 thread.addEventListener('scroll', () => {
-  pinned = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 120;
+  const top = thread.scrollTop;
+  const gap = thread.scrollHeight - top - thread.clientHeight;
+  /*
+   * Only the reader moving up lets go of the end. The thread glides by
+   * stylesheet, so following the reply down — and the jump button's own glide —
+   * passes through a dozen positions far from the end on the way there; read as
+   * "they scrolled away", each flashed the button and dropped the following
+   * mid-glide (code review, 2026-10-13). Moving down near the end takes it back.
+   */
+  if (top < lastTop) pinned = gap < 120;
+  else if (gap < 120) pinned = true;
+  lastTop = top;
+  paintJump();
+});
+
+/**
+ * Back to the newest message: the round button over the composer, the way
+ * Claude's works (owner, 2026-10-13).
+ *
+ * Shown only away from the end — at the end there is nowhere to go, and new
+ * output already follows you down (`maybeScroll`); `pinned` decides both, so
+ * the button and the following never disagree. While this conversation is
+ * still answering it shows three moving dots, so somebody reading further up
+ * knows more is arriving below; otherwise the down arrow — and the arrow under
+ * the pointer or keyboard focus too (the CSS), because that is when the
+ * question is what pressing it will do.
+ */
+const jump = $('jump');
+
+function paintJump() {
+  const working = runningHere || !!runHere() || (!!followingChat && followingChat === state.chatId);
+  jump.classList.toggle('is-shown', !pinned);
+  jump.classList.toggle('is-working', working);
+  const label = t(working ? 'chat.jumpWorking' : 'chat.jumpLatest');
+  if (jump.getAttribute('aria-label') !== label) {
+    jump.setAttribute('aria-label', label);
+    jump.title = label;
+  }
+}
+
+/*
+ * Following again from here, as though they had never scrolled away: the glide
+ * down cannot let go of the end (see the scroll listener), anything streaming
+ * in meanwhile chases the new end, and scrolling up during it is the reader
+ * choosing somewhere else — the same as at any other time.
+ */
+jump.addEventListener('click', () => {
+  pinned = true;
+  paintJump();
+  // `auto` is the stylesheet's smooth, and instant under reduced motion — the
+  // stylesheet turns every smooth scroll off there.
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  thread.scrollTo({ top: thread.scrollHeight, behavior: still ? 'auto' : 'smooth' });
+  // The button is about to go. Keyboard focus moves to the conversation it
+  // brought them to, rather than falling back to the top of the page.
+  if (jump.matches(':focus-visible')) thread.focus({ preventScroll: true });
 });
 
 /**
@@ -5716,6 +5789,7 @@ thread.addEventListener('scroll', () => {
 }
 function scrollToEnd() {
   pinned = true;
+  paintJump();
   requestAnimationFrame(() => thread.scrollTo({ top: thread.scrollHeight }));
 }
 /**

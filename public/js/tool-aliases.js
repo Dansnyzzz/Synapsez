@@ -251,8 +251,28 @@ function placeInput(input) {
 }
 
 /**
+ * The command tools, whose `title` is only the step's name on screen
+ * (`STEP_TITLE` in definitions.js). The transcript shows no other tool's.
+ */
+export const TITLED = new Set(['run_command', 'run_background', 'sandbox_run']);
+
+/**
+ * A `title` that is not text, left out rather than refusing the command over
+ * it: it is the step's name on screen and nothing runs differently without it.
+ *
+ * @param {Record<string, any>} input
+ */
+function textTitle(input) {
+  if (input.title === undefined || input.title === null || typeof input.title === 'string') return input;
+  const out = { ...input };
+  delete out.title;
+  return out;
+}
+
+/**
  * The call as the tool will read it. Never throws, never drops a field it does
- * not recognise — the validator is the one that refuses.
+ * not recognise — the validator is the one that refuses. (One exception: a
+ * command's `title` that is not text — see `textTitle`.)
  *
  * @param {string} name
  * @param {unknown} input
@@ -260,6 +280,7 @@ function placeInput(input) {
  */
 export function canonicalInput(name, input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+  if (TITLED.has(name)) input = textTitle(/** @type {Record<string, any>} */ (input));
   if (name === 'cloud_browser') {
     const out = browserStep(/** @type {Record<string, any>} */ (input));
     if (Array.isArray(out.steps)) out.steps = out.steps.map(browserStep);

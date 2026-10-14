@@ -480,6 +480,16 @@
         <!-- Floats over the transcript rather than sitting under it, so messages
              scroll away beneath the composer instead of stopping short of it. -->
         <div class="dock" id="dock">
+          <!-- Back to the newest message, the way Claude's button works: there
+               only when you have scrolled away from the end, three moving dots
+               while the answer is still coming, the down arrow otherwise and
+               under the pointer. Positioned above the dock, so it rises with
+               the composer and with the approval box. -->
+          <button class="jump" id="jump" type="button" aria-label="Jump to the latest" title="Jump to the latest" data-i18n-title="chat.jumpLatest">
+            <span class="jump__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <svg class="jump__arrow" aria-hidden="true" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4v12M5 11l5 5 5-5" /></svg>
+          </button>
+
           <!-- The run has stopped and is waiting on a person, so this one *is*
                assertive: it is the only moment in the app where nothing further
                happens until somebody answers. Announcing it politely would

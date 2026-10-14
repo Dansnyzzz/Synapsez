@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-10-13 — a button back to the newest message; commands and files read the way Claude Code reads
+
+Asked for by the owner on 2026-10-13, with screenshots of Claude's desktop app, and "make it work the way Claude does".
+
+### Back to the newest message
+
+- **A round button over the composer** when you have scrolled up, the way Claude's is. While the answer is
+  still coming it shows three moving dots, so you know more is arriving below; otherwise — and under the pointer
+  or keyboard focus — a down arrow. Pressing it glides to the end and the reply follows you down again from
+  there; at the end the button is gone. It rises with the composer and with the approval box, and does not move
+  for anyone who has asked their system for less motion.
+- **Following the reply no longer lets go by itself.** The conversation glides when it scrolls for you, and
+  every position on the way down was read as you scrolling away — so following stopped mid-glide when a long
+  block arrived. Now only scrolling up lets go of the end.
+
+### Commands and files
+
+- **One card for a run of work.** Commands on your computer, commands and Python on the cloud computer, and
+  reading, writing, editing, listing and searching files used to be a card each — every cloud one headed "Ran on
+  the cloud computer", a Python call with nothing at all beside it. Back-to-back, they are now one card, as Claude
+  Code draws them, carried across the model's steps the way a browsing session already was.
+- **Headed by what is happening now.** While it works the card is folded and its title is the step it is on,
+  with a clock for the run so far: "Loading the survey data 1m 12s" — the clock runs on from one step's title to
+  the next, as Claude Code's does. While the model is reasoning between two steps the title says "Thinking…"
+  (the reasoning is a row inside the card). Finished, it says what was done: "Ran 5 commands, read
+  bibliometrics.py" — or, for a single step, the step itself. A browsing card is headed by its current step too,
+  with the same clock, and goes back to "Used the browser" when it is done.
+- **The model says what a command is for.** `run_command`, `run_background` and `sandbox_run` take an optional
+  `title` — a few words in the person's language — shown as the step's title. A model that leaves it out loses
+  nothing: the step is titled from the command, or from the first line of Python that says something. The title is
+  a name on screen and nothing more: risk is graded on the command alone, the approval prompt shows the command and
+  never the title, and in the transcript the command keeps a share of the line beside it however long the title
+  is. A title that is not text is dropped rather than refusing the command.
+- **The approval prompt shows what will run** for `run_background` and `sandbox_run` too. They fell through to
+  their arguments as JSON cut at 90 characters, and stored arguments come back with short keys first — so a
+  reloaded prompt could show the model's title and no command. It now shows the command (and any Python, files,
+  download, folder, and whether it runs as root), with line breaks marked, read the way the tool will run it.
+- **Files are named whole.** A file step shows the file's full name, not the path cut from the front
+  (`…/on/and/on/bibliom…`); the full path is on hover.
+- **Each row opens on what it ran and what it printed**, like Claude Code's — the command as code rather than
+  as escaped JSON. A failed row is open already. A document, chart or map keeps its own card, and so do deleting
+  and moving a file — never "used a tool" inside a folded card. A file a command hands over ends the card, so
+  later work starts below it rather than above.
+
 ## 2026-10-08 (later) — emails: tables that are tables, a header that survives translation, reports dated the day they go out
 
 Asked for by the owner on 2026-10-08, with screenshots of the 08/10 morning report.

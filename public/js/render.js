@@ -9,7 +9,7 @@ import { webRowHtml, titleFromContent } from './webrows.js';
 import { parseResults } from './rail.js';
 import { rememberSearch, rememberPage, auditCitations } from './cite.js';
 import { normalisePlan, planItemHtml, planChange } from './plan.js';
-import { canonicalInput } from './tool-aliases.js';
+import { canonicalInput, TITLED } from './tool-aliases.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -123,8 +123,32 @@ export function revealInStrip(node) {
 /** One-line preview of a tool's arguments, so the timeline reads at a glance. */
 export function summariseToolInput(name, input = {}) {
   switch (name) {
+    /*
+     * What runs, whole, and never the model's `title` for it. This line is the
+     * approval prompt: `run_background` and `sandbox_run` used to fall through
+     * to JSON cut at 90 characters, and the database stores keys shortest
+     * first, so a reloaded prompt read `{"title":"Tidying the CSV, nothing
+     * leaves the machine","command…` and showed no command at all (security
+     * review, 2026-10-13). Read the way the tool will read it, so `cmd` or
+     * `code` shows as what it becomes; each line break is shown, so a second
+     * line is never mistaken for the end of the first.
+     */
     case 'run_command':
-      return input.command || '';
+    case 'run_background':
+    case 'sandbox_run': {
+      const i = canonicalInput(name, input) || input || {};
+      const lines = (text) => String(text).trim().replace(/\r?\n/g, ' ⏎ ');
+      return [
+        i.as_root ? '[root]' : '',
+        typeof i.command === 'string' && i.command.trim() ? `$ ${lines(i.command)}` : '',
+        typeof i.python === 'string' && i.python.trim() ? `python: ${lines(i.python)}` : '',
+        Array.isArray(i.files) && i.files.length ? `files: ${i.files.map((f) => f?.path).join(', ')}` : '',
+        typeof i.download === 'string' && i.download ? `download: ${i.download}` : '',
+        typeof i.cwd === 'string' && i.cwd ? `in ${i.cwd}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    }
     case 'read_file':
     case 'write_file':
     case 'edit_file':
@@ -431,7 +455,8 @@ const STEP_DETAILS = {
   image_search: (i) => clip(i.query, 64),
   sports: (i) => clip(i.team || i.league || i.player || i.date || i.op, 64),
   show_card: (i) => clip(i.card?.title || i.type, 64),
-  sandbox_run: (i) => clip(i.command || i.download || (i.files || []).map((f) => f?.path).join(', '), 72),
+  // A Python call has no `command`; it was drawn with nothing beside the verb.
+  sandbox_run: (i) => clip(firstLine(i.command) || firstLine(i.python) || i.download || (i.files || []).map((f) => f?.path).join(', '), 72),
   cloud_browser: (i) => clip([i.action, i.url || i.value || i.text || i.key || (i.ref != null ? `#${i.ref}` : '')].filter(Boolean).join(' · '), 72),
   publish_file: (i) => clip(i.file_id, 24),
   look_at: (i) => clip(i.question || i.url || i.file_id, 64),
@@ -662,8 +687,197 @@ export function describeStep(name, input = {}) {
 export function stepFamily(name) {
   if (/^browser_/.test(name) || name === 'cloud_browser') return 'browser';
   if (/^desktop_/.test(name)) return 'desktop';
+  if (WORK_KINDS[name]) return 'work';
   return null;
 }
+
+/**
+ * Commands and file work — the third family that comes in long runs.
+ *
+ * Each `sandbox_run` used to be a card of its own headed "Ran on the cloud
+ * computer": the same words on every one, and twelve of them for one analysis.
+ * Claude Code draws that as one line — "Ran 5 commands, read bibliometrics.py" —
+ * headed while it works by what is happening now (owner, 2026-10-13). The
+ * value is what the finished run's summary counts the step as.
+ *
+ * Only tools whose result is text for the model. Anything that draws something
+ * for the person — a document, a chart, a map — keeps its own card.
+ */
+const WORK_KINDS = {
+  run_command: 'run',
+  run_background: 'run',
+  sandbox_run: 'run',
+  read_file: 'read',
+  fs_read_text: 'read',
+  write_file: 'write',
+  edit_file: 'edit',
+  multi_edit: 'edit',
+  glob: 'search',
+  grep: 'search',
+  fs_search: 'search',
+  list_dir: 'list',
+  fs_browse: 'list',
+  run_background_logs: 'other',
+  run_background_stop: 'other',
+  // `delete_file` and `move_file` are not here on purpose: folded into a run
+  // they would read "used a tool", and under the auto policy the transcript is
+  // the only record that something was deleted (security review, 2026-10-13).
+};
+
+/** How each kind is said in a finished run's summary: one of it, or several. */
+const WORK_SAID = {
+  run: ['work.run.one', 'work.run.many'],
+  read: ['work.read.one', 'work.read.many'],
+  write: ['work.write.one', 'work.write.many'],
+  edit: ['work.edit.one', 'work.edit.many'],
+  search: ['work.search.one', 'work.search.many'],
+  list: ['work.list.one', 'work.list.many'],
+  other: ['work.other.one', 'work.other.many'],
+};
+
+/** The kinds whose step is one file, named by the file. */
+const ON_A_FILE = new Set(['read', 'write', 'edit', 'list']);
+
+/** The last part of a path, whole — the part anybody is reading it for. */
+const baseName = (raw) =>
+  String(raw ?? '')
+    .trim()
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]/)
+    .pop() || '';
+
+/**
+ * The first line of a command or of Python that says something — not blank,
+ * not a `#` comment, which neither shell nor Python runs — with "…" after it
+ * when more follows, so one line is never taken for the whole of what ran.
+ * Only `#`: in bash `//usr/bin/env x` is a command, not a comment.
+ */
+function firstLine(code) {
+  const lines = String(code ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const at = lines.findIndex((line) => !line.startsWith('#'));
+  if (at < 0) return '';
+  return at < lines.length - 1 ? `${lines[at]} …` : lines[at];
+}
+
+/**
+ * One step of commands-and-files work, as its row and its card's title say it.
+ *
+ * The model's own title when it gave one (`title` on the command tools — see
+ * `STEP_TITLE` in server/tools/definitions.js), otherwise the verb. Beside it,
+ * always, what actually ran or what was touched: the title is the model's word
+ * for it and the command is the fact, so a reassuring title is never all that
+ * shows.
+ *
+ * A file is named whole and by its name: the path clipped from the front,
+ * `…/on/and/on/bibliometrics.py`, was what the owner kept reading past
+ * (2026-10-13). The full path is the tooltip.
+ *
+ * @returns {{ verb: string, detail: string, path: string, kind: string, file: string }}
+ */
+export function workStep(name, raw = {}) {
+  const input = canonicalInput(name, raw) || raw || {};
+  const kind = WORK_KINDS[name] || 'other';
+  const said = describeStep(name, input);
+  const own = TITLED.has(name) && typeof input.title === 'string' ? clip(input.title, 90) : '';
+  let verb = said.verb;
+  let detail = said.detail;
+  let path = '';
+  let file = '';
+  if (kind === 'run') {
+    if (name === 'sandbox_run' && !firstLine(input.command) && firstLine(input.python)) verb = t('step.sandbox_python');
+    detail = clip(firstLine(input.command) || firstLine(input.python) || said.detail, 200);
+  } else if (ON_A_FILE.has(kind)) {
+    path = typeof input.path === 'string' ? input.path.trim() : '';
+    file = baseName(path);
+    detail = file || path;
+  }
+  return { verb: own || verb, detail, path, kind, file };
+}
+
+/**
+ * A finished run of work in one line, the way Claude Code says it: "Ran 5
+ * commands, read bibliometrics.py". Kinds in the order they first happened; a
+ * kind done once names its file.
+ *
+ * @param {{ kind: string, file: string }[]} steps
+ */
+function workSummary(steps) {
+  /** @type {Map<string, { file: string }[]>} */
+  const byKind = new Map();
+  for (const step of steps) {
+    if (!byKind.has(step.kind)) byKind.set(step.kind, []);
+    byKind.get(step.kind).push(step);
+  }
+  const parts = [...byKind].map(([kind, list]) => {
+    const [one, many] = WORK_SAID[kind] || WORK_SAID.other;
+    return list.length > 1 ? t(many, { n: list.length }) : t(one, { name: list[0].file || t('work.aFile') });
+  });
+  const said = t('work.summary', { list: parts.join(', ') });
+  return said.charAt(0).toUpperCase() + said.slice(1);
+}
+
+/**
+ * How long a run has been at it, the way Claude Code counts: "12s", "1m 12s".
+ * The whole run, not the step in its title — Claude's clock runs on from one
+ * step's title to the next ("Reading the table 1m 1s", then "Checking the
+ * options 1m 12s"), and so does this one, through the thinking between them.
+ */
+function clockText(elapsed) {
+  const s = Math.floor(elapsed / 1000);
+  if (s < 1) return '';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h ${m}m` : m ? `${m}m ${s % 60}s` : `${s}s`;
+}
+
+/**
+ * The runs whose title carries a running clock, ticked together.
+ *
+ * One timer for all of them rather than one each, stopped when none is
+ * working. A run whose card has left the page is skipped — its conversation
+ * may come back on screen — and let go of after ten minutes away, so a card
+ * thrown out mid-step cannot keep a timer alive for the life of the tab.
+ */
+const CLOCKS = new Set();
+let clockTimer = null;
+
+function tickClocks() {
+  for (const run of CLOCKS) {
+    if (run.pending === 0) {
+      CLOCKS.delete(run);
+    } else if (!run.node.isConnected) {
+      run.away = (run.away || 0) + 1;
+      if (run.away > 1200) CLOCKS.delete(run); // ten minutes of half-second ticks
+    } else {
+      run.away = 0;
+      const text = clockText(Date.now() - run.started);
+      if (run.clock.textContent !== text) run.clock.textContent = text;
+    }
+  }
+  if (!CLOCKS.size) {
+    clearInterval(clockTimer);
+    clockTimer = null;
+  }
+}
+
+/**
+ * Keep this run's clock going while it works, or stop it. Ticks twice a second
+ * so the number it shows is never more than half a second behind.
+ */
+function keepClock(run, working) {
+  if (working && run.started) {
+    CLOCKS.add(run);
+    clockTimer ??= setInterval(tickClocks, 500);
+  } else {
+    CLOCKS.delete(run);
+  }
+}
+
+/** For the interface suite: how many clocks are ticking, and whether the timer is. */
+export const __testing = { clocks: () => ({ live: CLOCKS.size, timer: clockTimer !== null }) };
 
 /** A file's extension, upper-cased, as the stand-in for a thumbnail. */
 const extensionBadge = (name) => String(name || 'file').split('.').pop().slice(0, 4).toUpperCase();
@@ -1464,10 +1678,18 @@ export function assistantMessage() {
   let thinkingDone = false;
   /** The row inside a carried run of steps that holds this block's reasoning, while it is there. */
   let thoughtHost = null;
+  /** The run that row is in — whose title says "Thinking…" while the reasoning arrives. */
+  let parkedIn = null;
   let prose = null;
   let rawText = '';
   /** Whether a repaint is already scheduled for the next frame — see appendText. */
   let paintQueued = false;
+  /**
+   * Redrawing a saved turn rather than watching one. A step drawn now did not
+   * start now, so it starts no clock: a run reloaded three minutes in must not
+   * read "2s".
+   */
+  let hydrating = false;
 
   /**
    * A run of steps in one family, drawn as a single card.
@@ -1683,11 +1905,21 @@ export function assistantMessage() {
     };
   }
 
+  /**
+   * Fold a finished run. A run of commands is not touched: it was folded while
+   * it worked, as Claude Code's are, so it is open now only because somebody
+   * opened it — and shutting it on them when the answer arrives is taking back
+   * what they were reading.
+   */
+  function fold(run) {
+    if (run.family !== 'work') run.node.open = false;
+  }
+
   function closeSteps() {
     if (!group) return;
     // The run is history now: fold it up. Its mark already says how it went.
     paintGroupSummary(group);
-    group.node.open = false;
+    fold(group);
     group = null;
   }
 
@@ -1702,14 +1934,40 @@ export function assistantMessage() {
    * running; then it is a tick, or a cross when every step failed — a run where
    * one step of eight failed is a tick with "1 failed" beside it, not a red
    * title over a green tick.
+   *
+   * The title is what is happening now, as Claude Code heads its runs (owner,
+   * 2026-10-13): while a step runs, that step — the newest, when several do —
+   * in the words its row uses, with a clock. Done, a run of commands says what
+   * was done ("Ran 5 commands, read bibliometrics.py", or the one step itself),
+   * and a browsing session is the browser again.
    */
   function paintGroupSummary(run = group) {
     if (!run) return;
-    run.title.textContent = run.family === 'desktop' ? t('steps.desktop') : t('steps.browser');
-    const tally = [t('steps.count').replace('{n}', String(run.count))];
+    const now = run.pending > 0 ? [...run.steps].reverse().find((s) => !s.done) : null;
+    // Reasoning parked in the card between two of its steps — see `settleThought`.
+    const thinking = !now && !!run.thinking;
+    const only = run.family === 'work' && run.steps.length === 1 ? run.steps[0] : null;
+    const shown = now || (thinking ? null : only);
+    run.title.textContent = shown
+      ? shown.verb
+      : thinking
+        ? t('status.thinking')
+        : run.family === 'work'
+          ? workSummary(run.steps)
+          : run.family === 'desktop'
+            ? t('steps.desktop')
+            : t('steps.browser');
+    run.detail.textContent = shown?.detail || '';
+    run.detail.hidden = !shown?.detail;
+    if (shown?.path) run.detail.title = shown.path;
+    else run.detail.removeAttribute('title');
+    keepClock(run, !!now || thinking);
+    if (!now && !thinking) run.clock.textContent = '';
+    // A run of commands counts in its title; only a failure is said beside it.
+    const tally = run.family === 'work' ? [] : [t('steps.count').replace('{n}', String(run.count))];
     if (run.failures) tally.push(t('steps.failedCount', { n: run.failures }));
     run.tally.textContent = tally.join(' · ');
-    const working = run.pending > 0;
+    const working = run.pending > 0 || thinking;
     const allFailed = !working && run.count > 0 && run.failures === run.count;
     const want = working ? MARK_PENDING : `<span class="mark">${allFailed ? '✗' : '✓'}</span>`;
     const mark = run.node.querySelector(':scope > summary > .mark');
@@ -1746,6 +2004,8 @@ export function assistantMessage() {
    */
   function unnestThinking() {
     if (!thoughtHost) return;
+    settleThought();
+    parkedIn = null;
     if (thoughtHost.parentElement && thoughtHost.parentElement.lastElementChild !== thoughtHost) {
       thinkingBlock?.classList.remove('think--inline');
       thoughtHost = null;
@@ -1757,6 +2017,22 @@ export function assistantMessage() {
     }
     thoughtHost.remove();
     thoughtHost = null;
+  }
+
+  /**
+   * The reasoning parked in a run has stopped arriving, so the run's title
+   * stops saying it is thinking.
+   *
+   * Without this a run of commands — folded, as Claude Code's are — read as
+   * finished for the whole of the reasoning between two of its commands: the
+   * reasoning is a row inside it, out of sight, and its mark was a tick (code
+   * review, 2026-10-13). While a thought arrives the title says "Thinking…",
+   * the mark waits and the clock runs.
+   */
+  function settleThought() {
+    if (!parkedIn?.thinking) return;
+    parkedIn.thinking = false;
+    paintGroupSummary(parkedIn);
   }
 
   /**
@@ -1773,7 +2049,56 @@ export function assistantMessage() {
     if (last.group === group) return; // ours: closeGroup folds it
     last.group.live = false;
     paintGroupSummary(last.group);
-    last.group.node.open = false;
+    fold(last.group);
+  }
+
+  /**
+   * A step of this run put something on the page after its card — a file, a
+   * picture. The run cannot grow on above it, or the file would end up under
+   * work done after it was made: the next command starts a card below.
+   */
+  function endRunAt(run) {
+    if (group === run) group = null;
+    if (lastStepRun?.group === run) lastStepRun = null;
+    run.live = false;
+    paintGroupSummary(run);
+  }
+
+  /**
+   * What a command ran, for whoever opens its row: `$ the command`, then any
+   * Python, as code rather than as a JSON string with its newlines escaped —
+   * which is how Claude Code shows it. Any other argument is listed after it,
+   * so nothing the call carried is hidden.
+   */
+  function workCode(call) {
+    const input = canonicalInput(call.name, call.input) || call.input || {};
+    const parts = [];
+    if (typeof input.command === 'string' && input.command.trim()) parts.push(`$ ${input.command.trim()}`);
+    if (typeof input.python === 'string' && input.python.trim()) parts.push(input.python.replace(/\s+$/, ''));
+    if (!parts.length) {
+      const node = toolCallDetail(call);
+      node.querySelector('pre')?.classList.add('step__code');
+      return node;
+    }
+    const node = el('div', 'tool__call');
+    node.title = call.name;
+    const code = el('pre', 'tool__args step__code');
+    code.textContent = parts.join('\n\n');
+    node.append(code);
+    const rest = { ...input };
+    delete rest.command;
+    delete rest.python;
+    delete rest.title;
+    if (Object.keys(rest).length) {
+      const more = el('pre', 'tool__args');
+      try {
+        more.textContent = JSON.stringify(rest, null, 2);
+      } catch {
+        more.textContent = String(rest);
+      }
+      node.append(more);
+    }
+    return node;
   }
 
   /**
@@ -1786,22 +2111,49 @@ export function assistantMessage() {
    */
   function startStep(call, family) {
     const run = groupFor(family);
+    const work = family === 'work';
+    const said = work ? workStep(call.name, call.input) : { ...describeStep(call.name, call.input), path: '', kind: '', file: '' };
+    const { verb, detail } = said;
+    const entry = { verb, detail, path: said.path, kind: said.kind, file: said.file, done: false };
+    run.steps.push(entry);
+    if (!hydrating && !run.started) run.started = Date.now();
     run.count += 1;
     run.pending += 1;
     paintGroupSummary(run);
 
-    const { verb, detail } = describeStep(call.name, call.input);
     const href = stepLink(call.input);
 
-    const item = el('li', 'step');
+    const item = el('li', work ? 'step step--work' : 'step');
     const mark = el('span', 'step__mark', '<span class="spinner"></span>');
     const label = el('span', 'step__label');
     const verbNode = el('span', 'step__verb');
     verbNode.textContent = verb;
     label.append(verbNode);
-    if (detail) label.append(detailNode('step__detail', detail, href));
+    if (detail) {
+      const what = detailNode('step__detail', detail, href);
+      if (said.path) what.title = said.path;
+      label.append(what);
+    }
     const time = el('span', 'step__time');
-    item.append(mark, label, time);
+
+    /*
+     * A row of a run of commands opens by itself, like Claude Code's: the
+     * command it ran and, once it is done, what it printed. The browser's rows
+     * keep their screenshot and the "Output" line under it.
+     */
+    let rowFold = null;
+    let foldBody = null;
+    if (work) {
+      rowFold = el('details', 'step__fold');
+      const head = el('summary', 'step__head');
+      head.append(mark, label, time);
+      foldBody = el('div', 'step__body');
+      foldBody.append(workCode(call));
+      rowFold.append(head, foldBody);
+      item.append(rowFold);
+    } else {
+      item.append(mark, label, time);
+    }
     run.list.append(item);
 
     return {
@@ -1812,7 +2164,35 @@ export function assistantMessage() {
         if (result.ms != null) time.textContent = ms(result.ms);
         run.pending = Math.max(0, run.pending - 1);
         if (result.isError) run.failures += 1;
+        entry.done = true;
         paintGroupSummary(run);
+
+        if (work) {
+          const printed = el('pre', 'step__output');
+          printed.textContent = forDisplay(result.content) || t('chat.noOutput');
+          foldBody.append(printed);
+          // A failure is the one row somebody needs to read; it is open already.
+          if (result.isError) rowFold.open = true;
+          let placed = false;
+          if (result.file?.id) {
+            placeFile(body, result.file);
+            placed = true;
+          }
+          if (drawable(result.widget)) {
+            body.append(widgetNode(result.widget, result.name));
+            placed = true;
+          }
+          if (result.schedule?.id) {
+            placeScheduleCard(body, result.schedule);
+            placed = true;
+          }
+          if (result.answered) {
+            placeAnswer(body, result.answered);
+            placed = true;
+          }
+          if (placed) endRunAt(run);
+          return;
+        }
 
         /**
          * What the screen looked like when this step finished.
@@ -1864,7 +2244,7 @@ export function assistantMessage() {
     if (carried) {
       group = carried;
       group.live = true;
-      group.node.open = true;
+      if (family !== 'work') group.node.open = true;
       lastStepRun = { group, wrap, body };
       return group;
     }
@@ -1875,19 +2255,43 @@ export function assistantMessage() {
     closeGroup();
 
     const node = el('details', 'block steps');
-    node.open = true;
+    node.dataset.family = family;
+    /*
+     * A browsing session is held open so you watch it happen (owner,
+     * 2026-10-07). A run of commands is folded, as Claude Code's are: its
+     * title already says what is happening, and the rows are one click away.
+     */
+    node.open = family !== 'work';
     const summary = el('summary');
     summary.innerHTML = MARK_PENDING;
     const title = el('span', 'steps__title');
+    const detail = el('span', 'steps__detail');
+    detail.hidden = true;
+    const clock = el('span', 'steps__clock');
     const tally = el('span', 'steps__tally');
-    summary.append(title, tally);
+    summary.append(title, detail, clock, tally);
     node.append(summary);
 
     const list = el('ol', 'steps__list');
     node.append(list);
     body.append(node);
 
-    group = { family, node, list, title, tally, count: 0, pending: 0, failures: 0, live: true };
+    group = {
+      family,
+      node,
+      list,
+      title,
+      detail,
+      clock,
+      tally,
+      /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean }[]} */
+      steps: [],
+      started: 0,
+      count: 0,
+      pending: 0,
+      failures: 0,
+      live: true,
+    };
     lastStepRun = { group, wrap, body };
     return group;
   }
@@ -1958,13 +2362,18 @@ export function assistantMessage() {
           thinkingBlock.classList.add('think--inline');
           thoughtHost.append(thinkingBlock);
           carried.list.append(thoughtHost);
-          if (carried.live !== false) carried.node.open = true;
+          if (carried.live !== false && carried.family !== 'work') carried.node.open = true;
           lastStepRun = { group: carried, wrap, body };
+          parkedIn = carried;
         } else {
           body.append(thinkingBlock);
         }
       }
       thinkingDone = false;
+      if (parkedIn && thoughtHost && !parkedIn.thinking) {
+        parkedIn.thinking = true;
+        paintGroupSummary(parkedIn);
+      }
       const text = thinkingBody.firstElementChild;
       const fresh = el('span', 'think__new');
       fresh.textContent = delta;
@@ -1984,6 +2393,7 @@ export function assistantMessage() {
       // normalize over the whole of it, and a forced layout — once is enough.
       if (!thinkingBlock || thinkingDone) return;
       thinkingDone = true;
+      settleThought();
       thinkingBlock.classList.remove('is-live');
       thinkingBlock.querySelector('.think__head .mark')?.replaceWith(el('span', 'mark', '✓'));
       thinkingBlock.querySelector('.think__title').textContent = t('chat.reasoning');
@@ -2004,6 +2414,8 @@ export function assistantMessage() {
      */
     adoptThinkingAsReply(text) {
       if (prose || !thinkingBlock) return;
+      settleThought();
+      parkedIn = null;
       thinkingBlock.remove();
       thinkingBlock = null;
       thinkingBody = null;
@@ -2086,6 +2498,8 @@ export function assistantMessage() {
         thinkingBlock = null;
         thinkingBody = null;
       }
+      settleThought();
+      parkedIn = null;
       thoughtHost?.remove();
       thoughtHost = null;
       // Cancel any frame still owed. Without this the queued paint would run
@@ -2141,10 +2555,17 @@ export function assistantMessage() {
      * the call is whole.
      */
     draftTool(name) {
-      // Browser clicks and file reads are tiny and grouped into a run of steps;
-      // a draft card between them would only flicker.
-      if (stepFamily(name) || WEB_TOOLS.has(name)) return null;
-      leaveRun();
+      // Browser clicks are tiny and grouped into a run of steps; a draft card
+      // between them would only flicker.
+      const family = stepFamily(name);
+      if ((family && family !== 'work') || WEB_TOOLS.has(name)) return null;
+      /*
+       * A command or a file can take a minute to write — a long script, a whole
+       * module — so it gets a draft card like any long call. It stands after
+       * the run it is about to join and does not end it: it is gone before the
+       * call arrives (`clearDrafts` in app.js), and the call carries the run on.
+       */
+      if (family !== 'work') leaveRun();
       const { verb } = describeStep(name, {});
       const block = el('div', 'block tool tool--draft');
       block.setAttribute('role', 'status');
@@ -2267,19 +2688,11 @@ export function assistantMessage() {
         api.appendThinking(message.thinking);
         api.finishThinking();
       }
-      for (const call of message.toolCalls || []) {
-        if (call.name === 'update_plan') api.setPlan(call.input?.steps);
-        const handle = api.startTool(call);
-        const result = resultsByCallId?.get(call.id);
-        /*
-         * No result, and nothing still running: the server was cut off before
-         * the call could answer (a long deep research past the time limit).
-         * That was drawn as a green tick over "no result" — a success that
-         * never happened. It is said for what it is; a turn still running
-         * leaves the card spinning until its result arrives.
-         */
-        if (result) handle.complete(result);
-        else if (!pending) handle.complete({ content: t('chat.cutOff'), isError: true });
+      hydrating = true;
+      try {
+        hydrateCalls(message, resultsByCallId, pending);
+      } finally {
+        hydrating = false;
       }
       if (message.text) api.appendText(message.text);
       // Only the reply's last block carries the time it finished, so a long turn
@@ -2304,18 +2717,38 @@ export function assistantMessage() {
       const row = wrap.querySelector(':scope > .msg__actions');
       const when = row && !row.querySelector('.msg__time') ? timeStamp(at) : null;
       if (when) row.prepend(when);
+      // A turn can stop mid-thought; its run must not say "Thinking…" for ever.
+      settleThought();
       closeGroup();
       // A block that holds a carried run without a step of its own — it ended
       // on reasoning, the turn stopped there — folds that run as well.
       if (lastStepRun?.wrap === wrap && lastStepRun.group !== group) {
         paintGroupSummary(lastStepRun.group);
-        lastStepRun.group.node.open = false;
+        fold(lastStepRun.group);
       }
       // Sources the conversation cannot account for are marked once the reply
       // is whole; opening a chip checks again with whatever has loaded since.
       if (prose) auditCitations(prose);
     },
   };
+
+  /** A saved turn's calls, each drawn and given the result it got. */
+  function hydrateCalls(message, resultsByCallId, pending) {
+    for (const call of message.toolCalls || []) {
+      if (call.name === 'update_plan') api.setPlan(call.input?.steps);
+      const handle = api.startTool(call);
+      const result = resultsByCallId?.get(call.id);
+      /*
+       * No result, and nothing still running: the server was cut off before
+       * the call could answer (a long deep research past the time limit).
+       * That was drawn as a green tick over "no result" — a success that
+       * never happened. It is said for what it is; a turn still running
+       * leaves the card spinning until its result arrives.
+       */
+      if (result) handle.complete(result);
+      else if (!pending) handle.complete({ content: t('chat.cutOff'), isError: true });
+    }
+  }
 
   return api;
 }
