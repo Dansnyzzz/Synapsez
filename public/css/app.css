@@ -511,6 +511,20 @@ textarea {
   cursor: pointer;
 }
 .gate__switch:hover { color: var(--accent); }
+.gate__about {
+  margin: 18px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.gate__legal {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-underline-offset: 3px;
+}
+.gate__legal:hover { color: var(--accent); }
 
 /* Sits above the topbar; used for "confirm your email". */
 .banner {

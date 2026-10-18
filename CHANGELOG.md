@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-10-18 — ready for Google's branding check; Google data goes only where nothing trains on it
+
+Asked for by the owner on 2026-10-18, after Google's Branding page said the home page was not theirs and the
+privacy policy was not enough. Everything here stays on the free tier.
+
+- **The home page is provably the owner's**: Search Console's verification file is served at
+  `/google19190bbd34c2487c.html`.
+- **A privacy policy Google can accept** (`/privacy.html`, version privacy-2026-10-18, Vietnamese and English): it
+  names Synapsez and its contact, says what is read from each Google product and why, who may see it, how it is
+  stored, how to stop and delete it, and carries Google's Limited Use statement. New accounts agree to this version.
+- **The sign-in screen says what Synapsez is and links the policy**, so someone without an account can read both.
+- **What is read from Google goes only to models that do not train on it.** A conversation that has read Gmail,
+  Drive, Calendar or any other Google product, or holds a file attached from Drive, is sent only to Anthropic,
+  OpenAI, or OpenRouter restricted to zero-retention endpoints — never through a Gemini key or OrcaRouter. A model
+  that cannot meet that is refused with a sentence saying why, and nothing is sent. The same goes for the work such
+  a conversation starts: folding it, sub-agents (which are no longer given the Google tools at all), deep research,
+  reading a picture for a model that cannot see, and a cheap model chosen for a role; Google-grounded search,
+  making pictures and searching indexed folders, which use a Gemini key, stand aside.
+- **A memory note saved from such a conversation is marked**, and — like what `search_chats` would quote from it —
+  is read only into conversations that hold Google data too. Elsewhere the assistant is told a note was held back.
+- On the free tier this means a free model whose only providers keep data cannot answer a conversation that read
+  Google; another model, or a new conversation, can.
+
 ## 2026-10-14 — the + menu, in both message boxes; how full a project is; a quieter memory card
 
 Asked for by the owner on 2026-10-14, with screenshots of Claude's composer and project page.

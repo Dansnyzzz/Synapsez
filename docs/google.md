@@ -69,6 +69,48 @@ or a small team. Removing the warning for the public requires Google's verificat
 which for restricted scopes includes a paid security assessment; that is a business decision,
 not a code change.
 
+## 4. Branding verification (free, no security assessment)
+
+Google's **Branding** page checks three things before it shows the app's name and logo on the
+consent screen. None of them costs anything:
+
+1. **The home page is yours.** Verify `https://YOUR-DOMAIN/` as a *URL-prefix* property in
+   [Search Console](https://search.google.com/search-console) with the *HTML file* method: Google
+   gives you a file such as `google1234abcd.html`; put it in `public/`, deploy, press **Verify**.
+   This deployment's file is `public/google19190bbd34c2487c.html` — leave it in place, or the
+   verification lapses. Use the same Google account as the Cloud project.
+2. **The privacy policy link** is `https://YOUR-DOMAIN/privacy.html` — not the home page. It
+   names who runs the deployment, what is read from each Google product, and carries the Limited
+   Use statement Google asks for.
+3. **The home page links the policy and says what the app does** — the sign-in screen does both
+   without an account.
+
+Then choose **I have fixed the issues** on the Branding page. This is separate from the
+restricted-scope review in section 3, which is the one that needs a paid assessment.
+
+## 5. Where Google data may go (Limited Use)
+
+Google's [API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy)
+lets this app pass what it reads from Google to another service only to do what the person asked,
+and never so that it trains a general model. `server/googleData.js` keeps that true:
+
+- A conversation **holds Google data** once a Google tool has returned something in it, or a file
+  from Drive was attached. It stays so, folded turns included.
+- Such a conversation is sent only to **Anthropic**, **OpenAI**, or **OpenRouter asked for
+  zero-retention endpoints** (strict privacy, whatever the account chose). A **Gemini key** (the
+  free tier may train) and **OrcaRouter** are refused with a sentence saying why. Gemini *through
+  OpenRouter* is fine if one of its endpoints there has zero retention.
+- The same holds for everything such a turn starts — a fold, a sub-agent, deep research, a picture
+  read for a model that cannot see, a cheap model for a role — and the tools that call a Gemini
+  key directly (Google-grounded search, `generate_image`, searching indexed folders) stand aside.
+- Sub-agents are never given the Google tools: their answer would come back unmarked.
+- A memory note saved in such a conversation is marked, and like an excerpt from it found by
+  `search_chats`, is read only into conversations that hold Google data too.
+
+On the free tier this means a free model whose only providers keep data cannot answer a
+conversation that read Gmail or Drive: the assistant says so, and another model (or a new
+conversation without Google data) works.
+
 ## Google Search
 
 Separate from the above and needs no OAuth: web search uses real Google results through

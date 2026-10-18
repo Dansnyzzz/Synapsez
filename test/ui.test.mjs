@@ -160,7 +160,7 @@ check('the app opened', await page.isVisible('#model-chip'));
   const { getStore } = await import('../server/store/index.js');
   const me = await getStore().getUserByEmail('ui@test.local');
   const consented = (await getStore().listAudit(me.id, 50)).find((e) => e.kind === 'consent_given');
-  check('  and the agreement is in the security record, with the notice\'s version', consented?.detail?.notice === 'privacy-2026-10-08', JSON.stringify(consented?.detail));
+  check('  and the agreement is in the security record, with the notice\'s version', consented?.detail?.notice === 'privacy-2026-10-18', JSON.stringify(consented?.detail));
 }
 
 /**

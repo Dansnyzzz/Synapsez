@@ -2,7 +2,7 @@
 
 > Bản mẫu do mã nguồn cung cấp (LAW-001), để bên vận hành một bản triển khai Synapsez lập hồ sơ theo Luật
 > Bảo vệ dữ liệu cá nhân số 91/2025/QH15 (hiệu lực 01/01/2026) và văn bản hướng dẫn. Phần mô tả kỹ thuật dưới
-> đây đúng với phần mềm tại phiên bản `privacy-2026-10-08`; phần pháp lý — biểu mẫu, thời hạn nộp, cơ quan tiếp
+> đây đúng với phần mềm tại phiên bản `privacy-2026-10-18`; phần pháp lý — biểu mẫu, thời hạn nộp, cơ quan tiếp
 > nhận, căn cứ điều khoản — **phải được luật sư đối chiếu với văn bản hiện hành**. Đây không phải tư vấn pháp lý.
 
 ## 1. Bên chuyển dữ liệu
@@ -36,11 +36,13 @@
 | Exa, DuckDuckGo, Tavily, Brave, Google | Câu truy vấn tìm kiếm | Khi trợ lý tìm kiếm web | Hoa Kỳ | *[điền]* |
 | OpenStreetMap: Nominatim (OSMF), Overpass (overpass-api.de, overpass.kumi.systems), OSRM (router.project-osrm.org, routing.openstreetmap.de — FOSSGIS) | Tên địa điểm; toạ độ nơi được tìm quanh, kể cả vị trí gần đúng (~1 km) khi hỏi "gần tôi" | Khi trợ lý tra địa điểm, tìm quanh một nơi, chỉ đường | Chủ yếu châu Âu (Đức và các nước khác) — bên vận hành kiểm tra | *[điền]* |
 | Dịch vụ email (Gmail/Resend/SMTP) | Email người dùng nhờ gửi | Khi gửi email | *[điền]* | *[điền]* |
+| Google (Gmail, Drive, Lịch, Tài liệu, Trang tính, Biểu mẫu, Tasks, Danh bạ) | Yêu cầu cần để làm việc người dùng nhờ | Chỉ khi người dùng tự kết nối Google | Hoa Kỳ / toàn cầu | Google API Services User Data Policy |
 
 ## 4. Biện pháp bảo vệ đã có trong phần mềm
 
 - Mã hoá khi truyền (TLS); khoá API mã hoá khi lưu (khoá mã hoá tách khỏi khoá phiên).
 - Chế độ Nghiêm ngặt cho OpenRouter (không lưu, không huấn luyện, zero data retention).
+- Dữ liệu từ tài khoản Google (khi người dùng tự kết nối) chỉ được gửi tới Anthropic, OpenAI, hoặc OpenRouter ở chế độ Nghiêm ngặt — không bao giờ qua key Gemini hay OrcaRouter; ghi chú và đoạn trích hội thoại cũ chứa dữ liệu đó chỉ đọc vào hội thoại cũng có dữ liệu Google (`server/googleData.js`, theo Google API Services User Data Policy — Limited Use).
 - Che thông tin cá nhân (tuỳ chọn, PRV-003): email, SĐT, CMND/CCCD, số tài khoản, số thẻ, tên có nhãn được thay bằng mã giữ chỗ trước khi gửi; bảng ánh xạ chỉ trong bộ nhớ một lần gọi. Giới hạn: không che tên không có nhãn, địa chỉ, thông tin nhận diện qua ngữ cảnh.
 - Hội thoại ẩn danh; tắt bộ nhớ; tắt tìm hội thoại cũ; thời hạn lưu.
 - Xuất dữ liệu, xoá dữ liệu, xoá tài khoản ngay trong ứng dụng.
@@ -63,6 +65,6 @@
 
 ## 7. Việc bên vận hành cần làm
 
-1. Điền mục 1, 3 (cột trống) và 5; cập nhật `public/privacy.html` mục 1 với tên và liên hệ của mình.
+1. Điền mục 1, 3 (cột trống) và 5. (`public/privacy.html` mục 1 đã có tên và liên hệ: Synapsez — <herozombie06@gmail.com>, từ 2026-10-18.)
 2. Nhờ luật sư xác nhận hồ sơ và thông báo theo văn bản hiện hành; nộp hồ sơ theo yêu cầu (nếu có).
 3. Khi thông báo thay đổi nội dung: tăng phiên bản (`privacy-YYYY-MM-DD`) ở `public/privacy.html` và `PRIVACY_NOTICE` trong `public/js/app.js` (test giữ hai chỗ khớp nhau).

@@ -1222,6 +1222,8 @@ export const vi = {
   'gate.consentNeeded': 'Hãy đánh dấu đồng ý với thông báo xử lý dữ liệu cá nhân trước.',
   'memory.notice': 'Thông báo xử lý dữ liệu cá nhân — xử lý gì, gửi đi đâu và quyền của bạn',
   'gate.forgot': 'Quên mật khẩu?',
+  'gate.about': 'Synapsez là trợ lý AI: trò chuyện với mô hình bạn chọn, làm việc với tệp của bạn và, chỉ khi bạn kết nối, với Gmail, Drive, Lịch và các ứng dụng Google khác, để làm việc bạn yêu cầu.',
+  'gate.privacy': 'Chính sách quyền riêng tư',
   'nav.collapse': 'Thu gọn menu',
   'nav.closeMenu': 'Đóng menu',
   'nav.main': 'Điều hướng chính',
