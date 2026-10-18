@@ -45,8 +45,8 @@ import {
 import { TOOLS } from './tools/definitions.js';
 import { executeTool } from './tools/execute.js';
 import { runAgent } from './agent.js';
-import { saveSkill } from './skills.js';
-import { addSource } from './projects.js';
+import { saveSkill, builtinSkillCards } from './skills.js';
+import { addSource, shelfCapacity } from './projects.js';
 import {
   parseSchedule,
   fromFrequency,
@@ -899,6 +899,9 @@ export function createApp() {
         'providerPrivacy',
         'maskPersonal',
         'modelNotice',
+        'pluginsOff',
+        'connectorsOff',
+        'toolLoading',
       ];
       const patch = {};
       for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
@@ -1527,7 +1530,22 @@ export function createApp() {
         .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
         .slice(0, 12);
 
-      res.json({ project, files, chats, memory, tasks, outputs });
+      /*
+       * How full the shelf is, as Claude's projects show it (owner, 2026-10-14):
+       * against what the account's model is actually sent whole — past it,
+       * answers are drawn from the passages that match the question instead.
+       * The model is resolved for its window only; one that cannot be resolved
+       * is measured against the usual budget rather than failing the page.
+       */
+      let context = 0;
+      try {
+        context = (await resolveModelId((await getPrefs(req.user.id)).defaultModel))?.context || 0;
+      } catch {
+        /* the default budget */
+      }
+      const capacity = shelfCapacity(files, context);
+
+      res.json({ project, files, chats, memory, tasks, outputs, capacity });
     }),
   );
 
@@ -1619,7 +1637,8 @@ export function createApp() {
   api.get(
     '/skills',
     wrap(async (req, res) => {
-      res.json({ skills: await getStore().listSkills(req.user.id) });
+      // The built-ins too, for the + menu — names and when to use them only.
+      res.json({ skills: await getStore().listSkills(req.user.id), builtin: builtinSkillCards() });
     }),
   );
 

@@ -57,6 +57,23 @@ export function shelfBudget(contextTokens) {
 }
 
 /**
+ * How full a project's shelf is, against what a turn is sent whole.
+ *
+ * The same arithmetic `selectSources` decides by: the quotable text of every
+ * source (pictures have none and never compete) against `shelfBudget` for the
+ * account's model. `searching` is the page's "Search mode" — past the budget,
+ * a turn is sent the passages that match its question rather than everything.
+ *
+ * @param {{ kind?: string, chars?: number|string|null }[]} files
+ * @param {number} [contextTokens]
+ */
+export function shelfCapacity(files, contextTokens) {
+  const used = (files || []).filter((f) => f.kind !== 'image').reduce((sum, f) => sum + (Number(f.chars) || 0), 0);
+  const budget = shelfBudget(contextTokens);
+  return { used, budget, percent: Math.round((used / budget) * 100), searching: used > budget };
+}
+
+/**
  * Passage size when a shelf is too big to send whole. Big enough to hold an
  * idea, and never so big that one passage swallows the budget it is competing
  * for — chop finer when there is less room, or the best-matching passage is the

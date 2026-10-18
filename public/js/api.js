@@ -168,6 +168,9 @@ export const api = {
   connectors: () => request('GET', '/api/connectors'),
   connect: (service, token) => request('POST', `/api/connectors/${service}`, { token }),
   disconnect: (service) => request('DELETE', `/api/connectors/${service}`),
+  // The + menu's Google Drive picker: find a file, and attach it to the message.
+  driveFiles: (q = '') => request('GET', `/api/connectors/google/drive${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  attachDriveFile: (id) => request('POST', `/api/connectors/google/drive/${encodeURIComponent(id)}/attach`),
 
   // MCP servers — tools from outside this app. Adding one tries it first, so the
   // answer to "did that work" arrives here rather than mid-task tomorrow.
@@ -263,8 +266,14 @@ export const api = {
   searchChats: (q) => request('GET', `/api/chats/search?q=${encodeURIComponent(q)}`),
   updateChat: (id, patch) => request('PATCH', `/api/chats/${id}`, patch),
   deleteChat: (id) => request('DELETE', `/api/chats/${id}`),
-  sendMessage: (id, text, attachments, intent) =>
-    request('POST', `/api/chats/${id}/messages`, { text, attachments, ...(intent ? { intent } : {}) }),
+  sendMessage: (id, text, attachments, intent, skills) =>
+    request('POST', `/api/chats/${id}/messages`, {
+      text,
+      attachments,
+      ...(intent ? { intent } : {}),
+      // Picked in the + menu; the server keeps only real ones (`chosenSkills`).
+      ...(skills?.length ? { skills } : {}),
+    }),
   /**
    * Tell the server to stop, as well as hanging up on it.
    *

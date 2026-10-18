@@ -248,6 +248,12 @@ export function createProjectPage({
   newTask = (/** @type {{ project: { id: string, name: string }, after: () => Promise<void> }} */ _options) => {},
   /** Show one task on its own page. */
   openTask = (/** @type {string} */ _id) => {},
+  /** Open the composer's + menu from this page's + — one menu for both boxes. */
+  openPlus = (/** @type {HTMLElement} */ _anchor) => {},
+  /** Whether a file picked in the + menu is uploaded and ready to go. */
+  draftReady = () => false,
+  /** The page has come on screen — the files and skills already picked are drawn above its box. */
+  onShow = () => {},
 }) {
   const page = $('project-page');
   const nameEl = $('project-page-name');
@@ -622,41 +628,18 @@ export function createProjectPage({
         }
       </section>
 
-      <!-- What the assistant has learned. A note picked up inside this
-           project is filed under it and read back only by its conversations;
-           the account's own notes apply here too, and each row says which it
-           is. Before this the card showed one flat account-wide list, which
-           meant a client's house style learned in one project turned up in the
-           answers of every other. -->
-      <section class="panel-card">
+      <!-- What the assistant has learned, as Claude's project card says it
+           (owner, 2026-10-14): who can see it, one line on what it is, and the
+           way in. The notes themselves — each marked as this project's or the
+           account's — are in the sheet "View memory" opens, where they can be
+           read whole and deleted; a few clipped lines here told nobody much. -->
+      <section class="panel-card panel-card--memory">
         <div class="panel-card__head">
           <span class="panel-card__name">${escapeHtml(t('proj.memory'))}</span>
-          <span class="panel-card__tag" title="${escapeHtml(t('proj.memoryScope'))}">${escapeHtml(t('proj.accountWide'))}</span>
+          <span class="panel-card__lock" title="${escapeHtml(t('proj.memoryOnlyYouTip'))}">${lockMark}${escapeHtml(t('proj.memoryOnlyYou'))}</span>
+          <button class="panel-card__link" id="pp-view-memory" type="button">${escapeHtml(t('proj.viewMemory'))}</button>
         </div>
-        ${
-          memory.length
-            ? `<p class="panel-card__say" style="margin-bottom:8px">${t('proj.memoryLede')}</p>` +
-              memory
-                .map(
-                  (note) => `
-              <div class="source">
-                <span class="source__name" title="${escapeHtml(note.content)}">${escapeHtml(
-                  note.content.slice(0, 90),
-                )}</span>
-                <span class="note__scope note__scope--${note.scope === 'project' ? 'here' : 'all'}">${escapeHtml(
-                  t(note.scope === 'project' ? 'proj.noteHere' : 'proj.noteEverywhere'),
-                )}</span>
-                <span class="source__size">${escapeHtml(ago(note.updatedAt))}</span>
-              </div>`,
-                )
-                .join('')
-            : `<p class="panel-card__say">${escapeHtml(t('proj.memoryEmpty'))}</p>`
-        }
-        <div class="panel-card__foot">
-          <button class="btn btn--ghost btn--small" id="pp-view-memory" type="button">${escapeHtml(
-            t('proj.viewMemory'),
-          )}</button>
-        </div>
+        <p class="panel-card__say">${escapeHtml(t('proj.memorySay'))}</p>
       </section>
 
       <section class="panel-card">
@@ -673,6 +656,7 @@ export function createProjectPage({
           <button class="panel-card__add" id="pp-add-source" type="button"
                   aria-haspopup="menu" aria-label="${escapeHtml(t('proj.addContext'))}">+</button>
         </div>
+        ${files.length ? capacityBar(data.capacity) : ''}
         ${files.length ? shelfBar(files) : ''}
         ${files.length ? `<div class="shelf">${files.map(sourceCard).join('')}</div>` : ''}
         <div class="dropzone" id="pp-dropzone" tabindex="0" role="button">
@@ -701,6 +685,36 @@ export function createProjectPage({
       </section>`;
 
     wireSide();
+  }
+
+  /**
+   * How full the shelf is, the way Claude's projects show it (owner,
+   * 2026-10-14): a bar, the share used, and which way the sources are read.
+   *
+   * Measured by the server against what a turn is actually sent whole for the
+   * account's model (`shelfCapacity` in server/projects.js) — so 100% is a real
+   * line: under it every source is read in full, over it a turn gets the
+   * passages that match its question, which is what "Search mode" says.
+   */
+  function capacityBar(capacity) {
+    if (!capacity) return '';
+    const pct = Math.max(0, Number(capacity.percent) || 0);
+    const said = pct === 0 && capacity.used > 0 ? '<1' : String(pct);
+    const fill = Math.min(100, Math.max(pct, capacity.used > 0 ? 2 : 0));
+    const mode = capacity.searching ? t('proj.searchMode') : t('proj.wholeMode');
+    return `
+      <div class="capacity${capacity.searching ? ' is-over' : ''}">
+        <div class="capacity__track" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+             aria-valuenow="${Math.min(100, pct)}" aria-label="${escapeHtml(t('proj.capacity', { pct: said }))}">
+          <div class="capacity__fill" style="width:${fill}%"></div>
+        </div>
+        <div class="capacity__row">
+          <span class="capacity__used">${escapeHtml(t('proj.capacity', { pct: said }))}</span>
+          <span class="capacity__mode" title="${escapeHtml(t(capacity.searching ? 'proj.searchModeTip' : 'proj.wholeModeTip'))}">
+            <span class="capacity__dot" aria-hidden="true"></span>${escapeHtml(mode)}
+          </span>
+        </div>
+      </div>`;
   }
 
   /**
@@ -1221,8 +1235,13 @@ export function createProjectPage({
     ask.style.height = `${Math.min(ask.scrollHeight, 220)}px`;
   };
 
+  /** Words to send, or a file that is ready: either is a message. */
+  const refreshSend = () => {
+    send.disabled = !(ask.value.trim() || draftReady());
+  };
+
   ask.addEventListener('input', () => {
-    send.disabled = !ask.value.trim();
+    refreshSend();
     sizeAsk();
   });
 
@@ -1235,9 +1254,14 @@ export function createProjectPage({
 
   send.addEventListener('click', go);
 
+  // The composer's own + menu, opened from here (owner, 2026-10-14): what is
+  // picked shows above this box and goes with the conversation it starts.
+  const plus = $('project-page-plus');
+  plus.addEventListener('click', () => openPlus(plus));
+
   function go() {
     const text = ask.value.trim();
-    if (!text) return;
+    if (!text && !draftReady()) return;
     // Nothing is created here: the conversation comes into existence at its
     // first message, carrying the project with it.
     startChat(
@@ -1245,7 +1269,7 @@ export function createProjectPage({
       text,
     );
     ask.value = '';
-    send.disabled = true;
+    refreshSend();
     sizeAsk();
   }
 
@@ -1259,10 +1283,15 @@ export function createProjectPage({
 
   const chatMark =
     '<svg viewBox="0 0 40 40" width="38" height="38" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 12a4 4 0 0 1 4-4h20a4 4 0 0 1 4 4v11a4 4 0 0 1-4 4H16l-7 6v-6a3 3 0 0 1-3-3Z"/></svg>';
+  const lockMark =
+    '<svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="9" width="11" height="8" rx="1.6"/><path d="M7 9V6.5a3 3 0 0 1 6 0V9"/></svg>';
   const uploadMark =
     '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0 4 4m-4-4-4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
 
   return {
+    /** The tray changed — a file finished uploading, or was taken away. */
+    refreshSend,
+
     /** Show the page for one project. Rejects nothing — it says so on screen. */
     async open(id) {
       page.hidden = false;
@@ -1274,7 +1303,8 @@ export function createProjectPage({
       page.scrollTop = 0;
       editingInstructions = false;
       ask.value = '';
-      send.disabled = true;
+      onShow();
+      refreshSend();
 
       side.innerHTML = `<div class="viewer__loading"><span class="spinner"></span> ${escapeHtml(t('common.loading'))}</div>`;
       chatList.innerHTML = '';

@@ -74,3 +74,13 @@ Only the products a person ticks — and then actually allows on Google's screen
 to the model. Tokens are encrypted at rest and never sent to the browser; disconnecting also
 revokes the grant on Google's side. Anything written by someone else (an email body, a
 document, a form answer) is handed to the model marked as untrusted.
+
+## In the + menu
+
+With Drive allowed, the + beside the message box offers **Add from Google Drive**: a search
+of the person's Drive (newest first, or by name), and a file picked there is attached to the
+message like an upload — a Google Doc, Sheet or Slides as its .docx, .xlsx or .pptx twin,
+anything else as it is, under the same size and type rules. The server fetches it
+(`GET /api/connectors/google/drive`, `POST /api/connectors/google/drive/:fileId/attach`); the
+browser never sees the token. Google can be **paused** from the same menu without
+disconnecting it: its tools are then not offered and the assistant is not told it has it.

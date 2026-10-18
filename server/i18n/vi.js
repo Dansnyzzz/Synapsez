@@ -813,6 +813,16 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Google không cấp refresh token, nên các lần chạy theo lịch sẽ không truy cập được. Hãy ngắt kết nối rồi kết nối lại.",
   "Google is not connected. The user can connect it in Settings → Connectors.":
     "Chưa kết nối Google. Người dùng có thể kết nối trong Cài đặt → Kết nối.",
+  /* ── nút + : thêm tệp từ Google Drive ── */
+  'Google Drive is not connected. Connect Google in Settings → Connectors and allow Drive.':
+    'Chưa kết nối Google Drive. Hãy kết nối Google trong Cài đặt → Kết nối và cho phép Drive.',
+  'That is not a Google Drive file.': 'Đó không phải một tệp Google Drive.',
+  '{0} is a Google {1}, which has no file to attach. Open it in Drive instead.':
+    '{0} là một Google {1}, không có tệp nào để đính kèm. Hãy mở nó trong Drive.',
+  '{0} is {1} MB — over the limit for one file.': '{0} nặng {1} MB — vượt giới hạn cho một tệp.',
+  '{0} is over the limit for one file.': '{0} vượt giới hạn cho một tệp.',
+  '{0} does not say how big it is, so it was not fetched.': '{0} không cho biết kích thước, nên không được tải về.',
+  'Tool loading is one of: {0}.': 'Cách tải công cụ phải là một trong: {0}.',
   "Google access has expired or been revoked. Reconnect Google in Settings → Connectors.":
     "Quyền truy cập Google đã hết hạn hoặc bị thu hồi. Hãy kết nối lại Google trong Cài đặt → Kết nối.",
   "Only Google API addresses can be called with the Google token.":

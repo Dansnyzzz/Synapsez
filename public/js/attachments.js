@@ -92,12 +92,25 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
    * its first page. Anything else is its name and its type. The state that
    * matters is still said: uploading as a spinner, a failure in words, and what
    * was changed on the way out (a PDF sent as its text) in the tile's title.
+   *
+   * One tray for both places a message is written — the conversation's
+   * composer and a project's box — so files picked on a project's page go
+   * with the conversation started from it (see `startChat` in app.js). It is
+   * drawn where it is being looked at, and the other copy is emptied: two
+   * sets of the same buttons, one of them out of sight, is one too many.
    */
   function renderStaged() {
-    const host = $('attachments');
-    host.hidden = staged.length === 0;
+    const onProject = $('project-page')?.hidden === false;
+    const composer = $('attachments');
+    const project = $('project-page-attachments');
+    if (composer) renderTray(composer, onProject ? [] : staged);
+    if (project) renderTray(project, onProject ? staged : []);
+  }
 
-    host.innerHTML = staged
+  function renderTray(host, files) {
+    host.hidden = files.length === 0;
+
+    host.innerHTML = files
       .map((file, i) => {
         const type = typeOf(file.name);
         const state = `${file.failed ? ' is-failed' : ''}${!file.id && !file.failed ? ' is-uploading' : ''}`;
@@ -306,7 +319,7 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
 
   $('vision-switch').addEventListener('click', () => openModelBrowser(state.model));
 
-  $('attach').addEventListener('click', () => $('file-input').click());
+  // The + opens the composer's menu now (plus-menu.js); its first row is this picker.
 
   $('file-input').addEventListener('change', async (event) => {
     const picker = /** @type {HTMLInputElement} */ (event.target);
@@ -342,11 +355,42 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     if (event.relatedTarget === null) $('app').classList.remove('is-dropping');
   });
 
+  /**
+   * A file that is already this account's attachment — one picked from Google
+   * Drive in the + menu, which the server fetched and saved — put in the tray
+   * as though it had been uploaded from here. Over the per-message limit, it is
+   * refused in the same words a picked file is.
+   */
+  function stageAttachment(attachment) {
+    const limits = state.boot?.attachments || { maxPerMessage: 6 };
+    if (staged.length >= limits.maxPerMessage) {
+      toast(t('attachment.tooMany', { count: limits.maxPerMessage }), 'error');
+      return;
+    }
+    const mime = attachment.mime || '';
+    staged.push({
+      name: attachment.name,
+      size: Number(attachment.size) || 0,
+      mime,
+      id: attachment.id,
+      isImage: isImage(mime),
+      isPdf: /pdf/i.test(mime) || /\.pdf$/i.test(attachment.name || ''),
+      // The bytes are on the server, not in this browser: a picture is drawn
+      // from there, anything else is its name and type.
+      preview: isImage(mime) ? `/api/attachments/${encodeURIComponent(attachment.id)}` : null,
+      thumb: null,
+    });
+    renderStaged();
+    refreshSendState();
+    renderVisionWarning();
+  }
+
   return {
     /** The staging list itself, mutated in place by whoever holds it. */
     staged,
     renderStaged,
     stageFiles,
+    stageAttachment,
     clearStaged,
     refreshModelFacts,
     renderVisionWarning,
