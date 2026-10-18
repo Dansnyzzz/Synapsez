@@ -20,8 +20,11 @@ has a daily quota far above what one person uses.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
    - Application type **Web application**.
    - **Authorised redirect URI**: `https://YOUR-DOMAIN/api/connectors/google/callback`
-     — for example `https://synapsez.vercel.app/api/connectors/google/callback`.
-     For a local run also add `http://localhost:3000/api/connectors/google/callback`.
+     — for example `https://synapsez.vercel.app/api/connectors/google/callback`. The whole
+     path, not just the domain: the domain alone is what *Authorised JavaScript origins*
+     takes, and putting it here gives `Error 400: redirect_uri_mismatch`.
+     For a local run also add `http://localhost:5173/api/connectors/google/callback`
+     (5173 is the default port; use yours if `PORT` is set).
    - Copy the **Client ID** and **Client secret**.
 
 ## 2. Give them to the deployment
@@ -34,6 +37,16 @@ On Vercel: **Project → Settings → Environment Variables**, then redeploy:
 | `GOOGLE_CLIENT_SECRET` | the client secret |
 | `PUBLIC_URL` | `https://YOUR-DOMAIN` (recommended, so the redirect address is exact) |
 | `GOOGLE_REDIRECT_URI` | optional — only if the callback lives somewhere other than the address above |
+
+### "Error 400: redirect_uri_mismatch"
+
+Google compares the redirect address character for character. The app sends
+`GOOGLE_REDIRECT_URI` if it is set, otherwise `<the address you opened the app at>/api/connectors/google/callback`
+(or `PUBLIC_URL` + that path when `PUBLIC_URL` is set). Add that exact address under
+**Authorised redirect URIs** — a missing path, `http` for `https`, a trailing `/`, `www.`, or a
+Vercel preview address (`ai-remote-xxxx.vercel.app`) instead of your main one are each a
+mismatch. Setting `PUBLIC_URL` pins it to one address. Changes on Google's side can take a few
+minutes to apply.
 
 ## 3. The one thing to know about "Testing" mode
 
