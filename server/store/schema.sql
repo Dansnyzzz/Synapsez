@@ -934,3 +934,13 @@ ALTER TABLE chats ADD COLUMN IF NOT EXISTS shared_title TEXT;
 UPDATE attachments SET origin = 'step'
  WHERE origin = 'generated' AND kind = 'image' AND chat_id IS NULL AND source IS NULL
    AND name ~ '^step-[0-9]+\.jpg$';
+-- ── 31: what a conversation's window is spent on ─
+-- The context gauge opens on a breakdown, as Claude's does: system prompt,
+-- tools, MCP tools, skills, memory, project (owner, 2026-10-19). Those parts are
+-- known only while a turn is being built, so the last step's figures are kept
+-- here, overwritten each step, and read back when the conversation is opened.
+-- One row per conversation rather than on every message: a share link copies
+-- messages, and the names of somebody's notes and servers are not for it.
+-- Nullable: a conversation that has not run since reads as "not measured yet".
+-- It holds note names, server names and token estimates — never their content.
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS context_parts JSONB;

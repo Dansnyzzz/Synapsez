@@ -5,7 +5,8 @@ import { getStore } from '../store/index.js';
 import { verifyOwned } from '../attachments.js';
 import { deriveTitle, needsApproval as pendingApproval } from '../agent.js';
 import { normaliseQuestions, askLayout } from '../tools/askOptions.js';
-import { compact as compactChat, measure as measureContext } from '../compact.js';
+import { compact as compactChat, measure as measureContext, transcriptTokens } from '../compact.js';
+import { contextBreakdown } from '../contextParts.js';
 
 /** The share of the window a conversation must use before it can be folded by hand. */
 export const MIN_MANUAL_COMPACT = 0.25;
@@ -184,6 +185,8 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         // has to be measured against the window the next turn will actually use.
         const entry = await resolveForUser(req.user.id, (await getPrefs(req.user.id)).defaultModel);
         context = measureContext(messages, entry);
+        // What it is spent on, from the parts the last step measured (contextParts.js).
+        context.breakdown = contextBreakdown(context, chat.context_parts, transcriptTokens(messages));
       } catch {
         /* an unresolvable model is the model picker's problem, not the gauge's */
       }
@@ -235,7 +238,9 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       // page follows the transcript as each step is saved instead.
       const background = !running && (await store.chatHasBackgroundRun(req.user.id, req.params.id));
 
-      res.json({ chat, messages, pendingApproval: pending, pendingQuestion: question, context, project, files, running, background });
+      // The raw parts went into `context`; they are not part of the conversation.
+      const { context_parts: _parts, ...shown } = chat;
+      res.json({ chat: shown, messages, pendingApproval: pending, pendingQuestion: question, context, project, files, running, background });
     }),
   );
 
@@ -456,9 +461,12 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         if (!summary) {
           return res.status(400).json({ error: 'There is not enough here yet to be worth folding up.' });
         }
+        const folded = [...messages, summary];
+        const context = measureContext(folded, entry);
+        context.breakdown = contextBreakdown(context, chat.context_parts, transcriptTokens(folded));
         res.json({
           summary: { id: summary.id, text: summary.text, replaced: summary.replaced },
-          context: measureContext([...messages, summary], entry),
+          context,
         });
       } catch (err) {
         res.status(400).json({ error: err.message });

@@ -398,6 +398,16 @@ section('what came from Google is read only where Google data already is (Limite
   const fromMarked = await withGoogleData(true, () => run('search_chats', { query: 'quokka' }, null));
   check('  and does into one with it', /newsletter/.test(fromMarked.content) && /zoo/.test(fromMarked.content), fromMarked.content);
 
+  // The gauge's breakdown comes back with the conversation (owner, 2026-10-19).
+  const prior = (await alice.call('GET', '/api/prefs')).body?.prefs?.defaultModel;
+  await alice.call('PUT', '/api/prefs', { defaultModel: 'anthropic/claude-haiku-4-5' });
+  await store.setChatContextParts(aliceId, zoo, { system: 3000, skills: 400, memory: 50, project: 0, tools: 9000, mcp: 0, deferred: { tools: 40, tokens: 6000 }, details: { memory: { rows: [{ name: 'tea', tokens: 50 }] } } });
+  const opened = await alice.call('GET', `/api/chats/${zoo}`);
+  const breakdown = opened.body?.context?.breakdown;
+  check('an opened conversation carries what its window is spent on', breakdown?.parts?.system > 0 && breakdown.parts.tools > breakdown.parts.system && breakdown.details?.memory?.rows?.[0]?.name === 'tea', JSON.stringify(breakdown)?.slice(0, 200));
+  check('  and not the raw column, which is the gauge\'s, not the conversation\'s', opened.body?.chat && !('context_parts' in opened.body.chat));
+  if (prior) await alice.call('PUT', '/api/prefs', { defaultModel: prior });
+
   // Out of the way of the sections below, which count notes and conversations.
   await store.removeUserSettingKey(aliceId, 'memory', 'ann-lunch');
   await store.removeUserSettingKey(aliceId, 'memory', 'plain-fact');

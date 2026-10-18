@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-10-19 — what the context window is spent on; commands you can watch run; a failing model is not the end
+
+Asked for by the owner on 2026-10-19, with screenshots of Claude Code beside the app.
+
+- **The context gauge opens on a breakdown**, laid out across: one bar split into messages, MCP tools, built-in
+  tools, system prompt, skills, memory and project, with the room kept for the reply and what is free; the parts in
+  two columns beneath with their size and share; and MCP servers (tools each), memory notes and skills opening in
+  place to show what each costs. Tools that load only when needed are listed, not counted. The figures are
+  measured each step and kept with the conversation (`chats.context_parts`, schema 31), so a conversation opened
+  later shows its last breakdown. Each part is an estimate; the total is the provider's own count when there is
+  one, and before the first reply it now includes the prompt and tools.
+- **A command or Python that is running stands open**: its card and row show the command and "Running… 12s",
+  counting; a success folds back unless you opened or closed it yourself, a failure stays open. What a command
+  printed sits on the page without a box around it, as in Claude Code.
+- **A model whose provider keeps failing (a 502) no longer stops the work on the first key.** The first key gets its
+  three tries, each further key one more; the notice says the key could not reach the model rather than that it
+  was refused. If every key fails that way, the turn — or the workflow step — carries on with Auto for that turn
+  only, says which model answered, and leaves your chosen model as it was.
+
 ## 2026-10-18 — ready for Google's branding check; Google data goes only where nothing trains on it
 
 Asked for by the owner on 2026-10-18, after Google's Branding page said the home page was not theirs and the

@@ -2934,6 +2934,39 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
 .step--work .step__detail { flex: 1 1 0; font-family: var(--mono); font-size: 12px; }
 .step__body { display: grid; gap: 6px; margin: 4px 0 8px 24px; }
 .step__body .tool__call { display: grid; gap: 6px; margin: 0; }
+/* What a command printed sits on the page itself, as in Claude Code — the
+   command keeps its box, the output has none (owner, 2026-10-19). Two classes
+   deep, to outrank `details.block pre`. */
+.step__body .step__output {
+  padding: 2px 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+}
+/* "Running… 12s" under a command still going. */
+.step__running {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 2px 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.step__running::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+  animation: running-pulse 1.2s ease-in-out infinite;
+}
+@keyframes running-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) {
+  .step__running::before { animation: none; }
+}
 
 .step__out { margin-left: 24px; }
 .step__out > summary {
@@ -5197,7 +5230,130 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 
 .menu--policy,
 .menu--context {
-  width: min(320px, calc(100vw - 16px));
+  width: min(440px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+
+/* ── what the window is spent on (context-panel.js) ──────────────────────
+ * Across rather than down (owner, 2026-10-19): one bar split into its parts,
+ * the parts in two columns beneath, and the parts that have parts of their own
+ * opening in place. Mid-tone colours, legible on both themes. */
+.ctx {
+  --ctx-messages: #6d8dff;
+  --ctx-mcp: #ff8a4c;
+  --ctx-tools: #3fcf8e;
+  --ctx-system: #98a2b3;
+  --ctx-skills: #b48cff;
+  --ctx-memory: #2fc3d1;
+  --ctx-project: #f0c24b;
+  --ctx-used: var(--accent);
+  display: grid;
+  gap: 10px;
+  padding: 8px 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 4px;
+}
+.ctx__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.ctx__title { font-weight: 600; font-size: 13.5px; }
+.ctx__used { font-size: 13px; }
+.ctx__total { margin-left: auto; color: var(--text-faint); font-size: 12px; }
+.ctx__bar {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--tint-2);
+}
+.ctx__seg { flex: none; height: 100%; min-width: 2px; }
+.ctx__seg + .ctx__seg { border-left: 1px solid var(--glass-solid); }
+.ctx__seg--free { flex: 1 1 auto; min-width: 0; background: transparent; border-left: 0 !important; }
+.ctx--messages { background: var(--ctx-messages); }
+.ctx--mcp { background: var(--ctx-mcp); }
+.ctx--tools { background: var(--ctx-tools); }
+.ctx--system { background: var(--ctx-system); }
+.ctx--skills { background: var(--ctx-skills); }
+.ctx--memory { background: var(--ctx-memory); }
+.ctx--project { background: var(--ctx-project); }
+.ctx--used { background: var(--ctx-used); }
+/* The reply's room is held back, not spent: hatched, so it does not read as a part. */
+.ctx--reserve { background: repeating-linear-gradient(135deg, var(--line) 0 3px, transparent 3px 6px); }
+.ctx--free { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+.ctx__legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.ctx__key {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.ctx__swatch { width: 9px; height: 9px; border-radius: 3px; }
+.ctx__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx__num { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.ctx__pct { min-width: 38px; color: var(--text-faint); text-align: right; }
+.ctx__more { display: grid; gap: 2px; border-top: 1px solid var(--line-soft); padding-top: 6px; }
+.ctx__foldhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  cursor: pointer;
+  list-style: none;
+}
+.ctx__foldhead::-webkit-details-marker { display: none; }
+.ctx__foldhead::before {
+  content: '›';
+  width: 10px;
+  color: var(--text-faint);
+  transition: transform 0.18s;
+}
+.ctx__fold[open] > .ctx__foldhead::before { transform: rotate(90deg); }
+.ctx__foldhead:hover { background: var(--tint); }
+.ctx__foldhead:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ctx__foldcount { margin-left: auto; color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ctx__rows {
+  display: grid;
+  gap: 3px;
+  max-height: 168px;
+  overflow-y: auto;
+  margin: 2px 0 6px;
+  padding: 0 4px 0 22px;
+  list-style: none;
+  font-size: 12px;
+}
+.ctx__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+.ctx__rowname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+.ctx__rowmeta { color: var(--text-faint); }
+.ctx__row--more .ctx__rowname { font-family: inherit; color: var(--text-faint); }
+.ctx__note { margin: 0; color: var(--text-faint); font-size: 11.5px; line-height: 1.45; }
+/* A phone keeps the two columns and gives the names the room: the share is in
+   each row's tooltip, and below 340px the list goes to one column. */
+@media (max-width: 480px) {
+  .ctx__pct { display: none; }
+  .ctx__key { grid-template-columns: 9px minmax(0, 1fr) auto; }
+}
+@media (max-width: 340px) {
+  .ctx__legend { grid-template-columns: minmax(0, 1fr); }
 }
 .menu__head {
   padding: 9px 12px;

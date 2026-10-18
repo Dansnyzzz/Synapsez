@@ -409,6 +409,24 @@ async function* streamAny(opts) {
     : null;
   const outgoing = shield ? shield.protect(rest) : rest;
   let shrunk = false;
+  /**
+   * Keys whose provider kept failing on this request, and the last such failure.
+   *
+   * A 502 used to end the request on the first key: every key reaches the same
+   * servers, the reasoning went, so the next would fail the same way. The owner
+   * saw a workflow stop on "key 1 was refused" with two more keys unused
+   * (2026-10-19) — and a key on another account, with its own provider
+   * settings, is not the same route. So each further key gets one try; only
+   * when every key has failed this way is it reported, marked `upstream` so the
+   * turn can move to another model (agent.js).
+   */
+  const gaveUp = new Set();
+  let lastUpstream = null;
+  const upstreamError = (failure) =>
+    Object.assign(
+      new Error(`${label} could not reach this model on any key: ${failure.message}`),
+      { status: failure.status, upstream: true },
+    );
 
   for (let round = 0; round < ROUNDS; round += 1) {
     const keys = await getApiKeys(userId, provider);
@@ -438,8 +456,12 @@ async function* streamAny(opts) {
       );
     }
 
-    for (const { key, index, shared } of keys) {
+    for (let position = 0; position < keys.length; position += 1) {
+      const { key, index, shared } = keys[position];
+      if (gaveUp.has(key)) continue;
       const which = shared ? 'the deployment key' : `key ${index + 1}`;
+      // The first key gets the full patience; the others one try each, above.
+      const tries = gaveUp.size ? 1 : UPSTREAM_TRIES;
       const common = {
         ...outgoing,
         apiKey: key,
@@ -452,7 +474,7 @@ async function* streamAny(opts) {
         maxTokens,
       };
 
-      for (let attempt = 0; attempt < UPSTREAM_TRIES; attempt += 1) {
+      for (let attempt = 0; attempt < tries; attempt += 1) {
         // Counted rather than flagged. "Something came out" lumps a discarded
         // thinking delta in with a paragraph somebody is reading, and only one
         // of those makes a restart visible.
@@ -528,12 +550,10 @@ async function* streamAny(opts) {
         };
         if (kind === 'FATAL') throw giveUp();
 
-        refused = `${which} was refused: ${failure.message}`;
-
         if (kind === 'UPSTREAM') {
           // The provider stumbled rather than the key being wrong, so it is the
           // same key that wants trying, a moment later.
-          if (attempt < UPSTREAM_TRIES - 1) {
+          if (attempt < tries - 1) {
             if (emitted.text) {
               yield {
                 type: 'retry',
@@ -543,10 +563,19 @@ async function* streamAny(opts) {
             await wait(retryAfterMs ?? backoff(attempt), signal);
             continue;
           }
-          // Out of patience. Every key on this account reaches the same servers,
-          // so the next one will fail identically and slowly.
-          throw giveUp();
+          // Out of patience with this key. The next one, if any, gets a try —
+          // see `gaveUp`; with none left, the turn is told it may switch model.
+          gaveUp.add(key);
+          lastUpstream = failure;
+          if (!keys.slice(position + 1).some((next) => !gaveUp.has(next.key))) throw upstreamError(failure);
+          yield { type: 'notice', text: `${label}: ${which} could not reach the model, trying the next key.` };
+          if (emitted.text) {
+            yield { type: 'retry', reason: `${label}: ${which} stopped mid-answer; starting that reply again.` };
+          }
+          break;
         }
+
+        refused = `${which} was refused: ${failure.message}`;
 
         if (kind === 'RATE_LIMITED') {
           markKeyLimited(userId, provider, index, Date.now() + (retryAfterMs ?? MAX_WAIT_MS));
@@ -569,6 +598,9 @@ async function* streamAny(opts) {
     }
   }
 
+  // Some keys refused and the rest could not reach the model: the model is the
+  // part worth changing, so it is reported the way that lets the turn change it.
+  if (lastUpstream) throw upstreamError(lastUpstream);
   throw new Error(`${label}: every key was refused${refused ? ` (${refused})` : ''}.`);
 }
 
