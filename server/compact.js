@@ -157,8 +157,14 @@ export function measure(messages, entry, { maxOutput } = {}) {
     ratio: Math.min(1, used / budget),
     // `counted` is exact; anything past it is arithmetic on character counts.
     exact: !folded && lastCounted === messages.length - 1,
+    // Whether `used` rests on a provider's figure at all — which, unlike the
+    // estimate, includes the system prompt and the tools. See contextParts.js.
+    provided: !folded && lastCounted >= 0,
   };
 }
+
+/** What the conversation part of a request comes to, estimated — the summary and the tail. */
+export const transcriptTokens = (messages) => activeTranscript(messages).reduce((sum, m) => sum + estimateTokens(m), 0);
 
 /** Whether the next turn should fold the older part up first. */
 export function shouldCompact(messages, entry, options = {}) {

@@ -221,8 +221,10 @@ export function splitStatements(sql) {
  *      conversation's title as it stood when shared (PRV-013)
  *  30  attachments.origin 'step' — the cloud browser's step screenshots, moved
  *      off the Files shelf; the ones already stored are reclassified in place
+ *  31  chats.context_parts — the last step's breakdown of the context window,
+ *      read back by the gauge when a conversation is opened
  */
-export const SCHEMA_VERSION = 30;
+export const SCHEMA_VERSION = 31;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1267,6 +1269,14 @@ export function createPgStore(connectionString) {
     },
     async touchChat(userId, id) {
       await q('UPDATE chats SET updated_at = NOW() WHERE id = $1 AND user_id = $2', [id, userId]);
+    },
+    /**
+     * The last step's breakdown of the context window (schema 31), overwritten
+     * each step. `updated_at` is left alone: measuring is not a change to the
+     * conversation, and the sidebar orders by it.
+     */
+    async setChatContextParts(userId, id, parts) {
+      await q('UPDATE chats SET context_parts = $3::jsonb WHERE id = $1 AND user_id = $2', [id, userId, toJson(parts ?? null)]);
     },
 
     /**

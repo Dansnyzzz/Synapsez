@@ -2223,6 +2223,8 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
       const step = script[calls] || { text: 'Hi.' };
       calls += 1;
       if (step.throws) throw new Error(step.throws);
+      // What streamCompletion throws once the provider has failed on every key.
+      if (step.upstream) throw Object.assign(new Error(step.upstream), { upstream: true, status: 502 });
       yield { type: 'text', delta: step.text };
       yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
     };
@@ -2287,6 +2289,18 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   check('a built-in the key cannot reach is not moved to Auto', !noAccess.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'anthropic/claude-opus-5', noAccess.thrown);
   const { isModelGoneError } = await import('../server/modelRetirement.js');
   check('  and "you do not have access" never reads as a model that has gone', !isModelGoneError('The model `gpt-x` does not exist or you do not have access to it.'));
+
+  // A free model's provider failing on every key stopped the owner's workflow
+  // at step 2 (2026-10-19): the turn goes to Auto instead, and only the turn.
+  await setPrefs(moved.id, { defaultModel: 'openrouter/lab/live', modelNotice: null });
+  const down = 'OpenRouter could not reach this model on any key: 502 Provider returned error';
+  const flaky = await turn('c-upstream', [{ upstream: down }, { text: 'Answered by Auto.' }]);
+  check('a model whose provider fails on every key hands the turn to Auto', flaky.entries[0] === 'openrouter/lab/live' && flaky.entries[1] === AUTO_ROUTER.id && flaky.reply === 'Answered by Auto.', `${JSON.stringify(flaky.entries)} ${flaky.thrown}`);
+  check('  says which answered, and leaves the account on its own model', flaky.events.some((e) => e.type === 'status' && /is not answering right now/.test(e.payload?.message || '')) && !flaky.events.some((e) => e.type === 'model_switched') && (await getPrefs(moved.id)).defaultModel === 'openrouter/lab/live');
+  const twice = await turn('c-upstream-twice', [{ upstream: down }, { upstream: down }, { text: 'never' }]);
+  check('  once: when Auto fails as well, the turn says so rather than going round', twice.entries.length === 2 && /could not reach this model/.test(twice.thrown), `${JSON.stringify(twice.entries)} ${twice.thrown}`);
+  const plainFail = await turn('c-not-upstream', [{ throws: '400 Bad request: tool schema invalid' }]);
+  check('  and any other failure is not moved', plainFail.entries.length === 1 && /Bad request/.test(plainFail.thrown), plainFail.thrown);
 
   // An account on its own OrcaRouter key, moved to Auto mid-turn, lands on the
   // deployment's OpenRouter key: the shared key's limits apply from there.
@@ -2493,6 +2507,53 @@ section('a conversation holding Google data is marked, and the mark follows its 
     if (saved.gemini === undefined) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = saved.gemini;
   }
+}
+
+section('the gauge says what the window is spent on (owner, 2026-10-19)');
+{
+  const { promptParts, contextBreakdown, PART_KEYS } = await import('../server/contextParts.js');
+  const skills = '- **docx** — Word documents\n- **pptx** — slides';
+  const memory = '## Memory\n### Everywhere\n- **language** (2026-10-01): Answer in Vietnamese,\n  briefly.\n- **tea**: green';
+  const system = `You are Synapsez.\n\n## Skills they have taught you\n${skills}\n\n${memory}`;
+  const tools = [
+    { name: 'web_search', description: 'Search the web for anything at all', parameters: { type: 'object' } },
+    { name: 'mcp__figma__get_file', description: 'Read a Figma file', parameters: { type: 'object' } },
+    { name: 'mcp__figma__list', description: 'List Figma files', parameters: { type: 'object' } },
+    { name: 'mcp__notes__find', description: 'Find a note', parameters: { type: 'object' } },
+  ];
+  const parts = promptParts({ system, skills, memory, tools, deferred: [{ name: 'chart', description: 'Draw a chart' }] });
+  check('the prompt is split into its sections, none counted twice', parts.skills > 0 && parts.memory > 0 && parts.system > 0 && parts.system < parts.skills + parts.memory + 40, JSON.stringify({ system: parts.system, skills: parts.skills, memory: parts.memory }));
+  check('MCP tools are told apart from built-in ones, per server', parts.mcp > parts.tools && parts.details.mcp.rows.map((r) => `${r.name}:${r.tools}`).sort().join(',') === 'figma:2,notes:1', JSON.stringify(parts.details.mcp));
+  check('each note and each skill is its own row, by name', parts.details.memory.rows.map((r) => r.name).sort().join(',') === 'language,tea' && parts.details.skills.rows.length === 2);
+  check('  and the rows carry sizes, never the text', !JSON.stringify(parts).includes('Vietnamese') && !JSON.stringify(parts).includes('Word documents'));
+  check('what waits behind load_tools is listed, not counted', parts.deferred.tools === 1 && parts.deferred.tokens > 0);
+
+  const info = { used: 20_000, context: 100_000, budget: 68_000, provided: true };
+  const shared = contextBreakdown(info, parts, 5000);
+  const sum = PART_KEYS.reduce((n, k) => n + shared.parts[k], 0);
+  check("a provider's total is shared out among the parts", Math.abs(sum - 20_000) <= PART_KEYS.length && shared.used === 20_000, `${sum}`);
+  check('  with the reply\'s room and what is free beside them', shared.reserve === 32_000 && shared.free === 48_000, JSON.stringify({ reserve: shared.reserve, free: shared.free }));
+  const early = contextBreakdown({ used: 50, context: 100_000, budget: 68_000, provided: false }, parts, 50);
+  check('before any reply, the estimate is the total — the prompt and tools count from the first message', early.used > 50 && early.parts.system > 0, String(early.used));
+  const none = contextBreakdown(info, null, 0);
+  check('a conversation never measured still has a total, and says nothing about parts', none.parts === null && none.used === 20_000);
+
+  // A real turn: the parts reach the browser and stay with the conversation.
+  const gauge = await store.createUser({ id: 'u-gauge', email: 'gauge@example.com', name: 'Gauge', passwordHash: await hashPassword('a-sufficiently-long-password'), role: 'user' });
+  await store.createChat(gauge.id, { id: 'c-gauge', title: 'gauge' });
+  await store.appendMessage(gauge.id, 'c-gauge', { id: 'cg-u', role: 'user', text: 'How full is it?' });
+  const seen = [];
+  const answers = async function* () {
+    yield { type: 'text', delta: 'Not very.' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 9000, output: 5 } };
+  };
+  await runAgent({ userId: gauge.id, user: gauge, chatId: 'c-gauge', emit: (type, payload) => type === 'context' && seen.push(payload), stream: answers });
+  const sent = seen.at(-1)?.breakdown;
+  check('each step sends the breakdown with the gauge', !!sent?.parts && sent.parts.system > 0 && sent.parts.tools > 0 && sent.parts.messages > 0, JSON.stringify(sent?.parts));
+  const kept = (await store.getChat(gauge.id, 'c-gauge'))?.context_parts;
+  check('  and the conversation keeps the last one, for when it is opened again', kept && kept.system > 0 && kept.tools > 0, JSON.stringify(kept)?.slice(0, 120));
+  await store.setChatContextParts('u-sub', 'c-gauge', { system: 1 });
+  check('  which no other account can write over', (await store.getChat(gauge.id, 'c-gauge'))?.context_parts?.system === kept.system);
 }
 
 // Last, after every section that uses the database: it was removed midway, and

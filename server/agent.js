@@ -21,7 +21,8 @@ import { mcpTools } from './mcp/registry.js';
 import { priceTurn } from './providers/catalog.js';
 import { loadForTranscript, toParts } from './attachments.js';
 import { projectPrompt } from './projects.js';
-import { compact, shouldCompact, measure, activeTranscript } from './compact.js';
+import { compact, shouldCompact, measure, activeTranscript, transcriptTokens } from './compact.js';
+import { promptParts, contextBreakdown } from './contextParts.js';
 import { log, annotate } from './util/trace.js';
 import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { validZone } from './util/zone.js';
@@ -1464,7 +1465,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // This turn's reads and its deep-research count — see `repeatedRead`.
   const turnReads = new Map();
   const turnCounts = {};
-  const buildTools = () => availableTools({
+  const toolArgs = () => ({
     workerOnline,
     desktopOnline: !!worker?.info?.desktop,
     policy,
@@ -1488,8 +1489,16 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // except on a run nobody is watching, which preloads nothing on purpose
     // (see `activated` above: a task that can create tasks multiplies).
     defer: unattended || prefs.toolLoading !== 'all',
-    // A question with nobody to answer it only ends the run.
-  }).filter((t) => !(unattended && t.name === 'ask_options'));
+  });
+  // A question with nobody to answer it only ends the run.
+  const buildTools = () => availableTools(toolArgs()).filter((t) => !(unattended && t.name === 'ask_options'));
+  /** What waits behind `load_tools` this step: offered by name only — for the gauge. */
+  const deferredTools = (offered) => {
+    const names = new Set(offered.map((t) => t.name));
+    return availableTools({ ...toolArgs(), defer: false }).filter((t) => !names.has(t.name));
+  };
+  /** The last breakdown written to the conversation, so an unchanged step writes nothing. */
+  let partsWritten = null;
 
   /** Take the names `load_tools` asked for, so the next step carries them. */
   const activate = (names) => {
@@ -1669,6 +1678,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
   /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
   let movedToAuto = false;
+  /** Set once this turn has left a failing model for Auto — see the `upstream` catch. */
+  let switchedThisTurn = false;
   for (let step = 0; step < prefs.maxSteps; step += 1) {
     if (signal?.aborted) {
       emit('done', { stopReason: 'aborted' });
@@ -1732,7 +1743,22 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       }
     }
 
-    emit('context', measure(messages, entry));
+    {
+      /*
+       * How full the window is, and with what (contextParts.js): this step's
+       * prompt and catalogue, measured where both are known, and kept on the
+       * conversation for when it is opened again — only when they changed.
+       */
+      const offered = buildTools();
+      const parts = promptParts({ system, skills, memory, project: project?.briefing, tools: offered, deferred: deferredTools(offered) });
+      const info = measure(messages, entry);
+      emit('context', { ...info, breakdown: contextBreakdown(info, parts, transcriptTokens(messages)) });
+      const written = JSON.stringify(parts);
+      if (written !== partsWritten) {
+        partsWritten = written;
+        await store.setChatContextParts(userId, chatId, parts).catch((err) => log.error('context parts not saved', err, { chatId }));
+      }
+    }
     emit('status', { phase: 'thinking', step: step + 1, model: entry.label });
 
     const assistant = { id: newId(), role: 'assistant', text: '', thinking: '', toolCalls: [] };
@@ -1939,6 +1965,36 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           entry = auto;
           emit('model_switched', { from, to: AUTO_ID });
           // The shared key's limits, if Auto runs on it and the old model did not.
+          usingSharedKey = await usesSharedKey(userId, entry.provider);
+          turnLimit = turnTokenLimit({ usingSharedKey });
+          const allowed = await checkQuota(user, { usingSharedKey });
+          if (!allowed.allowed) {
+            emit('error', { message: allowed.reason, code: 'quota_exceeded' });
+            emit('done', { stopReason: 'quota_exceeded' });
+            return;
+          }
+          step -= 1;
+          continue;
+        }
+      }
+      /**
+       * The provider behind the model failed on every key (`upstream`,
+       * providers/index.js) before a word of the reply.
+       *
+       * A free model's one provider having a bad hour stopped the owner's
+       * morning workflow at step 2 (2026-10-19). Auto is OpenRouter's own router
+       * across the free models, so this step goes there once instead — for this
+       * turn only: the account keeps its model, and is told which one answered.
+       * Not when the model already is Auto (there is nowhere further to go), and
+       * only for a library model, whose account already holds the key Auto runs on.
+       */
+      if (err?.upstream && !switchedThisTurn && !assistant.text && isLibraryModel(entry) && !isAuto(entry.id)) {
+        const auto = await pickAutoModel(userId);
+        if (auto && auto.id !== entry.id) {
+          switchedThisTurn = true;
+          const from = entry?.label || entry.id;
+          entry = auto;
+          emit('status', { message: `${from} is not answering right now, so this reply comes from ${auto.label || auto.id}. Your chosen model is unchanged.` });
           usingSharedKey = await usesSharedKey(userId, entry.provider);
           turnLimit = turnTokenLimit({ usingSharedKey });
           const allowed = await checkQuota(user, { usingSharedKey });

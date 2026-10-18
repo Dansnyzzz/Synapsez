@@ -346,19 +346,29 @@ section('the rotation reacts to what actually came out');
     check('and finishes', run.error === null, String(run.error?.message || ''));
   }
 
-  // A provider that is genuinely down is down for every key on the account —
-  // they all reach the same servers. Walking the rest is the "five slow errors"
-  // case, so patience runs out on the first key rather than on the last.
+  // A provider that is down on the first key used to end the request there:
+  // every key reaches the same servers, the reasoning went. The owner saw a
+  // workflow stop with two keys unused (2026-10-19), and a key on another
+  // account is not always the same route — so the first key gets its three
+  // tries and the next one a single try before anything is reported.
   {
     const run = await drive([
       { throw: err(503, 'Service unavailable') },
       { throw: err(503, 'Service unavailable') },
       { throw: err(503, 'Service unavailable') },
-      { emit: [{ type: 'text', delta: 'never reached' }, { type: 'done', stopReason: 'end_turn' }] },
+      { emit: [{ type: 'text', delta: 'reached on the second key' }, { type: 'done', stopReason: 'end_turn' }] },
     ]);
-    check('an outage gives up rather than spending the other keys', run.seen.length === 3, run.seen.join(','));
-    check('all three tries were the same key', new Set(run.seen).size === 1, run.seen.join(','));
-    check('and it is reported', run.error !== null, String(run.error?.message || ''));
+    check('an outage on the first key is tried once on the next', run.seen.join(',') === 'key-one,key-one,key-one,key-two', run.seen.join(','));
+    check('  which answers', run.error === null, String(run.error?.message || ''));
+  }
+  {
+    const run = await drive([
+      { throw: err(503, 'Service unavailable') },
+      { throw: err(503, 'Service unavailable') },
+      { throw: err(503, 'Service unavailable') },
+      { throw: err(503, 'Service unavailable') },
+    ]);
+    check('down on every key, it is reported — four calls, not six', run.seen.length === 4 && run.error?.upstream === true, `${run.seen.join(',')} ${run.error?.message || ''}`);
   }
 
   // One key, momentarily limited, is the ordinary free-tier situation. Waiting
@@ -513,6 +523,47 @@ section('a restart clears the text the reader had already seen');
   const reasoning = { id: 'a2', role: 'assistant', text: 'half', thinking: 'first attempt reasons one way', toolCalls: [] };
   applyStreamEvent({ type: 'retry', reason: 'key 1 stopped' }, reasoning, () => {});
   check('a retry discards the abandoned reasoning as well', reasoning.thinking === '', JSON.stringify(reasoning.thinking));
+}
+
+section('a provider failing on one key is tried on the next (owner, 2026-10-19)');
+{
+  const { streamCompletion } = await import('../server/providers/index.js');
+  const { setApiKey, addApiKey, clearKeyRest } = await import('../server/settings.js');
+  const uid = 'u-rot';
+  const entry = { provider: 'openrouter', model: 'x/flaky:free', label: 'Flaky', context: 128_000, maxOutput: 4096 };
+  const drive = async (script, keys) => {
+    await setApiKey(uid, 'openrouter', keys[0]);
+    for (const spare of keys.slice(1)) await addApiKey(uid, 'openrouter', spare);
+    clearKeyRest(uid, 'openrouter');
+    const seen = [];
+    const events = [];
+    const streamOne = async function* (_entry, common) {
+      const step = script[seen.length] || { throw: err(500, 'ran off the end of the script') };
+      seen.push(common.apiKey);
+      for (const event of step.emit || []) yield event;
+      if (step.throw) throw step.throw;
+    };
+    let error = null;
+    try {
+      for await (const event of streamCompletion({ userId: uid, entry, messages: [], streamOne, sleep: async () => {} })) events.push(event);
+    } catch (thrown) {
+      error = thrown;
+    }
+    return { seen, events, error };
+  };
+  const down = () => err(502, 'Provider returned error');
+  const answer = { emit: [{ type: 'text', delta: 'ok' }, { type: 'done', stopReason: 'end_turn', usage: { input: 1, output: 1 } }] };
+
+  const saved = await drive([{ throw: down() }, { throw: down() }, { throw: down() }, answer], ['k-one', 'k-two']);
+  check('key 1 failing three times hands over to key 2, which answers', !saved.error && saved.seen.join(',') === 'k-one,k-one,k-one,k-two', `${saved.seen.join(',')} ${saved.error?.message || ''}`);
+  check('  and says so, without calling it refused', saved.events.some((e) => e.type === 'notice' && /could not reach the model, trying the next key/.test(e.text)) && !saved.events.some((e) => /was refused/.test(e.text || '')));
+
+  const lost = await drive([{ throw: down() }, { throw: down() }, { throw: down() }, { throw: down() }, { throw: down() }], ['k-one', 'k-two', 'k-three']);
+  check('every key failing is one error, marked so the turn can change model', lost.error?.upstream === true && /could not reach this model on any key/.test(lost.error.message) && !/was refused/.test(lost.error.message), lost.error?.message);
+  check('  after one try on each further key, not three', lost.seen.join(',') === 'k-one,k-one,k-one,k-two,k-three', lost.seen.join(','));
+
+  const one = await drive([{ throw: down() }, { throw: down() }, { throw: down() }], ['k-only']);
+  check('with one key, three tries and the same marked error', one.error?.upstream === true && one.seen.length === 3, `${one.seen.length} ${one.error?.message}`);
 }
 
 section('what was read from Google goes only where nothing trains on it (Limited Use, 2026-10-18)');
