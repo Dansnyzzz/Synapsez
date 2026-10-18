@@ -6,6 +6,7 @@ import { record as recordUsage } from './usage.js';
 import { renderPdfPages } from './pdf.js';
 import { ocrImage } from './ocr.js';
 import { log } from './util/trace.js';
+import { googleDataInScope } from './googleData.js';
 
 /**
  * Eyes for a model that has none.
@@ -95,8 +96,9 @@ export function lendableUnder(privacy, provider) {
  * only if the account can actually reach its provider.
  */
 export async function visionEngines(userId) {
-  // Unknown is strict, the same rule providerPrivacyFor follows (PRV-002).
-  const privacy = await providerPrivacyFor(userId).catch(() => 'strict');
+  // Unknown is strict, the same rule providerPrivacyFor follows (PRV-002). So is
+  // a conversation holding Google data, whatever the account chose (googleData.js).
+  const privacy = googleDataInScope() ? 'strict' : await providerPrivacyFor(userId).catch(() => 'strict');
   const engines = [];
   const reach = new Map();
   const canReach = async (provider) => {

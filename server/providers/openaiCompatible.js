@@ -343,6 +343,9 @@ export function privacyParams({ router, privacy }) {
   return { provider: { data_collection: 'deny', zdr: true } };
 }
 
+/** OpenRouter's refusal when no endpoint for the model meets that policy. */
+export const DATA_POLICY_REFUSED = /matching your data policy|no endpoints? (?:found )?(?:that )?(?:match|meet)\w* (?:your )?(?:data|privacy|zdr)/i;
+
 export async function* streamOpenAICompatible({
   apiKey,
   baseURL,

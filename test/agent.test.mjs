@@ -2387,6 +2387,114 @@ section('a memory note asks first in a turn that has read something from outside
   check('  where auto, which never asks, does save it', underAuto.includes('planted mailbox'), underAuto.slice(0, 200));
 }
 
+section('a conversation holding Google data is marked, and the mark follows its work (Limited Use, 2026-10-18)');
+{
+  /*
+   * The privacy notice promises Google's Limited Use terms: what is read from
+   * somebody's Google account goes only to models that do not train on it.
+   * streamCompletion enforces that (fallback.test.mjs); this is what tells it.
+   */
+  const { carriesGoogleData, GOOGLE_DATA_TOOLS, DRIVE_ORIGIN, googleDataInScope, withGoogleData, mayReceiveGoogleData } = await import('../server/googleData.js');
+  const { TOOLS, availableTools } = await import('../server/tools/definitions.js');
+  const { saveUpload } = await import('../server/attachments.js');
+  const { encryptSecret } = await import('../server/crypto.js');
+
+  const needsGoogle = TOOLS.filter((t) => String(t.needs || '').startsWith('google_')).map((t) => t.name).sort();
+  check('the Google tools are exactly the ones that need a Google grant', JSON.stringify([...GOOGLE_DATA_TOOLS].sort()) === JSON.stringify(needsGoogle), needsGoogle.join(','));
+  check('a Gmail result marks a conversation', carriesGoogleData([{ role: 'tool', results: [{ name: 'gmail', content: 'Hi Ann', isError: false }] }]));
+  check('  a call that was refused or failed brings nothing back, so does not', !carriesGoogleData([
+    { role: 'assistant', toolCalls: [{ id: 'g1', name: 'gmail', input: {} }] },
+    { role: 'tool', results: [{ toolCallId: 'g1', name: 'gmail', content: 'Google is paused', isError: true }] },
+  ]));
+  check('a file from Drive marks it', carriesGoogleData([{ role: 'user', text: 'x', attachments: [{ id: 'a', origin: DRIVE_ORIGIN }] }]));
+  check('  a file from the computer does not', !carriesGoogleData([{ role: 'user', text: 'x', attachments: [{ id: 'a', origin: 'upload' }] }]));
+  check('it may go to Anthropic, OpenAI and OpenRouter; not to Gemini or OrcaRouter', ['anthropic', 'openai', 'openrouter'].every(mayReceiveGoogleData) && !['google', 'orcarouter', '', undefined].some(mayReceiveGoogleData));
+
+  const gUser = await store.createUser({ id: 'u-gdata', email: 'gdata@example.com', name: 'G', passwordHash: await hashPassword('a-sufficiently-long-password'), role: 'user' });
+  const fromDrive = await saveUpload(gUser.id, { name: 'plan.txt', mime: 'text/plain', data: Buffer.from('the plan').toString('base64'), origin: DRIVE_ORIGIN });
+  check('a Drive file is stored as one', fromDrive.origin === DRIVE_ORIGIN, fromDrive.origin);
+  const forged = await saveUpload(gUser.id, { name: 'x.txt', mime: 'text/plain', data: Buffer.from('x').toString('base64'), origin: 'generated' });
+  check('  and no other origin can be asked for through an upload', forged.origin === 'upload', forged.origin);
+
+  await store.createChat(gUser.id, { id: 'c-gdata-plain', title: 'plain' });
+  await store.appendMessage(gUser.id, 'c-gdata-plain', { id: 'gp-u', role: 'user', text: 'Hello.' });
+  await store.createChat(gUser.id, { id: 'c-gdata-mail', title: 'mail' });
+  await store.appendMessage(gUser.id, 'c-gdata-mail', { id: 'gm-u', role: 'user', text: 'Any mail from Ann?' });
+  await store.appendMessage(gUser.id, 'c-gdata-mail', { id: 'gm-a', role: 'assistant', text: '', toolCalls: [{ id: 'gm1', name: 'gmail', input: { action: 'search', query: 'from:ann' } }] });
+  await store.appendMessage(gUser.id, 'c-gdata-mail', { id: 'gm-t', role: 'tool', results: [{ toolCallId: 'gm1', name: 'gmail', content: 'Ann: lunch on Friday?', isError: false }] });
+  await store.appendMessage(gUser.id, 'c-gdata-mail', { id: 'gm-a2', role: 'assistant', text: 'Ann asked about lunch on Friday.' });
+  await store.appendMessage(gUser.id, 'c-gdata-mail', { id: 'gm-u2', role: 'user', text: 'Thanks. What else?' });
+  await store.createChat(gUser.id, { id: 'c-gdata-drive', title: 'drive' });
+  await store.appendMessage(gUser.id, 'c-gdata-drive', { id: 'gd-u', role: 'user', text: 'Summarise this.', attachments: [fromDrive] });
+
+  const marked = {};
+  for (const chatId of ['c-gdata-plain', 'c-gdata-mail', 'c-gdata-drive']) {
+    const records = async function* (opts) {
+      marked[chatId] = opts.googleData;
+      yield { type: 'text', delta: 'ok' };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+    };
+    await runAgent({ userId: gUser.id, user: gUser, chatId, emit: () => {}, stream: records });
+  }
+  check('a plain conversation goes as the account chose', marked['c-gdata-plain'] === false, String(marked['c-gdata-plain']));
+  check('one that read Gmail is sent marked, on every later turn too', marked['c-gdata-mail'] === true, String(marked['c-gdata-mail']));
+  check('one holding a file from Drive is sent marked', marked['c-gdata-drive'] === true, String(marked['c-gdata-drive']));
+
+  // Work a marked turn starts — here, sub-agents — inherits the mark.
+  const inScope = [];
+  const sub = async function* () {
+    inScope.push(googleDataInScope());
+    yield { type: 'text', delta: 'ok' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+  };
+  await withGoogleData(true, () => runParallel({ user: gUser, chatId: null, tasks: ['one', 'two'], stream: sub }));
+  check('sub-agents started from a marked turn carry the mark', inScope.length === 2 && inScope.every(Boolean), JSON.stringify(inScope));
+  inScope.length = 0;
+  await runParallel({ user: gUser, chatId: null, tasks: ['one'], stream: sub });
+  check('  and ones started from anywhere else do not', inScope.length === 1 && inScope[0] === false, JSON.stringify(inScope));
+  check('  nor can anything inside a marked turn take it off', await withGoogleData(true, () => withGoogleData(false, async () => googleDataInScope())));
+
+  // A sub-agent never reads Google itself: its answer comes back as a
+  // run_parallel result, which nothing could tell apart from any other.
+  await store.saveConnector(gUser.id, 'google', encryptSecret(JSON.stringify({ access: 'x', refresh: 'r', exp: Date.now() + 1e6, scope: 'https://www.googleapis.com/auth/contacts.readonly' })), 'g@example.com');
+  const control = availableTools({ workerOnline: false, desktopOnline: false, policy: 'readonly', subagent: true, context: 0, connected: ['google', 'google_contacts'] }).map((t) => t.name);
+  check('(Contacts is a read-only tool a sub-agent would otherwise be offered)', control.includes('google_contacts'));
+  const { stream: subStream, seen: subSeen } = scriptedProvider([{ text: 'ok' }]);
+  await runParallel({ user: gUser, chatId: null, tasks: ['find Ann'], stream: subStream });
+  const subNames = (subSeen.tools || []).map((t) => t.name);
+  check('a sub-agent is offered no Google tool, even with Google connected', subNames.length > 0 && !subNames.some((n) => GOOGLE_DATA_TOOLS.has(n)), subNames.filter((n) => GOOGLE_DATA_TOOLS.has(n)).join(',') || `${subNames.length} tools`);
+
+  // The tools that call a Gemini key directly stand aside in a marked turn.
+  const { executeTool } = await import('../server/tools/execute.js');
+  const { setApiKey } = await import('../server/settings.js');
+  await setApiKey(gUser.id, 'google', 'key-gemini-test');
+  const picture = await withGoogleData(true, () => executeTool({ user: gUser, name: 'generate_image', input: { prompt: 'a cat' }, chatId: null }));
+  check('no picture is made through a Gemini key from a marked turn', picture.isError && /holds data from the person's Google account/.test(picture.content), picture.content);
+  const docs = await withGoogleData(true, () => executeTool({ user: gUser, name: 'search_docs', input: { query: 'invoice' }, chatId: null }));
+  check('  nor are indexed folders searched through one', docs.isError && /Gemini key/.test(docs.content), docs.content);
+  const { search } = await import('../server/search.js');
+  const saved = { order: process.env.SEARCH_ORDER, gemini: process.env.GEMINI_API_KEY, fetch: globalThis.fetch };
+  process.env.SEARCH_ORDER = 'google';
+  process.env.GEMINI_API_KEY = 'deployment-gemini-test';
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    asked.push(String(url));
+    return new Response(JSON.stringify({ candidates: [] }), { status: 200 });
+  };
+  try {
+    await withGoogleData(true, () => search('Ann lunch Friday', { userId: gUser.id }));
+    check('  nor is a web search sent through one', !asked.some((u) => u.includes('generativelanguage')), asked.join(' '));
+    await search('weather in Hanoi', { userId: gUser.id });
+    check('  while a search from anywhere else still is', asked.some((u) => u.includes('generativelanguage')), asked.join(' '));
+  } finally {
+    globalThis.fetch = saved.fetch;
+    if (saved.order === undefined) delete process.env.SEARCH_ORDER;
+    else process.env.SEARCH_ORDER = saved.order;
+    if (saved.gemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = saved.gemini;
+  }
+}
+
 // Last, after every section that uses the database: it was removed midway, and
 // the sections after it ran against pages PGlite happened to still hold.
 removeTemp(process.env.DATA_DIR);

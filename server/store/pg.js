@@ -2010,9 +2010,10 @@ export function createPgStore(connectionString) {
       // belongs to the shelf, not a message — and this sweep used to take it a
       // day after it was added: the download vanished, and a picture on the
       // shelf lost the only copy of its bytes. Anything a shelf points at stays.
+      // `google_drive` is an upload picked from Drive (googleData.js).
       await q(
         `DELETE FROM attachments a
-          WHERE a.chat_id IS NULL AND a.origin = 'upload'
+          WHERE a.chat_id IS NULL AND a.origin IN ('upload', 'google_drive')
             AND a.created_at < NOW() - ($1 || ' hours')::interval
             AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id)`,
         [String(olderThanHours)],
@@ -2053,11 +2054,11 @@ export function createPgStore(connectionString) {
              WHERE a.chat_id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = a.chat_id))::bigint AS detached_bytes,
            (SELECT COUNT(*) FROM attachments a
-             WHERE a.chat_id IS NULL AND a.origin = 'upload'
+             WHERE a.chat_id IS NULL AND a.origin IN ('upload', 'google_drive')
                AND a.created_at < NOW() - INTERVAL '24 hours'
                AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id))::int AS unsent,
            (SELECT COALESCE(SUM(a.bytes), 0) FROM attachments a
-             WHERE a.chat_id IS NULL AND a.origin = 'upload'
+             WHERE a.chat_id IS NULL AND a.origin IN ('upload', 'google_drive')
                AND a.created_at < NOW() - INTERVAL '24 hours'
                AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id))::bigint AS unsent_bytes,
            (SELECT COUNT(*) FROM project_files WHERE attachment_id IS NULL)::int AS lost,
@@ -2086,7 +2087,7 @@ export function createPgStore(connectionString) {
       );
       const unsent = await q(
         `DELETE FROM attachments a
-          WHERE a.chat_id IS NULL AND a.origin = 'upload'
+          WHERE a.chat_id IS NULL AND a.origin IN ('upload', 'google_drive')
             AND a.created_at < NOW() - INTERVAL '24 hours'
             AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id)
       RETURNING a.id`,

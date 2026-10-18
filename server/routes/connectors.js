@@ -6,6 +6,7 @@ import { listDriveFiles, driveFileForAttachment } from '../tools/google.js';
 import { saveUpload, LIMITS } from '../attachments.js';
 import { publicUrlFor } from '../util/net.js';
 import { TOOLS } from '../tools/definitions.js';
+import { DRIVE_ORIGIN } from '../googleData.js';
 
 /**
  * Connecting a third-party account — GitHub, Notion, Slack and the rest.
@@ -133,7 +134,9 @@ export function mountConnectorRoutes(api, { wrap }) {
         if (!(await withDrive(req, res))) return;
         try {
           const file = await driveFileForAttachment(req.user.id, req.params.fileId, { maxBytes: LIMITS.maxBytes });
-          res.status(201).json({ attachment: await saveUpload(req.user.id, file) });
+          // Marked as from Drive: the conversation it is sent in then goes only
+          // to models that do not train on it (googleData.js).
+          res.status(201).json({ attachment: await saveUpload(req.user.id, { ...file, origin: DRIVE_ORIGIN }) });
         } catch (err) {
           res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
         }

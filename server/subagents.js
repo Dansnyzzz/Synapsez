@@ -12,6 +12,7 @@ import { getStore } from './store/index.js';
 import { searchProject } from './projects.js';
 import { untrusted, UNTRUSTED_RULE } from './tools/untrusted.js';
 import { withheldTools } from './memory.js';
+import { GOOGLE_DATA_TOOLS } from './googleData.js';
 
 /**
  * Sub-agents — several independent investigations at once.
@@ -327,8 +328,11 @@ export async function runParallel({
     providers: Object.entries(providerKeys)
       .filter(([, status]) => status?.configured)
       .map(([provider]) => provider),
-    // An incognito conversation's helpers remember nothing either.
-    withhold: withheldTools({ chat, prefs }),
+    // An incognito conversation's helpers remember nothing either. Nor do they
+    // read Google: what one read would come back as a `run_parallel` result,
+    // which googleData.js cannot tell from any other, and the conversation
+    // would go on to models it may not reach. The main loop reads it instead.
+    withhold: new Set([...withheldTools({ chat, prefs }), ...GOOGLE_DATA_TOOLS]),
   });
 
   const context = await projectContext(user.id, chatId);

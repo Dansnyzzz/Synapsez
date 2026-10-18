@@ -515,6 +515,76 @@ section('a restart clears the text the reader had already seen');
   check('a retry discards the abandoned reasoning as well', reasoning.thinking === '', JSON.stringify(reasoning.thinking));
 }
 
+section('what was read from Google goes only where nothing trains on it (Limited Use, 2026-10-18)');
+{
+  const { streamCompletion } = await import('../server/providers/index.js');
+  const { setApiKey, clearKeyRest, setPrefs } = await import('../server/settings.js');
+  const { withGoogleData } = await import('../server/googleData.js');
+  const uid = 'u-rot';
+  await setApiKey(uid, 'openrouter', 'key-or');
+  await setApiKey(uid, 'google', 'key-gemini');
+  await setPrefs(uid, { providerPrivacy: 'standard' });
+
+  const run = async ({ entry, googleData, script = null }) => {
+    clearKeyRest(uid, entry.provider);
+    const sent = [];
+    const streamOne = async function* (_entry, common) {
+      sent.push(common);
+      if (script?.throw) throw script.throw;
+      yield { type: 'text', delta: 'ok' };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 1, output: 1 } };
+    };
+    let error = null;
+    try {
+      for await (const _event of streamCompletion({ userId: uid, entry, messages: [], googleData, streamOne, sleep: async () => {} })) {
+        /* drained */
+      }
+    } catch (thrown) {
+      error = thrown;
+    }
+    return { sent, error };
+  };
+
+  const router = { provider: 'openrouter', model: 'x/y:free', label: 'Y (free)', context: 128_000, maxOutput: 4096 };
+  const gemini = { provider: 'google', model: 'gemini-flash-latest', label: 'Gemini Flash', context: 1_000_000, maxOutput: 8192 };
+
+  const plain = await run({ entry: router, googleData: false });
+  check('without Google data, OpenRouter goes as the account chose', plain.sent[0]?.privacy === 'standard', plain.sent[0]?.privacy);
+  const marked = await run({ entry: router, googleData: true });
+  check('with it, OpenRouter is asked for zero-retention endpoints only', marked.sent[0]?.privacy === 'strict', marked.sent[0]?.privacy);
+  check('  and the flag itself is not handed to the adapter', marked.sent[0] && !('googleData' in marked.sent[0]));
+
+  const refused = await run({ entry: gemini, googleData: true });
+  check('a Gemini key is never sent it', refused.sent.length === 0 && /holds data from your Google account/.test(refused.error?.message || '') && /Google Gemini/.test(refused.error?.message || ''), refused.error?.message);
+  const geminiPlain = await run({ entry: gemini, googleData: false });
+  check('  while a conversation without it still goes there', geminiPlain.sent.length === 1 && !geminiPlain.error, geminiPlain.error?.message);
+  const orca = await run({ entry: { provider: 'orcarouter', model: 'a/b', label: 'B', context: 32_000 }, googleData: true });
+  check('nor is OrcaRouter, which has no per-request policy', orca.sent.length === 0 && /OrcaRouter/.test(orca.error?.message || ''), orca.error?.message);
+
+  const policy = Object.assign(new Error('404 {"error":{"message":"No endpoints found matching your data policy (Free model publication)."}}'), { status: 404 });
+  const noEndpoint = await run({ entry: router, googleData: true, script: { throw: policy } });
+  check('no zero-retention endpoint says why, and not "set privacy back to Standard"', /holds data from your Google account/.test(noEndpoint.error?.message || '') && /Y \(free\)/.test(noEndpoint.error?.message || '') && !/Standard/.test(noEndpoint.error?.message || ''), noEndpoint.error?.message);
+  const ownStrict = await run({ entry: router, googleData: false, script: { throw: policy } });
+  check('  while the account\'s own strict setting keeps its own words', /data policy/.test(ownStrict.error?.message || ''), ownStrict.error?.message);
+
+  const scoped = [];
+  await withGoogleData(true, async () => {
+    scoped.push(await run({ entry: router }));
+    scoped.push(await run({ entry: gemini }));
+  });
+  check('work started from a marked turn is held to the same rule', scoped[0].sent[0]?.privacy === 'strict' && scoped[1].sent.length === 0, `${scoped[0].sent[0]?.privacy} / ${scoped[1].sent.length}`);
+
+  // The cheap model for a fold is not one the conversation's data may not reach.
+  const { modelForRole } = await import('../server/roleModel.js');
+  const { resolveModel } = await import('../server/providers/catalog.js');
+  const opus = resolveModel('anthropic/claude-opus-5');
+  const prefs = { cheapModel: 'google/gemini-flash-lite-latest' };
+  const freely = await modelForRole(uid, 'compaction', opus, prefs);
+  const kept = await modelForRole(uid, 'compaction', opus, prefs, { googleData: true });
+  check('a cheap model set in preferences is used as before', freely.provider === 'google', freely.id);
+  check('  but not for a conversation holding Google data', kept.provider === 'anthropic', kept.id);
+}
+
 removeTemp(process.env.DATA_DIR);
 
 // ── not every call in a turn deserves the turn's model ──────────────

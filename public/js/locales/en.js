@@ -1233,6 +1233,8 @@ export const en = {
   'gate.consentNeeded': 'Tick the box to agree to the privacy notice first.',
   'memory.notice': 'Privacy notice — what is processed, where it goes, and your rights',
   'gate.forgot': 'Forgot your password?',
+  'gate.about': 'Synapsez is an AI assistant: chat with the model you choose, work with your files and, only if you connect them, your Gmail, Drive, Calendar and other Google apps, to do what you ask.',
+  'gate.privacy': 'Privacy policy',
   'nav.collapse': 'Collapse menu',
   'nav.closeMenu': 'Close menu',
   'nav.main': 'Main',

@@ -37,6 +37,7 @@ import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { untrusted } from './tools/untrusted.js';
 import { getApiKey, baseUrlFor } from './settings.js';
+import { googleDataInScope } from './googleData.js';
 
 /**
  * Embedding models, in the order they are tried.
@@ -495,6 +496,14 @@ export async function searchDocs(userId, { query, limit = 6, source = null }) {
 
   const embedder = await embedderFor(userId);
   if (!embedder) throw noEmbedder();
+  // The query is read through the same model the folder was indexed with, and
+  // one written in a conversation holding Google data is not sent through a
+  // Gemini key, which may train on it (googleData.js).
+  if (embedder.provider === 'google' && googleDataInScope()) {
+    throw new Error(
+      'Searching the indexed folders goes through a Google Gemini key, and this conversation holds data from the person\'s Google account, which is not sent there. Read the files with read_file instead, or search in a new conversation.',
+    );
+  }
 
   const store = getStore();
   const needle = await queryVector(userId, text, embedder);

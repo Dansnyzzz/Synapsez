@@ -25,6 +25,7 @@
 
 import { untrusted } from './tools/untrusted.js';
 import { log } from './util/trace.js';
+import { googleDataInScope } from './googleData.js';
 
 const DEFAULT_ORDER = ['exa', 'google', 'duckduckgo', 'tavily', 'brave'];
 
@@ -261,6 +262,9 @@ const GROUNDING_MODEL = process.env.GOOGLE_SEARCH_MODEL || 'gemini-2.5-flash';
 
 /** @param {{ userId?: string|null }} [who] */
 async function searchGoogle(query, count, who = {}) {
+  // A query written in a conversation holding Google data is not sent through a
+  // Gemini key, which may train on it (googleData.js); the next engine searches.
+  if (googleDataInScope()) throw Object.assign(new Error('not with Google data'), { skip: true });
   const userId = who.userId;
   let key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
   if (!key && userId) {

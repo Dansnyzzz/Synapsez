@@ -355,6 +355,56 @@ section('search_chats reads what was said, scoped like Claude');
   await alice.call('PUT', '/api/prefs', { chatSearch: true });
 }
 
+section('what came from Google is read only where Google data already is (Limited Use, 2026-10-18)');
+{
+  /*
+   * A note or an earlier conversation is read into other conversations, which
+   * may be going to a model that trains on what it is sent. So a copy of Google
+   * data goes only where such data already is — the conversation is then held
+   * to providers that do not train (googleData.js).
+   */
+  const { withGoogleData } = await import('../server/googleData.js');
+  const { memoryForTurn } = await import('../server/memory.js');
+  const notes = async () => (await store.getUserSetting(aliceId, 'memory')) || {};
+
+  await withGoogleData(true, () => run('memory_write', { key: 'ann-lunch', content: 'Ann asked about lunch on Friday', scope: 'account' }));
+  check('a note saved from a conversation holding Google data is marked', (await notes())['ann-lunch']?.google === true, JSON.stringify((await notes())['ann-lunch']));
+  const plain = await memoryForTurn(aliceId, { id: 'c', project_id: null }, { memory: true });
+  check('a conversation without Google data is not read it', !/Ann asked about lunch/.test(plain) && /read only into conversations that hold such data/.test(plain), plain.slice(-300));
+  const marked = await memoryForTurn(aliceId, { id: 'c', project_id: null }, { memory: true }, { googleData: true });
+  check('  one with Google data is', /Ann asked about lunch/.test(marked));
+  const read = await run('memory_read', { key: 'ann-lunch' });
+  check('memory_read does not open it there', !/Ann asked/.test(read.content) && /Google data/.test(read.content), read.content);
+  const listed = await run('memory_read', {});
+  check('  nor list it', !/ann-lunch/.test(listed.content) && /Google data/.test(listed.content), listed.content.slice(-300));
+  const searched = await run('memory_search', { query: 'lunch Ann' });
+  check('  and memory_search does not find it', !/Ann asked/.test(searched.content) && /Google data/.test(searched.content), searched.content.slice(0, 300));
+  const there = await withGoogleData(true, () => run('memory_read', { key: 'ann-lunch' }));
+  check('where Google data already is, it reads as before', /Ann asked about lunch/.test(there.content), there.content);
+  await run('memory_append', { key: 'ann-lunch', content: 'She prefers noon.' });
+  check('adding to it from elsewhere keeps the mark', (await notes())['ann-lunch']?.google === true && /noon/.test((await notes())['ann-lunch']?.content));
+  await run('memory_write', { key: 'plain-fact', content: 'Likes green tea', scope: 'account' });
+  check('a note saved anywhere else is not marked', (await notes())['plain-fact'] && !(await notes())['plain-fact'].google);
+
+  const mail = (await alice.call('POST', '/api/chats', {})).body.chat.id;
+  await store.appendMessage(aliceId, mail, { id: 'gq-1', role: 'user', text: 'what did the quokka newsletter say' });
+  await store.appendMessage(aliceId, mail, { id: 'gq-2', role: 'assistant', text: '', toolCalls: [{ id: 'q1', name: 'gmail', input: { action: 'search', query: 'quokka' } }] });
+  await store.appendMessage(aliceId, mail, { id: 'gq-3', role: 'tool', results: [{ toolCallId: 'q1', name: 'gmail', content: 'Quokka weekly: sale', isError: false }] });
+  await store.appendMessage(aliceId, mail, { id: 'gq-4', role: 'assistant', text: 'The quokka newsletter announced a sale.' });
+  const zoo = (await alice.call('POST', '/api/chats', {})).body.chat.id;
+  await store.appendMessage(aliceId, zoo, { id: 'zq-1', role: 'user', text: 'I like the quokka at the zoo' });
+  const fromPlain = await run('search_chats', { query: 'quokka' }, null);
+  check('search_chats does not quote a conversation holding Google data into one without', /zoo/.test(fromPlain.content) && !/newsletter/.test(fromPlain.content) && /Google account/.test(fromPlain.content), fromPlain.content);
+  const fromMarked = await withGoogleData(true, () => run('search_chats', { query: 'quokka' }, null));
+  check('  and does into one with it', /newsletter/.test(fromMarked.content) && /zoo/.test(fromMarked.content), fromMarked.content);
+
+  // Out of the way of the sections below, which count notes and conversations.
+  await store.removeUserSettingKey(aliceId, 'memory', 'ann-lunch');
+  await store.removeUserSettingKey(aliceId, 'memory', 'plain-fact');
+  await store.deleteChat(aliceId, mail);
+  await store.deleteChat(aliceId, zoo);
+}
+
 /* ── retention ─────────────────────────────────────────────────────── */
 
 section('retention deletes old conversations, never pinned ones');

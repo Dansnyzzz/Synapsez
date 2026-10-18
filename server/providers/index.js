@@ -1,6 +1,7 @@
 import { streamAnthropic } from './anthropic.js';
-import { streamOpenAICompatible } from './openaiCompatible.js';
+import { streamOpenAICompatible, DATA_POLICY_REFUSED } from './openaiCompatible.js';
 import { streamGoogle } from './google.js';
+import { mayReceiveGoogleData, googleDataInScope } from '../googleData.js';
 import {
   getApiKeys,
   baseUrlFor,
@@ -383,8 +384,8 @@ const ROUNDS = 3;
  *       · {type:'notice', text} · {type:'retry', reason}
  *       · {type:'done', stopReason, toolCalls, usage, raw?}
  */
-export async function* streamCompletion(opts) {
-  const { streamOne: injected, sleep, ...rest } = opts;
+async function* streamAny(opts) {
+  const { streamOne: injected, sleep, googleData: _googleData, ...rest } = opts;
   const entry = opts.entry;
   const provider = entry.provider;
   const label = PROVIDERS[provider]?.label || provider;
@@ -569,6 +570,33 @@ export async function* streamCompletion(opts) {
   }
 
   throw new Error(`${label}: every key was refused${refused ? ` (${refused})` : ''}.`);
+}
+
+/**
+ * `streamAny`, with what was read from somebody's Google account kept away from
+ * any model that may train on it (googleData.js). `opts.googleData` is the
+ * caller saying its messages carry it; the scope covers work a tool started.
+ */
+export async function* streamCompletion(opts) {
+  if (!opts.googleData && !googleDataInScope()) {
+    yield* streamAny(opts);
+    return;
+  }
+  const provider = opts.entry?.provider;
+  if (!mayReceiveGoogleData(provider)) {
+    const label = PROVIDERS[provider]?.label || provider;
+    throw new Error(
+      `This conversation holds data from your Google account, and ${label} may keep what it is sent or learn from it, so it was not sent there. Pick a model from OpenRouter, Anthropic or OpenAI.`,
+    );
+  }
+  try {
+    yield* streamAny(provider === 'openrouter' ? { ...opts, privacy: 'strict' } : opts);
+  } catch (err) {
+    if (provider !== 'openrouter' || !DATA_POLICY_REFUSED.test(String(err?.message ?? err))) throw err;
+    throw new Error(
+      `This conversation holds data from your Google account, so it goes only to providers that neither keep it nor train on it, and none serving ${opts.entry?.label || 'this model'} promises that. Pick another model.`,
+    );
+  }
 }
 
 /**

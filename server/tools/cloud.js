@@ -39,7 +39,9 @@ import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText, answerSummary } from './askOptions.js';
 import {
   MEMORY_KEY, MAX_NOTE_CHARS, memoryScope, readBothScopes, noteName, memoryRefusal, refusalMessage, rankNotes, stampNote,
+  withoutGoogleNotes, heldNotesLine,
 } from '../memory.js';
+import { carriesGoogleData, googleDataInScope } from '../googleData.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
 import { dropElements, stripTags } from '../util/markup.js';
@@ -899,7 +901,8 @@ async function memoryWrite({ key, content, scope }, { userId, chatId }) {
   // What it replaces, kept one step back so a bad write can be undone (HAR-002).
   const before = ((await store.getUserSetting(userId, where.key).catch(() => null)) || {})[name] || null;
   await store.mergeUserSetting(userId, where.key, {
-    [name]: stampNote(text, { by: 'assistant', chatId, before }),
+    // Marked when written from a conversation holding Google data (googleData.js).
+    [name]: stampNote(text, { by: 'assistant', chatId, before, google: googleDataInScope() }),
   });
 
   if (!found.length) return `Saved note "${name}" for ${where.where}.`;
@@ -919,7 +922,21 @@ async function memoryWrite({ key, content, scope }, { userId, chatId }) {
  */
 async function memoryRead({ key }, { userId, chatId }) {
   await memoryAllowed(userId, chatId);
-  const { here, account, project, merged } = await readBothScopes({ userId, chatId });
+  const both = await readBothScopes({ userId, chatId });
+  const { here } = both;
+  let { account, project, merged } = both;
+  // A note saved from Google data is read only where such data already is (googleData.js).
+  let held = 0;
+  if (!googleDataInScope()) {
+    const fromAccount = withoutGoogleNotes(account);
+    const fromProject = withoutGoogleNotes(project);
+    if (key && Object.hasOwn(merged, key) && merged[key]?.google) return heldNotesLine(1);
+    ({ kept: account } = fromAccount);
+    ({ kept: project } = fromProject);
+    merged = { ...account, ...project };
+    held = fromAccount.held + fromProject.held;
+  }
+  const withHeld = (text) => (held ? `${text}\n${heldNotesLine(held)}` : text);
 
   if (key) {
     const note = Object.hasOwn(merged, key) ? merged[key] : null;
@@ -929,7 +946,7 @@ async function memoryRead({ key }, { userId, chatId }) {
   const line = (notes, k) => `- ${k}: ${notes[k].content.slice(0, 120)}`;
   if (!here.projectId) {
     const all = Object.keys(account).map((k) => line(account, k));
-    return all.length ? all.join('\n') : 'No notes saved yet.';
+    return withHeld(all.length ? all.join('\n') : 'No notes saved yet.');
   }
 
   const mine = Object.keys(project).map((k) => line(project, k));
@@ -939,15 +956,15 @@ async function memoryRead({ key }, { userId, chatId }) {
     .filter((k) => !(k in project))
     .map((k) => line(account, k));
 
-  if (!mine.length && !rest.length) return 'No notes saved yet.';
-  return [
+  if (!mine.length && !rest.length) return withHeld('No notes saved yet.');
+  return withHeld([
     mine.length ? `Notes for ${here.where} — these win where they disagree:` : null,
     ...mine,
     rest.length ? `${mine.length ? '\n' : ''}Notes for this account, which apply everywhere:` : null,
     ...rest,
   ]
     .filter((entry) => entry !== null)
-    .join('\n');
+    .join('\n'));
 }
 
 /**
@@ -1291,6 +1308,8 @@ async function memoryAppend({ key: rawKey, content, scope }, { userId, chatId })
     by: 'assistant',
     chatId,
     before: memory[key] || null,
+    // What was there stays, so a mark stays with it.
+    google: googleDataInScope() || !!memory[key]?.google,
   });
   // Merged, not overwritten: the agent runs up to four tool calls at once, so
   // two memory writes in one step both read the same object and a whole-value
@@ -1356,7 +1375,12 @@ async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newS
   guardNote(text, allowed);
   // A function, not the string: `replace` reads `$&` and `` $` `` in a string
   // replacement as patterns, so a note edited to say "costs $&5" came out wrong.
-  memory[key] = stampNote(boundedNote(note.content.replace(find, () => text)), { by: 'assistant', chatId, before: note });
+  memory[key] = stampNote(boundedNote(note.content.replace(find, () => text)), {
+    by: 'assistant',
+    chatId,
+    before: note,
+    google: googleDataInScope() || !!note.google,
+  });
   // Only this note, so a concurrent write to a different one is not undone.
   await store.mergeUserSetting(userId, target, { [key]: memory[key] });
 
@@ -1401,7 +1425,18 @@ async function memorySearch({ query, limit }, { userId, chatId }) {
   await memoryAllowed(userId, chatId);
   const wanted = String(query ?? '').trim();
   if (!wanted) throw new Error('Say what to look for.');
-  const { here, account, project } = await readBothScopes({ userId, chatId });
+  const both = await readBothScopes({ userId, chatId });
+  const { here } = both;
+  let { account, project } = both;
+  // As in memoryRead: a note from Google data only where such data already is.
+  let held = 0;
+  if (!googleDataInScope()) {
+    const fromAccount = withoutGoogleNotes(account);
+    const fromProject = withoutGoogleNotes(project);
+    ({ kept: account } = fromAccount);
+    ({ kept: project } = fromProject);
+    held = fromAccount.held + fromProject.held;
+  }
   const row = (scope) => ([key, note]) => ({
     key,
     scope,
@@ -1412,21 +1447,22 @@ async function memorySearch({ query, limit }, { userId, chatId }) {
     ...Object.entries(project).map(row('project')),
     ...Object.entries(account).filter(([key]) => !(key in project)).map(row('account')),
   ];
-  if (!notes.length) return 'No notes saved yet.';
+  const withHeld = (text) => (held ? `${text}\n${heldNotesLine(held)}` : text);
+  if (!notes.length) return withHeld('No notes saved yet.');
 
   const hits = rankNotes(notes, wanted, limit);
   if (!hits.length) {
     const names = notes.map((n) => n.key);
-    return `No note matches "${wanted}". The notes there are: ${names.slice(0, 80).join(', ')}${names.length > 80 ? ', …' : ''}.`;
+    return withHeld(`No note matches "${wanted}". The notes there are: ${names.slice(0, 80).join(', ')}${names.length > 80 ? ', …' : ''}.`);
   }
-  return hits
+  return withHeld(hits
     .map((n) => {
       const where = n.scope === 'project' ? ` — ${here.where}` : '';
       const date = n.updatedAt ? ` (${String(n.updatedAt).slice(0, 10)})` : '';
       const body = n.content.length > 1500 ? `${n.content.slice(0, 1500)}… [memory_read "${n.key}" for the rest]` : n.content;
       return `- ${n.key}${where}${date}: ${body}`;
     })
-    .join('\n');
+    .join('\n'));
 }
 
 /**
@@ -1509,11 +1545,33 @@ async function searchChatsTool({ query, limit }, { userId, chatId }) {
     const entry = chats.get(row.id);
     if (entry.lines.length < 2) entry.lines.push(`  ${row.role === 'user' ? 'They said' : 'You said'}: ${excerpt(row.text, terms)}`);
   }
+  /*
+   * What a conversation holding Google data said is quoted only into one that
+   * holds such data too (googleData.js): this one may be going to a model that
+   * can train on it. A conversation that cannot be checked is left out as well.
+   */
+  let held = 0;
+  if (!googleDataInScope()) {
+    const marked = await Promise.all(
+      [...chats.keys()].map(async (id) => {
+        const messages = await store.listMessages(userId, id).catch(() => null);
+        return messages === null || carriesGoogleData(messages) ? id : null;
+      }),
+    );
+    for (const id of marked.filter(Boolean)) {
+      chats.delete(id);
+      held += 1;
+    }
+  }
+  const heldLine = held
+    ? `\n(${held} more conversation${held === 1 ? '' : 's'} matched but ${held === 1 ? 'holds' : 'hold'} data from the person's Google account, which is not quoted into a conversation that holds none.)`
+    : '';
+  if (!chats.size) return `No earlier conversation ${where} that can be quoted here mentions ${terms.map((t) => `"${t}"`).join(' and ')}.${heldLine}`;
   const body = [...chats.values()]
     .map((c) => `- "${c.title}" (${new Date(c.updated).toISOString().slice(0, 10)})\n${c.lines.join('\n')}`)
     .join('\n');
   const note = loose ? ' (no conversation had every word, so these have some of them)' : '';
-  return `${chats.size} earlier conversation${chats.size === 1 ? '' : 's'} ${where}${note}:\n${untrusted('earlier conversations', body)}`;
+  return `${chats.size} earlier conversation${chats.size === 1 ? '' : 's'} ${where}${note}:\n${untrusted('earlier conversations', body)}${heldLine}`;
 }
 
 /**
@@ -2311,6 +2369,13 @@ export async function requestImages(client, { model, prompt, count, aspectRatio 
 async function generateImageTool({ prompt, name, aspect_ratio: aspectRatio, count }, { userId, chatId }) {
   const text = String(prompt || '').trim();
   if (!text) throw new Error('Describe the image you want.');
+  // Pictures are made through a Gemini key, which may train on the prompt, and a
+  // prompt written here may carry what was read from Google (googleData.js).
+  if (googleDataInScope()) {
+    throw new Error(
+      'Pictures are made through a Google Gemini key, and this conversation holds data from the person\'s Google account, which is not sent there. Tell the user; a picture can be made in a new conversation.',
+    );
+  }
 
   const key = await getApiKey(userId, 'google');
   if (!key) {

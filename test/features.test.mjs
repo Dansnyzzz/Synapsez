@@ -743,7 +743,12 @@ section('the privacy notice a new account agrees to is the one it can read (LAW-
   const version = /const PRIVACY_NOTICE = '(privacy-\d{4}-\d{2}-\d{2})'/.exec(app)?.[1];
   check('the page names the version the sign-up form sends', !!version && notice.includes(`Phiên bản ${version}`) && notice.includes(`Version ${version}`), version);
   check('  in both languages, saying where data goes outside Vietnam and what rights there are', /ra nước ngoài/.test(notice) && /outside Vietnam/.test(notice) && /Quyền của bạn/.test(notice) && /Your rights/.test(notice));
-  check('  says it is not legal advice', /không phải tư vấn pháp lý/.test(notice) && /not legal advice/.test(notice));
+  check('  names who runs it and how to reach them, not a placeholder', !/\[[^\]]*(email|điền|person|Tên)[^\]]*\]/i.test(notice) && /mailto:[^"]+@/.test(notice));
+  // Google's OAuth verification reads this page (owner, 2026-10-18).
+  check('  says what is read from Google and why, in both languages', /Dữ liệu từ tài khoản Google/.test(notice) && /Google user data/.test(notice) && /gmail\.modify/.test(notice) && /contacts\.readonly/.test(notice));
+  check('  and carries the Limited Use statement, with the policy it names', /use and transfer to any other app of information received from Google APIs will adhere to the\s*<a href="https:\/\/developers\.google\.com\/terms\/api-services-user-data-policy">Google API Services User Data Policy<\/a>,\s*including the Limited Use requirements/.test(notice));
+  check('the sign-in page links it for someone not signed in', /<a class="gate__legal" href="\/privacy\.html"/.test(fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')));
+  check('the Search Console verification file is served as Google wrote it', fs.readFileSync(new URL('../public/google19190bbd34c2487c.html', import.meta.url), 'utf8').trim() === 'google-site-verification: google19190bbd34c2487c.html');
   check('  and runs no script — it is served under the page policy as it is', !/<script/i.test(notice));
   const { AUDIT_KINDS } = await import('../server/audit.js');
   check('agreeing is an event the security record keeps', AUDIT_KINDS.includes('consent_given'));
