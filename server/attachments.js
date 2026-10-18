@@ -5,6 +5,7 @@ import { extractPdfText } from './pdf.js';
 import { isLegacyOffice, officeFormat, readOffice, readOfficeAsync } from './office/index.js';
 import { log } from './util/trace.js';
 import { groundedImage } from './imageGround.js';
+import { DRIVE_ORIGIN } from './googleData.js';
 
 /**
  * Photos and files — the ones sent with a message, and the ones the assistant
@@ -114,10 +115,12 @@ export function cleanThumb(thumb) {
  */
 /**
  * @param {string} userId
- * @param {{ name?: string, mime?: string, data?: string, thumb?: string|null }} file
+ * @param {{ name?: string, mime?: string, data?: string, thumb?: string|null, origin?: string }} file
  *   `thumb` is optional: the small picture a browser drew, when it drew one.
+ *   `origin` is `google_drive` for a file picked from the person's Drive, which
+ *   is what marks a conversation as holding Google data (googleData.js).
  */
-export async function saveUpload(userId, { name, mime, data, thumb = null }) {
+export async function saveUpload(userId, { name, mime, data, thumb = null, origin = 'upload' }) {
   const filename = String(name || 'file').slice(0, 200);
   const base64 = String(data || '');
   if (!base64) throw new Error(`${filename} is empty.`);
@@ -143,6 +146,7 @@ export async function saveUpload(userId, { name, mime, data, thumb = null }) {
     data: base64,
     // Drawn by the browser, which already has the file; checked, not trusted.
     thumb: cleanThumb(thumb),
+    origin: origin === DRIVE_ORIGIN ? DRIVE_ORIGIN : 'upload',
   });
 }
 

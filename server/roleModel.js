@@ -2,6 +2,7 @@ import { resolve as resolveModelId } from './models.js';
 import { resolveForUser } from './autoPick.js';
 import { getStore } from './store/index.js';
 import { log } from './util/trace.js';
+import { mayReceiveGoogleData, googleDataInScope } from './googleData.js';
 
 /**
  * Not every model call in a turn deserves the turn's model.
@@ -83,17 +84,22 @@ const CHEAP_BY_PROVIDER = {
  * where it was rather than failing, which is the only acceptable behaviour for
  * something that sits in the middle of a turn.
  *
+ * A conversation holding Google data (`options.googleData`, or the scope a tool
+ * runs in) keeps a cheap model on another provider only where that data may go.
+ *
  * @param entry the conversation's resolved model — the thing being saved from.
+ * @param {{ googleData?: boolean }} [options]
  */
-export async function modelForRole(userId, role, entry, prefs = null) {
+export async function modelForRole(userId, role, entry, prefs = null, options = {}) {
   if (!CHEAP_ROLES.has(role) || !entry) return entry;
+  const googleData = !!options.googleData || googleDataInScope();
 
   try {
     const settings = prefs || (await getStore().getUserSetting(userId, 'prefs')) || {};
 
     if (settings.cheapModel) {
       const chosen = await resolveForUser(userId, settings.cheapModel);
-      if (chosen) return note(role, entry, chosen, 'set in preferences');
+      if (chosen && (!googleData || mayReceiveGoogleData(chosen.provider))) return note(role, entry, chosen, 'set in preferences');
     }
 
     /**

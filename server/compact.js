@@ -4,6 +4,7 @@ import { streamCompletion } from './providers/index.js';
 import { priceTurn } from './providers/catalog.js';
 import { record as recordUsage } from './usage.js';
 import { modelForRole } from './roleModel.js';
+import { carriesGoogleData } from './googleData.js';
 
 /**
  * Keeping a long conversation inside the model's window.
@@ -367,7 +368,10 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
    * cheap tier where the account has one, and on the conversation's own model
    * where it does not. See server/roleModel.js.
    */
-  const writer = await modelForRole(userId, 'compaction', entry, prefs);
+  // What was read from Google is folded only where it may go (googleData.js) —
+  // the whole conversation decides, since an earlier fold carries it too.
+  const googleData = carriesGoogleData(messages);
+  const writer = await modelForRole(userId, 'compaction', entry, prefs, { googleData });
 
   let summary = '';
   let spent = null;
@@ -376,6 +380,7 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
     entry: writer,
     system: SYSTEM,
     messages: [{ id: 'compact', role: 'user', text: transcript }],
+    googleData,
     // No tools: this is a writing job, and a summariser that starts running
     // commands is a summariser that has misunderstood the assignment.
     tools: [],

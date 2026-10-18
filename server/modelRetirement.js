@@ -3,6 +3,7 @@ import { CATALOG } from './providers/catalog.js';
 import { setPrefs } from './settings.js';
 import { hasExpired } from './models.js';
 import { AUTO_ID, isAuto, pickAutoModel } from './autoPick.js';
+import { DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiCompatible.js';
 
 /**
  * A model the account chose, gone from the provider — and what happens then.
@@ -70,7 +71,6 @@ export async function goneModel(id) {
  */
 export const MODEL_GONE =
   /no longer available|is not found|not found for api version|does not exist|no longer supported|has been (?:retired|deprecated|shut down)|deprecat\w*|testing period|no endpoints found for /i;
-const DATA_POLICY = /matching your data policy|no endpoints? (?:found )?(?:that )?(?:match|meet)\w* (?:your )?(?:data|privacy|zdr)/i;
 /**
  * A key that cannot reach a model is not a model that has gone. OpenAI says
  * "The model `x` does not exist or you do not have access to it" for both, and

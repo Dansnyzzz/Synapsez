@@ -99,13 +99,19 @@ export const MAX_NOTE_CHARS = 8_000;
  * the opposite of what an edit is for. Their edit, or an import, keeps no earlier
  * version, and so also clears one an assistant change left behind.
  *
+ * `google` marks a note the assistant saved from a conversation holding data
+ * from the person's Google account; it is read only into conversations that
+ * hold such data too (googleData.js, `withoutGoogleNotes`). The person's own
+ * edit or an import carries no mark: what they write is theirs.
+ *
  * @param {string} content
- * @param {{ by: 'assistant'|'user'|'import', chatId?: string|null, before?: any }} origin
+ * @param {{ by: 'assistant'|'user'|'import', chatId?: string|null, before?: any, google?: boolean }} origin
  *   `before` is the stored note this replaces, if any.
  */
-export function stampNote(content, { by, chatId = null, before = null }) {
+export function stampNote(content, { by, chatId = null, before = null, google = false }) {
   const note = { content, updatedAt: new Date().toISOString(), by };
   if (chatId) note.chatId = chatId;
+  if (google) note.google = true;
   if (by === 'assistant' && before && typeof before.content === 'string' && before.content !== content) {
     // One step back, never a chain: the previous version, without its own past.
     note.previous = {
@@ -113,10 +119,29 @@ export function stampNote(content, { by, chatId = null, before = null }) {
       updatedAt: before.updatedAt || null,
       ...(before.by ? { by: before.by } : {}),
       ...(before.chatId ? { chatId: before.chatId } : {}),
+      ...(before.google ? { google: true } : {}),
     };
   }
   return note;
 }
+
+/**
+ * The notes a conversation without Google data may read: every one but those
+ * marked `google`, and how many were held back so it can be said.
+ */
+export function withoutGoogleNotes(notes) {
+  const kept = {};
+  let held = 0;
+  for (const [key, note] of Object.entries(notes || {})) {
+    if (note?.google) held += 1;
+    else kept[key] = note;
+  }
+  return { kept, held };
+}
+
+/** Said to the model where notes were held back, so it does not conclude they are gone. */
+export const heldNotesLine = (held) =>
+  `(${held} note${held === 1 ? ' was' : 's were'} saved from the person's Google data and ${held === 1 ? 'is' : 'are'} read only into conversations that hold such data; this one does not.)`;
 
 /* ── what may never be remembered ──────────────────────────────────── */
 
@@ -388,13 +413,13 @@ const newestFirst = (notes) =>
  * @param project  this project's notes, `{}` outside one
  * @param account  the account's notes
  */
-export function memoryBlock({ project = {}, account = {}, projectName = null, budget = MEMORY_PROMPT_CHARS }) {
+export function memoryBlock({ project = {}, account = {}, projectName = null, budget = MEMORY_PROMPT_CHARS, held = 0 }) {
   const shadowed = new Set(Object.keys(project || {}));
   const groups = [
     { title: `### This project${projectName ? ` ("${projectName}")` : ''} — these win where they disagree`, notes: newestFirst(project) },
     { title: '### Everywhere', notes: newestFirst(account).filter(([key]) => !shadowed.has(key)) },
   ].filter((g) => g.notes.length);
-  if (!groups.length) return '';
+  if (!groups.length && !held) return '';
 
   const out = [
     '## Memory',
@@ -443,6 +468,7 @@ export function memoryBlock({ project = {}, account = {}, projectName = null, bu
         `${more ? `, and ${more} more` : ''}. \`memory_search\` or \`memory_read\` opens them.)`,
     );
   }
+  if (held) out.push(heldNotesLine(held));
   return out.join('\n');
 }
 
@@ -452,18 +478,31 @@ export function memoryBlock({ project = {}, account = {}, projectName = null, bu
  * Nothing at all for an incognito conversation or an account that switched
  * memory off — both are promises that nothing remembered is used here, and the
  * cheapest way to keep a promise about the prompt is not to build that part.
+ *
+ * A note saved from Google data is left out of a conversation that holds none
+ * (`options.googleData`), which may be going to a model that can train on it.
+ *
+ * @param {{ googleData?: boolean }} [options]
  */
-export async function memoryForTurn(userId, chat, prefs) {
+export async function memoryForTurn(userId, chat, prefs, options = {}) {
   if (!userId || prefs?.memory === false || chat?.incognito) return '';
   const store = getStore();
-  const account = (await store.getUserSetting(userId, MEMORY_KEY).catch(() => null)) || {};
+  let account = (await store.getUserSetting(userId, MEMORY_KEY).catch(() => null)) || {};
   let project = {};
   let projectName = null;
   if (chat?.project_id) {
     project = (await store.getUserSetting(userId, projectMemoryKey(chat.project_id)).catch(() => null)) || {};
     projectName = (await store.getProject(userId, chat.project_id).catch(() => null))?.name || null;
   }
-  return memoryBlock({ project, account, projectName });
+  let held = 0;
+  if (!options.googleData) {
+    const fromAccount = withoutGoogleNotes(account);
+    const fromProject = withoutGoogleNotes(project);
+    account = fromAccount.kept;
+    project = fromProject.kept;
+    held = fromAccount.held + fromProject.held;
+  }
+  return memoryBlock({ project, account, projectName, held });
 }
 
 /** Every tool that reads or writes notes. */

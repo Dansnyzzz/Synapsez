@@ -130,6 +130,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
           updatedAt: new Date().toISOString(),
           ...(previous.by ? { by: previous.by } : {}),
           ...(previous.chatId ? { chatId: previous.chatId } : {}),
+          ...(previous.google ? { google: true } : {}),
         },
       });
       res.json({ ok: true });

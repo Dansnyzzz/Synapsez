@@ -28,6 +28,7 @@ import { validZone } from './util/zone.js';
 import { sandboxConfigured } from './sandbox.js';
 import { lendEyes } from './vision.js';
 import { memoryForTurn, withheldTools } from './memory.js';
+import { carriesGoogleData, withGoogleData } from './googleData.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
@@ -1066,7 +1067,7 @@ export function repeatedRead(call, memo, counts) {
   return key ? { key } : null;
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null }) {
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false }) {
   const results = await mapWithLimit(
     toolCalls,
     MAX_PARALLEL_TOOLS,
@@ -1104,7 +1105,9 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         emit('tool_result', result);
         return result;
       }
-      const running = executeTool({
+      // A sub-agent, a research run or a page read by a model, started from a
+      // conversation that holds Google data, keeps to where that may go.
+      const running = withGoogleData(googleData, () => executeTool({
         user,
         name: call.name,
         input: call.input,
@@ -1122,7 +1125,7 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         origin,
         // Roughly where they are, for a search near them — see whereabouts.js.
         whereabouts,
-      });
+      }));
       // Remembered before it is awaited, so a duplicate in the same batch waits
       // for this run instead of starting a second one. A failure is not kept:
       // the next identical call should get to try.
@@ -1358,7 +1361,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // carries on, and this catch is the belt to that braces.
     mcpTools(userId).catch(() => ({ tools: [], servers: [] })),
     // Nor is memory: a turn that cannot read its notes is still a turn.
-    memoryForTurn(userId, chat, prefs).catch(() => ''),
+    memoryForTurn(userId, chat, prefs, { googleData: carriesGoogleData(messages) }).catch(() => ''),
     // Alongside what it fingerprints rather than after it, so a change that lands
     // while these are read is still a change at the next step.
     connectionsSignature(userId).catch(() => null),
@@ -1603,7 +1606,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages) })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -1770,6 +1773,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     }, WAIT_NOTICE_MS);
     waiting.unref?.();
 
+    // Anything read from Google, or a file from Drive, anywhere in this
+    // conversation — folded turns included — goes only where googleData.js allows.
+    const googleData = carriesGoogleData(messages);
+
     try {
       // Attachment bytes are fetched here rather than carried in the transcript:
       // a conversation is re-read on every step, and dragging megabytes of
@@ -1806,7 +1813,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       // A picture or a scan this model cannot take is read by one that can
       // (vision.js) — once, and remembered on the file. The status line says so,
       // because the few seconds it takes would otherwise look like a hang.
-      await lendEyes({
+      await withGoogleData(googleData, () => lendEyes({
         userId,
         chatId,
         loaded,
@@ -1814,7 +1821,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         documents: !masking && readsPdfNatively(entry),
         signal,
         onLooking: () => emit('status', { phase: 'tool', name: 'look_at' }),
-      });
+      }));
 
       for await (const ev of stream({
         userId,
@@ -1837,6 +1844,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         tools: buildTools(),
         effort: prefs.effort,
         signal,
+        googleData,
       })) {
         // Anything at all counts as having started — a reasoning token, a tool
         // call, a notice that a key was refused. What is being timed is the
@@ -2102,7 +2110,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // No answers on this path: a well-formed question pauses above rather than
     // reaching here, so anything named `ask_options` that gets this far is a
     // malformed call on its way to becoming a tool error.
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold });
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {

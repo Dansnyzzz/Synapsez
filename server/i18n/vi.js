@@ -835,6 +835,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Google trả về HTTP {0}{1}.",
   "no Gemini key":
     "không có key Gemini",
+  "not with Google data":
+    "không dùng khi có dữ liệu Google",
+  "Searching the indexed folders goes through a Google Gemini key, and this conversation holds data from the person's Google account, which is not sent there. Read the files with read_file instead, or search in a new conversation.":
+    "Tìm trong các thư mục đã lập chỉ mục phải đi qua key Google Gemini, mà cuộc trò chuyện này có dữ liệu từ tài khoản Google của người dùng, thứ không được gửi tới đó. Hãy đọc tệp bằng read_file, hoặc tìm trong một cuộc trò chuyện mới.",
+  "Pictures are made through a Google Gemini key, and this conversation holds data from the person's Google account, which is not sent there. Tell the user; a picture can be made in a new conversation.":
+    "Ảnh được tạo qua key Google Gemini, mà cuộc trò chuyện này có dữ liệu từ tài khoản Google của người dùng, thứ không được gửi tới đó. Hãy báo người dùng; có thể tạo ảnh trong một cuộc trò chuyện mới.",
   "Google (Gemini grounding) returned HTTP {0}":
     "Google (Gemini grounding) trả về HTTP {0}",
   "action is search, read, send, draft, modify, trash or labels.":
@@ -1008,6 +1014,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Đây là cuộc trò chuyện ẩn danh, nên không tìm trong các cuộc trò chuyện trước từ đây.",
   "No provider serving this model promises not to store or train on what you send, so the strict privacy setting kept it from running. Pick another model, or set Provider privacy back to Standard in Settings → Memory.":
     "Không nhà cung cấp nào phục vụ mô hình này cam kết không lưu hay huấn luyện trên nội dung bạn gửi, nên chế độ riêng tư nghiêm ngặt đã chặn nó. Hãy chọn mô hình khác, hoặc đặt Quyền riêng tư với nhà cung cấp về Tiêu chuẩn trong Cài đặt → Bộ nhớ.",
+  "This conversation holds data from your Google account, and {0} may keep what it is sent or learn from it, so it was not sent there. Pick a model from OpenRouter, Anthropic or OpenAI.":
+    "Cuộc trò chuyện này có dữ liệu từ tài khoản Google của bạn, mà {0} có thể lưu lại hoặc dùng để học, nên nó không được gửi tới đó. Hãy chọn một mô hình của OpenRouter, Anthropic hoặc OpenAI.",
+  "This conversation holds data from your Google account, so it goes only to providers that neither keep it nor train on it, and none serving {0} promises that. Pick another model.":
+    "Cuộc trò chuyện này có dữ liệu từ tài khoản Google của bạn, nên chỉ được gửi tới nhà cung cấp không lưu và không huấn luyện trên nó — và không nhà cung cấp nào phục vụ {0} cam kết điều đó. Hãy chọn mô hình khác.",
   "Not saved: the note contains {0}. Notes never hold identity, passport, tax, bank or card numbers, criminal records or immigration status — not even when the user asks, because a note is read into every future conversation. Save the useful part without that detail if there is one, and tell the user plainly what was left out and why.":
     "Không lưu: ghi chú chứa {0}. Ghi chú không bao giờ chứa số căn cước, hộ chiếu, mã số thuế, tài khoản ngân hàng hay số thẻ, tiền án hoặc tình trạng cư trú — kể cả khi người dùng yêu cầu, vì ghi chú được đọc vào mọi cuộc trò chuyện sau này. Hãy lưu phần hữu ích mà không có chi tiết đó nếu có, và nói rõ với người dùng phần nào bị bỏ và vì sao.",
   "Not saved: the note is about {0}, a sensitive topic, and remembering sensitive topics is switched off for this account. Tell the user that, and that they can switch it on in Settings → Memory. Do not save it another way.":

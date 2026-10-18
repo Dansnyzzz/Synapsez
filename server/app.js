@@ -91,7 +91,7 @@ import { mountFileRoutes } from './routes/files.js';
 import { mountShareRoutes, mountPublicShare } from './routes/share.js';
 import { mountChatShareRoutes, mountPublicChatShare } from './routes/chatShare.js';
 import { cloudBrowserState, cloudBrowserInput, closeCloudBrowser } from './cloudBrowser/index.js';
-import { EFFORTS } from './providers/openaiCompatible.js';
+import { EFFORTS, DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf } from './i18n/index.js';
@@ -139,9 +139,6 @@ const HEARTBEAT_HEALTHY_MS = 20 * 60_000;
  * cannot drift apart. It now includes OpenRouter's "No endpoints found for
  * <model>", which reached the Workflows page raw.
  */
-/** OpenRouter refusing a request because no endpoint meets `data_collection: deny` / `zdr`. */
-const DATA_POLICY = /matching your data policy|no endpoints? (?:found )?(?:that )?(?:match|meet)\w* (?:your )?(?:data|privacy|zdr)/i;
-
 /**
  * The zone to read "six this morning" in: the account's own setting, else the
  * one the browser reported, else none (UTC). Never throws — it only decides
