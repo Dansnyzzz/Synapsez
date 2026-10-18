@@ -32,6 +32,7 @@ import { humanSize } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
 import { createAttachments } from './attachments.js';
 import { openPlusMenu } from './plus-menu.js';
+import { contextPanel } from './context-panel.js';
 import { createModelNews } from './model-news.js';
 import { createTwoFactor } from './two-factor.js';
 import { createPrivacy } from './privacy.js';
@@ -5379,13 +5380,20 @@ function openMenu(host, anchor, items) {
   }
 
   host.hidden = false;
-  const box = anchor.getBoundingClientRect();
-  const size = host.getBoundingClientRect();
-  const left = Math.min(box.left, window.innerWidth - size.width - 8);
-  const below = box.bottom + 8;
-  const top = below + size.height > window.innerHeight - 8 ? box.top - size.height - 8 : below;
-  host.style.left = `${Math.max(8, left)}px`;
-  host.style.top = `${Math.max(8, top)}px`;
+  const place = () => {
+    const box = anchor.getBoundingClientRect();
+    const size = host.getBoundingClientRect();
+    const left = Math.min(box.left, window.innerWidth - size.width - 8);
+    const below = box.bottom + 8;
+    const top = below + size.height > window.innerHeight - 8 ? box.top - size.height - 8 : below;
+    host.style.left = `${Math.max(8, left)}px`;
+    host.style.top = `${Math.max(8, top)}px`;
+  };
+  place();
+  // A section opened inside it (the context gauge's details) changes its
+  // height; placed again, it grows away from the button instead of off-screen.
+  // `toggle` does not bubble, so it is caught on the way down.
+  host.addEventListener('toggle', place, true);
 
   const onKey = (event) => {
     if (event.key === 'Escape') closeMenu();
@@ -5408,6 +5416,7 @@ function openMenu(host, anchor, items) {
 
   closeMenu = () => {
     host.hidden = true;
+    host.removeEventListener('toggle', place, true);
     anchor.setAttribute('aria-expanded', 'false');
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('mousedown', onOutside);
@@ -5436,6 +5445,9 @@ function openMenu(host, anchor, items) {
 const RING = 2 * Math.PI * 13; // r=13 in the SVG
 
 function renderContext(info) {
+  // The breakdown's total, where there is one: before the first reply it is the
+  // only figure that counts the prompt and the tools (server/contextParts.js).
+  if (info?.breakdown?.used != null) info = { ...info, used: info.breakdown.used };
   state.context = info || null;
   const gauge = $('context-gauge');
 
@@ -5482,10 +5494,8 @@ $('context-gauge').addEventListener('click', () => {
   const percent = Math.round(shareOfWindow(info) * 100);
 
   openMenu($('context-menu'), $('context-gauge'), [
-    {
-      label: t('context.menuUsed', { percent, used: fmtK(info.used), total: fmtK(info.context) }),
-      static: true,
-    },
+    // What the window is spent on, part by part — see context-panel.js.
+    { node: contextPanel(info) },
     {
       label: state.boot.prefs.autoCompact === false ? t('compact.turnOn') : t('compact.turnOff'),
       hint:

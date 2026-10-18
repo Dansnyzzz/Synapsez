@@ -1926,7 +1926,9 @@ export function assistantMessage() {
    * what they were reading.
    */
   function fold(run) {
-    if (run.family !== 'work') run.node.open = false;
+    // …except one that opened itself to show a command running: that folds back
+    // as it was, unless somebody has opened or closed it since.
+    if (run.family !== 'work' || (run.autoOpened && !run.touched)) run.node.open = false;
   }
 
   function closeSteps() {
@@ -2157,14 +2159,46 @@ export function assistantMessage() {
      */
     let rowFold = null;
     let foldBody = null;
+    /*
+     * While a command runs, its row stands open on the command and a line that
+     * says so, counting the seconds — Claude Code's "Running" (owner,
+     * 2026-10-19). It closes again when the command succeeds, unless somebody
+     * opened or closed it themselves meanwhile; a failure stays open.
+     */
+    let running = null;
+    let ticking = null;
+    let touched = false;
     if (work) {
       rowFold = el('details', 'step__fold');
       const head = el('summary', 'step__head');
       head.append(mark, label, time);
+      head.addEventListener('click', () => {
+        touched = true;
+      });
       foldBody = el('div', 'step__body');
       foldBody.append(workCode(call));
       rowFold.append(head, foldBody);
       item.append(rowFold);
+      if (!hydrating) {
+        const began = Date.now();
+        running = el('p', 'step__running');
+        running.setAttribute('role', 'status');
+        const say = () => {
+          running.textContent = t('work.running', { s: Math.floor((Date.now() - began) / 1000) });
+        };
+        say();
+        ticking = setInterval(() => {
+          if (!running.isConnected) clearInterval(ticking);
+          else say();
+        }, 1000);
+        foldBody.append(running);
+        rowFold.open = true;
+        // The run's card too, or the open row is inside a closed card.
+        if (!run.node.open && !run.touched) {
+          run.node.open = true;
+          run.autoOpened = true;
+        }
+      }
     } else {
       item.append(mark, label, time);
     }
@@ -2172,6 +2206,8 @@ export function assistantMessage() {
 
     return {
       complete(result) {
+        if (ticking) clearInterval(ticking);
+        running?.remove();
         item.classList.toggle('step--error', !!result.isError);
         mark.innerHTML = '';
         mark.textContent = result.isError ? '✗' : '✓';
@@ -2186,7 +2222,9 @@ export function assistantMessage() {
           printed.textContent = forDisplay(result.content) || t('chat.noOutput');
           foldBody.append(printed);
           // A failure is the one row somebody needs to read; it is open already.
+          // A success folds back to its title line — unless it was touched.
           if (result.isError) rowFold.open = true;
+          else if (running && !touched) rowFold.open = false;
           let placed = false;
           if (result.file?.id) {
             placeFile(body, result.file);
@@ -2305,7 +2343,14 @@ export function assistantMessage() {
       pending: 0,
       failures: 0,
       live: true,
+      // Opened by a command starting rather than by a person — see `startStep`.
+      autoOpened: false,
+      touched: false,
     };
+    const created = group;
+    summary.addEventListener('click', () => {
+      created.touched = true;
+    });
     lastStepRun = { group, wrap, body };
     return group;
   }

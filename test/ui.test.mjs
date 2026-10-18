@@ -755,14 +755,27 @@ section('the context gauge');
   await page.waitForTimeout(400);
   const menu = await page.evaluate(() => {
     const m = document.getElementById('context-menu');
+    const box = m.getBoundingClientRect();
+    const legend = m.querySelector('.ctx__legend');
     return {
       open: !m.hidden,
-      head: m.querySelector('.menu__head')?.textContent,
+      head: m.querySelector('.ctx__head')?.textContent,
+      segments: m.querySelectorAll('.ctx__bar > .ctx__seg').length,
+      barLabel: m.querySelector('.ctx__bar')?.getAttribute('aria-label') || '',
+      columns: legend ? getComputedStyle(legend).gridTemplateColumns.split(' ').length : 0,
+      keys: [...m.querySelectorAll('.ctx__key .ctx__name')].map((n) => n.textContent),
+      box: { left: box.left, right: box.right, width: window.innerWidth },
+      inside: box.left >= 0 && box.right <= window.innerWidth,
       actions: [...m.querySelectorAll('.menu__item')].map((i) => i.textContent.split('\n')[0].trim()),
       nowDisabled: /** @type {HTMLButtonElement | undefined} */ ([...m.querySelectorAll('.menu__item')].find((i) => /compact now/i.test(i.textContent || '')))?.disabled,
     };
   });
   check('clicking it says how full, in numbers', menu.open && /used/.test(menu.head || ''), menu.head);
+  // What the window is spent on (owner, 2026-10-19): one bar across, the parts
+  // in two columns beneath it, and what was measured last.
+  check('  as one bar split into its parts', menu.segments >= 3 && menu.barLabel.includes('System prompt'), `${menu.segments} ${menu.barLabel}`);
+  check('  with the parts in two columns underneath', menu.columns === 2 && menu.keys.includes('System prompt') && menu.keys.includes('Built-in tools') && menu.keys.includes('Free'), `${menu.columns} ${menu.keys.join(',')}`);
+  check('  inside the screen on both sides', menu.inside, JSON.stringify(menu.box));
   check('and offers to fold the earlier turns now', menu.actions.some((a) => /compact now/i.test(a)), menu.actions.join(' | '));
   check('and to turn the automatic one off', menu.actions.some((a) => /auto-compact/i.test(a)), menu.actions.join(' | '));
   // A two-message conversation is nowhere near a quarter of the window.
@@ -4229,12 +4242,18 @@ section('commands and files are one card, titled by what is happening now');
     });
     const card = host.querySelector('.steps');
     out.family = card.dataset.family;
-    out.foldedWhileWorking = !card.open;
+    // While a command runs, the card and its row stand open on it (owner, 2026-10-19).
+    const runningRow = card.querySelector('.step--work > details');
+    out.openWhileRunning = card.open && !!runningRow?.open;
     out.running = head(card);
     await new Promise((r) => setTimeout(r, 1600));
     out.clockAfterASecond = head(card).clock;
+    out.runningLine = card.querySelector('.step__running')?.textContent || '';
     py.complete({ content: 'loaded 120 rows', ms: 1200 });
     out.oneDone = head(card);
+    out.runningGone = !card.querySelector('.step__running');
+    const printed = card.querySelector('.step__output');
+    out.outputBorder = printed ? getComputedStyle(printed).borderTopWidth : 'none';
 
     const long = 'D:/research/NCKH/a/very/long/workspace/path/that/goes/on/and/on/bibliometrics_analysis_final_v2.py';
     const read = b1.startTool({ id: 'w2', name: 'read_file', input: { path: long } });
@@ -4270,6 +4289,8 @@ section('commands and files are one card, titled by what is happening now');
     // Something that is neither a command nor a file ends the run, and keeps its own card.
     b2.startTool({ id: 'w5', name: 'deep_research', input: { question: 'why' } }).complete({ content: 'because', ms: 4 });
     out.researchOwnCard = host.querySelectorAll('.block.tool').length === 1 && host.querySelectorAll('.steps').length === 1;
+    // Opened only to show commands running, the card folds back once the run is over.
+    out.foldedAfter = !card.open;
     b2.finish();
     out.nothingWaiting = host.querySelectorAll('.mark--pending').length === 0;
     // Every clock has stopped, and so has the one timer that ticks them.
@@ -4290,7 +4311,10 @@ section('commands and files are one card, titled by what is happening now');
   });
 
   check('a Python call on the cloud computer starts a card of commands and files', out.family === 'work', out.family);
-  check('  folded while it works, as Claude Code does', out.foldedWhileWorking === true);
+  check('  open on the command while it runs, as in Claude Code', out.openWhileRunning === true);
+  check('  with a line saying it is running, and for how long', /^(Running… 1s|Đang chạy… 1 giây)$/.test(out.runningLine), out.runningLine);
+  check('  gone when it finishes, and what it printed has no box around it', out.runningGone === true && out.outputBorder === '0px', `${out.runningGone} ${out.outputBorder}`);
+  check('  and the card folds back once the run is over', out.foldedAfter === true);
   check("  titled in the model's own words while it runs", out.running.title === 'Loading the survey data' && out.running.pending, JSON.stringify(out.running));
   check('  with the code it is running beside them — its first line that says something, and a mark that more follows', out.running.detail === 'import pandas as pd …', out.running.detail);
   check('  and a clock that moves', out.clockAfterASecond === '1s', out.clockAfterASecond);
