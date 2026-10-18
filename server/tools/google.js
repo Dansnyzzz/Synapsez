@@ -720,6 +720,114 @@ export async function saveToDrive(userId, file) {
   });
 }
 
+/* ── the composer's + menu: a Drive file attached to a message ──────── */
+
+/**
+ * The Office twin a Google file is attached as — so a picked Doc reaches the
+ * conversation exactly as a .docx somebody uploaded would, read by the same
+ * reader, rather than as a link nobody can open from inside the turn.
+ */
+const ATTACH_AS = {
+  [GOOGLE_TYPES.doc]: { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ext: 'docx' },
+  [GOOGLE_TYPES.sheet]: { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ext: 'xlsx' },
+  [GOOGLE_TYPES.slides]: { mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', ext: 'pptx' },
+};
+
+/**
+ * Drive files for the + menu's picker (owner, 2026-10-14): the newest, or the
+ * ones whose name holds what was typed. Folders and shortcuts are left out —
+ * the picker attaches a file — and only what a row shows is asked for.
+ *
+ * @returns {Promise<{ id: string, name: string, mime: string, modified: string|null }[]>}
+ */
+export async function listDriveFiles(userId, query = '') {
+  const typed = String(query || '').trim().slice(0, 100);
+  const parts = ['trashed = false', `mimeType != ${dq(GOOGLE_TYPES.folder)}`, `mimeType != ${dq('application/vnd.google-apps.shortcut')}`];
+  if (typed) parts.push(`name contains ${dq(typed)}`);
+  const found = await googleApi(userId, `${DRIVE}/files`, {
+    query: {
+      q: parts.join(' and '),
+      pageSize: 25,
+      orderBy: typed ? undefined : 'modifiedTime desc',
+      fields: 'files(id,name,mimeType,modifiedTime,ownedByMe,owners(displayName))',
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+    },
+  });
+  // Someone else's file says so: one shared with the person, renamed to look
+  // like theirs, is otherwise indistinguishable from it (security review, 2026-10-14).
+  return (found.files || []).map((f) => ({
+    id: f.id,
+    name: f.name,
+    mime: f.mimeType,
+    modified: f.modifiedTime || null,
+    sharedBy: f.ownedByMe === false ? f.owners?.[0]?.displayName || '?' : null,
+  }));
+}
+
+/**
+ * A download's bytes, never more than `maxBytes`: read as it arrives and
+ * given up the moment it passes, rather than buffered whole on the word of
+ * metadata that a new revision can change between the two calls.
+ */
+async function cappedBytes(res, maxBytes, name) {
+  const tooBig = () => new Error(`${name} is over the limit for one file.`);
+  if (!res.body) {
+    const whole = Buffer.from(await res.arrayBuffer());
+    if (whole.length > maxBytes) throw tooBig();
+    return whole;
+  }
+  const chunks = [];
+  let total = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw tooBig();
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * One Drive file as an upload: name, type and base64 bytes, for `saveUpload`.
+ *
+ * Google's own formats are exported to their Office twin; anything else comes
+ * down as it is — but a file the attachment limit would refuse is refused here,
+ * from its size, before its bytes are fetched. A Google form, map or site has
+ * no file to give and says so.
+ *
+ * @param {{ maxBytes?: number }} [options]
+ */
+export async function driveFileForAttachment(userId, id, options = {}) {
+  const { maxBytes = Infinity } = options;
+  const fileId = String(id || '');
+  // Drive ids are URL-safe base64. Anything else in the path would walk to another endpoint.
+  if (!/^[A-Za-z0-9_-]{8,200}$/.test(fileId)) throw new Error('That is not a Google Drive file.');
+  const path = `${DRIVE}/files/${encodeURIComponent(fileId)}`;
+  const meta = await googleApi(userId, path, { query: { fields: 'id,name,mimeType,size', supportsAllDrives: 'true' } });
+  const twin = ATTACH_AS[meta.mimeType];
+  if (!twin && String(meta.mimeType).startsWith('application/vnd.google-apps.')) {
+    throw new Error(`${meta.name} is a Google ${meta.mimeType.replace('application/vnd.google-apps.', '')}, which has no file to attach. Open it in Drive instead.`);
+  }
+  if (!twin) {
+    const size = Number(meta.size);
+    // A file that will not say how big it is is not fetched on trust.
+    if (!Number.isFinite(size)) throw new Error(`${meta.name} does not say how big it is, so it was not fetched.`);
+    if (size > maxBytes) throw new Error(`${meta.name} is ${Math.round(size / 1024 / 1024)} MB — over the limit for one file.`);
+  }
+  const res = twin
+    ? await googleApi(userId, `${path}/export`, { query: { mimeType: twin.mime }, raw: true })
+    : await googleApi(userId, path, { query: { alt: 'media', supportsAllDrives: 'true' }, raw: true });
+  const data = (await cappedBytes(res, maxBytes, meta.name)).toString('base64');
+  const name = twin && !String(meta.name).toLowerCase().endsWith(`.${twin.ext}`) ? `${meta.name}.${twin.ext}` : meta.name;
+  return { name, mime: twin?.mime || meta.mimeType || 'application/octet-stream', data };
+}
+
 export const GOOGLE_IMPLEMENTATIONS = {
   gmail: gmailTool,
   google_calendar: calendarTool,

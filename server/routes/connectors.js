@@ -1,7 +1,9 @@
 import { connectedServices, connect, disconnect } from '../connectors.js';
 import { limit as rateLimit } from '../ratelimit.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
-import { authUrl, finishAuth, googleConfigured, pickProducts, readState } from '../google.js';
+import { authUrl, finishAuth, googleConfigured, googleGrants, pickProducts, readState } from '../google.js';
+import { listDriveFiles, driveFileForAttachment } from '../tools/google.js';
+import { saveUpload, LIMITS } from '../attachments.js';
 import { publicUrlFor } from '../util/net.js';
 import { TOOLS } from '../tools/definitions.js';
 
@@ -90,6 +92,50 @@ export function mountConnectorRoutes(api, { wrap }) {
           const reason = encodeURIComponent(translateMessage(String(err.message), languageOf(req)).slice(0, 300));
           res.append('Set-Cookie', `g_err=${reason}; Path=/; Max-Age=60; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
           back({ google: 'error' });
+        }
+      }),
+    );
+
+    /**
+     * The + menu's "Add from Google Drive" (owner, 2026-10-14): find a file in
+     * the person's Drive, and attach it to the message being written.
+     *
+     * Only with Drive granted — asking without it would be a 403 from Google
+     * in words nobody can act on. Attaching goes through `saveUpload`, the same
+     * door every upload uses, so a Drive file obeys the same size and type rules
+     * as a file picked from the computer, and becomes this account's attachment.
+     */
+    const withDrive = async (req, res) => {
+      if ((await googleGrants(req.user.id).catch(() => [])).includes('drive')) return true;
+      res.status(400).json({
+        error: translateMessage('Google Drive is not connected. Connect Google in Settings → Connectors and allow Drive.', languageOf(req)),
+      });
+      return false;
+    };
+
+    api.get(
+      '/connectors/google/drive',
+      rateLimit('drive', (req) => req.user?.id),
+      wrap(async (req, res) => {
+        if (!(await withDrive(req, res))) return;
+        try {
+          res.json({ files: await listDriveFiles(req.user.id, typeof req.query.q === 'string' ? req.query.q : '') });
+        } catch (err) {
+          res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
+        }
+      }),
+    );
+
+    api.post(
+      '/connectors/google/drive/:fileId/attach',
+      rateLimit('drive', (req) => req.user?.id),
+      wrap(async (req, res) => {
+        if (!(await withDrive(req, res))) return;
+        try {
+          const file = await driveFileForAttachment(req.user.id, req.params.fileId, { maxBytes: LIMITS.maxBytes });
+          res.status(201).json({ attachment: await saveUpload(req.user.id, file) });
+        } catch (err) {
+          res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
         }
       }),
     );

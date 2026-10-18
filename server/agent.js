@@ -15,7 +15,7 @@ import { executeTool } from './tools/execute.js';
 import { normalisePlan, PLAN_MIN_STEPS } from './tools/cloud.js';
 import { withProgressNotes, unfinishedThisTurn, progressGateNote } from './progress.js';
 import { workerStatus } from './localTools.js';
-import { skillMenu } from './skills.js';
+import { skillMenu, skillNotes } from './skills.js';
 import { connectorSummary } from './connectors.js';
 import { mcpTools } from './mcp/registry.js';
 import { priceTurn } from './providers/catalog.js';
@@ -504,6 +504,29 @@ const looksLikeSetup = (text) =>
   RECURRING.test(String(text || '')) ||
   (EMAILING.test(String(text || '')) && /\b(send|write|draft)\b|gửi|soạn|tạo/i.test(String(text || '')));
 
+/**
+ * Skills the person picked for a message in the + menu (owner, 2026-10-14).
+ *
+ * The message they were picked for this turn carries their instructions,
+ * read once at the start of the turn (`skillNotes`) — so the model works to
+ * them without having to decide to call `skill_read` first, which is the step
+ * a small model skips. An older message only says which were picked: those
+ * were followed in their own turn, and sending the instructions again on every
+ * later turn would be paying for them for the rest of the conversation.
+ *
+ * @param {any[]} messages
+ * @param {{ id: string|null, text: string }} picked  the newest message's, read
+ */
+export function withSkillNotes(messages, picked) {
+  return messages.map((m) => {
+    if (m.role !== 'user' || !Array.isArray(m.skills) || !m.skills.length) return m;
+    if (picked?.text && m.id === picked.id) {
+      return { ...m, text: `${m.text || ''}\n\n(The user picked these skills for this message — follow them.)\n\n${picked.text}` };
+    }
+    return { ...m, text: `${m.text || ''}\n\n(Skills the user picked for this message: ${m.skills.join(', ')}.)` };
+  });
+}
+
 function withIntentNotes(messages) {
   const last = messages.findLastIndex((m) => m.role === 'user');
   return messages.map((m, i) => {
@@ -751,8 +774,9 @@ export function withheldRefusal(call) {
     toolCallId: call.id,
     name: call.name,
     content:
-      `"${call.name}" is not available in this conversation — it is incognito, or the account has switched memory or ` +
-      'chat search off — so it was not run. Carry on without it, and say so if the user asked for it.',
+      `"${call.name}" is not available in this conversation — it is incognito, or the account has switched memory, ` +
+      'chat search, the plugin this tool belongs to or its connector off — so it was not run. Carry on without it, and say so ' +
+      'if the user asked for it: they can switch a plugin or a connector back on from the + menu beside the message box.',
     isError: true,
     ms: 0,
   };
@@ -1315,11 +1339,18 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // The question decides which passages of a long shelf are worth sending, so
   // the sources are chosen after the transcript is known rather than before.
   const asked = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
+  // Skills picked for the newest message in the + menu, read once for the whole
+  // turn — see `withSkillNotes`.
+  const pickedFor = [...messages].reverse().find((m) => m.role === 'user');
+  const picked = {
+    id: pickedFor?.id || null,
+    text: pickedFor?.skills?.length ? await skillNotes(userId, pickedFor.skills).catch(() => '') : '',
+  };
 
   const [worker, skills, connectorsAtStart, project, providerKeys, mcpAtStart, memory, seenAtStart] = await Promise.all([
     workerStatus(user, prefs),
     skillMenu(userId),
-    connectorSummary(userId),
+    connectorSummary(userId, { off: prefs.connectorsOff }),
     projectPrompt(userId, chat, asked, { contextTokens: entry?.context }),
     providerStatus(userId),
     // Never allowed to fail the turn. One unreachable server must not take the
@@ -1386,7 +1417,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     if (!now || now === connectionsSeen) return;
     const [nextMcp, nextConnectors] = await Promise.all([
       mcpTools(userId).catch(() => ({ tools: [], servers: [], failed: true })),
-      connectorSummary(userId).catch(() => null),
+      connectorSummary(userId, { off: prefs.connectorsOff }).catch(() => null),
     ]);
     if (nextMcp.failed || !nextConnectors) return;
     connectionsSeen = now;
@@ -1450,6 +1481,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // Tools from outside this repository, already in the same shape.
     extra: mcp.tools,
     withhold,
+    // "Tools already loaded" in the + menu: nothing held back behind load_tools —
+    // except on a run nobody is watching, which preloads nothing on purpose
+    // (see `activated` above: a task that can create tasks multiplies).
+    defer: unattended || prefs.toolLoading !== 'all',
     // A question with nobody to answer it only ends the run.
   }).filter((t) => !(unattended && t.name === 'ask_options'));
 
@@ -1750,7 +1785,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        */
       // Where the plan stands rides on the tool results — see progress.js.
       const tracked = withProgressNotes(
-        unattended ? withRunNote(activeTranscript(normaliseOrder(messages)), runNote) : withIntentNotes(activeTranscript(normaliseOrder(messages))),
+        unattended
+          ? withRunNote(activeTranscript(normaliseOrder(messages)), runNote)
+          : withSkillNotes(withIntentNotes(activeTranscript(normaliseOrder(messages))), picked),
       );
       const grounded = withProjectSources(
         // The progress gate sends the model back with its own note, in place of

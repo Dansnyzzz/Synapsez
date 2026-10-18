@@ -1,6 +1,7 @@
 import { getStore } from './store/index.js';
 import { encryptSecret, decryptSecret } from './crypto.js';
 import { CATALOG } from './providers/catalog.js';
+import { PLUGIN_IDS } from '../public/js/plugins.js';
 
 const PREFS_KEY = 'prefs';
 const KEYS_KEY = 'providerKeys';
@@ -104,7 +105,27 @@ export const DEFAULT_PREFS = {
    * with less — a trade somebody should choose knowingly.
    */
   maskPersonal: false,
+  /**
+   * The composer's + menu (owner, 2026-10-14).
+   *
+   * `pluginsOff`: families of built-in tools switched off — their tools are not
+   * offered at all (public/js/plugins.js). `connectorsOff`: connections paused
+   * without being removed, so a token is not pasted again to switch one back on;
+   * a paused connector's tools are not offered. `toolLoading`: `auto` holds the
+   * rarely-used tools back behind `load_tools` when the catalogue would crowd
+   * the window (`availableTools`); `all` always sends every tool — more tokens on
+   * every step, no step spent asking for one.
+   */
+  pluginsOff: [],
+  connectorsOff: [],
+  toolLoading: 'auto',
 };
+
+/** How the catalogue is sent: held back when it would crowd the window, or always whole. */
+export const TOOL_LOADING = ['auto', 'all'];
+
+/** A connector's id, as `server/connectors.js` names them — or an MCP server's, which is a UUID. */
+const CONNECTOR_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** The languages the interface has strings for. See public/js/locales/. */
 const LANGUAGES = new Set(['vi', 'en']);
@@ -260,6 +281,19 @@ export async function setPrefs(userId, patch) {
   }
   if ('providerPrivacy' in patch && !PROVIDER_PRIVACY.includes(patch.providerPrivacy)) {
     throw new Error(`Provider privacy is one of: ${PROVIDER_PRIVACY.join(', ')}.`);
+  }
+  // Lists of ids: anything that is not one is dropped rather than stored, so an
+  // old or hand-written value can never hide a tool nobody chose to hide.
+  if ('pluginsOff' in patch) {
+    next.pluginsOff = Array.isArray(patch.pluginsOff) ? [...new Set(patch.pluginsOff.filter((id) => PLUGIN_IDS.has(id)))] : [];
+  }
+  if ('connectorsOff' in patch) {
+    next.connectorsOff = Array.isArray(patch.connectorsOff)
+      ? [...new Set(patch.connectorsOff.filter((id) => typeof id === 'string' && CONNECTOR_ID.test(id)))].slice(0, 64)
+      : [];
+  }
+  if ('toolLoading' in patch && !TOOL_LOADING.includes(patch.toolLoading)) {
+    throw new Error(`Tool loading is one of: ${TOOL_LOADING.join(', ')}.`);
   }
   /**
    * A zone that Intl does not recognise is worse than none at all.

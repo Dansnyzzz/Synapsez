@@ -10,6 +10,7 @@ import { compact as compactChat, measure as measureContext } from '../compact.js
 /** The share of the window a conversation must use before it can be folded by hand. */
 export const MIN_MANUAL_COMPACT = 0.25;
 import { getPrefs } from '../settings.js';
+import { chosenSkills } from '../skills.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 
 /**
@@ -336,12 +337,17 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       // Scheduled shelf — which of the two it is for. See `INTENT_NOTES`.
       const intent = ['workflow', 'schedule'].includes(req.body?.intent) ? req.body.intent : null;
 
+      // Skills picked in the + menu: kept with the message, so the turn reads
+      // them up front and a reload shows which were asked for (see `withSkillNotes`).
+      const skills = await chosenSkills(req.user.id, req.body?.skills);
+
       const message = {
         id: crypto.randomUUID(),
         role: 'user',
         text,
         ...(files.length ? { attachments: files } : {}),
         ...(intent ? { intent } : {}),
+        ...(skills.length ? { skills } : {}),
       };
       await store.appendMessage(req.user.id, chatId, message);
       await store.attachToChat(req.user.id, chatId, files.map((f) => f.id));

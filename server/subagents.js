@@ -298,7 +298,8 @@ export async function runParallel({
   const entry = await resolveForUser(user.id, modelId || prefs.defaultModel);
   const [worker, connectors, providerKeys, chat] = await Promise.all([
     workerStatus(user, prefs),
-    connectorSummary(user.id),
+    // A connector paused in the + menu is paused for the helpers too.
+    connectorSummary(user.id, { off: prefs.connectorsOff }),
     providerStatus(user.id),
     chatId ? getStore().getChat(user.id, chatId).catch(() => null) : null,
   ]);

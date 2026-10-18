@@ -1,4 +1,6 @@
 import { getStore } from './store/index.js';
+import { pluginTools } from '../public/js/plugins.js';
+import { TOOLS } from './tools/definitions.js';
 
 /**
  * What the assistant remembers between conversations, and how it is read back.
@@ -475,10 +477,27 @@ export const MEMORY_TOOLS = ['memory_write', 'memory_append', 'memory_edit', 'me
  * `skill_write`, which would otherwise file a procedure learned in a
  * conversation that promised to leave nothing behind.
  *
+ * And a plugin the account switched off in the composer's + menu takes its
+ * tools with it (public/js/plugins.js) — withheld here, so they are neither
+ * offered nor listed in `load_tools`, and a call to one is refused in words.
+ *
+ * So does a connector paused there. Leaving it out of the catalogue was not
+ * enough: a model is not held to the tools it was offered, and a page it read
+ * could name `gmail` and have it run on the paused account's token (security
+ * review, 2026-10-14). Withheld, the call is refused before anything is sent.
+ * Pausing Google pauses every Google product.
+ *
  * @param {{ chat?: any, prefs?: any }} [options]
  */
 export function withheldTools({ chat = null, prefs = {} } = {}) {
-  const out = new Set();
+  const out = pluginTools(prefs.pluginsOff);
+  const paused = new Set(Array.isArray(prefs.connectorsOff) ? prefs.connectorsOff : []);
+  if (paused.size) {
+    for (const tool of TOOLS) {
+      const needs = String(tool.needs || '');
+      if (needs && (paused.has(needs) || (paused.has('google') && needs.startsWith('google_')))) out.add(tool.name);
+    }
+  }
   const incognito = !!chat?.incognito;
   if (incognito || prefs.memory === false) for (const name of MEMORY_TOOLS) out.add(name);
   if (incognito || prefs.chatSearch === false) out.add('search_chats');

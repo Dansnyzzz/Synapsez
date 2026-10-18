@@ -3491,6 +3491,14 @@ export function availableTools({
    * `load_tools` for the model to ask for.
    */
   withhold = null,
+  /**
+   * Hold rarely-used tools back behind `load_tools` when the catalogue would
+   * crowd the window. False is the account's "Tools already loaded" choice
+   * (prefs.toolLoading, from the + menu): every tool every step, paying the
+   * schema for it rather than a step to ask for one. Trimming to fit a genuinely
+   * small window still applies either way.
+   */
+  defer = true,
 }) {
   // Planning is reading with a different brief: the model still needs to look
   // at everything, and `update_plan` is read-only, so the same filter serves.
@@ -3542,7 +3550,7 @@ export function availableTools({
    * exempt — it gets one short read-only job and an extra round trip to load a
    * tool would be a large fraction of its whole life.
    */
-  if (window && !subagent) {
+  if (window && !subagent && defer) {
     const held = offered.filter((t) => DEFERRABLE.has(t.name) && !activated?.has(t.name));
     if (held.length && estimateTokens(offered) > window * DEFER_ABOVE_SHARE) {
       const kept = offered.filter((t) => !held.includes(t));

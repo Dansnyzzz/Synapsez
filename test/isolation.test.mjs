@@ -2344,6 +2344,94 @@ section('a share link opens one file, and only its owner can make or take it bac
   check('taking it back closes it', (await store.getSharedAttachment(token)) === null);
 }
 
+/**
+ * The composer's + menu (owner, 2026-10-14): plugins switched off, connectors
+ * paused, tools loaded up front, skills picked for a message. Every one is the
+ * account's own choice and must stay on the account that made it — and a
+ * skill picked by name must be one of the picker's own, never another
+ * account's that happens to share the name.
+ */
+section("the + menu's choices stay on the account that made them");
+{
+  const { initStore } = await import('../server/store/index.js');
+  await initStore({ driver });
+  const { setPrefs, getPrefs } = await import('../server/settings.js');
+  const { withheldTools } = await import('../server/memory.js');
+  const { connectorSummary } = await import('../server/connectors.js');
+  const { chosenSkills, skillNotes } = await import('../server/skills.js');
+  const { withSkillNotes } = await import('../server/agent.js');
+  const { shelfCapacity } = await import('../server/projects.js');
+
+  const carol = await store.createUser({ id: 'u-carol', email: 'carol@example.com', name: 'Carol', passwordHash: await hashPassword('carol-long-password'), role: 'user' });
+  const dave = await store.createUser({ id: 'u-dave', email: 'dave@example.com', name: 'Dave', passwordHash: await hashPassword('dave-long-password'), role: 'user' });
+
+  const saved = await setPrefs(carol.id, { pluginsOff: ['cloud_computer', 'not-a-plugin'], connectorsOff: ['github', 'no spaces!'], toolLoading: 'all' });
+  check('a plugin switched off is stored, an unknown one is dropped', JSON.stringify(saved.pluginsOff) === '["cloud_computer"]', JSON.stringify(saved.pluginsOff));
+  check('a paused connector is stored, a malformed id is dropped', JSON.stringify(saved.connectorsOff) === '["github"]', JSON.stringify(saved.connectorsOff));
+  check('tools loaded up front is stored', saved.toolLoading === 'all');
+  const theirs = await getPrefs(dave.id);
+  check("another account's choices are its own", theirs.pluginsOff.length === 0 && theirs.connectorsOff.length === 0 && theirs.toolLoading === 'auto', JSON.stringify(theirs));
+  let refused = false;
+  try {
+    await setPrefs(carol.id, { toolLoading: 'everything' });
+  } catch {
+    refused = true;
+  }
+  check('a tool-loading choice that is not one is refused', refused);
+
+  const withhold = withheldTools({ prefs: await getPrefs(carol.id) });
+  const offered = availableTools({ workerOnline: true, desktopOnline: false, withhold }).map((t) => t.name);
+  check('a plugin switched off takes its tools out of the catalogue', !offered.includes('sandbox_run') && offered.includes('web_search'), String(offered.includes('sandbox_run')));
+  const daveOffered = availableTools({ workerOnline: true, desktopOnline: false, withhold: withheldTools({ prefs: await getPrefs(dave.id) }) }).map((t) => t.name);
+  check("  and not out of another account's", daveOffered.includes('sandbox_run'));
+  const small = { workerOnline: true, desktopOnline: false, context: 16_000 };
+  const heldBack = availableTools(small).map((t) => t.name);
+  const loaded = availableTools({ ...small, defer: false }).map((t) => t.name);
+  check('on a small window the rarely-used tools wait behind load_tools', heldBack.includes('load_tools') && !heldBack.includes('chart'), String(heldBack.length));
+  check('  unless every tool is loaded up front', !loaded.includes('load_tools') && loaded.includes('chart'), String(loaded.length));
+
+  await store.saveConnector(carol.id, 'github', encryptSecret('ghp_carol'), 'carol');
+  await store.saveConnector(carol.id, 'notion', encryptSecret('secret_carol'), 'carol');
+  const paused = await connectorSummary(carol.id, { off: ['github'] });
+  check('a paused connector is not offered to the assistant', !paused.ids.includes('github') && paused.ids.includes('notion'), paused.ids.join(','));
+  check('  nor named in its prompt', !/GitHub/i.test(paused.summary || ''), paused.summary);
+  check('  and is still connected — the token stays', (await store.getConnector(carol.id, 'github')) !== null);
+  // Out of the catalogue is not enough: a model can name a tool it was not offered.
+  const pausedWithheld = withheldTools({ prefs: { connectorsOff: ['github'] } });
+  check('a paused connector\'s tools are refused if a model names them anyway', pausedWithheld.has('github') && pausedWithheld.has('github_write') && !pausedWithheld.has('notion_search'), [...pausedWithheld].join(','));
+  const googlePaused = withheldTools({ prefs: { connectorsOff: ['google'] } });
+  check('  pausing Google refuses every Google product', ['gmail', 'google_drive', 'google_calendar', 'google_contacts'].every((n) => googlePaused.has(n)), [...googlePaused].join(','));
+
+  await store.saveSkill(carol.id, { id: 'sk-carol', name: 'Carol report', description: 'When Carol asks for her report.', instructions: 'Carol steps.' });
+  check('a skill picked by name is one of the account\'s own', JSON.stringify(await chosenSkills(carol.id, ['carol REPORT', 'Writing a Word document', 'No such skill'])) === '["Carol report","Writing a Word document"]', JSON.stringify(await chosenSkills(carol.id, ['carol REPORT', 'Writing a Word document', 'No such skill'])));
+  check("  and another account's skill of the same name is not picked", (await chosenSkills(dave.id, ['Carol report'])).length === 0);
+  check('  nor anything that is not a list of names', (await chosenSkills(carol.id, 'Carol report')).length === 0 && (await chosenSkills(carol.id, [{ name: 'x' }])).length === 0);
+  const flood = Array.from({ length: 200_000 }, (_, i) => `name ${i}`);
+  const startedAt = Date.now();
+  const floodPicked = await chosenSkills(carol.id, ['Carol report', ...flood]);
+  check('  a flood of names is cut to size before any work', Date.now() - startedAt < 500 && JSON.stringify(floodPicked) === '["Carol report"]', `${Date.now() - startedAt}ms`);
+  check('  and at most five go with one message',(await chosenSkills(carol.id, ['Carol report', 'Writing a Word document', 'Building a spreadsheet', 'Making a slide deck', 'Producing a PDF', 'Building a small tool or page'])).length === 5);
+  const notes = await skillNotes(carol.id, ['Carol report']);
+  check('a picked skill is read as skill_read reads it', notes.includes('Carol steps.') && notes.startsWith('# Carol report'), notes.slice(0, 60));
+  check("  and another account's is not read at all", (await skillNotes(dave.id, ['Carol report'])) === '');
+
+  const turn = withSkillNotes(
+    [
+      { id: 'm1', role: 'user', text: 'Earlier', skills: ['Carol report'] },
+      { id: 'm2', role: 'assistant', text: 'Done.' },
+      { id: 'm3', role: 'user', text: 'Now this', skills: ['Carol report'] },
+    ],
+    { id: 'm3', text: notes },
+  );
+  check('the newest message carries the picked skills\' instructions', turn[2].text.includes('Carol steps.'));
+  check('  an older one only says which it used', !turn[0].text.includes('Carol steps.') && turn[0].text.includes('Carol report'));
+  check('  and a message without skills is left alone', turn[1].text === 'Done.');
+
+  const capacity = shelfCapacity([{ kind: 'pdf', chars: 30_000 }, { kind: 'image', chars: 999_999 }, { kind: 'text', chars: '6000' }], 128_000);
+  check("a shelf's capacity counts the quotable text, not the pictures", capacity.used === 36_000 && capacity.budget === 40_000 && capacity.percent === 90 && !capacity.searching, JSON.stringify(capacity));
+  check('  and past the budget it is searched rather than read whole', shelfCapacity([{ kind: 'pdf', chars: 41_000 }], 128_000).searching === true);
+}
+
 console.log(
   failures === 0
     ? '\n\u001b[32mAll isolation checks passed.\u001b[0m\n'

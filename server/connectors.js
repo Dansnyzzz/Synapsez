@@ -270,8 +270,15 @@ async function tokenFor(userId, service) {
  * to every account, so the model could promise to post to a Slack that had never
  * been connected, and its schema was paid for on every request regardless.
  */
-export async function connectorSummary(userId) {
-  const rows = await getStore().listConnectors(userId);
+export async function connectorSummary(userId, { off = [] } = {}) {
+  /*
+   * A connector paused from the composer's + menu (prefs.connectorsOff) is
+   * still connected — its token stays, so switching it back on is one press —
+   * but for the assistant it is as though it were not: not named in the prompt,
+   * and none of its tools offered. Pausing Google pauses every Google product.
+   */
+  const paused = new Set(Array.isArray(off) ? off : []);
+  const rows = (await getStore().listConnectors(userId)).filter((r) => !paused.has(r.service));
   const ids = rows.map((r) => r.service);
   // Google is one connection but several grants: each product the person
   // allowed is its own id, so a Gmail tool is offered only when Gmail was.

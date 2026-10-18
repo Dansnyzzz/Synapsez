@@ -7,6 +7,10 @@ data/
 .claude/settings.local.json
 .env.local
 .env*.local
+# Google Cloud's OAuth client download (client_secret_<id>.apps.googleusercontent.com.json).
+# Its values belong in .env as GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET; the
+# file itself must never be committed — one sat untracked in the root (2026-10-14).
+client_secret*.json
 .vercel
 .DS_Store
 *.log
