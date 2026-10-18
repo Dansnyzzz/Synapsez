@@ -425,8 +425,17 @@
                    because it is the reason to come here. Nothing is created
                    until it is sent. -->
               <div class="starter">
+                <!-- The same tray and skills as the composer's: what is picked
+                     here goes with the conversation started from here. -->
+                <div class="attachments" id="project-page-attachments" hidden></div>
+                <div class="skillchips" id="project-page-skills" hidden></div>
                 <textarea id="project-page-ask" rows="2" placeholder="How can I help you today?" data-i18n-title="project.askInput" aria-label="Ask about this project" data-i18n-placeholder="project.askPlaceholder"></textarea>
                 <div class="starter__row">
+                  <button class="starter__plus" id="project-page-plus" type="button" aria-haspopup="menu" aria-expanded="false" data-i18n-title="plus.open" title="Add files, skills, connectors and plugins" aria-label="Add files, skills, connectors and plugins">
+                    <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" focusable="false">
+                      <path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none" />
+                    </svg>
+                  </button>
                   <span class="starter__chip" id="project-page-chip"></span>
                   <button class="starter__send" id="project-page-send" type="button" aria-label="Start conversation" disabled data-i18n-aria-label="project.start">↑</button>
                 </div>
@@ -587,6 +596,10 @@
               <button type="button" class="composer__mode-clear" id="composer-mode-clear" title="Cancel" aria-label="Cancel" data-i18n-title="action.cancel" data-i18n-aria-label="action.cancel">✕</button>
             </p>
 
+            <!-- Skills picked from the + menu for this message. Each one's
+                 instructions go with it, so the assistant works to them. -->
+            <div class="skillchips" id="skill-chips" hidden></div>
+
             <div class="composer__box">
               <input
                 type="file"
@@ -601,7 +614,8 @@
                    the box is centred correctly and the ink inside it is not.
                    Two lines through the middle of a square are centred by
                    construction, in every font and on every platform. -->
-              <button class="icon-btn icon-btn--attach" id="attach" type="button" data-i18n-title="composer.attach" title="Attach photos or files" aria-label="Attach photos or files">
+              <!-- Opens the + menu (plus-menu.js): files, skills, connectors, plugins. -->
+              <button class="icon-btn icon-btn--attach" id="attach" type="button" aria-haspopup="menu" aria-expanded="false" data-i18n-title="plus.open" title="Add files, skills, connectors and plugins" aria-label="Add files, skills, connectors and plugins">
                 <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" focusable="false">
                   <path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none" />
                 </svg>

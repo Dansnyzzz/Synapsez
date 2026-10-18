@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-10-14 — the + menu, in both message boxes; how full a project is; a quieter memory card
+
+Asked for by the owner on 2026-10-14, with screenshots of Claude's composer and project page.
+
+### The + beside the message box
+
+- **One menu, in both places a message is written** — a conversation's box and, newly, a project's, which had
+  no + at all. Hovering a row with › opens the next panel beside it, as in Claude; so does a click or a tap, and
+  → on the keyboard (↑ ↓ to move, ← or Escape to go back). On a phone each panel replaces the last, with a
+  ‹ Back row.
+- **Add files or photos**: the picker it always was. On a project's page the files show above its box and go
+  with the conversation started from it; a file alone is enough to send.
+- **Skills ›**: the built-in ones and your own that are switched on. Picking one puts it on the message as a chip;
+  the message carries it, its turn is given that skill's instructions up front (so a small model does not have
+  to decide to read it), and the sent message says which skill it asked for. Up to five; a name that is not one
+  of your skills is dropped by the server. Manage skills and Create a skill open Settings.
+- **Connectors ›**: Add connector (browse the catalogue, or add a custom one), Manage connectors, and every
+  connection with a switch. Switching one off pauses it — its token stays, its tools are neither offered nor
+  run (a model that names one anyway is refused before anything is sent), and the assistant is not told it has
+  it; an MCP server is switched off as before. One that is not working says so with ⚠, on its row and on the
+  Connectors row. **Add from Google Drive** (with Drive connected) searches your Drive and attaches a file — a
+  Google Doc, Sheet or Slides as its Word, Excel or PowerPoint twin — under the same size and type rules as an
+  upload, read with a hard byte limit; a file someone else shared with you says who shared it. **Tool access**:
+  load tools when needed (as before), or always send every tool — no step spent loading one, more tokens every
+  step. A scheduled run keeps loading tools when needed either way.
+- **The menu stays open while the conversation scrolls behind it**, and on a phone while the keyboard opens.
+- **A Google OAuth client file can no longer be committed by accident**: `client_secret*.json` is ignored.
+- **Plugins ›**: the assistant's built-in tools in families — office documents, charts and pictures, the cloud
+  computer, the cloud browser, research, maps and places, markets and data, schedules and email. Each shows
+  what is inside it and can be switched off; a plugin that is off is not offered to the assistant at all.
+
+### A project's page
+
+- **How full the shelf is**, as Claude shows it: a bar, "36% of project capacity used", and how the sources are
+  read at that size — in full, or, past capacity, by search (each answer gets the passages that match its
+  question). Measured against what the account's model is actually sent whole.
+- **The memory card is one line**: its name, "Only you", View memory, and what it is. The notes, each marked as
+  the project's or the account's, are where they were — in the sheet View memory opens.
+
 ## 2026-10-13 — a button back to the newest message; commands and files read the way Claude Code reads
 
 Asked for by the owner on 2026-10-13, with screenshots of Claude's desktop app, and "make it work the way Claude does".

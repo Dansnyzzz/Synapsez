@@ -31,6 +31,7 @@ import { createOnboarding } from './onboarding.js';
 import { humanSize } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
 import { createAttachments } from './attachments.js';
+import { openPlusMenu } from './plus-menu.js';
 import { createModelNews } from './model-news.js';
 import { createTwoFactor } from './two-factor.js';
 import { createPrivacy } from './privacy.js';
@@ -238,6 +239,8 @@ const state = {
   context: null,
   /** Documents the assistant has made in this conversation, newest first. */
   files: [],
+  /** Skills picked in the + menu for the message being written, by name. */
+  pickedSkills: /** @type {string[]} */ ([]),
 };
 
 /**
@@ -1916,7 +1919,7 @@ function drawTranscript(host, messages, { live = false } = {}) {
 
   const newest = messages.findLastIndex((m) => m.role === 'assistant');
   messages.forEach((m, i) => {
-    if (m.role === 'user') host.append(userMessage(m.text, m.attachments || [], m.id, m.createdAt));
+    if (m.role === 'user') host.append(userMessage(m.text, m.attachments || [], m.id, m.createdAt, m.skills || []));
     // A summary is what the model reads in place of the older turns; the
     // person still has those turns, so it is not drawn among them.
     else if (m.role === 'summary') return;
@@ -2010,6 +2013,7 @@ async function openChat(id) {
   // Files were staged for the conversation you were in, not this one. Carrying
   // them across would attach a screenshot to a completely unrelated question.
   clearStaged();
+  clearSkills();
   const { chat, messages, pendingApproval, pendingQuestion, context, project, files, running, background } = await api.chat(id);
   state.chatId = id;
   // Not `chat.model`. There is one model for the whole app, so a conversation
@@ -2216,7 +2220,13 @@ function setComposeMode(mode) {
 
 $('composer-mode-clear').addEventListener('click', () => setComposeMode(null));
 
-function startBlankChat(project = null) {
+/**
+ * @param {{ keepDraft?: boolean }} [options]  `keepDraft` keeps the files and
+ *   skills already picked — a conversation started from a project's page takes
+ *   with it what was picked there.
+ */
+function startBlankChat(project = null, options = {}) {
+  const { keepDraft = false } = options;
   leaveIncognito();
   // Same reason as `openChat`: the run carries on, but its nodes come off the
   // page so they are not sitting in the blank conversation now on screen.
@@ -2224,7 +2234,14 @@ function startBlankChat(project = null) {
   setRunning(false);
   setStatus(null);
   leavePages();
-  clearStaged();
+  if (!keepDraft) {
+    clearStaged();
+    clearSkills();
+  } else {
+    // Off the project's page and into the composer: the draft is drawn here now.
+    renderStaged();
+    renderSkillChips();
+  }
   state.chatId = null;
   setComposeMode(null);
   state.pendingProject = project;
@@ -2569,8 +2586,18 @@ const projectPage = createProjectPage({
   openTask: (id) => {
     pages.showTask(id).catch((err) => toast(err.message, 'error'));
   },
+  // The project page's + is the composer's: one menu, one tray, one set of skills.
+  openPlus: (anchor) => openPlusMenu(anchor, plusDeps),
+  // Something ready to go besides the words: a file that finished uploading.
+  draftReady: () => staged.some((f) => f.id),
+  // The page is on screen: what is already picked is drawn above its box.
+  onShow: () => {
+    renderStaged();
+    renderSkillChips();
+  },
   startChat: async (project, text) => {
-    await newChatInProject(project);
+    // What was picked on the project's page goes with the conversation.
+    await newChatInProject(project, { keepDraft: true });
     // Through the same path as everything else that fills the box. This one
     // happened to work — `requestSubmit()` does not care that the button is
     // disabled — but two ways of doing it is how the other one broke.
@@ -2634,8 +2661,12 @@ $('open-archive').addEventListener('click', () => {
   gotoShelf('archive');
 });
 
-/** A conversation started from inside a project belongs to it from the first word. */
-async function newChatInProject(project) {
+/**
+ * A conversation started from inside a project belongs to it from the first word.
+ *
+ * @param {{ keepDraft?: boolean }} [options]  see `startBlankChat`
+ */
+async function newChatInProject(project, options = {}) {
   // Read the project again rather than trusting what the sheet was showing.
   // A source added a moment ago — or in another tab — would otherwise leave the
   // header claiming the project has nothing on its shelf.
@@ -2656,7 +2687,7 @@ async function newChatInProject(project) {
   } catch {
     // Offline or deleted underneath us; the sheet's copy still names it.
   }
-  startBlankChat(summary);
+  startBlankChat(summary, options);
 }
 
 /* ── copying and editing what you said ─────────────────────────── */
@@ -2947,6 +2978,8 @@ $('composer').addEventListener('submit', async (event) => {
   // copy is not fetchable until it has been sent.
   const sending = ready.map((f) => ({ name: f.name, preview: f.preview, size: f.size, mime: f.mime, isImage: f.isImage, thumb: f.thumb }));
   const ids = ready.map((f) => f.id);
+  // Picked in the + menu; they go with this message and no further.
+  const skills = [...state.pickedSkills];
   // What this session sent, which the transcript only holds after a reload —
   // the citation check must count a file attached a minute ago as given.
   state.sentFiles = [...(state.sentFiles || []), ...sending.map((f) => f.name)];
@@ -2958,6 +2991,7 @@ $('composer').addEventListener('submit', async (event) => {
   // is about to use them.
   staged.length = 0;
   renderStaged();
+  clearSkills();
   refreshSendState();
   renderVisionWarning();
 
@@ -2977,7 +3011,7 @@ $('composer').addEventListener('submit', async (event) => {
    */
   const queueing = runHere();
   if (queueing) {
-    queueing.queue.push({ text, files: sending, ids });
+    queueing.queue.push({ text, files: sending, ids, skills });
     renderQueue();
     scrollToEnd();
     return;
@@ -3005,7 +3039,7 @@ $('composer').addEventListener('submit', async (event) => {
       renderIncognito();
     }
     const here = () => state.chatId === chatId;
-    const node = userMessage(text, sending, null, new Date());
+    const node = userMessage(text, sending, null, new Date(), skills);
     if (here()) {
       setEmpty(false);
       $('messages').append(node);
@@ -3015,7 +3049,7 @@ $('composer').addEventListener('submit', async (event) => {
     // The shelf this was begun from travels with the first message only.
     const intent = state.composeMode;
     setComposeMode(null);
-    const { message } = await api.sendMessage(chatId, text, ids, intent);
+    const { message } = await api.sendMessage(chatId, text, ids, intent, skills);
     if (message?.id) node.dataset.messageId = message.id;
     settleAttachments(node, sending, ids);
     await refreshChats();
@@ -3141,12 +3175,12 @@ function renderQueue() {
  */
 async function deliver(item, { interrupting = false, run = null, chatId = null } = {}) {
   const target = chatId || run?.chatId || state.chatId;
-  const node = userMessage(item.text, item.files, null, new Date());
+  const node = userMessage(item.text, item.files, null, new Date(), item.skills);
   if (run) run.stage.append(node);
   else $('messages').append(node);
   if (!run || onScreen(run)) scrollToEnd();
   try {
-    const { message } = await api.sendMessage(target, item.text, item.ids);
+    const { message } = await api.sendMessage(target, item.text, item.ids, undefined, item.skills);
     // Stamped after the fact: the id only exists once the server has it, and
     // without it the bubble has nothing to edit.
     if (message?.id) node.dataset.messageId = message.id;
@@ -5506,7 +5540,85 @@ const attachments = createAttachments({
   onboarding,
   openModelBrowser: (model) => browser.open(model),
 });
-const { staged, renderStaged, clearStaged, refreshModelFacts, renderVisionWarning } = attachments;
+const { staged, renderStaged, clearStaged, stageAttachment, refreshModelFacts, renderVisionWarning } = attachments;
+
+/* ── the + menu ────────────────────────────────────────────────── */
+
+/** How many skills one message may carry — the server keeps no more (`MAX_PICKED_SKILLS`). */
+const MAX_SKILLS = 5;
+
+/**
+ * The skills picked in the + menu for the message being written, as chips
+ * above both message boxes — the conversation's and a project's — with a ✕ to
+ * take one back. They go with the message and its turn works to them.
+ */
+function renderSkillChips() {
+  // Where the message is being written, and nowhere else — as the tray is.
+  const here = onProjectPage() ? $('project-page-skills') : $('skill-chips');
+  for (const host of [$('skill-chips'), $('project-page-skills')]) {
+    if (!host) continue;
+    const names = host === here ? state.pickedSkills : [];
+    host.hidden = !names.length;
+    host.replaceChildren(
+      ...names.map((name) => {
+        const chip = document.createElement('span');
+        chip.className = 'skillchip';
+        const label = document.createElement('span');
+        label.textContent = t('skill.chip', { name });
+        const drop = document.createElement('button');
+        drop.type = 'button';
+        drop.className = 'skillchip__drop';
+        drop.textContent = '✕';
+        drop.setAttribute('aria-label', t('skill.remove', { name }));
+        drop.addEventListener('click', () => {
+          state.pickedSkills = state.pickedSkills.filter((n) => n !== name);
+          renderSkillChips();
+        });
+        chip.append(label, drop);
+        return chip;
+      }),
+    );
+  }
+}
+
+function clearSkills() {
+  state.pickedSkills = [];
+  renderSkillChips();
+}
+
+/** Whether a project's page is the thing on screen, so a pick lands in its box. */
+const onProjectPage = () => $('project-page')?.hidden === false;
+
+/** What the + menu needs from the app — the same for both message boxes. */
+const plusDeps = {
+  pickFiles: () => $('file-input').click(),
+  pickSkill: (name) => {
+    if (!state.pickedSkills.includes(name)) {
+      if (state.pickedSkills.length >= MAX_SKILLS) return toast(t('skill.tooMany', { n: MAX_SKILLS }), 'error');
+      state.pickedSkills = [...state.pickedSkills, name];
+      renderSkillChips();
+    }
+    (onProjectPage() ? $('project-page-ask') : $('input')).focus();
+  },
+  picked: () => state.pickedSkills,
+  attach: (attachment) => stageAttachment(attachment),
+  prefs: () => state.boot?.prefs || {},
+  savePrefs: async (patch) => {
+    state.boot.prefs = await api.savePrefs(patch);
+    return state.boot.prefs;
+  },
+  openSettings: (tab, focusId) => {
+    openSettings(tab);
+    if (!focusId) return;
+    requestAnimationFrame(() => {
+      const target = $(focusId);
+      target?.scrollIntoView({ block: 'nearest' });
+      target?.focus?.();
+    });
+  },
+};
+
+$('attach').addEventListener('click', () => openPlusMenu($('attach'), plusDeps));
 
 /* ── appearance ────────────────────────────────────────────────── */
 
@@ -5642,6 +5754,9 @@ function refreshSendState() {
   $('stop').hidden = !showStop;
 
   fitPlaceholder(running);
+  // The project page's box shares the tray, so a file finishing its upload
+  // arms that send button too.
+  projectPage.refreshSend();
 }
 
 /**

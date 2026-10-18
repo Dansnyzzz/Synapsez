@@ -1091,13 +1091,25 @@ section('projects: instructions and sources a conversation inherits');
    * has to say which of these was learned *here*, or the split is invisible and
    * might as well not exist.
    */
+  /*
+   * Minimal, the way Claude's project card is (owner, 2026-10-14): its name,
+   * who can see it, the way in, and one line. The notes themselves — each
+   * marked as this project's or the account's — are in the sheet below.
+   */
   const honest = await page.evaluate(() => {
     const cards = [...document.querySelectorAll('#project-page-side .panel-card')];
     const memory = cards.find((c) => c.querySelector('.panel-card__name')?.textContent === 'Memory');
-    return { tag: memory?.querySelector('.panel-card__tag')?.textContent, say: memory?.textContent || '' };
+    return {
+      lock: memory?.querySelector('.panel-card__lock')?.textContent?.trim(),
+      link: memory?.querySelector('#pp-view-memory')?.textContent?.trim(),
+      lines: memory?.querySelectorAll('.panel-card__say').length,
+      previews: memory?.querySelectorAll('.source').length,
+      say: memory?.querySelector('.panel-card__say')?.textContent || '',
+    };
   });
-  check('the memory card is scoped to this project', honest.tag === 'this project', honest.tag);
-  check('and the empty state says what it will learn here', /this project/i.test(honest.say), honest.say.slice(0, 140));
+  check('the memory card says who can see it', honest.lock === 'Only you', honest.lock);
+  check('  with the way in beside it', honest.link === 'View memory', honest.link);
+  check('  and one line on what it is — no preview of the notes, no long caption', honest.lines === 1 && honest.previews === 0 && /remembers/i.test(honest.say), JSON.stringify(honest));
 
   /**
    * And what the project has produced.
@@ -7931,10 +7943,14 @@ section('a round button takes you back to the newest message, and shows when mor
     }, where);
   const toTop = () => scrollTo('top');
   // A glide moves a frame at a time; headless Chrome draws frames only when asked.
+  // Pumped until the glide arrives, or for `ms` on a machine too loaded for it.
   const frames = (ms) =>
     page.evaluate(async (wait) => {
+      const thread = document.getElementById('thread');
       const until = performance.now() + wait;
-      while (performance.now() < until) await new Promise((r) => requestAnimationFrame(r));
+      while (performance.now() < until && thread.scrollHeight - thread.scrollTop - thread.clientHeight >= 4) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
     }, ms);
   const look = () =>
     page.evaluate(() => {
@@ -7990,7 +8006,7 @@ section('a round button takes you back to the newest message, and shows when mor
   // A button that never appeared fails the check above, not the whole suite on a click that waits for it.
   if (idle.shown) {
     await page.click('#jump');
-    await frames(2000);
+    await frames(8000);
   }
   const jumped = await look();
   check('pressing it goes to the end', jumped.gap < 4, `${jumped.gap}px from the end`);
@@ -8064,9 +8080,347 @@ section('a round button takes you back to the newest message, and shows when mor
   check('the answer done, scrolled up it is the arrow again', finished.shown && !finished.working && finished.arrow && !finished.dots, JSON.stringify(finished));
   if (finished.shown) {
     await page.click('#jump');
-    await frames(2000);
+    await frames(8000);
   }
   check('  and it still takes you to the end', (await look()).gap < 4);
+}
+
+/**
+ * The + beside the message box, the way Claude's works (owner, 2026-10-14):
+ * files, Skills ›, Connectors ›, Plugins ›, each opening beside the row on
+ * hover, on a click, or with → on the keyboard. The account's connections are
+ * stood in for here — nothing in this suite has a real GitHub or Google.
+ */
+section('the + opens a menu of files, skills, connectors and plugins');
+{
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  const json = (body) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+  await page.route('**/api/skills', (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill(json({ skills: [{ id: 's-1', name: 'Weekly report', description: 'When a weekly report is asked for.', enabled: true }, { id: 's-2', name: 'Switched off', description: 'Off.', enabled: false }], builtin: [{ id: 'builtin:docx', name: 'Writing a Word document', description: 'Word.', builtin: true }] }))
+      : route.continue(),
+  );
+  await page.route('**/api/connectors', (route) =>
+    route.fulfill(json({ connectors: [
+      { id: 'google', label: 'Google', oauth: true, connected: true, account: 'me@example.com', products: [{ id: 'drive', label: 'Drive', granted: true }] },
+      { id: 'github', label: 'GitHub', connected: true, account: 'octo' },
+      { id: 'notion', label: 'Notion', connected: false },
+    ] })),
+  );
+  await page.route('**/api/mcp', (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill(json({ servers: [{ id: 'm-figma', name: 'Figma', prefix: 'mcp__figma__', enabled: true }, { id: 'm-canva', name: 'Canva', prefix: 'mcp__canva__', enabled: true }], status: [{ id: 'figma', tools: 4 }, { id: 'canva', error: 'Sign in again.' }] }))
+      : route.continue(),
+  );
+  const mcpPatches = [];
+  await page.route('**/api/mcp/*', (route) => {
+    if (route.request().method() !== 'PATCH') return route.continue();
+    mcpPatches.push({ url: route.request().url(), body: JSON.parse(route.request().postData() || '{}') });
+    return route.fulfill(json({ ok: true }));
+  });
+  await page.route('**/api/connectors/google/drive*', (route) =>
+    route.fulfill(json({ files: [{ id: 'drive-file-0001', name: 'Thesis draft', mime: 'application/vnd.google-apps.document', modified: '2026-10-01T08:00:00Z' }] })),
+  );
+  await page.route('**/api/connectors/google/drive/*/attach', (route) =>
+    route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ attachment: { id: 'att-drive-ui', name: 'Thesis draft.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 2048 } }) }),
+  );
+  const prefsPuts = [];
+  const onRequest = (request) => {
+    if (request.method() === 'PUT' && request.url().endsWith('/api/prefs')) prefsPuts.push(JSON.parse(request.postData() || '{}'));
+  };
+  page.on('request', onRequest);
+
+  const panel = (level) =>
+    page.evaluate((n) => {
+      const node = document.querySelector(`.plusmenu[data-level="${n}"]`);
+      if (!node || node.hidden) return null;
+      return {
+        rows: [...node.querySelectorAll('.plusmenu__item')].map((r) => ({
+          label: r.querySelector('.plusmenu__label')?.textContent || '',
+          role: r.getAttribute('role'),
+          checked: r.getAttribute('aria-checked'),
+          tag: r.querySelector('.plusmenu__tag')?.textContent || '',
+          warn: r.classList.contains('is-warn'),
+          sub: r.getAttribute('aria-haspopup') === 'menu',
+        })),
+        notes: [...node.querySelectorAll('.plusmenu__note')].map((n) => n.textContent.trim()),
+        search: !!node.querySelector('.plusmenu__search'),
+      };
+    }, level);
+  const exact = (text) => new RegExp(`^${String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
+  const rowOf = (level, label) =>
+    page
+      .locator(`.plusmenu[data-level="${level}"] .plusmenu__item`)
+      .filter({ has: page.locator('.plusmenu__label', { hasText: exact(label) }) })
+      .first();
+  const hoverRow = async (level, label) => {
+    await rowOf(level, label).hover();
+    await page.waitForTimeout(450);
+  };
+
+  await page.click('#attach');
+  await page.waitForTimeout(500);
+  const root = await panel(0);
+  check('the + opens a menu', !!root, JSON.stringify(root));
+  check('  of files, skills, connectors and plugins', root && /^(Add files or photos|Thêm tệp hoặc ảnh)$/.test(root.rows[0].label) && root.rows.slice(1).every((r) => r.sub) && root.rows.length === 4, JSON.stringify(root?.rows));
+  check('  and says on Connectors that one of them is not working', root && /⚠ 1/.test(root.rows[2].tag), root?.rows[2].tag);
+  check('  the + says it is open', (await page.getAttribute('#attach', 'aria-expanded')) === 'true');
+  // The transcript scrolls by itself while an answer streams in; that must not shut the menu.
+  await page.evaluate(async () => {
+    const thread = document.getElementById('thread');
+    thread.style.scrollBehavior = 'auto';
+    thread.scrollTop = 0;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    thread.scrollTop = thread.scrollHeight;
+    thread.style.scrollBehavior = '';
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  });
+  check('  and stays open while the conversation scrolls behind it', await page.evaluate(() => !!document.querySelector('.plusmenu[data-level="0"]')));
+
+  await hoverRow(0, root.rows[1].label);
+  const skills = await panel(1);
+  check('hovering Skills opens them beside it — the built-in ones and your own that are on', skills && skills.rows.some((r) => r.label === 'Writing a Word document') && skills.rows.some((r) => r.label === 'Weekly report') && !skills.rows.some((r) => r.label === 'Switched off'), JSON.stringify(skills?.rows.map((r) => r.label)));
+  check('  with a way to manage them and to make one', skills && skills.rows.length >= 4, JSON.stringify(skills?.rows.map((r) => r.label)));
+  await rowOf(1, 'Weekly report').click();
+  await page.waitForTimeout(300);
+  const chips = await page.evaluate(() => ({
+    menuGone: !document.querySelector('.plusmenu'),
+    chips: [...document.querySelectorAll('#skill-chips .skillchip')].map((c) => c.textContent.replace('✕', '').trim()),
+    shown: !document.getElementById('skill-chips').hidden,
+  }));
+  check('picking a skill closes the menu and puts it on the message', chips.menuGone && chips.shown && /^(Skill|Kỹ năng): Weekly report$/.test(chips.chips[0] || ''), JSON.stringify(chips));
+
+  // Connectors.
+  await page.click('#attach');
+  await page.waitForTimeout(500);
+  await hoverRow(0, root.rows[2].label);
+  const connectors = await panel(1);
+  const row = (label) => connectors?.rows.find((r) => r.label === label);
+  check('Connectors lists each connection with its switch', row('GitHub')?.role === 'menuitemcheckbox' && row('GitHub')?.checked === 'true' && row('Figma')?.checked === 'true' && row('Google')?.checked === 'true', JSON.stringify(connectors?.rows));
+  check('  one that is not working is marked so, not switched', row('Canva')?.warn === true && row('Canva')?.role === 'menuitem', JSON.stringify(row('Canva')));
+  check('  one not connected is not listed', !row('Notion'));
+  check('  with Add connector, Manage connectors, Google Drive and Tool access', connectors && connectors.rows[0].sub && connectors.rows.some((r) => /Google Drive/.test(r.label) && r.sub) && connectors.rows.at(-1).sub, JSON.stringify(connectors?.rows.map((r) => r.label)));
+  await rowOf(1, 'GitHub').click();
+  await page.waitForTimeout(500);
+  check('switching GitHub off pauses it on the account, without disconnecting it', prefsPuts.some((p) => JSON.stringify(p.connectorsOff) === '["github"]') && (await panel(1))?.rows.find((r) => r.label === 'GitHub')?.checked === 'false', JSON.stringify(prefsPuts));
+  await rowOf(1, 'Figma').click();
+  await page.waitForTimeout(400);
+  check('switching an MCP server off switches the server off', mcpPatches.some((p) => p.url.endsWith('/api/mcp/m-figma') && p.body.enabled === false), JSON.stringify(mcpPatches));
+  await rowOf(1, 'GitHub').click();
+  await page.waitForTimeout(400);
+  check('  and on again', prefsPuts.some((p) => Array.isArray(p.connectorsOff) && p.connectorsOff.length === 0));
+
+  const driveLabel = connectors.rows.find((r) => /Google Drive/.test(r.label)).label;
+  await rowOf(1, driveLabel).click();
+  await page.waitForTimeout(700);
+  const drive = await panel(2);
+  check('Google Drive opens a search with the newest files', drive?.search && drive.rows.some((r) => r.label === 'Thesis draft'), JSON.stringify(drive));
+  check('  and the search box has the keyboard', await page.evaluate(() => document.activeElement?.classList.contains('plusmenu__search')));
+  await rowOf(2, 'Thesis draft').click();
+  await page.waitForTimeout(500);
+  const attached = await page.evaluate(() => ({
+    menuGone: !document.querySelector('.plusmenu'),
+    tile: [...document.querySelectorAll('#attachments .stage')].map((s) => s.getAttribute('title')),
+  }));
+  check('picking a Drive file attaches it to the message', attached.menuGone && attached.tile.includes('Thesis draft.docx'), JSON.stringify(attached));
+  await page.evaluate(() => {
+    for (const drop of document.querySelectorAll('#attachments .stage__remove')) /** @type {HTMLElement} */ (drop).click();
+  });
+
+  await page.click('#attach');
+  await page.waitForTimeout(500);
+  await hoverRow(0, root.rows[2].label);
+  const toolAccess = (await panel(1)).rows.at(-1).label;
+  await hoverRow(1, toolAccess);
+  const access = await panel(2);
+  check('Tool access offers loading tools when needed, or all of them up front', access?.rows.length === 2 && access.rows.every((r) => r.role === 'menuitemradio') && access.rows[0].checked === 'true', JSON.stringify(access?.rows));
+  await page.click(`.plusmenu[data-level="2"] .plusmenu__item >> nth=1`);
+  await page.waitForTimeout(500);
+  check('  and choosing one is saved on the account', prefsPuts.some((p) => p.toolLoading === 'all') && (await panel(2))?.rows[1].checked === 'true', JSON.stringify(prefsPuts.at(-1)));
+  await page.click(`.plusmenu[data-level="2"] .plusmenu__item >> nth=0`);
+  await page.waitForTimeout(400);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+
+  // Plugins.
+  await page.click('#attach');
+  await page.waitForTimeout(500);
+  await hoverRow(0, root.rows[3].label);
+  const plugins = await panel(1);
+  check('Plugins lists the families of built-in tools', plugins && plugins.rows.length >= 6 && plugins.rows.every((r) => r.sub), JSON.stringify(plugins?.rows.map((r) => r.label)));
+  const cloud = plugins.rows.find((r) => /Cloud computer|Máy tính đám mây/.test(r.label)).label;
+  await hoverRow(1, cloud);
+  const inside = await panel(2);
+  check('  each one shows what is inside it, with its switch at the top', inside?.rows[0].role === 'menuitemcheckbox' && inside.rows[0].checked === 'true' && inside.notes.length >= 1, JSON.stringify(inside));
+  await page.click(`.plusmenu[data-level="2"] .plusmenu__item >> nth=0`);
+  await page.waitForTimeout(500);
+  check('switching a plugin off is saved, and its row says so', prefsPuts.some((p) => JSON.stringify(p.pluginsOff) === '["cloud_computer"]') && /^(Off|Tắt)$/.test((await panel(1))?.rows.find((r) => r.label === cloud)?.tag || ''), JSON.stringify(prefsPuts.at(-1)));
+  await page.click(`.plusmenu[data-level="2"] .plusmenu__item >> nth=0`);
+  await page.waitForTimeout(400);
+  check('  and on again', prefsPuts.some((p) => Array.isArray(p.pluginsOff) && p.pluginsOff.length === 0));
+
+  // A press anywhere else puts it all away.
+  await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  await page.waitForTimeout(300);
+  check('a click elsewhere closes every panel', await page.evaluate(() => !document.querySelector('.plusmenu')));
+
+  // The keyboard: Enter opens it, ↓ and → walk in, Escape walks back out.
+  await page.focus('#attach');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+  const first = await page.evaluate(() => document.activeElement?.closest('.plusmenu')?.dataset.level === '0');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(500);
+  const into = await page.evaluate(() => document.activeElement?.closest('.plusmenu')?.dataset.level);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  const backTo = await page.evaluate(() => ({ level: document.activeElement?.closest('.plusmenu')?.dataset.level, subs: document.querySelectorAll('.plusmenu').length }));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  const out = await page.evaluate(() => ({ menus: document.querySelectorAll('.plusmenu').length, focus: document.activeElement?.id }));
+  check('by keyboard: Enter opens it with the first row focused', first);
+  check('  → opens the next panel and moves into it', into === '1', String(into));
+  check('  Escape goes back one, to the row that opened it', backTo.level === '0' && backTo.subs === 1, JSON.stringify(backTo));
+  check('  and Escape again closes it, back on the +', out.menus === 0 && out.focus === 'attach', JSON.stringify(out));
+
+  page.off('request', onRequest);
+  await page.unroute('**/api/skills');
+  await page.unroute('**/api/connectors');
+  await page.unroute('**/api/mcp');
+  await page.unroute('**/api/mcp/*');
+  await page.unroute('**/api/connectors/google/drive*');
+  await page.unroute('**/api/connectors/google/drive/*/attach');
+  await page.evaluate(() => {
+    for (const drop of document.querySelectorAll('#skill-chips .skillchip__drop')) /** @type {HTMLElement} */ (drop).click();
+  });
+}
+
+/**
+ * A skill picked for a message goes with it, and is said on the message
+ * afterwards. A built-in skill, so the real server keeps it (`chosenSkills`).
+ */
+section('a skill picked in the + menu goes with the message');
+{
+  let sent = null;
+  let sentTo = null;
+  const onRequest = (request) => {
+    const match = /\/api\/chats\/([^/]+)\/messages$/.exec(request.url());
+    if (request.method() !== 'POST' || !match) return;
+    sent = JSON.parse(request.postData() || '{}');
+    sentTo = match[1];
+  };
+  page.on('request', onRequest);
+  await page.route('**/api/chats/*/run', (route) =>
+    route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: 'event: text\ndata: {"delta":"Ok."}\n\nevent: done\ndata: {"stopReason":"end_turn"}\n\n' }),
+  );
+  await page.click('#attach');
+  await page.waitForTimeout(500);
+  await page.locator('.plusmenu[data-level="0"] .plusmenu__item').nth(1).hover();
+  await page.waitForTimeout(700);
+  await page
+    .locator('.plusmenu[data-level="1"] .plusmenu__item')
+    .filter({ has: page.locator('.plusmenu__label', { hasText: /^Writing a Word document$/ }) })
+    .first()
+    .click();
+  await page.waitForTimeout(200);
+  await page.fill('#input', 'Viết giúp tôi một biên bản họp');
+  await page.press('#input', 'Enter');
+  await page.waitForTimeout(1800);
+  await page.unroute('**/api/chats/*/run');
+  page.off('request', onRequest);
+  const bubble = await page.evaluate(() => {
+    const last = [...document.querySelectorAll('#messages .msg--user')].pop();
+    return {
+      chips: [...(last?.querySelectorAll('.msg__skills .skillchip') || [])].map((c) => c.textContent),
+      composerChips: document.querySelectorAll('#skill-chips .skillchip').length,
+    };
+  });
+  check('the message is sent with the skill', JSON.stringify(sent?.skills) === '["Writing a Word document"]', JSON.stringify(sent));
+  check('  the message says which skill it asked for', bubble.chips.length === 1 && /Writing a Word document/.test(bubble.chips[0]), JSON.stringify(bubble));
+  check('  and the box is clear of it for the next one', bubble.composerChips === 0, String(bubble.composerChips));
+  const stored = await page.evaluate(async (id) => {
+    const chat = await (await fetch(`/api/chats/${id}`)).json();
+    return [...(chat.messages || [])].reverse().find((m) => m.role === 'user')?.skills || null;
+  }, sentTo);
+  check('  and the server kept it on the message', JSON.stringify(stored) === '["Writing a Word document"]', JSON.stringify(stored));
+}
+
+/**
+ * A project's page: the same + as the composer, and how full its shelf is
+ * (owner, 2026-10-14, beside Claude's project page).
+ */
+section("a project's box has the + too, and the shelf says how full it is");
+{
+  const made = await page.evaluate(async () => {
+    const post = async (url, body) => (await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
+    const { project } = await post('/api/projects', { name: 'Plus project' });
+    const text = 'Đây là nội dung nguồn của dự án. '.repeat(400);
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    await post(`/api/projects/${project.id}/files`, { name: 'source.txt', mime: 'text/plain', data: btoa(binary) });
+    return project.id;
+  });
+  check('a project with a source is made for this', !!made);
+  await page.click('#open-projects');
+  await page.waitForTimeout(800);
+  await openProjectNamed('Plus project');
+  const side = await page.evaluate(() => {
+    const capacity = document.querySelector('#project-page-side .capacity');
+    return {
+      plus: !!document.getElementById('project-page-plus') && !document.getElementById('project-page-plus').hidden,
+      bar: !!capacity?.querySelector('.capacity__track[role="progressbar"] .capacity__fill'),
+      used: capacity?.querySelector('.capacity__used')?.textContent || '',
+      mode: capacity?.querySelector('.capacity__mode')?.textContent.trim() || '',
+      value: capacity?.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow'),
+    };
+  });
+  check("a project's box has a + of its own", side.plus);
+  check('the shelf shows how full it is, as a bar and a share', side.bar && /^(\d+|<1)% of project capacity used$|^Đã dùng (\d+|<1)% dung lượng dự án$/.test(side.used), JSON.stringify(side));
+  check('  and how the sources are read at that size', /^(Read in full|Đọc toàn bộ)$/.test(side.mode), side.mode);
+
+  await page.click('#project-page-plus');
+  await page.waitForTimeout(500);
+  const opened = await page.evaluate(() => {
+    const menu = document.querySelector('.plusmenu[data-level="0"]');
+    const plus = document.getElementById('project-page-plus').getBoundingClientRect();
+    const box = menu?.getBoundingClientRect();
+    return { there: !!menu, rows: menu?.querySelectorAll('.plusmenu__item').length, below: box ? box.top >= plus.bottom - 1 : false };
+  });
+  check('the same menu opens from it, below it where there is room', opened.there && opened.rows === 4 && opened.below, JSON.stringify(opened));
+  await page.keyboard.press('Escape');
+
+  await page.setInputFiles('#file-input', { name: 'brief.txt', mimeType: 'text/plain', buffer: Buffer.from('Một bản tóm tắt ngắn.') });
+  await page.waitForTimeout(1500);
+  const tray = await page.evaluate(() => ({
+    tiles: [...document.querySelectorAll('#project-page-attachments .stage')].map((s) => s.getAttribute('title')),
+    sendable: !document.getElementById('project-page-send').disabled,
+  }));
+  check('a file picked from here shows above this box', tray.tiles.includes('brief.txt'), JSON.stringify(tray));
+  check('  and is enough to send, with nothing typed', tray.sendable);
+
+  await page.route('**/api/chats/*/run', (route) =>
+    route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: 'event: text\ndata: {"delta":"Đã nhận."}\n\nevent: done\ndata: {"stopReason":"end_turn"}\n\n' }),
+  );
+  await page.fill('#project-page-ask', 'Tóm tắt tệp này');
+  await page.click('#project-page-send');
+  await page.waitForTimeout(2500);
+  await page.unroute('**/api/chats/*/run');
+  const started = await page.evaluate(() => {
+    const last = [...document.querySelectorAll('#messages .msg--user')].pop();
+    return {
+      inChat: document.getElementById('project-page').hidden,
+      text: last?.querySelector('.bubble__text')?.textContent || '',
+      file: (last?.textContent || '').includes('brief.txt'),
+      trayEmpty: document.querySelectorAll('#attachments .stage').length === 0,
+    };
+  });
+  check('sending starts the conversation with the file it was given', started.inChat && started.text === 'Tóm tắt tệp này' && started.file, JSON.stringify(started));
+  check('  and the tray is empty after', started.trayEmpty);
 }
 
 await browser.close();

@@ -1595,11 +1595,25 @@ export function timeStamp(at) {
   return node;
 }
 
-/** @param at  when it was sent; the time is shown beside its copy button. */
-export function userMessage(text, files = [], id = null, at = null) {
+/**
+ * @param at  when it was sent; the time is shown beside its copy button.
+ * @param skills  the skills picked for it in the + menu, said above the bubble
+ *   so a reload shows what the answer was asked to follow.
+ */
+export function userMessage(text, files = [], id = null, at = null, skills = []) {
   const wrap = el('div', 'msg msg--user');
   if (id) wrap.dataset.messageId = id;
   const bubble = el('div', 'bubble');
+
+  if (Array.isArray(skills) && skills.length) {
+    const row = el('div', 'msg__skills');
+    for (const name of skills) {
+      const chip = el('span', 'skillchip skillchip--sent');
+      chip.textContent = t('skill.chip', { name: String(name) });
+      row.append(chip);
+    }
+    wrap.append(row);
+  }
 
 
   if (text) {
