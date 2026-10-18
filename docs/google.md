@@ -48,6 +48,14 @@ Vercel preview address (`ai-remote-xxxx.vercel.app`) instead of your main one ar
 mismatch. Setting `PUBLIC_URL` pins it to one address. Changes on Google's side can take a few
 minutes to apply.
 
+### "Error 403: access_denied — has not completed the Google verification process"
+
+The consent screen is in **Testing** and the Google account signing in is not one of its test
+users. Add that exact address under **Google Auth Platform → Audience → Test users** (up to
+100), or publish the app (below). A school or work account (Google Workspace) can also be held
+back by its own administrator's third-party-app policy — that shows as `admin_policy_enforced`,
+and only that organisation's admin can allow it; a personal Gmail account avoids it.
+
 ## 3. The one thing to know about "Testing" mode
 
 While the consent screen's publishing status is **Testing**, Google expires the connection
