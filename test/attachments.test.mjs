@@ -912,6 +912,26 @@ section('a picture a step read: known by its bytes, shrunk to look at, with a th
   check('bytes that are not a picture get no copy', (await viewCopy(Buffer.from('not a picture'))) === null);
 }
 
+section('a picture a step read is kept with its name and a thumbnail');
+{
+  const { keepStepShot } = await import('../server/attachments.js');
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const owner = await store.createUser({ id: 'u-seen', email: 'seen@example.com', name: 'Seen', passwordHash: 'x', role: 'user' });
+  const surface = createCanvas(2400, 1200);
+  surface.getContext('2d').fillRect(0, 0, 2400, 1200);
+  const data = (await surface.encode('png')).toString('base64');
+  const kept = await keepStepShot(owner.id, { data, mime: 'image/png', name: 'C:\\figs\\Figure_4.png' }, { chatId: null });
+  check('it is kept, named by the file alone', !!kept?.id && kept.name === 'Figure_4.png', JSON.stringify(kept));
+  const row = kept ? await store.getAttachment(owner.id, kept.id) : null;
+  check('  as a step picture, off the Files shelf', row?.origin === 'step' && row?.kind === 'image', `${row?.origin} ${row?.kind}`);
+  check('  shrunk past the 80KB a screenshot may be', !!row && row.bytes > 0, `${row?.bytes}`);
+  const thumb = kept ? await store.getAttachmentThumb(owner.id, kept.id) : '';
+  check('  with a thumbnail for the strip', /^data:image\/jpeg;base64,/.test(thumb || ''));
+  const shot = await keepStepShot(owner.id, { data: PNG, mime: 'image/png' }, { chatId: null });
+  check('a screenshot is still kept the old way, without a name', !!shot?.id && !('name' in shot), JSON.stringify(shot));
+  check('an id offered in place of bytes is not taken on trust', (await keepStepShot(owner.id, { id: 'someone-elses' })) === null);
+}
+
 server.close();
 await new Promise((r) => server.once('close', r));
 removeTemp(process.env.DATA_DIR);

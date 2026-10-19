@@ -36,6 +36,9 @@ const safeError = (error) => redactSecrets(String(error?.message ?? error ?? '')
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** A job's picture: the stored reference, `null` when one was sent and not kept, or nothing. */
+const shotOf = (result) => (result?.shot === null ? null : result?.shot || undefined);
+
 /**
  * Hand a local tool call to the worker on this user's machine and wait.
  *
@@ -122,8 +125,10 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
 
     // `shot` is a reference to an attachment the worker's result endpoint has
     // already stored — see `keepStepShot`. It rides out to the browser beside
-    // the text, the same way `file` and `widget` do for cloud tools.
-    return { isError: false, content: String(result.output ?? ''), shot: result.shot || undefined };
+    // the text, the same way `file` and `widget` do for cloud tools. A `null`
+    // is a picture the worker sent and the server could not keep, which
+    // `readPicture` has to be able to tell from no picture at all.
+    return { isError: false, content: String(result.output ?? ''), shot: shotOf(result) };
   }
 
   // Only if it is genuinely still open. The worker may have finished and be
@@ -139,7 +144,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
   // window, that is the truth and the timeout was a false alarm.
   const late = await store.getJob(userId, id).catch(() => null);
   if (late && late.status === 'done' && !late.result?.error) {
-    return { isError: false, content: String(late.result?.output ?? ''), shot: late.result?.shot || undefined };
+    return { isError: false, content: String(late.result?.output ?? ''), shot: shotOf(late.result) };
   }
 
   return {
@@ -462,7 +467,14 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           // What the person answered on a question card, in their words.
           answered: result.answered,
           // A picture of the page the cloud browser is on, kept like a worker's.
-          shot: result.shot ? await keepStepShot(userId, result.shot, { chatId }) : undefined,
+          // A picture the tool already holds — `look_at` on a file of this
+          // account — is referenced, not copied. Only cloud tools, this
+          // server's own code, may hand over an id; a worker's is always bytes.
+          shot: result.shot?.id
+            ? { id: String(result.shot.id), ...(result.shot.name ? { name: String(result.shot.name) } : {}) }
+            : result.shot
+              ? await keepStepShot(userId, result.shot, { chatId })
+              : undefined,
         };
       }
       return { isError: false, content: String(result ?? '') };
