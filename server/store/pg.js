@@ -279,10 +279,11 @@ const withoutNul = (value) => (typeof value === 'string' && value.includes('\u00
 const toJson = (value) => JSON.stringify(value, (key, item) => withoutNul(item));
 
 export function createPgStore(connectionString) {
-  // Accepts a driver object instead of a URL so the tenancy-isolation tests can
-  // run the real SQL against an in-process Postgres.
+  // Accepts a driver instead of a URL — PGlite, a node-postgres pool, Neon's own
+  // (a function with a `query`) — so the tenancy-isolation tests can run the real
+  // SQL against an in-process Postgres, and `openDatabase` can pick per host.
   const sql =
-    typeof connectionString === 'object' && connectionString?.query
+    connectionString && typeof connectionString !== 'string' && typeof connectionString.query === 'function'
       ? connectionString
       : neon(connectionString);
 

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPgStore } from './pg.js';
+import { openDatabase } from './driver.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DATA_DIR = path.resolve(here, '../../data');
@@ -11,8 +12,9 @@ let pending = null;
 /**
  * One store for the whole process, and one shape of it: Postgres.
  *
- * Hosted (`DATABASE_URL` set) uses Neon over HTTP; local uses PGlite against a
- * folder on disk. Both run the same SQL, so accounts and per-account
+ * Hosted (`DATABASE_URL` set) uses Supabase — or any Postgres — through a
+ * connection pool, or Neon over its HTTP driver (see driver.js); local uses
+ * PGlite against a folder on disk. All run the same SQL, so accounts and per-account
  * scoping behave identically on a laptop and on Vercel. There is no second,
  * weaker "single user" mode to reason about — everyone signs in with their own
  * email and password.
@@ -33,12 +35,12 @@ export async function initStore({ driver } = {}) {
     if (driver) {
       store = createPgStore(driver);
     } else if (url) {
-      store = createPgStore(url);
+      store = createPgStore(await openDatabase(url));
     } else {
       if (process.env.VERCEL) {
         throw new Error(
           'DATABASE_URL is not set. On Vercel the filesystem is ephemeral, so a hosted database is ' +
-            'required — add Neon from Vercel → Storage and it sets DATABASE_URL for you.',
+            "required — create a Supabase project, copy its Transaction pooler string (Connect → port 6543) and set it as DATABASE_URL. See docs/database.md.",
         );
       }
       // Imported here rather than at the top of the file so a deployment never
