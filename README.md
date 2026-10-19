@@ -421,6 +421,15 @@ its own — about 61KB against the browser's 4KB. That is a measurement, not an 
 desktop capture host for a one-off shot takes **1516ms** on Windows, and paying that on every action
 somebody is watching is a worse trade than 57KB.
 
+Commands, Python and file work are drawn the way Claude draws them: one grey line when folded —
+*Read 36 files, ran 34 commands (1 failed)* — and, open, a box of rows (*Read* **Figure_4.png**). A
+picture the assistant looked at — `read_file` on an image, or `look_at` by file, address or path on
+the cloud computer — is kept at 1600px with a thumbnail and **read by a model that can see in the same
+step**. The folded line shows the newest three with "+N" for the rest; hovering one shows it larger,
+and clicking opens a lightbox that pages through every picture in the run (arrows, Home/End, Esc, a
+swipe on a phone). Browser and desktop screens page through the same lightbox. A picture whose header
+claims more than 40 million pixels is refused before anything decodes it.
+
 ### The sandbox is not your browser
 
 Two different browsers, and confusing them is the single easiest way to be surprised by this app:
@@ -533,6 +542,15 @@ Desktop steps carry a picture as well, and it is the **live camera frame** rathe
 its own — about 61KB against the browser's 4KB. That is a measurement, not an oversight: starting the
 desktop capture host for a one-off shot takes **1516ms** on Windows, and paying that on every action
 somebody is watching is a worse trade than 57KB.
+
+Commands, Python and file work are drawn the way Claude draws them: one grey line when folded —
+*Read 36 files, ran 34 commands (1 failed)* — and, open, a box of rows (*Read* **Figure_4.png**). A
+picture the assistant looked at — `read_file` on an image, or `look_at` by file, address or path on
+the cloud computer — is kept at 1600px with a thumbnail and **read by a model that can see in the same
+step**. The folded line shows the newest three with "+N" for the rest; hovering one shows it larger,
+and clicking opens a lightbox that pages through every picture in the run (arrows, Home/End, Esc, a
+swipe on a phone). Browser and desktop screens page through the same lightbox. A picture whose header
+claims more than 40 million pixels is refused before anything decodes it.
 
 ### The sandbox is not your browser
 
