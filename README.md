@@ -17,7 +17,7 @@ internet ever connects inward to your machine.
   │   Browser    │─────▶│  API + agent loop │◀──────│  Worker (polls out) │
   └──────────────┘  SSE └────────┬──────────┘  jobs └──────────┬──────────┘
                                  │                             │
-                          Neon Postgres                 files · shell · git
+                        Supabase Postgres               files · shell · git
                     chats · settings · job queue        inside one workspace
 ```
 
@@ -120,7 +120,7 @@ Registration is open by default. Set `ALLOW_SIGNUP=false` on a public deployment
 want are in, and the door closes behind you — the very first account can always be created, or the
 deployment would have no administrator.
 
-The same Postgres runs everywhere: Neon when `DATABASE_URL` is set, and an in-process Postgres
+The same Postgres runs everywhere: Supabase (or any hosted Postgres) when `DATABASE_URL` is set, and an in-process Postgres
 (PGlite) stored under `./data` when it is not. Identical SQL, identical scoping, identical tests —
 so a laptop and a deployment behave the same, and there is no second, weaker mode to reason about.
 
@@ -1498,7 +1498,7 @@ and search the web; only your own machine can touch your files.
 
 ---
 
-## Deploy — GitHub → Vercel → Neon
+## Deploy — GitHub → Vercel → Supabase
 
 ### 1. Push to GitHub
 
@@ -1521,12 +1521,15 @@ served straight from Vercel's CDN.
 
 ### 3. Add the database (free)
 
-In the Vercel dashboard: **Storage → Create Database → Neon**, then connect it to the project. Vercel
-sets `DATABASE_URL` for you. The schema is created automatically on first request.
+Create a free **Supabase** project, press **Connect → Transaction pooler** (port 6543), and set that
+string as `DATABASE_URL` in Vercel. The schema is created automatically on first request. Step by
+step, with the optional certificate and how to bring data over from another database:
+[docs/database.md](docs/database.md).
 
-> Neon's free tier is ample for this — chat history is small text. Any Postgres works: Supabase,
-> Railway, or your own. Only `DATABASE_URL` matters. Free-tier limits change, so check the current
-> terms before you rely on them.
+> Why not Neon's free plan: it counts compute hours, and a paired computer standing by keeps the
+> database from ever going idle — the hours ran out mid-month (HTTP 402). Supabase's free compute has
+> no hour quota. Any Postgres works, Neon included; only `DATABASE_URL` matters. Free-tier limits
+> change, so check the current terms before you rely on them.
 
 ### 4. Set environment variables
 
@@ -1534,7 +1537,8 @@ sets `DATABASE_URL` for you. The schema is created automatically on first reques
 
 | Variable | Required | What it is |
 |---|---|---|
-| `DATABASE_URL` | **yes** | Set for you by the Neon integration. |
+| `DATABASE_URL` | **yes** | Supabase's Transaction pooler string (port 6543), or any Postgres. See [docs/database.md](docs/database.md). |
+| `DATABASE_CA_CERT` | recommended | The database's CA certificate, so the connection is verified as well as encrypted. |
 | `SESSION_SECRET` | **yes** | Signs session cookies. Long and random. Changing it signs everyone out. |
 | `ENCRYPTION_KEY` | **yes** | Encrypts stored provider keys. Changing it makes existing ones unreadable. |
 | `ACCESS_TOKEN` | legacy | One value standing in for both of the above, from before they were separate. Still honoured — the two keys are derived apart from it — but it cannot be rotated in halves, so the server warns at boot. Set `SESSION_SECRET` and `ENCRYPTION_KEY` instead. |
@@ -1818,7 +1822,7 @@ server/
     docx.js / xlsx.js / pptx.js   one format each, both directions
   providers/          one streaming interface over five APIs
   tools/              tool schemas, cloud implementations, execution router
-  store/              Neon and PGlite behind one Postgres interface
+  store/              Supabase/any Postgres, Neon and PGlite behind one interface
   routes/             six route groups lifted out of app.js — chats, files,
                       workspace, connectors, mcp, workflows
   research/           deep_research: plan, gather, debate, grade, report

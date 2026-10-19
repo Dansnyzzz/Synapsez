@@ -53,10 +53,12 @@ Cross-check `.env.example` against what `assertSecrets()` demands:
 
 ## 4. Database
 
-Confirm a hosted Postgres is attached (Neon via Vercel → Storage sets
-`DATABASE_URL` for you). Then sanity-check the free tier against expected usage:
-connection ceiling, storage cap, and whether it suspends when idle — a cold
-database behind a 300s function is a slow first request, not an outage.
+Confirm a hosted Postgres is attached: Supabase's Transaction pooler string
+(port 6543) in `DATABASE_URL`, ideally with `DATABASE_CA_CERT` — see
+docs/database.md. Then sanity-check the free tier against expected usage:
+connection ceiling, storage cap, and whether it counts compute hours — a paired
+worker keeps a database from ever idling, which is how a free Neon project ran
+out mid-month (HTTP 402, 2026-10-19).
 
 ## 5. Report
 
