@@ -880,6 +880,38 @@ section('old attachments fall out of the budget');
   check('and saying why', /no longer included/.test(stale[0]?.text || ''), stale[0]?.text);
 }
 
+/**
+ * A picture a step read — `read_file` on Figure_4.png, `look_at` on a figure —
+ * is kept to look at: known by its bytes, shrunk to 1600px, with a thumbnail
+ * for the strip a folded run shows (owner, 2026-10-19).
+ */
+section('a picture a step read: known by its bytes, shrunk to look at, with a thumbnail');
+{
+  const { sniffPicture, viewCopy } = await import('../server/util/picture.js');
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+  const big = createCanvas(3200, 1600);
+  const paint = big.getContext('2d');
+  paint.fillStyle = '#336699';
+  paint.fillRect(0, 0, 3200, 1600);
+  const png = await big.encode('png');
+  check('a PNG is known by its bytes', sniffPicture(png) === 'image/png');
+  check('and text is not a picture', sniffPicture(Buffer.from('hello world')) === null);
+  const copy = await viewCopy(png);
+  check('a large picture is shrunk to look at, as a JPEG', copy?.width === 3200 && copy?.height === 1600 && copy?.mime === 'image/jpeg', JSON.stringify({ w: copy?.width, mime: copy?.mime }));
+  const shrunk = await loadImage(copy.data);
+  check('  1600px on its long edge', shrunk.width === 1600 && shrunk.height === 800, `${shrunk.width}x${shrunk.height}`);
+  check('  with a JPEG thumbnail small enough for the row', /^data:image\/jpeg;base64,/.test(copy.thumb || '') && copy.thumb.length < 200_000);
+  // Half drawn, half see-through: a diagram exported with no background.
+  const glass = createCanvas(2400, 1200);
+  glass.getContext('2d').fillRect(0, 0, 1200, 1200);
+  const clear = await viewCopy(await glass.encode('png'));
+  check('a picture that really is see-through stays a PNG, so its clear parts stay clear', clear?.mime === 'image/png', clear?.mime);
+  const small = Buffer.from(PNG, 'base64');
+  const kept = await viewCopy(small);
+  check('a small PNG is kept byte for byte', !!kept && kept.data.equals(small) && kept.mime === 'image/png');
+  check('bytes that are not a picture get no copy', (await viewCopy(Buffer.from('not a picture'))) === null);
+}
+
 server.close();
 await new Promise((r) => server.once('close', r));
 removeTemp(process.env.DATA_DIR);
