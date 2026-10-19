@@ -922,6 +922,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     '{0} phải là chuỗi văn bản thường, nhưng nhận được một object. Hãy gửi chính đoạn văn bản, ví dụ "…", không phải { "task": "…" }.',
   // Vision for models that cannot see (server/vision.js, look_at).
   'There is no file {0} in this account.': 'Không có tệp {0} trong tài khoản này.',
+  // A picture read_file found (server/tools/execute.js, readPicture).
+  'the copy to look at was not stored': 'bản sao để xem chưa được lưu',
   '{0} is not a picture or a PDF — read it with read_generated_file or as text instead.':
     '{0} không phải hình ảnh hay PDF — hãy đọc bằng read_generated_file hoặc dạng văn bản.',
   'That address is {0}, not an image or a PDF — use web_fetch for a page.':

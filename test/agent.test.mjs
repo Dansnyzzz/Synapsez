@@ -350,6 +350,36 @@ section('look_at with nothing named looks at what was just attached');
   check('with nothing attached anywhere it still says what to give', none.isError && /file_id/.test(none.content));
 }
 
+/**
+ * One "Read Figure_4.png" step is the assistant having looked, the way Claude's
+ * Read works (owner, 2026-10-19): the worker hands the picture over and a model
+ * that can see reads it in the same step.
+ */
+section('a picture read_file found is read in the same step');
+{
+  const { readPicture } = await import('../server/tools/execute.js');
+  const { keepStepShot } = await import('../server/attachments.js');
+  const dot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const kept = await keepStepShot(user.id, { data: dot, mime: 'image/png', name: 'Figure_4.png' }, { chatId: null });
+  check('the picture is kept to read', !!kept?.id, JSON.stringify(kept));
+  const found = { isError: false, content: 'figs/Figure_4.png is a picture (PNG, 1×1, 1 KB).', shot: kept };
+  const asked = [];
+  const read = await readPicture(found, { userId: user.id }, async (input) => {
+    asked.push(input);
+    return { text: 'A PRISMA flow diagram: 1969 records identified.', model: 'Test Eyes' };
+  });
+  check('the model reads what is in it, after the line saying what it is', !read.isError && /is a picture[\s\S]*PRISMA flow diagram/.test(read.content), read.content);
+  check('  from the picture that was kept', asked[0]?.images?.[0]?.name === 'Figure_4.png' && !!asked[0]?.images?.[0]?.data);
+  check('  and is told which file it is on screen as', String(read.note || '').includes(kept?.id || '?'), read.note);
+  check('  the picture still goes to the screen', read.shot?.id === kept?.id);
+  const blind = await readPicture(found, { userId: user.id }, async () => {
+    throw new Error('no model that can see answered');
+  });
+  check('nothing could read it: an error that says so, picture still shown', blind.isError && /could not be read/.test(blind.content) && blind.shot?.id === kept?.id, blind.content);
+  const lost = await readPicture({ ...found, shot: null }, { userId: user.id });
+  check('a picture that could not be kept: an error that says what to do', lost.isError && /edit_image/.test(lost.content), lost.content);
+}
+
 section('measuring how full the window is');
 {
   const { measure } = await import('../server/compact.js');

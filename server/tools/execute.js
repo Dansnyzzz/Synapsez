@@ -6,6 +6,8 @@ import { TOOLS_BY_NAME, returnsExternalContent, externalSource } from './definit
 import { CLOUD_IMPLEMENTATIONS } from './cloud.js';
 import { isMcpTool, callMcpTool, splitMcpName } from '../mcp/registry.js';
 import { keepStepShot } from '../attachments.js';
+import { see } from '../vision.js';
+import { groundedImage } from '../imageGround.js';
 import { redactSecrets } from '../redact.js';
 import { untrusted } from './untrusted.js';
 import { readArguments } from './validate.js';
@@ -287,6 +289,10 @@ export async function executeTool(args) {
   }
 
   let result = await runTool(args);
+  // `read_file` found a picture: a model that can see reads it now — see readPicture.
+  if (args.name === 'read_file' && !args.raw && !result?.isError && result?.shot !== undefined) {
+    result = await readPicture(result, { userId: args.user.id, chatId: args.chatId ?? null, signal: args.signal });
+  }
   // Said to the model, so it learns the value rather than repeating it.
   if (notes.length && !result?.isError) {
     const aside = `\n\n[${notes.join(' ')}]`;
@@ -347,6 +353,49 @@ export async function executeTool(args) {
 }
 
 /**
+ * A picture `read_file` found, read the way `look_at` reads one (owner,
+ * 2026-10-19).
+ *
+ * The worker hands over the picture rather than its bytes as text; here a model
+ * that can see reads it, so one "Read Figure_4.png" step is the assistant having
+ * looked — the way Claude's Read works. When nothing can read it the step says
+ * so and is an error, so the model does not go on to describe a picture it never
+ * saw; the picture still goes to the screen.
+ *
+ * @param {ToolResult} result
+ * @param {{ userId: string, chatId?: string|null, signal?: AbortSignal }} context
+ * @param {typeof see} [lookWith]  the suite's eyes, in place of a real model
+ * @returns {Promise<ToolResult>}
+ */
+export async function readPicture(result, { userId, chatId = null, signal } = { userId: '' }, lookWith = see) {
+  if (!result.shot?.id) {
+    return {
+      ...result,
+      isError: true,
+      content: `${result.content}\n\nIt could not be kept to look at, so it was not read. Make a smaller copy with edit_image and read that.`,
+    };
+  }
+  const { id } = result.shot;
+  try {
+    const row = await getStore().getAttachment(userId, id);
+    if (!row) throw new Error('the copy to look at was not stored');
+    const picture = await groundedImage(row);
+    const { text, model } = await lookWith({ userId, chatId, images: [{ mime: picture.mime, data: picture.data, name: row.name }], signal });
+    return {
+      ...result,
+      content: `${result.content}\n\n${text}`,
+      note: `[Read by ${model}. It is on screen for the user as file ${id} — look_at with that file_id and a question looks again.]`,
+    };
+  } catch (err) {
+    return {
+      ...result,
+      isError: true,
+      content: `${result.content}\n\nIt could not be read: ${safeError(err)}. It is on screen for the user as file ${id}.`,
+    };
+  }
+}
+
+/**
  * Say which file holds the step's screenshot.
  *
  * The picture was stored and shown to the person, and the model never learned
@@ -356,7 +405,8 @@ export async function executeTool(args) {
  */
 function withShotNote(result, args) {
   const id = result?.shot?.id;
-  if (!id || args?.raw || result?.isError) return result;
+  // A picture a step read carries its name, and says its own line — see readPicture.
+  if (!id || args?.raw || result?.isError || result?.shot?.name) return result;
   return { ...result, content: `${result.content}\n[Screenshot of this step: file ${id} — look_at with that file_id reads what is on screen.]` };
 }
 
