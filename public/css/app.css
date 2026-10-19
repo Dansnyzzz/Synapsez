@@ -2991,6 +2991,124 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
   word-break: break-word;
 }
 
+/* ── the pictures a run looked at: the preview and the lightbox ──────────
+ *
+ * After Claude's (owner, 2026-10-19). The lightbox is the dark of a photo
+ * viewer whatever the theme — a picture is judged against black — with the
+ * tool's word bottom left and "2 of 3" between two arrows in the middle.
+ * Pictures sit on white: a diagram exported with no background is dark lines
+ * on nothing, and would vanish on the dark theme. */
+.gallery-open { overflow: hidden; }
+.gallery {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  background: rgb(0 0 0 / 0.86);
+  color: #ececec;
+}
+.gallery__stage {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 60px 24px 8px;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.gallery__frame { display: grid; place-items: center; min-height: 0; max-height: 100%; margin: 0; }
+.gallery__img {
+  display: block;
+  max-width: min(92vw, 1600px);
+  max-height: calc(100vh - 150px);
+  max-height: calc(100dvh - 150px);
+  border-radius: 12px;
+  background: #fff;
+  object-fit: contain;
+}
+.gallery__frame.is-from-right { animation: gallery-in-right 0.24s ease-out; }
+.gallery__frame.is-from-left { animation: gallery-in-left 0.24s ease-out; }
+@keyframes gallery-in-right { from { opacity: 0.15; transform: translateX(56px); } }
+@keyframes gallery-in-left { from { opacity: 0.15; transform: translateX(-56px); } }
+.gallery__bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px max(20px, var(--safe-b, 0px));
+}
+.gallery__label { min-width: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gallery__nav {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gallery__nav button,
+.gallery__close {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #f4f4f4;
+  font: inherit;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.gallery__close { position: absolute; top: 12px; right: 16px; z-index: 1; font-size: 20px; }
+.gallery__nav button:hover:not(:disabled),
+.gallery__close:hover { background: rgb(255 255 255 / 0.12); }
+.gallery__nav button:disabled { opacity: 0.28; cursor: default; }
+.gallery__nav button:focus-visible,
+.gallery__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+/* Under the pointer, a larger look before anything is clicked. */
+.pic-preview {
+  position: fixed;
+  z-index: 70;
+  width: min(440px, calc(100vw - 16px));
+  padding: 8px;
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  background: var(--glass-solid);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+.pic-preview__img {
+  display: block;
+  width: 100%;
+  height: 280px;
+  border-radius: 8px;
+  background: #fff;
+  object-fit: contain;
+}
+.pic-preview__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 4px 2px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gallery__frame.is-from-right,
+  .gallery__frame.is-from-left { animation: none; }
+}
+@media (max-width: 640px) {
+  .gallery__stage { padding: 60px 8px 4px; }
+  .gallery__bar { padding: 8px 12px max(16px, var(--safe-b, 0px)); }
+  .gallery__label { font-size: 13.5px; }
+}
+
 /* A small button beside a line of prose, where a full-size one would tower
    over the sentence. */
 .btn--tiny {
