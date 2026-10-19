@@ -51,10 +51,11 @@ export const forWord = (html) =>
  * Nodes that are interface rather than content.
  *
  * A code block's Copy button, the row of actions under a turn, the thumbnail
- * of a screenshot: all of them are things to press, and a document made of
- * pressed things is not what anybody meant to carry off.
+ * of a screenshot, the strip of pictures a run looked at: all of them are
+ * things to press, and a document made of pressed things is not what anybody
+ * meant to carry off.
  */
-export const CHROME_SELECTOR = 'button, .copy-btn, .msg__actions, .step__shot';
+export const CHROME_SELECTOR = 'button, .copy-btn, .msg__actions, .step__shot, .steps__thumbs, .step__picture';
 
 /**
  * Attributes that describe how this app draws something, not what it means.

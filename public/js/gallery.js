@@ -13,7 +13,12 @@ import { t } from './i18n.js';
  * imported by the Node suites, which have no DOM.
  */
 
-/** @typedef {{ id: string, name?: string, path?: string, label?: string }} Picture */
+/**
+ * `thumb: false` for a picture kept with no small copy — a browser step's
+ * screenshot, small already — so its strip does not ask for one first.
+ *
+ * @typedef {{ id: string, name?: string, path?: string, label?: string, thumb?: boolean }} Picture
+ */
 
 /** @type {WeakMap<Element, () => Picture[]>} */
 const SOURCES = new WeakMap();
@@ -72,7 +77,8 @@ export function pictureThumb(picture, index, className = 'pic-thumb') {
       button.hidden = true;
     }
   });
-  img.src = thumbUrl(picture.id);
+  if (picture.thumb === false) img.dataset.full = '1';
+  img.src = picture.thumb === false ? pictureUrl(picture.id) : thumbUrl(picture.id);
   button.append(img);
   return button;
 }

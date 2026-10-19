@@ -2991,6 +2991,183 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
   word-break: break-word;
 }
 
+/* ── the commands card, after Claude's (owner, 2026-10-19) ─────────────────
+ *
+ * Folded, one grey line — "Read 36 files, ran 34 commands (1 failed) ›" — and
+ * on the right the pictures it looked at. Open, its rows in a box with a
+ * hairline between each: the verb grey, the file bright, a thumbnail at the
+ * end. No border round the card and no tick on it: the words say what was
+ * done, a failure says so in them, a spinner says it is still going. Scoped to
+ * this family; a browsing session keeps its card. */
+details.block.steps[data-family='work'] {
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  transition: none;
+}
+details.block.steps[data-family='work']:has(> summary .mark--pending) { box-shadow: none; }
+details.block.steps[data-family='work'] > summary {
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 0;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 14.5px;
+}
+details.block.steps[data-family='work'] > summary:hover { background: none; color: var(--text); }
+details.block.steps[data-family='work'][open] > summary { border-bottom: 0; }
+details.block.steps[data-family='work'] > summary > .mark:not(.mark--pending) { display: none; }
+/* The chevron follows the words; the pictures take the far end. */
+details.block.steps[data-family='work'] > summary::after { order: 5; margin-left: -2px; font-size: 16px; }
+details.block.steps[data-family='work'] .steps__title {
+  position: relative;
+  color: inherit;
+  font-weight: 400;
+  font-size: 14.5px;
+}
+details.block.steps.steps--error[data-family='work'] .steps__title { color: var(--danger); }
+/* The old title fades up and away as the new one comes in. */
+details.block.steps[data-family='work'] .steps__title.is-changing { animation: steps-title-in 0.24s ease-out; }
+details.block.steps[data-family='work'] .steps__title[data-was]::after {
+  content: attr(data-was);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: steps-title-out 0.24s ease-out forwards;
+}
+@keyframes steps-title-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes steps-title-out { from { opacity: 1; transform: translateY(4px); } to { opacity: 0; transform: translateY(-4px); } }
+
+.steps__thumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-left: auto;
+  padding-left: 12px;
+}
+.steps__thumbs[hidden],
+details.block.steps[open] > summary > .steps__thumbs { display: none; }
+details.block.steps[data-family='work'] > summary > .steps__thumbs { order: 6; }
+/* Beside a browsing card's chevron, which keeps the far end. */
+details.block.steps:not([data-family='work']) > summary:has(> .steps__thumbs:not([hidden]))::after { margin-left: 10px; }
+.steps__more { margin-right: 4px; color: var(--text-dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+.pic-thumb {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  cursor: zoom-in;
+  line-height: 0;
+  transition: border-color 0.15s;
+}
+.pic-thumb[hidden] { display: none; }
+.pic-thumb:hover { border-color: var(--accent); }
+.pic-thumb:focus-visible,
+.step__path:focus-visible,
+.step__image:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pic-thumb--head,
+.pic-thumb--row { display: block; flex: none; min-width: 24px; }
+.pic-thumb--head { height: 36px; max-width: 64px; }
+.pic-thumb--row { height: 30px; max-width: 54px; margin-left: auto; }
+/* On a phone the words need the room: the same three, smaller. */
+@media (max-width: 520px) {
+  .steps__thumbs { gap: 4px; padding-left: 8px; }
+  .pic-thumb--head { height: 28px; max-width: 40px; }
+}
+.pic-thumb--head img,
+.pic-thumb--row img { display: block; height: 100%; width: auto; max-width: 100%; object-fit: cover; }
+
+/* Open: the rows in one box, a hairline between each. */
+details.block.steps[data-family='work'] > .steps__list {
+  gap: 0;
+  margin: 2px 0 6px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+details.block.steps[data-family='work'] > .steps__list > li + li { border-top: 1px solid var(--line); }
+details.block.steps[data-family='work'] .step.step--thought { padding: 6px 14px; }
+details.block.steps[data-family='work'] .step__fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border-radius: 0;
+}
+details.block.steps[data-family='work'] .step__fold > summary::after { content: none; }
+details.block.steps[data-family='work'] .step__mark { flex: none; width: 14px; }
+details.block.steps[data-family='work'] .step__mark:empty { display: none; }
+details.block.steps[data-family='work'] .step__label { flex: 0 1 auto; align-items: center; gap: 6px; font-size: 14.5px; }
+details.block.steps[data-family='work'] .step__label::after {
+  content: '›';
+  flex: none;
+  color: var(--text-faint);
+  transition: transform 0.18s;
+}
+details.block.steps[data-family='work'] .step__fold[open] .step__label::after { transform: rotate(90deg); }
+details.block.steps[data-family='work'] .step__verb { color: var(--text-dim); }
+details.block.steps[data-family='work'] .step--error .step__verb { color: var(--danger); }
+/* Sized to its words, so the chevron sits right after them. */
+details.block.steps[data-family='work'] .step__detail { flex: 0 1 auto; }
+/* A file is the bright half of the line; a command stays quiet monospace. */
+details.block.steps[data-family='work'] .step[data-kind='read'] .step__detail,
+details.block.steps[data-family='work'] .step[data-kind='write'] .step__detail,
+details.block.steps[data-family='work'] .step[data-kind='edit'] .step__detail,
+details.block.steps[data-family='work'] .step[data-kind='list'] .step__detail {
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14.5px;
+}
+details.block.steps[data-family='work'] .step__body { margin: 0 14px 12px; }
+.step__took { margin: 0; color: var(--text-faint); font-size: 12px; }
+.step__picture { display: grid; gap: 8px; }
+.step__where { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0; }
+/* The argument's name, plain — not the boxed `code` of prose. */
+details.block .step__key {
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.step__path {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--info);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.step__path:hover { text-decoration: underline; text-underline-offset: 3px; }
+.step__image {
+  width: max-content;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+  cursor: zoom-in;
+  line-height: 0;
+}
+.step__image img { display: block; max-width: 100%; max-height: 480px; width: auto; height: auto; }
+@media (prefers-reduced-motion: reduce) {
+  details.block.steps[data-family='work'] .steps__title.is-changing { animation: none; }
+  details.block.steps[data-family='work'] .steps__title[data-was]::after { display: none; }
+}
+
 /* ── the pictures a run looked at: the preview and the lightbox ──────────
  *
  * After Claude's (owner, 2026-10-19). The lightbox is the dark of a photo

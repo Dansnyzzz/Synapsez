@@ -4319,15 +4319,15 @@ section('commands and files are one card, titled by what is happening now');
   check('  with the code it is running beside them — its first line that says something, and a mark that more follows', out.running.detail === 'import pandas as pd …', out.running.detail);
   check('  and a clock that moves', out.clockAfterASecond === '1s', out.clockAfterASecond);
   check('one step done: the title is that step, ticked, and the clock gone', out.oneDone.title === 'Loading the survey data' && !out.oneDone.pending && out.oneDone.clock === '', JSON.stringify(out.oneDone));
-  check('reading a file: the title says so and names the whole file', /^(Read file|Đọc tệp)$/.test(out.reading.title) && out.reading.detail === 'bibliometrics_analysis_final_v2.py', JSON.stringify(out.reading));
+  check('reading a file: "Read" and the whole file, as Claude says it', /^(Read|Đọc)$/.test(out.reading.title) && out.reading.detail === 'bibliometrics_analysis_final_v2.py', JSON.stringify(out.reading));
   check('  with the full path on hover', out.reading.tip === 'D:/research/NCKH/a/very/long/workspace/path/that/goes/on/and/on/bibliometrics_analysis_final_v2.py', out.reading.tip);
   check('a command with no title of its own is titled by what it runs', /^(Ran command|Chạy lệnh)$/.test(out.untitled.title) && out.untitled.detail === 'npm test -- --grep survey', JSON.stringify(out.untitled));
   check('reasoning between two commands: the folded card says it is thinking, still waiting', /^(Thinking…|Đang suy nghĩ…)$/.test(out.whileThinking.title) && out.whileThinking.pending && out.whileThinking.detail === '', JSON.stringify(out.whileThinking));
   check('  and stops saying so when the reasoning is done', !/Thinking|suy nghĩ/.test(out.afterThinking.title) && !out.afterThinking.pending, JSON.stringify(out.afterThinking));
   check('the next model step joins the same card', out.cards === 1, `${out.cards}`);
-  check('finished, it says what was done', /^(Ran 2 commands, read 2 files|Đã chạy 2 lệnh, đọc 2 tệp)$/.test(out.done.title) && out.done.detail === '', JSON.stringify(out.done));
-  check('  and counts the failure', /1 (failed|lỗi)/.test(out.tally), out.tally);
-  check('each row is named the same way', out.rows[0] === 'Loading the survey data' && /^(Read file|Đọc tệp)$/.test(out.rows[1]), out.rows.join(' | '));
+  check('finished, it says what was done, the failure with its kind', /^(Ran 2 commands \(1 failed\), read 2 files|Đã chạy 2 lệnh \(1 lỗi\), đọc 2 tệp)$/.test(out.done.title) && out.done.detail === '', JSON.stringify(out.done));
+  check('  and counts nothing apart from the words', out.tally === '', out.tally);
+  check('each row is named the same way', out.rows[0] === 'Loading the survey data' && /^(Read|Đọc)$/.test(out.rows[1]), out.rows.join(' | '));
   check('  a file row names the whole file, with its path on hover', out.rowDetails[1] === 'bibliometrics_analysis_final_v2.py' && out.rowTip.startsWith('D:/research/'), `${out.rowDetails[1]} | ${out.rowTip}`);
   check("a row opens, like Claude Code's, on the code it ran and what it printed", out.rowIsDisclosure && /import pandas as pd/.test(out.rowCode) && out.rowOutput === 'loaded 120 rows', JSON.stringify({ code: out.rowCode, output: out.rowOutput }));
   check('  and a failed one is already open', out.failedRowOpen === true);
@@ -4335,6 +4335,133 @@ section('commands and files are one card, titled by what is happening now');
   check('nothing is left waiting', out.nothingWaiting === true);
   check('  no clock is left ticking, and the timer behind them has stopped', out.clocks.live === 0 && out.clocks.timer === false, JSON.stringify(out.clocks));
   check('one file among the commands is named in the summary', /^(Ran a command, read report_builder\.py|Đã chạy 1 lệnh, đọc report_builder\.py)$/.test(out.oneFileNamed), out.oneFileNamed);
+}
+
+/**
+ * The pictures a run looked at, as Claude shows them (owner, 2026-10-19):
+ * folded, the newest three on the header with "+N" for the rest; open, a
+ * thumbnail on each row and, opened, `file_path:` and the picture; hovered, a
+ * larger look; clicked, a lightbox that pages through them all.
+ */
+section('a run that read pictures shows them folded, per row, in a preview and a lightbox');
+{
+  // Real pictures behind the ids, so a thumbnail does not hide itself as broken.
+  const pictures = /\/api\/attachments\/(pic|shot)-\d+(\/thumb)?$/;
+  const dot = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await page.route(pictures, (route) => route.fulfill({ status: 200, contentType: 'image/png', body: dot }));
+  const out = await page.evaluate(async () => {
+    const { assistantMessage, stripPictures } = await import('/js/render.js');
+    const gallery = await import('/js/gallery.js');
+    const turn = assistantMessage();
+    document.body.append(turn.node);
+    const out = {};
+    const read = (i) =>
+      turn.startTool({ id: `p${i}`, name: 'read_file', input: { path: `figs/Figure_${i}.png` } });
+    read(1).complete({ content: 'figs/Figure_1.png is a picture.', ms: 30, shot: { id: 'pic-1', name: 'Figure_1.png' } });
+    const card = turn.node.querySelector('.steps');
+    const title = card.querySelector('.steps__title');
+    const listing = turn.startTool({ id: 'p6', name: 'run_command', input: { title: 'Listing the figures', command: 'ls figs' } });
+    // The title changed: the old words fade out while the new come in, and the
+    // title's own text is only ever the new words.
+    out.fading = /^(Read|Đọc)$/.test(title.dataset.was || '') && title.textContent === 'Listing the figures';
+    listing.complete({ content: 'x', ms: 3 });
+    for (let i = 2; i <= 5; i += 1) {
+      read(i).complete({ content: `figs/Figure_${i}.png is a picture.`, ms: 30, shot: { id: `pic-${i}`, name: `Figure_${i}.png` } });
+    }
+    turn.finish();
+
+    const strip = card.querySelector(':scope > summary .steps__thumbs');
+    out.title = title.textContent;
+    out.folded = !card.open;
+    out.stripThumbs = strip ? strip.querySelectorAll('.pic-thumb').length : -1;
+    out.more = strip?.querySelector('.steps__more')?.textContent || '';
+    out.newest = [...(strip?.querySelectorAll('.pic-thumb') || [])].map((b) => /** @type {HTMLElement} */ (b).dataset.pic).join(',');
+    out.stripVisible = !!strip && getComputedStyle(strip).display !== 'none';
+    out.noBorder = getComputedStyle(card).borderTopWidth === '0px';
+    out.noTick = getComputedStyle(card.querySelector(':scope > summary > .mark')).display === 'none';
+    const titleBox = title.getBoundingClientRect();
+    const stripBox = strip.getBoundingClientRect();
+    out.picturesAtTheFarEnd = stripBox.left > titleBox.right + 20;
+
+    card.open = true;
+    out.stripHiddenOpen = getComputedStyle(strip).display === 'none';
+    const rows = [...card.querySelectorAll('.step--work')];
+    out.rowThumbs = rows.filter((r) => r.querySelector('.pic-thumb--row')).length;
+    out.rowVerb = rows[0].querySelector('.step__verb').textContent;
+    out.rowFile = rows[0].querySelector('.step__detail').textContent;
+    out.rowFileBright = getComputedStyle(rows[0].querySelector('.step__detail')).color !== getComputedStyle(rows[0].querySelector('.step__verb')).color;
+    out.hairline = getComputedStyle(rows[1]).borderTopWidth === '1px';
+    rows[0].querySelector('details').open = true;
+    out.filePath = rows[0].querySelector('.step__where')?.textContent || '';
+    out.bigImage = !!rows[0].querySelector('.step__image img');
+    out.took = rows[0].querySelector('.step__took')?.textContent || '';
+
+    // The preview under the pointer.
+    card.open = false;
+    const first = /** @type {HTMLElement} */ (strip.querySelectorAll('.pic-thumb')[0]);
+    first.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+    await new Promise((r) => setTimeout(r, 450));
+    out.preview = document.querySelector('.pic-preview')?.textContent || '';
+    first.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }));
+    out.previewGone = !document.querySelector('.pic-preview');
+
+    // The lightbox: opened from the first picture on the strip, paged with the keys.
+    first.click();
+    out.cardStayedShut = !card.open;
+    const dialog = document.querySelector('.gallery');
+    out.dialog = !!dialog && dialog.getAttribute('aria-modal') === 'true';
+    out.countAtOpen = dialog?.querySelector('.gallery__count')?.textContent || '';
+    out.label = dialog?.querySelector('.gallery__label')?.textContent || '';
+    out.src = dialog?.querySelector('.gallery__img')?.getAttribute('src') || '';
+    const key = (k) => dialog.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+    key('ArrowRight');
+    out.countAfterRight = dialog.querySelector('.gallery__count').textContent;
+    key('End');
+    out.nextRestsAtTheEnd = /** @type {HTMLButtonElement} */ (dialog.querySelector('.gallery__next')).disabled;
+    key('Home');
+    out.prevRestsAtTheStart = /** @type {HTMLButtonElement} */ (dialog.querySelector('.gallery__prev')).disabled;
+    key('Escape');
+    out.closed = !gallery.__testing.isOpen();
+    out.focusBack = document.activeElement === first;
+
+    // A row's `file_path:` opens the same lightbox at that picture.
+    /** @type {HTMLElement} */ (card.querySelector('.step__path')).click();
+    out.fromPath = document.querySelector('.gallery__count')?.textContent || '';
+    key('Escape');
+
+    out.strip37 = stripPictures(Array.from({ length: 37 }, (_, i) => i));
+
+    // A browsing step's screen pages through the same lightbox, not the file viewer.
+    const b = assistantMessage();
+    document.body.append(b.node);
+    b.startTool({ id: 'bs1', name: 'browser_open', input: { url: 'https://example.com' } }).complete({ content: 'ok', ms: 5, shot: { id: 'shot-1' } });
+    const shot = b.node.querySelector('.step__shot');
+    out.shotPages = !!shot && shot.hasAttribute('data-pic') && !shot.hasAttribute('data-file');
+    b.finish();
+    out.browserStrip = b.node.querySelectorAll('.steps > summary .pic-thumb').length;
+    b.node.remove();
+    turn.node.remove();
+    return out;
+  });
+  await page.unroute(pictures);
+  check('folded: one line, no border, no tick, saying what it read', out.folded && out.noBorder && out.noTick && /^(Read 5 files, ran a command|Đã đọc 5 tệp, chạy 1 lệnh)$/.test(out.title), JSON.stringify({ t: out.title, b: out.noBorder, tick: out.noTick }));
+  check('  the newest three pictures on it, "+2" before them', out.stripVisible && out.stripThumbs === 3 && out.more === '+2' && out.newest === '2,3,4', JSON.stringify({ n: out.stripThumbs, more: out.more, newest: out.newest }));
+  check('  at the far end, the chevron staying with the words', out.picturesAtTheFarEnd === true);
+  check('  and its title fades from the old words to the new', out.fading === true);
+  check('open: the strip goes, and every picture row has its thumbnail', out.stripHiddenOpen && out.rowThumbs === 5, `${out.stripHiddenOpen} ${out.rowThumbs}`);
+  check('  in a box of rows with a hairline between them', out.hairline === true);
+  check('  a row reads "Read" and the file, the file brighter', /^(Read|Đọc)$/.test(out.rowVerb) && out.rowFile === 'Figure_1.png' && out.rowFileBright, `${out.rowVerb} ${out.rowFile}`);
+  check('  opened: file_path, the picture itself, and how long it took', /file_path:\s*figs\/Figure_1\.png/.test(out.filePath) && out.bigImage && /30ms/.test(out.took), `${out.filePath} | ${out.took}`);
+  check('hovering a thumbnail shows it larger, counted against them all', /^(Read|Đọc)(3 of 5|3 \/ 5)$/.test(out.preview), out.preview);
+  check('  and it goes when the pointer does', out.previewGone === true);
+  check('clicking one opens the lightbox, not the card', out.dialog && out.cardStayedShut, `${out.dialog} ${out.cardStayedShut}`);
+  check('  at that picture, with its word and the count', /^(3 of 5|3 \/ 5)$/.test(out.countAtOpen) && /^(Read|Đọc)$/.test(out.label) && out.src === '/api/attachments/pic-3', `${out.countAtOpen} ${out.label} ${out.src}`);
+  check('  → pages on; End and Home rest the arrow at each end', /^(4 of 5|4 \/ 5)$/.test(out.countAfterRight) && out.nextRestsAtTheEnd && out.prevRestsAtTheStart, out.countAfterRight);
+  check('  Esc closes it, and focus goes back to the thumbnail', out.closed && out.focusBack, `${out.closed} ${out.focusBack}`);
+  check('a row\'s file_path opens the lightbox at that picture', /^(1 of 5|1 \/ 5)$/.test(out.fromPath), out.fromPath);
+  check('thirty-seven pictures: three shown, "+34"', out.strip37.shown.length === 3 && out.strip37.more === 34, JSON.stringify(out.strip37));
+  check('a browsing step\'s screen pages through the lightbox too', out.shotPages === true);
+  check('  and a folded browsing card shows it on its header', out.browserStrip === 1, `${out.browserStrip}`);
 }
 
 /**
