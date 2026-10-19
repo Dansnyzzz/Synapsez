@@ -39,11 +39,21 @@ export function registerPictures(card, list) {
   install();
 }
 
-/** The pictures of the card a thumbnail belongs to, and which one it is. */
+/**
+ * The pictures of the card a thumbnail belongs to, and which one it is.
+ *
+ * Found by the picture's id when it is used, never by a position written down
+ * when the thumbnail was drawn: two pictures read side by side can answer in
+ * either order, and a place taken at arrival is the wrong place once the other
+ * one lands before it.
+ */
 function locate(thumb) {
   for (let node = thumb.parentElement; node; node = node.parentElement) {
     const list = SOURCES.get(node);
-    if (list) return { items: list(), index: Number(thumb.dataset.pic) || 0 };
+    if (list) {
+      const items = list();
+      return { items, index: Math.max(0, items.findIndex((picture) => picture.id === thumb.dataset.pic)) };
+    }
   }
   return null;
 }
@@ -56,14 +66,13 @@ function locate(thumb) {
  * rather than drawing a broken image in the strip.
  *
  * @param {Picture} picture
- * @param {number} index  its place in the card's list
  * @param {string} [className]
  */
-export function pictureThumb(picture, index, className = 'pic-thumb') {
+export function pictureThumb(picture, className = 'pic-thumb') {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = className;
-  button.dataset.pic = String(index);
+  button.dataset.pic = picture.id;
   button.setAttribute('aria-label', t('gallery.open', { name: picture.name || picture.label || '' }));
   const img = document.createElement('img');
   img.alt = '';

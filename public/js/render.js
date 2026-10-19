@@ -2081,7 +2081,7 @@ export function assistantMessage() {
       plus.title = t('gallery.more', { n: more });
       run.thumbs.append(plus);
     }
-    for (const picture of shown) run.thumbs.append(pictureThumb(picture, pictures.indexOf(picture), 'pic-thumb pic-thumb--head'));
+    for (const picture of shown) run.thumbs.append(pictureThumb(picture, 'pic-thumb pic-thumb--head'));
   }
 
   /** Every picture a run has looked at, in the order it looked. */
@@ -2091,19 +2091,19 @@ export function assistantMessage() {
    * An opened picture row: the path it read, then the picture — Claude's
    * `file_path:` line and the image under it. Both open the lightbox.
    */
-  function pictureBody(picture, index) {
+  function pictureBody(picture) {
     const node = el('div', 'step__picture');
     const where = el('p', 'step__where');
     const key = el('code', 'step__key');
     key.textContent = 'file_path:';
     const open = el('button', 'step__path');
     open.type = 'button';
-    open.dataset.pic = String(index);
+    open.dataset.pic = picture.id;
     open.textContent = picture.path || picture.name;
     where.append(key, ' ', open);
     const shown = el('button', 'step__image');
     shown.type = 'button';
-    shown.dataset.pic = String(index);
+    shown.dataset.pic = picture.id;
     shown.setAttribute('aria-label', t('gallery.open', { name: picture.name || picture.path }));
     const img = el('img');
     img.alt = picture.name || '';
@@ -2376,18 +2376,17 @@ export function assistantMessage() {
             thumb: !!result.shot.name,
           };
         }
-        const pictureIndex = entry.picture ? runPictures(run).indexOf(entry.picture) : -1;
         paintGroupSummary(run);
         if (entry.picture) paintThumbs(run);
 
         if (work) {
           if (entry.picture && head) {
-            head.append(pictureThumb(entry.picture, pictureIndex, 'pic-thumb pic-thumb--row'));
+            head.append(pictureThumb(entry.picture, 'pic-thumb pic-thumb--row'));
             // `file_path:` says what the call said, unless it asked something
             // more — a question to `look_at` — which stays in view.
             const asked = Object.keys(canonicalInput(call.name, call.input) || call.input || {});
             if (asked.every((key) => key === 'path' || key === 'url' || key === 'file_id')) foldBody.querySelector(':scope > .tool__call')?.remove();
-            foldBody.prepend(pictureBody(entry.picture, pictureIndex));
+            foldBody.prepend(pictureBody(entry.picture));
           }
           const printed = el('pre', 'step__output');
           printed.textContent = forDisplay(result.content) || t('chat.noOutput');
@@ -2427,7 +2426,7 @@ export function assistantMessage() {
          * can take in at once. Clicking one opens it in the lightbox, where the
          * run's other screens are an arrow away.
          */
-        if (entry.picture) item.append(pictureThumb(entry.picture, pictureIndex, 'step__shot pic-thumb'));
+        if (entry.picture) item.append(pictureThumb(entry.picture, 'step__shot pic-thumb'));
 
         // Errors are opened, successes are not. A failed step is the one thing
         // in the run somebody needs to read, and making them find and click it

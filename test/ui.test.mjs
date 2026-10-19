@@ -4431,6 +4431,22 @@ section('a run that read pictures shows them folded, per row, in a preview and a
 
     out.strip37 = stripPictures(Array.from({ length: 37 }, (_, i) => i));
 
+    // Two pictures read side by side, the second answering first: each opens
+    // at its own picture, not at whatever place it held when it arrived.
+    turn.node.remove();
+    const p = assistantMessage();
+    document.body.append(p.node);
+    const a = p.startTool({ id: 'pa', name: 'read_file', input: { path: 'a.png' } });
+    const z = p.startTool({ id: 'pz', name: 'read_file', input: { path: 'z.png' } });
+    z.complete({ content: 'z', ms: 5, shot: { id: 'pic-9', name: 'z.png' } });
+    a.complete({ content: 'a', ms: 9, shot: { id: 'pic-8', name: 'a.png' } });
+    p.finish();
+    const zRow = [...p.node.querySelectorAll('.step--work')][1];
+    /** @type {HTMLElement} */ (zRow.querySelector('.pic-thumb--row')).click();
+    out.parallel = `${document.querySelector('.gallery__count')?.textContent || ''} ${document.querySelector('.gallery__img')?.getAttribute('src') || ''}`;
+    key('Escape');
+    p.node.remove();
+
     // A browsing step's screen pages through the same lightbox, not the file viewer.
     const b = assistantMessage();
     document.body.append(b.node);
@@ -4445,7 +4461,7 @@ section('a run that read pictures shows them folded, per row, in a preview and a
   });
   await page.unroute(pictures);
   check('folded: one line, no border, no tick, saying what it read', out.folded && out.noBorder && out.noTick && /^(Read 5 files, ran a command|Đã đọc 5 tệp, chạy 1 lệnh)$/.test(out.title), JSON.stringify({ t: out.title, b: out.noBorder, tick: out.noTick }));
-  check('  the newest three pictures on it, "+2" before them', out.stripVisible && out.stripThumbs === 3 && out.more === '+2' && out.newest === '2,3,4', JSON.stringify({ n: out.stripThumbs, more: out.more, newest: out.newest }));
+  check('  the newest three pictures on it, "+2" before them', out.stripVisible && out.stripThumbs === 3 && out.more === '+2' && out.newest === 'pic-3,pic-4,pic-5', JSON.stringify({ n: out.stripThumbs, more: out.more, newest: out.newest }));
   check('  at the far end, the chevron staying with the words', out.picturesAtTheFarEnd === true);
   check('  and its title fades from the old words to the new', out.fading === true);
   check('open: the strip goes, and every picture row has its thumbnail', out.stripHiddenOpen && out.rowThumbs === 5, `${out.stripHiddenOpen} ${out.rowThumbs}`);
@@ -4460,6 +4476,7 @@ section('a run that read pictures shows them folded, per row, in a preview and a
   check('  Esc closes it, and focus goes back to the thumbnail', out.closed && out.focusBack, `${out.closed} ${out.focusBack}`);
   check('a row\'s file_path opens the lightbox at that picture', /^(1 of 5|1 \/ 5)$/.test(out.fromPath), out.fromPath);
   check('thirty-seven pictures: three shown, "+34"', out.strip37.shown.length === 3 && out.strip37.more === 34, JSON.stringify(out.strip37));
+  check('pictures read side by side each open at their own, whichever answered first', /^(2 of 2|2 \/ 2) \/api\/attachments\/pic-9$/.test(out.parallel), out.parallel);
   check('a browsing step\'s screen pages through the lightbox too', out.shotPages === true);
   check('  and a folded browsing card shows it on its header', out.browserStrip === 1, `${out.browserStrip}`);
 }
