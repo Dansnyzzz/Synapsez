@@ -65,7 +65,7 @@ export const TOOLS = [
     name: 'read_file',
     scope: 'local',
     readOnly: true,
-    description: 'Read a UTF-8 text file from the workspace. Returns numbered lines.',
+    description: 'Read a text file from the workspace (numbered lines), or look at a picture in it — png, jpg, webp, gif, bmp.',
     parameters: {
       type: 'object',
       properties: {

@@ -47,6 +47,7 @@ function openCommand(target) {
   return ['xdg-open', [target]];
 }
 import { safeFetch } from '../server/util/safeFetch.js';
+import { sniffPicture, viewCopy, PICTURE_EXTENSIONS } from '../server/util/picture.js';
 import { DESKTOP_IMPLEMENTATIONS, desktopAllowed } from './desktop.js';
 import { SYSTEM_IMPLEMENTATIONS } from './system.js';
 import { INDEX_IMPLEMENTATIONS } from './indexer.js';
@@ -124,10 +125,54 @@ async function listDir({ path: target = '.' }) {
   return `${rel(abs)}/\n${rows.join('\n')}`;
 }
 
+/** Past this a picture is not opened at all — the same ceiling as edit_image. */
+const MAX_PICTURE_BYTES = 40 * 1024 * 1024;
+/**
+ * What a picture may weigh going up as it is, when this machine cannot shrink
+ * it: its base64 stays under a serverless function's 4.5MB request limit.
+ */
+const MAX_PICTURE_POST = 2560 * 1024;
+
+const sizeOf = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/**
+ * A picture, as a picture (owner, 2026-10-19).
+ *
+ * `read_file` used to read a PNG as UTF-8 and hand the model a page of
+ * replacement characters. It hands over the picture now: the server keeps it,
+ * shows it in the run, and has a model that can see read it in the same step
+ * — one "Read Figure_4.png", the way Claude's Read works.
+ *
+ * @returns {Promise<{ text: string, shot: { data: string, mime: string, name: string } } | null>}
+ *   null when the bytes are not a picture after all, and it is read as text.
+ */
+async function readPicture(abs, stat) {
+  const bytes = await fsp.readFile(abs);
+  const format = sniffPicture(bytes);
+  if (!format) return null;
+  const copy = await viewCopy(bytes);
+  if (!copy) return null;
+  if (copy.data.length > MAX_PICTURE_POST) {
+    throw new Error(
+      `${rel(abs)} is a picture of ${sizeOf(stat.size)} that could not be made smaller on this computer. ` +
+        'Make a smaller copy with edit_image and read that.',
+    );
+  }
+  const size = copy.width ? `${copy.width}×${copy.height}, ` : '';
+  return {
+    text: `${rel(abs)} is a picture (${format.split('/')[1].toUpperCase()}, ${size}${sizeOf(stat.size)}).`,
+    shot: { data: copy.data.toString('base64'), mime: copy.mime, name: path.basename(abs) },
+  };
+}
+
 async function readFile({ path: target, offset = 1, limit = 400 }) {
   const abs = resolveInWorkspace(target);
   const stat = await fsp.stat(abs);
   if (stat.isDirectory()) return listDir({ path: target });
+  if (PICTURE_EXTENSIONS.test(abs) && stat.size <= MAX_PICTURE_BYTES) {
+    const picture = await readPicture(abs, stat);
+    if (picture) return picture;
+  }
   if (stat.size > 5_000_000) throw new Error(`${rel(abs)} is ${stat.size} bytes — too large to read.`);
 
   const lines = (await fsp.readFile(abs, 'utf8')).split('\n');
