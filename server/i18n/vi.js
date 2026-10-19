@@ -437,8 +437,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'That research run belongs to another account.': 'Lượt nghiên cứu đó thuộc về tài khoản khác.',
 
   /* ── cơ sở dữ liệu & khởi động ─────────────────────────────────── */
-  'DATABASE_URL is not set. On Vercel the filesystem is ephemeral, so a hosted database is required — add Neon from Vercel → Storage and it sets DATABASE_URL for you.':
-    'Chưa đặt DATABASE_URL. Trên Vercel hệ thống tệp là tạm thời, nên cần cơ sở dữ liệu được host — thêm Neon từ Vercel → Storage và nó sẽ tự đặt DATABASE_URL.',
+  'DATABASE_URL is not set. On Vercel the filesystem is ephemeral, so a hosted database is required — create a Supabase project, copy its Transaction pooler string (Connect → port 6543) and set it as DATABASE_URL. See docs/database.md.':
+    'Chưa đặt DATABASE_URL. Trên Vercel hệ thống tệp là tạm thời, nên cần cơ sở dữ liệu được host — tạo một project Supabase, chép chuỗi Transaction pooler (Connect → cổng 6543) và đặt làm DATABASE_URL. Xem docs/database.md.',
   'The database is not ready yet — initStore() must resolve first.': 'Cơ sở dữ liệu chưa sẵn sàng — initStore() phải hoàn tất trước.',
   'That server id belongs to another account.': 'Id máy chủ đó thuộc về tài khoản khác.',
   'Process {0} is already using the database at {1}. Two processes writing to one PGlite database corrupt it beyond repair, so this one is stopping before it starts. Stop the other one, or set DATA_DIR to somewhere else.':

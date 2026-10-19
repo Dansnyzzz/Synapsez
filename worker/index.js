@@ -9,6 +9,7 @@ import { setFrameSink } from './screen.js';
 import { setIndexSink } from './indexer.js';
 import { watchForCancel } from './cancel.js';
 import { serverTransport } from './serverUrl.js';
+import { HEARTBEAT_MS, heartbeatDue } from './cadence.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -502,7 +503,9 @@ let identityConfirmed = false;
  *
  * The reply to a heartbeat is the only channel there is — nothing on the
  * internet connects inward to this machine — and it is enough, because the
- * worker is already asking every fifteen seconds. So "work in D:\projects
+ * worker is already asking every fifteen seconds (every five minutes while
+ * nobody has the app open, and somebody changing a setting has it open, which
+ * brings the fifteen seconds back within half a minute). So "work in D:\projects
  * instead" is something you type on a phone and this picks up, rather than
  * something that needs a file edited here and the process restarted.
  *
@@ -539,7 +542,12 @@ function applyConfig(config) {
   }
 }
 
+/** What the last job poll said, and when the last heartbeat went — see cadence.js. */
+let away = false;
+let lastBeat = 0;
+
 async function heartbeat() {
+  lastBeat = Date.now();
   try {
     const res = await post('/api/worker/heartbeat', {
       workerId: WORKER_ID,
@@ -654,7 +662,8 @@ async function pollLoop() {
       }
       unauthorised = false;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { job, sleepMs } = await res.json();
+      const { job, sleepMs, away: told } = await res.json();
+      away = !job && told === true;
 
       /**
        * The server can ask to be left alone for a moment.
@@ -841,5 +850,9 @@ await import('./browser.js')
   .catch(() => {});
 
 await heartbeat();
-setInterval(heartbeat, 15_000);
+// Every fifteen seconds — or every five minutes while the server says this
+// machine is away and its poll is keeping it online (see cadence.js).
+setInterval(() => {
+  if (heartbeatDue(away, lastBeat)) heartbeat();
+}, HEARTBEAT_MS);
 pollLoop();
