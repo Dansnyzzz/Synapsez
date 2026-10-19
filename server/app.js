@@ -613,12 +613,23 @@ export function createApp() {
    * quiet spell can wait up to `sleepMs` extra. Every call after it is at full
    * speed, since by then the account counts as busy. Set WORKER_IDLE_SLEEP_MS=0
    * to switch the behaviour off entirely.
+   *
+   * **And when nobody is there at all, it asks rarely** (owner, 2026-10-19).
+   * Every four seconds was still 21,600 calls a day — each three queries — from
+   * a laptop nobody was using: it kept a free Neon database awake until its
+   * compute hours ran out, and was most of a free host's million invocations.
+   * With no work for ten minutes and nobody with the app open, the worker is
+   * told it is away: it asks every 30 seconds, and this poll refreshes its
+   * "online" mark so it can stop heartbeating every fifteen. Opening the app
+   * (`/devices/status`, which a visible tab polls) brings it back to 5s, so the
+   * wait is usually over by the time a message has been typed. On a local
+   * server both are off: holding a connection there costs nothing.
    */
   const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
-  const IDLE_SLEEP_MS = Math.max(
-    0,
-    Number(process.env.WORKER_IDLE_SLEEP_MS ?? (isServerless() ? 4000 : 0)) || 0,
-  );
+  const PRESENT_WINDOW_MS = 10 * 60 * 1000;
+  const sleepSetting = (name, deployed) => Math.max(0, Number(process.env[name] ?? (isServerless() ? deployed : 0)) || 0);
+  const IDLE_SLEEP_MS = sleepSetting('WORKER_IDLE_SLEEP_MS', 5000);
+  const AWAY_SLEEP_MS = sleepSetting('WORKER_AWAY_SLEEP_MS', 30_000);
 
   workerApi.get(
     '/jobs',
@@ -627,13 +638,24 @@ export function createApp() {
       const deviceId = req.workerDevice?.id || null;
 
       if (IDLE_SLEEP_MS > 0) {
-        const lastAt = await store.recentJobAt(req.workerUser.id).catch(() => null);
-        const busy = lastAt && Date.now() - lastAt.getTime() < ACTIVE_WINDOW_MS;
-        if (!busy) {
+        const { jobAt, seenAt } = await store
+          .workerActivity(req.workerUser.id)
+          .catch(() => ({ jobAt: null, seenAt: null }));
+        const since = (when) => (when ? Date.now() - when.getTime() : Infinity);
+        if (since(jobAt) >= ACTIVE_WINDOW_MS) {
           // One claim before sleeping, so a job queued in the gap is not made to
           // wait for the sleep it just missed.
           const job = await store.claimJob(req.workerUser.id, deviceId);
-          return res.json(job ? { job } : { job: null, sleepMs: IDLE_SLEEP_MS });
+          if (job) return res.json({ job });
+          // Away only for a paired machine, whose poll can stand in for its
+          // heartbeat; a legacy one keeps heartbeating and is never told it may stop.
+          const away =
+            AWAY_SLEEP_MS > 0 && !!deviceId && since(jobAt) >= PRESENT_WINDOW_MS && since(seenAt) >= PRESENT_WINDOW_MS;
+          if (away) {
+            await store.touchWorker(req.workerUser.id, deviceId).catch(() => {});
+            return res.json({ job: null, sleepMs: AWAY_SLEEP_MS, away: true });
+          }
+          return res.json({ job: null, sleepMs: IDLE_SLEEP_MS });
         }
       }
 
@@ -871,7 +893,15 @@ export function createApp() {
   api.get(
     '/devices/status',
     wrap(async (req, res) => {
-      res.json({ worker: await workerStatus(req.user, await getPrefs(req.user.id)) });
+      // A visible tab asks this every twenty seconds, which makes it the signal
+      // that somebody is here — and that a paired machine should ask often.
+      const [worker] = await Promise.all([
+        workerStatus(req.user, await getPrefs(req.user.id)),
+        getStore()
+          .markPresent(req.user.id)
+          .catch(() => {}),
+      ]);
+      res.json({ worker });
     }),
   );
 

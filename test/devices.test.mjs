@@ -29,6 +29,8 @@ process.env.WORKER_MODE = 'remote';
 // deployment, where it is billed execution time. Naming it here tests the
 // mechanism without having to pretend to be Vercel.
 process.env.WORKER_IDLE_SLEEP_MS = '1500';
+// And the longer sleep for when nobody has the app open (on a deployment, 30s).
+process.env.WORKER_AWAY_SLEEP_MS = '4000';
 process.env.DATA_DIR = path.join(os.tmpdir(), `ai-remote-devices-test-${process.pid}`);
 delete process.env.DATABASE_URL;
 delete process.env.POSTGRES_URL;
@@ -673,17 +675,47 @@ section('the job poll holds only while somebody is waiting');
   const auth = { Authorization: `Bearer ${collected.json.token}` };
   const caraDeviceId = collected.json.deviceId;
 
+  /*
+   * Nobody has the app open and nothing has run: the machine is told to ask
+   * rarely, and its poll keeps it marked online so it need not heartbeat
+   * every fifteen seconds (owner, 2026-10-19 — an idle worker was spending a
+   * free database's compute hours and most of a free host's invocations).
+   */
+  const caraId = (await store.getUserByEmail('cara@example.com')).id;
+  // A worker says hello before it asks for work, as one starting up does.
+  await anon.call('POST', '/api/worker/heartbeat', { info: { platform: 'win32 x64' } }, auth);
+  const beforeAway = (await store.activeWorkers(caraId)).find((w) => w.id === caraDeviceId)?.last_seen;
+  await new Promise((r) => setTimeout(r, 30));
   const at = Date.now();
   const idle = await anon.call('GET', '/api/worker/jobs', null, auth);
   const idleMs = Date.now() - at;
 
   check('an idle account is answered immediately', idleMs < 3000, `${idleMs}ms`);
   check('with no job', idle.json?.job === null, JSON.stringify(idle.json));
-  check('and told how long to sleep', idle.json?.sleepMs === 1500, JSON.stringify(idle.json));
+  check('nobody in the app: told to ask rarely, and that it is away', idle.json?.sleepMs === 4000 && idle.json?.away === true, JSON.stringify(idle.json));
+  const afterAway = (await store.activeWorkers(caraId)).find((w) => w.id === caraDeviceId)?.last_seen;
+  check('  and the poll itself keeps the machine marked online', !!beforeAway && !!afterAway && new Date(afterAway) > new Date(beforeAway), `${beforeAway} → ${afterAway}`);
+
+  // The app open in a tab is somebody who may ask for something any moment.
+  const status = await cara.call('GET', '/api/devices/status');
+  check('the app polling its status counts as somebody here', status.status === 200, `got ${status.status}`);
+  const present = await anon.call('GET', '/api/worker/jobs', null, auth);
+  check('  so the machine is told to ask often again', present.json?.sleepMs === 1500 && !present.json?.away, JSON.stringify(present.json));
+  const seen = (await store.getUserByEmail('cara@example.com')).last_seen_at;
+  await cara.call('GET', '/api/devices/status');
+  const seenAgain = (await store.getUserByEmail('cara@example.com')).last_seen_at;
+  check('  and presence is written at most every two minutes, not on every poll', !!seen && String(seen) === String(seenAgain), `${seen} | ${seenAgain}`);
+
+  // The worker's side of it: while away, the full heartbeat goes every five
+  // minutes rather than every fifteen seconds; back at once when not away.
+  const { heartbeatDue, AWAY_HEARTBEAT_MS } = await import('../worker/cadence.js');
+  const now = 1_000_000_000;
+  check('a worker that is not away heartbeats on every tick', heartbeatDue(false, now - 1000, now));
+  check('  one that is away skips the ticks in between', !heartbeatDue(true, now - 60_000, now));
+  check('  and still reports every five minutes', heartbeatDue(true, now - AWAY_HEARTBEAT_MS, now));
 
   // Queue something, and the account is busy: the hold comes back, because now
   // there is a person on the other end watching a spinner.
-  const caraId = (await store.getUserByEmail('cara@example.com')).id;
   await store.enqueueJob(caraId, {
     id: 'job-poll-test',
     chatId: null,

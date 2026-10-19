@@ -2168,6 +2168,31 @@ export function createPgStore(connectionString) {
       return rows[0]?.created_at ? new Date(rows[0].created_at) : null;
     },
     /**
+     * When this account last had work, and when somebody last had the app open
+     * — the two facts that decide how often an idle worker asks (2026-10-19).
+     * One round trip, because it runs on every poll.
+     */
+    async workerActivity(userId) {
+      const rows = await q(
+        `SELECT (SELECT created_at FROM tool_jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1) AS job_at,
+                (SELECT last_seen_at FROM users WHERE id = $1) AS seen_at`,
+        [userId],
+      );
+      const at = (value) => (value ? new Date(value) : null);
+      return { jobAt: at(rows[0]?.job_at), seenAt: at(rows[0]?.seen_at) };
+    },
+    /**
+     * Somebody has the app open. Written at most every two minutes however
+     * often the page asks, since it is read only against a ten-minute window.
+     */
+    async markPresent(userId) {
+      await q(
+        `UPDATE users SET last_seen_at = NOW()
+          WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '2 minutes')`,
+        [userId],
+      );
+    },
+    /**
      * @param onlyIfOpen  do not overwrite a job that has already finished.
      *   The server's own timeout path uses this: the worker may have completed
      *   the command and be mid-round-trip with the answer, and stamping "Timed
@@ -2306,6 +2331,16 @@ export function createPgStore(connectionString) {
          WHERE workers.user_id = $2`,
         [workerId, userId, toJson(info ?? {})],
       );
+    },
+    /**
+     * Still here — the liveness half of a heartbeat, without its report.
+     *
+     * An idle worker's poll says this instead of a heartbeat every fifteen
+     * seconds (2026-10-19). Only a machine that has heartbeated has a row to
+     * refresh: what it is, the report, still comes from the heartbeat.
+     */
+    async touchWorker(userId, workerId) {
+      await q('UPDATE workers SET last_seen = NOW() WHERE id = $1 AND user_id = $2', [workerId, userId]);
     },
     async activeWorker(userId, withinMs = 45_000) {
       const rows = await q(
