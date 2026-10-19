@@ -924,6 +924,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'There is no file {0} in this account.': 'Không có tệp {0} trong tài khoản này.',
   // A picture read_file found (server/tools/execute.js, readPicture).
   'the copy to look at was not stored': 'bản sao để xem chưa được lưu',
+  'It is {0}×{1} — too many pixels to open safely. Make a smaller copy and read that.':
+    'Ảnh này {0}×{1} — quá nhiều điểm ảnh để mở an toàn. Hãy tạo bản nhỏ hơn rồi đọc bản đó.',
   // look_at by path, on the cloud computer (server/tools/cloud.js, server/sandbox.js).
   "This account has no cloud computer, so there is nothing at that path. For a file on the user's own computer, use read_file.":
     'Tài khoản này không có máy cloud, nên đường dẫn đó không có gì. Với tệp trên máy của người dùng, hãy dùng read_file.',

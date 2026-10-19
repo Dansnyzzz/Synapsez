@@ -150,7 +150,9 @@ async function readPicture(abs, stat) {
   const bytes = await fsp.readFile(abs);
   const format = sniffPicture(bytes);
   if (!format) return null;
-  const copy = await viewCopy(bytes);
+  const copy = await viewCopy(bytes).catch((err) => {
+    throw new Error(`${rel(abs)}: ${err.message}`);
+  });
   if (!copy) return null;
   if (copy.data.length > MAX_PICTURE_POST) {
     throw new Error(

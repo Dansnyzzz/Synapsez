@@ -910,6 +910,22 @@ section('a picture a step read: known by its bytes, shrunk to look at, with a th
   const kept = await viewCopy(small);
   check('a small PNG is kept byte for byte', !!kept && kept.data.equals(small) && kept.mime === 'image/png');
   check('bytes that are not a picture get no copy', (await viewCopy(Buffer.from('not a picture'))) === null);
+
+  // A few hundred bytes can claim to be 60000×60000: decoding that is the attack.
+  const { pictureSize } = await import('../server/util/picture.js');
+  check('a PNG says its size in its header', JSON.stringify(pictureSize(png)) === '{"width":3200,"height":1600}', JSON.stringify(pictureSize(png)));
+  const jpeg = await big.encode('jpeg', 80);
+  check('  and so does a JPEG', JSON.stringify(pictureSize(jpeg)) === '{"width":3200,"height":1600}', JSON.stringify(pictureSize(jpeg)));
+  const bomb = Buffer.from(png);
+  bomb.writeUInt32BE(60000, 16);
+  bomb.writeUInt32BE(60000, 20);
+  let refused = '';
+  try {
+    await viewCopy(bomb);
+  } catch (err) {
+    refused = String(err.message);
+  }
+  check('a picture claiming billions of pixels is refused, never decoded', /too many pixels/.test(refused), refused);
 }
 
 section('a picture a step read is kept with its name and a thumbnail');

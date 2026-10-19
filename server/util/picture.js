@@ -54,6 +54,57 @@ export function sniffPicture(bytes) {
 }
 
 /**
+ * Past this many pixels a picture is not decoded at all: a few hundred bytes
+ * of PNG can claim 60000×60000, and decoding that is gigabytes of memory —
+ * on the person's computer, on the server, then in the browser that shows it.
+ * 40 million is a 600dpi figure; nothing anybody reads is larger.
+ */
+export const MAX_PIXELS = 40_000_000;
+
+/**
+ * How big a picture says it is, from its header alone — before anything
+ * decodes it. Null when the header is not one this knows.
+ *
+ * @param {Buffer} bytes
+ * @returns {{ width: number, height: number } | null}
+ */
+export function pictureSize(bytes) {
+  const mime = sniffPicture(bytes);
+  try {
+    if (mime === 'image/png' && bytes.length >= 24) return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+    if (mime === 'image/gif' && bytes.length >= 10) return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
+    if (mime === 'image/bmp' && bytes.length >= 26) return { width: Math.abs(bytes.readInt32LE(18)), height: Math.abs(bytes.readInt32LE(22)) };
+    if (mime === 'image/webp' && bytes.length >= 30) {
+      const chunk = bytes.toString('latin1', 12, 16);
+      if (chunk === 'VP8X') return { width: 1 + bytes.readUIntLE(24, 3), height: 1 + bytes.readUIntLE(27, 3) };
+      if (chunk === 'VP8 ') return { width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff };
+      if (chunk === 'VP8L') {
+        const bits = bytes.readUInt32LE(21);
+        return { width: 1 + (bits & 0x3fff), height: 1 + ((bits >> 14) & 0x3fff) };
+      }
+    }
+    if (mime === 'image/jpeg') {
+      // The frame header (SOFn) carries the size; walk the segments to it.
+      for (let at = 2; at + 9 < bytes.length; ) {
+        if (bytes[at] !== 0xff) return null;
+        const marker = bytes[at + 1];
+        if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+          at += 2;
+          continue;
+        }
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { width: bytes.readUInt16BE(at + 7), height: bytes.readUInt16BE(at + 5) };
+        }
+        at += 2 + bytes.readUInt16BE(at + 2);
+      }
+    }
+  } catch {
+    /* a header cut short: unknown */
+  }
+  return null;
+}
+
+/**
  * A copy to look at, and a thumbnail.
  *
  * A picture already small and in a format every browser draws is kept as it
@@ -63,10 +114,15 @@ export function sniffPicture(bytes) {
  * @param {Buffer} bytes
  * @returns {Promise<{ data: Buffer, mime: string, width: number, height: number, thumb: string|null } | null>}
  *   null when the bytes are not a picture at all.
+ * @throws when the picture claims more than MAX_PIXELS — it is never decoded.
  */
 export async function viewCopy(bytes) {
   const mime = sniffPicture(bytes);
   if (!mime) return null;
+  const claimed = pictureSize(bytes);
+  if (claimed && claimed.width * claimed.height > MAX_PIXELS) {
+    throw new Error(`It is ${claimed.width}×${claimed.height} — too many pixels to open safely. Make a smaller copy and read that.`);
+  }
   const asItIs = { data: bytes, mime, width: 0, height: 0, thumb: null };
   const api = await canvas();
   if (!api) return asItIs;
