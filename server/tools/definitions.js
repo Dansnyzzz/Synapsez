@@ -1401,7 +1401,7 @@ export const TOOLS = [
     description:
       'Look at a picture, a screenshot or PDF pages and get back everything in it — all its text word for word, tables, charts and layout. ' +
       'This is how a model that cannot see images sees: an attached image or PDF, a browser or desktop step\'s screenshot ' +
-      '(the file id the step reported), or an image or PDF on the web by url. Ask a question for a direct answer; ' +
+      '(the file id the step reported), an image or PDF on the web by url, or one on your cloud computer by path. Ask a question for a direct answer; ' +
       'give pages for a particular part of a long PDF. If you can see images, a picture attached to the message is already ' +
       'in front of you — answer from it and do not call this. With no file_id or url it looks at the newest attachment.',
     parameters: {
@@ -1409,6 +1409,7 @@ export const TOOLS = [
       properties: {
         file_id: { type: 'string', description: 'An attachment, a file you made, or a step screenshot.' },
         url: { type: 'string', description: 'An image or PDF on the web, instead of file_id.' },
+        path: { type: 'string', description: 'A picture or PDF on your cloud computer (where sandbox_run works), e.g. out/Figure_4.png.' },
         pages: { type: 'array', items: { type: 'integer' }, description: 'PDF: which pages, from 1; up to 8.' },
         question: { type: 'string', description: 'What to find out about it.' },
       },

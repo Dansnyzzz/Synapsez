@@ -380,6 +380,42 @@ section('a picture read_file found is read in the same step');
   check('a picture that could not be kept: an error that says what to do', lost.isError && /edit_image/.test(lost.content), lost.content);
 }
 
+/**
+ * Thirty-seven figures on the cloud computer used to mean thirty-seven
+ * downloads, each a file card, before any could be looked at. `look_at` reads
+ * one where it was made, and every picture it reads comes back to show.
+ */
+section('look_at reads a figure on the cloud computer, and the picture comes back to show');
+{
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  const dot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const png = Buffer.from(dot, 'base64');
+  const eyes = async () => ({ text: 'A bar chart.', model: 'Test Eyes' });
+  const fromCloud = await CLOUD_IMPLEMENTATIONS.look_at(
+    { path: 'out/Figure_4.png' },
+    { userId: user.id, chatId: null, see: eyes, readCloudFile: async (_u, p) => (p === 'out/Figure_4.png' ? png : null) },
+  );
+  check('it reads the file where it was made', typeof fromCloud === 'object' && /A bar chart/.test(fromCloud.content), JSON.stringify(fromCloud).slice(0, 120));
+  check('  and hands the picture back to show, named', fromCloud?.shot?.name === 'Figure_4.png' && !!fromCloud.shot.data, JSON.stringify(fromCloud?.shot || {}).slice(0, 80));
+  let missing = '';
+  try {
+    await CLOUD_IMPLEMENTATIONS.look_at({ path: 'nope.png' }, { userId: user.id, see: eyes, readCloudFile: async () => null });
+  } catch (err) {
+    missing = String(err.message);
+  }
+  check('a path that is not there says so, and where else to look', /not on the cloud computer/.test(missing) && /read_file/.test(missing), missing);
+  let notPicture = '';
+  try {
+    await CLOUD_IMPLEMENTATIONS.look_at({ path: 'notes.txt' }, { userId: user.id, see: eyes, readCloudFile: async () => Buffer.from('hello') });
+  } catch (err) {
+    notPicture = String(err.message);
+  }
+  check('a file that is neither a picture nor a PDF is turned away', /not an image or a PDF/.test(notPicture), notPicture);
+  await store.createAttachment(user.id, { id: 'att-fig', name: 'Figure_9.png', mime: 'image/png', kind: 'image', bytes: png.length, data: dot });
+  const byId = await CLOUD_IMPLEMENTATIONS.look_at({ file_id: 'att-fig' }, { userId: user.id, see: eyes });
+  check('a picture already on the account is pointed at, not copied', byId?.shot?.id === 'att-fig' && byId.shot.name === 'Figure_9.png' && !byId.shot.data, JSON.stringify(byId?.shot));
+}
+
 section('measuring how full the window is');
 {
   const { measure } = await import('../server/compact.js');

@@ -241,7 +241,7 @@ export const MAX_SEEN_BYTES = 2560 * 1024;
 /** The last part of a path, as the name the transcript shows. */
 const fileLabel = (raw) =>
   (String(raw).split(/[\\/]/).pop() || '')
-    .replace(/[\u0000-\u001f]/g, '')
+    .replace(/\p{Cc}/gu, '')
     .trim()
     .slice(0, 200);
 

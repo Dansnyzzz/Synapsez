@@ -76,6 +76,26 @@ export const CASES = [
       'web_fetch drops 20,000 characters of navigation and footer into the transcript, and then '
       + 're-sends it on every following step. extract reads the page elsewhere and returns the figure.',
   },
+  {
+    id: 'tool-choice/picture-on-the-computer',
+    axis: 'tool-choice',
+    ask: 'What does figures/Figure_4.png in my project show?',
+    situation: { workerOnline: true },
+    expect: { prefers: 'read_file', over: [] },
+    why:
+      'read_file looks at a picture now (2026-10-19): one step shows it to the person and reads it. '
+      + 'A shell command to describe an image reads nothing, and look_at cannot reach the computer.',
+  },
+  {
+    id: 'tool-choice/figure-on-the-cloud-computer',
+    axis: 'tool-choice',
+    ask: 'Look at out/Figure_4.png on the cloud computer — do any labels overlap?',
+    situation: { workerOnline: true },
+    expect: { prefers: 'look_at', over: [] },
+    why:
+      'look_at reads a figure where it was made, by path. Downloading it first puts a file card in '
+      + 'the conversation for every figure checked — thirty-seven of them for one audit.',
+  },
 
   // -- stopping ------------------------------------------------------
   {

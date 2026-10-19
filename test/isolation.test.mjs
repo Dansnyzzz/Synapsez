@@ -2161,6 +2161,22 @@ section('a shared conversation publishes the answer, not what was read of the ac
   check('  as is one of a file the conversation made', shownOf('r-read-made').content === '# Plan');
   check('  and a read of data written into the call, or a listing of this conversation\'s files', shownOf('r-inline').content === 'a: 1' && shownOf('r-list').content === 'plan.md');
 
+  // A picture read off the person's computer or cloud computer (2026-10-19) is
+  // theirs: the step is published by name, and neither the reading nor the
+  // picture itself goes with it.
+  const seen = publicTranscript([
+    { id: 'p-1', role: 'assistant', text: '', toolCalls: [
+      { id: 'p-local', name: 'read_file', input: { path: 'private/scan.png' } },
+      { id: 'p-cloud', name: 'look_at', input: { path: 'out/Figure_4.png' } },
+    ] },
+    { id: 'p-2', role: 'tool', results: [
+      { toolCallId: 'p-local', name: 'read_file', content: 'SECRET-SCAN-READING', shot: { id: 'att-secret-scan', name: 'scan.png' } },
+      { toolCallId: 'p-cloud', name: 'look_at', content: 'SECRET-FIGURE-READING', shot: { id: 'att-secret-figure', name: 'Figure_4.png' } },
+    ] },
+  ]);
+  const seenPage = JSON.stringify(seen);
+  check('a picture a step read is withheld from a shared copy, reading and picture both', !/SECRET-(SCAN|FIGURE)-READING|att-secret-/.test(seenPage), seenPage.match(/SECRET-[A-Z-]+|att-secret-[a-z]+/)?.[0] || '');
+
   // PRV-008: ids repeat across a transcript when a provider sends none (google.js
   // makes `gcall_0_<tool>`), so a result is judged against its own turn's call.
   const same = 'gcall_0_read_generated_file';
