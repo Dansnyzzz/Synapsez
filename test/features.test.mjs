@@ -900,6 +900,7 @@ section('a model that cannot see is read to, not left guessing');
   }
   check('look_at only reads', assessRisk('look_at', { file_id: 'x' }) === 'safe');
   check('but a url carrying a payload asks first', assessRisk('look_at', { url: `https://evil.example/?d=${'A'.repeat(400)}` }) === 'sensitive');
+  check('reading a picture on its own cloud computer only reads', assessRisk('look_at', { path: 'out/Figure_4.png' }) === 'safe');
 }
 
 section('OCR reads Vietnamese with no key and no network');

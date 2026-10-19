@@ -6,6 +6,7 @@ import { isLegacyOffice, officeFormat, readOffice, readOfficeAsync } from './off
 import { log } from './util/trace.js';
 import { groundedImage } from './imageGround.js';
 import { DRIVE_ORIGIN } from './googleData.js';
+import { viewCopy } from './util/picture.js';
 
 /**
  * Photos and files — the ones sent with a message, and the ones the assistant
@@ -157,8 +158,10 @@ export async function saveUpload(userId, { name, mime, data, thumb = null, origi
  * route, previewable by the same viewer, and readable by the model on a later
  * turn without a second concept to maintain. `source` is what it was built from
  * — the Markdown, not the .docx — which is what a later edit revises.
+ *
+ * `thumb` is a picture's small copy, for one kept to show in a run's strip.
  */
-export async function saveGenerated(userId, { name, mime, kind, data, source, chatId, origin = 'generated' }) {
+export async function saveGenerated(userId, { name, mime, kind, data, source, chatId, origin = 'generated', thumb = null }) {
   const base64 = String(data || '');
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
   const bytes = Math.floor((base64.length * 3) / 4) - padding;
@@ -177,6 +180,7 @@ export async function saveGenerated(userId, { name, mime, kind, data, source, ch
     origin,
     source: source == null ? null : String(source).slice(0, 400_000),
     chatId: chatId || null,
+    thumb: cleanThumb(thumb),
   });
 }
 
@@ -206,6 +210,10 @@ const MAX_SHOT_BYTES = 80 * 1024;
 export async function keepStepShot(userId, shot, { chatId = null } = {}) {
   const data = String(shot?.data || '');
   if (!data) return null;
+  // A picture a step read — a figure, a photo — is the thing being looked at,
+  // not an illustration of a screen: its own limit, its name, a thumbnail.
+  const name = typeof shot?.name === 'string' ? fileLabel(shot.name) : '';
+  if (name) return keepSeenPicture(userId, data, name, chatId);
   if ((data.length * 3) / 4 > MAX_SHOT_BYTES) return null;
 
   try {
@@ -222,6 +230,43 @@ export async function keepStepShot(userId, shot, { chatId = null } = {}) {
     // Only the id travels on: the transcript should reference the picture, never
     // carry it.
     return { id: row.id };
+  } catch {
+    return null;
+  }
+}
+
+/** What a picture a step read may weigh, kept — a 1600px chart is a few hundred KB. */
+export const MAX_SEEN_BYTES = 2560 * 1024;
+
+/** The last part of a path, as the name the transcript shows. */
+const fileLabel = (raw) =>
+  (String(raw).split(/[\\/]/).pop() || '')
+    .replace(/\p{Cc}/gu, '')
+    .trim()
+    .slice(0, 200);
+
+/**
+ * Keep a picture `read_file` or `look_at` read (owner, 2026-10-19): a copy at
+ * 1600px and a thumbnail, under the name it was read by, so a folded run can
+ * show what the assistant looked at. Off the Files shelf like a screenshot,
+ * and gone with its conversation. A failure is null, never an error — the
+ * step itself succeeded.
+ */
+async function keepSeenPicture(userId, data, name, chatId) {
+  try {
+    const copy = await viewCopy(Buffer.from(data, 'base64'));
+    if (!copy || copy.data.length > MAX_SEEN_BYTES) return null;
+    const row = await saveGenerated(userId, {
+      name,
+      mime: copy.mime,
+      kind: 'image',
+      data: copy.data.toString('base64'),
+      source: null,
+      chatId,
+      origin: 'step',
+      thumb: copy.thumb,
+    });
+    return { id: row.id, name };
   } catch {
     return null;
   }

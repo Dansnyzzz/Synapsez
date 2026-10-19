@@ -2991,6 +2991,301 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
   word-break: break-word;
 }
 
+/* ── the commands card, after Claude's (owner, 2026-10-19) ─────────────────
+ *
+ * Folded, one grey line — "Read 36 files, ran 34 commands (1 failed) ›" — and
+ * on the right the pictures it looked at. Open, its rows in a box with a
+ * hairline between each: the verb grey, the file bright, a thumbnail at the
+ * end. No border round the card and no tick on it: the words say what was
+ * done, a failure says so in them, a spinner says it is still going. Scoped to
+ * this family; a browsing session keeps its card. */
+details.block.steps[data-family='work'] {
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  transition: none;
+}
+details.block.steps[data-family='work']:has(> summary .mark--pending) { box-shadow: none; }
+details.block.steps[data-family='work'] > summary {
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 0;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 14.5px;
+}
+details.block.steps[data-family='work'] > summary:hover { background: none; color: var(--text); }
+details.block.steps[data-family='work'][open] > summary { border-bottom: 0; }
+details.block.steps[data-family='work'] > summary > .mark:not(.mark--pending) { display: none; }
+/* The chevron follows the words; the pictures take the far end. */
+details.block.steps[data-family='work'] > summary::after { order: 5; margin-left: -2px; font-size: 16px; }
+details.block.steps[data-family='work'] .steps__title {
+  position: relative;
+  color: inherit;
+  font-weight: 400;
+  font-size: 14.5px;
+}
+details.block.steps.steps--error[data-family='work'] .steps__title { color: var(--danger); }
+/* The old title fades up and away as the new one comes in. */
+details.block.steps[data-family='work'] .steps__title.is-changing { animation: steps-title-in 0.24s ease-out; }
+details.block.steps[data-family='work'] .steps__title[data-was]::after {
+  content: attr(data-was);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: steps-title-out 0.24s ease-out forwards;
+}
+@keyframes steps-title-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes steps-title-out { from { opacity: 1; transform: translateY(4px); } to { opacity: 0; transform: translateY(-4px); } }
+
+.steps__thumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-left: auto;
+  padding-left: 12px;
+}
+.steps__thumbs[hidden],
+details.block.steps[open] > summary > .steps__thumbs { display: none; }
+details.block.steps[data-family='work'] > summary > .steps__thumbs { order: 6; }
+/* Beside a browsing card's chevron, which keeps the far end. */
+details.block.steps:not([data-family='work']) > summary:has(> .steps__thumbs:not([hidden]))::after { margin-left: 10px; }
+.steps__more { margin-right: 4px; color: var(--text-dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+.pic-thumb {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  cursor: zoom-in;
+  line-height: 0;
+  transition: border-color 0.15s;
+}
+.pic-thumb[hidden] { display: none; }
+.pic-thumb:hover { border-color: var(--accent); }
+.pic-thumb:focus-visible,
+.step__path:focus-visible,
+.step__image:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pic-thumb--head,
+.pic-thumb--row { display: block; flex: none; min-width: 24px; }
+.pic-thumb--head { height: 36px; max-width: 64px; }
+.pic-thumb--row { height: 30px; max-width: 54px; margin-left: auto; }
+/* On a phone the words need the room: the same three, smaller. */
+@media (max-width: 520px) {
+  .steps__thumbs { gap: 4px; padding-left: 8px; }
+  .pic-thumb--head { height: 28px; max-width: 40px; }
+}
+.pic-thumb--head img,
+.pic-thumb--row img { display: block; height: 100%; width: auto; max-width: 100%; object-fit: cover; }
+
+/* Open: the rows in one box, a hairline between each. */
+details.block.steps[data-family='work'] > .steps__list {
+  gap: 0;
+  margin: 2px 0 6px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+details.block.steps[data-family='work'] > .steps__list > li + li { border-top: 1px solid var(--line); }
+details.block.steps[data-family='work'] .step.step--thought { padding: 6px 14px; }
+details.block.steps[data-family='work'] .step__fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border-radius: 0;
+}
+details.block.steps[data-family='work'] .step__fold > summary::after { content: none; }
+details.block.steps[data-family='work'] .step__mark { flex: none; width: 14px; }
+details.block.steps[data-family='work'] .step__mark:empty { display: none; }
+details.block.steps[data-family='work'] .step__label { flex: 0 1 auto; align-items: center; gap: 6px; font-size: 14.5px; }
+details.block.steps[data-family='work'] .step__label::after {
+  content: '›';
+  flex: none;
+  color: var(--text-faint);
+  transition: transform 0.18s;
+}
+details.block.steps[data-family='work'] .step__fold[open] .step__label::after { transform: rotate(90deg); }
+details.block.steps[data-family='work'] .step__verb { color: var(--text-dim); }
+details.block.steps[data-family='work'] .step--error .step__verb { color: var(--danger); }
+/* Sized to its words, so the chevron sits right after them. */
+details.block.steps[data-family='work'] .step__detail { flex: 0 1 auto; }
+/* A file is the bright half of the line; a command stays quiet monospace. */
+details.block.steps[data-family='work'] .step[data-kind='read'] .step__detail,
+details.block.steps[data-family='work'] .step[data-kind='write'] .step__detail,
+details.block.steps[data-family='work'] .step[data-kind='edit'] .step__detail,
+details.block.steps[data-family='work'] .step[data-kind='list'] .step__detail {
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14.5px;
+}
+details.block.steps[data-family='work'] .step__body { margin: 0 14px 12px; }
+.step__took { margin: 0; color: var(--text-faint); font-size: 12px; }
+.step__picture { display: grid; gap: 8px; }
+.step__where { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0; }
+/* The argument's name, plain — not the boxed `code` of prose. */
+details.block .step__key {
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.step__path {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--info);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.step__path:hover { text-decoration: underline; text-underline-offset: 3px; }
+.step__image {
+  width: max-content;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+  cursor: zoom-in;
+  line-height: 0;
+}
+.step__image img { display: block; max-width: 100%; max-height: 480px; width: auto; height: auto; }
+@media (prefers-reduced-motion: reduce) {
+  details.block.steps[data-family='work'] .steps__title.is-changing { animation: none; }
+  details.block.steps[data-family='work'] .steps__title[data-was]::after { display: none; }
+}
+
+/* ── the pictures a run looked at: the preview and the lightbox ──────────
+ *
+ * After Claude's (owner, 2026-10-19). The lightbox is the dark of a photo
+ * viewer whatever the theme — a picture is judged against black — with the
+ * tool's word bottom left and "2 of 3" between two arrows in the middle.
+ * Pictures sit on white: a diagram exported with no background is dark lines
+ * on nothing, and would vanish on the dark theme. */
+.gallery-open { overflow: hidden; }
+.gallery {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  background: rgb(0 0 0 / 0.86);
+  color: #ececec;
+}
+.gallery__stage {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 60px 24px 8px;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.gallery__frame { display: grid; place-items: center; min-height: 0; max-height: 100%; margin: 0; }
+.gallery__img {
+  display: block;
+  max-width: min(92vw, 1600px);
+  max-height: calc(100vh - 150px);
+  max-height: calc(100dvh - 150px);
+  border-radius: 12px;
+  background: #fff;
+  object-fit: contain;
+}
+.gallery__frame.is-from-right { animation: gallery-in-right 0.24s ease-out; }
+.gallery__frame.is-from-left { animation: gallery-in-left 0.24s ease-out; }
+@keyframes gallery-in-right { from { opacity: 0.15; transform: translateX(56px); } }
+@keyframes gallery-in-left { from { opacity: 0.15; transform: translateX(-56px); } }
+.gallery__bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px max(20px, var(--safe-b, 0px));
+}
+.gallery__label { min-width: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gallery__nav {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gallery__nav button,
+.gallery__close {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #f4f4f4;
+  font: inherit;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.gallery__close { position: absolute; top: 12px; right: 16px; z-index: 1; font-size: 20px; }
+.gallery__nav button:hover:not(:disabled),
+.gallery__close:hover { background: rgb(255 255 255 / 0.12); }
+.gallery__nav button:disabled { opacity: 0.28; cursor: default; }
+.gallery__nav button:focus-visible,
+.gallery__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+/* Under the pointer, a larger look before anything is clicked. */
+.pic-preview {
+  position: fixed;
+  z-index: 70;
+  width: min(440px, calc(100vw - 16px));
+  padding: 8px;
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  background: var(--glass-solid);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+.pic-preview__img {
+  display: block;
+  width: 100%;
+  height: 280px;
+  border-radius: 8px;
+  background: #fff;
+  object-fit: contain;
+}
+.pic-preview__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 4px 2px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gallery__frame.is-from-right,
+  .gallery__frame.is-from-left { animation: none; }
+}
+@media (max-width: 640px) {
+  .gallery__stage { padding: 60px 8px 4px; }
+  .gallery__bar { padding: 8px 12px max(16px, var(--safe-b, 0px)); }
+  .gallery__label { font-size: 13.5px; }
+}
+
 /* A small button beside a line of prose, where a full-size one would tower
    over the sentence. */
 .btn--tiny {

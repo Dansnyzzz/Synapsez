@@ -880,6 +880,74 @@ section('old attachments fall out of the budget');
   check('and saying why', /no longer included/.test(stale[0]?.text || ''), stale[0]?.text);
 }
 
+/**
+ * A picture a step read — `read_file` on Figure_4.png, `look_at` on a figure —
+ * is kept to look at: known by its bytes, shrunk to 1600px, with a thumbnail
+ * for the strip a folded run shows (owner, 2026-10-19).
+ */
+section('a picture a step read: known by its bytes, shrunk to look at, with a thumbnail');
+{
+  const { sniffPicture, viewCopy } = await import('../server/util/picture.js');
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas');
+  const big = createCanvas(3200, 1600);
+  const paint = big.getContext('2d');
+  paint.fillStyle = '#336699';
+  paint.fillRect(0, 0, 3200, 1600);
+  const png = await big.encode('png');
+  check('a PNG is known by its bytes', sniffPicture(png) === 'image/png');
+  check('and text is not a picture', sniffPicture(Buffer.from('hello world')) === null);
+  const copy = await viewCopy(png);
+  check('a large picture is shrunk to look at, as a JPEG', copy?.width === 3200 && copy?.height === 1600 && copy?.mime === 'image/jpeg', JSON.stringify({ w: copy?.width, mime: copy?.mime }));
+  const shrunk = await loadImage(copy.data);
+  check('  1600px on its long edge', shrunk.width === 1600 && shrunk.height === 800, `${shrunk.width}x${shrunk.height}`);
+  check('  with a JPEG thumbnail small enough for the row', /^data:image\/jpeg;base64,/.test(copy.thumb || '') && copy.thumb.length < 200_000);
+  // Half drawn, half see-through: a diagram exported with no background.
+  const glass = createCanvas(2400, 1200);
+  glass.getContext('2d').fillRect(0, 0, 1200, 1200);
+  const clear = await viewCopy(await glass.encode('png'));
+  check('a picture that really is see-through stays a PNG, so its clear parts stay clear', clear?.mime === 'image/png', clear?.mime);
+  const small = Buffer.from(PNG, 'base64');
+  const kept = await viewCopy(small);
+  check('a small PNG is kept byte for byte', !!kept && kept.data.equals(small) && kept.mime === 'image/png');
+  check('bytes that are not a picture get no copy', (await viewCopy(Buffer.from('not a picture'))) === null);
+
+  // A few hundred bytes can claim to be 60000×60000: decoding that is the attack.
+  const { pictureSize } = await import('../server/util/picture.js');
+  check('a PNG says its size in its header', JSON.stringify(pictureSize(png)) === '{"width":3200,"height":1600}', JSON.stringify(pictureSize(png)));
+  const jpeg = await big.encode('jpeg', 80);
+  check('  and so does a JPEG', JSON.stringify(pictureSize(jpeg)) === '{"width":3200,"height":1600}', JSON.stringify(pictureSize(jpeg)));
+  const bomb = Buffer.from(png);
+  bomb.writeUInt32BE(60000, 16);
+  bomb.writeUInt32BE(60000, 20);
+  let refused = '';
+  try {
+    await viewCopy(bomb);
+  } catch (err) {
+    refused = String(err.message);
+  }
+  check('a picture claiming billions of pixels is refused, never decoded', /too many pixels/.test(refused), refused);
+}
+
+section('a picture a step read is kept with its name and a thumbnail');
+{
+  const { keepStepShot } = await import('../server/attachments.js');
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const owner = await store.createUser({ id: 'u-seen', email: 'seen@example.com', name: 'Seen', passwordHash: 'x', role: 'user' });
+  const surface = createCanvas(2400, 1200);
+  surface.getContext('2d').fillRect(0, 0, 2400, 1200);
+  const data = (await surface.encode('png')).toString('base64');
+  const kept = await keepStepShot(owner.id, { data, mime: 'image/png', name: 'C:\\figs\\Figure_4.png' }, { chatId: null });
+  check('it is kept, named by the file alone', !!kept?.id && kept.name === 'Figure_4.png', JSON.stringify(kept));
+  const row = kept ? await store.getAttachment(owner.id, kept.id) : null;
+  check('  as a step picture, off the Files shelf', row?.origin === 'step' && row?.kind === 'image', `${row?.origin} ${row?.kind}`);
+  check('  shrunk past the 80KB a screenshot may be', !!row && row.bytes > 0, `${row?.bytes}`);
+  const thumb = kept ? await store.getAttachmentThumb(owner.id, kept.id) : '';
+  check('  with a thumbnail for the strip', /^data:image\/jpeg;base64,/.test(thumb || ''));
+  const shot = await keepStepShot(owner.id, { data: PNG, mime: 'image/png' }, { chatId: null });
+  check('a screenshot is still kept the old way, without a name', !!shot?.id && !('name' in shot), JSON.stringify(shot));
+  check('an id offered in place of bytes is not taken on trust', (await keepStepShot(owner.id, { id: 'someone-elses' })) === null);
+}
+
 server.close();
 await new Promise((r) => server.once('close', r));
 removeTemp(process.env.DATA_DIR);

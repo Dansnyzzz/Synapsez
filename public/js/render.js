@@ -10,6 +10,7 @@ import { parseResults } from './rail.js';
 import { rememberSearch, rememberPage, auditCitations } from './cite.js';
 import { normalisePlan, planItemHtml, planChange } from './plan.js';
 import { canonicalInput, TITLED } from './tool-aliases.js';
+import { registerPictures, pictureThumb, pictureUrl } from './gallery.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -709,6 +710,9 @@ const WORK_KINDS = {
   sandbox_run: 'run',
   read_file: 'read',
   fs_read_text: 'read',
+  // Looking at a picture is reading it, as Claude's Read is (owner, 2026-10-19):
+  // a row of the same card, "Read Figure_4.png", with the picture beside it.
+  look_at: 'read',
   write_file: 'write',
   edit_file: 'edit',
   multi_edit: 'edit',
@@ -745,6 +749,21 @@ const baseName = (raw) =>
     .replace(/[\\/]+$/, '')
     .split(/[\\/]/)
     .pop() || '';
+
+/** The file a web address names — its last path segment, decoded — or else its host. */
+const urlName = (raw) => {
+  try {
+    const url = new URL(String(raw ?? ''));
+    const last = url.pathname.split('/').filter(Boolean).pop() || '';
+    try {
+      return decodeURIComponent(last) || url.host;
+    } catch {
+      return last || url.host;
+    }
+  } catch {
+    return '';
+  }
+};
 
 /**
  * The first line of a command or of Python that says something — not blank,
@@ -792,20 +811,42 @@ export function workStep(name, raw = {}) {
   } else if (ON_A_FILE.has(kind)) {
     path = typeof input.path === 'string' ? input.path.trim() : '';
     file = baseName(path);
+    // `look_at` on the web: the address is the path, its last segment the name.
+    if (!path && name === 'look_at' && typeof input.url === 'string') {
+      path = input.url.trim();
+      file = urlName(path);
+    }
     detail = file || path;
+    // "Read Figure_4.png", as Claude says it — the file is the rest of the line.
+    if (kind === 'read') verb = t('work.readVerb');
   }
   return { verb: own || verb, detail, path, kind, file };
 }
 
 /**
+ * Which pictures a folded card shows: the newest three, in the order they were
+ * read, and how many more there are — Claude's "+33".
+ *
+ * @template T
+ * @param {T[]} pictures
+ * @param {number} [shown]
+ * @returns {{ shown: T[], more: number }}
+ */
+export function stripPictures(pictures, shown = 3) {
+  const list = pictures.slice(-shown);
+  return { shown: list, more: pictures.length - list.length };
+}
+
+/**
  * A finished run of work in one line, the way Claude Code says it: "Ran 5
  * commands, read bibliometrics.py". Kinds in the order they first happened; a
- * kind done once names its file.
+ * kind done once names its file. A failure is said with its kind — "ran 5
+ * commands (1 failed)" — the way Claude says it, not in a count apart.
  *
- * @param {{ kind: string, file: string }[]} steps
+ * @param {{ kind: string, file: string, failed?: boolean }[]} steps
  */
 function workSummary(steps) {
-  /** @type {Map<string, { file: string }[]>} */
+  /** @type {Map<string, { file: string, failed?: boolean }[]>} */
   const byKind = new Map();
   for (const step of steps) {
     if (!byKind.has(step.kind)) byKind.set(step.kind, []);
@@ -813,7 +854,9 @@ function workSummary(steps) {
   }
   const parts = [...byKind].map(([kind, list]) => {
     const [one, many] = WORK_SAID[kind] || WORK_SAID.other;
-    return list.length > 1 ? t(many, { n: list.length }) : t(one, { name: list[0].file || t('work.aFile') });
+    const said = list.length > 1 ? t(many, { n: list.length }) : t(one, { name: list[0].file || t('work.aFile') });
+    const failed = list.filter((step) => step.failed).length;
+    return failed ? `${said} ${t('work.failed', { n: failed })}` : said;
   });
   const said = t('work.summary', { list: parts.join(', ') });
   return said.charAt(0).toUpperCase() + said.slice(1);
@@ -1964,24 +2007,28 @@ export function assistantMessage() {
     const thinking = !now && !!run.thinking;
     const only = run.family === 'work' && run.steps.length === 1 ? run.steps[0] : null;
     const shown = now || (thinking ? null : only);
-    run.title.textContent = shown
-      ? shown.verb
-      : thinking
-        ? t('status.thinking')
-        : run.family === 'work'
-          ? workSummary(run.steps)
-          : run.family === 'desktop'
-            ? t('steps.desktop')
-            : t('steps.browser');
+    setTitle(
+      run,
+      shown
+        ? shown.verb
+        : thinking
+          ? t('status.thinking')
+          : run.family === 'work'
+            ? workSummary(run.steps)
+            : run.family === 'desktop'
+              ? t('steps.desktop')
+              : t('steps.browser'),
+    );
     run.detail.textContent = shown?.detail || '';
     run.detail.hidden = !shown?.detail;
     if (shown?.path) run.detail.title = shown.path;
     else run.detail.removeAttribute('title');
     keepClock(run, !!now || thinking);
     if (!now && !thinking) run.clock.textContent = '';
-    // A run of commands counts in its title; only a failure is said beside it.
+    // A run of commands counts in its title, failures too ("ran 5 commands
+    // (1 failed)"); a browsing session counts beside it.
     const tally = run.family === 'work' ? [] : [t('steps.count').replace('{n}', String(run.count))];
-    if (run.failures) tally.push(t('steps.failedCount', { n: run.failures }));
+    if (run.failures && run.family !== 'work') tally.push(t('steps.failedCount', { n: run.failures }));
     run.tally.textContent = tally.join(' · ');
     const working = run.pending > 0 || thinking;
     const allFailed = !working && run.count > 0 && run.failures === run.count;
@@ -1990,6 +2037,82 @@ export function assistantMessage() {
     if (mark && mark.outerHTML !== want) mark.outerHTML = want;
     run.node.classList.toggle('steps--error', allFailed);
     run.node.classList.toggle('steps--partial', !allFailed && run.failures > 0);
+  }
+
+  /**
+   * The header's words, and the change between them: the old title fades as
+   * the new one comes in, the way Claude's run title passes from "Searching
+   * wider for label sources" to "Read 36 files, ran 34 commands" (owner,
+   * 2026-10-19). The old words live in a data attribute that CSS draws, so the
+   * node's text is only ever the title itself. The whole title is its tooltip,
+   * for when the line cuts it short.
+   */
+  function setTitle(run, text) {
+    const node = run.title;
+    if (node.textContent === text) return;
+    const before = node.textContent;
+    node.textContent = text;
+    node.title = text;
+    if (!before || hydrating || run.family !== 'work') return;
+    node.dataset.was = before;
+    node.classList.remove('is-changing');
+    void node.offsetWidth; // start the animation again
+    node.classList.add('is-changing');
+    clearTimeout(run.fadeTimer);
+    run.fadeTimer = setTimeout(() => {
+      node.classList.remove('is-changing');
+      delete node.dataset.was;
+    }, 260);
+  }
+
+  /**
+   * The strip on a folded card's header: the newest pictures it looked at,
+   * with "+N" for the rest — what Claude shows so a closed run still says what
+   * it saw. Hidden by CSS while the card is open, where each row has its own.
+   */
+  function paintThumbs(run) {
+    const pictures = runPictures(run);
+    const { shown, more } = stripPictures(pictures);
+    run.thumbs.replaceChildren();
+    run.thumbs.hidden = pictures.length === 0;
+    if (more) {
+      const plus = el('span', 'steps__more');
+      plus.textContent = `+${more}`;
+      plus.title = t('gallery.more', { n: more });
+      run.thumbs.append(plus);
+    }
+    for (const picture of shown) run.thumbs.append(pictureThumb(picture, 'pic-thumb pic-thumb--head'));
+  }
+
+  /** Every picture a run has looked at, in the order it looked. */
+  const runPictures = (run) => run.steps.filter((s) => s.picture).map((s) => s.picture);
+
+  /**
+   * An opened picture row: the path it read, then the picture — Claude's
+   * `file_path:` line and the image under it. Both open the lightbox.
+   */
+  function pictureBody(picture) {
+    const node = el('div', 'step__picture');
+    const where = el('p', 'step__where');
+    const key = el('code', 'step__key');
+    key.textContent = 'file_path:';
+    const open = el('button', 'step__path');
+    open.type = 'button';
+    open.dataset.pic = picture.id;
+    open.textContent = picture.path || picture.name;
+    where.append(key, ' ', open);
+    const shown = el('button', 'step__image');
+    shown.type = 'button';
+    shown.dataset.pic = picture.id;
+    shown.setAttribute('aria-label', t('gallery.open', { name: picture.name || picture.path }));
+    const img = el('img');
+    img.alt = picture.name || '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.src = pictureUrl(picture.id);
+    shown.append(img);
+    node.append(where, shown);
+    return node;
   }
 
   /**
@@ -2130,7 +2253,8 @@ export function assistantMessage() {
     const work = family === 'work';
     const said = work ? workStep(call.name, call.input) : { ...describeStep(call.name, call.input), path: '', kind: '', file: '' };
     const { verb, detail } = said;
-    const entry = { verb, detail, path: said.path, kind: said.kind, file: said.file, done: false };
+    /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean, failed: boolean, picture: null | { id: string, name: string, path: string, label: string, thumb: boolean } }} */
+    const entry = { verb, detail, path: said.path, kind: said.kind, file: said.file, done: false, failed: false, picture: null };
     run.steps.push(entry);
     if (!hydrating && !run.started) run.started = Date.now();
     run.count += 1;
@@ -2140,10 +2264,15 @@ export function assistantMessage() {
     const href = stepLink(call.input);
 
     const item = el('li', work ? 'step step--work' : 'step');
+    // What kind of step it is, for the line's colours: a file's name is the
+    // bright half of "Read Figure_4.png", a command stays quiet.
+    if (said.kind) item.dataset.kind = said.kind;
     const mark = el('span', 'step__mark', '<span class="spinner"></span>');
     const label = el('span', 'step__label');
     const verbNode = el('span', 'step__verb');
     verbNode.textContent = verb;
+    // The whole of the model's words for it, when the line cuts them short.
+    verbNode.title = verb;
     label.append(verbNode);
     if (detail) {
       const what = detailNode('step__detail', detail, href);
@@ -2168,11 +2297,16 @@ export function assistantMessage() {
     let running = null;
     let ticking = null;
     let touched = false;
+    /** @type {HTMLElement|null} */
+    let head = null;
     if (work) {
       rowFold = el('details', 'step__fold');
-      const head = el('summary', 'step__head');
-      head.append(mark, label, time);
-      head.addEventListener('click', () => {
+      head = el('summary', 'step__head');
+      // No time on the line, as in Claude's rows: it is inside, under the output.
+      head.append(mark, label);
+      head.addEventListener('click', (event) => {
+        // The picture beside the words opens the lightbox, not the row.
+        if (/** @type {HTMLElement} */ (event.target).closest?.('[data-pic]')) return;
         touched = true;
       });
       foldBody = el('div', 'step__body');
@@ -2210,17 +2344,54 @@ export function assistantMessage() {
         running?.remove();
         item.classList.toggle('step--error', !!result.isError);
         mark.innerHTML = '';
-        mark.textContent = result.isError ? '✗' : '✓';
+        // A row of commands that went well needs no tick: its words say what
+        // was done, as Claude's do. A failure keeps its cross.
+        mark.textContent = result.isError ? '✗' : work ? '' : '✓';
         if (result.ms != null) time.textContent = ms(result.ms);
         run.pending = Math.max(0, run.pending - 1);
         if (result.isError) run.failures += 1;
         entry.done = true;
+        entry.failed = !!result.isError;
+
+        /*
+         * The picture this step looked at — read_file on Figure_4.png, look_at —
+         * or the screen a browser step left (owner, 2026-10-19). It joins the
+         * card's pictures: the strip on the folded header, the lightbox.
+         */
+        if (result.shot?.id) {
+          const name = String(result.shot.name || entry.file || '');
+          if (work && !entry.file && name) {
+            // `look_at` by file id names its file only once it has read it.
+            entry.file = name;
+            const what = label.querySelector('.step__detail') || label.appendChild(el('span', 'step__detail'));
+            what.textContent = name;
+          }
+          entry.picture = {
+            id: String(result.shot.id),
+            name,
+            path: entry.path || name,
+            label: work ? verb : detail ? `${verb} — ${detail}` : verb,
+            // A picture with a name was read and kept with a thumbnail; a
+            // screen a step left behind is small already and has none.
+            thumb: !!result.shot.name,
+          };
+        }
         paintGroupSummary(run);
+        if (entry.picture) paintThumbs(run);
 
         if (work) {
+          if (entry.picture && head) {
+            head.append(pictureThumb(entry.picture, 'pic-thumb pic-thumb--row'));
+            // `file_path:` says what the call said, unless it asked something
+            // more — a question to `look_at` — which stays in view.
+            const asked = Object.keys(canonicalInput(call.name, call.input) || call.input || {});
+            if (asked.every((key) => key === 'path' || key === 'url' || key === 'file_id')) foldBody.querySelector(':scope > .tool__call')?.remove();
+            foldBody.prepend(pictureBody(entry.picture));
+          }
           const printed = el('pre', 'step__output');
           printed.textContent = forDisplay(result.content) || t('chat.noOutput');
           foldBody.append(printed);
+          if (result.ms != null) foldBody.append(el('p', 'step__took', escapeHtml(t('work.took', { time: ms(result.ms) }))));
           // A failure is the one row somebody needs to read; it is open already.
           // A success folds back to its title line — unless it was touched.
           if (result.isError) rowFold.open = true;
@@ -2252,19 +2423,10 @@ export function assistantMessage() {
          * The single most useful thing in the whole card, and the reason it is
          * a thumbnail rather than a full frame: eight full-width screenshots
          * turn a run into a scroll, while eight thumbnails read as a strip you
-         * can take in at once. Clicking one opens it properly.
+         * can take in at once. Clicking one opens it in the lightbox, where the
+         * run's other screens are an arrow away.
          */
-        if (result.shot?.id) {
-          const shot = el('button', 'step__shot');
-          shot.type = 'button';
-          shot.dataset.file = result.shot.id;
-          const img = el('img');
-          img.src = `/api/attachments/${result.shot.id}`;
-          img.alt = `${verb}${detail ? ` — ${detail}` : ''}`;
-          img.loading = 'lazy';
-          shot.append(img);
-          item.append(shot);
-        }
+        if (entry.picture) item.append(pictureThumb(entry.picture, 'step__shot pic-thumb'));
 
         // Errors are opened, successes are not. A failed step is the one thing
         // in the run somebody needs to read, and making them find and click it
@@ -2321,7 +2483,10 @@ export function assistantMessage() {
     detail.hidden = true;
     const clock = el('span', 'steps__clock');
     const tally = el('span', 'steps__tally');
-    summary.append(title, detail, clock, tally);
+    // The pictures the run looked at, on its folded header — see paintThumbs.
+    const thumbs = el('span', 'steps__thumbs');
+    thumbs.hidden = true;
+    summary.append(title, detail, clock, tally, thumbs);
     node.append(summary);
 
     const list = el('ol', 'steps__list');
@@ -2336,8 +2501,11 @@ export function assistantMessage() {
       detail,
       clock,
       tally,
-      /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean }[]} */
+      thumbs,
+      /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean, failed: boolean, picture: any }[]} */
       steps: [],
+      /** The title's fade from its old words, cleared when it is over. */
+      fadeTimer: 0,
       started: 0,
       count: 0,
       pending: 0,
@@ -2348,9 +2516,12 @@ export function assistantMessage() {
       touched: false,
     };
     const created = group;
-    summary.addEventListener('click', () => {
+    summary.addEventListener('click', (event) => {
+      // A picture on the header opens the lightbox; the card stays as it was.
+      if (/** @type {HTMLElement} */ (event.target).closest?.('[data-pic]')) return;
       created.touched = true;
     });
+    registerPictures(node, () => runPictures(created));
     lastStepRun = { group, wrap, body };
     return group;
   }

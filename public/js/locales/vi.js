@@ -79,6 +79,18 @@ export const vi = {
   'work.other.one': 'dùng 1 công cụ',
   'work.other.many': 'dùng {n} công cụ',
   'work.aFile': 'một tệp',
+  // Claude's word for a row that read a file or looked at a picture (2026-10-19).
+  'work.readVerb': 'Đọc',
+  'work.failed': '({n} lỗi)',
+  'work.took': 'Mất {time}',
+  // The pictures a run looked at: the preview and the lightbox.
+  'gallery.count': '{n} / {total}',
+  'gallery.prev': 'Ảnh trước',
+  'gallery.next': 'Ảnh sau',
+  'gallery.close': 'Đóng',
+  'gallery.dialog': 'Ảnh',
+  'gallery.open': 'Mở {name}',
+  'gallery.more': 'Thêm {n} ảnh',
 
   /* Nút + cạnh ô nhập (plus-menu.js). */
   'plus.open': 'Thêm tệp, kỹ năng, kết nối và plugin',

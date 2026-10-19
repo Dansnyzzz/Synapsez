@@ -922,6 +922,17 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     '{0} phải là chuỗi văn bản thường, nhưng nhận được một object. Hãy gửi chính đoạn văn bản, ví dụ "…", không phải { "task": "…" }.',
   // Vision for models that cannot see (server/vision.js, look_at).
   'There is no file {0} in this account.': 'Không có tệp {0} trong tài khoản này.',
+  // A picture read_file found (server/tools/execute.js, readPicture).
+  'the copy to look at was not stored': 'bản sao để xem chưa được lưu',
+  'It is {0}×{1} — too many pixels to open safely. Make a smaller copy and read that.':
+    'Ảnh này {0}×{1} — quá nhiều điểm ảnh để mở an toàn. Hãy tạo bản nhỏ hơn rồi đọc bản đó.',
+  // look_at by path, on the cloud computer (server/tools/cloud.js, server/sandbox.js).
+  "This account has no cloud computer, so there is nothing at that path. For a file on the user's own computer, use read_file.":
+    'Tài khoản này không có máy cloud, nên đường dẫn đó không có gì. Với tệp trên máy của người dùng, hãy dùng read_file.',
+  "{0} is not on the cloud computer — check the path with ls. For a file on the user's own computer, use read_file.":
+    '{0} không có trên máy cloud — kiểm tra đường dẫn bằng ls. Với tệp trên máy của người dùng, hãy dùng read_file.',
+  '{0} is not an image or a PDF — read it with sandbox_run instead.': '{0} không phải hình ảnh hay PDF — hãy đọc bằng sandbox_run.',
+  '{0} is over {1}MB, too large to look at whole.': '{0} lớn hơn {1}MB, quá lớn để xem trọn.',
   '{0} is not a picture or a PDF — read it with read_generated_file or as text instead.':
     '{0} không phải hình ảnh hay PDF — hãy đọc bằng read_generated_file hoặc dạng văn bản.',
   'That address is {0}, not an image or a PDF — use web_fetch for a page.':

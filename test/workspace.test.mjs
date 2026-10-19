@@ -394,6 +394,33 @@ section('the model is not offered the interface\'s tools');
   check('with a reason that says so', /no undo/i.test(riskReason('delete_file', { path: 'notes.txt' })), riskReason('delete_file', { path: 'notes.txt' }));
 }
 
+/**
+ * `read_file` on Figure_4.png used to read its bytes as UTF-8 and hand the
+ * model a page of replacement characters. It hands over the picture now, shrunk
+ * to travel, for the server to keep, show and read (owner, 2026-10-19).
+ */
+section('read_file on a picture hands over the picture, not its bytes as text');
+{
+  const { LOCAL_IMPLEMENTATIONS } = await import('../worker/tools.js');
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const folder = path.join(process.env.WORKSPACE, 'pics');
+  fs.mkdirSync(folder, { recursive: true });
+  const surface = createCanvas(2000, 1000);
+  surface.getContext('2d').fillRect(0, 0, 2000, 1000);
+  fs.writeFileSync(path.join(folder, 'Figure_4.png'), await surface.encode('png'));
+  fs.writeFileSync(path.join(folder, 'notes.txt'), 'Một dòng ghi chú.\n');
+  fs.writeFileSync(path.join(folder, 'fake.png'), 'not really a picture\n');
+
+  const out = await LOCAL_IMPLEMENTATIONS.read_file({ path: 'pics/Figure_4.png' });
+  check('it answers with a picture', typeof out === 'object' && !!out?.shot?.data && out.shot.name === 'Figure_4.png', typeof out);
+  check('  shrunk before it travels', out?.shot?.mime === 'image/jpeg' && out.shot.data.length < 1024 * 1024, `${out?.shot?.mime} ${out?.shot?.data?.length}`);
+  check('  and a sentence that says what it is', /Figure_4\.png is a picture \(PNG, 2000×1000, /.test(out?.text || ''), out?.text);
+  const text = await LOCAL_IMPLEMENTATIONS.read_file({ path: 'pics/notes.txt' });
+  check('a text file still reads as numbered lines', typeof text === 'string' && /1 {2}Một dòng ghi chú\./.test(text), String(text).slice(0, 80));
+  const fake = await LOCAL_IMPLEMENTATIONS.read_file({ path: 'pics/fake.png' });
+  check('a file named like a picture that is not one is read as text', typeof fake === 'string' && /not really a picture/.test(fake));
+}
+
 server.close();
 await new Promise((r) => server.once('close', r));
 removeTemp(process.env.DATA_DIR);

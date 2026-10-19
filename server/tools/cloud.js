@@ -9,7 +9,8 @@ import { renderChart, scatterSpec } from './chart.js';
 import { imageSearchTool } from './images.js';
 import { sportsTool } from './sports.js';
 import { showCardTool } from './cards.js';
-import { runInSandbox } from '../sandbox.js';
+import { runInSandbox, readMachineFile, workPath } from '../sandbox.js';
+import { sniffPicture } from '../util/picture.js';
 import { cloudBrowser } from '../cloudBrowser/index.js';
 import { shareFile } from '../routes/share.js';
 import { see } from '../vision.js';
@@ -2509,12 +2510,26 @@ async function chatModelSees(userId, chatId) {
  * image or a PDF on the web, a particular page of a long document, or a
  * question about a picture the model was only given a reading of. Any model
  * can call it; for one that cannot see it is the only way to look at all.
+ *
+ * A figure on the cloud computer is read where it was made, by `path`, rather
+ * than handed over as a file card first — thirty-seven figures were thirty-seven
+ * cards (owner, 2026-10-19). Every picture it reads comes back as `shot`, so the
+ * run shows what was looked at: one already on the account by its id, one from
+ * the web or the cloud computer as bytes for `keepStepShot` to keep.
+ *
+ * `see` and `readCloudFile` in the context are the suite's, in place of a real
+ * model and a real machine.
  */
-async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, chatId, signal }) {
+async function lookAtTool(
+  { file_id: fileId, url, path, pages, question },
+  { userId, chatId, signal, see: lookWith = see, readCloudFile = readMachineFile },
+) {
   const ask = String(question || '').trim();
   const wantPages = Array.isArray(pages) ? pages.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 8) : null;
   let source;
   let item;
+  /** @type {null | { id: string, name: string } | { data: string, mime: string, name: string }} */
+  let shot = null;
 
   if (fileId) {
     const row = await getStore().getAttachment(userId, String(fileId));
@@ -2526,6 +2541,28 @@ async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, c
     // A transparent picture on a ground the reading model can see it against.
     const picture = row.kind === 'image' ? await groundedImage(row) : null;
     item = picture ? { images: [{ mime: picture.mime, data: picture.data, name: row.name }] } : { pdf: { data: row.data, name: row.name, pages: wantPages } };
+    if (picture) shot = { id: row.id, name: row.name };
+  } else if (path) {
+    const where = workPath(path);
+    const bytes = await readCloudFile(String(userId), where, { signal });
+    if (!bytes) {
+      throw new Error(`${where} is not on the cloud computer — check the path with ls. For a file on the user's own computer, use read_file.`);
+    }
+    const isPdf = bytes.subarray(0, 5).toString('latin1') === '%PDF-';
+    const type = isPdf ? 'application/pdf' : sniffPicture(bytes);
+    if (!type) throw new Error(`${where} is not an image or a PDF — read it with sandbox_run instead.`);
+    const cap = isPdf ? LOOK_MAX_PDF_BYTES : LOOK_MAX_BYTES;
+    if (bytes.length > cap) throw new Error(`${where} is over ${Math.round(cap / 1024 / 1024)}MB, too large to look at whole.`);
+    const name = where.split('/').pop() || where;
+    const data = bytes.toString('base64');
+    source = where;
+    if (isPdf) {
+      item = { pdf: { data, name, pages: wantPages } };
+    } else {
+      const picture = await groundedImage({ mime: type, data });
+      item = { images: [{ mime: picture.mime, data: picture.data, name }] };
+      shot = { data, mime: type, name };
+    }
   } else if (url) {
     let parsed;
     try {
@@ -2579,6 +2616,7 @@ async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, c
     source = parsed.href;
     const data = buffer.toString('base64');
     item = isPdf ? { pdf: { data, name: safeDecode(parsed.pathname.split('/').pop() || '') || 'document.pdf', pages: wantPages } } : { images: [{ mime: type, data, name: parsed.href }] };
+    if (!isPdf) shot = { data, mime: type, name: safeDecode(parsed.pathname.split('/').pop() || '') || parsed.host };
   } else {
     /*
      * Neither given: "what is this picture?" about the one just attached. The
@@ -2595,12 +2633,13 @@ async function lookAtTool({ file_id: fileId, url, pages, question }, { userId, c
         'Answer from the picture itself. (look_at is for an image or PDF by url, particular pages of a PDF, or a step screenshot.)'
       );
     }
-    return lookAtTool({ file_id: latest.id, url: undefined, pages, question }, { userId, chatId, signal });
+    return lookAtTool({ file_id: latest.id, url: undefined, path: undefined, pages, question }, { userId, chatId, signal, see: lookWith, readCloudFile });
   }
 
-  const { text, model } = await see({ userId, chatId, ...item, question: ask, signal });
+  const { text, model } = await lookWith({ userId, chatId, ...item, question: ask, signal });
   // The reading is of somebody else's picture, so it is outside content too.
-  return untrusted(`${source} (read by ${model})`, text);
+  const content = untrusted(`${source} (read by ${model})`, text);
+  return shot ? { content, shot } : content;
 }
 
 /**

@@ -640,6 +640,18 @@ export const en = {
   'work.other.one': 'used a tool',
   'work.other.many': 'used {n} tools',
   'work.aFile': 'a file',
+  // Claude's word for a row that read a file or looked at a picture (2026-10-19).
+  'work.readVerb': 'Read',
+  'work.failed': '({n} failed)',
+  'work.took': 'Took {time}',
+  // The pictures a run looked at: the preview and the lightbox.
+  'gallery.count': '{n} of {total}',
+  'gallery.prev': 'Previous picture',
+  'gallery.next': 'Next picture',
+  'gallery.close': 'Close',
+  'gallery.dialog': 'Pictures',
+  'gallery.open': 'Open {name}',
+  'gallery.more': '{n} more pictures',
 
   /* The + beside the message box (plus-menu.js). */
   'plus.open': 'Add files, skills, connectors and plugins',

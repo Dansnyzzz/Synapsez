@@ -351,6 +351,25 @@ export async function machineForUser(userId, { signal } = {}) {
 }
 
 /**
+ * A file's bytes from this account's cloud computer, or null when it is not
+ * there (2026-10-19) — for `look_at`, which reads a figure where it was made
+ * instead of having it handed over as a file card first.
+ *
+ * @param {string} userId
+ * @param {string} path
+ * @param {{ signal?: AbortSignal }} [options]
+ * @returns {Promise<Buffer|null>}
+ */
+export async function readMachineFile(userId, path, { signal } = {}) {
+  if (!sandboxConfigured()) {
+    throw new Error("This account has no cloud computer, so there is nothing at that path. For a file on the user's own computer, use read_file.");
+  }
+  await chargeCloud(String(userId));
+  const machine = await machineForUser(String(userId), { signal });
+  return (await machine.readFileToBuffer({ path: workPath(path) }, { signal })) || null;
+}
+
+/**
  * The https address of the machine's browser port, opening it on an older machine.
  *
  * @param {any} machine

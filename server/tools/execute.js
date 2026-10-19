@@ -6,6 +6,8 @@ import { TOOLS_BY_NAME, returnsExternalContent, externalSource } from './definit
 import { CLOUD_IMPLEMENTATIONS } from './cloud.js';
 import { isMcpTool, callMcpTool, splitMcpName } from '../mcp/registry.js';
 import { keepStepShot } from '../attachments.js';
+import { see } from '../vision.js';
+import { groundedImage } from '../imageGround.js';
 import { redactSecrets } from '../redact.js';
 import { untrusted } from './untrusted.js';
 import { readArguments } from './validate.js';
@@ -35,6 +37,9 @@ const DEFAULT_LOCAL_TIMEOUT_MS = 180_000;
 const safeError = (error) => redactSecrets(String(error?.message ?? error ?? '')).text;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** A job's picture: the stored reference, `null` when one was sent and not kept, or nothing. */
+const shotOf = (result) => (result?.shot === null ? null : result?.shot || undefined);
 
 /**
  * Hand a local tool call to the worker on this user's machine and wait.
@@ -122,8 +127,10 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
 
     // `shot` is a reference to an attachment the worker's result endpoint has
     // already stored — see `keepStepShot`. It rides out to the browser beside
-    // the text, the same way `file` and `widget` do for cloud tools.
-    return { isError: false, content: String(result.output ?? ''), shot: result.shot || undefined };
+    // the text, the same way `file` and `widget` do for cloud tools. A `null`
+    // is a picture the worker sent and the server could not keep, which
+    // `readPicture` has to be able to tell from no picture at all.
+    return { isError: false, content: String(result.output ?? ''), shot: shotOf(result) };
   }
 
   // Only if it is genuinely still open. The worker may have finished and be
@@ -139,7 +146,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
   // window, that is the truth and the timeout was a false alarm.
   const late = await store.getJob(userId, id).catch(() => null);
   if (late && late.status === 'done' && !late.result?.error) {
-    return { isError: false, content: String(late.result?.output ?? ''), shot: late.result?.shot || undefined };
+    return { isError: false, content: String(late.result?.output ?? ''), shot: shotOf(late.result) };
   }
 
   return {
@@ -282,6 +289,10 @@ export async function executeTool(args) {
   }
 
   let result = await runTool(args);
+  // `read_file` found a picture: a model that can see reads it now — see readPicture.
+  if (args.name === 'read_file' && !args.raw && !result?.isError && result?.shot !== undefined) {
+    result = await readPicture(result, { userId: args.user.id, chatId: args.chatId ?? null, signal: args.signal });
+  }
   // Said to the model, so it learns the value rather than repeating it.
   if (notes.length && !result?.isError) {
     const aside = `\n\n[${notes.join(' ')}]`;
@@ -342,6 +353,49 @@ export async function executeTool(args) {
 }
 
 /**
+ * A picture `read_file` found, read the way `look_at` reads one (owner,
+ * 2026-10-19).
+ *
+ * The worker hands over the picture rather than its bytes as text; here a model
+ * that can see reads it, so one "Read Figure_4.png" step is the assistant having
+ * looked — the way Claude's Read works. When nothing can read it the step says
+ * so and is an error, so the model does not go on to describe a picture it never
+ * saw; the picture still goes to the screen.
+ *
+ * @param {ToolResult} result
+ * @param {{ userId: string, chatId?: string|null, signal?: AbortSignal }} context
+ * @param {typeof see} [lookWith]  the suite's eyes, in place of a real model
+ * @returns {Promise<ToolResult>}
+ */
+export async function readPicture(result, { userId, chatId = null, signal } = { userId: '' }, lookWith = see) {
+  if (!result.shot?.id) {
+    return {
+      ...result,
+      isError: true,
+      content: `${result.content}\n\nIt could not be kept to look at, so it was not read. Make a smaller copy with edit_image and read that.`,
+    };
+  }
+  const { id } = result.shot;
+  try {
+    const row = await getStore().getAttachment(userId, id);
+    if (!row) throw new Error('the copy to look at was not stored');
+    const picture = await groundedImage(row);
+    const { text, model } = await lookWith({ userId, chatId, images: [{ mime: picture.mime, data: picture.data, name: row.name }], signal });
+    return {
+      ...result,
+      content: `${result.content}\n\n${text}`,
+      note: `[Read by ${model}. It is on screen for the user as file ${id} — look_at with that file_id and a question looks again.]`,
+    };
+  } catch (err) {
+    return {
+      ...result,
+      isError: true,
+      content: `${result.content}\n\nIt could not be read: ${safeError(err)}. It is on screen for the user as file ${id}.`,
+    };
+  }
+}
+
+/**
  * Say which file holds the step's screenshot.
  *
  * The picture was stored and shown to the person, and the model never learned
@@ -351,7 +405,8 @@ export async function executeTool(args) {
  */
 function withShotNote(result, args) {
   const id = result?.shot?.id;
-  if (!id || args?.raw || result?.isError) return result;
+  // A picture a step read carries its name, and says its own line — see readPicture.
+  if (!id || args?.raw || result?.isError || result?.shot?.name) return result;
   return { ...result, content: `${result.content}\n[Screenshot of this step: file ${id} — look_at with that file_id reads what is on screen.]` };
 }
 
@@ -462,7 +517,14 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           // What the person answered on a question card, in their words.
           answered: result.answered,
           // A picture of the page the cloud browser is on, kept like a worker's.
-          shot: result.shot ? await keepStepShot(userId, result.shot, { chatId }) : undefined,
+          // A picture the tool already holds — `look_at` on a file of this
+          // account — is referenced, not copied. Only cloud tools, this
+          // server's own code, may hand over an id; a worker's is always bytes.
+          shot: result.shot?.id
+            ? { id: String(result.shot.id), ...(result.shot.name ? { name: String(result.shot.name) } : {}) }
+            : result.shot
+              ? await keepStepShot(userId, result.shot, { chatId })
+              : undefined,
         };
       }
       return { isError: false, content: String(result ?? '') };
