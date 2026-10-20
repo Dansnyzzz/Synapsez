@@ -2293,13 +2293,42 @@ section('the getting-started guide');
   }));
   check('the guide opens', opened.open === true);
   check('and it is the only thing open', opened.others.join() === 'onboarding', opened.others.join(' '));
-  check('it starts at step 1 of 5', /1/.test(opened.step) && /5/.test(opened.step), opened.step);
+  check('it starts at step 1 of 6', /1/.test(opened.step) && /6/.test(opened.step), opened.step);
   check('with a title', opened.title.length > 0, opened.title);
   check('and no Back button on the first step', opened.backHidden === true);
 
-  // Walk all five steps. Each one has to render something.
+  /*
+   * Each step has a clip recorded from the app (2026-10-20): it plays, it can
+   * always be paused (WCAG 2.2.2), and the six steps are named across the top.
+   */
+  await page.waitForTimeout(900);
+  const clip = await page.evaluate(() => {
+    const video = /** @type {HTMLVideoElement} */ (document.getElementById('onb-video'));
+    return {
+      shown: !document.getElementById('onb-media').hidden,
+      src: video.getAttribute('src') || '',
+      playing: !video.paused,
+      label: document.getElementById('onb-play').getAttribute('aria-label') || '',
+      named: document.querySelectorAll('#onb-steps [data-step]').length,
+    };
+  });
+  check('step 1 has its clip, in the interface language', clip.shown && /\/onboarding\/(vi|en)\/step-1\.webm$/.test(clip.src), JSON.stringify(clip));
+  check('  playing, with a way to pause it', clip.playing && /Pause|Tạm dừng/.test(clip.label), JSON.stringify(clip));
+  check('  and all six steps named across the top', clip.named === 6, `${clip.named}`);
+  await page.click('#onb-play');
+  await page.waitForTimeout(200);
+  const pausedClip = await page.evaluate(() => ({
+    paused: /** @type {HTMLVideoElement} */ (document.getElementById('onb-video')).paused,
+    label: document.getElementById('onb-play').getAttribute('aria-label') || '',
+  }));
+  check('  pressing it pauses the clip, and it offers to play again', pausedClip.paused && /Play|Phát/.test(pausedClip.label), JSON.stringify(pausedClip));
+  await page.click('#onb-play');
+
+  // Walk all six steps. Each one has to render something.
   const titles = [opened.title];
-  for (let i = 2; i <= 5; i += 1) {
+  /** @type {string[]} */
+  let guideLevels = [];
+  for (let i = 2; i <= 6; i += 1) {
     await page.click('#onb-next');
     await page.waitForTimeout(350);
     const at = await page.evaluate(() => ({
@@ -2307,12 +2336,17 @@ section('the getting-started guide');
       title: document.querySelector('#onb-body .onb__title')?.textContent.trim() || '',
       body: document.getElementById('onb-body').textContent.trim().length,
       backHidden: document.getElementById('onb-back').hidden,
+      next: document.getElementById('onb-next').textContent.trim(),
     }));
     check(`step ${i} renders`, at.title.length > 0 && at.body > 40, `${at.title} (${at.body} chars)`);
+    // The dialog's `data-i18n` once put "Continue" back on the last step's button.
+    if (i === 6) check('the last step\'s button says it finishes, not "Continue"', /^(Done\. Start working\.|Xong\. Bắt đầu làm việc\.)$/.test(at.next), at.next);
     check(`step ${i} can be gone back from`, at.backHidden === false);
     titles.push(at.title);
+    // Compared with the mode button's own menu once the guide is closed, below.
+    if (i === 5) guideLevels = await page.evaluate(() => [...document.querySelectorAll('#onb-body .onb__level strong')].map((n) => n.textContent.trim()));
   }
-  check('all five steps are different', new Set(titles).size === 5, titles.join(' | '));
+  check('all six steps are different', new Set(titles).size === 6, titles.join(' | '));
 
   /**
    * Step 2 tracks whether a key exists, in both directions.
@@ -2323,9 +2357,8 @@ section('the getting-started guide');
    * guide that tells you to paste a key you have just pasted is a guide arguing
    * with you.
    */
-  await page.click('#onb-back');
-  await page.click('#onb-back');
-  await page.click('#onb-back');
+  // Back to step 2 by its name across the top.
+  await page.click('#onb-steps [data-step="2"]');
   await page.waitForTimeout(400);
   const noKey = await page.evaluate(() => ({
     step: document.getElementById('onb-step').textContent.trim(),
@@ -2343,6 +2376,10 @@ section('the getting-started guide');
   await page.fill('[data-key="openrouter"]', 'sk-or-v1-ui-test-key');
   await page.click('[data-save-key="openrouter"]');
   await page.waitForTimeout(900);
+  // A key added a moment ago was "in 0 min", and a minute later "overdue" — a
+  // schedule's countdown, in English on every screen (2026-10-20).
+  const added = await page.evaluate(() => document.querySelector('#provider-list .keyrow__when')?.textContent.trim() || '');
+  check('the key just saved says it was added just now, in the interface\'s language', /^(just now|vừa xong)$/.test(added), added);
   await page.evaluate(() => document.getElementById('settings').close());
   await page.waitForTimeout(500);
 
@@ -2357,12 +2394,14 @@ section('the getting-started guide');
   check('and it now sees the key that was just saved', withKey.done === true);
   check('so it stops asking for one', withKey.prompts === false);
 
-  // Step 4 hands a sentence to the composer and closes.
-  await page.click('#onb-next');
-  await page.click('#onb-next');
+  // Step 6 puts a sentence in the composer — not sent — and closes.
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
   await page.waitForTimeout(400);
   const tries = await page.$$eval('#onb-body .onb__try', (els) => els.map((e) => e.textContent.trim()));
-  check('step 4 offers something to try', tries.length === 3, tries.length + ' suggestions');
+  check('→ turns the pages, to step 6 and its six things to try', tries.length === 6, tries.length + ' suggestions');
   await page.click('#onb-body .onb__try');
   await page.waitForTimeout(500);
   const handed = await page.evaluate(() => ({
@@ -2371,6 +2410,20 @@ section('the getting-started guide');
   }));
   check('pressing one closes the guide', handed.closed === true);
   check('and puts the question in the composer', handed.typed.length > 0, handed.typed);
+
+  // Step 5's levels are the ones the button beside Send offers — all of them, by the same names.
+  await page.click('#policy-chip');
+  await page.waitForTimeout(300);
+  const menuLevels = await page.evaluate(() =>
+    [...document.querySelectorAll('#policy-menu .menu__item .menu__body > span:first-child')].map((n) => n.textContent.trim()),
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  check(
+    'step 5 lists every level the mode button offers, by the same names',
+    guideLevels.length === 5 && menuLevels.length === 5 && guideLevels.every((l) => menuLevels.includes(l)),
+    `${guideLevels.join(', ')} | ${menuLevels.join(', ')}`,
+  );
 
   await page.evaluate(() => {
     document.getElementById('input').value = '';
@@ -3963,9 +4016,14 @@ section('the guide does not come back after a mid-way reload');
   await page.waitForTimeout(500);
   await page.click('.tab[data-tab="behaviour"]');
   await page.waitForTimeout(300);
+  // With reduced motion asked for, the clip waits to be played (2026-10-20).
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.click('#open-onboarding');
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(900);
   check('and can still be opened deliberately', !!(await page.$('#onboarding[open]')));
+  const still = await page.evaluate(() => /** @type {HTMLVideoElement} */ (document.getElementById('onb-video')).paused);
+  check('  with reduced motion asked for, its clip does not play by itself', still === true);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.click('#onb-skip');
   await page.waitForTimeout(400);
   await page.evaluate(() => {

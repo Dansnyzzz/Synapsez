@@ -926,48 +926,71 @@ export const en = {
   'onb.title': 'Getting started with Synapsez',
   'onb.step': 'Step {n} of {total}',
   'onb.reopen': 'Show the getting-started guide again',
+  // Every sentence below is held to the code or an official page — see
+  // docs/superpowers/specs/2026-10-20-onboarding-videos-design.md and the
+  // "getting-started guide says only what is true" checks in test/features.
 
   'onb.1.title': 'What Synapsez does for you',
-  'onb.1.body': 'This is not a chatbot that only answers. It does real work on your computer.',
-  'onb.1.a': 'Reads and edits files, runs commands, drives a browser — on your machine, while you watch.',
-  'onb.1.b': 'Writes real quotations, reports, spreadsheets and decks you can download from the chat.',
-  'onb.1.c': 'Driven from your phone, a tablet, or another laptop.',
-  'onb.1.note': 'You can always see what it is doing, and the dangerous things stop and ask you first.',
+  'onb.1.body': 'You ask in plain words; the assistant works through it step by step and shows you every step.',
+  'onb.1.a': 'Searches and reads the web, and answers with its sources.',
+  'onb.1.b': 'Writes Word, Excel and PowerPoint documents for you to preview and download — for a PDF, use Print in the viewer and save as PDF.',
+  'onb.1.c': 'Has a cloud computer of its own: runs Python and commands, works with files, and has a browser you watch live.',
+  'onb.1.d': 'Works from a phone, a tablet or any machine with a browser.',
+  'onb.1.note': 'At the default level, anything that could lose data stops and asks you first — step 5 says exactly what.',
 
-  'onb.2.title': 'Paste in an API key',
+  'onb.2.title': 'Add an API key',
   'onb.2.body':
-    'An API key is the password that lets the assistant call an AI model. You get it from the provider yourself and paste it here once.',
-  'onb.2.recommend':
-    'If you are new: use OpenRouter. One key reaches almost every model, and a number of them are free.',
+    'An API key is like a password that lets Synapsez call an AI model for you. Get one from the provider and paste it into Settings → Providers.',
+  'onb.2.recommend': 'If you are new: OpenRouter — one key reaches a great many models, some of them free.',
+  'onb.2.many':
+    'Anthropic, OpenAI, Google Gemini, OpenRouter and OrcaRouter are supported. Each provider holds several keys; Synapsez uses them in the order they are listed.',
   'onb.2.open': 'Open the key settings',
-  'onb.2.done': 'Done — this account has a key.',
-  'onb.2.pending': 'No key yet. Until one is pasted, the assistant cannot answer.',
-  'onb.2.safety': 'Keys are encrypted on your own server and never sent back to the browser.',
+  'onb.2.done': 'Done — your account has a key.',
+  'onb.2.pending': 'No key yet. Until there is one, the assistant cannot answer.',
+  'onb.2.safety': 'Keys are encrypted on the server and never sent back to the browser — settings show only the last 4 characters.',
 
-  'onb.3.title': 'The model you are on',
-  'onb.3.free': 'You are on a FREE model. Good enough for questions, writing, and everyday work.',
-  'onb.3.freeWarn':
-    'Worth being straight about: free models are rate-limited and weaker at long multi-step jobs. If a long task stalls halfway, switching to a paid model is the fix.',
+  'onb.3.title': 'The model, and the free limits',
+  'onb.3.free': 'You are on a FREE model — good enough for questions, writing and everyday work.',
   'onb.3.paid': 'You are on a paid model — billed to your own key.',
+  'onb.3.limits':
+    "OpenRouter's limits for free models: 20 requests a minute and 50 a day — 1,000 a day once the OpenRouter account has bought at least 10 USD of credit. One message can take several requests, because every step the assistant takes is a call to the model.",
+  'onb.3.keys': 'OpenRouter says more keys or more accounts do not raise these limits.',
+  'onb.3.fallback':
+    'When a key is out of requests, Synapsez moves on to your next key, and waits if it opens again soon. If the model cannot be reached on any key, that turn moves to Auto.',
+  'onb.3.gemini':
+    'Picking a Gemini model goes on your Google Gemini key — Google has a free allowance for some of its models, not all of them.',
   'onb.3.change': 'Change model',
-  'onb.3.note': 'There is one model for the whole app, so changing it anywhere changes it everywhere.',
+  'onb.3.note': 'One model for the whole account: change it anywhere and it changes everywhere, open conversations included.',
 
-  'onb.4.title': 'Try your first question',
-  'onb.4.body': 'Press one below and it runs. You watch it work, step by step.',
-  'onb.4.try1': 'My computer feels slow — find out why',
-  'onb.4.try2': 'Find me five technology stories worth reading this week',
-  'onb.4.try3': 'Make me a spreadsheet for tracking monthly expenses',
-  'onb.4.note': 'Write the way you would talk. There are no special commands to learn.',
+  'onb.4.title': 'Your cloud computer',
+  'onb.4.body': 'Every account has a Linux machine of its own in the cloud, for the work that needs a real computer.',
+  'onb.4.a': 'Runs Python, Node, git and commands; installs more software when it needs to.',
+  'onb.4.b': 'Keeps its files and installed software between conversations.',
+  'onb.4.c': 'Has a browser of its own: the assistant opens pages, clicks and types — you watch it live in the side panel.',
+  'onb.4.limit':
+    "To stay inside the host's free allowance, each account gets up to 60 cloud-computer actions a day and the whole app 400 — the defaults, which an administrator can change.",
 
-  'onb.5.title': 'How much the assistant may do on its own',
-  'onb.5.body': 'The button beside Send decides what it just does and what it stops to ask about.',
-  'onb.5.guarded':
-    'Guarded (recommended) — everyday work runs straight away; deleting things or writing outside your working folder stops and asks.',
-  'onb.5.auto': 'Auto-run — fastest, and the one that can lose work.',
-  'onb.5.ask': 'Ask first — safest, and you will be asked a lot.',
+  'onb.5.title': 'How free the assistant is',
+  'onb.5.body': 'The button beside Send decides what the assistant does on its own and what it asks you first. There are 5 levels:',
+  'onb.5.default': 'default',
   'onb.5.honest':
-    'Plainly: the "is this dangerous" check is a list of known patterns, not a sealed cage. Something destructive it does not recognise will still run. If you need certainty, choose "Ask first".',
-  'onb.5.finish': 'Done. Start working.',
+    'Plainly: the check at Guarded is a list of known-dangerous patterns, not a sealed cage — something destructive done in an unfamiliar way can still run. When you need to be sure, choose "Ask first".',
+
+  'onb.6.title': 'Try a first task',
+  'onb.6.body': 'Press a suggestion to put it in the message box, edit it if you like, then send. Watch the assistant work step by step.',
+  'onb.6.try1': 'Find 5 notable AI news stories this week, summarise each in 2 sentences, with sources',
+  'onb.6.try2': 'Write 3 Facebook posts introducing a new product for an online shop, in a friendly voice',
+  'onb.6.try3': "Plan 2 weeks of content for a café's fanpage and export it as an Excel file",
+  'onb.6.try4': 'Compare 3 popular sales-management apps in Vietnam — price, features, pros and cons — as a table',
+  'onb.6.try5': 'Draft a sales email to business customers, with a Vietnamese version',
+  'onb.6.try6': 'Generate 12 months of sample sales data, analyse it with Python and chart the revenue',
+  'onb.6.note': 'Just write the way you talk — no special commands needed.',
+  'onb.6.finish': 'Done. Start working.',
+
+  'onb.video.pause': 'Pause video',
+  'onb.video.play': 'Play video',
+  'onb.video.label': 'Illustration: {title}',
+  'onb.video.caption': 'Recorded from the app itself, with sample data.',
 
   /* ── settings ──────────────────────────────────────────────────── */
   'settings.title': 'Settings',
