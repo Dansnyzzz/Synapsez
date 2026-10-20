@@ -80,7 +80,7 @@ Câu gợi ý cũng chưa sát nhu cầu thường gặp, và không bước nà
 - Một con trỏ giả di chuyển tới chỗ sắp bấm và nháy khi bấm, để người xem thấy đang bấm vào đâu.
 - Cắt phần tải trang ở đầu và nén lại bằng ffmpeg đi kèm Playwright (VP8/WebM); ảnh tĩnh là ảnh chụp
   JPEG của khung hình đẹp nhất.
-- Ra `public/onboarding/{vi,en}/step-{1..6}.webm` và `.jpg`, cùng `public/onboarding/manifest.json`.
+- Ra `public/onboarding/{vi,en}/step-{1..6}.webm` và `.jpg` — đường dẫn cố định, nên không cần tệp kê khai.
 - Ngân sách: mỗi clip ≤ 600KB, tổng ≤ 8MB.
 
 ## Kiểm thử
