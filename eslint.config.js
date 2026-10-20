@@ -129,8 +129,9 @@ export default [
 
   {
     // The worker runs in Node, but parts of it are serialised into a browser
-    // page by `page.evaluate` and reference the DOM from there.
-    files: ['worker/**/*.js', 'test/**/*.mjs'],
+    // page by `page.evaluate` and reference the DOM from there. So do the
+    // tests, and the script that records the getting-started guide's clips.
+    files: ['worker/**/*.js', 'test/**/*.mjs', 'scripts/record-onboarding.mjs'],
     languageOptions: { globals: { ...NODE_GLOBALS, ...BROWSER_GLOBALS } },
   },
 ];

@@ -16,6 +16,7 @@
     "launcher:install": "node scripts/launcher.js --install",
     "db:init": "node scripts/db-init.js",
     "db:copy": "node scripts/copy-database.js",
+    "onboarding:record": "node scripts/record-onboarding.mjs",
     "test:database": "node test/database.test.mjs",
     "lint": "eslint .",
     "test:hooks": "node .claude/hooks/hooks.test.mjs",

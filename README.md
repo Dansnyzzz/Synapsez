@@ -2082,7 +2082,17 @@ npm test                      # every fast suite
 npm run gate                  # lint, hook tests, eval, type-check, npm test — what "done" means here
 npm run test:deploy           # just the Vercel paths
 npm run test:ui               # the real app in a real browser: layout, theme, filtering
+npm run onboarding:record     # re-record the getting-started guide's clips (vi + en)
 ```
+
+The getting-started guide shows a short clip on each of its six steps, in
+`public/onboarding/{vi,en}/step-N.webm` with a still frame beside each. They are recorded from the
+app itself — a throwaway database, one demo account, headless Chrome — so re-record them after a
+change to anything they show (`npm run onboarding:record -- --step=3 --lang=vi` for one). The
+settings in them are operated for real; the conversations are sample turns drawn by the app's own
+renderer, with no model called, and the guide says so under every clip. Encoding uses the ffmpeg
+Playwright installs (`npx playwright-core install ffmpeg`), or the one `FFMPEG` names. Each clip must
+stay under 600 KB and all of them under 8 MB; `test/features` holds them to it.
 
 `npm test` runs every fast suite, one file per area. Six of them are worth knowing apart, and each
 has a script of its own:
