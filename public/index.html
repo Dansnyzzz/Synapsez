@@ -100,7 +100,11 @@
 
         <div id="gate-accounts">
           <input id="gate-name" class="gate__input gate__input--text" type="text" placeholder="Your name" autocomplete="name" hidden data-i18n-title="gate.name" aria-label="Your name" data-i18n-placeholder="gate.ph.name" />
-          <input id="gate-email" class="gate__input gate__input--text" type="email" placeholder="you@example.com" autocomplete="email" data-i18n-title="gate.email" aria-label="Email address" />
+          <!-- Sign-up only; the box below takes it at sign-in, beside the email (2026-10-20). -->
+          <input id="gate-username" class="gate__input gate__input--text" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="24" hidden data-i18n-title="gate.username" aria-label="Username" data-i18n-placeholder="gate.ph.username" />
+          <!-- Its type, placeholder and label are set per mode by renderGateMode: an
+               email at sign-up, "email or username" everywhere else. -->
+          <input id="gate-email" class="gate__input gate__input--text" type="email" placeholder="you@example.com" autocomplete="email" autocapitalize="none" spellcheck="false" data-i18n-title="gate.identifier" aria-label="Email or username" />
           <div class="gate__field" id="gate-password-field">
             <input id="gate-password" class="gate__input gate__input--text gate__input--secret" type="password" placeholder="Password" autocomplete="current-password" data-i18n-title="gate.password" aria-label="Password" data-i18n-placeholder="gate.ph.password" />
             <button class="gate__reveal" type="button" data-reveal="gate-password" aria-controls="gate-password" aria-pressed="false" aria-label="Show password" title="Show password" data-i18n-title="gate.showPassword">
@@ -1519,6 +1523,15 @@
               <input id="account-name" type="text" />
               <button class="btn btn--ghost" id="save-name" type="button" data-i18n="action.save">Save</button>
             </div>
+          </div>
+
+          <div class="field">
+            <label for="account-username" data-i18n="account.username">Username</label>
+            <div class="row">
+              <input id="account-username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="24" aria-describedby="account-username-hint" />
+              <button class="btn btn--ghost" id="save-username" type="button" data-i18n="action.save">Save</button>
+            </div>
+            <p class="hint" id="account-username-hint" data-i18n="account.usernameHint">Sign in with this or your email. 3–24 letters, digits, dots or underscores, starting with a letter.</p>
           </div>
 
           <!-- Not hidden. It was, for no reason anyone could point at, which made

@@ -549,7 +549,19 @@ function renderGateMode() {
   $('gate-newpass').hidden = !reset;
   $('gate-resetcode').hidden = !!resetToken;
   $('gate-name').hidden = !signup;
+  $('gate-username').hidden = !signup;
   $('gate-email').hidden = false;
+  /*
+   * One box for the email or the username everywhere but sign-up (owner,
+   * 2026-10-20) — a text box there, since an email box refuses a name before
+   * the server ever sees it. At sign-up it is the email, checked as one.
+   */
+  const identity = /** @type {HTMLInputElement} */ ($('gate-email'));
+  identity.type = signup ? 'email' : 'text';
+  identity.autocomplete = signup ? 'email' : 'username';
+  identity.placeholder = signup ? 'you@example.com' : t('gate.ph.identifier');
+  identity.setAttribute('aria-label', signup ? t('gate.email') : t('gate.identifier'));
+  identity.title = signup ? t('gate.email') : t('gate.identifier');
   $('gate-password-field').hidden = forgot || reset;
   $('gate-totp').hidden = !needsTotp || signup || forgot || reset;
   $('gate-password').autocomplete = signup ? 'new-password' : 'current-password';
@@ -647,8 +659,17 @@ $('gate-form').addEventListener('submit', async (event) => {
         /** @type {HTMLButtonElement} */ (submit).disabled = false;
         return;
       }
+      const username = /** @type {HTMLInputElement} */ ($('gate-username')).value.trim();
+      if (!username) {
+        $('gate-error').textContent = t('gate.usernameNeeded');
+        $('gate-error').hidden = false;
+        $('gate-username').focus();
+        /** @type {HTMLButtonElement} */ (submit).disabled = false;
+        return;
+      }
       const result = await api.register({
         name: $('gate-name').value.trim(),
+        username,
         email: $('gate-email').value.trim(),
         password: $('gate-password').value,
         consent: PRIVACY_NOTICE,
@@ -4848,6 +4869,7 @@ function fillSettings() {
       <div class="hint">${escapeHtml(me.email)}</div>
     </div>`;
   $('account-name').value = me.name || '';
+  /** @type {HTMLInputElement} */ ($('account-username')).value = me.username || '';
   renderTwoFactor();
   renderUsagePanel($('usage-card'), state.boot.usage);
   privacy.fillMemory();
@@ -5091,6 +5113,24 @@ $('save-name').addEventListener('click', async () => {
     state.boot.user = user;
     fillSettings();
     toast(t('account.nameUpdated'));
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+// The name signed in with, beside the email (2026-10-20). The server says why a
+// name will not do — the shape, reserved, or somebody else's.
+$('save-username').addEventListener('click', async () => {
+  const username = /** @type {HTMLInputElement} */ ($('account-username')).value.trim();
+  if (!username) {
+    toast(t('gate.usernameNeeded'), 'error');
+    return;
+  }
+  try {
+    const { user } = await api.updateAccount({ username });
+    state.boot.user = user;
+    fillSettings();
+    toast(t('account.usernameUpdated'));
   } catch (err) {
     toast(err.message, 'error');
   }
