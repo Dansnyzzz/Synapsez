@@ -177,11 +177,79 @@ export async function mailLanguage(user, req) {
 }
 
 /**
- * Always resolves the same way whether or not the address exists — otherwise
- * this endpoint becomes a way to enumerate who has an account here.
+ * What a username may be (owner, 2026-10-20): 3–24 of a–z, 0–9, `.` and `_`,
+ * starting with a letter and not ending on a dot or doubling one. ASCII only —
+ * a name that looks like somebody else's in another alphabet is how accounts
+ * get impersonated — and never an `@`, so it can never be read as an email.
  */
-export async function requestPasswordReset(email, req) {
-  const user = await getStore().getUserByEmail(String(email || '').trim().toLowerCase());
+const USERNAME_RE = /^[a-z][a-z0-9._]{2,23}$/;
+
+/** Names that would read as the service itself speaking. */
+const RESERVED_USERNAMES = new Set([
+  'admin', 'administrator', 'root', 'support', 'help', 'system', 'security', 'owner', 'staff', 'moderator',
+  'synapsez', 'api', 'www', 'mail', 'email', 'noreply', 'no_reply', 'null', 'undefined', 'anonymous',
+]);
+
+/**
+ * A username as it is stored — lower case — or an error that says what is wrong.
+ *
+ * @param {unknown} raw
+ */
+export function normaliseUsername(raw) {
+  const name = String(raw ?? '').trim().toLowerCase();
+  if (!USERNAME_RE.test(name) || name.includes('..') || name.endsWith('.')) {
+    throw Object.assign(new Error('A username is 3–24 letters, digits, dots or underscores, starting with a letter.'), { status: 400 });
+  }
+  if (RESERVED_USERNAMES.has(name)) {
+    throw Object.assign(new Error('That username is reserved. Pick another.'), { status: 400 });
+  }
+  return name;
+}
+
+/**
+ * The account an "email or username" box names: an email when it has an `@`,
+ * a username otherwise. Null when there is none — callers must answer the same
+ * either way, so nobody can learn which names exist.
+ *
+ * @param {unknown} identifier
+ */
+export async function findUserByIdentifier(identifier) {
+  const value = String(identifier ?? '').trim().toLowerCase();
+  if (!value) return null;
+  const store = getStore();
+  return value.includes('@') ? store.getUserByEmail(value) : store.getUserByUsername(value);
+}
+
+/** Whether a store error is the unique username index refusing a second one. */
+const usernameTaken = (err) => /users_username_key|duplicate key.*username/i.test(String(err?.message || '')) || err?.constraint === 'users_username_key';
+
+/**
+ * Set or change an account's username; null when it is somebody else's.
+ *
+ * @param {string} userId
+ * @param {unknown} raw
+ */
+export async function setUsername(userId, raw) {
+  const name = normaliseUsername(raw);
+  const store = getStore();
+  const holder = await store.getUserByUsername(name);
+  if (holder && holder.id !== userId) throw Object.assign(new Error('That username is taken.'), { status: 409 });
+  try {
+    return await store.updateUser(userId, { username: name });
+  } catch (err) {
+    // Two people claiming the same name in the same instant: the index decides.
+    if (usernameTaken(err)) throw Object.assign(new Error('That username is taken.'), { status: 409 });
+    throw err;
+  }
+}
+
+/**
+ * Always resolves the same way whether or not the account exists — otherwise
+ * this endpoint becomes a way to enumerate who has an account here. Takes the
+ * email or the username; the code goes to the email either way.
+ */
+export async function requestPasswordReset(identifier, req) {
+  const user = await findUserByIdentifier(identifier);
   if (user) await issueLink({ user, req });
   return { ok: true };
 }
@@ -194,7 +262,8 @@ export async function resetPassword({ token, code, email, password }) {
   if (token) {
     userId = await store.consumeAuthToken(sha256(token), 'reset');
   } else if (code && email) {
-    const user = await store.getUserByEmail(String(email).trim().toLowerCase());
+    // The same box as sign-in: the email, or the username.
+    const user = await findUserByIdentifier(email);
     if (user) {
       userId = await store.consumeAuthCode(user.id, sha256(String(code).replace(/\D/g, '')), 'reset');
     }
@@ -233,26 +302,42 @@ export function signupOpen() {
   return !/^(0|false|no)$/i.test(process.env.ALLOW_SIGNUP ?? 'true');
 }
 
-export async function registerUser({ email, password, name }, req, res) {
+/**
+ * @param {{ email?: string, password?: string, name?: string, username?: string }} input
+ *   `username` is asked for by the sign-up form (2026-10-20). An API client that
+ *   sends none still gets an account, which can take a name in its settings.
+ */
+export async function registerUser({ email, password, name, username }, req, res) {
   const store = getStore();
 
   const normalised = String(email || '').trim().toLowerCase();
   if (!EMAIL_RE.test(normalised)) throw new Error('That does not look like an email address.');
   if (String(password || '').length < 10) throw new Error('Use a password of at least 10 characters.');
+  const handle = username == null || String(username).trim() === '' ? null : normaliseUsername(username);
 
   const isFirstUser = (await store.countUsers()) === 0;
   if (!isFirstUser && !signupOpen()) {
     throw Object.assign(new Error('Registration is closed on this deployment.'), { status: 403 });
   }
   if (await store.getUserByEmail(normalised)) throw new Error('That email is already registered.');
+  if (handle && (await store.getUserByUsername(handle))) {
+    throw Object.assign(new Error('That username is taken.'), { status: 409 });
+  }
 
-  const user = await store.createUser({
-    id: crypto.randomUUID(),
-    email: normalised,
-    name: String(name || '').trim() || normalised.split('@')[0],
-    passwordHash: await hashPassword(password),
-    role: isFirstUser ? 'admin' : 'user',
-  });
+  let user;
+  try {
+    user = await store.createUser({
+      id: crypto.randomUUID(),
+      email: normalised,
+      name: String(name || '').trim() || handle || normalised.split('@')[0],
+      passwordHash: await hashPassword(password),
+      role: isFirstUser ? 'admin' : 'user',
+      username: handle,
+    });
+  } catch (err) {
+    if (usernameTaken(err)) throw Object.assign(new Error('That username is taken.'), { status: 409 });
+    throw err;
+  }
 
   // No confirmation step. The address is checked for shape here and for
   // deliverability wherever accounts are handed out; sending a code and then
@@ -266,10 +351,14 @@ export async function registerUser({ email, password, name }, req, res) {
   return fresh;
 }
 
+/**
+ * `email` is the sign-in box, which takes the email or the username (2026-10-20);
+ * the field keeps its name so an older page or an API client goes on working.
+ */
 export async function loginUser({ email, password, code, remember }, req, res) {
   const store = getStore();
 
-  const user = await store.getUserByEmail(String(email || '').trim().toLowerCase());
+  const user = await findUserByIdentifier(email);
   // Hash even when the account is missing, so timing does not reveal which
   // emails exist.
   const ok = await verifyPassword(password, user?.password_hash || DUMMY_PASSWORD_HASH);

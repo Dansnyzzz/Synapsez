@@ -944,3 +944,12 @@ UPDATE attachments SET origin = 'step'
 -- Nullable: a conversation that has not run since reads as "not measured yet".
 -- It holds note names, server names and token estimates — never their content.
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS context_parts JSONB;
+
+-- ── 32: a username to sign in with ─
+-- Signing in took only an email (owner, 2026-10-20). A username is chosen at
+-- sign-up and can be set later in the account settings; one box at sign-in
+-- takes either. Stored in lower case — "Dana.Tran" and "dana.tran" are one
+-- name — so the plain unique index is the case-insensitive one. Nullable: the
+-- accounts made before it keep signing in by email until they pick one.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_key ON users (username);

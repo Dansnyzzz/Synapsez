@@ -224,7 +224,7 @@ export function splitStatements(sql) {
  *  31  chats.context_parts — the last step's breakdown of the context window,
  *      read back by the gauge when a conversation is opened
  */
-export const SCHEMA_VERSION = 31;
+export const SCHEMA_VERSION = 32;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -444,14 +444,19 @@ export function createPgStore(connectionString) {
     },
     async createUser(user) {
       await q(
-        `INSERT INTO users (id, email, name, password_hash, role)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [user.id, user.email, user.name ?? null, user.passwordHash, user.role],
+        `INSERT INTO users (id, email, name, password_hash, role, username)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [user.id, user.email, user.name ?? null, user.passwordHash, user.role, user.username ?? null],
       );
       return this.getUserById(user.id);
     },
     async getUserByEmail(email) {
       const rows = await q('SELECT * FROM users WHERE email = $1', [String(email).toLowerCase()]);
+      return rows[0] ?? null;
+    },
+    /** By the name somebody signs in with — stored in lower case, so asked for in it. */
+    async getUserByUsername(username) {
+      const rows = await q('SELECT * FROM users WHERE username = $1', [String(username).toLowerCase()]);
       return rows[0] ?? null;
     },
     async getUserById(id) {
@@ -460,7 +465,7 @@ export function createPgStore(connectionString) {
     },
     async listUsers() {
       return q(
-        `SELECT u.id, u.email, u.name, u.role, u.created_at, u.last_seen_at,
+        `SELECT u.id, u.email, u.username, u.name, u.role, u.created_at, u.last_seen_at,
                 u.email_verified_at, u.suspended_at, u.monthly_token_limit,
                 (u.worker_token IS NOT NULL) AS has_worker,
                 (SELECT COUNT(*)::int FROM chats c WHERE c.user_id = u.id) AS chat_count,
@@ -494,7 +499,7 @@ export function createPgStore(connectionString) {
       await q("DELETE FROM auth_tokens WHERE user_id = $1 AND kind = 'reset'", [id]);
     },
     async updateUser(id, patch) {
-      const columns = { name: 'name', role: 'role', monthlyTokenLimit: 'monthly_token_limit' };
+      const columns = { name: 'name', role: 'role', monthlyTokenLimit: 'monthly_token_limit', username: 'username' };
       const fields = [];
       const values = [];
       for (const [key, column] of Object.entries(columns)) {

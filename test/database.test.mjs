@@ -149,7 +149,49 @@ section('db:copy carries every table across, in an order the foreign keys allow'
   check('it says how many rows each table took', copied.users === 1 && copied.messages === 1 && said.some((l) => /users: 1/.test(l)), JSON.stringify(copied));
   const again = await copyDatabase(driverOf(source), driverOf(target), { say: () => {} });
   const count = (await target.query('SELECT count(*)::int AS n FROM messages')).rows[0].n;
-  check('running it again changes nothing — what is there is left as it is', count === 1 && again.messages === 1, `${count}`);
+  check('running it again changes nothing — what is there is left as it is, and it says so', count === 1 && again.messages === 0, `${count} ${again.messages}`);
+  await source.close();
+  await target.close();
+}
+
+/**
+ * Somebody signed up on the new database before the old one could be copied —
+ * the same email, a new account (owner, 2026-10-20). The old account's rows go
+ * to the account already there, and what was made since stays.
+ */
+section('db:copy merges an old account into the one with the same email');
+{
+  const { copyDatabase } = await import('../scripts/copy-database.js');
+  const { PGlite } = await import('@electric-sql/pglite');
+  const { createPgStore } = await import('../server/store/pg.js');
+  const driverOf = (db) => ({ query: async (text, params = []) => (await db.query(text, params)).rows });
+  const source = new PGlite();
+  const target = new PGlite();
+  const old = createPgStore(driverOf(source));
+  const now = createPgStore(driverOf(target));
+  await old.init();
+  await now.init();
+  await old.createUser({ id: 'u-neon', email: 'owner@example.com', name: 'Owner', passwordHash: 'x', role: 'admin' });
+  await old.createChat('u-neon', { id: 'c-from-neon', title: 'Before the move', model: 'auto' });
+  await old.appendMessage('u-neon', 'c-from-neon', { id: 'm-neon', role: 'user', text: 'Ghi chú cũ' });
+  await old.setUserSetting('u-neon', 'prefs', { language: 'vi', defaultModel: 'old-model' });
+  await old.setUserSetting('u-neon', 'memory_note', { text: 'kept from before' });
+  await now.createUser({ id: 'u-supabase', email: 'owner@example.com', name: 'Owner', passwordHash: 'y', role: 'admin', username: 'owner.one' });
+  await now.createChat('u-supabase', { id: 'c-since', title: 'Made since', model: 'auto' });
+  await now.setUserSetting('u-supabase', 'prefs', { language: 'vi', defaultModel: 'new-model' });
+
+  const said = [];
+  await copyDatabase(driverOf(source), driverOf(target), { say: (line) => said.push(line) });
+  const users = (await target.query("SELECT id, username FROM users WHERE email = 'owner@example.com'")).rows;
+  check('one account, the one already there', users.length === 1 && users[0].id === 'u-supabase' && users[0].username === 'owner.one', JSON.stringify(users));
+  const before = await now.getChat('u-supabase', 'c-from-neon');
+  const messages = await now.listMessages('u-supabase', 'c-from-neon');
+  check('  the old conversations are in it', before?.title === 'Before the move' && messages[0]?.text === 'Ghi chú cũ', JSON.stringify(before));
+  check('  beside what was made since', (await now.getChat('u-supabase', 'c-since'))?.title === 'Made since');
+  check('  a setting chosen since wins over the old one', (await now.getUserSetting('u-supabase', 'prefs'))?.defaultModel === 'new-model');
+  check('  and one only the old account had comes across', (await now.getUserSetting('u-supabase', 'memory_note'))?.text === 'kept from before');
+  check('it says which account it merged', said.some((l) => /owner@example\.com/.test(l) && /merged/i.test(l)), said.join(' | '));
+  check('  and counts only what went in — the setting the target kept is not counted', said.some((l) => /user_settings: 1$/.test(l)), said.filter((l) => /user_settings/.test(l)).join(''));
   await source.close();
   await target.close();
 }

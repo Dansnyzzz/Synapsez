@@ -131,6 +131,9 @@ await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(600);
 
 section('signing in');
+// Signing up asks for a username too (owner, 2026-10-20).
+check('signing up asks for a username', await page.isVisible('#gate-username'));
+await page.fill('#gate-username', 'ui.tester');
 await page.fill('#gate-email', 'ui@test.local');
 await page.fill('#gate-password', 'a-long-enough-password');
 check('the gate asks for no invite code', !(await page.$('#gate-invite')));
@@ -3918,9 +3921,23 @@ section('the guide does not come back after a mid-way reload');
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'load' });
   await page.waitForTimeout(800);
 
+  /*
+   * Signing in, the box takes the email or the username: a text box, since an
+   * email box refuses a name before the server sees it (2026-10-20). Signing
+   * up, it is the email again, beside a username box of its own.
+   */
+  const box = () => page.evaluate(() => {
+    const el = /** @type {HTMLInputElement} */ (document.getElementById('gate-email'));
+    return { type: el.type, placeholder: el.placeholder, username: !(/** @type {HTMLInputElement} */ (document.getElementById('gate-username')).hidden) };
+  });
+  const signIn = await box();
+  check('signing in, one box takes the email or the username', signIn.type === 'text' && /Email or username|Email hoặc tên đăng nhập/.test(signIn.placeholder) && !signIn.username, JSON.stringify(signIn));
   await page.click('#gate-switch').catch(() => {});
   await page.waitForTimeout(400);
+  const signUp = await box();
+  check('  signing up, it is the email, with a username box beside it', signUp.type === 'email' && signUp.username, JSON.stringify(signUp));
   await page.fill('#gate-name', 'Người mới');
+  await page.fill('#gate-username', 'nguoi.moi');
   await page.fill('#gate-email', 'nguoi-moi@example.com');
   await page.fill('#gate-password', 'mot-mat-khau-dai');
   await page.check('#gate-consent');

@@ -183,6 +183,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
 
   /* ── tài khoản & đăng nhập ─────────────────────────────────────── */
   'Wrong email or password.': 'Sai email hoặc mật khẩu.',
+  // Usernames (server/auth.js, 2026-10-20).
+  'Wrong email/username or password.': 'Sai email/tên đăng nhập hoặc mật khẩu.',
+  'A username is 3–24 letters, digits, dots or underscores, starting with a letter.':
+    'Tên đăng nhập gồm 3–24 chữ cái, chữ số, dấu chấm hoặc gạch dưới, bắt đầu bằng một chữ cái.',
+  'That username is reserved. Pick another.': 'Tên đăng nhập này đã được dành riêng. Hãy chọn tên khác.',
+  'That username is taken.': 'Tên đăng nhập này đã có người dùng.',
   'You cannot suspend or demote yourself.': 'Bạn không thể tự khoá hoặc tự hạ quyền của mình.',
   'No such account.': 'Không có tài khoản này.',
   'You cannot delete your own account.': 'Bạn không thể xoá tài khoản của chính mình.',
