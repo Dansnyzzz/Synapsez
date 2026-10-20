@@ -8,6 +8,8 @@
  * runs — and then every table is copied in foreign-key order, a page at a time.
  * A row the target already has is left as it is, so running it twice is safe
  * and a copy cut short can simply be run again. Nothing in the source changes.
+ * An account the target already has under the same email takes the old
+ * account's rows rather than gaining a twin — see `merged` below.
  *
  * Needs both databases reachable: a Neon project whose compute hours have run
  * out answers 402 until its next billing period, or until it is upgraded.
@@ -106,6 +108,47 @@ export async function copyDatabase(from, to, { say = console.log } = {}) {
   /** @type {Record<string, number>} */
   const copied = {};
 
+  /*
+   * An account already on the target under the same email — somebody signed up
+   * on the new database before the old one could be copied (owner, 2026-10-20).
+   * The old account is not added beside it; its rows go to the one there, and
+   * where both have the same row (a setting under the same name) the target's
+   * stays, as everything else already there does.
+   */
+  const onTarget = new Map(
+    (await to.query('SELECT id, email FROM users')).map((r) => [String(r.email).toLowerCase(), r.id]),
+  );
+  /** @type {Map<string, string>} old account id → the account it merges into */
+  const merged = new Map();
+  for (const r of await from.query('SELECT id, email FROM users')) {
+    const there = onTarget.get(String(r.email).toLowerCase());
+    if (there && there !== r.id) {
+      merged.set(r.id, there);
+      say(`  ${r.email}: merged into the account that already has this email`);
+    }
+  }
+  /** Columns that hold an account's id: every foreign key to `users`, and any `user_id`. */
+  const accountColumns = new Map();
+  const holds = (table, column) => {
+    if (!accountColumns.has(table)) accountColumns.set(table, new Set());
+    accountColumns.get(table).add(column);
+  };
+  if (merged.size) {
+    for (const r of await from.query(
+      `SELECT cl.relname AS table_name, att.attname AS column_name
+         FROM pg_constraint c
+         JOIN pg_class cl ON cl.oid = c.conrelid
+         JOIN pg_attribute att ON att.attrelid = c.conrelid AND att.attnum = ANY (c.conkey)
+        WHERE c.contype = 'f' AND c.confrelid = 'public.users'::regclass`,
+    )) {
+      holds(r.table_name, r.column_name);
+    }
+    for (const [table, cols] of sourceColumns) if (cols.has('user_id')) holds(table, 'user_id');
+  }
+  /** A value as it goes to the target, an old account's id turned into the one it merged into. */
+  const carried = (table, column, value) =>
+    merged.size && accountColumns.get(table)?.has(column) && merged.has(value) ? merged.get(value) : value;
+
   for (const table of order) {
     if (!targetTables.has(table)) {
       say(`  ${table}: skipped — this version of the app has no such table`);
@@ -138,17 +181,24 @@ export async function copyDatabase(from, to, { say = console.log } = {}) {
         const params = [];
         const tuples = batch.map((row) => {
           const holes = columns.map((c) => {
-            params.push(asParam(row[c], target.get(c)));
+            params.push(asParam(carried(table, c, row[c]), target.get(c)));
             return `$${params.length}`;
           });
           return `(${holes.join(', ')})`;
         });
-        await to.query(`INSERT INTO ${ident(table)} (${list}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING`, params);
-        done += batch.length;
+        // Counted by what went in, not by what was sent: a row the target
+        // already had is skipped, and saying it was copied would be a claim.
+        const inserted = await to.query(
+          `INSERT INTO ${ident(table)} (${list}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING 1 AS ok`,
+          params,
+        );
+        done += inserted.length;
         batch = [];
         bytes = 0;
       };
       for (const row of rows) {
+        // The old account itself is not copied: the one it merged into stands for it.
+        if (table === 'users' && merged.has(row.id)) continue;
         const size = sizeOf(row);
         if (batch.length && (bytes + size > INSERT_BYTES || (batch.length + 1) * columns.length > MAX_PARAMS)) await flush();
         batch.push(row);

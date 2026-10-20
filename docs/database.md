@@ -57,9 +57,10 @@ can simply be run again.
 - **Neon has to be reachable.** A project whose compute hours ran out answers 402 until its next
   billing period (shown under *Billing*), or until it is upgraded — a month of Neon's paid plan is
   enough to make the copy, then downgrade.
-- **Copy before signing up on the new database.** An account created there under the same email has a
-  different id, so the old account — and everything that belongs to it — cannot be added beside it.
-  If you have already signed up, copy into a fresh Supabase project instead.
+- **Signed up on the new database already?** That is fine. An account there with the same email is
+  kept, and the old account's conversations, files, settings and paired computers are merged into
+  it. Where both have the same thing — the same setting — the new database's stays. The copy says
+  which accounts it merged.
 
 ## Keeping an eye on the free limits
 
