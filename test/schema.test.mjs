@@ -222,7 +222,7 @@ section('schema.sql and SCHEMA_VERSION move together');
   // the version that owns this file.
   // 28: chats.incognito and audit_events.
   // 31: chats.context_parts — the gauge's last breakdown of the window.
-  const STAMPED = { version: 31, fingerprint: '6d2ffc8d8dd13a28' };
+  const STAMPED = { version: 32, fingerprint: 'b0944bd4fb026c8c' };
 
   check(
     'the recorded version matches the code',

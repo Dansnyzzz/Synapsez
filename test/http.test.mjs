@@ -56,6 +56,7 @@ function jar() {
         headers: {
           ...(body ? { 'Content-Type': 'application/json' } : {}),
           ...(cookie && !options.noCookie ? { Cookie: cookie } : {}),
+          ...(options.headers || {}),
         },
         body: body ? JSON.stringify(body) : undefined,
       });
@@ -961,6 +962,51 @@ section('opening the app on a model that has gone moves the account to Auto, and
   await store.setUserSetting(me.id, 'prefs', { ...(await store.getUserSetting(me.id, 'prefs')), defaultModel: 'openrouter/lab/still-here' });
   const live = await alice.call('GET', '/api/bootstrap');
   check('a model that is still served is left alone', live.json?.prefs?.defaultModel === 'openrouter/lab/still-here' && !live.json?.prefs?.modelNotice);
+}
+
+/**
+ * A username to sign in with, beside the email (owner, 2026-10-20). One box
+ * takes either; a refusal reads the same whichever was wrong, so it says
+ * nothing about which accounts exist.
+ */
+section('a username to sign in with, or the email');
+{
+  // Addresses of their own, so these sign-ups and sign-ins have budgets of
+  // their own and the throttling checks above are not disturbed.
+  const at = (ip) => ({ headers: { 'x-real-ip': ip } });
+  const password = 'a-long-enough-password';
+  const dana = jar();
+  const digit = await dana.call('POST', '/api/register', { email: 'dana@example.com', password, username: '1dana' }, at('10.20.0.1'));
+  check('a username that does not start with a letter is refused', digit.status === 400 && /username/i.test(digit.json?.error || ''), digit.json?.error);
+  const reserved = await dana.call('POST', '/api/register', { email: 'dana@example.com', password, username: 'Admin' }, at('10.20.0.1'));
+  check('  and so is a reserved one', reserved.status === 400 && /reserved/i.test(reserved.json?.error || ''), reserved.json?.error);
+  const made = await dana.call('POST', '/api/register', { email: 'dana@example.com', password, name: 'Dana', username: 'Dana.Tran' }, at('10.20.0.1'));
+  check('an account is made with a username, kept in lower case', made.status === 201 && made.json?.user?.username === 'dana.tran', JSON.stringify(made.json?.user || made.json));
+  const taken = await jar().call('POST', '/api/register', { email: 'erin@example.com', password, username: 'DANA.TRAN' }, at('10.20.0.1'));
+  check('  and the same name in other letters is taken', taken.status === 409 && /taken/i.test(taken.json?.error || ''), `${taken.status} ${taken.json?.error}`);
+
+  const byName = await jar().call('POST', '/api/login', { email: 'DANA.TRAN', password }, at('10.20.0.2'));
+  check('signing in with the username works, in any case', byName.status === 200 && byName.json?.user?.email === 'dana@example.com', `${byName.status} ${byName.json?.error || ''}`);
+  const byMail = await jar().call('POST', '/api/login', { email: 'dana@example.com', password }, at('10.20.0.2'));
+  check('  and with the email, as before', byMail.status === 200, `${byMail.status}`);
+  const wrong = await jar().call('POST', '/api/login', { email: 'dana.tran', password: 'not-the-password' }, at('10.20.0.2'));
+  const nobody = await jar().call('POST', '/api/login', { email: 'nobody.here', password: 'not-the-password' }, at('10.20.0.2'));
+  check(
+    'a wrong password and an unknown name are refused in the same words',
+    wrong.status === 401 && nobody.status === 401 && wrong.json?.error === nobody.json?.error && /username/i.test(wrong.json?.error || ''),
+    `${wrong.json?.error} | ${nobody.json?.error}`,
+  );
+
+  const renamed = await dana.call('PATCH', '/api/account', { name: 'Dana', username: 'dana_t' });
+  check('a username can be changed in the account settings', renamed.status === 200 && renamed.json?.user?.username === 'dana_t', JSON.stringify(renamed.json));
+  const clash = await alice.call('PATCH', '/api/account', { name: 'Alice', username: 'Dana_T' });
+  check('  but not to one somebody has', clash.status === 409, `${clash.status} ${clash.json?.error}`);
+  const nameOnly = await alice.call('PATCH', '/api/account', { name: 'Alice' });
+  check('  saving only a name leaves the username as it was', nameOnly.status === 200 && nameOnly.json?.user?.username == null, JSON.stringify(nameOnly.json?.user));
+  const adopted = await alice.call('PATCH', '/api/account', { name: 'Alice', username: 'alice' });
+  check('an account made before usernames can take one', adopted.status === 200 && adopted.json?.user?.username === 'alice', JSON.stringify(adopted.json));
+  const forgot = await jar().call('POST', '/api/password/forgot', { email: 'dana_t' }, at('10.20.0.3'));
+  check('a forgotten password can be asked for by username too', forgot.status === 200 && forgot.json?.ok === true, `${forgot.status}`);
 }
 
 // ── signing out ─────────────────────────────────────────────────────

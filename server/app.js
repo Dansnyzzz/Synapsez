@@ -16,6 +16,8 @@ import {
   signupOpen,
   requestPasswordReset,
   resetPassword,
+  findUserByIdentifier,
+  setUsername,
   changePassword,
   beginTotpSetup,
   confirmTotpSetup,
@@ -343,6 +345,7 @@ export function createApp() {
   const publicUser = (user) => ({
     id: user.id,
     email: user.email,
+    username: user.username ?? null,
     name: user.name,
     role: user.role,
     emailVerified: !!user.email_verified_at,
@@ -388,12 +391,11 @@ export function createApp() {
           // Not awaited: an extra insert only for accounts that exist would make
           // the refusal measurably slower for them — an enumeration oracle.
           waitUntil(
-            getStore()
-              .getUserByEmail(String(req.body?.email || '').trim().toLowerCase())
+            findUserByIdentifier(req.body?.email)
               .then((tried) => tried && audit(req, tried.id, 'sign_in_failed'))
               .catch(() => {}),
           );
-          return res.status(401).json({ error: 'Wrong email or password.' });
+          return res.status(401).json({ error: 'Wrong email/username or password.' });
         }
         // A correct sign-in clears the tally, so a forgetful morning does not
         // cost somebody their afternoon.
@@ -1184,10 +1186,20 @@ export function createApp() {
   api.patch(
     '/account',
     wrap(async (req, res) => {
+      // Either or both: the display name, and the username signed in with
+      // (2026-10-20). An empty username leaves the one there is alone.
+      const hasName = typeof req.body?.name === 'string';
       const name = String(req.body?.name ?? '').trim();
-      if (!name) return res.status(400).json({ error: 'Name cannot be empty.' });
-      const updated = await getStore().updateUser(req.user.id, { name });
-      res.json({ user: publicUser(updated) });
+      if (hasName && !name) return res.status(400).json({ error: 'Name cannot be empty.' });
+      const wanted = String(req.body?.username ?? '').trim();
+      try {
+        let updated = req.user;
+        if (wanted && wanted.toLowerCase() !== (req.user.username || '')) updated = await setUsername(req.user.id, wanted);
+        if (hasName) updated = await getStore().updateUser(req.user.id, { name });
+        res.json({ user: publicUser(updated) });
+      } catch (err) {
+        res.status(err.status || 400).json({ error: err.message });
+      }
     }),
   );
 
