@@ -2394,7 +2394,9 @@ section('the getting-started guide');
   check('and it now sees the key that was just saved', withKey.done === true);
   check('so it stops asking for one', withKey.prompts === false);
 
-  // Step 6 puts a sentence in the composer — not sent — and closes.
+  // Step 6 puts a sentence in the composer — not sent — and closes. The button
+  // that opened the settings is gone now, so focus is on the page body: the
+  // arrows have to work from there too (they went nowhere, 2026-10-20).
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');

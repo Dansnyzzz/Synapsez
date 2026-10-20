@@ -230,9 +230,18 @@ export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryProm
   next.addEventListener('click', () => (step === TOTAL ? finish() : go(step + 1)));
   skip.addEventListener('click', finish);
 
-  // ← and → turn the pages, unless somebody is typing.
-  dialog.addEventListener('keydown', (event) => {
-    if (/** @type {HTMLElement} */ (event.target).closest?.('input, textarea, [contenteditable="true"]')) return;
+  /*
+   * ← and → turn the pages, unless somebody is typing. Heard on the document,
+   * not the dialog: after a key is saved from step 2 the button that opened the
+   * settings is gone, so closing them leaves focus on the page body — and the
+   * arrows went nowhere. A key pressed inside another dialog is that dialog's.
+   */
+  document.addEventListener('keydown', (event) => {
+    if (!dialog.open) return;
+    const target = /** @type {HTMLElement} */ (event.target);
+    const lost = target === document.body || target === document.documentElement;
+    if (!lost && !dialog.contains(target)) return;
+    if (target.closest?.('input, textarea, [contenteditable="true"]')) return;
     if (event.key === 'ArrowRight' && step < TOTAL) {
       event.preventDefault();
       go(step + 1);
