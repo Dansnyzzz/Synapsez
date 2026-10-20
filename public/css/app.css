@@ -4157,17 +4157,23 @@ details.block .step__key {
 
 /* ── Getting started ──────────────────────────────────────────────
  *
- * Deliberately plain. This is the first thing a new account sees and the whole
- * job is to be read once and dismissed, so nothing here animates, nothing
- * scrolls sideways, and the two decisions on screen — carry on, or skip — are
- * the only things that look pressable. */
-.sheet--onb { width: min(560px, 100%); }
-.onb { padding: 22px 24px 20px; }
+ * Six steps, each with a short clip recorded from the app itself (2026-10-20).
+ * Still plain where it matters: the clip illustrates, the words say everything,
+ * and the two decisions — carry on, or skip — stay in reach however tall a step
+ * is: the body scrolls, the foot does not. */
+.sheet--onb { width: min(760px, 100%); }
+.onb {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 24px 0;
+}
 .onb__head {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin-bottom: 4px;
+  margin-bottom: 12px;
 }
 .onb__head h2 {
   flex: 1;
@@ -4180,9 +4186,94 @@ details.block .step__key {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
-/* A fixed floor so stepping between a short panel and a tall one does not make
-   the dialog jump under the pointer that is about to press Continue again. */
-.onb__body { min-height: 268px; padding-top: 12px; }
+/* The six steps by name: a sense of how far there is to go, and a way to jump. */
+.onb__steps {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+.onb__dot button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 4px 8px;
+  border: 0;
+  border-bottom: 2px solid var(--line);
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.onb__dot button:hover { color: var(--text-dim); }
+.onb__dot button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.onb__dot-n {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.onb__dot-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.onb__dot.is-current button { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
+.onb__dot.is-current .onb__dot-n { background: var(--accent); color: var(--on-accent); }
+.onb__dot.is-done button { border-bottom-color: var(--ok); color: var(--text-dim); }
+.onb__dot.is-done .onb__dot-n { background: color-mix(in srgb, var(--ok) 22%, transparent); color: var(--ok); }
+/* The clip: 16:10, the shape it was recorded in, so nothing is cropped. */
+.onb__media {
+  position: relative;
+  flex: none;
+  /* No taller than about two fifths of the screen, so a laptop's short window
+     still shows the step's words under the clip. */
+  width: min(100%, 42vh * 1.6);
+  margin: 0 auto 14px;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.onb__media[hidden] { display: none; }
+.onb__video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.onb__play {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+.onb__caption {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 66px);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+.onb__play:hover { background: rgb(0 0 0 / 0.72); }
+.onb__play:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.onb__body { padding-bottom: 6px; }
 .onb__title {
   margin: 0 0 8px;
   font-size: 15.5px;
@@ -4195,15 +4286,31 @@ details.block .step__key {
   line-height: 1.55;
 }
 .onb__list li { margin-bottom: 7px; }
-/* The sentence that states a trade-off. Marked, because the honest caveat is the
-   one people skim past, and it is the one that saves them an afternoon. */
+/* The sentences that state a limit or a trade-off. Marked, because the honest
+   caveat is the one people skim past, and it is the one that saves them an afternoon. */
 .onb__tip {
+  margin: 0 0 12px;
   padding: 10px 12px;
   border-left: 2px solid var(--warn);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--surface);
   color: var(--text-dim);
   font-size: 13px;
+  line-height: 1.55;
+}
+ul.onb__facts { padding-left: 28px; }
+.onb__facts li { margin-bottom: 6px; }
+.onb__facts li:last-child,
+.onb__levels li:last-child { margin-bottom: 0; }
+.onb__levels { font-size: 13.5px; }
+.onb__badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ok) 20%, transparent);
+  color: var(--ok);
+  font-size: 11px;
+  font-weight: 600;
 }
 .onb__state {
   padding: 9px 12px;
@@ -4215,11 +4322,11 @@ details.block .step__key {
 .onb__state.is-done { border-color: var(--ok); }
 .onb__state.is-todo { border-color: var(--warn); }
 .onb__state.is-free { border-color: var(--ok); }
-/* The three sample questions. Full-width rows rather than a grid: they are
-   sentences of different lengths, and a grid would either clip them or leave a
-   ragged hole. */
+/* Six things to try, two to a row where there is room for sentences of
+   different lengths, one where there is not. */
 .onb__tries {
   display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -4231,26 +4338,35 @@ details.block .step__key {
   color: var(--text);
   font: inherit;
   font-size: 13.5px;
+  line-height: 1.45;
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
 .onb__try:hover {
   border-color: var(--accent-dim);
-  background: var(--surface-2);
+  background: var(--tint);
 }
+.onb__try:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .onb__foot {
+  position: sticky;
+  bottom: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-top: 14px;
+  margin: 0 -24px;
+  padding: 12px 24px 16px;
   border-top: 1px solid var(--line-soft);
+  background: var(--glass-solid);
 }
 .onb__spacer { flex: 1; }
 
 @media (max-width: 860px) {
-  .onb { padding: 18px 16px 16px; }
-  .onb__body { min-height: 0; }
+  .onb { padding: 16px 16px 0; }
+  .onb__foot { margin: 0 -16px; padding: 10px 16px 14px; }
+  /* On a phone the names would not fit: the numbers carry the place. */
+  .onb__dot-label { display: none; }
+  .onb__dot button { justify-content: center; }
 }
 
 

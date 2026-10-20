@@ -912,51 +912,72 @@ export const vi = {
   'onb.title': 'Bắt đầu với Synapsez',
   'onb.step': 'Bước {n}/{total}',
   'onb.reopen': 'Xem lại hướng dẫn ban đầu',
+  // Every sentence below is held to the code or an official page — see
+  // docs/superpowers/specs/2026-10-20-onboarding-videos-design.md and the
+  // "getting-started guide says only what is true" checks in test/features.
 
   'onb.1.title': 'Synapsez làm được gì cho bạn',
-  'onb.1.body': 'Đây không phải chatbot chỉ biết trả lời. Nó làm việc thật trên máy tính của bạn.',
-  'onb.1.a': 'Đọc và sửa tệp, chạy lệnh, mở web — trên máy tính của bạn, bạn xem trực tiếp.',
-  'onb.1.b': 'Tự làm báo giá, báo cáo, bảng tính, slide và gửi lại cho bạn tải về.',
-  'onb.1.c': 'Điều khiển được từ điện thoại, máy tính bảng hay laptop khác.',
-  'onb.1.note':
-    'Bạn luôn thấy nó đang làm gì, và những việc nguy hiểm thì nó dừng lại hỏi bạn trước.',
+  'onb.1.body': 'Bạn giao việc bằng lời bình thường; trợ lý tự làm từng bước và cho bạn thấy từng bước.',
+  'onb.1.a': 'Tìm và đọc trên web, trả lời có dẫn nguồn.',
+  'onb.1.b': 'Viết tài liệu Word, Excel và PowerPoint để bạn xem trước và tải về — cần PDF thì bấm In trong trình xem rồi lưu thành PDF.',
+  'onb.1.c': 'Có một máy tính cloud riêng: chạy Python, chạy lệnh, xử lý tệp, và một trình duyệt bạn xem trực tiếp.',
+  'onb.1.d': 'Dùng được từ điện thoại, máy tính bảng hay bất kỳ máy nào có trình duyệt.',
+  'onb.1.note': 'Ở mức mặc định, việc có thể làm mất dữ liệu sẽ dừng lại hỏi bạn trước — bước 5 nói rõ.',
 
-  'onb.2.title': 'Dán một API key vào',
+  'onb.2.title': 'Thêm API key',
   'onb.2.body':
-    'API key là mật khẩu để trợ lý gọi được model AI. Bạn tự lấy trên trang của nhà cung cấp, dán vào đây một lần là xong.',
+    'API key giống mật khẩu để Synapsez gọi model AI thay bạn. Bạn lấy key trên trang của nhà cung cấp rồi dán vào Cài đặt → Nhà cung cấp.',
   'onb.2.recommend':
-    'Gợi ý cho người mới: dùng OpenRouter. Một key duy nhất là với tới được gần như mọi model, và có nhiều model miễn phí.',
-  'onb.2.open': 'Mở phần dán key',
+    'Gợi ý cho người mới: OpenRouter — một key với tới rất nhiều model, trong đó có model miễn phí.',
+  'onb.2.many':
+    'Hỗ trợ Anthropic, OpenAI, Google Gemini, OpenRouter và OrcaRouter. Mỗi nhà cung cấp giữ được nhiều key; Synapsez dùng lần lượt theo thứ tự trong danh sách.',
+  'onb.2.open': 'Mở phần key',
   'onb.2.done': 'Xong — tài khoản của bạn đã có key.',
-  'onb.2.pending': 'Chưa có key nào. Chưa dán thì trợ lý chưa trả lời được.',
-  'onb.2.safety': 'Key được mã hoá trên máy chủ của bạn và không bao giờ gửi về trình duyệt.',
+  'onb.2.pending': 'Chưa có key nào. Chưa có key thì trợ lý chưa trả lời được.',
+  'onb.2.safety': 'Key được mã hoá trên máy chủ và không bao giờ gửi ngược về trình duyệt — trong cài đặt chỉ hiện 4 ký tự cuối.',
 
-  'onb.3.title': 'Model bạn đang dùng',
-  'onb.3.free':
-    'Bạn đang dùng model MIỄN PHÍ. Đủ tốt cho hỏi đáp, viết lách và việc thường ngày.',
-  'onb.3.freeWarn':
-    'Cần nói thật: model miễn phí bị giới hạn số lần gọi và làm việc nhiều bước kém hơn. Nếu một việc dài bị dừng giữa đường, đổi sang model trả phí là hết.',
+  'onb.3.title': 'Model và giới hạn miễn phí',
+  'onb.3.free': 'Bạn đang dùng model MIỄN PHÍ — đủ tốt cho hỏi đáp, viết lách và việc thường ngày.',
   'onb.3.paid': 'Bạn đang dùng model trả phí — tính vào key của chính bạn.',
+  'onb.3.limits':
+    'Giới hạn của OpenRouter cho model miễn phí: 20 yêu cầu mỗi phút và 50 yêu cầu mỗi ngày — thành 1.000 mỗi ngày nếu tài khoản OpenRouter đã từng mua từ 10 USD credit. Một tin nhắn có thể tốn nhiều yêu cầu, vì mỗi bước trợ lý làm là một lần gọi model.',
+  'onb.3.keys': 'Theo OpenRouter, tạo thêm key hay thêm tài khoản không làm tăng giới hạn này.',
+  'onb.3.fallback':
+    'Khi một key hết lượt, Synapsez tự chuyển sang key kế tiếp của bạn, và chờ nếu lượt sắp mở lại. Nếu model không trả lời được ở mọi key, lượt đó tự chuyển sang Auto.',
+  'onb.3.gemini':
+    'Chọn một model Gemini thì tính theo key Google Gemini của bạn — Google có hạn mức miễn phí riêng cho một số model, không phải tất cả.',
   'onb.3.change': 'Đổi model',
-  'onb.3.note':
-    'Chỉ có một model dùng cho toàn bộ ứng dụng, nên đổi ở đâu cũng là đổi ở mọi nơi.',
+  'onb.3.note': 'Một model dùng cho cả tài khoản: đổi ở đâu cũng là đổi ở mọi nơi, kể cả các cuộc trò chuyện đang mở.',
 
-  'onb.4.title': 'Thử câu đầu tiên',
-  'onb.4.body': 'Bấm một câu bên dưới là nó chạy luôn. Bạn xem nó làm từng bước.',
-  'onb.4.try1': 'Máy tính của tôi đang chậm, kiểm tra xem vì sao',
-  'onb.4.try2': 'Tìm giúp tôi 5 tin công nghệ đáng chú ý tuần này',
-  'onb.4.try3': 'Làm cho tôi một file Excel theo dõi chi phí hàng tháng',
-  'onb.4.note': 'Cứ nói bằng tiếng Việt bình thường. Không cần câu lệnh đặc biệt.',
+  'onb.4.title': 'Máy tính cloud của bạn',
+  'onb.4.body': 'Mỗi tài khoản có một máy Linux riêng trên cloud, để trợ lý làm những việc cần một cái máy thật.',
+  'onb.4.a': 'Chạy Python, Node, git và các lệnh; cài thêm phần mềm khi cần.',
+  'onb.4.b': 'Giữ lại tệp và phần mềm đã cài giữa các cuộc trò chuyện.',
+  'onb.4.c': 'Có trình duyệt riêng: trợ lý mở web, bấm, điền — bạn xem trực tiếp ở khung bên cạnh.',
+  'onb.4.limit':
+    'Để không vượt gói miễn phí của máy chủ, mỗi tài khoản dùng tối đa 60 lượt máy cloud mỗi ngày, cả ứng dụng 400 lượt — mức mặc định, người quản trị chỉnh được.',
 
   'onb.5.title': 'Mức độ tự do của trợ lý',
-  'onb.5.body': 'Nút cạnh chỗ gửi tin quyết định việc gì nó tự làm, việc gì phải hỏi bạn.',
-  'onb.5.guarded':
-    'Có kiểm soát (nên dùng) — việc thường ngày thì tự làm; xoá tệp hay sửa ngoài thư mục làm việc thì dừng lại hỏi bạn.',
-  'onb.5.auto': 'Tự chạy hết — nhanh nhất, và là mức có thể làm mất dữ liệu.',
-  'onb.5.ask': 'Hỏi mọi thứ — an toàn nhất, nhưng bị hỏi rất nhiều.',
+  'onb.5.body': 'Nút cạnh ô gửi tin quyết định việc gì trợ lý tự làm, việc gì phải hỏi bạn. Có 5 mức:',
+  'onb.5.default': 'mặc định',
   'onb.5.honest':
-    'Nói thẳng: phần kiểm tra "việc nguy hiểm" dựa trên danh sách các mẫu lệnh đã biết, không phải một cái lồng kín. Việc phá hoại theo cách lạ vẫn có thể chạy. Cần chắc chắn thì chọn "Hỏi mọi thứ".',
-  'onb.5.finish': 'Xong. Bắt đầu làm việc.',
+    'Nói thẳng: phép kiểm tra ở mức Có kiểm soát dựa trên danh sách các mẫu nguy hiểm đã biết, không phải một cái lồng kín — việc phá hoại theo cách lạ vẫn có thể chạy. Cần chắc chắn thì chọn "Hỏi trước".',
+
+  'onb.6.title': 'Thử việc đầu tiên',
+  'onb.6.body': 'Bấm một gợi ý để đưa vào ô nhập, sửa lại nếu muốn, rồi gửi. Bạn xem trợ lý làm từng bước.',
+  'onb.6.try1': 'Tìm 5 tin AI nổi bật tuần này, mỗi tin tóm tắt 2 câu, kèm nguồn',
+  'onb.6.try2': 'Viết 3 mẫu bài đăng Facebook giới thiệu sản phẩm mới cho shop online, giọng thân thiện',
+  'onb.6.try3': 'Lập kế hoạch nội dung 2 tuần cho fanpage quán cà phê, xuất ra file Excel',
+  'onb.6.try4': 'So sánh 3 phần mềm quản lý bán hàng phổ biến ở Việt Nam: giá, tính năng, ưu nhược — làm thành bảng',
+  'onb.6.try5': 'Soạn email chào hàng gửi khách doanh nghiệp, kèm bản tiếng Anh',
+  'onb.6.try6': 'Tạo dữ liệu bán hàng mẫu 12 tháng, phân tích bằng Python và vẽ biểu đồ doanh thu',
+  'onb.6.note': 'Cứ nói bằng tiếng Việt bình thường — không cần câu lệnh đặc biệt.',
+  'onb.6.finish': 'Xong. Bắt đầu làm việc.',
+
+  'onb.video.pause': 'Tạm dừng video',
+  'onb.video.play': 'Phát video',
+  'onb.video.label': 'Video minh hoạ: {title}',
+  'onb.video.caption': 'Quay từ chính ứng dụng, với dữ liệu mẫu.',
 
   /* ── cài đặt ───────────────────────────────────────────────────── */
   'settings.title': 'Cài đặt',

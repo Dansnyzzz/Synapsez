@@ -196,6 +196,8 @@ const onboarding = createOnboarding({
   onOpenKeys: () => openSettings('providers'),
   onPickModel: () => browser.open(state.model),
   onTryPrompt: (text) => setComposerText(text),
+  // The five levels as the menu beside Send names and describes them.
+  policies: () => POLICIES.map((id) => ({ id, label: POLICY_LABEL(id), hint: POLICY_HINT(id) })),
   // Nothing to persist here: the guide is marked as seen the moment it opens, not
   // when it is finished. See `markOnboarded`.
   onFinish: () => {},
@@ -4734,7 +4736,7 @@ function fillSettings() {
     <div class="keyrow">
       <span class="keyrow__no">${entry.position}</span>
       <span class="keyrow__hint">${escapeHtml(entry.hint || t('keys.saved'))}</span>
-      <span class="keyrow__when">${entry.addedAt ? escapeHtml(relativeWhen(entry.addedAt)) : ''}</span>
+      <span class="keyrow__when">${entry.addedAt ? escapeHtml(addedAgo(entry.addedAt)) : ''}</span>
       ${entry.position === 1 && spare ? `<span class="keyrow__badge">${escapeHtml(t('devices.inUse'))}</span>` : ''}
       <button class="keyrow__drop" data-drop-key="${escapeHtml(provider)}" data-position="${entry.position}"
               type="button" aria-label="${escapeHtml(t('keys.removeAria', { position: entry.position }))}">✕</button>
@@ -4886,13 +4888,22 @@ function fillSettings() {
 
 /* ── skills, connectors ──────────────────────────────────────── */
 
-const relativeWhen = (iso) => {
-  const then = new Date(iso);
-  const mins = Math.round((then - Date.now()) / 60000);
-  if (mins < 0) return 'overdue';
-  if (mins < 60) return `in ${mins} min`;
-  if (mins < 60 * 24) return `in ${Math.round(mins / 60)}h`;
-  return then.toLocaleString();
+/**
+ * How long ago a key was added, in the interface's language.
+ *
+ * It was a schedule's countdown ("in 5 min", "overdue"), left behind when the
+ * schedules moved, so a key added a minute ago said "overdue" — in English, on
+ * a Vietnamese screen (found recording the guide, 2026-10-20). A server clock a
+ * moment ahead of this one is "just now", not the future.
+ */
+const addedAgo = (iso) => {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return '';
+  const seconds = Math.round((Date.now() - then) / 1000);
+  if (seconds < 60) return t('time.justNow');
+  if (seconds < 3600) return t('time.minShort', { n: Math.round(seconds / 60) });
+  if (seconds < 86400) return t('time.hoursShort', { n: Math.round(seconds / 3600) });
+  return new Date(then).toLocaleDateString(currentLanguage(), { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
 async function loadSkills() {

@@ -1343,5 +1343,67 @@ section('a share link serves one file, sandboxed, and nothing once taken back');
   }
 }
 
+/**
+ * The getting-started guide says only what is true (owner, 2026-10-20: "minh
+ * bạch, chính xác, thực tế 100%"). The old one said free models were fixed by
+ * paying, listed three of five levels, promised work "on your computer" after
+ * pairing had left the interface, and said a suggestion ran when it is only put
+ * in the box. Each fact it states now is held to the code that makes it true.
+ */
+section('the getting-started guide says only what is true');
+{
+  const { vi } = await import('../public/js/locales/vi.js');
+  const { en } = await import('../public/js/locales/en.js');
+  const { PROVIDERS } = await import('../server/providers/catalog.js');
+  const { cloudBudgets } = await import('../server/sandbox.js');
+  const labels = Object.values(PROVIDERS).map((p) => p.label);
+  for (const [lang, dict] of [['vi', vi], ['en', en]]) {
+    const many = String(dict['onb.2.many'] || '');
+    check(`${lang}: the key step names every provider there is`, labels.every((label) => many.includes(label)), `${labels.filter((l) => !many.includes(l)).join(', ')} missing from: ${many}`);
+    const named = ['Mistral', 'Groq', 'DeepSeek', 'Cohere', 'xAI', 'Azure'].filter((other) => many.includes(other));
+    check(`${lang}:   and none there is not`, named.length === 0, named.join(', '));
+    const limits = String(dict['onb.3.limits'] || '');
+    check(`${lang}: the free limits are OpenRouter's own figures`, /\b20\b/.test(limits) && /\b50\b/.test(limits) && /1[.,]000/.test(limits), limits);
+    const { perAccount, total } = cloudBudgets({});
+    const cloud = String(dict['onb.4.limit'] || '');
+    check(`${lang}: the cloud computer's limits are the code's defaults`, cloud.includes(String(perAccount)) && cloud.includes(String(total)), `${perAccount}/${total} in: ${cloud}`);
+    const guide = Object.entries(dict).filter(([key]) => key.startsWith('onb.')).map(([, text]) => String(text));
+    const promises = guide.filter((text) => /máy tính của bạn|your computer|chạy luôn|runs? (straight|right) away/i.test(text));
+    check(`${lang}: nothing promises work on a paired computer, or that a suggestion runs by itself`, promises.length === 0, promises.join(' | '));
+    // create_file "does not write PDFs" (its own description): a PDF is printed from the viewer.
+    const documents = String(dict['onb.1.b'] || '');
+    check(`${lang}: the documents it writes are the ones create_file writes, and a PDF is printed`, /Word/.test(documents) && /Excel/.test(documents) && /PowerPoint/.test(documents) && (!/PDF/.test(documents) || /\bIn\b|Print/.test(documents)), documents);
+    const tries = [1, 2, 3, 4, 5, 6].map((n) => dict[`onb.6.try${n}`]).filter(Boolean);
+    check(`${lang}: six different things to try`, new Set(tries).size === 6, `${tries.length}`);
+  }
+
+  /**
+   * Every step has its clip and its still, in both languages, small enough to
+   * load on a phone (`npm run onboarding:record` makes them). A missing clip
+   * only hides the frame — the text says everything — so nothing else would
+   * notice one going missing.
+   */
+  const MAX_CLIP = 600 * 1024;
+  const MAX_ALL = 8 * 1024 * 1024;
+  let total = 0;
+  for (const lang of ['vi', 'en']) {
+    for (let step = 1; step <= 6; step += 1) {
+      const clip = new URL(`../public/onboarding/${lang}/step-${step}.webm`, import.meta.url);
+      const still = new URL(`../public/onboarding/${lang}/step-${step}.jpg`, import.meta.url);
+      const video = fs.existsSync(clip) ? fs.readFileSync(clip) : null;
+      const picture = fs.existsSync(still) ? fs.readFileSync(still) : null;
+      total += (video?.length || 0) + (picture?.length || 0);
+      // WebM starts with the EBML magic number; a JPEG with FF D8.
+      check(
+        `${lang} step ${step}: a WebM clip under 600 KB`,
+        !!video && video.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) && video.length <= MAX_CLIP,
+        video ? `${Math.round(video.length / 1024)} KB` : 'missing',
+      );
+      check(`${lang} step ${step}: and its still frame`, !!picture && picture[0] === 0xff && picture[1] === 0xd8, picture ? `${Math.round(picture.length / 1024)} KB` : 'missing');
+    }
+  }
+  check('all the clips together stay under 8 MB', total <= MAX_ALL, `${Math.round(total / 1024)} KB`);
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

@@ -864,6 +864,18 @@
           <span class="onb__count" id="onb-step"></span>
         </header>
 
+        <!-- The six steps by name; the current one lit, the ones behind ticked. -->
+        <ol class="onb__steps" id="onb-steps"></ol>
+
+        <!-- Each step's clip, recorded from the app itself (npm run onboarding:record).
+             An illustration only: the text below says everything the clip shows. -->
+        <figure class="onb__media" id="onb-media">
+          <video class="onb__video" id="onb-video" muted loop playsinline preload="metadata"></video>
+          <button class="onb__play" id="onb-play" type="button" aria-pressed="false"></button>
+          <!-- The conversations in the clips are sample turns, so the clip says so. -->
+          <figcaption class="onb__caption" data-i18n="onb.video.caption">Recorded from the app itself, with sample data.</figcaption>
+        </figure>
+
         <div class="onb__body" id="onb-body"></div>
 
         <footer class="onb__foot">

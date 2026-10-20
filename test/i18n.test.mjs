@@ -181,9 +181,9 @@ section('every step reads as a sentence');
 
 section('the onboarding steps are all present');
 {
-  // Five steps, and each one has a title. A step that renders an empty panel is
+  // Six steps, and each one has a title. A step that renders an empty panel is
   // the kind of thing only a real reader notices.
-  for (let step = 1; step <= 5; step += 1) {
+  for (let step = 1; step <= 6; step += 1) {
     check(`step ${step} has a title in both languages`, !!vi[`onb.${step}.title`] && !!en[`onb.${step}.title`]);
   }
   check('the step counter names both numbers', /\{n\}/.test(vi['onb.step']) && /\{total\}/.test(vi['onb.step']), vi['onb.step']);

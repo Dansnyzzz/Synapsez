@@ -1,11 +1,11 @@
 {
-  "total": 304,
+  "total": 297,
   "files": {
     "public/js/api.js": 4,
-    "public/js/app.js": 124,
+    "public/js/app.js": 123,
     "public/js/i18n.js": 1,
     "public/js/models.js": 14,
-    "public/js/onboarding.js": 7,
+    "public/js/onboarding.js": 1,
     "public/js/pages.js": 29,
     "public/js/project-page.js": 31,
     "public/js/render.js": 1,
