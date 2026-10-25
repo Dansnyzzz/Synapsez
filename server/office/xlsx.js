@@ -45,7 +45,7 @@ import {
   resolveTarget,
   rootRelsXml,
 } from './opc.js';
-import { pickTheme } from './theme.js';
+import { looksVietnamese, pickTheme } from './theme.js';
 
 /** How much of a large workbook the model is shown. Same budget as a PDF. */
 const MAX_TEXT_CHARS = 120_000;
@@ -379,8 +379,39 @@ const FORMATS = [
 ];
 const FORMAT = { general: 0, date: 1, integer: 2, decimal: 3, percent: 4, percent1: 5, dong: 6, dollar: 7 };
 
-/** A cell's value and the format it is shown in, read from whatever it was written as. */
-function cellFor(value) {
+/** 1.200.000 — two groups or more, which can only be thousands. */
+const DOTTED_MULTI = /^-?[1-9]\d{0,2}(?:\.\d{3}){2,}$/;
+/** 150.000 — thousands in Vietnamese, 150 in English; the column decides (see `sheetXml`). */
+const DOTTED_ONE = /^-?[1-9]\d{0,2}\.\d{3}$/;
+/**
+ * A dotted figure that is an address rather than an amount: four groups, none
+ * over 255, and none written with a leading zero — an address says "0", an
+ * amount says "000" ("4.160.000.000" is four billion, not an address).
+ */
+const addressLike = (t) => {
+  const groups = t.split('.');
+  return groups.length === 4 && groups.every((g) => Number(g) <= 255 && !/^0\d/.test(g));
+};
+
+/**
+ * A cell's value and the format it is shown in, read from whatever it was written as.
+ *
+ * `column` is what the cell's column says about it: `thousands` — "150.000" is
+ * 150,000 here, because the column also holds "1.200.000" or the sheet is in
+ * Vietnamese, where the dot groups thousands (a column of 150.000, 1.500 and
+ * 1.200.000 summed to 1,200,151.5 when each was read alone — code review,
+ * 2026-10-25); `plain` — a column of codes, ids, years or phone numbers, whose
+ * numbers are never shown with thousands ("700,000" was a postal code).
+ *
+ * @param {any} value
+ * @param {{ thousands?: boolean, plain?: boolean }} [column]
+ */
+function cellFor(value, column = {}) {
+  const cell = readCell(value, column);
+  return cell && column.plain && cell.format === FORMAT.integer ? { ...cell, format: FORMAT.general } : cell;
+}
+
+function readCell(value, { thousands = false } = {}) {
   if (value == null || value === '') return null;
   // A whole number of five digits or more is shown with its thousands; any
   // other number as it is — "3.14159" must not be shown as 3.14.
@@ -397,11 +428,12 @@ function cellFor(value) {
 
   const text = String(value);
   const t = text.trim();
+  if (thousands && DOTTED_ONE.test(t)) return { type: 'n', value: t.replace(/\./g, ''), format: FORMAT.integer };
   if (NUMERIC.test(t)) {
     const n = Number(t);
     return { type: 'n', value: t, format: Number.isInteger(n) && Math.abs(n) >= 10000 ? FORMAT.integer : FORMAT.general };
   }
-  if (DOTTED.test(t)) return { type: 'n', value: t.replace(/\./g, ''), format: FORMAT.integer };
+  if (DOTTED.test(t) && !addressLike(t)) return { type: 'n', value: t.replace(/\./g, ''), format: FORMAT.integer };
   if (COMMAED.test(t)) {
     const plain = t.replace(/,/g, '');
     return { type: 'n', value: plain, format: plain.includes('.') ? FORMAT.decimal : FORMAT.integer };
@@ -448,8 +480,11 @@ function columnWidths(rows, columns) {
   return widths;
 }
 
-/** A column that counts or names rather than measures — a year, an id — gets no data bar. */
-const NOT_A_MEASURE = /^(?:năm|year|mã|id|stt|số thứ tự|no\.?|#|tháng|month|quý|quarter|ngày|date)$/i;
+/**
+ * A column that counts or names rather than measures — a year, an id, a phone
+ * number — gets no data bar, and no thousands in its numbers. By its header.
+ */
+const NOT_A_MEASURE = /^(?:năm|year|mã|id|stt|số thứ tự|no\.?|#|tháng|month|quý|quarter|ngày|date|sđt|số điện thoại|điện thoại|phone|zip|postal|cmnd|cccd|số tài khoản|tài khoản|account)(?![\p{L}])/iu;
 
 /** The style of a body cell: its format, plain or on a band. */
 const styleFor = (format, band) => 2 + format * 2 + (band ? 1 : 0);
@@ -459,16 +494,25 @@ function sheetXml(sheet, sharedIndex, palette) {
   const columns = Math.max(...rows.map((row) => row.length), 1);
   const header = sheet.header !== false && rows.length > 1;
   const numericCells = Array.from({ length: columns }, () => 0);
+  // What each column says about its cells — see `cellFor`.
+  const vietnamese = looksVietnamese(rows.map((row) => row.join(' ')).join('\n'));
+  const columnOf = Array.from({ length: columns }, (_, c) => {
+    const values = rows.slice(header ? 1 : 0).map((row) => String(row[c] ?? '').trim());
+    return {
+      thousands: vietnamese || values.some((v) => DOTTED_MULTI.test(v) && !addressLike(v)),
+      plain: header && NOT_A_MEASURE.test(String(rows[0][c] ?? '').trim()),
+    };
+  });
 
   const body = rows
     .map((row, rowIndex) => {
       const cells = [];
       const band = header && rowIndex > 0 && rowIndex % 2 === 0;
       for (let column = 0; column < row.length; column += 1) {
-        const cell = cellFor(row[column]);
+        const isHead = header && rowIndex === 0;
+        const cell = cellFor(row[column], isHead ? {} : columnOf[column]);
         if (!cell) continue;
         const ref = `${columnName(column)}${rowIndex + 1}`;
-        const isHead = header && rowIndex === 0;
         if (!isHead && cell.type === 'n' && cell.format !== FORMAT.date) numericCells[column] += 1;
         const style = isHead ? 1 : styleFor(cell.format, band);
         const attrs = `r="${ref}" s="${style}"`;

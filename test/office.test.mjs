@@ -635,6 +635,14 @@ section('Word, Excel and PowerPoint come out designed');
   check('  and the drawing is not read as points: no footer, no slide number, no "01"', !back.text.includes(' / 7') && back.slides[1].bullets.every((b) => !/Chuyển đổi giao thông/.test(b.text)) && back.slides[3].bullets.length === 0, JSON.stringify(back.slides[1].bullets));
   check('  the table reads back as a table, the notes as notes', back.slides[4].tables[0]?.rows.length === 3 && back.slides[1].notes.includes('Nhấn mạnh'));
 
+  // What the model reads before making a deck says what the deck will be (code review, 2026-10-25).
+  {
+    const { BUILTIN_SKILLS } = await import('../server/skills/builtin.js');
+    const skill = (id) => BUILTIN_SKILLS.find((s) => s.id === id)?.instructions || '';
+    check('the deck skill describes the design the file gets, not "no themes, no transitions"', !/no themes|no transitions/i.test(skill('builtin:pptx')) && /KPI cards/.test(skill('builtin:pptx')) && /section/.test(skill('builtin:pptx')));
+    check('  and the Word skill names the page break the converter reads', /\\pagebreak/.test(skill('builtin:docx')) && !/`---` on its own line becomes a page break/.test(skill('builtin:docx')));
+  }
+
   const { slideKind } = await import('../server/office/slides.js');
   check('points that open with a date are a list, not cards with "15" in them', slideKind({ title: 'Lịch', bullets: ['15/03: Khởi động', '20/04: Lắp đặt', '2026-05-01 Bàn giao'] }, 2, 5) === 'bullets');
   check('  while "**120+** khách hàng" and "3x nhanh hơn" are figures', slideKind({ title: 'Kết quả', bullets: ['**120+** khách hàng', '3x nhanh hơn'] }, 2, 5) === 'stats');
@@ -650,6 +658,40 @@ section('Word, Excel and PowerPoint come out designed');
     const frame = /<p:graphicFrame>[\s\S]*?<a:off x="\d+" y="(\d+)"\/><a:ext cx="\d+" cy="(\d+)"/.exec(first);
     check('a table under an intro starts below it, not under its last line', !!box && !!frame && Number(frame[1]) >= Number(box[1]) + Number(box[2]), `${box?.slice(1)} → ${frame?.slice(1)}`);
     check('  and stops above the footer, the rest continued', !!frame && Number(frame[1]) + Number(frame[2]) <= 6858000 - 731520 && readPptx(intro).slides.reduce((n, s) => n + (s.tables[0]?.rows.length || 0) - 1, 0) === 12, readPptx(intro).slides.map((s) => s.tables[0]?.rows.length).join(','));
+  }
+
+  // Code review, 2026-10-25: three ways a slide still overflowed.
+  {
+    // Four long points: too much for one column, so two — not one column at the smallest size, running off.
+    const sentence = 'Doanh nghiệp tiết kiệm chi phí vận hành mỗi năm khi chuyển sang xe điện, với thời gian hoàn vốn khoảng mười tám tháng. ';
+    // 400 characters: five lines a point at the smallest one-column size, nine in a column of two.
+    const fourFile = writePptx({ title: 't', slides: [{ title: 'Lý do', bullets: Array.from({ length: 4 }, () => sentence.repeat(4).slice(0, 400)) }] });
+    const four = readPptx(fourFile);
+    const fourXml = openZip(fourFile).text('ppt/slides/slide1.xml');
+    check('four long points too tall for one column are set in two, on the one slide', four.slides.length === 1 && /name="Content 2"/.test(fourXml), `${four.slides.length} slide(s)`);
+
+    // A table whose cells wrap: each row as tall as its words, and the table stops above the footer.
+    const long = 'Lắp đặt trạm sạc tại ba kho chính, đào tạo tài xế, theo dõi mức tiêu thụ điện hằng tuần và báo cáo về phòng vận hành.';
+    const rows = [['Giai đoạn', 'Việc cần làm'], ...Array.from({ length: 8 }, (_, i) => [`Bước ${i + 1}`, `${long} ${long}`])];
+    const wrapped = openZip(writePptx({ title: 't', slides: [{ title: 'Lộ trình', table: { header: true, rows } }] }));
+    const slideNames = wrapped.names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n));
+    const frames = slideNames.map((n) => {
+      const xml = wrapped.text(n);
+      const frame = /<p:graphicFrame>[\s\S]*?<a:off x="\d+" y="(\d+)"\/><a:ext cx="\d+" cy="(\d+)"/.exec(xml);
+      const heights = [...xml.matchAll(/<a:tr h="(\d+)">/g)].map((m) => Number(m[1]));
+      const grid = [...xml.matchAll(/<a:gridCol w="(\d+)"\/>/g)].map((m) => m[1]).join(',');
+      return { top: Number(frame?.[1]), tall: Number(frame?.[2]), heights, grid };
+    });
+    check('a table whose cells wrap gets rows as tall as their words', frames[0].heights.length > 1 && frames[0].heights[1] > frames[0].heights[0], frames[0].heights.join(','));
+    check('  so it continues on more slides, each stopping above the footer', frames.length >= 2 && frames.every((f) => f.top + f.tall <= 6858000 - 731520 && f.tall === f.heights.reduce((a, b) => a + b, 0)), frames.map((f) => `${f.top}+${f.tall}`).join(' '));
+    check('  with every row kept, and the same columns on every page', frames.reduce((n, f) => n + f.heights.length - 1, 0) === 8 && new Set(frames.map((f) => f.grid)).size === 1, frames.map((f) => f.grid).join(' | '));
+
+    // Words written under a table come after it, not above it.
+    const after = readPptx(office.createDocument({ format: 'pptx', name: 'a', content: '## Kết quả\n\n| Chỉ số | Giá trị |\n| --- | --- |\n| Doanh thu | 120 |\n\nGhi chú: số liệu tạm tính.' }).buffer);
+    check('a line written under a table follows it on a slide of its own, under the same title', after.slides.length === 2 && after.slides[0].tables.length === 1 && !after.slides[0].bullets.length && after.slides[1].title === 'Kết quả' && /tạm tính/.test(after.slides[1].bullets[0]?.text || ''), JSON.stringify(after.slides.map((s) => [s.title, s.bullets.map((b) => b.text), s.tables.length])));
+    // Seen in PowerPoint: a one-line note there was set as a pull-quote, with a large quotation mark.
+    const afterXml = openZip(office.createDocument({ format: 'pptx', name: 'a', content: '## Kết quả\n\n| Chỉ số | Giá trị |\n| --- | --- |\n| Doanh thu | 120 |\n\nGhi chú: số liệu tạm tính.' }).buffer).text('ppt/slides/slide2.xml');
+    check('  as a note, not a pull-quote', !/name="Decoration Quote"/.test(afterXml) && /<p:ph idx="1"\/>/.test(afterXml));
   }
 
   // Too much for one slide is continued, never shrunk to nothing or dropped.
@@ -702,6 +744,19 @@ section('Word, Excel and PowerPoint come out designed');
   check('"1.560.000.000" is the number it says, not text', cells[1][1].t === 'n' && cells[1][1].v === '1560000000', JSON.stringify(cells[1][1]));
   check('"64,4%" is 0.644, "$31,200.50" is 31200.5, "2026-03-15" a date', cells[2][2].v === '0.644' && cells[2][3].v === '31200.5' && cells[1][4].t === 'd', JSON.stringify([cells[2][2], cells[2][3], cells[1][4]]));
   check('  while a code with a leading zero stays text', cells[1][5].t === 's' && cells[1][5].v === '0123');
+  // A column decides what "150.000" is (code review, 2026-10-25): read alone it was 150, and a
+  // column of 150.000, 1.500 and 1.200.000 summed to 1,200,151.5.
+  {
+    const mixed = readXlsx(writeXlsx({ sheets: [{ name: 'Price', rows: [['Item', 'Price', 'Server', 'Postal code'], ['A', '150.000', '192.168.100.200', 700000], ['B', '1.500', '10.0.0.1', 100000], ['C', '1.200.000', '172.16.0.10', 550000]] }] })).sheets[0].rows;
+    check('a column that also holds 1.200.000 reads 150.000 and 1.500 as thousands', mixed[1][1].v === '150000' && mixed[2][1].v === '1500' && mixed[3][1].v === '1200000', JSON.stringify(mixed.map((r) => r[1])));
+    check('  an address like 192.168.100.200 stays text', mixed[1][2].t === 's' && mixed[1][2].v === '192.168.100.200', JSON.stringify(mixed[1][2]));
+    const billions = readXlsx(writeXlsx({ sheets: [{ name: 'B', rows: [['Năm', 'Chi phí'], ['2027', '4.160.000.000'], ['2028', '5.200.000.000']] }] })).sheets[0].rows;
+    check('  while 4.160.000.000 — four groups none over 255 — is four billion, not an address', billions[1][1].v === '4160000000' && billions[2][1].v === '5200000000', JSON.stringify(billions.map((r) => r[1])));
+    const ws2 = openZip(writeXlsx({ sheets: [{ name: 'Price', rows: [['Item', 'Postal code'], ['A', 700000], ['B', 100000], ['C', 550000]] }] })).text('xl/worksheets/sheet1.xml');
+    check('  and a column of codes is never shown with thousands', /<c r="B2" s="2">/.test(ws2) && !/<conditionalFormatting/.test(ws2), ws2.match(/<c r="B2" s="\d+"/)?.[0]);
+    const english = readXlsx(writeXlsx({ sheets: [{ name: 'Weights', rows: [['Item', 'Kg'], ['A', '1.500'], ['B', '2.250']] }] })).sheets[0].rows;
+    check('  while an English column of 1.500 alone keeps reading it as one and a half', english[1][1].v === '1.5', JSON.stringify(english[1][1]));
+  }
   // Shown as written: a format with two decimals showed "3.14159" as 3.14 (caught in Excel, 2026-10-25).
   const plainDecimals = openZip(writeXlsx({ sheets: [{ name: 'p', rows: [['k', 'v'], ['pi', 3.14159], ['e', '2.71828']] }] })).text('xl/worksheets/sheet1.xml');
   check('  and a plain decimal keeps the General format, so every digit shows', /<c r="B2" s="2">/.test(plainDecimals) && /<c r="B3" s="3">/.test(plainDecimals), plainDecimals.match(/<c r="B\d" s="\d+"/g)?.join(' '));

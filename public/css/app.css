@@ -3001,8 +3001,9 @@ details.block.steps:not([data-family='work']) > .steps__list {
  * on the right the pictures it looked at. Open, its rows in a box with a
  * hairline between each: the verb grey, the file bright, a thumbnail at the
  * end. No border round the card and no tick on it: the words say what was
- * done, a failure says so in them, a spinner says it is still going. Scoped to
- * this family; a browsing session keeps its card. */
+ * done, a failure says so in them, a spinner says it is still going. Since
+ * 2026-10-25 every card is a line with no border (see "Tool cards"); what is
+ * scoped here is this family's: no mark at all on the line, and its rows. */
 details.block.steps[data-family='work'] > summary > .mark:not(.mark--pending) { display: none; }
 /* The chevron follows the words; the pictures take the far end. */
 details.block.steps > summary::after { order: 5; margin-left: -2px; }
@@ -9736,8 +9737,9 @@ details.block.recall > summary::after { content: none; }
   border-radius: 12px;
   overflow: hidden auto;
 }
-/* About four and a half rows, so it is plain there are more to scroll to. */
-.web__list { max-height: 212px; }
+/* Four and a half 40px rows (with the box's padding and edge), so it is plain
+   there are more to scroll to. */
+.web__list { max-height: 190px; }
 .recall__list { max-height: 280px; }
 .recall__row {
   display: flex;

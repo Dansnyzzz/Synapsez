@@ -378,6 +378,42 @@ section('places: when Overpass does not answer, Nominatim does');
     const before = asked.filter((u) => u.includes('overpass')).length;
     await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
     check('a query Overpass refused does not rest it for every other search', asked.filter((u) => u.includes('overpass')).length > before, `${before} → ${asked.filter((u) => u.includes('overpass')).length}`);
+
+    // Only slow, it rests a shorter time than a server that said it was overloaded (code review, 2026-10-25).
+    const overpassAsked = () => asked.filter((u) => u.includes('overpass')).length;
+    const hangs = (url, options) =>
+      new Promise((resolve, reject) => {
+        asked.push(String(url));
+        // A timer of its own: the timeout's timer does not keep the process alive.
+        const t = setTimeout(() => resolve(new Response('{"elements":[]}', { status: 200 })), 5000);
+        options?.signal?.addEventListener('abort', () => {
+          clearTimeout(t);
+          reject(options.signal.reason);
+        });
+      });
+    globalThis.fetch = async (url, options) => (String(url).includes('overpass') ? hangs(url, options) : realStub(url, options));
+    lib.__places.reset({ hedge: 50, each: 150, rest: 60_000, slowRest: 300 });
+    await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const slowBefore = overpassAsked();
+    await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
+    check('an Overpass that was only slow is asked again after its shorter rest', overpassAsked() > slowBefore, `${slowBefore} → ${overpassAsked()}`);
+    globalThis.fetch = async (url, options) => (String(url).includes('overpass') ? (asked.push(String(url)), new Response('busy', { status: 429 })) : realStub(url, options));
+    lib.__places.reset({ hedge: 50, each: 150, rest: 60_000, slowRest: 300 });
+    await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const busyBefore = overpassAsked();
+    // Resting, and Nominatim down too: the message says "did not answer" once, with the reason in it.
+    globalThis.fetch = async (url, options) => (String(url).includes('overpass') ? (asked.push(String(url)), new Response('busy', { status: 429 })) : new Response('down', { status: 503 }));
+    let both = '';
+    try {
+      const r = await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
+      both = String(r?.content || '');
+    } catch (err) {
+      both = String(err?.message || err);
+    }
+    check('  while one that said it was overloaded (429) is still resting', overpassAsked() === busyBefore, `${busyBefore} → ${overpassAsked()}`);
+    check('  and resting, with the address search down too, the message is not nested', /being rested/.test(both) && (both.match(/did not answer/g) || []).length === 1, both);
     globalThis.fetch = realStub;
   } finally {
     globalThis.fetch = real;

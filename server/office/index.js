@@ -331,6 +331,12 @@ function blocksToSlides(blocks, title) {
     return current;
   };
 
+  // Words written under a table come after it: a slide sets its points above
+  // its table, so they continue on a slide of their own, under the same title.
+  const afterTable = () => {
+    if (current.table) open(current.title).continued = true;
+  };
+
   for (const block of blocks) {
     if (block.type === 'heading') {
       open(runsToText(block.runs));
@@ -342,6 +348,7 @@ function blocksToSlides(blocks, title) {
     // to set, and whether it was a point or a paragraph, which a slide sets with
     // a bullet or without one.
     if (block.type === 'list') {
+      afterTable();
       for (const item of block.items) current.bullets.push({ level: item.level, text: runsToText(item.runs), runs: item.runs });
       continue;
     }
@@ -364,7 +371,9 @@ function blocksToSlides(blocks, title) {
     }
 
     const text = blockToPlainText(block);
-    if (text) current.bullets.push({ level: 0, text, runs: block.runs?.length ? block.runs : [{ text }], plain: true });
+    if (!text) continue;
+    afterTable();
+    current.bullets.push({ level: 0, text, runs: block.runs?.length ? block.runs : [{ text }], plain: true });
   }
 
   return slides.length ? slides : [{ title: title || 'Untitled', bullets: [] }];

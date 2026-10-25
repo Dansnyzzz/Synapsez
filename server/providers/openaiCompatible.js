@@ -458,7 +458,7 @@ export async function* streamOpenAICompatible({
     }
   }
 
-  const toolCalls = [...pending.values()].map((slot) => {
+  const toolCalls = [...pending.values()].map((slot, i) => {
     let input = {};
     try {
       input = slot.args ? JSON.parse(slot.args) : {};
@@ -482,7 +482,9 @@ export async function* streamOpenAICompatible({
        */
       input = { __malformed: String(slot.args ?? '') };
     }
-    return { id: slot.id || `call_${slot.name}`, name: slot.name, input };
+    // Unique, as for calls parsed from text: `call_<name>` twice in one step gave
+    // two parallel calls one id, and the second one's row and result were lost.
+    return { id: slot.id || `call_${randomUUID().slice(0, 8)}_${i}_${slot.name}`, name: slot.name, input };
   });
 
   // Withheld text becomes calls when it parses into ones this request offered

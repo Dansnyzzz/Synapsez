@@ -755,8 +755,9 @@ async function updateFileTool({ file_id: fileId, content, name, append = false, 
   // The format belongs to the file, not to this call: renaming is allowed,
   // and "update it" must never quietly turn a .docx into a .md.
   const format = extensionOf(existing.name);
-  // The palette follows the topic again unless one is named — the same one it
-  // was made with, unless the model chose another at the start.
+  // The palette is picked from the topic again unless one is named here. It is
+  // not stored with the file, so a palette named at creation is kept only if
+  // it is named again (update_file's `theme` says so to the model).
   const built = createDocument({ format, name: name || existing.name, content: whole, theme: theme || null });
 
   const saved = await store.replaceAttachment(userId, fileId, {

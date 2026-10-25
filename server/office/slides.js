@@ -280,16 +280,37 @@ export function slideKind(slide, index, count) {
   if (title && !points.length && !table) return index === 0 ? 'cover' : 'section';
   if (table) return 'table';
   if (figuresOf(points)) return 'stats';
-  if (points.length === 1 && points[0].plain && points[0].text.length <= 240) return 'statement';
+  // A line carried on from a table ("Ghi chú: …") is a note, not a pull-quote.
+  if (points.length === 1 && points[0].plain && points[0].text.length <= 240 && !slide.continued) return 'statement';
   return 'bullets';
 }
 
 /* ── the slides ──────────────────────────────────────────────────────── */
 
-/** A table's type size and row height, by how many columns it has. */
-function tableMetrics(columns) {
+const cellText = (cell) => (typeof cell === 'string' ? cell : String(cell?.text ?? cell?.runs?.map((r) => r.text).join('') ?? ''));
+
+/**
+ * How a table sits on a slide: its type size by how many columns it has, the
+ * columns sized to what they hold (each at least a fair share's half) unless a
+ * `grid` is given, and each row as tall as its longest cell wraps to — a row
+ * of one line each was drawn short, and a wrapped table ran over the footer.
+ */
+function tableLayout(rows, grid = null) {
+  const columns = Math.max(...rows.map((r) => r.length), 1);
   const size = columns <= 3 ? 1600 : columns <= 5 ? 1400 : columns <= 7 ? 1200 : 1050;
-  return { size, rowH: Math.round((size / 100) * PT * 2.3) };
+  const width = W - M * 2;
+  if (grid?.length !== columns) {
+    const longest = Array.from({ length: columns }, (_, c) => Math.max(4, ...rows.map((r) => cellText(r[c]).length)));
+    const sum = longest.reduce((a, b) => a + b, 0);
+    const share = longest.map((l) => Math.max(width / columns / 2, (width * l) / sum));
+    const scale = width / share.reduce((a, b) => a + b, 0);
+    grid = share.map((s) => Math.round(s * scale));
+  }
+  const oneLine = (size / 100) * PT * 2.3;
+  const more = (size / 100) * PT * 1.2;
+  // Inside the cell's margins (marL + marR).
+  const heights = rows.map((r) => Math.round(oneLine + (Math.max(1, ...grid.map((g, c) => linesFor(cellText(r[c]), size, g - 182880))) - 1) * more));
+  return { columns, size, grid, heights };
 }
 
 /** Room an intro above a table takes — measured, with the gap under it. */
@@ -313,21 +334,33 @@ export function paginate(slides) {
     if (table) {
       const header = table.header !== false ? table.rows.slice(0, 1) : [];
       const body = table.header !== false ? table.rows.slice(1) : table.rows;
-      // As many rows as the room left holds — less on the page under an intro.
-      const { rowH } = tableMetrics(Math.max(...table.rows.map((r) => r.length), 1));
-      const room = BODY_BOTTOM - BODY_TOP;
-      const fits = (space) => Math.max(1, Math.floor(space / rowH) - header.length);
-      const first = fits(room - introHeight(points));
-      const rest = fits(room);
-      const pageRows = [body.slice(0, first)];
-      for (let at = first; at < body.length; at += rest) pageRows.push(body.slice(at, at + rest));
+      // As many rows as the room left holds, each as tall as it wraps to — less
+      // on the page under an intro. Every page keeps the same columns.
+      const { grid, heights } = tableLayout(table.rows, table.grid);
+      const headH = header.length ? heights[0] : 0;
+      const pageRows = [];
+      let page = [];
+      let used = headH;
+      let space = BODY_BOTTOM - BODY_TOP - introHeight(points);
+      body.forEach((row, i) => {
+        const h = heights[header.length + i];
+        if (page.length && used + h > space) {
+          pageRows.push(page);
+          page = [];
+          used = headH;
+          space = BODY_BOTTOM - BODY_TOP;
+        }
+        page.push(row);
+        used += h;
+      });
+      if (page.length || !pageRows.length) pageRows.push(page);
       const pages = pageRows.length;
       pageRows.forEach((rows, i) => {
         out.push({
           ...slide,
           title: pages > 1 ? `${slide.title || ''} (${i + 1}/${pages})`.trim() : slide.title,
           bullets: i === 0 ? slide.bullets : [],
-          table: { header: table.header !== false, rows: [...header, ...rows] },
+          table: { header: table.header !== false, rows: [...header, ...rows], grid },
           notes: i === 0 ? slide.notes : '',
         });
       });
@@ -457,7 +490,8 @@ function bulletsSlide(slide, ctx, ids) {
   const room = BODY_BOTTOM - BODY_TOP;
   const one = fittingSize(points, width, room, SIZES);
   const timed = [];
-  if (one != null || points.length < 7) {
+  // Too much for one column goes into two — which takes two points to split.
+  if (one != null || points.filter((p) => p.level === 0).length < 2) {
     const size = one ?? 1600;
     const id = ids();
     shapes.push(placeholder({ id, name: 'Content 1', ph: 'idx="1"', x: M, y: BODY_TOP, w: width, h: room, text: textBody(pointsXml(points, size, palette)) }));
@@ -536,8 +570,8 @@ const isNumberCell = (text) => /^\s*[+\-−]?(?:[$€£¥₫]\s?)?\d[\d.,]*\s?(?
 function tableSlide(slide, ctx, ids) {
   const { palette } = ctx;
   const shapes = [...chrome(ctx, ids, { number: ctx.number }), ...heading(ctx, ids, slide.title || '')];
-  const rows = slide.table.rows.map((row) => row.map((cell) => (typeof cell === 'string' ? cell : String(cell?.text ?? cell?.runs?.map((r) => r.text).join('') ?? ''))));
-  const columns = Math.max(...rows.map((r) => r.length), 1);
+  const rows = slide.table.rows.map((row) => row.map(cellText));
+  const { columns, size, grid, heights } = tableLayout(rows, slide.table.grid);
   const header = slide.table.header !== false;
   const points = normalisePoints(slide.bullets);
   let top = BODY_TOP;
@@ -547,14 +581,7 @@ function tableSlide(slide, ctx, ids) {
     shapes.push(shape({ id: ids(), name: 'Content 1', x: M, y: BODY_TOP, w: W - M * 2, h: tall - 137160, box: true, text: textBody(pointsXml(points, 1600, palette)) }));
     top += tall;
   }
-  const { size, rowH } = tableMetrics(columns);
   const width = W - M * 2;
-  // Columns sized to what they hold, each at least a fair share's half.
-  const longest = Array.from({ length: columns }, (_, c) => Math.max(4, ...rows.map((r) => String(r[c] ?? '').length)));
-  const sum = longest.reduce((a, b) => a + b, 0);
-  const share = longest.map((l) => Math.max(width / columns / 2, (width * l) / sum));
-  const scale = width / share.reduce((a, b) => a + b, 0);
-  const grid = share.map((s) => Math.round(s * scale));
   const numeric = Array.from({ length: columns }, (_, c) => rows.slice(header ? 1 : 0).every((r) => !String(r[c] ?? '').trim() || isNumberCell(r[c])));
   const line = (tag, hex) => `<a:${tag} w="9525" cap="flat" cmpd="sng" algn="ctr">${solid(hex)}<a:prstDash val="solid"/></a:${tag}>`;
   const none = (tag) => `<a:${tag} w="0"><a:noFill/></a:${tag}>`;
@@ -574,13 +601,13 @@ function tableSlide(slide, ctx, ids) {
           `<a:tcPr marL="91440" marR="91440" marT="45720" marB="45720" anchor="ctr">${none('lnL')}${none('lnR')}${none('lnT')}${line('lnB', isHead ? palette.primary : palette.line)}${solid(fill)}</a:tcPr></a:tc>`
         );
       }).join('');
-      return `<a:tr h="${rowH}">${cells}</a:tr>`;
+      return `<a:tr h="${heights[ri]}">${cells}</a:tr>`;
     })
     .join('');
   const id = ids();
   shapes.push(
     `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${id}" name="Table 1"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>` +
-      `<p:xfrm><a:off x="${M}" y="${top}"/><a:ext cx="${width}" cy="${rowH * rows.length}"/></p:xfrm>` +
+      `<p:xfrm><a:off x="${M}" y="${top}"/><a:ext cx="${width}" cy="${heights.reduce((a, b) => a + b, 0)}"/></p:xfrm>` +
       '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">' +
       `<a:tbl><a:tblPr firstRow="${header ? 1 : 0}" bandRow="1"/><a:tblGrid>${grid.map((g) => `<a:gridCol w="${g}"/>`).join('')}</a:tblGrid>${trs}</a:tbl>` +
       '</a:graphicData></a:graphic></p:graphicFrame>',

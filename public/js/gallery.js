@@ -202,16 +202,32 @@ function build() {
   parts.copy.addEventListener('click', copyPicture);
   parts.save.addEventListener('click', savePicture);
 
-  // The dark around the picture closes it; the picture itself does not, and
-  // neither does the end of a drag that started on it.
+  /*
+   * The dark around the picture closes it: a press that began on the dark and
+   * ended there. Judged by where the press *began* — the stage captures the
+   * pointer, so a click on the picture itself arrives at the stage, and judging
+   * by where it landed closed the lightbox on every click on the picture (code
+   * review, 2026-10-25). Not the end of a drag or a pinch either.
+   */
   let dragged = false;
+  /** Where the latest press began, for the click after it — which clears it. */
+  let pressedOn = null;
+  /** The same, kept past its click: a double click arrives after two of them. */
+  let lastPress = null;
+  const onDark = (node) => node === root || !!node?.classList?.contains('gallery__stage');
+  root.addEventListener('pointerdown', (event) => {
+    pressedOn = event.target;
+    lastPress = event.target;
+  }, true);
   root.addEventListener('click', (event) => {
-    const target = /** @type {HTMLElement} */ (event.target);
     if (dragged) {
       dragged = false;
       return;
     }
-    if (target === root || target.classList.contains('gallery__stage')) closeGallery();
+    // A click with no press before it (the keyboard, a script) is judged by where it is.
+    const began = pressedOn ?? event.target;
+    pressedOn = null;
+    if (onDark(began) && onDark(event.target)) closeGallery();
   });
   root.addEventListener('keydown', onKey);
 
@@ -230,13 +246,17 @@ function build() {
     },
     { passive: false },
   );
-  parts.img.addEventListener('dblclick', (event) => {
-    if (!box) return;
+  // On the stage, which the captured pointer's double click arrives at; it
+  // counts when the press was on the picture.
+  stage.addEventListener('dblclick', (event) => {
+    if (!box || !(lastPress === parts.img || parts.img.contains(lastPress))) return;
     zoomTo(box.zoom.scale > 1 ? 1 : 2.5, event.clientX, event.clientY);
   });
   /** @type {Map<number, { x: number, y: number }>} */
   const pointers = new Map();
   let start = null;
+  /** Two fingers were down during this gesture: it is a pinch, never a swipe. */
+  let pinched = false;
   stage.addEventListener('pointerdown', (event) => {
     if (!box || (event.target instanceof Element && event.target.closest('button, a'))) return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -246,6 +266,7 @@ function build() {
       /* an untrusted event in the suite has nothing to capture */
     }
     const [a, b] = [...pointers.values()];
+    if (b) pinched = true;
     start = {
       x: event.clientX,
       y: event.clientY,
@@ -279,8 +300,17 @@ function build() {
     if (!box || !pointers.has(event.pointerId)) return;
     pointers.delete(event.pointerId);
     const was = start;
-    start = pointers.size ? { ...start, spread: 0, x: event.clientX, y: event.clientY, tx: box.zoom.x, ty: box.zoom.y } : null;
-    if (!was || pointers.size || was.spread || box.zoom.scale > 1 || event.type === 'pointercancel') return;
+    if (pointers.size) {
+      // One finger of a pinch lifted: the one still down carries on from where
+      // *it* is — anchoring on the lifted one jumped the picture (code review).
+      const [still] = [...pointers.values()];
+      start = { x: still.x, y: still.y, tx: box.zoom.x, ty: box.zoom.y, scale: box.zoom.scale, spread: 0 };
+      return;
+    }
+    start = null;
+    const wasPinch = pinched;
+    pinched = false;
+    if (!was || wasPinch || was.spread || box.zoom.scale > 1 || event.type === 'pointercancel') return;
     const dx = event.clientX - was.x;
     if (Math.abs(dx) > 50) {
       dragged = true;
@@ -334,6 +364,11 @@ function applyZoom() {
   box.zoomSaid.textContent = `${Math.round(scale * 100)}%`;
   box.zoomOut.disabled = scale <= MIN_ZOOM;
   box.zoomIn.disabled = scale >= MAX_ZOOM;
+  // A button that has just switched itself off cannot keep the focus, which
+  // fell to the page — and the keys, heard on the dialog, stopped working
+  // (code review, 2026-10-25). The zoom's own button takes it.
+  const focused = /** @type {any} */ (document.activeElement);
+  if ((focused === box.zoomOut || focused === box.zoomIn) && focused.disabled) box.zoomSaid.focus();
 }
 
 /** The picture on the clipboard, as a PNG — the one kind every app pastes. */

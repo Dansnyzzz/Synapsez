@@ -1079,12 +1079,21 @@ function fitDrawing(svg) {
     } catch {
       /* not rendered: keep the view it came with */
     }
+    /*
+     * Pixels per unit of the drawing, as it was shown before this — so a
+     * drawing in small units (`viewBox="0 0 100 50"`, or a `width="700"` over
+     * it) keeps the size it was drawn at rather than shrinking to a hundred
+     * pixels (code review, 2026-10-25).
+     */
+    const shownWidth = svg.getBoundingClientRect().width;
+    const viewWidth = svg.viewBox?.baseVal?.width;
+    const unit = viewWidth > 0 && shownWidth > 0 ? shownWidth / viewWidth : 1;
     let natural = 0;
     if (box && box.width > 1 && box.height > 1) {
-      const pad = Math.max(8, Math.max(box.width, box.height) * 0.03);
+      const pad = Math.max(8 / unit, Math.max(box.width, box.height) * 0.03);
       const parts = [box.x - pad, box.y - pad, box.width + pad * 2, box.height + pad * 2];
       svg.setAttribute('viewBox', parts.map((n) => Math.round(n * 100) / 100).join(' '));
-      natural = parts[2];
+      natural = parts[2] * unit;
     } else if (!svg.getAttribute('viewBox')) {
       // Nothing to measure, and no view: the size it was given becomes one, so it can scale.
       const w = parseFloat(svg.getAttribute('width') || '');
@@ -1092,7 +1101,7 @@ function fitDrawing(svg) {
       if (w > 0 && h > 0) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
       natural = w || 0;
     } else {
-      natural = svg.viewBox?.baseVal?.width || 0;
+      natural = (svg.viewBox?.baseVal?.width || 0) * unit;
     }
     svg.removeAttribute('width');
     svg.removeAttribute('height');
@@ -1133,8 +1142,11 @@ async function drawDiagram(svg, width = 2400) {
   const rect = svg.getBoundingClientRect();
   const across = box?.width || rect.width || 720;
   const down = box?.height || rect.height || 360;
-  const w = Math.round(width);
-  const h = Math.max(1, Math.round((width * down) / across));
+  // No larger than a phone's browser will draw: Safari refuses a canvas past
+  // about 16.7 million pixels, and a tall diagram at 2400 across went over it.
+  const fit = Math.min(1, Math.sqrt(16_000_000 / (width * ((width * down) / across))));
+  const w = Math.max(1, Math.round(width * fit));
+  const h = Math.max(1, Math.round((width * fit * down) / across));
   clone.setAttribute('width', String(w));
   clone.setAttribute('height', String(h));
   if (look) {
@@ -1188,18 +1200,19 @@ function diagramPicture(widget, svg) {
  * **In an iframe, and that is not optional.** This is markup a model wrote, and
  * putting it in the page directly would give it the same origin as the session —
  * one `<img onerror>` away from reading the conversation or the cookie. Sandboxed
- * with `allow-scripts` withheld and no `allow-same-origin`, it can draw and
- * nothing else, which is the whole job. The same reasoning as the artifact frame
- * in viewer.js, one step stricter because a widget never needs to run anything.
+ * with `allow-scripts` withheld, it can draw and nothing else, which is the
+ * whole job. The same reasoning as the artifact frame in viewer.js, one step
+ * stricter because a widget never needs to run anything. (`allow-same-origin`
+ * is granted, for this page's own code to measure and listen — see below; with
+ * no scripting inside, it gives the markup nothing.)
  *
  * `srcdoc` rather than a URL, because the markup lives in the tool result rather
  * than in a file with an id to fetch.
  *
  * The height comes from the content: an iframe defaults to 150px and would crop
- * most diagrams, and there is no way to measure inside a frame we deliberately
- * cannot script into. So the frame reports its own height once, through the one
- * channel a sandboxed document still has — and if it never does, the CSS floor
- * keeps the picture visible rather than clipped to nothing.
+ * most diagrams, so this page measures the drawing once it has loaded (`fit`,
+ * through `contentDocument`) and sizes the frame to it — and if it cannot, the
+ * CSS floor keeps the picture visible rather than clipped to nothing.
  */
 export function widgetFrame(widget) {
   const host = document.createElement('figure');
@@ -1724,7 +1737,7 @@ function placeFile(body, file) {
   open.type = 'button';
   // Full screen — to zoom, copy or download — rather than the side panel, which
   // is still the card's Open button (owner, 2026-10-25). Pages through every
-  // picture this reply made.
+  // picture this step of the reply made.
   open.dataset.pic = file.id;
   open.title = t('gallery.open', { name: file.name || '' });
   MADE.set(figure, { id: file.id, src, name: file.name || fileNameFrom('image', 'png'), label: file.name || '' });

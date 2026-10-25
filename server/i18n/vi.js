@@ -755,6 +755,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi ({0}), nên chưa kiểm tra được \"{1}\". Hãy thử lại sau giây lát.",
   "OpenStreetMap's place search did not answer (it failed a moment ago and is being rested). Try again in a moment.":
     'Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi (vừa lỗi cách đây ít phút nên đang được cho nghỉ). Hãy thử lại sau giây lát.',
+  'it failed a moment ago and is being rested':
+    'vừa lỗi cách đây ít phút nên đang được cho nghỉ',
   "OpenStreetMap's place search did not answer{0}, and neither did its address search ({1}). Try again in a moment, or web_search for the places.":
     'Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi{0}, dịch vụ tìm địa chỉ của nó cũng vậy ({1}). Hãy thử lại sau giây lát, hoặc dùng web_search để tìm các địa điểm.',
   "Say what to look for — \"quán ăn\", \"cà phê\", \"phở\", \"ATM\", \"bệnh viện\"…":

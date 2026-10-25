@@ -660,9 +660,11 @@ const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.k
  * 2026-10-25 every public server timed out at 25 s (owner's screenshot 7) — so
  * a query that has not been answered in `hedge` is put to the next server as
  * well, the first answer wins, each server gets `each` at most, and after a
- * failure Overpass is rested for `rest` rather than waited on by every search.
+ * failure Overpass is rested for `rest` rather than waited on by every search —
+ * for `slowRest` when it was only slow, which passes sooner than a server that
+ * said it was overloaded or could not be reached.
  */
-const PLACES_TIMING = { hedge: 2500, each: 10_000, rest: 3 * 60_000 };
+const PLACES_TIMING = { hedge: 2500, each: 10_000, rest: 3 * 60_000, slowRest: 60_000 };
 let timing = { ...PLACES_TIMING };
 let overpassRestsUntil = 0;
 
@@ -677,13 +679,18 @@ export const __places = {
 /** One Overpass query, on whichever public server answers first. */
 async function overpass(query, signal) {
   if (Date.now() < overpassRestsUntil) {
-    throw new Error("OpenStreetMap's place search did not answer (it failed a moment ago and is being rested). Try again in a moment.");
+    // The reason is the cause, so a message built around this one does not say "did not answer" twice.
+    throw new Error("OpenStreetMap's place search did not answer (it failed a moment ago and is being rested). Try again in a moment.", {
+      cause: new Error('it failed a moment ago and is being rested'),
+    });
   }
   /** @type {AbortController[]} */
   const asking = [];
   let last = null;
   /** Whether a server failed the way an overloaded one does, rather than refusing this query. */
   let overloaded = false;
+  /** Whether one said so (a 429, a 5xx) or could not be reached, rather than only being slow. */
+  let down = false;
   const ask = (endpoint) => {
     const own = new AbortController();
     asking.push(own);
@@ -720,7 +727,10 @@ async function overpass(query, signal) {
             waiting -= 1;
             last = err;
             // Slow, unreachable, "too many requests", a 5xx — not a 4xx about this query.
-            if (!/^HTTP 4(?!29)/.test(String(err?.message || ''))) overloaded = true;
+            if (!/^HTTP 4(?!29)/.test(String(err?.message || ''))) {
+              overloaded = true;
+              if (err?.name !== 'TimeoutError') down = true;
+            }
             if (settled) return;
             // Stopped by the person, or nothing left to ask and nothing still out: done.
             if (signal?.aborted || (started >= OVERPASS.length && waiting === 0)) {
@@ -744,7 +754,7 @@ async function overpass(query, signal) {
      * reach. A query it refused (a 4xx) is that query's problem, and must not
      * send everybody else's searches to the fallback for three minutes.
      */
-    if (overloaded) overpassRestsUntil = Date.now() + timing.rest;
+    if (overloaded) overpassRestsUntil = Date.now() + (down ? timing.rest : timing.slowRest);
     throw new Error(`OpenStreetMap's place search did not answer (${last?.message || 'no reply'}). Try again in a moment.`, { cause: last });
   } finally {
     // The slower server is not left working on an answer nobody will read.

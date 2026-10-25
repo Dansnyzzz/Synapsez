@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
 import { normaliseStop } from './stop.js';
 
@@ -236,7 +237,9 @@ export async function* streamGoogle({
         yield part.thought ? { type: 'thinking', delta: part.text } : { type: 'text', delta: part.text };
       }
       if (part.functionCall) {
-        const id = part.functionCall.id || `gcall_${toolCalls.length}_${part.functionCall.name}`;
+        // Unique per step: `gcall_0_<tool>` came back on every step, so a row on
+        // screen took a later call's result for its own (code review, 2026-10-25).
+        const id = part.functionCall.id || `gcall_${randomUUID().slice(0, 8)}_${toolCalls.length}_${part.functionCall.name}`;
         toolCalls.push({
           id,
           name: part.functionCall.name,

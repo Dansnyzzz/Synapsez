@@ -115,6 +115,49 @@ section('the provider is wired into the app');
   check('baseUrlFor tolerates the provider name', baseUrlFor('orcarouter') === undefined || typeof baseUrlFor('orcarouter') === 'string');
 }
 
+/**
+ * A router that sends no call ids (code review, 2026-10-25): the fallback was
+ * `call_<name>`, so two parallel reads in one step shared an id, and the page
+ * drew one row and dropped the second result.
+ */
+section('calls that arrive without ids get ids of their own');
+{
+  const { createServer } = await import('node:http');
+  const { streamOpenAICompatible } = await import('../server/providers/openaiCompatible.js');
+  const chunk = (delta, finish = null) => `data: ${JSON.stringify({ id: 'x', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(
+        chunk({ role: 'assistant', tool_calls: [{ index: 0, type: 'function', function: { name: 'web_fetch', arguments: '{"url":"https://a.example"}' } }] }) +
+          chunk({ tool_calls: [{ index: 1, type: 'function', function: { name: 'web_fetch', arguments: '{"url":"https://b.example"}' } }] }) +
+          chunk({}, 'tool_calls') +
+          'data: [DONE]\n\n',
+      );
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = /** @type {import('node:net').AddressInfo} */ (server.address());
+  const tools = [{ name: 'web_fetch', description: 'fetch', parameters: { type: 'object', properties: { url: { type: 'string' } } } }];
+  const ask = async () => {
+    let calls = [];
+    for await (const event of streamOpenAICompatible({ apiKey: 'k', baseURL: `http://127.0.0.1:${port}/v1`, model: 'm', entry: { id: 'm' }, system: '', messages: [{ role: 'user', text: 'read both' }], tools })) {
+      if (event.type === 'done') calls = event.toolCalls || [];
+    }
+    return calls;
+  };
+  try {
+    const first = await ask();
+    const second = await ask();
+    const ids = [...first, ...second].map((c) => c.id);
+    check('two calls to one tool in one step get two ids', first.length === 2 && first[0].id !== first[1].id, ids.join(', '));
+    check('  and the next step does not reuse them', second.length === 2 && new Set(ids).size === 4, ids.join(', '));
+  } finally {
+    server.close();
+  }
+}
+
 console.log(
   failures === 0
     ? '\n\x1b[32mAll OrcaRouter checks passed.\x1b[0m\n'

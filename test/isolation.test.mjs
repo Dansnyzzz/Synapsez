@@ -2178,7 +2178,8 @@ section('a shared conversation publishes the answer, not what was read of the ac
   check('a picture a step read is withheld from a shared copy, reading and picture both', !/SECRET-(SCAN|FIGURE)-READING|att-secret-/.test(seenPage), seenPage.match(/SECRET-[A-Z-]+|att-secret-[a-z]+/)?.[0] || '');
 
   // PRV-008: ids repeat across a transcript when a provider sends none (google.js
-  // makes `gcall_0_<tool>`), so a result is judged against its own turn's call.
+  // made `gcall_0_<tool>` until 2026-10-25, and stored chats still hold them), so
+  // a result is judged against its own turn's call.
   const same = 'gcall_0_read_generated_file';
   const repeated = publicTranscript([
     { id: 'g-1', role: 'assistant', text: '', toolCalls: [{ id: 'gcall_0_create_file', name: 'create_file', input: { name: 'a.md' } }] },

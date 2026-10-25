@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-10-25 — files that come out designed; searches drawn like Claude's; pictures full screen; no tool in a box
+
+Asked for by the owner on 2026-10-25, with eleven screenshots of Claude and of the app.
+
+- **Word, Excel and PowerPoint come out designed**, with nothing asked of the model. A palette is picked from what
+  the document is about (money navy, the environment green, health teal…), or named with `theme` on
+  `create_file`/`update_file`. A deck gets a layout per slide read off what it holds — a cover, section slides,
+  KPI cards for points that open with a figure, real banded tables, a statement slide, two columns when long, a
+  closing slide — fades between slides, and content that arrives a point at a time on its own; a slide too full
+  continues on the next. A long Word document opens on a cover, with a running header and "Trang X / Y" after it;
+  headings, tables and quotes are in the palette. In Excel "1.560.000.000", "64,4%", "$28,500" and "2026-03-15"
+  are numbers, percentages, money and dates, the header is in colour over banded rows, columns of figures carry a
+  data bar, and the sheet prints fitted to the page. Every sample was opened in PowerPoint, Word and Excel.
+- **Web searches read as Claude's**: a globe, the query and "10 results", the sites in a short box that scrolls,
+  searches one after another on one thread. **Searching earlier chats** is "Relevant chats · N results", each row
+  opening its conversation.
+- **No tool's call or answer is in a box**, in any card; a finished line shows its tool's icon instead of a tick,
+  and reasoning has no tick at all. A long argument wraps instead of widening its card.
+- **A picture opens full screen** — a chart a run made, a diagram, what a step read — with zoom (buttons, wheel,
+  pinch, keys) and copy and download in the viewer. **A diagram fills its frame**, centred both ways; the frame
+  had capped it at a fraction of its own height.
+- **Fixed**: a picture read from the cloud computer could run for half an hour (no limit on the free vision models)
+  and drew a new row every time the reconnect ran it again; a nearby search failed when OpenStreetMap's place
+  search was overloaded — it now asks two servers and falls back to the address search; a drawing whose `<svg>` tag
+  was written into the argument's name is put back together.
+- The model browser has no Anthropic or OpenAI tab, and Settings offers those keys only to an account that already
+  holds one; their models come through OpenRouter and OrcaRouter.
+- **From the code and security reviews of this round**: a diagram opened full screen is a PNG picture, never an SVG
+  page on the app's origin; the folded-tag repair applies only to a drawing's `svg`/`html`; a query Overpass refuses
+  does not rest it for everyone, and one that was only slow rests a minute rather than three. In the viewer a click
+  that ends on the picture keeps it open, a double click zooms and a pinch never turns the page. A slide too tall
+  for one column uses two, a table's rows are as tall as their words (a long table continues instead of running
+  over the footer), and words under a table follow it. In Excel a column decides whether "150.000" is thousands,
+  and an address like 192.168.1.10 stays text. Coming back to a conversation mid-call, the result lands on the row on
+  screen and the block already saved is drawn once; a call two providers sent without an id gets one of its own.
+
 ## 2026-10-19 — what the context window is spent on; commands you can watch run; a failing model is not the end
 
 Asked for by the owner on 2026-10-19, with screenshots of Claude Code beside the app.

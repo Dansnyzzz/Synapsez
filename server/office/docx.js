@@ -757,11 +757,19 @@ function blockXml(block, links, palette) {
   }
 }
 
-/** "25 tháng 10, 2026" or "25 October 2026" — the day a cover says it was made. */
+/**
+ * "Ngày 25 tháng 10 năm 2026" or "25 October 2026" — the day a cover says it
+ * was made. A Vietnamese document's day is Vietnam's: taken in UTC, a cover
+ * made before seven in the morning there was dated the day before.
+ */
 function coverDate(created, vietnamese) {
   const d = new Date(created);
   if (!Number.isFinite(d.getTime())) return '';
-  return vietnamese ? `Ngày ${d.getUTCDate()} tháng ${d.getUTCMonth() + 1} năm ${d.getUTCFullYear()}` : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  if (!vietnamese) return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const part = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Ho_Chi_Minh', day: 'numeric', month: 'numeric', year: 'numeric' }).formatToParts(d).map((p) => [p.type, p.value]),
+  );
+  return `Ngày ${part.day} tháng ${part.month} năm ${part.year}`;
 }
 
 /**

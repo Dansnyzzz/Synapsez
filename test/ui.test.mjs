@@ -4623,15 +4623,25 @@ section('a picture the assistant made opens full screen, with zoom, copy and dow
     });
     document.getElementById('messages').append(node);
     await loaded;
+    // Which kind of file each blob: address holds — read as they are made, since
+    // the page's CSP (rightly) lets nothing fetch a blob: back.
+    const kinds = new Map();
+    const make = URL.createObjectURL;
+    URL.createObjectURL = (blob) => {
+      const url = make.call(URL, blob);
+      kinds.set(url, blob.type);
+      return url;
+    };
     frame.contentDocument.querySelector('svg').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     // The drawing is drawn to a PNG first (security review, 2026-10-25), so the lightbox opens a moment later.
     for (let waited = 0; waited < 3000 && !gallery.__testing.isOpen(); waited += 50) await new Promise((r) => setTimeout(r, 50));
+    URL.createObjectURL = make;
     const src = document.querySelector('.gallery__img')?.getAttribute('src') || '';
     out.diagram = {
       opened: gallery.__testing.isOpen(),
       src,
       label: document.querySelector('.gallery__label')?.textContent || '',
-      type: src ? (await (await fetch(src)).blob()).type : '',
+      type: kinds.get(src) || '',
     };
     gallery.closeGallery();
     node.remove();
@@ -4651,6 +4661,70 @@ section('a picture the assistant made opens full screen, with zoom, copy and dow
   check('a diagram opens full screen when clicked, under its title', out.diagram.opened && /^blob:/.test(out.diagram.src) && out.diagram.label === 'Quy trình', JSON.stringify(out.diagram));
   // A blob of the model's SVG would be a page of this origin when opened on its own; a PNG is a picture.
   check('  shown as a PNG drawn from it, never as the drawing\'s own markup', out.diagram.type === 'image/png', out.diagram.type);
+}
+
+/**
+ * The lightbox under a real pointer and keyboard (code review, 2026-10-25): the
+ * stage captures the pointer, so a click on the picture used to arrive at the
+ * stage and close it; a double click could never zoom; a pinch lifted one
+ * finger at a time paged and then jumped; and a zoom button that switched
+ * itself off dropped the focus out of the dialog, and the keys with it.
+ */
+section('the lightbox under a real pointer: a click keeps it, a double click zooms, a pinch never pages');
+{
+  const pics = /\/api\/attachments\/lb-[12]$/;
+  const dot = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await page.route(pics, (route) => route.fulfill({ status: 200, contentType: 'image/png', body: dot }));
+  const scale = () => page.evaluate(() => Number((/scale\(([\d.]+)\)/.exec(document.querySelector('.gallery__img')?.style.transform || '') || [0, 1])[1]));
+  const isOpen = () => page.evaluate(async () => (await import('/js/gallery.js')).__testing.isOpen());
+  await page.evaluate(async () => {
+    const gallery = await import('/js/gallery.js');
+    gallery.openGallery([{ id: 'lb-1', name: 'one.png', label: 'One' }, { id: 'lb-2', name: 'two.png', label: 'Two' }], 0, null);
+    await new Promise((r) => setTimeout(r, 200));
+  });
+  const box = await page.evaluate(() => {
+    const r = document.querySelector('.gallery__img').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.click(box.x, box.y);
+  await page.waitForTimeout(150);
+  check('a click on the picture keeps the lightbox open', await isOpen());
+  await page.mouse.dblclick(box.x, box.y);
+  await page.waitForTimeout(150);
+  check('  a double click on it zooms in', (await scale()) > 2, String(await scale()));
+  await page.mouse.dblclick(box.x, box.y);
+  await page.waitForTimeout(150);
+  check('  and another goes back to fit', (await scale()) === 1, String(await scale()));
+
+  // Zoomed all the way with the keyboard: the + button switches itself off, and the keys still work.
+  await page.focus('.gallery__zoomin');
+  for (let i = 0; i < 8; i += 1) await page.keyboard.press('Enter');
+  const focus = await page.evaluate(() => ({ inside: !!document.activeElement?.closest('.gallery'), on: document.activeElement?.className || '' }));
+  check('a zoom button that switches itself off hands the focus on inside the dialog', focus.inside, focus.on);
+  await page.keyboard.press('0');
+  await page.keyboard.press('+');
+  check('  so the keys still work — + zooms in again', (await scale()) > 1, String(await scale()));
+  await page.keyboard.press('0');
+
+  // A pinch at fit size, its fingers lifted one at a time: no page turn, no jump.
+  const pinch = await page.evaluate(async () => {
+    const stage = document.querySelector('.gallery__stage');
+    const fire = (type, id, x, y) => stage.dispatchEvent(new PointerEvent(type, { pointerId: id, clientX: x, clientY: y, bubbles: true, pointerType: 'touch' }));
+    const count = () => document.querySelector('.gallery__count').textContent;
+    const before = count();
+    fire('pointerdown', 11, 500, 400);
+    fire('pointerdown', 12, 700, 400);
+    fire('pointermove', 12, 690, 400);
+    fire('pointerup', 11, 500, 400);
+    fire('pointermove', 12, 692, 402);
+    const t1 = document.querySelector('.gallery__img').style.transform;
+    fire('pointerup', 12, 400, 402);
+    return { before, after: count(), t1 };
+  });
+  check('a pinch lifted a finger at a time does not turn the page', pinch.after === pinch.before, `${pinch.before} → ${pinch.after}`);
+  await page.keyboard.press('Escape');
+  check('Esc still closes it', !(await isOpen()));
+  await page.unroute(pics);
 }
 
 /**
@@ -8083,6 +8157,26 @@ section('a diagram fills its frame, centred both ways, with no empty band');
     return out;
   });
   check('the drawing is scaled up to the reply\'s width, not left at its own size', fit.inkW > 420 * 1.6, JSON.stringify(fit));
+  // Drawn in small units, it keeps the size it was shown at (code review, 2026-10-25: it shrank to 232px).
+  const small = await page.evaluate(async () => {
+    const { widgetNode } = await import('/js/render.js');
+    const host = document.createElement('div');
+    host.style.width = '900px';
+    document.getElementById('thread').append(host);
+    const node = widgetNode({ title: 'Small units', markup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><rect x="2" y="2" width="96" height="46" fill="#1f6feb"/></svg>', kind: 'svg' });
+    const frame = node.querySelector('iframe');
+    frame.loading = 'eager';
+    const loaded = new Promise((r) => {
+      frame.addEventListener('load', () => setTimeout(r, 120), { once: true });
+      setTimeout(r, 3000);
+    });
+    host.append(node);
+    await loaded;
+    const out = { frame: Math.round(frame.getBoundingClientRect().width), drawn: Math.round(frame.contentDocument.querySelector('svg').getBoundingClientRect().width) };
+    host.remove();
+    return out;
+  });
+  check('  a drawing in small units is not shrunk to its unit count in pixels', small.drawn > small.frame * 0.8, JSON.stringify(small));
   check('  centred across', Math.abs(fit.gapLeft - fit.gapRight) <= 8, `${fit.gapLeft} / ${fit.gapRight}`);
   check('  and down, with no empty band under it', Math.abs(fit.gapTop - fit.gapBottom) <= 8 && fit.gapBottom < 60, `${fit.gapTop} / ${fit.gapBottom}`);
 }
@@ -8507,6 +8601,131 @@ section('a call run again after a cut-off is one row, and it finishes');
   });
   check('the read run twice is drawn once', attempts >= 2 && left.rows === 1, JSON.stringify({ attempts, ...left }));
   check('  and finishes with its answer, nothing left counting', left.answered && left.running === 0 && left.spinning === 0, JSON.stringify(left));
+}
+
+/**
+ * The rows on screen are the ones that finish (code review, 2026-10-25): a call
+ * a rejoin took over that the server did not run again shows its saved result,
+ * not "cut off"; leaving mid-call and coming back, the result lands on the row
+ * on screen, not on one no longer in the page; and a block this tab's run had
+ * already saved is drawn once, not once from the database and once live.
+ */
+section('a rejoined or revisited run finishes the rows on screen');
+{
+  const store = await initStore();
+  const signedIn = await page.evaluate(async () => (await (await fetch('/api/session')).json()).user);
+  const user = await store.getUserByEmail(signedIn.email);
+  const look = (id) => ({ id, name: 'look_at', input: { path: '/tmp/m5/sheet.jpg', question: 'Màu xe?' } });
+  const plant = async (id, title, calls) => {
+    await store.createChat(user.id, { id, title, model: 'm' });
+    await store.appendMessage(user.id, id, { id: `${id}-u`, role: 'user', text: 'màu xe là gì' });
+    if (calls) await store.appendMessage(user.id, id, { id: `${id}-a`, role: 'assistant', text: '', toolCalls: calls });
+  };
+  await plant('c-handed', 'Handed over call', [look('h1')]);
+  await plant('c-back', 'Come back mid call', [look('b1')]);
+  await plant('c-sealed', 'Saved block here', null);
+  await plant('c-away', 'Somewhere else entirely', null);
+  await store.claimChatRun(user.id, 'c-handed', 'aaaaaaaa-0000-4000-8000-000000000001');
+  await store.claimChatRun(user.id, 'c-back', 'aaaaaaaa-0000-4000-8000-000000000002');
+
+  const sse = (...events) => events.map(([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+  const reply = (route, body) => route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body });
+  const held = () => {
+    let release = () => {};
+    const promise = new Promise((resolve) => (release = resolve));
+    return { promise, release };
+  };
+  const open = (title) =>
+    page.evaluate(async (name) => {
+      const row = [...document.querySelectorAll('#chat-list .chat-row')].find((r) => r.textContent.includes(name));
+      row?.querySelector('.chat-item')?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      return !!row;
+    }, title);
+  const until = async (test, ms = 6000) => {
+    for (const end = Date.now() + ms; Date.now() < end && !test(); ) await page.waitForTimeout(100);
+  };
+  const shown = () =>
+    page.evaluate(() => {
+      const host = document.getElementById('messages');
+      const rows = [...host.querySelectorAll('.step--work')];
+      return {
+        rows: rows.length,
+        text: rows.map((r) => r.textContent || '').join(' | ').slice(0, 300),
+        spinning: host.querySelectorAll('.mark--pending, .spinner, .step__running').length,
+        cutOff: /Cut off before|Bị ngắt trước/.test(host.textContent || ''),
+        prose: (host.textContent.match(/Để tôi xem ảnh/g) || []).length,
+      };
+    });
+
+  // (b) The server saved the result before the rejoin, so it does not run the call again.
+  await page.route('**/api/chats/c-handed/run', async (route) => {
+    await store.appendMessage(user.id, 'c-handed', { id: 'c-handed-r', role: 'tool', results: [{ toolCallId: 'h1', name: 'look_at', content: 'Saved: a blue M5.', isError: false }] });
+    return reply(route, sse(['done', { stopReason: 'end_turn' }]));
+  });
+  // (a) A rejoin whose call is still running: the reconnect answers only once we have been away and back.
+  let backAttempts = 0;
+  const back = held();
+  await page.route('**/api/chats/c-back/run', async (route) => {
+    backAttempts += 1;
+    if (backAttempts === 1) return reply(route, sse(['tool_call', look('b1')]));
+    await back.promise;
+    return reply(route, sse(['tool_result', { toolCallId: 'b1', name: 'look_at', content: 'Came back: a red M5.', ms: 900 }], ['done', { stopReason: 'end_turn' }]));
+  });
+  // (c) A turn of this tab: its block is saved, then its call runs while we are away.
+  let sealedAttempts = 0;
+  const sealed = held();
+  await page.route('**/api/chats/c-sealed/run', async (route) => {
+    sealedAttempts += 1;
+    if (sealedAttempts === 1) {
+      await store.claimChatRun(user.id, 'c-sealed', route.request().postDataJSON().runId);
+      const saved = { id: 'c-sealed-a', role: 'assistant', text: 'Để tôi xem ảnh.', toolCalls: [look('s1')] };
+      await store.appendMessage(user.id, 'c-sealed', saved);
+      return reply(route, sse(['text', { delta: 'Để tôi xem ảnh.' }], ['message', { message: saved }], ['tool_call', look('s1')]));
+    }
+    await sealed.promise;
+    return reply(route, sse(['tool_result', { toolCallId: 's1', name: 'look_at', content: 'Seen: a grey M5.', ms: 900 }], ['done', { stopReason: 'end_turn' }]));
+  });
+
+  try {
+    await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2500);
+    await page.evaluate(() => {
+      for (const d of document.querySelectorAll('dialog[open]')) d.close();
+    });
+
+    await open('Handed over call');
+    await page.waitForTimeout(1500);
+    const handed = await shown();
+    check('a call a rejoin took over, not run again, shows its saved result', /Saved: a blue M5/.test(handed.text) && !handed.cutOff && handed.spinning === 0, JSON.stringify(handed));
+
+    await open('Come back mid call');
+    await until(() => backAttempts >= 2);
+    await open('Somewhere else entirely');
+    await open('Come back mid call');
+    back.release();
+    await page.waitForTimeout(1500);
+    const returned = await shown();
+    check('away and back mid-call, the result lands on the row on screen', backAttempts >= 2 && returned.rows === 1 && /Came back: a red M5/.test(returned.text) && returned.spinning === 0, JSON.stringify({ backAttempts, ...returned }));
+
+    await open('Saved block here');
+    await page.fill('#input', 'màu xe là gì');
+    await page.press('#input', 'Enter');
+    await until(() => sealedAttempts >= 2);
+    await open('Somewhere else entirely');
+    await open('Saved block here');
+    sealed.release();
+    await page.waitForTimeout(1500);
+    const again = await shown();
+    check('a block this tab had saved is drawn once on the way back, and its call finishes there', sealedAttempts >= 2 && again.prose === 1 && again.rows === 1 && /Seen: a grey M5/.test(again.text) && again.spinning === 0, JSON.stringify({ sealedAttempts, ...again }));
+  } finally {
+    back.release();
+    sealed.release();
+    await page.unroute('**/api/chats/c-handed/run');
+    await page.unroute('**/api/chats/c-back/run');
+    await page.unroute('**/api/chats/c-sealed/run');
+    for (const id of ['c-handed', 'c-back', 'c-sealed']) await store.stopChatRun(user.id, id);
+  }
 }
 
 /**
