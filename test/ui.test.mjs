@@ -4624,7 +4624,15 @@ section('a picture the assistant made opens full screen, with zoom, copy and dow
     document.getElementById('messages').append(node);
     await loaded;
     frame.contentDocument.querySelector('svg').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-    out.diagram = { opened: gallery.__testing.isOpen(), src: document.querySelector('.gallery__img')?.getAttribute('src') || '', label: document.querySelector('.gallery__label')?.textContent || '' };
+    // The drawing is drawn to a PNG first (security review, 2026-10-25), so the lightbox opens a moment later.
+    for (let waited = 0; waited < 3000 && !gallery.__testing.isOpen(); waited += 50) await new Promise((r) => setTimeout(r, 50));
+    const src = document.querySelector('.gallery__img')?.getAttribute('src') || '';
+    out.diagram = {
+      opened: gallery.__testing.isOpen(),
+      src,
+      label: document.querySelector('.gallery__label')?.textContent || '',
+      type: src ? (await (await fetch(src)).blob()).type : '',
+    };
     gallery.closeGallery();
     node.remove();
     return out;
@@ -4641,6 +4649,8 @@ section('a picture the assistant made opens full screen, with zoom, copy and dow
   check('download saves the file under its own name', out.download.name === 'vn_population.png' && /\/api\/attachments\/img-1\?download=1/.test(out.download.href || ''), JSON.stringify(out.download));
   check('Esc closes it', out.closed === true);
   check('a diagram opens full screen when clicked, under its title', out.diagram.opened && /^blob:/.test(out.diagram.src) && out.diagram.label === 'Quy trình', JSON.stringify(out.diagram));
+  // A blob of the model's SVG would be a page of this origin when opened on its own; a PNG is a picture.
+  check('  shown as a PNG drawn from it, never as the drawing\'s own markup', out.diagram.type === 'image/png', out.diagram.type);
 }
 
 /**

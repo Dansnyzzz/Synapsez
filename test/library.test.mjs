@@ -368,6 +368,17 @@ section('places: when Overpass does not answer, Nominatim does');
     const t0 = Date.now();
     const hedged = await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
     check('a slow first server: the second is asked too, and its answer used', /Phở Lệ/.test(hedged.content) && Date.now() - t0 < 2500, `${Date.now() - t0} ms: ${hedged.content?.slice(0, 80)}`);
+
+    // A query Overpass refuses (a 4xx) is that query's problem: everybody's searches share the rest.
+    lib.__places.reset({ hedge: 150, each: 600 });
+    overpassMode = 'refuses';
+    const realStub = globalThis.fetch;
+    globalThis.fetch = async (url, options) => (String(url).includes('overpass') ? (asked.push(String(url)), new Response('bad query', { status: 400 })) : realStub(url, options));
+    await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
+    const before = asked.filter((u) => u.includes('overpass')).length;
+    await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
+    check('a query Overpass refused does not rest it for every other search', asked.filter((u) => u.includes('overpass')).length > before, `${before} → ${asked.filter((u) => u.includes('overpass')).length}`);
+    globalThis.fetch = realStub;
   } finally {
     globalThis.fetch = real;
     lib.__places.reset();

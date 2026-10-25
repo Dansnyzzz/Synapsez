@@ -185,32 +185,43 @@ export function unwrapLists(value, depth = 0) {
   return out;
 }
 
-/** The parameters that hold a whole piece of markup, named for its root element. */
-const MARKUP_ROOTS = new Set(['svg', 'html']);
+/**
+ * The tools whose markup arguments are repaired when their opening tag became
+ * the argument's name, and those arguments — named for the root element.
+ */
+const MARKUP_ARGUMENTS = { show_widget: new Set(['svg', 'html']) };
 
 /**
- * Arguments whose opening tag became their name, put back together.
+ * A drawing whose opening tag became the argument's name, put back together.
  *
  * A model that writes its call as XML can merge a parameter's own tag with the
  * first tag of its value: `<svg viewBox="0 0 640 240" …>…</svg>` arrives as the
  * key `svg viewBox="0 0 640 240" …` holding the inside of the drawing — and
  * `show_widget` refused "give either svg or html" with the whole picture there
- * (owner, 2026-10-25, screenshot 8). Only a key that is a declared parameter's
- * name followed by attributes counts, and only when that parameter is absent.
- * A markup parameter gets its element back round the value, attributes and
- * all; any other keeps the value and loses the stray attributes.
+ * (owner, 2026-10-25, screenshot 8). The element goes back round the value,
+ * attributes and all.
+ *
+ * **Only `show_widget`'s drawing, nothing else** (security review, 2026-10-25).
+ * The checks made before a call runs — an address carrying personal data
+ * (`personalInAddress`), a message already sent, what a shared link may show —
+ * read the arguments as they arrived. Repairing `url …` into `url` here would
+ * run a url none of them had seen. A drawing goes nowhere, so its repair moves
+ * nothing past them.
+ *
+ * @param {string} tool
  */
-function unfoldTagKeys(value, schema, notes) {
-  if (!schema?.properties || !value || typeof value !== 'object' || Array.isArray(value)) return value;
+function unfoldTagKeys(tool, value, schema, notes) {
+  const markup = MARKUP_ARGUMENTS[tool];
+  if (!markup || !schema?.properties || !value || typeof value !== 'object' || Array.isArray(value)) return value;
   let out = value;
   for (const key of Object.keys(value)) {
     if (Object.hasOwn(schema.properties, key)) continue;
     const m = /^([A-Za-z_][\w-]*)\s+([\s\S]*=[\s\S]*)$/.exec(key);
-    if (!m || !Object.hasOwn(schema.properties, m[1]) || value[m[1]] !== undefined || typeof value[key] !== 'string') continue;
+    if (!m || !markup.has(m[1]) || value[m[1]] !== undefined || typeof value[key] !== 'string') continue;
     const [, name, attrs] = m;
     const inner = value[key];
-    const markup = MARKUP_ROOTS.has(name) && !new RegExp(`^\\s*<${name}[\\s>]`, 'i').test(inner);
-    out = { ...out, [name]: markup ? `<${name} ${attrs.trim().replace(/\s*\/?>?\s*$/, '')}>${inner}</${name}>` : inner };
+    const wrapped = new RegExp(`^\\s*<${name}[\\s>]`, 'i').test(inner);
+    out = { ...out, [name]: wrapped ? inner : `<${name} ${attrs.trim().replace(/\s*\/?>?\s*$/, '')}>${inner}</${name}>` };
     delete out[key];
     notes.push(`${name} arrived with its opening tag written into the argument's name; it was put back together. Send "${name}" as a plain argument next time.`);
   }
@@ -219,7 +230,6 @@ function unfoldTagKeys(value, schema, notes) {
 
 function check(value, schema, where, notes = []) {
   if (!schema || typeof schema !== 'object') return { ok: true, value };
-  if (where === 'arguments') value = unfoldTagKeys(value, schema, notes);
 
   const types = schema.type ? (Array.isArray(schema.type) ? schema.type : [schema.type]) : [];
   if (types.includes('array') && !Array.isArray(value) && value !== undefined && value !== null) {
@@ -352,5 +362,8 @@ export function validateArguments(schema, input) {
  * @param {unknown} input
  */
 export function readArguments(name, schema, input) {
-  return validateArguments(schema, canonicalInput(name, input));
+  const repaired = [];
+  const given = unfoldTagKeys(name, canonicalInput(name, input), schema, repaired);
+  const result = validateArguments(schema, given);
+  return result.ok && repaired.length ? { ...result, notes: [...repaired, ...result.notes] } : result;
 }

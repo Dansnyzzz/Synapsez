@@ -1104,43 +1104,82 @@ function fitDrawing(svg) {
   svg.style.maxHeight = `${Math.round(Math.max(240, (globalThis.innerHeight || view?.innerHeight || 800) * 0.72))}px`;
 }
 
-/** Each drawing's picture for the lightbox, made once. */
-const DIAGRAMS = new WeakMap();
+/** The conversation's ground, which a drawing is shown and exported on. */
+const groundColour = () => getComputedStyle(document.documentElement).getPropertyValue('--bg-elev').trim() || '#12161c';
 
 /**
- * A drawing as a picture the lightbox can show: the fitted view, in the ink and
- * type it was drawn in, as an image file of its own — an `<img>` runs nothing
- * and fetches nothing, whatever the markup says. Large, so it is sharp when
- * zoomed; the lightbox scales it to the screen.
+ * A drawing as a PNG: the fitted view, in the ink and type it was drawn in, on
+ * the conversation's ground, `width` pixels across — large, so it stays sharp
+ * when zoomed.
+ *
+ * **Never the drawing's own markup as a URL** (security review, 2026-10-25).
+ * The markup is the model's; a `blob:` URL of it as `image/svg+xml` belongs to
+ * this page's origin, and opened in a tab of its own ("Open image in new tab")
+ * the browser runs it as a page here — an `onload` in it reading the session's
+ * conversations, from a shared link too. So the SVG is only ever decoded inside
+ * an `Image`, which runs and fetches nothing, under a URL that is taken back the
+ * moment it is drawn; what anybody can reach is a PNG.
+ *
+ * The ink is written onto the copy: text drawn in `currentColor` was black in
+ * an exported copy, on a dark ground — the copy and download buttons gave a
+ * picture with its words missing.
  */
-function diagramPicture(widget, svg) {
-  if (DIAGRAMS.has(svg)) return DIAGRAMS.get(svg);
+async function drawDiagram(svg, width = 2400) {
   const look = svg.ownerDocument.defaultView?.getComputedStyle(svg);
   const clone = /** @type {SVGSVGElement} */ (svg.cloneNode(true));
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.removeAttribute('style');
   const box = svg.viewBox?.baseVal;
-  if (box?.width && box?.height) {
-    clone.setAttribute('width', '1800');
-    clone.setAttribute('height', String(Math.round((1800 * box.height) / box.width)));
-  }
+  const rect = svg.getBoundingClientRect();
+  const across = box?.width || rect.width || 720;
+  const down = box?.height || rect.height || 360;
+  const w = Math.round(width);
+  const h = Math.max(1, Math.round((width * down) / across));
+  clone.setAttribute('width', String(w));
+  clone.setAttribute('height', String(h));
   if (look) {
     clone.style.color = look.color;
     clone.style.fontFamily = look.fontFamily;
     clone.style.fontSize = look.fontSize;
   }
-  const source = new globalThis.XMLSerializer().serializeToString(clone);
-  const ground = getComputedStyle(document.documentElement).getPropertyValue('--bg-elev').trim() || '#12161c';
-  const picture = {
-    id: '',
-    src: URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' })),
-    name: fileNameFrom(widget.title, 'png'),
-    label: widget.title || t('chat.diagram'),
-    ground,
-    png: () => svgToPng(svg),
-  };
-  DIAGRAMS.set(svg, picture);
-  return picture;
+  const url = URL.createObjectURL(new Blob([new globalThis.XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = url;
+    await img.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = groundColour();
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return await new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('no image'))), 'image/png'));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Each drawing's picture for the lightbox, made once. */
+const DIAGRAMS = new WeakMap();
+
+/** A drawing as a picture the lightbox can show — a PNG; see `drawDiagram`. */
+function diagramPicture(widget, svg) {
+  if (!DIAGRAMS.has(svg)) {
+    const made = drawDiagram(svg).then((blob) => ({
+      id: '',
+      src: URL.createObjectURL(blob),
+      name: fileNameFrom(widget.title, 'png'),
+      label: widget.title || t('chat.diagram'),
+      ground: groundColour(),
+      png: async () => blob,
+    }));
+    // A drawing that failed to draw is tried again on the next click.
+    made.catch(() => DIAGRAMS.delete(svg));
+    DIAGRAMS.set(svg, made);
+  }
+  return DIAGRAMS.get(svg);
 }
 
 /**
@@ -1217,7 +1256,11 @@ export function widgetFrame(widget) {
     const doc = frame.contentDocument;
     const drawing = doc?.body ? soleDrawing(doc.body) : null;
     if (!drawing) return;
-    drawing.addEventListener('click', () => openGallery([diagramPicture(widget, drawing)], 0, frame));
+    drawing.addEventListener('click', () => {
+      diagramPicture(widget, drawing)
+        .then((picture) => openGallery([picture], 0, frame))
+        .catch(() => toast(t('media.downloadFailed'), 'error'));
+    });
   });
   // A drawing as wide as the reply grows taller when the reply widens (a
   // sidebar closed, a window resized), so its frame is measured again — on a
@@ -1298,8 +1341,9 @@ export function widgetFrame(widget) {
       mediaTools({
         name: fileNameFrom(widget.title, 'png'),
         blob: () => {
+          // In its ink, on its ground — see `drawDiagram`.
           const svg = frame.contentDocument?.querySelector('svg');
-          if (svg) return svgToPng(svg);
+          if (svg) return drawDiagram(svg, Math.max(1200, (svg.viewBox?.baseVal?.width || 0) * 2));
           const parsed = new globalThis.DOMParser().parseFromString(widget.markup, 'image/svg+xml').documentElement;
           return svgToPng(/** @type {SVGSVGElement} */ (/** @type {unknown} */ (parsed)));
         },

