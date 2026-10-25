@@ -639,6 +639,19 @@ section('Word, Excel and PowerPoint come out designed');
   check('points that open with a date are a list, not cards with "15" in them', slideKind({ title: 'Lịch', bullets: ['15/03: Khởi động', '20/04: Lắp đặt', '2026-05-01 Bàn giao'] }, 2, 5) === 'bullets');
   check('  while "**120+** khách hàng" and "3x nhanh hơn" are figures', slideKind({ title: 'Kết quả', bullets: ['**120+** khách hàng', '3x nhanh hơn'] }, 2, 5) === 'stats');
 
+  // A table under a few lines of intro starts below them — seen in PowerPoint, the
+  // third line used to run under the table's header (2026-10-25).
+  {
+    const rows = [['Khu vực', 'Q1'], ...Array.from({ length: 12 }, (_, i) => [`Chi nhánh ${i + 1}`, String(1200 + i)])];
+    const intro = writePptx({ title: 't', slides: [{ title: 'Doanh thu', bullets: [{ level: 0, text: 'Số liệu tổng hợp từ ba miền.\nĐơn vị: triệu đồng.\nNguồn: phòng kế toán.', plain: true }], table: { header: true, rows } }] });
+    const z = openZip(intro);
+    const first = z.text('ppt/slides/slide1.xml');
+    const box = /name="Content 1"[\s\S]*?<a:off x="\d+" y="(\d+)"\/><a:ext cx="\d+" cy="(\d+)"/.exec(first);
+    const frame = /<p:graphicFrame>[\s\S]*?<a:off x="\d+" y="(\d+)"\/><a:ext cx="\d+" cy="(\d+)"/.exec(first);
+    check('a table under an intro starts below it, not under its last line', !!box && !!frame && Number(frame[1]) >= Number(box[1]) + Number(box[2]), `${box?.slice(1)} → ${frame?.slice(1)}`);
+    check('  and stops above the footer, the rest continued', !!frame && Number(frame[1]) + Number(frame[2]) <= 6858000 - 731520 && readPptx(intro).slides.reduce((n, s) => n + (s.tables[0]?.rows.length || 0) - 1, 0) === 12, readPptx(intro).slides.map((s) => s.tables[0]?.rows.length).join(','));
+  }
+
   // Too much for one slide is continued, never shrunk to nothing or dropped.
   const long = writePptx({ title: 'x', slides: [{ title: 'Many', bullets: Array.from({ length: 34 }, (_, i) => `Point number ${i + 1} with some words to make it a line of its own on a slide`) }] });
   const pages = readPptx(long);

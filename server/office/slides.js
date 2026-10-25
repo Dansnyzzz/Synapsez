@@ -286,6 +286,15 @@ export function slideKind(slide, index, count) {
 
 /* ── the slides ──────────────────────────────────────────────────────── */
 
+/** A table's type size and row height, by how many columns it has. */
+function tableMetrics(columns) {
+  const size = columns <= 3 ? 1600 : columns <= 5 ? 1400 : columns <= 7 ? 1200 : 1050;
+  return { size, rowH: Math.round((size / 100) * PT * 2.3) };
+}
+
+/** Room an intro above a table takes — measured, with the gap under it. */
+const introHeight = (points) => (points.length ? Math.ceil(heightFor(points, 1600, W - M * 2)) + 137160 : 0);
+
 /**
  * Split slides that would not fit — a long list, a long table — into slides
  * that do, titled "(2/3)". What is given is never dropped.
@@ -295,8 +304,8 @@ export function paginate(slides) {
   for (const slide of slides) {
     const table = slide.table?.rows?.length ? slide.table : null;
     const points = normalisePoints(slide.bullets);
-    // A table and a long list on one slide: the list first, then the table.
-    if (table && points.length > 2) {
+    // A table and more than a short intro on one slide: the words first, then the table.
+    if (table && (points.length > 2 || introHeight(points) > 1005840)) {
       out.push(...paginate([{ ...slide, table: null }]));
       out.push(...paginate([{ title: slide.title, table }]));
       continue;
@@ -304,17 +313,24 @@ export function paginate(slides) {
     if (table) {
       const header = table.header !== false ? table.rows.slice(0, 1) : [];
       const body = table.header !== false ? table.rows.slice(1) : table.rows;
-      const per = 8;
-      const pages = Math.max(1, Math.ceil(body.length / per));
-      for (let i = 0; i < pages; i += 1) {
+      // As many rows as the room left holds — less on the page under an intro.
+      const { rowH } = tableMetrics(Math.max(...table.rows.map((r) => r.length), 1));
+      const room = BODY_BOTTOM - BODY_TOP;
+      const fits = (space) => Math.max(1, Math.floor(space / rowH) - header.length);
+      const first = fits(room - introHeight(points));
+      const rest = fits(room);
+      const pageRows = [body.slice(0, first)];
+      for (let at = first; at < body.length; at += rest) pageRows.push(body.slice(at, at + rest));
+      const pages = pageRows.length;
+      pageRows.forEach((rows, i) => {
         out.push({
           ...slide,
           title: pages > 1 ? `${slide.title || ''} (${i + 1}/${pages})`.trim() : slide.title,
           bullets: i === 0 ? slide.bullets : [],
-          table: { header: table.header !== false, rows: [...header, ...body.slice(i * per, (i + 1) * per)] },
+          table: { header: table.header !== false, rows: [...header, ...rows] },
           notes: i === 0 ? slide.notes : '',
         });
-      }
+      });
       continue;
     }
     // Points: as many per slide as fit at the smallest size kept readable.
@@ -526,11 +542,12 @@ function tableSlide(slide, ctx, ids) {
   const points = normalisePoints(slide.bullets);
   let top = BODY_TOP;
   if (points.length) {
-    const size = 1600;
-    shapes.push(shape({ id: ids(), name: 'Content 1', x: M, y: BODY_TOP, w: W - M * 2, h: 548640, box: true, text: textBody(pointsXml(points, size, palette)) }));
-    top += 640080;
+    // The intro is as tall as its words, and the table starts under it.
+    const tall = introHeight(points);
+    shapes.push(shape({ id: ids(), name: 'Content 1', x: M, y: BODY_TOP, w: W - M * 2, h: tall - 137160, box: true, text: textBody(pointsXml(points, 1600, palette)) }));
+    top += tall;
   }
-  const size = columns <= 3 ? 1600 : columns <= 5 ? 1400 : columns <= 7 ? 1200 : 1050;
+  const { size, rowH } = tableMetrics(columns);
   const width = W - M * 2;
   // Columns sized to what they hold, each at least a fair share's half.
   const longest = Array.from({ length: columns }, (_, c) => Math.max(4, ...rows.map((r) => String(r[c] ?? '').length)));
@@ -538,7 +555,6 @@ function tableSlide(slide, ctx, ids) {
   const share = longest.map((l) => Math.max(width / columns / 2, (width * l) / sum));
   const scale = width / share.reduce((a, b) => a + b, 0);
   const grid = share.map((s) => Math.round(s * scale));
-  const rowH = Math.round((size / 100) * PT * 2.3);
   const numeric = Array.from({ length: columns }, (_, c) => rows.slice(header ? 1 : 0).every((r) => !String(r[c] ?? '').trim() || isNumberCell(r[c])));
   const line = (tag, hex) => `<a:${tag} w="9525" cap="flat" cmpd="sng" algn="ctr">${solid(hex)}<a:prstDash val="solid"/></a:${tag}>`;
   const none = (tag) => `<a:${tag} w="0"><a:noFill/></a:${tag}>`;
