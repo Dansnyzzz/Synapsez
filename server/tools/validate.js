@@ -185,6 +185,49 @@ export function unwrapLists(value, depth = 0) {
   return out;
 }
 
+/**
+ * The tools whose markup arguments are repaired when their opening tag became
+ * the argument's name, and those arguments — named for the root element.
+ */
+const MARKUP_ARGUMENTS = { show_widget: new Set(['svg', 'html']) };
+
+/**
+ * A drawing whose opening tag became the argument's name, put back together.
+ *
+ * A model that writes its call as XML can merge a parameter's own tag with the
+ * first tag of its value: `<svg viewBox="0 0 640 240" …>…</svg>` arrives as the
+ * key `svg viewBox="0 0 640 240" …` holding the inside of the drawing — and
+ * `show_widget` refused "give either svg or html" with the whole picture there
+ * (owner, 2026-10-25, screenshot 8). The element goes back round the value,
+ * attributes and all.
+ *
+ * **Only `show_widget`'s drawing, nothing else** (security review, 2026-10-25).
+ * The checks made before a call runs — an address carrying personal data
+ * (`personalInAddress`), a message already sent, what a shared link may show —
+ * read the arguments as they arrived. Repairing `url …` into `url` here would
+ * run a url none of them had seen. A drawing goes nowhere, so its repair moves
+ * nothing past them.
+ *
+ * @param {string} tool
+ */
+function unfoldTagKeys(tool, value, schema, notes) {
+  const markup = MARKUP_ARGUMENTS[tool];
+  if (!markup || !schema?.properties || !value || typeof value !== 'object' || Array.isArray(value)) return value;
+  let out = value;
+  for (const key of Object.keys(value)) {
+    if (Object.hasOwn(schema.properties, key)) continue;
+    const m = /^([A-Za-z_][\w-]*)\s+([\s\S]*=[\s\S]*)$/.exec(key);
+    if (!m || !markup.has(m[1]) || value[m[1]] !== undefined || typeof value[key] !== 'string') continue;
+    const [, name, attrs] = m;
+    const inner = value[key];
+    const wrapped = new RegExp(`^\\s*<${name}[\\s>]`, 'i').test(inner);
+    out = { ...out, [name]: wrapped ? inner : `<${name} ${attrs.trim().replace(/\s*\/?>?\s*$/, '')}>${inner}</${name}>` };
+    delete out[key];
+    notes.push(`${name} arrived with its opening tag written into the argument's name; it was put back together. Send "${name}" as a plain argument next time.`);
+  }
+  return out;
+}
+
 function check(value, schema, where, notes = []) {
   if (!schema || typeof schema !== 'object') return { ok: true, value };
 
@@ -319,5 +362,8 @@ export function validateArguments(schema, input) {
  * @param {unknown} input
  */
 export function readArguments(name, schema, input) {
-  return validateArguments(schema, canonicalInput(name, input));
+  const repaired = [];
+  const given = unfoldTagKeys(name, canonicalInput(name, input), schema, repaired);
+  const result = validateArguments(schema, given);
+  return result.ok && repaired.length ? { ...result, notes: [...repaired, ...result.notes] } : result;
 }

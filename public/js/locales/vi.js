@@ -91,6 +91,9 @@ export const vi = {
   'gallery.dialog': 'Ảnh',
   'gallery.open': 'Mở {name}',
   'gallery.more': 'Thêm {n} ảnh',
+  'gallery.zoomIn': 'Phóng to',
+  'gallery.zoomOut': 'Thu nhỏ',
+  'gallery.zoomFit': 'Vừa màn hình',
 
   /* Nút + cạnh ô nhập (plus-menu.js). */
   'plus.open': 'Thêm tệp, kỹ năng, kết nối và plugin',
@@ -433,6 +436,9 @@ export const vi = {
   'web.searched': 'Đã tìm trên web',
   'web.reading': 'Đang đọc trang web',
   'web.read': 'Đã đọc trang web',
+  'web.result': '{n} kết quả',
+  'web.results': '{n} kết quả',
+  'recall.title': 'Hội thoại liên quan',
   'rail.tool.web_search': 'Tìm trên web',
   'rail.tool.web_fetch': 'Đọc trang web',
   'rail.tool.deep_research': 'Nghiên cứu sâu',
@@ -930,7 +936,7 @@ export const vi = {
   'onb.2.recommend':
     'Gợi ý cho người mới: OpenRouter — một key với tới rất nhiều model, trong đó có model miễn phí.',
   'onb.2.many':
-    'Hỗ trợ Anthropic, OpenAI, Google Gemini, OpenRouter và OrcaRouter. Mỗi nhà cung cấp giữ được nhiều key; Synapsez dùng lần lượt theo thứ tự trong danh sách.',
+    'Hỗ trợ Google Gemini, OpenRouter và OrcaRouter — model Claude và GPT có qua OpenRouter và OrcaRouter. Mỗi nhà cung cấp giữ được nhiều key; Synapsez dùng lần lượt theo thứ tự trong danh sách.',
   'onb.2.open': 'Mở phần key',
   'onb.2.done': 'Xong — tài khoản của bạn đã có key.',
   'onb.2.pending': 'Chưa có key nào. Chưa có key thì trợ lý chưa trả lời được.',

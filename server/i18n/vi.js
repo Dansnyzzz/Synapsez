@@ -753,6 +753,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi ({0}). Hãy thử lại sau giây lát.",
   "OpenStreetMap's place search did not answer ({0}), so \"{1}\" could not be checked. Try again in a moment.":
     "Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi ({0}), nên chưa kiểm tra được \"{1}\". Hãy thử lại sau giây lát.",
+  "OpenStreetMap's place search did not answer (it failed a moment ago and is being rested). Try again in a moment.":
+    'Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi (vừa lỗi cách đây ít phút nên đang được cho nghỉ). Hãy thử lại sau giây lát.',
+  'it failed a moment ago and is being rested':
+    'vừa lỗi cách đây ít phút nên đang được cho nghỉ',
+  "OpenStreetMap's place search did not answer{0}, and neither did its address search ({1}). Try again in a moment, or web_search for the places.":
+    'Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi{0}, dịch vụ tìm địa chỉ của nó cũng vậy ({1}). Hãy thử lại sau giây lát, hoặc dùng web_search để tìm các địa điểm.',
   "Say what to look for — \"quán ăn\", \"cà phê\", \"phở\", \"ATM\", \"bệnh viện\"…":
     "Hãy nói cần tìm gì — \"quán ăn\", \"cà phê\", \"phở\", \"ATM\", \"bệnh viện\"…",
   "OpenStreetMap took too long to answer, so this was stopped. Try again in a moment, or a smaller area.":
@@ -947,6 +953,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'Give a `file_id` (an attachment, a made file or a step screenshot) or a `url` of an image or PDF.':
     'Hãy đưa `file_id` (tệp đính kèm, tệp đã tạo hoặc ảnh chụp màn hình của một bước) hoặc `url` của ảnh hay PDF.',
   'it answered with nothing': 'model không trả lời gì',
+  'took more than {0}s': 'mất hơn {0} giây',
+  'The cloud computer took more than {0}s to hand over {1}, so it was not read. Try once more; if it is slow again, make a smaller copy first.':
+    'Máy tính đám mây mất hơn {0} giây để đưa ra {1}, nên chưa đọc được. Hãy thử lại một lần; nếu vẫn chậm, hãy tạo một bản nhỏ hơn trước.',
   stopped: 'đã dừng',
   'None of the models that can see could read it — {0}': 'Không model thị giác nào đọc được — {0}',
   // Share links.

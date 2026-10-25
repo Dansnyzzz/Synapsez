@@ -333,8 +333,8 @@ section('Word: written, then read back by the same code that reads an upload');
   const styles = openZip(writeDocx({ blocks: [{ type: 'quote', runs: [{ text: 'x' }] }] })).text('word/styles.xml');
   check(
     'and so are the paragraph properties of the stylesheet',
-    /<w:pPr><w:pBdr>[\s\S]*?<\/w:pBdr><w:spacing[^>]*\/><w:ind /.test(styles),
-    'pBdr, then spacing, then ind',
+    /<w:pPr><w:pBdr>[\s\S]*?<\/w:pBdr>(?:<w:shd [^>]*\/>)?<w:spacing[^>]*\/><w:ind /.test(styles),
+    'pBdr, then shd, then spacing, then ind',
   );
 }
 
@@ -563,6 +563,212 @@ section('creating a file in each format');
   check('a workbook can be written from JSON', readXlsx(fromJson.buffer).sheets[0].name === 'S');
   const fromCsv = office.createDocument({ format: 'xlsx', name: 'c', content: 'a,b\n1,2\n3,4' });
   check('and from raw CSV', readXlsx(fromCsv.buffer).sheets[0].rows.length === 3, String(readXlsx(fromCsv.buffer).sheets[0].rows.length));
+}
+
+/**
+ * The owner's 2026-10-25 round: Word, Excel and PowerPoint came out as "just
+ * text added". They come out designed now, with nothing asked of the model —
+ * a palette from the topic, a layout per slide read off what it holds, fades,
+ * banded tables, figures that are figures. Every one of these files was also
+ * opened in PowerPoint, Word and Excel themselves (see the commit), because
+ * those are the readers that refuse what everything else forgives.
+ */
+section('Word, Excel and PowerPoint come out designed');
+{
+  const { THEMES, pickTheme } = await import('../server/office/theme.js');
+  check('a document about money is navy, one about the environment green, one about health teal', pickTheme(null, 'Báo cáo tài chính và doanh thu quý 3').name === 'Ocean' && pickTheme(null, 'Chuyển đổi xe điện, năng lượng xanh').name === 'Emerald' && pickTheme(null, 'Sức khỏe bệnh nhân tại bệnh viện').name === 'Teal');
+  check('  a palette asked for by name wins over the topic', pickTheme('violet', 'tài chính').name === 'Violet' && pickTheme('nonsense', 'tài chính').name === 'Ocean');
+
+  const deck = [
+    '# Chuyển đổi giao thông xanh 2026–2030',
+    '',
+    'Kế hoạch chuyển sang xe điện',
+    '',
+    '## Bối cảnh',
+    '- Giá xăng biến động, nhiên liệu chiếm **35%** chi phí',
+    '- Ưu đãi lệ phí trước bạ đến 2027',
+    '  - Mở rộng mạng lưới sạc',
+    '> Nhấn mạnh ưu đãi.',
+    '',
+    '## Con số',
+    '- **45%** tiết kiệm nhiên liệu',
+    '- **1,2 tỷ** đồng bảo dưỡng',
+    '- **18 tháng** hoàn vốn',
+    '',
+    '# Phân tích chi phí',
+    '',
+    '## So sánh',
+    '| Hạng mục | Xe xăng | Xe điện |',
+    '| --- | --- | --- |',
+    '| Nhiên liệu | 52.000.000 | 18.500.000 |',
+    '| Bảo dưỡng | 12.000.000 | 4.000.000 |',
+    '',
+    '## Tầm nhìn',
+    '',
+    'Một đội xe không phát thải vào năm 2030.',
+    '',
+    '## Cảm ơn',
+    '- Phòng Vận hành',
+  ].join('\n');
+  const made = office.createDocument({ format: 'pptx', name: 'deck', content: deck });
+  const zip = openZip(made.buffer);
+  const slide = (n) => zip.text(`ppt/slides/slide${n}.xml`);
+  const count = (zip.names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))).length;
+  check('one slide per heading, nothing invented', count === 7, String(count));
+  check('the first is a cover: the palette\'s deep ground, the title large in white', /<p:bg><p:bgPr><a:gradFill/.test(slide(1)) && /val="FFFFFF"/.test(slide(1)) && /name="Subtitle"/.test(slide(1)), slide(1).slice(0, 200));
+  check('  in the palette the topic picks — green for the environment', zip.text('ppt/theme/theme1.xml').includes(`<a:accent1><a:srgbClr val="${THEMES.emerald.primary}"/>`));
+  check('a slide of points keeps its body where PowerPoint\'s outline looks for it, bullets in the accent', /<p:ph idx="1"\/>/.test(slide(2)) && new RegExp(`<a:buClr><a:srgbClr val="${THEMES.emerald.accent}"`).test(slide(2)) && /<a:buChar char="■"\/>/.test(slide(2)));
+  check('  bold inside a point stays bold', /b="1"[^>]*>[\s\S]{0,200}<a:t>35%<\/a:t>/.test(slide(2)));
+  check('points that open with a figure are cards, one per figure', (slide(3).match(/name="Card \d"/g) || []).length === 3 && /<a:t>45%<\/a:t>/.test(slide(3)));
+  check('a heading alone part-way through is a section, numbered', /<a:t>01<\/a:t>/.test(slide(4)) && /<p:push dir="u"\/>/.test(slide(4)));
+  check('a table is a real table, its header in the palette\'s colour, figures set right', /<a:tbl>/.test(slide(5)) && new RegExp(`<a:solidFill><a:srgbClr val="${THEMES.emerald.primary}"/></a:solidFill></a:tcPr>`).test(slide(5)) && /<a:pPr algn="r"/.test(slide(5)));
+  check('one short paragraph is a statement slide', /name="Decoration Quote"/.test(slide(6)) && /i="1"/.test(slide(6)));
+  check('a last slide that says thanks is a closing slide', /<p:bg><p:bgPr><a:gradFill/.test(slide(7)) && /algn="ctr"/.test(slide(7)));
+  check('every slide fades in', [1, 2, 3, 5, 6].every((n) => /<p:transition spd="med"><p:fade\/><\/p:transition>/.test(slide(n))));
+  check('  and its content arrives a point at a time, on its own — no click', /<p:timing>/.test(slide(2)) && /presetClass="entr"/.test(slide(2)) && /nodeType="afterEffect"/.test(slide(2)) && /<p:cond evt="onBegin" delay="0"><p:tn val="2"\/><\/p:cond>/.test(slide(2)));
+  check('  a point with points under it arrives with them', /<p:pRg st="1" end="2"\/>/.test(slide(2)), (slide(2).match(/<p:pRg[^>]*>/g) || []).join(' '));
+  check('  the timing comes after the transition, as the schema orders them', slide(2).indexOf('<p:transition') < slide(2).indexOf('<p:timing>') && slide(2).indexOf('</p:clrMapOvr>') < slide(2).indexOf('<p:transition'));
+  check('every part is still well-formed XML', zip.names.every((name) => !!parseXml(zip.text(name))));
+
+  const back = readPptx(made.buffer);
+  check('read back, the deck is its words — titles in order', back.slides.map((s) => s.title).join('|') === 'Chuyển đổi giao thông xanh 2026–2030|Bối cảnh|Con số|Phân tích chi phí|So sánh|Tầm nhìn|Cảm ơn', back.slides.map((s) => s.title).join('|'));
+  check('  and the drawing is not read as points: no footer, no slide number, no "01"', !back.text.includes(' / 7') && back.slides[1].bullets.every((b) => !/Chuyển đổi giao thông/.test(b.text)) && back.slides[3].bullets.length === 0, JSON.stringify(back.slides[1].bullets));
+  check('  the table reads back as a table, the notes as notes', back.slides[4].tables[0]?.rows.length === 3 && back.slides[1].notes.includes('Nhấn mạnh'));
+
+  // What the model reads before making a deck says what the deck will be (code review, 2026-10-25).
+  {
+    const { BUILTIN_SKILLS } = await import('../server/skills/builtin.js');
+    const skill = (id) => BUILTIN_SKILLS.find((s) => s.id === id)?.instructions || '';
+    check('the deck skill describes the design the file gets, not "no themes, no transitions"', !/no themes|no transitions/i.test(skill('builtin:pptx')) && /KPI cards/.test(skill('builtin:pptx')) && /section/.test(skill('builtin:pptx')));
+    check('  and the Word skill names the page break the converter reads', /\\pagebreak/.test(skill('builtin:docx')) && !/`---` on its own line becomes a page break/.test(skill('builtin:docx')));
+  }
+
+  const { slideKind } = await import('../server/office/slides.js');
+  check('points that open with a date are a list, not cards with "15" in them', slideKind({ title: 'Lịch', bullets: ['15/03: Khởi động', '20/04: Lắp đặt', '2026-05-01 Bàn giao'] }, 2, 5) === 'bullets');
+  check('  while "**120+** khách hàng" and "3x nhanh hơn" are figures', slideKind({ title: 'Kết quả', bullets: ['**120+** khách hàng', '3x nhanh hơn'] }, 2, 5) === 'stats');
+
+  // A table under a few lines of intro starts below them — seen in PowerPoint, the
+  // third line used to run under the table's header (2026-10-25).
+  {
+    const rows = [['Khu vực', 'Q1'], ...Array.from({ length: 12 }, (_, i) => [`Chi nhánh ${i + 1}`, String(1200 + i)])];
+    const intro = writePptx({ title: 't', slides: [{ title: 'Doanh thu', bullets: [{ level: 0, text: 'Số liệu tổng hợp từ ba miền.\nĐơn vị: triệu đồng.\nNguồn: phòng kế toán.', plain: true }], table: { header: true, rows } }] });
+    const z = openZip(intro);
+    const first = z.text('ppt/slides/slide1.xml');
+    const box = /name="Content 1"[\s\S]*?<a:off x="\d+" y="(\d+)"\/><a:ext cx="\d+" cy="(\d+)"/.exec(first);
+    const frame = /<p:graphicFrame>[\s\S]*?<a:off x="\d+" y="(\d+)"\/><a:ext cx="\d+" cy="(\d+)"/.exec(first);
+    check('a table under an intro starts below it, not under its last line', !!box && !!frame && Number(frame[1]) >= Number(box[1]) + Number(box[2]), `${box?.slice(1)} → ${frame?.slice(1)}`);
+    check('  and stops above the footer, the rest continued', !!frame && Number(frame[1]) + Number(frame[2]) <= 6858000 - 731520 && readPptx(intro).slides.reduce((n, s) => n + (s.tables[0]?.rows.length || 0) - 1, 0) === 12, readPptx(intro).slides.map((s) => s.tables[0]?.rows.length).join(','));
+  }
+
+  // Code review, 2026-10-25: three ways a slide still overflowed.
+  {
+    // Four long points: too much for one column, so two — not one column at the smallest size, running off.
+    const sentence = 'Doanh nghiệp tiết kiệm chi phí vận hành mỗi năm khi chuyển sang xe điện, với thời gian hoàn vốn khoảng mười tám tháng. ';
+    // 400 characters: five lines a point at the smallest one-column size, nine in a column of two.
+    const fourFile = writePptx({ title: 't', slides: [{ title: 'Lý do', bullets: Array.from({ length: 4 }, () => sentence.repeat(4).slice(0, 400)) }] });
+    const four = readPptx(fourFile);
+    const fourXml = openZip(fourFile).text('ppt/slides/slide1.xml');
+    check('four long points too tall for one column are set in two, on the one slide', four.slides.length === 1 && /name="Content 2"/.test(fourXml), `${four.slides.length} slide(s)`);
+
+    // A table whose cells wrap: each row as tall as its words, and the table stops above the footer.
+    const long = 'Lắp đặt trạm sạc tại ba kho chính, đào tạo tài xế, theo dõi mức tiêu thụ điện hằng tuần và báo cáo về phòng vận hành.';
+    const rows = [['Giai đoạn', 'Việc cần làm'], ...Array.from({ length: 8 }, (_, i) => [`Bước ${i + 1}`, `${long} ${long}`])];
+    const wrapped = openZip(writePptx({ title: 't', slides: [{ title: 'Lộ trình', table: { header: true, rows } }] }));
+    const slideNames = wrapped.names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n));
+    const frames = slideNames.map((n) => {
+      const xml = wrapped.text(n);
+      const frame = /<p:graphicFrame>[\s\S]*?<a:off x="\d+" y="(\d+)"\/><a:ext cx="\d+" cy="(\d+)"/.exec(xml);
+      const heights = [...xml.matchAll(/<a:tr h="(\d+)">/g)].map((m) => Number(m[1]));
+      const grid = [...xml.matchAll(/<a:gridCol w="(\d+)"\/>/g)].map((m) => m[1]).join(',');
+      return { top: Number(frame?.[1]), tall: Number(frame?.[2]), heights, grid };
+    });
+    check('a table whose cells wrap gets rows as tall as their words', frames[0].heights.length > 1 && frames[0].heights[1] > frames[0].heights[0], frames[0].heights.join(','));
+    check('  so it continues on more slides, each stopping above the footer', frames.length >= 2 && frames.every((f) => f.top + f.tall <= 6858000 - 731520 && f.tall === f.heights.reduce((a, b) => a + b, 0)), frames.map((f) => `${f.top}+${f.tall}`).join(' '));
+    check('  with every row kept, and the same columns on every page', frames.reduce((n, f) => n + f.heights.length - 1, 0) === 8 && new Set(frames.map((f) => f.grid)).size === 1, frames.map((f) => f.grid).join(' | '));
+
+    // Words written under a table come after it, not above it.
+    const after = readPptx(office.createDocument({ format: 'pptx', name: 'a', content: '## Kết quả\n\n| Chỉ số | Giá trị |\n| --- | --- |\n| Doanh thu | 120 |\n\nGhi chú: số liệu tạm tính.' }).buffer);
+    check('a line written under a table follows it on a slide of its own, under the same title', after.slides.length === 2 && after.slides[0].tables.length === 1 && !after.slides[0].bullets.length && after.slides[1].title === 'Kết quả' && /tạm tính/.test(after.slides[1].bullets[0]?.text || ''), JSON.stringify(after.slides.map((s) => [s.title, s.bullets.map((b) => b.text), s.tables.length])));
+    // Seen in PowerPoint: a one-line note there was set as a pull-quote, with a large quotation mark.
+    const afterXml = openZip(office.createDocument({ format: 'pptx', name: 'a', content: '## Kết quả\n\n| Chỉ số | Giá trị |\n| --- | --- |\n| Doanh thu | 120 |\n\nGhi chú: số liệu tạm tính.' }).buffer).text('ppt/slides/slide2.xml');
+    check('  as a note, not a pull-quote', !/name="Decoration Quote"/.test(afterXml) && /<p:ph idx="1"\/>/.test(afterXml));
+  }
+
+  // Too much for one slide is continued, never shrunk to nothing or dropped.
+  const long = writePptx({ title: 'x', slides: [{ title: 'Many', bullets: Array.from({ length: 34 }, (_, i) => `Point number ${i + 1} with some words to make it a line of its own on a slide`) }] });
+  const pages = readPptx(long);
+  check('a slide too full to read continues on the next, titled (1/n)', pages.slides.length >= 2 && pages.slides[0].title.startsWith('Many (1/'), pages.slides.map((s) => s.title).join(' | '));
+  check('  with every point kept', pages.slides.reduce((n, s) => n + s.bullets.length, 0) === 34, String(pages.slides.reduce((n, s) => n + s.bullets.length, 0)));
+
+  // Word.
+  const report = [
+    '# Báo cáo chuyển đổi xe điện',
+    '',
+    'Đánh giá chi phí và lộ trình.',
+    '',
+    ...[1, 2, 3, 4].flatMap((n) => [`## Phần ${n}`, '', 'Doanh nghiệp có thể tiết kiệm chi phí vận hành mỗi năm khi chuyển sang xe điện, với thời gian hoàn vốn khoảng mười tám tháng và rủi ro được kiểm soát. '.repeat(3), '']),
+    '| Hạng mục | Xe xăng | Xe điện |',
+    '| --- | --- | --- |',
+    '| Nhiên liệu | 52.000.000 | 18.500.000 |',
+    '| Bảo dưỡng | 12.000.000 | 4.000.000 |',
+    '| Bảo hiểm | 9.500.000 | 11.000.000 |',
+    '',
+    '> Khuyến nghị thí điểm 30 xe.',
+  ].join('\n');
+  const doc = openZip(office.createDocument({ format: 'docx', name: 'r', content: report }).buffer);
+  const body = doc.text('word/document.xml');
+  const styles = doc.text('word/styles.xml');
+  check('a long document opens on a cover: its title, the line under it, the day, then a new page', /<w:pStyle w:val="Title"\/><w:spacing w:before="3200"/.test(body) && /Ngày \d+ tháng \d+ năm \d{4}/.test(body) && /<w:br w:type="page"\/>/.test(body) && /<w:titlePg\/><\/w:sectPr>/.test(body));
+  check('  and every page after it a header and a numbered footer', doc.has('word/header1.xml') && /<w:fldSimple w:instr=" PAGE ">/.test(doc.text('word/footer1.xml')) && /NUMPAGES/.test(doc.text('word/footer1.xml')) && /Trang /.test(doc.text('word/footer1.xml')));
+  check('  declared, and related', doc.text('[Content_Types].xml').includes('/word/footer1.xml') && /footer1\.xml/.test(doc.text('word/_rels/document.xml.rels')));
+  check('headings in the palette, the first with a rule of accent', new RegExp(`w:styleId="Heading1"[\\s\\S]*?<w:bottom [^>]*w:color="${THEMES.emerald.accent}"`).test(styles) && new RegExp(`w:styleId="Heading2"[\\s\\S]*?<w:color w:val="${THEMES.emerald.secondary}"`).test(styles));
+  check('a table\'s header row in the palette\'s colour with white words, bands under it, figures set right', new RegExp(`w:fill="${THEMES.emerald.primary}"`).test(body) && /<w:color w:val="FFFFFF"\/>/.test(body) && new RegExp(`w:fill="${THEMES.emerald.soft}"`).test(body) && /<w:jc w:val="right"\/>/.test(body));
+  check('a quote is a tinted callout with a bar of accent', new RegExp(`w:styleId="Quote"[\\s\\S]*?<w:left [^>]*w:color="${THEMES.emerald.accent}"[\\s\\S]*?<w:shd [^>]*w:fill="${THEMES.emerald.soft}"`).test(styles));
+  check('it declares Vietnamese, so spelling is checked in it', /<w:lang w:val="vi-VN"\/>/.test(styles));
+  const short = openZip(office.createDocument({ format: 'docx', name: 's', content: '# Thư mời\n\nKính gửi anh chị.\n\nTrân trọng.' }).buffer).text('word/document.xml');
+  check('a short letter spends no page on a cover', !/<w:br w:type="page"\/>/.test(short) && !/Ngày \d+ tháng/.test(short) && /<w:pStyle w:val="Title"\/>/.test(short));
+  check('  its first page has the numbered footer, and no header repeating the title over it', /<w:footerReference w:type="first" r:id="rId4"\/>/.test(short) && !/<w:headerReference w:type="first"/.test(short) && /<w:titlePg\/>/.test(short));
+  check('bullets are a character Word can draw, not "•" in the Symbol font', !/w:ascii="Symbol"/.test(doc.text('word/numbering.xml')) && /w:ascii="Arial"/.test(doc.text('word/numbering.xml')));
+
+  // Excel.
+  const sheet = [
+    '## Chi phí',
+    '| Năm | Chi phí (đ) | Tỷ lệ | Giá | Ngày giao | Mã |',
+    '| --- | --- | --- | --- | --- | --- |',
+    '| 2026 | 1.560.000.000 | 64% | $28,500 | 2026-03-15 | 0123 |',
+    '| 2027 | 4.160.000.000 | 64,4% | $31,200.50 | 2026-04-01 | 0456 |',
+    '| 2028 | 5.200.000.000 | 65% | $33,900 | 2026-05-20 | 0789 |',
+  ].join('\n');
+  const book = office.createDocument({ format: 'xlsx', name: 'b', content: sheet });
+  const cells = readXlsx(book.buffer).sheets[0].rows;
+  check('"1.560.000.000" is the number it says, not text', cells[1][1].t === 'n' && cells[1][1].v === '1560000000', JSON.stringify(cells[1][1]));
+  check('"64,4%" is 0.644, "$31,200.50" is 31200.5, "2026-03-15" a date', cells[2][2].v === '0.644' && cells[2][3].v === '31200.5' && cells[1][4].t === 'd', JSON.stringify([cells[2][2], cells[2][3], cells[1][4]]));
+  check('  while a code with a leading zero stays text', cells[1][5].t === 's' && cells[1][5].v === '0123');
+  // A column decides what "150.000" is (code review, 2026-10-25): read alone it was 150, and a
+  // column of 150.000, 1.500 and 1.200.000 summed to 1,200,151.5.
+  {
+    const mixed = readXlsx(writeXlsx({ sheets: [{ name: 'Price', rows: [['Item', 'Price', 'Server', 'Postal code'], ['A', '150.000', '192.168.100.200', 700000], ['B', '1.500', '10.0.0.1', 100000], ['C', '1.200.000', '172.16.0.10', 550000]] }] })).sheets[0].rows;
+    check('a column that also holds 1.200.000 reads 150.000 and 1.500 as thousands', mixed[1][1].v === '150000' && mixed[2][1].v === '1500' && mixed[3][1].v === '1200000', JSON.stringify(mixed.map((r) => r[1])));
+    check('  an address like 192.168.100.200 stays text', mixed[1][2].t === 's' && mixed[1][2].v === '192.168.100.200', JSON.stringify(mixed[1][2]));
+    const billions = readXlsx(writeXlsx({ sheets: [{ name: 'B', rows: [['Năm', 'Chi phí'], ['2027', '4.160.000.000'], ['2028', '5.200.000.000']] }] })).sheets[0].rows;
+    check('  while 4.160.000.000 — four groups none over 255 — is four billion, not an address', billions[1][1].v === '4160000000' && billions[2][1].v === '5200000000', JSON.stringify(billions.map((r) => r[1])));
+    const ws2 = openZip(writeXlsx({ sheets: [{ name: 'Price', rows: [['Item', 'Postal code'], ['A', 700000], ['B', 100000], ['C', 550000]] }] })).text('xl/worksheets/sheet1.xml');
+    check('  and a column of codes is never shown with thousands', /<c r="B2" s="2">/.test(ws2) && !/<conditionalFormatting/.test(ws2), ws2.match(/<c r="B2" s="\d+"/)?.[0]);
+    const english = readXlsx(writeXlsx({ sheets: [{ name: 'Weights', rows: [['Item', 'Kg'], ['A', '1.500'], ['B', '2.250']] }] })).sheets[0].rows;
+    check('  while an English column of 1.500 alone keeps reading it as one and a half', english[1][1].v === '1.5', JSON.stringify(english[1][1]));
+  }
+  // Shown as written: a format with two decimals showed "3.14159" as 3.14 (caught in Excel, 2026-10-25).
+  const plainDecimals = openZip(writeXlsx({ sheets: [{ name: 'p', rows: [['k', 'v'], ['pi', 3.14159], ['e', '2.71828']] }] })).text('xl/worksheets/sheet1.xml');
+  check('  and a plain decimal keeps the General format, so every digit shows', /<c r="B2" s="2">/.test(plainDecimals) && /<c r="B3" s="3">/.test(plainDecimals), plainDecimals.match(/<c r="B\d" s="\d+"/g)?.join(' '));
+  const xz = openZip(book.buffer);
+  const ws = xz.text('xl/worksheets/sheet1.xml');
+  const xs = xz.text('xl/styles.xml');
+  check('the header row is the palette\'s colour, its words bold and white', xs.includes(`<fgColor rgb="FF${THEMES.ocean.primary}"/>`) && /<font><b\/><sz val="11"\/><color rgb="FFFFFFFF"\/>/.test(xs));
+  check('  each figure in its own format: thousands, a percent, dollars', /formatCode="0\.0%"/.test(xs) && /formatCode="&quot;\$&quot;#,##0\.00"/.test(xs) && /numFmtId="3"/.test(xs));
+  check('a data bar in each column of figures — not in the year\'s', /<conditionalFormatting sqref="B2:B4">[\s\S]*?<dataBar>/.test(ws) && !/sqref="A2:A4"/.test(ws));
+  check('set up to print: fitted to the width, the pages numbered', /<pageSetup [^>]*fitToWidth="1"/.test(ws) && /<oddFooter>&amp;C&amp;P \/ &amp;N<\/oddFooter>/.test(ws) && /<sheetPr><pageSetUpPr fitToPage="1"\/><\/sheetPr>/.test(ws));
+  check('  in the order the schema lists them', ws.indexOf('<sheetData>') < ws.indexOf('<autoFilter') && ws.indexOf('<autoFilter') < ws.indexOf('<conditionalFormatting') && ws.indexOf('<conditionalFormatting') < ws.indexOf('<printOptions') && ws.indexOf('<pageMargins') < ws.indexOf('<pageSetup'));
+  check('  the filter\'s range named the way Excel names it', /<definedName name="_xlnm\._FilterDatabase" localSheetId="0" hidden="1">&apos;Chi phí&apos;!\$A\$1:\$F\$4<\/definedName>|<definedName name="_xlnm\._FilterDatabase" localSheetId="0" hidden="1">'Chi phí'!\$A\$1:\$F\$4<\/definedName>/.test(xz.text('xl/workbook.xml')), xz.text('xl/workbook.xml').slice(-260));
 }
 
 section('what an upload is allowed to be');

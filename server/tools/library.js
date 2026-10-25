@@ -655,26 +655,212 @@ export const overpassLiteral = (s) =>
 
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 
-/** One Overpass query, on the first public server that answers. */
+/**
+ * How Overpass is waited on. It is overloaded more often than not — on
+ * 2026-10-25 every public server timed out at 25 s (owner's screenshot 7) — so
+ * a query that has not been answered in `hedge` is put to the next server as
+ * well, the first answer wins, each server gets `each` at most, and after a
+ * failure Overpass is rested for `rest` rather than waited on by every search —
+ * for `slowRest` when it was only slow, which passes sooner than a server that
+ * said it was overloaded or could not be reached.
+ */
+const PLACES_TIMING = { hedge: 2500, each: 10_000, rest: 3 * 60_000, slowRest: 60_000 };
+let timing = { ...PLACES_TIMING };
+let overpassRestsUntil = 0;
+
+/** For the suite: shorter waits, and no rest carried over from another test. */
+export const __places = {
+  reset(overrides = {}) {
+    timing = { ...PLACES_TIMING, ...overrides };
+    overpassRestsUntil = 0;
+  },
+};
+
+/** One Overpass query, on whichever public server answers first. */
 async function overpass(query, signal) {
+  if (Date.now() < overpassRestsUntil) {
+    // The reason is the cause, so a message built around this one does not say "did not answer" twice.
+    throw new Error("OpenStreetMap's place search did not answer (it failed a moment ago and is being rested). Try again in a moment.", {
+      cause: new Error('it failed a moment ago and is being rested'),
+    });
+  }
+  /** @type {AbortController[]} */
+  const asking = [];
   let last = null;
-  for (const endpoint of OVERPASS) {
-    try {
-      const limit = AbortSignal.timeout(20_000);
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA, Accept: 'application/json' },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: signal ? AbortSignal.any([signal, limit]) : limit,
-      });
+  /** Whether a server failed the way an overloaded one does, rather than refusing this query. */
+  let overloaded = false;
+  /** Whether one said so (a 429, a 5xx) or could not be reached, rather than only being slow. */
+  let down = false;
+  const ask = (endpoint) => {
+    const own = new AbortController();
+    asking.push(own);
+    const parts = [own.signal, AbortSignal.timeout(timing.each), ...(signal ? [signal] : [])];
+    return fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA, Accept: 'application/json' },
+      body: `data=${encodeURIComponent(query)}`,
+      signal: AbortSignal.any(parts),
+    }).then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
+      return res.json();
+    });
+  };
+  try {
+    return await new Promise((resolve, reject) => {
+      let started = 0;
+      let waiting = 0;
+      let settled = false;
+      let hedge = null;
+      const next = () => {
+        clearTimeout(hedge);
+        const endpoint = OVERPASS[started];
+        started += 1;
+        waiting += 1;
+        ask(endpoint).then(
+          (data) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(hedge);
+            resolve(data);
+          },
+          (err) => {
+            waiting -= 1;
+            last = err;
+            // Slow, unreachable, "too many requests", a 5xx — not a 4xx about this query.
+            if (!/^HTTP 4(?!29)/.test(String(err?.message || ''))) {
+              overloaded = true;
+              if (err?.name !== 'TimeoutError') down = true;
+            }
+            if (settled) return;
+            // Stopped by the person, or nothing left to ask and nothing still out: done.
+            if (signal?.aborted || (started >= OVERPASS.length && waiting === 0)) {
+              settled = true;
+              clearTimeout(hedge);
+              reject(err);
+            } else if (started < OVERPASS.length) {
+              next(); // a refusal asks the next server at once
+            }
+          },
+        );
+        if (started < OVERPASS.length) hedge = setTimeout(() => !settled && next(), timing.hedge);
+      };
+      next();
+    });
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    /*
+     * The rest is the instance's, so every account shares it (security review,
+     * 2026-10-25): it follows only a server that was overloaded or out of
+     * reach. A query it refused (a 4xx) is that query's problem, and must not
+     * send everybody else's searches to the fallback for three minutes.
+     */
+    if (overloaded) overpassRestsUntil = Date.now() + (down ? timing.rest : timing.slowRest);
+    throw new Error(`OpenStreetMap's place search did not answer (${last?.message || 'no reply'}). Try again in a moment.`, { cause: last });
+  } finally {
+    // The slower server is not left working on an answer nobody will read.
+    for (const own of asking) own.abort();
+  }
+}
+
+/**
+ * Places around a point from Nominatim — the fallback when Overpass does not
+ * answer. Nominatim's search is a geocoder, not a place finder, so what it
+ * returns is filtered here: by the dish's own pattern (accent-sensitive, so
+ * "phổ thông" is not "phở"), by the person's words for a name, or by the exact
+ * tag of a kind of place — and by distance, nearest first, inside the circle.
+ * It knows fewer small shops than Overpass; the caller says so.
+ *
+ * @param {{ lat: number, lon: number }} center
+ * @param {{ tags?: [string, string][], name?: string, pattern?: string, dish?: string }} want
+ */
+async function nominatimPlaces(center, want, radius, limit, signal = null) {
+  const dLat = radius / 111_320;
+  const dLon = radius / (111_320 * Math.max(0.2, Math.cos((center.lat * Math.PI) / 180)));
+  const params = new URLSearchParams({
+    format: 'jsonv2',
+    limit: '40',
+    bounded: '1',
+    viewbox: [center.lon - dLon, center.lat + dLat, center.lon + dLon, center.lat - dLat].map((n) => n.toFixed(5)).join(','),
+    extratags: '1',
+    addressdetails: '1',
+    'accept-language': 'vi,en',
+  });
+  // Measured 2026-10-25: `amenity=phở` finds the phở shops; `q=phở` finds the street names.
+  if (want.dish) params.set('amenity', want.dish);
+  else if (want.name) params.set('q', want.name);
+  else if (want.tags?.length) params.set('q', want.tags[0][1].replace(/_/g, ' '));
+  else return [];
+  await politely(signal);
+  const rows = await getJson(`https://nominatim.openstreetmap.org/search?${params}`, {}, signal);
+  const pattern = want.pattern ? new RegExp(want.pattern, 'iu') : null;
+  const tagged = want.tags?.length ? new Set(want.tags.map(([key, value]) => `${key}=${value}`)) : null;
+  const named = String(want.name || '').toLocaleLowerCase('vi');
+  const PLACE_CATEGORIES = /^(amenity|shop|tourism|leisure|office|craft|healthcare)$/;
+  const seen = new Set();
+  return (Array.isArray(rows) ? rows : [])
+    .map((r) => {
+      const lat = Number(r.lat);
+      const lon = Number(r.lon);
+      const name = String(r.name || '');
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      const kindTag = `${r.category}=${r.type}`;
+      const fits = pattern
+        ? pattern.test(name) && PLACE_CATEGORIES.test(String(r.category))
+        : named
+          ? name.toLocaleLowerCase('vi').includes(named) && PLACE_CATEGORIES.test(String(r.category))
+          : tagged
+            ? tagged.has(kindTag)
+            : false;
+      if (!fits) return null;
+      const a = r.address || {};
+      const x = r.extratags || {};
+      return {
+        name,
+        kind: kindOf({ [r.category]: r.type, cuisine: x.cuisine }),
+        address: [[a.house_number, a.road].filter(Boolean).join(' '), a.suburb || a.quarter || a.city_district, a.city].filter(Boolean).join(', '),
+        hours: x.opening_hours || '',
+        phone: x.phone || x['contact:phone'] || '',
+        website: x.website || x['contact:website'] || '',
+        lat,
+        lon,
+        metres: Math.round(haversineKm(center, { lat, lon }) * 1000),
+        url: `https://www.openstreetmap.org/${r.osm_type}/${r.osm_id}`,
+      };
+    })
+    .filter((p) => p && p.metres <= radius * 1.1)
+    .filter((p) => {
+      const key = `${p.name}|${Math.round(p.lat * 2000)}|${Math.round(p.lon * 2000)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.metres - b.metres)
+    .slice(0, limit);
+}
+
+/**
+ * Places around a point: Overpass, and Nominatim when Overpass does not answer.
+ * `state` is one request's memory — once Overpass has failed, the rest of the
+ * request goes straight to Nominatim, and `state.fallback` says it did.
+ */
+async function placesAround(center, want, radius, limit, signal, state) {
+  if (!state.overpassFailed) {
+    try {
+      return await overpassPlaces(center, want, radius, limit, signal);
     } catch (err) {
       if (signal?.aborted) throw err;
-      last = err;
+      state.overpassFailed = err;
     }
   }
-  throw new Error(`OpenStreetMap's place search did not answer (${last?.message || 'no reply'}). Try again in a moment.`, { cause: last });
+  try {
+    const found = await nominatimPlaces(center, want, radius, limit, signal);
+    state.fallback = true;
+    return found;
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    const why = (state.overpassFailed?.cause instanceof Error ? state.overpassFailed.cause.message : state.overpassFailed?.message || '').replace(/\.$/, '');
+    throw new Error(`OpenStreetMap's place search did not answer${why ? ` (${why})` : ''}, and neither did its address search (${String(err?.message || err).replace(/\.$/, '')}). Try again in a moment, or web_search for the places.`);
+  }
 }
 
 /** What kind of place an element is, in a few words: its cuisine, else its tag. */
@@ -791,9 +977,15 @@ async function nearbyTool({ what, near, radius, limit }, { whereabouts = null, s
   if (!kind && !dish && !free) throw new Error('Say what to look for — "quán ăn", "cà phê", "phở", "ATM", "bệnh viện"…');
 
   const here = whereabouts && (!near || (askedNearMe && sameArea(near, whereabouts)));
+  // A point given as "10.7673, 106.6848" is where to look, as it stands — no
+  // lookup to turn it into a place first (owner's screenshot 7 sent one).
+  const point = typeof near === 'string' ? /^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/.exec(near) : null;
   let center;
   let where;
-  if (here) {
+  if (!here && point && Math.abs(Number(point[1])) <= 90 && Math.abs(Number(point[2])) <= 180) {
+    center = { lat: Number(point[1]), lon: Number(point[2]), label: `${point[1]}, ${point[2]}` };
+    where = `around ${point[1]}, ${point[2]}`;
+  } else if (here) {
     center = { lat: whereabouts.lat, lon: whereabouts.lon };
     where = whereabouts.city ? `around the user's approximate location, in ${whereabouts.city} (from their connection — a city, not a street)` : "around the user's approximate location";
   } else if (near) {
@@ -812,12 +1004,14 @@ async function nearbyTool({ what, near, radius, limit }, { whereabouts = null, s
   const count = Math.min(15, Math.max(1, Number(limit) || 8));
   const spans = Number(radius) > 0 ? [Math.min(10_000, Math.max(200, Number(radius)))] : [600, 1500, 4000];
   let span = spans[0];
+  /** This request's memory of Overpass — see `placesAround`. */
+  const state = {};
   /** Smallest circle first, wider until enough are found. */
   const search = async (want) => {
     let hits = [];
     for (const r of spans) {
       span = r;
-      hits = await overpassPlaces(center, want, r, count, signal);
+      hits = await placesAround(center, want, r, count, signal, state);
       if (hits.length >= Math.min(count, 5)) break;
     }
     return hits;
@@ -825,10 +1019,12 @@ async function nearbyTool({ what, near, radius, limit }, { whereabouts = null, s
   let found;
   let note = '';
   if (dish) {
-    found = await search({ tags, pattern: dish[2] });
+    // The dish's own word — the first of its name pattern — is what Nominatim is asked for, if it comes to that.
+    found = await search({ tags, pattern: dish[2], dish: dish[2].split('|')[0].trim() });
     // Few named for it: the places listed under its cuisine as well. A failure
-    // here keeps what was already found.
-    if (found.length < 3 && dish[3]) {
+    // here keeps what was already found. Nominatim cannot ask by cuisine, so
+    // this is Overpass's alone.
+    if (found.length < 3 && dish[3] && !state.overpassFailed) {
       const more = await overpassPlaces(center, { tags, cuisine: dish[3] }, span, count, signal).catch((err) => {
         if (signal?.aborted) throw err;
         return [];
@@ -838,15 +1034,19 @@ async function nearbyTool({ what, near, radius, limit }, { whereabouts = null, s
     }
     // A dish nobody names in their sign: every place to eat, said so.
     if (!found.length) {
-      found = await overpassPlaces(center, { tags }, span, count, signal);
+      found = await placesAround(center, { tags }, span, count, signal, state);
       note = `No place named for ${dish[1]} is listed nearby, so these are the places to eat around it. `;
     }
   } else {
     found = await search({ tags: tags || [], name: free || undefined });
   }
+  // Said by the app, after the envelope: where these came from when Overpass did not answer.
+  const source = state.fallback
+    ? "Source: OpenStreetMap, through its address search (Nominatim) — its place search (Overpass) did not answer, and the address search knows fewer small shops, so some may be missing. "
+    : 'Source: OpenStreetMap. ';
   const label = kind?.label || (dish ? `places for ${dish[1]}` : `places named like "${free}"`);
   if (!found.length) {
-    return `No ${label} are listed on OpenStreetMap within ${metres(span)} ${where}. OpenStreetMap is thinner on small shops in some cities — web_search can find more.`;
+    return `No ${label} are listed on OpenStreetMap within ${metres(span)} ${where}. OpenStreetMap is thinner on small shops in some cities${state.fallback ? ', and its place search did not answer, so only its address search was asked' : ''} — web_search can find more.`;
   }
 
   const lines = found.map(
@@ -859,7 +1059,7 @@ async function nearbyTool({ what, near, radius, limit }, { whereabouts = null, s
     content: `${note}${found.length} ${label} within ${metres(span)} ${where}, nearest first:\n${lines.join('\n')}`,
     // What this app says about it — outside the envelope, where it is not read as the page's (execute.js).
     note:
-      'Source: OpenStreetMap. A map with these places numbered is shown to the user. OpenStreetMap lists places, not ratings or reviews — ' +
+      `${source}A map with these places numbered is shown to the user. OpenStreetMap lists places, not ratings or reviews — ` +
       'if they want the best-rated, web_search the names. Do not repeat the whole list; pick out what answers them.',
     widget: {
       kind: 'map',

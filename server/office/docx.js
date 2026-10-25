@@ -8,20 +8,22 @@
  * to a person and to an assistant.
  *
  * Writing one goes the other way, from the same blocks. The package it builds is
- * deliberately small: a document part, a stylesheet, a numbering definition and
- * the two property parts Word expects. No theme, no settings, no fonts table —
- * every one of those is optional, and each one is another file that can be
- * subtly wrong in a way that makes Word offer to "repair" the document, which is
- * the single worst thing a generated file can do.
+ * deliberately small: a document part, a stylesheet, a numbering definition, a
+ * running header and a footer with the page number, and the two property parts
+ * Word expects. No theme part, no settings, no fonts table — every one of those
+ * is optional, and each one is another file that can be subtly wrong in a way
+ * that makes Word offer to "repair" the document, which is the single worst
+ * thing a generated file can do. The design — a palette, a cover for a long
+ * document, banded tables — is in the styles and the body (owner, 2026-10-25).
  *
  * Pictures are read out with their bytes and become blocks of their own, so a
  * report full of figures previews as a report full of figures rather than as
  * the word "[image]" thirty times. They are not *written* — a document this
  * project generates is text, tables and structure.
  *
- * What is not attempted, and is said plainly rather than half-done: headers and
- * footers, footnotes, comments, tracked changes, columns, charts as anything
- * but their rendered picture, and anything positioned by hand.
+ * What is not attempted, and is said plainly rather than half-done: reading
+ * headers and footers back, footnotes, comments, tracked changes, columns,
+ * charts as anything but their rendered picture, and anything positioned by hand.
  */
 import { openZip, writeZip } from './zip.js';
 import {
@@ -50,6 +52,7 @@ import {
   rootRelsXml,
 } from './opc.js';
 import { blocksToText, normaliseBlocks } from './blocks.js';
+import { looksVietnamese, pickTheme } from './theme.js';
 
 /* ══ reading ═══════════════════════════════════════════════════════════ */
 
@@ -466,67 +469,83 @@ export function readDocx(buffer) {
 const A4 = { width: 11906, height: 16838, margin: 1134 };
 
 const WORDPROCESSING = 'application/vnd.openxmlformats-officedocument.wordprocessingml';
+const REL_HEADER = `${NS.officeRels}/header`;
+const REL_FOOTER = `${NS.officeRels}/footer`;
 
 const CONTENT_TYPES = contentTypesXml([
   ['/word/document.xml', `${WORDPROCESSING}.document.main+xml`],
   ['/word/styles.xml', `${WORDPROCESSING}.styles+xml`],
   ['/word/numbering.xml', `${WORDPROCESSING}.numbering+xml`],
+  ['/word/header1.xml', `${WORDPROCESSING}.header+xml`],
+  ['/word/footer1.xml', `${WORDPROCESSING}.footer+xml`],
 ]);
 
+const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+
 /**
- * The stylesheet.
+ * The stylesheet, in the document's palette (theme.js).
  *
  * Written out rather than left to Word's defaults because the defaults are not
  * the same everywhere — a document with no `docDefaults` picks up whatever the
  * installation's Normal template says, which is how the same file comes out
  * 11pt Calibri on one machine and 12pt Times on another.
  *
- * Colours and sizes here are the ones a business document actually wants: a
- * text size that prints, headings that step down, and a quote that reads as one
- * without a coloured bar nobody asked for.
+ * Designed (owner, 2026-10-25: "not just text added"): headings in the
+ * palette's colours, the first level with a rule of accent under it; a quote is
+ * a tinted callout with a bar down its side; links in the palette's blue.
+ *
+ * @param {import('./theme.js').Palette} palette
  */
-function stylesXml() {
-  const heading = (id, size, colour, spaceBefore) =>
+function stylesXml(palette, lang) {
+  const heading = (id, size, colour, spaceBefore, rule = '') =>
     `<w:style w:type="paragraph" w:styleId="Heading${id}"><w:name w:val="heading ${id}"/>` +
     '<w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/>' +
-    `<w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="${spaceBefore}" w:after="120"/>` +
+    `<w:pPr><w:keepNext/><w:keepLines/>${rule}<w:spacing w:before="${spaceBefore}" w:after="120"/>` +
     `<w:outlineLvl w:val="${id - 1}"/></w:pPr>` +
     `<w:rPr><w:b/><w:color w:val="${colour}"/><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr></w:style>`;
 
   return (
-    `${XML_DECLARATION}<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+    `${XML_DECLARATION}<w:styles xmlns:w="${W_NS}">` +
     '<w:docDefaults><w:rPrDefault><w:rPr>' +
     '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri" w:eastAsia="Calibri"/>' +
-    '<w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US"/>' +
+    `<w:color w:val="${palette.ink}"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="${lang}"/>` +
     '</w:rPr></w:rPrDefault>' +
-    '<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault>' +
+    '<w:pPrDefault><w:pPr><w:spacing w:after="140" w:line="288" w:lineRule="auto"/></w:pPr></w:pPrDefault>' +
     '</w:docDefaults>' +
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>' +
+    // The document's title: large, in the palette, a rule of accent under it.
     '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/>' +
-    '<w:next w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="240"/></w:pPr>' +
-    '<w:rPr><w:b/><w:sz w:val="52"/><w:szCs w:val="52"/></w:rPr></w:style>' +
-    heading(1, 36, '1A1A1A', 240) +
-    heading(2, 30, '1A1A1A', 240) +
-    heading(3, 26, '2A2A2A', 200) +
-    heading(4, 24, '2A2A2A', 200) +
-    heading(5, 22, '3A3A3A', 160) +
-    heading(6, 22, '3A3A3A', 160) +
+    '<w:next w:val="Normal"/><w:qFormat/>' +
+    `<w:pPr><w:pBdr><w:bottom w:val="single" w:sz="24" w:space="8" w:color="${palette.accent}"/></w:pBdr>` +
+    '<w:spacing w:before="120" w:after="280" w:line="240" w:lineRule="auto"/></w:pPr>' +
+    `<w:rPr><w:b/><w:color w:val="${palette.primary}"/><w:sz w:val="56"/><w:szCs w:val="56"/></w:rPr></w:style>` +
+    heading(1, 34, palette.primary, 360, `<w:pBdr><w:bottom w:val="single" w:sz="8" w:space="4" w:color="${palette.accent}"/></w:pBdr>`) +
+    heading(2, 28, palette.secondary, 280) +
+    heading(3, 24, palette.dark, 220) +
+    heading(4, 22, palette.dark, 200) +
+    heading(5, 22, palette.muted, 160) +
+    heading(6, 22, palette.muted, 160) +
     '<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/>' +
     '<w:basedOn w:val="Normal"/><w:uiPriority w:val="34"/><w:qFormat/>' +
     '<w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style>' +
-    // `pPr` is a sequence too: the border comes before the spacing, which comes
-    // before the indent. Written in any other order, this is a repair prompt.
+    // `pPr` is a sequence too: the border, then the shading, then the spacing,
+    // then the indent. Written in any other order, this is a repair prompt.
     '<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/>' +
     '<w:next w:val="Normal"/><w:qFormat/>' +
-    '<w:pPr><w:pBdr><w:left w:val="single" w:sz="18" w:space="8" w:color="C6D0D8"/></w:pBdr>' +
-    '<w:spacing w:before="120" w:after="120"/><w:ind w:left="567"/></w:pPr>' +
-    '<w:rPr><w:i/><w:color w:val="404A54"/></w:rPr></w:style>' +
+    `<w:pPr><w:pBdr><w:left w:val="single" w:sz="24" w:space="10" w:color="${palette.accent}"/></w:pBdr>` +
+    `<w:shd w:val="clear" w:color="auto" w:fill="${palette.soft}"/>` +
+    '<w:spacing w:before="160" w:after="160"/><w:ind w:left="284" w:right="284"/></w:pPr>' +
+    `<w:rPr><w:i/><w:color w:val="${palette.dark}"/></w:rPr></w:style>` +
     '<w:style w:type="paragraph" w:styleId="Code"><w:name w:val="HTML Preformatted"/><w:basedOn w:val="Normal"/>' +
     '<w:next w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F4F6F8"/>' +
     '<w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:left="227" w:right="227"/></w:pPr>' +
     '<w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="19"/></w:rPr></w:style>' +
+    '<w:style w:type="paragraph" w:styleId="Header"><w:name w:val="header"/><w:basedOn w:val="Normal"/>' +
+    `<w:pPr><w:spacing w:after="0"/></w:pPr><w:rPr><w:color w:val="${palette.muted}"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>` +
+    '<w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/><w:basedOn w:val="Normal"/>' +
+    `<w:pPr><w:spacing w:after="0"/></w:pPr><w:rPr><w:color w:val="${palette.muted}"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>` +
     '<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/>' +
-    '<w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>' +
+    `<w:rPr><w:color w:val="${palette.secondary}"/><w:u w:val="single"/></w:rPr></w:style>` +
     '<w:style w:type="character" w:styleId="CodeChar"><w:name w:val="Code Char"/>' +
     '<w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="19"/>' +
     '<w:shd w:val="clear" w:color="auto" w:fill="F1F3F5"/></w:rPr></w:style>' +
@@ -534,22 +553,29 @@ function stylesXml() {
   );
 }
 
-/** Bullets on numId 1, decimals on numId 2, five levels each. */
-function numberingXml() {
+/**
+ * Bullets on numId 1, decimals on numId 2, five levels each — in the palette's accent.
+ *
+ * The bullets are Arial's own characters. They were "•" in the Symbol font,
+ * which has no glyph there: Word drew an empty box for every bullet in every
+ * document (seen when Word itself rendered one, 2026-10-25).
+ */
+function numberingXml(palette) {
   const bulletLevel = (i) =>
     `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="bullet"/>` +
-    `<w:lvlText w:val="${['•', 'o', '▪', '•', 'o'][i]}"/><w:lvlJc w:val="left"/>` +
+    `<w:lvlText w:val="${['•', '–', '▪', '•', '–'][i]}"/><w:lvlJc w:val="left"/>` +
     `<w:pPr><w:ind w:left="${360 * (i + 1) + 360}" w:hanging="360"/></w:pPr>` +
-    '<w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:hint="default"/></w:rPr></w:lvl>';
+    `<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:hint="default"/><w:color w:val="${palette.accent}"/></w:rPr></w:lvl>`;
 
   const numberLevel = (i) =>
     `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="${['decimal', 'lowerLetter', 'lowerRoman', 'decimal', 'lowerLetter'][i]}"/>` +
     `<w:lvlText w:val="%${i + 1}."/><w:lvlJc w:val="left"/>` +
-    `<w:pPr><w:ind w:left="${360 * (i + 1) + 360}" w:hanging="360"/></w:pPr></w:lvl>`;
+    `<w:pPr><w:ind w:left="${360 * (i + 1) + 360}" w:hanging="360"/></w:pPr>` +
+    `<w:rPr><w:b/><w:color w:val="${palette.primary}"/></w:rPr></w:lvl>`;
 
   const levels = [0, 1, 2, 3, 4];
   return (
-    `${XML_DECLARATION}<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+    `${XML_DECLARATION}<w:numbering xmlns:w="${W_NS}">` +
     '<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/>' +
     levels.map(bulletLevel).join('') +
     '</w:abstractNum>' +
@@ -570,8 +596,9 @@ function numberingXml() {
  * is a schema violation, and what Word does with one is offer to repair the
  * file. Likewise there is exactly one `rStyle`: a run that is both a link and
  * code cannot have two, so the link wins and the monospace comes from the font.
+ * `colour` and `size` (half-points) come after them, where the sequence puts them.
  */
-function runXml(run, { insideLink = false } = {}) {
+function runXml(run, { insideLink = false, colour = null, size = null } = {}) {
   const properties = [];
   if (insideLink) properties.push('<w:rStyle w:val="Hyperlink"/>');
   else if (run.code) properties.push('<w:rStyle w:val="CodeChar"/>');
@@ -581,6 +608,8 @@ function runXml(run, { insideLink = false } = {}) {
   if (run.bold) properties.push('<w:b/>');
   if (run.italic) properties.push('<w:i/>');
   if (run.strike) properties.push('<w:strike/>');
+  if (colour) properties.push(`<w:color w:val="${colour}"/>`);
+  if (size) properties.push(`<w:sz w:val="${size}"/><w:szCs w:val="${size}"/>`);
   if (run.underline) properties.push('<w:u w:val="single"/>');
 
   const rPr = properties.length ? `<w:rPr>${properties.join('')}</w:rPr>` : '';
@@ -605,12 +634,12 @@ function runXml(run, { insideLink = false } = {}) {
  * caller's `links` map — a document that mentions the same URL twice gets one
  * relationship, which is what Word itself writes.
  */
-function runsXml(runs, links) {
+function runsXml(runs, links, style = {}) {
   let out = '';
   for (const run of runs || []) {
     if (!run || run.text == null || run.text === '') continue;
     if (!run.link) {
-      out += runXml(run);
+      out += runXml(run, style);
       continue;
     }
     let id = links.get(run.link);
@@ -626,46 +655,63 @@ function runsXml(runs, links) {
 const paragraphXml = (properties, body) =>
   `<w:p>${properties ? `<w:pPr>${properties}</w:pPr>` : ''}${body}</w:p>`;
 
-function tableXml(block, links) {
+/** Whether a cell is a figure — "1.250.000", "-64%", "$31,200" — to be set right. */
+const isFigure = (text) => /^\s*[+\-−]?(?:[$€£¥₫]\s?)?\d[\d.,]*\s?(?:%|‰|[kKmMbB]|tr|triệu|tỷ|đ|₫|USD|VND)?\s*$/u.test(String(text || ''));
+
+/**
+ * A table, designed: its header row in the palette's colour with white words,
+ * repeated on every page; bands of tint on every other row; hairlines between
+ * rows and none down the columns; figures set right.
+ */
+function tableXml(block, links, palette) {
   const columns = Math.max(...block.rows.map((row) => row.length), 1);
   // A table sized in fifths of a percent, which is how WordprocessingML spells
   // "full width" — 5000 is 100%.
   const width = Math.floor(5000 / columns);
+  const header = block.header !== false;
+  const cellText = (cell) => (cell?.runs || []).map((r) => r.text).join('');
+  const figures = Array.from({ length: columns }, (_, c) =>
+    block.rows.slice(header ? 1 : 0).every((row) => !cellText(row[c]).trim() || isFigure(cellText(row[c]))),
+  );
 
-  const border = (side) => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="D6DCE3"/>`;
-  const borders = `<w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('')}</w:tblBorders>`;
+  const rule = (side, colour, size = 4) => `<w:${side} w:val="single" w:sz="${size}" w:space="0" w:color="${colour}"/>`;
+  const none = (side) => `<w:${side} w:val="nil"/>`;
+  const borders = `<w:tblBorders>${rule('top', palette.primary, 8)}${none('left')}${rule('bottom', palette.line)}${none('right')}${rule('insideH', palette.line)}${none('insideV')}</w:tblBorders>`;
 
   const rows = block.rows
     .map((row, rowIndex) => {
-      const header = rowIndex === 0 && block.header !== false;
+      const isHead = header && rowIndex === 0;
+      const band = !isHead && (rowIndex - (header ? 1 : 0)) % 2 === 1;
       const cells = [];
       for (let i = 0; i < columns; i += 1) {
         const cell = row[i] || { runs: [] };
-        const runs = header
-          ? (cell.runs || []).map((run) => ({ ...run, bold: true }))
-          : cell.runs || [];
-        const shading = header ? '<w:shd w:val="clear" w:color="auto" w:fill="F1F4F7"/>' : '';
+        const runs = isHead ? (cell.runs || []).map((run) => ({ ...run, bold: true })) : cell.runs || [];
+        const fill = isHead ? palette.primary : band ? palette.soft : null;
+        const shading = fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : '';
+        const align = figures[i] && i > 0 ? '<w:jc w:val="right"/>' : '';
         cells.push(
           `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="pct"/>${shading}` +
             '<w:vAlign w:val="center"/></w:tcPr>' +
-            paragraphXml('<w:spacing w:after="40"/>', runsXml(runs, links)) +
+            paragraphXml(`<w:spacing w:before="40" w:after="40"/>${align}`, runsXml(runs, links, isHead ? { colour: 'FFFFFF' } : {})) +
             '</w:tc>',
         );
       }
-      const trPr = header ? '<w:trPr><w:tblHeader/></w:trPr>' : '';
+      const trPr = isHead ? '<w:trPr><w:tblHeader/></w:trPr>' : '';
       return `<w:tr>${trPr}${cells.join('')}</w:tr>`;
     })
     .join('');
 
   return (
     '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/>' +
-    `${borders}<w:tblLayout w:type="fixed"/></w:tblPr>` +
+    `${borders}<w:tblLayout w:type="fixed"/>` +
+    '<w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>' +
+    '</w:tblPr>' +
     `<w:tblGrid>${Array.from({ length: columns }, () => `<w:gridCol w:w="${Math.floor((A4.width - A4.margin * 2) / columns)}"/>`).join('')}</w:tblGrid>` +
     `${rows}</w:tbl>`
   );
 }
 
-function blockXml(block, links) {
+function blockXml(block, links, palette) {
   switch (block.type) {
     case 'heading': {
       const level = Math.min(Math.max(Number(block.level) || 1, 1), 6);
@@ -698,10 +744,10 @@ function blockXml(block, links) {
     case 'table':
       // Word requires a paragraph after a table; two tables in a row with
       // nothing between them merge into one.
-      return `${tableXml(block, links)}${paragraphXml('<w:spacing w:after="0"/>', '')}`;
+      return `${tableXml(block, links, palette)}${paragraphXml('<w:spacing w:after="0"/>', '')}`;
     case 'divider':
       return paragraphXml(
-        '<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="D6DCE3"/></w:pBdr>',
+        `<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="${palette.line}"/></w:pBdr>`,
         '',
       );
     case 'pagebreak':
@@ -712,28 +758,110 @@ function blockXml(block, links) {
 }
 
 /**
+ * "Ngày 25 tháng 10 năm 2026" or "25 October 2026" — the day a cover says it
+ * was made. A Vietnamese document's day is Vietnam's: taken in UTC, a cover
+ * made before seven in the morning there was dated the day before.
+ */
+function coverDate(created, vietnamese) {
+  const d = new Date(created);
+  if (!Number.isFinite(d.getTime())) return '';
+  if (!vietnamese) return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const part = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Ho_Chi_Minh', day: 'numeric', month: 'numeric', year: 'numeric' }).formatToParts(d).map((p) => [p.type, p.value]),
+  );
+  return `Ngày ${part.day} tháng ${part.month} năm ${part.year}`;
+}
+
+/**
+ * The opening of the document.
+ *
+ * A long, structured document — three sections or more, a few hundred words —
+ * opens on a cover of its own: its title large in the palette over a rule of
+ * accent, the line under the title that says what it is, the day it was made,
+ * and the body from the next page. Anything shorter keeps its title at the top
+ * of the first page, set the same way, with no page spent on a cover.
+ *
+ * The title stays a `Title` paragraph and the line under it a plain one, so the
+ * document reads back exactly as it was written (`readDocx`).
+ *
+ * @returns {{ xml: string, rest: any[], cover: boolean }}
+ */
+function opening(model, links, palette, { created, vietnamese }) {
+  const first = model[0];
+  if (!first || first.type !== 'heading' || first.level !== 1) return { xml: '', rest: model, cover: false };
+  const intro = model[1]?.type === 'paragraph' && blocksToText([model[1]]).length <= 320 ? model[1] : null;
+  const rest = model.slice(intro ? 2 : 1);
+  const sections = rest.filter((b) => b.type === 'heading' && b.level <= 2).length;
+  const words = blocksToText(rest).split(/\s+/).filter(Boolean).length;
+  const cover = sections >= 3 && words >= 250;
+  const title = paragraphXml(`<w:pStyle w:val="Title"/>${cover ? '<w:spacing w:before="3200" w:after="320" w:line="240" w:lineRule="auto"/>' : ''}`, runsXml(first.runs, links));
+  const line = intro ? paragraphXml('<w:spacing w:after="360"/>', runsXml(intro.runs, links, { colour: palette.muted, size: cover ? 30 : 26 })) : '';
+  if (!cover) return { xml: title + line, rest, cover: false };
+  const day = coverDate(created, vietnamese);
+  const meta = day ? paragraphXml('<w:spacing w:before="1600" w:after="0"/>', runXml({ text: day, bold: true }, { colour: palette.primary, size: 22 })) : '';
+  return { xml: title + line + meta + paragraphXml('', '<w:r><w:br w:type="page"/></w:r>'), rest, cover: true };
+}
+
+/** The running header: the document's title, right, over a hairline. */
+const headerXml = (title, palette) =>
+  `${XML_DECLARATION}<w:hdr xmlns:w="${W_NS}" xmlns:r="${NS.officeRels}">` +
+  paragraphXml(
+    `<w:pStyle w:val="Header"/><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="${palette.line}"/></w:pBdr><w:jc w:val="right"/>`,
+    runXml({ text: title }),
+  ) +
+  '</w:hdr>';
+
+/** The footer: "Trang 2 / 7", centred — fields Word fills in as it lays the pages out. */
+function footerXml(palette, vietnamese) {
+  const field = (instruction, placeholder) =>
+    `<w:fldSimple w:instr=" ${instruction} "><w:r><w:rPr><w:b/><w:color w:val="${palette.primary}"/></w:rPr><w:t>${placeholder}</w:t></w:r></w:fldSimple>`;
+  return (
+    `${XML_DECLARATION}<w:ftr xmlns:w="${W_NS}" xmlns:r="${NS.officeRels}">` +
+    paragraphXml(
+      '<w:pStyle w:val="Footer"/><w:jc w:val="center"/>',
+      `${runXml({ text: vietnamese ? 'Trang ' : 'Page ' })}${field('PAGE', '1')}${runXml({ text: vietnamese ? ' / ' : ' of ' })}${field('NUMPAGES', '1')}`,
+    ) +
+    '</w:ftr>'
+  );
+}
+
+/**
  * Build a .docx.
  *
  * @param blocks   the block model — see `blocks.js`
  * @param title    document title, also written into the file's properties
  * @param author   who it says wrote it
+ * @param theme    a palette name (theme.js), a palette, or nothing — picked from the words
  * @returns a Buffer holding the whole package
  */
-export function writeDocx({ blocks, title = 'Document', author = 'Synapsez', created = new Date() } = {}) {
+export function writeDocx({ blocks, title = 'Document', author = 'Synapsez', created = new Date(), theme = null } = {}) {
   const model = normaliseBlocks(blocks);
+  const text = blocksToText(model);
+  const palette = theme && typeof theme === 'object' && theme.primary ? theme : pickTheme(theme, `${title}\n${text}`);
+  const vietnamese = looksVietnamese(`${title}\n${text}`);
   const links = new Map();
-  const body = model.map((block) => blockXml(block, links)).join('');
+  const start = opening(model, links, palette, { created, vietnamese });
+  const body = start.xml + start.rest.map((block) => blockXml(block, links, palette)).join('');
 
+  /*
+   * `sectPr` is a sequence as well: the header and footer references first,
+   * then the page, then — last of these — `titlePg`, which gives the first page
+   * its own: nothing at all on a cover, and on a first page that opens with
+   * the title, the footer without a header repeating the title above it.
+   */
   const sectPr =
     '<w:sectPr>' +
+    '<w:headerReference w:type="default" r:id="rId3"/><w:footerReference w:type="default" r:id="rId4"/>' +
+    `${start.cover ? '' : '<w:footerReference w:type="first" r:id="rId4"/>'}` +
     `<w:pgSz w:w="${A4.width}" w:h="${A4.height}"/>` +
     `<w:pgMar w:top="${A4.margin}" w:right="${A4.margin}" w:bottom="${A4.margin}" w:left="${A4.margin}" ` +
-    'w:header="708" w:footer="708" w:gutter="0"/>' +
+    'w:header="567" w:footer="567" w:gutter="0"/>' +
+    `${start.cover || start.xml ? '<w:titlePg/>' : ''}` +
     '</w:sectPr>';
 
   const document =
     `${XML_DECLARATION}<w:document ` +
-    'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
+    `xmlns:w="${W_NS}" ` +
     'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
     `<w:body>${body}${sectPr}</w:body></w:document>`;
 
@@ -741,6 +869,8 @@ export function writeDocx({ blocks, title = 'Document', author = 'Synapsez', cre
     `${XML_DECLARATION}<Relationships xmlns="${NS.packageRels}">` +
     `<Relationship Id="rId1" Type="${REL.styles}" Target="styles.xml"/>` +
     `<Relationship Id="rId2" Type="${REL.numbering}" Target="numbering.xml"/>` +
+    `<Relationship Id="rId3" Type="${REL_HEADER}" Target="header1.xml"/>` +
+    `<Relationship Id="rId4" Type="${REL_FOOTER}" Target="footer1.xml"/>` +
     [...links.entries()]
       .map(
         ([target, id]) =>
@@ -749,7 +879,6 @@ export function writeDocx({ blocks, title = 'Document', author = 'Synapsez', cre
       .join('') +
     '</Relationships>';
 
-  const text = blocksToText(model);
   const words = text.split(/\s+/).filter(Boolean).length;
 
   return writeZip(
@@ -758,8 +887,10 @@ export function writeDocx({ blocks, title = 'Document', author = 'Synapsez', cre
       { name: '_rels/.rels', data: rootRelsXml('word/document.xml') },
       { name: 'word/document.xml', data: document },
       { name: 'word/_rels/document.xml.rels', data: relationships },
-      { name: 'word/styles.xml', data: stylesXml() },
-      { name: 'word/numbering.xml', data: numberingXml() },
+      { name: 'word/styles.xml', data: stylesXml(palette, vietnamese ? 'vi-VN' : 'en-US') },
+      { name: 'word/numbering.xml', data: numberingXml(palette) },
+      { name: 'word/header1.xml', data: headerXml(String(title || ''), palette) },
+      { name: 'word/footer1.xml', data: footerXml(palette, vietnamese) },
       { name: 'docProps/core.xml', data: corePropsXml({ title, author, created }) },
       {
         name: 'docProps/app.xml',

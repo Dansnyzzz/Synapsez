@@ -1102,6 +1102,7 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
           content: `${first.content}\n\n[This exact call already ran in this turn, so its result is repeated rather than run again. Use it; do not call it a third time.]`,
           isError: first.isError,
           ms: Date.now() - started,
+          ...(first.chats?.length ? { chats: first.chats } : {}),
         };
         emit('tool_result', result);
         return result;
@@ -1134,7 +1135,7 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         memo.set(seen.key, running);
         running.then((r) => r?.isError && memo.get(seen.key) === running && memo.delete(seen.key)).catch(() => memo.delete(seen.key));
       }
-      const { content, isError, file, widget, shot, schedule, answered } = await running;
+      const { content, isError, file, widget, shot, schedule, answered, chats } = await running;
       const result = {
         toolCallId: call.id,
         name: call.name,
@@ -1162,6 +1163,9 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         // A question card's answer as the person would say it, drawn as their
         // own bubble — live and when the conversation is reopened.
         ...(answered ? { answered } : {}),
+        // The conversations search_chats found, as the screen lists them —
+        // stored with the result so a reopened conversation lists them again.
+        ...(chats?.length ? { chats } : {}),
       };
       emit('tool_result', result);
       /**

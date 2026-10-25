@@ -338,6 +338,9 @@ section('search_chats reads what was said, scoped like Claude');
   const fromProject = await run('search_chats', { query: 'what did we say about the deposit' }, other);
   check('from inside the project, its conversations are found', /two months/.test(fromProject.content), fromProject.content);
   check('  wrapped as earlier words, not instructions', /<untrusted source="earlier conversations">/.test(fromProject.content));
+  // The browser draws them as Claude's "Relevant chats", each opening its conversation (owner, 2026-10-25).
+  check('  and each found conversation comes back for the screen, by id and title', Array.isArray(fromProject.chats) && fromProject.chats.some((c) => c.id === inProject && typeof c.title === 'string' && c.updated), JSON.stringify(fromProject.chats));
+  check('  never the conversation it was asked from', !fromProject.chats.some((c) => c.id === other));
   // One long conversation that says the word many times must not hide others.
   const chatty = (await alice.call('POST', '/api/chats', {})).body.chat.id;
   for (let i = 0; i < 70; i += 1) await store.appendMessage(aliceId, chatty, { id: `chatty-${i}`, role: 'user', text: `zebra note number ${i}` });
@@ -346,8 +349,10 @@ section('search_chats reads what was said, scoped like Claude');
   check('  and contributes at most two excerpts', (wide.content.match(/zebra note number/g) || []).length <= 2);
   const recent = await run('search_chats', {}, null);
   check('with no query it lists recent conversations', /most recent/.test(recent.content), recent.content);
+  check('  and hands those to the screen as well', Array.isArray(recent.chats) && recent.chats.length > 0 && recent.chats.every((c) => c.id && 'title' in c), JSON.stringify(recent.chats).slice(0, 200));
   const bobSees = await executeTool({ user: await store.getUserById(bobId), name: 'search_chats', input: { query: 'zebra' }, chatId: null });
   check('another account finds nothing of this one', /No earlier conversation/.test(bobSees.content) || /no earlier/i.test(bobSees.content), bobSees.content);
+  check('  and is handed none of its conversations', !bobSees.chats?.length, JSON.stringify(bobSees.chats));
 
   await alice.call('PUT', '/api/prefs', { chatSearch: false });
   const off = await run('search_chats', { query: 'zebra' }, null);
@@ -395,6 +400,7 @@ section('what came from Google is read only where Google data already is (Limite
   await store.appendMessage(aliceId, zoo, { id: 'zq-1', role: 'user', text: 'I like the quokka at the zoo' });
   const fromPlain = await run('search_chats', { query: 'quokka' }, null);
   check('search_chats does not quote a conversation holding Google data into one without', /zoo/.test(fromPlain.content) && !/newsletter/.test(fromPlain.content) && /Google account/.test(fromPlain.content), fromPlain.content);
+  check('  nor list it on the screen', fromPlain.chats?.some((c) => c.id === zoo) && !fromPlain.chats.some((c) => c.id === mail), JSON.stringify(fromPlain.chats));
   const fromMarked = await withGoogleData(true, () => run('search_chats', { query: 'quokka' }, null));
   check('  and does into one with it', /newsletter/.test(fromMarked.content) && /zoo/.test(fromMarked.content), fromMarked.content);
 

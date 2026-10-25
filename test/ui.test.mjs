@@ -1907,9 +1907,11 @@ check('the search box stays inside the dialog', fit.searchInside);
 
 section('choosing a model by provider');
 const providers = await page.$$eval('#provider-filter .seg__btn', (els) => els.map((e) => e.dataset.provider));
+// Anthropic and OpenAI models come through OpenRouter and OrcaRouter, so their
+// own tabs are gone (owner, 2026-10-25).
 check(
-  'every provider is offered',
-  providers.join() === 'all,anthropic,openai,google,openrouter,orcarouter',
+  'every provider is offered, and Anthropic and OpenAI no longer have tabs of their own',
+  providers.join() === 'all,google,openrouter,orcarouter',
   providers.join(' '),
 );
 
@@ -1924,11 +1926,7 @@ check(
  */
 const AUTO = 'auto';
 
-for (const [provider, pattern] of [
-  ['anthropic', /^anthropic\//],
-  ['openai', /^openai\//],
-  ['google', /^google\//],
-]) {
+for (const [provider, pattern] of [['google', /^google\//]]) {
   await page.click(`#provider-filter [data-provider="${provider}"]`);
   await page.waitForTimeout(500);
   const view = await page.evaluate(() => ({
@@ -2018,8 +2016,8 @@ check('OpenRouter brings the vendor chips back', library.chipsHidden === false);
   }
 }
 
-// "Anthropic + Free" is legitimately empty. Saying why beats shrugging.
-await page.click('#provider-filter [data-provider="anthropic"]');
+// "Google + Free" is legitimately empty — its built-in models are paid. Saying why beats shrugging.
+await page.click('#provider-filter [data-provider="google"]');
 await page.click('#tier-filter [data-tier="free"]');
 await page.waitForTimeout(500);
 const empty = await page.textContent('#model-results .hint').catch(() => '');
@@ -2373,6 +2371,10 @@ section('the getting-started guide');
   await page.click('#onb-keys');
   await page.waitForTimeout(600);
   check('it opens the key settings', await page.isVisible('#provider-list'));
+  // Anthropic's and OpenAI's own keys are no longer offered to an account that
+  // holds none — their models come through the routers (owner, 2026-10-25).
+  const offered = await page.$$eval('#provider-list [data-save-key]', (els) => els.map((e) => e.getAttribute('data-save-key')));
+  check('the key list offers Google, OpenRouter and OrcaRouter, and not Anthropic or OpenAI', offered.join() === 'google,openrouter,orcarouter', offered.join());
   await page.fill('[data-key="openrouter"]', 'sk-or-v1-ui-test-key');
   await page.click('[data-save-key="openrouter"]');
   await page.waitForTimeout(900);
@@ -4162,7 +4164,8 @@ section('browser steps across model steps are one card, and each settles when it
     fill.complete({ content: 'no element', isError: true, ms: 0 });
     out.tally = card.querySelector('.steps__tally').textContent;
     out.partial = card.classList.contains('steps--partial') && !card.classList.contains('steps--error');
-    out.tickAfterOneFailure = card.querySelector(':scope > summary > .mark').textContent === '✓';
+    // Done, a card shows its kind's icon rather than a tick (owner, 2026-10-25).
+    out.tickAfterOneFailure = !!card.querySelector(':scope > summary > .mark--icon');
 
     const b3 = block();
     b3.appendThinking('Done, now the answer.');
@@ -4185,7 +4188,7 @@ section('browser steps across model steps are one card, and each settles when it
   check('the next model step\'s browser action joins the same card', live.cards === 1, `${live.cards} cards`);
   check('  which spins again while that step runs', live.spinsAgainForTheNewStep === true);
   check('a step reads as the action it was — `fill` drawn as typing, with what was typed', /^(Type|Gõ)$/.test(live.fillVerb) && /#3 ← “TestMSSV123”/.test(live.fillDetail), `${live.fillVerb} | ${live.fillDetail}`);
-  check('one failed step of two: a tick, with the failure counted — not a red title over a green tick', live.tickAfterOneFailure && live.partial && /1 (failed|lỗi)/.test(live.tally), live.tally);
+  check('one failed step of two: done, with the failure counted — not a red title over a cross', live.tickAfterOneFailure && live.partial && /1 (failed|lỗi)/.test(live.tally), live.tally);
   check('the reasoning that led to the answer stands before the answer, outside the card', live.answerThoughtLeftTheCard === true);
   check('  and the card folds when the answer comes, holding both steps and the one thought between them', live.foldedWhenTheAnswerCame && live.stepsInCard === 2 && live.thoughtsInCard === 1, `${live.stepsInCard} steps, ${live.thoughtsInCard} thoughts`);
   check('nothing is left spinning', live.noSpinners === true);
@@ -4559,6 +4562,172 @@ section('a run that read pictures shows them folded, per row, in a preview and a
 }
 
 /**
+ * Screenshot 6 (owner, 2026-10-25): clicking the chart a run made opened it in
+ * the side panel. A picture opens full screen, where it can be zoomed — the
+ * buttons, the wheel, the keys — and copied or downloaded without leaving it.
+ * A diagram opens the same way.
+ */
+section('a picture the assistant made opens full screen, with zoom, copy and download');
+{
+  const png = /\/api\/attachments\/img-1(\?.*)?$/;
+  const dot = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await page.route(png, (route) => route.fulfill({ status: 200, contentType: 'image/png', body: dot }));
+  const out = await page.evaluate(async () => {
+    const { assistantMessage, widgetNode } = await import('/js/render.js');
+    const gallery = await import('/js/gallery.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    turn.startTool({ id: 'm1', name: 'publish_file', input: { path: 'vn_population.png' } }).complete({
+      content: 'made it',
+      ms: 40,
+      file: { id: 'img-1', name: 'vn_population.png', mime: 'image/png', bytes: 65000 },
+    });
+    turn.finish();
+    const out = {};
+    const open = /** @type {HTMLElement} */ (turn.node.querySelector('figure.media .media__open'));
+    out.notThePanel = !!open && !open.hasAttribute('data-file');
+    open.click();
+    const box = document.querySelector('.gallery');
+    out.opened = gallery.__testing.isOpen();
+    const q = (s) => /** @type {HTMLElement} */ (box?.querySelector(s));
+    out.tools = ['.gallery__zoomout', '.gallery__zoom', '.gallery__zoomin', '.gallery__copy', '.gallery__download'].filter((s) => !q(s)).join(' ');
+    out.navHiddenForOne = !q('.gallery__nav') || q('.gallery__nav').hidden;
+    const img = /** @type {HTMLImageElement} */ (q('.gallery__img'));
+    out.src = img.getAttribute('src');
+    const scale = () => Number((/scale\(([\d.]+)\)/.exec(img.style.transform) || [0, 1])[1]);
+    q('.gallery__zoomin').click();
+    out.afterIn = { scale: scale(), said: q('.gallery__zoom').textContent };
+    const key = (k) => box.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+    key('0');
+    out.afterReset = { scale: scale(), said: q('.gallery__zoom').textContent };
+    q('.gallery__stage').dispatchEvent(new window.WheelEvent('wheel', { deltaY: -240, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
+    out.afterWheel = scale();
+    key('-');
+    key('-');
+    key('-');
+    key('-');
+    out.floor = scale();
+    const save = /** @type {HTMLAnchorElement} */ (q('.gallery__download'));
+    out.download = { name: save.getAttribute('download'), href: save.getAttribute('href') };
+    key('Escape');
+    out.closed = !gallery.__testing.isOpen();
+    turn.node.remove();
+
+    // A diagram: clicking the picture opens it full screen too.
+    const node = widgetNode({ title: 'Quy trình', markup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80"><rect x="10" y="10" width="80" height="40" fill="#1f6feb"/></svg>', kind: 'svg' });
+    const frame = node.querySelector('iframe');
+    frame.loading = 'eager';
+    const loaded = new Promise((r) => {
+      frame.addEventListener('load', () => setTimeout(r, 80), { once: true });
+      setTimeout(r, 3000);
+    });
+    document.getElementById('messages').append(node);
+    await loaded;
+    // Which kind of file each blob: address holds — read as they are made, since
+    // the page's CSP (rightly) lets nothing fetch a blob: back.
+    const kinds = new Map();
+    const make = URL.createObjectURL;
+    URL.createObjectURL = (blob) => {
+      const url = make.call(URL, blob);
+      kinds.set(url, blob.type);
+      return url;
+    };
+    frame.contentDocument.querySelector('svg').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    // The drawing is drawn to a PNG first (security review, 2026-10-25), so the lightbox opens a moment later.
+    for (let waited = 0; waited < 3000 && !gallery.__testing.isOpen(); waited += 50) await new Promise((r) => setTimeout(r, 50));
+    URL.createObjectURL = make;
+    const src = document.querySelector('.gallery__img')?.getAttribute('src') || '';
+    out.diagram = {
+      opened: gallery.__testing.isOpen(),
+      src,
+      label: document.querySelector('.gallery__label')?.textContent || '',
+      type: kinds.get(src) || '',
+    };
+    gallery.closeGallery();
+    node.remove();
+    return out;
+  });
+  await page.unroute(png);
+  check('clicking the picture does not open the side panel', out.notThePanel === true);
+  check('  it opens full screen', out.opened === true && /\/api\/attachments\/img-1/.test(out.src || ''), out.src);
+  check('  with zoom out, the zoom, zoom in, copy and download', out.tools === '', out.tools);
+  check('  and no "1 of 1" arrows for a single picture', out.navHiddenForOne === true);
+  check('zoom in enlarges it, and says by how much', out.afterIn.scale > 1 && /^1\d\d%$/.test(out.afterIn.said), JSON.stringify(out.afterIn));
+  check('  0 puts it back to fit', out.afterReset.scale === 1 && out.afterReset.said === '100%', JSON.stringify(out.afterReset));
+  check('  the wheel zooms too', out.afterWheel > 1, String(out.afterWheel));
+  check('  and it never shrinks below fitting the screen', out.floor === 1, String(out.floor));
+  check('download saves the file under its own name', out.download.name === 'vn_population.png' && /\/api\/attachments\/img-1\?download=1/.test(out.download.href || ''), JSON.stringify(out.download));
+  check('Esc closes it', out.closed === true);
+  check('a diagram opens full screen when clicked, under its title', out.diagram.opened && /^blob:/.test(out.diagram.src) && out.diagram.label === 'Quy trình', JSON.stringify(out.diagram));
+  // A blob of the model's SVG would be a page of this origin when opened on its own; a PNG is a picture.
+  check('  shown as a PNG drawn from it, never as the drawing\'s own markup', out.diagram.type === 'image/png', out.diagram.type);
+}
+
+/**
+ * The lightbox under a real pointer and keyboard (code review, 2026-10-25): the
+ * stage captures the pointer, so a click on the picture used to arrive at the
+ * stage and close it; a double click could never zoom; a pinch lifted one
+ * finger at a time paged and then jumped; and a zoom button that switched
+ * itself off dropped the focus out of the dialog, and the keys with it.
+ */
+section('the lightbox under a real pointer: a click keeps it, a double click zooms, a pinch never pages');
+{
+  const pics = /\/api\/attachments\/lb-[12]$/;
+  const dot = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await page.route(pics, (route) => route.fulfill({ status: 200, contentType: 'image/png', body: dot }));
+  const scale = () => page.evaluate(() => Number((/scale\(([\d.]+)\)/.exec(document.querySelector('.gallery__img')?.style.transform || '') || [0, 1])[1]));
+  const isOpen = () => page.evaluate(async () => (await import('/js/gallery.js')).__testing.isOpen());
+  await page.evaluate(async () => {
+    const gallery = await import('/js/gallery.js');
+    gallery.openGallery([{ id: 'lb-1', name: 'one.png', label: 'One' }, { id: 'lb-2', name: 'two.png', label: 'Two' }], 0, null);
+    await new Promise((r) => setTimeout(r, 200));
+  });
+  const box = await page.evaluate(() => {
+    const r = document.querySelector('.gallery__img').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.click(box.x, box.y);
+  await page.waitForTimeout(150);
+  check('a click on the picture keeps the lightbox open', await isOpen());
+  await page.mouse.dblclick(box.x, box.y);
+  await page.waitForTimeout(150);
+  check('  a double click on it zooms in', (await scale()) > 2, String(await scale()));
+  await page.mouse.dblclick(box.x, box.y);
+  await page.waitForTimeout(150);
+  check('  and another goes back to fit', (await scale()) === 1, String(await scale()));
+
+  // Zoomed all the way with the keyboard: the + button switches itself off, and the keys still work.
+  await page.focus('.gallery__zoomin');
+  for (let i = 0; i < 8; i += 1) await page.keyboard.press('Enter');
+  const focus = await page.evaluate(() => ({ inside: !!document.activeElement?.closest('.gallery'), on: document.activeElement?.className || '' }));
+  check('a zoom button that switches itself off hands the focus on inside the dialog', focus.inside, focus.on);
+  await page.keyboard.press('0');
+  await page.keyboard.press('+');
+  check('  so the keys still work — + zooms in again', (await scale()) > 1, String(await scale()));
+  await page.keyboard.press('0');
+
+  // A pinch at fit size, its fingers lifted one at a time: no page turn, no jump.
+  const pinch = await page.evaluate(async () => {
+    const stage = document.querySelector('.gallery__stage');
+    const fire = (type, id, x, y) => stage.dispatchEvent(new PointerEvent(type, { pointerId: id, clientX: x, clientY: y, bubbles: true, pointerType: 'touch' }));
+    const count = () => document.querySelector('.gallery__count').textContent;
+    const before = count();
+    fire('pointerdown', 11, 500, 400);
+    fire('pointerdown', 12, 700, 400);
+    fire('pointermove', 12, 690, 400);
+    fire('pointerup', 11, 500, 400);
+    fire('pointermove', 12, 692, 402);
+    const t1 = document.querySelector('.gallery__img').style.transform;
+    fire('pointerup', 12, 400, 402);
+    return { before, after: count(), t1 };
+  });
+  check('a pinch lifted a finger at a time does not turn the page', pinch.after === pinch.before, `${pinch.before} → ${pinch.after}`);
+  await page.keyboard.press('Escape');
+  check('Esc still closes it', !(await isOpen()));
+  await page.unroute(pics);
+}
+
+/**
  * The model's title is a name on screen, never a stand-in for what runs
  * (security review, 2026-10-13). The approval line fell through to JSON cut at
  * 90 characters for these tools, and stored keys come back shortest first — so
@@ -4861,6 +5030,131 @@ section('searching and reading the web is one card of sites, like Claude\'s');
   check('  no raw arguments on show', !card.json);
   check('  and a long title is cut, not scrolled sideways', !card.sideways);
   check('  transparent, a border and nothing else', /rgba\(0, 0, 0, 0\)|transparent/.test(card.background), card.background);
+}
+
+/**
+ * Screenshot 3 (owner, 2026-10-25): searches one after another, the way
+ * Claude draws them — a globe, the query and "10 results" on one line, the
+ * sites in a box under it that scrolls, and a thread down the left joining
+ * one search to the next. No tick, no "Searched the web" on every line.
+ */
+section('searches one after another read as Claude\'s: a thread of queries, each with its sites');
+{
+  const got = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const host = document.createElement('div');
+    host.style.width = '640px';
+    document.getElementById('messages').append(host);
+    const block = () => {
+      const turn = assistantMessage();
+      host.append(turn.node);
+      return turn;
+    };
+    const results = (n, site) =>
+      `${n} results.\n\n<untrusted source="search">\n` +
+      Array.from({ length: n }, (_, i) => `${i + 1}. Result ${i + 1} about it\n   https://${site}/page-${i + 1}.html`).join('\n') +
+      '\n</untrusted>';
+    const a = block().startTool({ id: 's1', name: 'web_search', input: { query: 'Chau 2025 AI customer service Vietnam' } });
+    const live = {
+      spinner: !!host.querySelector('.web__mark .mark--pending'),
+      count: host.querySelector('.web__count')?.textContent || '',
+    };
+    a.complete({ content: results(10, 'researchgate.net'), ms: 900 });
+    block().startTool({ id: 's2', name: 'web_search', input: { query: 'Zhang Yuan 2026 AI service failure' } }).complete({ content: results(9, 'arxiv.org'), ms: 800 });
+    const entries = [...host.querySelectorAll('.webrun > .block.web')];
+    const [first, second] = entries;
+    const list = first?.querySelector('.web__list');
+    const out = {
+      live,
+      runs: host.querySelectorAll('.webrun').length,
+      entries: entries.length,
+      queries: entries.map((e) => e.querySelector('.web__query')?.textContent),
+      counts: entries.map((e) => e.querySelector('.web__count')?.textContent),
+      globes: entries.filter((e) => e.querySelector('.web__mark svg')).length,
+      ticks: [...host.querySelectorAll('.mark')].filter((m) => m.textContent.trim() === '✓').length,
+      titleShown: first ? getComputedStyle(first.querySelector('.web__title')).position !== 'absolute' && first.querySelector('.web__title').getBoundingClientRect().width > 1 : null,
+      titleSaid: first?.querySelector('.web__title')?.textContent || '',
+      open: entries.every((e) => e.open),
+      rows: first?.querySelectorAll('.webrow').length,
+      boxed: list ? getComputedStyle(list).borderTopWidth !== '0px' : false,
+      scrolls: list ? list.scrollHeight > list.clientHeight + 4 && /auto|scroll/.test(getComputedStyle(list).overflowY) : false,
+      thread: first ? getComputedStyle(first, '::before').content !== 'none' : false,
+      lastThread: second ? getComputedStyle(second, '::before').content : '',
+    };
+    // A step that carries the thread on and sends two searches together: both on it.
+    const both = block();
+    const p1 = both.startTool({ id: 's2a', name: 'web_search', input: { query: 'parallel one' } });
+    const p2 = both.startTool({ id: 's2b', name: 'web_search', input: { query: 'parallel two' } });
+    p2.complete({ content: results(2, 'b.example'), ms: 50 });
+    p1.complete({ content: results(3, 'a.example'), ms: 60 });
+    out.parallelRuns = host.querySelectorAll('.webrun').length;
+    out.parallelEntries = host.querySelectorAll('.webrun > .block.web').length;
+    // A reply in between ends the thread: the next search starts another.
+    block().appendText('Here is what I found.');
+    block().startTool({ id: 's3', name: 'web_search', input: { query: 'a third search' } }).complete({ content: results(2, 'example.com'), ms: 100 });
+    out.runsAfterReply = host.querySelectorAll('.webrun').length;
+    host.remove();
+    return out;
+  });
+  check('while it searches, the line has its ring and no count yet', got.live.spinner && !got.live.count, JSON.stringify(got.live));
+  check('two searches in a row are one thread of two', got.runs === 1 && got.entries === 2, `${got.runs} runs, ${got.entries} entries`);
+  check('  each line: a globe, the query, and how many it found', got.globes === 2 && got.queries.join('|') === 'Chau 2025 AI customer service Vietnam|Zhang Yuan 2026 AI service failure' && /^10 (results|kết quả)$/.test(got.counts[0]) && /^9 (results|kết quả)$/.test(got.counts[1]), JSON.stringify({ q: got.queries, c: got.counts }));
+  check('  no tick on any of them', got.ticks === 0, String(got.ticks));
+  check('  "Searched the web" is said to a screen reader, not printed on every line', got.titleShown === false && /web/i.test(got.titleSaid), `${got.titleShown} ${got.titleSaid}`);
+  check('  the sites stay open under each query, in a box that scrolls', got.open && got.rows === 10 && got.boxed && got.scrolls, JSON.stringify({ open: got.open, rows: got.rows, boxed: got.boxed, scrolls: got.scrolls }));
+  check('  joined by a thread down the left, ending at the last', got.thread && got.lastThread === 'none', `${got.thread} ${got.lastThread}`);
+  check('two searches sent together, in a step that carried the thread on, join it', got.parallelRuns === 1 && got.parallelEntries === 4, `${got.parallelRuns} runs, ${got.parallelEntries} entries`);
+  check('a reply between searches starts a new thread', got.runsAfterReply === 2, String(got.runsAfterReply));
+}
+
+/**
+ * Screenshot 2 (owner, 2026-10-25): searching earlier conversations is drawn
+ * as Claude's "Relevant chats · 2 results" — each conversation found is a row
+ * that opens it.
+ */
+section('a search of earlier conversations lists them as "Relevant chats", each one opening');
+{
+  const got = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    const handle = turn.startTool({ id: 'r1', name: 'search_chats', input: { query: 'CRM AI' } });
+    const pending = !!turn.node.querySelector('.recall .mark--pending');
+    handle.complete({
+      content: '2 earlier conversations outside projects:\n<untrusted source="earlier conversations">\n- "Điều chỉnh đề tài nghiên cứu CRM và AI" (2026-10-20)\n- "Chọn biến trung gian cho model deepfake CRM" (2026-10-19)\n</untrusted>',
+      ms: 120,
+      chats: [
+        { id: 'chat-a', title: 'Điều chỉnh đề tài nghiên cứu CRM và AI', updated: '2026-10-20T03:00:00.000Z' },
+        { id: 'chat-b', title: 'Chọn biến trung gian cho model deepfake CRM', updated: '2026-10-19T03:00:00.000Z' },
+      ],
+    });
+    const card = turn.node.querySelector('.recall');
+    const rows = [...(card?.querySelectorAll('[data-open-chat]') || [])];
+    const out = {
+      pending,
+      card: !!card,
+      separate: turn.node.querySelectorAll('.block.tool').length,
+      title: card?.querySelector('.recall__title')?.textContent || '',
+      count: card?.querySelector('.recall__count')?.textContent || '',
+      rows: rows.map((r) => ({ id: r.getAttribute('data-open-chat'), text: r.textContent.trim(), tag: r.tagName })),
+      icons: rows.filter((r) => r.querySelector('svg')).length,
+      boxed: card ? getComputedStyle(card.querySelector('.recall__list')).borderTopWidth !== '0px' : false,
+    };
+    turn.node.remove();
+
+    // Saved before rows carried ids: the titles still list, from the words.
+    const old = assistantMessage();
+    document.getElementById('messages').append(old.node);
+    old.startTool({ id: 'r2', name: 'search_chats', input: { query: 'x' } }).complete({ content: '1 earlier conversation outside projects:\n<untrusted source="earlier conversations">\n- "Viết lại BM02 cho model mới" (2026-10-18)\n  They said: hello\n</untrusted>', ms: 9 });
+    out.fromWords = [...old.node.querySelectorAll('.recall__row')].map((r) => r.textContent.trim());
+    old.node.remove();
+    return out;
+  });
+  check('it is its own card, ringed while it looks', got.card && got.pending && got.separate === 0, JSON.stringify({ card: got.card, pending: got.pending }));
+  check('  headed "Relevant chats", with how many it found', /^(Relevant chats|Hội thoại liên quan)$/.test(got.title) && /^2 (results|kết quả)$/.test(got.count), `${got.title} | ${got.count}`);
+  check('  a row per conversation, with its title and a chat icon, in a box', got.rows.length === 2 && got.rows[0].text === 'Điều chỉnh đề tài nghiên cứu CRM và AI' && got.icons === 2 && got.boxed, JSON.stringify(got.rows));
+  check('  each row opens its conversation', got.rows.every((r) => r.tag === 'BUTTON') && got.rows.map((r) => r.id).join() === 'chat-a,chat-b');
+  check('a result saved before the ids still lists its titles', got.fromWords.join('|') === 'Viết lại BM02 cho model mới', JSON.stringify(got.fromWords));
 }
 
 section('reopening a conversation mid-answer rejoins it rather than blanking');
@@ -5717,10 +6011,50 @@ section('the reasoning card: a window on the newest lines, or the whole of it');
   check('with the words just arrived glowing', card.folded.glowing);
   check('and says it is folded', card.folded.expanded === 'false');
   check('opened, the whole trace shows', card.open.full && card.open.expanded === 'true', JSON.stringify(card.open));
-  check('finished, it is ticked and no longer live', !card.done.live && card.done.tick === '✓', JSON.stringify(card.done));
+  // No tick on finished reasoning: it says nothing the title does not (owner, 2026-10-25).
+  check('finished, it is no longer live and carries no tick', !card.done.live && card.done.tick === undefined, JSON.stringify(card.done));
   check('nothing is left glowing', card.done.glowing === 0);
   check('no words were lost settling the glow', card.done.text === 30, String(card.done.text));
   check('and folded again it rests on the last lines', card.done.atEnd);
+}
+
+/**
+ * Every tool's call and answer, in every kind of card, is text on the page —
+ * no frame round it, the way a command's output already was (owner,
+ * 2026-10-25, screenshots 9–11: "rà soát đảm bảo mọi tools liên quan đều không
+ * có"). And a long argument wraps inside its card rather than widening it past
+ * the reply, which is what cut screenshot 10's question off at the edge.
+ */
+section('no tool\'s call or answer has a frame, and nothing widens its card');
+{
+  const got = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const host = document.createElement('div');
+    host.style.width = '520px';
+    document.getElementById('messages').append(host);
+    const block = () => {
+      const turn = assistantMessage();
+      host.append(turn.node);
+      return turn;
+    };
+    const question = 'Với mỗi ảnh trong sheet (có tên file vẽ bên trên), hãy cho biết: đây có phải ảnh xe BMW M5 Touring không, và màu sơn là gì? ' + 'x'.repeat(160);
+    // A single card, a row of a run of commands, and a browsing step.
+    block().startTool({ id: 'f1', name: 'image_search', input: { query: 'BMW M5 Touring', count: 12 } }).complete({ content: '1. A\nhttps://commons.wikimedia.org/wiki/File:A.jpg', ms: 15300 });
+    block().startTool({ id: 'f2', name: 'look_at', input: { path: '/tmp/m5/sheet.jpg', question } }).complete({ content: 'No picture here.', ms: 900, isError: true });
+    block().startTool({ id: 'f3', name: 'cloud_browser', input: { action: 'open', url: 'https://example.com' } }).complete({ content: 'Page: Example', ms: 700 });
+    for (const d of host.querySelectorAll('details')) d.open = true;
+    const framed = [...host.querySelectorAll('pre')]
+      .filter((pre) => getComputedStyle(pre).borderTopWidth !== '0px' || getComputedStyle(pre).borderLeftWidth !== '0px')
+      .map((pre) => pre.className || pre.parentElement?.className || 'pre');
+    const cards = [...host.querySelectorAll('.msg__body > details.block')];
+    const wider = cards.filter((card) => card.scrollWidth > host.clientWidth + 1 || card.getBoundingClientRect().width > host.clientWidth + 1).map((card) => card.className);
+    const cardFrames = cards.filter((card) => getComputedStyle(card).borderTopWidth !== '0px').map((card) => card.className);
+    host.remove();
+    return { pres: host.querySelectorAll('pre').length, framed, wider, cardFrames };
+  });
+  check('every call and answer drawn is text, with no frame round it', got.pres >= 5 && got.framed.length === 0, JSON.stringify(got));
+  check('no card is a box either', got.cardFrames.length === 0, got.cardFrames.join(', '));
+  check('and a long argument wraps inside its card instead of widening it', got.wider.length === 0, got.wider.join(', '));
 }
 
 section('a chat begun from a shelf says what it is setting up');
@@ -6783,7 +7117,9 @@ section('a working card is marked, not animated');
     const done = {
       spinners: turn.node.querySelectorAll('.spinner').length,
       pending: turn.node.querySelectorAll('.mark--pending').length,
-      ticks: [...turn.node.querySelectorAll('.mark')].filter((m) => m.textContent === '✓').length,
+      // Done, the reasoning carries no mark and the card its tool's icon (owner, 2026-10-25).
+      ticks: turn.node.querySelectorAll('.mark--icon').length + (turn.node.querySelector('.think__head .mark') ? 1 : 0),
+      icons: turn.node.querySelectorAll('.mark--icon').length,
     };
 
     turn.node.remove();
@@ -6792,7 +7128,7 @@ section('a working card is marked, not animated');
 
   check('a card in progress spins nothing', marks.working.spinners === 0, String(marks.working.spinners));
   check('it is marked as waiting instead', marks.working.pending === 2, String(marks.working.pending));
-  check('finishing turns both marks into ticks', marks.done.ticks === 2, JSON.stringify(marks.done));
+  check('finishing settles both: the reasoning loses its mark, the card shows its icon', marks.done.ticks === 1 && marks.done.icons === 1, JSON.stringify(marks.done));
   check('and leaves nothing waiting', marks.done.pending === 0, String(marks.done.pending));
 }
 
@@ -7154,7 +7490,7 @@ section('a step that acted on an address says so as a link');
       ...before,
       openedByLink,
       afterHref: after?.getAttribute('href') || '',
-      tick: turn.node.querySelector('.tool summary .mark')?.textContent || '',
+      tick: turn.node.querySelector('.tool summary .mark--icon svg') ? 'icon' : turn.node.querySelector('.tool summary .mark')?.textContent || '',
     };
     turn.node.remove();
     return out;
@@ -7165,7 +7501,7 @@ section('a step that acted on an address says so as a link');
   check('a readable form of it is what shows', card.shown.length > 0 && !card.shown.startsWith('https://'), card.shown);
   check('clicking it does not unfold the card', card.openedByLink === false);
   check('and it is still a link once the call finishes', card.afterHref === card.href, card.afterHref);
-  check('with the tick beside it', card.tick === '✓', card.tick);
+  check('with its tool\'s icon beside it, not a tick', card.tick === 'icon', card.tick);
 
   // A page the web card read: the row is the link, and it lives in the body,
   // so following it can never fold or unfold the card.
@@ -7768,6 +8104,83 @@ section('a picture in a frame sits on the conversation, not on a white slab');
   check('  with copy and download', oldChart.tools === 2);
 }
 
+/**
+ * Screenshot 6 (owner, 2026-10-25): a flow diagram sat small at the top of its
+ * frame with an empty band under it. The drawing is measured, its empty margin
+ * cut, and it is scaled up to the width of the reply and centred both ways,
+ * with the frame exactly as tall as the picture.
+ */
+section('a diagram fills its frame, centred both ways, with no empty band');
+{
+  const fit = await page.evaluate(async () => {
+    const { widgetNode } = await import('/js/render.js');
+    // Drawn in the top-left of a 640×360 canvas, as the model's was: boxes up
+    // to y≈120 and x≈420, nothing below or to the right of them.
+    const markup =
+      '<svg viewBox="0 0 640 360" width="640" height="360" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect x="16" y="20" width="120" height="60" rx="10" fill="#1f6feb"/><rect x="156" y="20" width="120" height="60" rx="10" fill="#238636"/>' +
+      '<rect x="296" y="20" width="120" height="60" rx="10" fill="#9e6a03"/><text x="20" y="115" fill="currentColor" font-size="12">Mỗi bước lặp lại được</text></svg>';
+    const host = document.createElement('div');
+    host.style.width = '900px';
+    document.getElementById('thread').append(host);
+    const node = widgetNode({ title: 'Quy trình', markup, kind: 'svg' });
+    const frame = node.querySelector('iframe');
+    frame.loading = 'eager';
+    const loaded = new Promise((r) => {
+      frame.addEventListener('load', () => setTimeout(r, 120), { once: true });
+      setTimeout(r, 3000);
+    });
+    host.append(node);
+    await loaded;
+    const svg = frame.contentDocument.querySelector('svg');
+    const f = frame.getBoundingClientRect();
+    const s = svg.getBoundingClientRect();
+    // Where the drawing's own shapes are, in the page's pixels.
+    const shapes = [...svg.querySelectorAll('rect, text')].map((el) => el.getBoundingClientRect());
+    const ink = {
+      top: Math.min(...shapes.map((r) => r.top)) + f.top,
+      bottom: Math.max(...shapes.map((r) => r.bottom)) + f.top,
+      left: Math.min(...shapes.map((r) => r.left)) + f.left,
+      right: Math.max(...shapes.map((r) => r.right)) + f.left,
+    };
+    const out = {
+      frameW: Math.round(f.width),
+      frameH: Math.round(f.height),
+      svgW: Math.round(s.width),
+      inkW: Math.round(ink.right - ink.left),
+      gapTop: Math.round(ink.top - f.top),
+      gapBottom: Math.round(f.bottom - ink.bottom),
+      gapLeft: Math.round(ink.left - f.left),
+      gapRight: Math.round(f.right - ink.right),
+    };
+    host.remove();
+    return out;
+  });
+  check('the drawing is scaled up to the reply\'s width, not left at its own size', fit.inkW > 420 * 1.6, JSON.stringify(fit));
+  // Drawn in small units, it keeps the size it was shown at (code review, 2026-10-25: it shrank to 232px).
+  const small = await page.evaluate(async () => {
+    const { widgetNode } = await import('/js/render.js');
+    const host = document.createElement('div');
+    host.style.width = '900px';
+    document.getElementById('thread').append(host);
+    const node = widgetNode({ title: 'Small units', markup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><rect x="2" y="2" width="96" height="46" fill="#1f6feb"/></svg>', kind: 'svg' });
+    const frame = node.querySelector('iframe');
+    frame.loading = 'eager';
+    const loaded = new Promise((r) => {
+      frame.addEventListener('load', () => setTimeout(r, 120), { once: true });
+      setTimeout(r, 3000);
+    });
+    host.append(node);
+    await loaded;
+    const out = { frame: Math.round(frame.getBoundingClientRect().width), drawn: Math.round(frame.contentDocument.querySelector('svg').getBoundingClientRect().width) };
+    host.remove();
+    return out;
+  });
+  check('  a drawing in small units is not shrunk to its unit count in pixels', small.drawn > small.frame * 0.8, JSON.stringify(small));
+  check('  centred across', Math.abs(fit.gapLeft - fit.gapRight) <= 8, `${fit.gapLeft} / ${fit.gapRight}`);
+  check('  and down, with no empty band under it', Math.abs(fit.gapTop - fit.gapBottom) <= 8 && fit.gapBottom < 60, `${fit.gapTop} / ${fit.gapBottom}`);
+}
+
 section('pinning a project puts it in the sidebar at once');
 {
   const shown = await page.evaluate(async () => {
@@ -8150,6 +8563,169 @@ section('a turn that fails mid-step leaves nothing spinning');
     };
   });
   check('the step whose result never came is marked cut off, and its card stops spinning', left.card && left.spinning === 0 && left.cut, JSON.stringify(left));
+}
+
+/**
+ * Screenshots 10–11 (owner, 2026-10-25): "Đọc sheet.jpg" six times, each still
+ * "Running… 1858 s". The function was cut off mid-read; the page reconnected,
+ * the server ran the same read again under the same call id, and every run of
+ * it drew a row of its own while the old rows counted on for ever. The same
+ * call is one row, and it finishes when its result comes.
+ */
+section('a call run again after a cut-off is one row, and it finishes');
+{
+  let attempts = 0;
+  await page.route('**/api/chats/*/run', (route) => {
+    attempts += 1;
+    const call = 'event: tool_call\ndata: {"id":"lk1","name":"look_at","input":{"path":"/tmp/m5/sheet.jpg","question":"Màu xe?"}}\n\n';
+    return route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      // First the invocation is cut off mid-call (no `done`); then the reconnect runs it again and it answers.
+      body: attempts === 1 ? call : call + 'event: tool_result\ndata: {"toolCallId":"lk1","name":"look_at","content":"A blue M5 Touring.","ms":4200}\n\nevent: done\ndata: {"stopReason":"end_turn"}\n\n',
+    });
+  });
+  await page.fill('#input', 'màu xe là gì');
+  await page.press('#input', 'Enter');
+  await page.waitForTimeout(4500);
+  await page.unroute('**/api/chats/*/run');
+  const left = await page.evaluate(() => {
+    const turn = [...document.querySelectorAll('#messages .msg--assistant')].slice(-3);
+    const rows = turn.flatMap((t) => [...t.querySelectorAll('.step--work')]);
+    return {
+      rows: rows.length,
+      running: document.querySelectorAll('#messages .step__running').length,
+      spinning: turn.reduce((n, t) => n + t.querySelectorAll('.mark--pending, .spinner').length, 0),
+      answered: rows.some((r) => /blue M5/.test(r.textContent || '')),
+    };
+  });
+  check('the read run twice is drawn once', attempts >= 2 && left.rows === 1, JSON.stringify({ attempts, ...left }));
+  check('  and finishes with its answer, nothing left counting', left.answered && left.running === 0 && left.spinning === 0, JSON.stringify(left));
+}
+
+/**
+ * The rows on screen are the ones that finish (code review, 2026-10-25): a call
+ * a rejoin took over that the server did not run again shows its saved result,
+ * not "cut off"; leaving mid-call and coming back, the result lands on the row
+ * on screen, not on one no longer in the page; and a block this tab's run had
+ * already saved is drawn once, not once from the database and once live.
+ */
+section('a rejoined or revisited run finishes the rows on screen');
+{
+  const store = await initStore();
+  const signedIn = await page.evaluate(async () => (await (await fetch('/api/session')).json()).user);
+  const user = await store.getUserByEmail(signedIn.email);
+  const look = (id) => ({ id, name: 'look_at', input: { path: '/tmp/m5/sheet.jpg', question: 'Màu xe?' } });
+  const plant = async (id, title, calls) => {
+    await store.createChat(user.id, { id, title, model: 'm' });
+    await store.appendMessage(user.id, id, { id: `${id}-u`, role: 'user', text: 'màu xe là gì' });
+    if (calls) await store.appendMessage(user.id, id, { id: `${id}-a`, role: 'assistant', text: '', toolCalls: calls });
+  };
+  await plant('c-handed', 'Handed over call', [look('h1')]);
+  await plant('c-back', 'Come back mid call', [look('b1')]);
+  await plant('c-sealed', 'Saved block here', null);
+  await plant('c-away', 'Somewhere else entirely', null);
+  await store.claimChatRun(user.id, 'c-handed', 'aaaaaaaa-0000-4000-8000-000000000001');
+  await store.claimChatRun(user.id, 'c-back', 'aaaaaaaa-0000-4000-8000-000000000002');
+
+  const sse = (...events) => events.map(([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+  const reply = (route, body) => route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body });
+  const held = () => {
+    let release = () => {};
+    const promise = new Promise((resolve) => (release = resolve));
+    return { promise, release };
+  };
+  const open = (title) =>
+    page.evaluate(async (name) => {
+      const row = [...document.querySelectorAll('#chat-list .chat-row')].find((r) => r.textContent.includes(name));
+      row?.querySelector('.chat-item')?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      return !!row;
+    }, title);
+  const until = async (test, ms = 6000) => {
+    for (const end = Date.now() + ms; Date.now() < end && !test(); ) await page.waitForTimeout(100);
+  };
+  const shown = () =>
+    page.evaluate(() => {
+      const host = document.getElementById('messages');
+      const rows = [...host.querySelectorAll('.step--work')];
+      return {
+        rows: rows.length,
+        text: rows.map((r) => r.textContent || '').join(' | ').slice(0, 300),
+        spinning: host.querySelectorAll('.mark--pending, .spinner, .step__running').length,
+        cutOff: /Cut off before|Bị ngắt trước/.test(host.textContent || ''),
+        prose: (host.textContent.match(/Để tôi xem ảnh/g) || []).length,
+      };
+    });
+
+  // (b) The server saved the result before the rejoin, so it does not run the call again.
+  await page.route('**/api/chats/c-handed/run', async (route) => {
+    await store.appendMessage(user.id, 'c-handed', { id: 'c-handed-r', role: 'tool', results: [{ toolCallId: 'h1', name: 'look_at', content: 'Saved: a blue M5.', isError: false }] });
+    return reply(route, sse(['done', { stopReason: 'end_turn' }]));
+  });
+  // (a) A rejoin whose call is still running: the reconnect answers only once we have been away and back.
+  let backAttempts = 0;
+  const back = held();
+  await page.route('**/api/chats/c-back/run', async (route) => {
+    backAttempts += 1;
+    if (backAttempts === 1) return reply(route, sse(['tool_call', look('b1')]));
+    await back.promise;
+    return reply(route, sse(['tool_result', { toolCallId: 'b1', name: 'look_at', content: 'Came back: a red M5.', ms: 900 }], ['done', { stopReason: 'end_turn' }]));
+  });
+  // (c) A turn of this tab: its block is saved, then its call runs while we are away.
+  let sealedAttempts = 0;
+  const sealed = held();
+  await page.route('**/api/chats/c-sealed/run', async (route) => {
+    sealedAttempts += 1;
+    if (sealedAttempts === 1) {
+      await store.claimChatRun(user.id, 'c-sealed', route.request().postDataJSON().runId);
+      const saved = { id: 'c-sealed-a', role: 'assistant', text: 'Để tôi xem ảnh.', toolCalls: [look('s1')] };
+      await store.appendMessage(user.id, 'c-sealed', saved);
+      return reply(route, sse(['text', { delta: 'Để tôi xem ảnh.' }], ['message', { message: saved }], ['tool_call', look('s1')]));
+    }
+    await sealed.promise;
+    return reply(route, sse(['tool_result', { toolCallId: 's1', name: 'look_at', content: 'Seen: a grey M5.', ms: 900 }], ['done', { stopReason: 'end_turn' }]));
+  });
+
+  try {
+    await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2500);
+    await page.evaluate(() => {
+      for (const d of document.querySelectorAll('dialog[open]')) d.close();
+    });
+
+    await open('Handed over call');
+    await page.waitForTimeout(1500);
+    const handed = await shown();
+    check('a call a rejoin took over, not run again, shows its saved result', /Saved: a blue M5/.test(handed.text) && !handed.cutOff && handed.spinning === 0, JSON.stringify(handed));
+
+    await open('Come back mid call');
+    await until(() => backAttempts >= 2);
+    await open('Somewhere else entirely');
+    await open('Come back mid call');
+    back.release();
+    await page.waitForTimeout(1500);
+    const returned = await shown();
+    check('away and back mid-call, the result lands on the row on screen', backAttempts >= 2 && returned.rows === 1 && /Came back: a red M5/.test(returned.text) && returned.spinning === 0, JSON.stringify({ backAttempts, ...returned }));
+
+    await open('Saved block here');
+    await page.fill('#input', 'màu xe là gì');
+    await page.press('#input', 'Enter');
+    await until(() => sealedAttempts >= 2);
+    await open('Somewhere else entirely');
+    await open('Saved block here');
+    sealed.release();
+    await page.waitForTimeout(1500);
+    const again = await shown();
+    check('a block this tab had saved is drawn once on the way back, and its call finishes there', sealedAttempts >= 2 && again.prose === 1 && again.rows === 1 && /Seen: a grey M5/.test(again.text) && again.spinning === 0, JSON.stringify({ sealedAttempts, ...again }));
+  } finally {
+    back.release();
+    sealed.release();
+    await page.unroute('**/api/chats/c-handed/run');
+    await page.unroute('**/api/chats/c-back/run');
+    await page.unroute('**/api/chats/c-sealed/run');
+    for (const id of ['c-handed', 'c-back', 'c-sealed']) await store.stopChatRun(user.id, id);
+  }
 }
 
 /**

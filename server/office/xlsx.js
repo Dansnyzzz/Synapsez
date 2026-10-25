@@ -8,13 +8,16 @@
  * model can answer questions about and a wall of integers.
  *
  * Writing one produces a file that is actually usable as a spreadsheet: real
- * numbers in real numeric cells, so a column can be summed; a frozen, filtered
- * header row; column widths that fit what is in them. A table pasted in as text
- * looks the same on screen and is useless the moment anybody clicks AutoSum.
+ * numbers in real numeric cells, so a column can be summed — "1.560.000.000",
+ * "64,4%" and "$28,500" included, each shown in its own format; a frozen,
+ * filtered header row; column widths that fit what is in them. A table pasted
+ * in as text looks the same on screen and is useless the moment anybody clicks
+ * AutoSum. And it is designed (owner, 2026-10-25): the header in the palette's
+ * colour, banded rows, a data bar in each column of figures, set up to print.
  *
  * Not attempted: formulas (values are read, formulas are noted and not
- * evaluated), charts, pivot tables, conditional formatting, and merged-cell
- * layout beyond recording that a merge exists.
+ * evaluated), charts, pivot tables, and merged-cell layout beyond recording
+ * that a merge exists.
  */
 import { openZip, writeZip } from './zip.js';
 import {
@@ -42,6 +45,7 @@ import {
   resolveTarget,
   rootRelsXml,
 } from './opc.js';
+import { looksVietnamese, pickTheme } from './theme.js';
 
 /** How much of a large workbook the model is shown. Same budget as a PDF. */
 const MAX_TEXT_CHARS = 120_000;
@@ -347,27 +351,112 @@ const SPREADSHEET = 'application/vnd.openxmlformats-officedocument.spreadsheetml
 /**
  * Whether a piece of text is a number that should be stored as one.
  *
- * Deliberately strict. "0123" is a part number, "1.500.000" is a thousands
- * separator this cannot safely guess at, and a phone number is not a quantity —
- * turning any of them into a float loses information that cannot be recovered.
- * What is converted is what is unambiguously a number in the plain form.
+ * Deliberately strict. "0123" is a part number and a phone number is not a
+ * quantity — turning either into a float loses information that cannot be
+ * recovered. What is converted is what is unambiguously a number: the plain
+ * form, and the written forms a person types into a report (owner, 2026-10-25:
+ * a sheet of "1.560.000.000" was a sheet of text nobody could add up).
  */
 const NUMERIC = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+/** 1.560.000.000 — thousands with dots, as Vietnamese writes them. */
+const DOTTED = /^-?[1-9]\d{0,2}(?:\.\d{3})+$/;
+/** 31,200 or 1,234.50 — thousands with commas. */
+const COMMAED = /^-?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?$/;
 
-function cellFor(value) {
+/**
+ * The number formats a cell can carry — each is a pair of styles, plain and on
+ * a band (see `stylesXml`). Index 0 is "as it is".
+ */
+const FORMATS = [
+  { id: 0 }, // general
+  { id: 164, code: 'yyyy\\-mm\\-dd' }, // a date
+  { id: 3 }, // #,##0
+  { id: 4 }, // #,##0.00
+  { id: 9 }, // 0%
+  { id: 165, code: '0.0%' },
+  { id: 166, code: '#,##0" ₫"' },
+  { id: 167, code: '"$"#,##0.00' },
+];
+const FORMAT = { general: 0, date: 1, integer: 2, decimal: 3, percent: 4, percent1: 5, dong: 6, dollar: 7 };
+
+/** 1.200.000 — two groups or more, which can only be thousands. */
+const DOTTED_MULTI = /^-?[1-9]\d{0,2}(?:\.\d{3}){2,}$/;
+/** 150.000 — thousands in Vietnamese, 150 in English; the column decides (see `sheetXml`). */
+const DOTTED_ONE = /^-?[1-9]\d{0,2}\.\d{3}$/;
+/**
+ * A dotted figure that is an address rather than an amount: four groups, none
+ * over 255, and none written with a leading zero — an address says "0", an
+ * amount says "000" ("4.160.000.000" is four billion, not an address).
+ */
+const addressLike = (t) => {
+  const groups = t.split('.');
+  return groups.length === 4 && groups.every((g) => Number(g) <= 255 && !/^0\d/.test(g));
+};
+
+/**
+ * A cell's value and the format it is shown in, read from whatever it was written as.
+ *
+ * `column` is what the cell's column says about it: `thousands` — "150.000" is
+ * 150,000 here, because the column also holds "1.200.000" or the sheet is in
+ * Vietnamese, where the dot groups thousands (a column of 150.000, 1.500 and
+ * 1.200.000 summed to 1,200,151.5 when each was read alone — code review,
+ * 2026-10-25); `plain` — a column of codes, ids, years or phone numbers, whose
+ * numbers are never shown with thousands ("700,000" was a postal code).
+ *
+ * @param {any} value
+ * @param {{ thousands?: boolean, plain?: boolean }} [column]
+ */
+function cellFor(value, column = {}) {
+  const cell = readCell(value, column);
+  return cell && column.plain && cell.format === FORMAT.integer ? { ...cell, format: FORMAT.general } : cell;
+}
+
+function readCell(value, { thousands = false } = {}) {
   if (value == null || value === '') return null;
-  if (typeof value === 'number' && Number.isFinite(value)) return { type: 'n', value: String(value) };
-  if (typeof value === 'boolean') return { type: 'b', value: value ? '1' : '0' };
+  // A whole number of five digits or more is shown with its thousands; any
+  // other number as it is — "3.14159" must not be shown as 3.14.
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return { type: 'n', value: String(value), format: Number.isInteger(value) && Math.abs(value) >= 10000 ? FORMAT.integer : FORMAT.general };
+  }
+  if (typeof value === 'boolean') return { type: 'b', value: value ? '1' : '0', format: FORMAT.general };
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     // Stored as a serial with a date format, which is what makes it sortable
     // and subtractable rather than a label that happens to look like a date.
     const serial = value.getTime() / 86400000 + 25569;
-    return { type: 'n', value: String(Number(serial.toFixed(10))), style: 2 };
+    return { type: 'n', value: String(Number(serial.toFixed(10))), format: FORMAT.date };
   }
 
   const text = String(value);
-  if (NUMERIC.test(text.trim())) return { type: 'n', value: text.trim() };
-  return { type: 's', value: text };
+  const t = text.trim();
+  if (thousands && DOTTED_ONE.test(t)) return { type: 'n', value: t.replace(/\./g, ''), format: FORMAT.integer };
+  if (NUMERIC.test(t)) {
+    const n = Number(t);
+    return { type: 'n', value: t, format: Number.isInteger(n) && Math.abs(n) >= 10000 ? FORMAT.integer : FORMAT.general };
+  }
+  if (DOTTED.test(t) && !addressLike(t)) return { type: 'n', value: t.replace(/\./g, ''), format: FORMAT.integer };
+  if (COMMAED.test(t)) {
+    const plain = t.replace(/,/g, '');
+    return { type: 'n', value: plain, format: plain.includes('.') ? FORMAT.decimal : FORMAT.integer };
+  }
+  // 64% · 64,4% · -12.5 %
+  const percent = /^(-?\d+(?:[.,]\d+)?)\s?%$/.exec(t);
+  if (percent) {
+    const n = Number(percent[1].replace(',', '.')) / 100;
+    return { type: 'n', value: String(Number(n.toFixed(10))), format: /[.,]/.test(percent[1]) ? FORMAT.percent1 : FORMAT.percent };
+  }
+  // 1.250.000 ₫ · 1.250.000đ · 1.250.000 VND
+  const dong = /^(-?[1-9]\d{0,2}(?:\.\d{3})+|-?\d+)\s?(?:₫|đ|vnđ|vnd|đồng)$/i.exec(t);
+  if (dong) return { type: 'n', value: dong[1].replace(/\./g, ''), format: FORMAT.dong };
+  // $28,500 · $1,234.50 · $99
+  const dollar = /^\$\s?(-?(?:[1-9]\d{0,2}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)$/.exec(t);
+  if (dollar) return { type: 'n', value: dollar[1].replace(/,/g, ''), format: FORMAT.dollar };
+  // 2026-03-15 — a real day, kept as a date.
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+  if (day) {
+    const date = new Date(Date.UTC(+day[1], +day[2] - 1, +day[3]));
+    if (date.getUTCMonth() === +day[2] - 1) return cellFor(date);
+  }
+  return { type: 's', value: text, format: FORMAT.general };
 }
 
 /** How wide a column has to be to show what is in it, in Excel's character units. */
@@ -375,31 +464,57 @@ function columnWidths(rows, columns) {
   const widths = [];
   for (let column = 0; column < columns; column += 1) {
     let widest = 8;
-    for (const row of rows) {
+    rows.forEach((row, r) => {
       const value = row[column];
-      const length = value == null ? 0 : String(value instanceof Date ? '2024-01-01' : value).length;
+      if (value == null) return;
+      const cell = cellFor(value);
+      // A figure shown with its separators is wider than it was typed; a header is bold.
+      const shown = value instanceof Date ? '2024-01-01' : cell && cell.type === 'n' && cell.format >= FORMAT.integer ? `${value}`.replace(/\D/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '  ' : String(value);
+      const length = shown.length + (r === 0 ? 2 : 0);
       if (length > widest) widest = length;
-    }
+    });
     // A little padding, and a ceiling — one 900-character cell must not produce
     // a column nobody can scroll past.
-    widths.push(Math.min(widest + 2, 60));
+    widths.push(Math.min(widest + 3, 60));
   }
   return widths;
 }
 
-function sheetXml(sheet, sharedIndex) {
+/**
+ * A column that counts or names rather than measures — a year, an id, a phone
+ * number — gets no data bar, and no thousands in its numbers. By its header.
+ */
+const NOT_A_MEASURE = /^(?:năm|year|mã|id|stt|số thứ tự|no\.?|#|tháng|month|quý|quarter|ngày|date|sđt|số điện thoại|điện thoại|phone|zip|postal|cmnd|cccd|số tài khoản|tài khoản|account)(?![\p{L}])/iu;
+
+/** The style of a body cell: its format, plain or on a band. */
+const styleFor = (format, band) => 2 + format * 2 + (band ? 1 : 0);
+
+function sheetXml(sheet, sharedIndex, palette) {
   const rows = sheet.rows || [];
   const columns = Math.max(...rows.map((row) => row.length), 1);
   const header = sheet.header !== false && rows.length > 1;
+  const numericCells = Array.from({ length: columns }, () => 0);
+  // What each column says about its cells — see `cellFor`.
+  const vietnamese = looksVietnamese(rows.map((row) => row.join(' ')).join('\n'));
+  const columnOf = Array.from({ length: columns }, (_, c) => {
+    const values = rows.slice(header ? 1 : 0).map((row) => String(row[c] ?? '').trim());
+    return {
+      thousands: vietnamese || values.some((v) => DOTTED_MULTI.test(v) && !addressLike(v)),
+      plain: header && NOT_A_MEASURE.test(String(rows[0][c] ?? '').trim()),
+    };
+  });
 
   const body = rows
     .map((row, rowIndex) => {
       const cells = [];
+      const band = header && rowIndex > 0 && rowIndex % 2 === 0;
       for (let column = 0; column < row.length; column += 1) {
-        const cell = cellFor(row[column]);
+        const isHead = header && rowIndex === 0;
+        const cell = cellFor(row[column], isHead ? {} : columnOf[column]);
         if (!cell) continue;
         const ref = `${columnName(column)}${rowIndex + 1}`;
-        const style = header && rowIndex === 0 ? 1 : cell.style || 0;
+        if (!isHead && cell.type === 'n' && cell.format !== FORMAT.date) numericCells[column] += 1;
+        const style = isHead ? 1 : styleFor(cell.format, band);
         const attrs = `r="${ref}" s="${style}"`;
 
         if (cell.type === 's') {
@@ -415,7 +530,9 @@ function sheetXml(sheet, sharedIndex) {
           cells.push(`<c ${attrs}><v>${cell.value}</v></c>`);
         }
       }
-      return `<row r="${rowIndex + 1}">${cells.join('')}</row>`;
+      // The header row a little taller, so its words have room on the colour.
+      const height = header && rowIndex === 0 ? ' ht="24" customHeight="1"' : '';
+      return `<row r="${rowIndex + 1}"${height}>${cells.join('')}</row>`;
     })
     .join('');
 
@@ -424,62 +541,94 @@ function sheetXml(sheet, sharedIndex) {
     .map((width, i) => `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`)
     .join('');
 
-  const dimension = `<dimension ref="A1:${columnName(Math.max(columns - 1, 0))}${Math.max(rows.length, 1)}"/>`;
+  const last = columnName(Math.max(columns - 1, 0));
+  const dimension = `<dimension ref="A1:${last}${Math.max(rows.length, 1)}"/>`;
 
   // A frozen header stays put while you scroll, and the filter is what people
   // actually reach for the moment a table has more than a screenful of rows.
+  // A table with its own bands and rules does without the grid behind it.
   const pane = header
-    ? '<sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>' +
+    ? '<sheetView workbookViewId="0" showGridLines="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>' +
       '<selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView>'
     : '<sheetView workbookViewId="0"/>';
-  const filter =
-    header && rows.length > 1
-      ? `<autoFilter ref="A1:${columnName(Math.max(columns - 1, 0))}${rows.length}"/>`
-      : '';
+  const filter = header && rows.length > 1 ? `<autoFilter ref="A1:${last}${rows.length}"/>` : '';
+
+  /*
+   * A bar of the palette's accent in each cell of a column of figures, as long
+   * as the figure — the one glance that says which row is big. Not on a column
+   * that counts or names (a year, an id).
+   */
+  const bars = header
+    ? Array.from({ length: columns }, (_, c) => c)
+        .filter((c) => numericCells[c] >= 3 && numericCells[c] >= (rows.length - 1) * 0.8 && !NOT_A_MEASURE.test(String(rows[0][c] ?? '').trim()))
+        .filter((c) => !rows.slice(1).every((r) => /^(19|20)\d\d$/.test(String(r[c] ?? '').trim())))
+        .map(
+          (c, i) =>
+            `<conditionalFormatting sqref="${columnName(c)}2:${columnName(c)}${rows.length}"><cfRule type="dataBar" priority="${i + 1}">` +
+            `<dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF${palette.accent}"/></dataBar></cfRule></conditionalFormatting>`,
+        )
+        .join('')
+    : '';
+
+  // Printed: fitted to the page's width, wide tables on their side, the page numbered.
+  const landscape = widths.reduce((a, b) => a + b, 0) > 95;
+  const print =
+    '<printOptions horizontalCentered="1"/>' +
+    '<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/>' +
+    `<pageSetup paperSize="9" orientation="${landscape ? 'landscape' : 'portrait'}" fitToWidth="1" fitToHeight="0"/>` +
+    '<headerFooter><oddFooter>&amp;C&amp;P / &amp;N</oddFooter></headerFooter>';
 
   return (
     `${XML_DECLARATION}<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ` +
     `xmlns:r="${NS.officeRels}">` +
-    `${dimension}<sheetViews>${pane}</sheetViews>` +
-    '<sheetFormatPr defaultRowHeight="15"/>' +
+    `<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>${dimension}<sheetViews>${pane}</sheetViews>` +
+    '<sheetFormatPr defaultRowHeight="18" customHeight="1"/>' +
     `${cols ? `<cols>${cols}</cols>` : ''}` +
-    `<sheetData>${body}</sheetData>${filter}</worksheet>`
+    `<sheetData>${body}</sheetData>${filter}${bars}${print}</worksheet>`
   );
 }
 
 /**
- * The stylesheet: three cell formats, and every one of them is used.
+ * The stylesheet, in the document's palette (theme.js).
  *
- *   0  ordinary
- *   1  the header row — bold on a tint, with a rule under it
- *   2  a date
+ *   0       ordinary
+ *   1       the header row — bold white on the palette's colour, a rule under it
+ *   2 + 2f  a body cell in format f (`FORMATS`) — and 3 + 2f the same on a band
  *
  * Excel requires the `cellStyleXfs` and `cellXfs` tables to exist even when
  * nothing is styled, and it requires index 0 of each to be the default. A
  * stylesheet that skips them is the classic "unreadable content" dialog.
+ *
+ * @param {import('./theme.js').Palette} palette
  */
-function stylesXml() {
+function stylesXml(palette) {
+  const custom = FORMATS.filter((f) => f.code);
+  const body = FORMATS.flatMap((f) => [false, true].map((band) =>
+    `<xf numFmtId="${f.id}" fontId="0" fillId="${band ? 3 : 0}" borderId="2" xfId="0"${f.id ? ' applyNumberFormat="1"' : ''}${band ? ' applyFill="1"' : ''} applyBorder="1"><alignment vertical="center"/></xf>`,
+  ));
   return (
     `${XML_DECLARATION}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-    '<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy\\-mm\\-dd"/></numFmts>' +
+    `<numFmts count="${custom.length}">${custom.map((f) => `<numFmt numFmtId="${f.id}" formatCode="${escapeXml(f.code)}"/>`).join('')}</numFmts>` +
     '<fonts count="2">' +
-    '<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' +
-    '<font><b/><sz val="11"/><color rgb="FF1A1A1A"/><name val="Calibri"/><family val="2"/></font>' +
+    `<font><sz val="11"/><color rgb="FF${palette.ink}"/><name val="Calibri"/><family val="2"/></font>` +
+    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>' +
     '</fonts>' +
-    '<fills count="3">' +
+    '<fills count="4">' +
     '<fill><patternFill patternType="none"/></fill>' +
     '<fill><patternFill patternType="gray125"/></fill>' +
-    '<fill><patternFill patternType="solid"><fgColor rgb="FFEFF3F7"/><bgColor indexed="64"/></patternFill></fill>' +
+    `<fill><patternFill patternType="solid"><fgColor rgb="FF${palette.primary}"/><bgColor indexed="64"/></patternFill></fill>` +
+    `<fill><patternFill patternType="solid"><fgColor rgb="FF${palette.soft}"/><bgColor indexed="64"/></patternFill></fill>` +
     '</fills>' +
-    '<borders count="2">' +
+    '<borders count="3">' +
     '<border><left/><right/><top/><bottom/><diagonal/></border>' +
-    '<border><left/><right/><top/><bottom style="thin"><color rgb="FFB9C4CE"/></bottom><diagonal/></border>' +
+    `<border><left/><right/><top/><bottom style="medium"><color rgb="FF${palette.dark}"/></bottom><diagonal/></border>` +
+    `<border><left/><right/><top/><bottom style="thin"><color rgb="FF${palette.line}"/></bottom><diagonal/></border>` +
     '</borders>' +
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-    '<cellXfs count="3">' +
+    `<cellXfs count="${2 + body.length}">` +
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
-    '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>' +
-    '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+    '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>' +
+    body.join('') +
     '</cellXfs>' +
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
     '</styleSheet>'
@@ -517,11 +666,14 @@ function sheetName(name, taken) {
  *
  * @param sheets `[{ name, rows: [[value]], header }]` — values may be strings,
  *   numbers, booleans, Dates or null
+ * @param theme  a palette name (theme.js), a palette, or nothing — picked from the words
  * @returns a Buffer holding the whole package
  */
-export function writeXlsx({ sheets, title = 'Workbook', author = 'Synapsez', created = new Date() } = {}) {
+export function writeXlsx({ sheets, title = 'Workbook', author = 'Synapsez', created = new Date(), theme = null } = {}) {
   const input = (Array.isArray(sheets) ? sheets : []).filter((sheet) => sheet && Array.isArray(sheet.rows));
   const list = input.length ? input : [{ name: 'Sheet1', rows: [[]] }];
+  const words = list.map((s) => `${s.name}\n${(s.rows[0] || []).join(' ')}`).join('\n');
+  const palette = theme && typeof theme === 'object' && theme.primary ? theme : pickTheme(theme, `${title}\n${words}`);
 
   const taken = new Set();
   const shared = new Map();
@@ -529,7 +681,7 @@ export function writeXlsx({ sheets, title = 'Workbook', author = 'Synapsez', cre
   const named = list.map((sheet, i) => ({ ...sheet, name: sheetName(sheet.name || `Sheet${i + 1}`, taken) }));
 
   named.forEach((sheet, i) => {
-    parts.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(sheet, shared) });
+    parts.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(sheet, shared, palette) });
   });
 
   const sharedStrings =
@@ -548,7 +700,22 @@ export function writeXlsx({ sheets, title = 'Workbook', author = 'Synapsez', cre
           `<sheet name="${escapeXml(sheet.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`,
       )
       .join('') +
-    '</sheets></workbook>';
+    '</sheets>' +
+    // The filter's range, named the way Excel names it — without it, Excel
+    // draws the filter buttons but sorting through them is off.
+    (() => {
+      const names = named
+        .map((sheet, i) => {
+          const rows = sheet.rows || [];
+          const columns = Math.max(...rows.map((row) => row.length), 1);
+          if (!(sheet.header !== false && rows.length > 1)) return '';
+          const quoted = `'${String(sheet.name).replace(/'/g, "''")}'`;
+          return `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">${escapeXml(`${quoted}!$A$1:$${columnName(Math.max(columns - 1, 0))}$${rows.length}`)}</definedName>`;
+        })
+        .join('');
+      return names ? `<definedNames>${names}</definedNames>` : '';
+    })() +
+    '</workbook>';
 
   const workbookRels =
     `${XML_DECLARATION}<Relationships xmlns="${NS.packageRels}">` +
@@ -573,7 +740,7 @@ export function writeXlsx({ sheets, title = 'Workbook', author = 'Synapsez', cre
       { name: 'xl/workbook.xml', data: workbook },
       { name: 'xl/_rels/workbook.xml.rels', data: workbookRels },
       ...parts,
-      { name: 'xl/styles.xml', data: stylesXml() },
+      { name: 'xl/styles.xml', data: stylesXml(palette) },
       { name: 'xl/sharedStrings.xml', data: sharedStrings },
       { name: 'docProps/core.xml', data: corePropsXml({ title, author, created }) },
       { name: 'docProps/app.xml', data: appPropsXml({}) },

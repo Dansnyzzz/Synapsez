@@ -665,12 +665,14 @@ export function nameForFile({ name, filename, file_name: fileName, title, conten
   return heading ? heading.trim() : 'Document';
 }
 
-async function createFileTool({ name, format, content, title, filename, file_name }, { userId, chatId }) {
+async function createFileTool({ name, format, content, title, filename, file_name, theme }, { userId, chatId }) {
   const built = createDocument({
     format,
     name: nameForFile({ name, filename, file_name, title, content }),
     content,
     title,
+    // A palette only when one was asked for; otherwise picked from the topic (theme.js).
+    theme: theme || null,
   });
   const saved = await saveGenerated(userId, {
     name: built.name,
@@ -713,7 +715,7 @@ export function applyEdits(source, edits) {
   return text;
 }
 
-async function updateFileTool({ file_id: fileId, content, name, append = false, edits }, { userId }) {
+async function updateFileTool({ file_id: fileId, content, name, append = false, edits, theme }, { userId }) {
   const store = getStore();
   const existing = await store.getAttachment(userId, fileId);
   if (!existing) throw new Error(`There is no file with the id ${fileId} on this account.`);
@@ -753,7 +755,10 @@ async function updateFileTool({ file_id: fileId, content, name, append = false, 
   // The format belongs to the file, not to this call: renaming is allowed,
   // and "update it" must never quietly turn a .docx into a .md.
   const format = extensionOf(existing.name);
-  const built = createDocument({ format, name: name || existing.name, content: whole });
+  // The palette is picked from the topic again unless one is named here. It is
+  // not stored with the file, so a palette named at creation is kept only if
+  // it is named again (update_file's `theme` says so to the model).
+  const built = createDocument({ format, name: name || existing.name, content: whole, theme: theme || null });
 
   const saved = await store.replaceAttachment(userId, fileId, {
     data: built.buffer.toString('base64'),
@@ -991,10 +996,19 @@ async function showWidgetTool({ title, svg, html }) {
   const caption = String(title || '').trim();
   if (!caption) throw new Error('Give the picture a short title, so it is labelled.');
 
-  const markup = String(svg || html || '').trim();
+  let markup = String(svg || html || '').trim();
   if (!markup) throw new Error('Give either `svg` or `html` to draw.');
   if (svg && html) {
     throw new Error('Give `svg` or `html`, not both — they are two different pictures.');
+  }
+  /*
+   * The parts of a drawing sent without the <svg> round them — `<rect …><text …>`
+   * — are still a drawing, so they get their element rather than a refusal. No
+   * viewBox is guessed here: the conversation measures what was drawn and fits
+   * the frame to it (`widgetFrame` in render.js).
+   */
+  if (svg && !/^<svg[\s>]/i.test(markup) && /^(?:<\?xml[^>]*>\s*)?<(?:defs|g|rect|circle|ellipse|line|path|polyline|polygon|text|image|use|marker|linearGradient|radialGradient|style|title|desc)[\s>/]/i.test(markup)) {
+    markup = `<svg xmlns="http://www.w3.org/2000/svg">${markup.replace(/^<\?xml[^>]*>\s*/i, '')}</svg>`;
   }
   if (markup.length > MAX_WIDGET_BYTES) {
     throw new Error(
@@ -1526,7 +1540,10 @@ async function searchChatsTool({ query, limit }, { userId, chatId }) {
     const body = recent
       .map((c) => `- "${c.title}" (${new Date(c.updated_at).toISOString().slice(0, 10)})${c.opening ? `: ${excerpt(c.opening, [], 200)}` : ''}`)
       .join('\n');
-    return `The ${recent.length} most recent conversation${recent.length === 1 ? '' : 's'} ${where}:\n${untrusted('earlier conversations', body)}`;
+    return {
+      content: `The ${recent.length} most recent conversation${recent.length === 1 ? '' : 's'} ${where}:\n${untrusted('earlier conversations', body)}`,
+      chats: recent.map((c) => foundChat(c.id, c.title, c.updated_at)),
+    };
   }
 
   let rows = await store.recallChats(userId, { ...scope, terms, mode: 'all' });
@@ -1572,8 +1589,20 @@ async function searchChatsTool({ query, limit }, { userId, chatId }) {
     .map((c) => `- "${c.title}" (${new Date(c.updated).toISOString().slice(0, 10)})\n${c.lines.join('\n')}`)
     .join('\n');
   const note = loose ? ' (no conversation had every word, so these have some of them)' : '';
-  return `${chats.size} earlier conversation${chats.size === 1 ? '' : 's'} ${where}${note}:\n${untrusted('earlier conversations', body)}${heldLine}`;
+  return {
+    content: `${chats.size} earlier conversation${chats.size === 1 ? '' : 's'} ${where}${note}:\n${untrusted('earlier conversations', body)}${heldLine}`,
+    // Only those quoted above — a held one is neither quoted nor listed.
+    chats: [...chats].map(([id, c]) => foundChat(id, c.title, c.updated)),
+  };
 }
+
+/**
+ * A conversation `search_chats` found, as the screen lists it: Claude's
+ * "Relevant chats", each row opening its conversation (owner, 2026-10-25).
+ * It travels beside the text the model reads, never in it — the model has no
+ * use for the ids, and the person's own conversations are theirs to open.
+ */
+const foundChat = (id, title, updated) => ({ id: String(id), title: String(title || ''), updated: new Date(updated).toISOString() });
 
 /**
  * Fewer steps than this is not a plan, and drawing one anyway is the failure
@@ -2466,6 +2495,8 @@ const LOOK_MAX_BYTES = 12 * 1024 * 1024;
 /** A whole textbook is 20–40MB; the pages asked for are rendered from it, never all of it. */
 const LOOK_MAX_PDF_BYTES = 48 * 1024 * 1024;
 const LOOK_FETCH_MS = 90_000;
+/** Waking the cloud computer and reading one file from it — a picture, not a download. */
+const LOOK_READ_MS = 45_000;
 /** A file name from a URL, readable, and never a throw over a stray %. */
 const safeDecode = (s) => {
   try {
@@ -2522,7 +2553,7 @@ async function chatModelSees(userId, chatId) {
  */
 async function lookAtTool(
   { file_id: fileId, url, path, pages, question },
-  { userId, chatId, signal, see: lookWith = see, readCloudFile = readMachineFile },
+  { userId, chatId, signal, see: lookWith = see, readCloudFile = readMachineFile, readMs = LOOK_READ_MS },
 ) {
   const ask = String(question || '').trim();
   const wantPages = Array.isArray(pages) ? pages.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 8) : null;
@@ -2544,7 +2575,19 @@ async function lookAtTool(
     if (picture) shot = { id: row.id, name: row.name };
   } else if (path) {
     const where = workPath(path);
-    const bytes = await readCloudFile(String(userId), where, { signal });
+    // A cloud computer that is waking, or stuck, is not waited on past a limit
+    // — with no limit, one read held the turn until the function was cut off
+    // (owner, 2026-10-25, screenshots 10–11).
+    const timer = AbortSignal.timeout(readMs);
+    let bytes;
+    try {
+      bytes = await readCloudFile(String(userId), where, { signal: signal ? AbortSignal.any([signal, timer]) : timer });
+    } catch (err) {
+      if (timer.aborted && !signal?.aborted) {
+        throw new Error(`The cloud computer took more than ${Math.round(readMs / 1000)}s to hand over ${where}, so it was not read. Try once more; if it is slow again, make a smaller copy first.`);
+      }
+      throw err;
+    }
     if (!bytes) {
       throw new Error(`${where} is not on the cloud computer — check the path with ls. For a file on the user's own computer, use read_file.`);
     }

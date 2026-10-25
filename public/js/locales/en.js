@@ -132,6 +132,9 @@ export const en = {
   'web.searched': 'Searched the web',
   'web.reading': 'Reading the web',
   'web.read': 'Read the web',
+  'web.result': '{n} result',
+  'web.results': '{n} results',
+  'recall.title': 'Relevant chats',
   'rail.tool.web_fetch': 'Read pages',
   'rail.tool.deep_research': 'Deep research',
   'stop.interrupted': 'Stopped partway ({reason}). Press Continue and the assistant finishes the rest.',
@@ -652,6 +655,9 @@ export const en = {
   'gallery.dialog': 'Pictures',
   'gallery.open': 'Open {name}',
   'gallery.more': '{n} more pictures',
+  'gallery.zoomIn': 'Zoom in',
+  'gallery.zoomOut': 'Zoom out',
+  'gallery.zoomFit': 'Fit to screen',
 
   /* The + beside the message box (plus-menu.js). */
   'plus.open': 'Add files, skills, connectors and plugins',
@@ -943,7 +949,7 @@ export const en = {
     'An API key is like a password that lets Synapsez call an AI model for you. Get one from the provider and paste it into Settings → Providers.',
   'onb.2.recommend': 'If you are new: OpenRouter — one key reaches a great many models, some of them free.',
   'onb.2.many':
-    'Anthropic, OpenAI, Google Gemini, OpenRouter and OrcaRouter are supported. Each provider holds several keys; Synapsez uses them in the order they are listed.',
+    'Google Gemini, OpenRouter and OrcaRouter are supported — Claude and GPT models come through OpenRouter and OrcaRouter. Each provider holds several keys; Synapsez uses them in the order they are listed.',
   'onb.2.open': 'Open the key settings',
   'onb.2.done': 'Done — your account has a key.',
   'onb.2.pending': 'No key yet. Until there is one, the assistant cannot answer.',

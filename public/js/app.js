@@ -1926,20 +1926,30 @@ function showStage(run) {
   runs.show(run, $('messages'));
 }
 
+/** Tool results live in their own message, so they are indexed by call id. */
+function resultsOf(messages) {
+  const byId = new Map();
+  for (const m of messages) {
+    if (m.role === 'tool') for (const r of m.results || []) byId.set(r.toolCallId, r);
+  }
+  return byId;
+}
+
 /**
  * Rebuild the stored transcript into `host`.
  *
  * @param live  the conversation is still answering: a call in its newest turn
  *   without a result is still running, not lost.
+ * @returns the newest assistant turn drawn, with the id of its message — for a
+ *   run of this tab that is still in it (`openChat`).
  */
 function drawTranscript(host, messages, { live = false } = {}) {
   host.innerHTML = '';
-
-  // Tool results live in their own message, so index them by call id first.
-  const resultsByCallId = new Map();
-  for (const m of messages) {
-    if (m.role === 'tool') for (const r of m.results || []) resultsByCallId.set(r.toolCallId, r);
-  }
+  // The calls of a still-running turn that have no result yet — see `stream`.
+  state.waitingCalls = new Map();
+  /** @type {{ turn: any, id: string } | null} */
+  let newestTurn = null;
+  const resultsByCallId = resultsOf(messages);
 
   const newest = messages.findLastIndex((m) => m.role === 'assistant');
   messages.forEach((m, i) => {
@@ -1955,8 +1965,11 @@ function drawTranscript(host, messages, { live = false } = {}) {
       // The turn ends where the next thing said is the person's, or nothing.
       const next = messages.slice(i + 1).find((x) => x.role === 'user' || x.role === 'assistant');
       turn.hydrate(m, resultsByCallId, { pending: live && i === newest, endsTurn: !next || next.role === 'user' });
+      for (const [id, handle] of turn.waiting) state.waitingCalls.set(id, handle);
+      if (i === newest) newestTurn = { turn, id: m.id };
     }
   });
+  return newestTurn;
 }
 
 /**
@@ -2087,7 +2100,7 @@ async function openChat(id) {
    * than narrating the construction.
    */
   host.setAttribute('aria-busy', 'true');
-  drawTranscript(host, messages, { live: !!running || !!background });
+  const newestTurn = drawTranscript(host, messages, { live: !!running || !!background });
 
   /**
    * If this conversation is mid-answer in this tab, its live nodes go back on
@@ -2113,8 +2126,23 @@ async function openChat(id) {
     }
   }
   if (live) {
+    /*
+     * The block it is in may be saved already — a step's words and calls are
+     * stored before the calls run — and then it was just drawn above, its calls
+     * waiting. That drawn copy becomes the run's: its stage copy goes, its next
+     * call is drawn there, and its results land on the rows on screen. They used
+     * to land on rows no longer in the page, while the ones on screen spun until
+     * the conversation was opened again (code review, 2026-10-25).
+     */
+    const stored = live.sealed && live.sealedId && newestTurn?.id === live.sealedId;
     for (const node of [...live.stage.children]) {
-      if (node !== live.turn?.node) node.remove();
+      if (node !== live.turn?.node || stored) node.remove();
+    }
+    if (stored) live.turn = newestTurn.turn;
+    for (const [callId, handle] of state.waitingCalls) {
+      if (!live.toolHandles.has(callId)) continue;
+      live.toolHandles.set(callId, handle);
+      state.waitingCalls.delete(callId);
     }
     showStage(live);
   }
@@ -2737,6 +2765,14 @@ $('messages').addEventListener('click', async (event) => {
   if (openable && !event.target.closest('a[download], [data-no-open]')) {
     event.preventDefault();
     viewer.open({ id: openable.dataset.file });
+    return;
+  }
+
+  // A conversation "search past chats" found opens from its row (owner, 2026-10-25).
+  const recalled = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-open-chat]'));
+  if (recalled) {
+    event.preventDefault();
+    openChat(recalled.dataset.openChat).catch((err) => toast(err.message, 'error'));
     return;
   }
 
@@ -3439,6 +3475,16 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     runId: rejoin || crypto.randomUUID(),
   });
   if (!run) return;
+  /*
+   * Rejoining a turn drawn from the database mid-call: its calls with no result
+   * are already rows on screen, and the server will run them again under the
+   * same ids. Those rows take the results, rather than a second row each.
+   */
+  if (rejoin && chatId === state.chatId && state.waitingCalls?.size) {
+    for (const [id, handle] of state.waitingCalls) run.toolHandles.set(id, handle);
+    run.handedOver = new Set(state.waitingCalls.keys());
+    state.waitingCalls.clear();
+  }
   /**
    * A stop note from an earlier turn in this same conversation may still be on
    * screen — the user ignored it and sent something else instead of pressing
@@ -3517,6 +3563,22 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
      * keeps its calls open for the answer.
      */
     if (ended !== 'waiting') {
+      /*
+       * A call handed over from the saved transcript that the server did not
+       * run again — its result was saved between the snapshot and the rejoin —
+       * has its answer in the database. It was said to be cut off (code review,
+       * 2026-10-25).
+       */
+      const handedOver = [...run.toolHandles.keys()].filter((id) => run.handedOver?.has(id));
+      if (handedOver.length) {
+        const saved = await api.chat(chatId).then(({ messages }) => resultsOf(messages || []), () => new Map());
+        for (const id of handedOver) {
+          const result = saved.get(id);
+          if (!result) continue;
+          run.toolHandles.get(id)?.complete(result);
+          run.toolHandles.delete(id);
+        }
+      }
       for (const handle of run.toolHandles.values()) handle?.complete?.({ content: t('chat.cutOff'), isError: true });
     }
     run.toolHandles.clear();
@@ -3681,6 +3743,17 @@ async function streamOnce(run, decision, answers) {
           // for it, even though that turn is already persisted.
           run.turn.finishThinking();
           clearDrafts();
+          /*
+           * The same call again: the invocation was cut off mid-call and the
+           * reconnect is running it once more, under the same id. Its row is
+           * already on screen and will take the result — a second row drew
+           * "Read sheet.jpg" six times, the old ones counting for ever (owner,
+           * 2026-10-25, screenshots 10–11).
+           */
+          if (run.toolHandles.has(call.id)) {
+            maybeScroll(run);
+            return;
+          }
           run.toolHandles.set(call.id, run.turn.startTool(call));
           if (onScreen(run)) {
             state.liveTools = [...(state.liveTools || []), { id: call.id, name: call.name, input: call.input || {}, content: '', asked: state.lastAsked || '', turn: 100000 + (state.liveTurn || 0) }];
@@ -3730,9 +3803,11 @@ async function streamOnce(run, decision, answers) {
         // The account's model was withdrawn; the server moved it to Auto and
         // carries on there. The chip follows whichever conversation is on screen.
         model_switched: ({ from }) => noteModelRetired(from),
-        message: () => {
+        message: (/** @type {{ message?: { id?: string } }} */ data) => {
           run.turn.finishThinking();
           run.sealed = true;
+          // Which stored message this block is, for `openChat` to find it again.
+          run.sealedId = data?.message?.id || null;
         },
         steer: ({ text }) => {
           setStatus(null, run);

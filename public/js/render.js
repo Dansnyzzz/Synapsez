@@ -10,7 +10,8 @@ import { parseResults } from './rail.js';
 import { rememberSearch, rememberPage, auditCitations } from './cite.js';
 import { normalisePlan, planItemHtml, planChange } from './plan.js';
 import { canonicalInput, TITLED } from './tool-aliases.js';
-import { registerPictures, pictureThumb, pictureUrl } from './gallery.js';
+import { registerPictures, pictureThumb, pictureUrl, openGallery } from './gallery.js';
+import { doneMark, ICONS } from './icons.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -59,6 +60,17 @@ export function forDisplay(text) {
     .replace(/<untrusted source="[^"]*">\n?/g, '')
     .replace(/\n?<\/untrusted>/g, '')
     .trim();
+}
+
+/**
+ * The conversations a `search_chats` answer names, read off its words — for a
+ * result saved before the answer carried them (owner, 2026-10-25). Titles and
+ * days only: with no id to open, those rows do not open.
+ *
+ * @returns {{ id: string, title: string, updated: string }[]}
+ */
+export function chatsFromWords(content) {
+  return [...forDisplay(content).matchAll(/^- "(.+)" \((\d{4}-\d{2}-\d{2})\)/gm)].map((m) => ({ id: '', title: m[1], updated: m[2] }));
 }
 
 /**
@@ -1040,24 +1052,167 @@ function sentTile(file) {
  * quotation" and a paragraph claiming there is one — and the two buttons are the
  * two things anybody does next.
  */
+/** The frame's drawing, when the whole widget is one `<svg>` — or null. */
+function soleDrawing(body) {
+  const only = body.children.length === 1 ? body.firstElementChild : null;
+  return only && only.tagName.toLowerCase() === 'svg' ? only : null;
+}
+
+/**
+ * Fit a drawing to its frame: large, clear, centred both ways (owner,
+ * 2026-10-25, screenshot 6).
+ *
+ * A model draws on a canvas it picked — 640×360 — and fills part of it, so a
+ * frame fitted to the canvas shows the drawing in a corner over an empty band.
+ * What was actually drawn is measured (`getBBox`), the view is set to that with
+ * a little margin, and the drawing is scaled to the reply's width — up to twice
+ * its own size, so three boxes do not become a poster — and no taller than
+ * most of the window. `meet`, the default, keeps the proportions and centres
+ * whatever room is left. Measured once: a second fit keeps the first view.
+ */
+function fitDrawing(svg) {
+  const view = svg.ownerDocument.defaultView;
+  if (!svg.dataset.fitted) {
+    let box = null;
+    try {
+      box = svg.getBBox();
+    } catch {
+      /* not rendered: keep the view it came with */
+    }
+    /*
+     * Pixels per unit of the drawing, as it was shown before this — so a
+     * drawing in small units (`viewBox="0 0 100 50"`, or a `width="700"` over
+     * it) keeps the size it was drawn at rather than shrinking to a hundred
+     * pixels (code review, 2026-10-25).
+     */
+    const shownWidth = svg.getBoundingClientRect().width;
+    const viewWidth = svg.viewBox?.baseVal?.width;
+    const unit = viewWidth > 0 && shownWidth > 0 ? shownWidth / viewWidth : 1;
+    let natural = 0;
+    if (box && box.width > 1 && box.height > 1) {
+      const pad = Math.max(8 / unit, Math.max(box.width, box.height) * 0.03);
+      const parts = [box.x - pad, box.y - pad, box.width + pad * 2, box.height + pad * 2];
+      svg.setAttribute('viewBox', parts.map((n) => Math.round(n * 100) / 100).join(' '));
+      natural = parts[2] * unit;
+    } else if (!svg.getAttribute('viewBox')) {
+      // Nothing to measure, and no view: the size it was given becomes one, so it can scale.
+      const w = parseFloat(svg.getAttribute('width') || '');
+      const h = parseFloat(svg.getAttribute('height') || '');
+      if (w > 0 && h > 0) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      natural = w || 0;
+    } else {
+      natural = (svg.viewBox?.baseVal?.width || 0) * unit;
+    }
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
+    svg.style.width = natural > 0 ? `min(100%, ${Math.round(natural * 2)}px)` : '100%';
+    svg.style.height = 'auto';
+    svg.dataset.fitted = '1';
+  }
+  // The page's window, not the frame's: see the note on the frame's style.
+  svg.style.maxHeight = `${Math.round(Math.max(240, (globalThis.innerHeight || view?.innerHeight || 800) * 0.72))}px`;
+}
+
+/** The conversation's ground, which a drawing is shown and exported on. */
+const groundColour = () => getComputedStyle(document.documentElement).getPropertyValue('--bg-elev').trim() || '#12161c';
+
+/**
+ * A drawing as a PNG: the fitted view, in the ink and type it was drawn in, on
+ * the conversation's ground, `width` pixels across — large, so it stays sharp
+ * when zoomed.
+ *
+ * **Never the drawing's own markup as a URL** (security review, 2026-10-25).
+ * The markup is the model's; a `blob:` URL of it as `image/svg+xml` belongs to
+ * this page's origin, and opened in a tab of its own ("Open image in new tab")
+ * the browser runs it as a page here — an `onload` in it reading the session's
+ * conversations, from a shared link too. So the SVG is only ever decoded inside
+ * an `Image`, which runs and fetches nothing, under a URL that is taken back the
+ * moment it is drawn; what anybody can reach is a PNG.
+ *
+ * The ink is written onto the copy: text drawn in `currentColor` was black in
+ * an exported copy, on a dark ground — the copy and download buttons gave a
+ * picture with its words missing.
+ */
+async function drawDiagram(svg, width = 2400) {
+  const look = svg.ownerDocument.defaultView?.getComputedStyle(svg);
+  const clone = /** @type {SVGSVGElement} */ (svg.cloneNode(true));
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.removeAttribute('style');
+  const box = svg.viewBox?.baseVal;
+  const rect = svg.getBoundingClientRect();
+  const across = box?.width || rect.width || 720;
+  const down = box?.height || rect.height || 360;
+  // No larger than a phone's browser will draw: Safari refuses a canvas past
+  // about 16.7 million pixels, and a tall diagram at 2400 across went over it.
+  const fit = Math.min(1, Math.sqrt(16_000_000 / (width * ((width * down) / across))));
+  const w = Math.max(1, Math.round(width * fit));
+  const h = Math.max(1, Math.round((width * fit * down) / across));
+  clone.setAttribute('width', String(w));
+  clone.setAttribute('height', String(h));
+  if (look) {
+    clone.style.color = look.color;
+    clone.style.fontFamily = look.fontFamily;
+    clone.style.fontSize = look.fontSize;
+  }
+  const url = URL.createObjectURL(new Blob([new globalThis.XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = url;
+    await img.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = groundColour();
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return await new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('no image'))), 'image/png'));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Each drawing's picture for the lightbox, made once. */
+const DIAGRAMS = new WeakMap();
+
+/** A drawing as a picture the lightbox can show — a PNG; see `drawDiagram`. */
+function diagramPicture(widget, svg) {
+  if (!DIAGRAMS.has(svg)) {
+    const made = drawDiagram(svg).then((blob) => ({
+      id: '',
+      src: URL.createObjectURL(blob),
+      name: fileNameFrom(widget.title, 'png'),
+      label: widget.title || t('chat.diagram'),
+      ground: groundColour(),
+      png: async () => blob,
+    }));
+    // A drawing that failed to draw is tried again on the next click.
+    made.catch(() => DIAGRAMS.delete(svg));
+    DIAGRAMS.set(svg, made);
+  }
+  return DIAGRAMS.get(svg);
+}
+
 /**
  * A widget, drawn in the transcript.
  *
  * **In an iframe, and that is not optional.** This is markup a model wrote, and
  * putting it in the page directly would give it the same origin as the session —
  * one `<img onerror>` away from reading the conversation or the cookie. Sandboxed
- * with `allow-scripts` withheld and no `allow-same-origin`, it can draw and
- * nothing else, which is the whole job. The same reasoning as the artifact frame
- * in viewer.js, one step stricter because a widget never needs to run anything.
+ * with `allow-scripts` withheld, it can draw and nothing else, which is the
+ * whole job. The same reasoning as the artifact frame in viewer.js, one step
+ * stricter because a widget never needs to run anything. (`allow-same-origin`
+ * is granted, for this page's own code to measure and listen — see below; with
+ * no scripting inside, it gives the markup nothing.)
  *
  * `srcdoc` rather than a URL, because the markup lives in the tool result rather
  * than in a file with an id to fetch.
  *
  * The height comes from the content: an iframe defaults to 150px and would crop
- * most diagrams, and there is no way to measure inside a frame we deliberately
- * cannot script into. So the frame reports its own height once, through the one
- * channel a sandboxed document still has — and if it never does, the CSS floor
- * keeps the picture visible rather than clipped to nothing.
+ * most diagrams, so this page measures the drawing once it has loaded (`fit`,
+ * through `contentDocument`) and sizes the frame to it — and if it cannot, the
+ * CSS floor keeps the picture visible rather than clipped to nothing.
  */
 export function widgetFrame(widget) {
   const host = document.createElement('figure');
@@ -1096,13 +1251,42 @@ export function widgetFrame(widget) {
     try {
       const body = frame.contentDocument?.body;
       if (!body) return;
+      const drawing = soleDrawing(body);
+      if (drawing) fitDrawing(drawing);
       const height = Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height));
-      if (height > 0) frame.style.height = `${height + 4}px`;
+      if (height > 0) frame.style.height = `${height}px`;
     } catch {
       // Cross-origin or detached: leave the CSS height, which still works.
     }
   };
   frame.addEventListener('load', fit);
+  /*
+   * Clicking the drawing opens it full screen, to zoom into, copy or download
+   * (owner, 2026-10-25). The listener is this page's, on a document it may
+   * reach because of `allow-same-origin` — the markup inside still runs nothing.
+   */
+  frame.addEventListener('load', () => {
+    const doc = frame.contentDocument;
+    const drawing = doc?.body ? soleDrawing(doc.body) : null;
+    if (!drawing) return;
+    drawing.addEventListener('click', () => {
+      diagramPicture(widget, drawing)
+        .then((picture) => openGallery([picture], 0, frame))
+        .catch(() => toast(t('media.downloadFailed'), 'error'));
+    });
+  });
+  // A drawing as wide as the reply grows taller when the reply widens (a
+  // sidebar closed, a window resized), so its frame is measured again — on a
+  // change of width only, or setting the height would set this off again.
+  if (typeof ResizeObserver === 'function') {
+    let width = 0;
+    new ResizeObserver(([entry]) => {
+      const now = Math.round(entry.contentRect.width);
+      if (!now || now === width) return;
+      width = now;
+      fit();
+    }).observe(frame);
+  }
 
   /**
    * The same colour scheme inside the frame as outside it.
@@ -1149,7 +1333,14 @@ export function widgetFrame(widget) {
     // No scrollbar inside a picture: the drawing is scaled to fit instead, and
     // anything genuinely taller scrolls without a bar drawn through it.
     'html{scrollbar-width:none}html::-webkit-scrollbar{display:none}' +
-    'body{padding:10px}svg{max-width:100%;max-height:64vh;height:auto;display:block;margin:0 auto}' +
+    // No height cap in `vh` here: inside a frame that is the frame's own
+    // height, so a 340px frame capped the drawing at 218px and was then
+    // measured down to it — the small diagram over an empty band (owner,
+    // 2026-10-25). `fitDrawing` caps it against the page's window instead.
+    // Anything narrower than the frame — a table, a fixed-width card — sits
+    // in its middle.
+    'body{padding:12px}body>*{margin-left:auto;margin-right:auto;max-width:100%}' +
+    'svg{max-width:100%;height:auto;display:block;margin:0 auto}body>svg:only-child{cursor:zoom-in}' +
     `table{border-collapse:collapse;font-size:12px}td,th{border:1px solid ${rule};padding:4px 8px}` +
     'a{color:#7cc7ff}' +
     '</style>' +
@@ -1163,8 +1354,9 @@ export function widgetFrame(widget) {
       mediaTools({
         name: fileNameFrom(widget.title, 'png'),
         blob: () => {
+          // In its ink, on its ground — see `drawDiagram`.
           const svg = frame.contentDocument?.querySelector('svg');
-          if (svg) return svgToPng(svg);
+          if (svg) return drawDiagram(svg, Math.max(1200, (svg.viewBox?.baseVal?.width || 0) * 2));
           const parsed = new globalThis.DOMParser().parseFromString(widget.markup, 'image/svg+xml').documentElement;
           return svgToPng(/** @type {SVGSVGElement} */ (/** @type {unknown} */ (parsed)));
         },
@@ -1520,6 +1712,9 @@ function shareButton(file, card) {
   return button;
 }
 
+/** The picture behind each shown image a reply made, for the lightbox. */
+const MADE = new WeakMap();
+
 /**
  * A file the assistant made, placed in the transcript — replacing the card for
  * the same id, so a document edited three times is one card, not four.
@@ -1540,8 +1735,13 @@ function placeFile(body, file) {
   figure.dataset.media = file.id;
   const open = el('button', 'media__open');
   open.type = 'button';
-  open.dataset.file = file.id;
-  open.title = t('chat.openNamed').replace('{name}', file.name || '');
+  // Full screen — to zoom, copy or download — rather than the side panel, which
+  // is still the card's Open button (owner, 2026-10-25). Pages through every
+  // picture this step of the reply made.
+  open.dataset.pic = file.id;
+  open.title = t('gallery.open', { name: file.name || '' });
+  MADE.set(figure, { id: file.id, src, name: file.name || fileNameFrom('image', 'png'), label: file.name || '' });
+  registerPictures(body, () => [...body.querySelectorAll(':scope > figure.media')].map((node) => MADE.get(node)).filter(Boolean));
   const img = el('img');
   img.src = src;
   img.alt = file.name || '';
@@ -1694,10 +1894,10 @@ export function userMessage(text, files = [], id = null, at = null, skills = [])
 }
 
 /**
- * The newest web card and the block it is in, so the next step's block can
- * add to it rather than draw another beside it (see `webCard`). Module-level
- * because each step is a separate `assistantMessage`.
- * @type {{ card: any, wrap: HTMLElement, body: HTMLElement } | null}
+ * The newest web entry, the thread it is on and the block it is in, so the
+ * next step's block can add to them rather than draw another beside them (see
+ * `webCard`). Module-level because each step is a separate `assistantMessage`.
+ * @type {{ card: any, run: HTMLElement, wrap: HTMLElement, body: HTMLElement } | null}
  */
 let lastWebCard = null;
 
@@ -1768,19 +1968,23 @@ export function assistantMessage() {
   }
 
   /**
-   * The web card: searching, reading a page, extracting, calling an API,
-   * reading a feed — one card per run of them, like Claude's "Searched the web".
+   * The web, drawn as Claude draws it (owner, 2026-10-25, screenshot 3):
+   * searching, reading a page, extracting, calling an API, reading a feed.
    *
-   * The header says what happened and the query it was for; the body lists every
-   * site involved as a row — its icon, its title, its domain — pointing at the
-   * exact address used. A page read after a search is the same row as its
-   * result, not a second one. The raw JSON that used to fill these cards is not
-   * something anybody reads; the tool's answer is still what the model got.
+   * Each search is a line — a globe, the query, "10 results" — with the sites
+   * it found in a box under it that scrolls: each row its icon, its title, its
+   * domain, pointing at the exact address used. A page read after a search is
+   * the same row as its result, not a second one. Searches one after another
+   * hang from one thread down the left (`.webrun`), so a run of six queries
+   * reads as one piece of work. The raw JSON that used to fill these cards is
+   * not something anybody reads; the tool's answer is still what the model got.
    *
-   * One search, one card. A second query gets a card of its own rather than a
-   * "· +1" on the first, which hid what was asked and mixed two lists of
-   * results into one. `webs` holds every card of the current run, because two
-   * searches sent together finish in either order and each must settle its own.
+   * One search, one line: a second query gets a line of its own rather than a
+   * "· +1" on the first, which hid what was asked and mixed two lists into one.
+   * `webs` holds every line of the current run, because two searches sent
+   * together finish in either order and each must settle its own. The lists
+   * stay open when the run ends, as Claude's do: each is a box a few rows tall,
+   * not ten rows pushing the answer off the screen.
    */
   let web = null;
   /** @type {Set<any>} */
@@ -1790,7 +1994,6 @@ export function assistantMessage() {
     for (const w of webs) {
       w.live = false;
       paintWeb(w);
-      w.node.open = false;
     }
     webs.clear();
     web = null;
@@ -1799,15 +2002,24 @@ export function assistantMessage() {
   function paintWeb(w) {
     const working = w.live && w.pending > 0;
     const allFailed = !working && w.calls > 0 && w.failures === w.calls;
-    w.mark.innerHTML = working ? MARK_PENDING : `<span class="mark">${allFailed ? '✗' : '✓'}</span>`;
+    // A globe once it is done — no tick — a ring while it works, a cross when it failed.
+    const state = working ? 'pending' : allFailed ? 'failed' : 'done';
+    if (w.mark.dataset.state !== state) {
+      w.mark.innerHTML = working ? MARK_PENDING : allFailed ? '<span class="mark">✗</span>' : `<span class="mark mark--icon">${ICONS.globe}</span>`;
+      w.mark.dataset.state = state;
+    }
+    // Still said, for a screen reader; printed only on a line that read pages,
+    // where there is no query to stand in for it.
     w.title.textContent = t(w.searched ? (working ? 'web.searching' : 'web.searched') : working ? 'web.reading' : 'web.read');
+    w.node.classList.toggle('web--search', w.searched);
     w.query.textContent = w.queryText;
+    w.count.textContent = w.searched && !working && !allFailed ? t(w.hits === 1 ? 'web.result' : 'web.results', { n: w.hits }) : '';
     w.node.classList.toggle('web--error', allFailed);
     w.list.innerHTML = [...w.rows.values()].map((row) => webRowHtml(row)).join('');
     w.list.hidden = w.rows.size === 0;
   }
 
-  /** The card this call belongs in: a search that follows a search starts a new one. */
+  /** The line this call belongs on: a search that follows a search starts a new one. */
   function webCard(isSearch) {
     if (web && !(isSearch && web.searched)) return web;
     /**
@@ -1816,49 +2028,108 @@ export function assistantMessage() {
      * Every saved step of a turn is drawn in a block of its own, so four page
      * reads in four steps drew four "Read the web" cards stacked one after
      * another. When this block has shown nothing yet and the one right before
-     * it ended on a web card, the read joins that card instead — the same work,
-     * one card. A reasoning card or a line of reply between them is a real
-     * break, and so is a second search (one query, one card).
+     * it ended on the thread, the read joins its last line and a search hangs
+     * a new line from the same thread — the same work, one piece. A reasoning
+     * card or a line of reply between them is a real break.
      */
     const last = lastWebCard;
-    if (
-      !web &&
-      last &&
+    const carried =
+      !!last &&
       body.childElementCount === 0 &&
       last.wrap.nextElementSibling === wrap &&
       last.card.node.isConnected &&
-      // Nothing drawn after the card: in its own block, and in the block that
+      // Nothing drawn after the thread: in its own block, and in the block that
       // last joined it (which holds nothing of its own).
-      last.card.node.parentElement?.lastElementChild === last.card.node &&
-      (last.body === last.card.node.parentElement || last.body.childElementCount === 0) &&
-      !(isSearch && last.card.searched)
-    ) {
+      last.run.parentElement?.lastElementChild === last.run &&
+      (last.body === last.run.parentElement || last.body.childElementCount === 0);
+    if (!web && carried && !(isSearch && last.card.searched)) {
       web = last.card;
       web.live = true;
-      web.node.open = true;
       webs.add(web);
       // The chain continues from this block: the next step joins it here too.
-      lastWebCard = { card: web, wrap, body };
+      lastWebCard = { ...last, wrap, body };
       return web;
     }
     leaveRun();
     closeSteps();
+    // The thread: the one this block's last line is on, while nothing has been
+    // drawn after it — in this block, or in the block before when this one
+    // carried it on and has drawn nothing of its own — else the one carried
+    // over from the block before, else a new one.
+    const mine = web?.node.parentElement;
+    const onMine = !!mine?.isConnected && mine.parentElement?.lastElementChild === mine && (mine.parentElement === body || body.childElementCount === 0);
+    const run = onMine ? mine : carried ? last.run : body.appendChild(el('div', 'webrun'));
     const node = el('details', 'block web');
     node.open = true;
-    // The chevron is the one every `details.block` draws after its summary —
-    // a second one of its own here put two arrows side by side.
     const summary = el('summary', 'web__head');
     const mark = el('span', 'web__mark');
     const title = el('span', 'web__title');
     const query = el('span', 'web__query');
-    summary.append(mark, title, query);
+    const count = el('span', 'web__count');
+    summary.append(mark, title, query, count);
     const list = el('div', 'web__list');
     node.append(summary, list);
-    body.append(node);
-    web = { node, mark, title, query, list, rows: new Map(), queryText: '', pending: 0, calls: 0, failures: 0, searched: false, live: true };
+    run.append(node);
+    web = { node, mark, title, query, count, list, rows: new Map(), queryText: '', hits: 0, pending: 0, calls: 0, failures: 0, searched: false, live: true };
     webs.add(web);
-    lastWebCard = { card: web, wrap, body };
+    lastWebCard = { card: web, run, wrap, body };
     return web;
+  }
+
+  /**
+   * Earlier conversations, found by `search_chats` — Claude's "Relevant chats ·
+   * 2 results" (owner, 2026-10-25, screenshot 2): a row per conversation, in a
+   * box, each one opening it (`data-open-chat`, served in app.js). A result
+   * saved before the rows carried ids still lists its titles, read off the
+   * words, as rows that do not open.
+   */
+  function startRecall(call) {
+    leaveRun();
+    closeGroup();
+    const node = el('details', 'block recall');
+    node.open = true;
+    node.title = call.name;
+    const summary = el('summary', 'recall__head');
+    const mark = el('span', 'recall__mark', MARK_PENDING);
+    const title = el('span', 'recall__title');
+    title.textContent = t('recall.title');
+    const count = el('span', 'recall__count');
+    summary.append(mark, title, count);
+    const list = el('div', 'recall__list');
+    list.hidden = true;
+    node.append(summary, list);
+    body.append(node);
+    return {
+      complete(result) {
+        node.classList.toggle('tool--error', !!result.isError);
+        mark.innerHTML = result.isError ? '<span class="mark">✗</span>' : `<span class="mark mark--icon">${ICONS.chat}</span>`;
+        const found = result.isError ? [] : Array.isArray(result.chats) ? result.chats : chatsFromWords(result.content);
+        count.textContent = result.isError ? '' : t(found.length === 1 ? 'web.result' : 'web.results', { n: found.length });
+        list.replaceChildren(
+          ...found.map((chat) => {
+            const row = el(chat.id ? 'button' : 'div', 'recall__row');
+            if (chat.id) {
+              /** @type {HTMLButtonElement} */ (row).type = 'button';
+              row.dataset.openChat = chat.id;
+            }
+            row.innerHTML = ICONS.chat;
+            const name = el('span', 'recall__name');
+            name.textContent = chat.title || t('chat.untitled');
+            row.append(name);
+            if (chat.updated) row.title = `${chat.title}\n${String(chat.updated).slice(0, 10)}`;
+            return row;
+          }),
+        );
+        list.hidden = !found.length;
+        // Nothing found, or refused: what it said, in a line, rather than an empty box.
+        node.querySelector('.recall__note')?.remove();
+        if (!found.length) {
+          const note = el('p', 'recall__note');
+          note.textContent = forDisplay(result.content).split('\n')[0];
+          node.append(note);
+        }
+      },
+    };
   }
 
   /**
@@ -1909,7 +2180,7 @@ export function assistantMessage() {
     return {
       complete(result) {
         block.classList.toggle('tool--error', !!result.isError);
-        paint(`<span class="mark">${result.isError ? '✗' : '✓'}</span>`);
+        paint(doneMark(call.name, !!result.isError));
         if (result.isError) {
           const why = el('pre');
           why.textContent = result.content || '';
@@ -1942,7 +2213,9 @@ export function assistantMessage() {
         if (call.name === 'web_search') {
           // What a citation chip's card shows beyond the name in the reply.
           if (!result.isError) rememberSearch(result.content);
-          for (const hit of parseResults(result.content)) {
+          const hits = parseResults(result.content);
+          w.hits = hits.length;
+          for (const hit of hits) {
             const row = w.rows.get(hit.url);
             if (row) row.title ||= hit.title;
             else w.rows.set(hit.url, { url: hit.url, title: hit.title, state: null });
@@ -1955,9 +2228,6 @@ export function assistantMessage() {
           if (!result.isError) rememberPage(url, row.title);
         }
         paintWeb(w);
-        // Folded once nothing in it is still loading: the sites are one click
-        // away, and an open list of ten results pushed the answer off screen.
-        if (w.pending === 0) w.node.open = false;
       },
     };
   }
@@ -2032,9 +2302,16 @@ export function assistantMessage() {
     run.tally.textContent = tally.join(' · ');
     const working = run.pending > 0 || thinking;
     const allFailed = !working && run.count > 0 && run.failures === run.count;
-    const want = working ? MARK_PENDING : `<span class="mark">${allFailed ? '✗' : '✓'}</span>`;
+    // Done, the card shows what kind of run it was — a browser, a terminal —
+    // rather than a tick (owner, 2026-10-25). Compared by state, not markup:
+    // an icon's markup does not survive the parser character for character.
+    const state = working ? 'pending' : allFailed ? 'failed' : 'done';
     const mark = run.node.querySelector(':scope > summary > .mark');
-    if (mark && mark.outerHTML !== want) mark.outerHTML = want;
+    if (mark && mark.dataset.state !== state) {
+      mark.outerHTML = working ? MARK_PENDING : doneMark(run.family === 'work' ? 'run_command' : run.family, allFailed);
+      const fresh = run.node.querySelector(':scope > summary > .mark');
+      if (fresh) fresh.dataset.state = state;
+    }
     run.node.classList.toggle('steps--error', allFailed);
     run.node.classList.toggle('steps--partial', !allFailed && run.failures > 0);
   }
@@ -2344,9 +2621,10 @@ export function assistantMessage() {
         running?.remove();
         item.classList.toggle('step--error', !!result.isError);
         mark.innerHTML = '';
-        // A row of commands that went well needs no tick: its words say what
-        // was done, as Claude's do. A failure keeps its cross.
-        mark.textContent = result.isError ? '✗' : work ? '' : '✓';
+        // A row that went well needs no tick: its words say what was done, as
+        // Claude's do — a browsing step as much as a command (owner,
+        // 2026-10-25). A failure keeps its cross.
+        mark.textContent = result.isError ? '✗' : '';
         if (result.ms != null) time.textContent = ms(result.ms);
         run.pending = Math.max(0, run.pending - 1);
         if (result.isError) run.failures += 1;
@@ -2550,6 +2828,15 @@ export function assistantMessage() {
     node: wrap,
 
     /**
+     * Calls redrawn from a turn that is still running, with no result yet —
+     * by id, for the run that rejoins it to finish (app.js `stream`). Without
+     * them a rejoined run drew a second row for the same call and the first
+     * waited for ever.
+     * @type {Map<string, { complete: (result: any) => void }>}
+     */
+    waiting: new Map(),
+
+    /**
      * The reasoning, as a card that is readable both folded and open.
      *
      * Folded, it is a window a few lines tall that always shows the newest
@@ -2625,7 +2912,9 @@ export function assistantMessage() {
       thinkingDone = true;
       settleThought();
       thinkingBlock.classList.remove('is-live');
-      thinkingBlock.querySelector('.think__head .mark')?.replaceWith(el('span', 'mark', '✓'));
+      // No tick once it is done: "Reasoning" already says it finished, and a
+      // green mark beside every one of them was noise (owner, 2026-10-25).
+      thinkingBlock.querySelector('.think__head .mark')?.remove();
       thinkingBlock.querySelector('.think__title').textContent = t('chat.reasoning');
       const text = thinkingBody.firstElementChild;
       for (const span of text.querySelectorAll('.think__new')) span.replaceWith(span.textContent);
@@ -2821,6 +3110,7 @@ export function assistantMessage() {
     /** Start a collapsed card for a tool call; returns a handle to complete it. */
     startTool(call) {
       if (WEB_TOOLS.has(call.name)) return startWeb(call);
+      if (call.name === 'search_chats') return startRecall(call);
       if (call.name === 'update_plan') return startPlanCard(call);
       const family = stepFamily(call.name);
       if (family) return startStep(call, family);
@@ -2864,7 +3154,7 @@ export function assistantMessage() {
         complete(result) {
           block.classList.toggle('tool--error', !!result.isError);
           paintHead(
-            `<span class="mark">${result.isError ? '✗' : '✓'}</span>`,
+            doneMark(call.name, !!result.isError),
             result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '',
           );
           output.textContent = forDisplay(result.content) || t('chat.noOutput');
@@ -2977,6 +3267,7 @@ export function assistantMessage() {
        */
       if (result) handle.complete(result);
       else if (!pending) handle.complete({ content: t('chat.cutOff'), isError: true });
+      else api.waiting.set(call.id, handle);
     }
   }
 

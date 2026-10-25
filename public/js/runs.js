@@ -62,7 +62,11 @@ export function createRuns({ currentChatId, newStage = () => document.createElem
        * to it — they are the calls it made — but the next prose starts fresh.
        */
       sealed: false,
+      /** The stored message the sealed block is — see `openChat`. */
+      sealedId: null,
       toolHandles: new Map(),
+      /** Calls a rejoin took over from the saved transcript, by id. */
+      handedOver: null,
       /** Typed while this turn was running, waiting for it. */
       queue: [],
       /** The status line, so returning to the conversation restores it. */
