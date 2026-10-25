@@ -27,6 +27,9 @@ import { XLSX_MIME, readXlsx, sheetsToText, writeXlsx } from './xlsx.js';
 import { PPTX_MIME, readPptx, writePptx } from './pptx.js';
 import { readSheetsElsewhere } from './sheets.js';
 import { looksLikeZip } from './zip.js';
+import { pickTheme } from './theme.js';
+
+export { THEME_NAMES } from './theme.js';
 
 export { blocksToHtml, blocksToText, normaliseBlocks } from './blocks.js';
 export { markdownToBlocks, markdownTitle } from './markdown.js';
@@ -322,20 +325,24 @@ function blocksToSheets(blocks, fallbackName = 'Sheet1') {
 function blocksToSlides(blocks, title) {
   const slides = [];
   let current = null;
+  const open = (name) => {
+    current = { title: name, bullets: [], table: null, notes: '' };
+    slides.push(current);
+    return current;
+  };
 
   for (const block of blocks) {
     if (block.type === 'heading') {
-      current = { title: runsToText(block.runs), bullets: [], notes: '' };
-      slides.push(current);
+      open(runsToText(block.runs));
       continue;
     }
-    if (!current) {
-      current = { title: title || '', bullets: [], notes: '' };
-      slides.push(current);
-    }
+    if (!current) open(title || '');
 
+    // Each point keeps its bold and italic — "**45%** of users" — for the slide
+    // to set, and whether it was a point or a paragraph, which a slide sets with
+    // a bullet or without one.
     if (block.type === 'list') {
-      for (const item of block.items) current.bullets.push({ level: item.level, text: runsToText(item.runs) });
+      for (const item of block.items) current.bullets.push({ level: item.level, text: runsToText(item.runs), runs: item.runs });
       continue;
     }
     if (block.type === 'quote') {
@@ -348,18 +355,16 @@ function blocksToSlides(blocks, title) {
     }
     if (block.type === 'divider' || block.type === 'pagebreak') continue;
 
-    // A table on a slide becomes one bullet per row: PowerPoint tables are not
-    // written here, and a Markdown table pasted onto a slide as text is worse
-    // than the rows themselves.
+    // A table is a real PowerPoint table (slides.js). A second table under the
+    // same heading continues on a slide of its own, under the same title.
     if (block.type === 'table') {
-      for (const row of block.rows) {
-        current.bullets.push({ level: 0, text: row.map((cell) => runsToText(cell.runs)).join('  |  ') });
-      }
+      if (current.table) open(current.title);
+      current.table = { header: block.header !== false, rows: block.rows.map((row) => row.map((cell) => runsToText(cell.runs))) };
       continue;
     }
 
     const text = blockToPlainText(block);
-    if (text) current.bullets.push({ level: 0, text });
+    if (text) current.bullets.push({ level: 0, text, runs: block.runs?.length ? block.runs : [{ text }], plain: true });
   }
 
   return slides.length ? slides : [{ title: title || 'Untitled', bullets: [] }];
@@ -458,13 +463,15 @@ const escapeHtmlText = (value) =>
 /**
  * @param {{
  *   format?: string, name?: string, content?: string, title?: string,
- *   author?: string, created?: Date,
+ *   author?: string, created?: Date, theme?: string|null,
  * }} [args]
+ *   `theme` is a palette's name (theme.js) for a Word, Excel or PowerPoint file;
+ *   left out, one is picked from what the document is about.
  *
  * Written out because only the two with defaults were being inferred: with the
  * rest unmarked, every caller read as passing properties the type did not have.
  */
-export function createDocument({ format, name, content, title, author = 'Synapsez', created = new Date() } = {}) {
+export function createDocument({ format, name, content, title, author = 'Synapsez', created = new Date(), theme = null } = {}) {
   const kind = String(format || '').toLowerCase();
   if (!CREATABLE.includes(kind)) {
     throw Object.assign(
@@ -519,13 +526,15 @@ export function createDocument({ format, name, content, title, author = 'Synapse
       const html = renderHtmlDocument(blocks, documentTitle);
       return { buffer: Buffer.from(html, 'utf8'), text: blocksToText(blocks) };
     }
+    // One palette for the file, from the name asked for or from what it is about.
+    const palette = pickTheme(theme, `${documentTitle}\n${source}`);
     if (kind === 'docx') {
-      return { buffer: writeDocx({ blocks, title: documentTitle, author, created }), text: blocksToText(blocks) };
+      return { buffer: writeDocx({ blocks, title: documentTitle, author, created, theme: palette }), text: blocksToText(blocks) };
     }
     if (kind === 'pptx') {
       const slides = blocksToSlides(blocks, documentTitle);
       return {
-        buffer: writePptx({ slides, title: documentTitle, author, created }),
+        buffer: writePptx({ slides, title: documentTitle, author, created, theme: palette }),
         text: blocksToText(blocks),
       };
     }
@@ -547,7 +556,7 @@ export function createDocument({ format, name, content, title, author = 'Synapse
       return { buffer: Buffer.from(`\uFEFF${csv}`, 'utf8'), text: csv };
     }
     return {
-      buffer: writeXlsx({ sheets, title: documentTitle, author, created }),
+      buffer: writeXlsx({ sheets, title: documentTitle, author, created, theme: palette }),
       text: sheets.map((sheet) => `## ${sheet.name}\n${toCsv(sheet.rows)}`).join('\n\n'),
     };
   };

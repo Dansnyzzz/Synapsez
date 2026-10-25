@@ -665,12 +665,14 @@ export function nameForFile({ name, filename, file_name: fileName, title, conten
   return heading ? heading.trim() : 'Document';
 }
 
-async function createFileTool({ name, format, content, title, filename, file_name }, { userId, chatId }) {
+async function createFileTool({ name, format, content, title, filename, file_name, theme }, { userId, chatId }) {
   const built = createDocument({
     format,
     name: nameForFile({ name, filename, file_name, title, content }),
     content,
     title,
+    // A palette only when one was asked for; otherwise picked from the topic (theme.js).
+    theme: theme || null,
   });
   const saved = await saveGenerated(userId, {
     name: built.name,
@@ -713,7 +715,7 @@ export function applyEdits(source, edits) {
   return text;
 }
 
-async function updateFileTool({ file_id: fileId, content, name, append = false, edits }, { userId }) {
+async function updateFileTool({ file_id: fileId, content, name, append = false, edits, theme }, { userId }) {
   const store = getStore();
   const existing = await store.getAttachment(userId, fileId);
   if (!existing) throw new Error(`There is no file with the id ${fileId} on this account.`);
@@ -753,7 +755,9 @@ async function updateFileTool({ file_id: fileId, content, name, append = false, 
   // The format belongs to the file, not to this call: renaming is allowed,
   // and "update it" must never quietly turn a .docx into a .md.
   const format = extensionOf(existing.name);
-  const built = createDocument({ format, name: name || existing.name, content: whole });
+  // The palette follows the topic again unless one is named — the same one it
+  // was made with, unless the model chose another at the start.
+  const built = createDocument({ format, name: name || existing.name, content: whole, theme: theme || null });
 
   const saved = await store.replaceAttachment(userId, fileId, {
     data: built.buffer.toString('base64'),

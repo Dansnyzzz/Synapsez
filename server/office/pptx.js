@@ -13,9 +13,10 @@
  * shape carries its own position instead of inheriting one from a placeholder,
  * and the notes parts appear only when a slide actually has notes.
  *
- * Not attempted: images, charts, transitions, animation, and any layout beyond
- * "title and body" or "section header". A deck written here is the shape of a
- * deck somebody would go on to design, with the words already right.
+ * The design — a layout per slide read off what it holds, a palette, fades and
+ * content that arrives a point at a time — is slides.js (owner, 2026-10-25:
+ * "design the files too, everything automated"). This file is the package
+ * round it. Not attempted: images and charts inside a slide.
  */
 import { openZip, writeZip } from './zip.js';
 import {
@@ -44,6 +45,8 @@ import {
   resolveTarget,
   rootRelsXml,
 } from './opc.js';
+import { designedSlideXml, paginate, slideKind } from './slides.js';
+import { THEMES, pickTheme } from './theme.js';
 
 /** 16:9, in English Metric Units — 914400 to the inch. */
 const DECK = { width: 12192000, height: 6858000 };
@@ -114,6 +117,11 @@ function readSlide(zip, path) {
     if (name !== 'sp') continue;
 
     const type = placeholderType(shape);
+    // A designed deck's drawing — its footer, its slide number, a section's
+    // big "01" — is not a point the slide makes (slides.js names them so).
+    // Nor is a footer or a number in anybody else's deck.
+    if (type === 'sldNum' || type === 'ftr' || type === 'dt') continue;
+    if (/^(?:Decoration\b|Footer$|Slide Number$)/.test(String(attr(element(element(shape, 'nvSpPr'), 'cNvPr'), 'name') || ''))) continue;
     const paragraphs = readTextBody(shape);
     if (!paragraphs.length) continue;
 
@@ -209,7 +217,7 @@ const PML_NS = 'http://schemas.openxmlformats.org/presentationml/2006/main';
  * that is short of any of them is not a plainer deck — it is a file that will
  * not open, which is why this is spelled out in full rather than trimmed.
  */
-function themeXml() {
+function themeXml(palette = THEMES.ocean) {
   const colour = (name, value) =>
     name === 'dk1' || name === 'lt1'
       ? `<a:${name}><a:sysClr val="${value}" lastClr="${value === 'windowText' ? '000000' : 'FFFFFF'}"/></a:${name}>`
@@ -233,12 +241,14 @@ function themeXml() {
     '<a:clrScheme name="Synapsez">' +
     colour('dk1', 'windowText') +
     colour('lt1', 'window') +
-    colour('dk2', '1F2933') +
-    colour('lt2', 'F4F6F8') +
-    colour('accent1', '2F7F5F') +
-    colour('accent2', '3C7DD9') +
-    colour('accent3', 'C98A2B') +
-    colour('accent4', '8A5CD1') +
+    // The document's palette as the theme's own colours, so a shape somebody
+    // adds later in PowerPoint picks them from the colour menu too.
+    colour('dk2', palette.dark) +
+    colour('lt2', palette.softer) +
+    colour('accent1', palette.primary) +
+    colour('accent2', palette.accent) +
+    colour('accent3', palette.secondary) +
+    colour('accent4', 'C98A2B') +
     colour('accent5', '2FA3A3') +
     colour('accent6', 'C0543F') +
     colour('hlink', '0563C1') +
@@ -418,61 +428,6 @@ function placeholderShape({
   );
 }
 
-function slideXml(slide) {
-  const shapes = [];
-
-  const title = String(slide.title || '').trim();
-  const bullets = (slide.bullets || [])
-    .map((bullet) => (typeof bullet === 'string' ? { level: 0, text: bullet } : bullet))
-    .filter((bullet) => String(bullet?.text || '').trim());
-
-  // A slide with a title and nothing else is a section divider: the title sits
-  // in the middle of the slide rather than at the top of an empty one. It is
-  // still the `title` placeholder — a `ctrTitle` that the layout does not have
-  // is a placeholder pointing at nothing.
-  const divider = !!title && !bullets.length;
-
-  if (title) {
-    shapes.push(
-      placeholderShape({
-        id: 2,
-        name: 'Title 1',
-        ph: 'type="title"',
-        x: FRAME.title.x,
-        y: divider ? Math.round(DECK.height / 2 - 800000) : FRAME.title.y,
-        width: FRAME.title.width,
-        height: divider ? 1600000 : FRAME.title.height,
-        paragraphs: [{ level: 0, text: title }],
-        size: divider ? 4400 : 3600,
-        bold: true,
-        colour: '11161B',
-        anchor: divider ? 'ctr' : 'b',
-      }),
-    );
-  }
-
-  if (bullets.length) {
-    shapes.push(
-      placeholderShape({
-        id: 3,
-        name: 'Content Placeholder 2',
-        ph: 'idx="1"',
-        x: FRAME.body.x,
-        y: title ? FRAME.body.y : EMU.titleTop,
-        width: FRAME.body.width,
-        height: DECK.height - (title ? FRAME.body.y : EMU.titleTop) - EMU.margin,
-        paragraphs: bullets,
-        bulleted: true,
-      }),
-    );
-  }
-
-  return (
-    `${partHead('sld')}<p:cSld>${shapeTree(shapes.join(''))}</p:cSld>` +
-    '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>'
-  );
-}
-
 /** The notes master, with the body placeholder every notes slide inherits from. */
 function notesMasterXml() {
   const shape = placeholderShape({
@@ -520,20 +475,29 @@ function notesSlideXml(notes) {
 /**
  * Build a .pptx.
  *
- * @param slides `[{ title, bullets: [{ level, text }] | [string], notes }]`
+ * @param slides `[{ title, bullets: [{ level, text, runs?, plain? }] | [string], table?: { header, rows }, notes, kind? }]`
+ *   — the layout of each is read off what it holds (slides.js); `kind` forces one
+ * @param theme  a palette name (theme.js), a palette, or nothing — picked from the deck's words
  * @returns a Buffer holding the whole package
  */
-export function writePptx({ slides, title = 'Presentation', author = 'Synapsez', created = new Date() } = {}) {
+export function writePptx({ slides, title = 'Presentation', author = 'Synapsez', created = new Date(), theme = null } = {}) {
   const list = (Array.isArray(slides) ? slides : []).filter(Boolean);
-  const deck = list.length ? list : [{ title, bullets: [] }];
+  // A slide too full to read is continued on the next rather than shrunk to nothing.
+  const deck = paginate(list.length ? list : [{ title, bullets: [] }]);
   const withNotes = deck.some((slide) => String(slide.notes || '').trim());
+  const words = deck.map((s) => [s.title, ...(s.bullets || []).map((b) => (typeof b === 'string' ? b : b?.text))].join('\n')).join('\n');
+  const palette = theme && typeof theme === 'object' && theme.primary ? theme : pickTheme(theme, `${title}\n${words}`);
 
   const parts = [];
   const slideRels = [];
+  let section = 0;
 
   deck.forEach((slide, i) => {
     const n = i + 1;
-    parts.push({ name: `ppt/slides/slide${n}.xml`, data: slideXml(slide) });
+    const kind = slideKind(slide, i, deck.length);
+    if (kind === 'section') section += 1;
+    const ctx = { palette, deckTitle: String(title || ''), number: n, count: deck.length, section };
+    parts.push({ name: `ppt/slides/slide${n}.xml`, data: designedSlideXml(slide, kind, ctx, partHead('sld')) });
 
     const notes = String(slide.notes || '').trim();
     const rels = [`<Relationship Id="rId1" Type="${REL.slideLayout}" Target="../slideLayouts/slideLayout1.xml"/>`];
@@ -645,7 +609,7 @@ export function writePptx({ slides, title = 'Presentation', author = 'Synapsez',
           `<Relationship Id="rId1" Type="${REL.slideMaster}" Target="../slideMasters/slideMaster1.xml"/>` +
           '</Relationships>',
       },
-      { name: 'ppt/theme/theme1.xml', data: themeXml() },
+      { name: 'ppt/theme/theme1.xml', data: themeXml(palette) },
       // Three parts that hold nothing this application decides — window state,
       // print setup, table style defaults. PowerPoint expects them anyway.
       { name: 'ppt/presProps.xml', data: `${partHead('presentationPr')}</p:presentationPr>` },
@@ -675,7 +639,7 @@ export function writePptx({ slides, title = 'Presentation', author = 'Synapsez',
              * open — while a deck without notes opened perfectly, which is what
              * made it hard to see.
              */
-            { name: 'ppt/theme/theme2.xml', data: themeXml() },
+            { name: 'ppt/theme/theme2.xml', data: themeXml(palette) },
           ]
         : []),
       ...parts,

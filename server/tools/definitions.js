@@ -25,6 +25,7 @@
  */
 import { readArguments } from './validate.js';
 import { canonicalInput } from '../../public/js/tool-aliases.js';
+import { THEME_NAMES as OFFICE_THEMES } from '../office/theme.js';
 
 /**
  * What a command is for, in the model's own words — the title of its step in
@@ -1121,6 +1122,8 @@ export const TOOLS = [
       'The content is written in Markdown whatever the format: headings, lists, tables, bold, links and fenced code all carry across. ' +
       'For xlsx and csv, write the data as Markdown tables — a heading above each one starts a new sheet — or as JSON `{"sheets":[{"name":..,"rows":[[..]]}]}`. ' +
       'For pptx, each heading is a slide, the list under it is that slide\'s bullets, and a blockquote is the speaker notes. ' +
+      'Word, Excel and PowerPoint files come out designed — a palette, a cover, banded tables, slides laid out and animated — with no styling asked of you: ' +
+      'a "# Title" with a line under it is the cover, a heading alone a section slide, a table a real table, 2–6 points that start with a figure ("**45%** …") KPI cards, one short paragraph a statement slide. ' +
       'It does not write PDFs: make a .docx or .html and tell the user the viewer has Print → Save as PDF, which uses their browser and gets accents right. ' +
       '\n\n' +
       'It also writes **artifacts**: with `format: "html"`, content that is real markup is kept exactly as written and the user can *run* it — a calculator, a chart, a small tool, a mock-up. ' +
@@ -1152,6 +1155,11 @@ export const TOOLS = [
         },
         content: { type: 'string', description: 'The document in Markdown, the page as HTML, or the source as itself.' },
         title: { type: 'string', description: "Document title for the file's own properties. Defaults to the first heading." },
+        theme: {
+          type: 'string',
+          enum: OFFICE_THEMES,
+          description: 'Colour palette for docx, xlsx and pptx, only when the user asked for a look. Left out, it is picked from the topic.',
+        },
       },
       // `name` is asked for and not required: a missing one is taken from the
       // page's own title rather than refusing a call whose content took minutes
@@ -1179,6 +1187,7 @@ export const TOOLS = [
           description: 'The complete new content, in the same language as the original — or, with append, the next part.',
         },
         name: { type: 'string', description: 'Rename it at the same time. Optional.' },
+        theme: { type: 'string', enum: OFFICE_THEMES, description: 'The palette, if one was asked for when it was made, or now. Optional.' },
         append: { type: 'boolean', description: 'Add content to the end rather than replacing it. Default false.' },
         edits: {
           type: 'array',
