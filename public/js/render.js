@@ -10,7 +10,7 @@ import { parseResults } from './rail.js';
 import { rememberSearch, rememberPage, auditCitations } from './cite.js';
 import { normalisePlan, planItemHtml, planChange } from './plan.js';
 import { canonicalInput, TITLED } from './tool-aliases.js';
-import { registerPictures, pictureThumb, pictureUrl } from './gallery.js';
+import { registerPictures, pictureThumb, pictureUrl, openGallery } from './gallery.js';
 import { doneMark } from './icons.js';
 
 /**
@@ -1093,6 +1093,45 @@ function fitDrawing(svg) {
   svg.style.maxHeight = `${Math.round(Math.max(240, (globalThis.innerHeight || view?.innerHeight || 800) * 0.72))}px`;
 }
 
+/** Each drawing's picture for the lightbox, made once. */
+const DIAGRAMS = new WeakMap();
+
+/**
+ * A drawing as a picture the lightbox can show: the fitted view, in the ink and
+ * type it was drawn in, as an image file of its own — an `<img>` runs nothing
+ * and fetches nothing, whatever the markup says. Large, so it is sharp when
+ * zoomed; the lightbox scales it to the screen.
+ */
+function diagramPicture(widget, svg) {
+  if (DIAGRAMS.has(svg)) return DIAGRAMS.get(svg);
+  const look = svg.ownerDocument.defaultView?.getComputedStyle(svg);
+  const clone = /** @type {SVGSVGElement} */ (svg.cloneNode(true));
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.removeAttribute('style');
+  const box = svg.viewBox?.baseVal;
+  if (box?.width && box?.height) {
+    clone.setAttribute('width', '1800');
+    clone.setAttribute('height', String(Math.round((1800 * box.height) / box.width)));
+  }
+  if (look) {
+    clone.style.color = look.color;
+    clone.style.fontFamily = look.fontFamily;
+    clone.style.fontSize = look.fontSize;
+  }
+  const source = new globalThis.XMLSerializer().serializeToString(clone);
+  const ground = getComputedStyle(document.documentElement).getPropertyValue('--bg-elev').trim() || '#12161c';
+  const picture = {
+    id: '',
+    src: URL.createObjectURL(new Blob([source], { type: 'image/svg+xml' })),
+    name: fileNameFrom(widget.title, 'png'),
+    label: widget.title || t('chat.diagram'),
+    ground,
+    png: () => svgToPng(svg),
+  };
+  DIAGRAMS.set(svg, picture);
+  return picture;
+}
+
 /**
  * A widget, drawn in the transcript.
  *
@@ -1158,6 +1197,17 @@ export function widgetFrame(widget) {
     }
   };
   frame.addEventListener('load', fit);
+  /*
+   * Clicking the drawing opens it full screen, to zoom into, copy or download
+   * (owner, 2026-10-25). The listener is this page's, on a document it may
+   * reach because of `allow-same-origin` — the markup inside still runs nothing.
+   */
+  frame.addEventListener('load', () => {
+    const doc = frame.contentDocument;
+    const drawing = doc?.body ? soleDrawing(doc.body) : null;
+    if (!drawing) return;
+    drawing.addEventListener('click', () => openGallery([diagramPicture(widget, drawing)], 0, frame));
+  });
   // A drawing as wide as the reply grows taller when the reply widens (a
   // sidebar closed, a window resized), so its frame is measured again — on a
   // change of width only, or setting the height would set this off again.
@@ -1223,7 +1273,7 @@ export function widgetFrame(widget) {
     // Anything narrower than the frame — a table, a fixed-width card — sits
     // in its middle.
     'body{padding:12px}body>*{margin-left:auto;margin-right:auto;max-width:100%}' +
-    'svg{max-width:100%;height:auto;display:block;margin:0 auto}' +
+    'svg{max-width:100%;height:auto;display:block;margin:0 auto}body>svg:only-child{cursor:zoom-in}' +
     `table{border-collapse:collapse;font-size:12px}td,th{border:1px solid ${rule};padding:4px 8px}` +
     'a{color:#7cc7ff}' +
     '</style>' +
@@ -1594,6 +1644,9 @@ function shareButton(file, card) {
   return button;
 }
 
+/** The picture behind each shown image a reply made, for the lightbox. */
+const MADE = new WeakMap();
+
 /**
  * A file the assistant made, placed in the transcript — replacing the card for
  * the same id, so a document edited three times is one card, not four.
@@ -1614,8 +1667,13 @@ function placeFile(body, file) {
   figure.dataset.media = file.id;
   const open = el('button', 'media__open');
   open.type = 'button';
-  open.dataset.file = file.id;
-  open.title = t('chat.openNamed').replace('{name}', file.name || '');
+  // Full screen — to zoom, copy or download — rather than the side panel, which
+  // is still the card's Open button (owner, 2026-10-25). Pages through every
+  // picture this reply made.
+  open.dataset.pic = file.id;
+  open.title = t('gallery.open', { name: file.name || '' });
+  MADE.set(figure, { id: file.id, src, name: file.name || fileNameFrom('image', 'png'), label: file.name || '' });
+  registerPictures(body, () => [...body.querySelectorAll(':scope > figure.media')].map((node) => MADE.get(node)).filter(Boolean));
   const img = el('img');
   img.src = src;
   img.alt = file.name || '';

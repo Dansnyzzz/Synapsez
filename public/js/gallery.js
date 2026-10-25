@@ -1,8 +1,16 @@
 import { t } from './i18n.js';
+// A cycle (media.js → render.js → this file), safe because both are called at
+// click time, long after every module has loaded.
+import { imageUrlToPng } from './media.js';
+import { toast } from './render.js';
 
 /**
  * The pictures a run looked at: a preview under the pointer, and a lightbox to
  * page through them (owner, 2026-10-19, after Claude's).
+ *
+ * Every picture in a reply opens here — a chart a run made, a diagram, what a
+ * step read — full screen, to zoom into, copy or download without leaving it
+ * (owner, 2026-10-25: the chart used to open in the side panel).
  *
  * A card's pictures are looked up when a thumbnail is used, through the card's
  * node, rather than copied into data attributes: a run that read thirty-seven
@@ -17,7 +25,12 @@ import { t } from './i18n.js';
  * `thumb: false` for a picture kept with no small copy — a browser step's
  * screenshot, small already — so its strip does not ask for one first.
  *
- * @typedef {{ id: string, name?: string, path?: string, label?: string, thumb?: boolean }} Picture
+ * A picture that is not a stored file — a diagram — brings its own `src`, the
+ * ground it was drawn on (`ground`), and how to make its PNG (`png`). One that
+ * is a stored file is downloaded as that file, by `id`.
+ *
+ * @typedef {{ id: string, name?: string, path?: string, label?: string, thumb?: boolean,
+ *   src?: string, ground?: string, png?: () => Promise<Blob> }} Picture
  */
 
 /** @type {WeakMap<Element, () => Picture[]>} */
@@ -26,6 +39,8 @@ let installed = false;
 
 export const pictureUrl = (id) => `/api/attachments/${encodeURIComponent(id)}`;
 export const thumbUrl = (id) => `${pictureUrl(id)}/thumb`;
+/** @param {Picture} picture */
+const srcOf = (picture) => picture.src || pictureUrl(picture.id);
 
 /**
  * Say where a card's pictures are. Thumbnails anywhere inside `card` page
@@ -94,15 +109,34 @@ export function pictureThumb(picture, className = 'pic-thumb') {
 
 /* ── the lightbox ───────────────────────────────────────────────────── */
 
+const ICON_COPY =
+  '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">' +
+  '<rect x="7" y="7" width="9.5" height="9.5" rx="2"/><path d="M13 4.5H5.5A1.5 1.5 0 0 0 4 6v7.5"/></svg>';
+const ICON_DONE =
+  '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg>';
+const ICON_DOWNLOAD =
+  '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">' +
+  '<path d="M10 3.5v9M6 9l4 4 4-4M4 15.5h12"/></svg>';
+
+/** How far a picture may be zoomed: fitting the screen, up to eight times that. */
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 8;
+/** One press of a zoom button or key. */
+const STEP = 1.5;
+
 /**
  * @type {null | {
- *   root: HTMLElement, frame: HTMLElement, img: HTMLImageElement, label: HTMLElement, count: HTMLElement,
- *   prev: HTMLButtonElement, next: HTMLButtonElement, close: HTMLButtonElement,
- *   items: Picture[], index: number, returnTo: HTMLElement|null }}
+ *   root: HTMLElement, stage: HTMLElement, frame: HTMLElement, img: HTMLImageElement, label: HTMLElement,
+ *   nav: HTMLElement, count: HTMLElement, prev: HTMLButtonElement, next: HTMLButtonElement, close: HTMLButtonElement,
+ *   zoomOut: HTMLButtonElement, zoomIn: HTMLButtonElement, zoomSaid: HTMLButtonElement,
+ *   copy: HTMLButtonElement, save: HTMLAnchorElement,
+ *   items: Picture[], index: number, returnTo: HTMLElement|null,
+ *   zoom: { scale: number, x: number, y: number } }}
  */
 let box = null;
 
 const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
 function build() {
   const root = document.createElement('div');
@@ -112,7 +146,7 @@ function build() {
   root.setAttribute('aria-label', t('gallery.dialog'));
   root.innerHTML = `
     <button type="button" class="gallery__close"><span aria-hidden="true">✕</span></button>
-    <div class="gallery__stage"><figure class="gallery__frame"><img class="gallery__img" alt=""></figure></div>
+    <div class="gallery__stage"><figure class="gallery__frame"><img class="gallery__img" alt="" draggable="false"></figure></div>
     <div class="gallery__bar">
       <span class="gallery__label"></span>
       <div class="gallery__nav">
@@ -120,44 +154,227 @@ function build() {
         <span class="gallery__count" aria-live="polite"></span>
         <button type="button" class="gallery__next"><span aria-hidden="true">›</span></button>
       </div>
-      <span></span>
+      <div class="gallery__tools">
+        <button type="button" class="gallery__tool gallery__zoomout"><span aria-hidden="true">−</span></button>
+        <button type="button" class="gallery__tool gallery__zoom">100%</button>
+        <button type="button" class="gallery__tool gallery__zoomin"><span aria-hidden="true">+</span></button>
+        <span class="gallery__sep" aria-hidden="true"></span>
+        <button type="button" class="gallery__tool gallery__copy">${ICON_COPY}</button>
+        <a class="gallery__tool gallery__download">${ICON_DOWNLOAD}</a>
+      </div>
     </div>`;
   const q = (selector) => /** @type {any} */ (root.querySelector(selector));
   const parts = {
     root,
+    stage: q('.gallery__stage'),
     frame: q('.gallery__frame'),
     img: q('.gallery__img'),
     label: q('.gallery__label'),
+    nav: q('.gallery__nav'),
     count: q('.gallery__count'),
     prev: q('.gallery__prev'),
     next: q('.gallery__next'),
     close: q('.gallery__close'),
+    zoomOut: q('.gallery__zoomout'),
+    zoomIn: q('.gallery__zoomin'),
+    zoomSaid: q('.gallery__zoom'),
+    copy: q('.gallery__copy'),
+    save: q('.gallery__download'),
   };
-  parts.close.setAttribute('aria-label', t('gallery.close'));
-  parts.prev.setAttribute('aria-label', t('gallery.prev'));
-  parts.next.setAttribute('aria-label', t('gallery.next'));
+  const name = (node, key) => {
+    node.setAttribute('aria-label', t(key));
+    node.title = t(key);
+  };
+  name(parts.close, 'gallery.close');
+  name(parts.prev, 'gallery.prev');
+  name(parts.next, 'gallery.next');
+  name(parts.zoomOut, 'gallery.zoomOut');
+  name(parts.zoomIn, 'gallery.zoomIn');
+  name(parts.zoomSaid, 'gallery.zoomFit');
+  name(parts.copy, 'media.copy');
+  name(parts.save, 'media.download');
   parts.close.addEventListener('click', closeGallery);
   parts.prev.addEventListener('click', () => show((box?.index ?? 0) - 1, -1));
   parts.next.addEventListener('click', () => show((box?.index ?? 0) + 1, 1));
-  // The dark around the picture closes it; the picture itself does not.
+  parts.zoomIn.addEventListener('click', () => box && zoomTo(box.zoom.scale * STEP));
+  parts.zoomOut.addEventListener('click', () => box && zoomTo(box.zoom.scale / STEP));
+  parts.zoomSaid.addEventListener('click', () => zoomTo(1));
+  parts.copy.addEventListener('click', copyPicture);
+  parts.save.addEventListener('click', savePicture);
+
+  // The dark around the picture closes it; the picture itself does not, and
+  // neither does the end of a drag that started on it.
+  let dragged = false;
   root.addEventListener('click', (event) => {
     const target = /** @type {HTMLElement} */ (event.target);
+    if (dragged) {
+      dragged = false;
+      return;
+    }
     if (target === root || target.classList.contains('gallery__stage')) closeGallery();
   });
   root.addEventListener('keydown', onKey);
-  // A swipe pages on a phone.
-  const stage = q('.gallery__stage');
-  let startX = null;
+
+  /*
+   * The pointer: a wheel zooms where it points; a double click zooms in there
+   * and back out; dragging a zoomed picture moves it; two fingers pinch; and a
+   * swipe across a picture at its fitted size pages, as before.
+   */
+  const stage = parts.stage;
+  stage.addEventListener(
+    'wheel',
+    (event) => {
+      if (!box) return;
+      event.preventDefault();
+      zoomTo(box.zoom.scale * Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
+    },
+    { passive: false },
+  );
+  parts.img.addEventListener('dblclick', (event) => {
+    if (!box) return;
+    zoomTo(box.zoom.scale > 1 ? 1 : 2.5, event.clientX, event.clientY);
+  });
+  /** @type {Map<number, { x: number, y: number }>} */
+  const pointers = new Map();
+  let start = null;
   stage.addEventListener('pointerdown', (event) => {
-    startX = event.clientX;
+    if (!box || (event.target instanceof Element && event.target.closest('button, a'))) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    try {
+      stage.setPointerCapture(event.pointerId);
+    } catch {
+      /* an untrusted event in the suite has nothing to capture */
+    }
+    const [a, b] = [...pointers.values()];
+    start = {
+      x: event.clientX,
+      y: event.clientY,
+      tx: box.zoom.x,
+      ty: box.zoom.y,
+      scale: box.zoom.scale,
+      spread: b ? Math.hypot(a.x - b.x, a.y - b.y) : 0,
+    };
+    dragged = false;
   });
-  stage.addEventListener('pointerup', (event) => {
-    if (startX == null || !box) return;
-    const dx = event.clientX - startX;
-    startX = null;
-    if (Math.abs(dx) > 50) show(box.index + (dx < 0 ? 1 : -1), dx < 0 ? 1 : -1);
+  stage.addEventListener('pointermove', (event) => {
+    if (!box || !start || !pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const [a, b] = [...pointers.values()];
+    if (b && start.spread) {
+      dragged = true;
+      zoomTo(start.scale * (Math.hypot(a.x - b.x, a.y - b.y) / start.spread), (a.x + b.x) / 2, (a.y + b.y) / 2);
+      return;
+    }
+    if (box.zoom.scale > 1) {
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) dragged = true;
+      box.zoom.x = start.tx + dx;
+      box.zoom.y = start.ty + dy;
+      keepInView();
+      applyZoom();
+    }
   });
+  const lift = (event) => {
+    if (!box || !pointers.has(event.pointerId)) return;
+    pointers.delete(event.pointerId);
+    const was = start;
+    start = pointers.size ? { ...start, spread: 0, x: event.clientX, y: event.clientY, tx: box.zoom.x, ty: box.zoom.y } : null;
+    if (!was || pointers.size || was.spread || box.zoom.scale > 1 || event.type === 'pointercancel') return;
+    const dx = event.clientX - was.x;
+    if (Math.abs(dx) > 50) {
+      dragged = true;
+      show(box.index + (dx < 0 ? 1 : -1), dx < 0 ? 1 : -1);
+    }
+  };
+  stage.addEventListener('pointerup', lift);
+  stage.addEventListener('pointercancel', lift);
   return parts;
+}
+
+/**
+ * Zoom to `scale`, keeping the point under (`cx`, `cy`) where it is — the middle
+ * of the picture when no point is given.
+ */
+function zoomTo(scale, cx = null, cy = null) {
+  if (!box) return;
+  const z = box.zoom;
+  const next = clamp(scale, MIN_ZOOM, MAX_ZOOM);
+  const r = box.frame.getBoundingClientRect();
+  const px = cx == null ? 0 : cx - (r.left + r.width / 2);
+  const py = cy == null ? 0 : cy - (r.top + r.height / 2);
+  const k = next / z.scale;
+  z.x = px - (px - z.x) * k;
+  z.y = py - (py - z.y) * k;
+  z.scale = next;
+  keepInView();
+  applyZoom();
+}
+
+/** A zoomed picture can be moved to its edges, not off the screen. */
+function keepInView() {
+  if (!box) return;
+  const z = box.zoom;
+  if (z.scale <= 1) {
+    z.x = 0;
+    z.y = 0;
+    return;
+  }
+  const maxX = (box.img.offsetWidth * (z.scale - 1)) / 2;
+  const maxY = (box.img.offsetHeight * (z.scale - 1)) / 2;
+  z.x = clamp(z.x, -maxX, maxX);
+  z.y = clamp(z.y, -maxY, maxY);
+}
+
+function applyZoom() {
+  if (!box) return;
+  const { scale, x, y } = box.zoom;
+  box.img.style.transform = scale === 1 ? '' : `translate(${Math.round(x)}px, ${Math.round(y)}px) scale(${Math.round(scale * 1000) / 1000})`;
+  box.root.classList.toggle('is-zoomed', scale > 1);
+  box.zoomSaid.textContent = `${Math.round(scale * 100)}%`;
+  box.zoomOut.disabled = scale <= MIN_ZOOM;
+  box.zoomIn.disabled = scale >= MAX_ZOOM;
+}
+
+/** The picture on the clipboard, as a PNG — the one kind every app pastes. */
+async function copyPicture() {
+  const picture = box?.items[box.index];
+  if (!picture) return;
+  const button = box.copy;
+  try {
+    // The promise, not the blob: Safari allows a clipboard write only if it
+    // begins inside the click, and drawing the PNG takes a moment.
+    const pending = picture.png ? picture.png() : imageUrlToPng(srcOf(picture));
+    await navigator.clipboard.write([new globalThis.ClipboardItem({ 'image/png': pending })]);
+    button.innerHTML = ICON_DONE;
+    setTimeout(() => {
+      button.innerHTML = ICON_COPY;
+    }, 1400);
+  } catch {
+    toast(t('media.copyFailed'), 'error');
+  }
+}
+
+/**
+ * Download: a stored file is its own link (`href` and `download`, set in
+ * `show`); a picture drawn here — a diagram — is made into a PNG first.
+ */
+async function savePicture(event) {
+  const picture = box?.items[box.index];
+  if (!picture?.png) return;
+  event.preventDefault();
+  try {
+    const url = URL.createObjectURL(await picture.png());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = picture.name || 'image.png';
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch {
+    toast(t('media.downloadFailed'), 'error');
+  }
 }
 
 /** @param {KeyboardEvent} event */
@@ -174,9 +391,20 @@ function onKey(event) {
   else if (event.key === 'ArrowLeft') go(box.index - 1, -1);
   else if (event.key === 'Home') go(0, -1);
   else if (event.key === 'End') go(box.items.length - 1, 1);
-  else if (event.key === 'Tab') {
-    // Focus stays in the dialog: close, previous, next, and round again.
-    const stops = [box.close, box.prev, box.next].filter((b) => !b.disabled);
+  else if (event.key === '+' || event.key === '=') {
+    event.preventDefault();
+    zoomTo(box.zoom.scale * STEP);
+  } else if (event.key === '-' || event.key === '_') {
+    event.preventDefault();
+    zoomTo(box.zoom.scale / STEP);
+  } else if (event.key === '0') {
+    event.preventDefault();
+    zoomTo(1);
+  } else if (event.key === 'Tab') {
+    // Focus stays in the dialog, going round every control that works.
+    const stops = [box.close, box.prev, box.next, box.zoomOut, box.zoomSaid, box.zoomIn, box.copy, box.save].filter(
+      (b) => !(/** @type {any} */ (b).disabled) && !b.closest('[hidden]'),
+    );
     const at = stops.indexOf(/** @type {any} */ (document.activeElement));
     event.preventDefault();
     stops[(at + (event.shiftKey ? -1 : 1) + stops.length) % stops.length]?.focus();
@@ -195,12 +423,21 @@ function show(index, direction = 0) {
   if (next === box.index) return;
   box.index = next;
   const picture = box.items[next];
-  box.img.src = pictureUrl(picture.id);
+  box.zoom = { scale: 1, x: 0, y: 0 };
+  applyZoom();
+  box.img.src = srcOf(picture);
   box.img.alt = picture.name || picture.label || '';
+  // A diagram is shown on the ground it was drawn for; a photo on white.
+  box.img.style.background = picture.ground || '';
   box.label.textContent = picture.label || '';
+  // One picture has nothing to page to: no "1 of 1" between two dead arrows.
+  box.nav.hidden = box.items.length < 2;
   box.count.textContent = t('gallery.count', { n: next + 1, total: box.items.length });
   box.prev.disabled = next === 0;
   box.next.disabled = next === box.items.length - 1;
+  const name = picture.name || picture.label || 'image';
+  box.save.setAttribute('download', picture.png && !/\.png$/i.test(name) ? `${name}.png` : name);
+  box.save.setAttribute('href', picture.png ? '#' : picture.src && !picture.id ? picture.src : `${pictureUrl(picture.id)}?download=1`);
   box.frame.classList.remove('is-from-left', 'is-from-right');
   if (direction && !still()) {
     void box.frame.offsetWidth; // restart the animation
@@ -210,7 +447,7 @@ function show(index, direction = 0) {
   if (/** @type {any} */ (document.activeElement)?.disabled) (box.next.disabled ? box.prev : box.next).focus();
   // The neighbours, so paging does not wait on the network.
   for (const at of [next - 1, next + 1]) {
-    if (box.items[at]) new Image().src = pictureUrl(box.items[at].id);
+    if (box.items[at]) new Image().src = srcOf(box.items[at]);
   }
 }
 
@@ -222,14 +459,14 @@ function show(index, direction = 0) {
 export function openGallery(items, index = 0, returnTo = null) {
   if (!items?.length) return;
   hidePreview();
-  if (!box) box = { ...build(), items, index: -1, returnTo };
+  if (!box) box = { ...build(), items, index: -1, returnTo, zoom: { scale: 1, x: 0, y: 0 } };
   box.items = items;
   box.returnTo = returnTo;
   box.index = -1;
   document.body.append(box.root);
   document.documentElement.classList.add('gallery-open');
   show(index, 0);
-  (box.next.disabled ? box.close : box.next).focus();
+  (box.items.length > 1 && !box.next.disabled ? box.next : box.close).focus();
 }
 
 export function closeGallery() {

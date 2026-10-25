@@ -91,6 +91,9 @@ export const vi = {
   'gallery.dialog': 'Ảnh',
   'gallery.open': 'Mở {name}',
   'gallery.more': 'Thêm {n} ảnh',
+  'gallery.zoomIn': 'Phóng to',
+  'gallery.zoomOut': 'Thu nhỏ',
+  'gallery.zoomFit': 'Vừa màn hình',
 
   /* Nút + cạnh ô nhập (plus-menu.js). */
   'plus.open': 'Thêm tệp, kỹ năng, kết nối và plugin',

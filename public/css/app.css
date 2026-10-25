@@ -3171,7 +3171,8 @@ details.block .step__key {
   min-height: 0;
   padding: 60px 24px 8px;
   overflow: hidden;
-  touch-action: pan-y;
+  /* Every touch is the lightbox's own: a pinch zooms the picture, not the page. */
+  touch-action: none;
 }
 .gallery__frame { display: grid; place-items: center; min-height: 0; max-height: 100%; margin: 0; }
 .gallery__img {
@@ -3194,7 +3195,10 @@ details.block .step__key {
   gap: 12px;
   padding: 10px 24px max(20px, var(--safe-b, 0px));
 }
-.gallery__label { min-width: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gallery__label { grid-column: 1; min-width: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Each in its own column, so the tools keep the right when the arrows are hidden. */
+.gallery__nav { grid-column: 2; }
+.gallery__tools { grid-column: 3; }
 .gallery__nav {
   display: flex;
   align-items: center;
@@ -3226,6 +3230,42 @@ details.block .step__key {
 .gallery__nav button:disabled { opacity: 0.28; cursor: default; }
 .gallery__nav button:focus-visible,
 .gallery__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.gallery__nav[hidden] { display: none; }
+
+/* Zoom and take it away, bottom right, without leaving the picture (owner,
+   2026-10-25). A zoomed picture is dragged by its hand. */
+.gallery__img { transform-origin: center; will-change: transform; }
+.gallery.is-zoomed .gallery__img { cursor: grab; }
+.gallery.is-zoomed .gallery__img:active { cursor: grabbing; }
+.gallery__tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+.gallery__tool {
+  display: grid;
+  place-items: center;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #f4f4f4;
+  font: inherit;
+  font-size: 22px;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.gallery__zoom { min-width: 58px; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.gallery__tool:hover:not(:disabled) { background: rgb(255 255 255 / 0.12); }
+.gallery__tool:disabled { opacity: 0.28; cursor: default; }
+.gallery__tool:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.gallery__sep { width: 1px; height: 22px; margin: 0 6px; background: rgb(255 255 255 / 0.22); }
 
 /* Under the pointer, a larger look before anything is clicked. */
 .pic-preview {
@@ -3262,8 +3302,19 @@ details.block .step__key {
 }
 @media (max-width: 640px) {
   .gallery__stage { padding: 60px 8px 4px; }
-  .gallery__bar { padding: 8px 12px max(16px, var(--safe-b, 0px)); }
-  .gallery__label { font-size: 13.5px; }
+  /* The word on a line of its own; the arrows and the tools share the next. */
+  .gallery__bar {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: 'label label' 'nav tools';
+    row-gap: 4px;
+    padding: 8px 12px max(16px, var(--safe-b, 0px));
+  }
+  .gallery__label { grid-area: label; font-size: 13.5px; }
+  .gallery__nav { grid-area: nav; gap: 6px; }
+  .gallery__tools { grid-area: tools; gap: 0; }
+  .gallery__tool { min-width: 36px; height: 36px; padding: 0 6px; }
+  .gallery__zoom { min-width: 50px; }
+  .gallery__sep { margin: 0 2px; }
 }
 
 /* A small button beside a line of prose, where a full-size one would tower

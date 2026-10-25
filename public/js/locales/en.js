@@ -652,6 +652,9 @@ export const en = {
   'gallery.dialog': 'Pictures',
   'gallery.open': 'Open {name}',
   'gallery.more': '{n} more pictures',
+  'gallery.zoomIn': 'Zoom in',
+  'gallery.zoomOut': 'Zoom out',
+  'gallery.zoomFit': 'Fit to screen',
 
   /* The + beside the message box (plus-menu.js). */
   'plus.open': 'Add files, skills, connectors and plugins',

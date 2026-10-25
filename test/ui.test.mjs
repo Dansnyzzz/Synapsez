@@ -4562,6 +4562,88 @@ section('a run that read pictures shows them folded, per row, in a preview and a
 }
 
 /**
+ * Screenshot 6 (owner, 2026-10-25): clicking the chart a run made opened it in
+ * the side panel. A picture opens full screen, where it can be zoomed — the
+ * buttons, the wheel, the keys — and copied or downloaded without leaving it.
+ * A diagram opens the same way.
+ */
+section('a picture the assistant made opens full screen, with zoom, copy and download');
+{
+  const png = /\/api\/attachments\/img-1(\?.*)?$/;
+  const dot = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await page.route(png, (route) => route.fulfill({ status: 200, contentType: 'image/png', body: dot }));
+  const out = await page.evaluate(async () => {
+    const { assistantMessage, widgetNode } = await import('/js/render.js');
+    const gallery = await import('/js/gallery.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    turn.startTool({ id: 'm1', name: 'publish_file', input: { path: 'vn_population.png' } }).complete({
+      content: 'made it',
+      ms: 40,
+      file: { id: 'img-1', name: 'vn_population.png', mime: 'image/png', bytes: 65000 },
+    });
+    turn.finish();
+    const out = {};
+    const open = /** @type {HTMLElement} */ (turn.node.querySelector('figure.media .media__open'));
+    out.notThePanel = !!open && !open.hasAttribute('data-file');
+    open.click();
+    const box = document.querySelector('.gallery');
+    out.opened = gallery.__testing.isOpen();
+    const q = (s) => /** @type {HTMLElement} */ (box?.querySelector(s));
+    out.tools = ['.gallery__zoomout', '.gallery__zoom', '.gallery__zoomin', '.gallery__copy', '.gallery__download'].filter((s) => !q(s)).join(' ');
+    out.navHiddenForOne = !q('.gallery__nav') || q('.gallery__nav').hidden;
+    const img = /** @type {HTMLImageElement} */ (q('.gallery__img'));
+    out.src = img.getAttribute('src');
+    const scale = () => Number((/scale\(([\d.]+)\)/.exec(img.style.transform) || [0, 1])[1]);
+    q('.gallery__zoomin').click();
+    out.afterIn = { scale: scale(), said: q('.gallery__zoom').textContent };
+    const key = (k) => box.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+    key('0');
+    out.afterReset = { scale: scale(), said: q('.gallery__zoom').textContent };
+    q('.gallery__stage').dispatchEvent(new window.WheelEvent('wheel', { deltaY: -240, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
+    out.afterWheel = scale();
+    key('-');
+    key('-');
+    key('-');
+    key('-');
+    out.floor = scale();
+    const save = /** @type {HTMLAnchorElement} */ (q('.gallery__download'));
+    out.download = { name: save.getAttribute('download'), href: save.getAttribute('href') };
+    key('Escape');
+    out.closed = !gallery.__testing.isOpen();
+    turn.node.remove();
+
+    // A diagram: clicking the picture opens it full screen too.
+    const node = widgetNode({ title: 'Quy trình', markup: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80"><rect x="10" y="10" width="80" height="40" fill="#1f6feb"/></svg>', kind: 'svg' });
+    const frame = node.querySelector('iframe');
+    frame.loading = 'eager';
+    const loaded = new Promise((r) => {
+      frame.addEventListener('load', () => setTimeout(r, 80), { once: true });
+      setTimeout(r, 3000);
+    });
+    document.getElementById('messages').append(node);
+    await loaded;
+    frame.contentDocument.querySelector('svg').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    out.diagram = { opened: gallery.__testing.isOpen(), src: document.querySelector('.gallery__img')?.getAttribute('src') || '', label: document.querySelector('.gallery__label')?.textContent || '' };
+    gallery.closeGallery();
+    node.remove();
+    return out;
+  });
+  await page.unroute(png);
+  check('clicking the picture does not open the side panel', out.notThePanel === true);
+  check('  it opens full screen', out.opened === true && /\/api\/attachments\/img-1/.test(out.src || ''), out.src);
+  check('  with zoom out, the zoom, zoom in, copy and download', out.tools === '', out.tools);
+  check('  and no "1 of 1" arrows for a single picture', out.navHiddenForOne === true);
+  check('zoom in enlarges it, and says by how much', out.afterIn.scale > 1 && /^1\d\d%$/.test(out.afterIn.said), JSON.stringify(out.afterIn));
+  check('  0 puts it back to fit', out.afterReset.scale === 1 && out.afterReset.said === '100%', JSON.stringify(out.afterReset));
+  check('  the wheel zooms too', out.afterWheel > 1, String(out.afterWheel));
+  check('  and it never shrinks below fitting the screen', out.floor === 1, String(out.floor));
+  check('download saves the file under its own name', out.download.name === 'vn_population.png' && /\/api\/attachments\/img-1\?download=1/.test(out.download.href || ''), JSON.stringify(out.download));
+  check('Esc closes it', out.closed === true);
+  check('a diagram opens full screen when clicked, under its title', out.diagram.opened && /^blob:/.test(out.diagram.src) && out.diagram.label === 'Quy trình', JSON.stringify(out.diagram));
+}
+
+/**
  * The model's title is a name on screen, never a stand-in for what runs
  * (security review, 2026-10-13). The approval line fell through to JSON cut at
  * 90 characters for these tools, and stored keys come back shortest first — so

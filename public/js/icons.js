@@ -34,7 +34,10 @@ export const ICONS = {
   spark: svg('<path d="M12 4l1.8 4.9L18.5 10.5l-4.7 1.7L12 17l-1.8-4.8L5.5 10.5l4.7-1.6z"/>'),
 };
 
-/** Most specific first: "search_chats" is a conversation before it is a search. */
+/**
+ * Most specific first: "search_chats" is a conversation before it is a search.
+ * @type {[RegExp, keyof typeof ICONS][]}
+ */
 const RULES = [
   [/^mcp__/, 'plug'],
   [/chats?\b|chats_|conversation/, 'chat'],
