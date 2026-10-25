@@ -4997,6 +4997,14 @@ section('searches one after another read as Claude\'s: a thread of queries, each
       thread: first ? getComputedStyle(first, '::before').content !== 'none' : false,
       lastThread: second ? getComputedStyle(second, '::before').content : '',
     };
+    // A step that carries the thread on and sends two searches together: both on it.
+    const both = block();
+    const p1 = both.startTool({ id: 's2a', name: 'web_search', input: { query: 'parallel one' } });
+    const p2 = both.startTool({ id: 's2b', name: 'web_search', input: { query: 'parallel two' } });
+    p2.complete({ content: results(2, 'b.example'), ms: 50 });
+    p1.complete({ content: results(3, 'a.example'), ms: 60 });
+    out.parallelRuns = host.querySelectorAll('.webrun').length;
+    out.parallelEntries = host.querySelectorAll('.webrun > .block.web').length;
     // A reply in between ends the thread: the next search starts another.
     block().appendText('Here is what I found.');
     block().startTool({ id: 's3', name: 'web_search', input: { query: 'a third search' } }).complete({ content: results(2, 'example.com'), ms: 100 });
@@ -5011,6 +5019,7 @@ section('searches one after another read as Claude\'s: a thread of queries, each
   check('  "Searched the web" is said to a screen reader, not printed on every line', got.titleShown === false && /web/i.test(got.titleSaid), `${got.titleShown} ${got.titleSaid}`);
   check('  the sites stay open under each query, in a box that scrolls', got.open && got.rows === 10 && got.boxed && got.scrolls, JSON.stringify({ open: got.open, rows: got.rows, boxed: got.boxed, scrolls: got.scrolls }));
   check('  joined by a thread down the left, ending at the last', got.thread && got.lastThread === 'none', `${got.thread} ${got.lastThread}`);
+  check('two searches sent together, in a step that carried the thread on, join it', got.parallelRuns === 1 && got.parallelEntries === 4, `${got.parallelRuns} runs, ${got.parallelEntries} entries`);
   check('a reply between searches starts a new thread', got.runsAfterReply === 2, String(got.runsAfterReply));
 }
 

@@ -1995,10 +1995,13 @@ export function assistantMessage() {
     }
     leaveRun();
     closeSteps();
-    // The thread: this block's own while it is the last thing drawn, the one
-    // carried over from the block before, or a new one.
+    // The thread: the one this block's last line is on, while nothing has been
+    // drawn after it — in this block, or in the block before when this one
+    // carried it on and has drawn nothing of its own — else the one carried
+    // over from the block before, else a new one.
     const mine = web?.node.parentElement;
-    const run = mine && body.lastElementChild === mine ? mine : carried ? last.run : body.appendChild(el('div', 'webrun'));
+    const onMine = !!mine?.isConnected && mine.parentElement?.lastElementChild === mine && (mine.parentElement === body || body.childElementCount === 0);
+    const run = onMine ? mine : carried ? last.run : body.appendChild(el('div', 'webrun'));
     const node = el('details', 'block web');
     node.open = true;
     const summary = el('summary', 'web__head');
