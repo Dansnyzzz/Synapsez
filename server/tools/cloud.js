@@ -2490,6 +2490,8 @@ const LOOK_MAX_BYTES = 12 * 1024 * 1024;
 /** A whole textbook is 20–40MB; the pages asked for are rendered from it, never all of it. */
 const LOOK_MAX_PDF_BYTES = 48 * 1024 * 1024;
 const LOOK_FETCH_MS = 90_000;
+/** Waking the cloud computer and reading one file from it — a picture, not a download. */
+const LOOK_READ_MS = 45_000;
 /** A file name from a URL, readable, and never a throw over a stray %. */
 const safeDecode = (s) => {
   try {
@@ -2546,7 +2548,7 @@ async function chatModelSees(userId, chatId) {
  */
 async function lookAtTool(
   { file_id: fileId, url, path, pages, question },
-  { userId, chatId, signal, see: lookWith = see, readCloudFile = readMachineFile },
+  { userId, chatId, signal, see: lookWith = see, readCloudFile = readMachineFile, readMs = LOOK_READ_MS },
 ) {
   const ask = String(question || '').trim();
   const wantPages = Array.isArray(pages) ? pages.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 8) : null;
@@ -2568,7 +2570,19 @@ async function lookAtTool(
     if (picture) shot = { id: row.id, name: row.name };
   } else if (path) {
     const where = workPath(path);
-    const bytes = await readCloudFile(String(userId), where, { signal });
+    // A cloud computer that is waking, or stuck, is not waited on past a limit
+    // — with no limit, one read held the turn until the function was cut off
+    // (owner, 2026-10-25, screenshots 10–11).
+    const timer = AbortSignal.timeout(readMs);
+    let bytes;
+    try {
+      bytes = await readCloudFile(String(userId), where, { signal: signal ? AbortSignal.any([signal, timer]) : timer });
+    } catch (err) {
+      if (timer.aborted && !signal?.aborted) {
+        throw new Error(`The cloud computer took more than ${Math.round(readMs / 1000)}s to hand over ${where}, so it was not read. Try once more; if it is slow again, make a smaller copy first.`);
+      }
+      throw err;
+    }
     if (!bytes) {
       throw new Error(`${where} is not on the cloud computer — check the path with ls. For a file on the user's own computer, use read_file.`);
     }

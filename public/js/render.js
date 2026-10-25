@@ -2768,6 +2768,15 @@ export function assistantMessage() {
     node: wrap,
 
     /**
+     * Calls redrawn from a turn that is still running, with no result yet —
+     * by id, for the run that rejoins it to finish (app.js `stream`). Without
+     * them a rejoined run drew a second row for the same call and the first
+     * waited for ever.
+     * @type {Map<string, { complete: (result: any) => void }>}
+     */
+    waiting: new Map(),
+
+    /**
      * The reasoning, as a card that is readable both folded and open.
      *
      * Folded, it is a window a few lines tall that always shows the newest
@@ -3198,6 +3207,7 @@ export function assistantMessage() {
        */
       if (result) handle.complete(result);
       else if (!pending) handle.complete({ content: t('chat.cutOff'), isError: true });
+      else api.waiting.set(call.id, handle);
     }
   }
 

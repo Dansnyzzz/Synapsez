@@ -8453,6 +8453,44 @@ section('a turn that fails mid-step leaves nothing spinning');
 }
 
 /**
+ * Screenshots 10–11 (owner, 2026-10-25): "Đọc sheet.jpg" six times, each still
+ * "Running… 1858 s". The function was cut off mid-read; the page reconnected,
+ * the server ran the same read again under the same call id, and every run of
+ * it drew a row of its own while the old rows counted on for ever. The same
+ * call is one row, and it finishes when its result comes.
+ */
+section('a call run again after a cut-off is one row, and it finishes');
+{
+  let attempts = 0;
+  await page.route('**/api/chats/*/run', (route) => {
+    attempts += 1;
+    const call = 'event: tool_call\ndata: {"id":"lk1","name":"look_at","input":{"path":"/tmp/m5/sheet.jpg","question":"Màu xe?"}}\n\n';
+    return route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      // First the invocation is cut off mid-call (no `done`); then the reconnect runs it again and it answers.
+      body: attempts === 1 ? call : call + 'event: tool_result\ndata: {"toolCallId":"lk1","name":"look_at","content":"A blue M5 Touring.","ms":4200}\n\nevent: done\ndata: {"stopReason":"end_turn"}\n\n',
+    });
+  });
+  await page.fill('#input', 'màu xe là gì');
+  await page.press('#input', 'Enter');
+  await page.waitForTimeout(4500);
+  await page.unroute('**/api/chats/*/run');
+  const left = await page.evaluate(() => {
+    const turn = [...document.querySelectorAll('#messages .msg--assistant')].slice(-3);
+    const rows = turn.flatMap((t) => [...t.querySelectorAll('.step--work')]);
+    return {
+      rows: rows.length,
+      running: document.querySelectorAll('#messages .step__running').length,
+      spinning: turn.reduce((n, t) => n + t.querySelectorAll('.mark--pending, .spinner').length, 0),
+      answered: rows.some((r) => /blue M5/.test(r.textContent || '')),
+    };
+  });
+  check('the read run twice is drawn once', attempts >= 2 && left.rows === 1, JSON.stringify({ attempts, ...left }));
+  check('  and finishes with its answer, nothing left counting', left.answered && left.running === 0 && left.spinning === 0, JSON.stringify(left));
+}
+
+/**
  * The round button over the composer, the way Claude's works (owner,
  * 2026-10-13): gone while you are at the end; scrolled up, a down arrow — or
  * three moving dots while the answer is still coming, which become the arrow

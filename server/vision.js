@@ -138,15 +138,44 @@ const SYSTEM =
   'Describe only what is there; do not guess beyond it. If a question is given, first answer it directly, then give the full reading.';
 
 /**
+ * How long a look may take (owner, 2026-10-25, screenshots 10–11).
+ *
+ * A free vision model can sit in a queue and never answer, and nothing here
+ * used to stop waiting for it: the function was cut off at 300 s, the read ran
+ * again on the reconnect, and "Read sheet.jpg" counted past half an hour. Each
+ * model now gets `engineMs` before the next is asked, the whole look `totalMs`
+ * — well inside one function — and each picture's OCR `ocrMs`. The turn's own
+ * Stop still ends it at once.
+ */
+export const SEE_LIMITS = { engineMs: 45_000, totalMs: 110_000, ocrMs: 25_000 };
+
+/** A promise, or a TimeoutError once `ms` have passed — whichever comes first. */
+function within(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error(`took more than ${Math.round(ms / 1000)}s`), { name: 'TimeoutError' })), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Look at pictures, or at a PDF, and say what is there.
+ *
+ * `engines` and `limits` are the suite's, in place of the account's models and
+ * the real waits.
  *
  * @param {{ userId: string, chatId?: string|null, images?: {mime: string, data: string, name?: string}[],
  *   pdf?: {data: string, name?: string, pages?: number[]}|null, question?: string, signal?: AbortSignal,
- *   stream?: Function, ocr?: (image: string) => Promise<{ text: string, confidence: number }> }} input
+ *   stream?: Function, ocr?: (image: string) => Promise<{ text: string, confidence: number }>,
+ *   engines?: any[], limits?: Partial<typeof SEE_LIMITS> }} input
  * @returns {Promise<{ text: string, model: string }>}
  */
-export async function see({ userId, chatId = null, images = [], pdf = null, question = '', signal, stream = streamCompletion, ocr = ocrImage }) {
-  const engines = await visionEngines(userId).catch(() => []);
+export async function see({ userId, chatId = null, images = [], pdf = null, question = '', signal, stream = streamCompletion, ocr = ocrImage, engines: given = null, limits: asked = {} }) {
+  const limits = { ...SEE_LIMITS, ...asked };
+  const ends = Date.now() + limits.totalMs;
+  const engines = given || (await visionEngines(userId).catch(() => []));
 
   /** Pages drawn once, shared by OCR and every engine that needs pictures. */
   let drawn = null;
@@ -166,7 +195,7 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
   for (const picture of pictures) {
     if (signal?.aborted) throw new Error('stopped');
     try {
-      const { text, confidence } = await ocr(picture.data);
+      const { text, confidence } = await within(ocr(picture.data), Math.max(1, Math.min(limits.ocrMs, ends - Date.now())));
       if (text) ocrRead.push({ name: picture.name || 'image', text, confidence });
     } catch (err) {
       ocrError = String(err?.message || err).slice(0, 160);
@@ -180,6 +209,11 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
   // the shield cannot mask — so Gemini is shown the drawn pages like everyone else.
   const masking = pdf ? await maskPersonalFor(userId).catch(() => true) : false;
   for (const entry of engines) {
+    const left = ends - Date.now();
+    if (left <= 0) {
+      failures.push(`the look ran past its ${Math.round(limits.totalMs / 1000)}s`);
+      break;
+    }
     const parts = [];
     if (pdf) {
       if (entry.provider === 'google' && !masking) {
@@ -207,6 +241,10 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
           `<ocr>\n${ocrText.slice(0, 12_000)}\n</ocr>`
         : '');
 
+    // This model's own limit, inside what is left of the look, and the turn's Stop.
+    const budget = Math.min(limits.engineMs, left);
+    const timer = AbortSignal.timeout(budget);
+    const engineSignal = signal ? AbortSignal.any([signal, timer]) : timer;
     try {
       let text = '';
       let usage = null;
@@ -218,7 +256,7 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
         // Reading, not reasoning: the thinking budget goes on the picture's
         // words, not on deliberating about them.
         effort: 'low',
-        signal,
+        signal: engineSignal,
       })) {
         if (ev.type === 'text') text += ev.delta ?? '';
         else if (ev.type === 'done') usage = ev.usage || null;
@@ -230,8 +268,9 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
       return { text: text.trim(), model: entry.label || entry.id };
     } catch (err) {
       if (signal?.aborted) throw err;
-      failures.push(`${entry.label || entry.id}: ${String(err?.message || err).slice(0, 160)}`);
-      log.warn('vision engine failed', { model: entry.id, error: String(err?.message || err).slice(0, 200) });
+      const why = timer.aborted ? `took more than ${Math.round(budget / 1000)}s` : String(err?.message || err).slice(0, 160);
+      failures.push(`${entry.label || entry.id}: ${why}`);
+      log.warn('vision engine failed', { model: entry.id, error: why.slice(0, 200) });
     }
   }
 

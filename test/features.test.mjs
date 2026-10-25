@@ -885,6 +885,48 @@ section('a model that cannot see is read to, not left guessing');
     check('  and says it is the words only', /words only/.test(read.text));
     const none = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], ocr: async () => ({ text: '', confidence: 0 }) }).catch((e) => e.message);
     check('a picture with no text and no reader says so', /no text in it/.test(String(none)), String(none));
+
+    /*
+     * Screenshots 10–11 (owner, 2026-10-25): "Đọc sheet.jpg" ran for half an
+     * hour. A free vision model that never answers was waited on with no limit,
+     * the function was cut off at 300 s, and the read began again. Every model
+     * now has its own limit, the whole look has one, and so does OCR.
+     */
+    const hangs = (signal) =>
+      new Promise((_, reject) => {
+        signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      });
+    const streamer = (answers) =>
+      async function* stream({ entry, signal }) {
+        if (answers[entry.id] === 'hang') await hangs(signal);
+        yield { type: 'text', delta: answers[entry.id] };
+        yield { type: 'done', usage: null };
+      };
+    const engines = [{ id: 'slow', label: 'Slow' }, { id: 'fast', label: 'Fast' }];
+    const limits = { engineMs: 250, totalMs: 1500, ocrMs: 300 };
+    let t0 = Date.now();
+    const skipped = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], engines, limits, stream: streamer({ slow: 'hang', fast: 'A blue wagon.' }), ocr: async () => ({ text: '', confidence: 0 }) });
+    check('a vision model that does not answer is left after its own limit, and the next one reads it', skipped.model === 'Fast' && /blue wagon/.test(skipped.text) && Date.now() - t0 < 1200, `${skipped.model} in ${Date.now() - t0} ms`);
+    t0 = Date.now();
+    const allHang = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], engines: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }], limits: { engineMs: 400, totalMs: 700, ocrMs: 300 }, stream: streamer({ a: 'hang', b: 'hang', c: 'hang', d: 'hang' }), ocr: async () => ({ text: 'BMW M5 Touring', confidence: 90 }) });
+    check('  when none answers, the whole look ends in its own time, with the words OCR read', allHang.model === 'Tesseract OCR' && /BMW M5 Touring/.test(allHang.text) && Date.now() - t0 < 1400, `${allHang.model} in ${Date.now() - t0} ms`);
+    t0 = Date.now();
+    const ocrHangs = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], engines, limits, stream: streamer({ slow: 'Read it.', fast: 'x' }), ocr: () => new Promise(() => {}) });
+    check('  and OCR that never finishes is not waited on either', ocrHangs.model === 'Slow' && Date.now() - t0 < 1000, `${ocrHangs.model} in ${Date.now() - t0} ms`);
+    const stopped = new AbortController();
+    setTimeout(() => stopped.abort(), 100);
+    const byStop = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], engines, limits: { engineMs: 5000, totalMs: 9000, ocrMs: 300 }, signal: stopped.signal, stream: streamer({ slow: 'hang', fast: 'x' }), ocr: async () => ({ text: '', confidence: 0 }) }).catch((e) => e);
+    check('  while Stop still stops it at once, rather than trying the next model', byStop instanceof Error && byStop.name === 'AbortError', String(byStop?.message || byStop?.model));
+  }
+  {
+    // The picture on the cloud computer is fetched with a limit too.
+    const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+    const t0 = Date.now();
+    const slowMachine = await CLOUD_IMPLEMENTATIONS.look_at(
+      { path: '/tmp/m5/sheet.jpg', question: 'Màu xe?' },
+      { userId: 'u-look', chatId: null, readMs: 200, readCloudFile: (_u, _p, { signal }) => new Promise((_, reject) => signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })) },
+    ).catch((e) => e.message);
+    check('a cloud computer slow to hand over the picture is given up on, and said so', /took more than/.test(String(slowMachine)) && /sheet\.jpg/.test(String(slowMachine)) && Date.now() - t0 < 1500, String(slowMachine));
   }
   check('an unknown family still qualifies, last', vision.rank('acme/unknown-vl') === vision.PREFERENCE.length);
   {

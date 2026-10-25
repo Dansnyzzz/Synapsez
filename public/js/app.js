@@ -1934,6 +1934,8 @@ function showStage(run) {
  */
 function drawTranscript(host, messages, { live = false } = {}) {
   host.innerHTML = '';
+  // The calls of a still-running turn that have no result yet — see `stream`.
+  state.waitingCalls = new Map();
 
   // Tool results live in their own message, so index them by call id first.
   const resultsByCallId = new Map();
@@ -1955,6 +1957,7 @@ function drawTranscript(host, messages, { live = false } = {}) {
       // The turn ends where the next thing said is the person's, or nothing.
       const next = messages.slice(i + 1).find((x) => x.role === 'user' || x.role === 'assistant');
       turn.hydrate(m, resultsByCallId, { pending: live && i === newest, endsTurn: !next || next.role === 'user' });
+      for (const [id, handle] of turn.waiting) state.waitingCalls.set(id, handle);
     }
   });
 }
@@ -3447,6 +3450,15 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     runId: rejoin || crypto.randomUUID(),
   });
   if (!run) return;
+  /*
+   * Rejoining a turn drawn from the database mid-call: its calls with no result
+   * are already rows on screen, and the server will run them again under the
+   * same ids. Those rows take the results, rather than a second row each.
+   */
+  if (rejoin && chatId === state.chatId && state.waitingCalls?.size) {
+    for (const [id, handle] of state.waitingCalls) run.toolHandles.set(id, handle);
+    state.waitingCalls.clear();
+  }
   /**
    * A stop note from an earlier turn in this same conversation may still be on
    * screen — the user ignored it and sent something else instead of pressing
@@ -3689,6 +3701,17 @@ async function streamOnce(run, decision, answers) {
           // for it, even though that turn is already persisted.
           run.turn.finishThinking();
           clearDrafts();
+          /*
+           * The same call again: the invocation was cut off mid-call and the
+           * reconnect is running it once more, under the same id. Its row is
+           * already on screen and will take the result — a second row drew
+           * "Read sheet.jpg" six times, the old ones counting for ever (owner,
+           * 2026-10-25, screenshots 10–11).
+           */
+          if (run.toolHandles.has(call.id)) {
+            maybeScroll(run);
+            return;
+          }
           run.toolHandles.set(call.id, run.turn.startTool(call));
           if (onScreen(run)) {
             state.liveTools = [...(state.liveTools || []), { id: call.id, name: call.name, input: call.input || {}, content: '', asked: state.lastAsked || '', turn: 100000 + (state.liveTurn || 0) }];

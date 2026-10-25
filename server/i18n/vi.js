@@ -951,6 +951,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'Give a `file_id` (an attachment, a made file or a step screenshot) or a `url` of an image or PDF.':
     'Hãy đưa `file_id` (tệp đính kèm, tệp đã tạo hoặc ảnh chụp màn hình của một bước) hoặc `url` của ảnh hay PDF.',
   'it answered with nothing': 'model không trả lời gì',
+  'took more than {0}s': 'mất hơn {0} giây',
+  'The cloud computer took more than {0}s to hand over {1}, so it was not read. Try once more; if it is slow again, make a smaller copy first.':
+    'Máy tính đám mây mất hơn {0} giây để đưa ra {1}, nên chưa đọc được. Hãy thử lại một lần; nếu vẫn chậm, hãy tạo một bản nhỏ hơn trước.',
   stopped: 'đã dừng',
   'None of the models that can see could read it — {0}': 'Không model thị giác nào đọc được — {0}',
   // Share links.
