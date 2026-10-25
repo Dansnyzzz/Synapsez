@@ -702,6 +702,9 @@ section('Word, Excel and PowerPoint come out designed');
   check('"1.560.000.000" is the number it says, not text', cells[1][1].t === 'n' && cells[1][1].v === '1560000000', JSON.stringify(cells[1][1]));
   check('"64,4%" is 0.644, "$31,200.50" is 31200.5, "2026-03-15" a date', cells[2][2].v === '0.644' && cells[2][3].v === '31200.5' && cells[1][4].t === 'd', JSON.stringify([cells[2][2], cells[2][3], cells[1][4]]));
   check('  while a code with a leading zero stays text', cells[1][5].t === 's' && cells[1][5].v === '0123');
+  // Shown as written: a format with two decimals showed "3.14159" as 3.14 (caught in Excel, 2026-10-25).
+  const plainDecimals = openZip(writeXlsx({ sheets: [{ name: 'p', rows: [['k', 'v'], ['pi', 3.14159], ['e', '2.71828']] }] })).text('xl/worksheets/sheet1.xml');
+  check('  and a plain decimal keeps the General format, so every digit shows', /<c r="B2" s="2">/.test(plainDecimals) && /<c r="B3" s="3">/.test(plainDecimals), plainDecimals.match(/<c r="B\d" s="\d+"/g)?.join(' '));
   const xz = openZip(book.buffer);
   const ws = xz.text('xl/worksheets/sheet1.xml');
   const xs = xz.text('xl/styles.xml');

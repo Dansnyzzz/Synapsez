@@ -382,8 +382,10 @@ const FORMAT = { general: 0, date: 1, integer: 2, decimal: 3, percent: 4, percen
 /** A cell's value and the format it is shown in, read from whatever it was written as. */
 function cellFor(value) {
   if (value == null || value === '') return null;
+  // A whole number of five digits or more is shown with its thousands; any
+  // other number as it is — "3.14159" must not be shown as 3.14.
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return { type: 'n', value: String(value), format: Number.isInteger(value) ? (Math.abs(value) >= 10000 ? FORMAT.integer : FORMAT.general) : FORMAT.decimal };
+    return { type: 'n', value: String(value), format: Number.isInteger(value) && Math.abs(value) >= 10000 ? FORMAT.integer : FORMAT.general };
   }
   if (typeof value === 'boolean') return { type: 'b', value: value ? '1' : '0', format: FORMAT.general };
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -397,7 +399,7 @@ function cellFor(value) {
   const t = text.trim();
   if (NUMERIC.test(t)) {
     const n = Number(t);
-    return { type: 'n', value: t, format: Number.isInteger(n) ? (Math.abs(n) >= 10000 ? FORMAT.integer : FORMAT.general) : FORMAT.decimal };
+    return { type: 'n', value: t, format: Number.isInteger(n) && Math.abs(n) >= 10000 ? FORMAT.integer : FORMAT.general };
   }
   if (DOTTED.test(t)) return { type: 'n', value: t.replace(/\./g, ''), format: FORMAT.integer };
   if (COMMAED.test(t)) {
