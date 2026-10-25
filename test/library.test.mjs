@@ -305,6 +305,75 @@ section('places: the calls in the owner\'s screenshots, and nearby searches (stu
   }
 }
 
+/**
+ * Screenshot 7 (owner, 2026-10-25): "phở" near a point failed after 20 s with
+ * "it took too long". Measured that day, every public Overpass server timed out
+ * at 25 s while Nominatim answered in under one — and Nominatim's own search for
+ * the dish, filtered by name, finds the phở shops. So: a second server is asked
+ * when the first is slow, a failure falls back to Nominatim, and an Overpass
+ * that just failed is rested for a few minutes rather than waited on again.
+ */
+section('places: when Overpass does not answer, Nominatim does');
+{
+  const real = globalThis.fetch;
+  const asked = [];
+  let overpassMode = 'down';
+  lib.__places.reset({ hedge: 150, each: 600 });
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    asked.push(u);
+    if (u.includes('overpass')) {
+      if (overpassMode === 'down') return new Response('<html>504 Gateway Time-out</html>', { status: 504 });
+      // The first server hangs; the second answers.
+      if (u.includes('overpass-api.de')) {
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, 5000);
+          options.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(options.signal.reason);
+          });
+        });
+      }
+      return new Response(JSON.stringify({ elements: [{ type: 'node', id: 1, lat: 10.7676, lon: 106.6851, tags: { amenity: 'restaurant', name: 'Phở Lệ' } }] }), { status: 200 });
+    }
+    if (u.includes('nominatim')) {
+      const params = new URL(u).searchParams;
+      // Nominatim's own search for the word, as measured: phở shops, and schools whose names fold the same way.
+      const rows = params.get('amenity') === 'phở'
+        ? [
+            { name: 'Quán Phở 1954', category: 'amenity', type: 'restaurant', lat: '10.7680', lon: '106.6855', osm_type: 'node', osm_id: 11, address: { house_number: '12', road: 'Nguyễn Trãi' }, extratags: { opening_hours: '06:00-22:00' } },
+            { name: 'Trường Trung học phổ thông chuyên Lê Hồng Phong', category: 'amenity', type: 'school', lat: '10.7650', lon: '106.6820', osm_type: 'way', osm_id: 12, address: {} },
+            { name: 'Phở Hùng', category: 'amenity', type: 'restaurant', lat: '10.7690', lon: '106.6830', osm_type: 'node', osm_id: 13, address: {} },
+            { name: 'Phở Far Away', category: 'amenity', type: 'restaurant', lat: '10.9000', lon: '106.9000', osm_type: 'node', osm_id: 14, address: {} },
+          ]
+        : [];
+      return new Response(JSON.stringify(rows), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('[]', { status: 200 });
+  };
+  try {
+    const started = Date.now();
+    const pho = await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
+    check('Overpass down, the phở places still come back, from Nominatim', /Quán Phở 1954/.test(pho.content) && /Phở Hùng/.test(pho.content) && pho.widget?.points?.length === 2, pho.content?.slice(0, 200));
+    check('  not the school whose name folds like "phở", nor a place outside the circle', !/phổ thông|Far Away/.test(pho.content), pho.content);
+    check('  with its address and hours where known', /12 Nguyễn Trãi/.test(pho.content) && /06:00-22:00/.test(pho.content));
+    check('  and the app says where they came from, outside the data', /Nominatim/.test(pho.note || '') && !/Nominatim/.test(pho.content), pho.note);
+    check('  quickly, not after a long wait', Date.now() - started < 5000, `${Date.now() - started} ms`);
+    const overpassCalls = asked.filter((u) => u.includes('overpass')).length;
+    await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
+    check('an Overpass that just failed is rested, not asked again at once', asked.filter((u) => u.includes('overpass')).length === overpassCalls, `${overpassCalls} → ${asked.filter((u) => u.includes('overpass')).length}`);
+
+    lib.__places.reset({ hedge: 150, each: 3000 });
+    overpassMode = 'slow-first';
+    const t0 = Date.now();
+    const hedged = await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
+    check('a slow first server: the second is asked too, and its answer used', /Phở Lệ/.test(hedged.content) && Date.now() - t0 < 2500, `${Date.now() - t0} ms: ${hedged.content?.slice(0, 80)}`);
+  } finally {
+    globalThis.fetch = real;
+    lib.__places.reset();
+  }
+}
+
 section('a long route is thinned before it is stored');
 {
   const long = Array.from({ length: 5000 }, (_, i) => [105 + i / 5000, 21 + i / 10000]);
