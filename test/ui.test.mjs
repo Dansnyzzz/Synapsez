@@ -4948,6 +4948,122 @@ section('searching and reading the web is one card of sites, like Claude\'s');
   check('  transparent, a border and nothing else', /rgba\(0, 0, 0, 0\)|transparent/.test(card.background), card.background);
 }
 
+/**
+ * Screenshot 3 (owner, 2026-10-25): searches one after another, the way
+ * Claude draws them — a globe, the query and "10 results" on one line, the
+ * sites in a box under it that scrolls, and a thread down the left joining
+ * one search to the next. No tick, no "Searched the web" on every line.
+ */
+section('searches one after another read as Claude\'s: a thread of queries, each with its sites');
+{
+  const got = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const host = document.createElement('div');
+    host.style.width = '640px';
+    document.getElementById('messages').append(host);
+    const block = () => {
+      const turn = assistantMessage();
+      host.append(turn.node);
+      return turn;
+    };
+    const results = (n, site) =>
+      `${n} results.\n\n<untrusted source="search">\n` +
+      Array.from({ length: n }, (_, i) => `${i + 1}. Result ${i + 1} about it\n   https://${site}/page-${i + 1}.html`).join('\n') +
+      '\n</untrusted>';
+    const a = block().startTool({ id: 's1', name: 'web_search', input: { query: 'Chau 2025 AI customer service Vietnam' } });
+    const live = {
+      spinner: !!host.querySelector('.web__mark .mark--pending'),
+      count: host.querySelector('.web__count')?.textContent || '',
+    };
+    a.complete({ content: results(10, 'researchgate.net'), ms: 900 });
+    block().startTool({ id: 's2', name: 'web_search', input: { query: 'Zhang Yuan 2026 AI service failure' } }).complete({ content: results(9, 'arxiv.org'), ms: 800 });
+    const entries = [...host.querySelectorAll('.webrun > .block.web')];
+    const [first, second] = entries;
+    const list = first?.querySelector('.web__list');
+    const out = {
+      live,
+      runs: host.querySelectorAll('.webrun').length,
+      entries: entries.length,
+      queries: entries.map((e) => e.querySelector('.web__query')?.textContent),
+      counts: entries.map((e) => e.querySelector('.web__count')?.textContent),
+      globes: entries.filter((e) => e.querySelector('.web__mark svg')).length,
+      ticks: [...host.querySelectorAll('.mark')].filter((m) => m.textContent.trim() === '✓').length,
+      titleShown: first ? getComputedStyle(first.querySelector('.web__title')).position !== 'absolute' && first.querySelector('.web__title').getBoundingClientRect().width > 1 : null,
+      titleSaid: first?.querySelector('.web__title')?.textContent || '',
+      open: entries.every((e) => e.open),
+      rows: first?.querySelectorAll('.webrow').length,
+      boxed: list ? getComputedStyle(list).borderTopWidth !== '0px' : false,
+      scrolls: list ? list.scrollHeight > list.clientHeight + 4 && /auto|scroll/.test(getComputedStyle(list).overflowY) : false,
+      thread: first ? getComputedStyle(first, '::before').content !== 'none' : false,
+      lastThread: second ? getComputedStyle(second, '::before').content : '',
+    };
+    // A reply in between ends the thread: the next search starts another.
+    block().appendText('Here is what I found.');
+    block().startTool({ id: 's3', name: 'web_search', input: { query: 'a third search' } }).complete({ content: results(2, 'example.com'), ms: 100 });
+    out.runsAfterReply = host.querySelectorAll('.webrun').length;
+    host.remove();
+    return out;
+  });
+  check('while it searches, the line has its ring and no count yet', got.live.spinner && !got.live.count, JSON.stringify(got.live));
+  check('two searches in a row are one thread of two', got.runs === 1 && got.entries === 2, `${got.runs} runs, ${got.entries} entries`);
+  check('  each line: a globe, the query, and how many it found', got.globes === 2 && got.queries.join('|') === 'Chau 2025 AI customer service Vietnam|Zhang Yuan 2026 AI service failure' && /^10 (results|kết quả)$/.test(got.counts[0]) && /^9 (results|kết quả)$/.test(got.counts[1]), JSON.stringify({ q: got.queries, c: got.counts }));
+  check('  no tick on any of them', got.ticks === 0, String(got.ticks));
+  check('  "Searched the web" is said to a screen reader, not printed on every line', got.titleShown === false && /web/i.test(got.titleSaid), `${got.titleShown} ${got.titleSaid}`);
+  check('  the sites stay open under each query, in a box that scrolls', got.open && got.rows === 10 && got.boxed && got.scrolls, JSON.stringify({ open: got.open, rows: got.rows, boxed: got.boxed, scrolls: got.scrolls }));
+  check('  joined by a thread down the left, ending at the last', got.thread && got.lastThread === 'none', `${got.thread} ${got.lastThread}`);
+  check('a reply between searches starts a new thread', got.runsAfterReply === 2, String(got.runsAfterReply));
+}
+
+/**
+ * Screenshot 2 (owner, 2026-10-25): searching earlier conversations is drawn
+ * as Claude's "Relevant chats · 2 results" — each conversation found is a row
+ * that opens it.
+ */
+section('a search of earlier conversations lists them as "Relevant chats", each one opening');
+{
+  const got = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    const handle = turn.startTool({ id: 'r1', name: 'search_chats', input: { query: 'CRM AI' } });
+    const pending = !!turn.node.querySelector('.recall .mark--pending');
+    handle.complete({
+      content: '2 earlier conversations outside projects:\n<untrusted source="earlier conversations">\n- "Điều chỉnh đề tài nghiên cứu CRM và AI" (2026-10-20)\n- "Chọn biến trung gian cho model deepfake CRM" (2026-10-19)\n</untrusted>',
+      ms: 120,
+      chats: [
+        { id: 'chat-a', title: 'Điều chỉnh đề tài nghiên cứu CRM và AI', updated: '2026-10-20T03:00:00.000Z' },
+        { id: 'chat-b', title: 'Chọn biến trung gian cho model deepfake CRM', updated: '2026-10-19T03:00:00.000Z' },
+      ],
+    });
+    const card = turn.node.querySelector('.recall');
+    const rows = [...(card?.querySelectorAll('[data-open-chat]') || [])];
+    const out = {
+      pending,
+      card: !!card,
+      separate: turn.node.querySelectorAll('.block.tool').length,
+      title: card?.querySelector('.recall__title')?.textContent || '',
+      count: card?.querySelector('.recall__count')?.textContent || '',
+      rows: rows.map((r) => ({ id: r.getAttribute('data-open-chat'), text: r.textContent.trim(), tag: r.tagName })),
+      icons: rows.filter((r) => r.querySelector('svg')).length,
+      boxed: card ? getComputedStyle(card.querySelector('.recall__list')).borderTopWidth !== '0px' : false,
+    };
+    turn.node.remove();
+
+    // Saved before rows carried ids: the titles still list, from the words.
+    const old = assistantMessage();
+    document.getElementById('messages').append(old.node);
+    old.startTool({ id: 'r2', name: 'search_chats', input: { query: 'x' } }).complete({ content: '1 earlier conversation outside projects:\n<untrusted source="earlier conversations">\n- "Viết lại BM02 cho model mới" (2026-10-18)\n  They said: hello\n</untrusted>', ms: 9 });
+    out.fromWords = [...old.node.querySelectorAll('.recall__row')].map((r) => r.textContent.trim());
+    old.node.remove();
+    return out;
+  });
+  check('it is its own card, ringed while it looks', got.card && got.pending && got.separate === 0, JSON.stringify({ card: got.card, pending: got.pending }));
+  check('  headed "Relevant chats", with how many it found', /^(Relevant chats|Hội thoại liên quan)$/.test(got.title) && /^2 (results|kết quả)$/.test(got.count), `${got.title} | ${got.count}`);
+  check('  a row per conversation, with its title and a chat icon, in a box', got.rows.length === 2 && got.rows[0].text === 'Điều chỉnh đề tài nghiên cứu CRM và AI' && got.icons === 2 && got.boxed, JSON.stringify(got.rows));
+  check('  each row opens its conversation', got.rows.every((r) => r.tag === 'BUTTON') && got.rows.map((r) => r.id).join() === 'chat-a,chat-b');
+  check('a result saved before the ids still lists its titles', got.fromWords.join('|') === 'Viết lại BM02 cho model mới', JSON.stringify(got.fromWords));
+}
+
 section('reopening a conversation mid-answer rejoins it rather than blanking');
 {
   const store = await initStore();

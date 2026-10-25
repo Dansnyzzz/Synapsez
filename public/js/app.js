@@ -2740,6 +2740,14 @@ $('messages').addEventListener('click', async (event) => {
     return;
   }
 
+  // A conversation "search past chats" found opens from its row (owner, 2026-10-25).
+  const recalled = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-open-chat]'));
+  if (recalled) {
+    event.preventDefault();
+    openChat(recalled.dataset.openChat).catch((err) => toast(err.message, 'error'));
+    return;
+  }
+
   /**
    * The pill on a schedule card opens what it describes.
    *

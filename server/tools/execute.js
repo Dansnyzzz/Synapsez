@@ -198,6 +198,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
  *   shot?: any,
  *   schedule?: any,
  *   answered?: string,
+ *   chats?: { id: string, title: string, updated: string }[],
  * }} ToolResult
  */
 
@@ -516,6 +517,8 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           schedule: result.schedule,
           // What the person answered on a question card, in their words.
           answered: result.answered,
+          // The conversations search_chats found, listed on screen as "Relevant chats".
+          chats: Array.isArray(result.chats) ? result.chats : undefined,
           // A picture of the page the cloud browser is on, kept like a worker's.
           // A picture the tool already holds — `look_at` on a file of this
           // account — is referenced, not copied. Only cloud tools, this

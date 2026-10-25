@@ -1535,7 +1535,10 @@ async function searchChatsTool({ query, limit }, { userId, chatId }) {
     const body = recent
       .map((c) => `- "${c.title}" (${new Date(c.updated_at).toISOString().slice(0, 10)})${c.opening ? `: ${excerpt(c.opening, [], 200)}` : ''}`)
       .join('\n');
-    return `The ${recent.length} most recent conversation${recent.length === 1 ? '' : 's'} ${where}:\n${untrusted('earlier conversations', body)}`;
+    return {
+      content: `The ${recent.length} most recent conversation${recent.length === 1 ? '' : 's'} ${where}:\n${untrusted('earlier conversations', body)}`,
+      chats: recent.map((c) => foundChat(c.id, c.title, c.updated_at)),
+    };
   }
 
   let rows = await store.recallChats(userId, { ...scope, terms, mode: 'all' });
@@ -1581,8 +1584,20 @@ async function searchChatsTool({ query, limit }, { userId, chatId }) {
     .map((c) => `- "${c.title}" (${new Date(c.updated).toISOString().slice(0, 10)})\n${c.lines.join('\n')}`)
     .join('\n');
   const note = loose ? ' (no conversation had every word, so these have some of them)' : '';
-  return `${chats.size} earlier conversation${chats.size === 1 ? '' : 's'} ${where}${note}:\n${untrusted('earlier conversations', body)}${heldLine}`;
+  return {
+    content: `${chats.size} earlier conversation${chats.size === 1 ? '' : 's'} ${where}${note}:\n${untrusted('earlier conversations', body)}${heldLine}`,
+    // Only those quoted above — a held one is neither quoted nor listed.
+    chats: [...chats].map(([id, c]) => foundChat(id, c.title, c.updated)),
+  };
 }
+
+/**
+ * A conversation `search_chats` found, as the screen lists it: Claude's
+ * "Relevant chats", each row opening its conversation (owner, 2026-10-25).
+ * It travels beside the text the model reads, never in it — the model has no
+ * use for the ids, and the person's own conversations are theirs to open.
+ */
+const foundChat = (id, title, updated) => ({ id: String(id), title: String(title || ''), updated: new Date(updated).toISOString() });
 
 /**
  * Fewer steps than this is not a plan, and drawing one anyway is the failure

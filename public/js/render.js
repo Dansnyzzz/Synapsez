@@ -11,7 +11,7 @@ import { rememberSearch, rememberPage, auditCitations } from './cite.js';
 import { normalisePlan, planItemHtml, planChange } from './plan.js';
 import { canonicalInput, TITLED } from './tool-aliases.js';
 import { registerPictures, pictureThumb, pictureUrl, openGallery } from './gallery.js';
-import { doneMark } from './icons.js';
+import { doneMark, ICONS } from './icons.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -60,6 +60,17 @@ export function forDisplay(text) {
     .replace(/<untrusted source="[^"]*">\n?/g, '')
     .replace(/\n?<\/untrusted>/g, '')
     .trim();
+}
+
+/**
+ * The conversations a `search_chats` answer names, read off its words — for a
+ * result saved before the answer carried them (owner, 2026-10-25). Titles and
+ * days only: with no id to open, those rows do not open.
+ *
+ * @returns {{ id: string, title: string, updated: string }[]}
+ */
+export function chatsFromWords(content) {
+  return [...forDisplay(content).matchAll(/^- "(.+)" \((\d{4}-\d{2}-\d{2})\)/gm)].map((m) => ({ id: '', title: m[1], updated: m[2] }));
 }
 
 /**
@@ -1826,10 +1837,10 @@ export function userMessage(text, files = [], id = null, at = null, skills = [])
 }
 
 /**
- * The newest web card and the block it is in, so the next step's block can
- * add to it rather than draw another beside it (see `webCard`). Module-level
- * because each step is a separate `assistantMessage`.
- * @type {{ card: any, wrap: HTMLElement, body: HTMLElement } | null}
+ * The newest web entry, the thread it is on and the block it is in, so the
+ * next step's block can add to them rather than draw another beside them (see
+ * `webCard`). Module-level because each step is a separate `assistantMessage`.
+ * @type {{ card: any, run: HTMLElement, wrap: HTMLElement, body: HTMLElement } | null}
  */
 let lastWebCard = null;
 
@@ -1900,19 +1911,23 @@ export function assistantMessage() {
   }
 
   /**
-   * The web card: searching, reading a page, extracting, calling an API,
-   * reading a feed — one card per run of them, like Claude's "Searched the web".
+   * The web, drawn as Claude draws it (owner, 2026-10-25, screenshot 3):
+   * searching, reading a page, extracting, calling an API, reading a feed.
    *
-   * The header says what happened and the query it was for; the body lists every
-   * site involved as a row — its icon, its title, its domain — pointing at the
-   * exact address used. A page read after a search is the same row as its
-   * result, not a second one. The raw JSON that used to fill these cards is not
-   * something anybody reads; the tool's answer is still what the model got.
+   * Each search is a line — a globe, the query, "10 results" — with the sites
+   * it found in a box under it that scrolls: each row its icon, its title, its
+   * domain, pointing at the exact address used. A page read after a search is
+   * the same row as its result, not a second one. Searches one after another
+   * hang from one thread down the left (`.webrun`), so a run of six queries
+   * reads as one piece of work. The raw JSON that used to fill these cards is
+   * not something anybody reads; the tool's answer is still what the model got.
    *
-   * One search, one card. A second query gets a card of its own rather than a
-   * "· +1" on the first, which hid what was asked and mixed two lists of
-   * results into one. `webs` holds every card of the current run, because two
-   * searches sent together finish in either order and each must settle its own.
+   * One search, one line: a second query gets a line of its own rather than a
+   * "· +1" on the first, which hid what was asked and mixed two lists into one.
+   * `webs` holds every line of the current run, because two searches sent
+   * together finish in either order and each must settle its own. The lists
+   * stay open when the run ends, as Claude's do: each is a box a few rows tall,
+   * not ten rows pushing the answer off the screen.
    */
   let web = null;
   /** @type {Set<any>} */
@@ -1922,7 +1937,6 @@ export function assistantMessage() {
     for (const w of webs) {
       w.live = false;
       paintWeb(w);
-      w.node.open = false;
     }
     webs.clear();
     web = null;
@@ -1931,15 +1945,24 @@ export function assistantMessage() {
   function paintWeb(w) {
     const working = w.live && w.pending > 0;
     const allFailed = !working && w.calls > 0 && w.failures === w.calls;
-    w.mark.innerHTML = working ? MARK_PENDING : `<span class="mark">${allFailed ? '✗' : '✓'}</span>`;
+    // A globe once it is done — no tick — a ring while it works, a cross when it failed.
+    const state = working ? 'pending' : allFailed ? 'failed' : 'done';
+    if (w.mark.dataset.state !== state) {
+      w.mark.innerHTML = working ? MARK_PENDING : allFailed ? '<span class="mark">✗</span>' : `<span class="mark mark--icon">${ICONS.globe}</span>`;
+      w.mark.dataset.state = state;
+    }
+    // Still said, for a screen reader; printed only on a line that read pages,
+    // where there is no query to stand in for it.
     w.title.textContent = t(w.searched ? (working ? 'web.searching' : 'web.searched') : working ? 'web.reading' : 'web.read');
+    w.node.classList.toggle('web--search', w.searched);
     w.query.textContent = w.queryText;
+    w.count.textContent = w.searched && !working && !allFailed ? t(w.hits === 1 ? 'web.result' : 'web.results', { n: w.hits }) : '';
     w.node.classList.toggle('web--error', allFailed);
     w.list.innerHTML = [...w.rows.values()].map((row) => webRowHtml(row)).join('');
     w.list.hidden = w.rows.size === 0;
   }
 
-  /** The card this call belongs in: a search that follows a search starts a new one. */
+  /** The line this call belongs on: a search that follows a search starts a new one. */
   function webCard(isSearch) {
     if (web && !(isSearch && web.searched)) return web;
     /**
@@ -1948,49 +1971,105 @@ export function assistantMessage() {
      * Every saved step of a turn is drawn in a block of its own, so four page
      * reads in four steps drew four "Read the web" cards stacked one after
      * another. When this block has shown nothing yet and the one right before
-     * it ended on a web card, the read joins that card instead — the same work,
-     * one card. A reasoning card or a line of reply between them is a real
-     * break, and so is a second search (one query, one card).
+     * it ended on the thread, the read joins its last line and a search hangs
+     * a new line from the same thread — the same work, one piece. A reasoning
+     * card or a line of reply between them is a real break.
      */
     const last = lastWebCard;
-    if (
-      !web &&
-      last &&
+    const carried =
+      !!last &&
       body.childElementCount === 0 &&
       last.wrap.nextElementSibling === wrap &&
       last.card.node.isConnected &&
-      // Nothing drawn after the card: in its own block, and in the block that
+      // Nothing drawn after the thread: in its own block, and in the block that
       // last joined it (which holds nothing of its own).
-      last.card.node.parentElement?.lastElementChild === last.card.node &&
-      (last.body === last.card.node.parentElement || last.body.childElementCount === 0) &&
-      !(isSearch && last.card.searched)
-    ) {
+      last.run.parentElement?.lastElementChild === last.run &&
+      (last.body === last.run.parentElement || last.body.childElementCount === 0);
+    if (!web && carried && !(isSearch && last.card.searched)) {
       web = last.card;
       web.live = true;
-      web.node.open = true;
       webs.add(web);
       // The chain continues from this block: the next step joins it here too.
-      lastWebCard = { card: web, wrap, body };
+      lastWebCard = { ...last, wrap, body };
       return web;
     }
     leaveRun();
     closeSteps();
+    // The thread: this block's own while it is the last thing drawn, the one
+    // carried over from the block before, or a new one.
+    const mine = web?.node.parentElement;
+    const run = mine && body.lastElementChild === mine ? mine : carried ? last.run : body.appendChild(el('div', 'webrun'));
     const node = el('details', 'block web');
     node.open = true;
-    // The chevron is the one every `details.block` draws after its summary —
-    // a second one of its own here put two arrows side by side.
     const summary = el('summary', 'web__head');
     const mark = el('span', 'web__mark');
     const title = el('span', 'web__title');
     const query = el('span', 'web__query');
-    summary.append(mark, title, query);
+    const count = el('span', 'web__count');
+    summary.append(mark, title, query, count);
     const list = el('div', 'web__list');
     node.append(summary, list);
-    body.append(node);
-    web = { node, mark, title, query, list, rows: new Map(), queryText: '', pending: 0, calls: 0, failures: 0, searched: false, live: true };
+    run.append(node);
+    web = { node, mark, title, query, count, list, rows: new Map(), queryText: '', hits: 0, pending: 0, calls: 0, failures: 0, searched: false, live: true };
     webs.add(web);
-    lastWebCard = { card: web, wrap, body };
+    lastWebCard = { card: web, run, wrap, body };
     return web;
+  }
+
+  /**
+   * Earlier conversations, found by `search_chats` — Claude's "Relevant chats ·
+   * 2 results" (owner, 2026-10-25, screenshot 2): a row per conversation, in a
+   * box, each one opening it (`data-open-chat`, served in app.js). A result
+   * saved before the rows carried ids still lists its titles, read off the
+   * words, as rows that do not open.
+   */
+  function startRecall(call) {
+    leaveRun();
+    closeGroup();
+    const node = el('details', 'block recall');
+    node.open = true;
+    node.title = call.name;
+    const summary = el('summary', 'recall__head');
+    const mark = el('span', 'recall__mark', MARK_PENDING);
+    const title = el('span', 'recall__title');
+    title.textContent = t('recall.title');
+    const count = el('span', 'recall__count');
+    summary.append(mark, title, count);
+    const list = el('div', 'recall__list');
+    list.hidden = true;
+    node.append(summary, list);
+    body.append(node);
+    return {
+      complete(result) {
+        node.classList.toggle('tool--error', !!result.isError);
+        mark.innerHTML = result.isError ? '<span class="mark">✗</span>' : `<span class="mark mark--icon">${ICONS.chat}</span>`;
+        const found = result.isError ? [] : Array.isArray(result.chats) ? result.chats : chatsFromWords(result.content);
+        count.textContent = result.isError ? '' : t(found.length === 1 ? 'web.result' : 'web.results', { n: found.length });
+        list.replaceChildren(
+          ...found.map((chat) => {
+            const row = el(chat.id ? 'button' : 'div', 'recall__row');
+            if (chat.id) {
+              /** @type {HTMLButtonElement} */ (row).type = 'button';
+              row.dataset.openChat = chat.id;
+            }
+            row.innerHTML = ICONS.chat;
+            const name = el('span', 'recall__name');
+            name.textContent = chat.title || t('chat.untitled');
+            row.append(name);
+            if (chat.updated) row.title = `${chat.title}\n${String(chat.updated).slice(0, 10)}`;
+            return row;
+          }),
+        );
+        list.hidden = !found.length;
+        // Nothing found, or refused: what it said, in a line, rather than an empty box.
+        node.querySelector('.recall__note')?.remove();
+        if (!found.length) {
+          const note = el('p', 'recall__note');
+          note.textContent = forDisplay(result.content).split('\n')[0];
+          node.append(note);
+        }
+      },
+    };
   }
 
   /**
@@ -2074,7 +2153,9 @@ export function assistantMessage() {
         if (call.name === 'web_search') {
           // What a citation chip's card shows beyond the name in the reply.
           if (!result.isError) rememberSearch(result.content);
-          for (const hit of parseResults(result.content)) {
+          const hits = parseResults(result.content);
+          w.hits = hits.length;
+          for (const hit of hits) {
             const row = w.rows.get(hit.url);
             if (row) row.title ||= hit.title;
             else w.rows.set(hit.url, { url: hit.url, title: hit.title, state: null });
@@ -2087,9 +2168,6 @@ export function assistantMessage() {
           if (!result.isError) rememberPage(url, row.title);
         }
         paintWeb(w);
-        // Folded once nothing in it is still loading: the sites are one click
-        // away, and an open list of ten results pushed the answer off screen.
-        if (w.pending === 0) w.node.open = false;
       },
     };
   }
@@ -2963,6 +3041,7 @@ export function assistantMessage() {
     /** Start a collapsed card for a tool call; returns a handle to complete it. */
     startTool(call) {
       if (WEB_TOOLS.has(call.name)) return startWeb(call);
+      if (call.name === 'search_chats') return startRecall(call);
       if (call.name === 'update_plan') return startPlanCard(call);
       const family = stepFamily(call.name);
       if (family) return startStep(call, family);

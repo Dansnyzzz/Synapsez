@@ -3365,7 +3365,7 @@ details.block .step__key {
 }
 /* A tool line's icon (icons.js), and one 18px slot for every state of a line —
    ring, icon, cross — so its words do not move when the ring becomes an icon. */
-.mark.mark--icon { width: 18px; height: 18px; }
+.mark.mark--icon { width: 18px; height: 18px; color: var(--text-faint); }
 details.block > summary > .mark:not(.mark--pending) { width: 18px; }
 details.block > summary > .mark--pending { margin: 0 3.5px; }
 
@@ -9682,39 +9682,83 @@ label.btn:has(+ input[type='file']:focus-visible) {
 }
 .webrow.is-failed .webrow__title { color: var(--text-faint); text-decoration: line-through; }
 
-/* The web card in a reply: transparent, a border, the query beside the title. */
-.block.web {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: transparent;
-  overflow: hidden;
+/* ── the web, and earlier conversations, as Claude draws them ─────────────
+ *
+ * (owner, 2026-10-25, screenshots 2 and 3.) A search is a line — a globe, the
+ * query, "10 results" at the far end — and the sites under it in a box a few
+ * rows tall that scrolls. Searches one after another hang from one thread down
+ * the left, from globe to globe. "Relevant chats" is the same shape, with a
+ * row per conversation. No tick, no chevron: the count is at the end. */
+.webrun { margin: 0 0 8px; }
+.webrun > .block.web { position: relative; margin: 0; padding-bottom: 12px; }
+.webrun > .block.web:last-child { padding-bottom: 0; }
+/* The thread, from under this line's globe down to the next one's. */
+.webrun > .block.web:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 8.5px;
+  top: 32px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--line);
 }
-.web__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 10px 14px;
-  cursor: pointer;
-  list-style: none;
-}
-.web__head::-webkit-details-marker { display: none; }
-.web__head:hover { background: var(--tint); }
-.web__mark { flex: none; display: grid; place-items: center; width: 16px; color: var(--ok); }
+details.block.web > summary::after,
+details.block.recall > summary::after { content: none; }
+.web__mark,
+.recall__mark { flex: none; display: grid; place-items: center; width: 18px; }
 .web--error .web__mark,
-.web--error .web__mark .mark { color: var(--danger); }
-/* A failed card says so at its edge, like every other tool card. */
-.block.web.web--error { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
-.web__title { flex: none; color: var(--text-dim); font-size: 14px; }
-.web__query { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 14px; }
-.web__list {
+.web--error .web__mark .mark,
+.recall.tool--error .recall__mark .mark { color: var(--danger); }
+.web__title { flex: none; color: var(--text-dim); font-size: 14.5px; }
+/* A search line's query says what it did; the words stay for a screen reader. */
+.web--search .web__title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.web__query { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-size: 14.5px; }
+.web__count,
+.recall__count { flex: none; margin-left: auto; padding-left: 12px; color: var(--text-faint); font-size: 13px; white-space: nowrap; }
+.web__count:empty,
+.recall__count:empty { display: none; }
+.recall__title { flex: 0 1 auto; min-width: 0; color: inherit; font-size: 14.5px; }
+.web__list,
+.recall__list {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
-  max-height: 420px;
-  padding: 0 8px 8px;
+  gap: 0;
+  margin: 2px 0 0 28px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   overflow: hidden auto;
 }
+/* About four and a half rows, so it is plain there are more to scroll to. */
+.web__list { max-height: 212px; }
+.recall__list { max-height: 280px; }
+.recall__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14.5px;
+  text-align: left;
+}
+.recall__row > svg { flex: none; color: var(--text-faint); }
+.recall__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.recall__row { cursor: pointer; }
+button.recall__row:hover { background: var(--tint-2); }
+button.recall__row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.recall__note { margin: 2px 0 0 28px; color: var(--text-faint); font-size: 13px; }
 
 /* ── Citations ────────────────────────────────────────────────
    The chip after a sourced sentence (drawn by markdown.js) and the card it
