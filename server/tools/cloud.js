@@ -991,10 +991,19 @@ async function showWidgetTool({ title, svg, html }) {
   const caption = String(title || '').trim();
   if (!caption) throw new Error('Give the picture a short title, so it is labelled.');
 
-  const markup = String(svg || html || '').trim();
+  let markup = String(svg || html || '').trim();
   if (!markup) throw new Error('Give either `svg` or `html` to draw.');
   if (svg && html) {
     throw new Error('Give `svg` or `html`, not both — they are two different pictures.');
+  }
+  /*
+   * The parts of a drawing sent without the <svg> round them — `<rect …><text …>`
+   * — are still a drawing, so they get their element rather than a refusal. No
+   * viewBox is guessed here: the conversation measures what was drawn and fits
+   * the frame to it (`widgetFrame` in render.js).
+   */
+  if (svg && !/^<svg[\s>]/i.test(markup) && /^(?:<\?xml[^>]*>\s*)?<(?:defs|g|rect|circle|ellipse|line|path|polyline|polygon|text|image|use|marker|linearGradient|radialGradient|style|title|desc)[\s>/]/i.test(markup)) {
+    markup = `<svg xmlns="http://www.w3.org/2000/svg">${markup.replace(/^<\?xml[^>]*>\s*/i, '')}</svg>`;
   }
   if (markup.length > MAX_WIDGET_BYTES) {
     throw new Error(

@@ -1041,6 +1041,58 @@ function sentTile(file) {
  * quotation" and a paragraph claiming there is one — and the two buttons are the
  * two things anybody does next.
  */
+/** The frame's drawing, when the whole widget is one `<svg>` — or null. */
+function soleDrawing(body) {
+  const only = body.children.length === 1 ? body.firstElementChild : null;
+  return only && only.tagName.toLowerCase() === 'svg' ? only : null;
+}
+
+/**
+ * Fit a drawing to its frame: large, clear, centred both ways (owner,
+ * 2026-10-25, screenshot 6).
+ *
+ * A model draws on a canvas it picked — 640×360 — and fills part of it, so a
+ * frame fitted to the canvas shows the drawing in a corner over an empty band.
+ * What was actually drawn is measured (`getBBox`), the view is set to that with
+ * a little margin, and the drawing is scaled to the reply's width — up to twice
+ * its own size, so three boxes do not become a poster — and no taller than
+ * most of the window. `meet`, the default, keeps the proportions and centres
+ * whatever room is left. Measured once: a second fit keeps the first view.
+ */
+function fitDrawing(svg) {
+  const view = svg.ownerDocument.defaultView;
+  if (!svg.dataset.fitted) {
+    let box = null;
+    try {
+      box = svg.getBBox();
+    } catch {
+      /* not rendered: keep the view it came with */
+    }
+    let natural = 0;
+    if (box && box.width > 1 && box.height > 1) {
+      const pad = Math.max(8, Math.max(box.width, box.height) * 0.03);
+      const parts = [box.x - pad, box.y - pad, box.width + pad * 2, box.height + pad * 2];
+      svg.setAttribute('viewBox', parts.map((n) => Math.round(n * 100) / 100).join(' '));
+      natural = parts[2];
+    } else if (!svg.getAttribute('viewBox')) {
+      // Nothing to measure, and no view: the size it was given becomes one, so it can scale.
+      const w = parseFloat(svg.getAttribute('width') || '');
+      const h = parseFloat(svg.getAttribute('height') || '');
+      if (w > 0 && h > 0) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      natural = w || 0;
+    } else {
+      natural = svg.viewBox?.baseVal?.width || 0;
+    }
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
+    svg.style.width = natural > 0 ? `min(100%, ${Math.round(natural * 2)}px)` : '100%';
+    svg.style.height = 'auto';
+    svg.dataset.fitted = '1';
+  }
+  // The page's window, not the frame's: see the note on the frame's style.
+  svg.style.maxHeight = `${Math.round(Math.max(240, (globalThis.innerHeight || view?.innerHeight || 800) * 0.72))}px`;
+}
+
 /**
  * A widget, drawn in the transcript.
  *
@@ -1097,13 +1149,27 @@ export function widgetFrame(widget) {
     try {
       const body = frame.contentDocument?.body;
       if (!body) return;
+      const drawing = soleDrawing(body);
+      if (drawing) fitDrawing(drawing);
       const height = Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height));
-      if (height > 0) frame.style.height = `${height + 4}px`;
+      if (height > 0) frame.style.height = `${height}px`;
     } catch {
       // Cross-origin or detached: leave the CSS height, which still works.
     }
   };
   frame.addEventListener('load', fit);
+  // A drawing as wide as the reply grows taller when the reply widens (a
+  // sidebar closed, a window resized), so its frame is measured again — on a
+  // change of width only, or setting the height would set this off again.
+  if (typeof ResizeObserver === 'function') {
+    let width = 0;
+    new ResizeObserver(([entry]) => {
+      const now = Math.round(entry.contentRect.width);
+      if (!now || now === width) return;
+      width = now;
+      fit();
+    }).observe(frame);
+  }
 
   /**
    * The same colour scheme inside the frame as outside it.
@@ -1150,7 +1216,14 @@ export function widgetFrame(widget) {
     // No scrollbar inside a picture: the drawing is scaled to fit instead, and
     // anything genuinely taller scrolls without a bar drawn through it.
     'html{scrollbar-width:none}html::-webkit-scrollbar{display:none}' +
-    'body{padding:10px}svg{max-width:100%;max-height:64vh;height:auto;display:block;margin:0 auto}' +
+    // No height cap in `vh` here: inside a frame that is the frame's own
+    // height, so a 340px frame capped the drawing at 218px and was then
+    // measured down to it — the small diagram over an empty band (owner,
+    // 2026-10-25). `fitDrawing` caps it against the page's window instead.
+    // Anything narrower than the frame — a table, a fixed-width card — sits
+    // in its middle.
+    'body{padding:12px}body>*{margin-left:auto;margin-right:auto;max-width:100%}' +
+    'svg{max-width:100%;height:auto;display:block;margin:0 auto}' +
     `table{border-collapse:collapse;font-size:12px}td,th{border:1px solid ${rule};padding:4px 8px}` +
     'a{color:#7cc7ff}' +
     '</style>' +

@@ -7813,6 +7813,63 @@ section('a picture in a frame sits on the conversation, not on a white slab');
   check('  with copy and download', oldChart.tools === 2);
 }
 
+/**
+ * Screenshot 6 (owner, 2026-10-25): a flow diagram sat small at the top of its
+ * frame with an empty band under it. The drawing is measured, its empty margin
+ * cut, and it is scaled up to the width of the reply and centred both ways,
+ * with the frame exactly as tall as the picture.
+ */
+section('a diagram fills its frame, centred both ways, with no empty band');
+{
+  const fit = await page.evaluate(async () => {
+    const { widgetNode } = await import('/js/render.js');
+    // Drawn in the top-left of a 640×360 canvas, as the model's was: boxes up
+    // to y≈120 and x≈420, nothing below or to the right of them.
+    const markup =
+      '<svg viewBox="0 0 640 360" width="640" height="360" xmlns="http://www.w3.org/2000/svg">' +
+      '<rect x="16" y="20" width="120" height="60" rx="10" fill="#1f6feb"/><rect x="156" y="20" width="120" height="60" rx="10" fill="#238636"/>' +
+      '<rect x="296" y="20" width="120" height="60" rx="10" fill="#9e6a03"/><text x="20" y="115" fill="currentColor" font-size="12">Mỗi bước lặp lại được</text></svg>';
+    const host = document.createElement('div');
+    host.style.width = '900px';
+    document.getElementById('thread').append(host);
+    const node = widgetNode({ title: 'Quy trình', markup, kind: 'svg' });
+    const frame = node.querySelector('iframe');
+    frame.loading = 'eager';
+    const loaded = new Promise((r) => {
+      frame.addEventListener('load', () => setTimeout(r, 120), { once: true });
+      setTimeout(r, 3000);
+    });
+    host.append(node);
+    await loaded;
+    const svg = frame.contentDocument.querySelector('svg');
+    const f = frame.getBoundingClientRect();
+    const s = svg.getBoundingClientRect();
+    // Where the drawing's own shapes are, in the page's pixels.
+    const shapes = [...svg.querySelectorAll('rect, text')].map((el) => el.getBoundingClientRect());
+    const ink = {
+      top: Math.min(...shapes.map((r) => r.top)) + f.top,
+      bottom: Math.max(...shapes.map((r) => r.bottom)) + f.top,
+      left: Math.min(...shapes.map((r) => r.left)) + f.left,
+      right: Math.max(...shapes.map((r) => r.right)) + f.left,
+    };
+    const out = {
+      frameW: Math.round(f.width),
+      frameH: Math.round(f.height),
+      svgW: Math.round(s.width),
+      inkW: Math.round(ink.right - ink.left),
+      gapTop: Math.round(ink.top - f.top),
+      gapBottom: Math.round(f.bottom - ink.bottom),
+      gapLeft: Math.round(ink.left - f.left),
+      gapRight: Math.round(f.right - ink.right),
+    };
+    host.remove();
+    return out;
+  });
+  check('the drawing is scaled up to the reply\'s width, not left at its own size', fit.inkW > 420 * 1.6, JSON.stringify(fit));
+  check('  centred across', Math.abs(fit.gapLeft - fit.gapRight) <= 8, `${fit.gapLeft} / ${fit.gapRight}`);
+  check('  and down, with no empty band under it', Math.abs(fit.gapTop - fit.gapBottom) <= 8 && fit.gapBottom < 60, `${fit.gapTop} / ${fit.gapBottom}`);
+}
+
 section('pinning a project puts it in the sidebar at once');
 {
   const shown = await page.evaluate(async () => {

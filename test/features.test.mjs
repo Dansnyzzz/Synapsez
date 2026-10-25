@@ -1138,6 +1138,41 @@ section('a list sent wrapped as XML-turned-JSON is read, not refused');
   check('an index-keyed object is read in order', indexed.ok && indexed.input.tasks.join() === 'a,b');
 }
 
+/**
+ * Screenshot 8 (owner, 2026-10-25): a model wrote the drawing's opening tag as
+ * the argument's name — `<svg viewBox="0 0 640 240" …>` became the key
+ * "svg viewBox=…" with the inside of the drawing as its value — and show_widget
+ * refused with "Give either `svg` or `html`" although the whole picture was
+ * there. It is put back together, and said so.
+ */
+section('a drawing whose opening tag became the argument\'s name is put back together');
+{
+  const { validateArguments } = await import('../server/tools/validate.js');
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  const schema = TOOLS_BY_NAME.show_widget.parameters;
+  const call = {
+    title: 'Quy trình làm việc của Synapsez',
+    'svg viewBox="0 0 640 240" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif"':
+      '<defs><marker id="a"><path d="M0,0 L0,6 L9,3 z"/></marker></defs><rect x="16" y="60" width="104" height="62" rx="10"/><text x="68" y="86">Bạn đặt yêu cầu</text>',
+  };
+  const checked = validateArguments(schema, call);
+  check('the call passes', checked.ok, checked.error);
+  const svg = String(checked.input?.svg || '');
+  check('the drawing has its <svg> element back, with its attributes', /^<svg viewBox="0 0 640 240" xmlns="http:\/\/www\.w3\.org\/2000\/svg" font-family="system-ui, sans-serif">/.test(svg) && svg.endsWith('</svg>'), svg.slice(0, 120));
+  check('  holding what was inside it', svg.includes('<rect x="16"') && svg.includes('Bạn đặt yêu cầu'));
+  check('  and the folded key is gone', !Object.keys(checked.input || {}).some((k) => k.startsWith('svg ')), Object.keys(checked.input || {}).join(' | '));
+  check('  and the model is told what happened', /svg/.test((checked.notes || []).join(' ')) && /name/.test((checked.notes || []).join(' ')), (checked.notes || []).join(' '));
+  const drawn = await CLOUD_IMPLEMENTATIONS.show_widget(checked.input, {});
+  check('and show_widget draws it', drawn?.widget?.markup?.startsWith('<svg'), JSON.stringify(drawn).slice(0, 160));
+
+  // Inside parts with no <svg> round them are a drawing too.
+  const bare = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Flow', svg: '<rect x="0" y="0" width="10" height="10"/><text x="2" y="8">A</text>' }, {});
+  check('svg parts sent without their <svg> element are wrapped in one', /^<svg [^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"[^>]*>/.test(bare?.widget?.markup || '') && bare.widget.markup.includes('<rect'), (bare?.widget?.markup || '').slice(0, 100));
+  // An ordinary unknown key is left alone: only a declared name plus attributes is a folded tag.
+  const other = validateArguments(schema, { title: 'x', svg: '<svg></svg>', 'note about it': 'y' });
+  check('an unrelated stray key is not mistaken for one', other.ok && other.input['note about it'] === 'y' && other.input.svg === '<svg></svg>');
+}
+
 section('a page\'s own pictures can be shown, and nothing else can');
 {
   const { pageImages } = await import('../server/tools/cloud.js');
