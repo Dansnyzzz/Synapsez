@@ -114,7 +114,7 @@ export function createModelBrowser({ onPick }) {
     }
 
     // Selecting an aggregator means the library alone; the built-ins run on your
-    // own Anthropic, OpenAI or Google key and are a different thing entirely.
+    // own Google key and are a different thing entirely.
     const builtin = isLibrary(provider)
       ? []
       : matchingBuiltins(data.builtin, { ...parsed, tier, family, provider });
@@ -173,9 +173,9 @@ export function createModelBrowser({ onPick }) {
     }
   }
 
+  // Anthropic and OpenAI have no tab: their models come through the two
+  // routers (owner, 2026-10-25). See OFFERED_KEY_PROVIDERS in catalog.js.
   const PROVIDER_LABEL = {
-    anthropic: 'Anthropic',
-    openai: 'OpenAI',
     google: 'Google',
     openrouter: 'OpenRouter',
     orcarouter: 'OrcaRouter',
@@ -261,7 +261,7 @@ export function createModelBrowser({ onPick }) {
     if (tier !== 'paid' && (provider === 'all' || provider === 'openrouter')) sections.push(autoCardHtml());
 
     if (!builtin.length && !models.length) {
-      // Say *why* it is empty. "Anthropic + Free" matches nothing for a real
+      // Say *why* it is empty. "Google + Free" matches nothing for a real
       // reason, and a generic "nothing matched" would leave people hunting.
       const why =
         tier === 'free' && provider && !isLibrary(provider)

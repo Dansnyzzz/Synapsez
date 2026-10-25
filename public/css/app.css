@@ -2607,89 +2607,89 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
 
 /* ── Tool cards ─────────────────────────────────────────────────
  *
- * One design for every card a tool draws — a single call, a run of browser
- * steps, a call still being written — and the same one the web card uses:
- * glass rather than a filled slab, so a turn with twelve tool calls reads as a
- * light column of events over the conversation instead of a stack of boxes.
- * The header is the whole card at rest: a mark, what was done, the one
- * argument that matters, how long it took. */
+ * One quiet line per tool, after Claude's (owner, 2026-10-25): no box round
+ * the card, and none round what it holds. At rest the line is the whole card —
+ * the tool's icon, what was done, the one argument that matters, how long it
+ * took — and opening it shows the call and its answer as text on the page, the
+ * way a command's output already was (2026-10-19). Twelve calls used to read
+ * as twelve boxes, each holding two more. */
 details.block {
-  --card-line: var(--line);
-  margin: 0 0 10px;
-  border: 1px solid var(--card-line);
-  border-radius: 14px;
+  margin: 0 0 6px;
+  border: 0;
   background: transparent;
-  overflow: hidden;
-  transition: border-color 0.2s, box-shadow 0.2s;
 }
 details.block > summary {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 10px 14px;
+  gap: 8px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 5px 0;
+  border-radius: 8px;
   color: var(--text-dim);
-  font-size: 14px;
+  font-size: 14.5px;
   cursor: pointer;
   list-style: none;
-  transition: background 0.15s;
+  transition: color 0.15s;
 }
-details.block > summary:hover { background: var(--tint); }
-details.block > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 14px; }
+details.block > summary:hover { color: var(--text); }
+details.block > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 details.block > summary::-webkit-details-marker { display: none; }
+/* The chevron follows the words, as on Claude's rows, rather than waiting at
+   the far edge of the column. */
 details.block > summary::after {
   content: '›';
-  margin-left: auto;
   flex: none;
   color: var(--text-faint);
+  font-size: 16px;
   transition: transform 0.18s;
 }
 details.block[open] > summary::after { transform: rotate(90deg); }
-/* Open, the header is set off from what it opened by a hairline. */
-details.block:not(.web)[open] > summary { border-bottom: 1px solid var(--line-soft); }
+/* Under the line, indented to its words. `minmax(0, 1fr)` so nothing inside —
+   a long argument, a wide output — can push the column wider than the reply. */
 details.block .block__body {
-  padding: 12px 14px 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 2px 0 10px 26px;
   color: var(--text-dim);
   font-size: 13.5px;
 }
-/* The finished marks read the way the web card's do: green done, red failed. */
+/* A finished line shows the tool's icon, quiet; a failed one its red cross. */
 details.block > summary > .mark,
-details.block > summary > .step__mark { color: var(--ok); }
-/* Still working: the card's edge carries a soft light, so the eye finds the
-   one live card in a long turn without a second spinner. */
-details.block:has(> summary .mark--pending) {
-  --card-line: color-mix(in srgb, var(--accent) 45%, var(--line));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), 0 0 18px -6px color-mix(in srgb, var(--accent) 45%, transparent);
-}
-/* Output and arguments: clear, with an edge — the grey fill read as a slab
-   over the glass card. Long output scrolls inside its own box, the way the
-   arguments always did, instead of making the transcript a page long. */
+details.block > summary > .step__mark { color: var(--text-faint); }
+.mark--icon svg { display: block; }
+/* What a call was given and what it answered: text on the page, monospace,
+   with no box (owner, 2026-10-25). Long output still scrolls in place rather
+   than making the transcript a page long. */
 details.block pre {
   margin: 0;
-  padding: 11px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   max-height: 320px;
   overflow: auto;
+  color: var(--text-dim);
   font-family: var(--mono);
   font-size: 12.2px;
   line-height: 1.55;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
-/* The headline of a tool card: what was done, in words. Deliberately not
-   monospace any more — it stopped being a function name and became a sentence,
-   and setting a sentence in a code face is what made the transcript read as a
-   log file. */
+/* The headline of a tool card: what was done, in words. Not monospace — it is
+   a sentence, not a function name — and not bold: it is a line in a column of
+   them, the way Claude sets its rows. */
 .tool__name {
-  flex: none;
-  /* Full-strength text and weight find the action in a turn; amber is kept
-     for warnings, which a finished step is not. */
-  color: var(--text);
-  font-weight: 600;
-  font-size: 14px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font-weight: 400;
+  font-size: 14.5px;
 }
 /* The argument that matters — a path, a URL, a query. Still monospace, because
    this half really is a literal value and the difference between `l` and `1` in
@@ -2699,6 +2699,7 @@ details.block pre {
    shrink below its content, so without it a long path widens the row instead of
    being cut, and on a phone the chevron leaves the screen. */
 .tool__arg {
+  flex: 0 1 auto;
   min-width: 0;
   color: var(--text-faint);
   font-family: var(--mono);
@@ -2708,43 +2709,36 @@ details.block pre {
   text-overflow: ellipsis;
 }
 .tool__time { color: var(--text-faint); font-size: 11.5px; }
-/* A call still being written: the same card, before it can be opened — and
-   lit the way a working card is, because it is one. */
-.tool--draft {
-  margin: 0 0 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
-  border-radius: 14px;
-  background: transparent;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), 0 0 18px -6px color-mix(in srgb, var(--accent) 45%, transparent);
-}
+/* A call still being written: the same line, before it can be opened. */
+.tool--draft { margin: 0 0 6px; }
 .tool__draft {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 10px 14px;
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 0;
   color: var(--text-dim);
-  font-size: 14px;
+  font-size: 14.5px;
 }
 .tool__draft .tool__time { font-variant-numeric: tabular-nums; }
-/* A failed card says so at its edge as well as in its words. */
-details.block.tool--error,
-details.block.steps--error { --card-line: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+/* A failed line says so in its words and its mark. */
 .tool--error .tool__name { color: var(--danger); }
 details.block.tool--error > summary > .mark,
 .tool--error .mark { color: var(--danger); }
 
 /* The exact call's arguments, inside the card. The function's name is on the
    card's tooltip rather than in a badge nobody read. */
-.tool__call { margin-bottom: 10px; }
+.tool__call { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .tool__call:empty { display: none; }
-/* Two classes deep on purpose: `details.block pre` and `.step__out pre` both
-   set a size, and this has to outrank them without reaching for `!important`. */
+/* The call is the quieter half: what it was asked, fainter than what it answered.
+   Two classes deep on purpose: `details.block pre` and `.step__out pre` both set
+   a size, and this has to outrank them without reaching for `!important`. */
 .block .tool__args,
 .step__out .tool__args {
   margin: 0;
   max-height: 260px;
   overflow: auto;
+  color: var(--text-faint);
   font-size: 11.5px;
 }
 
@@ -2768,9 +2762,9 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
-  font-weight: 600;
-  font-size: 14px;
+  color: inherit;
+  font-weight: 400;
+  font-size: 14.5px;
 }
 /* …but never all of it while there is a command beside it: the title is the
    model's word for what ran and the command is what ran, so the command keeps
@@ -2821,7 +2815,16 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
   padding: 8px 14px 12px;
   list-style: none;
   display: grid;
+  /* A row can never widen the card, whatever it holds. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
+}
+/* A browsing session's rows, open, in the same light box as a run of commands. */
+details.block.steps:not([data-family='work']) > .steps__list {
+  margin: 2px 0 6px;
+  padding: 6px 14px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
 }
 
 .step {
@@ -2932,8 +2935,8 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
 /* The same share for the command as in the card's title. */
 .step--work .step__verb:has(+ .step__detail) { max-width: 62%; }
 .step--work .step__detail { flex: 1 1 0; font-family: var(--mono); font-size: 12px; }
-.step__body { display: grid; gap: 6px; margin: 4px 0 8px 24px; }
-.step__body .tool__call { display: grid; gap: 6px; margin: 0; }
+.step__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin: 4px 0 8px 24px; }
+.step__body .tool__call { margin: 0; }
 /* What a command printed sits on the page itself, as in Claude Code — the
    command keeps its box, the output has none (owner, 2026-10-19). Two classes
    deep, to outrank `details.block pre`. */
@@ -2977,18 +2980,19 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
   padding: 2px 0;
 }
 .step__out > summary::-webkit-details-marker { display: none; }
+/* A browsing step's output, like every tool's: text on the page, no box. */
 .step__out pre {
   margin: 4px 0 2px;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   max-height: 320px;
   overflow: auto;
   font-family: var(--mono);
   font-size: 12px;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* ── the commands card, after Claude's (owner, 2026-10-19) ─────────────────
@@ -2999,32 +3003,10 @@ details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
  * end. No border round the card and no tick on it: the words say what was
  * done, a failure says so in them, a spinner says it is still going. Scoped to
  * this family; a browsing session keeps its card. */
-details.block.steps[data-family='work'] {
-  border: 0;
-  border-radius: 0;
-  overflow: visible;
-  transition: none;
-}
-details.block.steps[data-family='work']:has(> summary .mark--pending) { box-shadow: none; }
-details.block.steps[data-family='work'] > summary {
-  gap: 8px;
-  min-height: 32px;
-  padding: 5px 0;
-  border-radius: 8px;
-  color: var(--text-dim);
-  font-size: 14.5px;
-}
-details.block.steps[data-family='work'] > summary:hover { background: none; color: var(--text); }
-details.block.steps[data-family='work'][open] > summary { border-bottom: 0; }
 details.block.steps[data-family='work'] > summary > .mark:not(.mark--pending) { display: none; }
 /* The chevron follows the words; the pictures take the far end. */
-details.block.steps[data-family='work'] > summary::after { order: 5; margin-left: -2px; font-size: 16px; }
-details.block.steps[data-family='work'] .steps__title {
-  position: relative;
-  color: inherit;
-  font-weight: 400;
-  font-size: 14.5px;
-}
+details.block.steps > summary::after { order: 5; margin-left: -2px; }
+details.block.steps[data-family='work'] .steps__title { position: relative; }
 details.block.steps.steps--error[data-family='work'] .steps__title { color: var(--danger); }
 /* The old title fades up and away as the new one comes in. */
 details.block.steps[data-family='work'] .steps__title.is-changing { animation: steps-title-in 0.24s ease-out; }
@@ -3049,9 +3031,7 @@ details.block.steps[data-family='work'] .steps__title[data-was]::after {
 }
 .steps__thumbs[hidden],
 details.block.steps[open] > summary > .steps__thumbs { display: none; }
-details.block.steps[data-family='work'] > summary > .steps__thumbs { order: 6; }
-/* Beside a browsing card's chevron, which keeps the far end. */
-details.block.steps:not([data-family='work']) > summary:has(> .steps__thumbs:not([hidden]))::after { margin-left: 10px; }
+details.block.steps > summary > .steps__thumbs { order: 6; }
 .steps__more { margin-right: 4px; color: var(--text-dim); font-size: 13px; font-variant-numeric: tabular-nums; }
 .pic-thumb {
   padding: 0;
@@ -3332,6 +3312,11 @@ details.block .step__key {
 @media (prefers-reduced-motion: reduce) {
   .mark--pending { animation: none; }
 }
+/* A tool line's icon (icons.js), and one 18px slot for every state of a line —
+   ring, icon, cross — so its words do not move when the ring becomes an icon. */
+.mark.mark--icon { width: 18px; height: 18px; }
+details.block > summary > .mark:not(.mark--pending) { width: 18px; }
+details.block > summary > .mark--pending { margin: 0 3.5px; }
 
 .plan {
   margin: 0 0 14px;

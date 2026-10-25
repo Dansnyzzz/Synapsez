@@ -930,7 +930,7 @@ export const vi = {
   'onb.2.recommend':
     'Gợi ý cho người mới: OpenRouter — một key với tới rất nhiều model, trong đó có model miễn phí.',
   'onb.2.many':
-    'Hỗ trợ Anthropic, OpenAI, Google Gemini, OpenRouter và OrcaRouter. Mỗi nhà cung cấp giữ được nhiều key; Synapsez dùng lần lượt theo thứ tự trong danh sách.',
+    'Hỗ trợ Google Gemini, OpenRouter và OrcaRouter — model Claude và GPT có qua OpenRouter và OrcaRouter. Mỗi nhà cung cấp giữ được nhiều key; Synapsez dùng lần lượt theo thứ tự trong danh sách.',
   'onb.2.open': 'Mở phần key',
   'onb.2.done': 'Xong — tài khoản của bạn đã có key.',
   'onb.2.pending': 'Chưa có key nào. Chưa có key thì trợ lý chưa trả lời được.',

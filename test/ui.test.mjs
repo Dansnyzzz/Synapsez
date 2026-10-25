@@ -1907,9 +1907,11 @@ check('the search box stays inside the dialog', fit.searchInside);
 
 section('choosing a model by provider');
 const providers = await page.$$eval('#provider-filter .seg__btn', (els) => els.map((e) => e.dataset.provider));
+// Anthropic and OpenAI models come through OpenRouter and OrcaRouter, so their
+// own tabs are gone (owner, 2026-10-25).
 check(
-  'every provider is offered',
-  providers.join() === 'all,anthropic,openai,google,openrouter,orcarouter',
+  'every provider is offered, and Anthropic and OpenAI no longer have tabs of their own',
+  providers.join() === 'all,google,openrouter,orcarouter',
   providers.join(' '),
 );
 
@@ -1924,11 +1926,7 @@ check(
  */
 const AUTO = 'auto';
 
-for (const [provider, pattern] of [
-  ['anthropic', /^anthropic\//],
-  ['openai', /^openai\//],
-  ['google', /^google\//],
-]) {
+for (const [provider, pattern] of [['google', /^google\//]]) {
   await page.click(`#provider-filter [data-provider="${provider}"]`);
   await page.waitForTimeout(500);
   const view = await page.evaluate(() => ({
@@ -2018,8 +2016,8 @@ check('OpenRouter brings the vendor chips back', library.chipsHidden === false);
   }
 }
 
-// "Anthropic + Free" is legitimately empty. Saying why beats shrugging.
-await page.click('#provider-filter [data-provider="anthropic"]');
+// "Google + Free" is legitimately empty — its built-in models are paid. Saying why beats shrugging.
+await page.click('#provider-filter [data-provider="google"]');
 await page.click('#tier-filter [data-tier="free"]');
 await page.waitForTimeout(500);
 const empty = await page.textContent('#model-results .hint').catch(() => '');
@@ -2373,6 +2371,10 @@ section('the getting-started guide');
   await page.click('#onb-keys');
   await page.waitForTimeout(600);
   check('it opens the key settings', await page.isVisible('#provider-list'));
+  // Anthropic's and OpenAI's own keys are no longer offered to an account that
+  // holds none — their models come through the routers (owner, 2026-10-25).
+  const offered = await page.$$eval('#provider-list [data-save-key]', (els) => els.map((e) => e.getAttribute('data-save-key')));
+  check('the key list offers Google, OpenRouter and OrcaRouter, and not Anthropic or OpenAI', offered.join() === 'google,openrouter,orcarouter', offered.join());
   await page.fill('[data-key="openrouter"]', 'sk-or-v1-ui-test-key');
   await page.click('[data-save-key="openrouter"]');
   await page.waitForTimeout(900);
@@ -4162,7 +4164,8 @@ section('browser steps across model steps are one card, and each settles when it
     fill.complete({ content: 'no element', isError: true, ms: 0 });
     out.tally = card.querySelector('.steps__tally').textContent;
     out.partial = card.classList.contains('steps--partial') && !card.classList.contains('steps--error');
-    out.tickAfterOneFailure = card.querySelector(':scope > summary > .mark').textContent === '✓';
+    // Done, a card shows its kind's icon rather than a tick (owner, 2026-10-25).
+    out.tickAfterOneFailure = !!card.querySelector(':scope > summary > .mark--icon');
 
     const b3 = block();
     b3.appendThinking('Done, now the answer.');
@@ -4185,7 +4188,7 @@ section('browser steps across model steps are one card, and each settles when it
   check('the next model step\'s browser action joins the same card', live.cards === 1, `${live.cards} cards`);
   check('  which spins again while that step runs', live.spinsAgainForTheNewStep === true);
   check('a step reads as the action it was — `fill` drawn as typing, with what was typed', /^(Type|Gõ)$/.test(live.fillVerb) && /#3 ← “TestMSSV123”/.test(live.fillDetail), `${live.fillVerb} | ${live.fillDetail}`);
-  check('one failed step of two: a tick, with the failure counted — not a red title over a green tick', live.tickAfterOneFailure && live.partial && /1 (failed|lỗi)/.test(live.tally), live.tally);
+  check('one failed step of two: done, with the failure counted — not a red title over a cross', live.tickAfterOneFailure && live.partial && /1 (failed|lỗi)/.test(live.tally), live.tally);
   check('the reasoning that led to the answer stands before the answer, outside the card', live.answerThoughtLeftTheCard === true);
   check('  and the card folds when the answer comes, holding both steps and the one thought between them', live.foldedWhenTheAnswerCame && live.stepsInCard === 2 && live.thoughtsInCard === 1, `${live.stepsInCard} steps, ${live.thoughtsInCard} thoughts`);
   check('nothing is left spinning', live.noSpinners === true);
@@ -5717,10 +5720,50 @@ section('the reasoning card: a window on the newest lines, or the whole of it');
   check('with the words just arrived glowing', card.folded.glowing);
   check('and says it is folded', card.folded.expanded === 'false');
   check('opened, the whole trace shows', card.open.full && card.open.expanded === 'true', JSON.stringify(card.open));
-  check('finished, it is ticked and no longer live', !card.done.live && card.done.tick === '✓', JSON.stringify(card.done));
+  // No tick on finished reasoning: it says nothing the title does not (owner, 2026-10-25).
+  check('finished, it is no longer live and carries no tick', !card.done.live && card.done.tick === undefined, JSON.stringify(card.done));
   check('nothing is left glowing', card.done.glowing === 0);
   check('no words were lost settling the glow', card.done.text === 30, String(card.done.text));
   check('and folded again it rests on the last lines', card.done.atEnd);
+}
+
+/**
+ * Every tool's call and answer, in every kind of card, is text on the page —
+ * no frame round it, the way a command's output already was (owner,
+ * 2026-10-25, screenshots 9–11: "rà soát đảm bảo mọi tools liên quan đều không
+ * có"). And a long argument wraps inside its card rather than widening it past
+ * the reply, which is what cut screenshot 10's question off at the edge.
+ */
+section('no tool\'s call or answer has a frame, and nothing widens its card');
+{
+  const got = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const host = document.createElement('div');
+    host.style.width = '520px';
+    document.getElementById('messages').append(host);
+    const block = () => {
+      const turn = assistantMessage();
+      host.append(turn.node);
+      return turn;
+    };
+    const question = 'Với mỗi ảnh trong sheet (có tên file vẽ bên trên), hãy cho biết: đây có phải ảnh xe BMW M5 Touring không, và màu sơn là gì? ' + 'x'.repeat(160);
+    // A single card, a row of a run of commands, and a browsing step.
+    block().startTool({ id: 'f1', name: 'image_search', input: { query: 'BMW M5 Touring', count: 12 } }).complete({ content: '1. A\nhttps://commons.wikimedia.org/wiki/File:A.jpg', ms: 15300 });
+    block().startTool({ id: 'f2', name: 'look_at', input: { path: '/tmp/m5/sheet.jpg', question } }).complete({ content: 'No picture here.', ms: 900, isError: true });
+    block().startTool({ id: 'f3', name: 'cloud_browser', input: { action: 'open', url: 'https://example.com' } }).complete({ content: 'Page: Example', ms: 700 });
+    for (const d of host.querySelectorAll('details')) d.open = true;
+    const framed = [...host.querySelectorAll('pre')]
+      .filter((pre) => getComputedStyle(pre).borderTopWidth !== '0px' || getComputedStyle(pre).borderLeftWidth !== '0px')
+      .map((pre) => pre.className || pre.parentElement?.className || 'pre');
+    const cards = [...host.querySelectorAll('.msg__body > details.block')];
+    const wider = cards.filter((card) => card.scrollWidth > host.clientWidth + 1 || card.getBoundingClientRect().width > host.clientWidth + 1).map((card) => card.className);
+    const cardFrames = cards.filter((card) => getComputedStyle(card).borderTopWidth !== '0px').map((card) => card.className);
+    host.remove();
+    return { pres: host.querySelectorAll('pre').length, framed, wider, cardFrames };
+  });
+  check('every call and answer drawn is text, with no frame round it', got.pres >= 5 && got.framed.length === 0, JSON.stringify(got));
+  check('no card is a box either', got.cardFrames.length === 0, got.cardFrames.join(', '));
+  check('and a long argument wraps inside its card instead of widening it', got.wider.length === 0, got.wider.join(', '));
 }
 
 section('a chat begun from a shelf says what it is setting up');
@@ -6783,7 +6826,9 @@ section('a working card is marked, not animated');
     const done = {
       spinners: turn.node.querySelectorAll('.spinner').length,
       pending: turn.node.querySelectorAll('.mark--pending').length,
-      ticks: [...turn.node.querySelectorAll('.mark')].filter((m) => m.textContent === '✓').length,
+      // Done, the reasoning carries no mark and the card its tool's icon (owner, 2026-10-25).
+      ticks: turn.node.querySelectorAll('.mark--icon').length + (turn.node.querySelector('.think__head .mark') ? 1 : 0),
+      icons: turn.node.querySelectorAll('.mark--icon').length,
     };
 
     turn.node.remove();
@@ -6792,7 +6837,7 @@ section('a working card is marked, not animated');
 
   check('a card in progress spins nothing', marks.working.spinners === 0, String(marks.working.spinners));
   check('it is marked as waiting instead', marks.working.pending === 2, String(marks.working.pending));
-  check('finishing turns both marks into ticks', marks.done.ticks === 2, JSON.stringify(marks.done));
+  check('finishing settles both: the reasoning loses its mark, the card shows its icon', marks.done.ticks === 1 && marks.done.icons === 1, JSON.stringify(marks.done));
   check('and leaves nothing waiting', marks.done.pending === 0, String(marks.done.pending));
 }
 
@@ -7154,7 +7199,7 @@ section('a step that acted on an address says so as a link');
       ...before,
       openedByLink,
       afterHref: after?.getAttribute('href') || '',
-      tick: turn.node.querySelector('.tool summary .mark')?.textContent || '',
+      tick: turn.node.querySelector('.tool summary .mark--icon svg') ? 'icon' : turn.node.querySelector('.tool summary .mark')?.textContent || '',
     };
     turn.node.remove();
     return out;
@@ -7165,7 +7210,7 @@ section('a step that acted on an address says so as a link');
   check('a readable form of it is what shows', card.shown.length > 0 && !card.shown.startsWith('https://'), card.shown);
   check('clicking it does not unfold the card', card.openedByLink === false);
   check('and it is still a link once the call finishes', card.afterHref === card.href, card.afterHref);
-  check('with the tick beside it', card.tick === '✓', card.tick);
+  check('with its tool\'s icon beside it, not a tick', card.tick === 'icon', card.tick);
 
   // A page the web card read: the row is the link, and it lives in the body,
   // so following it can never fold or unfold the card.

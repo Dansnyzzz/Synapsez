@@ -11,6 +11,7 @@ import { rememberSearch, rememberPage, auditCitations } from './cite.js';
 import { normalisePlan, planItemHtml, planChange } from './plan.js';
 import { canonicalInput, TITLED } from './tool-aliases.js';
 import { registerPictures, pictureThumb, pictureUrl } from './gallery.js';
+import { doneMark } from './icons.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -1909,7 +1910,7 @@ export function assistantMessage() {
     return {
       complete(result) {
         block.classList.toggle('tool--error', !!result.isError);
-        paint(`<span class="mark">${result.isError ? '✗' : '✓'}</span>`);
+        paint(doneMark(call.name, !!result.isError));
         if (result.isError) {
           const why = el('pre');
           why.textContent = result.content || '';
@@ -2032,9 +2033,16 @@ export function assistantMessage() {
     run.tally.textContent = tally.join(' · ');
     const working = run.pending > 0 || thinking;
     const allFailed = !working && run.count > 0 && run.failures === run.count;
-    const want = working ? MARK_PENDING : `<span class="mark">${allFailed ? '✗' : '✓'}</span>`;
+    // Done, the card shows what kind of run it was — a browser, a terminal —
+    // rather than a tick (owner, 2026-10-25). Compared by state, not markup:
+    // an icon's markup does not survive the parser character for character.
+    const state = working ? 'pending' : allFailed ? 'failed' : 'done';
     const mark = run.node.querySelector(':scope > summary > .mark');
-    if (mark && mark.outerHTML !== want) mark.outerHTML = want;
+    if (mark && mark.dataset.state !== state) {
+      mark.outerHTML = working ? MARK_PENDING : doneMark(run.family === 'work' ? 'run_command' : run.family, allFailed);
+      const fresh = run.node.querySelector(':scope > summary > .mark');
+      if (fresh) fresh.dataset.state = state;
+    }
     run.node.classList.toggle('steps--error', allFailed);
     run.node.classList.toggle('steps--partial', !allFailed && run.failures > 0);
   }
@@ -2344,9 +2352,10 @@ export function assistantMessage() {
         running?.remove();
         item.classList.toggle('step--error', !!result.isError);
         mark.innerHTML = '';
-        // A row of commands that went well needs no tick: its words say what
-        // was done, as Claude's do. A failure keeps its cross.
-        mark.textContent = result.isError ? '✗' : work ? '' : '✓';
+        // A row that went well needs no tick: its words say what was done, as
+        // Claude's do — a browsing step as much as a command (owner,
+        // 2026-10-25). A failure keeps its cross.
+        mark.textContent = result.isError ? '✗' : '';
         if (result.ms != null) time.textContent = ms(result.ms);
         run.pending = Math.max(0, run.pending - 1);
         if (result.isError) run.failures += 1;
@@ -2625,7 +2634,9 @@ export function assistantMessage() {
       thinkingDone = true;
       settleThought();
       thinkingBlock.classList.remove('is-live');
-      thinkingBlock.querySelector('.think__head .mark')?.replaceWith(el('span', 'mark', '✓'));
+      // No tick once it is done: "Reasoning" already says it finished, and a
+      // green mark beside every one of them was noise (owner, 2026-10-25).
+      thinkingBlock.querySelector('.think__head .mark')?.remove();
       thinkingBlock.querySelector('.think__title').textContent = t('chat.reasoning');
       const text = thinkingBody.firstElementChild;
       for (const span of text.querySelectorAll('.think__new')) span.replaceWith(span.textContent);
@@ -2864,7 +2875,7 @@ export function assistantMessage() {
         complete(result) {
           block.classList.toggle('tool--error', !!result.isError);
           paintHead(
-            `<span class="mark">${result.isError ? '✗' : '✓'}</span>`,
+            doneMark(call.name, !!result.isError),
             result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '',
           );
           output.textContent = forDisplay(result.content) || t('chat.noOutput');

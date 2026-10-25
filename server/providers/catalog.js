@@ -216,6 +216,30 @@ export const PROVIDERS = {
 };
 
 /**
+ * The providers Settings offers a key for.
+ *
+ * Claude and GPT both come through OpenRouter and OrcaRouter, so a key of
+ * Anthropic's or OpenAI's own was a second way to the same models, with tabs
+ * of its own in the model browser to match (owner, 2026-10-25: removed "to
+ * optimise"). The adapters stay: a deployment-wide key still works, and so does
+ * a conversation already running on one of their models.
+ */
+export const OFFERED_KEY_PROVIDERS = ['google', 'openrouter', 'orcarouter'];
+
+/**
+ * The key rows Settings draws for this account: the offered providers, and any
+ * other the account holds a key of its own for — so a key saved before is still
+ * seen, and can be taken away. A deployment-wide key alone is not a reason.
+ *
+ * @param {Record<string, { own?: boolean }>} status  from `providerStatus`
+ */
+export function keyProviderMeta(status = {}) {
+  return Object.fromEntries(
+    Object.entries(PROVIDERS).filter(([id]) => OFFERED_KEY_PROVIDERS.includes(id) || status?.[id]?.own === true),
+  );
+}
+
+/**
  * How many output tokens to allow a library model, when nobody has said.
  *
  * OpenRouter publishes a real figure for most models and it is stored; this is

@@ -943,7 +943,7 @@ export const en = {
     'An API key is like a password that lets Synapsez call an AI model for you. Get one from the provider and paste it into Settings → Providers.',
   'onb.2.recommend': 'If you are new: OpenRouter — one key reaches a great many models, some of them free.',
   'onb.2.many':
-    'Anthropic, OpenAI, Google Gemini, OpenRouter and OrcaRouter are supported. Each provider holds several keys; Synapsez uses them in the order they are listed.',
+    'Google Gemini, OpenRouter and OrcaRouter are supported — Claude and GPT models come through OpenRouter and OrcaRouter. Each provider holds several keys; Synapsez uses them in the order they are listed.',
   'onb.2.open': 'Open the key settings',
   'onb.2.done': 'Done — your account has a key.',
   'onb.2.pending': 'No key yet. Until there is one, the assistant cannot answer.',

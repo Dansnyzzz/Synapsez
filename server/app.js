@@ -35,7 +35,7 @@ import { getStore, initStore, isServerless } from './store/index.js';
 import { RUN_LEASE_STALE_MS } from './store/pg.js';
 import { workerStatus, usesInProcessTools, handleIndexPayload } from './localTools.js';
 import { publish, subscribe, poll, forget as forgetScreen } from './screenHub.js';
-import { PROVIDERS } from './providers/catalog.js';
+import { keyProviderMeta } from './providers/catalog.js';
 import {
   browse,
   refreshLibrary,
@@ -853,7 +853,8 @@ export function createApp() {
         usage: { ...usage, limit: limitFor(req.user) },
         prefs,
         providers,
-        providerMeta: PROVIDERS,
+        // The key rows Settings draws — see OFFERED_KEY_PROVIDERS.
+        providerMeta: keyProviderMeta(providers),
         library,
         tools: TOOLS.map(({ name, scope, readOnly, description }) => ({
           name,

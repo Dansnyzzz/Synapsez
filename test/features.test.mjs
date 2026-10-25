@@ -1354,13 +1354,25 @@ section('the getting-started guide says only what is true');
 {
   const { vi } = await import('../public/js/locales/vi.js');
   const { en } = await import('../public/js/locales/en.js');
-  const { PROVIDERS } = await import('../server/providers/catalog.js');
+  const { PROVIDERS, OFFERED_KEY_PROVIDERS } = await import('../server/providers/catalog.js');
   const { cloudBudgets } = await import('../server/sandbox.js');
-  const labels = Object.values(PROVIDERS).map((p) => p.label);
+  // The providers Settings offers a key for — Anthropic's and OpenAI's own keys
+  // are no longer offered; their models come through the two routers (owner, 2026-10-25).
+  const labels = OFFERED_KEY_PROVIDERS.map((id) => PROVIDERS[id].label);
+  const retired = Object.keys(PROVIDERS).filter((id) => !OFFERED_KEY_PROVIDERS.includes(id)).map((id) => PROVIDERS[id].label);
+  check('Anthropic and OpenAI are the providers whose own key is no longer offered', retired.join() === 'Anthropic,OpenAI', retired.join());
+  {
+    const { keyProviderMeta } = await import('../server/providers/catalog.js');
+    const none = Object.keys(keyProviderMeta({}));
+    check('Settings offers only those three keys to an account that holds no other', none.join() === 'google,openrouter,orcarouter', none.join());
+    // An account that saved an Anthropic key before still sees it — to see it is there and to take it away.
+    const held = Object.keys(keyProviderMeta({ anthropic: { own: true, keys: [{ position: 1 }] }, openai: { own: false, shared: true } }));
+    check('…and still shows a key the account already holds, but not a deployment-wide one', held.join() === 'anthropic,google,openrouter,orcarouter', held.join());
+  }
   for (const [lang, dict] of [['vi', vi], ['en', en]]) {
     const many = String(dict['onb.2.many'] || '');
-    check(`${lang}: the key step names every provider there is`, labels.every((label) => many.includes(label)), `${labels.filter((l) => !many.includes(l)).join(', ')} missing from: ${many}`);
-    const named = ['Mistral', 'Groq', 'DeepSeek', 'Cohere', 'xAI', 'Azure'].filter((other) => many.includes(other));
+    check(`${lang}: the key step names every provider Settings offers`, labels.every((label) => many.includes(label)), `${labels.filter((l) => !many.includes(l)).join(', ')} missing from: ${many}`);
+    const named = ['Mistral', 'Groq', 'DeepSeek', 'Cohere', 'xAI', 'Azure', ...retired].filter((other) => many.includes(other));
     check(`${lang}:   and none there is not`, named.length === 0, named.join(', '));
     const limits = String(dict['onb.3.limits'] || '');
     check(`${lang}: the free limits are OpenRouter's own figures`, /\b20\b/.test(limits) && /\b50\b/.test(limits) && /1[.,]000/.test(limits), limits);
