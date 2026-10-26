@@ -176,7 +176,10 @@ check(
   const gate = await page.evaluate(() => {
     const box = document.getElementById('gate-consent').getBoundingClientRect();
     const words = document.getElementById('gate-consent-text');
-    const first = words.getClientRects()[0] || words.getBoundingClientRect();
+    // The label is a flex item — one box for all its lines — so the first line
+    // is measured on the words that open it.
+    const opening = words.querySelector('[data-i18n="gate.consent"]') || words;
+    const first = opening.getClientRects()[0] || opening.getBoundingClientRect();
     const about = document.getElementById('gate-about');
     return {
       name: !!document.getElementById('gate-name'),
@@ -255,8 +258,11 @@ section('a new account is shown the guide, once');
       cut: [...document.querySelectorAll('#onb-steps .onb__dot-label')]
         .filter((n) => n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1)
         .map((n) => n.textContent),
+      // One row, each tab one line tall: two of them wrapped and sat lower (owner, 2026-10-26).
+      heights: [...new Set([...document.querySelectorAll('#onb-steps .onb__dot button')].map((b) => Math.round(b.getBoundingClientRect().height)))],
     };
   });
+  check('  its six tabs sit on one line, the same height', look.heights.length === 1, JSON.stringify(look.heights));
   check('  its clip has no caption over it', look.caption === false);
   check('  its bar of buttons is solid, so no words show through it', look.footOpaque, JSON.stringify(look));
   check('  and every step is named whole', look.cut.length === 0, look.cut.join(' | '));
@@ -352,6 +358,24 @@ section("the account at the foot of the sidebar, and its menu");
   });
   check('Settings at the foot of the sidebar is now the account: a letter and the username', !foot.oldSettings && foot.inFoot && foot.letter === 'U' && foot.name === 'ui.tester', JSON.stringify(foot));
   check('  New chat is a plus; Projects a tray, Artifacts two pages, as in Claude', foot.plus === 'M10 4v12M4 10h12' && foot.projects === 1 && foot.artifacts === 1, JSON.stringify(foot));
+
+  // New chat is lit on the blank screen it leads to, and only there (owner, 2026-10-26).
+  const lit = async () =>
+    page.evaluate(() => {
+      const button = document.getElementById('new-chat');
+      const other = document.getElementById('open-search');
+      return { current: button.getAttribute('aria-current'), sameAsOthers: getComputedStyle(button).color === getComputedStyle(other).color };
+    });
+  await page.click('#new-chat');
+  await page.waitForTimeout(300);
+  const onNew = await lit();
+  await page.click('#open-projects');
+  await page.waitForTimeout(500);
+  const onShelf = await lit();
+  await page.click('#new-chat');
+  await page.waitForTimeout(300);
+  check('New chat is lit on a new conversation', onNew.current === 'page', JSON.stringify(onNew));
+  check('  and is a row like the others anywhere else — a shelf, here', onShelf.current === null && onShelf.sameAsOthers, JSON.stringify(onShelf));
 
   await page.click('#account-button');
   await page.waitForTimeout(300);
@@ -461,13 +485,17 @@ section("the account at the foot of the sidebar, and its menu");
     const button = document.getElementById('account-button');
     const circle = button.querySelector('.account__avatar').getBoundingClientRect();
     const box = button.getBoundingClientRect();
+    const sidebar = document.getElementById('sidebar').getBoundingClientRect();
     return {
       nameHidden: !button.querySelector('.account__name').getClientRects().length,
       centred: Math.abs(circle.left + circle.width / 2 - (box.left + box.width / 2)) <= 2,
       title: button.title,
+      // At the foot, as when open — not risen to sit under the icons (owner, 2026-10-26).
+      fromBottom: Math.round(sidebar.bottom - box.bottom),
     };
   });
   check('collapsed to a rail, the account is its circle, with the name on hover', rail.nameHidden && rail.centred && rail.title === 'ui.tester', JSON.stringify(rail));
+  check('  and it stays at the foot of the sidebar', rail.fromBottom >= 0 && rail.fromBottom <= 32, JSON.stringify(rail));
   await page.click('#sidebar-toggle');
   await page.waitForTimeout(400);
 }

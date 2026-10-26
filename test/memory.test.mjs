@@ -508,6 +508,11 @@ section('agreeing to the terms: recorded at sign-up, asked of an account that ne
   const agreed = await alice.call('POST', '/api/consent', LEGAL);
   const after = await alice.call('GET', '/api/bootstrap');
   check('agreeing to the current ones is recorded, and asks no more', agreed.status === 200 && after.body.consent?.agreed === true, `${agreed.status} ${JSON.stringify(after.body.consent)}`);
+  // Agreements are kept for good, so agreeing again adds nothing (review, 2026-10-26).
+  const count = async () => (await alice.call('GET', '/api/account/activity')).body.events.filter((e) => e.kind === 'consent_given').length;
+  const once = await count();
+  const again = await alice.call('POST', '/api/consent', LEGAL);
+  check('  agreeing again to what is already agreed records nothing more', again.status === 200 && (await count()) === once && once === 1, `${again.status} ${once}`);
   check("  one account's agreement is not another's", (await bob.call('GET', '/api/bootstrap')).body.consent?.agreed === false);
 }
 

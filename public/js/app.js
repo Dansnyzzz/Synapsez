@@ -1910,6 +1910,24 @@ function gotoShelf(which) {
 const onPage = (yes) => $('app').classList.toggle('is-on-page', yes);
 
 /**
+ * New chat is lit only where it leads — the blank screen of a new conversation,
+ * with no shelf over it — as Claude's "New" is; elsewhere it is a row like the
+ * others. It was accent-coloured everywhere, which said nothing about where you
+ * were (owner, 2026-10-26).
+ *
+ * Read off the shell's own classes whenever they change, because more than one
+ * place sets them (`setEmpty`, `onPage`, the project page) and a mark that one
+ * of them forgot to repaint would be the old bug again.
+ */
+function paintNewChat() {
+  const app = $('app');
+  const here = app.classList.contains('is-fresh') && !app.classList.contains('is-on-page');
+  if (here) $('new-chat').setAttribute('aria-current', 'page');
+  else $('new-chat').removeAttribute('aria-current');
+}
+new window.MutationObserver(paintNewChat).observe($('app'), { attributes: true, attributeFilter: ['class'] });
+
+/**
  * Take the run off screen without touching it.
  *
  * Navigating away used to *abort* the stream. That was the right fix for a real

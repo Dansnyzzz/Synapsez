@@ -1272,7 +1272,7 @@ export const vi = {
   'gate.consentTerms': 'Điều khoản dịch vụ',
   'gate.consentUsage': 'Chính sách sử dụng',
   'gate.consentAnd': 'và',
-  'legal.banner': 'Synapsez đã có Điều khoản dịch vụ và Chính sách sử dụng, và thông báo xử lý dữ liệu cá nhân đã được cập nhật. Hãy đọc và đồng ý để tiếp tục dùng Synapsez:',
+  'legal.banner': 'Điều khoản dịch vụ, Chính sách sử dụng và thông báo xử lý dữ liệu cá nhân có phiên bản mới. Hãy đọc và bấm đồng ý:',
   'legal.agree': 'Tôi đồng ý',
   'legal.thanks': 'Cảm ơn bạn — đã lưu sự đồng ý của bạn.',
   'gate.consentNeeded': 'Hãy đánh dấu đồng ý với điều khoản, chính sách sử dụng và thông báo xử lý dữ liệu cá nhân trước.',

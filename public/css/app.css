@@ -1086,8 +1086,12 @@ textarea {
 }
 .rail__item svg { flex: none; }
 .rail__item:hover { background: var(--tint); color: var(--text); }
-.rail__item--primary { color: var(--accent); }
-.rail__item--primary:hover { background: var(--accent-glow); color: var(--accent); }
+/* The screen you are on — New chat on a blank conversation (paintNewChat) —
+   lit the way Claude lights "New": a soft fill and the words at full colour. */
+.rail__item[aria-current='page'] {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
 .rail__label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1352,6 +1356,10 @@ textarea {
 .sidebar__foot {
   display: grid;
   gap: 8px;
+  /* At the bottom whatever is above it: open, the conversation list fills the
+     room between; collapsed to a rail that list is gone, and the account rose
+     to sit under the icons (owner, 2026-10-26). */
+  margin-top: auto;
   padding-bottom: var(--safe-b);
 }
 /* The account, as Claude's sidebar ends: a letter in a circle, the username,
@@ -4282,7 +4290,7 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
  * Still plain where it matters: the clip illustrates, the words say everything,
  * and the two decisions — carry on, or skip — stay in reach however tall a step
  * is: the body scrolls, the foot does not. */
-.sheet--onb { width: min(760px, 100%); }
+.sheet--onb { width: min(860px, 100%); }
 .onb {
   display: flex;
   flex-direction: column;
@@ -4307,15 +4315,18 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
-/* The six steps by name: a sense of how far there is to go, and a way to jump. */
+/* The six steps by name: a sense of how far there is to go, and a way to jump.
+   One line, each as wide as its name and the room left shared out — six equal
+   columns put "Model & giới hạn" on two lines beside "API key" with room to
+   spare, and its underline below everybody else's (owner, 2026-10-26). */
 .onb__steps {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  display: flex;
   gap: 6px;
   margin: 0 0 14px;
   padding: 0;
   list-style: none;
 }
+.onb__dot { flex: 1 1 auto; min-width: 0; }
 .onb__dot button {
   display: flex;
   align-items: center;
@@ -4344,18 +4355,8 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
-/* Two lines where one will not do: "Synapsez là…" named no step at all
-   (owner, 2026-10-26, screenshot 2). */
-.onb__dot-label {
-  display: -webkit-box;
-  min-width: 0;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-}
+/* The short name, on one line; cut short only on a window too narrow for six. */
+.onb__dot-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .onb__dot.is-current button { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
 .onb__dot.is-current .onb__dot-n { background: var(--accent); color: var(--on-accent); }
 .onb__dot.is-done button { border-bottom-color: var(--ok); color: var(--text-dim); }

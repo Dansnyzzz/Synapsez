@@ -1207,11 +1207,21 @@ export function createPgStore(connectionString) {
      * Everything but agreements. An agreement is the proof the account
      * consented (LAW-001), needed for as long as the account is used — it
      * goes with the account, not with the age of the record (2026-10-26).
+     * Past the same age it keeps only what the privacy notice says it keeps —
+     * which documents, which versions, when — and loses the network and
+     * browser it was given from, as every other event does by going.
      */
     async pruneAudit(days = 180) {
+      const keep = Math.max(1, Math.floor(Number(days) || 180));
+      await q(
+        `UPDATE audit_events SET network = NULL, agent = NULL
+          WHERE kind = 'consent_given' AND created_at < NOW() - make_interval(days => $1)
+            AND (network IS NOT NULL OR agent IS NOT NULL)`,
+        [keep],
+      );
       const rows = await q(
         `DELETE FROM audit_events WHERE created_at < NOW() - make_interval(days => $1) AND kind <> 'consent_given' RETURNING id`,
-        [Math.max(1, Math.floor(Number(days) || 180))],
+        [keep],
       );
       return rows.length;
     },

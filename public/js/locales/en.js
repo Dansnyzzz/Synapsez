@@ -1285,7 +1285,7 @@ export const en = {
   'gate.consentTerms': 'Terms of Service',
   'gate.consentUsage': 'the Usage Policy',
   'gate.consentAnd': 'and the',
-  'legal.banner': 'Synapsez now has Terms of Service and a Usage Policy, and its privacy notice has changed. Please read them and agree to keep using Synapsez:',
+  'legal.banner': 'There are new versions of the Terms of Service, the Usage Policy and the privacy notice. Please read them and agree:',
   'legal.agree': 'I agree',
   'legal.thanks': 'Thank you — your agreement is saved.',
   'gate.consentNeeded': 'Tick the box to agree to the terms, the usage policy and the privacy notice first.',

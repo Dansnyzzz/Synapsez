@@ -1263,12 +1263,15 @@ section('housekeeping');
    * is used, so it is never pruned (2026-10-26). And the latest agreement is
    * the account's own: another's never answers for it.
    */
-  await store.recordAudit('u-alice', { kind: 'consent_given', detail: { notice: 'privacy-2026-10-18' } });
+  await store.recordAudit('u-alice', { kind: 'consent_given', detail: { notice: 'privacy-2026-10-18' }, network: '203.0.113.0/24', agent: 'Chrome on Windows' });
   await store.recordAudit('u-alice', { kind: 'sign_in', detail: {} });
   await driver.query(`UPDATE audit_events SET created_at = NOW() - INTERVAL '400 days' WHERE user_id = 'u-alice' AND kind IN ('consent_given', 'sign_in')`);
   await store.pruneAudit(180);
   check('an old sign-in leaves the security record', (await rows('audit_events', "WHERE user_id = 'u-alice' AND kind = 'sign_in'")) === 0);
   check('  an old agreement does not — it is the proof of consent', (await rows('audit_events', "WHERE user_id = 'u-alice' AND kind = 'consent_given'")) === 1);
+  // What the privacy notice says is kept past 180 days: which documents, which
+  // versions, when — not the network and browser it was given from (review, 2026-10-26).
+  check('  kept as what was agreed and when, its network and browser gone', (await rows('audit_events', "WHERE user_id = 'u-alice' AND kind = 'consent_given' AND network IS NULL AND agent IS NULL AND detail->>'notice' = 'privacy-2026-10-18'")) === 1);
   await store.recordAudit('u-alice', { kind: 'consent_given', detail: { notice: 'privacy-2026-10-26', terms: 'terms-2026-10-26', usage: 'usage-2026-10-26' } });
   const latest = await store.latestConsent('u-alice');
   check("the account's latest agreement is the newest", latest?.terms === 'terms-2026-10-26' && latest?.notice === 'privacy-2026-10-26', JSON.stringify(latest));

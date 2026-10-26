@@ -62,7 +62,7 @@ import {
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
 import { redactSecrets } from './redact.js';
-import { audit } from './audit.js';
+import { audit, networkOf, agentOf } from './audit.js';
 import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
@@ -526,7 +526,7 @@ export function createApp() {
         // the tick; an API client that sends none simply has none recorded, and
         // is asked by the banner once it signs in (`/api/consent`).
         const agreed = agreement(body(req));
-        if (agreed.notice) await audit(req, user.id, 'consent_given', agreed);
+        if (Object.keys(agreed).length) await audit(req, user.id, 'consent_given', agreed);
         res.status(201).json({ user: publicUser(user), emailBackend: emailBackend() });
       } catch (err) {
         // A closed deployment is a 403, not a bad request — the client can tell
@@ -895,16 +895,30 @@ export function createApp() {
    * when its latest agreement is older, or missing (owner, 2026-10-26). Only
    * the current versions can be agreed to: a page left open across a change
    * must be read again, not agreed to sight unseen.
+   *
+   * At most one record per account per set of versions: agreements are never
+   * pruned, so agreeing again adds nothing — which is also why this needs no
+   * rate limit, whose per-address bucket would have turned away the eleventh
+   * person behind one office's address after a change. And the record is
+   * written here, not through `audit()`, which swallows a failed write: this
+   * row is the proof, so "saved" is said only once it is.
    */
   api.post(
     '/consent',
-    rateLimit('consent', (req) => req.user?.id),
     wrap(async (req, res) => {
       const agreed = agreement(body(req));
       if (!agreedToCurrent(agreed)) {
         return res.status(400).json({ error: 'Those are not the current documents. Reload the page to read them.' });
       }
-      await audit(req, req.user.id, 'consent_given', { ...agreed, renewed: true });
+      const store = getStore();
+      if (!agreedToCurrent(await store.latestConsent(req.user.id))) {
+        await store.recordAudit(req.user.id, {
+          kind: 'consent_given',
+          detail: { ...agreed, renewed: true },
+          network: networkOf(req.ip),
+          agent: agentOf(req.headers['user-agent']),
+        });
+      }
       res.json({ ok: true, consent: { current: LEGAL, agreed: true } });
     }),
   );

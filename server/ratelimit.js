@@ -37,9 +37,6 @@ export const LIMITS = {
   import: { limit: 400, windowMs: 60 * 60_000 },
   // Deleting the account checks a password: the same guessing ceiling as signing in.
   'delete-account': { limit: 10, windowMs: 15 * 60_000 },
-  // Agreeing to the terms is one press a person makes once per change; a
-  // ceiling keeps a script from filling the security record with it.
-  consent: { limit: 10, windowMs: 15 * 60_000 },
   // The + menu's Drive picker: a search per pause in typing, and each pick a
   // download through this server. Plenty for a person; a ceiling for a script.
   drive: { limit: 300, windowMs: 15 * 60_000 },
