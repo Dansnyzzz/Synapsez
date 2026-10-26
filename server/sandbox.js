@@ -482,6 +482,21 @@ export function pythonReport(cell, ran = true) {
 }
 
 /**
+ * What the model is told about the machine under every answer. Its words, not
+ * the person's: the screen leaves it out (`forDisplay` in render.js, held to
+ * this sentence by test/features).
+ *
+ * @param {string} home  the session's working folder, when the SDK says
+ */
+export function machineNote(home) {
+  return (
+    `(This account's own cloud computer: it keeps its files and installs between conversations${home ? `; working folder ${home}` : ''}. ` +
+    'Full internet access; as_root: true for system packages. ' +
+    'The Python session keeps its variables while the computer is awake — about fifteen idle minutes.)'
+  );
+}
+
+/**
  * Run one command, having written any files first, and hand back what it said
  * — plus, when asked, one file it made, saved into the conversation. Python for
  * the conversation's live session runs after the command, in the same folder.
@@ -593,11 +608,7 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   } catch {
     /* an older SDK without sessions; the note just omits the folder */
   }
-  report.push(
-    `(This account's own cloud computer: it keeps its files and installs between conversations${home ? `; working folder ${home}` : ''}. ` +
-      'Full internet access; as_root: true for system packages. ' +
-      'The Python session keeps its variables while the computer is awake — about fifteen idle minutes.)',
-  );
+  report.push(machineNote(home));
   const shown = file || pictures[0] || null;
   return { content: report.join('\n'), ...(shown ? { file: shown } : {}) };
 }

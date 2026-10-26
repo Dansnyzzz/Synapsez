@@ -385,7 +385,7 @@ export async function readPicture(result, { userId, chatId = null, signal } = { 
     return {
       ...result,
       content: `${result.content}\n\n${text}`,
-      note: `[Read by ${model}. It is on screen for the user as file ${id} — look_at with that file_id and a question looks again.]`,
+      note: readNote(model, id),
     };
   } catch (err) {
     return {
@@ -408,8 +408,19 @@ function withShotNote(result, args) {
   const id = result?.shot?.id;
   // A picture a step read carries its name, and says its own line — see readPicture.
   if (!id || args?.raw || result?.isError || result?.shot?.name) return result;
-  return { ...result, content: `${result.content}\n[Screenshot of this step: file ${id} — look_at with that file_id reads what is on screen.]` };
+  return { ...result, content: `${result.content}\n${shotNote(id)}` };
 }
+
+/**
+ * The two lines the app adds for the model about a picture — who read it, and
+ * where a step's screenshot is. Its words, not the person's: the screen leaves
+ * them out (`forDisplay` in render.js, held to these sentences by test/features).
+ *
+ * @param {string} model @param {string} id
+ */
+export const readNote = (model, id) => `[Read by ${model}. It is on screen for the user as file ${id} — look_at with that file_id and a question looks again.]`;
+/** @param {string} id */
+export const shotNote = (id) => `[Screenshot of this step: file ${id} — look_at with that file_id reads what is on screen.]`;
 
 /**
  * Tools whose output is scrubbed of recognisable credentials before the model

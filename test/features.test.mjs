@@ -1265,6 +1265,43 @@ section('what people see of a tool answer, and money in convert_units');
   const { untrusted } = await import('../server/tools/untrusted.js');
   const shown = forDisplay(untrusted('the page in the cloud browser', 'Page: Example Domain\nhttps://example.com/'));
   check('the untrusted envelope is the model\'s, not drawn on screen', !/untrusted/.test(shown) && shown.startsWith('Page: Example Domain'), shown);
+  /*
+   * The app's own words to the model, written after a tool's answer, are not
+   * the answer: "(This account's own cloud computer: …)" was printed under
+   * every command a person opened (owner, 2026-10-26, screenshot 4). Built
+   * from the server's own sentences, so a reworded note fails here rather than
+   * quietly showing up on screen again.
+   */
+  const { machineNote, pythonReport } = await import('../server/sandbox.js');
+  const { readNote, shotNote } = await import('../server/tools/execute.js');
+  const printed = 'exit 0 · 0.1s\nstdout:\nP90564719.jpg';
+  check("the cloud computer's note to the model is not drawn", forDisplay(`${printed}\n${machineNote('/home/user')}`) === printed && forDisplay(`${printed}\n${machineNote('')}`) === printed);
+  check('  nor the Python session line, fresh or kept', forDisplay(`${pythonReport({ fresh: true, output: 'hi\n' })}`) === 'output:\nhi' && forDisplay(pythonReport({ output: '42\n' })) === 'output:\n42');
+  check('  but a session that ended mid-call still says so', /session ended/.test(forDisplay(pythonReport({ ended: true, output: 'x' }))));
+  check('  nor who read a picture and how to look again', forDisplay(`It is a chart.\n\n${readNote('gemini-2.5-flash', 'f_1')}`) === 'It is a chart.');
+  check('  nor the screenshot line under a browser step', forDisplay(`Clicked.\n${shotNote('f_2')}`) === 'Clicked.');
+  check('  and words of the page that only look like one stay', forDisplay('(This is the page) [Read by me]') === '(This is the page) [Read by me]');
+
+  // The row already shows the command it ran; the output does not say it twice.
+  const { workOutput } = await import('../public/js/render.js');
+  const run = (command) => ({ name: 'sandbox_run', input: { title: 'Liệt kê ảnh', command } });
+  const grep = 'cd /tmp && grep -oE "P9[0-9]{6,8}" press.html | sort -u';
+  check('the command echoed at the top of an output is left out', workOutput(run(grep), `$ ${grep}\n${printed}\n${machineNote('/home/user')}`) === printed);
+  const long = `curl -sL ${'x'.repeat(400)}`;
+  check('  a long one, as the cloud computer cuts it, too', workOutput(run(long), `$ ${long.slice(0, 300)}…\n${printed}`) === printed);
+  check('  a heredoc of several lines, too', workOutput(run("python - <<'EOF'\nprint(1)\nEOF"), "$ python - <<'EOF'\nprint(1)\nEOF\nexit 0 · 0.1s") === 'exit 0 · 0.1s');
+  check("  and a paired computer's, with its folder line kept", workOutput({ name: 'run_command', input: { command: 'ls' } }, '$ ls\n(in src/)\n\na.js\n\nExit code 0.') === '(in src/)\n\na.js\n\nExit code 0.');
+  check('  but output that starts with some other command is left whole', workOutput(run('ls'), '$ pwd\n/tmp') === '$ pwd\n/tmp');
+  check('  and Python with no command is untouched', workOutput({ name: 'sandbox_run', input: { python: 'print(1)' } }, '$ not a command\n1') === '$ not a command\n1');
+
+  /*
+   * `.steps` was once a numbered list of setup instructions, and its rules —
+   * a 10px gap under every item, a dark box round every <pre> — still reached
+   * the run card that took the name: the gap was the black band under a
+   * hovered row (owner, 2026-10-26, screenshot 5).
+   */
+  const css = fs.readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
+  check('nothing styles a bare .steps list any more', !/(^|[\s,}])\.steps\s+(li|pre|code)\b/m.test(css) && !/(^|\n)\.steps\s*\{/.test(css));
   const { currencyCode } = await import('../server/tools/library.js');
   check('currency codes and names are recognised', currencyCode('USD') === 'USD' && currencyCode('đồng') === 'VND' && currencyCode('€') === 'EUR');
   check('  and a unit is not mistaken for money', currencyCode('km') === null && currencyCode('kWh') === null);

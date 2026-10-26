@@ -54,12 +54,48 @@ const ms = (n) => (n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`);
  * Outside content reaches the model wrapped in `<untrusted source=…>` (see
  * server/tools/untrusted.js). That boundary is for the model; on screen the tags
  * were noise around the page text — the source is already the card's headline.
+ *
+ * So are the lines the app adds for the model after an answer — what the cloud
+ * computer keeps, whether the Python session is the same one, who read a
+ * picture and how to look again (owner, 2026-10-26). Each is matched whole, as
+ * the server writes it (`machineNote`, `pythonReport`, `readNote`, `shotNote`),
+ * so a page that merely says something similar is left alone.
  */
+const MODEL_NOTES = [
+  /\n*\(This account's own cloud computer: it keeps its files and installs between conversations[^\n]*\)\s*$/,
+  /^\[Python: (?:the same live session|a new session) — [^\n]*\]\n?/m,
+  /\n*\[Read by [^\n]* — look_at with that file_id and a question looks again\.\]\s*$/,
+  /\n*\[Screenshot of this step: file [^\n]* — look_at with that file_id reads what is on screen\.\]\s*$/,
+];
+
 export function forDisplay(text) {
-  return String(text ?? '')
+  let shown = String(text ?? '')
     .replace(/<untrusted source="[^"]*">\n?/g, '')
-    .replace(/\n?<\/untrusted>/g, '')
-    .trim();
+    .replace(/\n?<\/untrusted>/g, '');
+  for (const note of MODEL_NOTES) shown = shown.replace(note, '');
+  return shown.trim();
+}
+
+/**
+ * What a command printed, without the command again.
+ *
+ * Both computers start their answer with `$ the command` — for the model, which
+ * reads the answer apart from the call. On screen the command is already in the
+ * row and in the box above the output, so it read three times over (owner,
+ * 2026-10-26, screenshot 4). Only that exact echo is taken off: the command as
+ * given, or as the cloud computer cuts a long one (300 characters and "…").
+ */
+export function workOutput(call, content) {
+  const shown = forDisplay(content);
+  const input = canonicalInput(call?.name, call?.input) || call?.input || {};
+  const given = typeof input.command === 'string' ? input.command : '';
+  const command = given.trim();
+  if (!command) return shown;
+  for (const echo of new Set([`$ ${given}`, `$ ${command}`, `$ ${command.slice(0, 300)}…`])) {
+    if (shown === echo) return '';
+    if (shown.startsWith(`${echo}\n`)) return shown.slice(echo.length + 1).replace(/^\n+/, '');
+  }
+  return shown;
 }
 
 /**
@@ -550,11 +586,11 @@ const STEP_DETAILS = {
  */
 function toolCallDetail(call) {
   const node = el('div', 'tool__call');
-  // The function's name used to sit here as a grey badge ("world_facts"). The
-  // headline already says what was done in words, and the badge was the one
-  // thing in the card nobody read; the name is still on the card's tooltip for
-  // whoever is reproducing a step.
-  node.title = call.name;
+  // The function's name used to sit here as a grey badge ("world_facts"), then
+  // on a tooltip — which popped "sandbox_run" up over the command (owner,
+  // 2026-10-26). The headline says what was done in words; the name stays on
+  // the node for whoever is reproducing a step, out of the pointer's way.
+  node.dataset.toolName = call.name;
 
   const args = call.input && Object.keys(call.input).length ? call.input : null;
   if (args) {
@@ -2088,7 +2124,7 @@ export function assistantMessage() {
     closeGroup();
     const node = el('details', 'block recall');
     node.open = true;
-    node.title = call.name;
+    node.dataset.toolName = call.name;
     const summary = el('summary', 'recall__head');
     const mark = el('span', 'recall__mark', MARK_PENDING);
     const title = el('span', 'recall__title');
@@ -2481,6 +2517,24 @@ export function assistantMessage() {
   }
 
   /**
+   * A run of one command is that command: its header already says the step in
+   * the step's own words, so opened it shows the command and what it printed
+   * rather than the same line a second time (owner, 2026-10-26, screenshot 5) —
+   * the way Claude opens a single call. The second step brings the rows back,
+   * the first one folded to its line unless somebody opened it or it failed.
+   */
+  function settleSingle(run) {
+    if (run.family !== 'work') return;
+    const single = run.steps.length === 1;
+    const was = run.node.hasAttribute('data-single');
+    run.node.toggleAttribute('data-single', single);
+    const first = run.steps[0];
+    if (!first?.row) return;
+    if (single) /** @type {HTMLDetailsElement} */ (first.row.fold).open = true;
+    else if (was && first.done && !first.failed && !first.row.touched()) /** @type {HTMLDetailsElement} */ (first.row.fold).open = false;
+  }
+
+  /**
    * What a command ran, for whoever opens its row: `$ the command`, then any
    * Python, as code rather than as a JSON string with its newlines escaped —
    * which is how Claude Code shows it. Any other argument is listed after it,
@@ -2497,7 +2551,7 @@ export function assistantMessage() {
       return node;
     }
     const node = el('div', 'tool__call');
-    node.title = call.name;
+    node.dataset.toolName = call.name;
     const code = el('pre', 'tool__args step__code');
     code.textContent = parts.join('\n\n');
     node.append(code);
@@ -2530,7 +2584,7 @@ export function assistantMessage() {
     const work = family === 'work';
     const said = work ? workStep(call.name, call.input) : { ...describeStep(call.name, call.input), path: '', kind: '', file: '' };
     const { verb, detail } = said;
-    /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean, failed: boolean, picture: null | { id: string, name: string, path: string, label: string, thumb: boolean } }} */
+    /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean, failed: boolean, picture: null | { id: string, name: string, path: string, label: string, thumb: boolean }, row?: { fold: HTMLElement, touched: () => boolean } }} */
     const entry = { verb, detail, path: said.path, kind: said.kind, file: said.file, done: false, failed: false, picture: null };
     run.steps.push(entry);
     if (!hydrating && !run.started) run.started = Date.now();
@@ -2590,6 +2644,8 @@ export function assistantMessage() {
       foldBody.append(workCode(call));
       rowFold.append(head, foldBody);
       item.append(rowFold);
+      const fold = rowFold;
+      entry.row = { fold, touched: () => touched };
       if (!hydrating) {
         const began = Date.now();
         running = el('p', 'step__running');
@@ -2614,6 +2670,7 @@ export function assistantMessage() {
       item.append(mark, label, time);
     }
     run.list.append(item);
+    settleSingle(run);
 
     return {
       complete(result) {
@@ -2667,13 +2724,14 @@ export function assistantMessage() {
             foldBody.prepend(pictureBody(entry.picture));
           }
           const printed = el('pre', 'step__output');
-          printed.textContent = forDisplay(result.content) || t('chat.noOutput');
+          printed.textContent = workOutput(call, result.content) || t('chat.noOutput');
           foldBody.append(printed);
           if (result.ms != null) foldBody.append(el('p', 'step__took', escapeHtml(t('work.took', { time: ms(result.ms) }))));
           // A failure is the one row somebody needs to read; it is open already.
-          // A success folds back to its title line — unless it was touched.
+          // A success folds back to its title line — unless it was touched, or
+          // it is the card's only step, whose line is the card's own.
           if (result.isError) rowFold.open = true;
-          else if (running && !touched) rowFold.open = false;
+          else if (running && !touched && !run.node.hasAttribute('data-single')) rowFold.open = false;
           let placed = false;
           if (result.file?.id) {
             placeFile(body, result.file);
@@ -2780,7 +2838,7 @@ export function assistantMessage() {
       clock,
       tally,
       thumbs,
-      /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean, failed: boolean, picture: any }[]} */
+      /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean, failed: boolean, picture: any, row?: { fold: HTMLElement, touched: () => boolean } }[]} */
       steps: [],
       /** The title's fade from its old words, cleared when it is over. */
       fadeTimer: 0,

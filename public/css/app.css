@@ -2749,9 +2749,6 @@ details.block.tool--error > summary > .mark,
  * transcript written for the person, and `browser_click {"ref":"7"}` was the
  * problem it exists to fix.
  */
-/* `.steps` is also the class of the numbered instruction lists further down;
-   the step card must not pick up their indent and text colour. */
-details.block.steps { padding-left: 0; color: inherit; font-size: inherit; }
 /* The title is what is happening now, and the model's own words for a command
    can run long: it gives way with an ellipsis rather than pushing the chevron
    off a phone's screen. The detail beside it — the file, the command — takes
@@ -2924,10 +2921,12 @@ details.block.steps:not([data-family='work']) > .steps__list {
 .step__fold[open] > summary::after { transform: rotate(90deg); }
 .step__fold > summary:hover { background: var(--tint); }
 .step__fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* The model's title for a step gives way before the time does; the command
-   beside it takes what is left, and never less than its share below. */
+/* The model's title for a step keeps its width, up to its share below; the
+   command beside it takes what is left and is cut short first. Both shrinking
+   together cut a title to "Tải và lọ…" beside a long curl (owner, 2026-10-26):
+   the title is what a person reads, and the whole command is one click away. */
 .step--work .step__verb {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3105,6 +3104,10 @@ details.block.steps[data-family='work'] .step[data-kind='list'] .step__detail {
   font-size: 14.5px;
 }
 details.block.steps[data-family='work'] .step__body { margin: 0 14px 12px; }
+/* One command is the card: opened, its command and what it printed, not its
+   line again — the header above already is that line (settleSingle). */
+details.block.steps[data-single] .step--work > .step__fold > summary { display: none; }
+details.block.steps[data-single] .step--work .step__body { margin-top: 12px; }
 .step__took { margin: 0; color: var(--text-faint); font-size: 12px; }
 .step__picture { display: grid; gap: 8px; }
 .step__where { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0; }
@@ -4079,22 +4082,13 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
 .row select { flex: 1; }
 
 .hint { color: var(--text-faint); font-size: 12.5px; line-height: 1.6; }
-.steps { padding-left: 20px; color: var(--text-dim); font-size: 13.5px; }
-.steps li { margin-bottom: 10px; }
-.steps code, .hint code {
+/* `.steps` was a numbered list of setup instructions here, long gone; its gap
+   under every item and its box round every <pre> reached the run card that
+   took the name — the black band under a hovered row (owner, 2026-10-26). */
+.hint code {
   padding: 2px 5px;
   border-radius: 5px;
   background: var(--surface-2);
-  font-family: var(--mono);
-  font-size: 12px;
-}
-.steps pre {
-  margin: 7px 0 0;
-  padding: 11px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: #0d1216;
-  overflow-x: auto;
   font-family: var(--mono);
   font-size: 12px;
 }

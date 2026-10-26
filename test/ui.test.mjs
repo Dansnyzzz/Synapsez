@@ -4418,6 +4418,64 @@ section('commands and files are one card, titled by what is happening now');
 }
 
 /**
+ * The owner's 2026-10-26 screenshots 3–5: a run of one command showed its line
+ * twice, a hovered row had a black band under its grey, a long curl cut the
+ * title to "Tải và lọ…", and an opened row printed the command again and the
+ * cloud computer's note to the model under it, with "sandbox_run" on hover.
+ */
+section('a run of commands: one line per step, the whole title, nothing said twice');
+{
+  const out = await page.evaluate(async () => {
+    const { assistantMessage } = await import('/js/render.js');
+    const host = document.createElement('div');
+    host.style.width = '760px';
+    document.body.append(host);
+    const turn = assistantMessage();
+    host.append(turn.node);
+    const curl = 'cd /tmp && curl -sL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)" "https://www.bmwblog.com/2024/05/28/2025-bmw-m5-touring-colors/" -o b1.html && grep -oE "m5-touring-[a-z-]+" b1.html | sort -u';
+    const note = "(This account's own cloud computer: it keeps its files and installs between conversations; working folder /home/user. Full internet access; as_root: true for system packages. The Python session keeps its variables while the computer is awake — about fifteen idle minutes.)";
+    const first = turn.startTool({ id: 'r1', name: 'sandbox_run', input: { title: 'Tải và lọc ảnh theo màu', command: curl } });
+    first.complete({ content: `$ ${curl}\nexit 0 · 0.4s\nstdout:\nm5-touring-alpine-white\n${note}`, ms: 400 });
+    const card = /** @type {HTMLDetailsElement} */ (host.querySelector('.steps'));
+    card.open = true;
+    const row = /** @type {HTMLElement} */ (card.querySelector('.step--work'));
+    const fold = /** @type {HTMLDetailsElement} */ (row.querySelector(':scope > details'));
+    const r = {};
+    r.single = card.hasAttribute('data-single');
+    r.lineHidden = getComputedStyle(fold.querySelector('summary')).display === 'none';
+    r.bodyShown = fold.open && !!fold.querySelector('.step__code')?.getClientRects().length;
+    r.output = fold.querySelector('.step__output')?.textContent || '';
+    r.tooltips = [...card.querySelectorAll('[title]')].map((n) => n.getAttribute('title')).filter((t) => /^[a-z]+_[a-z_]+$/.test(t || ''));
+
+    const second = turn.startTool({ id: 'r2', name: 'sandbox_run', input: { title: 'Liệt kê các màu có ảnh', command: 'cd /tmp && ls' } });
+    second.complete({ content: '$ cd /tmp && ls\nexit 0 · 0.1s\nstdout:\nb1.html', ms: 100 });
+    r.twoSingle = card.hasAttribute('data-single');
+    r.firstLineBack = getComputedStyle(fold.querySelector('summary')).display !== 'none';
+    r.firstFolded = !fold.open;
+
+    // The title keeps its width beside a long command; the command is cut instead.
+    const verb = /** @type {HTMLElement} */ (fold.querySelector('.step__verb'));
+    r.titleWhole = verb.scrollWidth <= verb.clientWidth + 1;
+    const detail = /** @type {HTMLElement} */ (fold.querySelector('.step__detail'));
+    r.commandCut = detail.scrollWidth > detail.clientWidth;
+
+    // A row's grey reaches the row's edge: nothing under its line inside the box.
+    const li = /** @type {HTMLElement} */ (card.querySelector('.steps__list > li'));
+    const line = /** @type {HTMLElement} */ (li.querySelector('summary'));
+    r.rowGap = Math.round(li.getBoundingClientRect().bottom - line.getBoundingClientRect().bottom);
+    r.liMargin = getComputedStyle(li).marginBottom;
+    host.remove();
+    return r;
+  });
+  check('a run of one command opens on that command, not on its line again', out.single && out.lineHidden && out.bodyShown, JSON.stringify(out));
+  check('  what it printed, without the command a second time or the note to the model', out.output === 'exit 0 · 0.4s\nstdout:\nm5-touring-alpine-white', out.output);
+  check('  and no tool name pops up on hover', out.tooltips.length === 0, out.tooltips.join(', '));
+  check('a second step brings the rows back, the first folded to its line', !out.twoSingle && out.firstLineBack && out.firstFolded, JSON.stringify(out));
+  check("  whose title is whole beside a long command, which is cut instead", out.titleWhole && out.commandCut, JSON.stringify(out));
+  check('  and whose grey on hover reaches its edge — no band under it', out.rowGap === 0 && out.liMargin === '0px', `${out.rowGap}px · ${out.liMargin}`);
+}
+
+/**
  * The pictures a run looked at, as Claude shows them (owner, 2026-10-19):
  * folded, the newest three on the header with "+N" for the rest; open, a
  * thumbnail on each row and, opened, `file_path:` and the picture; hovered, a
