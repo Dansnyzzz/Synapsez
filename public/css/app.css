@@ -484,6 +484,11 @@ textarea {
   cursor: pointer;
 }
 .gate__remember:hover { color: var(--text); }
+/* The agreement runs to two lines: read from the left like any sentence, the
+   box beside its first line. The card centres its text, and that centred the
+   second line under the box (owner, 2026-10-26, screenshot 1). */
+#gate-consent-row { align-items: flex-start; text-align: left; line-height: 1.5; }
+#gate-consent-row input { margin: 2px 0 0; flex: none; }
 
 .gate__error {
   margin: 14px 0 0;
@@ -511,20 +516,42 @@ textarea {
   cursor: pointer;
 }
 .gate__switch:hover { color: var(--accent); }
-.gate__about {
+/* One quiet line at the foot: what the app is, and its policies. */
+.gate__foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 4px 8px;
   margin: 18px 0 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.gate__what {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.gate__about {
+  margin: 10px 0 0;
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.5;
 }
-.gate__legal {
-  display: inline-block;
-  margin-top: 6px;
+.gate__legal,
+.gate__terms {
   color: var(--text-dim);
-  font-size: 12px;
   text-underline-offset: 3px;
 }
-.gate__legal:hover { color: var(--accent); }
+.gate__what:hover,
+.gate__legal:hover,
+.gate__terms:hover { color: var(--accent); }
+.gate__what:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
 /* Sits above the topbar; used for "confirm your email". */
 .banner {
@@ -1327,6 +1354,48 @@ textarea {
   gap: 8px;
   padding-bottom: var(--safe-b);
 }
+/* The account, as Claude's sidebar ends: a letter in a circle, the username,
+   a chevron; the whole row is the button (owner, 2026-10-26). */
+.account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px 6px 7px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.account:hover,
+.account[aria-expanded='true'] { background: var(--tint); }
+.account:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.account__avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.account__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+.account__chev { flex: none; color: var(--text-faint); }
+.app.is-rail .account { justify-content: center; padding: 6px 0; }
 .dot {
   flex: none;
   width: 8px;
@@ -4254,7 +4323,18 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
-.onb__dot-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Two lines where one will not do: "Synapsez là…" named no step at all
+   (owner, 2026-10-26, screenshot 2). */
+.onb__dot-label {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
 .onb__dot.is-current button { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
 .onb__dot.is-current .onb__dot-n { background: var(--accent); color: var(--on-accent); }
 .onb__dot.is-done button { border-bottom-color: var(--ok); color: var(--text-dim); }
@@ -4288,19 +4368,6 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
   background: rgb(0 0 0 / 0.55);
   color: #fff;
   cursor: pointer;
-}
-.onb__caption {
-  position: absolute;
-  left: 10px;
-  bottom: 10px;
-  max-width: calc(100% - 66px);
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgb(0 0 0 / 0.6);
-  color: #fff;
-  font-size: 12px;
-  line-height: 1.4;
-  pointer-events: none;
 }
 .onb__play:hover { background: rgb(0 0 0 / 0.72); }
 .onb__play:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
@@ -4388,7 +4455,10 @@ ul.onb__facts { padding-left: 28px; }
   margin: 0 -24px;
   padding: 12px 24px 16px;
   border-top: 1px solid var(--line-soft);
-  background: var(--glass-solid);
+  /* The sheet's glass over the page's own colour: the same shade, but solid.
+     Glass alone let the step's words show through the buttons as they
+     scrolled under them (owner, 2026-10-26, screenshot 2). */
+  background: linear-gradient(var(--glass-solid), var(--glass-solid)), var(--bg);
 }
 .onb__spacer { flex: 1; }
 
@@ -7821,6 +7891,42 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 .plusmenu__tag:empty { display: none; }
 .plusmenu__tag.is-warn { color: var(--warn); }
 .plusmenu__more { flex: none; color: var(--text-faint); font-size: 16px; line-height: 1; }
+.plusmenu__ext { flex: none; display: grid; color: var(--text-faint); }
+.plusmenu__ext svg { display: block; }
+/* The account menu (account-menu.js): a row with no icon of its own — Learn
+   more's pages, the languages — starts at the edge, as Claude's do. */
+.plusmenu--account { min-width: 264px; }
+/* About Synapsez, and the list of shortcuts — from Learn more. */
+.about { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.about__mark { display: block; }
+.about__what { margin: 0; color: var(--text-dim); line-height: 1.6; }
+.about__links { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 16px; margin: 0; }
+.about__links a { color: var(--accent); text-underline-offset: 3px; }
+.shortcuts { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.shortcuts__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.shortcuts__row:last-child { border-bottom: 0; }
+.shortcuts__keys { display: flex; flex: none; gap: 4px; }
+.shortcuts__keys kbd {
+  min-width: 26px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: center;
+}
+.plusmenu--account .plusmenu__item > .plusmenu__icon:empty { display: none; }
+.plusmenu--account > .plusmenu__note:first-child { padding: 8px 10px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plusmenu__tick { flex: none; width: 14px; color: var(--accent); text-align: center; }
 .plusmenu__warn { flex: none; color: var(--warn); }
 .plusmenu__item.is-warn .plusmenu__label { color: var(--text-dim); }

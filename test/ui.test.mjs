@@ -98,6 +98,16 @@ const openProjectNamed = async (name) => {
   await page.waitForTimeout(1200);
 };
 
+/**
+ * Settings, the way a person reaches it since the owner's 2026-10-26 round:
+ * the account at the foot of the sidebar, then its Settings row.
+ */
+const openSettings = async () => {
+  await page.click('#account-button');
+  await page.waitForTimeout(250);
+  await page.click('.plusmenu--account [data-row="settings"]');
+};
+
 let failures = 0;
 const section = (name) => realLog(`\n\x1b[1m${name}\x1b[0m`);
 const check = (label, ok, detail = '') => {
@@ -151,6 +161,40 @@ check(
 
 // LAW-001: agreeing to the privacy notice is a tick of the person's own.
 check('signing up asks for agreement to the privacy notice, with a link to it', (await page.isVisible('#gate-consent-row')) && (await page.getAttribute('#gate-consent-row a', 'href')) === '/privacy.html');
+
+/*
+ * The owner's 2026-10-26 screenshot 1: the agreement's words were centred under
+ * a box that sat between their two lines; signing up asked for a name nobody
+ * needed beside the username; and a paragraph about the app filled the foot of
+ * the card, which Google's verification needs on the home page — so it is one
+ * press away under "What is Synapsez?" rather than gone.
+ */
+{
+  const gate = await page.evaluate(() => {
+    const box = document.getElementById('gate-consent').getBoundingClientRect();
+    const words = document.getElementById('gate-consent-text');
+    const first = words.getClientRects()[0] || words.getBoundingClientRect();
+    const about = document.getElementById('gate-about');
+    return {
+      name: !!document.getElementById('gate-name'),
+      align: getComputedStyle(words).textAlign,
+      boxBesideFirstLine: Math.abs(box.top + box.height / 2 - (first.top + first.height / 2)) <= 4,
+      aboutHidden: !!about?.hidden,
+      what: document.getElementById('gate-what')?.getAttribute('aria-expanded') || '',
+      privacyShown: !!document.querySelector('.gate__legal[href="/privacy.html"]')?.getClientRects().length,
+    };
+  });
+  check('signing up asks for no name — the username is the name', gate.name === false);
+  check("  the agreement's words read from the left, the box beside their first line", /^(left|start)$/.test(gate.align) && gate.boxBesideFirstLine, JSON.stringify(gate));
+  check('  and what the app is waits behind one press, the privacy policy in view', gate.aboutHidden && gate.what === 'false' && gate.privacyShown, JSON.stringify(gate));
+  await page.click('#gate-what');
+  const told = await page.evaluate(() => ({
+    shown: !document.getElementById('gate-about').hidden,
+    words: document.getElementById('gate-about').textContent.trim(),
+    expanded: document.getElementById('gate-what').getAttribute('aria-expanded'),
+  }));
+  check('  pressed, it says what Synapsez is', told.shown && told.expanded === 'true' && /Synapsez/.test(told.words), JSON.stringify(told));
+}
 await page.click('#gate-submit');
 await page.waitForTimeout(600);
 const unticked = await page.evaluate(() => ({ error: !document.getElementById('gate-error').hidden, stillGate: !!document.getElementById('gate-form') && !document.getElementById('model-chip')?.offsetParent }));
@@ -187,6 +231,30 @@ section('a new account is shown the guide, once');
   check('the guide opens on a first sign-in', first.open === true);
   check('at step 1', /1/.test(first.step), first.step);
   check('and the model announcement does not stack on top of it', first.news === false);
+
+  /*
+   * The owner's 2026-10-26 screenshot 2: the step's words showed through the
+   * bar of buttons as they scrolled under it, the names of the steps were cut
+   * to "Synapsez là…", and the clip carried a caption the owner found redundant.
+   */
+  const look = await page.evaluate(() => {
+    const foot = document.querySelector('#onboarding .onb__foot');
+    const alpha = (colour) => {
+      const m = /rgba?\(([^)]+)\)/.exec(colour);
+      const parts = m ? m[1].split(/[ ,/]+/).filter(Boolean) : [];
+      return parts.length === 4 ? Number(parts[3]) : 1;
+    };
+    return {
+      caption: !!document.querySelector('#onboarding .onb__caption'),
+      footOpaque: alpha(getComputedStyle(foot).backgroundColor) === 1,
+      cut: [...document.querySelectorAll('#onb-steps .onb__dot-label')]
+        .filter((n) => n.scrollHeight > n.clientHeight + 1 || n.scrollWidth > n.clientWidth + 1)
+        .map((n) => n.textContent),
+    };
+  });
+  check('  its clip has no caption over it', look.caption === false);
+  check('  its bar of buttons is solid, so no words show through it', look.footOpaque, JSON.stringify(look));
+  check('  and every step is named whole', look.cut.length === 0, look.cut.join(' | '));
 
   // Skipping is an answer, and it has to stick.
   await page.click('#onb-skip');
@@ -254,6 +322,125 @@ section('the newest model is announced once, not caught up on');
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2500);
   check('and it does not come back on reload', !(await page.$('#model-news[open]')));
+}
+
+/**
+ * The owner's 2026-10-26 screenshots 6–9: Settings at the foot of the sidebar
+ * became the account — a letter in a circle and the username — whose menu is
+ * Claude's, cut to what this app has: Settings, Language, Get help, Learn more
+ * (about, the policies, your privacy choices, shortcuts) and Log out. The
+ * sidebar's New chat is a plus; Projects and Artifacts are drawn as Claude's.
+ */
+section("the account at the foot of the sidebar, and its menu");
+{
+  const foot = await page.evaluate(() => {
+    const button = document.getElementById('account-button');
+    return {
+      oldSettings: !!document.getElementById('open-settings'),
+      inFoot: !!button?.closest('.sidebar__foot') && !!button.getClientRects().length,
+      letter: button?.querySelector('.account__avatar')?.textContent || '',
+      name: button?.querySelector('.account__name')?.textContent || '',
+      plus: document.querySelector('#new-chat svg path')?.getAttribute('d') || '',
+      projects: document.querySelectorAll('#open-projects svg rect').length,
+      artifacts: document.querySelectorAll('#open-artifacts svg rect').length,
+    };
+  });
+  check('Settings at the foot of the sidebar is now the account: a letter and the username', !foot.oldSettings && foot.inFoot && foot.letter === 'U' && foot.name === 'ui.tester', JSON.stringify(foot));
+  check('  New chat is a plus; Projects a tray, Artifacts two pages, as in Claude', foot.plus === 'M10 4v12M4 10h12' && foot.projects === 1 && foot.artifacts === 1, JSON.stringify(foot));
+
+  await page.click('#account-button');
+  await page.waitForTimeout(300);
+  const menu = await page.evaluate(() => {
+    const panel = document.querySelector('.plusmenu--account');
+    const box = panel?.getBoundingClientRect();
+    const anchor = document.getElementById('account-button').getBoundingClientRect();
+    return {
+      email: panel?.querySelector(':scope > .plusmenu__note')?.textContent || '',
+      rows: [...(panel?.querySelectorAll('[data-row]') || [])].map((r) => /** @type {HTMLElement} */ (r).dataset.row),
+      settingsKeys: panel?.querySelector('[data-row="settings"] .plusmenu__tag')?.textContent || '',
+      above: !!box && box.bottom <= anchor.top + 1,
+      expanded: document.getElementById('account-button').getAttribute('aria-expanded'),
+    };
+  });
+  check('pressed, it opens a menu above it, headed by the email', menu.email === 'ui@test.local' && menu.above && menu.expanded === 'true', JSON.stringify(menu));
+  check('  Settings, Language, Get help, Learn more and Log out — in that order', menu.rows.join() === 'settings,language,help,learn,logout', menu.rows.join());
+  check('  Settings names its shortcut', /^(Ctrl|⌘)\+Shift\+,$/.test(menu.settingsKeys), menu.settingsKeys);
+
+  await page.hover('.plusmenu--account [data-row="learn"]');
+  await page.waitForTimeout(400);
+  const learn = await page.evaluate(() => {
+    const panel = document.querySelector('.plusmenu--account[data-level="1"]');
+    return {
+      rows: [...(panel?.querySelectorAll('[data-row]') || [])].map((r) => /** @type {HTMLElement} */ (r).dataset.row),
+      outside: [...(panel?.querySelectorAll('[data-row]') || [])].filter((r) => r.querySelector('.plusmenu__ext')).map((r) => /** @type {HTMLElement} */ (r).dataset.row),
+    };
+  });
+  check('hovering Learn more opens its pages beside it', learn.rows.join() === 'about,usage,privacy,terms,choices,shortcuts', learn.rows.join());
+  check('  the three policies marked as opening a page', learn.outside.join() === 'usage,privacy,terms', learn.outside.join());
+
+  await page.hover('.plusmenu--account [data-row="language"]');
+  await page.waitForTimeout(400);
+  const languages = await page.evaluate(() =>
+    [...document.querySelectorAll('.plusmenu--account[data-level="1"] [role="menuitemradio"]')].map((r) => `${r.textContent.trim()}:${r.getAttribute('aria-checked')}`),
+  );
+  check('  Language lists each language in itself, the one in use ticked', languages.length === 2 && languages.some((l) => l.startsWith('Tiếng Việt')) && languages.filter((l) => l.endsWith(':true')).length === 1, languages.join(' | '));
+
+  // Escape steps back a panel at a time when focus is in the one beside; from the first it closes.
+  for (let i = 0; i < 2 && (await page.$('.plusmenu--account')); i += 1) {
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(150);
+  }
+  check('  Escape puts it away', !(await page.$('.plusmenu--account')) && (await page.getAttribute('#account-button', 'aria-expanded')) === 'false');
+
+  await page.click('#account-button');
+  await page.waitForTimeout(250);
+  await page.click('.plusmenu--account [data-row="help"]');
+  await page.waitForTimeout(500);
+  check('Get help opens the getting-started guide', !!(await page.$('#onboarding[open]')));
+  await page.evaluate(() => document.getElementById('onboarding').close());
+
+  await page.click('#account-button');
+  await page.waitForTimeout(250);
+  await page.hover('.plusmenu--account [data-row="learn"]');
+  await page.waitForTimeout(400);
+  await page.click('.plusmenu--account [data-row="about"]');
+  await page.waitForTimeout(300);
+  check('About Synapsez says what it is', /Synapsez/.test((await page.textContent('#about .about__what')) || '') && !!(await page.$('#about[open]')));
+  await page.evaluate(() => document.getElementById('about').close());
+
+  // The shortcuts the menu names work, and the list of them is one of them.
+  await page.keyboard.press('Control+Shift+Comma');
+  await page.waitForTimeout(300);
+  check('Ctrl+Shift+, opens Settings', !!(await page.$('#settings[open]')));
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.keyboard.press('Control+Slash');
+  await page.waitForTimeout(300);
+  const listed = await page.$$eval('#shortcuts-list .shortcuts__row', (rows) => rows.length);
+  check('Ctrl+/ lists the shortcuts', !!(await page.$('#shortcuts[open]')) && listed >= 7, `${listed}`);
+  await page.keyboard.press('Control+Slash');
+  await page.waitForTimeout(200);
+  check('  and closes the list again', !(await page.$('#shortcuts[open]')));
+  await page.keyboard.press('Control+KeyK');
+  await page.waitForTimeout(300);
+  check('Ctrl+K opens search', !!(await page.$('#search[open]')));
+  await page.evaluate(() => document.getElementById('search').close());
+
+  // Collapsed to a rail, the circle alone, and still the menu.
+  await page.click('#sidebar-collapse');
+  await page.waitForTimeout(400);
+  const rail = await page.evaluate(() => {
+    const button = document.getElementById('account-button');
+    const circle = button.querySelector('.account__avatar').getBoundingClientRect();
+    const box = button.getBoundingClientRect();
+    return {
+      nameHidden: !button.querySelector('.account__name').getClientRects().length,
+      centred: Math.abs(circle.left + circle.width / 2 - (box.left + box.width / 2)) <= 2,
+      title: button.title,
+    };
+  });
+  check('collapsed to a rail, the account is its circle, with the name on hover', rail.nameHidden && rail.centred && rail.title === 'ui.tester', JSON.stringify(rail));
+  await page.click('#sidebar-toggle');
+  await page.waitForTimeout(400);
 }
 
 section('the chat window is fixed, only the transcript scrolls');
@@ -2101,7 +2288,7 @@ section('the model is one setting, with one control');
 
   // Settings has no Models tab any more: the chip is the one way to choose a
   // model, and the tab's place is taken by Languages.
-  await page.click('#open-settings');
+  await openSettings();
   await page.waitForTimeout(500);
   const settingsPanel = await page.evaluate(() => ({
     field: !!document.getElementById('default-model-display'),
@@ -2274,7 +2461,7 @@ section('the getting-started guide');
 
   // This account has been through the app already, so the guide is dismissed by
   // now. Reopening it from Settings is the path somebody actually uses.
-  await page.click('#open-settings');
+  await openSettings();
   await page.waitForTimeout(400);
   await page.click('.tab[data-tab="behaviour"]');
   await page.waitForTimeout(300);
@@ -2438,7 +2625,7 @@ section('the getting-started guide');
 
 section('the interface speaks Vietnamese');
 {
-  await page.click('#open-settings');
+  await openSettings();
   await page.waitForTimeout(400);
   await page.click('.tab[data-tab="languages"]');
   await page.waitForTimeout(300);
@@ -2456,7 +2643,7 @@ section('the interface speaks Vietnamese');
 
   const after = await page.evaluate(() => ({
     newChat: document.querySelector('#new-chat .rail__label').textContent.trim(),
-    settings: document.querySelector('#open-settings .rail__label').textContent.trim(),
+    settings: document.getElementById('account-button').getAttribute('aria-label') || '',
     languagesTab: document.querySelector('.tab[data-tab="languages"]').textContent.trim(),
     placeholder: document.getElementById('input').placeholder,
     lang: document.documentElement.lang,
@@ -2474,7 +2661,7 @@ section('the interface speaks Vietnamese');
   check('and a hint with markup inside keeps its markup', after.behaviourHint === 'Chế độ và mức suy luận', after.behaviourHint);
   check('the sidebar changes language', after.newChat !== before.newChat, `${before.newChat} → ${after.newChat}`);
   check('and it is actually Vietnamese', /Cuộc trò chuyện/.test(after.newChat), after.newChat);
-  check('settings label too', /Cài đặt/.test(after.settings), after.settings);
+  check('the account at the foot of the sidebar too', /Tài khoản/.test(after.settings), after.settings);
   check('the settings tabs too', /Ngôn ngữ/.test(after.languagesTab), after.languagesTab);
   check('and the composer placeholder', /Hỏi bất cứ điều gì/.test(after.placeholder), after.placeholder.slice(0, 40));
   check('the document language is stamped', after.lang === 'vi', after.lang);
@@ -2525,7 +2712,7 @@ section('the interface speaks Vietnamese');
   check('and the stamp with it', kept.lang === 'vi', kept.lang);
 
   // Back to English so later sections read the labels they expect.
-  await page.click('#open-settings');
+  await openSettings();
   await page.waitForTimeout(500);
   await page.click('.tab[data-tab="languages"]');
   await page.waitForTimeout(300);
@@ -2555,7 +2742,7 @@ section('a chosen tab scrolls itself into view');
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
   });
-  await page.click('#open-settings');
+  await openSettings();
   await page.waitForTimeout(500);
 
   const strip = await page.evaluate(() => {
@@ -2651,7 +2838,7 @@ section('the Settings tabs no longer include Computers');
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
   });
-  await page.click('#open-settings');
+  await openSettings();
   await page.waitForTimeout(400);
   const tabs = await page.evaluate(() => [...document.querySelectorAll('.sheet__tabs .tab')].map((b) => b.dataset.tab));
   check('no worker tab', !tabs.includes('worker'), tabs.join(', '));
@@ -2728,7 +2915,7 @@ await page.evaluate(() => {
   for (const d of document.querySelectorAll('dialog[open]')) d.close();
 });
 await page.waitForTimeout(300);
-await page.click('#open-settings');
+await openSettings();
 await page.waitForTimeout(900);
 check('the settings sheet opened', await page.evaluate(() => !!document.getElementById('settings')?.open));
 section('the composer row is level');
@@ -3891,7 +4078,7 @@ section('a new document opens itself');
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
   });
 
-  await page.click('#open-settings');
+  await openSettings();
   await page.waitForTimeout(500);
 
   const setting = await page.evaluate(() => {
@@ -3993,7 +4180,6 @@ section('the guide does not come back after a mid-way reload');
   await page.waitForTimeout(400);
   const signUp = await box();
   check('  signing up, it is the email, with a username box beside it', signUp.type === 'email' && signUp.username, JSON.stringify(signUp));
-  await page.fill('#gate-name', 'Người mới');
   await page.fill('#gate-username', 'nguoi.moi');
   await page.fill('#gate-email', 'nguoi-moi@example.com');
   await page.fill('#gate-password', 'mot-mat-khau-dai');
@@ -4016,7 +4202,7 @@ section('the guide does not come back after a mid-way reload');
   check('and still gone on the visit after that', !(await page.$('#onboarding[open]')));
 
   // But it is still reachable on purpose — dismissed is not deleted.
-  await page.click('#open-settings');
+  await openSettings();
   await page.waitForTimeout(500);
   await page.click('.tab[data-tab="behaviour"]');
   await page.waitForTimeout(300);

@@ -404,7 +404,10 @@ const SCENES = {
 
   /** A key pasted and saved, then a second one: the list numbers them in the order they are tried. */
   async 2({ page, begin, still }) {
-    await page.locator('#open-settings').click();
+    // Settings is a row of the account menu at the foot of the sidebar (2026-10-26).
+    await page.locator('#account-button').click();
+    await page.waitForTimeout(300);
+    await page.locator('.plusmenu--account [data-row="settings"]').click();
     await page.waitForTimeout(500);
     await page.locator('.tab[data-tab="providers"]').click();
     await page.locator('[data-key="openrouter"]').scrollIntoViewIfNeeded();

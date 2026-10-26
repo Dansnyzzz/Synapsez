@@ -32,6 +32,7 @@ import { humanSize } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
 import { createAttachments } from './attachments.js';
 import { openPlusMenu } from './plus-menu.js';
+import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
 import { contextPanel } from './context-panel.js';
 import { createModelNews } from './model-news.js';
 import { createTwoFactor } from './two-factor.js';
@@ -550,7 +551,6 @@ function renderGateMode() {
   $('gate-accounts').hidden = false;
   $('gate-newpass').hidden = !reset;
   $('gate-resetcode').hidden = !!resetToken;
-  $('gate-name').hidden = !signup;
   $('gate-username').hidden = !signup;
   $('gate-email').hidden = false;
   /*
@@ -626,6 +626,14 @@ $('gate-switch').addEventListener('click', async () => {
 
 $('gate-forgot').addEventListener('click', () => setGateMode('forgot'));
 
+// What Synapsez is, under the form: one press away rather than a paragraph
+// filling the card (owner, 2026-10-26) — and still on the home page Google reads.
+$('gate-what').addEventListener('click', () => {
+  const about = $('gate-about');
+  about.hidden = !about.hidden;
+  $('gate-what').setAttribute('aria-expanded', String(!about.hidden));
+});
+
 $('gate-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('gate-error').hidden = true;
@@ -670,7 +678,6 @@ $('gate-form').addEventListener('submit', async (event) => {
         return;
       }
       const result = await api.register({
-        name: $('gate-name').value.trim(),
         username,
         email: $('gate-email').value.trim(),
         password: $('gate-password').value,
@@ -4292,16 +4299,65 @@ function openSettings(tab) {
   $('settings').showModal();
 }
 
-$('open-settings').addEventListener('click', () => openSettings());
+/* ── the account, at the foot of the sidebar (owner, 2026-10-26) ─────── */
+
+function openShortcuts() {
+  renderShortcuts($('shortcuts-list'));
+  /** @type {HTMLDialogElement} */ ($('shortcuts')).showModal();
+}
+
+async function signOut() {
+  await api.logout();
+  location.reload();
+}
+
+$('account-button').addEventListener('click', () =>
+  openAccountMenu($('account-button'), {
+    user: () => state.boot.user,
+    openSettings: (tab) => openSettings(tab),
+    setLanguage: (id) => changeLanguage(id),
+    openGuide: () => onboarding.open(),
+    openAbout: () => /** @type {HTMLDialogElement} */ ($('about')).showModal(),
+    openShortcuts,
+    logout: signOut,
+  }),
+);
+
+/**
+ * The shortcuts the account menu names — Settings beside its row, the rest in
+ * Learn more → Keyboard shortcuts — from the list they are drawn from. A dialog
+ * that is open is a task in hand, so none of them reaches past it; the list of
+ * shortcuts is the one that closes itself again.
+ */
+document.addEventListener('keydown', (event) => {
+  const id = shortcutFor(event);
+  if (!id || $('app').hidden) return;
+  const dialog = /** @type {HTMLDialogElement | null} */ (document.querySelector('dialog[open]'));
+  if (dialog && !(id === 'shortcuts' && dialog.id === 'shortcuts')) return;
+  event.preventDefault();
+  if (id === 'shortcuts') {
+    if (dialog) dialog.close();
+    else openShortcuts();
+  } else if (id === 'settings') openSettings();
+  else if (id === 'search') $('open-search').click();
+  else if (id === 'newChat') $('new-chat').click();
+});
+
 // Whatever was connected or added in there shows in the side panel's Context.
 $('settings').addEventListener('close', () => {
   rail.forgetAccount();
   renderRail();
 });
 
-$('language').addEventListener('change', async (event) => {
-  const language = /** @type {HTMLInputElement} */ (event.target).value;
+$('language').addEventListener('change', (event) => changeLanguage(/** @type {HTMLInputElement} */ (event.target).value));
+
+/** Settings → Languages and the account menu's Language both land here. */
+async function changeLanguage(language) {
   if (!setLanguage(language)) return;
+  // The radios in Settings follow a choice made from the menu.
+  for (const radio of /** @type {NodeListOf<HTMLInputElement>} */ ($('language').querySelectorAll('input'))) {
+    radio.checked = radio.value === language;
+  }
   // Anything drawn from script rather than from markup has to be rebuilt: the
   // chips, the mode menu labels and the conversation list are not `data-i18n`
   // nodes, so `applyI18n` cannot reach them.
@@ -4330,12 +4386,14 @@ $('language').addEventListener('change', async (event) => {
     /* the list keeps whatever it had; the language is still applied */
   });
   onboarding.refresh();
+  // The account's own line carries a translated label for screen readers.
+  paintAccount($('account-button'), state.boot.user);
   try {
     state.boot.prefs = await api.savePrefs({ language });
   } catch (err) {
     toast(err.message, 'error');
   }
-});
+}
 
 /* ── MCP servers ───────────────────────────────────────────────────
  *
@@ -4937,6 +4995,8 @@ function fillSettings() {
   }
 
   const me = state.boot.user;
+  // The account at the foot of the sidebar, kept in step with a renamed one.
+  paintAccount($('account-button'), me);
   $('account-card').innerHTML = `
     <div class="provider">
       <div class="provider__head">
@@ -5325,10 +5385,7 @@ async function loadAdmin() {
   }
 }
 
-$('logout').addEventListener('click', async () => {
-  await api.logout();
-  location.reload();
-});
+$('logout').addEventListener('click', signOut);
 
 /* ── model browser ─────────────────────────────────────────────── */
 

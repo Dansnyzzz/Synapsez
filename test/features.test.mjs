@@ -750,6 +750,13 @@ section('the privacy notice a new account agrees to is the one it can read (LAW-
   check('the sign-in page links it for someone not signed in', /<a class="gate__legal" href="\/privacy\.html"/.test(fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')));
   check('the Search Console verification file is served as Google wrote it', fs.readFileSync(new URL('../public/google19190bbd34c2487c.html', import.meta.url), 'utf8').trim() === 'google-site-verification: google19190bbd34c2487c.html');
   check('  and runs no script — it is served under the page policy as it is', !/<script/i.test(notice));
+  // Terms and a usage policy, linked from the account menu's "Learn more" and
+  // the sign-in card (owner, 2026-10-26): the same shape as the privacy notice.
+  for (const [file, version] of [['terms.html', 'terms-2026-10-26'], ['usage-policy.html', 'usage-2026-10-26']]) {
+    const page = fs.readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
+    check(`${file} says its version in both languages, with a way to reach the owner and no script`, page.includes(`Phiên bản ${version}`) && page.includes(`Version ${version}`) && /mailto:[^"]+@/.test(page) && !/<script/i.test(page) && /<html lang="vi">/.test(page) && /lang="en"/.test(page));
+  }
+  check('  the sign-in card links the terms too', /<a class="gate__terms" href="\/terms\.html"/.test(fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')));
   const { AUDIT_KINDS } = await import('../server/audit.js');
   check('agreeing is an event the security record keeps', AUDIT_KINDS.includes('consent_given'));
 }

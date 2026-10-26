@@ -26,7 +26,7 @@ import { PLUGINS } from './plugins.js';
  *
  * @typedef {{
  *   id?: string, label?: string, detail?: string, title?: string, icon?: string, tag?: string,
- *   checked?: boolean, warn?: string, note?: string, radio?: boolean,
+ *   checked?: boolean, warn?: string, note?: string, radio?: boolean, external?: boolean,
  *   run?: () => any, select?: () => Promise<any>,
  *   sub?: (row: HTMLElement) => Item[] | Promise<Item[]>,
  *   toggle?: { on: boolean, set: (on: boolean) => Promise<any> },
@@ -61,6 +61,7 @@ const ICON = {
   tools: svg('<circle cx="9" cy="9" r="5.2"/><path d="m13 13 3.5 3.5"/>'),
   file: svg('<path d="M11.5 3H6a1.5 1.5 0 0 0-1.5 1.5v11A1.5 1.5 0 0 0 6 17h8a1.5 1.5 0 0 0 1.5-1.5V7Z"/><path d="M11.5 3v4h4"/>'),
   back: svg('<path d="m12 5-5 5 5 5"/>', 15),
+  external: svg('<path d="M11.5 3.5H16.5V8.5M16.5 3.5 9.5 10.5"/><path d="M14.5 11.5v3.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5h3.5"/>', 15),
 };
 
 /** The plugin names, by key literal so the dictionary check sees every one. */
@@ -76,9 +77,10 @@ const PLUGIN_LABEL = {
 };
 
 /**
- * What is open: the button it hangs from, and its panels, outermost first.
+ * What is open: the button it hangs from, and its panels, outermost first. One
+ * at a time across every menu drawn this way — the + and the account menu.
  *
- * @type {{ anchor: HTMLElement, deps: Deps, panels: Panel[], hover: any, connections: Promise<any> } | null}
+ * @type {{ anchor: HTMLElement, label: string, className: string, panels: Panel[], hover: any, connections: Promise<any> | null } | null}
  */
 let open = null;
 
@@ -115,18 +117,13 @@ export function closePlus() {
  * @param {Deps} deps
  */
 export function openPlusMenu(anchor, deps) {
-  const again = open?.anchor === anchor;
-  closePlus();
-  if (again) return;
-  closeMenu();
-
-  open = { anchor, deps, panels: [], hover: null, connections: loadConnections() };
-  anchor.setAttribute('aria-expanded', 'true');
-  const root = showPanel(rootItems(deps), 0, null, true);
+  const connections = loadConnections();
+  const root = openCascade(anchor, rootItems(deps), t('plus.open'), { connections });
+  if (!root) return;
 
   // Said on the Connectors row as soon as it is known, the way Claude puts ⚠ 1 there.
   const mine = open;
-  open.connections.then((data) => {
+  connections.then((data) => {
     if (open !== mine) return;
     const broken = brokenServers(data).length;
     const row = root.node.querySelector('[data-row="connectors"] .plusmenu__tag');
@@ -135,8 +132,32 @@ export function openPlusMenu(anchor, deps) {
       row.classList.add('is-warn');
     }
   });
+}
+
+/**
+ * A menu of these panels from any button — the + beside the message box, the
+ * account at the foot of the sidebar (owner, 2026-10-26) — or nothing, closing
+ * it, when it is already open from there.
+ *
+ * @param {HTMLElement} anchor
+ * @param {Item[]} items  the first panel's rows
+ * @param {string} label  what a screen reader calls the first panel
+ * @param {{ connections?: Promise<any> | null, className?: string }} [options]
+ *   the + menu's connections, read once per opening; a class on every panel
+ * @returns {Panel | null}
+ */
+export function openCascade(anchor, items, label, { connections = null, className = '' } = {}) {
+  const again = open?.anchor === anchor;
+  closePlus();
+  if (again) return null;
+  closeMenu();
+
+  open = { anchor, label, className, panels: [], hover: null, connections };
+  anchor.setAttribute('aria-expanded', 'true');
+  const root = showPanel(items, 0, null, true);
 
   // Registered on a later frame: the click that opened the menu is still travelling.
+  const mine = open;
   requestAnimationFrame(() => {
     if (open !== mine) return;
     document.addEventListener('pointerdown', onPointerDown, true);
@@ -144,6 +165,7 @@ export function openPlusMenu(anchor, deps) {
     window.addEventListener('resize', replace);
     window.addEventListener('scroll', onScroll, true);
   });
+  return root;
 }
 
 /* ── what is in it ──────────────────────────────────────────────── */
@@ -441,6 +463,13 @@ function itemButton(item) {
     more.textContent = '›';
     row.append(more);
   }
+  // A page that opens in a new tab says so, as Claude's ↗ does.
+  if (item.external) {
+    const out = el('span', 'plusmenu__ext');
+    out.setAttribute('aria-hidden', 'true');
+    out.innerHTML = ICON.external;
+    row.append(out);
+  }
   return row;
 }
 
@@ -455,10 +484,11 @@ function itemButton(item) {
 function showPanel(items, level, parent, focus) {
   while (open.panels.length > level) open.panels.pop().node.remove();
   const node = el('div', 'plusmenu');
+  if (open.className) node.classList.add(open.className);
   node.setAttribute('role', 'menu');
   node.dataset.level = String(level);
   if (parent) node.setAttribute('aria-label', parent.querySelector('.plusmenu__label')?.textContent || '');
-  else node.setAttribute('aria-label', t('plus.open'));
+  else node.setAttribute('aria-label', open.label);
   document.body.append(node);
   /** @type {Panel} */
   const panel = { node, level, parent };

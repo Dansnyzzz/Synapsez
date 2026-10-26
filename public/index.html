@@ -99,8 +99,11 @@
         <p class="gate__sub" id="gate-sub" data-i18n-js>Sign in to continue.</p>
 
         <div id="gate-accounts">
-          <input id="gate-name" class="gate__input gate__input--text" type="text" placeholder="Your name" autocomplete="name" hidden data-i18n-title="gate.name" aria-label="Your name" data-i18n-placeholder="gate.ph.name" />
-          <!-- Sign-up only; the box below takes it at sign-in, beside the email (2026-10-20). -->
+          <!-- Sign-up only; the box below takes it at sign-in, beside the email (2026-10-20).
+               It is the account's name too: a separate "Your name" box asked for
+               the same thing twice (owner, 2026-10-26), and the server names an
+               account after its username when no name is given. Settings → Account
+               still changes the name. -->
           <input id="gate-username" class="gate__input gate__input--text" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="24" hidden data-i18n-title="gate.username" aria-label="Username" data-i18n-placeholder="gate.ph.username" />
           <!-- Its type, placeholder and label are set per mode by renderGateMode: an
                email at sign-up, "email or username" everywhere else. -->
@@ -166,9 +169,17 @@
           </button>
         </div>
         <!-- What this is, and its privacy policy, readable before signing in:
-             Google's OAuth verification checks the home page for both. -->
-        <p class="gate__about" data-i18n="gate.about">Synapsez is an AI assistant: chat with the model you choose, work with your files and, only if you connect them, your Gmail, Drive, Calendar and other Google apps, to do what you ask.</p>
-        <a class="gate__legal" href="/privacy.html" data-i18n="gate.privacy">Privacy policy</a>
+             Google's OAuth verification checks the home page for both. The
+             paragraph filled the foot of the card (owner, 2026-10-26), so it
+             waits behind "What is Synapsez?" — still on the page, one press away. -->
+        <p class="gate__foot">
+          <button class="gate__what" type="button" id="gate-what" aria-expanded="false" aria-controls="gate-about" data-i18n="gate.what">What is Synapsez?</button>
+          <span aria-hidden="true">·</span>
+          <a class="gate__legal" href="/privacy.html" data-i18n="gate.privacy">Privacy policy</a>
+          <span aria-hidden="true">·</span>
+          <a class="gate__terms" href="/terms.html" data-i18n="gate.terms">Terms</a>
+        </p>
+        <p class="gate__about" id="gate-about" hidden data-i18n="gate.about">Synapsez is an AI assistant: chat with the model you choose, work with your files and, only if you connect them, your Gmail, Drive, Calendar and other Google apps, to do what you ask.</p>
       </form>
     </div>
 
@@ -228,9 +239,10 @@
         </header>
 
         <nav class="rail" aria-label="Main" data-i18n-aria-label="nav.main">
+          <!-- A plus, as Claude's "New" (owner, 2026-10-26): starting one, not writing. -->
           <button class="rail__item rail__item--primary" id="new-chat" type="button" title="New chat" data-i18n-title="nav.newChat">
-            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M13.5 2.9a1.9 1.9 0 0 1 2.7 2.7L7.8 14 4 15l1-3.8Z" />
+            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 4v12M4 10h12" />
             </svg>
             <span class="rail__label" data-i18n="nav.newChat">New chat</span>
           </button>
@@ -244,9 +256,11 @@
           <!-- This was the model library. The model picker is one press away on
                the header chip and in Settings → Models, so the sidebar slot goes
                to the thing you come back to across days: your projects. -->
+          <!-- Claude's projects glyph: a tray with two layers above it (owner, 2026-10-26). -->
           <button class="rail__item" id="open-projects" type="button" title="Projects" data-i18n-title="nav.projects">
-            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
-              <path d="M2.5 5.4a1.6 1.6 0 0 1 1.6-1.6h3.1l1.6 1.9h5.6a1.6 1.6 0 0 1 1.6 1.6v7.3a1.6 1.6 0 0 1-1.6 1.6H4.1a1.6 1.6 0 0 1-1.6-1.6Z" />
+            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 3.5h8M4.2 6.5h11.6" />
+              <rect x="2.5" y="9.5" width="15" height="7.5" rx="2" />
             </svg>
             <span class="rail__label" data-i18n="nav.projects">Projects</span>
           </button>
@@ -254,11 +268,11 @@
           <!-- Everything the assistant has made, across every conversation.
                A file is born in the chat it was asked for and needed again a
                week later, when nobody remembers which chat that was. -->
+          <!-- Claude's artifacts glyph: two pages, one over the other (owner, 2026-10-26). -->
           <button class="rail__item" id="open-artifacts" type="button" title="Artifacts" data-i18n-title="nav.artifacts">
-            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
-              <path d="M11.4 2.5H5.6A1.6 1.6 0 0 0 4 4.1v11.8a1.6 1.6 0 0 0 1.6 1.6h8.8a1.6 1.6 0 0 0 1.6-1.6V7Z" />
-              <path d="M11.4 2.5V7H16" />
-              <path d="M7.6 11.4 6.2 12.8l1.4 1.4M12.4 11.4l1.4 1.4-1.4 1.4" stroke-linecap="round" />
+            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2.5" y="6.5" width="11" height="11" rx="2.2" />
+              <path d="M6.5 6.5V4.7a2.2 2.2 0 0 1 2.2-2.2h6.6a2.2 2.2 0 0 1 2.2 2.2v6.6a2.2 2.2 0 0 1-2.2 2.2h-1.8" />
             </svg>
             <span class="rail__label" data-i18n="nav.artifacts">Artifacts</span>
           </button>
@@ -310,13 +324,17 @@
         <!-- No computer status here. It is in the header beside the model and
              policy chips, where it is visible without opening the menu — saying
              the same thing twice only invites the two to disagree. -->
+        <!-- The account, as Claude's sidebar ends (owner, 2026-10-26): a letter in
+             a circle and the username; pressed, the account menu — Settings,
+             language, help, the policies, signing out (account-menu.js).
+             Collapsed to a rail, the circle alone. -->
         <footer class="sidebar__foot">
-          <button class="rail__item" id="open-settings" type="button" title="Settings" data-i18n-title="nav.settings">
-            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6">
-              <circle cx="10" cy="10" r="2.6" />
-              <path d="M10 2.4v2M10 15.6v2M2.4 10h2M15.6 10h2M4.6 4.6l1.4 1.4M14 14l1.4 1.4M15.4 4.6L14 6M6 14l-1.4 1.4" stroke-linecap="round" />
+          <button class="account" id="account-button" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span class="account__avatar" aria-hidden="true"></span>
+            <span class="account__name rail__label" data-i18n-js></span>
+            <svg class="account__chev rail__label" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 8 4 4 4-4" />
             </svg>
-            <span class="rail__label" data-i18n="nav.settings">Settings</span>
           </button>
         </footer>
       </aside>
@@ -872,8 +890,8 @@
         <figure class="onb__media" id="onb-media">
           <video class="onb__video" id="onb-video" muted loop playsinline preload="metadata"></video>
           <button class="onb__play" id="onb-play" type="button" aria-pressed="false"></button>
-          <!-- The conversations in the clips are sample turns, so the clip says so. -->
-          <figcaption class="onb__caption" data-i18n="onb.video.caption">Recorded from the app itself, with sample data.</figcaption>
+          <!-- No caption over the clip: "recorded from the app, with sample data"
+               said what the clip plainly is, over the clip (owner, 2026-10-26). -->
         </figure>
 
         <div class="onb__body" id="onb-body"></div>
@@ -963,6 +981,33 @@
          not merely clutter — it is a wrong fact being repeated, and until this
          existed the only way to be rid of one was to ask the assistant to
          delete it and hope it picked the right key. -->
+    <!-- ── From the account menu's "Learn more" (account-menu.js) ─────── -->
+    <dialog id="about" class="sheet sheet--form" aria-labelledby="about-title">
+      <form method="dialog" class="sheet__head">
+        <h2 id="about-title" data-i18n="learn.about">About Synapsez</h2>
+        <button class="icon-btn" value="close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
+      </form>
+      <div class="sheet__body about">
+        <img class="about__mark" src="/logo.png" width="44" height="44" alt="" decoding="async" />
+        <p class="about__what" data-i18n="gate.about">Synapsez is an AI assistant: chat with the model you choose, work with your files and, only if you connect them, your Gmail, Drive, Calendar and other Google apps, to do what you ask.</p>
+        <p class="about__links">
+          <a href="/usage-policy.html" target="_blank" rel="noopener" data-i18n="learn.usage">Usage policy</a>
+          <a href="/privacy.html" target="_blank" rel="noopener" data-i18n="learn.privacy">Privacy policy</a>
+          <a href="/terms.html" target="_blank" rel="noopener" data-i18n="learn.terms">Terms of service</a>
+        </p>
+      </div>
+    </dialog>
+
+    <dialog id="shortcuts" class="sheet sheet--form" aria-labelledby="shortcuts-title">
+      <form method="dialog" class="sheet__head">
+        <h2 id="shortcuts-title" data-i18n="learn.shortcuts">Keyboard shortcuts</h2>
+        <button class="icon-btn" value="close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
+      </form>
+      <div class="sheet__body">
+        <ul class="shortcuts" id="shortcuts-list"></ul>
+      </div>
+    </dialog>
+
     <dialog id="memory-sheet" class="sheet sheet--tall" aria-labelledby="memory-sheet-title">
       <form method="dialog" class="sheet__head">
         <h2 id="memory-sheet-title" data-i18n="proj.memory">Memory</h2>
