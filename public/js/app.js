@@ -31,7 +31,7 @@ import { createOnboarding } from './onboarding.js';
 import { humanSize } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
 import { createAttachments } from './attachments.js';
-import { openPlusMenu } from './plus-menu.js';
+import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
 import { contextPanel } from './context-panel.js';
 import { createModelNews } from './model-news.js';
@@ -4326,15 +4326,21 @@ $('account-button').addEventListener('click', () =>
 /**
  * The shortcuts the account menu names — Settings beside its row, the rest in
  * Learn more → Keyboard shortcuts — from the list they are drawn from. A dialog
- * that is open is a task in hand, so none of them reaches past it; the list of
- * shortcuts is the one that closes itself again.
+ * that is open is a task in hand, so none of them reaches past it — nor past
+ * the picture viewer (a modal of its own), nor a key something else already
+ * took: driving the cloud browser sends Ctrl+K and Ctrl+/ to the page there.
+ * The list of shortcuts is the one that closes itself again.
  */
 document.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented || event.isComposing) return;
   const id = shortcutFor(event);
   if (!id || $('app').hidden) return;
   const dialog = /** @type {HTMLDialogElement | null} */ (document.querySelector('dialog[open]'));
   if (dialog && !(id === 'shortcuts' && dialog.id === 'shortcuts')) return;
+  if ([...document.querySelectorAll('[aria-modal="true"]')].some((m) => m.tagName !== 'DIALOG' && m.getClientRects().length)) return;
   event.preventDefault();
+  // A menu left open would sit under the window this opens.
+  closePlus();
   if (id === 'shortcuts') {
     if (dialog) dialog.close();
     else openShortcuts();

@@ -117,6 +117,11 @@ export function closePlus() {
  * @param {Deps} deps
  */
 export function openPlusMenu(anchor, deps) {
+  // A second press puts it away — without reading the connections first.
+  if (open?.anchor === anchor) {
+    closePlus();
+    return;
+  }
   const connections = loadConnections();
   const root = openCascade(anchor, rootItems(deps), t('plus.open'), { connections });
   if (!root) return;

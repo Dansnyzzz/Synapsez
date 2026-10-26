@@ -425,6 +425,30 @@ section("the account at the foot of the sidebar, and its menu");
   check('Ctrl+K opens search', !!(await page.$('#search[open]')));
   await page.evaluate(() => document.getElementById('search').close());
 
+  // A key something else took — the cloud browser sends Ctrl+K to its page —
+  // and a picture open full screen both keep the shortcuts out (review, 2026-10-26).
+  const held = await page.evaluate(async () => {
+    const press = (target) =>
+      target.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true, cancelable: true }));
+    const taker = document.createElement('div');
+    taker.addEventListener('keydown', (event) => event.preventDefault());
+    document.body.append(taker);
+    press(taker);
+    await new Promise((r) => setTimeout(r, 150));
+    const taken = !!document.querySelector('#search[open]');
+    taker.remove();
+    const viewer = document.createElement('div');
+    viewer.setAttribute('aria-modal', 'true');
+    viewer.style.cssText = 'position:fixed;inset:0';
+    document.body.append(viewer);
+    press(document.body);
+    await new Promise((r) => setTimeout(r, 150));
+    const underViewer = !!document.querySelector('#search[open]');
+    viewer.remove();
+    return { taken, underViewer };
+  });
+  check('  but not a key the cloud browser already took, nor under a picture open full screen', !held.taken && !held.underViewer, JSON.stringify(held));
+
   // Collapsed to a rail, the circle alone, and still the menu.
   await page.click('#sidebar-collapse');
   await page.waitForTimeout(400);
@@ -6150,7 +6174,8 @@ section('a tool step reads as a sentence, with the call still inside it');
     const out = {
       headline: block?.querySelector('.tool__name')?.textContent,
       badge: !!block?.querySelector('.tool__fn'),
-      fn: block?.querySelector('.tool__call')?.title,
+      fn: /** @type {HTMLElement | null} */ (block?.querySelector('.tool__call'))?.dataset.toolName,
+      tip: block?.querySelector('.tool__call')?.getAttribute('title') || '',
       args: block?.querySelector('.tool__args')?.textContent,
       result: block?.querySelector('.block__body > pre')?.textContent,
     };
@@ -6160,9 +6185,10 @@ section('a tool step reads as a sentence, with the call still inside it');
 
   check('the card is headlined in words', card.headline === 'Read a guide', card.headline);
   // The grey name badge was removed at the user's request (it repeated the
-  // headline); the exact name stays reachable on the tooltip.
+  // headline); the exact name stays on the node — no longer as a tooltip, which
+  // popped "sandbox_run" up over a command (owner, 2026-10-26).
   check('no grey name badge in the card', !card.badge);
-  check('the real tool name is still on it, as the tooltip', card.fn === 'skill_read', card.fn);
+  check('the real tool name is still on it, but not as a tooltip', card.fn === 'skill_read' && card.tip === '', JSON.stringify(card));
   check('with the arguments it was given', /Writing a Word document/.test(card.args || ''), card.args);
   check('and the result is still there', card.result === 'the guide', card.result);
 }

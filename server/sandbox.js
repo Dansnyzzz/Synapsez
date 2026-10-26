@@ -497,6 +497,22 @@ export function machineNote(home) {
 }
 
 /**
+ * What the model is told it put in front of the person — the figures a cell
+ * drew, the file it handed over. The person has the card itself, so the screen
+ * leaves these out too.
+ *
+ * @param {{ name: string, id: string }[]} pictures
+ */
+export function figuresNote(pictures) {
+  return `Showed the user ${pictures.length === 1 ? 'the figure' : `${pictures.length} figures`} in the conversation: ${pictures.map((p) => `${p.name} (id ${p.id})`).join(', ')}.`;
+}
+
+/** @param {string} name @param {string} id */
+export function handedNote(name, id) {
+  return `Handed ${name} to the user — it is in the conversation to open and download. Its id is ${id}; publish_file with that id makes a link to share.`;
+}
+
+/**
  * Run one command, having written any files first, and hand back what it said
  * — plus, when asked, one file it made, saved into the conversation. Python for
  * the conversation's live session runs after the command, in the same folder.
@@ -568,11 +584,7 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
       const saved = await saveGenerated(userId, { name: `figure-${i + 1}.png`, mime: 'image/png', kind: 'image', data, source: null, chatId });
       pictures.push({ id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes });
     }
-    if (pictures.length) {
-      report.push(
-        `Showed the user ${pictures.length === 1 ? 'the figure' : `${pictures.length} figures`} in the conversation: ${pictures.map((p) => `${p.name} (id ${p.id})`).join(', ')}.`,
-      );
-    }
+    if (pictures.length) report.push(figuresNote(pictures));
   }
 
   let file = null;
@@ -596,10 +608,7 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
       chatId,
     });
     file = { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes };
-    report.push(
-      `Handed ${name} to the user — it is in the conversation to open and download. ` +
-        `Its id is ${saved.id}; publish_file with that id makes a link to share.`,
-    );
+    report.push(handedNote(name, saved.id));
   }
 
   let home = '';

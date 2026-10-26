@@ -1288,6 +1288,11 @@ section('what people see of a tool answer, and money in convert_units');
   check('  nor who read a picture and how to look again', forDisplay(`It is a chart.\n\n${readNote('gemini-2.5-flash', 'f_1')}`) === 'It is a chart.');
   check('  nor the screenshot line under a browser step', forDisplay(`Clicked.\n${shotNote('f_2')}`) === 'Clicked.');
   check('  and words of the page that only look like one stay', forDisplay('(This is the page) [Read by me]') === '(This is the page) [Read by me]');
+  // Found by review, 2026-10-26: notes the card already shows, and a note with
+  // the validator's aside after it.
+  const { figuresNote, handedNote } = await import('../server/sandbox.js');
+  check('  nor what was handed over or shown, which the card itself is', forDisplay(`${printed}\n${figuresNote([{ name: 'figure-1.png', id: 'f_9' }])}\n${handedNote('chart.png', 'f_8')}`) === printed && forDisplay(`x\n${figuresNote([{ name: 'a.png', id: '1' }, { name: 'b.png', id: '2' }])}`) === 'x');
+  check('  nor the machine note with an aside after it, which stays', forDisplay(`${printed}\n${machineNote('/home/user')}\n\n[Use "path", not "file".]`) === `${printed}\n\n[Use "path", not "file".]`);
 
   // The row already shows the command it ran; the output does not say it twice.
   const { workOutput } = await import('../public/js/render.js');
@@ -1299,6 +1304,7 @@ section('what people see of a tool answer, and money in convert_units');
   check('  a heredoc of several lines, too', workOutput(run("python - <<'EOF'\nprint(1)\nEOF"), "$ python - <<'EOF'\nprint(1)\nEOF\nexit 0 · 0.1s") === 'exit 0 · 0.1s');
   check("  and a paired computer's, with its folder line kept", workOutput({ name: 'run_command', input: { command: 'ls' } }, '$ ls\n(in src/)\n\na.js\n\nExit code 0.') === '(in src/)\n\na.js\n\nExit code 0.');
   check('  but output that starts with some other command is left whole', workOutput(run('ls'), '$ pwd\n/tmp') === '$ pwd\n/tmp');
+  check('  and files written first keep their line, the echo under it going', workOutput(run('python a.py'), 'Wrote a.py, b.csv.\n$ python a.py\nexit 0 · 0.2s') === 'Wrote a.py, b.csv.\nexit 0 · 0.2s');
   check('  and Python with no command is untouched', workOutput({ name: 'sandbox_run', input: { python: 'print(1)' } }, '$ not a command\n1') === '$ not a command\n1');
 
   /*

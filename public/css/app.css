@@ -2796,7 +2796,8 @@ details.block.tool--error > summary > .mark,
 .tool--error .mark { color: var(--danger); }
 
 /* The exact call's arguments, inside the card. The function's name is on the
-   card's tooltip rather than in a badge nobody read. */
+   node as `data-tool-name` — not a badge nobody read, nor a tooltip in the
+   pointer's way (owner, 2026-10-26). */
 .tool__call { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .tool__call:empty { display: none; }
 /* The call is the quieter half: what it was asked, fainter than what it answered.
@@ -2995,13 +2996,14 @@ details.block.steps:not([data-family='work']) > .steps__list {
    together cut a title to "Tải và lọ…" beside a long curl (owner, 2026-10-26):
    the title is what a person reads, and the whole command is one click away. */
 .step--work .step__verb {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The same share for the command as in the card's title. */
-.step--work .step__verb:has(+ .step__detail) { max-width: 62%; }
+/* The same share for the command as in the card's title — and only beside a
+   command does the title hold its width; alone it gives way with an ellipsis. */
+.step--work .step__verb:has(+ .step__detail) { flex-shrink: 0; max-width: 62%; }
 .step--work .step__detail { flex: 1 1 0; font-family: var(--mono); font-size: 12px; }
 .step__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin: 4px 0 8px 24px; }
 .step__body .tool__call { margin: 0; }
@@ -7894,8 +7896,11 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 .plusmenu__ext { flex: none; display: grid; color: var(--text-faint); }
 .plusmenu__ext svg { display: block; }
 /* The account menu (account-menu.js): a row with no icon of its own — Learn
-   more's pages, the languages — starts at the edge, as Claude's do. */
+   more's pages, the languages — starts at the edge, as Claude's do; the email
+   heads it on one line. */
 .plusmenu--account { min-width: 264px; }
+.plusmenu--account .plusmenu__item > .plusmenu__icon:empty { display: none; }
+.plusmenu--account > .plusmenu__note:first-child { padding: 8px 10px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* About Synapsez, and the list of shortcuts — from Learn more. */
 .about { display: grid; justify-items: center; gap: 12px; text-align: center; }
 .about__mark { display: block; }
@@ -7925,8 +7930,6 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   font-size: 12px;
   text-align: center;
 }
-.plusmenu--account .plusmenu__item > .plusmenu__icon:empty { display: none; }
-.plusmenu--account > .plusmenu__note:first-child { padding: 8px 10px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plusmenu__tick { flex: none; width: 14px; color: var(--accent); text-align: center; }
 .plusmenu__warn { flex: none; color: var(--warn); }
 .plusmenu__item.is-warn .plusmenu__label { color: var(--text-dim); }

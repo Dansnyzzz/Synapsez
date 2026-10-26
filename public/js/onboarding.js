@@ -80,15 +80,16 @@ export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryProm
   /**
    * The six steps by name — a way to jump as well as a sense of how far there
    * is to go. A short name each: the full titles were cut to "Synapsez là…" in
-   * a sixth of the sheet (owner, 2026-10-26); the full one heads the step below,
-   * and is the button's name for a screen reader.
+   * a sixth of the sheet (owner, 2026-10-26). The short name is the button's
+   * name, so "click Autonomy" finds it by voice (WCAG 2.5.3); the full title
+   * heads the step below, and is the button's description on hover.
    */
   function paintSteps() {
     steps.innerHTML = Array.from({ length: TOTAL }, (_, i) => {
       const n = i + 1;
       const state = n === step ? ' is-current' : n < step ? ' is-done' : '';
-      return `<li class="onb__dot${state}"><button type="button" data-step="${n}"${n === step ? ' aria-current="step"' : ''} aria-label="${escapeHtml(`${n}. ${t(`onb.${n}.title`)}`)}">
-        <span class="onb__dot-n" aria-hidden="true">${n < step ? '✓' : n}</span><span class="onb__dot-label" aria-hidden="true">${escapeHtml(t(`onb.${n}.tab`))}</span></button></li>`;
+      return `<li class="onb__dot${state}"><button type="button" data-step="${n}"${n === step ? ' aria-current="step"' : ''} title="${escapeHtml(t(`onb.${n}.title`))}">
+        <span class="onb__dot-n" aria-hidden="true">${n < step ? '✓' : n}</span><span class="onb__dot-label">${escapeHtml(t(`onb.${n}.tab`))}</span></button></li>`;
     }).join('');
   }
 

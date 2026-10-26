@@ -48,14 +48,19 @@ const MOD = MAC ? '⌘' : 'Ctrl';
 /**
  * The app's keyboard shortcuts — the ones `shortcutFor` answers to, and the
  * list "Keyboard shortcuts" shows, from one place so the two cannot disagree.
- * `code` is the key's place on the keyboard: with Shift held, "," arrives as
- * "<" on most layouts, and its code is still `Comma`.
+ *
+ * Matched by the character a key types (`key`), so a layout that puts "/" or a
+ * letter elsewhere still finds it, and the key that sits where "/" does on a
+ * US board — "-" on a German one, Ctrl+- being zoom out — is left alone.
+ * Settings is the one matched by place (`code`): with Shift held, "," types
+ * "<" on one layout and ";" on another, and its place is the same on both.
+ * "/" ignores Shift, which some layouts need to type it at all.
  */
 export const SHORTCUTS = [
-  { id: 'newChat', code: 'KeyO', shift: true, keys: [MOD, 'Shift', 'O'], label: 'shortcuts.newChat' },
-  { id: 'search', code: 'KeyK', shift: false, keys: [MOD, 'K'], label: 'shortcuts.search' },
+  { id: 'newChat', key: 'o', shift: true, keys: [MOD, 'Shift', 'O'], label: 'shortcuts.newChat' },
+  { id: 'search', key: 'k', shift: false, keys: [MOD, 'K'], label: 'shortcuts.search' },
   { id: 'settings', code: 'Comma', shift: true, keys: [MOD, 'Shift', ','], label: 'shortcuts.settings' },
-  { id: 'shortcuts', code: 'Slash', shift: false, keys: [MOD, '/'], label: 'shortcuts.list' },
+  { id: 'shortcuts', key: '/', shift: null, keys: [MOD, '/'], label: 'shortcuts.list' },
 ];
 
 /** Keys the app already answers to without a shortcut of its own — listed, not handled here. */
@@ -69,7 +74,10 @@ const PLAIN_KEYS = [
 export function shortcutFor(event) {
   const mod = MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (!mod || event.altKey) return null;
-  return SHORTCUTS.find((s) => s.code === event.code && s.shift === event.shiftKey)?.id || null;
+  const typed = String(event.key || '').toLowerCase();
+  return (
+    SHORTCUTS.find((s) => (s.shift === null || s.shift === event.shiftKey) && (s.code ? s.code === event.code : s.key === typed))?.id || null
+  );
 }
 
 const keysOf = (id) => SHORTCUTS.find((s) => s.id === id)?.keys.join('+') || '';

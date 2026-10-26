@@ -57,15 +57,19 @@ const ms = (n) => (n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`);
  *
  * So are the lines the app adds for the model after an answer — what the cloud
  * computer keeps, whether the Python session is the same one, who read a
- * picture and how to look again (owner, 2026-10-26). Each is matched whole, as
- * the server writes it (`machineNote`, `pythonReport`, `readNote`, `shotNote`),
- * so a page that merely says something similar is left alone.
+ * picture and how to look again, the figure or file it put in front of the
+ * person, who has its card already (owner, 2026-10-26). Each is matched whole,
+ * on a line of its own, as the server writes it (`machineNote`, `pythonReport`,
+ * `figuresNote`, `handedNote`, `readNote`, `shotNote`), so a page that merely
+ * says something similar is left alone.
  */
 const MODEL_NOTES = [
-  /\n*\(This account's own cloud computer: it keeps its files and installs between conversations[^\n]*\)\s*$/,
+  /\n*^\(This account's own cloud computer: it keeps its files and installs between conversations[^\n]* — about fifteen idle minutes\.\)$/m,
   /^\[Python: (?:the same live session|a new session) — [^\n]*\]\n?/m,
-  /\n*\[Read by [^\n]* — look_at with that file_id and a question looks again\.\]\s*$/,
-  /\n*\[Screenshot of this step: file [^\n]* — look_at with that file_id reads what is on screen\.\]\s*$/,
+  /\n*^Showed the user (?:the figure|\d+ figures) in the conversation: [^\n]*\(id [^\n)]*\)\.$/m,
+  /\n*^Handed [^\n]* to the user — it is in the conversation to open and download\. Its id is [^\n]*; publish_file with that id makes a link to share\.$/m,
+  /\n*^\[Read by [^\n]* — look_at with that file_id and a question looks again\.\]$/m,
+  /\n*^\[Screenshot of this step: file [^\n]* — look_at with that file_id reads what is on screen\.\]$/m,
 ];
 
 export function forDisplay(text) {
@@ -83,7 +87,8 @@ export function forDisplay(text) {
  * reads the answer apart from the call. On screen the command is already in the
  * row and in the box above the output, so it read three times over (owner,
  * 2026-10-26, screenshot 4). Only that exact echo is taken off: the command as
- * given, or as the cloud computer cuts a long one (300 characters and "…").
+ * given, or as the cloud computer cuts a long one (300 characters and "…"),
+ * first in the answer or under the line saying which files were written first.
  */
 export function workOutput(call, content) {
   const shown = forDisplay(content);
@@ -91,9 +96,11 @@ export function workOutput(call, content) {
   const given = typeof input.command === 'string' ? input.command : '';
   const command = given.trim();
   if (!command) return shown;
+  const wrote = /^Wrote [^\n]*\.\n/.exec(shown)?.[0] || '';
+  const rest = shown.slice(wrote.length);
   for (const echo of new Set([`$ ${given}`, `$ ${command}`, `$ ${command.slice(0, 300)}…`])) {
-    if (shown === echo) return '';
-    if (shown.startsWith(`${echo}\n`)) return shown.slice(echo.length + 1).replace(/^\n+/, '');
+    if (rest === echo) return wrote.trimEnd();
+    if (rest.startsWith(`${echo}\n`)) return wrote + rest.slice(echo.length + 1).replace(/^\n+/, '');
   }
   return shown;
 }
@@ -2521,7 +2528,8 @@ export function assistantMessage() {
    * the step's own words, so opened it shows the command and what it printed
    * rather than the same line a second time (owner, 2026-10-26, screenshot 5) —
    * the way Claude opens a single call. The second step brings the rows back,
-   * the first one folded to its line unless somebody opened it or it failed.
+   * the first one folded to its line unless it failed, or somebody opened it —
+   * or opened the card, which was opening that step, and is reading it now.
    */
   function settleSingle(run) {
     if (run.family !== 'work') return;
@@ -2530,8 +2538,9 @@ export function assistantMessage() {
     run.node.toggleAttribute('data-single', single);
     const first = run.steps[0];
     if (!first?.row) return;
+    const reading = run.touched && run.node.open;
     if (single) /** @type {HTMLDetailsElement} */ (first.row.fold).open = true;
-    else if (was && first.done && !first.failed && !first.row.touched()) /** @type {HTMLDetailsElement} */ (first.row.fold).open = false;
+    else if (was && first.done && !first.failed && !first.row.touched() && !reading) /** @type {HTMLDetailsElement} */ (first.row.fold).open = false;
   }
 
   /**
