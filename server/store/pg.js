@@ -1203,12 +1203,29 @@ export function createPgStore(connectionString) {
         [Math.min(Math.max(Number(limit) || 200, 1), 500)],
       );
     },
+    /**
+     * Everything but agreements. An agreement is the proof the account
+     * consented (LAW-001), needed for as long as the account is used — it
+     * goes with the account, not with the age of the record (2026-10-26).
+     */
     async pruneAudit(days = 180) {
       const rows = await q(
-        `DELETE FROM audit_events WHERE created_at < NOW() - make_interval(days => $1) RETURNING id`,
+        `DELETE FROM audit_events WHERE created_at < NOW() - make_interval(days => $1) AND kind <> 'consent_given' RETURNING id`,
         [Math.max(1, Math.floor(Number(days) || 180))],
       );
       return rows.length;
+    },
+    /** What this account last agreed to — the versions, or null if it never did. */
+    async latestConsent(userId) {
+      const rows = await q(
+        `SELECT detail FROM audit_events WHERE user_id = $1 AND kind = 'consent_given' ORDER BY created_at DESC LIMIT 1`,
+        [userId],
+      );
+      const detail = rows[0]?.detail;
+      if (detail == null) return null;
+      // JSONB comes back parsed from every driver here; a text column, if one
+      // ever held it, would not.
+      return typeof detail === 'string' ? JSON.parse(detail) : detail;
     },
 
     async getChat(userId, id) {

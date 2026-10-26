@@ -259,7 +259,10 @@ export function createPrivacy({ state, armed, onImported }) {
 
   function activityLine(event, withAccount = false) {
     const detail = event.detail || {};
-    const what = t(`activity.${event.kind}`, {
+    // An agreement since 2026-10-26 covers the terms and the usage policy too;
+    // one from before said yes to the privacy notice alone, and says so.
+    const kind = event.kind === 'consent_given' && detail.terms ? 'consent_given_all' : event.kind;
+    const what = t(`activity.${kind}`, {
       provider: detail.provider || '',
       n: String(detail.chats ?? detail.notes ?? ''),
     });

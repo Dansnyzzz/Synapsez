@@ -1435,7 +1435,10 @@ Settings → Account → **Your data**:
 Settings → Account lists sign-ins (and failed attempts on your account), password and two-factor
 changes, keys added and removed, exports, imports, shared links and privacy changes — never what was
 said. Addresses are kept only to their network (an IPv4 /24, an IPv6 /48) and the browser only by
-family. Kept 180 days. Administrators see the record across accounts in Settings → People.
+family. Kept 180 days — except agreements, kept as long as the account: signing up records which
+versions of the terms, the usage policy and the privacy notice were ticked, and an account whose
+latest agreement is older than the current documents (`server/legal.js`) is asked once, by a banner
+under the header. Administrators see the record across accounts in Settings → People.
 
 ---
 

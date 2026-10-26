@@ -480,6 +480,37 @@ section('the security record: what happened, never what was said');
   check('old events are pruned', (await store.pruneAudit(180)) === 0);
 }
 
+/*
+ * Agreeing to the terms, the usage policy and the privacy notice (owner,
+ * 2026-10-26): signing up records all three versions, and an account whose
+ * latest agreement is to older documents — or to none — is asked once, then
+ * not again until a document changes.
+ */
+section('agreeing to the terms: recorded at sign-up, asked of an account that never did');
+{
+  const { LEGAL } = await import('../server/legal.js');
+  const session = await jar().call('GET', '/api/session');
+  check('the gate is told which versions it is showing', session.body.legal?.notice === LEGAL.notice && session.body.legal?.terms === LEGAL.terms && session.body.legal?.usage === LEGAL.usage, JSON.stringify(session.body.legal));
+
+  const dana = jar();
+  await dana.call('POST', '/api/register', { username: 'dana', email: 'dana@memory.test', password: 'a-long-enough-password', consent: LEGAL.notice, terms: LEGAL.terms, usage: LEGAL.usage });
+  const danaBoot = await dana.call('GET', '/api/bootstrap');
+  const danaRecord = (await dana.call('GET', '/api/account/activity')).body.events.find((e) => e.kind === 'consent_given');
+  check('signing up with the tick records all three versions', danaRecord?.detail?.terms === LEGAL.terms && danaRecord?.detail?.usage === LEGAL.usage && danaRecord?.detail?.notice === LEGAL.notice, JSON.stringify(danaRecord?.detail));
+  check('  and that account is not asked again', danaBoot.body.consent?.agreed === true, JSON.stringify(danaBoot.body.consent));
+
+  const before = await alice.call('GET', '/api/bootstrap');
+  check('an account with no agreement on record is asked to agree', before.body.consent?.agreed === false && before.body.consent?.current?.terms === LEGAL.terms, JSON.stringify(before.body.consent));
+  const old = await alice.call('POST', '/api/consent', { ...LEGAL, notice: 'privacy-2026-10-18' });
+  check('  agreeing to anything but the current documents is refused', old.status === 400, `${old.status} ${old.text.slice(0, 120)}`);
+  const signedOut = await jar().call('POST', '/api/consent', LEGAL);
+  check('  and nobody signed out agrees for anyone', signedOut.status === 401, `${signedOut.status}`);
+  const agreed = await alice.call('POST', '/api/consent', LEGAL);
+  const after = await alice.call('GET', '/api/bootstrap');
+  check('agreeing to the current ones is recorded, and asks no more', agreed.status === 200 && after.body.consent?.agreed === true, `${agreed.status} ${JSON.stringify(after.body.consent)}`);
+  check("  one account's agreement is not another's", (await bob.call('GET', '/api/bootstrap')).body.consent?.agreed === false);
+}
+
 /* ── the notes page ────────────────────────────────────────────────── */
 
 section('Settings → Memory lists, edits and deletes notes');

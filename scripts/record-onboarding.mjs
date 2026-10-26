@@ -72,6 +72,7 @@ await initStore();
 const { createApp } = await import('../server/app.js');
 const { executeTool } = await import('../server/tools/execute.js');
 const { DEFAULT_PREFS } = await import('../server/settings.js');
+const { LEGAL } = await import('../server/legal.js');
 const server = (await createApp()).listen(0, '127.0.0.1');
 await new Promise((r) => server.once('listening', r));
 const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
@@ -79,7 +80,8 @@ const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (
 const registered = await fetch(`${base}/api/register`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ email: 'lan@example.com', password: 'mot-mat-khau-du-dai', name: 'Lan', username: 'lan', consent: 'privacy-2026-10-18' }),
+  // Agreed as the sign-up tick agrees, so no "please agree" banner stands over the scenes.
+  body: JSON.stringify({ email: 'lan@example.com', password: 'mot-mat-khau-du-dai', name: 'Lan', username: 'lan', consent: LEGAL.notice, terms: LEGAL.terms, usage: LEGAL.usage }),
 });
 if (registered.status !== 201) throw new Error(`could not make the demo account: ${await registered.text()}`);
 const { user } = await registered.json();

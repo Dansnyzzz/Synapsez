@@ -265,8 +265,6 @@ const onScreen = (run) => runs.onScreen(run);
  * read-only with a job attached — look first, then say what you would do.
  */
 const POLICIES = ['guarded', 'auto', 'ask', 'plan', 'readonly'];
-/** The privacy notice a new account agrees to — public/privacy.html, by its version. */
-const PRIVACY_NOTICE = 'privacy-2026-10-18';
 
 /**
  * Looked up when drawn, not built at import.
@@ -677,11 +675,16 @@ $('gate-form').addEventListener('submit', async (event) => {
         /** @type {HTMLButtonElement} */ (submit).disabled = false;
         return;
       }
+      // What the tick agreed to, by version, as the server named them to this
+      // page (server/legal.js): the privacy notice, the terms, the usage policy.
+      const legal = session.legal || {};
       const result = await api.register({
         username,
         email: $('gate-email').value.trim(),
         password: $('gate-password').value,
-        consent: PRIVACY_NOTICE,
+        consent: legal.notice,
+        terms: legal.terms,
+        usage: legal.usage,
       });
       if (result.emailBackend === 'console') {
         toast(t('gate.note.noMail'));
@@ -732,6 +735,7 @@ async function start() {
 
   renderSuggestions();
   renderTopbar();
+  paintLegal();
   if (state.boot.prefs.modelNotice) noteModelRetired(state.boot.prefs.modelNotice.from);
   fillSettings();
   // Where scheduled work actually runs differs between a local run and a
@@ -4298,6 +4302,31 @@ function openSettings(tab) {
   if (tab) selectTab(tab);
   $('settings').showModal();
 }
+
+/* ── agreeing to the documents as they are now (owner, 2026-10-26) ─────
+ *
+ * An account whose latest agreement is older than the terms, the usage policy
+ * or the privacy notice — or that has none, being older than the terms — is
+ * asked once, by a banner under the header; the work behind it goes on. */
+
+function paintLegal() {
+  $('legal-banner').hidden = state.boot.consent?.agreed !== false;
+}
+
+$('legal-agree').addEventListener('click', async () => {
+  const button = /** @type {HTMLButtonElement} */ ($('legal-agree'));
+  button.disabled = true;
+  try {
+    const { consent } = await api.agree(state.boot.consent.current);
+    state.boot.consent = consent;
+    paintLegal();
+    toast(t('legal.thanks'));
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
 
 /* ── the account, at the foot of the sidebar (owner, 2026-10-26) ─────── */
 

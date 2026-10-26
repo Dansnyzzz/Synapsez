@@ -739,9 +739,14 @@ section('deleting stored files across every account is asked for first (CODE-044
 section('the privacy notice a new account agrees to is the one it can read (LAW-001)');
 {
   const notice = fs.readFileSync(new URL('../public/privacy.html', import.meta.url), 'utf8');
-  const app = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
-  const version = /const PRIVACY_NOTICE = '(privacy-\d{4}-\d{2}-\d{2})'/.exec(app)?.[1];
-  check('the page names the version the sign-up form sends', !!version && notice.includes(`Phiên bản ${version}`) && notice.includes(`Version ${version}`), version);
+  // One place says which versions are current (server/legal.js): the gate is
+  // told them by /api/session and sends them back with the tick (2026-10-26).
+  const { LEGAL, agreement, agreedToCurrent } = await import('../server/legal.js');
+  const version = LEGAL.notice;
+  check('the page names the version the sign-up form sends', /^privacy-\d{4}-\d{2}-\d{2}$/.test(version) && notice.includes(`Phiên bản ${version}`) && notice.includes(`Version ${version}`), version);
+  // The database moved from Neon to Supabase on 2026-10-19 (docs/database.md).
+  check('  naming the database the deployment actually uses', /<strong>Supabase<\/strong>/.test(notice) && /Supabase holds the database/.test(notice), version);
+  check('  and saying an agreement is kept while the account is', /bản ghi đồng ý/i.test(notice) && /record of what you agreed to/i.test(notice));
   check('  in both languages, saying where data goes outside Vietnam and what rights there are', /ra nước ngoài/.test(notice) && /outside Vietnam/.test(notice) && /Quyền của bạn/.test(notice) && /Your rights/.test(notice));
   check('  names who runs it and how to reach them, not a placeholder', !/\[[^\]]*(email|điền|person|Tên)[^\]]*\]/i.test(notice) && /mailto:[^"]+@/.test(notice));
   // Google's OAuth verification reads this page (owner, 2026-10-18).
@@ -752,11 +757,16 @@ section('the privacy notice a new account agrees to is the one it can read (LAW-
   check('  and runs no script — it is served under the page policy as it is', !/<script/i.test(notice));
   // Terms and a usage policy, linked from the account menu's "Learn more" and
   // the sign-in card (owner, 2026-10-26): the same shape as the privacy notice.
-  for (const [file, version] of [['terms.html', 'terms-2026-10-26'], ['usage-policy.html', 'usage-2026-10-26']]) {
+  for (const [file, version] of [['terms.html', LEGAL.terms], ['usage-policy.html', LEGAL.usage]]) {
     const page = fs.readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
     check(`${file} says its version in both languages, with a way to reach the owner and no script`, page.includes(`Phiên bản ${version}`) && page.includes(`Version ${version}`) && /mailto:[^"]+@/.test(page) && !/<script/i.test(page) && /<html lang="vi">/.test(page) && /lang="en"/.test(page));
   }
-  check('  the sign-in card links the terms too', /<a class="gate__terms" href="\/terms\.html"/.test(fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')));
+  const gate = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  check('  the sign-in card links the terms too', /<a class="gate__terms" href="\/terms\.html"/.test(gate));
+  const tick = /<div class="gate__remember" id="gate-consent-row"[\s\S]*?<\/div>/.exec(gate)?.[0] || '';
+  check('the tick at sign-up names all three, each a link to read first', ['/terms.html', '/usage-policy.html', '/privacy.html'].every((href) => tick.includes(`href="${href}"`)), tick.slice(0, 200));
+  check('  what a request says was shown is kept only in the shape of a version', JSON.stringify(agreement({ consent: LEGAL.notice, terms: LEGAL.terms, usage: 'x' })) === JSON.stringify({ notice: LEGAL.notice, terms: LEGAL.terms }));
+  check('  and only the current three answer "agreed"', agreedToCurrent({ ...LEGAL }) && !agreedToCurrent({ ...LEGAL, notice: 'privacy-2026-10-18' }) && !agreedToCurrent(null) && !agreedToCurrent({ notice: LEGAL.notice }));
   const { AUDIT_KINDS } = await import('../server/audit.js');
   check('agreeing is an event the security record keeps', AUDIT_KINDS.includes('consent_given'));
 }

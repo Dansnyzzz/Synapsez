@@ -160,7 +160,10 @@ check(
 );
 
 // LAW-001: agreeing to the privacy notice is a tick of the person's own.
-check('signing up asks for agreement to the privacy notice, with a link to it', (await page.isVisible('#gate-consent-row')) && (await page.getAttribute('#gate-consent-row a', 'href')) === '/privacy.html');
+{
+  const links = await page.$$eval('#gate-consent-row a', (as) => as.map((a) => a.getAttribute('href')).join());
+  check('signing up asks for agreement to the terms, the usage policy and the privacy notice, a link to each', (await page.isVisible('#gate-consent-row')) && links === '/terms.html,/usage-policy.html,/privacy.html', links);
+}
 
 /*
  * The owner's 2026-10-26 screenshot 1: the agreement's words were centred under
@@ -207,7 +210,9 @@ check('the app opened', await page.isVisible('#model-chip'));
   const { getStore } = await import('../server/store/index.js');
   const me = await getStore().getUserByEmail('ui@test.local');
   const consented = (await getStore().listAudit(me.id, 50)).find((e) => e.kind === 'consent_given');
-  check('  and the agreement is in the security record, with the notice\'s version', consented?.detail?.notice === 'privacy-2026-10-18', JSON.stringify(consented?.detail));
+  const { LEGAL } = await import('../server/legal.js');
+  check("  and the agreement is in the security record, with each document's version", consented?.detail?.notice === LEGAL.notice && consented?.detail?.terms === LEGAL.terms && consented?.detail?.usage === LEGAL.usage, JSON.stringify(consented?.detail));
+  check('  so the account is not asked again', await page.isHidden('#legal-banner'));
 }
 
 /**
@@ -465,6 +470,40 @@ section("the account at the foot of the sidebar, and its menu");
   check('collapsed to a rail, the account is its circle, with the name on hover', rail.nameHidden && rail.centred && rail.title === 'ui.tester', JSON.stringify(rail));
   await page.click('#sidebar-toggle');
   await page.waitForTimeout(400);
+}
+
+/*
+ * An account whose latest agreement is older than the documents — or missing,
+ * being older than the terms — is asked once, under the header (owner,
+ * 2026-10-26). Pressing "I agree" is a real request; the record is real too.
+ */
+section('an account that has not agreed to the documents as they are now is asked, once');
+{
+  // This account agreed at sign-up; the bootstrap is made to say it did not.
+  await page.route('**/api/bootstrap*', async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    await route.fulfill({ response, json: { ...json, consent: { ...json.consent, agreed: false } } });
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#legal-banner:not([hidden])', { timeout: 8000 }).catch(() => null);
+  const asked = await page.evaluate(() => ({
+    shown: !document.getElementById('legal-banner').hidden,
+    links: [...document.querySelectorAll('#legal-banner a')].map((a) => a.getAttribute('href')).join(),
+  }));
+  check('it says so under the header, with the three documents to read', asked.shown && asked.links === '/terms.html,/usage-policy.html,/privacy.html', JSON.stringify(asked));
+  await page.unroute('**/api/bootstrap*');
+  await page.click('#legal-agree');
+  await page.waitForTimeout(800);
+  check('  "I agree" puts it away', await page.isHidden('#legal-banner'));
+  const { getStore } = await import('../server/store/index.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  const renewed = (await getStore().listAudit(me.id, 50)).find((e) => e.kind === 'consent_given' && e.detail?.renewed);
+  const { LEGAL } = await import('../server/legal.js');
+  check('  and records the agreement, by version', renewed?.detail?.terms === LEGAL.terms && renewed?.detail?.notice === LEGAL.notice, JSON.stringify(renewed?.detail));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2000);
+  check('  and is not asked again', await page.isHidden('#legal-banner'));
 }
 
 section('the chat window is fixed, only the transcript scrolls');

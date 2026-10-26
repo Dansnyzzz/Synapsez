@@ -1257,6 +1257,23 @@ section('housekeeping');
   check('deleting a project deletes its sources\' files', (await rows('attachments', "WHERE id = 'shelved'")) === 0);
   check('and the shelf rows', (await rows('project_files', "WHERE id = 'pf-sweep'")) === 0);
 
+  /*
+   * The security record is pruned after 180 days — but an agreement is the
+   * proof the account consented (LAW-001), needed for as long as the account
+   * is used, so it is never pruned (2026-10-26). And the latest agreement is
+   * the account's own: another's never answers for it.
+   */
+  await store.recordAudit('u-alice', { kind: 'consent_given', detail: { notice: 'privacy-2026-10-18' } });
+  await store.recordAudit('u-alice', { kind: 'sign_in', detail: {} });
+  await driver.query(`UPDATE audit_events SET created_at = NOW() - INTERVAL '400 days' WHERE user_id = 'u-alice' AND kind IN ('consent_given', 'sign_in')`);
+  await store.pruneAudit(180);
+  check('an old sign-in leaves the security record', (await rows('audit_events', "WHERE user_id = 'u-alice' AND kind = 'sign_in'")) === 0);
+  check('  an old agreement does not — it is the proof of consent', (await rows('audit_events', "WHERE user_id = 'u-alice' AND kind = 'consent_given'")) === 1);
+  await store.recordAudit('u-alice', { kind: 'consent_given', detail: { notice: 'privacy-2026-10-26', terms: 'terms-2026-10-26', usage: 'usage-2026-10-26' } });
+  const latest = await store.latestConsent('u-alice');
+  check("the account's latest agreement is the newest", latest?.terms === 'terms-2026-10-26' && latest?.notice === 'privacy-2026-10-26', JSON.stringify(latest));
+  check("  and another account's never answers for this one", (await store.latestConsent('u-bob')) === null);
+
   // What nothing can reach: counted, then removed — and nothing else with it.
   await driver.query(
     `INSERT INTO attachments (id, user_id, chat_id, name, mime, kind, bytes, data)

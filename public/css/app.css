@@ -1896,6 +1896,25 @@ textarea {
   background: transparent;
 }
 .topbar__menu { display: none; }
+/* Asked once, under the header, of an account that has not agreed to the
+   documents as they are now (2026-10-26). Quiet: the work goes on beside it. */
+.legal-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 16px 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  background: var(--glass-solid);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.legal-banner[hidden] { display: none; }
+.legal-banner__text { flex: 1 1 320px; margin: 0; }
+.legal-banner__text a { color: var(--accent); text-underline-offset: 3px; white-space: nowrap; }
 .topbar__title {
   /* An h1, so the chat view has a heading — it had none, and this is the thing
      that names the page. The two resets are what let it be one without looking

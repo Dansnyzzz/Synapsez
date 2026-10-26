@@ -150,10 +150,15 @@
           <span data-i18n="gate.remember">Remember me</span>
         </label>
 
-        <!-- Sign-up only: agreeing to the privacy notice, by ticking (LAW-001). -->
+        <!-- Sign-up only: agreeing, by ticking (LAW-001), to the terms, the usage
+             policy and the privacy notice — each a link to read first; the
+             versions shown go back with the tick (server/legal.js). -->
         <div class="gate__remember" id="gate-consent-row" hidden>
           <input type="checkbox" id="gate-consent" aria-describedby="gate-consent-text" />
           <label for="gate-consent" id="gate-consent-text"><span data-i18n="gate.consent">I have read and agree to the</span>
+            <a href="/terms.html" target="_blank" rel="noopener" data-i18n="gate.consentTerms">Terms of Service</a>,
+            <a href="/usage-policy.html" target="_blank" rel="noopener" data-i18n="gate.consentUsage">the Usage Policy</a>
+            <span data-i18n="gate.consentAnd">and the</span>
             <a href="/privacy.html" target="_blank" rel="noopener" data-i18n="gate.consentLink">privacy notice</a></label>
         </div>
 
@@ -384,6 +389,20 @@
             </button>
           </div>
         </header>
+
+        <!-- Asked once of an account whose latest agreement is older than the
+             documents as they are now, or missing — one created before the terms
+             existed (owner, 2026-10-26). Under the header on every page, until
+             agreed; the work behind it goes on meanwhile. -->
+        <div class="legal-banner" id="legal-banner" role="region" aria-labelledby="legal-banner-text" hidden>
+          <p class="legal-banner__text" id="legal-banner-text">
+            <span data-i18n="legal.banner">Synapsez now has Terms of Service and a Usage Policy, and its privacy notice has changed. Please read them and agree to keep using Synapsez:</span>
+            <a href="/terms.html" target="_blank" rel="noopener" data-i18n="learn.terms">Terms of service</a> ·
+            <a href="/usage-policy.html" target="_blank" rel="noopener" data-i18n="learn.usage">Usage policy</a> ·
+            <a href="/privacy.html" target="_blank" rel="noopener" data-i18n="learn.privacy">Privacy policy</a>
+          </p>
+          <button class="btn btn--primary btn--small" id="legal-agree" type="button" data-i18n="legal.agree">I agree</button>
+        </div>
 
         <!-- ── A full page, in the place the conversation normally is ──────
              Projects, Artifacts and Scheduled are shelves, not asides: you go

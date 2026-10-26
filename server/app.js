@@ -63,6 +63,7 @@ import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
 import { redactSecrets } from './redact.js';
 import { audit } from './audit.js';
+import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -368,6 +369,8 @@ export function createApp() {
         emailBackend: emailBackend(),
         // Page views and page speed, on Vercel only — see server/insights.js.
         insights: insightsConfig(),
+        // The versions the sign-up tick agrees to, sent back with it — server/legal.js.
+        legal: LEGAL,
       });
     }),
   );
@@ -517,11 +520,13 @@ export function createApp() {
     wrap(async (req, res) => {
       try {
         const user = await registerUser(body(req), req, res);
-        // Which privacy notice the person ticked, kept in their security record
+        // What the person ticked — the privacy notice, and since 2026-10-26 the
+        // terms and the usage policy — by version, in their security record
         // (LAW-001): consent has to be shown, not assumed. The form insists on
-        // the tick; an API client that sends none simply has none recorded.
-        const consent = typeof body(req)?.consent === 'string' ? body(req).consent.slice(0, 40) : '';
-        if (/^privacy-\d{4}-\d{2}-\d{2}$/.test(consent)) await audit(req, user.id, 'consent_given', { notice: consent });
+        // the tick; an API client that sends none simply has none recorded, and
+        // is asked by the banner once it signs in (`/api/consent`).
+        const agreed = agreement(body(req));
+        if (agreed.notice) await audit(req, user.id, 'consent_given', agreed);
         res.status(201).json({ user: publicUser(user), emailBackend: emailBackend() });
       } catch (err) {
         // A closed deployment is a 403, not a bad request — the client can tell
@@ -842,14 +847,18 @@ export function createApp() {
         await setPrefs(req.user.id, { timezone: zone }).catch(() => {});
       }
 
-      const [providers, worker, usage, library] = await Promise.all([
+      const [providers, worker, usage, library, consented] = await Promise.all([
         providerStatus(req.user.id),
         workerStatus(req.user, prefs),
         usageSummary(req.user.id),
         store.modelLibraryStatus(),
+        store.latestConsent(req.user.id),
       ]);
       res.json({
         user: publicUser(req.user),
+        // Whether this account has agreed to the documents as they are now; if
+        // not, a banner asks once — see server/legal.js.
+        consent: { current: LEGAL, agreed: agreedToCurrent(consented) },
         usage: { ...usage, limit: limitFor(req.user) },
         prefs,
         providers,
@@ -878,6 +887,25 @@ export function createApp() {
           publicUrl: publicUrlFor(req),
         },
       });
+    }),
+  );
+
+  /**
+   * Agreeing to the documents as they are now — from the banner an account sees
+   * when its latest agreement is older, or missing (owner, 2026-10-26). Only
+   * the current versions can be agreed to: a page left open across a change
+   * must be read again, not agreed to sight unseen.
+   */
+  api.post(
+    '/consent',
+    rateLimit('consent', (req) => req.user?.id),
+    wrap(async (req, res) => {
+      const agreed = agreement(body(req));
+      if (!agreedToCurrent(agreed)) {
+        return res.status(400).json({ error: 'Those are not the current documents. Reload the page to read them.' });
+      }
+      await audit(req, req.user.id, 'consent_given', { ...agreed, renewed: true });
+      res.json({ ok: true, consent: { current: LEGAL, agreed: true } });
     }),
   );
 

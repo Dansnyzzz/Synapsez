@@ -91,6 +91,8 @@ export const api = {
   login: (credentials) => request('POST', '/api/login', credentials),
   register: (details) => request('POST', '/api/register', details),
   logout: () => request('POST', '/api/logout'),
+  /** Agreeing to the documents as they are now — `versions` as bootstrap's `consent.current` says them. */
+  agree: (versions) => request('POST', '/api/consent', versions),
 
   forgotPassword: (email) => request('POST', '/api/password/forgot', { email }),
   resetPassword: (payload) => request('POST', '/api/password/reset', payload),
