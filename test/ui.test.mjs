@@ -526,9 +526,12 @@ section('an account that has not agreed to the documents as they are now is aske
   check('  "I agree" puts it away', await page.isHidden('#legal-banner'));
   const { getStore } = await import('../server/store/index.js');
   const me = await getStore().getUserByEmail('ui@test.local');
-  const renewed = (await getStore().listAudit(me.id, 50)).find((e) => e.kind === 'consent_given' && e.detail?.renewed);
-  const { LEGAL } = await import('../server/legal.js');
-  check('  and records the agreement, by version', renewed?.detail?.terms === LEGAL.terms && renewed?.detail?.notice === LEGAL.notice, JSON.stringify(renewed?.detail));
+  // This account agreed to these very versions at sign-up, so agreeing again
+  // writes nothing new (agreements are kept for good) — the latest is still them.
+  const { agreedToCurrent } = await import('../server/legal.js');
+  const agreements = (await getStore().listAudit(me.id, 200)).filter((e) => e.kind === 'consent_given');
+  const latest = await getStore().latestConsent(me.id);
+  check('  and the agreement on record is to the current versions, not written twice', agreedToCurrent(latest) && agreements.length === 1, `${agreements.length} ${JSON.stringify(latest)}`);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
   check('  and is not asked again', await page.isHidden('#legal-banner'));
