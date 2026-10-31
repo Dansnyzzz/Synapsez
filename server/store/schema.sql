@@ -887,7 +887,9 @@ CREATE INDEX IF NOT EXISTS chats_incognito_idx ON chats (updated_at) WHERE incog
 -- What happened, never what was said: no message text, no secret, and the
 -- address only as its network (an IPv4 /24, an IPv6 /48), which is enough to
 -- tell "my phone" from "somewhere else" without keeping where somebody lives.
--- Goes with the account (ON DELETE CASCADE) and is pruned after 180 days.
+-- Goes with the account (ON DELETE CASCADE) and is pruned after 180 days —
+-- except agreements (`consent_given`), the proof of consent, kept as long as the
+-- account with their network and browser cleared at that age (2026-10-26).
 CREATE TABLE IF NOT EXISTS audit_events (
   id         TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -953,3 +955,47 @@ ALTER TABLE chats ADD COLUMN IF NOT EXISTS context_parts JSONB;
 -- accounts made before it keep signing in by email until they pick one.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_key ON users (username);
+
+-- ── 33: where the account is signed in, one device at a time; feedback ─
+-- `sessions`: one row per sign-in, so somebody can see the browsers their
+-- account is signed in on and sign out one without the others (owner,
+-- 2026-10-31). The cookie carries the row's id and a revoked row stops it on
+-- the next request. Only what the security record already keeps is kept here —
+-- the browser by family and the network (an IPv4 /24, an IPv6 /48) — never an
+-- address or a place. `epoch` is the account's session_epoch at sign-in: a
+-- password change ends every row of an older one. Rows that can no longer be
+-- used — expired or signed out — are swept a week later.
+CREATE TABLE IF NOT EXISTS sessions (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  epoch       INTEGER NOT NULL DEFAULT 1,
+  agent       TEXT,
+  network     TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL,
+  revoked_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id, created_at DESC);
+-- `feedback`: what somebody sent from Give feedback — the area, the kind, their
+-- words, how much it affects them — and, only when they switched it on, a copy
+-- of one conversation as it was when sent. Read by the deployment's
+-- administrators in Settings, never by a model. Goes with the account.
+CREATE TABLE IF NOT EXISTS feedback (
+  id             TEXT PRIMARY KEY,
+  user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  topic          TEXT NOT NULL,
+  topic_other    TEXT,
+  kind           TEXT NOT NULL,
+  body           TEXT NOT NULL,
+  affect         TEXT NOT NULL,
+  frequency      TEXT,
+  worked_before  TEXT,
+  chat_id        TEXT,
+  chat_title     TEXT,
+  transcript     JSONB,
+  client         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  read_at        TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS feedback_created_idx ON feedback (created_at DESC);
+CREATE INDEX IF NOT EXISTS feedback_user_idx ON feedback (user_id, created_at DESC);

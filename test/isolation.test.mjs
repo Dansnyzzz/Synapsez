@@ -1277,6 +1277,33 @@ section('housekeeping');
   check("the account's latest agreement is the newest", latest?.terms === 'terms-2026-10-26' && latest?.notice === 'privacy-2026-10-26', JSON.stringify(latest));
   check("  and another account's never answers for this one", (await store.latestConsent('u-bob')) === null);
 
+  /*
+   * Sessions (33): where an account is signed in, one device at a time (owner,
+   * 2026-10-31). One account can neither see, read nor sign out another's.
+   */
+  const soon = new Date(Date.now() + 86_400_000).toISOString();
+  await store.createSession({ id: 's-alice-1', userId: 'u-alice', epoch: 1, agent: 'Chrome on Windows', network: '203.0.113.0/24', expiresAt: soon });
+  await store.createSession({ id: 's-alice-2', userId: 'u-alice', epoch: 1, agent: 'Safari on iOS', network: null, expiresAt: soon });
+  await store.createSession({ id: 's-bob-1', userId: 'u-bob', epoch: 1, agent: 'Firefox on Linux', network: null, expiresAt: soon });
+  const listed = (await store.listSessions('u-alice', 1)).map((s) => s.id).sort().join();
+  check("an account lists its own sessions, and only those", listed === 's-alice-1,s-alice-2', listed);
+  check("  reads no other account's by id", (await store.getSession('u-alice', 's-bob-1')) === null);
+  check("  and cannot sign another account's device out", (await store.revokeSession('u-alice', 's-bob-1')) === false && (await store.getSession('u-bob', 's-bob-1'))?.revoked_at == null);
+  check('signing a device out takes it off the list', (await store.revokeSession('u-alice', 's-alice-2')) && (await store.listSessions('u-alice', 1)).map((s) => s.id).join() === 's-alice-1');
+  check('  a password change (a new epoch) lists none of the old ones', (await store.listSessions('u-alice', 2)).length === 0);
+  await driver.query(`UPDATE sessions SET revoked_at = NOW() - INTERVAL '8 days' WHERE id = 's-alice-2'`);
+  await driver.query(`UPDATE sessions SET expires_at = NOW() - INTERVAL '8 days' WHERE id = 's-bob-1'`);
+  await store.pruneSessions();
+  check('  a week after it can no longer be used, a session goes', (await rows('sessions', "WHERE id IN ('s-alice-2', 's-bob-1')")) === 0 && (await rows('sessions', "WHERE id = 's-alice-1'")) === 1);
+
+  // Feedback (33): an account writes its own; the cross-account list is the store's
+  // admin reader, which the routes put behind requireAdmin.
+  await store.createFeedback('u-bob', { id: 'fb-1', topic: 'files', kind: 'bug', body: 'The export failed.', affect: 'blocks', client: { language: 'vi' } });
+  const all = await store.listFeedback(10);
+  check('feedback is kept with whose it was', all.length === 1 && all[0].email === 'bob@example.com' && all[0].body === 'The export failed.', JSON.stringify(all[0]));
+  check("  counted per account for its ceiling", (await store.feedbackCountSince('u-bob')) === 1 && (await store.feedbackCountSince('u-alice')) === 0);
+  check('  marked read and removed by id', (await store.markFeedbackRead('fb-1')) && (await store.deleteFeedback('fb-1')) && (await store.listFeedback(10)).length === 0);
+
   // What nothing can reach: counted, then removed — and nothing else with it.
   await driver.query(
     `INSERT INTO attachments (id, user_id, chat_id, name, mime, kind, bytes, data)

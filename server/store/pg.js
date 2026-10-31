@@ -223,8 +223,13 @@ export function splitStatements(sql) {
  *      off the Files shelf; the ones already stored are reclassified in place
  *  31  chats.context_parts — the last step's breakdown of the context window,
  *      read back by the gauge when a conversation is opened
+ *  32  users.username — a name to sign in with beside the email, unique in
+ *      lower case, nullable for the accounts made before it
+ *  33  sessions — one row per sign-in, so a device can be listed and signed
+ *      out on its own; feedback — what somebody sent from Give feedback, with a
+ *      conversation's copy only when they chose to include it
  */
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1225,6 +1230,103 @@ export function createPgStore(connectionString) {
       );
       return rows.length;
     },
+    /* ── sessions: where an account is signed in (33) ─────────────────── */
+    async createSession(session) {
+      await q(
+        `INSERT INTO sessions (id, user_id, epoch, agent, network, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          session.id,
+          session.userId,
+          Number(session.epoch) || 1,
+          session.agent ? String(session.agent).slice(0, 120) : null,
+          session.network ? String(session.network).slice(0, 64) : null,
+          session.expiresAt,
+        ],
+      );
+    },
+    /** One session of one account — never another's, whatever id is asked for. */
+    async getSession(userId, id) {
+      const rows = await q(`SELECT * FROM sessions WHERE id = $1 AND user_id = $2`, [String(id), userId]);
+      return rows[0] || null;
+    },
+    /** The ones still able to sign a request in: this epoch, not expired, not signed out. */
+    async listSessions(userId, epoch) {
+      return q(
+        `SELECT id, agent, network, created_at, expires_at FROM sessions
+          WHERE user_id = $1 AND epoch = $2 AND revoked_at IS NULL AND expires_at > NOW()
+          ORDER BY created_at DESC LIMIT 50`,
+        [userId, Number(epoch) || 1],
+      );
+    },
+    /** Sign one device out. True if there was such a live session of this account. */
+    async revokeSession(userId, id) {
+      const rows = await q(
+        `UPDATE sessions SET revoked_at = NOW() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING id`,
+        [String(id), userId],
+      );
+      return rows.length > 0;
+    },
+    /** A week after a session could last be used, it goes. */
+    async pruneSessions() {
+      const rows = await q(
+        `DELETE FROM sessions
+          WHERE expires_at < NOW() - INTERVAL '7 days'
+             OR revoked_at < NOW() - INTERVAL '7 days'
+         RETURNING id`,
+      );
+      return rows.length;
+    },
+
+    /* ── feedback (33) ────────────────────────────────────────────────── */
+    async createFeedback(userId, f) {
+      await q(
+        `INSERT INTO feedback
+           (id, user_id, topic, topic_other, kind, body, affect, frequency, worked_before, chat_id, chat_title, transcript, client)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          f.id,
+          userId,
+          f.topic,
+          f.topicOther || null,
+          f.kind,
+          f.body,
+          f.affect,
+          f.frequency || null,
+          f.workedBefore || null,
+          f.chatId || null,
+          f.chatTitle || null,
+          f.transcript ? toJson(f.transcript) : null,
+          toJson(f.client || {}),
+        ],
+      );
+    },
+    /** Everyone's, for an administrator — with whose it was. The newest first. */
+    async listFeedback(limit = 100) {
+      return q(
+        `SELECT f.id, f.topic, f.topic_other, f.kind, f.body, f.affect, f.frequency, f.worked_before,
+                f.chat_id, f.chat_title, f.transcript, f.client, f.read_at, f.created_at, u.email, u.name, u.username
+           FROM feedback f JOIN users u ON u.id = f.user_id
+          ORDER BY f.created_at DESC LIMIT $1`,
+        [Math.min(Math.max(Number(limit) || 100, 1), 500)],
+      );
+    },
+    async markFeedbackRead(id) {
+      const rows = await q(`UPDATE feedback SET read_at = COALESCE(read_at, NOW()) WHERE id = $1 RETURNING id`, [String(id)]);
+      return rows.length > 0;
+    },
+    async deleteFeedback(id) {
+      const rows = await q(`DELETE FROM feedback WHERE id = $1 RETURNING id`, [String(id)]);
+      return rows.length > 0;
+    },
+    /** How many sent in the last hour by this account — a ceiling on one person, not on an office. */
+    async feedbackCountSince(userId, minutes = 60) {
+      const rows = await q(
+        `SELECT COUNT(*)::int AS n FROM feedback WHERE user_id = $1 AND created_at > NOW() - make_interval(mins => $2)`,
+        [userId, Math.max(1, Math.floor(Number(minutes) || 60))],
+      );
+      return rows[0]?.n || 0;
+    },
+
     /** What this account last agreed to — the versions, or null if it never did. */
     async latestConsent(userId) {
       const rows = await q(
