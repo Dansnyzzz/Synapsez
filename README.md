@@ -1440,6 +1440,30 @@ versions of the terms, the usage policy and the privacy notice were ticked, and 
 latest agreement is older than the current documents (`server/legal.js`) is asked once, by a banner
 under the header. Administrators see the record across accounts in Settings → People.
 
+### Usage, devices, feedback, changelog
+
+The account menu at the foot of the sidebar (the letter and the username) holds Settings, **Usage**,
+Language, Get help, **Give feedback**, **View changelog**, Learn more and Sign out.
+
+- **Usage** opens Settings → Usage: a tab per provider the account has a key for. For each of the
+  account's own OpenRouter keys it shows what OpenRouter itself reports (`GET /api/v1/key`): free-model
+  requests today against the day's limit (50, or 1,000 once the OpenRouter account has bought 10 USD of
+  credit), spend today, this week and this month, and the key's own limit or budget with its reset. The
+  deployment's shared key is never asked — its figures are the deployment's. Google's Gemini API and
+  OrcaRouter report no allowance, so for them, and for every provider, the page shows what Synapsez
+  counted: requests by day and by model, the week hour by hour, and the pace against last week
+  (`server/usageReport.js`, `public/js/usage-panel.js`).
+- **By device** (in Usage) lists every browser the account is signed in on — the browser by family and
+  the network, as the security record keeps them — and signs out any one of them. Each sign-in is a row
+  in `sessions` (schema 33); signing out, from the list or the menu, ends that cookie for good, and a
+  password change ends them all.
+- **Give feedback** sends the area, the kind, what happened and how much it matters — and one of the
+  person's conversations only when they switch that on — to the deployment's administrators: kept for
+  Settings → People, and announced by email when a mail provider is set. It never reaches a model.
+- **View changelog** shows `public/changelog.json`, newest first; its newest version is the one
+  `package.json` says the app is (test/features holds the two together). Add an entry, in Vietnamese and
+  English, with every release.
+
 ---
 
 ## There is one mode
