@@ -7,9 +7,12 @@ import { openCascade, closePlus } from './plus-menu.js';
  *
  *   you@example.com
  *   Settings            Ctrl+Shift+,
+ *   Usage               Settings → Usage (2026-10-31)
  *   Language ›          Tiếng Việt · English
  *   Get help            the getting-started guide
+ *   Give feedback       to the people who run the deployment
  *   ───
+ *   View changelog      what each version changed
  *   Learn more ›        about, the policies, your privacy choices, shortcuts
  *   ───
  *   Log out
@@ -26,6 +29,8 @@ import { openCascade, closePlus } from './plus-menu.js';
  *   openGuide: () => void,
  *   openAbout: () => void,
  *   openShortcuts: () => void,
+ *   openFeedback: () => void,
+ *   openChangelog: () => void,
  *   logout: () => any,
  * }} Deps
  */
@@ -39,6 +44,10 @@ const ICON = {
   help: svg('<circle cx="10" cy="10" r="7"/><path d="M8 8a2 2 0 1 1 3 1.7c-.7.4-1 .9-1 1.6"/><circle cx="10" cy="14" r=".4" fill="currentColor"/>'),
   info: svg('<circle cx="10" cy="10" r="7"/><path d="M10 9v4.5"/><circle cx="10" cy="6.6" r=".4" fill="currentColor"/>'),
   logout: svg('<path d="M8 3.5H5a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 0 5 16.5h3"/><path d="M12.5 13.5 16 10l-3.5-3.5M16 10H8"/>'),
+  // Claude's three (owner, 2026-10-31): a gauge, a bug, a notebook.
+  usage: svg('<circle cx="10" cy="10" r="7"/><path d="M10 10 7.2 6.8M10 3v1.6"/>'),
+  feedback: svg('<path d="M7 7.2a3 3 0 0 1 6 0"/><rect x="6" y="7" width="8" height="9.5" rx="4"/><path d="M10 9.5v7M3 10h3M14 10h3M3.5 14.5 6 13.5M16.5 14.5 14 13.5M4 5.5l2.3 1.6M16 5.5l-2.3 1.6"/>'),
+  changelog: svg('<rect x="4" y="2.5" width="12" height="15" rx="1.8"/><path d="M7.5 6.5h5M7.5 9.5h5M7.5 12.5h3"/>'),
 };
 
 /** Ctrl on Windows and Linux, ⌘ on a Mac — what the shortcuts are pressed with. */
@@ -107,9 +116,12 @@ export function openAccountMenu(anchor, deps) {
     [
       { note: user.email },
       { id: 'settings', label: t('account.settings'), icon: ICON.settings, tag: keysOf('settings'), run: () => deps.openSettings() },
+      { id: 'usage', label: t('account.usage'), icon: ICON.usage, run: () => deps.openSettings('usage') },
       { id: 'language', label: t('account.language'), icon: ICON.language, sub: () => languageItems(deps) },
       { id: 'help', label: t('account.help'), icon: ICON.help, run: () => deps.openGuide() },
+      { id: 'feedback', label: t('account.feedback'), icon: ICON.feedback, run: () => deps.openFeedback() },
       null,
+      { id: 'changelog', label: t('account.changelog'), icon: ICON.changelog, run: () => deps.openChangelog() },
       { id: 'learn', label: t('account.learnMore'), icon: ICON.info, sub: () => learnMoreItems(deps) },
       null,
       { id: 'logout', label: t('account.signOut'), icon: ICON.logout, run: () => deps.logout() },

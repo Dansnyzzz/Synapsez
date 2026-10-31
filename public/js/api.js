@@ -94,6 +94,17 @@ export const api = {
   /** Agreeing to the documents as they are now — `versions` as bootstrap's `consent.current` says them. */
   agree: (versions) => request('POST', '/api/consent', versions),
 
+  /** Settings → Usage: each provider's own figures for the account's keys, and what Synapsez counted. */
+  usageReport: () => request('GET', '/api/usage/report'),
+  /** Where the account is signed in, and signing one device out. */
+  sessions: () => request('GET', '/api/account/sessions'),
+  signOutDevice: (id) => request('DELETE', `/api/account/sessions/${encodeURIComponent(id)}`),
+  /** Give feedback, and an administrator's view of what was sent. */
+  feedback: (body) => request('POST', '/api/feedback', body),
+  adminFeedback: () => request('GET', '/api/admin/feedback'),
+  markFeedbackRead: (id) => request('PUT', `/api/admin/feedback/${encodeURIComponent(id)}/read`),
+  deleteFeedback: (id) => request('DELETE', `/api/admin/feedback/${encodeURIComponent(id)}`),
+
   forgotPassword: (email) => request('POST', '/api/password/forgot', { email }),
   resetPassword: (payload) => request('POST', '/api/password/reset', payload),
 

@@ -1301,6 +1301,7 @@
         <button class="tab" type="button" data-tab="connectors" role="tab" id="tab-connectors" aria-controls="panel-connectors" aria-selected="false" tabindex="-1" data-i18n="settings.tab.connectors">Connectors</button>
         <button class="tab" type="button" data-tab="mcp" role="tab" id="tab-mcp" aria-controls="panel-mcp" aria-selected="false" tabindex="-1" data-i18n="settings.tab.mcp">MCP servers</button>
         <button class="tab" type="button" data-tab="account" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1" data-i18n="settings.tab.account">Account</button>
+        <button class="tab" type="button" data-tab="usage" role="tab" id="tab-usage" aria-controls="panel-usage" aria-selected="false" tabindex="-1" data-i18n="settings.tab.usage">Usage</button>
         <button class="tab" type="button" data-tab="admin" role="tab" id="tab-admin" aria-controls="panel-admin" aria-selected="false" tabindex="-1" hidden data-i18n="settings.tab.people">People</button>
       </div>
 
@@ -1628,9 +1629,6 @@
           <h3 data-i18n="account.twofa">Two-factor authentication</h3>
           <div id="twofa-card"></div>
 
-          <h3 data-i18n="account.usage">Usage this month</h3>
-          <div id="usage-card"></div>
-
           <h3 data-i18n="data.title">Your data</h3>
           <div class="provider">
             <p class="hint" data-i18n="data.hint">
@@ -1669,6 +1667,13 @@
           <button class="btn btn--ghost" id="logout" type="button" data-i18n="account.signOut">Sign out</button>
         </section>
 
+        <!-- Usage, after Claude's (owner, 2026-10-31): each provider with a key,
+             what is left and when it resets, where the requests went, the week,
+             the pace, the money, and the devices signed in (usage-panel.js). -->
+        <section class="panel" data-panel="usage" id="panel-usage" role="tabpanel" aria-labelledby="tab-usage">
+          <div id="usage-panel"></div>
+        </section>
+
         <section class="panel" data-panel="admin" id="panel-admin" role="tabpanel" aria-labelledby="tab-admin">
           <h3 data-i18n="settings.tab.people">People</h3>
           <p class="hint" data-i18n-html="admin.lede">
@@ -1680,6 +1685,9 @@
           <h3 data-i18n="activity.title">Security activity</h3>
           <p class="hint" data-i18n="activity.adminHint">The newest events across every account on this deployment.</p>
           <div id="admin-activity"></div>
+          <!-- What people sent from Give feedback (routes/feedback.js). -->
+          <h3 data-i18n="feedback.admin.title">Feedback</h3>
+          <div id="admin-feedback"></div>
         </section>
       </div>
     </dialog>

@@ -105,7 +105,7 @@ export function mountFeedbackRoutes(api, admin, { wrap }) {
     wrap(async (req, res) => {
       const store = getStore();
       const checked = checkFeedback(req.body);
-      if (!checked.ok) return res.status(400).json({ error: checked.error });
+      if (!checked.ok) return res.status(400).json({ error: /** @type {{ error: string }} */ (checked).error });
       // A ceiling on one account rather than on an address, so an office
       // behind one address is never turned away for the person beside them.
       if ((await store.feedbackCountSince(req.user.id, 60)) >= FEEDBACK_LIMITS.perHour) {

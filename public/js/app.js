@@ -33,6 +33,9 @@ import { normalisePlan, planItemHtml } from './plan.js';
 import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
+import { createUsagePanel } from './usage-panel.js';
+import { createFeedback, renderFeedbackList } from './feedback.js';
+import { createChangelog, appVersion } from './changelog.js';
 import { contextPanel } from './context-panel.js';
 import { createModelNews } from './model-news.js';
 import { createTwoFactor } from './two-factor.js';
@@ -4358,6 +4361,30 @@ async function signOut() {
   location.reload();
 }
 
+/* Usage, Give feedback and What's new — three rows of the account menu (owner, 2026-10-31). */
+const usagePanel = createUsagePanel($('usage-panel'), {
+  load: () => api.usageReport(),
+  sessions: () => api.sessions(),
+  signOut: async (id) => {
+    const done = await api.signOutDevice(id);
+    toast(t('usage.signedOut'));
+    return done;
+  },
+  providers: () => state.boot?.providers || {},
+  meta: () => state.boot?.providerMeta || {},
+  user: () => state.boot?.user,
+});
+const feedback = createFeedback({
+  // Incognito conversations are not offered: they are kept out of everything.
+  chats: () => (state.chats || []).filter((c) => !c.incognito),
+  currentChat: () => state.chatId,
+  send: (body) => api.feedback(body),
+  done: () => toast(t('feedback.thanks')),
+  version: appVersion,
+  language: () => currentLanguage(),
+});
+const changelog = createChangelog();
+
 $('account-button').addEventListener('click', () =>
   openAccountMenu($('account-button'), {
     user: () => state.boot.user,
@@ -4366,6 +4393,8 @@ $('account-button').addEventListener('click', () =>
     openGuide: () => onboarding.open(),
     openAbout: () => /** @type {HTMLDialogElement} */ ($('about')).showModal(),
     openShortcuts,
+    openFeedback: () => feedback.open(),
+    openChangelog: () => changelog.open(),
     logout: signOut,
   }),
 );
@@ -4850,6 +4879,8 @@ function selectTab(name) {
   // changed since the last look.
   if (name === 'memory') privacy.loadMemory();
   if (name === 'account') privacy.loadActivity();
+  // The providers are asked what is left only when somebody looks (2026-10-31).
+  if (name === 'usage') usagePanel.load();
 }
 
 /**
@@ -5061,7 +5092,6 @@ function fillSettings() {
   $('account-name').value = me.name || '';
   /** @type {HTMLInputElement} */ ($('account-username')).value = me.username || '';
   renderTwoFactor();
-  renderUsagePanel($('usage-card'), state.boot.usage);
   privacy.fillMemory();
 
   $('tab-admin').hidden = me.role !== 'admin';
@@ -5272,40 +5302,6 @@ function afterGoogleSignIn() {
 
 /* ── account ───────────────────────────────────────────────────── */
 
-function renderUsagePanel(host, usage) {
-  const { month, byModel, limit } = usage;
-  const pct = limit ? Math.min(100, Math.round((month.tokens / limit) * 100)) : 0;
-  const level = pct >= 100 ? 'is-full' : pct >= 80 ? 'is-high' : '';
-
-  host.innerHTML =
-    `<div class="provider">
-      <div class="provider__head">
-        <span class="provider__name">${escapeHtml(t('usage.tokens', { n: month.tokens.toLocaleString() }))}</span>
-        <span class="badge">${escapeHtml(t('usage.calls', { n: month.calls }))} · $${month.cost.toFixed(4)}</span>
-      </div>
-      ${
-        limit
-          ? `<div class="meter"><div class="meter__fill ${level}" style="width:${pct}%"></div></div>
-             <div class="hint">${escapeHtml(t('usage.sharedLimit', { pct, limit: limit.toLocaleString() }))}</div>`
-          : `<div class="hint">${escapeHtml(t('usage.noLimit'))}</div>`
-      }
-    </div>` +
-    (byModel.length
-      ? `<div class="rows">${byModel
-          .map(
-            (m) => `<div class="rows__item">
-              <span class="grow">${escapeHtml(m.model)}
-                <span class="muted">· ${m.calls} calls</span>
-              </span>
-              <span class="muted">${(
-                Number(m.input_tokens) + Number(m.output_tokens)
-              ).toLocaleString()} tok</span>
-            </div>`,
-          )
-          .join('')}</div>`
-      : `<p class="hint">${escapeHtml(t('usage.empty'))}</p>`);
-}
-
 $('save-name').addEventListener('click', async () => {
   try {
     const { user } = await api.updateAccount({ name: $('account-name').value.trim() });
@@ -5350,8 +5346,38 @@ const privacy = createPrivacy({
 
 /* ── admin ─────────────────────────────────────────────────────── */
 
+/** What people sent from Give feedback, for an administrator (2026-10-31). */
+async function loadAdminFeedback() {
+  try {
+    const { feedback: items } = await api.adminFeedback();
+    const stamp = (d) => new Intl.DateTimeFormat(currentLanguage() === 'vi' ? 'vi-VN' : 'en-US', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(d);
+    renderFeedbackList($('admin-feedback'), items, stamp);
+    // Deleting is for good, so it asks twice, as removing a person does.
+    for (const btn of /** @type {NodeListOf<HTMLElement>} */ ($('admin-feedback').querySelectorAll('[data-feedback-delete]'))) {
+      armed(btn, t('action.reallyRemove'), async () => {
+        await api.deleteFeedback(btn.dataset.feedbackDelete);
+        loadAdminFeedback();
+      });
+    }
+  } catch (err) {
+    $('admin-feedback').textContent = err.message;
+  }
+}
+
+$('admin-feedback').addEventListener('click', async (event) => {
+  const button = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-feedback-read]'));
+  if (!button) return;
+  try {
+    await api.markFeedbackRead(button.dataset.feedbackRead);
+    loadAdminFeedback();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
 async function loadAdmin() {
   privacy.loadAdminActivity();
+  loadAdminFeedback();
   try {
     const { users } = await api.users();
 

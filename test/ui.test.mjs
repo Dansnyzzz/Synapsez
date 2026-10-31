@@ -392,7 +392,7 @@ section("the account at the foot of the sidebar, and its menu");
     };
   });
   check('pressed, it opens a menu above it, headed by the email', menu.email === 'ui@test.local' && menu.above && menu.expanded === 'true', JSON.stringify(menu));
-  check('  Settings, Language, Get help, Learn more and Log out — in that order', menu.rows.join() === 'settings,language,help,learn,logout', menu.rows.join());
+  check('  Settings, Usage, Language, Get help, Give feedback, View changelog, Learn more and Log out — in that order', menu.rows.join() === 'settings,usage,language,help,feedback,changelog,learn,logout', menu.rows.join());
   check('  Settings names its shortcut', /^(Ctrl|⌘)\+Shift\+,$/.test(menu.settingsKeys), menu.settingsKeys);
 
   await page.hover('.plusmenu--account [data-row="learn"]');
@@ -535,6 +535,108 @@ section('an account that has not agreed to the documents as they are now is aske
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
   check('  and is not asked again', await page.isHidden('#legal-banner'));
+}
+
+/*
+ * The owner's 2026-10-31 round: Usage, Give feedback and View changelog in the
+ * account menu, and the devices the account is signed in on.
+ */
+section('Usage, devices, feedback and what is new — from the account menu');
+{
+  const now = Date.now();
+  const report = {
+    generatedAt: new Date(now).toISOString(),
+    hours: [
+      { at: new Date(now - 3600e3).toISOString(), provider: 'openrouter', model: 'openrouter/nvidia/nemotron:free', calls: 6, tokens: 900, cost: 0 },
+      { at: new Date(now - 2 * 3600e3).toISOString(), provider: 'google', model: 'google/gemini-2.5-flash', calls: 2, tokens: 500, cost: 0.0004 },
+      { at: new Date(now - 8 * 86400e3).toISOString(), provider: 'openrouter', model: 'openrouter/nvidia/nemotron:free', calls: 9, tokens: 900, cost: 0 },
+    ],
+    month: { tokens: 2300, calls: 17, cost: 0.0004 },
+    sharedLimit: null,
+    live: { openrouter: [{ index: 0, ok: true, freeToday: { used: 37, limit: 50, remaining: 13 }, spend: { today: 0, week: 0.02, month: 0.11, total: 1 }, limit: null, budget: null, neverPaid: true }] },
+    sharedKey: { openrouter: false },
+  };
+  await page.route('**/api/usage/report', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(report) }));
+  await page.click('#account-button');
+  await page.waitForTimeout(250);
+  await page.click('.plusmenu--account [data-row="usage"]');
+  await page.waitForTimeout(900);
+  const usage = await page.evaluate(() => ({
+    open: !!document.querySelector('#settings[open]'),
+    tab: document.getElementById('tab-usage')?.getAttribute('aria-selected'),
+    scopes: [...document.querySelectorAll('#usage-panel [data-scope]')].map((b) => /** @type {HTMLElement} */ (b).dataset.scope),
+    free: [...document.querySelectorAll('#usage-panel .usage__limit')].map((l) => l.textContent.replace(/\s+/g, ' ').trim()).find((s) => /37/.test(s)) || '',
+    days: document.querySelectorAll('#usage-panel .usage__day').length,
+    cells: document.querySelectorAll('#usage-panel .usage__heat .usage__cell').length,
+  }));
+  check('Usage opens Settings on its own tab', usage.open && usage.tab === 'true', JSON.stringify(usage));
+  check('  a tab for each provider used, beside the overview', usage.scopes.join() === 'all,openrouter,google', usage.scopes.join());
+  check("  OpenRouter's own figure for a key: free requests today, of the day's limit", /37 (of|\/) 50/.test(usage.free), usage.free);
+  check('  the week by day, and hour by hour', usage.days === 7 && usage.cells === 7 * 24, JSON.stringify(usage));
+  await page.click('#usage-panel [data-week="pace"]');
+  await page.waitForTimeout(200);
+  check('  and the pace against last week, as a line', !!(await page.$('#usage-panel svg.usage__pace path.usage__now')));
+  await page.unroute('**/api/usage/report');
+
+  // Another browser signs in; this one sees it, and signs it out.
+  const other = await browser.newContext();
+  const signedIn = await other.request.post(`http://127.0.0.1:${PORT}/api/login`, { data: { email: 'ui@test.local', password: 'a-long-enough-password' }, headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile Safari/604.1' } });
+  await page.click('#usage-panel [data-where="device"]');
+  await page.waitForTimeout(900);
+  const devices = await page.evaluate(() => [...document.querySelectorAll('#usage-panel .usage__device')].map((d) => ({ text: d.textContent.replace(/\s+/g, ' ').trim(), out: !!d.querySelector('[data-sign-out]') })));
+  check('By device lists this browser, marked, and the other one with a Sign out', signedIn.ok() && devices.some((d) => /This device|Thiết bị này/.test(d.text) && !d.out) && devices.some((d) => /iOS/.test(d.text) && d.out), JSON.stringify(devices));
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('#usage-panel .usage__device')].find((d) => /iOS/.test(d.textContent));
+    /** @type {HTMLElement} */ (row?.querySelector('[data-sign-out]'))?.click();
+  });
+  await page.waitForTimeout(900);
+  const after = await other.request.get(`http://127.0.0.1:${PORT}/api/bootstrap`);
+  check('  signing it out ends it there at once', after.status() === 401 && !(await page.evaluate(() => [...document.querySelectorAll('#usage-panel .usage__device')].some((d) => /iOS/.test(d.textContent)))), `${after.status()}`);
+  await other.close();
+  await page.evaluate(() => document.getElementById('settings').close());
+
+  // Give feedback, both pages, by keyboard where Claude's takes it.
+  await page.click('#account-button');
+  await page.waitForTimeout(250);
+  await page.click('.plusmenu--account [data-row="feedback"]');
+  await page.waitForTimeout(300);
+  const topics = await page.$$eval('#feedback [data-topic]', (b) => b.length);
+  await page.click('#feedback [data-topic="files"]');
+  const chosen = (await page.textContent('#feedback .fb__chosen')) || '';
+  await page.click('#feedback [data-kind="bug"]');
+  const noNextYet = !(await page.$('#feedback .fb__go'));
+  await page.fill('#fb-body', 'The Word file came out empty.');
+  await page.waitForTimeout(100);
+  const nextShown = !!(await page.$('#feedback .fb__go[data-next]'));
+  await page.keyboard.press('Control+Enter');
+  await page.waitForTimeout(150);
+  const submitWaits = await page.$eval('#feedback [data-submit]', (b) => /** @type {HTMLButtonElement} */ (b).disabled);
+  await page.click('#feedback [data-affect="blocks"]');
+  await page.click('#feedback [data-frequency="daily"]');
+  check('Give feedback lists the areas, then asks the kind, then the words — Next once there are some', topics === 12 && /files|tệp/i.test(chosen) && noNextYet && nextShown, JSON.stringify({ topics, chosen, noNextYet, nextShown }));
+  check('  the second page waits for how much it affects you', submitWaits === true);
+  await page.keyboard.press('Control+Enter');
+  await page.waitForTimeout(900);
+  const { getStore } = await import('../server/store/index.js');
+  const sent = (await getStore().listFeedback(5)).find((f) => f.body === 'The Word file came out empty.');
+  check('  sent, it reaches the administrators as written', !(await page.$('#feedback[open]')) && sent?.topic === 'files' && sent?.kind === 'bug' && sent?.affect === 'blocks' && sent?.frequency === 'daily' && !sent?.transcript, JSON.stringify(sent));
+
+  // What's new: the newest version, which is the app's own.
+  await page.click('#account-button');
+  await page.waitForTimeout(250);
+  await page.click('.plusmenu--account [data-row="changelog"]');
+  await page.waitForTimeout(700);
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const whatsNew = await page.evaluate(() => ({
+    version: document.querySelector('#changelog .whatsnew__version')?.textContent?.trim(),
+    sections: document.querySelectorAll('#changelog .whatsnew__section').length,
+  }));
+  await page.click('#changelog [data-pick]');
+  await page.waitForTimeout(150);
+  const listed = await page.$$eval('#changelog .whatsnew__versions [data-version]', (li) => li.length);
+  check("View changelog opens on the newest version — the app's own — with what it brought", whatsNew.version === pkg.version && whatsNew.sections >= 1, JSON.stringify(whatsNew));
+  check('  and its number opens the list of versions to pick from', listed >= 1, `${listed}`);
+  await page.evaluate(() => document.getElementById('changelog').close());
 }
 
 section('the chat window is fixed, only the transcript scrolls');
