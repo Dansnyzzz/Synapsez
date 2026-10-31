@@ -1361,6 +1361,29 @@ section('Settings → Usage: the week, the busiest hour and the pace, in the rea
   check('the pace is this week so far beside the same hours of the last', p.thisWeek.at(-1) === 17 && p.lastWeek[p.hoursIn - 1] === 26 && Math.abs(p.change - (17 - 26) / 26) < 1e-9, JSON.stringify({ a: p.thisWeek.at(-1), b: p.lastWeek[p.hoursIn - 1], h: p.hoursIn }));
   check('free requests start again at midnight UTC', m.nextUtcMidnight(new Date(Date.UTC(2026, 9, 31, 16, 0))).toISOString() === '2026-11-01T00:00:00.000Z');
   check('the standing is the tightest limit known, and "unknown" with none', m.standing([]) === 'unknown' && m.standing([{ used: 10, limit: 50 }]) === 'ok' && m.standing([{ used: 10, limit: 50 }, { used: 45, limit: 50 }]) === 'close' && m.standing([{ used: 50, limit: 50 }]) === 'out');
+
+  // The limits, as the server counts them: UTC periods, the month the database sums.
+  const utc = new Date(Date.UTC(2026, 9, 31, 18, 0)); // Saturday, 01:00 on Sunday in Hanoi
+  check("the shared monthly allowance resets on the UTC month the server sums, not local midnight", m.nextMonth(utc).toISOString() === '2026-11-01T00:00:00.000Z');
+  check("OpenRouter's daily, weekly (from Monday) and monthly periods are UTC", m.periodOf('daily', utc).from.toISOString() === '2026-10-31T00:00:00.000Z' && m.periodOf('weekly', utc).from.toISOString() === '2026-10-26T00:00:00.000Z' && m.periodOf('weekly', utc).to.toISOString() === '2026-11-02T00:00:00.000Z' && m.periodOf('monthly', utc).to.toISOString() === '2026-11-01T00:00:00.000Z' && m.periodOf(null, utc) === null);
+  const report = {
+    live: { openrouter: [
+      { index: 0, ok: true, freeToday: { used: 45, limit: 50 }, limit: { amount: 10, remaining: 8, reset: 'weekly' }, budget: null },
+      { index: 1, ok: false, reason: 'rejected' },
+    ] },
+    sharedKey: { openrouter: false, google: true },
+    sharedLimit: 1000,
+    month: { tokens: 500 },
+  };
+  const all = m.knownLimits(report, 'all', utc);
+  check('every limit known is listed: free requests, a key cap, the shared allowance on a shared provider', all.map((l) => l.id).join() === 'free:0,cap:0,shared' && all[1].used === 2 && all[1].to.toISOString() === '2026-11-02T00:00:00.000Z', JSON.stringify(all.map((l) => [l.id, l.used, l.limit])));
+  check("  a provider's own tab shows its own: OpenRouter's keys there, the allowance where the shared key is", m.knownLimits(report, 'openrouter', utc).map((l) => l.id).join() === 'free:0,cap:0' && m.knownLimits(report, 'google', utc).map((l) => l.id).join() === 'shared');
+  check('the tightest is the largest share used', m.tightest(all).id === 'free:0' && m.tightest([]) === null);
+  // 45 of 50 free requests in the 18 hours since midnight UTC: at that pace, the 50th comes in two hours.
+  const runs = m.project(all[0], utc);
+  check('at the pace so far, when a limit runs out — before its reset, or not at all', runs?.runsOut instanceof Date && Math.abs(runs.runsOut.getTime() - (utc.getTime() + 2 * 3600_000)) < 1000 && m.project({ ...all[0], used: 5 }, utc)?.runsOut === null, String(runs?.runsOut?.toISOString()));
+  check('  and says nothing in the first half hour of a period, or with nothing used', m.project({ ...all[0], from: new Date(utc.getTime() - 10 * 60_000) }, utc) === null && m.project({ ...all[0], used: 0 }, utc) === null && m.project({ ...all[2], from: null }, utc) === null);
+  check('the warning above the composer starts at 80%, again at 90%, and at the limit', m.alertFor([{ used: 79, limit: 100 }]) === null && m.alertFor([{ used: 80, limit: 100 }]).level === '80' && m.alertFor([{ used: 93, limit: 100 }]).level === '90' && m.alertFor([{ used: 100, limit: 100 }]).level === 'out');
 }
 
 section('the changelog: newest first, the version the app is, in both languages');

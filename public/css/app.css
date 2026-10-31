@@ -10232,9 +10232,19 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
  * pace as a line, and the money. Blue bars, as Claude draws them — a limit is
  * not the accent colour's business. */
 /* The settings sheet widens for Usage: a label, a bar and a share on one line. */
-#settings:has(#panel-usage.is-active) { width: min(920px, 100%); }
-.usage { --bar: #4c8df6; --bar-track: color-mix(in srgb, var(--text) 10%, transparent); display: grid; gap: 22px; }
+/* Wide enough for every tab in Vietnamese on one row, and for the page's own
+   tables — which scroll inside their own boxes, so the sheet itself never
+   scrolls sideways (owner, 2026-10-31). */
+#settings:has(#panel-usage.is-active) { width: min(1100px, 100%); }
+.usage { --bar: #4c8df6; --bar-track: color-mix(in srgb, var(--text) 10%, transparent); display: grid; gap: 22px; min-width: 0; }
+.usage > *, .usage section > * { min-width: 0; }
 .usage section { display: grid; gap: 12px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.usage__lead { display: grid; gap: 6px; }
+.usage__head.is-close { color: color-mix(in srgb, var(--warn) 70%, var(--text)); }
+.usage__head.is-out { color: color-mix(in srgb, var(--danger) 75%, var(--text)); }
+.usage__insight { max-width: 70ch; font-size: 13.5px; }
+.usage__lead .usage__actions { margin-top: 6px; }
+.usage__actions a.btn { text-decoration: none; }
 .usage h4 { margin: 0; font-size: 15px; font-weight: 600; }
 .usage p { margin: 0; line-height: 1.55; }
 .usage__head { font-size: 15px; font-weight: 600; }
@@ -10243,7 +10253,8 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .usage__note { color: var(--text-dim); font-size: 13.5px; }
 .usage__note a, .usage__foot a { color: var(--info); text-underline-offset: 3px; }
 .usage__limits { display: grid; gap: 16px; }
-.usage__limit { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) 84px; align-items: center; gap: 16px; }
+/* The last column fits what it says — "0,00 US$ / 50,00 US$" is wider than a percentage. */
+.usage__limit { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) minmax(84px, max-content); align-items: center; gap: 16px; }
 .usage__limit-text { display: grid; gap: 2px; min-width: 0; }
 .usage__limit-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .usage__limit-sub { color: var(--text-dim); font-size: 12.5px; }
@@ -10263,10 +10274,16 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .usage__day.is-today { color: var(--text); font-weight: 600; }
 .usage__col { width: 100%; min-height: 3px; border-radius: 6px; background: var(--bar); }
 .usage__device { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+/* As far below the last device's line as the next section's line is below it. */
+.usage__device-hint { padding-top: 22px; }
 .usage__badge { display: inline-block; margin-left: 6px; padding: 0 8px; border: 1px solid var(--info); border-radius: 999px; color: var(--info); font-size: 11.5px; line-height: 1.6; vertical-align: 1px; }
-.usage__views { display: flex; justify-content: flex-end; gap: 4px; }
-.usage__views button { display: grid; place-items: center; width: 30px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: none; color: var(--text-dim); cursor: pointer; }
+/* Claude's switch: one rounded box, two faces, the chosen one lit — set apart from the grid it switches. */
+.usage__views { display: flex; justify-self: end; gap: 2px; margin: 6px 0 10px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; }
+.usage__views button { display: grid; place-items: center; width: 32px; height: 28px; border: 0; border-radius: 7px; background: none; color: var(--text-dim); cursor: pointer; }
+.usage__views button:hover { color: var(--text); }
 .usage__views button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+.usage__views button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.usage__week { display: grid; gap: 12px; min-width: 0; }
 .usage__heat { display: grid; grid-template-columns: auto repeat(24, minmax(0, 1fr)); gap: 3px; align-items: center; }
 .usage__heat-day { padding-right: 8px; color: var(--text-dim); font-size: 12px; white-space: nowrap; }
 .usage__heat-hour { color: var(--text-dim); font-size: 11.5px; padding-top: 4px; }
@@ -10279,9 +10296,20 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .usage__legend { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .usage__legend p { flex: 1 1 260px; margin-right: 12px; }
 .usage__legend .usage__cell { width: 14px; min-height: 12px; }
-.usage__table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-.usage__table th, .usage__table td { padding: 7px 8px; border-bottom: 1px solid var(--line-soft); text-align: left; }
-.usage__table th { color: var(--text-dim); font-weight: 500; }
+.usage__scale { display: inline-flex; align-items: center; gap: 4px; }
+/* Claude's table of the week: a day a row, an hour a column, in a box of its
+   own that scrolls both ways while the day and the hour stay in view. */
+.usage__tablewrap { max-height: 236px; overflow: auto; border-radius: 10px; background: var(--surface); overscroll-behavior: contain; }
+.usage__tablewrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.usage__hours { border-collapse: separate; border-spacing: 0; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage__hours th, .usage__hours td { height: 42px; padding: 0 14px; border-bottom: 1px solid var(--line-soft); }
+.usage__hours td { min-width: 52px; text-align: right; }
+.usage__hours td.is-zero { color: var(--text-dim); }
+.usage__hours thead th { position: sticky; top: 0; z-index: 1; background: var(--surface-2); color: var(--text-dim); font-weight: 500; text-align: right; }
+.usage__hours th[scope="row"], .usage__hours thead th:first-child { position: sticky; left: 0; min-width: 120px; text-align: left; font-weight: 500; }
+.usage__hours th[scope="row"] { z-index: 1; background: var(--surface-2); color: var(--text); }
+.usage__hours thead th:first-child { z-index: 2; }
+.usage__hours tbody tr:last-child > * { border-bottom: 0; }
 .usage__pace { width: 100%; height: auto; overflow: visible; }
 .usage__pace text { fill: var(--text-dim); font-size: 12px; }
 .usage__grid { stroke: var(--line); stroke-width: 1; }
@@ -10292,6 +10320,35 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .usage__label { fill: var(--text) !important; font-weight: 600; }
 .usage__label--usual { fill: var(--text-dim) !important; font-weight: 400; }
 .usage__credit { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+
+/* Near a limit, above the composer, after Claude's: amber from 80%, red at the
+   limit, tucked behind the top of the box so the two read as one piece. */
+.usage-alert {
+  position: relative;
+  max-width: 780px;
+  margin: 0 auto -24px;
+  padding: 9px 40px 32px 20px;
+  border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent);
+  border-radius: 20px 20px 0 0;
+  background: color-mix(in srgb, var(--warn) 15%, var(--bg, #0f1115));
+  color: color-mix(in srgb, var(--warn) 78%, var(--text));
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.usage-alert[hidden] { display: none; }
+.usage-alert.is-out {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 14%, var(--bg, #0f1115));
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
+}
+.usage-alert__text { margin: 0; }
+.usage-alert__link { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.usage-alert__link:hover { color: var(--text); }
+.usage-alert__close { position: absolute; top: 6px; right: 10px; width: 26px; height: 26px; border: 0; border-radius: 7px; background: none; color: inherit; cursor: pointer; }
+.usage-alert__close:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+.usage-alert__link:focus-visible, .usage-alert__close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The box sits over the banner's lower edge. */
+.usage-alert:not([hidden]) + .composer__box { z-index: 1; }
 .usage__spend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .usage__spend div { display: grid; gap: 2px; }
 .usage__spend strong { font-size: 16px; font-variant-numeric: tabular-nums; }

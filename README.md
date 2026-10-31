@@ -1451,8 +1451,19 @@ Language, Get help, **Give feedback**, **View changelog**, Learn more and Sign o
   credit), spend today, this week and this month, and the key's own limit or budget with its reset. The
   deployment's shared key is never asked — its figures are the deployment's. Google's Gemini API and
   OrcaRouter report no allowance, so for them, and for every provider, the page shows what Synapsez
-  counted: requests by day and by model, the week hour by hour, and the pace against last week
-  (`server/usageReport.js`, `public/js/usage-panel.js`).
+  counted: requests by day and by model, the week hour by hour (a grid, or a table of every hour that
+  scrolls in its own box), and the pace against last week (`server/usageReport.js`,
+  `public/js/usage-panel.js`). The line at the top projects the tightest limit at the pace of its
+  period so far — on track, or about when it runs out before it resets — and names the model most of
+  the week's requests went to. Periods are the providers' own: OpenRouter's reset at midnight UTC
+  (weeks from Monday), the deployment's monthly allowance on the UTC month the server sums
+  (`public/js/usage-math.js`). The page asks again each minute while it is on screen.
+- **Near a limit** — from 80% of the tightest one, again at 90% and at the limit — a banner above the
+  composer says how much is used, when it resets, where to get more and links to Usage; bars turn
+  amber from 80% and red at the limit. Closing it holds until the next step or the next period
+  (`public/js/usage-alert.js`). It is checked as the app opens and after every turn with
+  `GET /api/usage/report?part=limits` (no hourly rows), and OpenRouter's answer about a key is shared
+  for 15 seconds between the banner and the page.
 - **By device** (in Usage) lists every browser the account is signed in on — the browser by family and
   the network, as the security record keeps them — and signs out any one of them. Each sign-in is a row
   in `sessions` (schema 33); signing out, from the list or the menu, ends that cookie for good, and a

@@ -576,6 +576,47 @@ section('Usage, devices, feedback and what is new — from the account menu');
   await page.click('#usage-panel [data-week="pace"]');
   await page.waitForTimeout(200);
   check('  and the pace against last week, as a line', !!(await page.$('#usage-panel svg.usage__pace path.usage__now')));
+
+  // Claude's table of the week: a day a row, an hour a column, in a box that
+  // scrolls on its own — the sheet never sideways (owner, 2026-10-31).
+  await page.click('#usage-panel [data-week="grid"]');
+  await page.click('#usage-panel [data-week-view="table"]');
+  await page.waitForTimeout(200);
+  const table = await page.evaluate(() => {
+    const wrap = /** @type {HTMLElement} */ (document.querySelector('#usage-panel .usage__tablewrap'));
+    const body = /** @type {HTMLElement} */ (document.querySelector('#settings .sheet__body'));
+    const views = document.querySelector('#usage-panel .usage__views');
+    return {
+      heads: document.querySelectorAll('#usage-panel .usage__hours thead th').length,
+      rows: document.querySelectorAll('#usage-panel .usage__hours tbody tr').length,
+      scrolls: !!wrap && wrap.scrollWidth > wrap.clientWidth,
+      sheetSideways: body.scrollWidth - body.clientWidth,
+      gap: wrap && views ? Math.round(wrap.getBoundingClientRect().top - views.getBoundingClientRect().bottom) : -1,
+    };
+  });
+  check('  as a table: a row a day, a column an hour, scrolling in its own box', table.heads === 25 && table.rows === 7 && table.scrolls, JSON.stringify(table));
+  check('    the sheet itself never scrolls sideways, and the switch stands clear of the table', table.sheetSideways <= 0 && table.gap >= 8, JSON.stringify(table));
+
+  // Near a limit: the bar turns amber, the line at the top says so, and the
+  // composer carries Claude's banner until it is closed.
+  report.live.openrouter[0].freeToday = { used: 46, limit: 50, remaining: 4 };
+  await page.evaluate(() => { try { localStorage.removeItem('synapsez.usageAlert'); } catch { /* none to clear */ } });
+  await page.click('#usage-panel [data-refresh]');
+  await page.waitForTimeout(500);
+  const near = await page.evaluate(() => ({
+    amber: !!document.querySelector('#usage-panel .usage__bar.is-close'),
+    head: document.querySelector('#usage-panel .usage__head')?.className || '',
+    banner: !(/** @type {HTMLElement} */ (document.getElementById('usage-alert')).hidden),
+    said: document.getElementById('usage-alert')?.textContent.replace(/\s+/g, ' ').trim() || '',
+  }));
+  check('at 92% of a limit the bar turns amber and the page says how it stands', near.amber && /is-close/.test(near.head), JSON.stringify(near));
+  check('  and the composer warns, with when it resets and the way to Usage', near.banner && /92%/.test(near.said) && /resets|đặt lại/.test(near.said), near.said);
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.click('#usage-alert [data-alert-close]');
+  check('  closed, it stays closed until the next step up', await page.isHidden('#usage-alert'));
+  await page.evaluate(() => document.getElementById('settings').showModal());
+  await page.click('#tab-usage');
+  await page.waitForTimeout(300);
   await page.unroute('**/api/usage/report');
 
   // Another browser signs in; this one sees it, and signs it out.
@@ -9554,9 +9595,17 @@ section('the + opens a menu of files, skills, connectors and plugins');
   await page.waitForTimeout(400);
   const first = await page.evaluate(() => document.activeElement?.closest('.plusmenu')?.dataset.level === '0');
   await page.keyboard.press('ArrowDown');
+  const onRow = await page.evaluate(() => document.activeElement?.textContent?.trim());
   await page.keyboard.press('ArrowRight');
-  await page.waitForTimeout(500);
+  // Up to two seconds for the panel to load and take the keyboard: a fixed
+  // half second failed two runs in three on a busy machine (2026-10-31).
+  await page.waitForFunction(() => document.activeElement?.closest('.plusmenu')?.dataset.level === '1', null, { timeout: 2000 }).catch(() => {});
   const into = await page.evaluate(() => document.activeElement?.closest('.plusmenu')?.dataset.level);
+  const why = await page.evaluate(() => ({
+    active: document.activeElement?.textContent?.trim().slice(0, 40),
+    panels: [...document.querySelectorAll('.plusmenu')].map((p) => /** @type {HTMLElement} */ (p).dataset.level),
+    banner: !(/** @type {HTMLElement} */ (document.getElementById('usage-alert')).hidden),
+  }));
   await page.keyboard.press('Escape');
   await page.waitForTimeout(150);
   const backTo = await page.evaluate(() => ({ level: document.activeElement?.closest('.plusmenu')?.dataset.level, subs: document.querySelectorAll('.plusmenu').length }));
@@ -9564,7 +9613,7 @@ section('the + opens a menu of files, skills, connectors and plugins');
   await page.waitForTimeout(150);
   const out = await page.evaluate(() => ({ menus: document.querySelectorAll('.plusmenu').length, focus: document.activeElement?.id }));
   check('by keyboard: Enter opens it with the first row focused', first);
-  check('  → opens the next panel and moves into it', into === '1', String(into));
+  check('  → opens the next panel and moves into it', into === '1', JSON.stringify({ into, onRow, ...why }));
   check('  Escape goes back one, to the row that opened it', backTo.level === '0' && backTo.subs === 1, JSON.stringify(backTo));
   check('  and Escape again closes it, back on the +', out.menus === 0 && out.focus === 'attach', JSON.stringify(out));
 

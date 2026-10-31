@@ -8,18 +8,26 @@
           "Mục Mức sử dụng trong menu tài khoản: Cài đặt → Mức sử dụng cho xem riêng từng nhà cung cấp bạn có gắn khoá. Với OpenRouter là số liệu chính OpenRouter báo cho từng khoá — lượt model miễn phí hôm nay, số đã chi hôm nay, tuần này, tháng này và hạn mức của khoá; với mọi nhà cung cấp là những gì Synapsez đã đếm — yêu cầu theo ngày và theo model, tuần của bạn theo từng giờ, và nhịp độ so với tuần trước.",
           "Thiết bị: Cài đặt → Mức sử dụng → Theo thiết bị liệt kê mọi trình duyệt đang đăng nhập tài khoản của bạn, và đăng xuất riêng từng cái. Đăng xuất giờ chấm dứt hẳn phiên của trình duyệt đó.",
           "Gửi góp ý trong menu tài khoản: chọn phần và loại góp ý, kể điều đã xảy ra và mức ảnh hưởng, kèm một cuộc trò chuyện nếu bạn muốn. Góp ý được gửi tới người vận hành Synapsez.",
-          "Xem nhật ký thay đổi trong menu tài khoản — chính là trang này."
+          "Xem nhật ký thay đổi trong menu tài khoản — chính là trang này.",
+          "Cảnh báo khi gần chạm giới hạn: từ 80% (rồi 90% và khi đã hết), một dòng phía trên ô nhập cho biết bạn đã dùng bao nhiêu, khi nào đặt lại, cách có thêm và đường tới Mức sử dụng; thanh hạn mức chuyển sang màu hổ phách, rồi đỏ."
         ],
         "en": [
           "Usage in the account menu: Settings → Usage shows each provider you have a key for on its own. For OpenRouter, the figures OpenRouter itself reports for each key — free-model requests today, what it has spent today, this week and this month, and the key's own limit; for every provider, what Synapsez counted — requests by day and by model, your week hour by hour, and the pace against last week.",
           "Devices: Settings → Usage → By device lists every browser your account is signed in on, and signs out any one of them. Signing out now ends that browser's session for good.",
           "Give feedback in the account menu: choose the area and the kind, say what happened and how much it affects you, and include a conversation if you choose. It goes to the people who run Synapsez.",
-          "View changelog in the account menu — this page."
+          "View changelog in the account menu — this page.",
+          "A warning near a limit: from 80% (again at 90%, and when it is used up), a line above the message box says how much you have used, when it resets, how to get more and the way to Usage; the limit's bar turns amber, then red."
         ]
       },
       "improved": {
-        "vi": ["Menu tài khoản giờ gồm Cài đặt, Mức sử dụng, Ngôn ngữ, Hướng dẫn sử dụng, Gửi góp ý, Xem nhật ký thay đổi, Tìm hiểu thêm và Đăng xuất."],
-        "en": ["The account menu now holds Settings, Usage, Language, Get help, Give feedback, View changelog, Learn more and Sign out."]
+        "vi": [
+          "Menu tài khoản giờ gồm Cài đặt, Mức sử dụng, Ngôn ngữ, Hướng dẫn sử dụng, Gửi góp ý, Xem nhật ký thay đổi, Tìm hiểu thêm và Đăng xuất.",
+          "Mức sử dụng dự đoán hạn mức sát nhất theo nhịp dùng hiện tại — còn dư tới lần đặt lại, hay sẽ hết vào khoảng mấy giờ — và cho biết model nào chiếm phần lớn yêu cầu tuần này. Bảng của tuần hiện mọi giờ trong ngày, như của Claude."
+        ],
+        "en": [
+          "The account menu now holds Settings, Usage, Language, Get help, Give feedback, View changelog, Learn more and Sign out.",
+          "Usage projects the tightest limit at your current pace — room to spare at the reset, or about when it runs out — and names the model most of this week's requests went to. The week's table shows every hour of the day, as Claude's does."
+        ]
       },
       "fixed": { "vi": [], "en": [] }
     }

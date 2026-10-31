@@ -903,7 +903,7 @@ export function createApp() {
   api.get(
     '/usage/report',
     wrap(async (req, res) => {
-      res.json(await usageReport(req.user));
+      res.json(await usageReport(req.user, { part: req.query.part === 'limits' ? 'limits' : 'all' }));
     }),
   );
 

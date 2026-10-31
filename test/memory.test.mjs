@@ -556,6 +556,8 @@ section('usage: what each provider reports, and what Synapsez counted');
   const providers = [...new Set((route.body?.hours || []).map((h) => h.provider))].sort().join();
   check("the report is the account's own calls, hour by hour, by provider", route.status === 200 && providers === 'google,openrouter', `${route.status} ${providers}`);
   check('  signed out, there is no report', (await jar().call('GET', '/api/usage/report')).status === 401);
+  const lite = await alice.call('GET', '/api/usage/report?part=limits');
+  check('  and ?part=limits is the same report without the hours', lite.status === 200 && Array.isArray(lite.body?.hours) && lite.body.hours.length === 0 && lite.body.month?.calls === route.body?.month?.calls, `${lite.status}`);
 
   // Live figures: asked of the account's own keys, never of the deployment's.
   const saved = await alice.call('POST', '/api/providers/openrouter/keys', { apiKey: 'sk-or-v1-own-key-for-usage-test-0001' });
@@ -569,6 +571,9 @@ section('usage: what each provider reports, and what Synapsez counted');
     const report = await usageReport(await store.getUserById(aliceId), { fetchImpl: stub });
     check("each of the account's own OpenRouter keys is asked what is left", saved.status < 300 && report.live.openrouter.length === 1 && report.live.openrouter[0].ok && report.live.openrouter[0].freeToday?.remaining === 13, JSON.stringify(report.live));
     check("  and the deployment's shared key never is", asked.length === 1 && asked.every((h) => !h.includes('deployment-shared')), asked.join(' | '));
+    const [again, both] = await Promise.all([usageReport(await store.getUserById(aliceId), { fetchImpl: stub }), usageReport(await store.getUserById(aliceId), { fetchImpl: stub, part: 'limits' })]);
+    check('  asked again within seconds, the same answer serves — one request between them', asked.length === 1 && again.live.openrouter[0].freeToday?.used === 37 && both.live.openrouter[0].ok, String(asked.length));
+    check("  the limits alone leave out the hours, and keep what the warning needs", both.hours.length === 0 && again.hours.length > 0 && both.sharedLimit === again.sharedLimit && 'openrouter' in both.sharedKey && both.sharedKey.openrouter === false, JSON.stringify(both.sharedKey));
     const refused = await usageReport(await store.getUserById(aliceId), { fetchImpl: async () => new Response('{}', { status: 401 }) });
     check('  a key OpenRouter refuses says so rather than showing numbers', refused.live.openrouter[0].ok === false && refused.live.openrouter[0].reason === 'rejected');
   } finally {

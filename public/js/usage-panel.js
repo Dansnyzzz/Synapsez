@@ -1,18 +1,6 @@
 import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
-import {
-  weekDays,
-  rowsFor,
-  callsByDay,
-  heatmap,
-  shareBy,
-  pace,
-  busiest,
-  usualDay,
-  nextUtcMidnight,
-  nextMonth,
-  standing,
-} from './usage-math.js';
+import { weekDays, rowsFor, callsByDay, heatmap, shareBy, pace, busiest, usualDay, standing, knownLimits, tightest, project } from './usage-math.js';
 
 /**
  * Settings → Usage, after Claude's (owner, 2026-10-31): a page per provider the
@@ -26,8 +14,11 @@ import {
  * limit. Nothing here is invented: a provider that does not say what is left is
  * shown without a bar, and a link to where it does say.
  *
- * @typedef {{ load: () => Promise<any>, sessions: () => Promise<any>, signOut: (id: string) => Promise<any>, providers: () => any, meta: () => any, user: () => any }} Deps
+ * @typedef {{ load: () => Promise<any>, sessions: () => Promise<any>, signOut: (id: string) => Promise<any>, providers: () => any, meta: () => any, user: () => any, onReport?: (report: any) => void, openKeys?: () => void }} Deps
  */
+
+/** How often an open page asks again on its own, so what it shows keeps up with the turns. */
+const LIVE_EVERY_MS = 60_000;
 
 const ORDER = ['openrouter', 'google', 'orcarouter', 'anthropic', 'openai'];
 /** Where each provider's own figures live, for the line under a provider that reports none. */
@@ -44,7 +35,39 @@ const pct = (n) => `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%`;
 const money = (n) => (n == null ? '—' : new Intl.NumberFormat(locale(), { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: n < 1 && n > 0 ? 4 : 2 }).format(n));
 const count = (n) => new Intl.NumberFormat(locale()).format(n);
 const when = (date, opts) => new Intl.DateTimeFormat(locale(), opts).format(date);
-const resetAt = (date) => when(date, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+const resetAt = (date) => when(date, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+const timeOf = (date) => when(date, new Date(date).toDateString() === new Date().toDateString() ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+/** Where more of a limit can be had: credit raises the free requests to 1,000 a day; a key's own cap is set on its page. */
+export const MORE = { free: 'https://openrouter.ai/settings/credits', cap: 'https://openrouter.ai/settings/keys' };
+
+/**
+ * An own OpenRouter key by its place and the last characters of it: "Key 1
+ * (…7a41)" — or "Key 1, …7a41" inside a sentence that is already in brackets.
+ */
+export function keyLabel(index, providers, { inline = false } = {}) {
+  const raw = providers?.openrouter?.keys?.[index]?.hint || '';
+  // The hint already reads "…7a41".
+  const hint = raw ? (raw.startsWith('…') ? raw : `…${raw}`) : '';
+  return t('usage.keyN', { n: String(index + 1), hint: hint ? (inline ? `, ${hint}` : ` (${hint})`) : '' });
+}
+
+/**
+ * A limit by name, as a sentence uses it: "today's free requests on OpenRouter".
+ * The key is named only when there are several, where it tells them apart.
+ *
+ * @param {{ kind: string, index?: number }} limit
+ * @param {any} providers  the account's provider status, for the keys' hints
+ * @param {number} keys  how many own OpenRouter keys there are
+ */
+export function limitName(limit, providers, keys) {
+  const key = keys > 1 && limit.index != null ? ` (${keyLabel(limit.index, providers, { inline: true })})` : '';
+  return t(`usage.name.${limit.kind}`, { key });
+}
+
+/** How much of a limit, in its own unit: requests, dollars or tokens. */
+export function limitAmount(limit, value) {
+  return limit.unit === 'usd' ? money(value) : count(value);
+}
 
 /** The bar the page draws for any limit: a label and its sub-line, the fill, the share used. */
 function bar({ label, sub = '', used, limit, note = '' }) {
@@ -75,85 +98,91 @@ export function createUsagePanel(host, deps) {
     return [['all', t('usage.overview')], ...list.map((p) => [p, meta[p]?.label || p])];
   }
 
-  const keyName = (index) => {
-    const key = deps.providers()?.openrouter?.keys?.[index];
-    // The hint already reads "…7a41".
-    return t('usage.keyN', { n: String(index + 1), hint: key?.hint ? ` (${key.hint.startsWith('…') ? key.hint : `…${key.hint}`})` : '' });
-  };
+  const keyName = (index) => keyLabel(index, deps.providers());
 
-  /** Every limit the page knows for the scope, as bars, and what they mean for the line at the top. */
-  function limits(scope) {
-    const out = [];
-    const report = view.report;
-    const now = new Date();
-    if (scope === 'all' || scope === 'openrouter') {
-      for (const live of report.live?.openrouter || []) {
-        if (!live.ok) {
-          out.push({ html: `<p class="usage__note">${escapeHtml(t(live.reason === 'rejected' ? 'usage.keyRejected' : 'usage.keyQuiet', { key: keyName(live.index) }))}</p>` });
-          continue;
-        }
-        if (live.freeToday) {
-          out.push({
-            used: live.freeToday.used,
-            limit: live.freeToday.limit,
-            html: bar({
-              label: t('usage.freeToday', { key: keyName(live.index) }),
-              sub: t('usage.resets', { when: resetAt(nextUtcMidnight(now)) }),
-              used: live.freeToday.used,
-              limit: live.freeToday.limit,
-              note: t('usage.ofLimit', { used: count(live.freeToday.used), limit: count(live.freeToday.limit) }),
-            }),
-          });
-        }
-        const cap = live.budget || (live.limit ? { limit: live.limit.amount, spent: live.limit.amount - (live.limit.remaining ?? live.limit.amount), resetsAt: null, interval: live.limit.reset } : null);
-        if (cap && cap.limit > 0) {
-          out.push({
-            used: cap.spent ?? 0,
-            limit: cap.limit,
-            html: bar({
-              label: t('usage.keyLimit', { key: keyName(live.index) }),
-              sub: cap.resetsAt ? t('usage.resets', { when: resetAt(new Date(cap.resetsAt)) }) : cap.interval ? t(`usage.interval.${cap.interval}`) : t('usage.noReset'),
-              used: cap.spent ?? 0,
-              limit: cap.limit,
-              note: t('usage.ofLimit', { used: money(cap.spent ?? 0), limit: money(cap.limit) }),
-            }),
-          });
-        }
-      }
-    }
-    // The deployment's own monthly ceiling, which is only spent on its shared key.
-    const shared = report.sharedKey?.openrouter && report.sharedLimit > 0 && (scope === 'all' || scope === 'openrouter');
-    if (shared) {
-      out.push({
-        used: report.month.tokens,
-        limit: report.sharedLimit,
-        html: bar({
-          label: t('usage.sharedMonth'),
-          sub: t('usage.resets', { when: when(nextMonth(now), { day: 'numeric', month: 'short' }) }),
-          used: report.month.tokens,
-          limit: report.sharedLimit,
-          note: t('usage.ofLimit', { used: count(report.month.tokens), limit: count(report.sharedLimit) }),
-        }),
-      });
-    }
-    if (scope !== 'all' && scope !== 'openrouter') {
-      out.push({ html: `<p class="usage__note">${escapeHtml(t('usage.noAllowance', { provider: deps.meta()?.[scope]?.label || scope }))} <a href="${CONSOLE[scope] || '#'}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a></p>` });
-    }
-    return out;
+  const ownKeys = () => (view.report?.live?.openrouter || []).length;
+
+  /** The bar for one limit: its name, when it resets, how much is used — amber from 80%, red at the limit. */
+  function limitBar(l) {
+    const label = l.kind === 'free' ? t('usage.freeToday', { key: keyName(l.index) }) : l.kind === 'cap' ? t('usage.keyLimit', { key: keyName(l.index) }) : t('usage.sharedMonth');
+    const sub = l.to ? t('usage.resets', { when: resetAt(l.to) }) : l.interval ? t(`usage.interval.${l.interval}`) : t('usage.noReset');
+    return bar({ label, sub, used: l.used, limit: l.limit, note: t('usage.ofLimit', { used: limitAmount(l, l.used), limit: limitAmount(l, l.limit) }) });
   }
 
-  /** The resets the page knows of, soonest first. */
-  function resets(scope) {
+  /** What the page says instead of a bar: a key that did not answer, a provider that reports no allowance. */
+  function limitNotes(scope) {
+    const out = [];
+    if (scope === 'all' || scope === 'openrouter') {
+      for (const live of view.report.live?.openrouter || []) {
+        if (!live.ok) out.push(`<p class="usage__note">${escapeHtml(t(live.reason === 'rejected' ? 'usage.keyRejected' : 'usage.keyQuiet', { key: keyName(live.index) }))}</p>`);
+      }
+    }
+    if (scope !== 'all' && scope !== 'openrouter') {
+      out.push(`<p class="usage__note">${escapeHtml(t('usage.noAllowance', { provider: deps.meta()?.[scope]?.label || scope }))} <a href="${CONSOLE[scope] || '#'}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a></p>`);
+    }
+    return out.join('');
+  }
+
+  /**
+   * The line at the top, after Claude's "On track. You should reach this
+   * week's reset with room to spare.": where the tightest limit stands, and —
+   * at the pace of its period so far — whether it lasts until it resets.
+   */
+  function headline(known) {
+    const worst = tightest(known);
+    if (!worst) return { text: t(`usage.standing.${standing(known)}`), tone: '' };
     const now = new Date();
-    const list = [];
-    if ((scope === 'all' || scope === 'openrouter') && (view.report.live?.openrouter || []).some((l) => l.ok && l.freeToday)) {
-      list.push({ at: nextUtcMidnight(now), what: t('usage.resetFree') });
+    const name = limitName(worst, deps.providers(), ownKeys());
+    const share = worst.used / worst.limit;
+    const resets = worst.to ? t('usage.head.resets', { when: resetAt(worst.to) }) : '';
+    if (share >= 1) return { text: `${t('usage.head.out', { limit: name })}${resets ? ` ${resets}` : ''}`, tone: 'out', limit: worst };
+    const ahead = project(worst, now);
+    if (share >= 0.8) {
+      const pace = ahead?.runsOut ? ` ${t('usage.head.paceOut', { time: timeOf(ahead.runsOut) })}` : '';
+      return { text: `${t('usage.head.close', { pct: pct(share), limit: name })}${pace}${resets ? ` ${resets}` : ''}`, tone: 'close', limit: worst };
     }
-    for (const live of view.report.live?.openrouter || []) {
-      if ((scope === 'all' || scope === 'openrouter') && live.ok && live.budget?.resetsAt) list.push({ at: new Date(live.budget.resetsAt), what: t('usage.resetBudget', { key: keyName(live.index) }) });
-    }
-    if (view.report.sharedKey?.openrouter && view.report.sharedLimit > 0 && (scope === 'all' || scope === 'openrouter')) list.push({ at: nextMonth(now), what: t('usage.resetShared') });
-    list.sort((a, b) => a.at - b.at);
+    if (ahead?.runsOut) return { text: t('usage.head.willRunOut', { limit: name, time: timeOf(ahead.runsOut), when: worst.to ? resetAt(worst.to) : '' }), tone: 'close', limit: worst };
+    if (ahead) return { text: t('usage.head.onTrack'), tone: '' };
+    return { text: t('usage.standing.ok'), tone: '' };
+  }
+
+  /**
+   * The line under it: which model most of this week's requests went to, and —
+   * when it is also most of the week's cost — that a lighter one would make the
+   * credit last. The same week for both: the report's rows go back two weeks,
+   * not to the start of the month. Said only with enough requests for a share
+   * to mean something.
+   */
+  function insight(rows) {
+    const days = weekDays(new Date(), firstDay());
+    const share = shareBy(rows, days, 'model');
+    const total = share.reduce((n, s) => n + s.calls, 0);
+    if (total < 3 || !share.length) return '';
+    const top = share[0];
+    const name = String(top.name).replace(/^[^/]+\//, '');
+    let text = t('usage.insight.model', { model: name, pct: pct(top.share) });
+    const week = rows.filter((r) => new Date(r.at) >= days[0]);
+    const cost = week.reduce((n, r) => n + (r.cost || 0), 0);
+    const mine = week.filter((r) => r.model === top.name).reduce((n, r) => n + (r.cost || 0), 0);
+    if (cost >= 0.01 && mine / cost >= 0.6) text += ` ${t('usage.insight.cost', { pct: pct(mine / cost) })}`;
+    return text;
+  }
+
+  /** What to do about a limit nearly or wholly used: get more of it, or stop riding the shared one. */
+  function moreOf(limit) {
+    if (!limit) return '';
+    if (limit.kind === 'shared') return deps.openKeys ? `<div class="usage__actions"><button type="button" class="btn btn--small" data-open-keys>${escapeHtml(t('usage.addOwnKey'))}</button></div>` : '';
+    return `<div class="usage__actions"><a class="btn btn--small" href="${MORE[limit.kind]}" target="_blank" rel="noopener">${escapeHtml(t('usage.getMore'))} ↗</a></div>`;
+  }
+
+  /** The resets the page knows of, soonest first, each once. */
+  function resets(known) {
+    const seen = new Set();
+    const list = known
+      .filter((l) => l.to)
+      .map((l) => ({ at: l.to, what: l.kind === 'free' ? t('usage.resetFree') : l.kind === 'cap' ? t('usage.resetBudget', { key: keyName(l.index) }) : t('usage.resetShared') }))
+      .filter((r) => !seen.has(r.what) && seen.add(r.what))
+      .sort((a, b) => a.at - b.at);
     if (!list.length) return `<p class="usage__strong">${escapeHtml(t('usage.noResets'))}</p><p class="usage__muted">${escapeHtml(t('usage.noResetsHint'))}</p>`;
     return `<ul class="usage__resets">${list.map((r) => `<li><span>${escapeHtml(r.what)}</span><span class="usage__muted">${escapeHtml(when(r.at, { weekday: 'long', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }))}</span></li>`).join('')}</ul>`;
   }
@@ -196,7 +225,7 @@ export function createUsagePanel(host, deps) {
         </div>`,
       )
       .join('');
-    return `${rows}<p class="usage__muted">${escapeHtml(t('usage.signOutHint'))}</p>`;
+    return `${rows}<p class="usage__muted usage__device-hint">${escapeHtml(t('usage.signOutHint'))}</p>`;
   }
 
   /** "This week": the line about it, then the grid of hours — or the same as a table. */
@@ -212,16 +241,19 @@ export function createUsagePanel(host, deps) {
     const max = Math.max(1, ...grid.flat());
     const level = (n) => (n === 0 ? 0 : Math.min(5, Math.ceil((n / max) * 5)));
     const table = view.weekTable;
-    const switcher = `<div class="usage__views"><button type="button" data-week-view="grid" aria-pressed="${!table}" aria-label="${escapeHtml(t('usage.asGrid'))}" title="${escapeHtml(t('usage.asGrid'))}">${ICON.chart}</button><button type="button" data-week-view="table" aria-pressed="${table}" aria-label="${escapeHtml(t('usage.asTable'))}" title="${escapeHtml(t('usage.asTable'))}">${ICON.table}</button></div>`;
+    // One control with two faces, as Claude draws it — and room between it and what it switches.
+    const switcher = `<div class="usage__views" role="group" aria-label="${escapeHtml(t('usage.viewAs'))}"><button type="button" data-week-view="grid" aria-pressed="${!table}" aria-label="${escapeHtml(t('usage.asGrid'))}" title="${escapeHtml(t('usage.asGrid'))}">${ICON.chart}</button><button type="button" data-week-view="table" aria-pressed="${table}" aria-label="${escapeHtml(t('usage.asTable'))}" title="${escapeHtml(t('usage.asTable'))}">${ICON.table}</button></div>`;
+    const hourName = (h) => when(new Date(2026, 0, 1, h), { hour: 'numeric' });
+    // The scale is one piece: on a phone it moves under the line whole, not a square at a time.
+    const legend = `<div class="usage__legend"><p class="usage__muted">${escapeHtml(t('usage.heatHint'))}</p><span class="usage__scale"><span class="usage__muted">0</span>${[0, 1, 2, 3, 4, 5].map((l) => `<span class="usage__cell l${l}"></span>`).join('')}<span class="usage__muted">${count(max)}</span></span></div>`;
+    // Claude's table: a row a day, a column an hour, every count — in a box of
+    // its own that scrolls both ways, the day and the hour staying in view.
     const body = table
-      ? `<table class="usage__table"><thead><tr><th>${escapeHtml(t('usage.day'))}</th><th>${escapeHtml(t('usage.requestsLabel'))}</th><th>${escapeHtml(t('usage.busiestHour'))}</th></tr></thead><tbody>${days
-          .map((d, i) => {
-            const hours = grid[i];
-            const total = hours.reduce((a, b) => a + b, 0);
-            const peak = total ? hours.indexOf(Math.max(...hours)) : -1;
-            return `<tr><td>${escapeHtml(when(d, { weekday: 'short', day: 'numeric' }))}</td><td>${count(total)}</td><td>${peak < 0 ? '—' : `${String(peak).padStart(2, '0')}:00`}</td></tr>`;
-          })
-          .join('')}</tbody></table>`
+      ? `<div class="usage__tablewrap" role="region" aria-label="${escapeHtml(t('usage.asTable'))}" tabindex="0"><table class="usage__hours"><thead><tr><th scope="col">${escapeHtml(t('usage.day'))}</th>${grid[0]
+          .map((_, h) => `<th scope="col">${escapeHtml(hourName(h))}</th>`)
+          .join('')}</tr></thead><tbody>${days
+          .map((d, i) => `<tr><th scope="row">${escapeHtml(when(d, { weekday: 'long' }))}</th>${grid[i].map((n) => `<td${n ? '' : ' class="is-zero"'}>${count(n)}</td>`).join('')}</tr>`)
+          .join('')}</tbody></table></div>${legend}`
       : `<div class="usage__heat" role="img" aria-label="${escapeHtml(said)}">${days
           .map(
             (d, i) =>
@@ -229,8 +261,7 @@ export function createUsagePanel(host, deps) {
                 .map((n, h) => `<span class="usage__cell l${level(n)}" title="${escapeHtml(`${when(d, { weekday: 'short', day: 'numeric' })} ${String(h).padStart(2, '0')}:00 — ${count(n)}`)}"></span>`)
                 .join('')}`,
           )
-          .join('')}<span></span>${[0, 6, 12, 18].map((h) => `<span class="usage__heat-hour" style="grid-column:${h + 2} / span 6">${escapeHtml(when(new Date(2026, 0, 1, h), { hour: 'numeric' }))}</span>`).join('')}</div>
-        <div class="usage__legend"><p class="usage__muted">${escapeHtml(t('usage.heatHint'))}</p><span class="usage__muted">0</span>${[1, 2, 3, 4, 5].map((l) => `<span class="usage__cell l${l}"></span>`).join('')}<span class="usage__muted">${count(max)}</span></div>`;
+          .join('')}<span></span>${[0, 6, 12, 18].map((h) => `<span class="usage__heat-hour" style="grid-column:${h + 2} / span 6">${escapeHtml(hourName(h))}</span>`).join('')}</div>${legend}`;
     return `<p>${escapeHtml(said)}</p>${switcher}${body}`;
   }
 
@@ -304,32 +335,63 @@ export function createUsagePanel(host, deps) {
     const tabs = scopes();
     if (!tabs.some(([id]) => id === view.scope)) view.scope = 'all';
     const rows = rowsFor(view.report.hours, view.scope);
-    const known = limits(view.scope);
-    const state = standing(known.filter((l) => l.limit != null));
-    const head = t(`usage.standing.${state}`);
+    const known = knownLimits(view.report, view.scope);
+    const head = headline(known);
+    const said = insight(rows);
+    const notes = limitNotes(view.scope);
+    // A repaint replaces the table; whoever was scrolled along it stays where they were.
+    const box = /** @type {HTMLElement | null} */ (host.querySelector('.usage__tablewrap'));
+    const scrolled = box ? [box.scrollLeft, box.scrollTop] : null;
     host.innerHTML = `<div class="usage">
       ${tabs.length > 2 ? segmented('scope', tabs, view.scope) : ''}
-      <p class="usage__head">${escapeHtml(head)}</p>
-      <div class="usage__limits">${known.map((l) => l.html).join('') || `<p class="usage__muted">${escapeHtml(t('usage.noLimitsKnown'))}</p>`}</div>
-      <section><h4>${escapeHtml(t('usage.resetsTitle'))}</h4>${resets(view.scope)}</section>
+      <div class="usage__lead">
+        <p class="usage__head${head.tone ? ` is-${head.tone}` : ''}">${escapeHtml(head.text)}</p>
+        ${said ? `<p class="usage__muted usage__insight">${escapeHtml(said)}</p>` : ''}
+        ${head.tone ? moreOf(head.limit) : ''}
+      </div>
+      <div class="usage__limits">${known.map(limitBar).join('')}${notes}${known.length || notes ? '' : `<p class="usage__muted">${escapeHtml(t('usage.noLimitsKnown'))}</p>`}</div>
+      <section><h4>${escapeHtml(t('usage.resetsTitle'))}</h4>${resets(known)}</section>
       <section><h4>${escapeHtml(t('usage.whereTitle'))}</h4>${segmented('where', [['model', t(view.scope === 'all' ? 'usage.byProvider' : 'usage.byModel')], ['device', t('usage.byDevice')]], view.where)}<div class="usage__where">${view.where === 'device' ? byDevice() : byModel(view.scope, rows)}</div></section>
       <section><h4>${escapeHtml(t('usage.weekTitle'))}</h4>${segmented('week', [['grid', t('usage.thisWeek')], ['pace', t('usage.pace')]], view.week)}<div class="usage__week">${view.week === 'pace' ? paceChart(rows) : thisWeek(rows)}</div></section>
       <section><h4>${escapeHtml(t('usage.creditsTitle'))}</h4>${credits(view.scope)}</section>
-      <footer class="usage__foot"><span class="usage__muted">${escapeHtml(t('usage.updated', { when: when(new Date(view.loadedAt), { hour: 'numeric', minute: '2-digit' }) }))}</span><button type="button" class="icon-btn" data-refresh aria-label="${escapeHtml(t('usage.refresh'))}" title="${escapeHtml(t('usage.refresh'))}">${ICON.refresh}</button><a href="${LIMITS_DOC}" target="_blank" rel="noopener">${escapeHtml(t('usage.learnLimits'))}</a></footer>
+      <footer class="usage__foot"><span class="usage__muted">${escapeHtml(t('usage.updated', { when: when(new Date(view.loadedAt), { hour: 'numeric', minute: '2-digit', second: '2-digit' }) }))}</span><button type="button" class="icon-btn" data-refresh aria-label="${escapeHtml(t('usage.refresh'))}" title="${escapeHtml(t('usage.refresh'))}">${ICON.refresh}</button><a href="${LIMITS_DOC}" target="_blank" rel="noopener">${escapeHtml(t('usage.learnLimits'))}</a></footer>
     </div>`;
+    const again = /** @type {HTMLElement | null} */ (host.querySelector('.usage__tablewrap'));
+    if (again && scrolled) [again.scrollLeft, again.scrollTop] = scrolled;
   }
 
+  let loading = null;
   async function load() {
+    // Asked twice at once — a tab opened as the minute came round — one request.
+    if (loading) return loading;
     view.error = '';
-    paint();
-    try {
-      view.report = await deps.load();
-      view.loadedAt = Date.now();
-    } catch (err) {
-      view.error = err.message || t('usage.failed');
-    }
-    paint();
+    if (!view.report) paint();
+    loading = (async () => {
+      try {
+        view.report = await deps.load();
+        view.loadedAt = Date.now();
+        deps.onReport?.(view.report);
+      } catch (err) {
+        // A page already showing figures keeps them; only a first load shows the failure.
+        if (!view.report) view.error = err.message || t('usage.failed');
+      }
+      paint();
+    })().finally(() => {
+      loading = null;
+    });
+    return loading;
   }
+
+  // While the page is on screen, it keeps up on its own: asked again each
+  // minute, and as soon as it is looked at after longer than that.
+  const visible = () => document.visibilityState === 'visible' && !!host.offsetParent;
+  const stale = () => Date.now() - view.loadedAt >= LIVE_EVERY_MS;
+  setInterval(() => {
+    if (view.report && visible() && stale()) load();
+  }, 15_000);
+  document.addEventListener('visibilitychange', () => {
+    if (view.report && visible() && stale()) load();
+  });
 
   async function loadSessions() {
     try {
@@ -349,7 +411,10 @@ export function createUsagePanel(host, deps) {
       if (view.where === 'device') loadSessions();
     } else if (target.dataset.week) view.week = target.dataset.week;
     else if (target.dataset.weekView) view.weekTable = target.dataset.weekView === 'table';
-    else if (target.hasAttribute('data-refresh')) {
+    else if (target.hasAttribute('data-open-keys')) {
+      deps.openKeys?.();
+      return;
+    } else if (target.hasAttribute('data-refresh')) {
       load();
       if (view.where === 'device') loadSessions();
       return;

@@ -1,5 +1,6 @@
+import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
-import { getApiKeys } from './settings.js';
+import { getApiKeys, providerStatus } from './settings.js';
 import { limitFor } from './usage.js';
 import { withMarkup } from './pricing.js';
 
@@ -70,8 +71,30 @@ export function readOpenRouterKey(data) {
   };
 }
 
+/**
+ * What OpenRouter said about each key in the last few seconds, by a hash of
+ * the key. The warning above the composer asks after every turn and the Usage
+ * page as it opens; one answer serves both, and two asking at once share one
+ * request. Short, so a count is never more than a turn behind; per instance,
+ * which on a serverless deployment only ever makes it fresher.
+ */
+const LIVE_FRESH_MS = 15_000;
+const liveCache = new Map();
+
 /** Ask OpenRouter about one key. Never throws: a key it cannot read says why. */
-async function askOpenRouter(key, fetchImpl) {
+function askOpenRouter(key, fetchImpl) {
+  const id = crypto.createHash('sha256').update(key).digest('base64url');
+  const hit = liveCache.get(id);
+  // Only an answer asked the same way: the suites ask through stubs of their own.
+  if (hit && hit.until > Date.now() && hit.fetchImpl === fetchImpl) return hit.answer;
+  const answer = askOpenRouterNow(key, fetchImpl);
+  liveCache.set(id, { until: Date.now() + LIVE_FRESH_MS, answer, fetchImpl });
+  // Never kept past its time, and never more than a handful of keys.
+  for (const [k, v] of liveCache) if (v.until <= Date.now()) liveCache.delete(k);
+  return answer;
+}
+
+async function askOpenRouterNow(key, fetchImpl) {
   try {
     const res = await fetchImpl('https://openrouter.ai/api/v1/key', {
       headers: { Authorization: `Bearer ${key}` },
@@ -88,14 +111,17 @@ async function askOpenRouter(key, fetchImpl) {
 
 /**
  * @param {{ id: string, monthly_token_limit?: number | null }} user
- * @param {{ fetchImpl?: typeof fetch }} [options]
+ * @param {{ fetchImpl?: typeof fetch, part?: 'all' | 'limits' }} [options]
+ *   `limits` leaves out the hour-by-hour rows: all the warning above the
+ *   composer needs, asked after every turn.
  */
-export async function usageReport(user, { fetchImpl = fetch } = {}) {
+export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}) {
   const store = getStore();
-  const [hours, month, openrouterKeys] = await Promise.all([
-    store.usageByHour(user.id, HOURS_BACK),
+  const [hours, month, openrouterKeys, status] = await Promise.all([
+    part === 'limits' ? [] : store.usageByHour(user.id, HOURS_BACK),
     store.usageThisMonth(user.id),
     getApiKeys(user.id, 'openrouter', { includeResting: true }),
+    providerStatus(user.id),
   ]);
 
   const own = openrouterKeys.filter((k) => !k.shared);
@@ -113,10 +139,12 @@ export async function usageReport(user, { fetchImpl = fetch } = {}) {
       cost: withMarkup(Number(row.cost) || 0),
     })),
     month: { tokens: month.tokens, calls: month.calls, cost: withMarkup(Number(month.cost) || 0) },
-    // The deployment's own monthly ceiling, which applies only on its shared key.
+    // The deployment's own monthly ceiling, which applies only on its shared keys.
     sharedLimit: limitFor(user),
     live: { openrouter: live },
-    // Whether this account is riding the deployment's key for OpenRouter.
-    sharedKey: { openrouter: openrouterKeys.some((k) => k.shared) && own.length === 0 },
+    // Each provider this account rides the deployment's key for — where the
+    // monthly ceiling applies (checkQuota counts every call of the month, and
+    // stops a turn only on a shared key).
+    sharedKey: Object.fromEntries(Object.entries(status).map(([provider, s]) => [provider, !!s.shared])),
   };
 }

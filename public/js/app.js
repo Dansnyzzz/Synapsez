@@ -34,6 +34,7 @@ import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
 import { createUsagePanel } from './usage-panel.js';
+import { createUsageAlert } from './usage-alert.js';
 import { createFeedback, renderFeedbackList, transcriptLines } from './feedback.js';
 import { createChangelog, appVersion } from './changelog.js';
 import { contextPanel } from './context-panel.js';
@@ -739,6 +740,8 @@ async function start() {
   renderSuggestions();
   renderTopbar();
   paintLegal();
+  // A limit nearly used is said before the next message, not after it fails.
+  usageAlert.refresh({ soon: true });
   if (state.boot.prefs.modelNotice) noteModelRetired(state.boot.prefs.modelNotice.from);
   fillSettings();
   // Where scheduled work actually runs differs between a local run and a
@@ -3582,6 +3585,8 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
       compactBar.finish(false);
     }
     runs.finish(chatId);
+    // What the turn spent is booked by now: see whether a limit is near.
+    usageAlert.refresh({ soon: true });
     setStatus(null, run);
     if (onScreen(run)) setRunning(false);
     // Drop the trailing empty block created by the last `message` event.
@@ -4362,6 +4367,12 @@ async function signOut() {
 }
 
 /* Usage, Give feedback and What's new — three rows of the account menu (owner, 2026-10-31). */
+const usageAlert = createUsageAlert($('usage-alert'), {
+  load: () => api.usageLimits(),
+  providers: () => state.boot?.providers || {},
+  openUsage: () => openSettings('usage'),
+  openKeys: () => openSettings('providers'),
+});
 const usagePanel = createUsagePanel($('usage-panel'), {
   load: () => api.usageReport(),
   sessions: () => api.sessions(),
@@ -4373,6 +4384,9 @@ const usagePanel = createUsagePanel($('usage-panel'), {
   providers: () => state.boot?.providers || {},
   meta: () => state.boot?.providerMeta || {},
   user: () => state.boot?.user,
+  // The page's figures are the newest there are: the warning follows them.
+  onReport: (report) => usageAlert.show(report),
+  openKeys: () => selectTab('providers'),
 });
 const feedback = createFeedback({
   // Incognito conversations are not offered: they are kept out of everything.
