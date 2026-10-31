@@ -64,6 +64,7 @@ import { resumeCutOffTurns } from './resume.js';
 import { redactSecrets } from './redact.js';
 import { audit, networkOf, agentOf } from './audit.js';
 import { LEGAL, agreement, agreedToCurrent } from './legal.js';
+import { usageReport } from './usageReport.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -889,6 +890,19 @@ export function createApp() {
           publicUrl: publicUrlFor(req),
         },
       });
+    }),
+  );
+
+  /**
+   * Settings → Usage (owner, 2026-10-31): each provider's own figures for the
+   * account's own keys where the provider reports them, and what Synapsez
+   * counted for every provider, hour by hour — see server/usageReport.js.
+   * Asked when the tab opens and on ↻, not on every page.
+   */
+  api.get(
+    '/usage/report',
+    wrap(async (req, res) => {
+      res.json(await usageReport(req.user));
     }),
   );
 

@@ -727,6 +727,8 @@ export async function sweep() {
     store.sweepIncognito(INCOGNITO_TTL_MS),
     // The security record keeps half a year, then lets go.
     store.pruneAudit(AUDIT_KEEP_DAYS),
+    // Sign-ins a week after they could last be used — expired or signed out.
+    store.pruneSessions(),
     applyRetention(store),
   ]);
 }

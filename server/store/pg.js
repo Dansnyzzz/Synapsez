@@ -677,6 +677,24 @@ export function createPgStore(connectionString) {
         [userId, String(days)],
       );
     },
+    /**
+     * Calls per hour per model, the last `hours` of them — what Settings →
+     * Usage draws its week, heatmap and pace from, in the browser's own zone.
+     * Every role counts: a compaction or a research step is a request to the
+     * provider like any other.
+     */
+    async usageByHour(userId, hours = 360) {
+      return q(
+        `SELECT date_trunc('hour', created_at) AS hour, model,
+                COUNT(*)::int                                AS calls,
+                SUM(input_tokens + output_tokens)::bigint    AS tokens,
+                SUM(cost_usd)                                AS cost
+           FROM usage_events
+          WHERE user_id = $1 AND created_at >= NOW() - make_interval(hours => $2)
+          GROUP BY 1, 2 ORDER BY 1`,
+        [userId, Math.min(Math.max(Math.floor(Number(hours) || 360), 1), 24 * 60)],
+      );
+    },
     async usageByModel(userId, days = 30) {
       return q(
         `SELECT model,

@@ -524,6 +524,59 @@ section('agreeing to the terms: recorded at sign-up, asked of an account that ne
 }
 
 /*
+ * Settings → Usage (owner, 2026-10-31): per provider, what the provider says
+ * is left of each of the account's own keys, and what Synapsez counted.
+ */
+section('usage: what each provider reports, and what Synapsez counted');
+{
+  const { usageReport, readOpenRouterKey, providerOf } = await import('../server/usageReport.js');
+  check('a model id names its provider', providerOf('openrouter/nvidia/nemotron-3.5-super-vl:free') === 'openrouter' && providerOf('google/gemini-2.5-flash') === 'google' && providerOf('auto') === 'other');
+  const sample = {
+    label: 'sk-or-v1-abc...',
+    limit: 20,
+    limit_remaining: 12.5,
+    limit_reset: 'monthly',
+    usage: 40.2,
+    usage_daily: 0.3,
+    usage_weekly: 2.1,
+    usage_monthly: 7.5,
+    is_free_tier: true,
+    free_model_daily_requests: { used: 37, limit: 50, remaining: 13 },
+    effective_budget: { limit_usd: 20, spend_usd: 7.5, remaining_usd: 12.5, reset_interval: 'monthly', resets_at: '2026-11-01T00:00:00Z' },
+  };
+  const read = readOpenRouterKey(sample);
+  check("OpenRouter's answer is read field by field", read.freeToday.used === 37 && read.freeToday.limit === 50 && read.freeToday.remaining === 13 && read.spend.week === 2.1 && read.limit.remaining === 12.5 && read.budget.resetsAt === '2026-11-01T00:00:00Z' && read.neverPaid === true, JSON.stringify(read));
+  check('  and what it leaves out is "not reported", never zero', readOpenRouterKey({}).freeToday === null && readOpenRouterKey({}).spend.today === null && readOpenRouterKey({}).limit === null);
+
+  // Each account counts its own calls only.
+  await store.recordUsage(aliceId, { id: 'ue-a1', model: 'openrouter/meta/llama:free', inputTokens: 100, outputTokens: 20, costUsd: 0 });
+  await store.recordUsage(aliceId, { id: 'ue-a2', model: 'google/gemini-2.5-flash', inputTokens: 300, outputTokens: 50, costUsd: 0.001 });
+  await store.recordUsage(bobId, { id: 'ue-b1', model: 'orcarouter/some-model', inputTokens: 9, outputTokens: 9, costUsd: 0 });
+  const route = await alice.call('GET', '/api/usage/report');
+  const providers = [...new Set((route.body?.hours || []).map((h) => h.provider))].sort().join();
+  check("the report is the account's own calls, hour by hour, by provider", route.status === 200 && providers === 'google,openrouter', `${route.status} ${providers}`);
+  check('  signed out, there is no report', (await jar().call('GET', '/api/usage/report')).status === 401);
+
+  // Live figures: asked of the account's own keys, never of the deployment's.
+  const saved = await alice.call('POST', '/api/providers/openrouter/keys', { apiKey: 'sk-or-v1-own-key-for-usage-test-0001' });
+  const asked = [];
+  const stub = async (url, init) => {
+    asked.push(String(init?.headers?.Authorization || ''));
+    return new Response(JSON.stringify({ data: sample }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  process.env.OPENROUTER_API_KEY = 'sk-or-v1-deployment-shared-key-9999';
+  try {
+    const report = await usageReport(await store.getUserById(aliceId), { fetchImpl: stub });
+    check("each of the account's own OpenRouter keys is asked what is left", saved.status < 300 && report.live.openrouter.length === 1 && report.live.openrouter[0].ok && report.live.openrouter[0].freeToday?.remaining === 13, JSON.stringify(report.live));
+    check("  and the deployment's shared key never is", asked.length === 1 && asked.every((h) => !h.includes('deployment-shared')), asked.join(' | '));
+    const refused = await usageReport(await store.getUserById(aliceId), { fetchImpl: async () => new Response('{}', { status: 401 }) });
+    check('  a key OpenRouter refuses says so rather than showing numbers', refused.live.openrouter[0].ok === false && refused.live.openrouter[0].reason === 'rejected');
+  } finally {
+    delete process.env.OPENROUTER_API_KEY;
+  }
+}
+
+/*
  * Where the account is signed in, one device at a time (owner, 2026-10-31):
  * Settings → Usage → By device lists each sign-in and signs one out without
  * the others — and signing out of a browser ends that cookie for good.
