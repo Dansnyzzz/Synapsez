@@ -66,6 +66,7 @@ import { audit, networkOf, agentOf } from './audit.js';
 import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { usageReport } from './usageReport.js';
 import { mountAccountRoutes } from './routes/account.js';
+import { mountFeedbackRoutes } from './routes/feedback.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
 import { withTrace, newTraceId, annotate, log, mark, since } from './util/trace.js';
@@ -1988,6 +1989,7 @@ export function createApp() {
   const admin = express.Router();
   admin.use(requireAdmin);
   mountAccountRoutes(api, admin, { wrap });
+  mountFeedbackRoutes(api, admin, { wrap });
 
   // ── the agent stream ────────────────────────────────────────────────
   /**

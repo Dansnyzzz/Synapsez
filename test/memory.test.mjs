@@ -577,6 +577,32 @@ section('usage: what each provider reports, and what Synapsez counted');
 }
 
 /*
+ * Give feedback (owner, 2026-10-31): kept for the deployment's administrators,
+ * with a conversation's copy only when the sender included one of their own.
+ */
+section('feedback: sent to the administrators, a conversation only when included');
+{
+  const ok = { topic: 'files', kind: 'bug', body: 'The Word file came out empty.', affect: 'workaround', frequency: 'daily', workedBefore: 'unknown', language: 'vi', version: '1.1.0' };
+  const sent = await bob.call('POST', '/api/feedback', ok);
+  check('feedback is accepted from any account', sent.status === 201 && !!sent.body?.id, `${sent.status} ${sent.text.slice(0, 120)}`);
+  check('  but not without what it is about, its kind, its words and how much it matters', (await bob.call('POST', '/api/feedback', { ...ok, affect: 'whatever' })).status === 400 && (await bob.call('POST', '/api/feedback', { ...ok, body: '  ' })).status === 400 && (await bob.call('POST', '/api/feedback', { ...ok, topic: 'other' })).status === 400);
+  const aliceChat = (await alice.call('POST', '/api/chats', { title: 'Alice private plan' })).body?.chat?.id || (await alice.call('POST', '/api/chats', {})).body?.id;
+  const reach = await bob.call('POST', '/api/feedback', { ...ok, chatId: aliceChat });
+  check("  nor with somebody else's conversation", reach.status === 404, `${reach.status} ${aliceChat}`);
+  const bobChat = (await bob.call('POST', '/api/chats', { title: 'Report export' })).body;
+  const bobChatId = bobChat?.chat?.id || bobChat?.id;
+  await store.appendMessage(bobId, bobChatId, { id: 'fb-m1', role: 'user', text: 'Make the report into a Word file' });
+  await store.appendMessage(bobId, bobChatId, { id: 'fb-m2', role: 'assistant', text: 'Here is the file.' });
+  const withChat = await bob.call('POST', '/api/feedback', { ...ok, chatId: bobChatId });
+  const listed = await alice.call('GET', '/api/admin/feedback');
+  const mine = (listed.body?.feedback || []).find((f) => f.id === withChat.body?.id);
+  check('an administrator reads it, with whose it was and the conversation included', listed.status === 200 && mine?.email === 'bob@memory.test' && mine?.transcript?.messages?.length === 2 && mine.transcript.messages[0].text.startsWith('Make the report'), JSON.stringify(mine?.transcript));
+  check('  and what helps reproduce it — language, version, browser — nothing more', mine?.client?.language === 'vi' && mine?.client?.version === '1.1.0' && !('ip' in (mine?.client || {})), JSON.stringify(mine?.client));
+  check("  an account that is not an administrator reads none of it", (await bob.call('GET', '/api/admin/feedback')).status === 403);
+  check('  marked read, and deleted, by an administrator', (await alice.call('PUT', `/api/admin/feedback/${mine?.id}/read`)).status === 200 && (await alice.call('DELETE', `/api/admin/feedback/${mine?.id}`)).status === 200);
+}
+
+/*
  * Where the account is signed in, one device at a time (owner, 2026-10-31):
  * Settings → Usage → By device lists each sign-in and signs one out without
  * the others — and signing out of a browser ends that cookie for good.
