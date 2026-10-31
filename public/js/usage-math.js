@@ -72,6 +72,24 @@ export function heatmap(rows, days) {
   return grid;
 }
 
+/**
+ * What each hour's requests were made of: `grid[day][hour]` is the provider —
+ * or the model, by `key` — and its requests, largest first. For the line under
+ * a cell when it is pointed at, after Claude's ("230 Claude Code").
+ *
+ * @returns {{ name: string, calls: number }[][][]}
+ */
+export function heatmapBy(rows, days, key) {
+  const grid = days.map(() => Array.from({ length: 24 }, () => new Map()));
+  for (const row of rows) {
+    const i = dayIndex(days, row.at);
+    if (i < 0) continue;
+    const cell = grid[i][new Date(row.at).getHours()];
+    cell.set(row[key], (cell.get(row[key]) || 0) + row.calls);
+  }
+  return grid.map((hours) => hours.map((cell) => [...cell.entries()].map(([name, calls]) => ({ name, calls })).sort((a, b) => b.calls - a.calls)));
+}
+
 /** Each key's share of the requests on the given days, largest first. */
 export function shareBy(rows, days, key) {
   const totals = new Map();

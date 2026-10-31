@@ -1291,409 +1291,663 @@
     </dialog>
 
     <!-- ── Settings ─────────────────────────────────────────────────── -->
-    <dialog id="settings" class="sheet">
+    <!-- Settings, after Claude's (owner, 2026-10-31): a list of sections down the
+         left — Preferences, This computer, Customize, and Administration for the
+         people who run the deployment — and each section as rows: what it is and
+         what it does on the left, its switch or choice on the right, saved the
+         moment it changes. Every row is something Synapsez really does; nothing
+         is drawn for a feature it does not have. See settings-nav.js. -->
+    <dialog id="settings" class="sheet sheet--settings" aria-labelledby="settings-title">
       <form method="dialog" class="sheet__head">
-        <h2 data-i18n="settings.title">Settings</h2>
+        <h2 id="settings-title" data-i18n="settings.title">Settings</h2>
         <button class="icon-btn" value="close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
       </form>
 
-      <div class="sheet__tabs" role="tablist">
-        <button class="tab is-active" type="button" data-tab="providers" role="tab" id="tab-providers" aria-controls="panel-providers" aria-selected="true" tabindex="0" data-i18n="settings.tab.providers">Providers</button>
-        <button class="tab" type="button" data-tab="languages" role="tab" id="tab-languages" aria-controls="panel-languages" aria-selected="false" tabindex="-1" data-i18n="settings.tab.languages">Languages</button>
-        <button class="tab" type="button" data-tab="behaviour" role="tab" id="tab-behaviour" aria-controls="panel-behaviour" aria-selected="false" tabindex="-1" data-i18n="settings.tab.behaviour">Behaviour</button>
-        <button class="tab" type="button" data-tab="memory" role="tab" id="tab-memory" aria-controls="panel-memory" aria-selected="false" tabindex="-1" data-i18n="settings.tab.memory">Memory &amp; privacy</button>
-        <button class="tab" type="button" data-tab="skills" role="tab" id="tab-skills" aria-controls="panel-skills" aria-selected="false" tabindex="-1" data-i18n="settings.tab.skills">Skills</button>
-        <button class="tab" type="button" data-tab="connectors" role="tab" id="tab-connectors" aria-controls="panel-connectors" aria-selected="false" tabindex="-1" data-i18n="settings.tab.connectors">Connectors</button>
-        <button class="tab" type="button" data-tab="mcp" role="tab" id="tab-mcp" aria-controls="panel-mcp" aria-selected="false" tabindex="-1" data-i18n="settings.tab.mcp">MCP servers</button>
-        <button class="tab" type="button" data-tab="account" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1" data-i18n="settings.tab.account">Account</button>
-        <button class="tab" type="button" data-tab="usage" role="tab" id="tab-usage" aria-controls="panel-usage" aria-selected="false" tabindex="-1" data-i18n="settings.tab.usage">Usage</button>
-        <button class="tab" type="button" data-tab="admin" role="tab" id="tab-admin" aria-controls="panel-admin" aria-selected="false" tabindex="-1" hidden data-i18n="settings.tab.people">People</button>
-      </div>
-
-      <div class="sheet__body">
-        <section class="panel is-active" data-panel="providers" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers">
-          <p class="hint" data-i18n="providers.lede">
-            Keys are stored on your server and never sent to the browser. Set them as environment
-            variables instead and they become read-only here.
-          </p>
-          <div id="provider-list"></div>
-        </section>
-
-        <section class="panel" data-panel="languages" id="panel-languages" role="tabpanel" aria-labelledby="tab-languages">
-          <!-- Replaces the Models tab. Adding a model by id and probing the
-               built-ins were rarely used next to the picker, and the language
-               choice deserves its own place rather than a line under Behaviour. -->
-          <fieldset class="field lang-choice">
-            <legend data-i18n="settings.language.label">Language</legend>
-            <div id="language" class="lang-choice__list" role="radiogroup"></div>
-            <p class="hint" data-i18n="settings.language.hint">
-              Applies immediately, and follows your account onto every device.
-            </p>
-          </fieldset>
-        </section>
-
-        <section class="panel" data-panel="behaviour" id="panel-behaviour" role="tabpanel" aria-labelledby="tab-behaviour">
-          <!-- Mode and effort used to be repeated here as two more dropdowns.
-               Two homes for one setting is two places to disagree, and the one
-               beside the send button is the one that is read at the moment it
-               matters. This says where they went rather than saying it again. -->
-          <p class="hint" id="behaviour-elsewhere" data-i18n-html="behaviour.elsewhere">
-            <strong>Mode and reasoning effort</strong> live on the button beside
-            <em>Send</em>, where they apply the moment you press it.
-          </p>
-          <div class="field">
-            <label for="max-steps" data-i18n="behaviour.maxSteps">Max tool steps per turn</label>
-            <input id="max-steps" type="number" min="1" max="100" />
+      <div class="settings">
+        <nav class="settings__nav" aria-labelledby="settings-title">
+          <div class="settings__search">
+            <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="5.2" /><path d="m13 13 3.5 3.5" /></svg>
+            <input type="search" id="settings-search" autocomplete="off" placeholder="Search" aria-label="Search settings" data-i18n-placeholder="settings.search" data-i18n-aria-label="settings.searchLabel" />
           </div>
-          <div class="field">
-            <label for="auto-compact" data-i18n="behaviour.compact">Long conversations</label>
-            <select id="auto-compact">
-              <option value="on" data-i18n="behaviour.compact.on">Fold older turns into a summary before the window fills</option>
-              <option value="off" data-i18n="behaviour.compact.off">Keep every word — and stop when the window is full</option>
-            </select>
-            <p class="hint" data-i18n="behaviour.compact.hint">
-              Each turn re-sends the whole conversation, so a long one eventually stops fitting. The
-              ring in the header shows how full it is; you can also fold it up yourself from there.
-            </p>
+          <div class="sheet__tabs settings__tabs" role="tablist" aria-orientation="vertical" aria-labelledby="settings-title">
+            <p class="settings__group" role="presentation" data-group="preferences" data-i18n="settings.group.preferences">Preferences</p>
+            <button class="tab is-active" type="button" data-tab="providers" data-group="preferences" role="tab" id="tab-providers" aria-controls="panel-providers" aria-selected="true" tabindex="0">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6.8" cy="13.2" r="3.3" /><path d="m9.2 10.8 7.3-7.3M14.3 5.7l1.8 1.8M12.2 7.8l1.4 1.4" /></svg>
+              <span data-i18n="settings.tab.providers">Providers</span>
+            </button>
+            <button class="tab" type="button" data-tab="general" data-group="preferences" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="2.6" /><path d="M10 2.4v2M10 15.6v2M2.4 10h2M15.6 10h2M4.6 4.6l1.4 1.4M14 14l1.4 1.4M15.4 4.6 14 6M6 14l-1.4 1.4" /></svg>
+              <span data-i18n="settings.tab.general">General</span>
+            </button>
+            <button class="tab" type="button" data-tab="account" data-group="preferences" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="7" r="3.2" /><path d="M4 16.5a6 6 0 0 1 12 0" /></svg>
+              <span data-i18n="settings.tab.account">Account</span>
+            </button>
+            <button class="tab" type="button" data-tab="privacy" data-group="preferences" role="tab" id="tab-privacy" aria-controls="panel-privacy" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5 16.5 5v4.6c0 3.8-2.7 6.7-6.5 7.9-3.8-1.2-6.5-4.1-6.5-7.9V5Z" /><rect x="7.6" y="9" width="4.8" height="3.8" rx=".8" /><path d="M8.6 9V7.9a1.4 1.4 0 0 1 2.8 0V9" /></svg>
+              <span data-i18n="settings.tab.privacy">Privacy</span>
+            </button>
+            <button class="tab" type="button" data-tab="usage" data-group="preferences" role="tab" id="tab-usage" aria-controls="panel-usage" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M10 10 7.2 6.8M10 3v1.6" /></svg>
+              <span data-i18n="settings.tab.usage">Usage</span>
+            </button>
+            <button class="tab" type="button" data-tab="capabilities" data-group="preferences" role="tab" id="tab-capabilities" aria-controls="panel-capabilities" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6.5" width="14" height="10" rx="2" /><path d="M7.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 12.5 5v1.5" /></svg>
+              <span data-i18n="settings.tab.capabilities">Capabilities</span>
+            </button>
+            <button class="tab" type="button" data-tab="memory" data-group="preferences" role="tab" id="tab-memory" aria-controls="panel-memory" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4.2a2.6 2.6 0 0 0-4.6 1.4A2.7 2.7 0 0 0 4 10.3a2.7 2.7 0 0 0 1.8 4.5A2.6 2.6 0 0 0 10 16Z" /><path d="M10 4.2a2.6 2.6 0 0 1 4.6 1.4 2.7 2.7 0 0 1 1.4 4.7 2.7 2.7 0 0 1-1.8 4.5A2.6 2.6 0 0 1 10 16Z" /><path d="M10 4.2V16" /></svg>
+              <span data-i18n="settings.tab.memory">Memory</span>
+            </button>
+
+            <p class="settings__group" role="presentation" data-group="computer" data-i18n="settings.group.computer">This computer</p>
+            <button class="tab" type="button" data-tab="system" data-group="computer" role="tab" id="tab-system" aria-controls="panel-system" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.6" /><path d="M7 17h6M10 13.5V17" /></svg>
+              <span data-i18n="settings.tab.system">System</span>
+            </button>
+            <button class="tab" type="button" data-tab="extensions" data-group="computer" role="tab" id="tab-extensions" aria-controls="panel-extensions" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3v3M12.5 3v3" /><path d="M5.5 6h9v3a4.5 4.5 0 0 1-9 0Z" /><path d="M10 13.5V17" /></svg>
+              <span data-i18n="settings.tab.extensions">Extensions</span>
+            </button>
+            <button class="tab" type="button" data-tab="developer" data-group="computer" role="tab" id="tab-developer" aria-controls="panel-developer" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.3 3.2a3.8 3.8 0 0 0-4.9 4.9l-6 6a1.6 1.6 0 0 0 2.3 2.3l6-6a3.8 3.8 0 0 0 4.9-4.9l-2.2 2.2-2.3-.4-.4-2.3Z" /></svg>
+              <span data-i18n="settings.tab.developer">Developer</span>
+            </button>
+
+            <p class="settings__group" role="presentation" data-group="customize" data-i18n="settings.group.customize">Customize</p>
+            <button class="tab" type="button" data-tab="skills" data-group="customize" role="tab" id="tab-skills" aria-controls="panel-skills" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8a2 2 0 0 1 2 2v1H8" /><path d="M8 6v9a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-1h2" /><path d="M8 17h7a2 2 0 0 0 2-2V6" /><path d="M10.5 9.5h4M10.5 12.5h4" /></svg>
+              <span data-i18n="settings.tab.skills">Skills</span>
+            </button>
+            <button class="tab" type="button" data-tab="connectors" data-group="customize" role="tab" id="tab-connectors" aria-controls="panel-connectors" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.2" /><rect x="11" y="11" width="6" height="6" rx="1.2" /><path d="M14 3v6M11 6h6" /><rect x="3" y="11" width="6" height="6" rx="1.2" /></svg>
+              <span data-i18n="settings.tab.connectors">Connectors</span>
+            </button>
+            <button class="tab" type="button" data-tab="plugins" data-group="customize" role="tab" id="tab-plugins" aria-controls="panel-plugins" aria-selected="false" tabindex="-1">
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3h5v3.2a1.6 1.6 0 1 0 3.2 0V3H17v14H3V3h1.3v3.2a1.6 1.6 0 1 0 3.2 0Z" /></svg>
+              <span data-i18n="settings.tab.plugins">Plugins</span>
+            </button>
+
+            <p class="settings__group" role="presentation" data-group="admin" data-i18n="settings.group.admin" hidden>Administration</p>
+            <button class="tab" type="button" data-tab="admin" data-group="admin" role="tab" id="tab-admin" aria-controls="panel-admin" aria-selected="false" tabindex="-1" hidden>
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="7.5" r="2.7" /><path d="M2.8 16a4.7 4.7 0 0 1 9.4 0" /><circle cx="14" cy="8" r="2.2" /><path d="M13 12.3a3.9 3.9 0 0 1 4.6 3.7" /></svg>
+              <span data-i18n="settings.tab.people">People</span>
+            </button>
+            <button class="tab" type="button" data-tab="feedback" data-group="admin" role="tab" id="tab-feedback" aria-controls="panel-feedback" aria-selected="false" tabindex="-1" hidden>
+              <svg class="tab__icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7.2a3 3 0 0 1 6 0" /><rect x="6" y="7" width="8" height="9.5" rx="4" /><path d="M10 9.5v7M3 10h3M14 10h3M3.5 14.5 6 13.5M16.5 14.5 14 13.5M4 5.5l2.3 1.6M16 5.5l-2.3 1.6" /></svg>
+              <span data-i18n="settings.tab.feedback">Feedback</span>
+            </button>
           </div>
-          <div class="field">
-            <label for="auto-preview" data-i18n="behaviour.preview">New documents</label>
-            <select id="auto-preview">
-              <option value="on" data-i18n="behaviour.preview.on">Open beside the conversation as soon as one is made</option>
-              <option value="off" data-i18n="behaviour.preview.off">Leave them as cards until I press one</option>
-            </select>
-            <p class="hint" data-i18n="behaviour.preview.hint">
-              The reason to ask for a report is to read it. It opens once per turn and closing it
-              means closed, so it never reappears while you are working — and never on a narrow
-              screen, where the panel would cover the conversation.
+          <p class="settings__none" id="settings-none" data-i18n="settings.noMatch" hidden>No settings match.</p>
+        </nav>
+
+        <div class="sheet__body settings__body">
+          <!-- ── Providers: the keys, first, since nothing works without one ── -->
+          <section class="panel is-active" data-panel="providers" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers">
+            <h3 class="settings__title" data-i18n="settings.tab.providers">Providers</h3>
+            <p class="settings__lede" data-i18n="providers.lede">
+              Keys are stored on your server and never sent to the browser. Set them as environment
+              variables instead and they become read-only here.
             </p>
-          </div>
-          <div class="field">
-            <label data-i18n="settings.help.label">Guide</label>
-            <div class="row">
-              <button class="btn btn--ghost" id="open-onboarding" type="button" data-i18n="onb.reopen">
-                Show the getting-started guide again
-              </button>
+            <div id="provider-list"></div>
+          </section>
+
+          <!-- ── General ── -->
+          <section class="panel" data-panel="general" id="panel-general" role="tabpanel" aria-labelledby="tab-general">
+            <h3 class="settings__title" data-i18n="settings.appearance">Appearance</h3>
+            <div class="srow">
+              <div class="srow__text">
+                <span class="srow__label" id="theme-label" data-i18n="settings.theme">Theme</span>
+                <p class="srow__desc" data-i18n="behaviour.theme.hint">Applies immediately, and only to this browser.</p>
+              </div>
+              <div class="srow__control">
+                <div class="seg seg--icons" id="theme" role="radiogroup" aria-labelledby="theme-label">
+                  <button type="button" role="radio" data-theme-choice="system" aria-checked="true" aria-label="Follow my system" title="Follow my system" data-i18n-aria-label="behaviour.theme.system" data-i18n-title="behaviour.theme.system">
+                    <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.6" /><path d="M7 17h6M10 13.5V17" /></svg>
+                  </button>
+                  <button type="button" role="radio" data-theme-choice="light" aria-checked="false" aria-label="Light" title="Light" data-i18n-aria-label="behaviour.theme.light" data-i18n-title="behaviour.theme.light">
+                    <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="3.2" /><path d="M10 2.5v1.8M10 15.7v1.8M2.5 10h1.8M15.7 10h1.8M4.7 4.7l1.3 1.3M14 14l1.3 1.3M15.3 4.7 14 6M6 14l-1.3 1.3" /></svg>
+                  </button>
+                  <button type="button" role="radio" data-theme-choice="dark" aria-checked="false" aria-label="Dark" title="Dark" data-i18n-aria-label="behaviour.theme.dark" data-i18n-title="behaviour.theme.dark">
+                    <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.5 12.3A6.5 6.5 0 0 1 7.7 4.5a6.5 6.5 0 1 0 7.8 7.8Z" /></svg>
+                  </button>
+                </div>
+              </div>
             </div>
-            <p class="hint" data-i18n="settings.help.hint">
-              Show the five-step guide for people just starting out.
-            </p>
-          </div>
-          <div class="field">
-            <label for="theme" data-i18n="behaviour.theme">Appearance</label>
-            <select id="theme">
-              <option value="system" data-i18n="behaviour.theme.system">Follow my system</option>
-              <option value="dark" data-i18n="behaviour.theme.dark">Dark</option>
-              <option value="light" data-i18n="behaviour.theme.light">Light</option>
-            </select>
-            <p class="hint" data-i18n="behaviour.theme.hint">Applies immediately, and only to this browser.</p>
-          </div>
-          <div class="field">
-            <label for="system-prompt" data-i18n="behaviour.instructions">Custom instructions</label>
-            <textarea id="system-prompt" rows="6" placeholder="How should the assistant work with you?" data-i18n-placeholder="behaviour.instructionsPlaceholder"></textarea>
-          </div>
-          <button class="btn btn--primary" id="save-behaviour" type="button" data-i18n="action.save">Save</button>
-          <span class="hint" id="behaviour-status"></span>
-        </section>
-
-        <section class="panel" data-panel="memory" id="panel-memory" role="tabpanel" aria-labelledby="tab-memory">
-          <p class="hint" data-i18n="memory.lede">
-            What the assistant remembers between conversations, and what it may look back at. All of it stays
-            in this app's database; it reaches the model you chose only as part of a conversation — and that
-            model's provider handles it under its own terms. When the assistant changes a note, what it said
-            before is kept so you can undo the change; editing or deleting the note yourself removes it.
-          </p>
-          <!-- Shown by app.js only where the deployment measures (on Vercel), so it is never untrue. -->
-          <p class="hint" id="insights-note" data-i18n="memory.insights" hidden>
-            On this deployment, page views and page speed are counted by Vercel Web Analytics and Speed
-            Insights: no cookies, only the page's address without anything after ? or #, never what you write.
-            A browser set to Do Not Track or Global Privacy Control is not counted.
-          </p>
-          <div class="field">
-            <label class="check" for="memory-on">
-              <input type="checkbox" id="memory-on" />
-              <span data-i18n="memory.use">Use memory</span>
-            </label>
-            <p class="hint" data-i18n="memory.useHint">
-              Saved notes are read at the start of each conversation, and new ones are saved when something is
-              worth keeping. Off: nothing is read or saved, and the notes stay until you delete them.
-            </p>
-          </div>
-          <div class="field">
-            <label class="check" for="memory-sensitive">
-              <input type="checkbox" id="memory-sensitive" />
-              <span data-i18n="memory.sensitive">Remember sensitive topics</span>
-            </label>
-            <p class="hint" data-i18n="memory.sensitiveHint">
-              Health, religion, politics, ethnicity and sexuality are not saved unless this is on. Identity,
-              passport, tax, bank and card numbers, criminal records and immigration status are never saved.
-            </p>
-          </div>
-          <div class="field">
-            <label class="check" for="chat-search">
-              <input type="checkbox" id="chat-search" />
-              <span data-i18n="memory.chatSearch">Search earlier conversations</span>
-            </label>
-            <p class="hint" data-i18n="memory.chatSearchHint">
-              When you mention something discussed before, the assistant may look it up. Inside a project it
-              searches only that project; incognito conversations are never searched.
-            </p>
-          </div>
-          <div class="field">
-            <label for="retention" data-i18n="memory.retention">Keep conversations</label>
-            <select id="retention">
-              <option value="0" data-i18n="memory.retention.forever">Until I delete them</option>
-              <option value="30" data-i18n="memory.retention.30">30 days after last use</option>
-              <option value="90" data-i18n="memory.retention.90">90 days after last use</option>
-              <option value="180" data-i18n="memory.retention.180">180 days after last use</option>
-              <option value="365" data-i18n="memory.retention.365">One year after last use</option>
-            </select>
-            <p class="hint" data-i18n="memory.retentionHint">
-              Conversations not continued for this long are deleted with their files. Pinned conversations are
-              always kept.
-            </p>
-          </div>
-          <div class="field">
-            <label for="provider-privacy" data-i18n="memory.providerPrivacy">Provider privacy</label>
-            <select id="provider-privacy">
-              <option value="standard" data-i18n="memory.providerPrivacy.standard">Standard</option>
-              <option value="strict" data-i18n="memory.providerPrivacy.strict">Strict — only providers that keep and train on nothing</option>
-            </select>
-            <p class="hint" data-i18n="memory.providerPrivacyHint">
-              For models reached through OpenRouter. Strict sends requests only to zero-data-retention endpoints
-              that neither store nor train on what you send. Many free models are not served that way, so they
-              will stop working while this is on.
-            </p>
-          </div>
-          <div class="field">
-            <label class="check" for="mask-personal">
-              <input type="checkbox" id="mask-personal" />
-              <span data-i18n="memory.maskPersonal">Hide personal details from the model's provider</span>
-            </label>
-            <p class="hint" data-i18n="memory.maskPersonalHint">
-              Email addresses, phone numbers, ID and bank-account numbers, card numbers, and a name written after
-              "my name is" are replaced with placeholders before anything is sent, and put back in the reply and
-              before any tool runs. A PDF goes as its text while this is on. Pictures and scanned pages go as they
-              are, and a name in the middle of a sentence, an address, or anything identifying by context is not
-              caught. The model works with the placeholders, so answers about those details can
-              be less precise.
-            </p>
-          </div>
-          <p class="hint"><a href="/privacy.html" target="_blank" rel="noopener" data-i18n="memory.notice">Privacy notice — what is processed, where it goes, and your rights</a></p>
-          <button class="btn btn--primary" id="save-memory-prefs" type="button" data-i18n="action.save">Save</button>
-          <span class="hint" id="memory-status" role="status" aria-live="polite"></span>
-
-          <h3 data-i18n="memory.notes">Saved notes</h3>
-          <div id="memory-list"></div>
-          <div class="row">
-            <button class="btn btn--ghost" id="memory-clear" type="button" data-i18n="memory.clear">Delete all memory</button>
-          </div>
-
-          <h3 data-i18n="memory.importTitle">Bring memory from another assistant</h3>
-          <p class="hint" data-i18n="memory.importHint">
-            Ask Claude or ChatGPT to "write out everything you remember about me", paste the answer here, and it
-            becomes one note you can read and edit above.
-          </p>
-          <div class="field">
-            <label for="memory-import-text" class="sr-only" data-i18n="memory.importLabel">Memory to import</label>
-            <textarea id="memory-import-text" rows="4"></textarea>
-          </div>
-          <button class="btn btn--ghost" id="memory-import" type="button" data-i18n="memory.import">Import</button>
-        </section>
-
-        <section class="panel" data-panel="skills" id="panel-skills" role="tabpanel" aria-labelledby="tab-skills">
-          <p class="hint" data-i18n-html="skills.lede">
-            A procedure taught once instead of re-explained every conversation. The assistant sees the
-            names and descriptions, and reads the full instructions when one applies — so the
-            <strong>description</strong> is what decides whether it gets used. It can also write these
-            itself when you teach it something.
-          </p>
-          <div class="field">
-            <label for="skill-name" data-i18n="form.name">Name</label>
-            <input type="text" id="skill-name" placeholder="Weekly freight quotation" data-i18n-placeholder="skills.namePlaceholder" />
-          </div>
-          <div class="field">
-            <label for="skill-description" data-i18n="skills.when">When it applies</label>
-            <input type="text" id="skill-description" placeholder="When asked to price a container shipment" data-i18n-placeholder="skills.whenPlaceholder" />
-          </div>
-          <div class="field">
-            <label for="skill-instructions" data-i18n="skills.procedure">The procedure</label>
-            <textarea id="skill-instructions" rows="6" placeholder="1. Check the rate sheet in …" data-i18n-placeholder="skills.procedurePlaceholder"></textarea>
-          </div>
-          <div class="row">
-            <button class="btn btn--primary" id="skill-save" type="button" data-i18n="skills.save">Save skill</button>
-            <span class="hint" id="skill-status"></span>
-          </div>
-          <h3 data-i18n="skills.saved">Saved</h3>
-          <div id="skill-list"></div>
-        </section>
-
-        <section class="panel" data-panel="connectors" id="panel-connectors" role="tabpanel" aria-labelledby="tab-connectors">
-          <p class="hint" data-i18n="connectors.lede">
-            Tokens are encrypted on the server and never sent back to the browser. Each is verified
-            with the service before it is stored, so a bad paste fails here rather than mid-task.
-            Revoke from the service's own settings whenever you like.
-          </p>
-          <div id="connector-list"></div>
-        </section>
-
-        <section class="panel" data-panel="mcp" id="panel-mcp" role="tabpanel" aria-labelledby="tab-mcp">
-          <p class="hint" data-i18n="mcp.lede">
-            MCP servers add tools from outside this app — Figma, Jira, Sentry, a database, hundreds of
-            others. Plug one in and the assistant can use it. Nothing here is chosen by the assistant:
-            you type the command, and every tool from a server stops and asks before it runs.
-          </p>
-
-          <h3 data-i18n="mcp.suggested">Suggested servers</h3>
-          <p class="hint" data-i18n="mcp.suggested.hint">
-            Press one to fill the form in. Nothing is installed or run until you press Connect.
-          </p>
-          <div id="mcp-catalogue" class="mcp-cat"></div>
-
-          <div class="field">
-            <label for="mcp-name" data-i18n="mcp.name">Name</label>
-            <input id="mcp-name" type="text" placeholder="figma" autocomplete="off" />
-          </div>
-
-          <div class="field">
-            <label for="mcp-transport" data-i18n="mcp.transport">How to reach it</label>
-            <select id="mcp-transport">
-              <option value="stdio" data-i18n="mcp.transport.stdio">A program on this computer</option>
-              <option value="http" data-i18n="mcp.transport.http">A URL</option>
-            </select>
-          </div>
-
-          <div class="field" id="mcp-stdio-field">
-            <label for="mcp-command" data-i18n="mcp.command">Command</label>
-            <input id="mcp-command" type="text" placeholder="npx -y @modelcontextprotocol/server-filesystem D:\work" autocomplete="off" spellcheck="false" />
-            <p class="hint" id="mcp-command-hint" data-i18n="mcp.command.hint">
-              The whole command line, exactly as you would type it in a terminal. This runs a program on
-              your computer, so only paste something you trust.
-            </p>
-          </div>
-
-          <div class="field" id="mcp-http-field" hidden>
-            <label for="mcp-url" data-i18n="mcp.url">Server URL</label>
-            <input id="mcp-url" type="text" placeholder="https://example.com/mcp" autocomplete="off" spellcheck="false" />
-            <div class="field">
-              <label for="mcp-headers" data-i18n="mcp.headers">Headers</label>
-              <textarea id="mcp-headers" rows="3" placeholder="Authorization: Bearer …"></textarea>
-              <p class="hint" data-i18n-html="mcp.headers.hint">
-                One per line, as <code>Name: value</code>. Encrypted on the server and never sent back
-                to the browser.
-              </p>
+            <div class="srow">
+              <div class="srow__text">
+                <span class="srow__label" id="language-label" data-i18n="settings.language.label">Language</span>
+                <p class="srow__desc" data-i18n="settings.language.hint">Applies immediately, and follows your account onto every device.</p>
+              </div>
+              <div class="srow__control">
+                <div id="language" class="lang-choice__list seg" role="radiogroup" aria-labelledby="language-label"></div>
+              </div>
             </div>
-          </div>
 
-          <div class="row">
-            <button class="btn btn--primary" id="mcp-add" type="button" data-i18n="mcp.add">Connect</button>
-            <span class="hint" id="mcp-status"></span>
-          </div>
-
-          <h3 data-i18n="mcp.connected">Connected</h3>
-          <div id="mcp-list"></div>
-        </section>
-
-        <section class="panel" data-panel="account" id="panel-account" role="tabpanel" aria-labelledby="tab-account">
-          <div id="account-card"></div>
-
-          <div class="field">
-            <label for="account-name" data-i18n="account.displayName">Display name</label>
-            <div class="row">
-              <input id="account-name" type="text" />
-              <button class="btn btn--ghost" id="save-name" type="button" data-i18n="action.save">Save</button>
+            <h3 class="settings__title" data-i18n="settings.help">Help</h3>
+            <div class="srow">
+              <div class="srow__text">
+                <span class="srow__label" data-i18n="settings.help.label">Guide</span>
+                <p class="srow__desc" data-i18n="settings.help.hint">Show the five-step guide for people just starting out.</p>
+              </div>
+              <div class="srow__control">
+                <button class="btn btn--small" id="open-onboarding" type="button" data-i18n="settings.open">Open</button>
+              </div>
             </div>
-          </div>
+          </section>
 
-          <div class="field">
-            <label for="account-username" data-i18n="account.username">Username</label>
-            <div class="row">
-              <input id="account-username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="24" aria-describedby="account-username-hint" />
-              <button class="btn btn--ghost" id="save-username" type="button" data-i18n="action.save">Save</button>
+          <!-- ── Account ── -->
+          <section class="panel" data-panel="account" id="panel-account" role="tabpanel" aria-labelledby="tab-account">
+            <h3 class="settings__title" data-i18n="settings.profile">Profile</h3>
+            <div id="account-card"></div>
+            <div class="srow">
+              <div class="srow__text"><label class="srow__label" for="account-name" data-i18n="account.displayName">Display name</label></div>
+              <div class="srow__control"><input id="account-name" class="sinput" type="text" autocomplete="name" /></div>
             </div>
-            <p class="hint" id="account-username-hint" data-i18n="account.usernameHint">Sign in with this or your email. 3–24 letters, digits, dots or underscores, starting with a letter.</p>
-          </div>
-
-          <!-- Not hidden. It was, for no reason anyone could point at, which made
-               the only way to change a password a password-reset email — on an
-               install where email is usually not configured at all. -->
-          <div id="password-block">
-            <h3 data-i18n="account.changePassword">Change password</h3>
-            <div class="field">
-              <label for="current-password" data-i18n="account.currentPassword">Current password</label>
-              <input id="current-password" type="password" autocomplete="current-password" />
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="account-username" data-i18n="account.username">Username</label>
+                <p class="srow__desc" id="account-username-hint" data-i18n="account.usernameHint">Sign in with this or your email. 3–24 letters, digits, dots or underscores, starting with a letter.</p>
+              </div>
+              <div class="srow__control"><input id="account-username" class="sinput" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="24" aria-describedby="account-username-hint" /></div>
             </div>
-            <div class="field">
-              <label for="new-password" data-i18n="account.newPassword">New password</label>
-              <input id="new-password" type="password" autocomplete="new-password" placeholder="At least 10 characters" data-i18n-placeholder="account.passwordPlaceholder" />
+            <div class="srow srow--stack">
+              <div class="srow__text">
+                <label class="srow__label" for="system-prompt" data-i18n="behaviour.instructions">Custom instructions</label>
+                <p class="srow__desc" data-i18n="settings.instructionsHint">The assistant keeps these in mind in every conversation. Saved when you leave the box.</p>
+              </div>
+              <textarea id="system-prompt" rows="6" placeholder="How should the assistant work with you?" data-i18n-placeholder="behaviour.instructionsPlaceholder"></textarea>
             </div>
-            <button class="btn btn--primary" id="save-password" type="button" data-i18n="account.updatePassword">Update password</button>
-            <p class="hint" data-i18n="account.passwordHint">Changing it signs out every other device — this one stays in.</p>
-          </div>
+            <p class="settings__status" id="behaviour-status" role="status" aria-live="polite"></p>
 
-          <h3 data-i18n="account.twofa">Two-factor authentication</h3>
-          <div id="twofa-card"></div>
+            <h3 class="settings__title" data-i18n="settings.accountTitle">Account</h3>
+            <div class="srow">
+              <div class="srow__text">
+                <span class="srow__label" data-i18n="settings.logoutAll">Log out of all devices</span>
+                <p class="srow__desc" data-i18n="settings.logoutAllHint">Every browser signed in to this account is signed out, this one too.</p>
+              </div>
+              <div class="srow__control"><button class="btn btn--small" id="logout-all" type="button" data-i18n="settings.logoutAction">Log out</button></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="settings.logoutHere">Sign out of this browser</span></div>
+              <div class="srow__control"><button class="btn btn--small" id="logout" type="button" data-i18n="account.signOut">Sign out</button></div>
+            </div>
+            <!-- Not hidden. It was, for no reason anyone could point at, which made
+                 the only way to change a password a password-reset email — on an
+                 install where email is usually not configured at all. -->
+            <div id="password-block" class="srow srow--stack">
+              <div class="srow__text">
+                <span class="srow__label" data-i18n="account.changePassword">Change password</span>
+                <p class="srow__desc" data-i18n="account.passwordHint">Changing it signs out every other device — this one stays in.</p>
+              </div>
+              <div class="srow__fields">
+                <input id="current-password" class="sinput" type="password" autocomplete="current-password" placeholder="Current password" aria-label="Current password" data-i18n-placeholder="account.currentPassword" data-i18n-aria-label="account.currentPassword" />
+                <input id="new-password" class="sinput" type="password" autocomplete="new-password" placeholder="At least 10 characters" aria-label="New password" data-i18n-placeholder="account.passwordPlaceholder" data-i18n-aria-label="account.newPassword" />
+                <button class="btn btn--small" id="save-password" type="button" data-i18n="account.updatePassword">Update password</button>
+              </div>
+            </div>
+            <div class="srow srow--stack">
+              <div class="srow__text"><span class="srow__label" data-i18n="account.twofa">Two-factor authentication</span></div>
+              <div id="twofa-card"></div>
+            </div>
+            <div class="srow srow--stack">
+              <div class="srow__text">
+                <span class="srow__label" data-i18n="leave.title">Delete account</span>
+                <p class="srow__desc" data-i18n="leave.hint">
+                  Deletes the account and everything in it — conversations, files, notes, projects, keys and tasks —
+                  at once and for good. Export your data first if you want a copy.
+                </p>
+              </div>
+              <div class="srow__fields">
+                <input type="password" id="leave-password" class="sinput" autocomplete="current-password" placeholder="Your password" aria-label="Your password" data-i18n-placeholder="account.yourPassword" data-i18n-aria-label="account.yourPassword" />
+                <input type="text" id="leave-code" class="sinput" inputmode="numeric" autocomplete="one-time-code" hidden placeholder="Authenticator code" aria-label="Authenticator code" data-i18n-placeholder="twofa.code" data-i18n-aria-label="twofa.code" />
+                <button class="btn btn--danger btn--small" id="leave-account" type="button" data-i18n="leave.button">Delete my account</button>
+              </div>
+            </div>
 
-          <h3 data-i18n="data.title">Your data</h3>
-          <div class="provider">
-            <p class="hint" data-i18n="data.hint">
+            <h3 class="settings__title" data-i18n="settings.sessions">Active sessions</h3>
+            <div id="session-table"></div>
+
+            <h3 class="settings__title" data-i18n="activity.title">Security activity</h3>
+            <p class="settings__lede" data-i18n="activity.hint">
+              Sign-ins, password and two-factor changes, keys, exports and shared links on this account — never what
+              was said. Addresses are kept only to their network. Kept for 180 days.
+            </p>
+            <div id="activity-list"></div>
+          </section>
+
+          <!-- ── Privacy ── -->
+          <section class="panel" data-panel="privacy" id="panel-privacy" role="tabpanel" aria-labelledby="tab-privacy">
+            <h3 class="settings__title" data-i18n="settings.tab.privacy">Privacy</h3>
+            <p class="settings__lede" data-i18n="settings.privacyLede">What you write stays in this app's own database. It reaches the model you chose only as part of a conversation, and that model's provider handles it under its own terms.</p>
+            <a class="srow srow--link" href="/privacy.html" target="_blank" rel="noopener">
+              <span class="srow__label" data-i18n="settings.privacyNotice">The privacy notice — what is processed, where it goes, and your rights</span>
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 5 5-5 5" /></svg>
+            </a>
+            <a class="srow srow--link" href="/usage-policy.html" target="_blank" rel="noopener">
+              <span class="srow__label" data-i18n="learn.usage">Usage policy</span>
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 5 5-5 5" /></svg>
+            </a>
+
+            <h3 class="settings__title" data-i18n="settings.preferences">Preferences</h3>
+            <!-- Stacked, so each choice is read whole: what Standard allows is said
+                 in the choice itself, not left to the paragraph (PRV-004). -->
+            <div class="srow srow--stack">
+              <div class="srow__text">
+                <label class="srow__label" for="provider-privacy" data-i18n="memory.providerPrivacy">Provider privacy</label>
+                <p class="srow__desc" data-i18n="memory.providerPrivacyHint">
+                  For models reached through OpenRouter. Strict sends requests only to zero-data-retention endpoints
+                  that neither store nor train on what you send. Many free models are not served that way, so they
+                  will stop working while this is on.
+                </p>
+              </div>
+              <select id="provider-privacy" class="sselect sselect--wide">
+                <option value="standard" data-i18n="memory.providerPrivacy.standard">Standard — may reach providers that keep or train on what you send</option>
+                <option value="strict" data-i18n="memory.providerPrivacy.strict">Strict — only providers that keep and train on nothing</option>
+              </select>
+            </div>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="mask-personal" data-i18n="memory.maskPersonal">Hide personal details from the model's provider</label>
+                <p class="srow__desc" data-i18n="memory.maskPersonalHint">
+                  Email addresses, phone numbers, ID and bank-account numbers, card numbers, and a name written after
+                  "my name is" are replaced with placeholders before anything is sent, and put back in the reply and
+                  before any tool runs. A PDF goes as its text while this is on. Pictures and scanned pages go as they
+                  are, and a name in the middle of a sentence, an address, or anything identifying by context is not
+                  caught. The model works with the placeholders, so answers about those details can
+                  be less precise.
+                </p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="mask-personal" /></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="retention" data-i18n="memory.retention">Keep conversations</label>
+                <p class="srow__desc" data-i18n="memory.retentionHint">
+                  Conversations not continued for this long are deleted with their files. Pinned conversations are
+                  always kept.
+                </p>
+              </div>
+              <div class="srow__control">
+                <select id="retention" class="sselect">
+                  <option value="0" data-i18n="memory.retention.forever">Until I delete them</option>
+                  <option value="30" data-i18n="memory.retention.30">30 days after last use</option>
+                  <option value="90" data-i18n="memory.retention.90">90 days after last use</option>
+                  <option value="180" data-i18n="memory.retention.180">180 days after last use</option>
+                  <option value="365" data-i18n="memory.retention.365">One year after last use</option>
+                </select>
+              </div>
+            </div>
+            <!-- Shown by app.js only where the deployment measures (on Vercel), so it is never untrue. -->
+            <p class="settings__lede" id="insights-note" data-i18n="memory.insights" hidden>
+              On this deployment, page views and page speed are counted by Vercel Web Analytics and Speed
+              Insights: no cookies, only the page's address without anything after ? or #, never what you write.
+              A browser set to Do Not Track or Global Privacy Control is not counted.
+            </p>
+
+            <h3 class="settings__title" data-i18n="data.title">Your data</h3>
+            <p class="settings__lede" data-i18n="data.hint">
               Download everything this account holds as one file, or bring in conversations exported from Claude
               or ChatGPT (their conversations.json) or from another Synapsez. Keys and connector tokens are never
               exported.
             </p>
-            <div class="provider__row">
-              <a class="btn btn--ghost" id="data-export" href="/api/account/export" download data-i18n="data.export">Export my data</a>
-              <label class="btn btn--ghost" for="data-import-file" data-i18n="data.import">Import conversations</label>
-              <input type="file" id="data-import-file" accept=".json,application/json" class="sr-only" />
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="data.export">Export my data</span></div>
+              <div class="srow__control"><a class="btn btn--small" id="data-export" href="/api/account/export" download data-i18n="settings.exportAction">Export data</a></div>
             </div>
-            <p class="hint" id="data-import-status" role="status" aria-live="polite"></p>
-          </div>
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="data.import">Import conversations</span></div>
+              <div class="srow__control">
+                <label class="btn btn--small" for="data-import-file" data-i18n="settings.importAction">Import</label>
+                <input type="file" id="data-import-file" accept=".json,application/json" class="sr-only" />
+              </div>
+            </div>
+            <p class="settings__status" id="data-import-status" role="status" aria-live="polite"></p>
+            <p class="settings__status" id="memory-status" role="status" aria-live="polite"></p>
+          </section>
 
-          <h3 data-i18n="activity.title">Security activity</h3>
-          <p class="hint" data-i18n="activity.hint">
-            Sign-ins, password and two-factor changes, keys, exports and shared links on this account — never what
-            was said. Addresses are kept only to their network. Kept for 180 days.
-          </p>
-          <div id="activity-list"></div>
+          <!-- Usage, after Claude's (owner, 2026-10-31): each provider with a key,
+               what is left and when it resets, where the requests went, the week,
+               the pace, the money, and the devices signed in (usage-panel.js). -->
+          <section class="panel" data-panel="usage" id="panel-usage" role="tabpanel" aria-labelledby="tab-usage">
+            <div id="usage-panel"></div>
+          </section>
 
-          <h3 data-i18n="leave.title">Delete account</h3>
-          <div class="provider provider--danger">
-            <p class="hint" data-i18n="leave.hint">
-              Deletes the account and everything in it — conversations, files, notes, projects, keys and tasks —
-              at once and for good. Export your data first if you want a copy.
+          <!-- ── Capabilities: how the assistant works ── -->
+          <section class="panel" data-panel="capabilities" id="panel-capabilities" role="tabpanel" aria-labelledby="tab-capabilities">
+            <h3 class="settings__title" data-i18n="settings.general">General</h3>
+            <!-- Mode and effort used to be repeated here as two more dropdowns.
+                 Two homes for one setting is two places to disagree, and the one
+                 beside the send button is the one that is read at the moment it
+                 matters. This says where they went rather than saying it again. -->
+            <p class="settings__lede" id="behaviour-elsewhere" data-i18n-html="behaviour.elsewhere">
+              <strong>Mode and reasoning effort</strong> live on the button beside
+              <em>Send</em>, where they apply the moment you press it.
             </p>
-            <div class="provider__row">
-              <input type="password" id="leave-password" autocomplete="current-password" placeholder="Your password" aria-label="Your password" data-i18n-placeholder="account.yourPassword" data-i18n-aria-label="account.yourPassword" />
-              <input type="text" id="leave-code" inputmode="numeric" autocomplete="one-time-code" hidden placeholder="Authenticator code" aria-label="Authenticator code" data-i18n-placeholder="twofa.code" data-i18n-aria-label="twofa.code" />
-              <button class="btn btn--danger" id="leave-account" type="button" data-i18n="leave.button">Delete my account</button>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="tool-loading" data-i18n="settings.toolLoading">Tool access</label>
+                <p class="srow__desc" data-i18n="settings.toolLoadingHint">How the assistant's tools are loaded in new conversations.</p>
+              </div>
+              <div class="srow__control">
+                <select id="tool-loading" class="sselect">
+                  <option value="auto" data-i18n="plus.toolsOnDemand">Load tools when needed</option>
+                  <option value="all" data-i18n="plus.toolsLoaded">Tools already loaded</option>
+                </select>
+              </div>
             </div>
-          </div>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="max-steps" data-i18n="behaviour.maxSteps">Max tool steps per turn</label>
+                <p class="srow__desc" data-i18n="settings.maxStepsHint">How many tools the assistant may use for one answer before it stops and reports.</p>
+              </div>
+              <div class="srow__control"><input id="max-steps" class="sinput sinput--num" type="number" min="1" max="100" /></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="auto-compact" data-i18n="behaviour.compact">Long conversations</label>
+                <p class="srow__desc" data-i18n="behaviour.compact.hint">
+                  Each turn re-sends the whole conversation, so a long one eventually stops fitting. The
+                  ring in the header shows how full it is; you can also fold it up yourself from there.
+                </p>
+              </div>
+              <div class="srow__control">
+                <select id="auto-compact" class="sselect">
+                  <option value="on" data-i18n="settings.compactOn">Fold older turns</option>
+                  <option value="off" data-i18n="settings.compactOff">Keep every word</option>
+                </select>
+              </div>
+            </div>
 
-          <button class="btn btn--ghost" id="logout" type="button" data-i18n="account.signOut">Sign out</button>
-        </section>
+            <h3 class="settings__title" data-i18n="settings.visuals">Visuals</h3>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="auto-preview" data-i18n="behaviour.preview">New documents</label>
+                <p class="srow__desc" data-i18n="behaviour.preview.hint">
+                  The reason to ask for a report is to read it. It opens once per turn and closing it
+                  means closed, so it never reappears while you are working — and never on a narrow
+                  screen, where the panel would cover the conversation.
+                </p>
+              </div>
+              <div class="srow__control">
+                <select id="auto-preview" class="sselect">
+                  <option value="on" data-i18n="settings.previewOn">Open beside the conversation</option>
+                  <option value="off" data-i18n="settings.previewOff">Leave as cards</option>
+                </select>
+              </div>
+            </div>
 
-        <!-- Usage, after Claude's (owner, 2026-10-31): each provider with a key,
-             what is left and when it resets, where the requests went, the week,
-             the pace, the money, and the devices signed in (usage-panel.js). -->
-        <section class="panel" data-panel="usage" id="panel-usage" role="tabpanel" aria-labelledby="tab-usage">
-          <div id="usage-panel"></div>
-        </section>
+            <h3 class="settings__title" data-i18n="settings.tab.skills">Skills</h3>
+            <p class="settings__lede"><span data-i18n="settings.skillsMoved">Skills have moved to Customize.</span> <button class="linkbtn" type="button" data-goto="skills" data-i18n="settings.openSkills">Open Skills</button></p>
+            <p class="settings__status" id="capabilities-status" role="status" aria-live="polite"></p>
+          </section>
 
-        <section class="panel" data-panel="admin" id="panel-admin" role="tabpanel" aria-labelledby="tab-admin">
-          <h3 data-i18n="settings.tab.people">People</h3>
-          <p class="hint" data-i18n-html="admin.lede">
-            Anyone can sign up with an email and a password. Each account brings its own API keys and
-            pairs its own computer — never yours. Set <code>ALLOW_SIGNUP=false</code> to close
-            registration once everyone you want is in.
-          </p>
-          <div id="user-list"></div>
-          <h3 data-i18n="activity.title">Security activity</h3>
-          <p class="hint" data-i18n="activity.adminHint">The newest events across every account on this deployment.</p>
-          <div id="admin-activity"></div>
+          <!-- ── Memory ── -->
+          <section class="panel" data-panel="memory" id="panel-memory" role="tabpanel" aria-labelledby="tab-memory">
+            <h3 class="settings__title" data-i18n="settings.tab.memory">Memory</h3>
+            <p class="settings__lede" data-i18n="memory.lede">
+              What the assistant remembers between conversations, and what it may look back at. All of it stays
+              in this app's database; it reaches the model you chose only as part of a conversation — and that
+              model's provider handles it under its own terms. When the assistant changes a note, what it said
+              before is kept so you can undo the change; editing or deleting the note yourself removes it.
+            </p>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="chat-search" data-i18n="memory.chatSearch">Search earlier conversations</label>
+                <p class="srow__desc" data-i18n="memory.chatSearchHint">
+                  When you mention something discussed before, the assistant may look it up. Inside a project it
+                  searches only that project; incognito conversations are never searched.
+                </p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="chat-search" /></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="memory-on" data-i18n="memory.use">Use memory</label>
+                <p class="srow__desc" data-i18n="memory.useHint">
+                  Saved notes are read at the start of each conversation, and new ones are saved when something is
+                  worth keeping. Off: nothing is read or saved, and the notes stay until you delete them.
+                </p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="memory-on" /></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="memory-sensitive" data-i18n="memory.sensitive">Remember sensitive topics</label>
+                <p class="srow__desc" data-i18n="memory.sensitiveHint">
+                  Health, religion, politics, ethnicity and sexuality are not saved unless this is on. Identity,
+                  passport, tax, bank and card numbers, criminal records and immigration status are never saved.
+                </p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="memory-sensitive" /></div>
+            </div>
+            <div class="srow srow--stack">
+              <div class="srow__head">
+                <div class="srow__text">
+                  <span class="srow__label" data-i18n="memory.importTitle">Bring memory from another assistant</span>
+                  <p class="srow__desc" data-i18n="memory.importHint">
+                    Ask Claude or ChatGPT to "write out everything you remember about me", paste the answer here, and it
+                    becomes one note you can read and edit below.
+                  </p>
+                </div>
+                <button class="btn btn--small" id="memory-import-open" type="button" aria-expanded="false" aria-controls="memory-import-box" data-i18n="settings.startImport">Start import</button>
+              </div>
+              <div class="srow__fields" id="memory-import-box" hidden>
+                <label for="memory-import-text" class="sr-only" data-i18n="memory.importLabel">Memory to import</label>
+                <textarea id="memory-import-text" rows="4"></textarea>
+                <button class="btn btn--small" id="memory-import" type="button" data-i18n="memory.import">Import</button>
+              </div>
+            </div>
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="memory.clear">Delete all memory</span></div>
+              <div class="srow__control"><button class="btn btn--small" id="memory-clear" type="button" data-i18n="action.delete">Delete</button></div>
+            </div>
+            <p class="settings__status" id="memory-saved" role="status" aria-live="polite"></p>
+
+            <h3 class="settings__title" data-i18n="memory.notes">Saved notes</h3>
+            <div id="memory-list"></div>
+          </section>
+
+          <!-- ── System ── -->
+          <section class="panel" data-panel="system" id="panel-system" role="tabpanel" aria-labelledby="tab-system">
+            <h3 class="settings__title" data-i18n="settings.tab.system">System</h3>
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="settings.version">Synapsez version</span></div>
+              <div class="srow__control"><span class="srow__value" id="app-version"></span><button class="btn btn--small" id="system-changelog" type="button" data-i18n="settings.whatsNew">What's new</button></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text">
+                <span class="srow__label" data-i18n="settings.shortcuts">Keyboard shortcuts</span>
+                <p class="srow__desc" data-i18n="settings.shortcutsHint">Every shortcut the app answers to.</p>
+              </div>
+              <div class="srow__control"><button class="btn btn--small" id="system-shortcuts" type="button" data-i18n="settings.view">View</button></div>
+            </div>
+
+            <h3 class="settings__title" data-i18n="settings.browserUse">Browser use</h3>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="system-browser" data-i18n="settings.cloudBrowser">Let the assistant use a browser</label>
+                <p class="srow__desc" data-i18n="settings.cloudBrowserHint">A browser on the assistant's cloud computer — it opens pages, clicks and fills them in, and you watch it work. Never your own browser.</p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="system-browser" data-plugin-switch="cloud_browser" /></div>
+            </div>
+
+            <h3 class="settings__title" data-i18n="settings.computerUse">Computer use</h3>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="system-computer" data-i18n="settings.cloudComputer">Let the assistant use a computer</label>
+                <p class="srow__desc" data-i18n="settings.cloudComputerHint">Its own computer in the cloud: it runs code there, makes files and installs what it needs. Never your own computer.</p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="system-computer" data-plugin-switch="cloud_computer" /></div>
+            </div>
+          </section>
+
+          <!-- ── Extensions: MCP servers, as Claude's extensions are ── -->
+          <section class="panel" data-panel="extensions" id="panel-extensions" role="tabpanel" aria-labelledby="tab-extensions">
+            <div class="settings__headrow">
+              <div>
+                <h3 class="settings__title" data-i18n="settings.tab.extensions">Extensions</h3>
+                <p class="settings__lede" data-i18n="settings.extensionsLede">Tools from outside Synapsez — Figma, Jira, a database — through MCP servers. Every tool from one asks before it runs.</p>
+              </div>
+              <button class="btn btn--small" id="extensions-browse" type="button" aria-expanded="false" aria-controls="mcp-catalogue" data-i18n="settings.browseExtensions">Browse extensions</button>
+            </div>
+            <div class="settings__browse" id="extensions-catalogue" hidden>
+              <p class="settings__lede" data-i18n="mcp.suggested.hint">Press one to fill the form in. Nothing is installed or run until you press Connect.</p>
+              <div id="mcp-catalogue" class="mcp-cat"></div>
+            </div>
+            <div id="mcp-list"></div>
+          </section>
+
+          <!-- ── Developer: an MCP server added by hand ── -->
+          <section class="panel" data-panel="developer" id="panel-developer" role="tabpanel" aria-labelledby="tab-developer">
+            <h3 class="settings__title" data-i18n="settings.mcpByHand">MCP servers you add yourself</h3>
+            <p class="settings__lede" data-i18n="mcp.lede">
+              MCP servers add tools from outside this app — Figma, Jira, Sentry, a database, hundreds of
+              others. Plug one in and the assistant can use it. Nothing here is chosen by the assistant:
+              you type the command, and every tool from a server stops and asks before it runs.
+            </p>
+            <div class="srow">
+              <div class="srow__text"><label class="srow__label" for="mcp-name" data-i18n="mcp.name">Name</label></div>
+              <div class="srow__control"><input id="mcp-name" class="sinput" type="text" placeholder="figma" autocomplete="off" /></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text"><label class="srow__label" for="mcp-transport" data-i18n="mcp.transport">How to reach it</label></div>
+              <div class="srow__control">
+                <select id="mcp-transport" class="sselect">
+                  <option value="stdio" data-i18n="mcp.transport.stdio">A program on this computer</option>
+                  <option value="http" data-i18n="mcp.transport.http">A URL</option>
+                </select>
+              </div>
+            </div>
+            <div class="srow srow--stack" id="mcp-stdio-field">
+              <div class="srow__text">
+                <label class="srow__label" for="mcp-command" data-i18n="mcp.command">Command</label>
+                <p class="srow__desc" id="mcp-command-hint" data-i18n="mcp.command.hint">
+                  The whole command line, exactly as you would type it in a terminal. This runs a program on
+                  your computer, so only paste something you trust.
+                </p>
+              </div>
+              <input id="mcp-command" class="sinput" type="text" placeholder="npx -y @modelcontextprotocol/server-filesystem D:\work" autocomplete="off" spellcheck="false" />
+            </div>
+            <div class="srow srow--stack" id="mcp-http-field" hidden>
+              <div class="srow__text"><label class="srow__label" for="mcp-url" data-i18n="mcp.url">Server URL</label></div>
+              <input id="mcp-url" class="sinput" type="text" placeholder="https://example.com/mcp" autocomplete="off" spellcheck="false" />
+              <div class="srow__text">
+                <label class="srow__label" for="mcp-headers" data-i18n="mcp.headers">Headers</label>
+                <p class="srow__desc" data-i18n-html="mcp.headers.hint">
+                  One per line, as <code>Name: value</code>. Encrypted on the server and never sent back
+                  to the browser.
+                </p>
+              </div>
+              <textarea id="mcp-headers" rows="3" placeholder="Authorization: Bearer …"></textarea>
+            </div>
+            <div class="settings__actions">
+              <button class="btn btn--primary btn--small" id="mcp-add" type="button" data-i18n="mcp.add">Connect</button>
+              <span class="settings__status" id="mcp-status" role="status" aria-live="polite"></span>
+            </div>
+
+            <div class="scard">
+              <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 6-4 4 4 4M13 6l4 4-4 4M11 4 9 16" /></svg>
+              <div>
+                <p class="scard__title" data-i18n="settings.wantKey">Need an API key?</p>
+                <p class="srow__desc" data-i18n="settings.wantKeyHint">Every provider's keys — and the order they are tried in — are under Providers.</p>
+                <button class="btn btn--small" type="button" data-goto="providers" data-i18n="settings.goProviders">Go to Providers</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Customize: Skills, Connectors, Plugins — yours, and what else there is ── -->
+          <section class="panel" data-panel="skills" id="panel-skills" role="tabpanel" aria-labelledby="tab-skills">
+            <div class="cust__head">
+              <h3 class="cust__title" data-i18n="settings.tab.skills">Skills</h3>
+              <div class="usage__seg" role="tablist" aria-labelledby="tab-skills">
+                <button type="button" role="tab" data-cust-view="yours" aria-selected="true" data-i18n="settings.yours">Yours</button>
+                <button type="button" role="tab" data-cust-view="discover" aria-selected="false" data-i18n="settings.discover">Discover</button>
+              </div>
+              <input type="search" class="cust__search" data-cust-search autocomplete="off" placeholder="Search" aria-label="Search skills" data-i18n-placeholder="settings.search" data-i18n-aria-label="settings.searchSkills" />
+              <button class="btn btn--primary btn--small" id="skill-add-open" type="button" aria-expanded="false" aria-controls="skill-form" data-i18n="settings.add">+ Add</button>
+            </div>
+            <div class="cust__form" id="skill-form" hidden>
+              <p class="settings__lede" data-i18n-html="skills.lede">
+                A procedure taught once instead of re-explained every conversation. The assistant sees the
+                names and descriptions, and reads the full instructions when one applies — so the
+                <strong>description</strong> is what decides whether it gets used. It can also write these
+                itself when you teach it something.
+              </p>
+              <div class="field">
+                <label for="skill-name" data-i18n="form.name">Name</label>
+                <input type="text" id="skill-name" placeholder="Weekly freight quotation" data-i18n-placeholder="skills.namePlaceholder" />
+              </div>
+              <div class="field">
+                <label for="skill-description" data-i18n="skills.when">When it applies</label>
+                <input type="text" id="skill-description" placeholder="When asked to price a container shipment" data-i18n-placeholder="skills.whenPlaceholder" />
+              </div>
+              <div class="field">
+                <label for="skill-instructions" data-i18n="skills.procedure">The procedure</label>
+                <textarea id="skill-instructions" rows="6" placeholder="1. Check the rate sheet in …" data-i18n-placeholder="skills.procedurePlaceholder"></textarea>
+              </div>
+              <div class="settings__actions">
+                <button class="btn btn--primary btn--small" id="skill-save" type="button" data-i18n="skills.save">Save skill</button>
+                <span class="settings__status" id="skill-status" role="status" aria-live="polite"></span>
+              </div>
+            </div>
+            <div data-cust-pane="yours"><div id="skill-list"></div></div>
+            <div data-cust-pane="discover" hidden><div id="skill-discover"></div></div>
+          </section>
+
+          <section class="panel" data-panel="connectors" id="panel-connectors" role="tabpanel" aria-labelledby="tab-connectors">
+            <div class="cust__head">
+              <h3 class="cust__title" data-i18n="settings.tab.connectors">Connectors</h3>
+              <div class="usage__seg" role="tablist" aria-labelledby="tab-connectors">
+                <button type="button" role="tab" data-cust-view="yours" aria-selected="true" data-i18n="settings.yours">Yours</button>
+                <button type="button" role="tab" data-cust-view="discover" aria-selected="false" data-i18n="settings.discover">Discover</button>
+              </div>
+              <input type="search" class="cust__search" data-cust-search autocomplete="off" placeholder="Search" aria-label="Search connectors" data-i18n-placeholder="settings.search" data-i18n-aria-label="settings.searchConnectors" />
+              <button class="btn btn--primary btn--small" type="button" data-cust-goto="discover" data-i18n="settings.add">+ Add</button>
+            </div>
+            <p class="settings__lede" data-i18n="connectors.lede">
+              Tokens are encrypted on the server and never sent back to the browser. Each is verified
+              with the service before it is stored, so a bad paste fails here rather than mid-task.
+              Revoke from the service's own settings whenever you like.
+            </p>
+            <div data-cust-pane="yours"><div id="connector-list"></div></div>
+            <div data-cust-pane="discover" hidden><div id="connector-discover"></div></div>
+          </section>
+
+          <section class="panel" data-panel="plugins" id="panel-plugins" role="tabpanel" aria-labelledby="tab-plugins">
+            <div class="cust__head">
+              <h3 class="cust__title" data-i18n="settings.tab.plugins">Plugins</h3>
+              <div class="usage__seg" role="tablist" aria-labelledby="tab-plugins">
+                <button type="button" role="tab" data-cust-view="yours" aria-selected="true" data-i18n="settings.yours">Yours</button>
+                <button type="button" role="tab" data-cust-view="discover" aria-selected="false" data-i18n="settings.discover">Discover</button>
+              </div>
+              <input type="search" class="cust__search" data-cust-search autocomplete="off" placeholder="Search" aria-label="Search plugins" data-i18n-placeholder="settings.search" data-i18n-aria-label="settings.searchPlugins" />
+            </div>
+            <p class="settings__lede" data-i18n="settings.pluginsLede">Families of the assistant's built-in tools. One that is off is not offered to the model at all.</p>
+            <div data-cust-pane="yours"><div id="plugin-list"></div></div>
+            <div data-cust-pane="discover" hidden><div id="plugin-discover"></div></div>
+          </section>
+
+          <!-- ── Administration: only for the people who run the deployment ── -->
+          <section class="panel" data-panel="admin" id="panel-admin" role="tabpanel" aria-labelledby="tab-admin">
+            <h3 class="settings__title" data-i18n="settings.tab.people">People</h3>
+            <p class="settings__lede" data-i18n-html="admin.lede">
+              Anyone can sign up with an email and a password. Each account brings its own API keys and
+              pairs its own computer — never yours. Set <code>ALLOW_SIGNUP=false</code> to close
+              registration once everyone you want is in.
+            </p>
+            <div id="user-list"></div>
+            <h3 class="settings__title" data-i18n="activity.title">Security activity</h3>
+            <p class="settings__lede" data-i18n="activity.adminHint">The newest events across every account on this deployment.</p>
+            <div id="admin-activity"></div>
+          </section>
+
           <!-- What people sent from Give feedback (routes/feedback.js). -->
-          <h3 data-i18n="feedback.admin.title">Feedback</h3>
-          <div id="admin-feedback"></div>
-        </section>
+          <section class="panel" data-panel="feedback" id="panel-feedback" role="tabpanel" aria-labelledby="tab-feedback">
+            <h3 class="settings__title" data-i18n="feedback.admin.title">Feedback</h3>
+            <div id="admin-feedback"></div>
+          </section>
+        </div>
       </div>
     </dialog>
 

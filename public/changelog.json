@@ -22,11 +22,13 @@
       "improved": {
         "vi": [
           "Menu tài khoản giờ gồm Cài đặt, Mức sử dụng, Ngôn ngữ, Hướng dẫn sử dụng, Gửi góp ý, Xem nhật ký thay đổi, Tìm hiểu thêm và Đăng xuất.",
-          "Mức sử dụng dự đoán hạn mức sát nhất theo nhịp dùng hiện tại — còn dư tới lần đặt lại, hay sẽ hết vào khoảng mấy giờ — và cho biết model nào chiếm phần lớn yêu cầu tuần này. Bảng của tuần hiện mọi giờ trong ngày, như của Claude."
+          "Mức sử dụng dự đoán hạn mức sát nhất theo nhịp dùng hiện tại — còn dư tới lần đặt lại, hay sẽ hết vào khoảng mấy giờ — và cho biết model nào chiếm phần lớn yêu cầu tuần này. Bảng của tuần hiện mọi giờ trong ngày, như của Claude; rê chuột lên một ô để xem giờ đó gồm những gì.",
+          "Cài đặt được sắp lại như của Claude: danh sách mục bên trái có ô tìm kiếm, chia thành Tuỳ chọn, Máy tính này, Tuỳ chỉnh; mỗi thay đổi được lưu ngay, không cần nút Lưu."
         ],
         "en": [
           "The account menu now holds Settings, Usage, Language, Get help, Give feedback, View changelog, Learn more and Sign out.",
-          "Usage projects the tightest limit at your current pace — room to spare at the reset, or about when it runs out — and names the model most of this week's requests went to. The week's table shows every hour of the day, as Claude's does."
+          "Usage projects the tightest limit at your current pace — room to spare at the reset, or about when it runs out — and names the model most of this week's requests went to. The week's table shows every hour of the day, as Claude's does; point at a cell to see what that hour was made of.",
+          "Settings is laid out as Claude's: the sections down the left with a search, grouped into Preferences, This computer and Customize; every change is saved the moment it is made, with no Save button."
         ]
       },
       "fixed": { "vi": [], "en": [] }

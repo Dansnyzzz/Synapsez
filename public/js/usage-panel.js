@@ -1,6 +1,6 @@
 import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
-import { weekDays, rowsFor, callsByDay, heatmap, shareBy, pace, busiest, usualDay, standing, knownLimits, tightest, project } from './usage-math.js';
+import { weekDays, rowsFor, callsByDay, heatmap, heatmapBy, shareBy, pace, busiest, usualDay, standing, knownLimits, tightest, project } from './usage-math.js';
 
 /**
  * Settings → Usage, after Claude's (owner, 2026-10-31): a page per provider the
@@ -88,6 +88,8 @@ const segmented = (name, options, current) =>
 /** @param {HTMLElement} host @param {Deps} deps */
 export function createUsagePanel(host, deps) {
   const view = { scope: 'all', where: 'model', week: 'grid', weekTable: false, report: null, sessions: null, loadedAt: 0, error: '' };
+  /** The grid as drawn, for the line a pointed-at cell shows: its days, counts and what each was made of. */
+  let cells = null;
 
   /** The providers this page has a tab for: the account's own keys, and any it used through the shared key. */
   function scopes() {
@@ -254,14 +256,18 @@ export function createUsagePanel(host, deps) {
           .join('')}</tr></thead><tbody>${days
           .map((d, i) => `<tr><th scope="row">${escapeHtml(when(d, { weekday: 'long' }))}</th>${grid[i].map((n) => `<td${n ? '' : ' class="is-zero"'}>${count(n)}</td>`).join('')}</tr>`)
           .join('')}</tbody></table></div>${legend}`
-      : `<div class="usage__heat" role="img" aria-label="${escapeHtml(said)}">${days
+      : // Claude's grid: pointing at an hour — or moving to it with the arrows —
+        // says when it was, how many requests, and what they were made of.
+        `<div class="usage__heatwrap"><div class="usage__heat" role="group" tabindex="0" aria-label="${escapeHtml(`${said} ${t('usage.heatKeys')}`)}">${days
           .map(
             (d, i) =>
               `<span class="usage__heat-day">${escapeHtml(when(d, { weekday: 'short', day: 'numeric' }))}</span>${grid[i]
-                .map((n, h) => `<span class="usage__cell l${level(n)}" title="${escapeHtml(`${when(d, { weekday: 'short', day: 'numeric' })} ${String(h).padStart(2, '0')}:00 — ${count(n)}`)}"></span>`)
+                .map((n, h) => `<span class="usage__cell l${level(n)}" data-d="${i}" data-h="${h}"></span>`)
                 .join('')}`,
           )
-          .join('')}<span></span>${[0, 6, 12, 18].map((h) => `<span class="usage__heat-hour" style="grid-column:${h + 2} / span 6">${escapeHtml(hourName(h))}</span>`).join('')}</div>${legend}`;
+          .join('')}<span></span>${[0, 6, 12, 18].map((h) => `<span class="usage__heat-hour" style="grid-column:${h + 2} / span 6">${escapeHtml(hourName(h))}</span>`).join('')}</div>
+          <div class="usage__tip" role="status" aria-live="polite" hidden></div></div>${legend}`;
+    cells = table ? null : { days, grid, parts: heatmapBy(rows, days, view.scope === 'all' ? 'provider' : 'model'), level, at: cells?.at || null };
     return `<p>${escapeHtml(said)}</p>${switcher}${body}`;
   }
 
@@ -359,6 +365,67 @@ export function createUsagePanel(host, deps) {
     const again = /** @type {HTMLElement | null} */ (host.querySelector('.usage__tablewrap'));
     if (again && scrolled) [again.scrollLeft, again.scrollTop] = scrolled;
   }
+
+  /** The line beside a cell: the day and hour, the requests, and what they were made of. */
+  function showTip(d, h) {
+    const wrap = host.querySelector('.usage__heatwrap');
+    const cell = /** @type {HTMLElement | null} */ (host.querySelector(`.usage__cell[data-d="${d}"][data-h="${h}"]`));
+    const tip = /** @type {HTMLElement | null} */ (host.querySelector('.usage__tip'));
+    if (!cells || !wrap || !cell || !tip) return;
+    cells.at = { d, h };
+    for (const on of host.querySelectorAll('.usage__cell.is-at')) on.classList.remove('is-at');
+    cell.classList.add('is-at');
+    const n = cells.grid[d][h];
+    const name = (p) => (view.scope === 'all' ? deps.meta()?.[p]?.label || p : String(p).replace(/^[^/]+\//, ''));
+    const hour = when(new Date(2026, 0, 1, h), { hour: 'numeric' });
+    tip.innerHTML = `<p class="usage__tip-when">${escapeHtml(`${when(cells.days[d], { weekday: 'long' })}, ${hour}`)}</p>
+      <p class="usage__tip-total"><span class="usage__cell l${cells.level(n)}"></span><strong>${count(n)}</strong> ${escapeHtml(t('usage.tipRequests'))}</p>
+      ${cells.parts[d][h]
+        .slice(0, 5)
+        .map((p) => `<p class="usage__tip-part"><span>${count(p.calls)}</span> ${escapeHtml(name(p.name))}</p>`)
+        .join('')}`;
+    tip.hidden = false;
+    // Beside the cell, on the side with room; never past the grid's edges.
+    const box = wrap.getBoundingClientRect();
+    const at = cell.getBoundingClientRect();
+    const right = at.right - box.left + 8;
+    const left = at.left - box.left - tip.offsetWidth - 8;
+    tip.style.left = `${right + tip.offsetWidth <= box.width ? right : Math.max(0, left)}px`;
+    tip.style.top = `${Math.max(0, Math.min(at.top - box.top - 6, box.height - tip.offsetHeight))}px`;
+  }
+
+  function hideTip() {
+    const tip = /** @type {HTMLElement | null} */ (host.querySelector('.usage__tip'));
+    if (tip) tip.hidden = true;
+    for (const on of host.querySelectorAll('.usage__cell.is-at')) on.classList.remove('is-at');
+  }
+
+  host.addEventListener('pointerover', (event) => {
+    const cell = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('.usage__cell[data-d]'));
+    if (cell) showTip(Number(cell.dataset.d), Number(cell.dataset.h));
+  });
+  host.addEventListener('pointerout', (event) => {
+    const into = /** @type {HTMLElement | null} */ (event.relatedTarget);
+    if (/** @type {HTMLElement} */ (event.target).closest('.usage__heat') && !into?.closest?.('.usage__heat')) hideTip();
+  });
+  // The arrows walk the grid; the line follows.
+  host.addEventListener('keydown', (event) => {
+    if (!cells || !/** @type {HTMLElement} */ (event.target).classList?.contains('usage__heat')) return;
+    const step = { ArrowRight: [0, 1], ArrowLeft: [0, -1], ArrowDown: [1, 0], ArrowUp: [-1, 0] }[event.key];
+    if (!step) {
+      if (event.key === 'Escape') hideTip();
+      return;
+    }
+    event.preventDefault();
+    const from = cells.at || { d: 0, h: 0 };
+    showTip(Math.min(cells.days.length - 1, Math.max(0, from.d + step[0])), Math.min(23, Math.max(0, from.h + step[1])));
+  });
+  host.addEventListener('focusin', (event) => {
+    if (cells && /** @type {HTMLElement} */ (event.target).classList?.contains('usage__heat')) showTip(cells.at?.d ?? 0, cells.at?.h ?? 0);
+  });
+  host.addEventListener('focusout', (event) => {
+    if (/** @type {HTMLElement} */ (event.target).classList?.contains('usage__heat')) hideTip();
+  });
 
   let loading = null;
   async function load() {

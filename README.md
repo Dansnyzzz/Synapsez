@@ -40,7 +40,7 @@ internet ever connects inward to your machine.
 | **Workflows** | Several steps in order, run unattended, where each step sees what the last produced. It keeps its position: a run cut off at step three carries on at step three rather than sending the same email twice — and a step that was interrupted mid-flight is never repeated automatically, because nothing can tell you whether it had already happened. The shelf names the step that stopped and why. |
 | **Sub-agents** | Fan a job out to several read-only agents at once and gather the answers. |
 | **Deep research** | For a question where being right matters more than being fast: it searches several angles, cross-checks sources, and answers through an internal proposer–critic–arbiter debate. Searches run in parallel; eight pages are opened and read (a page that refuses is replaced by the next, spread across independent sites), and only the passages that bear on the question are kept. Every conclusion carries a confidence — HIGH / MEDIUM / LOW / CONFLICTING, counted from independent sources, not guessed — and is checked against the page it cites: a figure the page never states marks the conclusion down. Any claim with no source is flagged. It keeps time for the debate and always finishes with a report — from the last draft if the clock runs out. The full transcript is kept for audit. Runs on the conversation's own model, so it is affordable on a free one. |
-| **Light and dark** | Follows your system by default; `Settings → Behaviour` overrides it per browser. |
+| **Light and dark** | Follows your system by default; `Settings → General → Theme` overrides it per browser. |
 | **Your computers** | Pair as many machines as you like with an eight-character code. Sign in anywhere and they are there. |
 | **New-model alerts** | The daily scan spots a genuinely new release and tells you once, with the details — take it as your default or turn it down. |
 | **Photos and files** | Attach screenshots, PDFs, Word, Excel, PowerPoint, code or logs — from the `+`, by pasting, or by dropping them on the window. Office documents are read out and previewed in the app. |
@@ -61,7 +61,7 @@ internet ever connects inward to your machine.
 | **Auto-compact** | Long conversations fold their older turns into a summary before the window fills. A ring in the header shows how full it is. |
 | **Live plan** | The assistant keeps a visible task list as it works through multi-step jobs. |
 | **Reasoning** | Streamed and collapsible, for models that expose it. |
-| **Memory** | Notes read back at the start of every conversation, project notes first, within a budget; `memory_search` for the rest. Identifiers are never saved and sensitive topics only if you allow it. Every note editable in Settings → Memory & privacy. |
+| **Memory** | Notes read back at the start of every conversation, project notes first, within a budget; `memory_search` for the rest. Identifiers are never saved and sensitive topics only if you allow it. Every note editable in Settings → Memory. |
 | **Earlier conversations** | `search_chats` looks back through what was said, scoped to the project you are in, as Claude's chat search does. Switchable. |
 | **Incognito** | A conversation kept out of history, search, export and memory, deleted when you leave it. |
 | **Your data** | Export everything as one file; import conversations from Claude, ChatGPT or another Synapsez; delete the account; a security record of sign-ins, key and privacy changes; automatic deletion after 30–365 days if you want it. |
@@ -307,7 +307,7 @@ paid model.
 
 ## Languages
 
-**Settings → Languages** switches the whole interface, and the choice follows your account onto every
+**Settings → General → Language** switches the whole interface, and the choice follows your account onto every
 device. English and Vietnamese are complete — every label, hint, placeholder, tooltip, notification,
 and the sentences the server itself writes (errors, status lines while a turn runs, why an action
 needs approval, connector help).
@@ -1393,7 +1393,7 @@ and private keys — and the assistant is told what was removed so it can say so
 Vietnamese with its accents on, so "đồng tình" (agree) is not mistaken for "đồng tính". It is a filter,
 not a guarantee: it misses what is said obliquely. The tool descriptions carry the same rule.
 
-**Settings → Memory & privacy** has the switches and the notes:
+**Settings → Memory** has the memory switches and the notes, and **Settings → Privacy** the provider privacy, masking and retention ones:
 
 - **Use memory** — off means nothing is read or saved; the notes stay until deleted.
 - **Remember sensitive topics** — off by default.
@@ -1418,7 +1418,7 @@ day after their last use.
 
 ### Your data: export, import, leave
 
-Settings → Account → **Your data**:
+Settings → Privacy → **Your data**:
 
 - **Export my data** downloads one JSON file — profile, preferences, notes, skills, projects with their
   source text, scheduled tasks, workflows and every conversation with its messages. Streamed, so a large
@@ -1439,6 +1439,20 @@ family. Kept 180 days — except agreements, kept as long as the account: signin
 versions of the terms, the usage policy and the privacy notice were ticked, and an account whose
 latest agreement is older than the current documents (`server/legal.js`) is asked once, by a banner
 under the header. Administrators see the record across accounts in Settings → People.
+
+### Settings
+
+Settings is laid out as Claude's is: the sections down the left with a search above them, in
+groups — **Preferences** (Providers, General, Account, Privacy, Usage, Capabilities, Memory), **This
+computer** (System, Extensions, Developer), **Customize** (Skills, Connectors, Plugins), and
+**Administration** (People, Feedback) for administrators only. Each section is rows: what a setting
+is and does on the left, its switch or choice on the right, saved the moment it changes — there is no
+Save button. Only what Synapsez really does is there: System's browser and computer switches are the
+cloud browser and cloud computer plugins; Extensions are MCP servers, and Developer adds one by hand;
+Customize has **Yours** (a list, with a ⋯ menu per row) and **Discover** (the built-in skills, the
+services not yet connected, the plugins switched off — no catalogue, no install counts). Old section
+names (`languages`, `behaviour`, `mcp`) still open where their settings went (`public/js/app.js`
+`SETTINGS_MOVED`, `public/js/customize.js`).
 
 ### Usage, devices, feedback, changelog
 
@@ -1609,7 +1623,7 @@ tabs). Both are free on Hobby within their allowance — 50,000 analytics events
 speed events over a rolling 30 days; past either, collection pauses and nothing is billed. What is
 sent is only the page's address cut to its path (this app keeps reset, share and chat tokens after
 `?`, and those never leave), no cookies, and nothing at all from a browser set to Do Not Track or
-Global Privacy Control. Settings → Memory & privacy tells people so. A self-hosted copy loads
+Global Privacy Control. Settings → Privacy tells people so. A self-hosted copy loads
 neither.
 
 Get one of the three required ones wrong and the deployment says so plainly — every request answers
@@ -2100,7 +2114,7 @@ verified the app shows token counts rather than inventing a number — check you
 page.
 
 Agentic runs use more tokens than plain chat, because tool results re-enter the context each step.
-`Settings → Behaviour` has the levers: reasoning effort, and the maximum tool steps per turn.
+`Settings → Capabilities` has the maximum tool steps per turn; reasoning effort is on the composer.
 
 ---
 

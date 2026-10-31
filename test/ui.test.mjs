@@ -671,7 +671,8 @@ section('Usage, devices, feedback and what is new — from the account menu');
   await page.waitForTimeout(250);
   await page.click('.plusmenu--account [data-row="settings"]');
   await page.waitForTimeout(400);
-  await page.click('#tab-admin');
+  // Administration → Feedback, its own section since Settings became Claude's list.
+  await page.click('#tab-feedback');
   await page.waitForTimeout(900);
   const folded = await page.$eval('#admin-feedback [data-feedback-chat] .fbadmin__lines', (el) => el.textContent || '').catch(() => null);
   await page.click('#admin-feedback [data-feedback-chat] summary').catch(() => {});
@@ -2490,7 +2491,7 @@ section('appearance');
   check('light really is light', /^rgb\(2[0-9]{2}, 2[0-9]{2}, 2[0-9]{2}\)$/.test(light), light);
   check('dark really is dark', /^rgb\(1?[0-9]?[0-9], /.test(dark), dark);
   check('the toggle exists in settings', !!(await page.$('#theme')));
-  check('and offers a system option', await page.$eval('#theme', (s) => !!s.querySelector('[value="system"]')));
+  check('and offers a system option, as Claude draws it — three faces, one lit', await page.$eval('#theme', (s) => !!s.querySelector('[data-theme-choice="system"]') && s.querySelectorAll('[data-theme-choice]').length === 3));
 
   await page.evaluate((value) => {
     if (value) document.documentElement.dataset.theme = value;
@@ -2542,20 +2543,20 @@ section('the model is one setting, with one control');
     (m) => document.getElementById('model-chip').title.includes(m), viaChip), viaChip);
 
   // Settings has no Models tab any more: the chip is the one way to choose a
-  // model, and the tab's place is taken by Languages.
+  // model, and the language is chosen in General (2026-10-31).
   await openSettings();
   await page.waitForTimeout(500);
   const settingsPanel = await page.evaluate(() => ({
     field: !!document.getElementById('default-model-display'),
     button: !!document.getElementById('pick-default-model'),
     modelsTab: !!document.querySelector('.tab[data-tab="models"]'),
-    languagesTab: !!document.querySelector('.tab[data-tab="languages"]'),
+    language: !!document.querySelector('#panel-general #language'),
     tasksTab: !!document.querySelector('.tab[data-tab="tasks"]') || !!document.getElementById('panel-tasks'),
   }));
   check('Settings no longer carries a second copy of the model', !settingsPanel.field);
   check('nor a second way to change it', !settingsPanel.button);
   check('the Models tab is gone', !settingsPanel.modelsTab);
-  check('and Languages has taken its place', settingsPanel.languagesTab);
+  check('and the language is chosen in General', settingsPanel.language);
   // The same rule for schedules: the Scheduled page is where they are made and
   // changed, and a second copy in Settings was the owner's "dư thừa".
   check('Settings has no Scheduled tab either', !settingsPanel.tasksTab);
@@ -2565,18 +2566,18 @@ section('the model is one setting, with one control');
     const { getStore } = await import('../server/store/index.js');
     const { getPrefs } = await import('../server/settings.js');
     const me = await getStore().getUserByEmail('ui@test.local');
-    await page.click('#tab-memory');
+    // In Privacy now, and saved the moment it is switched — there is no Save to press.
+    await page.click('#tab-privacy');
     await page.waitForTimeout(400);
     const before = await page.evaluate(() => /** @type {HTMLInputElement} */ (document.getElementById('mask-personal'))?.checked);
     await page.check('#mask-personal');
-    await page.click('#save-memory-prefs');
     await page.waitForTimeout(800);
     const saved = (await getPrefs(me.id)).maskPersonal;
     check('Settings offers to hide personal details from the provider, off at first', before === false, String(before));
-    check('  and the switch is saved to the account', saved === true, String(saved));
+    check('  and the switch is saved to the account the moment it is switched', saved === true, String(saved));
     await page.uncheck('#mask-personal');
-    await page.click('#save-memory-prefs');
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(800);
+    check('  and switched back, saved back', (await getPrefs(me.id)).maskPersonal === false);
   }
 
   // The reload is what used to expose the disagreement.
@@ -2718,7 +2719,7 @@ section('the getting-started guide');
   // now. Reopening it from Settings is the path somebody actually uses.
   await openSettings();
   await page.waitForTimeout(400);
-  await page.click('.tab[data-tab="behaviour"]');
+  await page.click('.tab[data-tab="general"]');
   await page.waitForTimeout(300);
   check('Settings offers the guide again', await page.isVisible('#open-onboarding'));
 
@@ -2882,7 +2883,7 @@ section('the interface speaks Vietnamese');
 {
   await openSettings();
   await page.waitForTimeout(400);
-  await page.click('.tab[data-tab="languages"]');
+  await page.click('.tab[data-tab="general"]');
   await page.waitForTimeout(300);
 
   const offered = await page.$$eval('#language input[name="language"]', (els) => els.map((e) => e.value));
@@ -2899,7 +2900,7 @@ section('the interface speaks Vietnamese');
   const after = await page.evaluate(() => ({
     newChat: document.querySelector('#new-chat .rail__label').textContent.trim(),
     settings: document.getElementById('account-button').getAttribute('aria-label') || '',
-    languagesTab: document.querySelector('.tab[data-tab="languages"]').textContent.trim(),
+    languagesTab: document.querySelector('.tab[data-tab="general"]').textContent.trim(),
     placeholder: document.getElementById('input').placeholder,
     lang: document.documentElement.lang,
     // The screens the user reported in English: the model picker and the rest
@@ -2917,7 +2918,7 @@ section('the interface speaks Vietnamese');
   check('the sidebar changes language', after.newChat !== before.newChat, `${before.newChat} → ${after.newChat}`);
   check('and it is actually Vietnamese', /Cuộc trò chuyện/.test(after.newChat), after.newChat);
   check('the account at the foot of the sidebar too', /Tài khoản/.test(after.settings), after.settings);
-  check('the settings tabs too', /Ngôn ngữ/.test(after.languagesTab), after.languagesTab);
+  check('the settings sections too', /Chung/.test(after.languagesTab), after.languagesTab);
   check('and the composer placeholder', /Hỏi bất cứ điều gì/.test(after.placeholder), after.placeholder.slice(0, 40));
   check('the document language is stamped', after.lang === 'vi', after.lang);
   check('no untranslated key leaked through', !/^[a-z]+\.[a-z]+/i.test(after.newChat), after.newChat);
@@ -2969,7 +2970,7 @@ section('the interface speaks Vietnamese');
   // Back to English so later sections read the labels they expect.
   await openSettings();
   await page.waitForTimeout(500);
-  await page.click('.tab[data-tab="languages"]');
+  await page.click('.tab[data-tab="general"]');
   await page.waitForTimeout(300);
   await page.check('#language input[value="en"]');
   await page.waitForTimeout(700);
@@ -2992,7 +2993,7 @@ section('no third-party requests');
   check('no font CDN preconnect', !/fonts\.(googleapis|gstatic)\.com/i.test(html));
 }
 
-section('a chosen tab scrolls itself into view');
+section("Settings is Claude's list: sections down the left, in groups, each its own page");
 {
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
@@ -3000,92 +3001,74 @@ section('a chosen tab scrolls itself into view');
   await openSettings();
   await page.waitForTimeout(500);
 
-  const strip = await page.evaluate(() => {
-    const tabs = document.querySelector('#settings .sheet__tabs');
-    return { scrolls: tabs.scrollWidth > tabs.clientWidth + 2, left: tabs.scrollLeft };
+  const nav = await page.evaluate(() => {
+    const tabs = [...document.querySelectorAll('#settings .settings__tabs .tab')].filter((t) => !t.hidden);
+    const [a, b] = tabs.map((t) => t.getBoundingClientRect());
+    return {
+      order: tabs.map((t) => /** @type {HTMLElement} */ (t).dataset.tab).join(','),
+      groups: [...document.querySelectorAll('#settings .settings__group')].filter((g) => !g.hidden).map((g) => /** @type {HTMLElement} */ (g).dataset.group).join(','),
+      downward: !!a && !!b && b.top > a.top && Math.abs(b.left - a.left) < 2,
+      search: !!document.getElementById('settings-search'),
+    };
   });
-  check('the tab strip is wider than the sheet', strip.scrolls, 'otherwise there is nothing to prove');
-  check('and starts at the left', strip.left < 5, `${strip.left}px`);
-
-  /** Is the tab fully inside the visible part of its strip? */
-  const visible = (name) =>
-    page.evaluate((tab) => {
-      const strip = document.querySelector('#settings .sheet__tabs');
-      const el = document.querySelector(`.tab[data-tab="${tab}"]`);
-      const s = strip.getBoundingClientRect();
-      const e = el.getBoundingClientRect();
-      return { inside: e.left >= s.left - 1 && e.right <= s.right + 1, scrollLeft: strip.scrollLeft };
-    }, name);
-
-  // The last tab is off the right-hand edge to begin with — that is the bug.
-  const beforeLast = await visible('admin');
-  await page.click('.tab[data-tab="account"]');
-  await page.waitForTimeout(600);
-  const afterRight = await visible('account');
-  check('clicking a tab near the right brings it into view', afterRight.inside, JSON.stringify(afterRight));
-  check('by scrolling right', afterRight.scrollLeft > beforeLast.scrollLeft, `${beforeLast.scrollLeft} → ${afterRight.scrollLeft}`);
-
-  // And back the other way.
-  await page.click('.tab[data-tab="providers"]');
-  await page.waitForTimeout(600);
-  const afterLeft = await visible('providers');
-  check('and going back scrolls left again', afterLeft.inside && afterLeft.scrollLeft < afterRight.scrollLeft, JSON.stringify(afterLeft));
-
-  /**
-   * Arriving at a tab because something else selected it.
-   *
-   * This is the case from the report: the panel changed and the tab that was now
-   * lit sat outside the visible strip, so it looked as though nothing had been
-   * chosen. Driven by scrolling the strip away first and then selecting a tab at
-   * the other end — which is what a button that jumps to a settings tab does.
-   */
-  await page.evaluate(() => {
-    document.querySelector('#settings .sheet__tabs').scrollLeft = 9999;
-  });
-  await page.waitForTimeout(200);
-  const scrolledAway = await visible('providers');
-  check('a tab can start off-screen', !scrolledAway.inside, JSON.stringify(scrolledAway));
-
-  await page.click('.tab[data-tab="providers"]');
-  await page.waitForTimeout(600);
-  const broughtBack = await visible('providers');
-  check('and selecting it brings it back into view', broughtBack.inside, JSON.stringify(broughtBack));
-
-  /**
-   * Not merely inside — centred.
-   *
-   * Scrolling the minimum leaves the tab you picked pinned against the edge it
-   * came from, with the neighbours you might pick next still hidden behind it.
-   * A tab from the middle of the strip has room to be centred; the ends stay
-   * clamped, which is the other half of the rule.
-   */
-  const offset = (tab) =>
-    page.evaluate((name) => {
-      const strip = document.querySelector('#settings .sheet__tabs');
-      const el = document.querySelector(`.tab[data-tab="${name}"]`);
-      const s = strip.getBoundingClientRect();
-      const e = el.getBoundingClientRect();
-      return {
-        off: Math.round(e.left + e.width / 2 - (s.left + s.width / 2)),
-        atStart: strip.scrollLeft < 2,
-        atEnd: strip.scrollLeft >= strip.scrollWidth - strip.clientWidth - 2,
-      };
-    }, tab);
-
-  await page.click('.tab[data-tab="skills"]');
-  await page.waitForTimeout(700);
-  const centred = await offset('skills');
-  const clamped = centred.atStart || centred.atEnd;
   check(
-    'a chosen tab is centred, or clamped when the strip is out of room',
-    Math.abs(centred.off) < 24 || clamped,
-    `${centred.off}px off centre${clamped ? ' (strip at its limit)' : ''}`,
+    'the sections, in Claude\'s order: Preferences, This computer, Customize — and Administration for an administrator',
+    nav.order === 'providers,general,account,privacy,usage,capabilities,memory,system,extensions,developer,skills,connectors,plugins,admin,feedback' && nav.groups === 'preferences,computer,customize,admin',
+    JSON.stringify(nav),
   );
+  check('  down the left, with a search above them', nav.downward && nav.search, JSON.stringify(nav));
 
-  await page.click('.tab[data-tab="providers"]');
+  // Each opens its own page, and only that one.
+  const opened = [];
+  for (const tab of nav.order.split(',')) {
+    await page.click(`#tab-${tab}`);
+    await page.waitForTimeout(tab === 'usage' || tab === 'extensions' ? 700 : 150);
+    opened.push(
+      await page.evaluate((name) => {
+        const active = [...document.querySelectorAll('#settings .panel.is-active')].map((p) => /** @type {HTMLElement} */ (p).dataset.panel);
+        const body = /** @type {HTMLElement} */ (document.querySelector('#settings .settings__body'));
+        const sheet = /** @type {HTMLElement} */ (document.getElementById('settings'));
+        // The section scrolls; the sheet around it never does — Import's hidden file input once made it.
+        return { name, ok: active.length === 1 && active[0] === name && document.getElementById(`tab-${name}`).getAttribute('aria-selected') === 'true', sideways: body.scrollWidth - body.clientWidth, sheet: sheet.scrollHeight - sheet.clientHeight };
+      }, tab),
+    );
+  }
+  check('  each section opens its own page, and none scrolls sideways — or moves the sheet', opened.every((o) => o.ok && o.sideways <= 0 && o.sheet <= 0), JSON.stringify(opened.filter((o) => !o.ok || o.sideways > 0 || o.sheet > 0)));
+
+  // The keyboard: down and up walk the list.
+  await page.click('#tab-general');
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(200);
+  const walked = await page.evaluate(() => /** @type {HTMLElement} */ (document.activeElement)?.dataset.tab);
+  check('  ↓ moves to the next section and opens it', walked === 'account' && (await page.isVisible('#panel-account')), String(walked));
+
+  // The search narrows the list to sections that mention it.
+  await page.fill('#settings-search', 'keyboard shortcuts');
+  await page.waitForTimeout(200);
+  const found = await page.$$eval('#settings .settings__tabs .tab', (els) => els.filter((e) => !e.hidden && !e.classList.contains('is-filtered')).map((e) => /** @type {HTMLElement} */ (e).dataset.tab));
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  check('  the search narrows the list to the sections that mention it, and Enter opens the first', found.includes('system') && !found.includes('skills') && (await page.isVisible('#panel-system')), found.join(','));
+  await page.fill('#settings-search', 'zzzz-nothing');
+  await page.waitForTimeout(150);
+  check('    and says so when nothing does', await page.isVisible('#settings-none'));
+  await page.fill('#settings-search', '');
+  await page.waitForTimeout(150);
+
+  // A switch saves itself: nothing to press after it.
+  const { getPrefs } = await import('../server/settings.js');
+  const me = await (await import('../server/store/index.js')).getStore().getUserByEmail('ui@test.local');
+  await page.click('#tab-memory');
+  await page.waitForTimeout(300);
+  const was = (await getPrefs(me.id)).chatSearch !== false;
+  await page.click('#chat-search');
   await page.waitForTimeout(700);
-  const first = await offset('providers');
-  check('but the first tab stays against its own edge', first.atStart, JSON.stringify(first));
+  const now = (await getPrefs(me.id)).chatSearch !== false;
+  await page.click('#chat-search');
+  await page.waitForTimeout(700);
+  check('  a switch is saved the moment it is switched, as Claude\'s are', now === !was && (await getPrefs(me.id)).chatSearch !== false === was, JSON.stringify({ was, now }));
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.waitForTimeout(200);
 }
 
 section('the Settings tabs no longer include Computers');
@@ -4350,17 +4333,20 @@ section('a new document opens itself');
   check('  with a way to turn it off', setting.options.join(',') === 'on,off', setting.options.join(','));
   check('  named for what it governs', /document/i.test(setting.label || ''), setting.label);
 
+  // Saved the moment it is chosen — Settings has no Save button since it became Claude's list.
   const off = await page.evaluate(async () => {
-    document.getElementById('auto-preview').value = 'off';
-    document.getElementById('save-behaviour').click();
+    const field = /** @type {HTMLSelectElement} */ (document.getElementById('auto-preview'));
+    field.value = 'off';
+    field.dispatchEvent(new Event('change'));
     await new Promise((r) => setTimeout(r, 800));
     return (await (await fetch('/api/bootstrap')).json()).prefs.autoPreview;
   });
   check('  turning it off is saved to the account', off === false, String(off));
 
   const on = await page.evaluate(async () => {
-    document.getElementById('auto-preview').value = 'on';
-    document.getElementById('save-behaviour').click();
+    const field = /** @type {HTMLSelectElement} */ (document.getElementById('auto-preview'));
+    field.value = 'on';
+    field.dispatchEvent(new Event('change'));
     await new Promise((r) => setTimeout(r, 800));
     return (await (await fetch('/api/bootstrap')).json()).prefs.autoPreview;
   });
@@ -4459,7 +4445,7 @@ section('the guide does not come back after a mid-way reload');
   // But it is still reachable on purpose — dismissed is not deleted.
   await openSettings();
   await page.waitForTimeout(500);
-  await page.click('.tab[data-tab="behaviour"]');
+  await page.click('.tab[data-tab="general"]');
   await page.waitForTimeout(300);
   // With reduced motion asked for, the clip waits to be played (2026-10-20).
   await page.emulateMedia({ reducedMotion: 'reduce' });

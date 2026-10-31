@@ -10232,10 +10232,181 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
  * pace as a line, and the money. Blue bars, as Claude draws them — a limit is
  * not the accent colour's business. */
 /* The settings sheet widens for Usage: a label, a bar and a share on one line. */
-/* Wide enough for every tab in Vietnamese on one row, and for the page's own
-   tables — which scroll inside their own boxes, so the sheet itself never
-   scrolls sideways (owner, 2026-10-31). */
-#settings:has(#panel-usage.is-active) { width: min(1100px, 100%); }
+/* ── Settings, after Claude's (owner, 2026-10-31) ─────────────────────────
+   The sections down the left, a search above them, each section as rows: what
+   it is on the left, its switch or choice on the right. One height whichever
+   section is open, so the sheet does not jump; the list and the section each
+   scroll on their own, and never sideways. */
+.sheet--settings { width: min(1100px, 100%); height: min(88dvh, 860px); }
+.settings { display: grid; grid-template-columns: 264px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; }
+.settings__nav { display: flex; flex-direction: column; min-height: 0; padding: 14px 8px 10px 14px; border-right: 1px solid var(--line-soft); }
+.settings__search { position: relative; display: flex; align-items: center; margin: 0 6px 10px 0; }
+.settings__search svg { position: absolute; left: 11px; color: var(--text-dim); pointer-events: none; }
+.settings__search input { width: 100%; padding: 8px 10px 8px 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--text); font: inherit; font-size: 14px; }
+.settings__search input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sheet__tabs.settings__tabs { flex-direction: column; flex: 1; min-height: 0; gap: 2px; padding: 0 6px 8px 0; border-bottom: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; mask-image: none; -webkit-mask-image: none; }
+.settings__group { margin: 16px 10px 6px; color: var(--text-faint); font-size: 12.5px; }
+.settings__group:first-child { margin-top: 4px; }
+.settings__tabs .tab { display: flex; flex: none; align-items: center; gap: 12px; width: 100%; padding: 8px 12px; border: 0; border-radius: 9px; color: var(--text); font-size: 14.5px; text-align: left; }
+.settings__tabs .tab:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.settings__tabs .tab.is-active { background: color-mix(in srgb, var(--text) 11%, transparent); color: var(--text); border-bottom-color: transparent; }
+.settings__tabs .tab__icon { flex: none; color: var(--text-dim); }
+.settings__tabs .tab.is-active .tab__icon { color: var(--text); }
+.settings__tabs .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings__tabs .tab[hidden], .settings__group[hidden], .tab.is-filtered, .settings__group.is-filtered { display: none; }
+.settings__none { margin: 8px 10px; color: var(--text-dim); font-size: 13px; }
+/* Positioned, so anything placed absolutely inside a section — the hidden file
+   input of Import — is held and scrolled by it, not by the sheet. */
+.settings__body { position: relative; padding: 22px 30px 30px; }
+
+.settings__title { margin: 30px 0 6px; font-size: 16px; font-weight: 600; }
+.panel > .settings__title:first-child, .settings__headrow .settings__title { margin-top: 0; }
+.settings__lede { margin: 0 0 10px; max-width: 80ch; color: var(--text-dim); font-size: 13.5px; line-height: 1.55; }
+.settings__lede strong { color: var(--text); }
+.settings__status { min-height: 1.2em; margin: 6px 0 0; color: var(--ok); font-size: 13px; }
+.settings__status:empty { min-height: 0; margin: 0; }
+.settings__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.settings__actions .sinput { flex: 1 1 220px; }
+.settings__headrow { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.settings__browse { margin: 6px 0 18px; }
+.settings__empty { display: grid; justify-items: center; gap: 12px; padding: 48px 16px; color: var(--text-dim); text-align: center; }
+.settings__empty p { margin: 0; font-size: 15px; }
+.settings__avatar { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: #6f8f5f; color: #fff; font-size: 18px; font-weight: 700; }
+#settings .btn--small { flex: none; padding: 7px 14px; border-radius: 9px; font-size: 13.5px; white-space: nowrap; }
+.linkbtn { padding: 0; border: 0; background: none; color: var(--info); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+/* A row: what it is, and its control. */
+.srow { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 15px 0; border-bottom: 1px solid var(--line-soft); }
+.srow__text { flex: 1 1 auto; min-width: 0; }
+.srow__label { display: block; color: var(--text); font-size: 14.5px; }
+.srow__desc { margin: 4px 0 0; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.srow__control { display: flex; flex: none; align-items: center; gap: 10px; max-width: 55%; }
+.srow__value { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.srow--stack { flex-direction: column; align-items: stretch; gap: 10px; }
+.srow__head { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.srow__fields { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.srow__fields .sinput { flex: 1 1 200px; }
+.srow--stack textarea, .srow__fields textarea, .srow--stack > .sinput { width: 100%; }
+.srow--link { color: inherit; text-decoration: none; }
+.srow--link:hover .srow__label { text-decoration: underline; text-underline-offset: 3px; }
+.srow--link svg { flex: none; color: var(--text-dim); }
+.sinput { min-width: 220px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); color: var(--text); font: inherit; font-size: 14px; }
+.sinput--num { width: 90px; min-width: 0; text-align: right; }
+.sinput:focus-visible, .sselect:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Claude's choice: the value and a chevron, no box. */
+.sselect { max-width: 320px; padding: 7px 30px 7px 12px; border: 0; border-radius: 8px; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' width='16' height='16' fill='none' stroke='%239aa8b5' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 8 4 4 4-4'/%3E%3C/svg%3E") no-repeat right 8px center; color: var(--text); font: inherit; font-size: 14px; text-align: right; cursor: pointer; appearance: none; -webkit-appearance: none; }
+.sselect:hover { background-color: color-mix(in srgb, var(--text) 6%, transparent); }
+/* A choice whose words matter in full: a box the width of the row, read left to right. */
+.sselect--wide { width: 100%; max-width: none; padding: 9px 34px 9px 12px; border: 1px solid var(--line); background-color: var(--surface-2); text-align: left; }
+.sselect option { background: var(--surface); color: var(--text); }
+/* Claude's switch, from a checkbox — still a checkbox to a screen reader and a click. */
+.switch { position: relative; flex: none; width: 40px; height: 24px; margin: 0; border-radius: 999px; background: color-mix(in srgb, var(--text) 22%, transparent); cursor: pointer; appearance: none; -webkit-appearance: none; transition: background 0.15s; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); transition: transform 0.15s; }
+.switch:checked { background: #4c8df6; }
+.switch:checked::after { transform: translateX(16px); }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
+/* One box, faces side by side, the chosen one lit: the theme's icons, the languages. */
+.seg { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.seg--icons button { display: grid; place-items: center; width: 34px; height: 30px; border: 0; border-radius: 7px; background: none; color: var(--text-dim); cursor: pointer; }
+.seg--icons button[aria-checked="true"] { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+.seg--icons button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#language.seg { display: inline-flex; margin: 0; }
+#language.seg .lang-choice__item { position: relative; padding: 5px 12px; border: 0; border-radius: 7px; background: none; color: var(--text-dim); font-size: 13.5px; cursor: pointer; }
+#language.seg .lang-choice__item input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+#language.seg .lang-choice__item:has(input:checked) { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+#language.seg .lang-choice__native { font-weight: 500; }
+#language.seg .lang-choice__english { display: none; }
+.scard { display: flex; align-items: flex-start; gap: 14px; margin-top: 30px; padding: 20px 22px; border: 1px solid var(--line); border-radius: 14px; }
+.scard > svg { flex: none; margin-top: 2px; color: var(--text-dim); }
+.scard__title { margin: 0 0 4px; font-weight: 600; }
+.scard .btn { margin-top: 12px; }
+
+/* Customize: Yours as rows, Discover as cards, as Claude lists them. */
+.cust__head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 14px; }
+.cust__title { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.cust__search { width: min(280px, 100%); margin-left: auto; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--text); font: inherit; font-size: 14px; }
+.cust__form { margin: 0 0 18px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; }
+.cust__group { margin: 18px 0 6px; font-size: 15px; font-weight: 600; }
+.cust__count { display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-dim); font-size: 12px; font-weight: 500; }
+.cust__empty { margin: 14px 0; color: var(--text-dim); font-size: 13.5px; }
+.crow { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto 34px; align-items: center; gap: 14px; padding: 12px 10px; border-bottom: 1px solid var(--line-soft); border-radius: 12px; }
+.crow:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.crow[hidden], .ccard[hidden], .ctable__row[hidden] { display: none; }
+.crow--wrap { grid-template-columns: 44px minmax(0, 1fr) auto; }
+.crow__icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 10px; background: var(--surface-2); color: var(--text-dim); }
+.crow__mono { color: var(--text); font-size: 16px; font-weight: 700; }
+.crow__text { min-width: 0; }
+.crow__name { margin: 0; overflow: hidden; font-size: 14.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.crow__tag { display: inline-block; margin-left: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-dim); font-size: 11.5px; font-weight: 500; vertical-align: 1px; }
+.crow__desc { margin: 2px 0 0; overflow: hidden; color: var(--text-dim); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.crow--wrap .crow__desc { white-space: normal; overflow-wrap: anywhere; }
+.crow__warn { color: var(--warn); }
+.crow__meta { color: var(--text-dim); font-size: 13px; white-space: nowrap; }
+.crow__more { width: 32px; height: 32px; }
+.crow__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.ccard { position: relative; display: grid; grid-template-columns: 52px minmax(0, 1fr) 34px; align-items: start; gap: 14px; padding: 18px; border-radius: 14px; background: var(--surface-2); }
+.ccard__icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 12px; background: var(--bg); color: var(--text-dim); }
+.ccard__text { min-width: 0; }
+.ccard__name { margin: 0; font-weight: 600; }
+.ccard__desc { display: -webkit-box; margin: 4px 0; overflow: hidden; color: var(--text-dim); font-size: 13px; line-height: 1.45; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ccard__by { margin: 0; color: var(--text-dim); font-size: 12.5px; }
+.ccard__add { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); cursor: pointer; }
+.ccard__add:hover { background: color-mix(in srgb, var(--text) 17%, transparent); }
+.ccard__add:focus-visible, .crow__more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ccard__detail { grid-column: 1 / -1; }
+.ctable { display: grid; }
+.ctable__head, .ctable__row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.7fr) minmax(0, 0.5fr) 34px; align-items: center; gap: 12px; padding: 10px 6px; }
+.ctable__head { border-bottom: 1px solid var(--line-soft); color: var(--text-dim); font-size: 13px; }
+.ctable__row { border-bottom: 1px solid var(--line-soft); }
+.ctable__name { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ctable__name .crow__mono { display: grid; flex: none; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--surface-2); font-size: 14px; }
+.ctable__name > span:last-child { display: grid; min-width: 0; }
+.ctable__ok { color: var(--text-dim); }
+.ctable__detail { grid-column: 1 / -1; padding: 6px 0 4px; }
+.ctable--sessions .ctable__head, .ctable--sessions .ctable__row { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.1fr) auto; }
+/* A row's ⋯ menu — a popover, so it is drawn above the sheet rather than clipped by it. */
+.cmenu { inset: auto; min-width: 180px; margin: 0; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); color: var(--text); box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.6); }
+.cmenu__item { display: block; width: 100%; padding: 8px 12px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.cmenu__item:hover, .cmenu__item:focus-visible { background: color-mix(in srgb, var(--text) 9%, transparent); outline: none; }
+.cmenu__item.is-danger { color: var(--danger); }
+
+/* Memory's notes, as Claude's rows: the name, what it says, when, and edit and delete on the row in hand. */
+#memory-list .note { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr) auto 96px; align-items: center; gap: 16px; margin: 0; padding: 13px 12px; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 10px; background: none; }
+#memory-list .note:hover, #memory-list .note:focus-within { background: color-mix(in srgb, var(--text) 5%, transparent); }
+#memory-list .note__key { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+#memory-list .note__body { overflow: hidden; color: var(--text-dim); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+#memory-list .note__date { color: var(--text-dim); font-size: 13px; white-space: nowrap; }
+#memory-list .note__actions { display: flex; justify-content: flex-end; gap: 2px; opacity: 0; }
+#memory-list .note:hover .note__actions, #memory-list .note:focus-within .note__actions { opacity: 1; }
+#memory-list .note__edit { grid-column: 1 / -1; }
+#memory-list .note-group__head { margin: 22px 0 4px; color: var(--text); font-size: 15px; }
+
+/* A phone: the list runs across the top and the rows stack. */
+@media (max-width: 760px) {
+  /* minmax(0, …): the list's row of names must not widen the column past the sheet. */
+  .settings { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .settings__nav { min-width: 0; padding: 10px 12px 0; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .sheet__tabs.settings__tabs { flex-direction: row; flex: none; overflow-x: auto; overflow-y: hidden; padding-bottom: 8px; scrollbar-width: none; }
+  .settings__tabs .tab { width: auto; padding: 7px 10px; white-space: nowrap; }
+  .settings__group { display: none; }
+  .settings__body { padding: 16px; }
+  .srow { flex-direction: column; align-items: stretch; gap: 10px; }
+  .srow__control { max-width: 100%; }
+  .sinput { width: 100%; min-width: 0; }
+  .sselect { max-width: 100%; text-align: left; }
+  .crow { grid-template-columns: 40px minmax(0, 1fr) 34px; }
+  .crow__meta { display: none; }
+  .ctable__head { display: none; }
+  .ctable__head, .ctable__row, .ctable--sessions .ctable__row { grid-template-columns: minmax(0, 1fr) auto; }
+  #memory-list .note { grid-template-columns: minmax(0, 1fr) auto; }
+  #memory-list .note__body { grid-column: 1 / -1; grid-row: 2; }
+  #memory-list .note__date { display: none; }
+  #memory-list .note__actions { opacity: 1; }
+  .cust__search { width: 100%; margin-left: 0; }
+}
 .usage { --bar: #4c8df6; --bar-track: color-mix(in srgb, var(--text) 10%, transparent); display: grid; gap: 22px; min-width: 0; }
 .usage > *, .usage section > * { min-width: 0; }
 .usage section { display: grid; gap: 12px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
@@ -10288,6 +10459,20 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .usage__heat-day { padding-right: 8px; color: var(--text-dim); font-size: 12px; white-space: nowrap; }
 .usage__heat-hour { color: var(--text-dim); font-size: 11.5px; padding-top: 4px; }
 .usage__cell { display: block; aspect-ratio: 1.15; min-height: 10px; border-radius: 3px; background: var(--bar-track); }
+/* Pointing at an hour, after Claude's: the cell ringed, its line beside it. */
+.usage__heatwrap { position: relative; }
+.usage__heat:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+.usage__cell[data-d] { cursor: default; }
+.usage__cell.is-at { outline: 2px solid var(--text); outline-offset: 1px; }
+.usage__tip { position: absolute; z-index: 3; min-width: 150px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.6); font-size: 13.5px; line-height: 1.35; white-space: nowrap; pointer-events: none; }
+.usage__tip[hidden] { display: none; }
+.usage__tip p { margin: 0; }
+.usage__tip-when { margin-bottom: 8px !important; color: var(--text-dim); }
+.usage__tip-total { display: flex; align-items: center; gap: 8px; color: var(--text-dim); }
+.usage__tip-total .usage__cell { width: 12px; min-height: 12px; aspect-ratio: 1; }
+.usage__tip-total strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.usage__tip-part { margin-top: 6px !important; padding-left: 20px; color: var(--text-dim); }
+.usage__tip-part span { color: var(--text); font-variant-numeric: tabular-nums; margin-right: 4px; }
 .usage__cell.l1 { background: #1f3f7a; }
 .usage__cell.l2 { background: #2b5bb4; }
 .usage__cell.l3 { background: #3c79e6; }

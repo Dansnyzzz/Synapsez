@@ -16,6 +16,12 @@ import { normaliseImport, batchesOf } from './import-formats.js';
 const $ = (id) => document.getElementById(id);
 const checked = (id) => /** @type {HTMLInputElement} */ ($(id)).checked;
 
+const glyph = (paths) =>
+  `<svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+const PENCIL = glyph('<path d="M13.5 2.9a1.9 1.9 0 0 1 2.7 2.7L7.8 14 4 15l1-3.8Z"/>');
+const UNDO = glyph('<path d="M7 7H13a4 4 0 0 1 0 8H8"/><path d="M9.5 4.5 7 7l2.5 2.5"/>');
+const BIN = glyph('<path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6"/>');
+
 /** A date as this browser writes dates, with the time when it is today. */
 function when(iso) {
   if (!iso) return '';
@@ -47,25 +53,40 @@ export function createPrivacy({ state, armed, onImported }) {
     $('leave-code').hidden = !state.boot?.user?.twoFactor;
   }
 
-  $('save-memory-prefs').addEventListener('click', async () => {
-    const button = /** @type {HTMLButtonElement} */ ($('save-memory-prefs'));
-    button.disabled = true;
-    try {
-      state.boot.prefs = await api.savePrefs({
-        memory: checked('memory-on'),
-        memorySensitive: checked('memory-sensitive'),
-        chatSearch: checked('chat-search'),
-        retentionDays: Number(/** @type {HTMLSelectElement} */ ($('retention')).value) || 0,
-        providerPrivacy: /** @type {HTMLSelectElement} */ ($('provider-privacy')).value,
-        maskPersonal: checked('mask-personal'),
-      });
-      $('memory-status').textContent = t('status.saved');
-      setTimeout(() => ($('memory-status').textContent = ''), 2000);
-    } catch (err) {
-      toast(err.message, 'error');
-    } finally {
-      button.disabled = false;
-    }
+  /**
+   * Each switch and choice saves the moment it changes, as Claude's do. The
+   * three in Memory say so there; the three in Privacy, there. A change the
+   * server refuses is put back.
+   *
+   * @type {Record<string, { status: string, patch: () => Record<string, any> }>}
+   */
+  const SAVED_ON_CHANGE = {
+    'memory-on': { status: 'memory-saved', patch: () => ({ memory: checked('memory-on') }) },
+    'memory-sensitive': { status: 'memory-saved', patch: () => ({ memorySensitive: checked('memory-sensitive') }) },
+    'chat-search': { status: 'memory-saved', patch: () => ({ chatSearch: checked('chat-search') }) },
+    retention: { status: 'memory-status', patch: () => ({ retentionDays: Number(/** @type {HTMLSelectElement} */ ($('retention')).value) || 0 }) },
+    'provider-privacy': { status: 'memory-status', patch: () => ({ providerPrivacy: /** @type {HTMLSelectElement} */ ($('provider-privacy')).value }) },
+    'mask-personal': { status: 'memory-status', patch: () => ({ maskPersonal: checked('mask-personal') }) },
+  };
+  for (const [id, { status, patch }] of Object.entries(SAVED_ON_CHANGE)) {
+    $(id).addEventListener('change', async () => {
+      try {
+        state.boot.prefs = await api.savePrefs(patch());
+        $(status).textContent = t('status.saved');
+        setTimeout(() => ($(status).textContent = ''), 2000);
+      } catch (err) {
+        fillMemory();
+        toast(err.message, 'error');
+      }
+    });
+  }
+
+  // "Start import", as Claude's: the box to paste into, folded away until asked for.
+  $('memory-import-open').addEventListener('click', () => {
+    const box = $('memory-import-box');
+    box.hidden = !box.hidden;
+    $('memory-import-open').setAttribute('aria-expanded', String(!box.hidden));
+    if (!box.hidden) $('memory-import-text').focus();
   });
 
   /* ── the notes ───────────────────────────────────────────────────── */
@@ -98,20 +119,20 @@ export function createPrivacy({ state, armed, onImported }) {
               : group.projectName
                 ? t('memory.groupProject', { name: group.projectName })
                 : t('memory.groupGone');
+          // Claude's rows: the note's name, what it says, when, and — on the row
+          // under the pointer or the keyboard — edit and delete.
           return `<div class="note-group">
             <h4 class="note-group__head">${escapeHtml(title)}</h4>
             ${group.notes
               .map(
                 (note) => `<div class="note" data-scope="${escapeHtml(scopeOf(group))}" data-key="${escapeHtml(note.key)}">
-                  <div class="note__head">
-                    <span class="note__key">${escapeHtml(note.key)}</span>
-                    <span class="note__date">${escapeHtml([origin(note.by), when(note.updatedAt)].filter(Boolean).join(' · '))}</span>
-                  </div>
-                  <div class="note__body">${escapeHtml(note.content)}</div>
+                  <span class="note__key">${escapeHtml(note.key)}</span>
+                  <div class="note__body" title="${escapeHtml(note.content)}">${escapeHtml(note.content)}</div>
+                  <span class="note__date">${escapeHtml([origin(note.by), when(note.updatedAt)].filter(Boolean).join(' · '))}</span>
                   <div class="note__actions">
-                    <button class="btn btn--ghost" type="button" data-note-edit>${escapeHtml(t('memory.edit'))}</button>
-                    ${note.canUndo ? `<button class="btn btn--ghost" type="button" data-note-undo title="${escapeHtml(t('memory.undoHint'))}">${escapeHtml(t('memory.undo'))}</button>` : ''}
-                    <button class="btn btn--ghost" type="button" data-note-delete>${escapeHtml(t('action.delete'))}</button>
+                    <button class="icon-btn" type="button" data-note-edit aria-label="${escapeHtml(t('memory.editLabel', { key: note.key }))}" title="${escapeHtml(t('memory.edit'))}">${PENCIL}</button>
+                    ${note.canUndo ? `<button class="icon-btn" type="button" data-note-undo aria-label="${escapeHtml(t('memory.undo'))}" title="${escapeHtml(t('memory.undoHint'))}">${UNDO}</button>` : ''}
+                    <button class="icon-btn" type="button" data-note-delete aria-label="${escapeHtml(t('action.delete'))}" title="${escapeHtml(t('action.delete'))}">${BIN}</button>
                   </div>
                 </div>`,
               )

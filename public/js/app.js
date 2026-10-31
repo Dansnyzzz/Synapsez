@@ -35,6 +35,7 @@ import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
 import { createUsagePanel } from './usage-panel.js';
 import { createUsageAlert } from './usage-alert.js';
+import { createCustomize } from './customize.js';
 import { createFeedback, renderFeedbackList, transcriptLines } from './feedback.js';
 import { createChangelog, appVersion } from './changelog.js';
 import { contextPanel } from './context-panel.js';
@@ -4325,7 +4326,15 @@ async function refreshWorker() {
 
 function openSettings(tab) {
   fillSettings();
-  if (tab) selectTab(tab);
+  // A search left in the list from last time would hide what was just asked for.
+  const search = /** @type {HTMLInputElement} */ ($('settings-search'));
+  if (search.value) {
+    search.value = '';
+    search.dispatchEvent(new Event('input'));
+  }
+  const showing = /** @type {HTMLElement | null} */ ($('settings').querySelector('.tab.is-active'));
+  // Whatever section is asked for — or the one left open, unless it is one this account cannot see.
+  selectTab(tab || (showing && !showing.hidden ? showing.dataset.tab : 'providers'));
   $('settings').showModal();
 }
 
@@ -4528,7 +4537,12 @@ function parseHeaders(text) {
 function renderMcp({ servers, status }) {
   const host = $('mcp-list');
   if (!servers.length) {
-    host.innerHTML = `<p class="hint">${escapeHtml(t('mcp.none'))}</p>`;
+    // Claude's empty Extensions: nothing yet, and the two ways to add one.
+    host.innerHTML = `<div class="settings__empty">
+      <svg viewBox="0 0 20 20" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3v3M12.5 3v3"/><path d="M5.5 6h9v3a4.5 4.5 0 0 1-9 0Z"/><path d="M10 13.5V17"/></svg>
+      <p>${escapeHtml(t('settings.noExtensions'))}</p>
+      <button class="btn btn--small" type="button" data-goto="developer">${escapeHtml(t('settings.addByHand'))}</button>
+    </div>`;
     return;
   }
 
@@ -4550,18 +4564,19 @@ function renderMcp({ servers, status }) {
         : [server.command, ...(server.args || [])].join(' ');
 
       return `
-        <div class="provider">
-          <div class="provider__head">
-            <strong>${escapeHtml(server.name)}</strong> ${reach}
+        <div class="crow crow--wrap">
+          <span class="crow__icon"><span class="crow__mono" aria-hidden="true">${escapeHtml(String(server.name || '?').charAt(0).toUpperCase())}</span></span>
+          <div class="crow__text">
+            <p class="crow__name">${escapeHtml(server.name)} ${reach}</p>
+            <p class="crow__desc crow__where">${escapeHtml(where || '')}</p>
+            ${server.runsOn === 'cloud' ? `<p class="crow__desc">${escapeHtml(t('mcp.runsOnCloud'))}</p>` : ''}
+            ${state?.error ? `<p class="crow__desc crow__warn">${escapeHtml(state.error)}</p>` : ''}
           </div>
-          <div class="hint" style="word-break:break-all">${escapeHtml(where || '')}</div>
-          ${server.runsOn === 'cloud' ? `<div class="hint">${escapeHtml(t('mcp.runsOnCloud'))}</div>` : ''}
-          ${state?.error ? `<div class="hint" style="color:var(--warn)">${escapeHtml(state.error)}</div>` : ''}
-          <div class="row">
-            <button class="btn btn--ghost" data-mcp-toggle="${escapeHtml(server.id)}" type="button">
+          <div class="crow__actions">
+            <button class="btn btn--small" data-mcp-toggle="${escapeHtml(server.id)}" type="button">
               ${escapeHtml(server.enabled === false ? t('mcp.enable') : t('mcp.disable'))}
             </button>
-            <button class="btn btn--ghost" data-mcp-remove="${escapeHtml(server.id)}" type="button">
+            <button class="btn btn--small" data-mcp-remove="${escapeHtml(server.id)}" type="button">
               ${escapeHtml(t('mcp.remove'))}
             </button>
           </div>
@@ -4625,6 +4640,8 @@ async function loadMcpCatalogue() {
     for (const btn of host.querySelectorAll('[data-mcp-preset]')) {
       btn.addEventListener('click', () => {
         const preset = servers.find((s) => s.id === btn.dataset.mcpPreset);
+        // The form is in Developer: the command is what somebody should read before it runs.
+        selectTab('developer');
         $('mcp-name').value = preset.id;
         $('mcp-transport').value = preset.transport;
         $('mcp-transport').dispatchEvent(new Event('change'));
@@ -4674,6 +4691,14 @@ async function loadMcp() {
     $('mcp-list').innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
   }
 }
+
+// Claude's "Browse extensions": the suggested servers, folded away until asked for.
+$('extensions-browse').addEventListener('click', () => {
+  const box = $('extensions-catalogue');
+  box.hidden = !box.hidden;
+  $('extensions-browse').setAttribute('aria-expanded', String(!box.hidden));
+  if (!box.hidden && !$('mcp-catalogue').childElementCount) loadMcpCatalogue();
+});
 
 $('mcp-transport').addEventListener('change', (event) => {
   const http = event.target.value === 'http';
@@ -4868,7 +4893,15 @@ const effortLabel = (value) => (efforts().find(([v]) => v === value) || efforts(
 const settingsTabs = () =>
   /** @type {NodeListOf<HTMLButtonElement>} */ (document.querySelectorAll('.tab'));
 
-function selectTab(name) {
+/**
+ * The sections before Settings became Claude's list (2026-10-31), and where
+ * each one's contents went — so a link or a habit that names the old one still
+ * lands somewhere sensible.
+ */
+const SETTINGS_MOVED = { languages: 'general', behaviour: 'capabilities', mcp: 'extensions' };
+
+function selectTab(asked) {
+  const name = SETTINGS_MOVED[asked] || asked;
   for (const tab of settingsTabs()) {
     const active = tab.dataset.tab === name;
     tab.classList.toggle('is-active', active);
@@ -4878,33 +4911,58 @@ function selectTab(name) {
      * These carried `role="tab"` and nothing else — no aria-selected, so ten
      * tabs were announced and none of them said which one you were on. The
      * roving tabindex is the other half: only the selected tab is in the tab
-     * order, so Tab moves past the whole strip rather than through ten stops,
+     * order, so Tab moves past the whole list rather than through every stop,
      * which is what the arrow keys below are for.
      */
     tab.setAttribute('aria-selected', String(active));
     tab.tabIndex = active ? 0 : -1;
-    if (active) revealInStrip(tab);
+    if (active) {
+      // Across a phone the list scrolls sideways; down the left of a wide sheet it scrolls down.
+      const list = tab.closest('.settings__tabs');
+      if (list && getComputedStyle(list).flexDirection === 'row') revealInStrip(tab);
+      else if (list && list.scrollHeight > list.clientHeight + 1) {
+        const top = tab.offsetTop - list.offsetTop;
+        if (top < list.scrollTop || top + tab.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = Math.max(0, top - list.clientHeight / 2);
+      }
+    }
   }
-  for (const panel of document.querySelectorAll('.panel')) {
+  for (const panel of document.querySelectorAll('#settings .panel')) {
     panel.classList.toggle('is-active', panel.dataset.panel === name);
   }
+  $('settings').querySelector('.settings__body').scrollTop = 0;
   // Read when looked at, not every time Settings opens: each is a request, and
-  // the notes and the security record are the two lists most likely to have
+  // the notes and the security record are the lists most likely to have
   // changed since the last look.
   if (name === 'memory') privacy.loadMemory();
-  if (name === 'account') privacy.loadActivity();
+  if (name === 'account') {
+    privacy.loadActivity();
+    loadSessionTable();
+  }
   // The providers are asked what is left only when somebody looks (2026-10-31).
   if (name === 'usage') usagePanel.load();
+  // Reaching an MCP server takes a moment, so it is asked when looked at.
+  if (name === 'extensions') {
+    loadMcp();
+    if (!$('mcp-catalogue').childElementCount) loadMcpCatalogue();
+  }
+  if (name === 'developer') describeStdioPlace();
+  if (name === 'skills') customize.loadSkills().catch((err) => toast(err.message, 'error'));
+  if (name === 'connectors') customize.loadConnectors().catch((err) => toast(err.message, 'error'));
+  if (name === 'plugins') customize.paintPlugins();
+  if (name === 'system') paintSystem();
+  if (name === 'admin') loadAdmin();
+  if (name === 'feedback') loadAdminFeedback();
 }
 
 /**
- * Left and right move between tabs, Home and End jump to the ends.
+ * Up and down move through the list — left and right too, where it runs across
+ * a phone — and Home and End jump to its ends, skipping what is hidden.
  *
  * This is the half of the tab pattern that cannot be expressed in markup, and
  * without it `role="tablist"` promises a keyboard behaviour that is not there.
  */
 function moveTab(from, step) {
-  const tabs = /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll('.sheet__tabs .tab')]);
+  const tabs = /** @type {HTMLButtonElement[]} */ ([...document.querySelectorAll('#settings .sheet__tabs .tab')]).filter((tab) => !tab.hidden);
   if (!tabs.length) return;
   const at = tabs.indexOf(from);
   const next =
@@ -4919,8 +4977,8 @@ function moveTab(from, step) {
 for (const tab of settingsTabs()) {
   tab.addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
     const step =
-      event.key === 'ArrowRight' ? 1
-      : event.key === 'ArrowLeft' ? -1
+      event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1
+      : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1
       : event.key === 'Home' ? 'home'
       : event.key === 'End' ? 'end'
       : null;
@@ -4929,16 +4987,45 @@ for (const tab of settingsTabs()) {
     moveTab(tab, step);
   });
 
-  tab.addEventListener('click', () => {
-    selectTab(tab.dataset.tab);
-    // Reaching a server takes a moment, so this is done when the tab is opened
-    // rather than every time Settings is.
-    if (tab.dataset.tab === 'mcp') {
-      loadMcp();
-      if (!$('mcp-catalogue').childElementCount) loadMcpCatalogue();
-    }
-  });
+  tab.addEventListener('click', () => selectTab(tab.dataset.tab));
 }
+
+/**
+ * The search at the top of the list, as in Claude: it narrows the list to the
+ * sections whose name — or anything written in them — matches, and Enter opens
+ * the first. A group with nothing left in it goes too.
+ */
+$('settings-search').addEventListener('input', () => {
+  const query = /** @type {HTMLInputElement} */ ($('settings-search')).value.trim().toLocaleLowerCase();
+  let shown = 0;
+  for (const tab of settingsTabs()) {
+    if (tab.hidden) continue;
+    const panel = $(`panel-${tab.dataset.tab}`);
+    const match = !query || `${tab.textContent} ${panel?.textContent || ''}`.toLocaleLowerCase().includes(query);
+    tab.classList.toggle('is-filtered', !match);
+    if (match) shown += 1;
+  }
+  for (const label of /** @type {NodeListOf<HTMLElement>} */ ($('settings').querySelectorAll('.settings__group'))) {
+    const any = [...settingsTabs()].some((tab) => tab.dataset.group === label.dataset.group && !tab.hidden && !tab.classList.contains('is-filtered'));
+    label.classList.toggle('is-filtered', !any);
+  }
+  $('settings-none').hidden = shown > 0;
+});
+$('settings-search').addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  const first = [...settingsTabs()].find((tab) => !tab.hidden && !tab.classList.contains('is-filtered'));
+  if (first) {
+    selectTab(first.dataset.tab);
+    first.focus();
+  }
+});
+
+// A link inside one section to another ("Skills have moved to Customize").
+$('settings').addEventListener('click', (event) => {
+  const go = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-goto]'));
+  if (go) selectTab(go.dataset.goto);
+});
 
 function fillSettings() {
   const { prefs, providers, providerMeta } = state.boot;
@@ -5063,9 +5150,11 @@ function fillSettings() {
   $('max-steps').value = prefs.maxSteps;
   $('auto-compact').value = prefs.autoCompact === false ? 'off' : 'on';
   $('auto-preview').value = prefs.autoPreview === false ? 'off' : 'on';
+  /** @type {HTMLSelectElement} */ ($('tool-loading')).value = prefs.toolLoading === 'all' ? 'all' : 'auto';
   $('system-prompt').value = prefs.systemPrompt || '';
   // Per-browser, not per-account — so it is read back from storage, not prefs.
-  $('theme').value = storedTheme();
+  paintThemeChoice(storedTheme());
+  paintPluginSwitches();
 
   /**
    * Language is per-account, unlike the theme.
@@ -5095,27 +5184,23 @@ function fillSettings() {
   const me = state.boot.user;
   // The account at the foot of the sidebar, kept in step with a renamed one.
   paintAccount($('account-button'), me);
+  // Who this is, as Claude's Profile opens: the letter, the email, the role.
   $('account-card').innerHTML = `
-    <div class="provider">
-      <div class="provider__head">
-        <span class="provider__name">${escapeHtml(me.name || me.email)}</span>
-        <span class="badge ${me.role === 'admin' ? 'badge--ok' : ''}">${escapeHtml(me.role === 'admin' ? t('role.admin') : t('role.member'))}</span>
+    <div class="srow">
+      <div class="srow__text">
+        <span class="srow__label">${escapeHtml(me.email)}</span>
+        <p class="srow__desc">${escapeHtml(me.role === 'admin' ? t('role.admin') : t('role.member'))}</p>
       </div>
-      <div class="hint">${escapeHtml(me.email)}</div>
+      <div class="srow__control"><span class="settings__avatar" aria-hidden="true">${escapeHtml((me.username || me.name || me.email || '?').charAt(0).toUpperCase())}</span></div>
     </div>`;
   $('account-name').value = me.name || '';
   /** @type {HTMLInputElement} */ ($('account-username')).value = me.username || '';
   renderTwoFactor();
   privacy.fillMemory();
 
-  $('tab-admin').hidden = me.role !== 'admin';
-  if (!$('tab-admin').hidden) loadAdmin();
-
-  // These each hit the network, so they load alongside rather than
-  // blocking the sheet from opening. A failure in one must not blank the rest.
-  for (const load of [loadSkills, loadConnectors]) {
-    load().catch((err) => console.error('[settings]', err.message));
-  }
+  // Administration is there for the people who run the deployment, and only them.
+  const admin = me.role === 'admin';
+  for (const node of /** @type {NodeListOf<HTMLElement>} */ ($('settings').querySelectorAll('[data-group="admin"]'))) node.hidden = !admin;
 }
 
 /* ── skills, connectors ──────────────────────────────────────── */
@@ -5138,115 +5223,125 @@ const addedAgo = (iso) => {
   return new Date(then).toLocaleDateString(currentLanguage(), { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-async function loadSkills() {
-  const { skills } = await api.skills();
-  $('skill-list').innerHTML = skills.length
-    ? `<div class="rows">${skills
-        .map(
-          (s) => `<div class="rows__item">
-            <span class="grow">${escapeHtml(s.name)}
-              <span class="muted">· ${escapeHtml(s.description)}${
-                s.used_count ? ` · ${escapeHtml(t('skills.used', { n: s.used_count }))}` : ''
-              }</span>
-            </span>
-            <button data-skill-toggle="${escapeHtml(s.id)}" data-on="${!!s.enabled}">${
-              escapeHtml(s.enabled ? t('mcp.disable') : t('mcp.enable'))
-            }</button>
-            <button data-skill-del="${escapeHtml(s.id)}">${escapeHtml(t('action.remove'))}</button>
-          </div>`,
-        )
-        .join('')}</div>`
-    : `<p class="hint">${escapeHtml(t('skills.empty'))}</p>`;
-
-  for (const btn of $('skill-list').querySelectorAll('[data-skill-toggle]')) {
-    btn.addEventListener('click', async () => {
-      await api.setSkillEnabled(btn.dataset.skillToggle, btn.dataset.on !== 'true');
-      loadSkills();
-    });
-  }
-  for (const btn of $('skill-list').querySelectorAll('[data-skill-del]')) {
-    armed(btn, t('action.reallyRemove'), async () => {
-      await api.deleteSkill(btn.dataset.skillDel);
-      loadSkills();
-    });
-  }
-}
-
-$('skill-save').addEventListener('click', async () => {
-  const status = $('skill-status');
-  try {
-    const { skill } = await api.saveSkill({
-      name: $('skill-name').value,
-      description: $('skill-description').value,
-      instructions: $('skill-instructions').value,
-    });
-    status.textContent = t('skills.savedNamed', { name: skill.name });
-    $('skill-name').value = '';
-    $('skill-description').value = '';
-    $('skill-instructions').value = '';
-    loadSkills();
-  } catch (err) {
-    status.textContent = err.message;
-  }
+/* Settings → Customize: Skills, Connectors, Plugins (customize.js). */
+const customize = createCustomize({
+  armed,
+  prefs: () => state.boot?.prefs || {},
+  savePrefs: async (patch) => {
+    state.boot.prefs = await api.savePrefs(patch);
+    return state.boot.prefs;
+  },
+  pickSkill: (name) => plusDeps.pickSkill(name),
+  closeSettings: () => $('settings').close(),
+  googleCard: (c) => googleCardHtml(c),
+  onPlugins: () => paintPluginSwitches(),
 });
 
-async function loadConnectors() {
-  const { connectors } = await api.connectors();
-  $('connector-list').innerHTML = connectors
-    .map((c) =>
-      c.oauth
-        ? googleCardHtml(c)
-        : `<div class="provider">
-        <div class="provider__head">
-          <span class="provider__name">${escapeHtml(c.label)}</span>
-          <span class="badge ${c.connected ? 'badge--ok' : ''}">${
-            c.connected ? escapeHtml(c.account || t('connectors.connected')) : escapeHtml(t('connectors.notConnected'))
-          }</span>
-        </div>
-        <div class="hint">${escapeHtml(c.help)}</div>
-        <div class="provider__row">
-          <input type="password" data-token="${escapeHtml(c.id)}" placeholder="${escapeHtml(c.placeholder)}" autocomplete="off" />
-          <button data-connect="${escapeHtml(c.id)}">${escapeHtml(c.connected ? t('connectors.replace') : t('mcp.add'))}</button>
-          ${c.connected ? `<button data-disconnect="${escapeHtml(c.id)}">${escapeHtml(t('connectors.disconnect'))}</button>` : ''}
-        </div>
-      </div>`,
-    )
-    .join('');
-
-  for (const btn of $('connector-list').querySelectorAll('[data-connect]')) {
-    btn.addEventListener('click', async () => {
-      const service = btn.dataset.connect;
-      const field = $('connector-list').querySelector(`[data-token="${service}"]`);
-      btn.disabled = true;
-      try {
-        const { account } = await api.connect(service, field.value);
-        toast(t('connectors.connectedAs', { account }));
-        loadConnectors();
-      } catch (err) {
-        toast(err.message, 'error');
-      } finally {
-        btn.disabled = false;
-      }
-    });
+/**
+ * The theme as Claude draws it: three faces — the system's, light, dark — one
+ * of them lit. Per browser, so it is read from storage, never from prefs.
+ */
+function paintThemeChoice(value) {
+  for (const btn of /** @type {NodeListOf<HTMLElement>} */ ($('theme').querySelectorAll('[data-theme-choice]'))) {
+    const on = btn.dataset.themeChoice === value;
+    btn.setAttribute('aria-checked', String(on));
+    btn.tabIndex = on ? 0 : -1;
   }
-  for (const btn of $('connector-list').querySelectorAll('[data-disconnect]')) {
-    armed(btn, t('connectors.reallyDisconnect'), async () => {
-      await api.disconnect(btn.dataset.disconnect);
-      loadConnectors();
-    });
-  }
-
-  // Google is a sign-in, not a paste: the browser goes to Google and comes back.
-  $('connector-list')
-    .querySelector('[data-google-connect]')
-    ?.addEventListener('click', () => {
-      const products = [...$('connector-list').querySelectorAll('[data-google-product]:checked')].map(
-        (box) => /** @type {HTMLInputElement} */ (box).value,
-      );
-      if (!products.length) return toast(t('google.pickOne'), 'error');
-      location.href = `/api/connectors/google/start?products=${encodeURIComponent(products.join(','))}`;
-    });
 }
+
+/** System's two switches are two of the plugins — the cloud browser and the cloud computer. */
+function paintPluginSwitches() {
+  const off = new Set(state.boot?.prefs?.pluginsOff || []);
+  for (const box of /** @type {NodeListOf<HTMLInputElement>} */ ($('settings').querySelectorAll('[data-plugin-switch]'))) box.checked = !off.has(box.dataset.pluginSwitch);
+}
+
+for (const box of /** @type {NodeListOf<HTMLInputElement>} */ ($('settings').querySelectorAll('[data-plugin-switch]'))) {
+  box.addEventListener('change', async () => {
+    try {
+      await customize.setPlugin(box.dataset.pluginSwitch, box.checked);
+      flashSaved('memory-status');
+    } catch (err) {
+      box.checked = !box.checked;
+      toast(err.message, 'error');
+    }
+  });
+}
+
+/** Settings → System: the version this deployment runs, read from the changelog. */
+function paintSystem() {
+  appVersion()
+    .then((version) => ($('app-version').textContent = version ? `v${version}` : ''))
+    .catch(() => {});
+  paintPluginSwitches();
+}
+$('system-changelog').addEventListener('click', () => {
+  $('settings').close();
+  changelog.open();
+});
+$('system-shortcuts').addEventListener('click', () => {
+  $('settings').close();
+  openShortcuts();
+});
+
+/** "Saved", for a moment, beside whatever was just saved on the spot. */
+function flashSaved(id) {
+  const status = $(id);
+  if (!status) return;
+  status.textContent = t('status.saved');
+  clearTimeout(Number(status.dataset.timer));
+  status.dataset.timer = String(setTimeout(() => (status.textContent = ''), 2000));
+}
+
+/**
+ * Settings → Account → Active sessions, after Claude's table: every browser
+ * signed in to this account, this one marked, any other signed out on its own.
+ * The same rows as Usage → By device (routes/account.js).
+ */
+async function loadSessionTable() {
+  const host = $('session-table');
+  try {
+    const { sessions = [] } = await api.sessions();
+    const when = (iso) => new Date(iso).toLocaleString(currentLanguage() === 'vi' ? 'vi-VN' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    host.innerHTML = `<div class="ctable ctable--sessions" role="table" aria-label="${escapeHtml(t('settings.sessions'))}">
+      <div class="ctable__head" role="row"><span role="columnheader">${escapeHtml(t('settings.device'))}</span><span role="columnheader">${escapeHtml(t('settings.network'))}</span><span role="columnheader">${escapeHtml(t('settings.signedInAt'))}</span><span></span></div>
+      ${sessions
+        .map(
+          (s) => `<div class="ctable__row" role="row">
+            <span role="cell"><strong>${escapeHtml(s.agent || t('usage.unknownBrowser'))}</strong>${s.current ? ` <span class="usage__badge">${escapeHtml(t('settings.current'))}</span>` : ''}</span>
+            <span role="cell" class="crow__desc">${escapeHtml(s.network || '—')}</span>
+            <span role="cell" class="crow__desc">${escapeHtml(when(s.createdAt))}</span>
+            <span role="cell">${s.current ? '' : `<button class="btn btn--small" type="button" data-session-out="${escapeHtml(s.id)}">${escapeHtml(t('usage.signOut'))}</button>`}</span>
+          </div>`,
+        )
+        .join('')}
+    </div>`;
+    for (const btn of /** @type {NodeListOf<HTMLButtonElement>} */ (host.querySelectorAll('[data-session-out]'))) {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await api.signOutDevice(btn.dataset.sessionOut);
+          toast(t('usage.signedOut'));
+          loadSessionTable();
+        } catch (err) {
+          btn.disabled = false;
+          toast(err.message, 'error');
+        }
+      });
+    }
+  } catch (err) {
+    host.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+/**
+ * Log out of all devices: every other sign-in revoked, then this one. A copy of
+ * any of their cookies signs nobody in afterwards (auth.js endSession).
+ */
+armed($('logout-all'), t('settings.logoutAllSure'), async () => {
+  const { sessions = [] } = await api.sessions();
+  for (const s of sessions.filter((x) => !x.current)) await api.signOutDevice(s.id);
+  await signOut();
+});
 
 /**
  * The Google card: which products the assistant may use, and one button.
@@ -5316,34 +5411,46 @@ function afterGoogleSignIn() {
 
 /* ── account ───────────────────────────────────────────────────── */
 
-$('save-name').addEventListener('click', async () => {
+// Saved when the box is left or Enter is pressed, as Claude's are — and only
+// when something changed. A name that will not do is put back as it was.
+$('account-name').addEventListener('change', async () => {
+  const field = /** @type {HTMLInputElement} */ ($('account-name'));
   try {
-    const { user } = await api.updateAccount({ name: $('account-name').value.trim() });
+    const { user } = await api.updateAccount({ name: field.value.trim() });
     state.boot.user = user;
-    fillSettings();
+    paintAccount($('account-button'), user);
     toast(t('account.nameUpdated'));
   } catch (err) {
+    field.value = state.boot.user.name || '';
     toast(err.message, 'error');
   }
 });
 
 // The name signed in with, beside the email (2026-10-20). The server says why a
 // name will not do — the shape, reserved, or somebody else's.
-$('save-username').addEventListener('click', async () => {
-  const username = /** @type {HTMLInputElement} */ ($('account-username')).value.trim();
+$('account-username').addEventListener('change', async () => {
+  const field = /** @type {HTMLInputElement} */ ($('account-username'));
+  const username = field.value.trim();
   if (!username) {
+    field.value = state.boot.user.username || '';
     toast(t('gate.usernameNeeded'), 'error');
     return;
   }
   try {
     const { user } = await api.updateAccount({ username });
     state.boot.user = user;
-    fillSettings();
+    paintAccount($('account-button'), user);
     toast(t('account.usernameUpdated'));
   } catch (err) {
+    field.value = state.boot.user.username || '';
     toast(err.message, 'error');
   }
 });
+for (const id of ['account-name', 'account-username']) {
+  $(id).addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
+    if (event.key === 'Enter') /** @type {HTMLInputElement} */ (event.target).blur();
+  });
+}
 
 /* ── two-factor ────────────────────────────────────────────────── */
 
@@ -5571,21 +5678,31 @@ function noteModelRetired(from) {
 // copy of the same control.
 $('model-chip').addEventListener('click', () => browser.open(state.model));
 
-$('save-behaviour').addEventListener('click', async () => {
-  try {
-    state.boot.prefs = await api.savePrefs({
-      maxSteps: Number($('max-steps').value),
-      autoCompact: $('auto-compact').value !== 'off',
-      autoPreview: $('auto-preview').value !== 'off',
-      systemPrompt: $('system-prompt').value,
-    });
-    renderTopbar();
-    $('behaviour-status').textContent = t('status.saved');
-    setTimeout(() => ($('behaviour-status').textContent = ''), 2000);
-  } catch (err) {
-    toast(err.message, 'error');
-  }
-});
+/**
+ * Each of these saves the moment it changes, as Claude's settings do — no Save
+ * button to forget. The instructions are saved when the box is left. A value
+ * the server refuses is put back as it was and the reason shown.
+ */
+const SAVED_ON_CHANGE = {
+  'max-steps': { status: 'capabilities-status', patch: (v) => ({ maxSteps: Number(v) }), back: (p) => p.maxSteps },
+  'auto-compact': { status: 'capabilities-status', patch: (v) => ({ autoCompact: v !== 'off' }), back: (p) => (p.autoCompact === false ? 'off' : 'on') },
+  'auto-preview': { status: 'capabilities-status', patch: (v) => ({ autoPreview: v !== 'off' }), back: (p) => (p.autoPreview === false ? 'off' : 'on') },
+  'tool-loading': { status: 'capabilities-status', patch: (v) => ({ toolLoading: v === 'all' ? 'all' : 'auto' }), back: (p) => (p.toolLoading === 'all' ? 'all' : 'auto') },
+  'system-prompt': { status: 'behaviour-status', patch: (v) => ({ systemPrompt: v }), back: (p) => p.systemPrompt || '' },
+};
+for (const [id, rule] of Object.entries(SAVED_ON_CHANGE)) {
+  $(id).addEventListener('change', async () => {
+    const field = /** @type {HTMLInputElement} */ ($(id));
+    try {
+      state.boot.prefs = await api.savePrefs(rule.patch(field.value));
+      renderTopbar();
+      flashSaved(rule.status);
+    } catch (err) {
+      field.value = rule.back(state.boot.prefs || {});
+      toast(err.message, 'error');
+    }
+  });
+}
 
 
 /**
@@ -5916,6 +6033,9 @@ const plusDeps = {
   openSettings: (tab, focusId) => {
     openSettings(tab);
     if (!focusId) return;
+    // What is folded away until asked for is opened first.
+    if (focusId === 'skill-name') customize.showSkillForm();
+    if (focusId === 'extensions-browse' && $('extensions-catalogue').hidden) $('extensions-browse').click();
     requestAnimationFrame(() => {
       const target = $(focusId);
       target?.scrollIntoView({ block: 'nearest' });
@@ -5966,7 +6086,22 @@ function storedTheme() {
 // sees a dark flash on the way in.
 applyTheme(storedTheme());
 
-$('theme').addEventListener('change', (event) => applyTheme(event.target.value));
+// Three faces, one lit, as Claude draws the choice; the arrows move between them as in any radio group.
+$('theme').addEventListener('click', (event) => {
+  const btn = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-theme-choice]'));
+  if (!btn) return;
+  applyTheme(btn.dataset.themeChoice);
+  paintThemeChoice(btn.dataset.themeChoice);
+});
+$('theme').addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
+  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+  if (!step) return;
+  event.preventDefault();
+  const faces = /** @type {HTMLElement[]} */ ([...$('theme').querySelectorAll('[data-theme-choice]')]);
+  const next = faces[(faces.indexOf(/** @type {HTMLElement} */ (document.activeElement)) + step + faces.length) % faces.length];
+  next.click();
+  next.focus();
+});
 
 /* ── layout plumbing ───────────────────────────────────────────── */
 

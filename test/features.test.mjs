@@ -1351,6 +1351,8 @@ section('Settings → Usage: the week, the busiest hour and the pace, in the rea
   check('requests are counted on the local day they were made', m.callsByDay(rows, days).join() === '14,0,0,0,2,1,0');
   const grid = m.heatmap(rows, days);
   check('  and in the local hour', grid[0][9] === 4 && grid[0][21] === 10 && grid[4][21] === 2);
+  const parts = m.heatmapBy([...rows, { at: at(26, 21), provider: 'google', model: 'google/gemini', calls: 3 }], days, 'provider');
+  check("  and each hour says what it was made of, the largest first", parts[0][21].map((p) => `${p.name}:${p.calls}`).join() === 'openrouter:10,google:3' && parts[0][3].length === 0, JSON.stringify(parts[0][21]));
   const top = m.busiest(grid);
   check('the busiest hour this week is found, and named by its part of the day', top.day === 0 && top.hour === 21 && top.part === 'evening', JSON.stringify(top));
   check('  and the usual weekday across the whole window', m.usualDay(rows) === 1);

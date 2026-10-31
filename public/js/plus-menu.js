@@ -246,8 +246,8 @@ async function connectorItems(deps) {
       label: t('plus.addConnector'),
       icon: ICON.add,
       sub: () => [
-        { label: t('plus.browseConnectors'), icon: ICON.browse, run: () => deps.openSettings('mcp', 'mcp-catalogue') },
-        { label: t('plus.customConnector'), icon: ICON.dots, run: () => deps.openSettings('mcp', 'mcp-name') },
+        { label: t('plus.browseConnectors'), icon: ICON.browse, run: () => deps.openSettings('extensions', 'extensions-browse') },
+        { label: t('plus.customConnector'), icon: ICON.dots, run: () => deps.openSettings('developer', 'mcp-name') },
       ],
     },
     { label: t('plus.manageConnectors'), icon: ICON.manage, run: () => deps.openSettings('connectors') },
@@ -267,7 +267,7 @@ async function connectorItems(deps) {
     const error = broken.get(server.id);
     items.push(
       error
-        ? { label: server.name, icon: monogram(server.name), warn: error, run: () => deps.openSettings('mcp') }
+        ? { label: server.name, icon: monogram(server.name), warn: error, run: () => deps.openSettings('extensions') }
         : {
             label: server.name,
             icon: monogram(server.name),
