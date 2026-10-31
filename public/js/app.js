@@ -34,7 +34,7 @@ import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
 import { createUsagePanel } from './usage-panel.js';
-import { createFeedback, renderFeedbackList } from './feedback.js';
+import { createFeedback, renderFeedbackList, transcriptLines } from './feedback.js';
 import { createChangelog, appVersion } from './changelog.js';
 import { contextPanel } from './context-panel.js';
 import { createModelNews } from './model-news.js';
@@ -5374,6 +5374,26 @@ $('admin-feedback').addEventListener('click', async (event) => {
     toast(err.message, 'error');
   }
 });
+
+// A conversation sent with feedback is read when it is opened, once. `toggle`
+// does not bubble, hence the capture.
+$('admin-feedback').addEventListener(
+  'toggle',
+  async (event) => {
+    const box = /** @type {HTMLDetailsElement} */ (event.target);
+    if (!box.dataset?.feedbackChat || !box.open || box.dataset.loaded) return;
+    box.dataset.loaded = '1';
+    const lines = /** @type {HTMLElement} */ (box.querySelector('.fbadmin__lines'));
+    try {
+      const { transcript } = await api.feedbackTranscript(box.dataset.feedbackChat);
+      lines.innerHTML = transcriptLines(transcript);
+    } catch (err) {
+      delete box.dataset.loaded;
+      lines.textContent = err.message;
+    }
+  },
+  true,
+);
 
 async function loadAdmin() {
   privacy.loadAdminActivity();

@@ -596,10 +596,27 @@ section('feedback: sent to the administrators, a conversation only when included
   const withChat = await bob.call('POST', '/api/feedback', { ...ok, chatId: bobChatId });
   const listed = await alice.call('GET', '/api/admin/feedback');
   const mine = (listed.body?.feedback || []).find((f) => f.id === withChat.body?.id);
-  check('an administrator reads it, with whose it was and the conversation included', listed.status === 200 && mine?.email === 'bob@memory.test' && mine?.transcript?.messages?.length === 2 && mine.transcript.messages[0].text.startsWith('Make the report'), JSON.stringify(mine?.transcript));
+  const read = await alice.call('GET', `/api/admin/feedback/${mine?.id}/transcript`);
+  check('an administrator reads it, with whose it was and the conversation included', listed.status === 200 && mine?.email === 'bob@memory.test' && mine?.transcript_count === 2 && read.status === 200 && read.body?.transcript?.messages?.[0]?.text.startsWith('Make the report'), JSON.stringify(read.body));
+  check('  the list counts the conversation, and carries none of it', !('transcript' in (mine || {})) && !listed.text.includes('Make the report'));
   check('  and what helps reproduce it — language, version, browser — nothing more', mine?.client?.language === 'vi' && mine?.client?.version === '1.1.0' && !('ip' in (mine?.client || {})), JSON.stringify(mine?.client));
-  check("  an account that is not an administrator reads none of it", (await bob.call('GET', '/api/admin/feedback')).status === 403);
+  check("  an account that is not an administrator reads none of it", (await bob.call('GET', '/api/admin/feedback')).status === 403 && (await bob.call('GET', `/api/admin/feedback/${mine?.id}/transcript`)).status === 403);
+
+  // The privacy notice: deleting a conversation deletes it — the copy sent with feedback included.
+  await bob.call('DELETE', `/api/chats/${bobChatId}`);
+  const after = ((await alice.call('GET', '/api/admin/feedback')).body?.feedback || []).find((f) => f.id === mine?.id);
+  check('  deleted by its owner, the conversation is gone from the feedback too — the feedback stays', after?.body === ok.body && after?.transcript_count == null && after?.chat_title == null && (await alice.call('GET', `/api/admin/feedback/${mine?.id}/transcript`)).status === 404, JSON.stringify(after));
   check('  marked read, and deleted, by an administrator', (await alice.call('PUT', `/api/admin/feedback/${mine?.id}/read`)).status === 200 && (await alice.call('DELETE', `/api/admin/feedback/${mine?.id}`)).status === 200);
+
+  const hidden = (await bob.call('POST', '/api/chats', { incognito: true })).body;
+  const hiddenId = hidden?.chat?.id || hidden?.id;
+  const kept = await bob.call('POST', '/api/feedback', { ...ok, chatId: hiddenId });
+  check('an incognito conversation is never sent, whatever the request says', kept.status === 400 && !!hiddenId, `${kept.status} ${hiddenId}`);
+
+  // The ceiling holds for requests sent together: one count, taken atomically.
+  const burst = await Promise.all(Array.from({ length: 12 }, () => alice.call('POST', '/api/feedback', ok)));
+  const through = burst.filter((r) => r.status === 201).length;
+  check('ten an hour from one account, even sent all at once', through === 10 && burst.filter((r) => r.status === 429).length === 2, burst.map((r) => r.status).join());
 }
 
 /*
@@ -649,6 +666,15 @@ section('devices: each sign-in listed, and signed out on its own');
   const stale = jar();
   stale.cookie = legacyCookie;
   check('  and signed out from the list, it stops — even as it was, without the id it was given', (await stale.call('GET', '/api/bootstrap')).status === 401);
+
+  // Signing out with one ends it as surely as signing out with a new one does.
+  const another = `${authTesting.COOKIE}=${authTesting.sign({ uid: erin.id, epoch: Number(erin.session_epoch) || 1, exp: Math.floor(Date.now() / 1000) + 7200, rem: 1 })}`;
+  const leaving = jar();
+  leaving.cookie = another;
+  const keptCopy = jar();
+  keptCopy.cookie = another;
+  const gone = await leaving.call('POST', '/api/logout');
+  check('  and signing out with an old cookie ends it for good — a copy of it no longer signs in', gone.status === 200 && (await keptCopy.call('GET', '/api/bootstrap')).status === 401);
 
   // Signing out of a browser ends that cookie, not only this browser's copy of it.
   const copy = jar();

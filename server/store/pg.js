@@ -1286,12 +1286,17 @@ export function createPgStore(connectionString) {
       );
       return rows.length > 0;
     },
-    /** A week after a session could last be used, it goes. */
+    /**
+     * A week after a session could last be used, it goes. Except an old
+     * cookie's signed-out row: that cookie carries no id of its own, so the
+     * revoked row is the only thing refusing it — it stays until the cookie
+     * itself has run out (its row expires no sooner, see adoptLegacySession).
+     */
     async pruneSessions() {
       const rows = await q(
         `DELETE FROM sessions
           WHERE expires_at < NOW() - INTERVAL '7 days'
-             OR revoked_at < NOW() - INTERVAL '7 days'
+             OR (revoked_at < NOW() - INTERVAL '7 days' AND id NOT LIKE 'legacy-%')
          RETURNING id`,
       );
       return rows.length;
@@ -1320,15 +1325,52 @@ export function createPgStore(connectionString) {
         ],
       );
     },
-    /** Everyone's, for an administrator — with whose it was. The newest first. */
+    /**
+     * Everyone's, for an administrator — with whose it was. The newest first.
+     *
+     * A conversation sent with one is counted here, not carried: two hundred
+     * of them at up to 200k characters each is no list. Read one with
+     * getFeedbackTranscript. And only while the conversation still exists —
+     * the privacy notice says deleting one deletes it, a copy included, so
+     * however it went (by hand, retention, its project) it is never shown again.
+     */
     async listFeedback(limit = 100) {
       return q(
-        `SELECT f.id, f.topic, f.topic_other, f.kind, f.body, f.affect, f.frequency, f.worked_before,
-                f.chat_id, f.chat_title, f.transcript, f.client, f.read_at, f.created_at, u.email, u.name, u.username
+        `SELECT f.id, f.topic, f.topic_other, f.kind, f.body, f.affect, f.frequency, f.worked_before, f.chat_id,
+                CASE WHEN c.id IS NULL THEN NULL ELSE f.chat_title END AS chat_title,
+                CASE WHEN c.id IS NULL THEN NULL ELSE jsonb_array_length(f.transcript->'messages') END AS transcript_count,
+                f.client, f.read_at, f.created_at, u.email, u.name, u.username
            FROM feedback f JOIN users u ON u.id = f.user_id
+           LEFT JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id
           ORDER BY f.created_at DESC LIMIT $1`,
         [Math.min(Math.max(Number(limit) || 100, 1), 500)],
       );
+    },
+    /** One feedback's conversation, as sent — null once that conversation is deleted. */
+    async getFeedbackTranscript(id) {
+      const rows = await q(
+        `SELECT f.chat_title, f.transcript FROM feedback f
+           JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id
+          WHERE f.id = $1 AND f.transcript IS NOT NULL`,
+        [String(id)],
+      );
+      return rows[0] ? { title: rows[0].chat_title, transcript: rows[0].transcript } : null;
+    },
+    /**
+     * The copies of conversations deleted since they were sent, removed. A
+     * conversation deleted by hand takes its copy at once (deleteChat); this is
+     * for every other way one goes, run by the scheduler's sweep.
+     *
+     * @returns how many copies went
+     */
+    async forgetFeedbackTranscripts() {
+      const rows = await q(
+        `UPDATE feedback f SET transcript = NULL, chat_title = NULL
+          WHERE (f.transcript IS NOT NULL OR f.chat_title IS NOT NULL) AND f.chat_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = f.chat_id AND c.user_id = f.user_id)
+         RETURNING f.id`,
+      );
+      return rows.length;
     },
     async markFeedbackRead(id) {
       const rows = await q(`UPDATE feedback SET read_at = COALESCE(read_at, NOW()) WHERE id = $1 RETURNING id`, [String(id)]);
@@ -1337,14 +1379,6 @@ export function createPgStore(connectionString) {
     async deleteFeedback(id) {
       const rows = await q(`DELETE FROM feedback WHERE id = $1 RETURNING id`, [String(id)]);
       return rows.length > 0;
-    },
-    /** How many sent in the last hour by this account — a ceiling on one person, not on an office. */
-    async feedbackCountSince(userId, minutes = 60) {
-      const rows = await q(
-        `SELECT COUNT(*)::int AS n FROM feedback WHERE user_id = $1 AND created_at > NOW() - make_interval(mins => $2)`,
-        [userId, Math.max(1, Math.floor(Number(minutes) || 60))],
-      );
-      return rows[0]?.n || 0;
     },
 
     /** What this account last agreed to — the versions, or null if it never did. */
@@ -1587,6 +1621,9 @@ export function createPgStore(connectionString) {
       // the database with nothing pointing at them. "Delete this conversation"
       // has to mean what it says.
       await q('DELETE FROM attachments WHERE user_id = $1 AND chat_id = $2', [userId, id]);
+      // So does any copy of it sent with feedback (33): the words and the title,
+      // not the feedback itself, which is the sender's own message.
+      await q('UPDATE feedback SET transcript = NULL, chat_title = NULL WHERE user_id = $1 AND chat_id = $2', [userId, id]);
       await q('DELETE FROM chats WHERE id = $1 AND user_id = $2', [id, userId]);
     },
 

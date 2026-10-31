@@ -1293,16 +1293,45 @@ section('housekeeping');
   check('  a password change (a new epoch) lists none of the old ones', (await store.listSessions('u-alice', 2)).length === 0);
   await driver.query(`UPDATE sessions SET revoked_at = NOW() - INTERVAL '8 days' WHERE id = 's-alice-2'`);
   await driver.query(`UPDATE sessions SET expires_at = NOW() - INTERVAL '8 days' WHERE id = 's-bob-1'`);
+  // A cookie from before rows existed carries no id of its own: only its row,
+  // revoked, says it is over. Swept a week after the sign-out, the same cookie
+  // would sign in again — so it stays until the cookie itself has run out.
+  await store.createSession({ id: 'legacy-alice-old', userId: 'u-alice', epoch: 1, agent: null, network: null, expiresAt: soon });
+  await store.revokeSession('u-alice', 'legacy-alice-old');
+  await driver.query(`UPDATE sessions SET revoked_at = NOW() - INTERVAL '8 days' WHERE id = 'legacy-alice-old'`);
   await store.pruneSessions();
   check('  a week after it can no longer be used, a session goes', (await rows('sessions', "WHERE id IN ('s-alice-2', 's-bob-1')")) === 0 && (await rows('sessions', "WHERE id = 's-alice-1'")) === 1);
+  check("  but an old cookie's signed-out row stays while that cookie could still be presented", (await store.getSession('u-alice', 'legacy-alice-old'))?.revoked_at != null);
+  await driver.query(`UPDATE sessions SET expires_at = NOW() - INTERVAL '8 days' WHERE id = 'legacy-alice-old'`);
+  await store.pruneSessions();
+  check('    and goes a week after it expires', (await rows('sessions', "WHERE id = 'legacy-alice-old'")) === 0);
 
   // Feedback (33): an account writes its own; the cross-account list is the store's
   // admin reader, which the routes put behind requireAdmin.
   await store.createFeedback('u-bob', { id: 'fb-1', topic: 'files', kind: 'bug', body: 'The export failed.', affect: 'blocks', client: { language: 'vi' } });
   const all = await store.listFeedback(10);
   check('feedback is kept with whose it was', all.length === 1 && all[0].email === 'bob@example.com' && all[0].body === 'The export failed.', JSON.stringify(all[0]));
-  check("  counted per account for its ceiling", (await store.feedbackCountSince('u-bob')) === 1 && (await store.feedbackCountSince('u-alice')) === 0);
   check('  marked read and removed by id', (await store.markFeedbackRead('fb-1')) && (await store.deleteFeedback('fb-1')) && (await store.listFeedback(10)).length === 0);
+
+  // A conversation's copy in feedback lives only as long as the conversation:
+  // the privacy notice says deleting one deletes it, and a copy kept for the
+  // administrators is still it. Deleted by hand it goes at once; by any other
+  // way (retention, a project's cascade) it is never shown again, and the
+  // sweep removes what is left.
+  const shot = { messages: [{ role: 'user', text: 'Private plan', at: null }], cut: 0 };
+  await store.createChat('u-bob', { id: 'c-fb-hand', title: 'Plan A', model: 'm' });
+  await store.createChat('u-bob', { id: 'c-fb-aged', title: 'Plan B', model: 'm' });
+  await store.createFeedback('u-bob', { id: 'fb-hand', topic: 'files', kind: 'bug', body: 'One.', affect: 'minor', chatId: 'c-fb-hand', chatTitle: 'Plan A', transcript: shot });
+  await store.createFeedback('u-bob', { id: 'fb-aged', topic: 'files', kind: 'bug', body: 'Two.', affect: 'minor', chatId: 'c-fb-aged', chatTitle: 'Plan B', transcript: shot });
+  const copy = async (id) => (await store.listFeedback(10)).find((f) => f.id === id);
+  check('a conversation sent with feedback is counted in the list, read on its own', (await copy('fb-hand'))?.transcript_count === 1 && (await copy('fb-hand'))?.chat_title === 'Plan A' && !('transcript' in ((await copy('fb-hand')) || {})) && (await store.getFeedbackTranscript('fb-hand'))?.transcript?.messages?.[0]?.text === 'Private plan');
+  await store.deleteChat('u-bob', 'c-fb-hand');
+  check('  deleted, its copy goes with it — the words and the title', (await rows('feedback', "WHERE id = 'fb-hand' AND transcript IS NULL AND chat_title IS NULL")) === 1 && (await copy('fb-hand'))?.body === 'One.');
+  await driver.query(`DELETE FROM chats WHERE id = 'c-fb-aged'`);
+  check('  gone any other way, it is never shown again', (await copy('fb-aged'))?.transcript_count == null && (await copy('fb-aged'))?.chat_title == null && (await store.getFeedbackTranscript('fb-aged')) === null);
+  check('    and the sweep removes what was left', (await store.forgetFeedbackTranscripts()) === 1 && (await rows('feedback', "WHERE id = 'fb-aged' AND transcript IS NULL AND chat_title IS NULL")) === 1);
+  await store.deleteFeedback('fb-hand');
+  await store.deleteFeedback('fb-aged');
 
   // What nothing can reach: counted, then removed — and nothing else with it.
   await driver.query(

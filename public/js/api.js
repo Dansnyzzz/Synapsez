@@ -102,6 +102,7 @@ export const api = {
   /** Give feedback, and an administrator's view of what was sent. */
   feedback: (body) => request('POST', '/api/feedback', body),
   adminFeedback: () => request('GET', '/api/admin/feedback'),
+  feedbackTranscript: (id) => request('GET', `/api/admin/feedback/${encodeURIComponent(id)}/transcript`),
   markFeedbackRead: (id) => request('PUT', `/api/admin/feedback/${encodeURIComponent(id)}/read`),
   deleteFeedback: (id) => request('DELETE', `/api/admin/feedback/${encodeURIComponent(id)}`),
 

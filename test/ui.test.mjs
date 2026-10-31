@@ -619,7 +619,25 @@ section('Usage, devices, feedback and what is new — from the account menu');
   await page.waitForTimeout(900);
   const { getStore } = await import('../server/store/index.js');
   const sent = (await getStore().listFeedback(5)).find((f) => f.body === 'The Word file came out empty.');
-  check('  sent, it reaches the administrators as written', !(await page.$('#feedback[open]')) && sent?.topic === 'files' && sent?.kind === 'bug' && sent?.affect === 'blocks' && sent?.frequency === 'daily' && !sent?.transcript, JSON.stringify(sent));
+  check('  sent, it reaches the administrators as written', !(await page.$('#feedback[open]')) && sent?.topic === 'files' && sent?.kind === 'bug' && sent?.affect === 'blocks' && sent?.frequency === 'daily' && !sent?.transcript_count, JSON.stringify(sent));
+
+  // An administrator's list counts a conversation sent with one, and reads it when it is opened.
+  const fbUser = await getStore().getUserByEmail('ui@test.local');
+  await getStore().createChat(fbUser.id, { id: 'ui-fb-chat', title: 'Word export', model: 'm' });
+  await getStore().appendMessage(fbUser.id, 'ui-fb-chat', { id: 'ui-fb-m1', role: 'user', text: 'Turn this into a Word file' });
+  await page.evaluate(() => fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic: 'files', kind: 'bug', body: 'With the conversation.', affect: 'minor', chatId: 'ui-fb-chat' }) }));
+  await page.click('#account-button');
+  await page.waitForTimeout(250);
+  await page.click('.plusmenu--account [data-row="settings"]');
+  await page.waitForTimeout(400);
+  await page.click('#tab-admin');
+  await page.waitForTimeout(900);
+  const folded = await page.$eval('#admin-feedback [data-feedback-chat] .fbadmin__lines', (el) => el.textContent || '').catch(() => null);
+  await page.click('#admin-feedback [data-feedback-chat] summary').catch(() => {});
+  await page.waitForTimeout(600);
+  const opened = await page.$eval('#admin-feedback [data-feedback-chat] .fbadmin__lines', (el) => el.textContent || '').catch(() => null);
+  check('  an administrator sees it in People, the conversation read only when opened', folded != null && !folded.includes('Word file') && /Turn this into a Word file/.test(opened || ''), JSON.stringify({ folded, opened }));
+  await page.evaluate(() => document.getElementById('settings').close());
 
   // What's new: the newest version, which is the app's own.
   await page.click('#account-button');

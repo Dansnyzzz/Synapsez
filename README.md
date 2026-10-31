@@ -1456,10 +1456,14 @@ Language, Get help, **Give feedback**, **View changelog**, Learn more and Sign o
 - **By device** (in Usage) lists every browser the account is signed in on — the browser by family and
   the network, as the security record keeps them — and signs out any one of them. Each sign-in is a row
   in `sessions` (schema 33); signing out, from the list or the menu, ends that cookie for good, and a
-  password change ends them all.
+  password change ends them all. The cookie is checked when a request starts: a stream already open on
+  the signed-out device (a turn's live output, the cloud computer's panel) runs until it closes, and
+  nothing after it is let in.
 - **Give feedback** sends the area, the kind, what happened and how much it matters — and one of the
   person's conversations only when they switch that on — to the deployment's administrators: kept for
-  Settings → People, and announced by email when a mail provider is set. It never reaches a model.
+  Settings → People, and announced by email when a mail provider is set. It never reaches a model. A
+  conversation sent with it is deleted with the conversation, however that goes; an incognito one is
+  never sent. Ten an hour per account, and at most three emails an hour per account, twenty in all.
 - **View changelog** shows `public/changelog.json`, newest first; its newest version is the one
   `package.json` says the app is (test/features holds the two together). Add an entry, in Vietnamese and
   English, with every release.

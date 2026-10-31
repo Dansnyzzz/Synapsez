@@ -1553,6 +1553,7 @@ export const en = {
   'feedback.admin.title': 'Feedback',
   'feedback.admin.none': 'No feedback yet.',
   'feedback.admin.chat': 'Conversation: {title} · {n} messages',
+  'feedback.admin.chat.one': 'Conversation: {title} · 1 message',
   'feedback.admin.user': 'Person:',
   'feedback.admin.assistant': 'Assistant:',
   'feedback.admin.markRead': 'Mark as read',

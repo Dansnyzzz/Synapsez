@@ -729,7 +729,9 @@ export async function sweep() {
     store.pruneAudit(AUDIT_KEEP_DAYS),
     // Sign-ins a week after they could last be used — expired or signed out.
     store.pruneSessions(),
-    applyRetention(store),
+    // After retention has run, so a conversation it deletes takes its copy in
+    // feedback this sweep rather than the next. (Never shown once gone either way.)
+    applyRetention(store).finally(() => store.forgetFeedbackTranscripts()),
   ]);
 }
 

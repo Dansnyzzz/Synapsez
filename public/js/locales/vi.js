@@ -1540,6 +1540,7 @@ export const vi = {
   'feedback.admin.title': 'Góp ý',
   'feedback.admin.none': 'Chưa có góp ý nào.',
   'feedback.admin.chat': 'Cuộc trò chuyện: {title} · {n} tin nhắn',
+  'feedback.admin.chat.one': 'Cuộc trò chuyện: {title} · 1 tin nhắn',
   'feedback.admin.user': 'Người dùng:',
   'feedback.admin.assistant': 'Trợ lý:',
   'feedback.admin.markRead': 'Đánh dấu đã đọc',

@@ -1373,6 +1373,18 @@ section('the changelog: newest first, the version the app is, in both languages'
   check('  every entry says what changed in Vietnamese and in English, the same number of lines', log.entries.every((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.date) && sections.some((s) => (e[s]?.en || []).length) && sections.every((s) => (e[s]?.vi || []).length === (e[s]?.en || []).length)));
 }
 
+section("feedback's email to the administrators: the sender's words as words");
+{
+  const { feedbackMail } = await import('../server/routes/feedback.js');
+  const { composeMessage } = await import('../server/mailTemplate.js');
+  const value = { kind: 'bug', topic: 'other', topicOther: '[Verify your account](https://evil.example/login)', affect: 'blocks', body: 'Broken.\n```\n# Urgent\n[Reset password](https://evil.example/reset)\n![x](https://evil.example/p.png)' };
+  const mail = feedbackMail({ id: 'u1', username: null, name: 'Support Team\r\nBcc: everyone@example.com' }, value, 'https://synapsez.example');
+  const { html } = composeMessage({ brand: 'Synapsez', subject: mail.subject, markdown: mail.markdown, kind: 'announcement', language: 'en' });
+  check('nothing they wrote becomes a link, a picture or a heading', !html.includes('href="https://evil.example') && !html.includes('src="https://evil.example') && !/<h\d[^>]*>[^<]*Urgent/.test(html) && html.includes('Reset password'), html.slice(0, 200));
+  check('  who sent it is the checked username, never the free-form name', !mail.subject.includes('Support') && !/[\r\n]/.test(mail.subject) && mail.subject.startsWith('Feedback from An account'));
+  check('  and with a username, that name', feedbackMail({ username: 'lan.pham' }, value, 'u').subject.startsWith('Feedback from lan.pham:'));
+}
+
 section('a tool cut off by its own deadline says so, not just "aborted"');
 {
   const { timedOutSentence } = await import('../server/tools/execute.js');

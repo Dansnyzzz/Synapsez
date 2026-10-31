@@ -27,8 +27,15 @@ export const FEEDBACK_CHOICES = {
   worked: ['worked', 'unknown', 'never'],
 };
 
-/** How much may be sent: enough to say what happened, not a way to store files. */
-export const FEEDBACK_LIMITS = { body: 5000, other: 200, perHour: 10, transcriptMessages: 200, transcriptChars: 200_000, messageChars: 4000 };
+/**
+ * How much may be sent: enough to say what happened, not a way to store files.
+ * And how many emails it may cause: an administrator's inbox is not a channel
+ * anyone with an account gets to fill — past these, feedback is still kept and
+ * read in Settings, only not announced.
+ */
+export const FEEDBACK_LIMITS = { body: 5000, other: 200, perHour: 10, transcriptMessages: 200, transcriptChars: 200_000, messageChars: 4000, mailsPerAccount: 3, mailsPerHour: 20 };
+
+const HOUR_MS = 60 * 60_000;
 
 const pick = (value, list) => (typeof value === 'string' && list.includes(value) ? value : null);
 
@@ -77,17 +84,43 @@ export function transcriptOf(messages) {
   return { messages: kept, cut: lines.length - kept.length };
 }
 
+/**
+ * The announcement an administrator receives.
+ *
+ * Whatever the sender wrote is set as a block of plain text, never as
+ * Markdown: their words reach the administrator as words, not as a link or a
+ * heading in a mail that comes from this deployment. Who sent it is the
+ * username, checked when it was chosen — never the free-form name.
+ *
+ * @returns {{ subject: string, markdown: string }}
+ */
+export function feedbackMail(user, value, url) {
+  const who = user.username || 'An account';
+  const words = [value.topicOther ? `About: ${value.topicOther}` : '', value.body.slice(0, 1200)]
+    .filter(Boolean)
+    .join('\n\n')
+    // A line of backticks would close the block early and let the rest be Markdown.
+    .replace(/`{3,}/g, "'''");
+  return {
+    subject: `Feedback from ${who}: ${value.kind} · ${value.topic}`,
+    markdown:
+      `**${who}** sent feedback — ${value.kind}, about ${value.topic}, affecting them: ${value.affect}.\n\n` +
+      '```\n' + words + '\n```\n\n' +
+      `Read it, and any conversation they included, in Synapsez → Settings → People: ${url}`,
+  };
+}
+
 /** Tell each administrator, by email, that something was sent. A failure is logged, never the sender's problem. */
 async function tellAdministrators(req, user, value) {
   try {
-    const admins = (await getStore().listUsers()).filter((u) => u.role === 'admin' && !u.suspended_at && u.email);
+    const store = getStore();
+    // Counted at once, so a burst sent together cannot slip past the ceiling.
+    const mine = await store.hitRateLimit(`feedback:mail:${user.id}`, FEEDBACK_LIMITS.mailsPerAccount, HOUR_MS);
+    const all = mine.allowed ? await store.hitRateLimit('feedback:mail', FEEDBACK_LIMITS.mailsPerHour, HOUR_MS) : null;
+    if (!all?.allowed) return;
+    const admins = (await store.listUsers()).filter((u) => u.role === 'admin' && !u.suspended_at && u.email);
     if (!admins.length) return;
-    const who = user.username || user.name || 'An account';
-    const subject = `Feedback from ${who}: ${value.kind} · ${value.topic}`;
-    const markdown =
-      `**${who}** sent feedback — ${value.kind}, about ${value.topicOther ? `"${value.topicOther}"` : value.topic}, ` +
-      `affecting them: ${value.affect}.\n\n${value.body.slice(0, 1200)}\n\n` +
-      `Read it, and any conversation they included, in Synapsez → Settings → People: ${publicUrl(req)}`;
+    const { subject, markdown } = feedbackMail(user, value, publicUrl(req));
     const mail = composeMessage({ brand: senderName(), subject, markdown, kind: 'announcement', language: 'en' });
     await sendEmail({ to: admins.map((a) => a.email), subject, html: mail.html, text: mail.text });
   } catch (err) {
@@ -108,7 +141,14 @@ export function mountFeedbackRoutes(api, admin, { wrap }) {
       if (!checked.ok) return res.status(400).json({ error: /** @type {{ error: string }} */ (checked).error });
       // A ceiling on one account rather than on an address, so an office
       // behind one address is never turned away for the person beside them.
-      if ((await store.feedbackCountSince(req.user.id, 60)) >= FEEDBACK_LIMITS.perHour) {
+      // One upsert counts and checks together: ten sent at once are ten, not
+      // ten each. A counter that cannot be reached lets feedback through.
+      const counted = await store.hitRateLimit(`feedback:${req.user.id}`, FEEDBACK_LIMITS.perHour, HOUR_MS).catch((err) => {
+        log.warn('feedback not counted — letting it through', { error: String(err?.message || err).slice(0, 200) });
+        return null;
+      });
+      if (counted && !counted.allowed) {
+        res.set('Retry-After', String(Math.ceil(counted.retryAfterMs / 1000)));
         return res.status(429).json({ error: 'You have sent a lot of feedback in the last hour. Try again a little later.' });
       }
       const value = checked.value;
@@ -118,6 +158,9 @@ export function mountFeedbackRoutes(api, admin, { wrap }) {
         // Their own conversation only: another account's id is not found.
         const chat = await store.getChat(req.user.id, value.chatId);
         if (!chat) return res.status(404).json({ error: 'That conversation was not found.' });
+        // Incognito is a promise that nothing of it is kept — a copy for the
+        // administrators included. The form never offers one; this is the lock.
+        if (chat.incognito) return res.status(400).json({ error: 'An incognito conversation is not kept, so it cannot be included.' });
         chatTitle = String(chat.title || '').slice(0, 200) || null;
         transcript = transcriptOf(await store.listMessages(req.user.id, value.chatId));
       }
@@ -143,6 +186,17 @@ export function mountFeedbackRoutes(api, admin, { wrap }) {
     '/feedback',
     wrap(async (req, res) => {
       res.json({ feedback: await getStore().listFeedback(200) });
+    }),
+  );
+
+  // A conversation sent with one, read when the administrator opens it — the
+  // list only counts them. Gone once the conversation is deleted.
+  admin.get(
+    '/feedback/:id/transcript',
+    wrap(async (req, res) => {
+      const found = await getStore().getFeedbackTranscript(req.params.id);
+      if (!found) return res.status(404).json({ error: 'That conversation was not found.' });
+      res.json(found);
     }),
   );
 

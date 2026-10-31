@@ -161,8 +161,21 @@ export async function refreshSession(req, res, userId) {
  * cleared, so a copy of the cookie taken before does not sign anybody in.
  */
 export async function endSession(req, res) {
-  const payload = verify(parseCookies(req.headers.cookie)[COOKIE]);
-  if (payload?.uid && payload.sid) await getStore().revokeSession(payload.uid, payload.sid).catch(() => {});
+  const raw = parseCookies(req.headers.cookie)[COOKIE];
+  const payload = verify(raw);
+  if (payload?.uid) {
+    const store = getStore();
+    // A cookie from before rows existed has none in it: its row is the one
+    // derived from the cookie, written now if it never was, so that it is
+    // there, revoked, for as long as the cookie could still be presented.
+    const sid = payload.sid || legacySessionId(raw);
+    if (!payload.sid) {
+      await store
+        .createSession({ id: sid, userId: payload.uid, epoch: Number(payload.epoch) || 1, agent: agentOf(req.headers['user-agent']), network: networkOf(req.ip), expiresAt: new Date(payload.exp * 1000).toISOString() })
+        .catch(() => {});
+    }
+    await store.revokeSession(payload.uid, sid).catch(() => {});
+  }
   clearSession(res);
 }
 

@@ -58,10 +58,9 @@ export function renderFeedbackList(host, items, when) {
       const who = f.username || f.name || f.email;
       const about = f.topic === 'other' ? f.topic_other || t('feedback.topic.other') : t(`feedback.topic.${f.topic}`);
       const tags = [t(`feedback.kind.${f.kind}`), about, t(`feedback.affect.${f.affect}`), f.frequency ? t(`feedback.frequency.${f.frequency}`) : null, f.worked_before ? t(`feedback.worked.${f.worked_before}`) : null].filter(Boolean);
-      const transcript = f.transcript?.messages?.length
-        ? `<details class="fbadmin__chat"><summary>${escapeHtml(t('feedback.admin.chat', { title: f.chat_title || t('chat.untitled'), n: String(f.transcript.messages.length) }))}</summary>${f.transcript.messages
-            .map((m) => `<p class="fbadmin__line"><strong>${escapeHtml(t(m.role === 'user' ? 'feedback.admin.user' : 'feedback.admin.assistant'))}</strong> ${escapeHtml(m.text)}</p>`)
-            .join('')}</details>`
+      // Counted here, read when opened (transcriptLines): the list stays small however long they were.
+      const transcript = f.transcript_count
+        ? `<details class="fbadmin__chat" data-feedback-chat="${escapeHtml(f.id)}"><summary>${escapeHtml(t(f.transcript_count === 1 ? 'feedback.admin.chat.one' : 'feedback.admin.chat', { title: f.chat_title || t('chat.untitled'), n: String(f.transcript_count) }))}</summary><div class="fbadmin__lines"><p class="muted">${escapeHtml(t('common.loading'))}</p></div></details>`
         : '';
       return `<article class="fbadmin__item${f.read_at ? '' : ' is-unread'}" data-feedback="${escapeHtml(f.id)}">
         <header><strong>${escapeHtml(who)}</strong> <span class="muted">· ${escapeHtml(f.email)} · ${escapeHtml(when(new Date(f.created_at)))}</span></header>
@@ -73,6 +72,13 @@ export function renderFeedbackList(host, items, when) {
       </article>`;
     })
     .join('')}</div>`;
+}
+
+/** A conversation sent with feedback, as lines — `GET /api/admin/feedback/:id/transcript`. */
+export function transcriptLines(transcript) {
+  return (transcript?.messages || [])
+    .map((m) => `<p class="fbadmin__line"><strong>${escapeHtml(t(m.role === 'user' ? 'feedback.admin.user' : 'feedback.admin.assistant'))}</strong> ${escapeHtml(m.text)}</p>`)
+    .join('');
 }
 
 /** @param {Deps} deps */
@@ -188,6 +194,7 @@ export function createFeedback(deps) {
     } catch {
       s.sending = false;
       paint();
+      focusOn('[data-submit]');
     }
   }
 
@@ -267,15 +274,12 @@ export function createFeedback(deps) {
       s.kind = d.kind;
       repaint();
       focusOn('#fb-body');
-    } else if (d.affect) {
-      s.affect = d.affect;
+    } else if (d.affect || d.frequency || d.worked) {
+      // The repaint replaces the chip; focus stays on the new one, inside the dialog, so Ctrl+Enter still reaches it.
+      const name = d.affect ? 'affect' : d.frequency ? 'frequency' : 'worked';
+      s[name] = d[name] || null;
       repaint();
-    } else if (d.frequency) {
-      s.frequency = d.frequency;
-      repaint();
-    } else if (d.worked) {
-      s.worked = d.worked;
-      repaint();
+      focusOn(`[data-${name}][aria-checked="true"]`);
     } else if (el.hasAttribute('data-include')) {
       s.include = !s.include;
       repaint();
@@ -299,6 +303,7 @@ export function createFeedback(deps) {
     else if (el.hasAttribute('data-prev')) {
       s.page = 1;
       repaint();
+      focusOn('#fb-body');
     } else if (el.hasAttribute('data-submit')) submit();
   });
 
