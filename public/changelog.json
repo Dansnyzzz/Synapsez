@@ -1,0 +1,27 @@
+{
+  "entries": [
+    {
+      "version": "1.1.0",
+      "date": "2026-10-31",
+      "new": {
+        "vi": [
+          "Mục Mức sử dụng trong menu tài khoản: Cài đặt → Mức sử dụng cho xem riêng từng nhà cung cấp bạn có gắn khoá. Với OpenRouter là số liệu chính OpenRouter báo cho từng khoá — lượt model miễn phí hôm nay, số đã chi hôm nay, tuần này, tháng này và hạn mức của khoá; với mọi nhà cung cấp là những gì Synapsez đã đếm — yêu cầu theo ngày và theo model, tuần của bạn theo từng giờ, và nhịp độ so với tuần trước.",
+          "Thiết bị: Cài đặt → Mức sử dụng → Theo thiết bị liệt kê mọi trình duyệt đang đăng nhập tài khoản của bạn, và đăng xuất riêng từng cái. Đăng xuất giờ chấm dứt hẳn phiên của trình duyệt đó.",
+          "Gửi góp ý trong menu tài khoản: chọn phần và loại góp ý, kể điều đã xảy ra và mức ảnh hưởng, kèm một cuộc trò chuyện nếu bạn muốn. Góp ý được gửi tới người vận hành Synapsez.",
+          "Xem nhật ký thay đổi trong menu tài khoản — chính là trang này."
+        ],
+        "en": [
+          "Usage in the account menu: Settings → Usage shows each provider you have a key for on its own. For OpenRouter, the figures OpenRouter itself reports for each key — free-model requests today, what it has spent today, this week and this month, and the key's own limit; for every provider, what Synapsez counted — requests by day and by model, your week hour by hour, and the pace against last week.",
+          "Devices: Settings → Usage → By device lists every browser your account is signed in on, and signs out any one of them. Signing out now ends that browser's session for good.",
+          "Give feedback in the account menu: choose the area and the kind, say what happened and how much it affects you, and include a conversation if you choose. It goes to the people who run Synapsez.",
+          "View changelog in the account menu — this page."
+        ]
+      },
+      "improved": {
+        "vi": ["Menu tài khoản giờ gồm Cài đặt, Mức sử dụng, Ngôn ngữ, Hướng dẫn sử dụng, Gửi góp ý, Xem nhật ký thay đổi, Tìm hiểu thêm và Đăng xuất."],
+        "en": ["The account menu now holds Settings, Usage, Language, Get help, Give feedback, View changelog, Learn more and Sign out."]
+      },
+      "fixed": { "vi": [], "en": [] }
+    }
+  ]
+}

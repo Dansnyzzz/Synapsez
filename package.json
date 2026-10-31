@@ -1,6 +1,6 @@
 {
   "name": "ai-remote",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Synapsez â€” a self-hosted, multi-provider agentic AI workspace you can drive from any device.",

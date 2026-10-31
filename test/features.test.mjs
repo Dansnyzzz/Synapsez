@@ -1330,6 +1330,49 @@ section('what people see of a tool answer, and money in convert_units');
   check('  and a unit is not mistaken for money', currencyCode('km') === null && currencyCode('kWh') === null);
 }
 
+section('Settings → Usage: the week, the busiest hour and the pace, in the reader\'s own time');
+{
+  const m = await import('../public/js/usage-math.js');
+  // Saturday 31 October 2026, 10:30 local.
+  const now = new Date(2026, 9, 31, 10, 30);
+  const monday = m.weekDays(now, 1);
+  const sunday = m.weekDays(now, 0);
+  check('a Vietnamese week starts on Monday, an English one on Sunday', monday[0].getDay() === 1 && monday[0].getDate() === 26 && sunday[0].getDay() === 0 && sunday[0].getDate() === 25 && monday.length === 7);
+  const at = (d, h) => new Date(2026, 9, d, h, 5).toISOString();
+  const rows = [
+    { at: at(26, 9), provider: 'openrouter', model: 'openrouter/a:free', calls: 4 },
+    { at: at(26, 21), provider: 'openrouter', model: 'openrouter/a:free', calls: 10 },
+    { at: at(30, 21), provider: 'google', model: 'google/gemini', calls: 2 },
+    { at: at(31, 9), provider: 'openrouter', model: 'openrouter/b', calls: 1 },
+    { at: at(19, 9), provider: 'openrouter', model: 'openrouter/a:free', calls: 6 }, // last Monday
+    { at: at(20, 9), provider: 'openrouter', model: 'openrouter/a:free', calls: 20 }, // last Tuesday
+  ];
+  const days = m.weekDays(now, 1);
+  check('requests are counted on the local day they were made', m.callsByDay(rows, days).join() === '14,0,0,0,2,1,0');
+  const grid = m.heatmap(rows, days);
+  check('  and in the local hour', grid[0][9] === 4 && grid[0][21] === 10 && grid[4][21] === 2);
+  const top = m.busiest(grid);
+  check('the busiest hour this week is found, and named by its part of the day', top.day === 0 && top.hour === 21 && top.part === 'evening', JSON.stringify(top));
+  check('  and the usual weekday across the whole window', m.usualDay(rows) === 1);
+  const share = m.shareBy(m.rowsFor(rows, 'openrouter'), days, 'model');
+  check("one provider's models share its requests this week", share[0].name === 'openrouter/a:free' && Math.abs(share[0].share - 14 / 15) < 1e-9 && share.length === 2, JSON.stringify(share));
+  const p = m.pace(rows, now, 1);
+  // By Saturday 10:30 this week has 17; last week had 26 by the same hour.
+  check('the pace is this week so far beside the same hours of the last', p.thisWeek.at(-1) === 17 && p.lastWeek[p.hoursIn - 1] === 26 && Math.abs(p.change - (17 - 26) / 26) < 1e-9, JSON.stringify({ a: p.thisWeek.at(-1), b: p.lastWeek[p.hoursIn - 1], h: p.hoursIn }));
+  check('free requests start again at midnight UTC', m.nextUtcMidnight(new Date(Date.UTC(2026, 9, 31, 16, 0))).toISOString() === '2026-11-01T00:00:00.000Z');
+  check('the standing is the tightest limit known, and "unknown" with none', m.standing([]) === 'unknown' && m.standing([{ used: 10, limit: 50 }]) === 'ok' && m.standing([{ used: 10, limit: 50 }, { used: 45, limit: 50 }]) === 'close' && m.standing([{ used: 50, limit: 50 }]) === 'out');
+}
+
+section('the changelog: newest first, the version the app is, in both languages');
+{
+  const log = JSON.parse(fs.readFileSync(new URL('../public/changelog.json', import.meta.url), 'utf8'));
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  check('its newest entry is the version package.json says the app is', log.entries?.[0]?.version === pkg.version, `${log.entries?.[0]?.version} vs ${pkg.version}`);
+  check('  newest first, by date', log.entries.every((e, i, all) => i === 0 || e.date <= all[i - 1].date));
+  const sections = ['new', 'improved', 'fixed'];
+  check('  every entry says what changed in Vietnamese and in English, the same number of lines', log.entries.every((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.date) && sections.some((s) => (e[s]?.en || []).length) && sections.every((s) => (e[s]?.vi || []).length === (e[s]?.en || []).length)));
+}
+
 section('a tool cut off by its own deadline says so, not just "aborted"');
 {
   const { timedOutSentence } = await import('../server/tools/execute.js');
