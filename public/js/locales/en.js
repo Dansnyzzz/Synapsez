@@ -1707,6 +1707,7 @@ export const en = {
   'activity.settings_privacy': "Memory or privacy settings changed",
   'activity.consent_given': "Agreed to the privacy notice",
   'activity.consent_given_all': 'Agreed to the terms, the usage policy and the privacy notice',
+  'activity.session_revoked': 'Signed a device out',
   'activity.account_deleted_user': "Account deleted",
   'leave.title': "Delete account",
   'leave.hint': "Deletes the account and everything in it — conversations, files, notes, projects, keys and tasks — at once and for good. Export your data first if you want a copy.",

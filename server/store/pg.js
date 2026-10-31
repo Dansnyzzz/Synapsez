@@ -1233,7 +1233,9 @@ export function createPgStore(connectionString) {
     /* ── sessions: where an account is signed in (33) ─────────────────── */
     async createSession(session) {
       await q(
-        `INSERT INTO sessions (id, user_id, epoch, agent, network, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+        // A conflict is the same legacy cookie adopted by two requests at once: one row.
+        `INSERT INTO sessions (id, user_id, epoch, agent, network, expires_at) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO NOTHING`,
         [
           session.id,
           session.userId,

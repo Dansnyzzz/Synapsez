@@ -17,6 +17,7 @@ import {
 } from './crypto.js';
 import { sendEmail, resetEmail, publicUrl } from './email.js';
 import { getPrefs } from './settings.js';
+import { networkOf, agentOf } from './audit.js';
 
 const COOKIE = 'ai_remote_session';
 const MAX_AGE_SEC = 30 * 24 * 60 * 60;
@@ -88,13 +89,38 @@ export function parseCookies(header = '') {
  * no Max-Age and so dies with the browser — which is the honest reading of
  * "don't remember me" on a machine that is not yours. The signed expiry stays
  * thirty days either way; the browser is the one being asked to forget.
+ *
+ * `sid` names this sign-in's row in `sessions` (2026-10-31): the device list
+ * shows it, and signing it out stops this cookie on its next request. A new
+ * sign-in mints one; `sid` is passed to keep one that already exists. If the
+ * row cannot be written the cookie carries none and works as cookies always
+ * did — a sign-in is not refused for the sake of a list.
  */
-function issue(req, res, user, remember = true) {
+async function issue(req, res, user, remember = true, sid = null) {
+  const exp = Math.floor(Date.now() / 1000) + MAX_AGE_SEC;
+  const epoch = Number(user.session_epoch) || 1;
+  let id = sid;
+  if (!id) {
+    id = crypto.randomUUID();
+    try {
+      await getStore().createSession({
+        id,
+        userId: user.id,
+        epoch,
+        agent: agentOf(req.headers['user-agent']),
+        network: networkOf(req.ip),
+        expiresAt: new Date(exp * 1000).toISOString(),
+      });
+    } catch {
+      id = null;
+    }
+  }
   const cookie = sign({
     uid: user.id,
-    epoch: Number(user.session_epoch) || 1,
-    exp: Math.floor(Date.now() / 1000) + MAX_AGE_SEC,
+    epoch,
+    exp,
     rem: remember ? 1 : 0,
+    ...(id ? { sid: id } : {}),
   });
   const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
   res.setHeader(
@@ -124,9 +150,20 @@ export function clearSession(res) {
 export async function refreshSession(req, res, userId) {
   const user = await getStore().getUserById(userId);
   // Carry the old cookie's "remember me" answer over: a password change should
-  // not quietly promote a browser-session cookie into a thirty-day one.
+  // not quietly promote a browser-session cookie into a thirty-day one. A new
+  // sign-in row too: the old one belongs to the epoch that just ended.
   const previous = verify(parseCookies(req.headers.cookie)[COOKIE]);
-  if (user) issue(req, res, user, previous?.rem !== 0);
+  if (user) await issue(req, res, user, previous?.rem !== 0);
+}
+
+/**
+ * Sign this browser out for good: its row is revoked as well as its cookie
+ * cleared, so a copy of the cookie taken before does not sign anybody in.
+ */
+export async function endSession(req, res) {
+  const payload = verify(parseCookies(req.headers.cookie)[COOKIE]);
+  if (payload?.uid && payload.sid) await getStore().revokeSession(payload.uid, payload.sid).catch(() => {});
+  clearSession(res);
 }
 
 /** Length-independent comparison so a wrong guess leaks nothing via timing. */
@@ -347,7 +384,7 @@ export async function registerUser({ email, password, name, username }, req, res
   await store.markEmailVerified(user.id);
 
   const fresh = await store.getUserById(user.id);
-  issue(req, res, fresh);
+  await issue(req, res, fresh);
   return fresh;
 }
 
@@ -390,7 +427,7 @@ export async function loginUser({ email, password, code, remember }, req, res) {
   await store.touchUser(user.id);
   // Anything but an explicit "no" keeps the old thirty-day behaviour, so API
   // callers and older clients that never send the flag are unaffected.
-  issue(req, res, user, remember !== false);
+  await issue(req, res, user, remember !== false);
   return user;
 }
 
@@ -474,12 +511,20 @@ export async function confirmIdentity(user, { password, code }) {
   }
 }
 
-/** Resolve the session cookie to a live user, or null. */
+/**
+ * Resolve the session cookie to a live user, or null. Sets `req.sessionId` to
+ * the cookie's sign-in row, or null for a cookie from before rows existed.
+ */
 export async function currentUser(req) {
   const payload = verify(parseCookies(req.headers.cookie)[COOKIE]);
   if (!payload?.uid) return null;
 
-  const user = await getStore().getUserById(payload.uid);
+  // Both at once: the row is one more indexed read, and it is not a second wait.
+  // A cookie from before rows existed is looked up by the id it was given (see
+  // adoptLegacySession), so signing it out from the list holds for it too.
+  const store = getStore();
+  const sid = payload.sid || legacySessionId(parseCookies(req.headers.cookie)[COOKIE]);
+  const [user, session] = await Promise.all([store.getUserById(payload.uid), store.getSession(payload.uid, sid)]);
   if (!user) return null;
 
   // A cookie minted before the last password change is no longer a session.
@@ -489,7 +534,48 @@ export async function currentUser(req) {
   const epoch = Number(user.session_epoch) || 1;
   if ((Number(payload.epoch) || 1) !== epoch) return null;
 
+  // Signed out from the device list, or by signing out here: over, whatever the
+  // cookie's own expiry says. A row that is missing is over too — it was swept.
+  if (session?.revoked_at) return null;
+  if (payload.sid && !session) return null;
+
+  req.sessionId = session ? sid : null;
   return user;
+}
+
+/** For the suites: a cookie signed the way this deployment signs them, and its name. */
+export const __testing = { sign, COOKIE };
+
+/** The row id a cookie from before sign-ins had rows is given — derived from the cookie, so stable. */
+const legacySessionId = (raw) => `legacy-${crypto.createHash('sha256').update(String(raw)).digest('base64url').slice(0, 24)}`;
+
+/**
+ * A cookie from before sign-ins had rows (2026-10-31) gets one on its first
+ * request, so every device already signed in shows up in the list — not only
+ * the ones that sign in again. Its id is derived from the cookie itself, so the
+ * several requests a page makes at once write one row between them, not one each.
+ */
+async function adoptLegacySession(req, res, user) {
+  const raw = parseCookies(req.headers.cookie)[COOKIE];
+  const payload = verify(raw);
+  if (!payload || payload.sid) return;
+  const sid = legacySessionId(raw);
+  try {
+    await getStore().createSession({
+      id: sid,
+      userId: user.id,
+      epoch: Number(user.session_epoch) || 1,
+      agent: agentOf(req.headers['user-agent']),
+      network: networkOf(req.ip),
+      // The cookie issued below runs thirty days from now; so does its row,
+      // or the row would be swept while the cookie still pointed at it.
+      expiresAt: new Date(Date.now() + MAX_AGE_SEC * 1000).toISOString(),
+    });
+  } catch {
+    return; // listed next time; the request goes on either way
+  }
+  await issue(req, res, user, payload.rem !== 0, sid);
+  req.sessionId = sid;
 }
 
 export async function requireAuth(req, res, next) {
@@ -501,6 +587,7 @@ export async function requireAuth(req, res, next) {
       return res.status(403).json({ error: 'This account has been suspended.' });
     }
     req.user = user;
+    if (!req.sessionId) await adoptLegacySession(req, res, user);
     next();
   } catch (err) {
     next(err);

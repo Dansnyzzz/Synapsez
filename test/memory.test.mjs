@@ -42,6 +42,13 @@ const check = (label, pass, detail = '') => {
 function jar() {
   let cookie = '';
   return {
+    /** The cookie as it stands — to keep a copy, the way a thief would. */
+    get cookie() {
+      return cookie;
+    },
+    set cookie(value) {
+      cookie = value;
+    },
     async call(method, url, body, headers = {}) {
       const res = await fetch(`${base}${url}`, {
         method,
@@ -514,6 +521,61 @@ section('agreeing to the terms: recorded at sign-up, asked of an account that ne
   const again = await alice.call('POST', '/api/consent', LEGAL);
   check('  agreeing again to what is already agreed records nothing more', again.status === 200 && (await count()) === once && once === 1, `${again.status} ${once}`);
   check("  one account's agreement is not another's", (await bob.call('GET', '/api/bootstrap')).body.consent?.agreed === false);
+}
+
+/*
+ * Where the account is signed in, one device at a time (owner, 2026-10-31):
+ * Settings → Usage → By device lists each sign-in and signs one out without
+ * the others — and signing out of a browser ends that cookie for good.
+ */
+section('devices: each sign-in listed, and signed out on its own');
+{
+  const phone = jar();
+  const laptop = jar();
+  const ua = (agent) => ({ 'User-Agent': agent });
+  await jar().call('POST', '/api/register', { username: 'erin', email: 'erin@memory.test', password: 'a-long-enough-password' });
+  await phone.call('POST', '/api/login', { email: 'erin@memory.test', password: 'a-long-enough-password' }, ua('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit Version/18.0 Mobile Safari/604.1'));
+  await laptop.call('POST', '/api/login', { email: 'erin@memory.test', password: 'a-long-enough-password' }, ua('Mozilla/5.0 (Windows NT 10.0) AppleWebKit Chrome/140 Safari/537'));
+  const seen = await laptop.call('GET', '/api/account/sessions');
+  const mine = seen.body?.sessions || [];
+  const current = mine.find((s) => s.current);
+  const other = mine.find((s) => !s.current && /iOS/.test(s.agent || ''));
+  check('each sign-in is listed, this one marked as this one', seen.status === 200 && mine.length >= 2 && /Windows/.test(current?.agent || '') && !!other, JSON.stringify(mine));
+  check("  as the security record keeps it — browser and network, never an address", mine.every((s) => !s.network || /\/(24|48)$/.test(s.network)) && !JSON.stringify(mine).includes('127.0.0.1'));
+  const bobs = await bob.call('GET', '/api/account/sessions');
+  check("  another account sees none of them", !(bobs.body?.sessions || []).some((s) => mine.some((m) => m.id === s.id)));
+  const reach = await bob.call('DELETE', `/api/account/sessions/${other.id}`);
+  check("  nor signs one out", reach.status === 404 && (await phone.call('GET', '/api/bootstrap')).status === 200, `${reach.status}`);
+  const out = await laptop.call('DELETE', `/api/account/sessions/${other.id}`);
+  check('signing the phone out from the laptop ends the phone at once', out.status === 200 && (await phone.call('GET', '/api/bootstrap')).status === 401, `${out.status}`);
+  check('  and leaves the laptop signed in', (await laptop.call('GET', '/api/bootstrap')).status === 200);
+  check('  and is in the security record', (await laptop.call('GET', '/api/account/activity')).body.events.some((e) => e.kind === 'session_revoked'));
+
+  // A cookie from before sign-ins had rows — every browser signed in when this
+  // shipped — keeps working, is listed once however many requests a page makes
+  // at once, and can be signed out like any other.
+  const { __testing: authTesting } = await import('../server/auth.js');
+  const erin = await store.getUserByEmail('erin@memory.test');
+  const old = jar();
+  old.cookie = `${authTesting.COOKIE}=${authTesting.sign({ uid: erin.id, epoch: Number(erin.session_epoch) || 1, exp: Math.floor(Date.now() / 1000) + 3600, rem: 1 })}`;
+  const legacyCookie = old.cookie;
+  const together = await Promise.all([1, 2, 3].map(() => {
+    const twin = jar();
+    twin.cookie = legacyCookie;
+    return twin.call('GET', '/api/bootstrap');
+  }));
+  const legacyRows = ((await laptop.call('GET', '/api/account/sessions')).body?.sessions || []).filter((s) => String(s.id).startsWith('legacy-'));
+  check('a cookie from before keeps working, listed once for requests made at once', together.every((r) => r.status === 200) && legacyRows.length === 1, `${together.map((r) => r.status)} ${legacyRows.length}`);
+  await laptop.call('DELETE', `/api/account/sessions/${legacyRows[0]?.id}`);
+  const stale = jar();
+  stale.cookie = legacyCookie;
+  check('  and signed out from the list, it stops — even as it was, without the id it was given', (await stale.call('GET', '/api/bootstrap')).status === 401);
+
+  // Signing out of a browser ends that cookie, not only this browser's copy of it.
+  const copy = jar();
+  copy.cookie = laptop.cookie;
+  const left = await laptop.call('POST', '/api/logout');
+  check('signing out ends the cookie for good — a copy of it no longer signs in', left.status === 200 && (await copy.call('GET', '/api/bootstrap')).status === 401);
 }
 
 /* ── the notes page ────────────────────────────────────────────────── */

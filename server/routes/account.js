@@ -204,6 +204,45 @@ export function mountAccountRoutes(api, admin, { wrap }) {
     }),
   );
 
+  // ── devices: where the account is signed in (owner, 2026-10-31) ──────
+  /**
+   * Each sign-in still able to sign a request in — this password's, not
+   * expired, not signed out — with the one this request came from marked.
+   * What is shown is what the security record keeps: the browser by family and
+   * the network, never an address or a place.
+   */
+  api.get(
+    '/account/sessions',
+    wrap(async (req, res) => {
+      const rows = await getStore().listSessions(req.user.id, req.user.session_epoch);
+      res.json({
+        sessions: rows.map((s) => ({
+          id: s.id,
+          agent: s.agent || null,
+          network: s.network || null,
+          createdAt: s.created_at,
+          current: s.id === req.sessionId,
+        })),
+      });
+    }),
+  );
+
+  /**
+   * Sign one device out. Its cookie stops on its next request. Signing out the
+   * device this request came from is signing out here, so its cookie goes too.
+   * Scoped by account in the store: another account's id is simply not found.
+   */
+  api.delete(
+    '/account/sessions/:id',
+    wrap(async (req, res) => {
+      const id = String(req.params.id || '').slice(0, 80);
+      if (!(await getStore().revokeSession(req.user.id, id))) return res.status(404).json({ error: 'No such device is signed in.' });
+      await audit(req, req.user.id, 'session_revoked', { current: id === req.sessionId });
+      if (id === req.sessionId) clearSession(res);
+      res.json({ ok: true, signedOutHere: id === req.sessionId });
+    }),
+  );
+
   // ── export ──────────────────────────────────────────────────────────
   /**
    * Everything this account holds, as one JSON file, streamed.

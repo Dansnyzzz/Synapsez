@@ -7,7 +7,6 @@ import { waitUntil } from '@vercel/functions';
 import {
   loginUser,
   registerUser,
-  clearSession,
   currentUser,
   requireAuth,
   requireAdmin,
@@ -23,6 +22,7 @@ import {
   confirmTotpSetup,
   disableTotp,
   refreshSession,
+  endSession,
 } from './auth.js';
 import { limit as rateLimit, forgive } from './ratelimit.js';
 import { publicUrlFor } from './util/net.js';
@@ -547,7 +547,9 @@ export function createApp() {
         forgetScreen(user.id);
         await getStore().clearScreen(user.id).catch(() => {});
       }
-      clearSession(res);
+      // The sign-in's row goes with the cookie, so a copy of the cookie taken
+      // before signing out does not sign anybody back in (2026-10-31).
+      await endSession(req, res);
       res.json({ ok: true });
     }),
   );

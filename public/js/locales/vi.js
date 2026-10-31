@@ -1694,6 +1694,7 @@ export const vi = {
   'activity.settings_privacy': "Đổi cài đặt bộ nhớ hoặc quyền riêng tư",
   'activity.consent_given': "Đồng ý với thông báo xử lý dữ liệu cá nhân",
   'activity.consent_given_all': 'Đồng ý với điều khoản, chính sách sử dụng và thông báo xử lý dữ liệu cá nhân',
+  'activity.session_revoked': 'Đăng xuất một thiết bị',
   'activity.account_deleted_user': "Xoá tài khoản",
   'leave.title': "Xoá tài khoản",
   'leave.hint': "Xoá tài khoản và mọi thứ trong đó — cuộc trò chuyện, tệp, ghi chú, dự án, khoá và tác vụ — ngay lập tức và vĩnh viễn. Hãy xuất dữ liệu trước nếu bạn muốn giữ bản sao.",
