@@ -213,6 +213,34 @@ export async function copyDatabase(from, to, { say = console.log } = {}) {
   return copied;
 }
 
+/**
+ * `--check`: read both, change neither — whether the old database answers at
+ * all, what it holds, and how many of its accounts the new one already has
+ * (those merge by email rather than arriving twice). The step to run first,
+ * the morning Neon's quota resets (owner, 2026-11-01).
+ *
+ * @returns {Promise<{ tables: Record<string, number>, accounts: number, merging: number }>}
+ */
+export async function checkCopy(from, to) {
+  const tables = (
+    await from.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name`)
+  ).map((r) => r.table_name);
+  const counts = {};
+  for (const table of tables) counts[table] = (await from.query(`SELECT COUNT(*)::int AS n FROM ${ident(table)}`))[0]?.n ?? 0;
+  const emails = async (db) => new Set((await db.query('SELECT lower(email) AS email FROM users').catch(() => [])).map((r) => r.email));
+  const [old, now] = await Promise.all([emails(from), emails(to)]);
+  return { tables: counts, accounts: old.size, merging: [...old].filter((e) => now.has(e)).length };
+}
+
+/** Why a database would not answer, in words that say what to do — Neon's quota above all. */
+export function whyUnreachable(err) {
+  const text = String(err?.message || err || '');
+  if (/\b402\b|quota|compute time|exceeded the/i.test(text)) {
+    return "The old database refuses: Neon's free compute for this period is used up. It answers again when the quota resets (Neon's console shows the date under Billing) or once the project is upgraded.";
+  }
+  return text;
+}
+
 /** `--from x --to y`, or `--from=x`. */
 function argument(name) {
   const args = process.argv.slice(2);
@@ -227,7 +255,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   const fromUrl = argument('from') || process.env.COPY_FROM_URL;
   const toUrl = argument('to') || process.env.COPY_TO_URL;
   if (!fromUrl || !toUrl) {
-    console.error('Usage: npm run db:copy -- --from "<old database URL>" --to "<new database URL>"');
+    console.error('Usage: npm run db:copy -- --from "<old database URL>" --to "<new database URL>" [--check]');
     process.exit(2);
   }
   if (fromUrl === toUrl) {
@@ -237,13 +265,29 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   const { openDatabase } = await import('../server/store/driver.js');
   const from = await openDatabase(fromUrl);
   const to = await openDatabase(toUrl);
+  if (process.argv.includes('--check')) {
+    console.log(`\n  Checking ${new URL(fromUrl).host} → ${new URL(toUrl).host} (nothing is written)\n`);
+    try {
+      const { tables, accounts, merging } = await checkCopy(from, to);
+      for (const [table, n] of Object.entries(tables)) console.log(`  ${table}: ${n}`);
+      console.log(`\n  ${accounts} account(s) in the old database; ${merging} already on the new one, by email — those merge.`);
+      console.log('  Run the same command without --check to copy.\n');
+    } catch (err) {
+      console.error(`\n  Could not read it: ${whyUnreachable(err)}\n`);
+      process.exitCode = 1;
+    } finally {
+      await from.end?.();
+      await to.end?.();
+    }
+    process.exit();
+  }
   console.log(`\n  Copying ${new URL(fromUrl).host} → ${new URL(toUrl).host}\n`);
   try {
     const copied = await copyDatabase(from, to);
     const total = Object.values(copied).reduce((a, b) => a + b, 0);
     console.log(`\n  Done: ${total} rows in ${Object.keys(copied).length} tables.\n`);
   } catch (err) {
-    console.error(`\n  Stopped: ${err?.message || err}\n  Nothing in the source was changed; run it again once the cause is fixed.\n`);
+    console.error(`\n  Stopped: ${whyUnreachable(err)}\n  Nothing in the source was changed; run it again once the cause is fixed.\n`);
     process.exitCode = 1;
   } finally {
     await from.end?.();

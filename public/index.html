@@ -1025,6 +1025,56 @@
       </div>
     </dialog>
 
+    <!-- ── Settings → Skills → Add → Create a skill (owner, 2026-11-01, after
+         Claude's): the name, when it applies, and the instructions in an editor
+         with line numbers and files beside SKILL.md. Kept as a draft while it is
+         written — on this device and on the account — so a closed tab or a dead
+         computer loses nothing (skills-editor.js). ── -->
+    <dialog id="skill-create" class="sheet skc" aria-labelledby="skc-title">
+      <div class="skc__head">
+        <h2 id="skc-title" data-i18n="skills.createTitle">Create a skill</h2>
+        <button class="icon-btn" type="button" id="skc-close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
+      </div>
+      <label class="skc__label" for="skc-name" data-i18n="skills.skillName">Skill name</label>
+      <input id="skc-name" class="skc__input" type="text" maxlength="60" autocomplete="off" placeholder="Weekly status report" data-i18n-placeholder="skills.namePlaceholder2" />
+      <p class="skc__saved" id="skc-saved" hidden></p>
+      <label class="skc__label" for="skc-desc" data-i18n="skills.description">Description</label>
+      <textarea id="skc-desc" class="skc__area" rows="3" maxlength="1024" placeholder="Generate weekly status reports from recent work. Use when asked for updates or progress summaries." data-i18n-placeholder="skills.descPlaceholder"></textarea>
+      <div class="skedit" id="skc-editor">
+        <div class="skedit__bar">
+          <div class="skedit__tabs" id="skc-tabs" role="tablist" aria-label="Files" data-i18n-aria-label="skills.files"></div>
+          <button class="skedit__add" type="button" id="skc-add-file">
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>
+            <span data-i18n="skills.addFile">Add file</span>
+          </button>
+          <input type="file" id="skc-file-input" multiple class="sr-only" accept=".md,.markdown,.txt,.json,.yaml,.yml,.csv,.tsv,.xml,.html,.css,.js,.mjs,.ts,.py,.sh,.ps1,.sql,.toml,.ini" />
+        </div>
+        <div class="skedit__body">
+          <pre class="skedit__lines" id="skc-lines" aria-hidden="true">1</pre>
+          <textarea class="skedit__text" id="skc-text" spellcheck="false" placeholder="Summarize my recent work in three sections: wins, blockers, and next steps. Keep the tone professional but not stiff..." data-i18n-placeholder="skills.textPlaceholder"></textarea>
+          <button class="icon-btn skedit__copy" type="button" id="skc-copy" aria-label="Copy" title="Copy" data-i18n-aria-label="chat.copy" data-i18n-title="chat.copy">
+            <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v6a1.5 1.5 0 0 0 1.5 1.5H7" /></svg>
+          </button>
+        </div>
+      </div>
+      <p class="settings__status skc__status" id="skc-status" role="status" aria-live="polite"></p>
+      <div class="skc__foot">
+        <button class="skc__draft" type="button" id="skc-draft" data-i18n="skills.draft">Draft</button>
+        <span class="skc__spacer"></span>
+        <button class="btn" type="button" id="skc-cancel" data-i18n="action.cancel">Cancel</button>
+        <button class="btn btn--light" type="button" id="skc-create" data-i18n="skills.create">Create</button>
+      </div>
+    </dialog>
+
+    <dialog id="skc-discard" class="sheet skc-confirm" aria-labelledby="skc-discard-title" aria-describedby="skc-discard-text">
+      <h3 id="skc-discard-title" data-i18n="skills.discardTitle">Discard this draft?</h3>
+      <p id="skc-discard-text" data-i18n="skills.discardText">Your changes haven’t been saved and will be lost.</p>
+      <div class="skc-confirm__actions">
+        <button class="btn skc-confirm__keep" type="button" id="skc-keep" data-i18n="skills.keepEditing">Keep editing</button>
+        <button class="btn skc-confirm__discard" type="button" id="skc-discard-yes" data-i18n="skills.discard">Discard</button>
+      </div>
+    </dialog>
+
     <dialog id="shortcuts" class="sheet sheet--form" aria-labelledby="shortcuts-title">
       <form method="dialog" class="sheet__head">
         <h2 id="shortcuts-title" data-i18n="learn.shortcuts">Keyboard shortcuts</h2>
@@ -1838,18 +1888,73 @@
 
           <!-- ── Extensions: MCP servers, as Claude's extensions are ── -->
           <section class="panel" data-panel="extensions" id="panel-extensions" role="tabpanel" aria-labelledby="tab-extensions">
-            <div class="settings__headrow">
-              <div>
-                <h3 class="settings__title" data-i18n="settings.tab.extensions">Extensions</h3>
-                <p class="settings__lede" data-i18n="settings.extensionsLede">Tools from outside Synapsez — Figma, Jira, a database — through MCP servers. Every tool from one asks before it runs.</p>
+            <!-- Laid out as Claude's Connectors (owner, 2026-11-01): what you have,
+                 and Discover — the suggested servers as cards. + Add holds adding
+                 one by hand, a config file, and Advanced settings. -->
+            <div class="cust__head">
+              <h3 class="cust__title" data-i18n="settings.tab.extensions">Extensions</h3>
+              <div class="usage__seg" role="tablist" aria-labelledby="tab-extensions">
+                <button type="button" role="tab" data-cust-view="yours" aria-selected="true" data-i18n="settings.yours">Yours</button>
+                <button type="button" role="tab" id="extensions-browse" data-cust-view="discover" aria-selected="false" data-i18n="settings.discover">Discover</button>
               </div>
-              <button class="btn btn--small" id="extensions-browse" type="button" aria-expanded="false" aria-controls="mcp-catalogue" data-i18n="settings.browseExtensions">Browse extensions</button>
+              <input type="search" class="cust__search" data-cust-search autocomplete="off" placeholder="Search" aria-label="Search extensions" data-i18n-placeholder="settings.search" data-i18n-aria-label="settings.searchExtensions" />
+              <button class="btn btn--primary btn--small cust__add" id="extensions-add" type="button" aria-haspopup="menu" aria-expanded="false">
+                <span data-i18n="settings.add">+ Add</span>
+                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
+              </button>
             </div>
-            <div class="settings__browse" id="extensions-catalogue" hidden>
-              <p class="settings__lede" data-i18n="mcp.suggested.hint">Press one to fill the form in. Nothing is installed or run until you press Connect.</p>
-              <div id="mcp-catalogue" class="mcp-cat"></div>
+            <p class="settings__lede" data-i18n="settings.extensionsLede">Tools from outside Synapsez — Figma, Jira, a database — through MCP servers. Every tool from one asks before it runs.</p>
+            <div data-cust-pane="yours"><div id="mcp-list"></div></div>
+            <div data-cust-pane="discover" id="extensions-catalogue" hidden>
+              <div class="cust__grouprow">
+                <p class="cust__group"><span data-i18n="settings.suggestedServers">Suggested servers</span> <span class="cust__count" id="mcp-catalogue-count"></span></p>
+              </div>
+              <div id="mcp-catalogue" class="cgrid cgrid--ext"></div>
             </div>
-            <div id="mcp-list"></div>
+          </section>
+
+          <!-- Extensions → Advanced settings (owner, 2026-11-01, after Claude's):
+               where servers run and with what, then adding one yourself. The
+               form is the one in Developer, moved here while this is open. -->
+          <section class="panel" data-panel="extadvanced" id="panel-extadvanced" role="tabpanel" aria-labelledby="tab-extensions">
+            <button class="data__back" type="button" data-goto="extensions">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 10H4M9 5l-5 5 5 5" /></svg>
+              <span data-i18n="settings.tab.extensions">Extensions</span>
+            </button>
+            <h3 class="page__title" data-i18n="ext.advanced">Advanced settings</h3>
+            <h4 class="page__section" data-i18n="ext.settings">Extension settings</h4>
+            <div class="srow">
+              <div class="srow__text">
+                <span class="srow__label" data-i18n="ext.runsWhere">Where servers that are programs run</span>
+                <p class="srow__desc" id="ext-runs-hint"></p>
+              </div>
+              <div class="srow__control"><span class="srow__value" id="ext-runs"></span></div>
+            </div>
+            <div class="srow srow--stack ext-tools">
+              <span class="srow__label" data-i18n="ext.detected">Detected tools</span>
+              <p class="ext-tools__line"><span data-i18n="ext.node">Node.js</span>: <strong id="ext-node">—</strong></p>
+              <p class="ext-tools__line"><span data-i18n="ext.python">Python</span>: <strong id="ext-python">—</strong></p>
+              <div class="ext-tools__check" id="ext-check-row" hidden>
+                <button class="btn btn--small" type="button" id="ext-check" data-i18n="ext.check">Check the cloud computer</button>
+                <span class="srow__desc" id="ext-checked"></span>
+              </div>
+            </div>
+            <h4 class="page__section" data-i18n="ext.developer">Extension developer</h4>
+            <div class="ext-warn" role="note">
+              <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3 2.5 16.5h15Z" /><path d="M10 8.5v3.5M10 14.4h.01" /></svg>
+              <div>
+                <p class="ext-warn__title" data-i18n="ext.warnTitle">Developer tools warning</p>
+                <p class="ext-warn__text" data-i18n="ext.warnText">These are for adding servers yourself. A server added by hand runs a program or reaches an address you name — only add what you trust. Every tool from it still asks before it runs.</p>
+              </div>
+            </div>
+            <div class="ext-actions">
+              <button class="btn btn--light" type="button" id="ext-add-hand" data-i18n="ext.addByHand">Add a server by hand</button>
+              <label class="btn btn--small ext-actions__file" for="ext-config-file" data-i18n="ext.installConfig">Install from a config file</label>
+              <input type="file" id="ext-config-file" accept=".json,application/json" class="sr-only" />
+              <button class="btn btn--small" type="button" id="ext-export" data-i18n="ext.export">Export your servers</button>
+            </div>
+            <p class="settings__status" id="ext-status" role="status" aria-live="polite"></p>
+            <div id="ext-form-host"></div>
           </section>
 
           <!-- ── Developer: an MCP server added by hand ── -->
@@ -1860,6 +1965,9 @@
               others. Plug one in and the assistant can use it. Nothing here is chosen by the assistant:
               you type the command, and every tool from a server stops and asks before it runs.
             </p>
+            <!-- One form, two homes: here, and Extensions → Advanced settings, which
+                 borrows it while open (app.js placeMcpForm). -->
+            <div id="mcp-form-home"><div id="mcp-form">
             <div class="srow">
               <div class="srow__text"><label class="srow__label" for="mcp-name" data-i18n="mcp.name">Name</label></div>
               <div class="srow__control"><input id="mcp-name" class="sinput" type="text" placeholder="figma" autocomplete="off" /></div>
@@ -1899,6 +2007,7 @@
               <button class="btn btn--primary btn--small" id="mcp-add" type="button" data-i18n="mcp.add">Connect</button>
               <span class="settings__status" id="mcp-status" role="status" aria-live="polite"></span>
             </div>
+            </div></div>
 
             <div class="scard">
               <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 6-4 4 4 4M13 6l4 4-4 4M11 4 9 16" /></svg>
@@ -1919,34 +2028,50 @@
                 <button type="button" role="tab" data-cust-view="discover" aria-selected="false" data-i18n="settings.discover">Discover</button>
               </div>
               <input type="search" class="cust__search" data-cust-search autocomplete="off" placeholder="Search" aria-label="Search skills" data-i18n-placeholder="settings.search" data-i18n-aria-label="settings.searchSkills" />
-              <button class="btn btn--primary btn--small" id="skill-add-open" type="button" aria-expanded="false" aria-controls="skill-form" data-i18n="settings.add">+ Add</button>
-            </div>
-            <div class="cust__form" id="skill-form" hidden>
-              <p class="settings__lede" data-i18n-html="skills.lede">
-                A procedure taught once instead of re-explained every conversation. The assistant sees the
-                names and descriptions, and reads the full instructions when one applies — so the
-                <strong>description</strong> is what decides whether it gets used. It can also write these
-                itself when you teach it something.
-              </p>
-              <div class="field">
-                <label for="skill-name" data-i18n="form.name">Name</label>
-                <input type="text" id="skill-name" placeholder="Weekly freight quotation" data-i18n-placeholder="skills.namePlaceholder" />
-              </div>
-              <div class="field">
-                <label for="skill-description" data-i18n="skills.when">When it applies</label>
-                <input type="text" id="skill-description" placeholder="When asked to price a container shipment" data-i18n-placeholder="skills.whenPlaceholder" />
-              </div>
-              <div class="field">
-                <label for="skill-instructions" data-i18n="skills.procedure">The procedure</label>
-                <textarea id="skill-instructions" rows="6" placeholder="1. Check the rate sheet in …" data-i18n-placeholder="skills.procedurePlaceholder"></textarea>
-              </div>
-              <div class="settings__actions">
-                <button class="btn btn--primary btn--small" id="skill-save" type="button" data-i18n="skills.save">Save skill</button>
-                <span class="settings__status" id="skill-status" role="status" aria-live="polite"></span>
-              </div>
+              <!-- Claude's: filter (by plugin, by who made it), sort, and + Add's menu (owner, 2026-11-01). -->
+              <button class="icon-btn cust__tool" id="skills-filter" type="button" aria-haspopup="menu" aria-expanded="false" data-i18n-aria-label="skills.filterBy" data-i18n-title="skills.filterBy" aria-label="Filter by" title="Filter by">
+                <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 5.5h13M6 10h8M8.5 14.5h3" /></svg>
+              </button>
+              <button class="icon-btn cust__tool" id="skills-sort" type="button" aria-haspopup="menu" aria-expanded="false" data-i18n-aria-label="skills.sortBy" data-i18n-title="skills.sortBy" aria-label="Sort by" title="Sort by">
+                <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 16V4M4 7l3-3 3 3M13 4v12M10 13l3 3 3-3" /></svg>
+              </button>
+              <button class="btn btn--primary btn--small cust__add" id="skill-add-open" type="button" aria-haspopup="menu" aria-expanded="false">
+                <span data-i18n="settings.add">+ Add</span>
+                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
+              </button>
             </div>
             <div data-cust-pane="yours"><div id="skill-list"></div></div>
             <div data-cust-pane="discover" hidden><div id="skill-discover"></div></div>
+          </section>
+
+          <!-- Skills → Add → Upload skill (owner, 2026-11-01, after Claude's). -->
+          <section class="panel" data-panel="skillupload" id="panel-skillupload" role="tabpanel" aria-labelledby="tab-skills">
+            <button class="data__back" type="button" data-goto="skills">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 10H4M9 5l-5 5 5 5" /></svg>
+              <span data-i18n="skills.yourSkills">Your skills</span>
+            </button>
+            <h3 class="page__title" data-i18n="skills.uploadTitle">Upload a skill</h3>
+            <p class="data__hint" data-i18n="skills.uploadLede">Add a skill to your workspace. A security scan runs when you upload.</p>
+            <p class="page__label" id="skill-drop-label" data-i18n="skills.skillFile">Skill file</p>
+            <label class="dropzone" id="skill-drop" for="skill-files" tabindex="0" aria-labelledby="skill-drop-label skill-drop-text">
+              <svg viewBox="0 0 20 20" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13V4M6.5 7.5 10 4l3.5 3.5M4 16h12" /></svg>
+              <span id="skill-drop-text" data-i18n="skills.dropHint">Drag and drop skill files here, or browse — you can add several at once</span>
+            </label>
+            <input type="file" id="skill-files" accept=".md,.markdown,.zip,.skill" multiple class="sr-only" />
+            <ul class="dropzone__rules">
+              <li data-i18n="skills.ruleMd">.md file must contain skill name and description formatted in YAML</li>
+              <li data-i18n="skills.ruleZip">.zip or .skill file must include a SKILL.md file</li>
+            </ul>
+            <div id="skill-picked" class="skpick"></div>
+            <div class="scanrow">
+              <span data-i18n="skills.scan">Security scan</span>
+              <span class="scanrow__state" id="skill-scan-state" data-i18n="skills.scanWhen">Runs when you upload</span>
+            </div>
+            <div class="settings__actions">
+              <button class="btn btn--light" type="button" id="skill-upload" disabled data-i18n="skills.upload">Upload</button>
+              <button class="btn" type="button" id="skill-upload-cancel" data-i18n="action.cancel">Cancel</button>
+              <span class="settings__status" id="skill-upload-status" role="status" aria-live="polite" data-i18n="skills.chooseFirst">Choose a file to continue.</span>
+            </div>
           </section>
 
           <section class="panel" data-panel="connectors" id="panel-connectors" role="tabpanel" aria-labelledby="tab-connectors">

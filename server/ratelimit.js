@@ -40,6 +40,9 @@ export const LIMITS = {
   // The + menu's Drive picker: a search per pause in typing, and each pick a
   // download through this server. Plenty for a person; a ceiling for a script.
   drive: { limit: 300, windowMs: 15 * 60_000 },
+  // Uploading skills: a scan on choosing the files and one more to keep them —
+  // a few dozen an hour is a busy afternoon; each reads up to ten 2 MB files.
+  skillUpload: { limit: 60, windowMs: 60 * 60_000 },
 };
 
 /**

@@ -182,6 +182,13 @@ export const api = {
   runWorkflow: (id) => request('POST', `/api/workflows/${id}/run`),
 
   connectors: () => request('GET', '/api/connectors'),
+  // Skills: upload (scan first, keep when asked) and the Create a skill draft (owner, 2026-11-01).
+  uploadSkills: (files, { save = false } = {}) => request('POST', '/api/skills/upload', { files, save }),
+  skillDraft: () => request('GET', '/api/skills/draft'),
+  saveSkillDraft: (draft) => request('PUT', '/api/skills/draft', draft),
+  deleteSkillDraft: () => request('DELETE', '/api/skills/draft'),
+  // Where MCP servers that are programs run, and the Node and Python there.
+  mcpEnvironment: ({ check = false } = {}) => request('GET', `/api/mcp/environment${check ? '?check=1' : ''}`),
   // Where each entry of the connector directory stands — for the suggestion cards.
   connectorDirectory: () => request('GET', '/api/connectors/directory'),
   connect: (service, token) => request('POST', `/api/connectors/${service}`, { token }),

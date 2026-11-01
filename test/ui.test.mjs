@@ -3190,14 +3190,186 @@ section('connector search: on by default, and a card whose Connect opens the for
   check('  connected, the card says so once Settings closes', (await page.evaluate(() => document.querySelector('#ui-consug .consug__row[data-connector-id="notion"] .consug__connect')?.classList.contains('is-connected'))) === true);
   await page.locator('#ui-consug .consug__row[data-connector-id="mcp:sentry"] .consug__connect').click();
   await page.waitForTimeout(900);
-  const server = await page.evaluate(() => ({ tab: /** @type {HTMLElement | null} */ (document.querySelector('#settings .tab.is-active'))?.dataset.tab, name: /** @type {HTMLInputElement} */ (document.getElementById('mcp-name')).value }));
-  check('  a server\'s Connect fills the form in Developer', server.tab === 'developer' && server.name === 'sentry', JSON.stringify(server));
+  const server = await page.evaluate(() => ({
+    tab: /** @type {HTMLElement | null} */ (document.querySelector('#settings .tab.is-active'))?.dataset.tab,
+    panel: /** @type {HTMLElement | null} */ (document.querySelector('#settings .panel.is-active'))?.dataset.panel,
+    name: /** @type {HTMLInputElement} */ (document.getElementById('mcp-name')).value,
+  }));
+  check('  a server\'s Connect fills the form in Extensions → Advanced settings', server.tab === 'extensions' && server.panel === 'extadvanced' && server.name === 'sentry', JSON.stringify(server));
   await page.evaluate(() => {
     document.getElementById('settings').close();
     document.getElementById('ui-consug')?.remove();
   });
   await getStore().deleteConnector(me.id, 'notion');
   await page.waitForTimeout(200);
+}
+
+section('Extensions: Discover as cards, + Add, and Advanced settings with the form (owner, 2026-11-01)');
+{
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await openSettings();
+  await page.click('#tab-extensions');
+  await page.waitForTimeout(500);
+  await page.click('#extensions-browse');
+  await page.waitForTimeout(1200);
+  const cards = await page.evaluate(() => {
+    const all = [...document.querySelectorAll('#mcp-catalogue .ccard--ext')];
+    const first = all[0];
+    return {
+      n: all.length,
+      count: document.getElementById('mcp-catalogue-count')?.textContent,
+      by: first?.querySelector('.ccard__by')?.textContent,
+      badge: !!first?.querySelector('.ccard__badge'),
+      add: !!first?.querySelector('[data-mcp-preset]'),
+      visible: !document.getElementById('extensions-catalogue')?.hidden,
+    };
+  });
+  check('Discover shows the suggested servers as cards, counted, each "by" its maker with a mark and a +', cards.visible && cards.n >= 10 && cards.count === String(cards.n) && /^by /.test(cards.by || '') && cards.badge && cards.add, JSON.stringify(cards));
+  await page.click('#extensions-add');
+  await page.waitForTimeout(250);
+  const addMenu = await page.evaluate(() => [...document.querySelectorAll('.cmenu .cmenu__item')].length);
+  check('  + Add holds a server by hand, a config file and Advanced settings', addMenu === 3, String(addMenu));
+  await page.locator('.cmenu .cmenu__item').nth(2).click();
+  await page.waitForTimeout(700);
+  const advanced = await page.evaluate(() => ({
+    lit: /** @type {HTMLElement | null} */ (document.querySelector('#settings .tab.is-active'))?.dataset.tab,
+    panel: /** @type {HTMLElement | null} */ (document.querySelector('#settings .panel.is-active'))?.dataset.panel,
+    runs: document.getElementById('ext-runs')?.textContent,
+    node: document.getElementById('ext-node')?.textContent,
+    warn: !!document.querySelector('#panel-extadvanced .ext-warn'),
+    formHidden: document.getElementById('ext-form-host')?.hidden,
+  }));
+  check('Advanced settings is a page inside Extensions: where servers run, the tools found, the warning', advanced.lit === 'extensions' && advanced.panel === 'extadvanced' && !!advanced.runs && !!advanced.node && advanced.warn, JSON.stringify(advanced));
+  check('  opened from + Add → Advanced settings, the form waits to be asked for', advanced.formHidden === true);
+  await page.click('#ext-add-hand');
+  await page.waitForTimeout(200);
+  check('  Add a server by hand opens the form there', (await page.evaluate(() => !!document.querySelector('#ext-form-host #mcp-form') && document.activeElement?.id === 'mcp-name')) === true);
+  await page.click('#tab-developer');
+  await page.waitForTimeout(200);
+  check('  and Developer has it back', (await page.evaluate(() => !!document.querySelector('#mcp-form-home #mcp-form'))) === true);
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.waitForTimeout(200);
+}
+
+section('Skills: filter, sort, + Add — upload with a scan, create with a draft that survives, create with Claude (owner, 2026-11-01)');
+{
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await openSettings();
+  await page.click('#tab-skills');
+  await page.waitForTimeout(700);
+  await page.click('#skills-filter');
+  await page.waitForTimeout(250);
+  await page.locator('#settings .cmenu .cmenu__item--sub').first().hover();
+  await page.waitForTimeout(300);
+  const filter = await page.evaluate(() => ({
+    heading: document.querySelector('#settings .cmenu > .cmenu__heading')?.textContent,
+    subs: [...document.querySelectorAll('#settings .cmenu > .cmenu__item--sub')].length,
+    sub: [...document.querySelectorAll('#settings .cmenu--sub .cmenu__item')].map((n) => n.getAttribute('aria-checked')),
+  }));
+  check('Filter by opens Plugin › and Created by ›, the current choice ticked', filter.subs === 2 && filter.sub[0] === 'true' && filter.sub.length >= 2, JSON.stringify(filter));
+  await page.locator('#settings .cmenu--sub .cmenu__item').nth(1).click();
+  await page.waitForTimeout(300);
+  const narrowed = await page.evaluate(() => ({
+    rows: document.querySelectorAll('#skill-list .crow').length,
+    tagged: [...document.querySelectorAll('#skill-list .crow')].every((r) => !!r.querySelector('.crow__tag')),
+  }));
+  check('  a plugin narrows the list to the skills it comes with', narrowed.rows > 0 && narrowed.tagged, JSON.stringify(narrowed));
+  await page.click('#skills-filter');
+  await page.locator('#settings .cmenu .cmenu__item--sub').first().hover();
+  await page.waitForTimeout(200);
+  await page.locator('#settings .cmenu--sub .cmenu__item').first().click();
+  await page.waitForTimeout(200);
+  await page.click('#skills-sort');
+  await page.waitForTimeout(200);
+  const sort = await page.evaluate(() => [...document.querySelectorAll('#settings .cmenu .cmenu__item')].map((n) => n.getAttribute('aria-checked')));
+  check('Sort by: last edited (ticked), name, plugin name', sort.join() === 'true,false,false', sort.join());
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  await page.click('#skill-add-open');
+  await page.waitForTimeout(200);
+  const add = await page.evaluate(() => [...document.querySelectorAll('#settings .cmenu .cmenu__item')].map((n) => !!n.querySelector('.cmenu__icon')));
+  check('+ Add: upload, create, create with Claude — each with its icon, no screen recording', add.length === 3 && add.every(Boolean), JSON.stringify(add));
+
+  // Upload: the scan refuses a skill holding a key, and keeps the clean one.
+  await page.locator('#settings .cmenu .cmenu__item').first().click();
+  await page.waitForTimeout(300);
+  const good = '---\nname: ui-weekly-status\ndescription: When asked for a weekly status report.\n---\n1. Gather wins.\n';
+  const bad = `---\nname: ui-leaky\ndescription: Has a key.\n---\nUse sk-ant-api03-${'A'.repeat(90)} always.\n`;
+  await page.setInputFiles('#skill-files', [
+    { name: 'weekly.md', mimeType: 'text/markdown', buffer: Buffer.from(good) },
+    { name: 'leaky.md', mimeType: 'text/markdown', buffer: Buffer.from(bad) },
+  ]);
+  await page.waitForTimeout(1200);
+  const scanned = await page.evaluate(() => ({
+    refused: document.querySelectorAll('#skill-picked .skpick__item.is-refused').length,
+    items: document.querySelectorAll('#skill-picked .skpick__item').length,
+    upload: !(/** @type {HTMLButtonElement} */ (document.getElementById('skill-upload')).disabled),
+  }));
+  check('Upload scans what is chosen: a key refuses that file, the clean one may go', scanned.items === 2 && scanned.refused === 1 && scanned.upload, JSON.stringify(scanned));
+  await page.click('#skill-upload');
+  await page.waitForTimeout(1200);
+  const { getStore } = await import('../server/store/index.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  const names = (await getStore().listSkills(me.id)).map((s) => s.name);
+  check('  uploaded, the clean one is a skill — the refused one is not', names.includes('ui-weekly-status') && !names.includes('ui-leaky'), names.join(','));
+
+  // Create: typed, kept as a draft; Cancel asks; reopened, it is all there.
+  await page.click('#tab-skills');
+  await page.waitForTimeout(300);
+  await page.click('#skill-add-open');
+  await page.locator('#settings .cmenu .cmenu__item').nth(1).click();
+  await page.waitForTimeout(600);
+  await page.fill('#skc-name', 'ui-draft-skill');
+  await page.fill('#skc-desc', 'When testing drafts.');
+  await page.click('#skc-text');
+  await page.keyboard.type('Step one.\nStep two.');
+  await page.waitForTimeout(1600);
+  const typed = await page.evaluate(async () => ({
+    lines: document.getElementById('skc-lines')?.textContent,
+    server: (await (await fetch('/api/skills/draft')).json()).draft?.name,
+    copyShown: getComputedStyle(/** @type {HTMLElement} */ (document.getElementById('skc-copy'))).opacity,
+  }));
+  check('Create a skill: numbered lines, Copy shown while in the editor, the draft kept on the account', typed.lines === '1\n2' && typed.server === 'ui-draft-skill' && typed.copyShown === '1', JSON.stringify(typed));
+  await page.click('#skc-cancel');
+  await page.waitForTimeout(250);
+  check('  Cancel with something written asks first, Keep editing ready', (await page.evaluate(() => /** @type {HTMLDialogElement} */ (document.getElementById('skc-discard')).open && document.activeElement?.id === 'skc-keep')) === true);
+  await page.click('#skc-keep');
+  await page.evaluate(() => {
+    localStorage.removeItem('synapsez.skillDraft');
+    /** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).close();
+  });
+  await page.click('#skill-add-open');
+  await page.locator('#settings .cmenu .cmenu__item').nth(1).click();
+  await page.waitForTimeout(800);
+  const restored = await page.evaluate(() => ({ name: /** @type {HTMLInputElement} */ (document.getElementById('skc-name')).value, text: /** @type {HTMLTextAreaElement} */ (document.getElementById('skc-text')).value }));
+  check('  a browser that lost its copy gets the account\'s back', restored.name === 'ui-draft-skill' && restored.text === 'Step one.\nStep two.', JSON.stringify(restored));
+  await page.click('#skc-cancel');
+  await page.waitForTimeout(200);
+  await page.click('#skc-discard-yes');
+  await page.waitForTimeout(500);
+  check('  Discard lets it go, everywhere', (await page.evaluate(async () => !(/** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).open) && !localStorage.getItem('synapsez.skillDraft') && !(await (await fetch('/api/skills/draft')).json()).draft)) === true);
+
+  // Create with Claude: a new conversation, the request written, skill-creator picked.
+  await page.click('#skill-add-open');
+  await page.locator('#settings .cmenu .cmenu__item').nth(2).click();
+  await page.waitForTimeout(700);
+  const withClaude = await page.evaluate(() => ({
+    settings: /** @type {HTMLDialogElement} */ (document.getElementById('settings')).open,
+    text: /** @type {HTMLTextAreaElement} */ (document.getElementById('input')).value,
+    picked: document.getElementById('skill-chips')?.textContent || '',
+  }));
+  check('Create with Claude starts a conversation with the request written and skill-creator picked', !withClaude.settings && /skill-creator/.test(withClaude.text) && /skill-creator/.test(withClaude.picked), JSON.stringify(withClaude));
+  await page.evaluate(() => {
+    const box = /** @type {HTMLTextAreaElement} */ (document.getElementById('input'));
+    box.value = '';
+    box.dispatchEvent(new Event('input'));
+  });
+  for (const chip of await page.$$('#skill-chips button')) await chip.click().catch(() => {});
+  await getStore().deleteSkill(me.id, (await getStore().listSkills(me.id)).find((s) => s.name === 'ui-weekly-status')?.id || '');
 }
 
 section('the Settings tabs no longer include Computers');

@@ -218,10 +218,11 @@ export function openZip(buffer) {
     }
   };
 
-  const read = (name) => {
+  /** `limit`: the most this read may inflate to — smaller than a part may be, for a reader that wants little. */
+  const read = (name, limit = MAX_PART_BYTES) => {
     const entry = entryFor(name);
     if (!entry) throw new Error(`This document has no part called ${name}.`);
-    if (entry.size > MAX_PART_BYTES) {
+    if (entry.size > limit) {
       throw new Error(`${name} claims to be ${entry.size} bytes, which is too large to read.`);
     }
 
@@ -239,7 +240,8 @@ export function openZip(buffer) {
     if (entry.method !== 8) throw new Error(`${name} uses compression method ${entry.method}, which is not supported.`);
 
     try {
-      return zlib.inflateRawSync(raw, { maxOutputLength: MAX_PART_BYTES });
+      // The declared size can lie; inflating stops at the limit whatever it says.
+      return zlib.inflateRawSync(raw, { maxOutputLength: limit });
     } catch (err) {
       throw new Error(`${name} could not be decompressed: ${err.message}`);
     }
@@ -250,7 +252,7 @@ export function openZip(buffer) {
     has: (name) => !!entryFor(name),
     read,
     /** A part as text. Every XML part of an OOXML package is UTF-8. */
-    text: (name) => read(name).toString('utf8').replace(/^\uFEFF/, ''),
+    text: (name, limit) => read(name, limit).toString('utf8').replace(/^\uFEFF/, ''),
   };
 }
 

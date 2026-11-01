@@ -20,6 +20,7 @@
 export const BUILTIN_SKILLS = [
   {
     id: 'builtin:docx',
+    plugin: 'office',
     name: 'Writing a Word document',
     description:
       'When asked for a report, a contract, a letter, a proposal, meeting minutes, a CV — anything whose home is Word. Read before calling create_file with format docx.',
@@ -79,6 +80,7 @@ export const BUILTIN_SKILLS = [
   },
   {
     id: 'builtin:xlsx',
+    plugin: 'office',
     name: 'Building a spreadsheet',
     description:
       'When asked for a spreadsheet, a budget, a price list, a tracker, a table of figures, or anything with several sheets. Read before calling create_file with format xlsx or csv.',
@@ -138,6 +140,7 @@ export const BUILTIN_SKILLS = [
   },
   {
     id: 'builtin:pptx',
+    plugin: 'office',
     name: 'Making a slide deck',
     description:
       'When asked for a deck, a presentation, slides, a pitch, or a training session. Read before calling create_file with format pptx.',
@@ -192,6 +195,7 @@ export const BUILTIN_SKILLS = [
   },
   {
     id: 'builtin:pdf',
+    plugin: 'office',
     name: 'Producing a PDF',
     description:
       'When the user specifically asks for a PDF — an invoice, a quotation, a certificate, anything to be printed or sent as final. Read before promising or refusing one.',
@@ -230,6 +234,7 @@ export const BUILTIN_SKILLS = [
   },
   {
     id: 'builtin:artifact',
+    plugin: 'office',
     name: 'Building a small tool or page',
     description:
       'When asked for a calculator, a dashboard, a form, a chart, a mock-up, a game, or any small thing they want to use rather than read. Read before calling create_file with format html.',
@@ -274,6 +279,56 @@ export const BUILTIN_SKILLS = [
       '  in Artifacts, it survives, they can come back to it.',
       '- Something to **look at once**, inside your explanation → `show_widget`. Inline,',
       '  no scripting, gone from mind once read.',
+    ].join('\n'),
+  },
+  /*
+   * What Settings → Skills → Add → Create with Claude starts a conversation
+   * with (owner, 2026-11-01): the assistant asks, drafts, shows, and saves only
+   * when told to — the same skill_write a person's own words would reach.
+   */
+  {
+    id: 'builtin:skill-creator',
+    name: 'skill-creator',
+    description:
+      'When asked to create, write or improve a skill — a procedure the assistant should follow every time a kind of request comes up. Interview the person, draft it, and save it with skill_write once they agree.',
+    instructions: [
+      '# skill-creator',
+      '',
+      'A skill is a procedure you read whenever it applies: its **name** and **description**',
+      'are all you see before deciding to read it, and its **instructions** are what you',
+      'then follow. Help the person make one that works.',
+      '',
+      '## 1. Ask, one thing at a time',
+      '',
+      'Start by asking what the skill should do. Then, only as far as you need to:',
+      '',
+      '- when it should be used — the situations, the words they would use to ask;',
+      '- what a good result looks like — an example, if they have one;',
+      '- the steps or rules that matter, and anything it must never do.',
+      '',
+      'Use `ask_options` when the choices are clear. Two or three questions are usually',
+      'enough; do not interrogate.',
+      '',
+      '## 2. Draft it',
+      '',
+      '- **Name**: short and specific, lowercase words joined by hyphens',
+      '  (`weekly-status-report`).',
+      '- **Description**: one or two sentences about the *situation* — when to use it —',
+      '  under 1,024 characters. This is what decides whether the skill is ever read.',
+      '- **Instructions**: Markdown, written to the assistant ("Do…", not "The assistant',
+      '  does…"): numbered steps, the rules, and an example of the output.',
+      '',
+      '## 3. Show it, then save it',
+      '',
+      'Show the whole draft and ask whether to save it or change something. Save only when',
+      'they agree, with `skill_write`. Then say where it lives — Settings → Skills, where it',
+      'can be edited, switched off or deleted — and that it applies from the next message on.',
+      '',
+      '## Keep it safe',
+      '',
+      '- Never put a key, a password or personal details in a skill: it is read into',
+      '  conversations.',
+      '- One skill, one job. Two jobs are two skills.',
     ].join('\n'),
   },
 ];

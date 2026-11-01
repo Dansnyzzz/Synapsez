@@ -1,9 +1,37 @@
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { getStore } from '../store/index.js';
+import { runInSandbox } from '../sandbox.js';
 import { sealConfig, forgetMcp, probeMcpServer, mcpStatus, slugify } from '../mcp/registry.js';
-import { searchCatalogue } from '../mcp/catalogue.js';
+import { searchCatalogue, MCP_CATALOGUE } from '../mcp/catalogue.js';
+import { connectorDirectory, siteFor } from '../connectorDirectory.js';
 import { stdioPlace } from '../mcp/cloud.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
+
+/** A version out of what `node --version` and `python --version` print. */
+export function parseToolVersions(text) {
+  const out = String(text || '');
+  return {
+    node: /\bv(\d+\.\d+\.\d+)\b/.exec(out)?.[1] || null,
+    python: /\bPython (\d+\.\d+(?:\.\d+)?)\b/i.exec(out)?.[1] || null,
+  };
+}
+
+/** Node and Python where this server runs stdio servers itself — read at once, a few seconds at most. */
+async function localTools() {
+  const run = promisify(execFile);
+  const ask = async (command) => {
+    try {
+      const { stdout, stderr } = await run(command, ['--version'], { timeout: 4000, windowsHide: true });
+      return `${stdout}${stderr}`;
+    } catch {
+      return '';
+    }
+  };
+  const python = process.platform === 'win32' ? (await ask('python')) || (await ask('python3')) : (await ask('python3')) || (await ask('python'));
+  return { node: process.versions.node, python: parseToolVersions(python).python };
+}
 
 /**
  * Lifted out of server/app.js — see the note on mountWorkspaceRoutes for why.
@@ -15,6 +43,29 @@ import { languageOf, translateMessage } from '../i18n/index.js';
  * @param {{ wrap: Function, body: Function }} ctx
  */
 export function mountMcpRoutes(api, { wrap, body }) {
+  /**
+   * Where stdio servers run here, and with what — Extensions → Advanced
+   * settings → Detected tools (owner, 2026-11-01). On this computer it is read
+   * at once. The cloud computer is asked only when somebody presses Check,
+   * because asking starts it; what it said is kept on the account for next time.
+   */
+  api.get(
+    '/mcp/environment',
+    wrap(async (req, res) => {
+      const place = stdioPlace();
+      if (place === 'local') return res.json({ place, tools: await localTools() });
+      if (place !== 'cloud') return res.json({ place: null, tools: null });
+      const store = getStore();
+      let tools = await store.getUserSetting(req.user.id, 'cloudTools');
+      if (req.query.check === '1') {
+        const report = await runInSandbox({ command: 'node --version; python3 --version 2>&1 || python --version 2>&1', timeout_seconds: 30 }, { userId: req.user.id });
+        tools = { ...parseToolVersions(report?.content), checkedAt: new Date().toISOString() };
+        await store.setUserSetting(req.user.id, 'cloudTools', tools);
+      }
+      res.json({ place, tools: tools || null });
+    }),
+  );
+
   /* ── MCP servers ──────────────────────────────────────────────────────
    *
    * The one thing to keep in mind reading these: a stdio MCP server is an
@@ -35,11 +86,16 @@ export function mountMcpRoutes(api, { wrap, body }) {
     '/mcp/catalogue',
     wrap(async (req, res) => {
       const language = languageOf(req);
+      // Whether this account already has each — the ✓ on Discover's card (owner, 2026-11-01).
+      const directory = await connectorDirectory(req.user.id).catch(() => []);
+      const added = new Set(directory.filter((e) => e.kind === 'mcp' && e.connected).map((e) => e.id));
       const servers = searchCatalogue(req.query.q, Number(req.query.limit) || 12).map((server) => ({
         ...server,
         blurb: translateMessage(server.blurb, language),
+        site: siteFor(server.id),
+        added: added.has(`mcp:${server.id}`),
       }));
-      res.json({ servers });
+      res.json({ servers, total: MCP_CATALOGUE.length });
     }),
   );
 

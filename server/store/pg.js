@@ -228,8 +228,10 @@ export function splitStatements(sql) {
  *  33  sessions — one row per sign-in, so a device can be listed and signed
  *      out on its own; feedback — what somebody sent from Give feedback, with a
  *      conversation's copy only when they chose to include it
+ *  34  skills.files — the files a skill carries beside its instructions, from
+ *      the Create a skill editor or an uploaded .zip/.skill
  */
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 34;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -2907,17 +2909,22 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT * FROM skills WHERE user_id = $1 AND id = $2', [userId, id]);
       return rows[0] ?? null;
     },
-    /** Upsert by name, so teaching the same thing twice refines it rather than duplicating it. */
-    async saveSkill(userId, { id, name, description, instructions }) {
+    /**
+     * Upsert by name, so teaching the same thing twice refines it rather than
+     * duplicating it. `files` (34) is replaced only when given: the assistant's
+     * `skill_write` refines the words and leaves the files a person added.
+     */
+    async saveSkill(userId, { id, name, description, instructions, files }) {
       const rows = await q(
-        `INSERT INTO skills (id, user_id, name, description, instructions)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO skills (id, user_id, name, description, instructions, files)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '[]'::jsonb))
          ON CONFLICT (user_id, lower(name)) DO UPDATE SET
            description = EXCLUDED.description,
            instructions = EXCLUDED.instructions,
+           files = COALESCE($6::jsonb, skills.files),
            updated_at = NOW()
       RETURNING *`,
-        [id, userId, name, description, instructions],
+        [id, userId, name, description, instructions, Array.isArray(files) ? toJson(files) : null],
       );
       return rows[0];
     },

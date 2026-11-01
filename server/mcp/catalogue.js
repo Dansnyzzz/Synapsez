@@ -25,6 +25,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'context7',
     label: 'Context7',
+    by: 'Upstash',
     blurb:
       'Up-to-date documentation for any library or framework, fetched on demand. Stops the assistant answering from a stale memory of an API that has changed.',
     transport: 'http',
@@ -35,6 +36,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'gitnexus',
     label: 'GitNexus',
+    by: 'GitNexus',
     blurb:
       'Builds a graph of a codebase, so questions like "what calls this" and "what breaks if I change it" are answered from the code rather than guessed.',
     transport: 'stdio',
@@ -45,6 +47,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'repomix',
     label: 'Repomix',
+    by: 'Repomix',
     blurb:
       'Packs a whole repository into one file a model can read at once. Useful for a review or an audit, where the shape of everything matters more than any one file.',
     transport: 'stdio',
@@ -57,6 +60,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'filesystem',
     label: 'Filesystem',
+    by: 'Model Context Protocol',
     blurb:
       'Reads and writes files under folders you name. Note this app already has its own file tools; this is for reaching a folder outside the workspace on purpose.',
     transport: 'stdio',
@@ -68,6 +72,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'github',
     label: 'GitHub',
+    by: 'Model Context Protocol',
     blurb:
       "GitHub's own server: issues, pull requests, code search, actions. Wider than this app's built-in `github` tool, which is the REST API by hand.",
     transport: 'stdio',
@@ -79,6 +84,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'postgres',
     label: 'PostgreSQL',
+    by: 'Model Context Protocol',
     blurb: 'Runs read-only queries against a Postgres database and reads its schema. For answering questions from real data.',
     transport: 'stdio',
     command: 'npx',
@@ -89,6 +95,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'sentry',
     label: 'Sentry',
+    by: 'Sentry',
     blurb: 'Reads errors and stack traces from Sentry, so a bug report can start from what actually happened rather than a description of it.',
     transport: 'stdio',
     command: 'npx',
@@ -99,6 +106,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'playwright',
     label: 'Playwright',
+    by: 'Microsoft',
     blurb:
       "Browser automation with an accessibility-tree view of the page. This app's own sandbox does the same job; use this when you want Playwright's own tooling.",
     transport: 'stdio',
@@ -109,6 +117,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'figma',
     label: 'Figma',
+    by: 'Figma',
     blurb: 'Reads a Figma file: frames, layers, styles and measurements. For turning a design into markup without eyeballing a screenshot.',
     transport: 'http',
     url: 'http://127.0.0.1:3845/mcp',
@@ -118,6 +127,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'notion',
     label: 'Notion',
+    by: 'Notion',
     blurb: "Notion's own server — richer than this app's `notion_search`, which only finds pages.",
     transport: 'http',
     url: 'https://mcp.notion.com/mcp',
@@ -126,6 +136,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'fetch',
     label: 'Fetch',
+    by: 'Model Context Protocol',
     blurb: 'Fetches a URL and converts it to Markdown. Overlaps this app\'s `web_fetch`; worth it for the cleaner conversion on documentation sites.',
     transport: 'stdio',
     command: 'npx',
@@ -135,6 +146,7 @@ export const MCP_CATALOGUE = [
   {
     id: 'sequential-thinking',
     label: 'Sequential Thinking',
+    by: 'Model Context Protocol',
     blurb: 'A structured scratchpad for working through a hard problem in steps, revising earlier ones as it goes.',
     transport: 'stdio',
     command: 'npx',

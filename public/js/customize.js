@@ -21,6 +21,9 @@ import { PLUGINS } from './plugins.js';
  *   closeSettings: () => void,
  *   googleCard: (connector: any) => string,
  *   onPlugins?: () => void,
+ *   selectTab: (tab: string) => void,
+ *   editSkill: (skill: any) => void,
+ *   createWithClaude: () => void,
  * }} Deps
  */
 
@@ -32,6 +35,9 @@ const ICON = {
   more: svg('<circle cx="5" cy="10" r=".9"/><circle cx="10" cy="10" r=".9"/><circle cx="15" cy="10" r=".9"/>'),
   add: svg('<path d="M10 4v12M4 10h12"/>', 17),
   check: svg('<path d="m4.5 10.5 3.5 3.5 7.5-8"/>', 17),
+  upload: svg('<path d="M10 13V4M6.5 7.5 10 4l3.5 3.5M4 16h12"/>', 17),
+  pencil: svg('<path d="M13.5 2.9a1.9 1.9 0 0 1 2.7 2.7L7.8 14 4 15l1-3.8Z"/>', 17),
+  chat: svg('<path d="M4 4.5h12a1.5 1.5 0 0 1 1.5 1.5v6.5A1.5 1.5 0 0 1 16 14h-6l-4 3v-3H4a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 4 4.5Z"/>', 17),
 };
 
 /** The plugin names and what each holds, by key literal so the dictionary check sees every one. */
@@ -58,44 +64,84 @@ const day = (iso) => {
  * click elsewhere or Escape the way every menu is.
  *
  * A choice of one (Private or Public in Your data) passes `checked` on each
- * item: they read as radio items, the chosen one ticked.
+ * item: they read as radio items, the chosen one ticked. Claude's Skills menus
+ * (owner, 2026-11-01) add the rest: a `heading` row ("Filter by"), an `icon`
+ * before a label, and `sub` — a second menu opened beside its row by pointing,
+ * pressing or →, nested inside the first so a click in it never closes both.
  *
+ * @typedef {{ label?: string, heading?: string, run?: () => any, danger?: boolean, confirm?: string, checked?: boolean, icon?: string, sub?: () => MenuItem[] }} MenuItem
  * @param {HTMLElement} button
- * @param {{ label: string, run: () => any, danger?: boolean, confirm?: string, checked?: boolean }[]} items
+ * @param {MenuItem[]} items
+ * @param {{ beside?: HTMLElement, root?: HTMLElement }} [options]  for a sub-menu: the row it opens from, and the menu it is in
  */
-export function openMenu(button, items) {
-  const dialog = button.closest('dialog') || document.body;
-  dialog.querySelector('.cmenu')?.remove();
+export function openMenu(button, items, { beside = null, root = null } = {}) {
+  const host = root || button.closest('dialog') || document.body;
+  if (root) root.querySelectorAll(':scope > .cmenu').forEach((m) => m.remove());
+  else host.querySelectorAll(':scope > .cmenu').forEach((m) => m.remove());
   const menu = document.createElement('div');
-  menu.className = 'cmenu';
+  menu.className = `cmenu${root ? ' cmenu--sub' : ''}`;
   menu.setAttribute('role', 'menu');
   menu.setAttribute('popover', 'auto');
+  const close = () => {
+    /** @type {HTMLElement} */
+    let top = menu;
+    while (top.parentElement?.classList.contains('cmenu')) top = top.parentElement;
+    top.hidePopover?.();
+    top.remove();
+  };
   for (const item of items) {
+    if (item.heading) {
+      menu.append(Object.assign(document.createElement('p'), { className: 'cmenu__heading', textContent: item.heading }));
+      continue;
+    }
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = `cmenu__item${item.danger ? ' is-danger' : ''}${item.checked != null ? ' cmenu__item--check' : ''}`;
+    row.className = `cmenu__item${item.danger ? ' is-danger' : ''}${item.checked != null ? ' cmenu__item--check' : ''}${item.sub ? ' cmenu__item--sub' : ''}`;
     row.setAttribute('role', item.checked != null ? 'menuitemradio' : 'menuitem');
     if (item.checked != null) row.setAttribute('aria-checked', String(!!item.checked));
-    row.textContent = item.label;
-    let armedOnce = false;
-    row.addEventListener('click', async () => {
-      // Something that cannot be undone asks twice, as every delete here does.
-      if (item.confirm && !armedOnce) {
-        armedOnce = true;
-        row.textContent = item.confirm;
-        return;
-      }
-      menu.hidePopover?.();
-      menu.remove();
-      try {
-        await item.run();
-      } catch (err) {
-        toast(err.message, 'error');
-      }
-    });
+    if (item.sub) row.setAttribute('aria-haspopup', 'menu');
+    if (item.icon) row.insertAdjacentHTML('beforeend', `<span class="cmenu__icon">${item.icon}</span>`);
+    const label = document.createElement('span');
+    label.className = 'cmenu__label';
+    label.textContent = item.label || '';
+    row.append(label);
+    if (item.sub) {
+      const openSub = (focus) => {
+        if (/** @type {HTMLElement | null} */ (menu.querySelector(':scope > .cmenu'))?.dataset.from === item.label) return;
+        const sub = openMenu(row, item.sub(), { beside: row, root: menu });
+        sub.dataset.from = item.label || '';
+        if (focus) /** @type {HTMLElement | null} */ (sub.querySelector('.cmenu__item'))?.focus();
+      };
+      row.addEventListener('pointerenter', () => openSub(false));
+      row.addEventListener('click', () => openSub(true));
+      row.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          openSub(true);
+        }
+      });
+    } else {
+      // Pointing at a plain row closes a sub-menu another row opened.
+      row.addEventListener('pointerenter', () => menu.querySelectorAll(':scope > .cmenu').forEach((m) => m.remove()));
+      let armedOnce = false;
+      row.addEventListener('click', async () => {
+        // Something that cannot be undone asks twice, as every delete here does.
+        if (item.confirm && !armedOnce) {
+          armedOnce = true;
+          label.textContent = item.confirm;
+          return;
+        }
+        close();
+        try {
+          await item.run?.();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+    }
     menu.append(row);
   }
-  dialog.append(menu);
+  host.append(menu);
   button.setAttribute('aria-expanded', 'true');
   menu.addEventListener('toggle', (event) => {
     if (/** @type {any} */ (event).newState === 'closed') {
@@ -104,18 +150,35 @@ export function openMenu(button, items) {
     }
   });
   menu.addEventListener('keydown', (event) => {
-    const rows = /** @type {HTMLElement[]} */ ([...menu.querySelectorAll('.cmenu__item')]);
+    event.stopPropagation();
+    const rows = /** @type {HTMLElement[]} */ ([...menu.querySelectorAll(':scope > .cmenu__item')]);
     const at = rows.indexOf(/** @type {HTMLElement} */ (document.activeElement));
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       rows[(at + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus();
+    } else if (event.key === 'ArrowLeft' && root) {
+      event.preventDefault();
+      menu.remove();
+      button.focus();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+      /** @type {HTMLElement | null} */ (beside ? button.closest('.cmenu') : button)?.focus?.();
     }
   });
   menu.showPopover?.();
   const at = button.getBoundingClientRect();
-  menu.style.top = `${Math.min(at.bottom + 4, window.innerHeight - menu.offsetHeight - 8)}px`;
-  menu.style.left = `${Math.max(8, at.right - menu.offsetWidth)}px`;
-  /** @type {HTMLElement | null} */ (menu.querySelector('.cmenu__item'))?.focus();
+  if (beside) {
+    // Beside its row, on whichever side has room.
+    const right = at.right + 6;
+    menu.style.left = `${right + menu.offsetWidth <= window.innerWidth - 8 ? right : Math.max(8, at.left - menu.offsetWidth - 6)}px`;
+    menu.style.top = `${Math.max(8, Math.min(at.top - 6, window.innerHeight - menu.offsetHeight - 8))}px`;
+  } else {
+    menu.style.top = `${Math.min(at.bottom + 4, window.innerHeight - menu.offsetHeight - 8)}px`;
+    menu.style.left = `${Math.max(8, at.right - menu.offsetWidth)}px`;
+    /** @type {HTMLElement | null} */ (menu.querySelector('.cmenu__item'))?.focus();
+  }
+  return menu;
 }
 
 /** One row of a "Yours" list. */
@@ -152,7 +215,7 @@ const empty = (text) => `<p class="cust__empty">${escapeHtml(text)}</p>`;
 export function createCustomize(deps) {
   /* ── the two views and the search, the same in all three panels ──── */
 
-  for (const panel of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#panel-skills, #panel-connectors, #panel-plugins'))) {
+  for (const panel of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#panel-skills, #panel-connectors, #panel-plugins, #panel-extensions'))) {
     const show = (view) => {
       for (const b of panel.querySelectorAll('[data-cust-view]')) b.setAttribute('aria-selected', String(/** @type {HTMLElement} */ (b).dataset.custView === view));
       for (const pane of /** @type {NodeListOf<HTMLElement>} */ (panel.querySelectorAll('[data-cust-pane]'))) pane.hidden = pane.dataset.custPane !== view;
@@ -182,39 +245,74 @@ export function createCustomize(deps) {
     deps.pickSkill(name);
   };
 
+  /**
+   * How "Yours" is narrowed and ordered, as Claude's Skills are (owner,
+   * 2026-11-01): by the plugin a skill comes with, by who made it, and by when it
+   * was last changed, its name, or its plugin's. Remembered in this browser —
+   * a view, not a setting.
+   */
+  const VIEW_KEY = 'synapsez.skillsView';
+  let view = { plugin: 'all', by: 'all', sort: 'edited' };
+  try {
+    view = { ...view, ...JSON.parse(localStorage.getItem(VIEW_KEY) || '{}') };
+  } catch {
+    /* a private window keeps the defaults */
+  }
+  const keepView = () => {
+    try {
+      localStorage.setItem(VIEW_KEY, JSON.stringify(view));
+    } catch {
+      /* the view holds for this visit */
+    }
+  };
+  let skillData = { skills: [], builtin: [] };
+  const pluginName = (id) => (id && PLUGIN_TEXT[id] ? t(PLUGIN_TEXT[id][0]) : '');
+
   async function loadSkills() {
-    const { skills = [], builtin = [] } = await api.skills();
-    const own = skills.map((s) =>
+    skillData = await api.skills();
+    drawSkills();
+    drawDiscover();
+  }
+
+  function drawSkills() {
+    const { skills = [], builtin = [] } = skillData;
+    const theirs = builtin.map((s) => ({ ...s, mine: false }));
+    const mine = skills.map((s) => ({ ...s, mine: true, plugin: null }));
+    const keep = (s) => (view.by === 'all' || (view.by === 'you') === s.mine) && (view.plugin === 'all' || s.plugin === view.plugin);
+    const order = (a, b) => {
+      if (view.sort === 'name') return a.name.localeCompare(b.name);
+      if (view.sort === 'plugin') return pluginName(a.plugin).localeCompare(pluginName(b.plugin)) || a.name.localeCompare(b.name);
+      return String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || ''));
+    };
+    const row = (s) =>
       listRow({
         key: s.id,
         icon: ICON.skill,
         name: s.name,
-        tag: s.enabled ? '' : t('settings.off'),
-        by: t('settings.byYou'),
+        tag: s.mine ? (s.enabled ? '' : t('settings.off')) : pluginName(s.plugin),
+        by: s.mine ? t('settings.byYou') : t('settings.fromSynapsez'),
         desc: s.description,
-        meta: s.used_count ? t('skills.used', { n: s.used_count }) : day(s.updated_at || s.created_at),
-        search: `${s.name} ${s.description}`,
-      }),
-    );
-    const theirs = builtin.map((s) =>
-      listRow({ key: s.id, icon: ICON.skill, name: s.name, by: t('settings.fromSynapsez'), desc: s.description, search: `${s.name} ${s.description}` }),
-    );
+        meta: s.mine ? day(s.updated_at || s.created_at) : '',
+        search: `${s.name} ${s.description} ${pluginName(s.plugin)}`,
+      });
+    const shownTheirs = theirs.filter(keep).sort(order);
+    const shownMine = mine.filter(keep).sort(order);
     const list = document.getElementById('skill-list');
     list.innerHTML =
-      (theirs.length ? group(t('settings.fromSynapsez'), theirs.length) + theirs.join('') : '') +
-      group(t('settings.madeByYou'), own.length) +
-      (own.join('') || empty(t('skills.empty')));
+      (shownTheirs.length ? group(t('settings.fromSynapsez'), shownTheirs.length) + shownTheirs.map(row).join('') : '') +
+      (view.by !== 'synapsez' && view.plugin === 'all' ? group(t('settings.madeByYou'), shownMine.length) + (shownMine.map(row).join('') || empty(t(mine.length ? 'skills.noneMatch' : 'skills.empty'))) : '');
     for (const btn of /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('[data-more]'))) {
       btn.addEventListener('click', () => {
-        const mine = skills.find((s) => s.id === btn.dataset.more);
+        const own = skills.find((s) => s.id === btn.dataset.more);
         const built = builtin.find((s) => s.id === btn.dataset.more);
-        const name = (mine || built)?.name;
+        const name = (own || built)?.name;
         const items = [{ label: t('settings.useInMessage'), run: () => useSkill(name) }];
-        if (mine) {
+        if (own) {
+          items.push({ label: t('skills.edit'), run: () => deps.editSkill(own) });
           items.push({
-            label: mine.enabled ? t('settings.turnOff') : t('settings.turnOn'),
+            label: own.enabled ? t('settings.turnOff') : t('settings.turnOn'),
             run: async () => {
-              await api.setSkillEnabled(mine.id, !mine.enabled);
+              await api.setSkillEnabled(own.id, !own.enabled);
               loadSkills();
             },
           });
@@ -223,7 +321,7 @@ export function createCustomize(deps) {
             danger: true,
             confirm: t('action.reallyRemove'),
             run: async () => {
-              await api.deleteSkill(mine.id);
+              await api.deleteSkill(own.id);
               loadSkills();
             },
           });
@@ -231,7 +329,11 @@ export function createCustomize(deps) {
         openMenu(btn, items);
       });
     }
+    refilter('panel-skills');
+  }
 
+  function drawDiscover() {
+    const { builtin = [] } = skillData;
     const discover = document.getElementById('skill-discover');
     discover.innerHTML = `<div class="cgrid">${
       builtin.map((s) => card({ key: s.id, icon: ICON.skill, name: s.name, desc: s.description, by: t('settings.fromSynapsez'), search: `${s.name} ${s.description}` })).join('') +
@@ -247,25 +349,181 @@ export function createCustomize(deps) {
     refilter('panel-skills');
   }
 
-  /** The form for a new skill, opened from + Add, from Discover, or from the + menu's "Create a skill". */
-  function showSkillForm(open = true) {
-    const form = document.getElementById('skill-form');
-    form.hidden = !open;
-    document.getElementById('skill-add-open').setAttribute('aria-expanded', String(open));
-    if (open) /** @type {HTMLElement} */ (document.getElementById('skill-name')).focus();
-  }
-  document.getElementById('skill-add-open').addEventListener('click', () => showSkillForm(Boolean(document.getElementById('skill-form').hidden)));
+  /** Filter by → Plugin › and Created by ›, each a choice of one, the current one ticked. */
+  document.getElementById('skills-filter').addEventListener('click', (event) => {
+    const button = /** @type {HTMLElement} */ (event.currentTarget);
+    const plugins = [...new Set(skillData.builtin.map((s) => s.plugin).filter(Boolean))];
+    const choose = (key, value) => () => {
+      view = { ...view, [key]: value };
+      keepView();
+      drawSkills();
+    };
+    openMenu(button, [
+      { heading: t('skills.filterBy') },
+      {
+        label: t('skills.plugin'),
+        sub: () => [
+          { label: t('skills.all'), checked: view.plugin === 'all', run: choose('plugin', 'all') },
+          ...plugins.map((id) => ({ label: pluginName(id), checked: view.plugin === id, run: choose('plugin', id) })),
+        ],
+      },
+      {
+        label: t('skills.createdBy'),
+        sub: () => [
+          { label: t('skills.all'), checked: view.by === 'all', run: choose('by', 'all') },
+          { label: t('skills.byYou'), checked: view.by === 'you', run: choose('by', 'you') },
+          { label: 'Synapsez', checked: view.by === 'synapsez', run: choose('by', 'synapsez') },
+        ],
+      },
+    ]);
+  });
 
-  document.getElementById('skill-save').addEventListener('click', async () => {
-    const status = document.getElementById('skill-status');
-    const field = (id) => /** @type {HTMLInputElement} */ (document.getElementById(id));
+  /** Sort by: when it was last changed, its name, or its plugin's. */
+  document.getElementById('skills-sort').addEventListener('click', (event) => {
+    const sortBy = (sort) => () => {
+      view = { ...view, sort };
+      keepView();
+      drawSkills();
+    };
+    openMenu(/** @type {HTMLElement} */ (event.currentTarget), [
+      { heading: t('skills.sortBy') },
+      { label: t('skills.lastEdited'), checked: view.sort === 'edited', run: sortBy('edited') },
+      { label: t('skills.name'), checked: view.sort === 'name', run: sortBy('name') },
+      { label: t('skills.pluginName'), checked: view.sort === 'plugin', run: sortBy('plugin') },
+    ]);
+  });
+
+  /** + Add: upload one, write one, or make one with the assistant. */
+  document.getElementById('skill-add-open').addEventListener('click', (event) => {
+    openMenu(/** @type {HTMLElement} */ (event.currentTarget), [
+      { label: t('skills.uploadSkill'), icon: ICON.upload, run: () => showUpload() },
+      { label: t('skills.createSkill'), icon: ICON.pencil, run: () => showSkillForm() },
+      { label: t('skills.createWithClaude'), icon: ICON.chat, run: () => deps.createWithClaude() },
+    ]);
+  });
+
+  /** The Create a skill editor, from + Add, from Discover, or from the + menu's "Create a skill". */
+  function showSkillForm() {
+    deps.editSkill(null);
+  }
+
+  /* ── Upload a skill ─────────────────────────────────────────────── */
+
+  /** The files chosen, with what the scan said of each, until they are uploaded or let go. */
+  let chosen = [];
+
+  function showUpload() {
+    chosen = [];
+    drawChosen();
+    deps.selectTab('skillupload');
+  }
+
+  /** A file as base64, for the upload's JSON body. */
+  const asBase64 = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+  async function choose(files) {
+    const picked = [...files].slice(0, 10);
+    if (!picked.length) return;
+    const state = document.getElementById('skill-scan-state');
+    state.textContent = t('skills.scanning');
     try {
-      const { skill } = await api.saveSkill({ name: field('skill-name').value, description: field('skill-description').value, instructions: field('skill-instructions').value });
-      status.textContent = t('skills.savedNamed', { name: skill.name });
-      for (const id of ['skill-name', 'skill-description', 'skill-instructions']) field(id).value = '';
-      loadSkills();
+      const uploads = await Promise.all(picked.map(async (file) => ({ name: file.name, data: await asBase64(file) })));
+      const { results } = await api.uploadSkills(uploads, { save: false });
+      chosen = uploads.map((upload, i) => ({ upload, result: results[i] }));
     } catch (err) {
-      status.textContent = err.message;
+      chosen = [];
+      toast(err.message, 'error');
+    }
+    drawChosen();
+  }
+
+  /** What each chosen file holds and what the scan found; Upload only when one of them can go. */
+  function drawChosen() {
+    const host = document.getElementById('skill-picked');
+    host.replaceChildren();
+    const ready = chosen.filter(({ result }) => !result.error && !result.findings.some((f) => f.level === 'block'));
+    for (const { result } of chosen) {
+      const item = document.createElement('div');
+      item.className = `skpick__item${result.error || result.findings.some((f) => f.level === 'block') ? ' is-refused' : ''}`;
+      const head = document.createElement('p');
+      head.className = 'skpick__name';
+      head.textContent = result.name ? `${result.name} · ${result.file}` : result.file;
+      item.append(head);
+      if (result.description) item.append(Object.assign(document.createElement('p'), { className: 'skpick__desc', textContent: result.description }));
+      if (result.files?.length) item.append(Object.assign(document.createElement('p'), { className: 'skpick__desc', textContent: t('skills.withFiles', { files: result.files.join(', ') }) }));
+      const notes = result.error ? [{ level: 'block', text: result.error }] : result.findings;
+      for (const finding of notes) {
+        item.append(Object.assign(document.createElement('p'), { className: `skpick__finding is-${finding.level}`, textContent: finding.text }));
+      }
+      host.append(item);
+    }
+    const state = document.getElementById('skill-scan-state');
+    const problems = chosen.reduce((n, { result }) => n + (result.error ? 1 : result.findings.filter((f) => f.level !== 'note').length), 0);
+    state.textContent = chosen.length ? (problems ? t('skills.scanFound', { n: problems }) : t('skills.scanClean')) : t('skills.scanWhen');
+    state.classList.toggle('is-warn', problems > 0);
+    /** @type {HTMLButtonElement} */ (document.getElementById('skill-upload')).disabled = !ready.length;
+    document.getElementById('skill-upload-status').textContent = chosen.length
+      ? ready.length
+        ? t('skills.readyToUpload', { n: ready.length })
+        : t('skills.nothingToUpload')
+      : t('skills.chooseFirst');
+  }
+
+  const drop = document.getElementById('skill-drop');
+  const input = /** @type {HTMLInputElement} */ (document.getElementById('skill-files'));
+  input.addEventListener('change', () => {
+    choose(input.files || []);
+    input.value = '';
+  });
+  drop.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      input.click();
+    }
+  });
+  for (const type of ['dragenter', 'dragover']) {
+    drop.addEventListener(type, (event) => {
+      event.preventDefault();
+      drop.classList.add('is-over');
+    });
+  }
+  drop.addEventListener('dragleave', () => drop.classList.remove('is-over'));
+  drop.addEventListener('drop', (event) => {
+    event.preventDefault();
+    drop.classList.remove('is-over');
+    choose(event.dataTransfer?.files || []);
+  });
+  document.getElementById('skill-upload-cancel').addEventListener('click', () => {
+    chosen = [];
+    drawChosen();
+    deps.selectTab('skills');
+  });
+  document.getElementById('skill-upload').addEventListener('click', async () => {
+    const button = /** @type {HTMLButtonElement} */ (document.getElementById('skill-upload'));
+    button.disabled = true;
+    try {
+      const { results } = await api.uploadSkills(chosen.map(({ upload }) => upload), { save: true });
+      const saved = results.filter((r) => r.saved).map((r) => r.saved);
+      if (saved.length) toast(t('skills.uploaded', { names: saved.join(', ') }), 'ok');
+      const left = results.filter((r) => !r.saved);
+      if (left.length) {
+        chosen = chosen.filter((_, i) => !results[i].saved).map((c, i) => ({ ...c, result: left[i] }));
+        drawChosen();
+      } else {
+        chosen = [];
+        drawChosen();
+        deps.selectTab('skills');
+      }
+      await loadSkills();
+    } catch (err) {
+      toast(err.message, 'error');
+      button.disabled = false;
     }
   });
 

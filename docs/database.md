@@ -54,6 +54,17 @@ copies every table in an order the foreign keys allow, and prints how many rows 
 in the old database changes, and a row the new one already has is left alone — so a copy cut short
 can simply be run again.
 
+**Check first.** The same command with `--check` reads both and writes nothing: whether Neon answers
+yet, how many rows each table holds, and how many of its accounts the new database already has (those
+merge by email). Run it the morning Neon's quota resets; if it still answers 402, it says so.
+
+```bash
+npm run db:copy -- --from "<the old Neon DATABASE_URL>" --to "<the Supabase DATABASE_URL>" --check
+```
+
+The addresses can also come from the environment — `COPY_FROM_URL` and `COPY_TO_URL` — so they need
+not be typed where a shell keeps its history.
+
 - **Neon has to be reachable.** A project whose compute hours ran out answers 402 until its next
   billing period (shown under *Billing*), or until it is upgraded — a month of Neon's paid plan is
   enough to make the copy, then downgrade.

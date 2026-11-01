@@ -999,3 +999,9 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS feedback_created_idx ON feedback (created_at DESC);
 CREATE INDEX IF NOT EXISTS feedback_user_idx ON feedback (user_id, created_at DESC);
+
+-- 34: `skills.files` — the files a skill carries beside its instructions
+-- (owner, 2026-11-01): a template, a reference list, a script kept as text,
+-- added in the Create a skill editor or arriving in an uploaded .zip/.skill.
+-- Read back with the skill (`readSkill`), never run. Existing skills have none.
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS files JSONB NOT NULL DEFAULT '[]'::jsonb;

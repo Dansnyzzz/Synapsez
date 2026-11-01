@@ -35,7 +35,9 @@ import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
 import { createUsagePanel } from './usage-panel.js';
 import { createUsageAlert } from './usage-alert.js';
-import { createCustomize } from './customize.js';
+import { createCustomize, openMenu as openPopoverMenu } from './customize.js';
+import { createSkillEditor } from './skills-editor.js';
+import { serversInConfig } from './mcp-config.js';
 import { paintConnectorButton } from './cards.js';
 import { createYourData } from './your-data.js';
 import { createFeedback, renderFeedbackList, transcriptLines } from './feedback.js';
@@ -4579,7 +4581,7 @@ function renderMcp({ servers, status }) {
     host.innerHTML = `<div class="settings__empty">
       <svg viewBox="0 0 20 20" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3v3M12.5 3v3"/><path d="M5.5 6h9v3a4.5 4.5 0 0 1-9 0Z"/><path d="M10 13.5V17"/></svg>
       <p>${escapeHtml(t('settings.noExtensions'))}</p>
-      <button class="btn btn--small" type="button" data-goto="developer">${escapeHtml(t('settings.addByHand'))}</button>
+      <button class="btn btn--small" type="button" data-ext-hand>${escapeHtml(t('settings.addByHand'))}</button>
     </div>`;
     return;
   }
@@ -4602,7 +4604,7 @@ function renderMcp({ servers, status }) {
         : [server.command, ...(server.args || [])].join(' ');
 
       return `
-        <div class="crow crow--wrap">
+        <div class="crow crow--wrap cust-item" data-search="${escapeHtml(`${server.name} ${where || ''}`.toLowerCase())}">
           <span class="crow__icon"><span class="crow__mono" aria-hidden="true">${escapeHtml(String(server.name || '?').charAt(0).toUpperCase())}</span></span>
           <div class="crow__text">
             <p class="crow__name">${escapeHtml(server.name)} ${reach}</p>
@@ -4654,13 +4656,14 @@ const slugForMcp = (name) =>
     .slice(0, 32) || 'server';
 
 /**
- * One suggested server, filled into the form in Developer — from the strip, or
- * from a Connect button on a card the assistant showed. The command is what
- * somebody should read before it runs, so nothing is added until they press Add.
+ * One suggested server, filled into the form in Extensions → Advanced settings
+ * — from a Discover card, or from a Connect button on a card the assistant
+ * showed. The command is what somebody should read before it runs, so nothing
+ * is added until they press Connect.
  */
 function fillMcpPreset(preset) {
   if (!preset) return;
-  selectTab('developer');
+  openExtAdvanced({ form: true });
   $('mcp-name').value = preset.id;
   $('mcp-transport').value = preset.transport;
   $('mcp-transport').dispatchEvent(new Event('change'));
@@ -4700,7 +4703,7 @@ async function connectFromCard(kind, id, name) {
     // The directory says `mcp:github`; the catalogue knows it as `github`.
     const preset = id.replace(/^mcp:/, '');
     const { servers = [] } = await api.mcpCatalogue(preset);
-    openSettings('developer');
+    openSettings('extensions');
     fillMcpPreset(servers.find((s) => s.id === preset));
     return;
   }
@@ -4721,28 +4724,48 @@ async function refreshConnectorCards() {
 }
 
 /**
- * The suggestions strip.
+ * Discover — the suggested servers, as Claude's connector cards (owner,
+ * 2026-11-01): each one's icon, its name with a mark saying who publishes it,
+ * what it does, "by" its maker, and + — or ✓ once it is added.
  *
- * Pressing one fills the form in rather than connecting: the command is the thing
- * somebody should see before it runs on their machine, and a one-press "install"
- * would hide exactly the step worth reading.
+ * + fills the form in rather than connecting: the command is the thing
+ * somebody should see before it runs on their machine, and a one-press
+ * "install" would hide exactly the step worth reading.
  */
+const BADGE = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5 12 4h2.5l.7 2.4L17 8l-.8 2.4.8 2.4-1.8 1.6-.7 2.4H12L10 18l-2-1.2H5.5l-.7-2.4L3 12.8l.8-2.4L3 8l1.8-1.6.7-2.4H8Z"/><path d="m7.2 10.2 1.9 1.9 3.8-4"/></svg>';
 async function loadMcpCatalogue() {
   const host = $('mcp-catalogue');
   try {
-    const { servers } = await api.mcpCatalogue();
+    const { servers, total } = await api.mcpCatalogue();
+    $('mcp-catalogue-count').textContent = String(total ?? servers.length);
     host.innerHTML = servers
       .map(
         (s) => `
-        <button class="mcp-cat__item" type="button" data-mcp-preset="${escapeHtml(s.id)}">
-          <span class="mcp-cat__name">${escapeHtml(s.label)}</span>
-          <span class="mcp-cat__blurb">${escapeHtml(s.blurb)}</span>
-          ${s.needs ? `<span class="mcp-cat__needs">${escapeHtml(t('mcp.needs'))}</span>` : ''}
-        </button>`,
+        <div class="ccard ccard--ext cust-item" data-search="${escapeHtml(`${s.label} ${s.blurb} ${s.by || ''} ${(s.tags || []).join(' ')}`.toLowerCase())}">
+          <span class="ccard__icon ccard__icon--logo">${
+            s.site
+              ? `<img src="/api/favicon/${encodeURIComponent(s.site)}" alt="" width="26" height="26" loading="lazy" decoding="async" data-mono="${escapeHtml(s.label.charAt(0).toUpperCase())}" />`
+              : `<span class="crow__mono" aria-hidden="true">${escapeHtml(s.label.charAt(0).toUpperCase())}</span>`
+          }</span>
+          <div class="ccard__text">
+            <p class="ccard__name">${escapeHtml(s.label)}${s.by ? ` <span class="ccard__badge" title="${escapeHtml(t('ext.publishedBy', { by: s.by }))}">${BADGE}</span>` : ''}</p>
+            <p class="ccard__desc">${escapeHtml(s.blurb)}</p>
+            ${s.by ? `<p class="ccard__by">${escapeHtml(t('ext.by', { by: s.by }))}</p>` : ''}
+          </div>
+          ${
+            s.added
+              ? `<span class="ccard__add is-added" title="${escapeHtml(t('ext.added'))}" aria-label="${escapeHtml(t('ext.addedName', { name: s.label }))}" role="img"><svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg></span>`
+              : `<button class="ccard__add" type="button" data-mcp-preset="${escapeHtml(s.id)}" aria-label="${escapeHtml(t('settings.addThing', { name: s.label }))}" title="${escapeHtml(t('settings.addThing', { name: s.label }))}"><svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button>`
+          }
+        </div>`,
       )
       .join('');
 
-    for (const btn of host.querySelectorAll('[data-mcp-preset]')) {
+    // A site with no icon shows its first letter, as everywhere else.
+    for (const img of /** @type {NodeListOf<HTMLImageElement>} */ (host.querySelectorAll('img[data-mono]'))) {
+      img.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'crow__mono', textContent: img.dataset.mono })), { once: true });
+    }
+    for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-mcp-preset]'))) {
       btn.addEventListener('click', () => fillMcpPreset(servers.find((s) => s.id === btn.dataset.mcpPreset)));
     }
   } catch {
@@ -4779,12 +4802,122 @@ async function loadMcp() {
   }
 }
 
-// Claude's "Browse extensions": the suggested servers, folded away until asked for.
+// Discover — Claude's "Browse extensions": the suggested servers as cards (customize.js switches the view).
 $('extensions-browse').addEventListener('click', () => {
-  const box = $('extensions-catalogue');
-  box.hidden = !box.hidden;
-  $('extensions-browse').setAttribute('aria-expanded', String(!box.hidden));
-  if (!box.hidden && !$('mcp-catalogue').childElementCount) loadMcpCatalogue();
+  if (!$('mcp-catalogue').childElementCount) loadMcpCatalogue();
+});
+
+/* ── Extensions → Advanced settings (owner, 2026-11-01, after Claude's) ── */
+
+/** The Developer form, in whichever of its two homes is on screen. */
+function placeMcpForm(where) {
+  const host = where === 'extadvanced' ? $('ext-form-host') : $('mcp-form-home');
+  const form = $('mcp-form');
+  if (form.parentElement !== host) host.append(form);
+}
+
+/** Advanced settings, with the form to add a server by hand open when asked. */
+function openExtAdvanced({ form = false } = {}) {
+  selectTab('extadvanced');
+  $('ext-form-host').hidden = !form;
+  if (form) $('mcp-name').focus();
+}
+
+/** Where servers that are programs run here, and the Node and Python there — read, never guessed. */
+async function loadExtEnvironment(check = false) {
+  try {
+    const { place, tools } = await api.mcpEnvironment({ check });
+    const key = place === 'local' ? 'Local' : place === 'cloud' ? 'Cloud' : 'Nowhere';
+    $('ext-runs').textContent = t(`ext.runs${key}`);
+    $('ext-runs-hint').textContent = t(`ext.runs${key}Hint`);
+    const missing = place === 'cloud' && !tools ? t('ext.notChecked') : t('ext.notFound');
+    $('ext-node').textContent = tools?.node || missing;
+    $('ext-python').textContent = tools?.python || missing;
+    $('ext-check-row').hidden = place !== 'cloud';
+    $('ext-checked').textContent = tools?.checkedAt ? t('ext.checkedAt', { when: new Date(tools.checkedAt).toLocaleString(currentLanguage()) }) : '';
+  } catch (err) {
+    $('ext-checked').textContent = err.message;
+  }
+}
+
+$('ext-check').addEventListener('click', async () => {
+  const button = /** @type {HTMLButtonElement} */ ($('ext-check'));
+  button.disabled = true;
+  $('ext-checked').textContent = t('ext.checking');
+  await loadExtEnvironment(true);
+  button.disabled = false;
+});
+
+// The empty list's "Add server by hand": Advanced settings, the form open (owner, 2026-11-01).
+$('panel-extensions').addEventListener('click', (event) => {
+  if (/** @type {HTMLElement} */ (event.target).closest('[data-ext-hand]')) openExtAdvanced({ form: true });
+});
+
+$('ext-add-hand').addEventListener('click', () => {
+  $('ext-form-host').hidden = false;
+  $('ext-form-host').scrollIntoView({ block: 'nearest' });
+  $('mcp-name').focus();
+});
+
+/** Install from a config file: each server in it added as though typed in, one at a time, and said which took. */
+$('ext-config-file').addEventListener('change', async (event) => {
+  const input = /** @type {HTMLInputElement} */ (event.target);
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  const status = $('ext-status');
+  let servers = [];
+  try {
+    servers = serversInConfig(JSON.parse(await file.text()));
+  } catch {
+    status.textContent = t('ext.configUnreadable');
+    return;
+  }
+  if (!servers.length) {
+    status.textContent = t('ext.configEmpty');
+    return;
+  }
+  const added = [];
+  const failed = [];
+  for (const server of servers) {
+    status.textContent = t('ext.installing', { name: server.name });
+    try {
+      await api.addMcpServer(server);
+      added.push(server.name);
+    } catch (err) {
+      failed.push(`${server.name}: ${err.message}`);
+    }
+  }
+  status.textContent = [added.length ? t('ext.installed', { names: added.join(', ') }) : '', ...failed].filter(Boolean).join(' · ');
+  loadMcp();
+});
+
+/** Export: the servers as a config file other apps read — never a header or environment value, which hold secrets. */
+$('ext-export').addEventListener('click', async () => {
+  try {
+    const { servers = [] } = await api.mcpServers();
+    const mcpServers = Object.fromEntries(servers.map((s) => [s.name, s.transport === 'http' ? { url: s.url } : { command: s.command, args: s.args || [] }]));
+    const blob = new Blob([JSON.stringify({ mcpServers }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'synapsez-mcp-servers.json';
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    $('ext-status').textContent = t(servers.some((s) => s.hasHeaders || s.hasEnv) ? 'ext.exportedNoSecrets' : 'ext.exported', { n: servers.length });
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+/** + Add in Extensions: a server by hand, a config file, or Advanced settings. */
+$('extensions-add').addEventListener('click', (event) => {
+  openPopoverMenu(/** @type {HTMLElement} */ (event.currentTarget), [
+    { label: t('ext.addByHand'), run: () => openExtAdvanced({ form: true }) },
+    { label: t('ext.installConfig'), run: () => $('ext-config-file').click() },
+    { label: t('ext.advanced'), run: () => openExtAdvanced() },
+  ]);
 });
 
 $('mcp-transport').addEventListener('change', (event) => {
@@ -4988,7 +5121,7 @@ const settingsTabs = () =>
 const SETTINGS_MOVED = { languages: 'general', behaviour: 'capabilities', mcp: 'extensions' };
 
 /** A page inside a section — Privacy's Manage lists — keeps its section lit in the list. */
-const SECTION_OF = { data: 'privacy' };
+const SECTION_OF = { data: 'privacy', extadvanced: 'extensions', skillupload: 'skills' };
 
 function selectTab(asked) {
   const name = SETTINGS_MOVED[asked] || asked;
@@ -5038,7 +5171,13 @@ function selectTab(asked) {
     loadMcp();
     if (!$('mcp-catalogue').childElementCount) loadMcpCatalogue();
   }
+  // The hand-made server's form lives in Developer and is borrowed by Advanced settings.
+  if (name === 'developer' || name === 'extadvanced') placeMcpForm(name);
   if (name === 'developer') describeStdioPlace();
+  if (name === 'extadvanced') {
+    describeStdioPlace();
+    loadExtEnvironment();
+  }
   if (name === 'skills') customize.loadSkills().catch((err) => toast(err.message, 'error'));
   if (name === 'connectors') customize.loadConnectors().catch((err) => toast(err.message, 'error'));
   if (name === 'plugins') customize.paintPlugins();
@@ -5329,7 +5468,23 @@ const customize = createCustomize({
   closeSettings: () => $('settings').close(),
   googleCard: (c) => googleCardHtml(c),
   onPlugins: () => paintPluginSwitches(),
+  selectTab: (tab) => selectTab(tab),
+  editSkill: (skill) => skillEditor.open(skill),
+  /**
+   * Skills → Add → Create with Claude (owner, 2026-11-01): a new conversation
+   * with the request written and skill-creator picked — sent when they press
+   * Send, as Claude's is, so it can be changed first.
+   */
+  createWithClaude: () => {
+    $('settings').close();
+    startBlankChat();
+    const box = /** @type {HTMLTextAreaElement} */ ($('input'));
+    box.value = t('skills.createWithClaudePrompt');
+    box.dispatchEvent(new Event('input'));
+    plusDeps.pickSkill('skill-creator');
+  },
 });
+const skillEditor = createSkillEditor({ onSaved: () => customize.loadSkills().catch(() => {}) });
 
 /**
  * The theme as Claude draws it: three faces — the system's, light, dark — one
@@ -6132,7 +6287,8 @@ const plusDeps = {
     openSettings(tab);
     if (!focusId) return;
     // What is folded away until asked for is opened first.
-    if (focusId === 'skill-name') customize.showSkillForm();
+    // The + menu's "Create a skill" opens the editor, which takes its own focus.
+    if (focusId === 'skill-name') return customize.showSkillForm();
     if (focusId === 'extensions-browse' && $('extensions-catalogue').hidden) $('extensions-browse').click();
     requestAnimationFrame(() => {
       const target = $(focusId);

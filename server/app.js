@@ -48,6 +48,7 @@ import { TOOLS } from './tools/definitions.js';
 import { executeTool } from './tools/execute.js';
 import { runAgent } from './agent.js';
 import { saveSkill, builtinSkillCards } from './skills.js';
+import { readSkillUpload } from './skillUpload.js';
 import { addSource, shelfCapacity } from './projects.js';
 import {
   parseSchedule,
@@ -100,7 +101,7 @@ import { cloudBrowserState, cloudBrowserInput, closeCloudBrowser } from './cloud
 import { EFFORTS, DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
-import { translateErrors, translateEvent, languageOf } from './i18n/index.js';
+import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
 import { approximateLocation } from './whereabouts.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1751,6 +1752,76 @@ export function createApp() {
       } catch (err) {
         res.status(400).json({ error: err.message });
       }
+    }),
+  );
+
+  /**
+   * Upload skills (owner, 2026-11-01): .md, .zip or .skill files, several at
+   * once. Read and scanned first (`save` false, as the page does on choosing
+   * them); kept only when asked and only those the scan does not refuse.
+   * Before `/skills/:id`, which would otherwise take "upload" for an id.
+   */
+  api.post(
+    '/skills/upload',
+    rateLimit('skillUpload', (req) => req.user?.id),
+    wrap(async (req, res) => {
+      const language = languageOf(req);
+      const uploads = Array.isArray(req.body?.files) ? req.body.files.slice(0, 10) : [];
+      if (!uploads.length) return res.status(400).json({ error: translateMessage('Choose a skill file to upload.', language) });
+      const results = [];
+      for (const upload of uploads) {
+        const read = readSkillUpload(upload);
+        let saved = null;
+        let error = read.error || null;
+        if (req.body?.save && read.skill && !read.findings.some((f) => f.level === 'block')) {
+          try {
+            saved = (await saveSkill(req.user.id, read.skill)).name;
+          } catch (err) {
+            error = err.message;
+          }
+        }
+        results.push({
+          file: read.file,
+          name: read.skill?.name || null,
+          description: read.skill?.description || null,
+          files: read.skill?.files.map((f) => f.name) || [],
+          findings: read.findings.map((f) => ({ level: f.level, text: translateMessage(f.text, language) })),
+          error: error ? translateMessage(error, language) : null,
+          saved,
+        });
+      }
+      res.json({ results });
+    }),
+  );
+
+  /**
+   * The Create a skill draft, kept on the account as it is typed (owner,
+   * 2026-11-01): a browser that crashes or a computer that dies leaves it
+   * where it was, to carry on from here or from another device.
+   */
+  const DRAFT_CHARS = 120_000;
+  api.get(
+    '/skills/draft',
+    wrap(async (req, res) => {
+      res.json({ draft: (await getStore().getUserSetting(req.user.id, 'skillDraft')) || null });
+    }),
+  );
+  api.put(
+    '/skills/draft',
+    wrap(async (req, res) => {
+      const text = (v) => String(v ?? '');
+      const files = Array.isArray(req.body?.files) ? req.body.files.slice(0, 10).map((f) => ({ name: text(f?.name).slice(0, 120), content: text(f?.content) })) : [];
+      const draft = { name: text(req.body?.name).slice(0, 200), description: text(req.body?.description).slice(0, 2000), instructions: text(req.body?.instructions), files, savedAt: new Date().toISOString() };
+      if (JSON.stringify(draft).length > DRAFT_CHARS) return res.status(413).json({ error: translateMessage('That draft is too long to keep.', languageOf(req)) });
+      await getStore().setUserSetting(req.user.id, 'skillDraft', draft);
+      res.json({ savedAt: draft.savedAt });
+    }),
+  );
+  api.delete(
+    '/skills/draft',
+    wrap(async (req, res) => {
+      await getStore().setUserSetting(req.user.id, 'skillDraft', null);
+      res.json({ ok: true });
     }),
   );
 

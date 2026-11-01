@@ -162,6 +162,37 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'A skill needs a description — it is how the assistant decides when this applies, so say what it is for.':
     'Kỹ năng cần có mô tả — trợ lý dựa vào đó để quyết định khi nào áp dụng, nên hãy nói nó dùng để làm gì.',
   'Keep the description under {0} characters.': 'Mô tả phải dưới {0} ký tự.',
+  /* kỹ năng mang tệp, tải kỹ năng lên, bản nháp (2026-11-01) */
+  "A skill's files must be a list.": 'Các tệp của kỹ năng phải là một danh sách.',
+  'A skill carries at most {0} files.': 'Một kỹ năng chỉ mang tối đa {0} tệp.',
+  '"{0}" is not a file name a skill can carry.': '"{0}" không phải tên tệp mà kỹ năng mang theo được.',
+  'Two files are called "{0}".': 'Có hai tệp cùng tên "{0}".',
+  '{0} is too long for a skill to carry; keep each file under 20,000 characters.':
+    '{0} quá dài để kỹ năng mang theo; mỗi tệp phải dưới 20.000 ký tự.',
+  "A skill's files come to too much text together; keep what it carries short.":
+    'Các tệp của kỹ năng cộng lại quá nhiều chữ; hãy giữ phần mang theo thật ngắn.',
+  'That file is empty.': 'Tệp đó trống.',
+  'That file is over 2 MB — too large for a skill.': 'Tệp đó lớn hơn 2 MB — quá lớn cho một kỹ năng.',
+  'That archive could not be opened. A .zip or .skill holds a SKILL.md.':
+    'Không mở được tệp nén đó. Tệp .zip hoặc .skill phải chứa một SKILL.md.',
+  'There is no SKILL.md in that archive.': 'Tệp nén đó không có SKILL.md.',
+  'That SKILL.md is too large for a skill.': 'SKILL.md đó quá lớn cho một kỹ năng.',
+  'Upload a .md file, or a .zip or .skill holding a SKILL.md.': 'Hãy tải lên tệp .md, hoặc tệp .zip hay .skill chứa SKILL.md.',
+  'The SKILL.md has no description in its front matter (description: …).':
+    'SKILL.md không có mô tả trong phần đầu (description: …).',
+  'The SKILL.md has no instructions under its front matter.': 'SKILL.md không có hướng dẫn bên dưới phần đầu.',
+  'Choose a skill file to upload.': 'Hãy chọn một tệp kỹ năng để tải lên.',
+  'That draft is too long to keep.': 'Bản nháp đó quá dài để giữ lại.',
+  '{0} holds what looks like a key, token or password. Take it out, then upload again.':
+    '{0} chứa thứ trông như khoá, token hoặc mật khẩu. Hãy bỏ nó ra rồi tải lên lại.',
+  '{0} has invisible characters, which can hide instructions. Remove them, then upload again.':
+    '{0} có ký tự vô hình, thứ có thể giấu chỉ dẫn. Hãy xoá chúng rồi tải lên lại.',
+  '{0} tells the assistant to set aside its other instructions.': '{0} bảo trợ lý gác lại các chỉ dẫn khác của nó.',
+  '{0} tells the assistant to send something to {1}.': '{0} bảo trợ lý gửi thứ gì đó tới {1}.',
+  'Scripts are kept as text and never run here: {0}.': 'Script được giữ dưới dạng chữ và không bao giờ chạy ở đây: {0}.',
+  'Left out {0}: only text files are kept with a skill.': 'Bỏ qua {0}: kỹ năng chỉ giữ tệp chữ.',
+  'Left out {0}: over 20,000 characters.': 'Bỏ qua {0}: dài hơn 20.000 ký tự.',
+  'Left out {0}: a skill carries at most {1} files.': 'Bỏ qua {0}: một kỹ năng chỉ mang tối đa {1} tệp.',
   'A skill needs instructions — the actual procedure.': 'Kỹ năng cần có hướng dẫn — tức là quy trình thực tế.',
   'That is too long for one skill; split it up.': 'Quá dài cho một kỹ năng; hãy tách ra.',
   'No skill called "{0}". Available: {1}': 'Không có kỹ năng nào tên "{0}". Hiện có: {1}',

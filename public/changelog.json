@@ -1,6 +1,24 @@
 {
   "entries": [
     {
+      "version": "1.3.0",
+      "date": "2026-11-01",
+      "new": {
+        "vi": [
+          "Kỹ năng: lọc theo plugin hay người tạo, sắp xếp theo lần sửa gần nhất, tên hay tên plugin; nút Thêm có Tải kỹ năng lên (.md, .zip, .skill — có quét bảo mật trước khi giữ), Tạo kỹ năng (trình soạn có số dòng, thêm tệp, bản nháp tự lưu trên máy và trên tài khoản, hỏi lại trước khi bỏ) và Tạo cùng Claude.",
+          "Tiện ích mở rộng: tab Khám phá hiện máy chủ gợi ý dạng thẻ có logo và nhà phát hành; Cài đặt nâng cao cho biết máy chủ chạy ở đâu, Node.js và Python ở đó, cho tự thêm máy chủ, cài từ tệp cấu hình và xuất danh sách máy chủ."
+        ],
+        "en": [
+          "Skills: filter by plugin or by who made them, sort by last edited, name or plugin; + Add has Upload skill (.md, .zip, .skill — scanned before anything is kept), Create a skill (an editor with line numbers, files, and a draft kept on this device and on the account, asking before it is discarded) and Create with Claude.",
+          "Extensions: Discover shows the suggested servers as cards with their logos and makers; Advanced settings says where servers run and the Node.js and Python there, and adds a server by hand, from a config file, or exports yours."
+        ]
+      },
+      "improved": {
+        "vi": ["Lệnh chép dữ liệu cũ (npm run db:copy) có --check: đọc cả hai cơ sở dữ liệu mà không ghi gì, báo Neon đã mở lại chưa và bao nhiêu tài khoản sẽ được gộp."],
+        "en": ["The old-data copy (npm run db:copy) has --check: it reads both databases without writing, and says whether Neon answers yet and how many accounts will merge."]
+      }
+    },
+    {
       "version": "1.2.0",
       "date": "2026-11-01",
       "new": {

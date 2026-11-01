@@ -1222,6 +1222,24 @@ be thousands of tokens on every turn, nearly all of it irrelevant — so the mod
 reads the one it needs with `skill_read`. That is why the description matters more than the title:
 it is the thing the model uses to decide.
 
+Laid out as Claude's (2026-11-01): **Filter by** the plugin a skill comes with or who made it,
+**Sort by** last edited, name or plugin name (remembered in the browser), and **+ Add**:
+
+- **Upload skill** — a `.md` with `name` and `description` in YAML, or a `.zip` / `.skill` holding a
+  `SKILL.md` (the one nearest the top, with the text files beside it). Several at once. A security
+  scan reads each before anything is kept: a key, token or password, or invisible characters that
+  could hide words, refuse the file; words that set aside the assistant's instructions or send
+  something to an address are shown as warnings; scripts are kept as text and never run
+  (`server/skillUpload.js`, `POST /api/skills/upload`).
+- **Create a skill** — the name, the description (up to 1,024 characters, Claude's limit), and the
+  instructions in an editor with line numbers; **Add file** puts a text file beside `SKILL.md` (a
+  skill carries up to ten, read back with it — schema 34, `skills.files`). It is kept as a **draft**
+  as it is typed, in the browser and on the account (`/api/skills/draft`), so a closed tab or a dead
+  computer loses nothing; Cancel with anything written asks before discarding.
+- **Create with Claude** — a new conversation with the request written and the built-in
+  `skill-creator` picked: the assistant asks what the skill should do, drafts it, and saves it with
+  `skill_write` once you agree.
+
 ---
 
 ## Scheduled tasks
@@ -1309,6 +1327,18 @@ with the same key as your provider keys and never returned to the browser.
 
 Notion only sees pages explicitly shared with the integration, so an empty search often means
 unshared rather than absent.
+
+### Extensions — Discover and Advanced settings
+
+**Settings → Extensions** lists your MCP servers (Yours) and the suggested ones as cards (Discover):
+each with its icon, who publishes it, what it does, and **+** — which fills the form in, since the
+command is what you should read before it runs — or ✓ once it is added. **+ Add** holds *Add a server
+by hand*, *Install from a config file* (a Claude Desktop, Cursor or VS Code `mcpServers` JSON — each
+server added as though typed in) and **Advanced settings**: where servers that are programs run here
+(this computer, your cloud computer, or nowhere), the Node.js and Python found there (read on this
+computer at once; on the cloud computer when you press Check, since checking starts it), the
+developer warning, the form, and *Export your servers* (a config file without headers or
+environment values, which hold secrets).
 
 ### Connector search
 

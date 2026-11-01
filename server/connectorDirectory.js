@@ -83,6 +83,9 @@ const SITE = {
   'sequential-thinking': 'modelcontextprotocol.io',
 };
 
+/** Whose icon an entry shows — by its directory id or its catalogue id. */
+export const siteFor = (id) => SITE[String(id || '').replace(/^mcp:/, '')] || null;
+
 /** The most a search returns, and the most one card shows — Claude's shows a handful. */
 const MAX_FOUND = 8;
 export const MAX_SUGGESTED = 4;
@@ -233,7 +236,7 @@ export async function suggestConnectorsTool({ ids, reason }, { userId }) {
         kind: entry.kind,
         name: entry.name,
         blurb: translateMessage(entry.blurb, language),
-        site: SITE[entry.id.replace(/^mcp:/, '')] || null,
+        site: siteFor(entry.id),
         how: entry.how,
         connected: entry.connected,
         paused: entry.paused,

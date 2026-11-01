@@ -10787,3 +10787,127 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
   .dtable--two .dtable__row { grid-template-columns: minmax(0, 1fr) 36px; }
   .dtable__when { display: none; }
 }
+/* ── Extensions, Skills: Claude's heads, menus and pages (owner, 2026-11-01) ── */
+.cust__tool { width: 36px; height: 36px; color: var(--text-dim); }
+.cust__tool[aria-expanded='true'] { background: var(--tint-2); color: var(--text); }
+/* Claude's + Add: white, with its chevron. */
+.cust__add { gap: 6px; background: #f2f2f0; background-image: none; color: #141414; animation: none; }
+.cust__add:hover { background: #ffffff; filter: none; }
+.cust__search + .cust__tool { margin-left: -4px; }
+.cust__grouprow { display: flex; align-items: center; justify-content: space-between; }
+.cust__count { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text-dim); font-size: 12px; font-weight: 500; }
+
+/* The popover menus: a heading row, icons before labels, and a › for a menu beside. */
+.cmenu__heading { margin: 0; padding: 6px 12px 4px; color: var(--text-dim); font-size: 13px; }
+.cmenu__item { display: flex; align-items: center; gap: 10px; }
+.cmenu__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmenu__icon { display: grid; flex: none; place-items: center; color: var(--text-dim); }
+.cmenu__item:hover .cmenu__icon, .cmenu__item:focus-visible .cmenu__icon { color: var(--text); }
+.cmenu__item--sub::after { content: '›'; color: var(--text-dim); font-size: 18px; line-height: 1; }
+.cmenu__item--sub[aria-haspopup]:has(+ .cmenu), .cmenu__item--sub:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.cmenu--sub { min-width: 220px; max-height: min(70vh, 640px); overflow-y: auto; }
+
+/* Discover in Extensions: Claude's connector cards — the logo on a tile, the
+   name and its maker's mark, two lines of what it does, "by", and + or ✓. */
+.cgrid--ext { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.ccard--ext { grid-template-columns: 60px minmax(0, 1fr) 38px; padding: 20px; }
+.ccard__icon--logo { width: 60px; height: 60px; border: 1px solid var(--line-soft); border-radius: 12px; background: #f6f6f4; }
+/* A light tile, so a black logo (GitHub's, Notion's) reads as well as a coloured one. */
+.ccard__icon--logo .crow__mono { color: #222; }
+.ccard__icon--logo img { width: 30px; height: 30px; object-fit: contain; }
+.ccard--ext .ccard__name { display: flex; align-items: center; gap: 6px; font-size: 15.5px; }
+.ccard__badge { display: inline-grid; color: var(--text-dim); }
+.ccard--ext .ccard__desc { font-size: 14px; }
+.ccard--ext .ccard__by { font-size: 13.5px; }
+.ccard--ext .ccard__add { width: 38px; height: 38px; border-radius: 9px; }
+.ccard__add.is-added { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); cursor: default; }
+
+/* A page inside a section: its title, its parts, and labels over fields. */
+.page__title { margin: 0 0 14px; color: var(--text); font-family: inherit; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+.page__section { margin: 26px 0 4px; color: var(--text); font-size: 16px; font-weight: 650; }
+.page__label { margin: 22px 0 10px; color: var(--text); font-size: 15px; font-weight: 600; }
+
+/* Extensions → Advanced settings. */
+.ext-tools { gap: 8px; }
+.ext-tools__line { margin: 0; color: var(--text-dim); font-size: 14.5px; }
+.ext-tools__line strong { color: var(--text); font-weight: 500; }
+.ext-tools__check { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
+.ext-warn { display: flex; gap: 14px; margin: 14px 0 18px; padding: 18px 22px; border: 1px solid var(--line); border-radius: 14px; }
+.ext-warn > svg { flex: none; margin-top: 2px; color: var(--danger); }
+.ext-warn__title { margin: 0 0 4px; color: var(--text); font-weight: 600; }
+.ext-warn__text { margin: 0; color: var(--text); font-size: 14px; line-height: 1.55; }
+.ext-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.ext-actions__file { cursor: pointer; }
+#ext-form-host { margin-top: 18px; padding-top: 6px; border-top: 1px solid var(--line-soft); }
+.btn--light { background: #f2f2f0; color: #141414; font-weight: 600; }
+.btn--light:hover { background: #ffffff; }
+.btn--light:disabled { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text-dim); opacity: 1; }
+
+/* Skills → Upload a skill: a dashed place to drop files, the rules under it,
+   what each chosen file holds and what the scan found, and the scan's row. */
+.dropzone { display: grid; place-items: center; gap: 12px; padding: 44px 20px; border: 1.5px dashed var(--line); border-radius: 14px; color: var(--text-dim); text-align: center; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.dropzone:hover, .dropzone.is-over { border-color: color-mix(in srgb, var(--text) 40%, transparent); background: var(--tint-2); }
+.dropzone:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dropzone svg { color: var(--text); }
+.dropzone__rules { margin: 12px 0 0; padding-left: 22px; color: var(--text-dim); font-size: 13.5px; line-height: 1.7; }
+.skpick { display: grid; gap: 10px; margin-top: 16px; }
+.skpick:empty { display: none; }
+.skpick__item { padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; }
+.skpick__item.is-refused { border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
+.skpick__name { margin: 0; color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.skpick__desc { margin: 3px 0 0; color: var(--text-dim); font-size: 13px; }
+.skpick__finding { margin: 6px 0 0; font-size: 13px; }
+.skpick__finding.is-block { color: var(--danger); }
+.skpick__finding.is-warn { color: var(--warn); }
+.skpick__finding.is-note { color: var(--text-dim); }
+.scanrow { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 22px 0 18px; padding: 18px 22px; border-radius: 14px; background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--text); }
+.scanrow__state { color: var(--text-dim); font-size: 14px; }
+.scanrow__state.is-warn { color: var(--warn); }
+
+/* Create a skill: Claude's sheet — fields on a dark card, an editor with line
+   numbers and files as tabs, Copy in its corner (always while you are in it,
+   on pointing otherwise), and the draft's state at the foot. */
+.skc { width: min(1180px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 22px 26px 24px; overflow-y: auto; background: var(--surface-2); }
+.skc__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.skc__head h2 { margin: 0; font-size: 18px; font-weight: 650; }
+.skc__label { display: block; margin: 12px 0 8px; color: var(--text); font-size: 15px; font-weight: 600; }
+.skc__input, .skc__area { width: 100%; padding: 12px 16px; border: 1px solid transparent; border-radius: 10px; background: color-mix(in srgb, var(--text) 7%, var(--surface-2)); color: var(--text); font: inherit; font-size: 15px; }
+.skc__area { min-height: 96px; resize: vertical; line-height: 1.5; }
+.skc__input:focus, .skc__area:focus { border-color: #4c8df6; outline: none; box-shadow: 0 0 0 1px #4c8df6; }
+.skc__input[readonly] { color: var(--text-dim); }
+.skc__saved { margin: 8px 0 0; color: var(--text-dim); font-size: 13.5px; }
+.skedit { position: relative; margin-top: 18px; border: 1px solid transparent; border-radius: 14px; background: var(--bg); }
+.skedit:focus-within { border-color: #4c8df6; box-shadow: 0 0 0 1px #4c8df6; }
+.skedit__bar { display: flex; align-items: center; gap: 12px; padding: 12px 14px 0 18px; }
+.skedit__tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.skedit__tab { display: inline-flex; align-items: center; border: 1px solid var(--line-soft); border-radius: 8px; color: var(--text-dim); font-size: 13px; }
+.skedit__tab.is-on { border-color: var(--line); background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.skedit__tab button { padding: 4px 10px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.skedit__tab .skedit__untab { padding: 4px 8px 4px 0; font-size: 15px; line-height: 1; }
+.skedit__tabs:has(> .skedit__tab:only-child) { visibility: hidden; }
+.skedit__add { display: inline-flex; flex: none; align-items: center; gap: 6px; margin-left: auto; padding: 6px 8px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; font-size: 15px; cursor: pointer; }
+.skedit__add:hover { background: var(--tint-2); }
+.skedit__body { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 380px; padding: 18px 54px 18px 0; }
+.skedit__lines, .skedit__text { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, 'Cascadia Mono', monospace; font-size: 14px; line-height: 1.6; }
+.skedit__lines { min-width: 52px; padding: 0 14px 0 18px; overflow: hidden; color: var(--text-dim); text-align: right; user-select: none; white-space: pre; }
+.skedit__text { width: 100%; min-height: 360px; padding: 0; border: 0; background: transparent; color: var(--text); resize: vertical; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+.skedit__text:focus { outline: none; }
+.skedit__copy { position: absolute; top: 12px; right: 12px; opacity: 0; transition: opacity 0.12s; }
+.skedit:hover .skedit__copy, .skedit:focus-within .skedit__copy, .skedit__copy:focus-visible { opacity: 1; }
+.skc__status:empty { display: none; }
+.skc__foot { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+.skc__spacer { flex: 1 1 auto; }
+.skc__draft { padding: 5px 12px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--text-dim); font: inherit; font-size: 13px; cursor: pointer; }
+.skc__draft:hover { color: var(--text); }
+.skc-confirm { width: min(560px, calc(100vw - 32px)); padding: 22px 24px; background: var(--surface-2); }
+.skc-confirm h3 { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
+.skc-confirm p { margin: 0 0 18px; color: var(--text); font-size: 15px; }
+.skc-confirm__actions { display: flex; justify-content: flex-end; gap: 10px; }
+.skc-confirm__keep:focus-visible { outline: 2px solid #4c8df6; outline-offset: 2px; }
+.skc-confirm__discard { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.skc-confirm__discard:hover { background: color-mix(in srgb, var(--danger) 28%, transparent); }
+@media (max-width: 640px) {
+  .skc { padding: 18px 16px 20px; }
+  .skedit__body { min-height: 260px; padding-right: 44px; }
+  .cgrid--ext { grid-template-columns: 1fr; }
+}

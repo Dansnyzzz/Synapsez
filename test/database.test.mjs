@@ -180,6 +180,13 @@ section('db:copy merges an old account into the one with the same email');
   await now.createChat('u-supabase', { id: 'c-since', title: 'Made since', model: 'auto' });
   await now.setUserSetting('u-supabase', 'prefs', { language: 'vi', defaultModel: 'new-model' });
 
+  // --check first, as the owner would the morning Neon's quota resets: read both, write nothing.
+  const { checkCopy, whyUnreachable } = await import('../scripts/copy-database.js');
+  const looked = await checkCopy(driverOf(source), driverOf(target));
+  check('--check says what the old database holds and which accounts merge', looked.accounts === 1 && looked.merging === 1 && looked.tables.chats === 1 && looked.tables.messages === 1, JSON.stringify({ ...looked, tables: undefined }));
+  check('  and writes nothing', (await now.getChat('u-supabase', 'c-from-neon')) == null);
+  check("  a Neon project out of compute is said as that, with what to do", /quota resets/.test(whyUnreachable(new Error('HTTP status 402: Your project has exceeded the compute time quota'))) && whyUnreachable(new Error('ECONNREFUSED')) === 'ECONNREFUSED');
+
   const said = [];
   await copyDatabase(driverOf(source), driverOf(target), { say: (line) => said.push(line) });
   const users = (await target.query("SELECT id, username FROM users WHERE email = 'owner@example.com'")).rows;
