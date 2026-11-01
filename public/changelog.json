@@ -1,6 +1,26 @@
 {
   "entries": [
     {
+      "version": "1.4.0",
+      "date": "2026-11-01",
+      "new": {
+        "vi": [
+          "Kết nối: bảng Của bạn (Kết nối · Loại · Trạng thái) và tab Khám phá dạng thẻ — mỗi sản phẩm Google (Drive, Gmail, Lịch, Tài liệu, Trang tính, Biểu mẫu, Tasks, Danh bạ) là một kết nối riêng, bên cạnh GitHub, Notion, Slack, YouTube transcripts và Telegram.",
+          "Bấm vào một kết nối để mở trang của nó: kết nối hoặc ngắt riêng sản phẩm đó, các công cụ nó có, quyền của từng công cụ (chạy ngay hay hỏi trước), ai làm ra, đăng nhập thế nào, kết nối liên quan và nút Sao chép link.",
+          "Công cụ code_context: tìm mã mẫu và tài liệu lập trình — câu trả lời được chấp nhận trên Stack Overflow kèm mã, qua Exa khi bản triển khai có khoá."
+        ],
+        "en": [
+          "Connectors: a Yours table (Connector · Type · Status) and Discover as cards — each Google product (Drive, Gmail, Calendar, Docs, Sheets, Forms, Tasks, Contacts) its own connector, beside GitHub, Notion, Slack, YouTube transcripts and Telegram.",
+          "Press a connector to open its page: connect or disconnect that product alone, its tools, what each tool may do (runs at once or asks first), who makes it, how it signs in, related connectors and Copy link.",
+          "The code_context tool finds code examples and programming documentation — Stack Overflow's accepted answers with their code, and Exa when the deployment has its key."
+        ]
+      },
+      "improved": {
+        "vi": ["Chính sách quyền riêng tư privacy-2026-11-01: nêu Stack Exchange là nơi nhận câu truy vấn tìm mã, và cách ngắt từng sản phẩm Google — bạn sẽ được hỏi đồng ý lại một lần."],
+        "en": ["Privacy policy privacy-2026-11-01: names Stack Exchange as a recipient of code searches, and how each Google product is disconnected — you are asked to agree once more."]
+      }
+    },
+    {
       "version": "1.3.0",
       "date": "2026-11-01",
       "new": {

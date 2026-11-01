@@ -1716,6 +1716,106 @@ section('skills: uploaded and scanned, files carried and read back (owner, 2026-
   check('the versions Node and Python print are read', JSON.stringify(parseToolVersions('v22.16.0\nPython 3.14.7')) === JSON.stringify({ node: '22.16.0', python: '3.14.7' }) && parseToolVersions('').node === null);
 }
 
+section('connectors: each Google product its own, the catalogue page, logos, and code_context (owner, 2026-11-01)');
+{
+  const hadKey = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY ||= 'features-suite-encryption-key';
+  const db = await PGlite.create();
+  const { initStore } = await import('../server/store/index.js');
+  const store = await initStore({ driver: { query: async (text, params = []) => (await db.query(text, params)).rows } });
+  const { encryptSecret } = await import('../server/crypto.js');
+  const google = await import('../server/google.js');
+  const user = await store.createUser({ id: 'u-gprod', email: 'gprod@example.com', passwordHash: 'x', name: 'G', role: 'user' });
+  const scope = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify openid email';
+  await store.saveConnector(user.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope })), 'g@example.com');
+  check('every granted product is in use to begin with', (await google.googleGrants(user.id)).join() === 'gmail,drive');
+  check('disconnecting Drive leaves Gmail', (await google.dropGoogleProduct(user.id, 'drive')).join() === 'gmail' && (await google.googleGrants(user.id)).join() === 'gmail');
+  const realFetch = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    asked.push(String(url));
+    if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'a2', expires_in: 3600, scope }), { status: 200 });
+    if (String(url).includes('userinfo')) return new Response(JSON.stringify({ email: 'g@example.com' }), { status: 200 });
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    await google.finishAuth({ userId: user.id, code: 'c', origin: 'http://localhost', products: ['drive'] });
+    check('  signing in for Drive again turns Drive back on, and only Drive', (await google.googleGrants(user.id)).join() === 'gmail,drive');
+    await google.dropGoogleProduct(user.id, 'drive');
+    await google.dropGoogleProduct(user.id, 'gmail');
+    check('  the last one going disconnects Google, revoking it on Google\'s side', !(await store.getConnector(user.id, 'google')) && asked.some((u) => u.includes('oauth2.googleapis.com/revoke')), asked.join(' '));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  let unknown = '';
+  try {
+    await google.dropGoogleProduct(user.id, 'photos');
+  } catch (err) {
+    unknown = err.message;
+  }
+  check('  a product there is no such thing as is refused', /No Google product/.test(unknown));
+
+  const { productIcon } = await import('../server/favicon.js');
+  check("a product's logo comes from a fixed list — anything else is not fetched", (await productIcon('../../evil')) === null && (await productIcon('constructor')) === null);
+
+  // The catalogue Settings draws, through its route.
+  const { mountConnectorRoutes } = await import('../server/routes/connectors.js');
+  await store.saveConnector(user.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope })), 'g@example.com');
+  await store.saveConnector(user.id, 'github', encryptSecret('ghp_x'), 'octo');
+  const app = express();
+  const api = express.Router();
+  api.use((req, res, next) => {
+    req.user = { id: user.id };
+    next();
+  });
+  mountConnectorRoutes(api, { wrap: (h) => (req, res, next) => Promise.resolve(h(req, res, next)).catch(next) });
+  app.use('/api', api);
+  const server = http.createServer(app).listen(0);
+  try {
+    const { entries } = await (await fetch(`http://127.0.0.1:${server.address().port}/api/connectors/catalog`)).json();
+    const ids = entries.map((e) => e.id);
+    check('the catalogue: the eight Google products, GitHub, Notion, Slack, YouTube transcripts and Telegram — and nothing else', ids.length === 13 && ids.filter((i) => i.startsWith('google:')).length === 8 && ['github', 'notion', 'slack', 'supadata', 'telegram'].every((i) => ids.includes(i)) && !ids.includes('meta_page'), ids.join(','));
+    const drive = entries.find((e) => e.id === 'google:drive');
+    check("  each with where it stands and its tools: Drive's search runs at once, its trash asks first", drive.connected && drive.account === 'g@example.com' && drive.tools.find((t) => t.name === 'search')?.asks === false && drive.tools.find((t) => t.name === 'trash')?.asks === true, JSON.stringify(drive.tools));
+    check('  a token service says where its token comes from', /notion\.so/.test(entries.find((e) => e.id === 'notion').help) && entries.find((e) => e.id === 'github').connected);
+  } finally {
+    server.close();
+  }
+
+  const { relatedTo, CONNECTOR_BY_ID } = await import('../public/js/connector-catalog.js');
+  const related = relatedTo(CONNECTOR_BY_ID.get('google:drive')).map((c) => c.id);
+  check('related to Drive: the same kind first, then the rest of Google, six at most', related[0] === 'google:docs' && related.length === 6 && related.slice(1).every((id) => id.startsWith('google:')), related.join(','));
+
+  // code_context: Stack Overflow's answers, code kept as code, in the untrusted envelope.
+  const { codeContextTool, answerText } = await import('../server/tools/codeContext.js');
+  check("an answer's HTML becomes text with its code fenced", answerText('<p>Use <code>AbortSignal.timeout</code>:</p><pre><code>fetch(u, { signal: AbortSignal.timeout(5000) });\nif (a &lt; b) x();</code></pre>') === 'Use `AbortSignal.timeout`:\n\n```\nfetch(u, { signal: AbortSignal.timeout(5000) });\nif (a < b) x();\n```');
+  const saved = process.env.EXA_API_KEY;
+  delete process.env.EXA_API_KEY;
+  const called = [];
+  const fake = async (url) => {
+    called.push(String(url));
+    if (String(url).includes('/search/advanced')) return new Response(JSON.stringify({ items: [{ question_id: 1, title: 'Fetch with a timeout', link: 'https://stackoverflow.com/q/1' }] }), { status: 200 });
+    if (String(url).includes('/answers')) return new Response(JSON.stringify({ items: [{ question_id: 1, score: 12, is_accepted: true, body: '<pre><code>AbortSignal.timeout(5000)</code></pre>' }] }), { status: 200 });
+    return new Response('{}', { status: 404 });
+  };
+  try {
+    const out = await codeContextTool({ query: 'fetch timeout' }, { fetchImpl: fake });
+    check('code_context: the accepted answer, its code, its link — inside the untrusted envelope', /<untrusted/.test(out.content) && /Accepted answer \(score 12\)/.test(out.content) && /```\nAbortSignal\.timeout\(5000\)\n```/.test(out.content) && /stackoverflow\.com\/q\/1/.test(out.content), out.content.slice(0, 200));
+    check('  Exa is asked only when the deployment has its key', !called.some((u) => u.includes('api.exa.ai')));
+  } finally {
+    if (saved !== undefined) process.env.EXA_API_KEY = saved;
+  }
+  let empty = '';
+  try {
+    await codeContextTool({ query: '  ' }, { fetchImpl: fake });
+  } catch (err) {
+    empty = err.message;
+  }
+  check('  nothing asked: refused, saying what to give', /what code or documentation/.test(empty));
+  check('code_context is read-only, waits behind load_tools, and goes with the research plugin', TOOLS_BY_NAME.code_context?.readOnly && TOOLS_BY_NAME.code_context?.secondary && assessRisk('code_context', { query: 'x' }) === 'safe');
+  if (hadKey === undefined) delete process.env.ENCRYPTION_KEY;
+}
+
 section('connector search: the directory, what is offered, and the switch (owner, 2026-11-01)');
 {
   const db = await PGlite.create();

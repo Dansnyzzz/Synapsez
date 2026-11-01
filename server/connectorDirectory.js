@@ -110,6 +110,9 @@ export async function connectorDirectory(userId) {
   const services = Object.entries(SERVICE_ABOUT)
     .filter(([id]) => id !== 'google' || googleConfigured())
     .filter(([id]) => id === 'google' || SERVICES[id])
+    // The owner's list (2026-11-01): Google, GitHub, Notion, Slack, YouTube
+    // transcripts and Telegram. A Facebook Page already connected stays.
+    .filter(([id]) => id !== 'meta_page' || linked.has(id))
     .map(([id, about]) => ({
       id,
       kind: /** @type {const} */ ('service'),

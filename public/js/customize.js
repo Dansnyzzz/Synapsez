@@ -3,6 +3,7 @@ import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { toast } from './render.js';
 import { PLUGINS } from './plugins.js';
+import { CONNECTORS, CONNECTOR_BY_ID, CATEGORIES, relatedTo } from './connector-catalog.js';
 
 /**
  * Settings → Customize: Skills, Connectors and Plugins, after Claude's (owner,
@@ -19,7 +20,7 @@ import { PLUGINS } from './plugins.js';
  *   savePrefs: (patch: Record<string, any>) => Promise<any>,
  *   pickSkill: (name: string) => void,
  *   closeSettings: () => void,
- *   googleCard: (connector: any) => string,
+ *   addMcpServer: () => void,
  *   onPlugins?: () => void,
  *   selectTab: (tab: string) => void,
  *   editSkill: (skill: any) => void,
@@ -52,7 +53,6 @@ const PLUGIN_TEXT = {
   automation: ['plugin.automation', 'settings.plugin.automation'],
 };
 
-const monogram = (name) => `<span class="crow__mono" aria-hidden="true">${escapeHtml(String(name || '?').trim().charAt(0).toUpperCase() || '?')}</span>`;
 const day = (iso) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(currentLanguage() === 'vi' ? 'vi-VN' : 'en-US', { day: 'numeric', month: 'short' });
@@ -207,8 +207,6 @@ const card = ({ key, icon, name, desc, by, search, detail = '' }) =>
   </div>`;
 
 const group = (label, n) => `<p class="cust__group">${escapeHtml(label)} <span class="cust__count">${n}</span></p>`;
-/** The element under `root` whose `data-<name>` is exactly `value` — an id somebody typed is never put in a selector. */
-const byData = (root, name, value) => /** @type {HTMLElement | undefined} */ ([...root.querySelectorAll(`[data-${name}]`)].find((el) => /** @type {HTMLElement} */ (el).getAttribute(`data-${name}`) === value));
 const empty = (text) => `<p class="cust__empty">${escapeHtml(text)}</p>`;
 
 /** @param {Deps} deps */
@@ -529,134 +527,320 @@ export function createCustomize(deps) {
 
   /* ── Connectors ──────────────────────────────────────────────────── */
 
-  /** The form a connector is connected — or changed — with: a token, or Google's sign-in. */
-  const connectForm = (c) =>
-    c.oauth
-      ? deps.googleCard(c)
-      : `<p class="crow__desc">${escapeHtml(c.help || '')}</p>
-        <div class="settings__actions">
-          <input class="sinput" type="password" data-token="${escapeHtml(c.id)}" placeholder="${escapeHtml(c.placeholder || '')}" aria-label="${escapeHtml(t('settings.tokenFor', { name: c.label }))}" autocomplete="off" />
-          <button class="btn btn--primary btn--small" type="button" data-connect="${escapeHtml(c.id)}">${escapeHtml(c.connected ? t('connectors.replace') : t('mcp.add'))}</button>
-        </div>`;
+  /**
+   * Settings → Connectors, as Claude's (owner, 2026-11-01): Yours as a table —
+   * each connector, its type, where it stands — and Discover as cards, every
+   * Google product its own. Pressing one opens its page: what it does, its
+   * tools and which of them ask first, who makes it, and what is related.
+   * Where each stands is the server's (`/api/connectors/catalog`); what each
+   * is, the catalogue's (connector-catalog.js).
+   */
+  let catalog = { policy: 'guarded', entries: [] };
+  let kind = 'all';
+  const stateOf = (id) => catalog.entries.find((e) => e.id === id) || null;
+  const listed = () => CONNECTORS.filter((c) => stateOf(c.id));
+  const tagline = (c) => t(`conn.${c.key}.tagline`);
+  const inKind = (c) => kind === 'all' || c.category === kind;
+  const BADGE = svg('<path d="M10 2.5 12 4h2.5l.7 2.4L17 8l-.8 2.4.8 2.4-1.8 1.6-.7 2.4H12L10 18l-2-1.2H5.5l-.7-2.4L3 12.8l.8-2.4L3 8l1.8-1.6.7-2.4H8Z"/><path d="m7.2 10.2 1.9 1.9 3.8-4"/>', 15);
+  const RELOAD = svg('<path d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5V6h-2.5"/>', 17);
+  const LINK_OUT = svg('<path d="M8 5h7v7M15 5l-9 9"/>', 13);
+  const INFO = svg('<circle cx="10" cy="10" r="7.5"/><path d="M10 9v5M10 6.5h.01"/>', 18);
+
+  /** A connector's logo on its tile, through this app's favicon route; its first letter when there is none. */
+  const logo = (c, size) => {
+    // A Google product wears its own mark; the rest, their site's icon.
+    const src = c.product ? `/api/connectors/icon/${encodeURIComponent(c.product)}` : `/api/favicon/${encodeURIComponent(c.site)}`;
+    return `<span class="clogo clogo--${size}"><img src="${src}" alt="" loading="lazy" decoding="async" data-mono="${escapeHtml(c.name.charAt(0))}" /></span>`;
+  };
+  function settleLogos(root) {
+    for (const img of /** @type {NodeListOf<HTMLImageElement>} */ (root.querySelectorAll('.clogo img[data-mono]'))) {
+      img.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'crow__mono', textContent: img.dataset.mono })), { once: true });
+    }
+  }
 
   async function loadConnectors() {
-    const { connectors = [] } = await api.connectors();
-    const yours = connectors.filter((c) => c.connected);
-    const others = connectors.filter((c) => !c.connected);
-    const list = document.getElementById('connector-list');
-    list.innerHTML = yours.length
-      ? `<div class="ctable" role="table" aria-label="${escapeHtml(t('settings.tab.connectors'))}">
-          <div class="ctable__head" role="row"><span role="columnheader">${escapeHtml(t('settings.connector'))}</span><span role="columnheader">${escapeHtml(t('settings.type'))}</span><span role="columnheader">${escapeHtml(t('settings.status'))}</span><span></span></div>
-          ${yours
-            .map(
-              (c) => `<div class="ctable__row cust-item" role="row" data-search="${escapeHtml(`${c.label} ${c.account || ''}`.toLowerCase())}">
-                <span role="cell" class="ctable__name">${monogram(c.label)}<span><strong>${escapeHtml(c.label)}</strong>${c.account ? `<span class="crow__desc">${escapeHtml(c.account)}</span>` : ''}</span></span>
-                <span role="cell" class="crow__desc">${escapeHtml(t(c.oauth ? 'settings.typeSignIn' : 'settings.typeToken'))}</span>
-                <span role="cell" class="ctable__ok" title="${escapeHtml(t('connectors.connected'))}">${ICON.check}<span class="sr-only">${escapeHtml(t('connectors.connected'))}</span></span>
-                <button class="icon-btn crow__more" type="button" data-more="${escapeHtml(c.id)}" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(t('settings.moreFor', { name: c.label }))}">${ICON.more}</button>
-                <div class="ctable__detail" data-detail="${escapeHtml(c.id)}" hidden>${connectForm(c)}</div>
-              </div>`,
-            )
-            .join('')}
-        </div>`
-      : empty(t('settings.noConnectors'));
-    for (const btn of /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('[data-more]'))) {
-      btn.addEventListener('click', () => {
-        const c = yours.find((x) => x.id === btn.dataset.more);
-        openMenu(btn, [
-          {
-            label: t(c.oauth ? 'google.update' : 'connectors.replace'),
-            run: () => {
-              const detail = byData(list, 'detail', c.id);
-              if (detail) detail.hidden = !detail.hidden;
-            },
-          },
-          {
-            label: t('connectors.disconnect'),
-            danger: true,
-            confirm: t('connectors.reallyDisconnect'),
-            run: async () => {
-              await api.disconnect(c.id);
-              loadConnectors();
-            },
-          },
-        ]);
-      });
-    }
+    catalog = await api.connectorCatalog();
+    drawYours();
+    drawConnectorDiscover();
+  }
 
-    const discover = document.getElementById('connector-discover');
-    discover.innerHTML = others.length
-      ? `<div class="cgrid">${others.map((c) => card({ key: c.id, icon: monogram(c.label), name: c.label, desc: c.help || '', by: t(c.oauth ? 'settings.typeSignIn' : 'settings.typeToken'), search: `${c.label} ${c.help || ''}`, detail: connectForm(c) })).join('')}</div>`
-      : empty(t('settings.allConnected'));
-    for (const btn of /** @type {NodeListOf<HTMLElement>} */ (discover.querySelectorAll('[data-add]'))) {
-      btn.addEventListener('click', () => {
-        const detail = byData(discover, 'detail', btn.dataset.add);
-        if (!detail) return;
-        detail.hidden = !detail.hidden;
-        btn.setAttribute('aria-expanded', String(!detail.hidden));
-        /** @type {HTMLElement | null} */ (detail.querySelector('input'))?.focus();
-      });
+  /** Yours: what this account has — and, once Google is connected, its other products one press away. */
+  function drawYours() {
+    const googleIn = catalog.entries.some((e) => e.id.startsWith('google:') && e.connected);
+    const rows = listed().filter((c) => {
+      const s = stateOf(c.id);
+      return inKind(c) && (s.connected || s.paused || (googleIn && c.signIn === 'google' && s.configured));
+    });
+    rows.sort((a, b) => Number(!!stateOf(b.id).connected) - Number(!!stateOf(a.id).connected));
+    const list = document.getElementById('connector-list');
+    if (!rows.length) {
+      list.innerHTML = `<div class="settings__empty"><p>${escapeHtml(t('conn.none'))}</p><button class="btn btn--small" type="button" data-cust-goto="discover">${escapeHtml(t('conn.browse'))}</button></div>`;
+      return;
     }
-    wireConnect(document.getElementById('panel-connectors'));
+    const status = (c) => {
+      const s = stateOf(c.id);
+      if (s.paused) return `<span class="ctable__paused">${escapeHtml(t('conn.paused'))}</span><button class="btn btn--small" type="button" data-turn-on="${escapeHtml(c.id)}">${escapeHtml(t('conn.turnOn'))}</button>`;
+      if (s.connected) return `<span class="ctable__ok" title="${escapeHtml(t('conn.connected'))}">${ICON.check}<span class="sr-only">${escapeHtml(t('conn.connected'))}</span></span>`;
+      return `<button class="btn btn--small" type="button" data-connect-now="${escapeHtml(c.id)}">${escapeHtml(t('conn.connect'))}</button>`;
+    };
+    list.innerHTML = `<div class="ctable ctable--conn" role="table" aria-label="${escapeHtml(t('settings.tab.connectors'))}">
+      <div class="ctable__head" role="row"><span role="columnheader">${escapeHtml(t('conn.colConnector'))}</span><span role="columnheader">${escapeHtml(t('conn.colType'))}</span><span role="columnheader">${escapeHtml(t('conn.colStatus'))}</span></div>
+      ${rows
+        .map(
+          (c) => `<div class="ctable__row ctable__row--open cust-item" role="row" tabindex="0" data-open-connector="${escapeHtml(c.id)}" data-search="${escapeHtml(`${c.name} ${c.by} ${tagline(c)}`.toLowerCase())}" aria-label="${escapeHtml(c.name)}">
+            <span role="cell" class="ctable__name">${logo(c, 'sm')}<strong>${escapeHtml(c.name)}</strong></span>
+            <span role="cell" class="crow__desc">${escapeHtml(t('conn.typeWeb'))}</span>
+            <span role="cell" class="ctable__status">${status(c)}</span>
+          </div>`,
+        )
+        .join('')}
+    </div>`;
+    settleLogos(list);
     refilter('panel-connectors');
   }
 
+  /** One connector's card — in Discover and under Related — with + to connect, ✓ when it is, ↻ when paused. */
+  function connectorCard(c) {
+    const s = stateOf(c.id) || {};
+    const button = s.paused
+      ? `<button class="ccard__add" type="button" data-turn-on="${escapeHtml(c.id)}" title="${escapeHtml(t('conn.turnOn'))}" aria-label="${escapeHtml(t('conn.turnOnName', { name: c.name }))}">${RELOAD}</button>`
+      : s.connected
+        ? `<span class="ccard__add is-added" role="img" aria-label="${escapeHtml(t('conn.connectedName', { name: c.name }))}" title="${escapeHtml(t('conn.connected'))}">${ICON.check}</span>`
+        : `<button class="ccard__add" type="button" data-connect-now="${escapeHtml(c.id)}" title="${escapeHtml(t('conn.connectName', { name: c.name }))}" aria-label="${escapeHtml(t('conn.connectName', { name: c.name }))}">${ICON.add}</button>`;
+    return `<div class="ccard ccard--ext ccard--open cust-item" data-open-connector="${escapeHtml(c.id)}" tabindex="0" role="link" aria-label="${escapeHtml(c.name)}" data-search="${escapeHtml(`${c.name} ${c.by} ${tagline(c)}`.toLowerCase())}">
+      <span class="ccard__icon ccard__icon--logo">${logo(c, 'md')}</span>
+      <div class="ccard__text">
+        <p class="ccard__name">${escapeHtml(c.name)} <span class="ccard__badge" title="${escapeHtml(t('ext.publishedBy', { by: c.by }))}">${BADGE}</span></p>
+        <p class="ccard__desc">${escapeHtml(tagline(c))}</p>
+        <p class="ccard__by">${escapeHtml(t('ext.by', { by: c.by }))}</p>
+      </div>
+      ${button}
+    </div>`;
+  }
+
+  /** Discover: Google Workspace, then the rest — each counted, nothing ranked by figures there are none of. */
+  function drawConnectorDiscover() {
+    const shown = listed().filter(inKind);
+    const google = shown.filter((c) => c.signIn === 'google');
+    const rest = shown.filter((c) => c.signIn !== 'google');
+    const part = (title, items) =>
+      items.length
+        ? `<div class="cust__grouprow"><p class="cust__group">${escapeHtml(title)} <span class="cust__count">${items.length}</span></p></div><div class="cgrid cgrid--ext">${items.map(connectorCard).join('')}</div>`
+        : '';
+    const discover = document.getElementById('connector-discover');
+    discover.innerHTML = part(t('conn.google'), google) + part(t('conn.more'), rest) || empty(t('conn.noneOfKind'));
+    if (google.length) discover.querySelector('.cust__grouprow')?.setAttribute('id', 'conn-google');
+    settleLogos(discover);
+    refilter('panel-connectors');
+  }
+
+  /** Connect: Google's sign-in for that one product, or the page with its token box open. */
+  function connectNow(id) {
+    const c = CONNECTOR_BY_ID.get(id);
+    const s = stateOf(id);
+    if (!c || !s) return;
+    if (c.signIn === 'google') {
+      if (!s.configured) return toast(s.help || t('conn.notSetUp'), 'error');
+      location.href = `/api/connectors/google/start?products=${encodeURIComponent(c.product || '')}`;
+      return;
+    }
+    showConnectorPage(id, { form: true });
+  }
+
+  /** A connector paused in the + menu, on again — a Google product turns all of Google back on, as pausing it did. */
+  async function turnOn(id) {
+    const key = id.startsWith('google:') ? 'google' : id;
+    await deps.savePrefs({ connectorsOff: (deps.prefs().connectorsOff || []).filter((x) => x !== key) });
+    toast(t('consug.on', { name: CONNECTOR_BY_ID.get(id)?.name || id }), 'ok');
+    await loadConnectors();
+    if (document.getElementById('panel-connector').classList.contains('is-active')) showConnectorPage(id);
+  }
+
+  async function disconnectOne(id) {
+    const c = CONNECTOR_BY_ID.get(id);
+    if (c?.signIn === 'google') await api.disconnectGoogleProduct(c.product);
+    else await api.disconnect(id);
+    toast(t('conn.disconnected', { name: c?.name || id }), 'ok');
+    await loadConnectors();
+    showConnectorPage(id);
+  }
+
+  /** The page of one connector — Claude's: the hero, what it does, its tools, who makes it, and related ones. */
+  let pageId = '';
+  async function showConnectorPage(id, { form = false } = {}) {
+    const c = CONNECTOR_BY_ID.get(id);
+    if (!c) return;
+    if (!catalog.entries.length) catalog = await api.connectorCatalog();
+    const s = stateOf(id) || { tools: [] };
+    pageId = id;
+    deps.selectTab('connector');
+    const host = /** @type {HTMLElement} */ (document.getElementById('connector-page'));
+    const action = s.paused
+      ? `<span class="cpage__state">${escapeHtml(t('conn.paused'))}</span><button class="btn btn--light" type="button" data-turn-on="${escapeHtml(id)}">${escapeHtml(t('conn.turnOn'))}</button>`
+      : s.connected
+        ? `<span class="cpage__state">${ICON.check}${escapeHtml(t('conn.connected'))}</span><button class="icon-btn cpage__more" type="button" id="connector-more" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(t('settings.moreFor', { name: c.name }))}">${ICON.more}</button>`
+        : s.configured
+          ? `<button class="btn btn--light cpage__connect" type="button" data-connect-now="${escapeHtml(id)}">${escapeHtml(t('conn.connect'))}</button>`
+          : `<button class="btn" type="button" disabled>${escapeHtml(t('conn.notSetUp'))}</button>`;
+    const tokenForm =
+      c.signIn === 'token' && !s.connected
+        ? `<div class="cpage__form" id="connector-form" ${form ? '' : 'hidden'}>
+            <p class="crow__desc">${escapeHtml(s.help || '')}</p>
+            <div class="settings__actions">
+              <input class="sinput" type="password" id="connector-token" placeholder="${escapeHtml(s.placeholder || '')}" aria-label="${escapeHtml(t('settings.tokenFor', { name: c.name }))}" autocomplete="off" />
+              <button class="btn btn--primary btn--small" type="button" id="connector-save">${escapeHtml(t('conn.connect'))}</button>
+            </div>
+          </div>`
+        : '';
+    const help = !s.configured && s.help ? `<p class="cpage__note">${escapeHtml(s.help)}</p>` : '';
+    host.innerHTML = `
+      <button class="data__back" type="button" data-goto="connectors">${svg('<path d="M16 10H4M9 5l-5 5 5 5"/>', 16)}<span>${escapeHtml(t('settings.tab.connectors'))}</span></button>
+      <div class="cpage__hero">
+        <span class="ccard__icon ccard__icon--logo cpage__logo">${logo(c, 'lg')}</span>
+        <div class="cpage__title">
+          <h3>${escapeHtml(c.name)} <span class="ccard__badge" title="${escapeHtml(t('ext.publishedBy', { by: c.by }))}">${BADGE}</span></h3>
+          <p>${escapeHtml(tagline(c))}</p>
+        </div>
+        <div class="cpage__actions">${action}</div>
+      </div>
+      ${tokenForm}${help}
+      <p class="cpage__about">${escapeHtml(t(`conn.${c.key}.about`))}</p>
+      <div class="cpage__toolsrow">
+        <h4>${escapeHtml(t('conn.tools'))}</h4>
+        <button class="btn btn--small" type="button" id="connector-perms" aria-haspopup="dialog" aria-expanded="false">${escapeHtml(t('conn.permissions'))}</button>
+      </div>
+      <div class="cpage__chips">${(s.tools || []).map((tool) => `<span class="cpage__chip${tool.asks ? ' is-asks' : ''}">${escapeHtml(tool.name)}</span>`).join('')}</div>
+      <div class="cpage__trust">${INFO}<p>${escapeHtml(t('conn.trust'))}</p></div>
+      <dl class="cpage__meta">
+        <div><dt>${escapeHtml(t('conn.madeBy'))}</dt><dd><a href="${escapeHtml(c.byUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(c.by)} ${LINK_OUT}</a></dd></div>
+        <div><dt>${escapeHtml(t('conn.url'))}</dt><dd class="cpage__mono">${escapeHtml(c.api)}</dd></div>
+        <div><dt>${escapeHtml(t('conn.category'))}</dt><dd><span class="cpage__cat">${escapeHtml(t(`conn.cat.${c.category}`))}</span></dd></div>
+        <div><dt>${escapeHtml(t('conn.signIn'))}</dt><dd>${escapeHtml(t(c.signIn === 'google' ? 'conn.signInGoogle' : 'conn.signInToken'))}</dd></div>
+        ${s.connected && s.account ? `<div><dt>${escapeHtml(t('conn.account'))}</dt><dd>${escapeHtml(s.account)}</dd></div>` : ''}
+        <div><dt>${escapeHtml(t('conn.moreInfo'))}</dt><dd class="cpage__links"><a href="${escapeHtml(c.docs)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('conn.docs'))} ${LINK_OUT}</a><a href="${escapeHtml(c.privacy)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('conn.privacy'))} ${LINK_OUT}</a></dd></div>
+      </dl>
+      <h4 class="cpage__related">${escapeHtml(t('conn.related'))}</h4>
+      <div class="cgrid cgrid--ext">${relatedTo(c, listed()).map(connectorCard).join('')}</div>
+      <p class="cpage__foot">${escapeHtml(t('conn.foot'))}</p>`;
+    settleLogos(host);
+    document.getElementById('connector-more')?.addEventListener('click', (event) =>
+      openMenu(/** @type {HTMLElement} */ (event.currentTarget), [
+        { label: t('conn.disconnect'), danger: true, confirm: t('connectors.reallyDisconnect'), run: () => disconnectOne(id) },
+      ]),
+    );
+    document.getElementById('connector-perms').addEventListener('click', (event) => showPermissions(/** @type {HTMLElement} */ (event.currentTarget), s.tools || []));
+    document.getElementById('connector-save')?.addEventListener('click', async (event) => {
+      const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+      const field = /** @type {HTMLInputElement} */ (document.getElementById('connector-token'));
+      button.disabled = true;
+      try {
+        const { account } = await api.connect(id, field.value);
+        toast(t('connectors.connectedAs', { account }), 'ok');
+        await loadConnectors();
+        showConnectorPage(id);
+      } catch (err) {
+        toast(err.message, 'error');
+        button.disabled = false;
+      }
+    });
+    if (form) /** @type {HTMLElement | null} */ (document.getElementById('connector-token'))?.focus();
+    document.querySelector('#settings .settings__body')?.scrollTo({ top: 0 });
+  }
+
+  /** Your tool permissions: each tool, and whether it runs at once or asks first — as a turn would treat it. */
+  function showPermissions(button, tools) {
+    const dialog = button.closest('dialog') || document.body;
+    dialog.querySelectorAll(':scope > .cperm').forEach((m) => m.remove());
+    const box = document.createElement('div');
+    box.className = 'cmenu cperm';
+    box.setAttribute('popover', 'auto');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', t('conn.permissions'));
+    box.append(Object.assign(document.createElement('p'), { className: 'cmenu__heading', textContent: t('conn.permsHead') }));
+    for (const tool of tools) {
+      const row = document.createElement('p');
+      row.className = 'cperm__row';
+      row.append(Object.assign(document.createElement('span'), { className: 'cperm__name', textContent: tool.name }), Object.assign(document.createElement('span'), { className: `cperm__rule${tool.asks ? ' is-asks' : ''}`, textContent: t(tool.asks ? 'conn.asks' : 'conn.runs') }));
+      box.append(row);
+    }
+    dialog.append(box);
+    button.setAttribute('aria-expanded', 'true');
+    box.addEventListener('toggle', (event) => {
+      if (/** @type {any} */ (event).newState === 'closed') {
+        button.setAttribute('aria-expanded', 'false');
+        box.remove();
+      }
+    });
+    box.showPopover?.();
+    const at = button.getBoundingClientRect();
+    box.style.top = `${Math.min(at.bottom + 6, window.innerHeight - box.offsetHeight - 8)}px`;
+    box.style.left = `${Math.max(8, at.right - box.offsetWidth)}px`;
+  }
+
+  /** Every press in the two panels: open a page, connect, turn on — one listener, whatever was drawn. */
+  for (const id of ['panel-connectors', 'panel-connector']) {
+    const panel = /** @type {HTMLElement} */ (document.getElementById(id));
+    panel.addEventListener('click', (event) => {
+      const el = /** @type {HTMLElement} */ (event.target);
+      const connect = /** @type {HTMLElement | null} */ (el.closest('[data-connect-now]'));
+      if (connect) return connectNow(/** @type {string} */ (connect.dataset.connectNow));
+      const on = /** @type {HTMLElement | null} */ (el.closest('[data-turn-on]'));
+      if (on) return turnOn(/** @type {string} */ (on.dataset.turnOn)).catch((err) => toast(err.message, 'error'));
+      const open = /** @type {HTMLElement | null} */ (el.closest('[data-open-connector]'));
+      if (open && !el.closest('a, button, input')) showConnectorPage(/** @type {string} */ (open.dataset.openConnector));
+    });
+    panel.addEventListener('keydown', (event) => {
+      const open = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-open-connector]'));
+      if (open && event.target === open && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault();
+        showConnectorPage(/** @type {string} */ (open.dataset.openConnector));
+      }
+    });
+  }
+
+  document.getElementById('connector-copy').addEventListener('click', async () => {
+    const link = `${location.origin}/#connector=${encodeURIComponent(pageId)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast(t('conn.linkCopied'), 'ok');
+    } catch {
+      toast(`${t('data.linkIs')} ${link}`, 'ok', { ms: 12000 });
+    }
+  });
+
+  /** Filter by: the kind of connector — files, mail, messaging — both panes at once. */
+  document.getElementById('connectors-filter').addEventListener('click', (event) => {
+    const choose = (value) => () => {
+      kind = value;
+      drawYours();
+      drawConnectorDiscover();
+    };
+    const kinds = [...new Set(listed().map((c) => c.category))];
+    openMenu(/** @type {HTMLElement} */ (event.currentTarget), [
+      { heading: t('skills.filterBy') },
+      { label: t('skills.all'), checked: kind === 'all', run: choose('all') },
+      ...CATEGORIES.filter((k) => kinds.includes(k)).map((k) => ({ label: t(`conn.cat.${k}`), checked: kind === k, run: choose(k) })),
+    ]);
+  });
+
+  /** + Add: browse what there is, or add an MCP server by hand. */
+  document.getElementById('connectors-add').addEventListener('click', (event) => {
+    openMenu(/** @type {HTMLElement} */ (event.currentTarget), [
+      { label: t('conn.browse'), run: () => /** @type {HTMLElement} */ (document.querySelector('#panel-connectors [data-cust-view="discover"]')).click() },
+      { label: t('conn.addMcp'), run: () => deps.addMcpServer() },
+    ]);
+  });
+
   /**
-   * One connector's form, open and ready — for Connect pressed on a card the
-   * assistant showed (owner, 2026-11-01). Not connected: Discover, its form
-   * open, the token box (or Google's first choice) focused. Connected already:
-   * Yours, where it is listed.
+   * One connector, open and ready — for Connect pressed on a card the assistant
+   * showed (owner, 2026-11-01). A service: its page, its token box open when it
+   * is not connected. Google: Discover, at Google Workspace.
    */
   async function showConnector(id) {
     await loadConnectors();
-    const panel = /** @type {HTMLElement} */ (document.getElementById('panel-connectors'));
-    const search = /** @type {HTMLInputElement | null} */ (panel.querySelector('[data-cust-search]'));
-    if (search?.value) {
-      search.value = '';
-      filter(panel, '');
-    }
-    const discover = /** @type {HTMLElement} */ (document.getElementById('connector-discover'));
-    const add = byData(discover, 'add', id);
-    if (!add) return;
-    /** @type {HTMLElement} */ (panel.querySelector('[data-cust-view="discover"]')).click();
-    const detail = byData(discover, 'detail', id);
-    if (detail?.hidden) add.click();
-    detail?.scrollIntoView({ block: 'nearest' });
-    /** @type {HTMLElement | null} */ (detail?.querySelector('input, button'))?.focus();
-  }
-
-  /** The buttons inside the forms: connect with a token, or go to Google. */
-  function wireConnect(panel) {
-    for (const btn of /** @type {NodeListOf<HTMLButtonElement>} */ (panel.querySelectorAll('[data-connect]'))) {
-      btn.addEventListener('click', async () => {
-        const service = btn.dataset.connect;
-        const field = /** @type {HTMLInputElement} */ (byData(btn.closest('[data-detail]'), 'token', service));
-        btn.disabled = true;
-        try {
-          const { account } = await api.connect(service, field.value);
-          toast(t('connectors.connectedAs', { account }));
-          loadConnectors();
-        } catch (err) {
-          toast(err.message, 'error');
-        } finally {
-          btn.disabled = false;
-        }
-      });
-    }
-    // Google is a sign-in, not a paste: the browser goes to Google and comes back.
-    for (const btn of /** @type {NodeListOf<HTMLElement>} */ (panel.querySelectorAll('[data-google-connect]'))) {
-      btn.addEventListener('click', () => {
-        const products = [...btn.closest('[data-detail]').querySelectorAll('[data-google-product]:checked')].map((box) => /** @type {HTMLInputElement} */ (box).value);
-        if (!products.length) return toast(t('google.pickOne'), 'error');
-        location.href = `/api/connectors/google/start?products=${encodeURIComponent(products.join(','))}`;
-      });
-    }
-    for (const btn of /** @type {NodeListOf<HTMLElement>} */ (panel.querySelectorAll('[data-disconnect]'))) {
-      deps.armed(btn, t('connectors.reallyDisconnect'), async () => {
-        await api.disconnect(btn.dataset.disconnect);
-        loadConnectors();
-      });
-    }
+    if (id !== 'google') return showConnectorPage(id, { form: !stateOf(id)?.connected });
+    /** @type {HTMLElement} */ (document.querySelector('#panel-connectors [data-cust-view="discover"]')).click();
+    document.getElementById('conn-google')?.scrollIntoView({ block: 'start' });
   }
 
   /* ── Plugins ─────────────────────────────────────────────────────── */
@@ -696,5 +880,5 @@ export function createCustomize(deps) {
     refilter('panel-plugins');
   }
 
-  return { loadSkills, loadConnectors, showConnector, paintPlugins, setPlugin, showSkillForm };
+  return { loadSkills, loadConnectors, showConnector, showConnectorPage, paintPlugins, setPlugin, showSkillForm };
 }

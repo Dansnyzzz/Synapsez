@@ -134,9 +134,13 @@ used.
 | Contacts | `google_contacts` | search, list | — (read-only) |
 
 Only the products a person ticks — and then actually allows on Google's screen — are offered
-to the model. Tokens are encrypted at rest and never sent to the browser; disconnecting also
-revokes the grant on Google's side. Anything written by someone else (an email body, a
-document, a form answer) is handed to the model marked as untrusted.
+to the model. Tokens are encrypted at rest and never sent to the browser. In Settings →
+Connectors each product is its own connector with its own page: **Connect** signs in for that
+product alone (`/api/connectors/google/start?products=drive`), and **Disconnect** turns that
+one off (`DELETE /api/connectors/google/:product`) — its tools stop at once, the others stay.
+Google grants scopes to the one sign-in, so the grant on Google's side is revoked when the
+last product goes. Anything written by someone else (an email body, a document, a form
+answer) is handed to the model marked as untrusted.
 
 ## In the + menu
 

@@ -189,6 +189,9 @@ export const api = {
   deleteSkillDraft: () => request('DELETE', '/api/skills/draft'),
   // Where MCP servers that are programs run, and the Node and Python there.
   mcpEnvironment: ({ check = false } = {}) => request('GET', `/api/mcp/environment${check ? '?check=1' : ''}`),
+  // Settings → Connectors: each connector, Google's products apart, with its tools (owner, 2026-11-01).
+  connectorCatalog: () => request('GET', '/api/connectors/catalog'),
+  disconnectGoogleProduct: (product) => request('DELETE', `/api/connectors/google/${encodeURIComponent(product)}`),
   // Where each entry of the connector directory stands — for the suggestion cards.
   connectorDirectory: () => request('GET', '/api/connectors/directory'),
   connect: (service, token) => request('POST', `/api/connectors/${service}`, { token }),

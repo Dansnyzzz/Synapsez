@@ -1,13 +1,17 @@
 import { connectedServices, connect, disconnect } from '../connectors.js';
 import { limit as rateLimit } from '../ratelimit.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
-import { authUrl, finishAuth, googleConfigured, googleGrants, pickProducts, readState } from '../google.js';
+import { authUrl, finishAuth, googleConfigured, googleGrants, pickProducts, readState, dropGoogleProduct, GOOGLE_PRODUCTS } from '../google.js';
+import { getStore } from '../store/index.js';
+import { getPrefs } from '../settings.js';
+import { needsApproval } from '../agent.js';
 import { listDriveFiles, driveFileForAttachment } from '../tools/google.js';
 import { saveUpload, LIMITS } from '../attachments.js';
 import { publicUrlFor } from '../util/net.js';
 import { TOOLS } from '../tools/definitions.js';
 import { DRIVE_ORIGIN } from '../googleData.js';
 import { connectorDirectory } from '../connectorDirectory.js';
+import { productIcon } from '../favicon.js';
 
 /**
  * Connecting a third-party account — GitHub, Notion, Slack and the rest.
@@ -37,6 +41,90 @@ export function mountConnectorRoutes(api, { wrap }) {
           ),
         }));
         res.json({ connectors });
+      }),
+    );
+
+    /**
+     * Settings → Connectors as Claude's page has them (owner, 2026-11-01): each
+     * Google product its own connector, beside GitHub, Notion, Slack, YouTube
+     * transcripts and Telegram — where each stands, and what its tools do: each
+     * action, and whether it runs at once or asks first under this account's
+     * approval policy (`needsApproval`, the rule a turn obeys). Facebook Page is
+     * listed only for an account that already has it connected.
+     */
+    const SERVICE_ORDER = ['github', 'notion', 'slack', 'supadata', 'telegram'];
+    api.get(
+      '/connectors/catalog',
+      wrap(async (req, res) => {
+        const userId = req.user.id;
+        const [rows, prefs, granted, services] = await Promise.all([
+          getStore().listConnectors(userId),
+          getPrefs(userId).catch(() => ({})),
+          googleGrants(userId).catch(() => []),
+          connectedServices(userId),
+        ]);
+        // Where a token comes from, or what setting Google up takes — said on the page.
+        const language = languageOf(req);
+        const help = (id) => {
+          const known = services.find((c) => c.id === id);
+          return { help: translateMessage(known?.help || '', language), placeholder: known?.placeholder || '' };
+        };
+        const linked = new Map(rows.map((r) => [r.service, r]));
+        const off = new Set(Array.isArray(prefs.connectorsOff) ? prefs.connectorsOff : []);
+        const policy = prefs.toolPolicy || 'guarded';
+        const asks = (name, input) => needsApproval([{ id: 'catalog', name, input }], policy).length > 0;
+        const toolsFor = (need) =>
+          TOOLS.filter((t) => t.needs === need).flatMap((t) => {
+            const actions = t.parameters?.properties?.action?.enum;
+            return Array.isArray(actions)
+              ? actions.map((action) => ({ name: action, tool: t.name, asks: asks(t.name, { action }) }))
+              : [{ name: t.name, tool: t.name, asks: asks(t.name, {}) }];
+          });
+        const google = Object.keys(GOOGLE_PRODUCTS).map((product) => ({
+          id: `google:${product}`,
+          configured: googleConfigured(),
+          connected: granted.includes(product),
+          paused: granted.includes(product) && off.has('google'),
+          account: granted.includes(product) ? linked.get('google')?.account || null : null,
+          tools: toolsFor(`google_${product}`),
+          ...help('google'),
+        }));
+        const tokens = [...SERVICE_ORDER, ...(linked.has('meta_page') ? ['meta_page'] : [])].map((id) => ({
+          id,
+          configured: true,
+          connected: linked.has(id),
+          paused: linked.has(id) && off.has(id),
+          account: linked.get(id)?.account || null,
+          tools: toolsFor(id),
+          ...help(id),
+        }));
+        res.json({ policy, entries: [...google, ...tokens] });
+      }),
+    );
+
+    /** A Google product's own logo, through this app (favicon.js `productIcon`). */
+    api.get(
+      '/connectors/icon/:product',
+      wrap(async (req, res) => {
+        const icon = await productIcon(String(req.params.product));
+        if (!icon) return res.status(404).json({ error: 'Not found' });
+        res.setHeader('Content-Type', icon.type);
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        res.setHeader('Cache-Control', 'private, max-age=86400');
+        res.send(icon.data);
+      }),
+    );
+
+    /** One Google product disconnected — the last one disconnects Google, revoking the grant. */
+    api.delete(
+      '/connectors/google/:product',
+      wrap(async (req, res) => {
+        try {
+          res.json({ products: await dropGoogleProduct(req.user.id, String(req.params.product)) });
+        } catch (err) {
+          res.status(400).json({ error: translateMessage(err.message, languageOf(req)) });
+        }
       }),
     );
 
@@ -97,8 +185,8 @@ export function mountConnectorRoutes(api, { wrap }) {
         const back = (params) => res.redirect(302, `/?${new URLSearchParams(params).toString()}`);
         if (req.query.error) return back({ google: 'denied' });
         try {
-          readState(req.query.state, req.user.id, nonce);
-          const { products } = await finishAuth({ userId: req.user.id, code: req.query.code, origin: publicUrlFor(req) });
+          const asked = readState(req.query.state, req.user.id, nonce);
+          const { products } = await finishAuth({ userId: req.user.id, code: req.query.code, origin: publicUrlFor(req), products: asked });
           back({ google: 'connected', products: products.join(',') });
         } catch (err) {
           // The reason travels in a cookie only this origin can set, not in the

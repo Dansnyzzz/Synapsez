@@ -145,4 +145,35 @@ export async function faviconFor(requested) {
   return icon;
 }
 
-export const __testing = { cache };
+/**
+ * Each Google product's own logo, for its connector (owner, 2026-11-01). The
+ * favicon of drive.google.com is google.com's — only registrable names are
+ * fetched, see `siteOf` — so every product would wear the same G. These are
+ * the product marks Google publishes on its static host, by a fixed list:
+ * nothing a request names is ever fetched.
+ */
+const PRODUCT_ICONS = {
+  drive: 'drive_2020q4_48dp',
+  gmail: 'gmail_2020q4_48dp',
+  calendar: 'calendar_2020q4_48dp',
+  docs: 'docs_2020q4_48dp',
+  sheets: 'sheets_2020q4_48dp',
+  forms: 'forms_2020q4_48dp',
+  tasks: 'tasks_48dp',
+  contacts: 'contacts_2022_48dp',
+};
+
+/** A Google product's logo, or null — cached like a favicon, a miss included. */
+export async function productIcon(product) {
+  const file = Object.hasOwn(PRODUCT_ICONS, product) ? PRODUCT_ICONS[product] : null;
+  if (!file) return null;
+  const key = `google-product:${product}`;
+  const hit = cache.get(key);
+  if (hit && (!hit.miss || hit.miss > Date.now())) return hit.miss ? null : hit;
+  const icon = await fetchIcon(new URL(`https://ssl.gstatic.com/images/branding/product/2x/${file}.png`)).catch(() => null);
+  if (cache.size >= MAX_CACHED) cache.delete(cache.keys().next().value);
+  cache.set(key, icon || { miss: Date.now() + MISS_TTL_MS });
+  return icon;
+}
+
+export const __testing = { cache, PRODUCT_ICONS };

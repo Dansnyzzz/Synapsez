@@ -23,7 +23,7 @@ export const PLUGINS = [
   { id: 'visuals', tools: ['chart', 'show_widget', 'show_card', 'generate_image', 'edit_image', 'make_qr'] },
   { id: 'cloud_computer', tools: ['sandbox_run'] },
   { id: 'cloud_browser', tools: ['cloud_browser'] },
-  { id: 'research', tools: ['deep_research', 'encyclopedia', 'image_search', 'youtube_transcript', 'read_feed', 'extract'] },
+  { id: 'research', tools: ['deep_research', 'encyclopedia', 'image_search', 'youtube_transcript', 'read_feed', 'extract', 'code_context'] },
   { id: 'places', tools: ['place_lookup'] },
   { id: 'data', tools: ['market_data', 'world_facts', 'sports', 'analyze_data', 'date_calc', 'convert_units'] },
   { id: 'automation', tools: ['schedule_task', 'list_tasks', 'cancel_task', 'workflow_write', 'workflow_status', 'send_email'] },

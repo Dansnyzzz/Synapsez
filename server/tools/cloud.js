@@ -25,6 +25,7 @@ import { GOOGLE_IMPLEMENTATIONS } from './google.js';
 import { normaliseSteps } from '../workflows.js';
 import { CONNECTOR_CALLS } from '../connectors.js';
 import { searchConnectorsTool, suggestConnectorsTool } from '../connectorDirectory.js';
+import { codeContextTool } from './codeContext.js';
 import { getPrefs, getApiKey } from '../settings.js';
 import { sendEmail, emailBackend, senderName } from '../email.js';
 import { composeMessage, KIND_NAMES } from '../mailTemplate.js';
@@ -2764,6 +2765,8 @@ export const CLOUD_IMPLEMENTATIONS = {
   memory_delete: memoryDelete,
   memory_search: memorySearch,
   search_chats: searchChatsTool,
+  // Claude's get_code_context_exa: code and documentation for a programming question.
+  code_context: (input, { userId, signal }) => codeContextTool(input, { userId, signal }),
   // Claude's connector search. Withheld when Settings → Capabilities switches it
   // off (memory.js); asked again here, as search_chats asks, for a call that
   // names it anyway.

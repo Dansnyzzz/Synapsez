@@ -1328,6 +1328,32 @@ with the same key as your provider keys and never returned to the browser.
 Notion only sees pages explicitly shared with the integration, so an empty search often means
 unshared rather than absent.
 
+### The Connectors page
+
+Laid out as Claude's: **Yours** is a table (Connector · Type · Status — ✓, Connect, or Turn on for one
+paused in the + menu), and **Discover** is cards in two groups, *Google Workspace* (each product its own
+connector) and *More connectors* (GitHub, Notion, Slack, YouTube transcripts, Telegram; Facebook Page
+only for an account that already has it). The filter narrows by category; **+ Add** browses or adds an
+MCP server. Pressing a connector opens its page: the logo, Connect or ✓ Connected with ⋯ → Disconnect,
+the token form for a token service, what it does, its tools as chips, **Your tool permissions** (each
+action, and whether it runs at once or asks first under the account's approval policy — the rule a turn
+obeys, not a separate setting), who makes it, its address, category, how it signs in, docs and privacy
+links, related connectors, and **Copy link** (`/#connector=<id>` opens the page again). Google products
+connect and disconnect one at a time ([docs/google.md](docs/google.md)). There are no install counts or
+"added" dates: this app has none to show. The page reads `GET /api/connectors/catalog`; Google product
+logos come through `GET /api/connectors/icon/:product` (a fixed list of Google's own icons). Code:
+`public/js/connector-catalog.js`, `public/js/customize.js`, `server/routes/connectors.js`.
+
+### Code and documentation — `code_context`
+
+Claude's Exa connector has two tools, `web_search_exa` and `get_code_context_exa`. Here the first is
+`web_search`, which already asks Exa first when the deployment has `EXA_API_KEY`; the second is
+`code_context` (deferred behind `load_tools`, part of the research plugin): give it a library and what
+the code should do, or an error message. With `EXA_API_KEY` it searches code sites through Exa with
+their text; without, Stack Overflow's API (free, no key, about 300 requests a day per IP) — the
+accepted answer, else the best voted, with its code kept as fenced blocks; failing both, a web search
+for the documentation. Everything returned is marked untrusted. Code: `server/tools/codeContext.js`.
+
 ### Extensions — Discover and Advanced settings
 
 **Settings → Extensions** lists your MCP servers (Yours) and the suggested ones as cards (Discover):

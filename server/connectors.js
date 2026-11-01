@@ -241,7 +241,7 @@ export async function connectedServices(userId) {
     oauth: true,
     configured: googleConfigured(),
     help: googleConfigured()
-      ? 'Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts. Tick what the assistant may use, then sign in with Google.'
+      ? 'Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts — each connected on its own, by signing in with Google.'
       : 'Not set up on this deployment yet. The owner creates a free OAuth client in Google Cloud Console and sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET — see docs/google.md.',
     placeholder: '',
     connected: connected.has('google'),

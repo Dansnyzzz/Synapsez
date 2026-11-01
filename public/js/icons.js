@@ -52,7 +52,7 @@ const RULES = [
   [/browser|desktop|screen/, 'window'],
   [/command|run_|sandbox|python|shell|process/, 'terminal'],
   [/file|doc|sheet|slide|pdf|publish|folder|dir/, 'file'],
-  [/search|find|research|recall|lookup|grep|glob/, 'search'],
+  [/search|find|research|recall|lookup|grep|glob|code_context/, 'search'],
   [/web|fetch|url|http|feed|news|youtube|encyclopedia|wiki|market|sports|world|weather|exchange/, 'globe'],
 ];
 

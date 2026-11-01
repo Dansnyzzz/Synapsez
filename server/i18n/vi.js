@@ -177,6 +177,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Không mở được tệp nén đó. Tệp .zip hoặc .skill phải chứa một SKILL.md.',
   'There is no SKILL.md in that archive.': 'Tệp nén đó không có SKILL.md.',
   'That SKILL.md is too large for a skill.': 'SKILL.md đó quá lớn cho một kỹ năng.',
+  'No Google product called "{0}".': 'Không có sản phẩm Google nào tên "{0}".',
+  'Say what code or documentation to find — a library and what it should do, or an error message.':
+    'Hãy nói cần tìm mã hay tài liệu gì — một thư viện và việc nó cần làm, hoặc một thông báo lỗi.',
   'Upload a .md file, or a .zip or .skill holding a SKILL.md.': 'Hãy tải lên tệp .md, hoặc tệp .zip hay .skill chứa SKILL.md.',
   'The SKILL.md has no description in its front matter (description: …).':
     'SKILL.md không có mô tả trong phần đầu (description: …).',
@@ -871,8 +874,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Wikipedia ({0}) không có bài nào khớp với \"{1}\".",
   "Sends a {0} request to {1}, which may change something there.":
     "Gửi yêu cầu {0} tới {1}, có thể làm thay đổi dữ liệu ở đó.",
-  "Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts. Tick what the assistant may use, then sign in with Google.":
-    "Gmail, Drive, Lịch, Tài liệu, Trang tính, Biểu mẫu, Tasks và Danh bạ. Tick những gì trợ lý được dùng, rồi đăng nhập bằng Google.",
+  "Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts — each connected on its own, by signing in with Google.":
+    "Gmail, Drive, Lịch, Tài liệu, Trang tính, Biểu mẫu, Tasks và Danh bạ — mỗi sản phẩm kết nối riêng, bằng cách đăng nhập với Google.",
   "Not set up on this deployment yet. The owner creates a free OAuth client in Google Cloud Console and sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET — see docs/google.md.":
     "Bản triển khai này chưa được thiết lập. Chủ sở hữu tạo một OAuth client miễn phí trong Google Cloud Console và đặt GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET — xem docs/google.md.",
   "Google is not set up on this deployment. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET first.":

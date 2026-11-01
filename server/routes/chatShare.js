@@ -53,7 +53,7 @@ export const chatSharePath = (token) => `/share.html?t=${token}`;
  * go, rather than of what may not, so a tool added tomorrow starts private.
  */
 export const PUBLISHABLE_TOOLS = new Set([
-  'web_search', 'web_fetch', 'extract', 'deep_research', 'image_search', 'encyclopedia', 'read_feed',
+  'web_search', 'web_fetch', 'extract', 'deep_research', 'image_search', 'encyclopedia', 'read_feed', 'code_context',
   'youtube_transcript', 'world_facts', 'market_data', 'sports', 'place_lookup', 'calculate', 'convert_units',
   'date_calc', 'text_tools', 'analyze_data', 'make_qr', 'chart', 'show_card', 'show_widget', 'create_file',
   'update_file', 'read_generated_file', 'generate_image', 'update_plan', 'ask_options', 'load_tools',

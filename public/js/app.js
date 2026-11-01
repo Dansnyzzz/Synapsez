@@ -759,6 +759,7 @@ async function start() {
 
   await refreshChats();
   afterGoogleSignIn();
+  openConnectorFromLink();
   // Never fatal: a sidebar section that could not load is a missing list, not
   // a broken app, and throwing here would take the conversations with it.
   await refreshTasks().catch(() => {});
@@ -5121,7 +5122,7 @@ const settingsTabs = () =>
 const SETTINGS_MOVED = { languages: 'general', behaviour: 'capabilities', mcp: 'extensions' };
 
 /** A page inside a section — Privacy's Manage lists — keeps its section lit in the list. */
-const SECTION_OF = { data: 'privacy', extadvanced: 'extensions', skillupload: 'skills' };
+const SECTION_OF = { data: 'privacy', extadvanced: 'extensions', skillupload: 'skills', connector: 'connectors' };
 
 function selectTab(asked) {
   const name = SETTINGS_MOVED[asked] || asked;
@@ -5466,7 +5467,8 @@ const customize = createCustomize({
   },
   pickSkill: (name) => plusDeps.pickSkill(name),
   closeSettings: () => $('settings').close(),
-  googleCard: (c) => googleCardHtml(c),
+  // Add an MCP server by hand, from Connectors' + Add: Extensions → Advanced settings, the form open.
+  addMcpServer: () => openExtAdvanced({ form: true }),
   onPlugins: () => paintPluginSwitches(),
   selectTab: (tab) => selectTab(tab),
   editSkill: (skill) => skillEditor.open(skill),
@@ -5593,48 +5595,6 @@ armed($('logout-all'), t('settings.logoutAllSure'), async () => {
 });
 
 /**
- * The Google card: which products the assistant may use, and one button.
- *
- * Ticked by default for what is already granted, or everything on a first
- * connect — Google's consent screen lets the person untick any of them again,
- * and the tools follow what was actually granted.
- */
-function googleCardHtml(c) {
-  const anyGranted = c.products.some((p) => p.granted);
-  const boxes = c.products
-    .map(
-      (p) => `<label class="gprod">
-        <input type="checkbox" data-google-product value="${escapeHtml(p.id)}" ${
-          !c.connected || !anyGranted || p.granted ? 'checked' : ''
-        } ${c.configured ? '' : 'disabled'} />
-        <span>${escapeHtml(p.label)}</span>
-        ${p.granted ? `<span class="badge badge--ok">${escapeHtml(t('google.allowed'))}</span>` : ''}
-      </label>`,
-    )
-    .join('');
-  return `<div class="provider provider--google">
-    <div class="provider__head">
-      <span class="provider__name">Google</span>
-      <span class="badge ${c.connected ? 'badge--ok' : ''}">${
-        c.connected ? escapeHtml(c.account || t('connectors.connected')) : escapeHtml(t('connectors.notConnected'))
-      }</span>
-    </div>
-    <div class="hint">${escapeHtml(c.help)}</div>
-    <div class="gprods">${boxes}</div>
-    <div class="provider__row">
-      ${
-        c.configured
-          ? `<button class="gsignin" data-google-connect type="button">${escapeHtml(
-              t(c.connected ? 'google.update' : 'google.signIn'),
-            )}</button>`
-          : ''
-      }
-      ${c.connected ? `<button data-disconnect="google" type="button">${escapeHtml(t('connectors.disconnect'))}</button>` : ''}
-    </div>
-  </div>`;
-}
-
-/**
  * Back from Google's consent screen: say how it went, and show the card.
  * The query is removed first so a reload does not say it again.
  */
@@ -5656,6 +5616,21 @@ function afterGoogleSignIn() {
   else if (outcome === 'denied') toast(t('google.denied'), 'error');
   else toast(message || t('google.failed'), 'error');
   openSettings('connectors');
+  // Back on the page of the product just connected, as Claude returns to it.
+  const one = String(products || '').split(',').filter(Boolean);
+  if (outcome === 'connected' && one.length === 1) customize.showConnectorPage(`google:${one[0]}`).catch(() => {});
+}
+
+/**
+ * A connector's link — Copy link on its page (owner, 2026-11-01): `#connector=<id>`
+ * opens Settings on that connector's page, then leaves the address clean.
+ */
+function openConnectorFromLink() {
+  const id = /^#connector=([\w:-]{1,40})$/.exec(location.hash)?.[1];
+  if (!id) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  openSettings('connectors');
+  customize.showConnectorPage(decodeURIComponent(id)).catch((err) => toast(err.message, 'error'));
 }
 
 /* ── account ───────────────────────────────────────────────────── */

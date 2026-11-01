@@ -3180,10 +3180,11 @@ section('connector search: on by default, and a card whose Connect opens the for
   await page.waitForTimeout(900);
   const opened = await page.evaluate(() => ({
     tab: /** @type {HTMLElement | null} */ (document.querySelector('#settings .tab.is-active'))?.dataset.tab,
-    form: [...document.querySelectorAll('#connector-discover [data-detail]')].find((d) => d.getAttribute('data-detail') === 'notion')?.hidden === false,
-    focused: document.activeElement?.getAttribute('data-token'),
+    panel: /** @type {HTMLElement | null} */ (document.querySelector('#settings .panel.is-active'))?.dataset.panel,
+    form: document.getElementById('connector-form')?.hidden === false,
+    focused: document.activeElement?.id,
   }));
-  check('  Connect opens that connector\'s own form in Connectors, its token box ready', opened.tab === 'connectors' && opened.form && opened.focused === 'notion', JSON.stringify(opened));
+  check('  Connect opens that connector\'s page in Connectors, its token box ready', opened.tab === 'connectors' && opened.panel === 'connector' && opened.form && opened.focused === 'connector-token', JSON.stringify(opened));
   await getStore().saveConnector(me.id, 'notion', 'cipher', 'workspace');
   await page.evaluate(() => document.getElementById('settings').close());
   await page.waitForTimeout(800);
@@ -3201,6 +3202,67 @@ section('connector search: on by default, and a card whose Connect opens the for
     document.getElementById('ui-consug')?.remove();
   });
   await getStore().deleteConnector(me.id, 'notion');
+  await page.waitForTimeout(200);
+}
+
+section('Connectors: Claude\'s table and cards, every Google product its own, and a page for each (owner, 2026-11-01)');
+{
+  const { getStore } = await import('../server/store/index.js');
+  const { encryptSecret } = await import('../server/crypto.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  const scope = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify openid email';
+  await getStore().saveConnector(me.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope, off: [] })), 'ui@example.com');
+  await getStore().saveConnector(me.id, 'github', encryptSecret('ghp_ui'), 'ui-octo');
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await openSettings();
+  await page.click('#tab-connectors');
+  await page.waitForTimeout(1200);
+  const yours = await page.evaluate(() => [...document.querySelectorAll('#connector-list .ctable__row')].map((r) => r.querySelector('strong')?.textContent));
+  check('Yours is a table of what is connected — each Google product on its own row', ['Google Drive', 'Gmail', 'GitHub'].every((n) => yours.includes(n)) && (await page.$$('#connector-list .ctable__head [role="columnheader"]')).length === 3, yours.join(','));
+  await page.click('#panel-connectors [data-cust-view="discover"]');
+  await page.waitForTimeout(600);
+  const groups = await page.evaluate(() => [...document.querySelectorAll('#connector-discover .cust__group')].map((g) => g.textContent.replace(/\s+/g, ' ').trim()));
+  check('Discover: Google Workspace (eight products) and the rest — no Facebook Page for an account without one', groups.length === 2 && /8$/.test(groups[0]) && /5$/.test(groups[1]), groups.join(' | '));
+  const marks = await page.evaluate(() => [...document.querySelectorAll('#connector-discover .ccard')].filter((c) => c.querySelector('.is-added')).map((c) => c.getAttribute('data-open-connector')));
+  check('  a connected one wears ✓ rather than +', marks.includes('google:drive') && marks.includes('github') && !marks.includes('google:docs'), marks.join(','));
+
+  await page.locator('#connector-discover [data-open-connector="google:drive"] .ccard__name').click();
+  await page.waitForTimeout(700);
+  const pageView = await page.evaluate(() => ({
+    panel: /** @type {HTMLElement | null} */ (document.querySelector('#settings .panel.is-active'))?.dataset.panel,
+    lit: /** @type {HTMLElement | null} */ (document.querySelector('#settings .tab.is-active'))?.dataset.tab,
+    title: document.querySelector('.cpage__title h3')?.textContent?.trim(),
+    state: !!document.querySelector('.cpage__state'),
+    chips: document.querySelectorAll('.cpage__chip').length,
+    meta: document.querySelectorAll('.cpage__meta dt').length,
+    related: document.querySelectorAll('.cpage__related + .cgrid .ccard').length,
+    copy: !!document.getElementById('connector-copy'),
+  }));
+  check('pressed, a connector opens its page inside Connectors: its name, Connected, its tools, who makes it, related ones', pageView.panel === 'connector' && pageView.lit === 'connectors' && pageView.title === 'Google Drive' && pageView.state && pageView.chips === 8 && pageView.meta >= 5 && pageView.related === 6 && pageView.copy, JSON.stringify(pageView));
+  await page.click('#connector-perms');
+  await page.waitForTimeout(250);
+  const perms = await page.evaluate(() => [...document.querySelectorAll('.cperm__row')].map((r) => `${r.querySelector('.cperm__name')?.textContent}:${r.querySelector('.cperm__rule')?.classList.contains('is-asks')}`));
+  check('  Your tool permissions says, for each, whether it runs at once or asks first', perms.includes('search:false') && perms.includes('trash:true') && perms.length === 8, perms.join(','));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  await page.click('#connector-more');
+  await page.waitForTimeout(200);
+  await page.locator('#settings .cmenu .cmenu__item').first().click();
+  await page.locator('#settings .cmenu .cmenu__item').first().click();
+  await page.waitForTimeout(900);
+  const after = await page.evaluate(async () => {
+    const { entries } = await (await fetch('/api/connectors/catalog')).json();
+    return { drive: entries.find((e) => e.id === 'google:drive')?.connected, gmail: entries.find((e) => e.id === 'google:gmail')?.connected };
+  });
+  check('  Disconnect takes that one product, and the rest of Google stays', after.drive === false && after.gmail === true, JSON.stringify(after));
+  await page.click('#panel-connector [data-goto="connectors"]');
+  await page.waitForTimeout(300);
+  check('  ← Connectors goes back', await page.isVisible('#panel-connectors'));
+  await getStore().deleteConnector(me.id, 'google');
+  await getStore().deleteConnector(me.id, 'github');
+  await page.evaluate(() => document.getElementById('settings').close());
   await page.waitForTimeout(200);
 }
 

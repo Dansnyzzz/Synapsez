@@ -346,6 +346,7 @@ const STEP_VERBS = {
   memory_search: 'step.memory_search',
   search_chats: 'step.search_chats',
   search_connectors: 'step.search_connectors',
+  code_context: 'step.code_context',
   suggest_connectors: 'step.suggest_connectors',
   skill_read: 'step.skill_read',
   skill_write: 'step.skill_write',

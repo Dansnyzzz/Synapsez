@@ -153,8 +153,24 @@ async function readRow(userId) {
 
 const save = (userId, data, account) => getStore().saveConnector(userId, 'google', encryptSecret(JSON.stringify(data)), account);
 
-/** Trade the code for tokens and keep them. */
-export async function finishAuth({ userId, code, origin }) {
+/**
+ * The products in use: granted by Google, and not turned off here.
+ *
+ * Each Google product is its own connector in Settings (owner, 2026-11-01), so
+ * one can be disconnected while the rest stay. Google grants scopes to the one
+ * sign-in, so turning one off is kept here (`off`): the app stops offering its
+ * tools at once, and Google is told when the last one goes (`dropGoogleProduct`).
+ */
+const enabledProducts = (data) => {
+  const off = new Set(Array.isArray(data?.off) ? data.off : []);
+  return grantedProducts(data?.scope).filter((p) => !off.has(p));
+};
+
+/**
+ * Trade the code for tokens and keep them. `products` are the ones this
+ * sign-in asked for: whatever was turned off among them is on again.
+ */
+export async function finishAuth({ userId, code, origin, products = [] }) {
   const { ok, body } = await tokenRequest({ code: String(code || ''), redirect_uri: redirectUri(origin), grant_type: 'authorization_code' });
   if (!ok || !body.access_token) {
     throw new Error(`Google refused the sign-in (${body.error_description || body.error || 'no token'}).`);
@@ -179,15 +195,36 @@ export async function finishAuth({ userId, code, origin }) {
     refresh,
     exp: Date.now() + Number(body.expires_in || 3600) * 1000,
     scope: body.scope || '',
+    // Asked for again, so on again; the rest stay as they were.
+    off: (Array.isArray(previous?.data?.off) ? previous.data.off : []).filter((p) => !products.includes(p)),
   };
   await save(userId, data, who.email || 'Google');
-  return { account: who.email || 'Google', products: grantedProducts(data.scope) };
+  return { account: who.email || 'Google', products: enabledProducts(data) };
 }
 
-/** The products this account has granted, for the tool filter and the settings card. */
+/** The products this account has in use, for the tool filter and the settings card. */
 export async function googleGrants(userId) {
   const found = await readRow(userId);
-  return found ? grantedProducts(found.data.scope) : [];
+  return found ? enabledProducts(found.data) : [];
+}
+
+/**
+ * One Google product disconnected: its tools stop at once. The last one going
+ * disconnects Google itself, revoking the grant on Google's side too. Returns
+ * the products still in use.
+ */
+export async function dropGoogleProduct(userId, product) {
+  if (!Object.hasOwn(GOOGLE_PRODUCTS, product)) throw new Error(`No Google product called "${product}".`);
+  const found = await readRow(userId);
+  if (!found) return [];
+  const data = { ...found.data, off: [...new Set([...(Array.isArray(found.data.off) ? found.data.off : []), product])] };
+  const left = enabledProducts(data);
+  if (!left.length) {
+    await disconnectGoogle(userId);
+    return [];
+  }
+  await save(userId, data, found.row.account);
+  return left;
 }
 
 /** A live access token, refreshed when it is about to run out. */

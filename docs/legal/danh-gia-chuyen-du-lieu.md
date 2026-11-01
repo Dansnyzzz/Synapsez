@@ -2,7 +2,7 @@
 
 > Bản mẫu do mã nguồn cung cấp (LAW-001), để bên vận hành một bản triển khai Synapsez lập hồ sơ theo Luật
 > Bảo vệ dữ liệu cá nhân số 91/2025/QH15 (hiệu lực 01/01/2026) và văn bản hướng dẫn. Phần mô tả kỹ thuật dưới
-> đây đúng với phần mềm tại phiên bản `privacy-2026-10-26`; phần pháp lý — biểu mẫu, thời hạn nộp, cơ quan tiếp
+> đây đúng với phần mềm tại phiên bản `privacy-2026-11-01`; phần pháp lý — biểu mẫu, thời hạn nộp, cơ quan tiếp
 > nhận, căn cứ điều khoản — **phải được luật sư đối chiếu với văn bản hiện hành**. Đây không phải tư vấn pháp lý.
 
 ## 1. Bên chuyển dữ liệu
@@ -35,6 +35,7 @@
 | Supabase | Cơ sở dữ liệu | Luôn | Vùng chọn | *[điền]* |
 | Neon | Bản sao cơ sở dữ liệu cũ (trước 19/10/2026) | Cho tới khi bên vận hành xoá | Vùng đã chọn khi đó | *[điền]* |
 | Exa, DuckDuckGo, Tavily, Brave, Google | Câu truy vấn tìm kiếm | Khi trợ lý tìm kiếm web | Hoa Kỳ | *[điền]* |
+| Stack Exchange (Stack Overflow) | Câu truy vấn tìm mã nguồn / tài liệu lập trình | Khi trợ lý dùng `code_context` | Hoa Kỳ | *[điền]* |
 | OpenStreetMap: Nominatim (OSMF), Overpass (overpass-api.de, overpass.kumi.systems), OSRM (router.project-osrm.org, routing.openstreetmap.de — FOSSGIS) | Tên địa điểm; toạ độ nơi được tìm quanh, kể cả vị trí gần đúng (~1 km) khi hỏi "gần tôi" | Khi trợ lý tra địa điểm, tìm quanh một nơi, chỉ đường | Chủ yếu châu Âu (Đức và các nước khác) — bên vận hành kiểm tra | *[điền]* |
 | Dịch vụ email (Gmail/Resend/SMTP) | Email người dùng nhờ gửi | Khi gửi email | *[điền]* | *[điền]* |
 | Google (Gmail, Drive, Lịch, Tài liệu, Trang tính, Biểu mẫu, Tasks, Danh bạ) | Yêu cầu cần để làm việc người dùng nhờ | Chỉ khi người dùng tự kết nối Google | Hoa Kỳ / toàn cầu | Google API Services User Data Policy |

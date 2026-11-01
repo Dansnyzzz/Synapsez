@@ -1917,6 +1917,29 @@ export const TOOLS = [
     },
   },
   /*
+   * Claude's get_code_context_exa, in this app's terms (owner, 2026-11-01):
+   * working code and documentation for a programming question. See
+   * server/tools/codeContext.js — Exa within code sites when the deployment has
+   * its key, Stack Overflow's answers always, the ordinary search otherwise.
+   */
+  {
+    name: 'code_context',
+    scope: 'cloud',
+    readOnly: true,
+    secondary: true,
+    description:
+      'Find working code examples and documentation for a programming question — how a library or API is actually called, the known fix for an error message, idiomatic usage — from Stack Overflow answers and code and documentation sites. ' +
+      'Use it before writing code against an API you are not sure of, and cite the links you rely on.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The library or language and what the code should do, or the exact error message, e.g. "express 5 async error handler".' },
+        max_results: { type: 'integer', description: 'How many sources, 1–8. Default 4.' },
+      },
+      required: ['query'],
+    },
+  },
+  /*
    * Claude's connector search (Settings → Capabilities, owner 2026-11-01): find
    * a service the person could connect, then show it with a Connect button.
    * Two tools, as Claude's are, so the model chooses what is worth offering
@@ -3465,6 +3488,8 @@ const DEFERRABLE = new Set([
   'memory_read', 'memory_edit', 'memory_delete', 'memory_search', 'search_chats',
   // Finding a service to connect: the turn that needs one is told so in the prompt.
   'search_connectors', 'suggest_connectors',
+  // Code and documentation for a programming question: a real job, and a rare one.
+  'code_context',
   // Reading a video. A real job and a rare one — most turns never see a link
   // to one, and the schema is pure cost on all of them.
   'youtube_transcript',
