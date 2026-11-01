@@ -1869,7 +1869,7 @@ section('connectors: each Google product its own, the catalogue page, logos, and
     try {
       const low = await codeContextTool({ query: 'react useState counter' }, { fetchImpl: withExa, plan: SEARCH_LEVELS.low });
       const max = await codeContextTool({ query: 'react useState counter' }, { fetchImpl: withExa, plan: SEARCH_LEVELS.max });
-      check('with Exa: asked as its own code tool asks — highlights on the query, any site — fast and three on Low, auto and eight on Max', sent[0].type === 'fast' && sent[0].numResults === 3 && sent[0].contents.highlights.query === 'react useState counter' && !('includeDomains' in sent[0]) && sent[1].type === 'auto' && sent[1].numResults === 8, JSON.stringify(sent));
+      check('with Exa: asked as its own code tool asks — highlights on the query, any site — lite and three on Low, fast and eight on Max', sent[0].type === 'lite' && sent[0].numResults === 3 && sent[0].contents.highlights.query === 'react useState counter' && !('includeDomains' in sent[0]) && sent[1].type === 'fast' && sent[1].numResults === 8, JSON.stringify(sent));
       check('  its passages keep their line breaks, beside Stack Overflow', /useState\(0\);\n…\nsetN/.test(low.content) && /Stack Overflow/.test(max.content), low.content.slice(0, 240));
     } finally {
       if (hadExa === undefined) delete process.env.EXA_API_KEY;
@@ -1878,6 +1878,190 @@ section('connectors: each Google product its own, the catalogue page, logos, and
   }
   check('code_context is read-only, waits behind load_tools, and goes with the research plugin', TOOLS_BY_NAME.code_context?.readOnly && TOOLS_BY_NAME.code_context?.secondary && assessRisk('code_context', { query: 'x' }) === 'safe');
   if (hadKey === undefined) delete process.env.ENCRYPTION_KEY;
+}
+
+section('free tiers: one allowance per service for the whole deployment, a fair share each, and nothing past them (owner, 2026-11-02)');
+{
+  const db = await PGlite.create();
+  const { initStore } = await import('../server/store/index.js');
+  const store = await initStore({ driver: { query: async (text, params = []) => (await db.query(text, params)).rows } });
+  const tiers = await import('../server/freeTier.js');
+  const { search, searchPlan, clearSearchCache } = await import('../server/search.js');
+  const saved = { ...process.env };
+  for (const name of ['EXA_API_KEY', 'TAVILY_API_KEY', 'BRAVE_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'FREE_TIER_ONLY', 'FREE_TIER_USER_DAILY', 'STACKEXCHANGE_KEY']) delete process.env[name];
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  const web = (plan) => {
+    calls.length = 0;
+    clearSearchCache();
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), body: init?.body ? String(init.body) : '' });
+      for (const [part, answer] of Object.entries(plan)) if (String(url).includes(part)) return answer(init);
+      throw new Error(`nothing stubbed for ${url}`);
+    };
+  };
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const ddg = `<a class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent('https://example.com/free')}">Free</a><a class="result__snippet">s</a>`;
+  const now = new Date('2026-11-17T09:00:00Z');
+  try {
+    check('Exa priced as its page says: auto with ten highlighted results is 1.7¢, deep-reasoning with twelve 2.9¢', tiers.exaMills('auto', 10) === 17 && tiers.exaMills('deep-reasoning', 12) === 29 && tiers.exaMills('lite', 5) === 9);
+    const month = tiers.periodOf('month', now);
+    const day = tiers.periodOf('day', now);
+    check('a month and a day, in UTC, and when each ends', month.key === '2026-11' && month.ends.toISOString() === '2026-12-01T00:00:00.000Z' && day.key === '2026-11-17' && day.ends.toISOString() === '2026-11-18T00:00:00.000Z');
+    const fresh = await tiers.allowance('tavily');
+    await tiers.spend('tavily', 2);
+    await tiers.spend('tavily', 3);
+    check('what is spent is counted once for everyone, in the database', fresh.limit === 950 && (await tiers.allowance('tavily')).left === 945);
+
+    process.env.TAVILY_API_KEY = 'tv';
+    process.env.SEARCH_ORDER = 'tavily,duckduckgo';
+    await tiers.spend('tavily', 944);
+    web({ 'api.tavily.com': () => json({ results: [{ title: 'T', url: 'https://example.com/t', content: 'c' }] }), 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
+    const short = await search('one credit left', { plan: searchPlan('high') });
+    const asked = JSON.parse(calls[0].body);
+    check('with one Tavily credit left, High asks basic (one credit) rather than advanced (two)', short.engine === 'Tavily' && asked.search_depth === 'basic' && !('chunks_per_source' in asked), calls[0].body);
+    web({ 'api.tavily.com': () => json({ results: [{ title: 'T', url: 'https://example.com/t', content: 'c' }] }), 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
+    const spent = await search('none left', { plan: searchPlan('high') });
+    check('  with none, Tavily is not asked at all — DuckDuckGo answers, and no failure is reported', spent.engine === 'DuckDuckGo' && !calls.some((c) => c.url.includes('tavily')) && spent.attempts.length === 0, JSON.stringify(spent.attempts));
+
+    process.env.EXA_API_KEY = 'exa';
+    process.env.SEARCH_ORDER = 'exa,duckduckgo';
+    const exaAnswer = (init) => json({ results: [{ title: 'E', url: 'https://example.com/e', highlights: ['h'] }], costDollars: { total: 0.021 }, requestType: JSON.parse(init.body).type });
+    web({ 'api.exa.ai': exaAnswer, 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
+    const before = (await tiers.allowance('exa')).left;
+    await search('deep while there is room', { plan: { ...searchPlan('xhigh'), fuse: false } });
+    const counted = before - (await tiers.allowance('exa')).left;
+    check('Exa: a deep search while the month has room, and the cost Exa reports is what is counted', JSON.parse(calls[0].body).type === 'deep' && counted === 21, `${calls[0].body} — counted ${counted}`);
+    await tiers.spend('exa', 7_500);
+    web({ 'api.exa.ai': exaAnswer, 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
+    await search('deep with a quarter left', { plan: { ...searchPlan('max'), fuse: false } });
+    check('  under a quarter of the month left: the deep types give way to auto, so it lasts', JSON.parse(calls[0].body).type === 'auto', calls[0].body);
+    web({ 'api.exa.ai': () => json({ error: 'out of credits' }, 402), 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
+    const refused = await search('exa says it is spent', { plan: searchPlan('medium') });
+    check('  Exa saying its credit is spent is believed for the rest of the month', refused.engine === 'DuckDuckGo' && (await tiers.allowance('exa')).left === 0, JSON.stringify(refused.attempts));
+    web({ 'api.exa.ai': exaAnswer, 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
+    await search('after that', { plan: searchPlan('medium') });
+    check('  and is not asked again', !calls.some((c) => c.url.includes('api.exa.ai')));
+
+    // A new month for Exa, as far as the count goes.
+    await store.clearRateLimit(`free:exa:${tiers.periodOf('month').key}`);
+
+    // A fair share: one account's searches past its share go to the free engines.
+    process.env.FREE_TIER_USER_DAILY = '1';
+    web({ 'api.exa.ai': exaAnswer, 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
+    const first = await search('my first', { userId: 'u-share', plan: searchPlan('medium') });
+    web({ 'api.exa.ai': exaAnswer, 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
+    const second = await search('my second', { userId: 'u-share', plan: searchPlan('medium') });
+    const other = await search('someone else', { userId: 'u-other', plan: searchPlan('medium') });
+    check('one account past its share of the day uses the free engines; another account still has its own', first.engine === 'Exa' && second.engine === 'DuckDuckGo' && other.engine === 'Exa', `${first.engine} ${second.engine} ${other.engine}`);
+    delete process.env.FREE_TIER_USER_DAILY;
+
+    web({ 'api.exa.ai': exaAnswer });
+    process.env.SEARCH_ORDER = 'exa';
+    await search('asked twice', { plan: searchPlan('medium') });
+    await search('Asked twice ', { plan: searchPlan('medium') });
+    check('the same search asked again soon is answered from memory, and spends nothing', calls.length === 1, `${calls.length} calls`);
+
+    process.env.FREE_TIER_ONLY = 'false';
+    check('FREE_TIER_ONLY=false: counted, not stopped', (await tiers.allowance('exa')).left === Infinity);
+    delete process.env.FREE_TIER_ONLY;
+    const report = await tiers.freeTierReport();
+    check("the administrators' view: each service, its use and ceiling, and when it starts again", report.enforced && report.services.length === 5 && report.services.find((s) => s.service === 'exa').used > 0 && report.userDaily === 30, JSON.stringify(report.services[0]));
+
+    // Exa's categories, its sense of where someone is, and the same said to the others.
+    web({ 'api.exa.ai': exaAnswer });
+    await search('who founded it', { plan: searchPlan('medium'), category: 'company', recency: 'week', country: 'VN' });
+    const company = JSON.parse(calls[0].body);
+    check('Exa: the category and the country go with the query — and a company search takes no date, which Exa refuses', company.category === 'company' && company.userLocation === 'VN' && !('startPublishedDate' in company), calls[0].body);
+    process.env.SEARCH_ORDER = 'duckduckgo';
+    web({ 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
+    await search('annual report', { plan: searchPlan('medium'), category: 'pdf', country: 'VN' });
+    const form = new URLSearchParams(calls[0].body);
+    check('  DuckDuckGo: a PDF as filetype:pdf, and the Vietnamese region', form.get('q') === 'annual report filetype:pdf' && form.get('kl') === 'vn-vi', calls[0].body);
+    const { countryOf } = await import('../server/search.js');
+    check('  the country is Vietnam for a Vietnamese account or a Vietnamese clock, nobody else', countryOf({ language: 'vi' }) === 'VN' && countryOf({ timezone: 'Asia/Ho_Chi_Minh' }) === 'VN' && countryOf({ language: 'en', timezone: 'Europe/Paris' }) === null);
+    check('  web_search offers the same categories search.js knows', JSON.stringify(TOOLS_BY_NAME.web_search.parameters.properties.category.enum) === JSON.stringify((await import('../server/search.js')).SEARCH_CATEGORIES));
+
+    // Stack Exchange: its key when there is one, and its own word on the quota.
+    process.env.STACKEXCHANGE_KEY = 'se-key';
+    const { codeContextTool } = await import('../server/tools/codeContext.js');
+    const seen = [];
+    await codeContextTool({ query: 'fetch timeout' }, {
+      plan: searchPlan('low'),
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        if (String(url).includes('/search/advanced')) return json({ items: [{ question_id: 9, title: 'Q', link: 'https://stackoverflow.com/q/9' }], quota_remaining: 3 });
+        return json({ items: [{ question_id: 9, score: 1, is_accepted: true, body: '<p>A</p>' }], quota_remaining: 2 });
+      },
+    });
+    const toStack = seen.filter((u) => u.includes('stackexchange'));
+    check('Stack Exchange: asked with the free key, and a quota it says is nearly gone is believed', toStack.length === 2 && toStack.every((u) => u.includes('key=se-key')) && (await tiers.allowance('stackexchange')).left === 0, toStack.join(' '));
+  } finally {
+    globalThis.fetch = realFetch;
+    for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name];
+    Object.assign(process.env, saved);
+    clearSearchCache();
+  }
+}
+
+section('feedback on one answer: the problem, the words, and that turn as it ran (owner, 2026-11-02)');
+{
+  const db = await PGlite.create();
+  const { initStore } = await import('../server/store/index.js');
+  const store = await initStore({ driver: { query: async (text, params = []) => (await db.query(text, params)).rows } });
+  const { checkAnswerFeedback, answerSnapshot, ANSWER_ISSUES, mountFeedbackRoutes } = await import('../server/routes/feedback.js');
+  const { ANSWER_ISSUES: shownIssues } = await import('../public/js/answer-feedback.js');
+  check('the dialog offers what the server takes — twelve problems, in Claude\'s order', JSON.stringify(ANSWER_ISSUES) === JSON.stringify(shownIssues) && ANSWER_ISSUES.length === 12 && ANSWER_ISSUES[0] === 'ui_bug' && ANSWER_ISSUES.at(-1) === 'other');
+  check('both the problem and the words are optional; a problem not on the list is refused', checkAnswerFeedback({ chatId: 'c' }).ok && !checkAnswerFeedback({ chatId: 'c', issue: 'made_up' }).ok && !checkAnswerFeedback({}).ok);
+
+  const messages = [
+    { id: 'm1', role: 'user', text: 'earlier' },
+    { id: 'm2', role: 'assistant', text: 'earlier answer' },
+    { id: 'm3', role: 'user', text: 'what is gold at today?', attachments: [{ name: 'chart.png' }] },
+    { id: 'm4', role: 'assistant', text: '', thinking: 'search first', model: 'openrouter/free', toolCalls: [{ id: 't1', name: 'web_search', input: { query: 'gold price' } }], usage: { input: 900, output: 40 } },
+    { id: 'm5', role: 'tool', results: [{ toolCallId: 't1', name: 'web_search', content: 'x'.repeat(9000), isError: false, ms: 812 }] },
+    { id: 'm6', role: 'assistant', text: 'Gold is at 4,031 USD.', model: 'openrouter/free' },
+    { id: 'm7', role: 'user', text: 'thanks' },
+  ];
+  const snap = answerSnapshot(messages, 'm3');
+  check('the turn is the message that began it and everything up to the next one — replies, calls, results', snap.prompt.id === 'm3' && snap.prompt.files[0] === 'chart.png' && snap.steps.length === 3 && snap.steps[0].calls[0].name === 'web_search' && /gold price/.test(snap.steps[0].calls[0].input) && snap.steps[1].results[0].ms === 812 && snap.steps[2].text === 'Gold is at 4,031 USD.', JSON.stringify(snap).slice(0, 300));
+  check('  a long tool answer is kept short, saying how much more there was', snap.steps[1].results[0].content.length < 6100 && /more characters/.test(snap.steps[1].results[0].content));
+  check('  with no message named, the last turn', answerSnapshot(messages, null).prompt.id === 'm7' && answerSnapshot(messages, 'nope').prompt.id === 'm7');
+
+  const user = await store.createUser({ id: 'u-afb', email: 'afb@example.com', passwordHash: 'x', name: 'A', role: 'user' });
+  await store.createChat(user.id, { id: 'chat-afb', title: 'Gold', model: 'auto' });
+  for (const m of messages) await store.appendMessage(user.id, 'chat-afb', m);
+  await store.createChat(user.id, { id: 'chat-inc', title: 'Secret', model: 'auto', incognito: true });
+  await store.appendMessage(user.id, 'chat-inc', { id: 'i1', role: 'user', text: 'private' });
+  const app = express();
+  app.use(express.json());
+  const api = express.Router();
+  api.use((req, res, next) => {
+    req.user = { id: user.id, username: 'afb' };
+    next();
+  });
+  const admin = express.Router();
+  mountFeedbackRoutes(api, admin, { wrap: (h) => (req, res, next) => Promise.resolve(h(req, res, next)).catch(next) });
+  app.use('/api', api);
+  app.use('/api/admin', admin);
+  const server = http.createServer(app).listen(0);
+  const base = `http://127.0.0.1:${server.address().port}/api`;
+  const post = (body) => fetch(`${base}/feedback/answer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const sent = await (await post({ chatId: 'chat-afb', messageId: 'm3', issue: 'not_factual', details: 'The price was a week old.' })).json();
+    const listed = (await (await fetch(`${base}/admin/feedback`)).json()).feedback.find((f) => f.id === sent.id);
+    check('sent: kept for the administrators with its problem, its words and its turn', sent.included === true && listed.topic === 'answer' && listed.issue === 'not_factual' && listed.body === 'The price was a week old.' && listed.has_answer && listed.message_id === 'm3', JSON.stringify(listed));
+    const opened = await (await fetch(`${base}/admin/feedback/${sent.id}/transcript`)).json();
+    check('  opened: the answer as it ran, beside the conversation', opened.answer?.steps?.length === 3 && opened.transcript?.messages?.length >= 5, JSON.stringify(opened).slice(0, 200));
+    const quiet = await (await post({ chatId: 'chat-inc' })).json();
+    const kept = (await (await fetch(`${base}/admin/feedback`)).json()).feedback.find((f) => f.id === quiet.id);
+    check('an incognito conversation: the report goes alone, nothing of the conversation with it', quiet.included === false && !kept.has_answer && !kept.transcript_count && kept.chat_title === null, JSON.stringify(kept));
+    check("  another account's conversation is not found", (await post({ chatId: 'chat-elsewhere' })).status === 404);
+    await store.deleteChat(user.id, 'chat-afb');
+    check('  the conversation deleted, its answer goes with it', (await fetch(`${base}/admin/feedback/${sent.id}/transcript`)).status === 404);
+  } finally {
+    server.close();
+  }
 }
 
 section('connector search: the directory, what is offered, and the switch (owner, 2026-11-01)');

@@ -104,6 +104,10 @@ export const api = {
   /** Give feedback, and an administrator's view of what was sent. */
   feedback: (body) => request('POST', '/api/feedback', body),
   adminFeedback: () => request('GET', '/api/admin/feedback'),
+  // Feedback on one answer, from the thumb beside its copy button (owner, 2026-11-02).
+  answerFeedback: (body) => request('POST', '/api/feedback/answer', body),
+  // The deployment's free allowances this period (server/freeTier.js).
+  freeTier: () => request('GET', '/api/admin/free-tier'),
   feedbackTranscript: (id) => request('GET', `/api/admin/feedback/${encodeURIComponent(id)}/transcript`),
   markFeedbackRead: (id) => request('PUT', `/api/admin/feedback/${encodeURIComponent(id)}/read`),
   deleteFeedback: (id) => request('DELETE', `/api/admin/feedback/${encodeURIComponent(id)}`),

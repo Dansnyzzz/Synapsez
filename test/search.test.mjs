@@ -16,7 +16,7 @@ process.env.TAVILY_API_KEY = 'tavily-test-key';
 process.env.BRAVE_API_KEY = 'brave-test-key';
 delete process.env.SEARCH_ORDER;
 
-const { search, formatResults, searchChain, searchPlan, SEARCH_LEVELS, cleanSites, fuseResults, readThroughExa } = await import('../server/search.js');
+const { search, formatResults, searchChain, searchPlan, SEARCH_LEVELS, cleanSites, fuseResults, readThroughExa, clearSearchCache } = await import('../server/search.js');
 // Google stands aside in these tests: with no Gemini key it skips itself.
 delete process.env.GEMINI_API_KEY;
 delete process.env.GOOGLE_API_KEY;
@@ -38,6 +38,8 @@ const check = (label, pass, detail = '') => {
 const calls = [];
 function stubFetch(plan) {
   calls.length = 0;
+  // Each stub is a different web: nothing remembered from the one before.
+  clearSearchCache();
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, at: Date.now(), body: init?.body });
@@ -163,12 +165,12 @@ section('every engine refusing is an answer too');
 // ── how far a search goes (owner, 2026-11-02) ───────────────────────
 section('each reasoning level, every engine in step');
 {
-  check('Low: the fast path, short passages, one engine', searchPlan('low').exa === 'fast' && searchPlan('low').snippet <= 300 && !searchPlan('low').fuse);
+  check("Low: Exa's cheapest path, short passages, one engine", searchPlan('low').exa === 'lite' && searchPlan('low').snippet <= 300 && !searchPlan('low').fuse);
   check('High: Exa decides, Tavily reads the best passages', searchPlan('high').exa === 'auto' && searchPlan('high').tavily === 'advanced');
   check('Extra high and Max: Exa searches deep, and a second engine joins', searchPlan('xhigh').exa === 'deep' && searchPlan('max').exa === 'deep-reasoning' && searchPlan('xhigh').fuse && searchPlan('max').fuse);
   check('each level asks for more than the one below', ['low', 'medium', 'high', 'xhigh', 'max'].every((l, i, all) => i === 0 || (SEARCH_LEVELS[l].count >= SEARCH_LEVELS[all[i - 1]].count && SEARCH_LEVELS[l].snippet > SEARCH_LEVELS[all[i - 1]].snippet)));
   const quick = searchPlan('max', 'quick');
-  check('"quick" inside a careful job: links only, the fast path, one engine', quick.read === 0 && quick.exa === 'fast' && !quick.fuse);
+  check('"quick" inside a careful job: links only, the cheapest path, one engine', quick.read === 0 && quick.exa === 'lite' && !quick.fuse);
   check('"thorough" on a fast setting reads pages and leaves the fast path', searchPlan('low', 'thorough').read >= 3 && searchPlan('low', 'thorough').exa === 'auto');
   check('an unknown level is the settings default, High', searchPlan(undefined) === SEARCH_LEVELS.high && searchPlan('nonsense') === SEARCH_LEVELS.high);
 
@@ -176,7 +178,7 @@ section('each reasoning level, every engine in step');
   stubFetch({ 'api.exa.ai': () => json({ results: [{ title: 'T', url: 'https://example.com/t', highlights: ['x'.repeat(900)] }] }) });
   const low = await search('giá xăng', { plan: searchPlan('low') });
   const sent = JSON.parse(calls[0].body);
-  check('on Low Exa is asked for its fast type, five results, passages of 300', sent.type === 'fast' && sent.numResults === 5 && sent.contents.highlights.maxCharacters === 300, JSON.stringify(sent));
+  check('on Low Exa is asked for its lite type, five results, passages of 300', sent.type === 'lite' && sent.numResults === 5 && sent.contents.highlights.maxCharacters === 300, JSON.stringify(sent));
   check('  and a passage is kept to that length', low.results[0].snippet.length <= 301, String(low.results[0].snippet.length));
   delete process.env.SEARCH_ORDER;
 }

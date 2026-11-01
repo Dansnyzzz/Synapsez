@@ -1005,3 +1005,13 @@ CREATE INDEX IF NOT EXISTS feedback_user_idx ON feedback (user_id, created_at DE
 -- added in the Create a skill editor or arriving in an uploaded .zip/.skill.
 -- Read back with the skill (`readSkill`), never run. Existing skills have none.
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS files JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- 35: feedback on one answer (owner, 2026-11-02) — the button beside an
+-- answer's copy button. `message_id` is the message that began the turn it is
+-- about; `issue` the kind of problem chosen, if one was; `answer` that turn as
+-- it ran — the replies, their tool calls and results, the model — so an
+-- administrator can see exactly what went wrong. Like `transcript`, it is a
+-- copy of the conversation: cleared when the conversation is deleted.
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS message_id TEXT;
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS issue TEXT;
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS answer JSONB;

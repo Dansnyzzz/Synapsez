@@ -231,7 +231,9 @@ export function createYourData(deps) {
     const name = cell('dtable__name');
     const label =
       kind === 'feedback'
-        ? `${t(`feedback.kind.${item.kind}`)} · ${item.topic === 'other' ? item.topicOther || t('feedback.topic.other') : t(`feedback.topic.${item.topic}`)}`
+        ? item.topic === 'answer'
+          ? `${t('feedback.admin.onAnswer')} · ${item.issue ? t(`answerFeedback.issue.${item.issue}`) : t('feedback.admin.noIssue')}`
+          : `${t(`feedback.kind.${item.kind}`)} · ${item.topic === 'other' ? item.topicOther || t('feedback.topic.other') : t(`feedback.topic.${item.topic}`)}`
         : item.name || t('chat.untitled');
     if (spec.open) {
       const open = h('button', 'dtable__link', label);

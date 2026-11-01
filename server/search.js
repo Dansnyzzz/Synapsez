@@ -26,6 +26,7 @@
 import { untrusted } from './tools/untrusted.js';
 import { log } from './util/trace.js';
 import { googleDataInScope } from './googleData.js';
+import { allowance, spend, exhaust, mayMeter, countMetered, exaMills, exaSpent } from './freeTier.js';
 
 const DEFAULT_ORDER = ['exa', 'google', 'duckduckgo', 'tavily', 'brave'];
 
@@ -38,20 +39,21 @@ const DEFAULT_ORDER = ['exa', 'google', 'duckduckgo', 'tavily', 'brave'];
  *   read       top pages web_search opens and reads into its answer
  *   snippet    characters kept from each result; Exa's highlights are asked
  *              for at this length, focused on the query
- *   exa        Exa's search type: fast, auto, deep (expands the query itself,
- *              4–12s) or deep-reasoning (12–50s) — the last two also return
- *              Exa's own grounded summary of what it found
+ *   exa        Exa's search type: lite (its cheapest, $4 a thousand), auto,
+ *              deep (expands the query itself, 4–12s) or deep-reasoning
+ *              (12–50s) — the last two also return Exa's own grounded summary
+ *              of what it found, and cost about twice as much
  *   tavily     Tavily's depth: basic, or advanced (the best passages of each page)
  *   fuse       a second engine searched alongside the first, the two merged
  *   code       sources code_context gathers
  *   timeoutMs  how long one engine may take
  */
 export const SEARCH_LEVELS = Object.freeze({
-  low: { count: 5, read: 0, snippet: 300, exa: 'fast', tavily: 'basic', fuse: false, code: 3, timeoutMs: 15_000 },
-  medium: { count: 8, read: 0, snippet: 450, exa: 'auto', tavily: 'basic', fuse: false, code: 4, timeoutMs: 30_000 },
-  high: { count: 8, read: 2, snippet: 600, exa: 'auto', tavily: 'advanced', fuse: false, code: 5, timeoutMs: 30_000 },
-  xhigh: { count: 10, read: 3, snippet: 800, exa: 'deep', tavily: 'advanced', fuse: true, code: 6, timeoutMs: 45_000 },
-  max: { count: 12, read: 4, snippet: 1000, exa: 'deep-reasoning', tavily: 'advanced', fuse: true, code: 8, timeoutMs: 60_000 },
+  low: Object.freeze({ count: 5, read: 0, snippet: 300, exa: 'lite', tavily: 'basic', fuse: false, code: 3, timeoutMs: 15_000 }),
+  medium: Object.freeze({ count: 8, read: 0, snippet: 450, exa: 'auto', tavily: 'basic', fuse: false, code: 4, timeoutMs: 30_000 }),
+  high: Object.freeze({ count: 8, read: 2, snippet: 600, exa: 'auto', tavily: 'advanced', fuse: false, code: 5, timeoutMs: 30_000 }),
+  xhigh: Object.freeze({ count: 10, read: 3, snippet: 800, exa: 'deep', tavily: 'advanced', fuse: true, code: 6, timeoutMs: 45_000 }),
+  max: Object.freeze({ count: 12, read: 4, snippet: 1000, exa: 'deep-reasoning', tavily: 'advanced', fuse: true, code: 8, timeoutMs: 60_000 }),
 });
 
 /**
@@ -62,11 +64,25 @@ export const SEARCH_LEVELS = Object.freeze({
  */
 export function searchPlan(effort, depth) {
   const level = SEARCH_LEVELS[effort] || SEARCH_LEVELS.high;
-  if (depth === 'quick') return { ...level, read: 0, exa: 'fast', tavily: 'basic', fuse: false, timeoutMs: Math.min(level.timeoutMs, 15_000) };
+  if (depth === 'quick') return { ...level, read: 0, exa: 'lite', tavily: 'basic', fuse: false, timeoutMs: Math.min(level.timeoutMs, 15_000) };
   if (depth === 'thorough') {
-    return { ...level, count: Math.max(level.count, 10), read: Math.max(level.read, 3), exa: level.exa === 'fast' ? 'auto' : level.exa, tavily: 'advanced' };
+    return { ...level, count: Math.max(level.count, 10), read: Math.max(level.read, 3), exa: level.exa === 'lite' ? 'auto' : level.exa, tavily: 'advanced' };
   }
   return level;
+}
+
+/**
+ * The kinds of page a search can be held to (Exa's categories, from its kit).
+ * Exa searches within the kind; the others are told what they understand:
+ * Tavily's news and finance topics, `filetype:pdf` and github.com for the
+ * engines that read operators in the query.
+ */
+export const SEARCH_CATEGORIES = ['news', 'company', 'people', 'research paper', 'pdf', 'github', 'financial report', 'personal site'];
+
+/** The account's country for Exa's `userLocation`, from what it told us — Vietnamese, or a Vietnamese clock. */
+export function countryOf(prefs) {
+  const zone = String(prefs?.timezone || '');
+  return prefs?.language === 'vi' || /^Asia\/(Ho_Chi_Minh|Saigon)$/.test(zone) ? 'VN' : null;
 }
 
 /** How far back `recency` reaches, in days — the same span for every engine. */
@@ -87,6 +103,22 @@ export function cleanSites(sites) {
 
 /** A query held to some sites, for the engines that read `site:` in the query itself. */
 const withSites = (query, sites) => (sites.length ? `${query} ${sites.map((s) => `site:${s}`).join(' OR ')}` : query);
+
+/** The query as the engines that read operators take it: its sites, and the kind of page where an operator says it. */
+const keywordQuery = (query, ask) =>
+  withSites(ask.category === 'pdf' ? `${query} filetype:pdf` : query, ask.sites.length ? ask.sites : ask.category === 'github' ? ['github.com'] : []);
+
+/** Standing aside — not a failure: no allowance left, or this account's share used today. */
+const standAside = (why) => Object.assign(new Error(why), { skip: true });
+
+/** Whether a metered engine may run for this search, its allowance and this account's share both counted. */
+async function metered(service, ask, cost) {
+  if (!ask.mayMeter) throw standAside(`${service}: this account's share of today's searches is used`);
+  const room = await allowance(service);
+  if (room.left < cost) throw standAside(`${service}: the free allowance for this period is used`);
+  ask.drew = true;
+  return room;
+}
 
 /* ── DuckDuckGo, and being a good citizen about it ──────────────────── */
 
@@ -169,16 +201,29 @@ async function refusal(label, res) {
  * asked again the ordinary way, so a slow or unavailable deep path never
  * costs the answer.
  *
- * @param {{ count: number, plan: any, recency: string|null, sites: string[] }} ask
+ * Inside the free month (freeTier.js): with under a quarter of it left, the
+ * deep types give way to `auto` — about half the price — so the month lasts;
+ * with too little for this search, Exa stands aside. What Exa says each call
+ * cost is what is counted. A category and the account's country (Exa's
+ * `userLocation`) go with the query; company and people searches take no date.
+ *
+ * @param {{ count: number, plan: any, recency: string|null, sites: string[], category: string|null, country: string|null, mayMeter: boolean }} ask
  */
 async function searchExa(query, ask) {
+  let type = ask.plan.exa;
+  const room = await metered('exa', ask, exaMills('lite', ask.count));
+  if (String(type).startsWith('deep') && room.left < room.limit / 4) type = 'auto';
+  if (room.left < exaMills(type, ask.count)) type = 'lite';
+  const dated = ask.recency && !['company', 'people'].includes(ask.category);
   const body = {
     query,
-    type: ask.plan.exa,
+    type,
     numResults: ask.count,
     contents: { highlights: { query, maxCharacters: ask.plan.snippet } },
-    ...(ask.sites.length ? { includeDomains: ask.sites } : {}),
-    ...(ask.recency ? { startPublishedDate: new Date(Date.now() - RECENCY_DAYS[ask.recency] * 86_400_000).toISOString() } : {}),
+    ...(ask.category && ask.category !== 'pdf' && ask.category !== 'github' ? { category: ask.category } : {}),
+    ...(ask.country ? { userLocation: ask.country } : {}),
+    ...(ask.sites.length ? { includeDomains: ask.sites } : ask.category === 'github' ? { includeDomains: ['github.com'] } : {}),
+    ...(dated ? { startPublishedDate: new Date(Date.now() - RECENCY_DAYS[ask.recency] * 86_400_000).toISOString() } : {}),
   };
   const call = async (sent, timeoutMs) => {
     const res = await fetch('https://api.exa.ai/search', {
@@ -188,13 +233,17 @@ async function searchExa(query, ask) {
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) throw await refusal('Exa', res);
-    return res.json();
+    const json = await res.json();
+    await spend('exa', exaSpent(json, exaMills(sent.type, (json.results || []).length)));
+    return json;
   };
   let json;
   try {
     json = await call(body, ask.plan.timeoutMs);
   } catch (err) {
     if (!String(body.type).startsWith('deep') || [401, 402, 403].includes(err.status)) throw err;
+    // A deep search that ran out of time may still have been charged.
+    if (!err.status) await spend('exa', exaMills(body.type, ask.count));
     // Kept short: the deep attempt has already spent its time, and a turn has five minutes in all.
     json = await call({ ...body, type: 'auto' }, 20_000);
   }
@@ -209,17 +258,25 @@ async function searchExa(query, ask) {
   return { results, answer: said || null };
 }
 
-/** Tavily: `advanced` from High up — the best passages of each page, at two credits a search. */
+/** Tavily's own topics, for the categories it has one for. */
+const TAVILY_TOPIC = { news: 'news', 'financial report': 'finance' };
+
+/**
+ * Tavily: `advanced` from High up — the best passages of each page, at two
+ * credits a search, or one when the month's credits are running short.
+ */
 async function searchTavily(query, ask) {
-  const advanced = ask.plan.tavily === 'advanced';
+  const room = await metered('tavily', ask, 1);
+  const advanced = ask.plan.tavily === 'advanced' && room.left >= 2;
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.TAVILY_API_KEY}` },
     body: JSON.stringify({
       query,
       max_results: ask.count,
-      search_depth: ask.plan.tavily,
+      search_depth: advanced ? 'advanced' : 'basic',
       ...(advanced ? { chunks_per_source: 3 } : {}),
+      ...(TAVILY_TOPIC[ask.category] ? { topic: TAVILY_TOPIC[ask.category] } : {}),
       ...(ask.recency ? { time_range: ask.recency } : {}),
       ...(ask.sites.length ? { include_domains: ask.sites } : {}),
       include_answer: false,
@@ -227,6 +284,7 @@ async function searchTavily(query, ask) {
     signal: AbortSignal.timeout(ask.plan.timeoutMs),
   });
   if (!res.ok) throw await refusal('Tavily', res);
+  await spend('tavily', advanced ? 2 : 1);
 
   const json = await res.json();
   return (json.results || []).map((result) => ({
@@ -240,9 +298,11 @@ async function searchTavily(query, ask) {
 /** Brave's freshness codes for the same spans. */
 const BRAVE_FRESHNESS = { day: 'pd', week: 'pw', month: 'pm', year: 'py' };
 
+/** Brave: a card on file and no cap of its own, so the count in freeTier.js is the cap. */
 async function searchBrave(query, ask) {
+  await metered('brave', ask, 1);
   const url = new URL('https://api.search.brave.com/res/v1/web/search');
-  url.searchParams.set('q', withSites(query, ask.sites));
+  url.searchParams.set('q', keywordQuery(query, ask));
   url.searchParams.set('count', String(Math.min(ask.count, 20)));
   if (ask.recency) url.searchParams.set('freshness', BRAVE_FRESHNESS[ask.recency]);
 
@@ -250,6 +310,8 @@ async function searchBrave(query, ask) {
     headers: { Accept: 'application/json', 'X-Subscription-Token': process.env.BRAVE_API_KEY },
     signal: AbortSignal.timeout(ask.plan.timeoutMs),
   });
+  // Counted whatever came back: a refused call may still be a billed one.
+  await spend('brave', 1);
   if (!res.ok) throw await refusal('Brave Search', res);
 
   const json = await res.json();
@@ -285,8 +347,8 @@ function stripTags(html) {
  */
 async function searchDuckDuckGo(query, ask) {
   const count = ask.count;
-  // `df` is DuckDuckGo's own date filter: d, w, m or y.
-  const form = { q: withSites(query, ask.sites), ...(ask.recency ? { df: ask.recency[0] } : {}) };
+  // `df` is DuckDuckGo's own date filter: d, w, m or y; `kl` its region.
+  const form = { q: keywordQuery(query, ask), ...(ask.recency ? { df: ask.recency[0] } : {}), ...(ask.country === 'VN' ? { kl: 'vn-vi' } : {}) };
   return pacedDuckDuckGo(async () => {
     const res = await fetch('https://html.duckduckgo.com/html/', {
       method: 'POST',
@@ -360,11 +422,16 @@ async function searchGoogle(query, ask) {
   if (googleDataInScope()) throw Object.assign(new Error('not with Google data'), { skip: true });
   const { count, userId } = ask;
   let key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+  // The deployment's key draws on the deployment's daily free quota; an
+  // account's own key is its own, and not counted against anyone.
+  const deployment = !!key;
+  if (deployment) await metered('google', ask, 1);
   if (!key && userId) {
     const { getApiKey } = await import('./settings.js');
     key = (await getApiKey(userId, 'google').catch(() => null)) || '';
   }
   if (!key) throw Object.assign(new Error('no Gemini key'), { skip: true });
+  if (deployment) await spend('google', 1);
 
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GROUNDING_MODEL)}:generateContent`,
@@ -378,7 +445,7 @@ async function searchGoogle(query, ask) {
             parts: [
               {
                 text:
-                  `Search Google for: ${withSites(query, ask.sites)}\n` +
+                  `Search Google for: ${keywordQuery(query, ask)}\n` +
                   (ask.recency ? `Only pages published in the past ${ask.recency}.\n` : '') +
                   `List what the top ${count} results say, briefly.`,
               },
@@ -432,10 +499,11 @@ async function searchGoogle(query, ask) {
 
 /* ── the chain ──────────────────────────────────────────────────────── */
 
+/** `metered`: drawn from a free allowance the deployment shares (freeTier.js). */
 const ENGINES = {
-  exa: { label: 'Exa', run: searchExa, key: 'EXA_API_KEY' },
-  tavily: { label: 'Tavily', run: searchTavily, key: 'TAVILY_API_KEY' },
-  brave: { label: 'Brave', run: searchBrave, key: 'BRAVE_API_KEY' },
+  exa: { label: 'Exa', run: searchExa, key: 'EXA_API_KEY', metered: true },
+  tavily: { label: 'Tavily', run: searchTavily, key: 'TAVILY_API_KEY', metered: true },
+  brave: { label: 'Brave', run: searchBrave, key: 'BRAVE_API_KEY', metered: true },
   // No key, so it is always available — which is what makes it a good middle
   // of the chain rather than a last resort.
   duckduckgo: { label: 'DuckDuckGo', run: searchDuckDuckGo, key: null },
@@ -504,16 +572,21 @@ export function fuseResults(answered, count) {
  * passage from each, how hard Exa and Tavily look — and, from Extra high up,
  * a second engine searched alongside the first and merged with it. `recency`
  * (day, week, month, year) and `sites` hold every engine to the same span and
- * the same sites, each in its own words.
+ * the same sites, each in its own words; `category` (SEARCH_CATEGORIES) the
+ * kind of page, and `country` Exa's sense of where the person is.
+ *
+ * Free, first (freeTier.js): the same search asked again within ten minutes
+ * is answered from memory and spends nothing; a metered engine runs only
+ * inside its allowance and the account's share of the day.
  *
  * @param {string} query
- * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string }} [options]
+ * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string, category?: string|null, country?: string|null }} [options]
  * @returns `{ engine, engines, results, attempts, answer }` — `attempts` records
  *   what was tried and why it did not answer, which is the difference between
  *   "there is nothing about this on the web" and "the search key expired last
  *   Tuesday"; `answer` is Exa's own summary when a deep search gave one.
  */
-export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [] } = {}) {
+export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [], category = null, country = null } = {}) {
   const wanted = Math.min(Math.max(Number(count) || plan.count || 8, 1), 20);
   const chain = searchChain();
 
@@ -531,8 +604,16 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
     plan,
     recency: Object.hasOwn(RECENCY_DAYS, String(recency)) ? String(recency) : null,
     sites: cleanSites(sites),
+    category: SEARCH_CATEGORIES.includes(String(category)) ? String(category) : null,
+    country: /^[A-Z]{2}$/.test(String(country)) ? String(country) : null,
     userId,
+    mayMeter: await mayMeter(userId),
+    // Set when a metered engine was asked, so the account's share is counted once.
+    drew: false,
   };
+  const cacheKey = JSON.stringify([query.trim().toLowerCase(), chain, wanted, plan.exa, plan.tavily, plan.snippet, plan.fuse, ask.recency, ask.sites, ask.category, ask.country]);
+  const cached = recall(cacheKey);
+  if (cached) return cached;
 
   /*
    * Down the chain, in one lane — or two side by side when the plan fuses.
@@ -559,13 +640,20 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
         }
         attempts.push({ at, engine: engine.label, error: 'no results' });
       } catch (err) {
-        // An engine with nothing to run on stands aside without being reported as failing.
-        if (err.skip) continue;
+        // An engine with nothing to run on — no key, no allowance left —
+        // stands aside without being reported as failing.
+        if (err.skip) {
+          if (/allowance|share/.test(err.message)) log.info('search: free tier', { reason: err.message, userId: userId || 'unattributed' });
+          continue;
+        }
+        // The service itself says its credit is spent: believed for the rest of the period.
+        if (engine.metered && [402, 432, 433].includes(err.status)) await exhaust(chain[at]);
         attempts.push({ at, engine: engine.label, error: err.message });
       }
     }
   };
   await Promise.all(Array.from({ length: plan.fuse ? 2 : 1 }, lane));
+  if (ask.drew) await countMetered(userId);
   // In chain order, whichever finished first.
   answered.sort((a, b) => a.at - b.at);
   attempts.sort((a, b) => a.at - b.at);
@@ -589,14 +677,45 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
    * plainly that these are shared.
    */
   log.info('search', { engine: engines.join('+'), userId: userId || 'unattributed', results: results.length, exa: plan.exa });
-  return {
+  const found = {
     engine: engines.join(' + '),
     engines,
     results,
     attempts: tried,
     answer: answered.find((a) => a.answer)?.answer || null,
   };
+  remember(cacheKey, found);
+  return found;
 }
+
+/*
+ * The same search, asked again soon, answered from memory: ten minutes, two
+ * hundred searches, per server instance. A question several people ask the
+ * same morning — or one person asks twice — costs one search. What the web
+ * says changes, but not by the minute; recency=day still gets a fresh one
+ * after ten.
+ */
+const CACHE_MS = 10 * 60_000;
+const CACHE_MAX = 200;
+const cache = new Map();
+
+function recall(key) {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (hit.until < Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return structuredClone(hit.value);
+}
+
+function remember(key, value) {
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
+  cache.set(key, { until: Date.now() + CACHE_MS, value: structuredClone(value) });
+}
+
+/** Forget every remembered search — for tests, which change the web under it. */
+export const clearSearchCache = () => cache.clear();
 
 /** How much of Exa's own summary is passed on — the sources below it are the evidence. */
 const ANSWER_CHARS = 1500;
@@ -644,6 +763,8 @@ export function formatResults(query, { engine, engines = [], results, attempts, 
 export async function readThroughExa(url, { maxChars = 20_000, timeoutMs = 30_000 } = {}) {
   if (!process.env.EXA_API_KEY) return null;
   try {
+    // A thousandth of a dollar a page, inside the free month like a search.
+    if ((await allowance('exa')).left < 1) return null;
     const res = await fetch('https://api.exa.ai/contents', {
       method: 'POST',
       headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
@@ -651,7 +772,9 @@ export async function readThroughExa(url, { maxChars = 20_000, timeoutMs = 30_00
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return null;
-    const hit = ((await res.json()).results || [])[0];
+    const json = await res.json();
+    await spend('exa', exaSpent(json, 1));
+    const hit = (json.results || [])[0];
     return hit?.text ? { title: String(hit.title || ''), text: String(hit.text) } : null;
   } catch {
     return null;

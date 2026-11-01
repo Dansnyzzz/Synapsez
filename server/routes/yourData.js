@@ -33,6 +33,7 @@ function shapeOf(kind, row, shared) {
       topic: row.topic,
       topicOther: row.topic_other,
       kind: row.kind,
+      issue: row.issue || null,
       body: row.body,
       chatTitle: row.chat_title,
       shared,

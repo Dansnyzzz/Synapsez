@@ -68,6 +68,7 @@ import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { usageReport } from './usageReport.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { mountFeedbackRoutes } from './routes/feedback.js';
+import { freeTierReport } from './freeTier.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
 import { withTrace, newTraceId, annotate, log, mark, since } from './util/trace.js';
@@ -2321,6 +2322,14 @@ export function createApp() {
 
   // ── admin ───────────────────────────────────────────────────────────
   // The router itself, and its guard, are created above mountAccountRoutes.
+
+  // How much of each free allowance this deployment has used this period (freeTier.js).
+  admin.get(
+    '/free-tier',
+    wrap(async (req, res) => {
+      res.json(await freeTierReport());
+    }),
+  );
 
   admin.get(
     '/users',

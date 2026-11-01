@@ -965,6 +965,11 @@ export const TOOLS = [
           items: { type: 'string' },
           description: 'Only these sites, e.g. ["vnexpress.net"]. Up to 5.',
         },
+        category: {
+          type: 'string',
+          enum: ['news', 'company', 'people', 'research paper', 'pdf', 'github', 'financial report', 'personal site'],
+          description: 'Only this kind of page — a person\'s profile, a company, a paper, a PDF, a repository.',
+        },
       },
       required: ['query'],
     },

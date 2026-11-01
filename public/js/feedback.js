@@ -56,16 +56,26 @@ export function renderFeedbackList(host, items, when) {
   host.innerHTML = `<div class="fbadmin">${items
     .map((f) => {
       const who = f.username || f.name || f.email;
+      // Feedback on one answer (owner, 2026-11-02): its problem, and that answer as it ran.
+      const onAnswer = f.topic === 'answer';
       const about = f.topic === 'other' ? f.topic_other || t('feedback.topic.other') : t(`feedback.topic.${f.topic}`);
-      const tags = [t(`feedback.kind.${f.kind}`), about, t(`feedback.affect.${f.affect}`), f.frequency ? t(`feedback.frequency.${f.frequency}`) : null, f.worked_before ? t(`feedback.worked.${f.worked_before}`) : null].filter(Boolean);
-      // Counted here, read when opened (transcriptLines): the list stays small however long they were.
-      const transcript = f.transcript_count
-        ? `<details class="fbadmin__chat" data-feedback-chat="${escapeHtml(f.id)}"><summary>${escapeHtml(t(f.transcript_count === 1 ? 'feedback.admin.chat.one' : 'feedback.admin.chat', { title: f.chat_title || t('chat.untitled'), n: String(f.transcript_count) }))}</summary><div class="fbadmin__lines"><p class="muted">${escapeHtml(t('common.loading'))}</p></div></details>`
+      const tags = onAnswer
+        ? [t('feedback.admin.onAnswer'), f.issue ? t(`answerFeedback.issue.${f.issue}`) : t('feedback.admin.noIssue')]
+        : [t(`feedback.kind.${f.kind}`), about, t(`feedback.affect.${f.affect}`), f.frequency ? t(`feedback.frequency.${f.frequency}`) : null, f.worked_before ? t(`feedback.worked.${f.worked_before}`) : null].filter(Boolean);
+      const loading = `<div class="fbadmin__lines"><p class="muted">${escapeHtml(t('common.loading'))}</p></div>`;
+      // Counted here, read when opened (transcriptLines, answerLines): the list stays small however long they were.
+      const ran = onAnswer && f.has_answer
+        ? `<details class="fbadmin__chat fbadmin__answer" data-feedback-answer="${escapeHtml(f.id)}"><summary>${escapeHtml(t('feedback.admin.answerRan'))}</summary>${loading}</details>`
         : '';
+      const transcript = f.transcript_count
+        ? `<details class="fbadmin__chat" data-feedback-chat="${escapeHtml(f.id)}"><summary>${escapeHtml(t(f.transcript_count === 1 ? 'feedback.admin.chat.one' : 'feedback.admin.chat', { title: f.chat_title || t('chat.untitled'), n: String(f.transcript_count) }))}</summary>${loading}</details>`
+        : '';
+      const words = f.body ? `<p class="fbadmin__body">${escapeHtml(f.body)}</p>` : `<p class="fbadmin__body muted">${escapeHtml(t('feedback.admin.noWords'))}</p>`;
       return `<article class="fbadmin__item${f.read_at ? '' : ' is-unread'}" data-feedback="${escapeHtml(f.id)}">
         <header><strong>${escapeHtml(who)}</strong> <span class="muted">· ${escapeHtml(f.email)} · ${escapeHtml(when(new Date(f.created_at)))}</span></header>
         <p class="fbadmin__tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</p>
-        <p class="fbadmin__body">${escapeHtml(f.body)}</p>
+        ${words}
+        ${ran}
         ${transcript}
         <p class="muted">${escapeHtml([f.client?.version, f.client?.language, f.client?.browser].filter(Boolean).join(' · '))}</p>
         <div class="fbadmin__actions">${f.read_at ? '' : `<button type="button" class="btn btn--ghost btn--small" data-feedback-read="${escapeHtml(f.id)}">${escapeHtml(t('feedback.admin.markRead'))}</button>`}<button type="button" class="btn btn--ghost btn--small" data-feedback-delete="${escapeHtml(f.id)}">${escapeHtml(t('action.remove'))}</button></div>
@@ -79,6 +89,39 @@ export function transcriptLines(transcript) {
   return (transcript?.messages || [])
     .map((m) => `<p class="fbadmin__line"><strong>${escapeHtml(t(m.role === 'user' ? 'feedback.admin.user' : 'feedback.admin.assistant'))}</strong> ${escapeHtml(m.text)}</p>`)
     .join('');
+}
+
+/**
+ * The answer a report was about, as it ran (server `answerSnapshot`): what was
+ * asked, then each reply with its model and tokens, its reasoning folded, the
+ * tools it called with what, and what each answered — failures marked. All of
+ * it text: written by the model or by a web page, never markup here.
+ */
+export function answerLines(answer) {
+  if (!answer) return `<p class="muted">${escapeHtml(t('feedback.admin.answerGone'))}</p>`;
+  const pre = (text) => `<pre class="fbadmin__pre">${escapeHtml(text || '')}</pre>`;
+  const meta = (bits) => `<p class="fbadmin__meta">${escapeHtml(bits.filter(Boolean).join(' · '))}</p>`;
+  const parts = [`<p class="fbadmin__line"><strong>${escapeHtml(t('feedback.admin.user'))}</strong> ${escapeHtml(answer.prompt?.text || '')}</p>`];
+  if (answer.prompt?.files?.length) parts.push(`<p class="muted">${escapeHtml(t('feedback.admin.files', { names: answer.prompt.files.join(', ') }))}</p>`);
+  for (const step of answer.steps || []) {
+    if (step.kind === 'reply') {
+      const tokens = step.usage ? t('feedback.admin.tokens', { input: String(step.usage.input ?? '?'), output: String(step.usage.output ?? '?') }) : null;
+      parts.push(
+        `<div class="fbadmin__step">${meta([t('feedback.admin.reply'), step.model, tokens, step.stop])}` +
+          (step.thinking ? `<details><summary>${escapeHtml(t('feedback.admin.thinking'))}</summary>${pre(step.thinking)}</details>` : '') +
+          (step.text ? pre(step.text) : '') +
+          (step.calls || []).map((c) => `${meta([t('feedback.admin.call'), c.name])}${pre(c.input)}`).join('') +
+          '</div>',
+      );
+    } else if (step.kind === 'results') {
+      for (const r of step.results || []) {
+        parts.push(`<div class="fbadmin__result${r.error ? ' is-error' : ''}">${meta([t('feedback.admin.result'), r.name, r.error ? t('feedback.admin.failed') : null, r.ms != null ? `${r.ms} ms` : null])}${pre(r.content)}</div>`);
+      }
+    } else {
+      parts.push(`${meta([step.kind])}${pre(step.text)}`);
+    }
+  }
+  return parts.join('');
 }
 
 /** @param {Deps} deps */

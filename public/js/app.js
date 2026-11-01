@@ -40,7 +40,8 @@ import { createSkillEditor } from './skills-editor.js';
 import { serversInConfig } from './mcp-config.js';
 import { paintConnectorButton } from './cards.js';
 import { createYourData } from './your-data.js';
-import { createFeedback, renderFeedbackList, transcriptLines } from './feedback.js';
+import { createFeedback, renderFeedbackList, transcriptLines, answerLines } from './feedback.js';
+import { createAnswerFeedback } from './answer-feedback.js';
 import { createChangelog, appVersion } from './changelog.js';
 import { contextPanel } from './context-panel.js';
 import { createModelNews } from './model-news.js';
@@ -2871,6 +2872,23 @@ $('messages').addEventListener('click', async (event) => {
    * Markdown the answer was written in.
    */
   const assistant = button.closest('.msg--assistant');
+  /*
+   * Feedback on this answer (owner, 2026-11-02). The turn is named by the
+   * message that began it — the person's own, just above — so the server can
+   * take that turn as it ran, whether it was drawn live or from a reload.
+   */
+  if (assistant && button.dataset.act === 'feedback') {
+    if (!state.chatId) return;
+    const shown = [...$('messages').querySelectorAll('.msg')];
+    const prompt = shown.slice(0, shown.indexOf(assistant)).reverse().find((node) => node.classList.contains('msg--user'));
+    answerFeedback.open({
+      chatId: state.chatId,
+      messageId: /** @type {HTMLElement | undefined} */ (prompt)?.dataset.messageId || null,
+      incognito: state.incognitoChat === state.chatId || !!(state.chats || []).find((c) => c.id === state.chatId)?.incognito,
+      button,
+    });
+    return;
+  }
   if (assistant && button.dataset.act === 'copy') {
     const wrote = await writeRich({
       html: cleanHtml(assistant.querySelector('.prose')),
@@ -4421,6 +4439,14 @@ const feedback = createFeedback({
   version: appVersion,
   language: () => currentLanguage(),
 });
+// The thumb beside an answer's copy button (answer-feedback.js).
+const answerFeedback = createAnswerFeedback({
+  send: (body) => api.answerFeedback(body),
+  version: appVersion,
+  language: () => currentLanguage(),
+  done: (included) => toast(t(included ? 'answerFeedback.thanks' : 'answerFeedback.thanksWords')),
+  failed: (message) => toast(message, 'error'),
+});
 const changelog = createChangelog();
 
 /* Privacy → Your data → Manage: what this account holds, kind by kind (owner, 2026-11-01). */
@@ -5726,12 +5752,14 @@ $('admin-feedback').addEventListener(
   'toggle',
   async (event) => {
     const box = /** @type {HTMLDetailsElement} */ (event.target);
-    if (!box.dataset?.feedbackChat || !box.open || box.dataset.loaded) return;
+    const id = box.dataset?.feedbackChat || box.dataset?.feedbackAnswer;
+    if (!id || !box.open || box.dataset.loaded) return;
     box.dataset.loaded = '1';
     const lines = /** @type {HTMLElement} */ (box.querySelector('.fbadmin__lines'));
     try {
-      const { transcript } = await api.feedbackTranscript(box.dataset.feedbackChat);
-      lines.innerHTML = transcriptLines(transcript);
+      const { transcript, answer } = await api.feedbackTranscript(id);
+      // The answer a report was about, as it ran; or the conversation sent with it.
+      lines.innerHTML = box.dataset.feedbackAnswer ? answerLines(answer) : transcriptLines(transcript);
     } catch (err) {
       delete box.dataset.loaded;
       lines.textContent = err.message;
@@ -5740,9 +5768,43 @@ $('admin-feedback').addEventListener(
   true,
 );
 
+/**
+ * The deployment's free allowances this period (server/freeTier.js, owner
+ * 2026-11-02): one per service, shared by every account — Exa in dollars,
+ * the rest in requests or credits — and when each starts again.
+ */
+async function loadFreeTier() {
+  const host = $('admin-free-tier');
+  try {
+    const report = await api.freeTier();
+    const locale = currentLanguage() === 'vi' ? 'vi-VN' : 'en-US';
+    const day = (iso) => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(new Date(iso));
+    const amount = (s, n) => (s.service === 'exa' ? `$${(n / 1000).toFixed(2)}` : Number(n).toLocaleString(locale));
+    const rows = report.services
+      .map((s) => {
+        const used = s.used == null ? '—' : `${amount(s, s.used)} / ${amount(s, s.limit)}`;
+        const share = s.used == null || !s.limit ? 0 : Math.min(100, Math.round((s.used / s.limit) * 100));
+        return `<div class="ctable__row" role="row">
+          <span role="cell"><strong>${escapeHtml(t(`freetier.${s.service}`))}</strong></span>
+          <span role="cell" class="freetier__used"><span class="freetier__bar${share >= 90 ? ' is-near' : ''}" aria-hidden="true"><span style="width:${share}%"></span></span>${escapeHtml(used)} ${escapeHtml(t(s.per === 'month' ? 'freetier.perMonth' : 'freetier.perDay'))}</span>
+          <span role="cell" class="crow__desc">${escapeHtml(t('freetier.resets', { day: day(s.resets) }))}</span>
+        </div>`;
+      })
+      .join('');
+    host.innerHTML = `<div class="ctable ctable--free" role="table" aria-label="${escapeHtml(t('freetier.title'))}">
+        <div class="ctable__head" role="row"><span role="columnheader">${escapeHtml(t('freetier.service'))}</span><span role="columnheader">${escapeHtml(t('freetier.used'))}</span><span role="columnheader">${escapeHtml(t('freetier.when'))}</span></div>
+        ${rows}
+      </div>
+      <p class="hint">${escapeHtml(report.enforced ? t('freetier.enforced', { n: String(report.userDaily) }) : t('freetier.off'))}</p>`;
+  } catch (err) {
+    host.textContent = err.message;
+  }
+}
+
 async function loadAdmin() {
   privacy.loadAdminActivity();
   loadAdminFeedback();
+  loadFreeTier();
   try {
     const { users } = await api.users();
 

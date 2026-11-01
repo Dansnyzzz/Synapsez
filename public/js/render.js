@@ -1820,6 +1820,17 @@ function copyButton() {
   );
 }
 
+/** Report a problem with an answer — a thumb down, opening answer-feedback.js. */
+function feedbackButton() {
+  return (
+    `<button class="msg__action msg__action--feedback" type="button" data-act="feedback" aria-pressed="false" title="${escapeHtml(t('answerFeedback.button'))}" aria-label="${escapeHtml(t('answerFeedback.button'))}">` +
+    '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M6.5 11.5V3.5H4.2A1.2 1.2 0 0 0 3 4.7v5.6a1.2 1.2 0 0 0 1.2 1.2Z" />' +
+    '<path d="M6.5 11.5 9.4 17a1.8 1.8 0 0 0 2.4-1.9l-.5-2.9h3.6a1.8 1.8 0 0 0 1.8-2.1l-.9-5a1.8 1.8 0 0 0-1.8-1.6H6.5" />' +
+    '</svg></button>'
+  );
+}
+
 /**
  * A web address, as written, with the punctuation that ends a sentence left
  * outside it. `http` and `https` only — a `javascript:` or `data:` URL typed
@@ -2884,7 +2895,8 @@ export function assistantMessage() {
   function ensureActions() {
     if (wrap.querySelector(':scope > .msg__actions')) return;
     const actions = el('div', 'msg__actions');
-    actions.innerHTML = copyButton();
+    // Feedback on this answer, left of its copy button as Claude has it (owner, 2026-11-02).
+    actions.innerHTML = feedbackButton() + copyButton();
     wrap.append(actions);
   }
 

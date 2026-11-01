@@ -36,7 +36,7 @@ import { extractPdfText } from '../pdf.js';
 import { saveGenerated, liveRevision } from '../attachments.js';
 import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
-import { search, formatResults, searchPlan, readThroughExa } from '../search.js';
+import { search, formatResults, searchPlan, readThroughExa, countryOf } from '../search.js';
 import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText, answerSummary } from './askOptions.js';
@@ -630,19 +630,18 @@ async function youtubeTranscript({ url, lang, max_chars: maxChars }, { userId })
 export const searchDepth = searchPlan;
 const EXCERPT_CHARS = 2500;
 
-/** The plan for this account's searches, from the reasoning level it chose. */
+/** The plan for this account's searches, from the reasoning level it chose — and its country, for Exa. */
 async function planFor(userId, depth) {
   const prefs = userId ? await getPrefs(userId).catch(() => null) : null;
-  return searchPlan(prefs?.effort, depth);
+  return { ...searchPlan(prefs?.effort, depth), country: countryOf(prefs) };
 }
 
-async function webSearch({ query, count, depth, recency, sites }, context = {}) {
+async function webSearch({ query, count, depth, recency, sites, category }, context = {}) {
   const { userId } = context;
   const plan = await planFor(userId, depth);
-  // `userId` only so the search can be attributed in the log. The keys these
-  // engines use are deployment-wide, so nothing else about the call depends on
-  // which account made it.
-  const found = await search(query, { count: Number(count) || plan.count, userId, plan, recency, sites });
+  // `userId` so the search is attributed in the log and counted against the
+  // account's fair share of the deployment's free allowances (freeTier.js).
+  const found = await search(query, { count: Number(count) || plan.count, userId, plan, recency, sites, category, country: plan.country });
   const listing = formatResults(query, found);
   if (!plan.read || !found.results?.length) return listing;
 

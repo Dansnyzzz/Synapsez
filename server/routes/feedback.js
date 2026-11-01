@@ -85,6 +85,96 @@ export function transcriptOf(messages) {
 }
 
 /**
+ * What can be wrong with one answer — Claude's list, in its order (owner,
+ * 2026-11-02). The last but one is this deployment's usage policy, where
+ * Claude's names its constitution.
+ */
+export const ANSWER_ISSUES = [
+  'ui_bug', 'overactive_refusal', 'poor_image', 'not_followed', 'not_factual', 'incomplete',
+  'thought_process', 'should_search', 'memory', 'report_content', 'usage_policy', 'other',
+];
+
+/** Feedback on one answer, checked: both the issue and the words are optional, as Claude's are. */
+export function checkAnswerFeedback(body) {
+  const given = typeof body?.issue === 'string' && body.issue ? body.issue : null;
+  const issue = given ? pick(given, ANSWER_ISSUES) : null;
+  if (given && !issue) return { ok: false, error: 'Choose one of the problems offered.' };
+  const text = typeof body?.details === 'string' ? body.details.trim() : '';
+  if (text.length > FEEDBACK_LIMITS.body) return { ok: false, error: 'That is too long to send — keep it under 5,000 characters.' };
+  const chatId = typeof body?.chatId === 'string' && body.chatId ? body.chatId.slice(0, 80) : null;
+  if (!chatId) return { ok: false, error: 'Say which conversation the answer is in.' };
+  const messageId = typeof body?.messageId === 'string' && body.messageId ? body.messageId.slice(0, 80) : null;
+  return { ok: true, value: { issue, body: text, chatId, messageId } };
+}
+
+/** How much of one turn is kept, piece by piece, and in all. */
+const ANSWER_LIMITS = { prompt: 8000, text: 20_000, thinking: 8000, input: 4000, result: 6000, total: 300_000 };
+
+const cut = (value, n) => {
+  const text = typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value);
+  return text.length > n ? `${text.slice(0, n)}… [${text.length - n} more characters]` : text;
+};
+
+/**
+ * One turn as it ran, for the administrators who will fix what went wrong:
+ * the message that began it, then each reply in order — its model, its
+ * reasoning, the tools it called with what, and what each tool answered —
+ * up to the next message the person sent. `afterId` is the message that
+ * began it; without one, the conversation's last turn.
+ */
+export function answerSnapshot(messages, afterId) {
+  const list = messages || [];
+  let start = afterId ? list.findIndex((m) => m.id === afterId && m.role === 'user') : -1;
+  if (start < 0) start = list.map((m) => m.role).lastIndexOf('user');
+  if (start < 0) return null;
+  const after = list.slice(start + 1);
+  const stop = after.findIndex((m) => m.role === 'user');
+  const turn = stop < 0 ? after : after.slice(0, stop);
+  const prompt = list[start];
+  const steps = turn.flatMap((m) => {
+    if (m.role === 'assistant') {
+      return [{
+        kind: 'reply',
+        model: m.model || null,
+        at: m.createdAt || null,
+        text: cut(m.text, ANSWER_LIMITS.text),
+        thinking: m.thinking ? cut(m.thinking, ANSWER_LIMITS.thinking) : null,
+        calls: (m.toolCalls || []).map((c) => ({ id: c.id || null, name: c.name, input: cut(c.input ?? {}, ANSWER_LIMITS.input) })),
+        usage: m.usage || null,
+        stop: m.stop || m.stopReason || null,
+      }];
+    }
+    if (m.role === 'tool') {
+      return [{
+        kind: 'results',
+        results: (m.results || []).map((r) => ({ id: r.toolCallId || null, name: r.name || null, error: !!r.isError, ms: r.ms ?? null, content: cut(r.content, ANSWER_LIMITS.result) })),
+      }];
+    }
+    return [{ kind: m.role, text: cut(m.text ?? m, 2000) }];
+  });
+  // Too long in all: the tools' answers are the first thing shortened — the
+  // replies and the calls say most about what went wrong.
+  let size = JSON.stringify(steps).length;
+  for (const step of steps) {
+    if (size <= ANSWER_LIMITS.total) break;
+    for (const r of step.results || []) {
+      const before = r.content.length;
+      r.content = cut(r.content, 500);
+      size -= before - r.content.length;
+    }
+  }
+  return {
+    prompt: {
+      id: prompt.id,
+      at: prompt.createdAt || null,
+      text: cut(prompt.text, ANSWER_LIMITS.prompt),
+      files: (prompt.attachments || []).map((a) => a?.name).filter(Boolean),
+    },
+    steps,
+  };
+}
+
+/**
  * The announcement an administrator receives.
  *
  * Whatever the sender wrote is set as a block of plain text, never as
@@ -101,6 +191,16 @@ export function feedbackMail(user, value, url) {
     .join('\n\n')
     // A line of backticks would close the block early and let the rest be Markdown.
     .replace(/`{3,}/g, "'''");
+  if (value.topic === 'answer') {
+    const issue = value.issue || 'no problem chosen';
+    return {
+      subject: `Feedback from ${who} on an answer: ${issue}`,
+      markdown:
+        `**${who}** flagged an answer — ${issue}.\n\n` +
+        (words ? '```\n' + words + '\n```\n\n' : '') +
+        `Read it, with that answer as it ran, in Synapsez → Settings → Feedback: ${url}`,
+    };
+  }
   return {
     subject: `Feedback from ${who}: ${value.kind} · ${value.topic}`,
     markdown:
@@ -179,6 +279,54 @@ export function mountFeedbackRoutes(api, admin, { wrap }) {
       });
       await tellAdministrators(req, req.user, value);
       res.status(201).json({ ok: true, id });
+    }),
+  );
+
+  /**
+   * Feedback on one answer (owner, 2026-11-02) — the button beside its copy
+   * button. The conversation goes with it, as the dialog says before Submit,
+   * and so does that turn as it ran: what the administrators need to find the
+   * fault. Not for an incognito conversation, which keeps nothing: there the
+   * words go alone.
+   */
+  api.post(
+    '/feedback/answer',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const checked = checkAnswerFeedback(req.body);
+      if (!checked.ok) return res.status(400).json({ error: /** @type {{ error: string }} */ (checked).error });
+      const counted = await store.hitRateLimit(`feedback:${req.user.id}`, FEEDBACK_LIMITS.perHour, HOUR_MS).catch(() => null);
+      if (counted && !counted.allowed) {
+        res.set('Retry-After', String(Math.ceil(counted.retryAfterMs / 1000)));
+        return res.status(429).json({ error: 'You have sent a lot of feedback in the last hour. Try again a little later.' });
+      }
+      const { issue, body, chatId, messageId } = checked.value;
+      // Their own conversation only: another account's id is not found.
+      const chat = await store.getChat(req.user.id, chatId);
+      if (!chat) return res.status(404).json({ error: 'That conversation was not found.' });
+      const messages = chat.incognito ? [] : await store.listMessages(req.user.id, chatId);
+      const answer = chat.incognito ? null : answerSnapshot(messages, messageId);
+      const value = {
+        id: crypto.randomUUID(),
+        topic: 'answer',
+        kind: 'answer',
+        affect: 'answer',
+        body,
+        issue,
+        chatId,
+        messageId: answer?.prompt?.id || messageId,
+        chatTitle: chat.incognito ? null : String(chat.title || '').slice(0, 200) || null,
+        transcript: chat.incognito ? null : transcriptOf(messages),
+        answer,
+        client: {
+          language: typeof req.body?.language === 'string' ? req.body.language.slice(0, 8) : null,
+          version: typeof req.body?.version === 'string' ? req.body.version.slice(0, 20) : null,
+          browser: agentOf(req.headers['user-agent']),
+        },
+      };
+      await store.createFeedback(req.user.id, value);
+      await tellAdministrators(req, req.user, value);
+      res.status(201).json({ ok: true, id: value.id, included: !chat.incognito });
     }),
   );
 

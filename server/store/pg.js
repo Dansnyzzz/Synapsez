@@ -230,8 +230,11 @@ export function splitStatements(sql) {
  *      conversation's copy only when they chose to include it
  *  34  skills.files — the files a skill carries beside its instructions, from
  *      the Create a skill editor or an uploaded .zip/.skill
+ *  35  feedback.message_id / issue / answer — feedback on one answer, from the
+ *      button beside its copy button: which turn, what kind of problem, and
+ *      that turn as it ran (tool calls, results, model), for the administrators
  */
-export const SCHEMA_VERSION = 34;
+export const SCHEMA_VERSION = 35;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1321,8 +1324,9 @@ export function createPgStore(connectionString) {
     async createFeedback(userId, f) {
       await q(
         `INSERT INTO feedback
-           (id, user_id, topic, topic_other, kind, body, affect, frequency, worked_before, chat_id, chat_title, transcript, client)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+           (id, user_id, topic, topic_other, kind, body, affect, frequency, worked_before, chat_id, chat_title, transcript, client,
+            message_id, issue, answer)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
           f.id,
           userId,
@@ -1337,6 +1341,9 @@ export function createPgStore(connectionString) {
           f.chatTitle || null,
           f.transcript ? toJson(f.transcript) : null,
           toJson(f.client || {}),
+          f.messageId || null,
+          f.issue || null,
+          f.answer ? toJson(f.answer) : null,
         ],
       );
     },
@@ -1354,6 +1361,7 @@ export function createPgStore(connectionString) {
         `SELECT f.id, f.topic, f.topic_other, f.kind, f.body, f.affect, f.frequency, f.worked_before, f.chat_id,
                 CASE WHEN c.id IS NULL THEN NULL ELSE f.chat_title END AS chat_title,
                 CASE WHEN c.id IS NULL THEN NULL ELSE jsonb_array_length(f.transcript->'messages') END AS transcript_count,
+                f.issue, f.message_id, (c.id IS NOT NULL AND f.answer IS NOT NULL) AS has_answer,
                 f.client, f.read_at, f.created_at, u.email, u.name, u.username
            FROM feedback f JOIN users u ON u.id = f.user_id
            LEFT JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id
@@ -1361,15 +1369,15 @@ export function createPgStore(connectionString) {
         [Math.min(Math.max(Number(limit) || 100, 1), 500)],
       );
     },
-    /** One feedback's conversation, as sent — null once that conversation is deleted. */
+    /** One feedback's conversation, as sent — and the answer it was about, as it ran — null once that conversation is deleted. */
     async getFeedbackTranscript(id) {
       const rows = await q(
-        `SELECT f.chat_title, f.transcript FROM feedback f
+        `SELECT f.chat_title, f.transcript, f.answer FROM feedback f
            JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id
-          WHERE f.id = $1 AND f.transcript IS NOT NULL`,
+          WHERE f.id = $1 AND (f.transcript IS NOT NULL OR f.answer IS NOT NULL)`,
         [String(id)],
       );
-      return rows[0] ? { title: rows[0].chat_title, transcript: rows[0].transcript } : null;
+      return rows[0] ? { title: rows[0].chat_title, transcript: rows[0].transcript, answer: rows[0].answer || null } : null;
     },
     /**
      * The copies of conversations deleted since they were sent, removed. A
@@ -1380,8 +1388,8 @@ export function createPgStore(connectionString) {
      */
     async forgetFeedbackTranscripts() {
       const rows = await q(
-        `UPDATE feedback f SET transcript = NULL, chat_title = NULL
-          WHERE (f.transcript IS NOT NULL OR f.chat_title IS NOT NULL) AND f.chat_id IS NOT NULL
+        `UPDATE feedback f SET transcript = NULL, chat_title = NULL, answer = NULL
+          WHERE (f.transcript IS NOT NULL OR f.chat_title IS NOT NULL OR f.answer IS NOT NULL) AND f.chat_id IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = f.chat_id AND c.user_id = f.user_id)
          RETURNING f.id`,
       );
@@ -1638,7 +1646,7 @@ export function createPgStore(connectionString) {
       await q('DELETE FROM attachments WHERE user_id = $1 AND chat_id = $2', [userId, id]);
       // So does any copy of it sent with feedback (33): the words and the title,
       // not the feedback itself, which is the sender's own message.
-      await q('UPDATE feedback SET transcript = NULL, chat_title = NULL WHERE user_id = $1 AND chat_id = $2', [userId, id]);
+      await q('UPDATE feedback SET transcript = NULL, chat_title = NULL, answer = NULL WHERE user_id = $1 AND chat_id = $2', [userId, id]);
       await q('DELETE FROM chats WHERE id = $1 AND user_id = $2', [id, userId]);
     },
 
@@ -2182,7 +2190,7 @@ export function createPgStore(connectionString) {
       const from = 'FROM feedback f LEFT JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id';
       const [rows, count] = await Promise.all([
         q(
-          `SELECT f.id, f.topic, f.topic_other, f.kind, left(f.body, 240) AS body, f.created_at,
+          `SELECT f.id, f.topic, f.topic_other, f.kind, f.issue, left(f.body, 240) AS body, f.created_at,
                   CASE WHEN c.id IS NULL THEN NULL ELSE f.chat_title END AS chat_title
              ${from} WHERE ${where}
          ORDER BY f.created_at DESC, f.id LIMIT $3 OFFSET $4`,
@@ -2227,7 +2235,7 @@ export function createPgStore(connectionString) {
     /** The copy of a conversation sent with feedback, taken back — the feedback itself stays. */
     async forgetOwnFeedbackTranscript(userId, id) {
       const rows = await q(
-        `UPDATE feedback SET transcript = NULL, chat_title = NULL WHERE id = $1 AND user_id = $2 RETURNING id`,
+        `UPDATE feedback SET transcript = NULL, chat_title = NULL, answer = NULL WHERE id = $1 AND user_id = $2 RETURNING id`,
         [String(id), userId],
       );
       return rows.length > 0;
@@ -4110,6 +4118,27 @@ export function createPgStore(connectionString) {
         count,
         retryAfterMs: Math.max(0, new Date(row.expires_at).getTime() - Date.now()),
       };
+    },
+    /**
+     * A running total kept until a moment — a free tier's use this month, an
+     * account's searches today (server/freeTier.js, owner 2026-11-02). The
+     * throttles' own table: a bucket per service and period, swept with them.
+     */
+    async readCounter(bucket) {
+      const rows = await q('SELECT count FROM rate_limits WHERE bucket = $1 AND expires_at > NOW()', [bucket]);
+      return Number(rows[0]?.count || 0);
+    },
+    /** Add to a running total in one upsert — a period that has ended starts again from this amount. */
+    async addToCounter(bucket, amount, expiresAt) {
+      const rows = await q(
+        `INSERT INTO rate_limits (bucket, count, expires_at) VALUES ($1, $2::int, $3::timestamptz)
+         ON CONFLICT (bucket) DO UPDATE SET
+           count = CASE WHEN rate_limits.expires_at < NOW() THEN $2::int ELSE rate_limits.count + $2::int END,
+           expires_at = CASE WHEN rate_limits.expires_at < NOW() THEN $3::timestamptz ELSE rate_limits.expires_at END
+      RETURNING count`,
+        [bucket, Math.max(0, Math.round(Number(amount) || 0)), new Date(expiresAt).toISOString()],
+      );
+      return Number(rows[0]?.count || 0);
     },
     /** Forget a bucket — called on success, so one good login clears the tally. */
     async clearRateLimit(bucket) {

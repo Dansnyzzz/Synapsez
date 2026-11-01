@@ -3266,6 +3266,101 @@ section('Connectors: Claude\'s table and cards, every Google product its own, an
   await page.waitForTimeout(200);
 }
 
+section('Feedback on an answer: the thumb left of copy, Claude\'s dialog, and the turn it was about (owner, 2026-11-02)');
+{
+  const { getStore } = await import('../server/store/index.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  await getStore().createChat(me.id, { id: 'c-afb', title: 'Giá vàng', model: 'm' });
+  await getStore().appendMessage(me.id, 'c-afb', { id: 'afb-u', role: 'user', text: 'giá vàng hôm nay?' });
+  await getStore().appendMessage(me.id, 'c-afb', { id: 'afb-a', role: 'assistant', text: 'Gold is at 4,031 USD.', model: 'm' });
+  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1800);
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await page.click('.chat-row[data-chat="c-afb"]');
+  await page.waitForTimeout(900);
+  const order = await page.evaluate(() => [...document.querySelectorAll('#messages .msg--assistant .msg__actions .msg__action')].map((b) => /** @type {HTMLElement} */ (b).dataset.act));
+  check('an answer carries a feedback button, left of its copy button', order.join() === 'feedback,copy', order.join());
+  await page.hover('#messages .msg--assistant');
+  await page.click('#messages .msg--assistant [data-act="feedback"]');
+  await page.waitForTimeout(300);
+  const opened = await page.evaluate(() => ({
+    open: !!document.querySelector('#answer-feedback[open]'),
+    title: document.querySelector('#afb-title')?.textContent,
+    value: document.querySelector('#afb-value')?.textContent,
+    listHidden: /** @type {HTMLElement} */ (document.querySelector('#afb-list'))?.hidden,
+    note: document.querySelector('.afb__note')?.textContent || '',
+    focused: document.activeElement?.id,
+  }));
+  check('  pressed, it opens the dialog: a list to choose from, the words, and what is sent', opened.open && opened.listHidden && opened.focused === 'afb-pick' && /conversation/.test(opened.note), JSON.stringify(opened));
+  await page.click('#afb-pick');
+  await page.waitForTimeout(150);
+  const list = await page.evaluate(() => ({
+    shown: !/** @type {HTMLElement} */ (document.querySelector('#afb-list')).hidden,
+    options: [...document.querySelectorAll('#afb-list [role="option"]')].map((o) => o.textContent),
+    focus: document.activeElement?.id,
+  }));
+  check('  the list opens with Claude\'s twelve problems, from UI bug to Other', list.shown && list.options.length === 12 && list.options[0] === 'UI bug' && list.options[11] === 'Other' && list.focus === 'afb-list', JSON.stringify(list));
+  await page.hover('#afb-opt-overactive_refusal');
+  await page.keyboard.press('ArrowDown');
+  const lit = await page.evaluate(() => document.querySelector('#afb-list .is-active')?.getAttribute('data-issue'));
+  check('  the pointer lights one, and the arrow keys move on from it', lit === 'poor_image', lit);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  const escaped = await page.evaluate(() => ({ list: /** @type {HTMLElement} */ (document.querySelector('#afb-list')).hidden, dialog: !!document.querySelector('#answer-feedback[open]') }));
+  check('  Escape shuts the list, not the dialog', escaped.list && escaped.dialog, JSON.stringify(escaped));
+  await page.click('#afb-pick');
+  await page.click('#afb-opt-not_factual');
+  await page.fill('#afb-details', 'The price was a week old.');
+  const chosen = await page.evaluate(() => document.querySelector('#afb-value')?.textContent);
+  check('  a choice shows in the box', chosen === 'Not factually correct', chosen);
+  await page.click('#answer-feedback [data-submit]');
+  await page.waitForTimeout(700);
+  const sent = await page.evaluate(async () => ({
+    closed: !document.querySelector('#answer-feedback[open]'),
+    marked: document.querySelector('#messages .msg--assistant [data-act="feedback"]')?.classList.contains('is-sent'),
+    row: (await (await fetch('/api/admin/feedback')).json()).feedback.find((f) => f.chat_id === 'c-afb'),
+  }));
+  check('Submit sends it — the problem, the words, the turn — and the thumb stays marked', sent.closed && sent.marked && sent.row?.issue === 'not_factual' && sent.row?.message_id === 'afb-u' && sent.row?.has_answer, JSON.stringify(sent.row || {}).slice(0, 200));
+  await getStore().deleteChat(me.id, 'c-afb');
+}
+
+section('The composer\'s pictures, dragged into another order — or moved with Alt+arrows (owner, 2026-11-02)');
+{
+  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await page.setInputFiles('#file-input', ['one', 'two', 'three'].map((name) => ({ name: `${name}.png`, mimeType: 'image/png', buffer: PNG })));
+  await page.waitForTimeout(2200);
+  const names = () => page.evaluate(() => [...document.querySelectorAll('#attachments .stage')].map((s) => (s.getAttribute('title') || '').split(' — ')[0]));
+  check('three pictures in the tray, each movable', (await names()).join() === 'one.png,two.png,three.png' && (await page.$$('#attachments .stage--movable')).length === 3, (await names()).join());
+  const boxes = await page.$$eval('#attachments .stage', (tiles) => tiles.map((t) => {
+    const r = t.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }));
+  await page.mouse.move(boxes[0].x, boxes[0].y);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i += 1) await page.mouse.move(boxes[0].x + ((boxes[2].x - boxes[0].x) * i) / 8, boxes[0].y);
+  const marked = await page.evaluate(() => ({ dragging: !!document.querySelector('#attachments .stage.is-dragging'), target: !!document.querySelector('#attachments .stage.is-target-after') }));
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  check('dragging the first onto the third: it follows the pointer, the third shows where it lands', marked.dragging && marked.target, JSON.stringify(marked));
+  check('  let go, and it is last', (await names()).join() === 'two.png,three.png,one.png', (await names()).join());
+  check('  and a drag is not a press: the picture editor did not open', !(await page.$('dialog.sketch[open]')));
+  await page.focus('#attachments .stage[data-index="0"] .stage__open');
+  await page.keyboard.press('Alt+ArrowRight');
+  await page.waitForTimeout(200);
+  const keyed = await page.evaluate(() => ({ focus: document.activeElement?.closest('.stage')?.getAttribute('data-index') }));
+  check('Alt+→ moves the focused picture one place on, the focus going with it', (await names()).join() === 'three.png,two.png,one.png' && keyed.focus === '1', `${(await names()).join()} ${JSON.stringify(keyed)}`);
+  // One at a time: each removal draws the tray again.
+  for (let i = 0; i < 3; i += 1) await page.click('#attachments .stage__remove').catch(() => {});
+  await page.waitForTimeout(200);
+}
+
 section('Extensions: Discover as cards, + Add, and Advanced settings with the form (owner, 2026-11-01)');
 {
   await page.evaluate(() => {

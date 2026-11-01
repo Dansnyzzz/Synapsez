@@ -109,29 +109,32 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
 
   function renderTray(host, files) {
     host.hidden = files.length === 0;
+    const movable = files.length > 1;
+    armReorder(host);
 
     host.innerHTML = files
       .map((file, i) => {
         const type = typeOf(file.name);
         const state = `${file.failed ? ' is-failed' : ''}${!file.id && !file.failed ? ' is-uploading' : ''}`;
         const say = file.failed || file.note || file.name;
+        const keys = movable ? ' aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"' : '';
         const face = file.isImage
-          ? `<button class="stage__open" data-open="${i}" type="button" aria-label="${escapeHtml(t('attachment.edit', { name: file.name }))}">
-               <img class="stage__img" src="${file.preview}" alt="">
+          ? `<button class="stage__open" data-open="${i}" type="button" aria-label="${escapeHtml(t('attachment.edit', { name: file.name }))}"${keys}>
+               <img class="stage__img" src="${file.preview}" alt="" draggable="false">
              </button>`
           : file.thumb
-            ? `<img class="stage__img" src="${file.thumb}" alt="">`
+            ? `<img class="stage__img" src="${file.thumb}" alt="" draggable="false">`
             : `<span class="stage__icon" aria-hidden="true">${escapeHtml(type.slice(0, 4))}</span>
                <span class="stage__name">${escapeHtml(file.name)}</span>
                <span class="stage__type">${escapeHtml(type)}</span>`;
         return `
-      <div class="stage ${file.isImage || file.thumb ? 'stage--media' : 'stage--file'}${state}" title="${escapeHtml(say)}">
+      <div class="stage ${file.isImage || file.thumb ? 'stage--media' : 'stage--file'}${state}${movable ? ' stage--movable' : ''}" data-index="${i}" title="${escapeHtml(movable ? `${say} — ${t('attachment.moveHint')}` : say)}">
         ${face}
         ${file.failed ? `<span class="stage__err">${escapeHtml(file.failed)}</span>` : ''}
         ${!file.id && !file.failed ? `<span class="stage__spin" aria-label="${escapeHtml(t('attachment.uploading'))}"></span>` : ''}
         <button class="stage__remove" data-drop="${i}" type="button" aria-label="${escapeHtml(
           t('attachment.remove', { name: file.name }),
-        )}">✕</button>
+        )}"${keys}>✕</button>
       </div>`;
       })
       .join('');
@@ -148,6 +151,119 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-open]'))) {
       btn.addEventListener('click', () => editPicture(staged[Number(btn.dataset.open)]));
     }
+  }
+
+  /**
+   * A tile moved to another place in the tray (owner, 2026-11-02). The order
+   * here is the order the message carries them in — the strip under it, and
+   * the order the model is shown them, so "the second picture" means this one.
+   */
+  function move(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= staged.length || to >= staged.length) return false;
+    const [entry] = staged.splice(from, 1);
+    staged.splice(to, 0, entry);
+    renderStaged();
+    return true;
+  }
+
+  /**
+   * Dragging a tile into another place, with the pointer or a finger — or
+   * Alt+← / Alt+→ on a focused tile. Pointer events rather than the browser's
+   * drag-and-drop, which touch screens do not have and which the window
+   * already listens to for files dropped from outside.
+   *
+   * The tile follows the pointer; the one it would take the place of shows a
+   * bar on the side it would land; letting go moves it. A press that never
+   * moved is still a press, and opens the picture.
+   */
+  const armedTrays = new WeakSet();
+  let swallowClickUntil = 0;
+  function armReorder(host) {
+    if (armedTrays.has(host)) return;
+    armedTrays.add(host);
+    host.addEventListener(
+      'click',
+      (event) => {
+        if (Date.now() < swallowClickUntil) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      },
+      true,
+    );
+    host.addEventListener('pointerdown', (/** @type {PointerEvent} */ event) => {
+      const target = /** @type {HTMLElement} */ (event.target);
+      const tile = /** @type {HTMLElement | null} */ (target.closest('.stage--movable'));
+      if (!tile || target.closest('.stage__remove') || event.button > 0) return;
+      const from = Number(tile.dataset.index);
+      const tiles = /** @type {HTMLElement[]} */ ([...host.querySelectorAll('.stage')]);
+      const centres = tiles.map((node) => {
+        const r = node.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      const start = { x: event.clientX, y: event.clientY };
+      let dragging = false;
+      let to = from;
+      const mark = () => {
+        tiles.forEach((node, i) => {
+          node.classList.toggle('is-target-before', dragging && i === to && to < from);
+          node.classList.toggle('is-target-after', dragging && i === to && to > from);
+        });
+      };
+      const onMove = (/** @type {PointerEvent} */ e) => {
+        const dx = e.clientX - start.x;
+        const dy = e.clientY - start.y;
+        if (!dragging) {
+          if (Math.hypot(dx, dy) < 6) return;
+          dragging = true;
+          tile.setPointerCapture?.(e.pointerId);
+          tile.classList.add('is-dragging');
+          host.classList.add('is-sorting');
+        }
+        e.preventDefault();
+        tile.style.transform = `translate(${dx}px, ${dy}px)`;
+        // The slot whose middle is nearest the pointer.
+        let best = from;
+        let bestDistance = Infinity;
+        centres.forEach((c, i) => {
+          const d = Math.hypot(e.clientX - c.x, e.clientY - c.y);
+          if (d < bestDistance) {
+            bestDistance = d;
+            best = i;
+          }
+        });
+        to = best;
+        mark();
+      };
+      const finish = (/** @type {PointerEvent} */ e) => {
+        tile.removeEventListener('pointermove', onMove);
+        tile.removeEventListener('pointerup', finish);
+        tile.removeEventListener('pointercancel', finish);
+        if (!dragging) return;
+        swallowClickUntil = Date.now() + 400;
+        tile.classList.remove('is-dragging');
+        tile.style.transform = '';
+        host.classList.remove('is-sorting');
+        const moved = e.type === 'pointerup' && move(from, to);
+        if (!moved) {
+          dragging = false;
+          mark();
+        }
+      };
+      tile.addEventListener('pointermove', onMove);
+      tile.addEventListener('pointerup', finish);
+      tile.addEventListener('pointercancel', finish);
+    });
+    host.addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
+      if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+      const tile = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('.stage--movable'));
+      if (!tile) return;
+      event.preventDefault();
+      const from = Number(tile.dataset.index);
+      const to = from + (event.key === 'ArrowLeft' ? -1 : 1);
+      const which = /** @type {HTMLElement} */ (event.target).classList.contains('stage__remove') ? '.stage__remove' : '.stage__open';
+      if (move(from, to)) /** @type {HTMLElement | null} */ (host.querySelector(`.stage[data-index="${to}"] ${which}`))?.focus();
+    });
   }
 
   /**

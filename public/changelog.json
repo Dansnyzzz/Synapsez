@@ -1,6 +1,26 @@
 {
   "entries": [
     {
+      "version": "1.6.0",
+      "date": "2026-11-02",
+      "new": {
+        "vi": [
+          "Góp ý về từng câu trả lời: nút ngón tay cái bên trái nút sao chép mở hộp thoại như Claude — chọn loại vấn đề (không bắt buộc), mô tả (không bắt buộc) — và gửi kèm cách câu trả lời đó đã chạy để người vận hành tìm và sửa lỗi.",
+          "Kéo thả để đổi thứ tự ảnh trong ô soạn tin (hoặc Alt+← / Alt+→); thứ tự đó là thứ tự ảnh được gửi và trợ lý được xem.",
+          "Chạy trong hạn mức miễn phí: mỗi dịch vụ tìm kiếm tính phí (Exa, Tavily, Brave, Google, Stack Exchange) dừng ở hạn mức miễn phí của nó, tìm kiếm tự chuyển sang công cụ miễn phí; mỗi tài khoản có phần chia đều mỗi ngày; câu tìm lặp lại trong 10 phút không tốn lượt."
+        ],
+        "en": [
+          "Feedback on each answer: a thumb left of the copy button opens Claude's dialog — a problem (optional), what was unsatisfying (optional) — and sends how that answer ran, so the people who run Synapsez can find and fix it.",
+          "Drag the pictures in the composer into another order (or Alt+← / Alt+→); that order is the order they are sent and shown to the assistant.",
+          "Inside the free tiers: each metered search service (Exa, Tavily, Brave, Google, Stack Exchange) stops at its free allowance and searches move to the free engines; each account has a fair share a day; the same search within ten minutes costs nothing."
+        ]
+      },
+      "improved": {
+        "vi": ["Tìm kiếm theo loại trang (tin tức, công ty, người, bài báo khoa học, PDF, GitHub…) và theo quốc gia của tài khoản; mức Thấp dùng loại tìm rẻ nhất của Exa."],
+        "en": ["Search by kind of page (news, company, people, research paper, PDF, GitHub…) and the account's country; Low uses Exa's cheapest search."]
+      }
+    },
+    {
       "version": "1.5.0",
       "date": "2026-11-02",
       "new": {

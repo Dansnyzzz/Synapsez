@@ -1,5 +1,6 @@
 import { untrusted } from './untrusted.js';
 import { search, SEARCH_LEVELS } from '../search.js';
+import { allowance, spend, exhaust, exaMills, exaSpent } from '../freeTier.js';
 
 /**
  * `code_context` — working code and documentation for a programming question,
@@ -46,17 +47,22 @@ function entities(text) {
 const clip = (text, n = MAX_CHARS_EACH) => (text.length > n ? `${text.slice(0, n)}…` : text);
 
 /**
- * Exa, for code. `fast` on the quick levels and `auto` above — a deep search
- * buys nothing for a snippet. Nothing without the deployment's key.
+ * Exa, for code: `lite` on Low, `fast` above — Exa's own code tool asks fast,
+ * and a deep search buys nothing for a snippet. Nothing without the
+ * deployment's key, or once its free month is spent (freeTier.js).
  */
 async function fromExa(query, count, plan, { fetchImpl, signal }) {
   if (!process.env.EXA_API_KEY) return [];
+  const type = plan.exa === 'lite' ? 'lite' : 'fast';
+  // Two kinds of content a page: the passages, and the opening when there are none.
+  const estimate = exaMills(type, count, 2);
+  if ((await allowance('exa')).left < estimate) return [];
   const res = await fetchImpl('https://api.exa.ai/search', {
     method: 'POST',
     headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       query,
-      type: plan.exa === 'fast' ? 'fast' : 'auto',
+      type,
       numResults: count,
       contents: { highlights: { query, maxCharacters: MAX_CHARS_EACH }, text: { maxCharacters: 300 } },
     }),
@@ -64,6 +70,7 @@ async function fromExa(query, count, plan, { fetchImpl, signal }) {
   });
   if (!res.ok) return [];
   const body = await res.json().catch(() => ({}));
+  await spend('exa', exaSpent(body, estimate));
   return (body.results || [])
     .filter((r) => r?.url && (r.highlights?.length || r.text))
     .map((r) => ({
@@ -75,21 +82,35 @@ async function fromExa(query, count, plan, { fetchImpl, signal }) {
     }));
 }
 
-/** Stack Overflow's matching questions and the best answer to each, through the free Stack Exchange API. */
+/**
+ * Stack Overflow's matching questions and the best answer to each, through the
+ * free Stack Exchange API. Its quota is the server's — 300 requests a day per
+ * address without a key, 10,000 with a free one (STACKEXCHANGE_KEY) — shared
+ * by every account, so it is counted (freeTier.js), and the quota Stack
+ * Exchange reports on each answer is believed when it runs low.
+ */
 async function fromStackOverflow(query, count, { fetchImpl, signal }) {
+  if ((await allowance('stackexchange')).left < 2) return [];
   const api = 'https://api.stackexchange.com/2.3';
+  const key = process.env.STACKEXCHANGE_KEY ? { key: process.env.STACKEXCHANGE_KEY } : {};
+  const read = async (res) => {
+    const body = await res.json().catch(() => ({}));
+    await spend('stackexchange', 1);
+    if (Number.isFinite(body.quota_remaining) && body.quota_remaining < 5) await exhaust('stackexchange');
+    return body;
+  };
   const found = await fetchImpl(
-    `${api}/search/advanced?${new URLSearchParams({ order: 'desc', sort: 'relevance', q: query, site: 'stackoverflow', pagesize: String(count), answers: '1', filter: 'withbody' })}`,
+    `${api}/search/advanced?${new URLSearchParams({ order: 'desc', sort: 'relevance', q: query, site: 'stackoverflow', pagesize: String(count), answers: '1', filter: 'withbody', ...key })}`,
     { signal },
   );
   if (!found.ok) return [];
-  const questions = ((await found.json().catch(() => ({}))).items || []).filter((q) => q?.question_id);
+  const questions = ((await read(found)).items || []).filter((q) => q?.question_id);
   if (!questions.length) return [];
   const answered = await fetchImpl(
-    `${api}/questions/${questions.map((q) => q.question_id).join(';')}/answers?${new URLSearchParams({ order: 'desc', sort: 'votes', site: 'stackoverflow', pagesize: '30', filter: 'withbody' })}`,
+    `${api}/questions/${questions.map((q) => q.question_id).join(';')}/answers?${new URLSearchParams({ order: 'desc', sort: 'votes', site: 'stackoverflow', pagesize: '30', filter: 'withbody', ...key })}`,
     { signal },
   );
-  const answers = answered.ok ? (await answered.json().catch(() => ({}))).items || [] : [];
+  const answers = answered.ok ? (await read(answered)).items || [] : [];
   return questions.flatMap((q) => {
     // The accepted answer, or else the highest voted.
     const best = answers.filter((a) => a.question_id === q.question_id).sort((a, b) => Number(b.is_accepted) - Number(a.is_accepted) || b.score - a.score)[0];

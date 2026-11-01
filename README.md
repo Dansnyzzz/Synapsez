@@ -1156,6 +1156,41 @@ only script is read through Exa's `/contents` — what Exa's `web_fetch_exa` cal
 has `EXA_API_KEY`. The answer says *read through Exa* and why; a 404 is not retried, a private address
 never reaches Exa, and a readable page never goes there.
 
+**Exa's other pieces, where they cost nothing more:** `category` on `web_search` (news, company, people,
+research paper, pdf, github, financial report, personal site — Tavily gets its news/finance topic,
+the keyword engines `filetype:pdf` or github.com); the account's country as Exa's `userLocation` (and
+DuckDuckGo's `kl=vn-vi`) for a Vietnamese account; Exa's cheapest `lite` type on Low. Left out on
+purpose: Exa's Agent and Research runs ($0.012–$1 each, a large share of a $10 month — the app's own
+`deep_research` does that job on free models), summaries and subpages (charged per page), and the
+deprecated `includeText`/`excludeText`.
+
+### Free tiers: one allowance per service, shared by everyone
+
+The deployment pays nothing (`server/freeTier.js`). Every metered service has **one** free allowance —
+the deployment's key, or the server's address — and every account's searches draw on it: it is never
+per person, nor per person's IP. So it is counted once, in the database every serverless instance
+shares (the `rate_limits` table, a bucket per service and period), and a service at its ceiling stands
+aside until it resets while DuckDuckGo and Stack Exchange carry on.
+
+| Service | Free allowance (checked 2026-11-02) | Ceiling here | Counted as |
+|---|---|---|---|
+| Exa | $10 credit a month, no card | $9.50 | the cost Exa reports on each answer |
+| Tavily | 1,000 credits a month, no card | 950 | basic 1, advanced 2 |
+| Brave | $5 credit a month (~1,000 searches), card on file, no cap | 950 | 1 a request, refused or not |
+| Google grounding (deployment's Gemini key) | a daily free quota | 450 a day | 1 a request; an account's own key is not counted |
+| Stack Exchange | 300 a day per server address; 10,000 with a free key | 280 / 9,500 a day | 1 a request; its own `quota_remaining` believed |
+
+- **Adaptive inside the month:** with under a quarter of Exa's month left, the deep types give way to
+  `auto` (about half the price); with too little for the search, `lite`; with nothing, Exa stands aside.
+  Tavily drops to basic with one credit left. A 402 (or Tavily's 432/433) is believed for the period.
+- **A fair share:** an account may make `FREE_TIER_USER_DAILY` metered searches a day (30); past it, its
+  searches use the free engines, so one person cannot spend everyone's month in an afternoon.
+- **The same search, asked again within ten minutes,** is answered from memory and spends nothing.
+- **Administrators see each service's use** this period in Settings → People → *Free allowances*.
+- Models are not on this list: each account brings its own key (or OpenRouter's free models on its own
+  OpenRouter key), so a model call is never the deployment's bill. `FREE_TIER_ONLY=false` lifts every
+  ceiling for a deployment that pays.
+
 ---
 
 ## More than one key per provider
@@ -1634,6 +1669,13 @@ Language, Get help, **Give feedback**, **View changelog**, Learn more and Sign o
   Settings → People, and announced by email when a mail provider is set. It never reaches a model. A
   conversation sent with it is deleted with the conversation, however that goes; an incognito one is
   never sent. Ten an hour per account, and at most three emails an hour per account, twenty in all.
+- **Feedback on one answer** — the thumb left of an answer's copy button (Claude's "Give negative
+  feedback"): a problem from Claude's list of twelve (optional) and what was unsatisfying (optional).
+  It sends the conversation and that turn as it ran — the message that began it, each reply with its
+  model, tokens and reasoning, every tool call with its input and every result, failures marked
+  (`answerSnapshot`, schema 35) — so an administrator can see exactly what went wrong, in Settings →
+  Feedback under *The answer, as it ran*. The dialog says so before Submit. An incognito conversation
+  sends only the words. Deleted with the conversation, like any copy. `POST /api/feedback/answer`.
 - **View changelog** shows `public/changelog.json`, newest first; its newest version is the one
   `package.json` says the app is (test/features holds the two together). Add an entry, in Vietnamese and
   English, with every release.
@@ -1753,6 +1795,10 @@ step, with the optional certificate and how to bring data over from another data
 | `DESKTOP_ACCESS` | optional, worker | `true` lets the assistant drive real applications on that machine. Off by default; see the platform table under "Desktop control". |
 | `DEFAULT_MONTHLY_TOKEN_LIMIT` | optional | Monthly cap for accounts using a shared key. Ignored for accounts with their own. |
 | `TAVILY_API_KEY` or `BRAVE_API_KEY` | recommended | Reliable web search. Without one, search scrapes DuckDuckGo, which is best-effort. |
+| `STACKEXCHANGE_KEY` | recommended | A free Stack Apps key for `code_context`: 10,000 Stack Exchange requests a day instead of 300 — a quota of the server's address, shared by every account. |
+| `FREE_TIER_ONLY` | optional | On by default: every metered search service stops at its free allowance (see "Free tiers"). `false` counts them but stops none, for a deployment that pays. |
+| `FREE_TIER_USER_DAILY` | optional | Metered searches one account may make a day (default `30`); past it, its searches use the free engines. |
+| `EXA_FREE_MILLS`, `TAVILY_FREE_CREDITS`, `BRAVE_FREE_REQUESTS`, `GOOGLE_FREE_DAILY`, `STACKEXCHANGE_FREE_DAILY` | optional | Each service's ceiling, if its free tier is not the default one: Exa in thousandths of a dollar a month (9500), Tavily credits a month (950), Brave requests a month (950), Google grounded searches a day on the deployment's Gemini key (450), Stack Exchange requests a day (280, or 9500 with a key). |
 | `ANTHROPIC_API_KEY` etc. | **usually leave blank** | A shared fallback every account without its own key spends against. See the warning above. |
 | `PUBLIC_URL` | recommended | Your deployment URL. Used to build links in emails; without it they are guessed from the request. |
 | `INSIGHTS` | optional | `off` stops the app loading Vercel Web Analytics and Speed Insights. On by default on Vercel only — see below. |
