@@ -365,6 +365,21 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'A structured scratchpad for working through a hard problem in steps, revising earlier ones as it goes.':
     'Một bảng nháp có cấu trúc để giải một bài toán khó theo từng bước, sửa lại các bước trước trong lúc làm.',
 
+  /* ── tìm kết nối (connectorDirectory.js) ───────────────────────── */
+  'Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts: search and send mail, find and read files, see and add events.':
+    'Gmail, Drive, Lịch, Tài liệu, Trang tính, Biểu mẫu, Tasks và Danh bạ: tìm và gửi thư, tìm và đọc tệp, xem và thêm sự kiện.',
+  'Repositories, issues, pull requests and code search on GitHub — read them, and open an issue or a pull request.':
+    'Kho mã, issue, pull request và tìm mã trên GitHub — đọc chúng, và mở một issue hay một pull request.',
+  'Finds and reads the Notion pages you share with it.': 'Tìm và đọc các trang Notion bạn chia sẻ với nó.',
+  'Posts messages to a Slack channel as your bot.': 'Đăng tin nhắn vào một kênh Slack dưới tên bot của bạn.',
+  'Reads the transcript of a YouTube video, so it can be summarised or quoted.':
+    'Đọc lời thoại của một video YouTube để tóm tắt hoặc trích dẫn.',
+  'Sends messages from your own Telegram bot to a chat or a group.':
+    'Gửi tin nhắn từ bot Telegram của riêng bạn tới một cuộc trò chuyện hay một nhóm.',
+  'Publishes posts to a Facebook Page you manage.': 'Đăng bài lên một Trang Facebook bạn quản lý.',
+  'None of those is in the connector directory ({0}). Call search_connectors first and use the ids it gives.':
+    'Không mục nào trong số đó có trong danh mục kết nối ({0}). Hãy gọi search_connectors trước và dùng đúng các id nó trả về.',
+
   /* ── model & nhà cung cấp ──────────────────────────────────────── */
   'Which model?': 'Model nào?',
   '"{0}" is not a decision. It is "apply" or "decline".': '"{0}" không phải một lựa chọn. Chỉ có "apply" hoặc "decline".',
@@ -1052,6 +1067,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Ghi chú đó sẽ dài {0} ký tự; giới hạn là {1}, vì mọi ghi chú đều được đọc vào mọi cuộc trò chuyện. Hãy giữ những điều sẽ cần sau này và bỏ phần còn lại, hoặc tách theo chủ đề.",
   "Say what to look for.":
     "Hãy nói cần tìm gì.",
+  'Connector search is switched off for this account (Settings → Capabilities). Say which service would help instead.':
+    'Tìm kết nối đang tắt cho tài khoản này (Cài đặt → Khả năng). Hãy nói dịch vụ nào sẽ giúp được thay vào đó.',
   "Searching earlier conversations is switched off for this account (Settings → Memory). Say so if it matters.":
     "Tìm trong các cuộc trò chuyện trước đang tắt cho tài khoản này (Cài đặt → Bộ nhớ). Hãy nói rõ nếu điều đó quan trọng.",
   "This is an incognito conversation, so earlier conversations are not searched from it.":

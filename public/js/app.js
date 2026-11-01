@@ -36,6 +36,8 @@ import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './a
 import { createUsagePanel } from './usage-panel.js';
 import { createUsageAlert } from './usage-alert.js';
 import { createCustomize } from './customize.js';
+import { paintConnectorButton } from './cards.js';
+import { createYourData } from './your-data.js';
 import { createFeedback, renderFeedbackList, transcriptLines } from './feedback.js';
 import { createChangelog, appVersion } from './changelog.js';
 import { contextPanel } from './context-panel.js';
@@ -2137,6 +2139,8 @@ async function openChat(id) {
    */
   host.setAttribute('aria-busy', 'true');
   const newestTurn = drawTranscript(host, messages, { live: !!running || !!background });
+  // A card suggesting connectors says where they stand now, not when it was drawn.
+  refreshConnectorCards();
 
   /**
    * If this conversation is mid-answer in this tab, its live nodes go back on
@@ -2809,6 +2813,14 @@ $('messages').addEventListener('click', async (event) => {
   if (recalled) {
     event.preventDefault();
     openChat(recalled.dataset.openChat).catch((err) => toast(err.message, 'error'));
+    return;
+  }
+
+  // Connect, on a card of connectors the assistant suggested (owner, 2026-11-01).
+  const connect = /** @type {HTMLElement | null} */ (/** @type {Element} */ (event.target).closest('.consug__connect'));
+  if (connect) {
+    const row = /** @type {HTMLElement} */ (connect.closest('.consug__row'));
+    connectFromCard(row.dataset.connectorKind, row.dataset.connectorId, row.dataset.connectorName).catch((err) => toast(err.message, 'error'));
     return;
   }
 
@@ -4408,6 +4420,30 @@ const feedback = createFeedback({
 });
 const changelog = createChangelog();
 
+/* Privacy → Your data → Manage: what this account holds, kind by kind (owner, 2026-11-01). */
+const yourData = createYourData({
+  selectTab: (tab) => selectTab(tab),
+  openChat: (id) => {
+    /** @type {HTMLDialogElement} */ ($('settings')).close();
+    openChat(id).catch((err) => toast(err.message, 'error'));
+  },
+  openFile: (file) => {
+    /** @type {HTMLDialogElement} */ ($('settings')).close();
+    viewer.open(file);
+  },
+  // As the sidebar's own Delete leaves it: the conversation on screen, if it was this one, gone.
+  chatDeleted: async (id) => {
+    if (id === state.chatId) {
+      state.chatId = null;
+      $('messages').innerHTML = '';
+      $('chat-title').textContent = t('nav.newChat');
+      setEmpty(true);
+      hideApproval();
+    }
+    await refreshChats();
+  },
+});
+
 $('account-button').addEventListener('click', () =>
   openAccountMenu($('account-button'), {
     user: () => state.boot.user,
@@ -4452,6 +4488,8 @@ document.addEventListener('keydown', (event) => {
 $('settings').addEventListener('close', () => {
   rail.forgetAccount();
   renderRail();
+  // A Connect pressed on a suggestion card leads in here; leaving says whether it took.
+  refreshConnectorCards();
 });
 
 $('language').addEventListener('change', (event) => changeLanguage(/** @type {HTMLInputElement} */ (event.target).value));
@@ -4616,6 +4654,73 @@ const slugForMcp = (name) =>
     .slice(0, 32) || 'server';
 
 /**
+ * One suggested server, filled into the form in Developer — from the strip, or
+ * from a Connect button on a card the assistant showed. The command is what
+ * somebody should read before it runs, so nothing is added until they press Add.
+ */
+function fillMcpPreset(preset) {
+  if (!preset) return;
+  selectTab('developer');
+  $('mcp-name').value = preset.id;
+  $('mcp-transport').value = preset.transport;
+  $('mcp-transport').dispatchEvent(new Event('change'));
+  if (preset.transport === 'http') {
+    $('mcp-url').value = preset.url || '';
+    $('mcp-headers').value = preset.needs?.header ? `${preset.needs.header}: ` : '';
+  } else {
+    $('mcp-command').value = [preset.command, ...(preset.args || [])].join(' ');
+  }
+  // Everything the entry knows that the form cannot show: an argument it
+  // still needs, a token, or where it has to be running.
+  const notes = [preset.argsHint, preset.needs?.why, preset.note].filter(Boolean);
+  $('mcp-status').textContent = notes.length ? notes.join('  ') : t('mcp.presetReady', { name: preset.label });
+  $('mcp-name').focus();
+}
+
+/**
+ * Connect, pressed on a card the assistant showed (Claude's connector search,
+ * owner 2026-11-01). A service opens its own form in Customize → Connectors —
+ * the token box, or Google's sign-in — and a server fills the form in
+ * Developer; the person finishes it there, as Claude's install links leave the
+ * confirming to them. One paused in the + menu is switched back on instead.
+ */
+async function connectFromCard(kind, id, name) {
+  const { entries = [] } = await api.connectorDirectory();
+  const entry = entries.find((e) => e.kind === kind && e.id === id);
+  if (kind === 'service' && entry?.connected && entry.paused) {
+    const off = (state.boot.prefs.connectorsOff || []).filter((x) => x !== id);
+    state.boot.prefs = await api.savePrefs({ connectorsOff: off });
+    toast(t('consug.on', { name: name || id }));
+    await refreshConnectorCards();
+    return;
+  }
+  if (kind === 'mcp') {
+    // A server added but paused is switched on where the servers are.
+    if (entry?.connected) return openSettings('extensions');
+    // The directory says `mcp:github`; the catalogue knows it as `github`.
+    const preset = id.replace(/^mcp:/, '');
+    const { servers = [] } = await api.mcpCatalogue(preset);
+    openSettings('developer');
+    fillMcpPreset(servers.find((s) => s.id === preset));
+    return;
+  }
+  openSettings('connectors');
+  await customize.showConnector(id);
+}
+
+/** Every suggestion card on the page, told where its connectors stand now. */
+async function refreshConnectorCards() {
+  const rows = /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.consug__row'));
+  if (!rows.length) return;
+  const { entries = [] } = await api.connectorDirectory().catch(() => ({ entries: [] }));
+  for (const row of rows) {
+    const entry = entries.find((e) => e.kind === row.dataset.connectorKind && e.id === row.dataset.connectorId);
+    const button = /** @type {HTMLButtonElement | null} */ (row.querySelector('.consug__connect'));
+    if (entry && button) paintConnectorButton(button, { ...entry, name: row.dataset.connectorName });
+  }
+}
+
+/**
  * The suggestions strip.
  *
  * Pressing one fills the form in rather than connecting: the command is the thing
@@ -4638,25 +4743,7 @@ async function loadMcpCatalogue() {
       .join('');
 
     for (const btn of host.querySelectorAll('[data-mcp-preset]')) {
-      btn.addEventListener('click', () => {
-        const preset = servers.find((s) => s.id === btn.dataset.mcpPreset);
-        // The form is in Developer: the command is what somebody should read before it runs.
-        selectTab('developer');
-        $('mcp-name').value = preset.id;
-        $('mcp-transport').value = preset.transport;
-        $('mcp-transport').dispatchEvent(new Event('change'));
-        if (preset.transport === 'http') {
-          $('mcp-url').value = preset.url || '';
-          $('mcp-headers').value = preset.needs?.header ? `${preset.needs.header}: ` : '';
-        } else {
-          $('mcp-command').value = [preset.command, ...(preset.args || [])].join(' ');
-        }
-        // Everything the entry knows that the form cannot show: an argument it
-        // still needs, a token, or where it has to be running.
-        const notes = [preset.argsHint, preset.needs?.why, preset.note].filter(Boolean);
-        $('mcp-status').textContent = notes.length ? notes.join('  ') : t('mcp.presetReady', { name: preset.label });
-        $('mcp-name').focus();
-      });
+      btn.addEventListener('click', () => fillMcpPreset(servers.find((s) => s.id === btn.dataset.mcpPreset)));
     }
   } catch {
     // A suggestions list that will not load is not worth an error: the form under
@@ -4900,10 +4987,14 @@ const settingsTabs = () =>
  */
 const SETTINGS_MOVED = { languages: 'general', behaviour: 'capabilities', mcp: 'extensions' };
 
+/** A page inside a section — Privacy's Manage lists — keeps its section lit in the list. */
+const SECTION_OF = { data: 'privacy' };
+
 function selectTab(asked) {
   const name = SETTINGS_MOVED[asked] || asked;
+  const lit = SECTION_OF[name] || name;
   for (const tab of settingsTabs()) {
-    const active = tab.dataset.tab === name;
+    const active = tab.dataset.tab === lit;
     tab.classList.toggle('is-active', active);
     /**
      * The state a screen reader reads, alongside the class the eye reads.
@@ -4934,6 +5025,8 @@ function selectTab(asked) {
   // the notes and the security record are the lists most likely to have
   // changed since the last look.
   if (name === 'memory') privacy.loadMemory();
+  // What is shared now, beside each Manage.
+  if (name === 'privacy') yourData.paintCounts();
   if (name === 'account') {
     privacy.loadActivity();
     loadSessionTable();
@@ -5151,6 +5244,7 @@ function fillSettings() {
   $('auto-compact').value = prefs.autoCompact === false ? 'off' : 'on';
   $('auto-preview').value = prefs.autoPreview === false ? 'off' : 'on';
   /** @type {HTMLSelectElement} */ ($('tool-loading')).value = prefs.toolLoading === 'all' ? 'all' : 'auto';
+  /** @type {HTMLInputElement} */ ($('connector-search')).checked = prefs.connectorSearch !== false;
   $('system-prompt').value = prefs.systemPrompt || '';
   // Per-browser, not per-account — so it is read back from storage, not prefs.
   paintThemeChoice(storedTheme());
@@ -5688,17 +5782,21 @@ const SAVED_ON_CHANGE = {
   'auto-compact': { status: 'capabilities-status', patch: (v) => ({ autoCompact: v !== 'off' }), back: (p) => (p.autoCompact === false ? 'off' : 'on') },
   'auto-preview': { status: 'capabilities-status', patch: (v) => ({ autoPreview: v !== 'off' }), back: (p) => (p.autoPreview === false ? 'off' : 'on') },
   'tool-loading': { status: 'capabilities-status', patch: (v) => ({ toolLoading: v === 'all' ? 'all' : 'auto' }), back: (p) => (p.toolLoading === 'all' ? 'all' : 'auto') },
+  'connector-search': { status: 'capabilities-status', patch: (on) => ({ connectorSearch: !!on }), back: (p) => p.connectorSearch !== false },
   'system-prompt': { status: 'behaviour-status', patch: (v) => ({ systemPrompt: v }), back: (p) => p.systemPrompt || '' },
 };
 for (const [id, rule] of Object.entries(SAVED_ON_CHANGE)) {
   $(id).addEventListener('change', async () => {
     const field = /** @type {HTMLInputElement} */ ($(id));
+    // A switch's value is whether it is on; everything else's is what it holds.
+    const box = field.type === 'checkbox';
     try {
-      state.boot.prefs = await api.savePrefs(rule.patch(field.value));
+      state.boot.prefs = await api.savePrefs(rule.patch(box ? field.checked : field.value));
       renderTopbar();
       flashSaved(rule.status);
     } catch (err) {
-      field.value = rule.back(state.boot.prefs || {});
+      if (box) field.checked = !!rule.back(state.boot.prefs || {});
+      else field.value = rule.back(state.boot.prefs || {});
       toast(err.message, 'error');
     }
   });

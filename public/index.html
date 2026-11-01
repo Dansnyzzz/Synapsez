@@ -1609,8 +1609,46 @@
                 <input type="file" id="data-import-file" accept=".json,application/json" class="sr-only" />
               </div>
             </div>
+            <!-- What can be reached from outside, kind by kind, after Claude's
+                 (owner, 2026-11-01): each Manage opens the list in panel-data
+                 (your-data.js). The count beside it is what is shared now. -->
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="data.sharedChats">Shared chats</span></div>
+              <div class="srow__control"><span class="srow__value" data-shared-count="chats"></span><button class="btn btn--small" type="button" data-manage="chats" data-i18n="data.manage">Manage</button></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="data.sharedArtifacts">Shared artifacts</span></div>
+              <div class="srow__control"><span class="srow__value" data-shared-count="artifacts"></span><button class="btn btn--small" type="button" data-manage="artifacts" data-i18n="data.manage">Manage</button></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="data.uploads">Uploaded files</span></div>
+              <div class="srow__control"><span class="srow__value" data-shared-count="uploads"></span><button class="btn btn--small" type="button" data-manage="uploads" data-i18n="data.manage">Manage</button></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="data.feedback">Your feedback</span></div>
+              <div class="srow__control"><span class="srow__value" data-shared-count="feedback"></span><button class="btn btn--small" type="button" data-manage="feedback" data-i18n="data.manage">Manage</button></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text"><span class="srow__label" data-i18n="data.memoryPrefs">Memory preferences</span></div>
+              <div class="srow__control">
+                <button class="btn btn--small" type="button" data-goto="memory">
+                  <span data-i18n="data.manage">Manage</span>
+                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4h5v5M16 4l-7 7M14 11.5V15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5" /></svg>
+                </button>
+              </div>
+            </div>
             <p class="settings__status" id="data-import-status" role="status" aria-live="polite"></p>
             <p class="settings__status" id="memory-status" role="status" aria-live="polite"></p>
+          </section>
+
+          <!-- Privacy → Manage: one kind of what this account holds, the shared
+               ones above the rest (your-data.js). Privacy stays lit in the list. -->
+          <section class="panel" data-panel="data" id="panel-data" role="tabpanel" aria-labelledby="tab-privacy">
+            <button class="data__back" type="button" data-goto="privacy">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 10H4M9 5l-5 5 5 5" /></svg>
+              <span data-i18n="settings.tab.privacy">Privacy</span>
+            </button>
+            <div id="data-page"></div>
           </section>
 
           <!-- Usage, after Claude's (owner, 2026-10-31): each provider with a key,
@@ -1642,6 +1680,15 @@
                   <option value="all" data-i18n="plus.toolsLoaded">Tools already loaded</option>
                 </select>
               </div>
+            </div>
+            <!-- Claude's connector search (owner, 2026-11-01): on by default.
+                 server/connectorDirectory.js; the cards are cards.js's. -->
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="connector-search" data-i18n="settings.connectorSearch">Connector search</label>
+                <p class="srow__desc" data-i18n="settings.connectorSearchHint">Let the assistant search the connector directory and surface ones relevant to your conversation.</p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="connector-search" /></div>
             </div>
             <div class="srow">
               <div class="srow__text">

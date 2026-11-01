@@ -626,10 +626,78 @@ export function cardFigure(widget) {
   return figure;
 }
 
+/* ── connectors to connect ────────────────────────────────────────── */
+
+
+/**
+ * What one suggested connector's button says: Connect, Connected, or — for a
+ * connection paused in the + menu — Turn on. Connected is not a button any
+ * more, only the state.
+ *
+ * @param {HTMLButtonElement} button
+ * @param {{ name?: string, connected?: boolean, paused?: boolean }} state
+ */
+export function paintConnectorButton(button, { name = '', connected = false, paused = false }) {
+  const done = connected && !paused;
+  button.classList.toggle('is-connected', done);
+  button.disabled = done;
+  button.textContent = t(done ? 'consug.connected' : paused ? 'consug.turnOn' : 'consug.connect');
+  button.setAttribute('aria-label', t(done ? 'consug.connectedName' : paused ? 'consug.turnOnName' : 'consug.connectName', { name }));
+}
+
+/**
+ * The connectors the assistant found for what is being asked, each with a
+ * Connect button — Claude's connector search (owner, 2026-11-01).
+ *
+ * The row carries the kind and the id and nothing else: one listener on the
+ * transcript opens the place in Settings where that one is connected (app.js),
+ * and Settings closing asks where each stands, so the card says "Connected"
+ * once it is — on a reload too. Icons come through this app's favicon route,
+ * and a letter stands in when there is none.
+ */
+function connectorsFigure(widget) {
+  const items = (Array.isArray(widget.items) ? widget.items : []).filter((item) => item?.id && item?.name).slice(0, 4);
+  if (!items.length) return null;
+  const figure = h('figure', 'widget consug');
+  if (widget.title) figure.append(h('figcaption', 'consug__why', widget.title));
+  const list = h('div', 'consug__list');
+  for (const item of items) {
+    const row = h('div', 'consug__row');
+    row.dataset.connectorKind = item.kind === 'mcp' ? 'mcp' : 'service';
+    row.dataset.connectorId = String(item.id);
+    row.dataset.connectorName = String(item.name);
+    const icon = h('span', 'consug__icon');
+    const letter = () => {
+      icon.replaceChildren(String(item.name).trim().charAt(0).toUpperCase());
+      icon.classList.add('is-letter');
+    };
+    if (item.site) {
+      const img = h('img');
+      img.src = `/api/favicon/${encodeURIComponent(String(item.site))}`;
+      img.alt = '';
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.addEventListener('error', letter, { once: true });
+      icon.append(img);
+    } else letter();
+    const text = h('div', 'consug__text');
+    text.append(h('p', 'consug__name', item.name));
+    if (item.blurb) text.append(h('p', 'consug__blurb', item.blurb));
+    const button = /** @type {HTMLButtonElement} */ (h('button', 'consug__connect'));
+    button.type = 'button';
+    paintConnectorButton(button, item);
+    row.append(icon, text, button);
+    list.append(row);
+  }
+  figure.append(list);
+  return figure;
+}
+
 /** The right drawing for a widget of one of these kinds, or null. */
 export function richWidget(widget) {
   if (widget?.kind === 'map') return mapFigure(widget);
   if (widget?.kind === 'images') return galleryFigure(widget);
   if (widget?.kind === 'card') return cardFigure(widget);
+  if (widget?.kind === 'connectors') return connectorsFigure(widget);
   return null;
 }

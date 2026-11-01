@@ -39,7 +39,7 @@ export const ICONS = {
  * @type {[RegExp, keyof typeof ICONS][]}
  */
 const RULES = [
-  [/^mcp__/, 'plug'],
+  [/^mcp__|connector/, 'plug'],
   [/chats?\b|chats_|conversation/, 'chat'],
   [/image|photo|picture|look_at|qr|screenshot/, 'image'],
   [/place|map|route|direction/, 'pin'],

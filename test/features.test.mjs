@@ -1647,5 +1647,112 @@ section('the getting-started guide says only what is true');
   check('all the clips together stay under 8 MB', total <= MAX_ALL, `${Math.round(total / 1024)} KB`);
 }
 
+section('connector search: the directory, what is offered, and the switch (owner, 2026-11-01)');
+{
+  const db = await PGlite.create();
+  const { initStore } = await import('../server/store/index.js');
+  const store = await initStore({ driver: { query: async (text, params = []) => (await db.query(text, params)).rows } });
+  const { connectorDirectory, rankConnectors, searchConnectorsTool, suggestConnectorsTool, MAX_SUGGESTED } = await import('../server/connectorDirectory.js');
+  const { setPrefs, getPrefs } = await import('../server/settings.js');
+  const { withheldTools } = await import('../server/memory.js');
+  const { buildSystemPrompt } = await import('../server/agent.js');
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  const user = await store.createUser({ id: 'u-consug', email: 'consug@example.com', passwordHash: 'x', name: 'C', role: 'user' });
+
+  check('on by default, as Claude has it', (await getPrefs(user.id)).connectorSearch === true);
+  const entries = await connectorDirectory(user.id);
+  const ids = entries.map((e) => e.id);
+  check('the directory is the services and the suggested MCP servers, one id each', ids.includes('github') && ids.includes('mcp:github') && ids.includes('notion') && ids.includes('mcp:notion') && new Set(ids).size === ids.length, ids.join(' '));
+  check("  Google is left out where this deployment cannot sign in to it", !ids.includes('google') || !!process.env.GOOGLE_CLIENT_ID);
+  check('  nothing is connected on a new account', entries.every((e) => !e.connected && !e.paused));
+  check('the best fit comes first: a name before a line', rankConnectors(entries, 'github issues')[0]?.id === 'github', rankConnectors(entries, 'github issues').map((e) => e.id).join());
+  check('  a word in what it does finds it too', rankConnectors(entries, 'youtube video')[0]?.id === 'supadata');
+  const found = await searchConnectorsTool({ query: 'notes wiki' }, { userId: user.id });
+  check('search names each fit with its id and its state', /- notion — Notion: .*\[not connected — they paste a token\]/.test(found) && /suggest_connectors/.test(found), found.split('\n')[1]);
+  check('  and says so when nothing fits', /^Nothing in the connector directory fits/.test(await searchConnectorsTool({ query: 'zzqx' }, { userId: user.id })));
+
+  const shown = await suggestConnectorsTool({ ids: ['github', 'mcp:context7', 'not-a-connector'], reason: 'To read the repository' }, { userId: user.id });
+  const items = shown.widget.items;
+  check('suggesting draws a card of the ones asked for, the unknown dropped', shown.widget.kind === 'connectors' && items.map((i) => i.id).join() === 'github,mcp:context7' && shown.widget.title === 'To read the repository', JSON.stringify(items));
+  check('  each with its kind, its icon\'s site and its state', items[0].kind === 'service' && items[1].kind === 'mcp' && items[0].site === 'github.com' && items[1].site === 'context7.com' && items.every((i) => i.connected === false));
+  check('  and the model is told to wait for the person', /Connect button/.test(shown.content) && /do not act as though it were connected/.test(shown.content));
+  check(`  at most ${MAX_SUGGESTED}`, (await suggestConnectorsTool({ ids: ids.slice(0, 9) }, { userId: user.id })).widget.items.length === MAX_SUGGESTED);
+  let refused = '';
+  try {
+    await suggestConnectorsTool({ ids: ['nope'] }, { userId: user.id });
+  } catch (err) {
+    refused = err.message;
+  }
+  check('  nothing it knows: refused, pointing at search_connectors', /search_connectors first/.test(refused), refused);
+
+  await store.saveConnector(user.id, 'github', 'cipher', 'octocat');
+  await setPrefs(user.id, { connectorsOff: ['github'] });
+  await store.saveMcpServer(user.id, { id: 'srv-1', name: 'my docs', config: { transport: 'http', url: 'https://mcp.context7.com/mcp' } });
+  const now = await connectorDirectory(user.id);
+  const github = now.find((e) => e.id === 'github');
+  check('connected, and paused in the + menu, is said as both', github.connected && github.paused && github.account === 'octocat');
+  check('  a server counts as the entry at the same address, whatever it was named', now.find((e) => e.id === 'mcp:context7')?.connected === true);
+  check('  and the card says so rather than offering Connect', (await suggestConnectorsTool({ ids: ['github'] }, { userId: user.id })).widget.items[0].paused === true);
+
+  check('switched off, both tools are withheld', ['search_connectors', 'suggest_connectors'].every((n) => withheldTools({ prefs: { connectorSearch: false } }).has(n)) && !withheldTools({ prefs: {} }).has('search_connectors'));
+  await setPrefs(user.id, { connectorSearch: false });
+  let off = '';
+  try {
+    await CLOUD_IMPLEMENTATIONS.search_connectors({ query: 'github' }, { userId: user.id });
+  } catch (err) {
+    off = err.message;
+  }
+  check('  and a call that names one anyway is refused in words', /switched off/.test(off), off);
+  check('the prompt tells the model about it only when it is on', buildSystemPrompt({ connectorSearch: true }).includes('## Connecting a service') && !buildSystemPrompt({}).includes('## Connecting a service'));
+  check('both are read-only and wait behind load_tools', ['search_connectors', 'suggest_connectors'].every((n) => TOOLS_BY_NAME[n]?.readOnly && TOOLS_BY_NAME[n]?.secondary && assessRisk(n, {}) === 'safe'));
+}
+
+section('your data: the lists and deletions behind Privacy → Manage (owner, 2026-11-01)');
+{
+  const db = await PGlite.create();
+  const { initStore } = await import('../server/store/index.js');
+  const store = await initStore({ driver: { query: async (text, params = []) => (await db.query(text, params)).rows } });
+  const { mountYourDataRoutes } = await import('../server/routes/yourData.js');
+  const me = await store.createUser({ id: 'u-yd', email: 'yd@example.com', passwordHash: 'x', name: 'Y', role: 'user' });
+  const other = await store.createUser({ id: 'u-yd-2', email: 'yd2@example.com', passwordHash: 'x', name: 'Z', role: 'user' });
+  await store.createChat(me.id, { id: 'c-yd', title: 'Shared one', model: 'm' });
+  await store.createChat(me.id, { id: 'c-yd-2', title: 'Private one', model: 'm' });
+  await store.setChatShare(me.id, 'c-yd', 'y'.repeat(43));
+  await store.createAttachment(me.id, { id: 'yd-made', name: 'deck.pptx', mime: 'application/zip', kind: 'document', bytes: 2048, data: 'AAA', origin: 'generated', chatId: 'c-yd-2' });
+  await store.setAttachmentShare(me.id, 'yd-made', 'z'.repeat(43));
+  await store.createAttachment(other.id, { id: 'yd-theirs', name: 'theirs.png', mime: 'image/png', kind: 'image', bytes: 3, data: 'AAA' });
+  await store.createFeedback(me.id, { id: 'yd-fb', topic: 'files', kind: 'bug', body: 'Broke.', affect: 'minor' });
+
+  const app = express();
+  app.use(express.json());
+  const wrap = (h) => (req, res, next) => Promise.resolve(h(req, res, next)).catch(next);
+  const api = express.Router();
+  api.use((req, res, next) => {
+    req.user = { id: req.headers['x-user'] || me.id };
+    next();
+  });
+  mountYourDataRoutes(api, { wrap });
+  app.use('/api', api);
+  const server = http.createServer(app).listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const get = (path, user = me.id) => fetch(base + path, { headers: { 'x-user': user } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  const del = (path, user = me.id) => fetch(base + path, { method: 'DELETE', headers: { 'x-user': user } }).then((r) => r.status);
+  try {
+    const summary = await get('/api/data');
+    check('the counts beside Manage', summary.body.shared?.chats === 1 && summary.body.shared?.artifacts === 1 && summary.body.shared?.feedback === 0, JSON.stringify(summary.body));
+    const shared = await get('/api/data/chats?shared=1');
+    check('a shared conversation comes with the path to copy, never its token by name', shared.body.items[0]?.link === `/share.html?t=${'y'.repeat(43)}` && !('share_token' in shared.body.items[0]) && shared.body.total === 1);
+    const made = await get('/api/data/artifacts?shared=1');
+    check('  a made file with its link', made.body.items[0]?.link === `/api/share/${'z'.repeat(43)}` && made.body.items[0]?.bytes === 2048);
+    check('  the rest, searched', (await get('/api/data/chats?q=private')).body.items.map((i) => i.name).join() === 'Private one');
+    check('  an unknown kind is not a list', (await get('/api/data/passwords')).status === 404);
+    check("another account's upload cannot be deleted from here", (await del('/api/data/uploads/yd-theirs')) === 404 && (await store.getAttachment(other.id, 'yd-theirs')) != null);
+    check('  nor its feedback', (await del('/api/data/feedback/yd-fb', other.id)) === 404);
+    check('  its own feedback can', (await del('/api/data/feedback/yd-fb')) === 200 && (await get('/api/data/feedback')).body.total === 0);
+  } finally {
+    server.close();
+  }
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

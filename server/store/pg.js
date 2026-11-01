@@ -283,6 +283,19 @@ const withoutNul = (value) => (typeof value === 'string' && value.includes('\u00
  */
 const toJson = (value) => JSON.stringify(value, (key, item) => withoutNul(item));
 
+/**
+ * A phrase as an ILIKE pattern, or null for none. Its own `%`, `_` and `\` are
+ * searched for, not obeyed — `\` first, or it would escape the escapes (see
+ * searchChats, where a lone `%` once matched every message there was).
+ */
+const likeOf = (query) => {
+  const text = String(query ?? '').trim().slice(0, 200);
+  return text ? `%${text.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%` : null;
+};
+/** One page of a Your-data list: between 1 and 100 rows, from a row that exists. */
+const pageSize = (limit) => Math.min(Math.max(Math.trunc(Number(limit)) || 20, 1), 100);
+const pageStart = (offset) => Math.min(Math.max(Math.trunc(Number(offset)) || 0, 0), 1_000_000);
+
 export function createPgStore(connectionString) {
   // Accepts a driver instead of a URL — PGlite, a node-postgres pool, Neon's own
   // (a function with a `query`) — so the tenancy-isolation tests can run the real
@@ -2093,6 +2106,127 @@ export function createPgStore(connectionString) {
       const rows = await q(
         `DELETE FROM attachments WHERE id = $1 AND user_id = $2 AND origin = 'generated' RETURNING id`,
         [id, userId],
+      );
+      return rows.length > 0;
+    },
+
+    /* ── Settings → Privacy → Your data (owner, 2026-11-01) ───────────────
+     *
+     * What this account holds, kind by kind, a page at a time: the shared ones
+     * and the rest asked for separately (`shared`), as the page lists them —
+     * what anybody with a link can open on top. A phrase narrows by name, its
+     * wildcards searched for rather than obeyed (see searchChats). Always this
+     * account's own, and never an incognito conversation or its files: those go
+     * when it is left, and are kept out of everything.
+     */
+    async listDataChats(userId, { query = '', shared = false, offset = 0, limit = 20 } = {}) {
+      const like = likeOf(query);
+      const where = `c.user_id = $1 AND NOT COALESCE(c.incognito, FALSE)
+        AND ${shared ? 'c.share_token IS NOT NULL' : 'c.share_token IS NULL'}
+        AND ($2::text IS NULL OR c.title ILIKE $2 ESCAPE '\\')`;
+      const [rows, count] = await Promise.all([
+        q(
+          `SELECT c.id, c.title, c.share_token, c.shared_at, c.updated_at FROM chats c
+            WHERE ${where} ORDER BY c.updated_at DESC, c.id LIMIT $3 OFFSET $4`,
+          [userId, like, pageSize(limit), pageStart(offset)],
+        ),
+        q(`SELECT COUNT(*)::int AS n FROM chats c WHERE ${where}`, [userId, like]),
+      ]);
+      return { items: rows, total: count[0]?.n ?? 0 };
+    },
+    /**
+     * Files: what the assistant made (`generated`) or what was sent (`upload`).
+     * A made file is shared by its own link. An upload has none — uploads are
+     * never published by themselves — but one sent in a conversation that is
+     * shared, before it was, is opened by anybody with that link, so it is
+     * listed as shared, with the conversation it goes with. "Updated" is the
+     * last rewrite of a made file: its newest version is the copy put aside
+     * when it was rewritten.
+     */
+    async listDataFiles(userId, { origin = 'generated', query = '', shared = false, offset = 0, limit = 20 } = {}) {
+      const upload = origin === 'upload';
+      const like = likeOf(query);
+      const sharedChat = `c.share_token IS NOT NULL AND c.shared_at IS NOT NULL AND a.created_at <= c.shared_at`;
+      const isShared = upload ? `(${sharedChat})` : 'a.share_token IS NOT NULL';
+      const where = `a.user_id = $1 AND a.origin = $2
+        AND NOT COALESCE(c.incognito, FALSE)
+        AND ${shared ? isShared : `NOT COALESCE(${isShared}, FALSE)`}
+        AND ($3::text IS NULL OR a.name ILIKE $3 ESCAPE '\\')`;
+      const from = `FROM attachments a LEFT JOIN chats c ON c.id = a.chat_id AND c.user_id = a.user_id`;
+      const [rows, count] = await Promise.all([
+        q(
+          `SELECT a.id, a.name, a.mime, a.kind, a.bytes, a.chat_id, a.created_at,
+                  ${upload ? 'NULL' : 'a.share_token'} AS share_token, c.title AS chat_title,
+                  COALESCE((SELECT MAX(v.created_at) FROM attachment_versions v WHERE v.attachment_id = a.id), a.created_at) AS updated_at
+             ${from}
+            WHERE ${where}
+         ORDER BY updated_at DESC, a.id LIMIT $4 OFFSET $5`,
+          [userId, upload ? 'upload' : 'generated', like, pageSize(limit), pageStart(offset)],
+        ),
+        q(`SELECT COUNT(*)::int AS n ${from} WHERE ${where}`, [userId, upload ? 'upload' : 'generated', like]),
+      ]);
+      return { items: rows, total: count[0]?.n ?? 0 };
+    },
+    /**
+     * Feedback this account sent. "Shared" is one sent with a copy of a
+     * conversation the deployment's administrators can still read — the copy
+     * goes when the conversation does (deleteChat), or when it is removed here.
+     */
+    async listDataFeedback(userId, { query = '', shared = false, offset = 0, limit = 20 } = {}) {
+      const like = likeOf(query);
+      const withCopy = 'f.transcript IS NOT NULL AND c.id IS NOT NULL';
+      const where = `f.user_id = $1 AND ${shared ? withCopy : `NOT (${withCopy})`}
+        AND ($2::text IS NULL OR f.body ILIKE $2 ESCAPE '\\' OR f.topic ILIKE $2 ESCAPE '\\')`;
+      const from = 'FROM feedback f LEFT JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id';
+      const [rows, count] = await Promise.all([
+        q(
+          `SELECT f.id, f.topic, f.topic_other, f.kind, left(f.body, 240) AS body, f.created_at,
+                  CASE WHEN c.id IS NULL THEN NULL ELSE f.chat_title END AS chat_title
+             ${from} WHERE ${where}
+         ORDER BY f.created_at DESC, f.id LIMIT $3 OFFSET $4`,
+          [userId, like, pageSize(limit), pageStart(offset)],
+        ),
+        q(`SELECT COUNT(*)::int AS n ${from} WHERE ${where}`, [userId, like]),
+      ]);
+      return { items: rows, total: count[0]?.n ?? 0 };
+    },
+    /**
+     * How much of each kind can be reached from outside now — the count beside
+     * each Manage in Privacy. One statement; the same rules as the lists above.
+     */
+    async dataSummary(userId) {
+      const rows = await q(
+        `SELECT
+           (SELECT COUNT(*)::int FROM chats c
+             WHERE c.user_id = $1 AND NOT COALESCE(c.incognito, FALSE) AND c.share_token IS NOT NULL) AS chats,
+           (SELECT COUNT(*)::int FROM attachments a LEFT JOIN chats c ON c.id = a.chat_id AND c.user_id = a.user_id
+             WHERE a.user_id = $1 AND a.origin = 'generated' AND a.share_token IS NOT NULL
+               AND NOT COALESCE(c.incognito, FALSE)) AS artifacts,
+           (SELECT COUNT(*)::int FROM attachments a JOIN chats c ON c.id = a.chat_id AND c.user_id = a.user_id
+             WHERE a.user_id = $1 AND a.origin = 'upload' AND NOT COALESCE(c.incognito, FALSE)
+               AND c.share_token IS NOT NULL AND c.shared_at IS NOT NULL AND a.created_at <= c.shared_at) AS uploads,
+           (SELECT COUNT(*)::int FROM feedback f JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id
+             WHERE f.user_id = $1 AND f.transcript IS NOT NULL) AS feedback`,
+        [userId],
+      );
+      const row = rows[0] || {};
+      return { chats: row.chats ?? 0, artifacts: row.artifacts ?? 0, uploads: row.uploads ?? 0, feedback: row.feedback ?? 0 };
+    },
+    /** Throw away a file this account sent. Only an upload: a made file goes by deleteGeneratedFile. */
+    async deleteUpload(userId, id) {
+      const rows = await q(`DELETE FROM attachments WHERE id = $1 AND user_id = $2 AND origin = 'upload' RETURNING id`, [id, userId]);
+      return rows.length > 0;
+    },
+    /** Feedback this account sent, deleted by its sender. */
+    async deleteOwnFeedback(userId, id) {
+      const rows = await q(`DELETE FROM feedback WHERE id = $1 AND user_id = $2 RETURNING id`, [String(id), userId]);
+      return rows.length > 0;
+    },
+    /** The copy of a conversation sent with feedback, taken back — the feedback itself stays. */
+    async forgetOwnFeedbackTranscript(userId, id) {
+      const rows = await q(
+        `UPDATE feedback SET transcript = NULL, chat_title = NULL WHERE id = $1 AND user_id = $2 RETURNING id`,
+        [String(id), userId],
       );
       return rows.length > 0;
     },

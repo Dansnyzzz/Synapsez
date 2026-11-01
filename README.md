@@ -1310,6 +1310,19 @@ with the same key as your provider keys and never returned to the browser.
 Notion only sees pages explicitly shared with the integration, so an empty search often means
 unshared rather than absent.
 
+### Connector search
+
+**Settings → Capabilities → Connector search**, on by default, after Claude's. When what someone asks
+needs a service they have not connected, the assistant calls `search_connectors` — the directory is the
+services above plus the suggested MCP servers (`server/mcp/catalogue.js`, ids `mcp:<name>`) — then
+`suggest_connectors` with the ones worth offering, at most four. They appear in the conversation as a
+card, each with its icon (through this app's favicon route) and a **Connect** button that opens the place
+it is connected: the service's own form in Customize → Connectors, Google's sign-in, or the MCP form in
+Developer filled in. Nothing is connected from the conversation itself; the person finishes it in
+Settings, and the card says "Connected" once they have. A connection paused in the + menu shows **Turn
+on** instead. Off, both tools are withheld; a scheduled run never gets them. Code:
+`server/connectorDirectory.js`, `public/js/cards.js`.
+
 ---
 
 ## Your own documents
@@ -1474,6 +1487,27 @@ plain string is still an option's label.
 - **A helper stopped as it starts** (the machine's session about to end, or a second start of the same
   service) is retried once, and a start that did come up elsewhere is used; the error names the exit
   code. Before starting, the machine's session is extended.
+
+### Your data — what is shared, and Manage
+
+**Settings → Privacy → Your data** has, after Export and Import, one row per kind of thing the account
+holds — Shared chats, Shared artifacts, Uploaded files, Your feedback — each with how many can be
+reached from outside right now, and **Manage**; Memory preferences goes to Memory. Manage opens a page
+inside Privacy (← Privacy goes back) with what anybody else can reach on top and the rest below,
+searched by name, twenty to a page:
+
+| Kind | On top | Visibility |
+|---|---|---|
+| Chats | conversations with a share link | Private / Public — the same share routes as the chat's own button |
+| Artifacts | files the assistant made, with a link | Private / Public |
+| Uploads | files sent in a shared conversation before it was shared — its visitors can open them | said, not switched: stop sharing the conversation |
+| Feedback | feedback sent with a copy of a conversation, which administrators can read | ⋯ → remove the copy |
+
+Each row's ⋯ copies its link, opens, downloads or deletes it. Making something public copies its new
+link; making it private takes the link back, and sharing again makes a new one. Incognito
+conversations and their files are never listed. Routes: `GET /api/data`, `GET /api/data/:kind`,
+`DELETE /api/data/uploads/:id`, `DELETE /api/data/feedback/:id[/transcript]`
+(`server/routes/yourData.js`); page: `public/js/your-data.js`.
 
 ### Usage, devices, feedback, changelog
 

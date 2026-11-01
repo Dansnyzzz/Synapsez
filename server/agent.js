@@ -105,9 +105,10 @@ export function promptVersion() {
  *   memory?: string,
  *   recall?: boolean,
  *   incognito?: boolean,
+ *   connectorSearch?: boolean,
  * }} options
  */
-export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills, connectors, project, mcpServers, timezone, memory, recall, incognito }) {
+export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills, connectors, project, mcpServers, timezone, memory, recall, incognito, connectorSearch }) {
   const lines = [
     'You are Synapsez — an agentic assistant the user drives from their phone, tablet, or laptop.',
     'Work autonomously: use your tools to find things out rather than asking the user to look them up.',
@@ -240,6 +241,20 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
       '',
       '## Connected services',
       `This account has connected: ${connectors}. Use those tools rather than asking them to fetch things by hand.`,
+    );
+  }
+
+  /**
+   * Claude's connector search (Settings → Capabilities; owner, 2026-11-01).
+   * Without the nudge a request that needs an unconnected service ends in "I
+   * cannot reach your inbox" — true, and no help. The tools are deferred, so
+   * the line names them.
+   */
+  if (connectorSearch) {
+    lines.push(
+      '',
+      '## Connecting a service',
+      'When what they ask needs a service that is not connected — their inbox or calendar, a GitHub repo, Notion, Slack, a database — call `search_connectors`, then `suggest_connectors` with the ones worth offering: they connect it with a button, and its tools are yours once they say it is done. Never claim to have used a service that is not connected. Load them with `load_tools` when they are not already there.',
     );
   }
 
@@ -1405,6 +1420,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     memory,
     recall: !withhold.has('search_chats'),
     incognito: !!chat.incognito,
+    // Nobody is there to press Connect on a scheduled run.
+    connectorSearch: !unattended && !withhold.has('suggest_connectors'),
   };
   let system = buildSystemPrompt({ ...systemArgs, connectors: connectors.summary, mcpServers: mcp.servers });
 
@@ -1494,8 +1511,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // (see `activated` above: a task that can create tasks multiplies).
     defer: unattended || prefs.toolLoading !== 'all',
   });
-  // A question with nobody to answer it only ends the run.
-  const buildTools = () => availableTools(toolArgs()).filter((t) => !(unattended && t.name === 'ask_options'));
+  // A question with nobody to answer it only ends the run — and a Connect button
+  // with nobody to press it, the same.
+  const NOBODY_THERE = new Set(['ask_options', 'search_connectors', 'suggest_connectors']);
+  const buildTools = () => availableTools(toolArgs()).filter((t) => !(unattended && NOBODY_THERE.has(t.name)));
   /** What waits behind `load_tools` this step: offered by name only — for the gauge. */
   const deferredTools = (offered) => {
     const names = new Set(offered.map((t) => t.name));

@@ -182,6 +182,8 @@ export const api = {
   runWorkflow: (id) => request('POST', `/api/workflows/${id}/run`),
 
   connectors: () => request('GET', '/api/connectors'),
+  // Where each entry of the connector directory stands — for the suggestion cards.
+  connectorDirectory: () => request('GET', '/api/connectors/directory'),
   connect: (service, token) => request('POST', `/api/connectors/${service}`, { token }),
   disconnect: (service) => request('DELETE', `/api/connectors/${service}`),
   // The + menu's Google Drive picker: find a file, and attach it to the message.
@@ -319,6 +321,15 @@ export const api = {
   /** Rewrite one by hand — the same road `update_file` takes. */
   updateFile: (id, content, name) => request('PATCH', `/api/attachments/${id}`, { content, name }),
   deleteFile: (id) => request('DELETE', `/api/attachments/${id}`),
+
+  // Settings → Privacy → Your data: what is shared now, one kind's page, and the
+  // deletions only that page offers (owner, 2026-11-01).
+  dataSummary: () => request('GET', '/api/data'),
+  dataList: (kind, { q = '', shared = false, offset = 0, limit = 20 } = {}) =>
+    request('GET', `/api/data/${encodeURIComponent(kind)}?${new URLSearchParams({ q, shared: shared ? '1' : '0', offset: String(offset), limit: String(limit) })}`),
+  deleteUpload: (id) => request('DELETE', `/api/data/uploads/${encodeURIComponent(id)}`),
+  deleteOwnFeedback: (id) => request('DELETE', `/api/data/feedback/${encodeURIComponent(id)}`),
+  forgetFeedbackCopy: (id) => request('DELETE', `/api/data/feedback/${encodeURIComponent(id)}/transcript`),
 
   /* The folder on the machine, through the same worker tools the assistant uses. */
   workspace: (path = '.') => request('GET', `/api/workspace?path=${encodeURIComponent(path)}`),

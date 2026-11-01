@@ -7,6 +7,7 @@ import { saveUpload, LIMITS } from '../attachments.js';
 import { publicUrlFor } from '../util/net.js';
 import { TOOLS } from '../tools/definitions.js';
 import { DRIVE_ORIGIN } from '../googleData.js';
+import { connectorDirectory } from '../connectorDirectory.js';
 
 /**
  * Connecting a third-party account — GitHub, Notion, Slack and the rest.
@@ -36,6 +37,19 @@ export function mountConnectorRoutes(api, { wrap }) {
           ),
         }));
         res.json({ connectors });
+      }),
+    );
+
+    /**
+     * Where each entry of the connector directory stands for this account —
+     * so a suggestion card drawn last week says "Connected" once it is, and a
+     * card just pressed says so the moment Settings closes (owner, 2026-11-01).
+     */
+    api.get(
+      '/connectors/directory',
+      wrap(async (req, res) => {
+        const entries = await connectorDirectory(req.user.id);
+        res.json({ entries: entries.map(({ id, kind, connected, paused }) => ({ id, kind, connected, paused })) });
       }),
     );
 

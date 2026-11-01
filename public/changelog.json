@@ -1,6 +1,28 @@
 {
   "entries": [
     {
+      "version": "1.2.0",
+      "date": "2026-11-01",
+      "new": {
+        "vi": [
+          "Quyền riêng tư → Dữ liệu của bạn có thêm Cuộc trò chuyện đã chia sẻ, Tệp đã tạo được chia sẻ, Tệp đã tải lên và Góp ý của bạn: mỗi mục cho biết có bao nhiêu thứ đang chia sẻ, và nút Quản lý mở danh sách — những gì ai có link cũng mở được nằm trên cùng, phần còn lại tìm được theo tên, chuyển Riêng tư/Công khai hay xoá ngay tại đó.",
+          "Tìm kết nối (Cài đặt → Khả năng, bật sẵn): khi việc bạn nhờ cần một dịch vụ chưa kết nối, trợ lý tìm trong danh mục và gợi ý ngay trong cuộc trò chuyện, mỗi mục có nút Kết nối mở đúng chỗ để kết nối."
+        ],
+        "en": [
+          "Privacy → Your data now has Shared chats, Shared artifacts, Uploaded files and Your feedback: each says how much is shared now, and Manage opens the list — what anyone with a link can open on top, the rest searchable by name, made private or public or deleted right there.",
+          "Connector search (Settings → Capabilities, on by default): when what you ask needs a service you have not connected, the assistant searches the directory and suggests it in the conversation, each with a Connect button that opens the right place to connect it."
+        ]
+      },
+      "improved": {
+        "vi": ["Số bước công cụ tối đa nằm giữa ô, và mũi tên tăng giảm không còn nền đen."],
+        "en": ["The maximum tool steps sit in the middle of their box, and the up/down arrows have no dark plate."]
+      },
+      "fixed": {
+        "vi": ["Nút Xuất dữ liệu không còn bị gạch chân như một đường link.", "Cập nhật thư viện undici và zod theo cảnh báo bảo mật của GitHub."],
+        "en": ["The Export data button is no longer underlined like a link.", "undici and zod updated after GitHub's security alerts."]
+      }
+    },
+    {
       "version": "1.1.1",
       "date": "2026-11-01",
       "new": {

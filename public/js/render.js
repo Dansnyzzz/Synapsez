@@ -345,6 +345,8 @@ const STEP_VERBS = {
   memory_delete: 'step.memory_delete',
   memory_search: 'step.memory_search',
   search_chats: 'step.search_chats',
+  search_connectors: 'step.search_connectors',
+  suggest_connectors: 'step.suggest_connectors',
   skill_read: 'step.skill_read',
   skill_write: 'step.skill_write',
   load_tools: 'step.load_tools',
@@ -1436,7 +1438,7 @@ export function widgetNode(widget, toolName = null) {
  * Whether a result carries something to draw. A map, a gallery or a card has
  * no markup — it is drawn from its data — so `markup` alone is not the test.
  */
-const drawable = (widget) => !!(widget && (widget.markup || ['map', 'images', 'card'].includes(widget.kind)));
+const drawable = (widget) => !!(widget && (widget.markup || ['map', 'images', 'card', 'connectors'].includes(widget.kind)));
 
 /**
  * When a scheduled run fires next, in the zone it was set in.

@@ -1,9 +1,9 @@
 {
   "name": "ai-remote",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
-  "description": "Synapsez Ã¢â‚¬â€ a self-hosted, multi-provider agentic AI workspace you can drive from any device.",
+  "description": "Synapsez — a self-hosted, multi-provider agentic AI workspace you can drive from any device.",
   "main": "server/index.js",
   "scripts": {
     "start": "node scripts/launch.js",
@@ -120,6 +120,9 @@
     "katex": "^0.18.7",
     "typescript": "^7.0.2",
     "ws": "^8.21.1"
+  },
+  "overrides": {
+    "zod": "^4.6.7"
   },
   "allowScripts": {
     "@google/genai": false,

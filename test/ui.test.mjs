@@ -3094,6 +3094,112 @@ section("Settings is Claude's list: sections down the left, in groups, each its 
   await page.waitForTimeout(200);
 }
 
+section('Privacy → Your data: what is shared on top, the rest searched, a pill to change it (owner, 2026-11-01)');
+{
+  const { getStore } = await import('../server/store/index.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  await getStore().createChat(me.id, { id: 'ui-data-shared', title: 'Milk tea plan', model: 'm' });
+  await getStore().createChat(me.id, { id: 'ui-data-own', title: 'Zebra notes', model: 'm' });
+  await getStore().setChatShare(me.id, 'ui-data-shared', 'u'.repeat(43));
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await openSettings();
+  await page.click('#tab-privacy');
+  await page.waitForTimeout(600);
+  const rows = await page.evaluate(() => ({
+    manage: [...document.querySelectorAll('#panel-privacy [data-manage]')].map((b) => /** @type {HTMLElement} */ (b).dataset.manage),
+    count: document.querySelector('[data-shared-count="chats"]')?.textContent || '',
+    memory: !!document.querySelector('#panel-privacy [data-goto="memory"]'),
+    underline: getComputedStyle(/** @type {HTMLElement} */ (document.getElementById('data-export'))).textDecorationLine,
+  }));
+  check('Your data has shared chats, artifacts, uploads and feedback, each with Manage — and Memory preferences', rows.manage.join() === 'chats,artifacts,uploads,feedback' && rows.memory, rows.manage.join());
+  check('  each says how many are shared now', /^1\D/.test(rows.count), rows.count);
+  check('  and Export data is a button, not an underlined link', rows.underline === 'none', rows.underline);
+
+  await page.click('[data-manage="chats"]');
+  await page.waitForTimeout(700);
+  const listed = (which) => page.evaluate((w) => [...document.querySelectorAll(`[data-list="${w}"] .dtable__link`)].map((n) => n.textContent), which);
+  check('Manage opens a page inside Privacy, which stays lit in the list', (await page.evaluate(() => /** @type {HTMLElement | null} */ (document.querySelector('#settings .tab.is-active'))?.dataset.tab)) === 'privacy');
+  const onTop = await listed('shared');
+  check('  the shared conversation is on top', onTop.join() === 'Milk tea plan', onTop.join());
+  await page.fill('.data__search', 'zebra');
+  await page.waitForTimeout(800);
+  const found = await listed('rest');
+  const counted = await page.textContent('.data__count');
+  check('  the rest is searched by name, and counted', found.join() === 'Zebra notes' && /1.1\D+1/.test(counted || ''), `${found.join()} · ${counted}`);
+  await page.locator('[data-list="rest"] .dvis').first().click();
+  await page.waitForTimeout(250);
+  const menu = await page.evaluate(() => [...document.querySelectorAll('.cmenu__item')].map((n) => n.getAttribute('aria-checked')));
+  check('  its pill offers Private, ticked, and Public', menu.join() === 'true,false', menu.join());
+  await page.locator('.cmenu__item').nth(1).click();
+  await page.waitForTimeout(1000);
+  check('  made public, it moves up — and the link is real', (await listed('shared')).includes('Zebra notes') && !!(await getStore().getChat(me.id, 'ui-data-own'))?.share_token);
+  await page.click('.data__back');
+  await page.waitForTimeout(300);
+  check('  ← Privacy goes back', await page.isVisible('#panel-privacy'));
+  await getStore().setChatShare(me.id, 'ui-data-shared', null);
+  await getStore().setChatShare(me.id, 'ui-data-own', null);
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.waitForTimeout(200);
+}
+
+section('connector search: on by default, and a card whose Connect opens the form (owner, 2026-11-01)');
+{
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await openSettings();
+  await page.click('#tab-capabilities');
+  await page.waitForTimeout(300);
+  check('Capabilities has Connector search, switched on', await page.isChecked('#connector-search'));
+  const box = await page.evaluate(() => {
+    const cs = getComputedStyle(/** @type {HTMLElement} */ (document.getElementById('max-steps')));
+    return { align: cs.textAlign, left: parseFloat(cs.paddingLeft), right: parseFloat(cs.paddingRight) };
+  });
+  // 26px on the left matches the arrows' 16px of room plus the 10px on the right.
+  check('the steps number sits in the middle of its box', box.align === 'center' && box.left === box.right + 16, JSON.stringify(box));
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.waitForTimeout(200);
+
+  const { getStore } = await import('../server/store/index.js');
+  const me = await getStore().getUserByEmail('ui@test.local');
+  const { suggestConnectorsTool } = await import('../server/connectorDirectory.js');
+  const made = await suggestConnectorsTool({ ids: ['notion', 'mcp:sentry'], reason: 'To read your notes' }, { userId: me.id });
+  await page.evaluate(async (widget) => {
+    const { richWidget } = await import('/js/cards.js');
+    const figure = richWidget(widget);
+    figure.id = 'ui-consug';
+    document.getElementById('messages').append(figure);
+    figure.scrollIntoView({ block: 'center' });
+  }, made.widget);
+  await page.waitForTimeout(400);
+  const card = await page.evaluate(() => [...document.querySelectorAll('#ui-consug .consug__row')].map((r) => `${/** @type {HTMLElement} */ (r).dataset.connectorId}:${r.querySelector('.consug__connect')?.classList.contains('is-connected')}`));
+  check('the card lists what was suggested, each with Connect', card.join() === 'notion:false,mcp:sentry:false', card.join());
+  await page.locator('#ui-consug .consug__row[data-connector-id="notion"] .consug__connect').click();
+  await page.waitForTimeout(900);
+  const opened = await page.evaluate(() => ({
+    tab: /** @type {HTMLElement | null} */ (document.querySelector('#settings .tab.is-active'))?.dataset.tab,
+    form: [...document.querySelectorAll('#connector-discover [data-detail]')].find((d) => d.getAttribute('data-detail') === 'notion')?.hidden === false,
+    focused: document.activeElement?.getAttribute('data-token'),
+  }));
+  check('  Connect opens that connector\'s own form in Connectors, its token box ready', opened.tab === 'connectors' && opened.form && opened.focused === 'notion', JSON.stringify(opened));
+  await getStore().saveConnector(me.id, 'notion', 'cipher', 'workspace');
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.waitForTimeout(800);
+  check('  connected, the card says so once Settings closes', (await page.evaluate(() => document.querySelector('#ui-consug .consug__row[data-connector-id="notion"] .consug__connect')?.classList.contains('is-connected'))) === true);
+  await page.locator('#ui-consug .consug__row[data-connector-id="mcp:sentry"] .consug__connect').click();
+  await page.waitForTimeout(900);
+  const server = await page.evaluate(() => ({ tab: /** @type {HTMLElement | null} */ (document.querySelector('#settings .tab.is-active'))?.dataset.tab, name: /** @type {HTMLInputElement} */ (document.getElementById('mcp-name')).value }));
+  check('  a server\'s Connect fills the form in Developer', server.tab === 'developer' && server.name === 'sentry', JSON.stringify(server));
+  await page.evaluate(() => {
+    document.getElementById('settings').close();
+    document.getElementById('ui-consug')?.remove();
+  });
+  await getStore().deleteConnector(me.id, 'notion');
+  await page.waitForTimeout(200);
+}
+
 section('the Settings tabs no longer include Computers');
 {
   await page.evaluate(() => {

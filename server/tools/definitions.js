@@ -1916,6 +1916,45 @@ export const TOOLS = [
       },
     },
   },
+  /*
+   * Claude's connector search (Settings → Capabilities, owner 2026-11-01): find
+   * a service the person could connect, then show it with a Connect button.
+   * Two tools, as Claude's are, so the model chooses what is worth offering
+   * from what was found rather than showing whatever matched. See
+   * server/connectorDirectory.js. Withheld when the setting is off.
+   */
+  {
+    name: 'search_connectors',
+    scope: 'cloud',
+    readOnly: true,
+    secondary: true,
+    description:
+      'Search the connector directory for a service the user could connect — when what they ask needs one that is not connected (their inbox or calendar, a GitHub repo, Notion pages, a Slack channel, a database). ' +
+      'Returns each fit and whether it is connected. Then offer the useful unconnected ones with suggest_connectors; never claim to have used a service that is not connected.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What the service would do or be called, in a few English words, e.g. "email calendar", "github issues", "database".' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'suggest_connectors',
+    scope: 'cloud',
+    readOnly: true,
+    secondary: true,
+    description:
+      'Show connectors that search_connectors found, in the conversation, each with a Connect button — the most useful first, at most four. Then stop and let the user connect; until they say it is done, do not act as though it were connected.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ids: { type: 'array', items: { type: 'string' }, description: 'Ids exactly as search_connectors gave them.' },
+        reason: { type: 'string', description: 'One short line on why these, shown above them.' },
+      },
+      required: ['ids'],
+    },
+  },
   {
     name: 'update_plan',
     scope: 'cloud',
@@ -3424,6 +3463,8 @@ const DEFERRABLE = new Set([
   // stays loaded because noticing something worth keeping is a moment, not a
   // plan. Looking back through earlier conversations is a deliberate act.
   'memory_read', 'memory_edit', 'memory_delete', 'memory_search', 'search_chats',
+  // Finding a service to connect: the turn that needs one is told so in the prompt.
+  'search_connectors', 'suggest_connectors',
   // Reading a video. A real job and a rare one — most turns never see a link
   // to one, and the schema is pure cost on all of them.
   'youtube_transcript',

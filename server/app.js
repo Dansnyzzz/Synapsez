@@ -95,6 +95,7 @@ import { mountChatRoutes } from './routes/chats.js';
 import { mountFileRoutes } from './routes/files.js';
 import { mountShareRoutes, mountPublicShare } from './routes/share.js';
 import { mountChatShareRoutes, mountPublicChatShare } from './routes/chatShare.js';
+import { mountYourDataRoutes } from './routes/yourData.js';
 import { cloudBrowserState, cloudBrowserInput, closeCloudBrowser } from './cloudBrowser/index.js';
 import { EFFORTS, DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
@@ -991,6 +992,7 @@ export function createApp() {
         'pluginsOff',
         'connectorsOff',
         'toolLoading',
+        'connectorSearch',
       ];
       const patch = {};
       for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
@@ -1977,6 +1979,7 @@ export function createApp() {
   mountFileRoutes(api, { wrap, body });
   mountShareRoutes(api, { wrap });
   mountChatShareRoutes(api, { wrap });
+  mountYourDataRoutes(api, { wrap });
   mountWorkspaceRoutes(api, { wrap, body });
 
   // Lifted into server/routes/chats.js.

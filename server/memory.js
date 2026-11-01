@@ -540,6 +540,8 @@ export function withheldTools({ chat = null, prefs = {} } = {}) {
   const incognito = !!chat?.incognito;
   if (incognito || prefs.memory === false) for (const name of MEMORY_TOOLS) out.add(name);
   if (incognito || prefs.chatSearch === false) out.add('search_chats');
+  // Connector search switched off in Settings → Capabilities (owner, 2026-11-01).
+  if (prefs.connectorSearch === false) for (const name of ['search_connectors', 'suggest_connectors']) out.add(name);
   if (incognito) out.add('skill_write');
   return out;
 }

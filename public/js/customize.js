@@ -57,10 +57,13 @@ const day = (iso) => {
  * top layer rather than clipped by the scrolling panel, and dismissed by a
  * click elsewhere or Escape the way every menu is.
  *
+ * A choice of one (Private or Public in Your data) passes `checked` on each
+ * item: they read as radio items, the chosen one ticked.
+ *
  * @param {HTMLElement} button
- * @param {{ label: string, run: () => any, danger?: boolean, confirm?: string }[]} items
+ * @param {{ label: string, run: () => any, danger?: boolean, confirm?: string, checked?: boolean }[]} items
  */
-function openMenu(button, items) {
+export function openMenu(button, items) {
   const dialog = button.closest('dialog') || document.body;
   dialog.querySelector('.cmenu')?.remove();
   const menu = document.createElement('div');
@@ -70,8 +73,9 @@ function openMenu(button, items) {
   for (const item of items) {
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = `cmenu__item${item.danger ? ' is-danger' : ''}`;
-    row.setAttribute('role', 'menuitem');
+    row.className = `cmenu__item${item.danger ? ' is-danger' : ''}${item.checked != null ? ' cmenu__item--check' : ''}`;
+    row.setAttribute('role', item.checked != null ? 'menuitemradio' : 'menuitem');
+    if (item.checked != null) row.setAttribute('aria-checked', String(!!item.checked));
     row.textContent = item.label;
     let armedOnce = false;
     row.addEventListener('click', async () => {
@@ -339,6 +343,30 @@ export function createCustomize(deps) {
     refilter('panel-connectors');
   }
 
+  /**
+   * One connector's form, open and ready — for Connect pressed on a card the
+   * assistant showed (owner, 2026-11-01). Not connected: Discover, its form
+   * open, the token box (or Google's first choice) focused. Connected already:
+   * Yours, where it is listed.
+   */
+  async function showConnector(id) {
+    await loadConnectors();
+    const panel = /** @type {HTMLElement} */ (document.getElementById('panel-connectors'));
+    const search = /** @type {HTMLInputElement | null} */ (panel.querySelector('[data-cust-search]'));
+    if (search?.value) {
+      search.value = '';
+      filter(panel, '');
+    }
+    const discover = /** @type {HTMLElement} */ (document.getElementById('connector-discover'));
+    const add = byData(discover, 'add', id);
+    if (!add) return;
+    /** @type {HTMLElement} */ (panel.querySelector('[data-cust-view="discover"]')).click();
+    const detail = byData(discover, 'detail', id);
+    if (detail?.hidden) add.click();
+    detail?.scrollIntoView({ block: 'nearest' });
+    /** @type {HTMLElement | null} */ (detail?.querySelector('input, button'))?.focus();
+  }
+
   /** The buttons inside the forms: connect with a token, or go to Google. */
   function wireConnect(panel) {
     for (const btn of /** @type {NodeListOf<HTMLButtonElement>} */ (panel.querySelectorAll('[data-connect]'))) {
@@ -410,5 +438,5 @@ export function createCustomize(deps) {
     refilter('panel-plugins');
   }
 
-  return { loadSkills, loadConnectors, paintPlugins, setPlugin, showSkillForm };
+  return { loadSkills, loadConnectors, showConnector, paintPlugins, setPlugin, showSkillForm };
 }

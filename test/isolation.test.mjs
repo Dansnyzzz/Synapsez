@@ -2525,6 +2525,68 @@ section("the + menu's choices stay on the account that made them");
   check('  and past the budget it is searched rather than read whole', shelfCapacity([{ kind: 'pdf', chars: 41_000 }], 128_000).searching === true);
 }
 
+// ── Settings → Privacy → Your data (owner, 2026-11-01) ──────────────
+section('your data: each list is the account\'s own, shared apart from the rest');
+{
+  // Accounts of its own: by here the suite has deleted Alice's.
+  const carol = await store.createUser({ id: 'u-data-carol', email: 'carol.data@example.com', name: 'Carol', passwordHash: 'x', role: 'user' });
+  const dan = await store.createUser({ id: 'u-data-dan', email: 'dan.data@example.com', name: 'Dan', passwordHash: 'x', role: 'user' });
+  const names = (page) => page.items.map((r) => r.title ?? r.name ?? r.body);
+  await store.createChat(carol.id, { id: 'c-data-shared', title: 'Quarterly plan', model: 'm' });
+  await store.createChat(carol.id, { id: 'c-data-own', title: 'Grocery plan', model: 'm' });
+  await store.createChat(carol.id, { id: 'c-data-incog', title: 'Secret plan', model: 'm', incognito: true });
+  await store.createChat(carol.id, { id: 'c-data-more', title: 'Holiday trip', model: 'm' });
+  await store.createChat(dan.id, { id: 'c-data-bob', title: 'Dan plan', model: 'm' });
+  const before = await store.createAttachment(carol.id, { id: 'up-before', name: 'photo-before.png', mime: 'image/png', kind: 'image', bytes: 3, data: 'AAA', chatId: 'c-data-shared' });
+  await store.setChatShare(carol.id, 'c-data-shared', 'a'.repeat(43));
+  await store.setChatShare(dan.id, 'c-data-bob', 'b'.repeat(43));
+  await store.createAttachment(carol.id, { id: 'up-after', name: 'photo-after.png', mime: 'image/png', kind: 'image', bytes: 3, data: 'AAA', chatId: 'c-data-shared' });
+  await driver.query(`UPDATE attachments SET created_at = (SELECT shared_at FROM chats WHERE id = 'c-data-shared') + INTERVAL '1 minute' WHERE id = 'up-after'`);
+  await store.createAttachment(carol.id, { id: 'up-incog', name: 'incog.png', mime: 'image/png', kind: 'image', bytes: 3, data: 'AAA', chatId: 'c-data-incog' });
+  await store.createAttachment(carol.id, { id: 'made-shared', name: 'report.docx', mime: 'application/zip', kind: 'document', bytes: 3, data: 'AAA', origin: 'generated', chatId: 'c-data-own' });
+  await store.createAttachment(carol.id, { id: 'made-own', name: 'notes_50%.md', mime: 'text/markdown', kind: 'text', bytes: 3, data: 'AAA', origin: 'generated', chatId: 'c-data-own' });
+  await store.setAttachmentShare(carol.id, 'made-shared', 'c'.repeat(43));
+  await store.createAttachment(dan.id, { id: 'up-bob', name: 'bob.png', mime: 'image/png', kind: 'image', bytes: 3, data: 'AAA', chatId: 'c-data-bob' });
+
+  const sharedChats = await store.listDataChats(carol.id, { shared: true });
+  check('shared conversations: only the ones with a link, only hers', names(sharedChats).join() === 'Quarterly plan' && sharedChats.total === 1, names(sharedChats).join());
+  const ownChats = await store.listDataChats(carol.id, { query: 'plan' });
+  check('  the rest, by a word in the name — never an incognito one, never Dan\'s', names(ownChats).join() === 'Grocery plan' && ownChats.total === 1, names(ownChats).join());
+  check('  a lone % is searched for, not obeyed', (await store.listDataChats(carol.id, { query: '%' })).total === 0);
+  const paged = await store.listDataChats(carol.id, { limit: 1, offset: 1 });
+  check('  a page at a time, the total counted apart', paged.items.length === 1 && paged.total >= 2, `${paged.items.length}/${paged.total}`);
+
+  const sharedUploads = await store.listDataFiles(carol.id, { origin: 'upload', shared: true });
+  check('an upload in a shared conversation, sent before it was shared, is listed as reachable', names(sharedUploads).join() === 'photo-before.png' && before.id === 'up-before', names(sharedUploads).join());
+  const ownUploads = names(await store.listDataFiles(carol.id, { origin: 'upload', query: 'photo' }));
+  check('  one sent after the link was made is not — the link shows the conversation as it was', ownUploads.includes('photo-after.png') && !ownUploads.includes('photo-before.png'), ownUploads.join());
+  const everyUpload = names(await store.listDataFiles(carol.id, { origin: 'upload', limit: 100 }));
+  check('  an incognito conversation\'s file and another account\'s are never listed', !everyUpload.includes('incog.png') && !everyUpload.includes('bob.png'), everyUpload.join());
+  const sharedMade = await store.listDataFiles(carol.id, { origin: 'generated', shared: true });
+  check('a made file with a link is listed with it', names(sharedMade).join() === 'report.docx' && sharedMade.items[0].share_token === 'c'.repeat(43));
+  check('  a made file\'s % is a character, found as one', names(await store.listDataFiles(carol.id, { origin: 'generated', query: '50%' })).join() === 'notes_50%.md');
+  check('  uploads carry no link of their own', (await store.listDataFiles(carol.id, { origin: 'upload', shared: true })).items.every((r) => r.share_token == null));
+
+  const summary = await store.dataSummary(carol.id);
+  check('the counts beside Manage follow the same rules', summary.chats === 1 && summary.artifacts === 1 && summary.uploads === 1 && summary.feedback === 0, JSON.stringify(summary));
+  // Dan's file was sent after his conversation was shared, so the link does not reach it.
+  check("  and another account's are its own", JSON.stringify(await store.dataSummary(dan.id)) === JSON.stringify({ chats: 1, artifacts: 0, uploads: 0, feedback: 0 }), JSON.stringify(await store.dataSummary(dan.id)));
+  check("Dan cannot delete Carol's upload", (await store.deleteUpload(dan.id, 'up-after')) === false && (await store.getAttachment(carol.id, 'up-after')) != null);
+  check('  and deleting an upload never reaches a made file', (await store.deleteUpload(carol.id, 'made-own')) === false);
+  check('  her own goes', (await store.deleteUpload(carol.id, 'up-after')) === true && (await store.getAttachment(carol.id, 'up-after')) == null);
+
+  const shot = { messages: [{ role: 'user', text: 'Grocery list', at: null }], cut: 0 };
+  await store.createFeedback(carol.id, { id: 'fb-data-copy', topic: 'files', kind: 'bug', body: 'It broke.', affect: 'minor', chatId: 'c-data-own', chatTitle: 'Grocery plan', transcript: shot });
+  await store.createFeedback(carol.id, { id: 'fb-data-plain', topic: 'files', kind: 'idea', body: 'Make it blue.', affect: 'minor' });
+  await store.createFeedback(dan.id, { id: 'fb-data-bob', topic: 'files', kind: 'bug', body: 'Dan words.', affect: 'minor' });
+  const withCopy = await store.listDataFeedback(carol.id, { shared: true });
+  check('feedback sent with a conversation is listed apart, with that conversation', names(withCopy).join() === 'It broke.' && withCopy.items[0].chat_title === 'Grocery plan', JSON.stringify(withCopy.items[0]));
+  check("  Dan's is not hers to list or delete", !names(await store.listDataFeedback(carol.id, {})).includes('Dan words.') && (await store.deleteOwnFeedback(carol.id, 'fb-data-bob')) === false && (await store.forgetOwnFeedbackTranscript(dan.id, 'fb-data-copy')) === false);
+  check('  the copy taken back, it moves to the rest — the words kept', (await store.forgetOwnFeedbackTranscript(carol.id, 'fb-data-copy')) === true && (await store.listDataFeedback(carol.id, { shared: true })).total === 0 && names(await store.listDataFeedback(carol.id, {})).includes('It broke.'));
+  check('  and her own deleted', (await store.deleteOwnFeedback(carol.id, 'fb-data-plain')) === true && !names(await store.listDataFeedback(carol.id, {})).includes('Make it blue.'));
+  await store.deleteFeedback('fb-data-bob');
+}
+
 console.log(
   failures === 0
     ? '\n\u001b[32mAll isolation checks passed.\u001b[0m\n'

@@ -24,6 +24,7 @@ import { LIBRARY_IMPLEMENTATIONS } from './library.js';
 import { GOOGLE_IMPLEMENTATIONS } from './google.js';
 import { normaliseSteps } from '../workflows.js';
 import { CONNECTOR_CALLS } from '../connectors.js';
+import { searchConnectorsTool, suggestConnectorsTool } from '../connectorDirectory.js';
 import { getPrefs, getApiKey } from '../settings.js';
 import { sendEmail, emailBackend, senderName } from '../email.js';
 import { composeMessage, KIND_NAMES } from '../mailTemplate.js';
@@ -1506,6 +1507,15 @@ function excerpt(text, terms, width = 320) {
   return `${start > 0 ? '…' : ''}${body.slice(start, start + width)}${start + width < body.length ? '…' : ''}`;
 }
 
+/** A connector-search tool, refused in words while the setting is off. */
+const connectorSearch = (tool) => async (input, context) => {
+  const prefs = await getPrefs(context.userId).catch(() => ({}));
+  if (prefs.connectorSearch === false) {
+    throw new Error('Connector search is switched off for this account (Settings → Capabilities). Say which service would help instead.');
+  }
+  return tool(input, context);
+};
+
 /**
  * Look back through earlier conversations — Claude's chat search.
  *
@@ -2754,6 +2764,11 @@ export const CLOUD_IMPLEMENTATIONS = {
   memory_delete: memoryDelete,
   memory_search: memorySearch,
   search_chats: searchChatsTool,
+  // Claude's connector search. Withheld when Settings → Capabilities switches it
+  // off (memory.js); asked again here, as search_chats asks, for a call that
+  // names it anyway.
+  search_connectors: connectorSearch(searchConnectorsTool),
+  suggest_connectors: connectorSearch(suggestConnectorsTool),
   update_plan: updatePlan,
   skill_read: skillRead,
   skill_write: skillWrite,

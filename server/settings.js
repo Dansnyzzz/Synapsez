@@ -119,6 +119,14 @@ export const DEFAULT_PREFS = {
   pluginsOff: [],
   connectorsOff: [],
   toolLoading: 'auto',
+  /**
+   * Connector search — Settings → Capabilities, on by default as Claude's is
+   * (owner, 2026-11-01). The assistant may search the connector directory (the
+   * services in server/connectors.js and the MCP servers in mcp/catalogue.js)
+   * and show the ones that fit what is being asked, each with a Connect button.
+   * Off, `search_connectors` and `suggest_connectors` are withheld.
+   */
+  connectorSearch: true,
 };
 
 /** How the catalogue is sent: held back when it would crowd the window, or always whole. */
@@ -271,7 +279,7 @@ export async function setPrefs(userId, patch) {
     throw new Error(`"${patch.language}" is not a language this interface has. Use one of: ${[...LANGUAGES].join(', ')}.`);
   }
   if ('onboarded' in patch) next.onboarded = !!patch.onboarded;
-  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal']) if (flag in patch) next[flag] = !!patch[flag];
+  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'connectorSearch']) if (flag in patch) next[flag] = !!patch[flag];
   if ('retentionDays' in patch) {
     const days = Number(patch.retentionDays);
     if (!RETENTION_DAYS.includes(days)) {
