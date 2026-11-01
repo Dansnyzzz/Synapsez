@@ -1,6 +1,26 @@
 {
   "entries": [
     {
+      "version": "1.5.0",
+      "date": "2026-11-02",
+      "new": {
+        "vi": [
+          "Tìm kiếm theo mức suy luận bạn chọn, mọi công cụ tìm kiếm cùng một nhịp: mức Thấp tìm nhanh, đoạn trích ngắn; mức Cao lấy đoạn khớp nhất của từng trang; mức Rất cao và Tối đa dùng tìm kiếm sâu của Exa (tự mở rộng truy vấn, kèm tóm tắt có dẫn nguồn) và tìm song song hai công cụ rồi gộp kết quả — trang được cả hai tìm thấy xếp lên trên.",
+          "Trợ lý có thể giới hạn tìm kiếm theo thời gian (ngày, tuần, tháng, năm) và theo trang web — Exa, Google, DuckDuckGo, Tavily, Brave đều hiểu cùng một cách.",
+          "Trang web từ chối cho đọc trực tiếp (hoặc chỉ hiện bằng script) giờ được đọc qua Exa khi bản triển khai có khoá Exa."
+        ],
+        "en": [
+          "Search follows the reasoning level you choose, every engine in step: Low searches fast with short passages; High takes each page's best passages; Extra high and Max use Exa's deep search (it expands the query itself and summarises with sources) and search two engines side by side, merged — a page both found ranks higher.",
+          "The assistant can hold a search to a span (day, week, month, year) and to particular sites — Exa, Google, DuckDuckGo, Tavily and Brave all take it the same way.",
+          "A website that refuses a direct read (or shows itself only by script) is now read through Exa when the deployment has an Exa key."
+        ]
+      },
+      "improved": {
+        "vi": ["code_context hỏi Exa đúng như công cụ mã của Exa (đoạn khớp với câu hỏi, từ mọi trang tài liệu), số nguồn theo mức suy luận.", "Chính sách quyền riêng tư privacy-2026-11-02: địa chỉ trang từ chối đọc trực tiếp được gửi tới Exa — bạn sẽ được hỏi đồng ý lại một lần."],
+        "en": ["code_context asks Exa as Exa's own code tool does (passages matching the question, from any documentation site), with as many sources as the reasoning level calls for.", "Privacy policy privacy-2026-11-02: the address of a page that refuses a direct read goes to Exa — you are asked to agree once more."]
+      }
+    },
+    {
       "version": "1.4.0",
       "date": "2026-11-01",
       "new": {

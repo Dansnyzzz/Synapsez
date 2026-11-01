@@ -1124,6 +1124,38 @@ queue behind each other with `DDG_MIN_INTERVAL_MS` (4 seconds by default) betwee
 rate-limit page — which arrives as a cheerful HTTP 200 — is treated as a failure and handed to the
 next engine rather than reported as "no results".
 
+### How far a search goes: the reasoning level
+
+One table (`SEARCH_LEVELS` in `server/search.js`) that every engine reads, so they move together:
+
+| Level | Results | Pages read | Passage per result | Exa type | Tavily depth | Engines |
+|---|---|---|---|---|---|---|
+| Low | 5 | 0 | 300 chars | `fast` | basic | one |
+| Medium | 8 | 0 | 450 | `auto` | basic | one |
+| High (default) | 8 | 2 | 600 | `auto` | advanced (3 passages a page) | one |
+| Extra high | 10 | 3 | 800 | `deep` (expands the query itself) | advanced | two, merged |
+| Max | 12 | 4 | 1000 | `deep-reasoning` | advanced | two, merged |
+
+- **Exa** is asked the way Exa's own tools ask: highlights focused on the query, at the passage length
+  above. `deep` and `deep-reasoning` also return Exa's grounded summary, passed on after the sources
+  ("check it against the sources above"). A deep search that fails for any reason but the key is asked
+  again as `auto`, so a slow deep path never costs the answer.
+- **Two engines, merged** (Extra high, Max): two lanes go down the chain side by side — the first two
+  engines that answer — and their lists are merged by reciprocal rank fusion. A page both found ranks
+  higher and says *found by Exa and DuckDuckGo*; a paid fallback is asked only once the engines ahead
+  of it did not answer.
+- **`recency`** (day, week, month, year) and **`sites`** (up to five) hold every engine to the same
+  span and sites, each in its own words: Exa `startPublishedDate`/`includeDomains`, Tavily
+  `time_range`/`include_domains`, Brave `freshness` + `site:`, DuckDuckGo `df` + `site:`, Google in the
+  question it is asked.
+- `depth: quick` (links only, the fast path, one engine) and `depth: thorough` override the level for
+  one call. Exa's deep types cost more per search than `auto`; that is what Extra high and Max are for.
+
+**`web_fetch` through Exa.** A site that refuses this server (403, 429, 5xx) or sends a page that is
+only script is read through Exa's `/contents` — what Exa's `web_fetch_exa` calls — when the deployment
+has `EXA_API_KEY`. The answer says *read through Exa* and why; a 404 is not retried, a private address
+never reaches Exa, and a readable page never goes there.
+
 ---
 
 ## More than one key per provider
@@ -1349,10 +1381,12 @@ logos come through `GET /api/connectors/icon/:product` (a fixed list of Google's
 Claude's Exa connector has two tools, `web_search_exa` and `get_code_context_exa`. Here the first is
 `web_search`, which already asks Exa first when the deployment has `EXA_API_KEY`; the second is
 `code_context` (deferred behind `load_tools`, part of the research plugin): give it a library and what
-the code should do, or an error message. With `EXA_API_KEY` it searches code sites through Exa with
-their text; without, Stack Overflow's API (free, no key, about 300 requests a day per IP) — the
-accepted answer, else the best voted, with its code kept as fenced blocks; failing both, a web search
-for the documentation. Everything returned is marked untrusted. Code: `server/tools/codeContext.js`.
+the code should do, or an error message. With `EXA_API_KEY` it asks Exa as `get_code_context_exa`
+does — highlights focused on the query, from anywhere Exa has indexed code and documentation — beside
+Stack Overflow's API (free, no key, about 300 requests a day per IP): the accepted answer, else the
+best voted, with its code kept as fenced blocks; failing both, a web search for the documentation.
+How many sources follows the reasoning level (three on Low, eight on Max). Everything returned is
+marked untrusted. Code: `server/tools/codeContext.js`.
 
 ### Extensions — Discover and Advanced settings
 

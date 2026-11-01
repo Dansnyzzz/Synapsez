@@ -1,5 +1,5 @@
 import { untrusted } from './untrusted.js';
-import { search } from '../search.js';
+import { search, SEARCH_LEVELS } from '../search.js';
 
 /**
  * `code_context` — working code and documentation for a programming question,
@@ -8,23 +8,22 @@ import { search } from '../search.js';
  *
  * Three sources, the best first:
  *   - **Exa**, when the deployment has its key — the same key web_search uses —
- *     searched within code and documentation sites, with the page text.
+ *     asked as Exa's own code tool asks: the passages that match the question
+ *     (highlights focused on the query), from anywhere it has indexed code and
+ *     documentation, not a fixed list of sites.
  *   - **Stack Overflow**, through the Stack Exchange API: free and keyless, the
  *     questions that match and their best answers, code kept as code.
  *   - Otherwise the ordinary web search, for documentation pages.
+ *
+ * How many sources, and how hard Exa looks, follow the reasoning level
+ * (`SEARCH_LEVELS`, owner 2026-11-02): three on Low, eight on Max.
  *
  * What comes back was written by strangers, so it travels in the untrusted
  * envelope like anything else read from outside: an instruction in an answer
  * is a quote, not an order.
  */
 
-/** Where code and its documentation live — what Exa is asked to stay within. */
-const CODE_SITES = [
-  'github.com', 'gist.github.com', 'stackoverflow.com', 'developer.mozilla.org', 'docs.python.org', 'nodejs.org',
-  'readthedocs.io', 'pkg.go.dev', 'docs.rs', 'learn.microsoft.com', 'dev.to', 'npmjs.com', 'pypi.org',
-];
 const MAX_CHARS_EACH = 2400;
-const MAX_TOTAL = 12_000;
 
 /** HTML from an answer as plain text, its code blocks fenced and its inline code in backticks. */
 export function answerText(html) {
@@ -46,20 +45,34 @@ function entities(text) {
 
 const clip = (text, n = MAX_CHARS_EACH) => (text.length > n ? `${text.slice(0, n)}…` : text);
 
-/** Exa, within code and documentation sites. Nothing without the deployment's key. */
-async function fromExa(query, count, { fetchImpl, signal }) {
+/**
+ * Exa, for code. `fast` on the quick levels and `auto` above — a deep search
+ * buys nothing for a snippet. Nothing without the deployment's key.
+ */
+async function fromExa(query, count, plan, { fetchImpl, signal }) {
   if (!process.env.EXA_API_KEY) return [];
   const res = await fetchImpl('https://api.exa.ai/search', {
     method: 'POST',
     headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, type: 'auto', numResults: count, includeDomains: CODE_SITES, contents: { text: { maxCharacters: MAX_CHARS_EACH } } }),
+    body: JSON.stringify({
+      query,
+      type: plan.exa === 'fast' ? 'fast' : 'auto',
+      numResults: count,
+      contents: { highlights: { query, maxCharacters: MAX_CHARS_EACH }, text: { maxCharacters: 300 } },
+    }),
     signal,
   });
   if (!res.ok) return [];
   const body = await res.json().catch(() => ({}));
   return (body.results || [])
-    .filter((r) => r?.url && r?.text)
-    .map((r) => ({ source: 'Exa', title: String(r.title || r.url), url: String(r.url), text: clip(String(r.text)) }));
+    .filter((r) => r?.url && (r.highlights?.length || r.text))
+    .map((r) => ({
+      source: 'Exa',
+      title: String(r.title || r.url),
+      url: String(r.url),
+      // Line breaks kept: they are code.
+      text: clip(r.highlights?.length ? r.highlights.join('\n…\n') : String(r.text)),
+    }));
 }
 
 /** Stack Overflow's matching questions and the best answer to each, through the free Stack Exchange API. */
@@ -94,24 +107,26 @@ async function fromStackOverflow(query, count, { fetchImpl, signal }) {
 
 /**
  * @param {{ query: string, max_results?: number }} input
- * @param {{ userId?: string, signal?: AbortSignal, fetchImpl?: typeof fetch }} [context]
+ * @param {{ userId?: string, signal?: AbortSignal, fetchImpl?: typeof fetch, plan?: any }} [context]
  */
-export async function codeContextTool({ query, max_results }, { userId = null, signal, fetchImpl = fetch } = {}) {
+export async function codeContextTool({ query, max_results }, { userId = null, signal, fetchImpl = fetch, plan = SEARCH_LEVELS.high } = {}) {
   const asked = String(query ?? '').trim().slice(0, 300);
   if (!asked) throw new Error('Say what code or documentation to find — a library and what it should do, or an error message.');
-  const count = Math.min(Math.max(Number(max_results) || 4, 1), 8);
+  const count = Math.min(Math.max(Number(max_results) || plan.code || 4, 1), 8);
+  // Room for every source asked for, and no more.
+  const maxTotal = Math.max(count * MAX_CHARS_EACH, 9_600);
   // Bounded on its own as well as by the turn: a slow source must not hold the turn.
   const limit = AbortSignal.timeout(20_000);
   const timed = signal ? AbortSignal.any([signal, limit]) : limit;
 
   const [exa, overflow] = await Promise.all([
-    fromExa(asked, count, { fetchImpl, signal: timed }).catch(() => []),
+    fromExa(asked, count, plan, { fetchImpl, signal: timed }).catch(() => []),
     fromStackOverflow(asked, count, { fetchImpl, signal: timed }).catch(() => []),
   ]);
   let found = [...exa, ...overflow];
   // Nothing from either: documentation pages from the ordinary search.
   if (!found.length) {
-    const web = await search(`${asked} documentation example`, { count, userId }).catch(() => null);
+    const web = await search(`${asked} documentation example`, { count, userId, plan }).catch(() => null);
     found = (web?.results || []).map((r) => ({ source: 'Web', title: String(r.title || r.url), url: String(r.url || ''), text: clip(String(r.snippet || r.content || '')) }));
   }
   if (!found.length) {
@@ -121,7 +136,7 @@ export async function codeContextTool({ query, max_results }, { userId = null, s
   const blocks = [];
   for (const item of found) {
     const block = `## ${item.title}\n${item.source} · ${item.url}\n\n${item.text}`;
-    if (total + block.length > MAX_TOTAL) break;
+    if (total + block.length > maxTotal) break;
     total += block.length;
     blocks.push(block);
   }

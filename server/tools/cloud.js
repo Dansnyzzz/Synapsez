@@ -36,7 +36,7 @@ import { extractPdfText } from '../pdf.js';
 import { saveGenerated, liveRevision } from '../attachments.js';
 import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
-import { search, formatResults } from '../search.js';
+import { search, formatResults, searchPlan, readThroughExa } from '../search.js';
 import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText, answerSummary } from './askOptions.js';
@@ -339,7 +339,7 @@ async function fetchReadable(url, { timeoutMs = 30_000 } = {}) {
     },
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`${parsed.host} returned HTTP ${res.status} ${res.statusText}`);
+  if (!res.ok) throw Object.assign(new Error(`${parsed.host} returned HTTP ${res.status} ${res.statusText}`), { status: res.status });
 
   const type = (res.headers.get('content-type') || '').toLowerCase();
   const format = documentFormat(type, parsed.pathname.toLowerCase());
@@ -369,8 +369,43 @@ export async function readPageText(url, { timeoutMs = 15_000 } = {}) {
   return (await fetchReadable(url, { timeoutMs })).text;
 }
 
+/** Refusals Exa cannot help with: the page is not there, for anyone. */
+const GONE = new Set([404, 410]);
+/** Less readable text than this from a web page usually means the page is drawn by script. */
+const THIN_PAGE_CHARS = 200;
+
+/**
+ * The page through Exa, said as such — for a site that turned this server away
+ * or sent only script (`readThroughExa`, owner 2026-11-02). Null when Exa has
+ * no key or could not read it either, and the caller says what went wrong.
+ */
+async function fetchedThroughExa(url, maxChars, why, { moreThan = 0 } = {}) {
+  const limit = Math.min(Math.max(Number(maxChars) || PAGE_CHARS, 500), 200_000);
+  const read = await readThroughExa(url, { maxChars: limit });
+  // Only when it read more than this server did: a short page may simply be short.
+  if (!read || read.text.trim().length <= moreThan) return null;
+  return `# ${url} (read through Exa — ${why})\n\n${untrusted(url, read.text.slice(0, limit))}`;
+}
+
 async function webFetch({ url, max_chars: maxChars }) {
-  const { parsed, text, note, html, truncated, cap } = await fetchReadable(url);
+  let page;
+  try {
+    page = await fetchReadable(url);
+  } catch (err) {
+    // A refusal by status (403 to anything that is not a browser, 429, 5xx) is
+    // worth asking Exa about. An address this server will not visit at all —
+    // a private one — never reaches here with a status, and is never sent on.
+    const viaExa = err.status && !GONE.has(err.status) ? await fetchedThroughExa(url, maxChars, err.message) : null;
+    if (viaExa) return viaExa;
+    throw err;
+  }
+  const { parsed, text, note, html, truncated, cap } = page;
+  if (html && !note && text.trim().length < THIN_PAGE_CHARS) {
+    const viaExa = await fetchedThroughExa(parsed.href, maxChars, `${parsed.host} sent almost no text without running its scripts`, {
+      moreThan: text.trim().length,
+    });
+    if (viaExa) return viaExa;
+  }
 
   // A document gets a larger default than a page. 20,000 characters is a
   // generous slice of an article and a third of an exam paper, and a model that
@@ -581,8 +616,9 @@ async function youtubeTranscript({ url, lang, max_chars: maxChars }, { userId })
  * @param {{ userId?: string }} [context]  the tool context; only `userId` is used
  */
 /**
- * How far one search goes: how many results, and how many of the top pages
- * are opened and read into the answer.
+ * How far one search goes: how many results, how much of each, how hard each
+ * engine looks, and how many of the top pages are opened and read into the
+ * answer — `SEARCH_LEVELS` in server/search.js, one table for every engine.
  *
  * Set by the reasoning level the person chose, because that dial already
  * means "how much care is this worth": on Low a search is a list of links and
@@ -591,30 +627,22 @@ async function youtubeTranscript({ url, lang, max_chars: maxChars }, { userId })
  * overrides it either way — a quick check inside a careful job, or a careful
  * look on a fast setting.
  */
-const SEARCH_DEPTH = {
-  low: { count: 5, read: 0 },
-  medium: { count: 8, read: 0 },
-  high: { count: 8, read: 2 },
-  xhigh: { count: 10, read: 3 },
-  max: { count: 12, read: 4 },
-};
+export const searchDepth = searchPlan;
 const EXCERPT_CHARS = 2500;
 
-export function searchDepth(effort, depth) {
-  const level = SEARCH_DEPTH[effort] || SEARCH_DEPTH.high;
-  if (depth === 'quick') return { count: level.count, read: 0 };
-  if (depth === 'thorough') return { count: Math.max(level.count, 10), read: Math.max(level.read, 3) };
-  return level;
+/** The plan for this account's searches, from the reasoning level it chose. */
+async function planFor(userId, depth) {
+  const prefs = userId ? await getPrefs(userId).catch(() => null) : null;
+  return searchPlan(prefs?.effort, depth);
 }
 
-async function webSearch({ query, count, depth }, context = {}) {
+async function webSearch({ query, count, depth, recency, sites }, context = {}) {
   const { userId } = context;
-  const prefs = userId ? await getPrefs(userId).catch(() => null) : null;
-  const plan = searchDepth(prefs?.effort, depth);
+  const plan = await planFor(userId, depth);
   // `userId` only so the search can be attributed in the log. The keys these
   // engines use are deployment-wide, so nothing else about the call depends on
   // which account made it.
-  const found = await search(query, { count: Number(count) || plan.count, userId });
+  const found = await search(query, { count: Number(count) || plan.count, userId, plan, recency, sites });
   const listing = formatResults(query, found);
   if (!plan.read || !found.results?.length) return listing;
 
@@ -2765,8 +2793,9 @@ export const CLOUD_IMPLEMENTATIONS = {
   memory_delete: memoryDelete,
   memory_search: memorySearch,
   search_chats: searchChatsTool,
-  // Claude's get_code_context_exa: code and documentation for a programming question.
-  code_context: (input, { userId, signal }) => codeContextTool(input, { userId, signal }),
+  // Claude's get_code_context_exa: code and documentation for a programming question,
+  // as far as the reasoning level goes.
+  code_context: async (input, { userId, signal }) => codeContextTool(input, { userId, signal, plan: await planFor(userId) }),
   // Claude's connector search. Withheld when Settings → Capabilities switches it
   // off (memory.js); asked again here, as search_chats asks, for a call that
   // names it anyway.

@@ -29,7 +29,64 @@ import { googleDataInScope } from './googleData.js';
 
 const DEFAULT_ORDER = ['exa', 'google', 'duckduckgo', 'tavily', 'brave'];
 
-const TIMEOUT_MS = 30_000;
+/**
+ * How far one search goes at each reasoning level (owner, 2026-11-02) — one
+ * table every engine reads, so Exa, Google, DuckDuckGo, Tavily and Brave move
+ * together rather than each having its own idea of "careful".
+ *
+ *   count      results asked for
+ *   read       top pages web_search opens and reads into its answer
+ *   snippet    characters kept from each result; Exa's highlights are asked
+ *              for at this length, focused on the query
+ *   exa        Exa's search type: fast, auto, deep (expands the query itself,
+ *              4–12s) or deep-reasoning (12–50s) — the last two also return
+ *              Exa's own grounded summary of what it found
+ *   tavily     Tavily's depth: basic, or advanced (the best passages of each page)
+ *   fuse       a second engine searched alongside the first, the two merged
+ *   code       sources code_context gathers
+ *   timeoutMs  how long one engine may take
+ */
+export const SEARCH_LEVELS = Object.freeze({
+  low: { count: 5, read: 0, snippet: 300, exa: 'fast', tavily: 'basic', fuse: false, code: 3, timeoutMs: 15_000 },
+  medium: { count: 8, read: 0, snippet: 450, exa: 'auto', tavily: 'basic', fuse: false, code: 4, timeoutMs: 30_000 },
+  high: { count: 8, read: 2, snippet: 600, exa: 'auto', tavily: 'advanced', fuse: false, code: 5, timeoutMs: 30_000 },
+  xhigh: { count: 10, read: 3, snippet: 800, exa: 'deep', tavily: 'advanced', fuse: true, code: 6, timeoutMs: 45_000 },
+  max: { count: 12, read: 4, snippet: 1000, exa: 'deep-reasoning', tavily: 'advanced', fuse: true, code: 8, timeoutMs: 60_000 },
+});
+
+/**
+ * The plan for one search: the person's reasoning level, unless the call says
+ * otherwise — `quick` for a check inside a careful job (links only, the fast
+ * path, one engine), `thorough` for a careful look on a fast setting. An
+ * unknown level is the settings default, high.
+ */
+export function searchPlan(effort, depth) {
+  const level = SEARCH_LEVELS[effort] || SEARCH_LEVELS.high;
+  if (depth === 'quick') return { ...level, read: 0, exa: 'fast', tavily: 'basic', fuse: false, timeoutMs: Math.min(level.timeoutMs, 15_000) };
+  if (depth === 'thorough') {
+    return { ...level, count: Math.max(level.count, 10), read: Math.max(level.read, 3), exa: level.exa === 'fast' ? 'auto' : level.exa, tavily: 'advanced' };
+  }
+  return level;
+}
+
+/** How far back `recency` reaches, in days — the same span for every engine. */
+const RECENCY_DAYS = { day: 1, week: 7, month: 31, year: 366 };
+
+/**
+ * The sites a search is held to, as bare host names: no scheme, no path,
+ * nothing that is not a name, five at most. Each engine says it its own way
+ * (Exa and Tavily take a list; Brave, DuckDuckGo and Google read `site:`).
+ */
+export function cleanSites(sites) {
+  const given = Array.isArray(sites) ? sites : String(sites || '').split(/[\s,]+/);
+  const names = given
+    .map((s) => String(s || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/^site:/, '').split(/[/?#]/)[0].replace(/^www\./, ''))
+    .filter((s) => /^(?!-)[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$/.test(s));
+  return [...new Set(names)].slice(0, 5);
+}
+
+/** A query held to some sites, for the engines that read `site:` in the query itself. */
+const withSites = (query, sites) => (sites.length ? `${query} ${sites.map((s) => `site:${s}`).join(' OR ')}` : query);
 
 /* ── DuckDuckGo, and being a good citizen about it ──────────────────── */
 
@@ -96,49 +153,78 @@ async function refusal(label, res) {
   } catch {
     /* not JSON, or already consumed — the status still says something */
   }
-  return new Error(`${label} returned HTTP ${res.status}${detail ? `: ${trim(detail, 200)}` : ''}`);
+  return Object.assign(new Error(`${label} returned HTTP ${res.status}${detail ? `: ${trim(detail, 200)}` : ''}`), { status: res.status });
 }
 
 /**
  * Exa: neural search, and the reason it is first.
  *
- * `highlights` is the point — it returns the sentences that actually answer the
- * query rather than the opening paragraph of the page, which is both a better
- * answer and fewer tokens. `type: auto` lets Exa decide between its neural and
- * keyword paths per query, which is the documented default and right for a
- * general-purpose tool.
+ * `highlights` is the point — the passages that answer the query rather than
+ * the opening paragraph of the page — asked for as Exa's own tools ask: focused
+ * on the query, at the length the level keeps. The type follows the level
+ * (`SEARCH_LEVELS`): `fast` on Low, `auto` (Exa picks neural or keyword per
+ * query) in the middle, `deep` and `deep-reasoning` above — those expand the
+ * query into several searches themselves and say what they found, which comes
+ * back as `answer`. A deep search that fails for any reason but the key is
+ * asked again the ordinary way, so a slow or unavailable deep path never
+ * costs the answer.
+ *
+ * @param {{ count: number, plan: any, recency: string|null, sites: string[] }} ask
  */
-async function searchExa(query, count) {
-  const res = await fetch('https://api.exa.ai/search', {
-    method: 'POST',
-    headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query,
-      type: 'auto',
-      numResults: count,
-      contents: { highlights: true },
-    }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  if (!res.ok) throw await refusal('Exa', res);
+async function searchExa(query, ask) {
+  const body = {
+    query,
+    type: ask.plan.exa,
+    numResults: ask.count,
+    contents: { highlights: { query, maxCharacters: ask.plan.snippet } },
+    ...(ask.sites.length ? { includeDomains: ask.sites } : {}),
+    ...(ask.recency ? { startPublishedDate: new Date(Date.now() - RECENCY_DAYS[ask.recency] * 86_400_000).toISOString() } : {}),
+  };
+  const call = async (sent, timeoutMs) => {
+    const res = await fetch('https://api.exa.ai/search', {
+      method: 'POST',
+      headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(sent),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) throw await refusal('Exa', res);
+    return res.json();
+  };
+  let json;
+  try {
+    json = await call(body, ask.plan.timeoutMs);
+  } catch (err) {
+    if (!String(body.type).startsWith('deep') || [401, 402, 403].includes(err.status)) throw err;
+    // Kept short: the deep attempt has already spent its time, and a turn has five minutes in all.
+    json = await call({ ...body, type: 'auto' }, 20_000);
+  }
 
-  const json = await res.json();
-  return (json.results || []).map((result) => ({
+  const results = (json.results || []).map((result) => ({
     title: result.title || result.url,
     url: result.url,
-    // Highlights are an array of passages; the first two are plenty and the
-    // rest is usually the same idea again.
-    snippet: trim((result.highlights || []).slice(0, 2).join(' … ') || result.text || ''),
+    snippet: trim((result.highlights || []).join(' … ') || result.text || '', ask.plan.snippet),
     published: result.publishedDate || null,
   }));
+  const said = typeof json.output?.content === 'string' ? json.output.content.trim() : '';
+  return { results, answer: said || null };
 }
 
-async function searchTavily(query, count) {
+/** Tavily: `advanced` from High up — the best passages of each page, at two credits a search. */
+async function searchTavily(query, ask) {
+  const advanced = ask.plan.tavily === 'advanced';
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.TAVILY_API_KEY}` },
-    body: JSON.stringify({ query, max_results: count, include_answer: false }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    body: JSON.stringify({
+      query,
+      max_results: ask.count,
+      search_depth: ask.plan.tavily,
+      ...(advanced ? { chunks_per_source: 3 } : {}),
+      ...(ask.recency ? { time_range: ask.recency } : {}),
+      ...(ask.sites.length ? { include_domains: ask.sites } : {}),
+      include_answer: false,
+    }),
+    signal: AbortSignal.timeout(ask.plan.timeoutMs),
   });
   if (!res.ok) throw await refusal('Tavily', res);
 
@@ -146,19 +232,23 @@ async function searchTavily(query, count) {
   return (json.results || []).map((result) => ({
     title: result.title,
     url: result.url,
-    snippet: trim(result.content),
+    snippet: trim(result.content, ask.plan.snippet),
     published: result.published_date || null,
   }));
 }
 
-async function searchBrave(query, count) {
+/** Brave's freshness codes for the same spans. */
+const BRAVE_FRESHNESS = { day: 'pd', week: 'pw', month: 'pm', year: 'py' };
+
+async function searchBrave(query, ask) {
   const url = new URL('https://api.search.brave.com/res/v1/web/search');
-  url.searchParams.set('q', query);
-  url.searchParams.set('count', String(count));
+  url.searchParams.set('q', withSites(query, ask.sites));
+  url.searchParams.set('count', String(Math.min(ask.count, 20)));
+  if (ask.recency) url.searchParams.set('freshness', BRAVE_FRESHNESS[ask.recency]);
 
   const res = await fetch(url, {
     headers: { Accept: 'application/json', 'X-Subscription-Token': process.env.BRAVE_API_KEY },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(ask.plan.timeoutMs),
   });
   if (!res.ok) throw await refusal('Brave Search', res);
 
@@ -166,7 +256,7 @@ async function searchBrave(query, count) {
   return (json.web?.results || []).map((result) => ({
     title: result.title,
     url: result.url,
-    snippet: trim(result.description),
+    snippet: trim(result.description, ask.plan.snippet),
     published: result.age || null,
   }));
 }
@@ -193,7 +283,10 @@ function stripTags(html) {
  * layout change that stops the pattern matching. The one thing it must not do
  * is look like success with nothing in it.
  */
-async function searchDuckDuckGo(query, count) {
+async function searchDuckDuckGo(query, ask) {
+  const count = ask.count;
+  // `df` is DuckDuckGo's own date filter: d, w, m or y.
+  const form = { q: withSites(query, ask.sites), ...(ask.recency ? { df: ask.recency[0] } : {}) };
   return pacedDuckDuckGo(async () => {
     const res = await fetch('https://html.duckduckgo.com/html/', {
       method: 'POST',
@@ -202,8 +295,8 @@ async function searchDuckDuckGo(query, count) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
       },
-      body: new URLSearchParams({ q: query }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      body: new URLSearchParams(form),
+      signal: AbortSignal.timeout(ask.plan.timeoutMs),
     });
     if (!res.ok) throw new Error(`DuckDuckGo returned HTTP ${res.status}`);
 
@@ -235,7 +328,7 @@ async function searchDuckDuckGo(query, count) {
       const wrapped = /[?&]uddg=([^&]+)/.exec(href);
       if (wrapped) href = decodeURIComponent(wrapped[1]);
       if (href.startsWith('//')) href = `https:${href}`;
-      results.push({ title: stripTags(match[2]), url: href, snippet: snippets[results.length] || '', published: null });
+      results.push({ title: stripTags(match[2]), url: href, snippet: trim(snippets[results.length] || '', ask.plan.snippet), published: null });
     }
 
     if (!results.length) throw new Error('Nothing could be parsed out of the DuckDuckGo page.');
@@ -260,12 +353,12 @@ async function searchDuckDuckGo(query, count) {
  */
 const GROUNDING_MODEL = process.env.GOOGLE_SEARCH_MODEL || 'gemini-2.5-flash';
 
-/** @param {{ userId?: string|null }} [who] */
-async function searchGoogle(query, count, who = {}) {
+/** @param {{ count: number, plan: any, recency: string|null, sites: string[], userId?: string|null }} ask */
+async function searchGoogle(query, ask) {
   // A query written in a conversation holding Google data is not sent through a
   // Gemini key, which may train on it (googleData.js); the next engine searches.
   if (googleDataInScope()) throw Object.assign(new Error('not with Google data'), { skip: true });
-  const userId = who.userId;
+  const { count, userId } = ask;
   let key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
   if (!key && userId) {
     const { getApiKey } = await import('./settings.js');
@@ -279,11 +372,23 @@ async function searchGoogle(query, count, who = {}) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: `Search Google for: ${query}\nList what the top results say, briefly.` }] }],
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text:
+                  `Search Google for: ${withSites(query, ask.sites)}\n` +
+                  (ask.recency ? `Only pages published in the past ${ask.recency}.\n` : '') +
+                  `List what the top ${count} results say, briefly.`,
+              },
+            ],
+          },
+        ],
         tools: [{ google_search: {} }],
         generationConfig: { temperature: 0 },
       }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(ask.plan.timeoutMs),
     },
   );
   if (!res.ok) throw new Error(`Google (Gemini grounding) returned HTTP ${res.status}`);
@@ -320,7 +425,7 @@ async function searchGoogle(query, count, who = {}) {
   return picked.map((c, i) => ({
     title: c.web?.title || urls[i],
     url: urls[i],
-    snippet: said[i].join(' ').slice(0, 400),
+    snippet: trim(said[i].join(' '), ask.plan.snippet),
     published: null,
   }));
 }
@@ -351,15 +456,65 @@ export function searchChain() {
     .filter((name) => !ENGINES[name].key || process.env[ENGINES[name].key]);
 }
 
+/** One address however it was written — scheme, www., a trailing slash and tracking tags aside. */
+function sameUrl(url) {
+  try {
+    const u = new URL(url);
+    for (const key of [...u.searchParams.keys()]) if (/^(utm_|fbclid$|gclid$)/.test(key)) u.searchParams.delete(key);
+    return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`.toLowerCase();
+  } catch {
+    return String(url || '').toLowerCase();
+  }
+}
+
+/**
+ * Two engines' results as one list (reciprocal rank fusion): a page high on
+ * both lists comes first, and a page only one of them found still takes its
+ * place by rank. Each result says which engines found it — two engines that
+ * agree is worth knowing — and keeps the fuller of the snippets.
+ */
+export function fuseResults(answered, count) {
+  if (answered.length === 1) return answered[0].results.slice(0, count);
+  const byUrl = new Map();
+  for (const { label, results } of answered) {
+    results.forEach((result, rank) => {
+      const key = sameUrl(result.url);
+      const seen = byUrl.get(key);
+      const score = 1 / (60 + rank);
+      if (!seen) {
+        byUrl.set(key, { ...result, engines: [label], score });
+        return;
+      }
+      seen.score += score;
+      if (!seen.engines.includes(label)) seen.engines.push(label);
+      if (String(result.snippet || '').length > String(seen.snippet || '').length) seen.snippet = result.snippet;
+      seen.published ||= result.published;
+    });
+  }
+  return [...byUrl.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, count)
+    .map(({ score: _score, ...result }) => result);
+}
+
 /**
  * Search, and say who answered.
  *
- * @returns `{ engine, results, attempts }` — `attempts` records what was tried
- *   and why it did not answer, which is the difference between "there is
- *   nothing about this on the web" and "the search key expired last Tuesday".
+ * The level's plan (`searchPlan`) says how far: how many results, how long a
+ * passage from each, how hard Exa and Tavily look — and, from Extra high up,
+ * a second engine searched alongside the first and merged with it. `recency`
+ * (day, week, month, year) and `sites` hold every engine to the same span and
+ * the same sites, each in its own words.
+ *
+ * @param {string} query
+ * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string }} [options]
+ * @returns `{ engine, engines, results, attempts, answer }` — `attempts` records
+ *   what was tried and why it did not answer, which is the difference between
+ *   "there is nothing about this on the web" and "the search key expired last
+ *   Tuesday"; `answer` is Exa's own summary when a deep search gave one.
  */
-export async function search(query, { count = 8, userId = null } = {}) {
-  const wanted = Math.min(Math.max(Number(count) || 8, 1), 20);
+export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [] } = {}) {
+  const wanted = Math.min(Math.max(Number(count) || plan.count || 8, 1), 20);
   const chain = searchChain();
 
   if (!chain.length) {
@@ -371,42 +526,83 @@ export async function search(query, { count = 8, userId = null } = {}) {
     );
   }
 
-  const attempts = [];
-  for (const name of chain) {
-    const engine = ENGINES[name];
-    try {
-      const results = await engine.run(query, wanted, { userId });
-      if (results.length) {
-        /**
-         * Say who spent it.
-         *
-         * These keys are deployment-wide — one Exa or Tavily key serves every
-         * account — so unlike a model call there is no per-account quota this
-         * lands against and nothing anywhere recorded who searched. A single
-         * `deep_research` run makes up to six of these, so "the search bill
-         * went up" had no way of being traced to anybody.
-         *
-         * Attribution rather than enforcement: the operator can now see it in
-         * the log. Per-account search keys would be the fuller answer and are a
-         * product decision, not an audit fix — see .env.example, which now says
-         * plainly that these are shared.
-         */
-        log.info('search', { engine: engine.label, userId: userId || 'unattributed', results: results.length });
-        return { engine: engine.label, results, attempts };
-      }
-      attempts.push({ engine: engine.label, error: 'no results' });
-    } catch (err) {
-      // An engine with nothing to run on stands aside without being reported as failing.
-      if (err.skip) continue;
-      attempts.push({ engine: engine.label, error: err.message });
-    }
-  }
+  const ask = {
+    count: wanted,
+    plan,
+    recency: Object.hasOwn(RECENCY_DAYS, String(recency)) ? String(recency) : null,
+    sites: cleanSites(sites),
+    userId,
+  };
 
-  return { engine: null, results: [], attempts };
+  /*
+   * Down the chain, in one lane — or two side by side when the plan fuses.
+   * Each lane takes the next engine not yet tried and stops at the first that
+   * answers; one that fails or finds nothing hands the lane to the next. So
+   * one lane is exactly the chain as it always was, and with two a paid
+   * fallback is asked only once the engines ahead of it in the chain did not
+   * answer.
+   */
+  const attempts = [];
+  const answered = [];
+  let next = 0;
+  const lane = async () => {
+    while (next < chain.length) {
+      const at = next;
+      next += 1;
+      const engine = ENGINES[chain[at]];
+      try {
+        const out = await engine.run(query, ask);
+        const results = Array.isArray(out) ? out : out.results;
+        if (results.length) {
+          answered.push({ at, label: engine.label, results, answer: Array.isArray(out) ? null : out.answer });
+          return;
+        }
+        attempts.push({ at, engine: engine.label, error: 'no results' });
+      } catch (err) {
+        // An engine with nothing to run on stands aside without being reported as failing.
+        if (err.skip) continue;
+        attempts.push({ at, engine: engine.label, error: err.message });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: plan.fuse ? 2 : 1 }, lane));
+  // In chain order, whichever finished first.
+  answered.sort((a, b) => a.at - b.at);
+  attempts.sort((a, b) => a.at - b.at);
+  const tried = attempts.map(({ engine, error }) => ({ engine, error }));
+
+  if (!answered.length) return { engine: null, engines: [], results: [], attempts: tried, answer: null };
+  const engines = answered.map((a) => a.label);
+  const results = fuseResults(answered, wanted);
+  /**
+   * Say who spent it.
+   *
+   * These keys are deployment-wide — one Exa or Tavily key serves every
+   * account — so unlike a model call there is no per-account quota this
+   * lands against and nothing anywhere recorded who searched. A single
+   * `deep_research` run makes up to six of these, so "the search bill
+   * went up" had no way of being traced to anybody.
+   *
+   * Attribution rather than enforcement: the operator can now see it in
+   * the log. Per-account search keys would be the fuller answer and are a
+   * product decision, not an audit fix — see .env.example, which now says
+   * plainly that these are shared.
+   */
+  log.info('search', { engine: engines.join('+'), userId: userId || 'unattributed', results: results.length, exa: plan.exa });
+  return {
+    engine: engines.join(' + '),
+    engines,
+    results,
+    attempts: tried,
+    answer: answered.find((a) => a.answer)?.answer || null,
+  };
 }
 
+/** How much of Exa's own summary is passed on — the sources below it are the evidence. */
+const ANSWER_CHARS = 1500;
+
 /** The search result as the model reads it. */
-export function formatResults(query, { engine, results, attempts }) {
+export function formatResults(query, { engine, engines = [], results, attempts, answer = null }) {
   if (!results.length) {
     const tried = attempts.map((a) => `${a.engine} (${a.error})`).join(', ');
     return `No results for "${query}". Tried: ${tried || 'nothing'}.`;
@@ -416,14 +612,48 @@ export function formatResults(query, { engine, results, attempts }) {
     const parts = [`${i + 1}. ${result.title}`, `   ${result.url}`];
     if (result.snippet) parts.push(`   ${result.snippet}`);
     if (result.published) parts.push(`   published ${String(result.published).slice(0, 10)}`);
+    if (result.engines?.length > 1) parts.push(`   found by ${result.engines.join(' and ')}`);
     return parts.join('\n');
   });
+  // Exa's deep search says what it found. Written by a model from the pages
+  // above, so it goes in the same envelope, after them, and is named for what it is.
+  const summary = answer
+    ? `\n\nExa's own summary of what it found — check it against the sources above:\n${answer.length > ANSWER_CHARS ? `${answer.slice(0, ANSWER_CHARS)}…` : answer}`
+    : '';
 
   // Named, because which engine answered changes how much weight a result
   // deserves — and because a silent failover looks like a quality regression.
+  const merged = engines.length > 1 ? ', merged — a page more than one engine found ranks higher' : '';
   const failed = attempts.length ? ` after ${attempts.map((a) => a.engine).join(', ')} failed` : '';
   // Titles and snippets are written by whoever owns the page, so they are data
   // like any other fetched text — and a search result is a cheap thing for an
   // attacker to get in front of a model. See server/tools/untrusted.js.
-  return `${results.length} results from ${engine}${failed}.\n\n${untrusted(`${engine} search results`, lines.join('\n\n'))}`;
+  return `${results.length} results from ${engine}${merged}${failed}.\n\n${untrusted(`${engine} search results`, lines.join('\n\n') + summary)}`;
+}
+
+/**
+ * A page read through Exa (`/contents`, what Exa's web_fetch_exa calls): for a
+ * site that turned this server away — a 403 to anything that is not a browser,
+ * a rate limit, a page that is only script. Exa reads it from its own copy, or
+ * fresh when it has none. Null with no key, or when Exa could not read it either.
+ *
+ * @param {string} url
+ * @param {{ maxChars?: number, timeoutMs?: number }} [options]
+ * @returns {Promise<{ title: string, text: string } | null>}
+ */
+export async function readThroughExa(url, { maxChars = 20_000, timeoutMs = 30_000 } = {}) {
+  if (!process.env.EXA_API_KEY) return null;
+  try {
+    const res = await fetch('https://api.exa.ai/contents', {
+      method: 'POST',
+      headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls: [url], text: { maxCharacters: maxChars }, livecrawl: 'fallback' }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return null;
+    const hit = ((await res.json()).results || [])[0];
+    return hit?.text ? { title: String(hit.title || ''), text: String(hit.text) } : null;
+  } catch {
+    return null;
+  }
 }

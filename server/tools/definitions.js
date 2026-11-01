@@ -955,6 +955,16 @@ export const TOOLS = [
           description:
             'Omit to follow the reasoning level the user chose. quick = links only; thorough = the top pages are also opened and read.',
         },
+        recency: {
+          type: 'string',
+          enum: ['day', 'week', 'month', 'year'],
+          description: 'Only pages published within this span — for news and anything that changes.',
+        },
+        sites: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Only these sites, e.g. ["vnexpress.net"]. Up to 5.',
+        },
       },
       required: ['query'],
     },

@@ -174,6 +174,48 @@ section('search depth follows the reasoning level');
   check('"thorough" overrides a fast one', searchDepth('low', 'thorough').read >= 3);
 }
 
+section('web_fetch: a site that turns the server away is read through Exa (owner, 2026-11-02)');
+{
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  const had = { private: process.env.ALLOW_PRIVATE_FETCH, exa: process.env.EXA_API_KEY };
+  process.env.ALLOW_PRIVATE_FETCH = 'true';
+  process.env.EXA_API_KEY = 'exa-test';
+  const site = http
+    .createServer((req, res) => {
+      if (req.url === '/blocked') return res.writeHead(403).end('no robots');
+      if (req.url === '/gone') return res.writeHead(404).end('not here');
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      if (req.url === '/script') return res.end('<html><body><div id="root"></div><script>start()</script></body></html>');
+      res.end(`<html><body><article><p>${'Plain words on a plain page. '.repeat(30)}</p></article></body></html>`);
+    })
+    .listen(0);
+  const base = `http://127.0.0.1:${site.address().port}`;
+  const realFetch = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (url, init) => {
+    if (!String(url).includes('api.exa.ai/contents')) return realFetch(url, init);
+    asked.push(JSON.parse(init.body).urls[0]);
+    return new Response(JSON.stringify({ results: [{ title: 'T', text: 'The article, as Exa read it.' }] }), { status: 200 });
+  };
+  try {
+    const blocked = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: `${base}/blocked` });
+    check('a 403 is read through Exa — said so, in the untrusted envelope', /read through Exa — 127\.0\.0\.1:\d+ returned HTTP 403/.test(blocked) && /The article, as Exa read it\./.test(blocked) && /<untrusted/.test(blocked), blocked.slice(0, 160));
+    const script = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: `${base}/script` });
+    check('  so is a page that is only script', /almost no text without running its scripts/.test(script), script.slice(0, 160));
+    let gone = '';
+    await CLOUD_IMPLEMENTATIONS.web_fetch({ url: `${base}/gone` }).catch((err) => (gone = err.message));
+    const plain = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: `${base}/plain` });
+    check('  not a 404 — that page is not there for anyone — and a readable page never goes to Exa', /HTTP 404/.test(gone) && /Plain words/.test(plain) && asked.length === 2, JSON.stringify(asked));
+  } finally {
+    globalThis.fetch = realFetch;
+    site.close();
+    for (const [name, value] of [['ALLOW_PRIVATE_FETCH', had.private], ['EXA_API_KEY', had.exa]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
 section('a shared conversation opens with no account, and shows only its own files');
 {
   const { initStore } = await import('../server/store/index.js');
@@ -1812,6 +1854,28 @@ section('connectors: each Google product its own, the catalogue page, logos, and
     empty = err.message;
   }
   check('  nothing asked: refused, saying what to give', /what code or documentation/.test(empty));
+  {
+    const { SEARCH_LEVELS } = await import('../server/search.js');
+    const hadExa = process.env.EXA_API_KEY;
+    process.env.EXA_API_KEY = 'exa-test';
+    const sent = [];
+    const withExa = async (url, init) => {
+      if (String(url).includes('api.exa.ai')) {
+        sent.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({ results: [{ title: 'Docs', url: 'https://react.dev/reference/react/useState', highlights: ['const [n, setN] = useState(0);', 'setN(n + 1);'] }] }), { status: 200 });
+      }
+      return fake(url);
+    };
+    try {
+      const low = await codeContextTool({ query: 'react useState counter' }, { fetchImpl: withExa, plan: SEARCH_LEVELS.low });
+      const max = await codeContextTool({ query: 'react useState counter' }, { fetchImpl: withExa, plan: SEARCH_LEVELS.max });
+      check('with Exa: asked as its own code tool asks — highlights on the query, any site — fast and three on Low, auto and eight on Max', sent[0].type === 'fast' && sent[0].numResults === 3 && sent[0].contents.highlights.query === 'react useState counter' && !('includeDomains' in sent[0]) && sent[1].type === 'auto' && sent[1].numResults === 8, JSON.stringify(sent));
+      check('  its passages keep their line breaks, beside Stack Overflow', /useState\(0\);\n…\nsetN/.test(low.content) && /Stack Overflow/.test(max.content), low.content.slice(0, 240));
+    } finally {
+      if (hadExa === undefined) delete process.env.EXA_API_KEY;
+      else process.env.EXA_API_KEY = hadExa;
+    }
+  }
   check('code_context is read-only, waits behind load_tools, and goes with the research plugin', TOOLS_BY_NAME.code_context?.readOnly && TOOLS_BY_NAME.code_context?.secondary && assessRisk('code_context', { query: 'x' }) === 'safe');
   if (hadKey === undefined) delete process.env.ENCRYPTION_KEY;
 }
