@@ -220,8 +220,6 @@ export const api = {
     request('POST', '/api/account/import', { conversations, ...(memory?.length ? { memory } : {}) }),
   deleteAccount: (password, code) => request('DELETE', '/api/account', { password, code }),
 
-  startTwoFactor: () => request('POST', '/api/account/2fa/setup'),
-  confirmTwoFactor: (code) => request('POST', '/api/account/2fa/confirm', { code }),
   disableTwoFactor: (password, code) => request('POST', '/api/account/2fa/disable', { password, code }),
 
   // Just the worker indicator — polled often, so deliberately cheap.

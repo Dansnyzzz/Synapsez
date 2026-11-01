@@ -1998,6 +1998,20 @@ section('what counts as a question worth drawing');
   });
   check('an option written as an object is understood', rich[0].options[0].description === 'một đoạn');
 
+  // A preview, when an option has one, keeps its lines — it is a layout or a snippet (2026-11-01).
+  const shown = normaliseQuestions({
+    question: 'Bố cục?',
+    options: [
+      { label: 'Dọc', preview: '\n  Tuỳ chọn\n    Chung     giao diện\t·\n\u001b[31m    Tài khoản\n\n' },
+      { label: 'Ngang' },
+    ],
+  });
+  check('an option\'s preview keeps its lines and spaces, without control characters', shown[0].options[0].preview === '  Tuỳ chọn\n    Chung     giao diện  ·\n[31m    Tài khoản', JSON.stringify(shown[0].options[0].preview));
+  check('  and an option without one carries none', !('preview' in shown[0].options[1]));
+  const { previewText, __testing: askLimits } = await import('../server/tools/askOptions.js');
+  const tall = previewText(Array.from({ length: 80 }, (_, i) => `line ${i}`).join('\n'));
+  check('  a preview is held to a few dozen lines', tall.split('\n').length === askLimits.MAX_PREVIEW_LINES && tall.length <= askLimits.MAX_PREVIEW);
+
   const many = normaliseQuestions({
     questions: Array.from({ length: 9 }, (_, i) => ({ question: `Q${i}`, options: ['a', 'b'] })),
   });

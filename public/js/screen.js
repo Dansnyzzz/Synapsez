@@ -91,6 +91,8 @@ export function createScreen() {
    */
   let mode = 'local';
   let lastShot = '';
+  /** A cloud step is under way: a browser not open yet is starting, not resting. */
+  let stepRunning = false;
 
   const hostOf = (address) => {
     try {
@@ -117,11 +119,26 @@ export function createScreen() {
      * put the old title back until the next page loaded.
      */
     const socketSaid = liveOpen() && link.meta;
+    /*
+     * A frame arriving is the truth about whether it runs. The state call asks
+     * the machine with a three-second limit, and a busy one answers "not open"
+     * while its socket is still painting — that must not take the controls out
+     * of somebody's hands, or call a live browser resting.
+     */
+    const running = !!state?.open || liveOpen() || stepRunning;
     if (!socketSaid) {
-      title.textContent = state?.title || (state?.open ? t('screen.title') : t('screen.cloudStarting'));
+      /*
+       * Not open while a step is under way is a browser starting; not open
+       * after the step is over is a browser resting (or one that failed to
+       * start). It said "starting…" either way, for good, over the last
+       * step's picture — which looked live and could not be driven (owner,
+       * 2026-10-31).
+       */
+      title.textContent = state?.title || (state?.open || liveOpen() ? t('screen.title') : t(stepRunning ? 'screen.cloudStarting' : 'screen.cloudResting'));
       url.textContent = state?.url || '';
       showMeta(state);
     }
+    canDrive(running);
     source.textContent = t('screen.sourceCloud');
     source.title = t('screen.cloudNote');
     closeButton.hidden = false;
@@ -232,10 +249,38 @@ export function createScreen() {
   /** Sockets that closed in a row without a frame — past a few, the relay. */
   let liveRetries = 0;
 
-  /** The size the picture is drawn at, in device pixels — the size worth sending. */
-  function viewSize() {
+  /**
+   * Where the picture actually is on screen. Full screen draws it with
+   * `object-fit: contain` in a box the size of the window, so the box and the
+   * picture differ by the bands either side; a click is placed by the picture.
+   */
+  function drawnBox() {
     const box = img.getBoundingClientRect();
+    const naturalWidth = img.naturalWidth;
+    const naturalHeight = img.naturalHeight;
+    if (!naturalWidth || !naturalHeight || !box.width || !box.height) return box;
+    const fit = Math.min(box.width / naturalWidth, box.height / naturalHeight);
+    const width = naturalWidth * fit;
+    const height = naturalHeight * fit;
+    return { left: box.left + (box.width - width) / 2, top: box.top + (box.height - height) / 2, width, height };
+  }
+
+  /**
+   * The size the picture is drawn at, in device pixels — the size worth sending.
+   *
+   * Full screen asks for the size it has room for, not the size it is showing:
+   * asked from the picture, a small frame kept the picture small and the next
+   * frame small with it, so full screen never grew past the rail's size
+   * (owner, 2026-10-31).
+   */
+  function viewSize() {
     const scale = window.devicePixelRatio || 1;
+    if (panel.classList.contains('is-expanded')) {
+      const room = frame.getBoundingClientRect();
+      const width = Math.round(Math.min(room.width, room.height * (1280 / 800)) * scale);
+      return { width, height: Math.round((width * 800) / 1280) };
+    }
+    const box = drawnBox();
     const width = Math.round((box.width || frame.clientWidth || 640) * scale);
     return { width, height: box.height ? Math.round(box.height * scale) : Math.round((width * 800) / 1280) };
   }
@@ -474,7 +519,7 @@ export function createScreen() {
    */
   let driving = false;
   let driveTimer = null;
-  const drive = document.getElementById('screen-drive');
+  const drive = /** @type {HTMLButtonElement} */ (document.getElementById('screen-drive'));
 
   /**
    * Where typing goes while you drive the cloud browser: a text box out of
@@ -517,6 +562,24 @@ export function createScreen() {
     if (on) (direct() ? keys : img).focus({ preventScroll: true });
   };
   drive.addEventListener('click', () => setDriving(!driving));
+
+  /**
+   * Whether there is anything to drive. A cloud browser that is resting has
+   * only a picture of its last step on screen: the button says so and waits,
+   * rather than taking presses that go nowhere (owner, 2026-10-31).
+   */
+  function canDrive(on) {
+    const able = on || !direct();
+    drive.disabled = !able;
+    if (!able) {
+      if (driving) setDriving(false);
+      drive.title = t('screen.driveResting');
+      drive.setAttribute('aria-label', t('screen.driveResting'));
+    } else if (!driving) {
+      drive.title = t('screen.driveOff');
+      drive.setAttribute('aria-label', t('screen.driveOff'));
+    }
+  }
 
   /* Gestures through the server, for when the socket cannot be had: batched,
      a run of moves or wheel ticks folded into one, in order. */
@@ -581,14 +644,14 @@ export function createScreen() {
 
   /** Where in the frame, as a fraction — the panel never needs the real size. */
   const spot = (event) => {
-    const box = img.getBoundingClientRect();
+    const box = drawnBox();
     return {
       x: Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)),
       y: Math.min(1, Math.max(0, (event.clientY - box.top) / box.height)),
     };
   };
   /** Page pixels per screen pixel, for turning a finger's travel into a scroll. */
-  const pageScale = () => 1280 / (img.getBoundingClientRect().width || 1280);
+  const pageScale = () => 1280 / (drawnBox().width || 1280);
 
   const BUTTON = ['left', 'middle', 'right'];
   /** Which click of a double or triple this press is: near the last one, soon after it. */
@@ -894,9 +957,17 @@ export function createScreen() {
       panel.replaceWith(home);
       document.body.append(panel);
       panel.classList.add('is-expanded');
+      /*
+       * And the whole screen, as asked for (owner, 2026-10-31): the browser's
+       * own full screen where it is allowed — it hides the tabs and the address
+       * bar too. Where it is not (a frame, a policy), the window-sized panel
+       * above is the full screen.
+       */
+      Promise.resolve(panel.requestFullscreen?.({ navigationUI: 'hide' })).catch(() => {});
     } else {
       panel.classList.remove('is-expanded');
       home.replaceWith(panel);
+      if (document.fullscreenElement === panel) Promise.resolve(document.exitFullscreen?.()).catch(() => {});
     }
 
     if (!stopped && mode !== 'cloud') {
@@ -904,8 +975,15 @@ export function createScreen() {
       clearTimeout(timer);
       if (!openStream()) pollTick();
     }
+    // The size worth sending changed with it: say so now, not after the resize settles.
+    tell({ t: 'view', ...viewSize() });
     if (driving && direct()) keys.focus({ preventScroll: true });
   }
+
+  // Leaving the browser's full screen (its own Escape, F11) leaves ours too.
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && expanded()) setExpanded(false);
+  });
 
   document.getElementById('screen-expand').addEventListener('click', () => {
     panel.classList.remove('is-collapsed');
@@ -958,7 +1036,12 @@ export function createScreen() {
     const wasRunning = !stopped;
     stop();
     mode = next;
-    if (next !== 'cloud') lastShot = '';
+    if (next !== 'cloud') {
+      lastShot = '';
+      stepRunning = false;
+      // The desktop mirror is always there to drive while it shows.
+      canDrive(true);
+    }
     panel.classList.toggle('is-direct', driving && direct());
     if (wasRunning) start();
   }
@@ -976,6 +1059,7 @@ export function createScreen() {
       panel.hidden = false;
       panel.classList.remove('is-collapsed');
       wokenByTool = true;
+      if (kind === 'cloud') stepRunning = true;
       start();
       // Already running: a new step may have started the machine or moved the page.
       if (kind === 'cloud' && !img.dataset.stream && !liveOpen()) {
@@ -990,6 +1074,7 @@ export function createScreen() {
      * @param {string} [shotId]
      */
     cloudStepDone(shotId) {
+      stepRunning = false;
       if (shotId) lastShot = `/api/attachments/${shotId}`;
       // With the socket open the screen and its address are already current.
       if (!liveOpen()) refreshCloud();

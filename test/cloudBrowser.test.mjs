@@ -143,6 +143,54 @@ section('a slow answer is not a dead service: nothing is restarted, nothing sent
   await store.setUserSetting('u-slow', cb.__testing.SETTING, null);
 }
 
+/*
+ * "The cloud computer's helper stopped as it started" with a log ending "helper
+ * service on 3000" (owner, 2026-10-31): the service came up, and this start's
+ * process was then stopped from outside — a second start writing the same pid
+ * file, or the machine's session ending. A stand-in SDK plays the machine.
+ */
+section('a helper stopped from outside as it starts');
+{
+  const { __testing: sandboxTesting } = await import('../server/sandbox.js');
+  const running = http.createServer((req, res) => res.end(req.headers['x-synz-key'] === 'o'.repeat(43) ? '{"ok":true}' : '{}'));
+  await new Promise((r) => running.listen(0, '127.0.0.1', r));
+  const runningAt = `http://127.0.0.1:${running.address().port}`;
+  let starts = 0;
+  let extended = 0;
+  const machine = (address) => ({
+    domain: () => address,
+    extendTimeout: async () => {
+      extended += 1;
+    },
+    readFileToBuffer: async ({ path: file }) => Buffer.from(file.endsWith('service.log') ? 'starting as the account\nhelper service on 3000\n' : 'added 20 packages in 4s\n'),
+    runCommand: async () => {
+      starts += 1;
+      // Another start, elsewhere, takes over: its connection is saved, then this process is stopped.
+      if (other) await cb.__testing.saveConnection('u-out', { url: runningAt, key: 'o'.repeat(43), build: cb.__testing.service().build, extendedAt: Date.now(), mode: 'user' });
+      return { wait: async () => ({ exitCode: 143 }) };
+    },
+  });
+  let other = true;
+  sandboxTesting.useSdk({ Sandbox: { getOrCreate: async () => machine('http://127.0.0.1:9') } });
+  await store.createUser({ id: 'u-out', email: 'out@example.com', passwordHash: 'x', name: 'O', role: 'user' }).catch(() => {});
+  await cb.__testing.saveConnection('u-out', { url: 'http://127.0.0.1:9', key: 'z'.repeat(43), build: cb.__testing.service().build, extendedAt: 1, mode: 'user' });
+  const viaOther = await throws(() => cb.__testing.serviceCall('u-out', '/health', undefined, { timeout: 2000 }));
+  check('a start stopped by another start that came up uses that one, rather than failing', viaOther === '' && starts === 1, `${starts} starts · ${viaOther}`);
+  check('  and the machine is given room before anything starts on it', extended >= 1, String(extended));
+
+  other = false;
+  starts = 0;
+  await cb.__testing.saveConnection('u-out', { url: 'http://127.0.0.1:9', key: 'z'.repeat(43), build: cb.__testing.service().build, extendedAt: 1, mode: 'user' });
+  const failed = await throws(() => cb.__testing.serviceCall('u-out', '/health', undefined, { timeout: 2000 }));
+  check('stopped from outside with nothing else up: tried once more, then said with its exit code and log', starts === 2 && /was stopped from outside as it started \(exit code 143\)/.test(failed) && /helper service on 3000/.test(failed), `${starts} starts · ${failed.slice(0, 160)}`);
+  const { translateMessage } = await import('../server/i18n/index.js');
+  const inVietnamese = translateMessage(failed, 'vi');
+  check('  and a Vietnamese account reads it in Vietnamese, the code and log kept', /bị dừng từ bên ngoài.*\(mã thoát 143\)/.test(inVietnamese) && /helper service on 3000/.test(inVietnamese), inVietnamese.slice(0, 120));
+  sandboxTesting.useSdk(null);
+  running.close();
+  await store.setUserSetting('u-out', cb.__testing.SETTING, null);
+}
+
 section('a Python cell, as the model reads it');
 {
   const { pythonReport } = await import('../server/sandbox.js');
@@ -482,6 +530,13 @@ if (!chrome) {
       );
     }
     if (at.pathname === '/files') return res.end('<title>Files</title><a href="/report.csv">Báo cáo</a>');
+    // A consent box over the page, the way YouTube greets a fresh browser (owner, 2026-10-31).
+    if (at.pathname === '/covered') {
+      return res.end(
+        '<title>Covered</title><button onclick="location=\'/done?name=under\'">Under</button>' +
+          '<div id="consent" style="position:fixed;inset:0;background:rgba(0,0,0,.5)"><button onclick="this.parentNode.remove()">Accept all</button></div>',
+      );
+    }
     res.end('<title>Form</title><form action="/done"><input name="name" placeholder="Your name"><button>Send</button></form><a href="/done?name=link">A link</a>');
   });
   await new Promise((r) => site.listen(0, '127.0.0.1', r));
@@ -559,6 +614,15 @@ if (!chrome) {
     await cb.cloudBrowser({ action: 'read', page: 1 }, ctx);
     const pressed = await cb.cloudBrowser({ action: 'click', ref: go }, ctx);
     check('read keeps the numbers the model was shown, so the next click lands where it meant', /Xin chào button/.test(pressed.content), pressed.content.split('\n').slice(0, 2).join(' | '));
+
+    // A click under a consent box used to come back as "took too long" — the
+    // reason was in the part of the error that was thrown away.
+    const covered = await cb.cloudBrowser({ action: 'open', url: `${siteUrl}/covered` }, ctx);
+    const under = Number(/\[(\d+)\] button "Under"/.exec(covered.content)?.[1]);
+    const blocked = await throws(() => cb.cloudBrowser({ action: 'click', ref: under }, ctx));
+    const { timedOutSentence } = await import('../server/tools/execute.js');
+    check('a click under a pop-up says something is on top of it, and which', /on top of it \(<button[^)]*this\.parentNode\.remove/.test(blocked) && /close or accept that box first/.test(blocked), blocked.slice(0, 300));
+    check('  and is not read as a slow site', timedOutSentence(new Error(blocked)) === '', blocked.slice(0, 120));
 
     // The step's picture after a scroll was white: it photographed the top.
     await cb.cloudBrowser({ action: 'open', url: `${siteUrl}/tall` }, ctx);

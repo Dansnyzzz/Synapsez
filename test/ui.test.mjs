@@ -3067,6 +3067,29 @@ section("Settings is Claude's list: sections down the left, in groups, each its 
   await page.click('#chat-search');
   await page.waitForTimeout(700);
   check('  a switch is saved the moment it is switched, as Claude\'s are', now === !was && (await getPrefs(me.id)).chatSearch !== false === was, JSON.stringify({ was, now }));
+
+  // Account (owner, 2026-11-01): no two-factor setup; the instructions box is
+  // Claude's, blue while written in; neither scrolling part takes Windows' bar.
+  await page.click('#tab-account');
+  await page.waitForTimeout(300);
+  await page.focus('#system-prompt');
+  // The edge turns blue over 0.15s; read it once it has.
+  await page.waitForTimeout(400);
+  const account = await page.evaluate(() => {
+    const box = /** @type {HTMLElement} */ (document.getElementById('system-prompt'));
+    const style = getComputedStyle(box);
+    const page = getComputedStyle(document.body).getPropertyValue('--bg').trim();
+    return {
+      twofa: /** @type {HTMLElement} */ (document.getElementById('twofa-row')).hidden && !document.getElementById('twofa-start'),
+      dark: style.backgroundColor !== 'rgb(59, 59, 59)' && !!page,
+      blue: style.borderTopColor === 'rgb(76, 141, 246)',
+      bars: [...document.querySelectorAll('#settings .settings__tabs, #settings .settings__body')].map((el) => getComputedStyle(el).scrollbarWidth).join(','),
+    };
+  });
+  check('  Account offers no two-factor setup to an account without it', account.twofa, JSON.stringify(account));
+  check('  the instructions box is dark, and edged in blue while written in', account.dark && account.blue, JSON.stringify(account));
+  check('  and the list and the section scroll with the app\'s own thumb, no grey track', account.bars === 'auto,auto', account.bars);
+  await page.evaluate(() => /** @type {HTMLElement} */ (document.activeElement)?.blur());
   await page.evaluate(() => document.getElementById('settings').close());
   await page.waitForTimeout(200);
 }
@@ -6506,13 +6529,14 @@ section('the reasoning card: a window on the newest lines, or the whole of it');
 }
 
 /**
- * Every tool's call and answer, in every kind of card, is text on the page —
- * no frame round it, the way a command's output already was (owner,
- * 2026-10-25, screenshots 9–11: "rà soát đảm bảo mọi tools liên quan đều không
- * có"). And a long argument wraps inside its card rather than widening it past
- * the reply, which is what cut screenshot 10's question off at the edge.
+ * Every tool's answer, in every kind of card, is text on the page — no frame
+ * round it (owner, 2026-10-25, screenshots 9–11). Its call is framed, so the
+ * command and what came back are told apart at a glance (owner, 2026-10-31:
+ * "command của tools có viền khung để phân biệt với kết quả output"). And a
+ * long argument wraps inside its card rather than widening it past the reply,
+ * which is what cut screenshot 10's question off at the edge.
  */
-section('no tool\'s call or answer has a frame, and nothing widens its card');
+section('a tool\'s call is framed and its answer is not, and nothing widens its card');
 {
   const got = await page.evaluate(async () => {
     const { assistantMessage } = await import('/js/render.js');
@@ -6530,16 +6554,19 @@ section('no tool\'s call or answer has a frame, and nothing widens its card');
     block().startTool({ id: 'f2', name: 'look_at', input: { path: '/tmp/m5/sheet.jpg', question } }).complete({ content: 'No picture here.', ms: 900, isError: true });
     block().startTool({ id: 'f3', name: 'cloud_browser', input: { action: 'open', url: 'https://example.com' } }).complete({ content: 'Page: Example', ms: 700 });
     for (const d of host.querySelectorAll('details')) d.open = true;
-    const framed = [...host.querySelectorAll('pre')]
-      .filter((pre) => getComputedStyle(pre).borderTopWidth !== '0px' || getComputedStyle(pre).borderLeftWidth !== '0px')
-      .map((pre) => pre.className || pre.parentElement?.className || 'pre');
+    const hasFrame = (pre) => getComputedStyle(pre).borderTopWidth !== '0px' || getComputedStyle(pre).borderLeftWidth !== '0px';
+    const pres = [...host.querySelectorAll('pre')];
+    const calls = pres.filter((pre) => pre.classList.contains('tool__args'));
+    const framed = pres.filter((pre) => !pre.classList.contains('tool__args') && hasFrame(pre)).map((pre) => pre.className || pre.parentElement?.className || 'pre');
+    const unframedCalls = calls.filter((pre) => !hasFrame(pre)).map((pre) => pre.className);
     const cards = [...host.querySelectorAll('.msg__body > details.block')];
     const wider = cards.filter((card) => card.scrollWidth > host.clientWidth + 1 || card.getBoundingClientRect().width > host.clientWidth + 1).map((card) => card.className);
     const cardFrames = cards.filter((card) => getComputedStyle(card).borderTopWidth !== '0px').map((card) => card.className);
     host.remove();
-    return { pres: host.querySelectorAll('pre').length, framed, wider, cardFrames };
+    return { pres: pres.length, calls: calls.length, framed, unframedCalls, wider, cardFrames };
   });
-  check('every call and answer drawn is text, with no frame round it', got.pres >= 5 && got.framed.length === 0, JSON.stringify(got));
+  check('every answer drawn is text, with no frame round it', got.pres >= 5 && got.framed.length === 0, JSON.stringify(got));
+  check('  and every call is framed, apart from it', got.calls >= 3 && got.unframedCalls.length === 0, JSON.stringify(got));
   check('no card is a box either', got.cardFrames.length === 0, got.cardFrames.join(', '));
   check('and a long argument wraps inside its card instead of widening it', got.wider.length === 0, got.wider.join(', '));
 }
@@ -7826,6 +7853,47 @@ section('a question card collects an answer');
   check('the card goes once it is answered', out.gone === true);
 }
 
+/*
+ * Claude Code's two panes (owner, 2026-11-01): an option may carry a preview,
+ * shown beside the list while it is pointed at or moved to — and a question
+ * without previews is drawn as it always was.
+ */
+section('a question whose options have previews shows them beside the list');
+{
+  const out = await page.evaluate(async () => {
+    const { createQuestionCard } = await import('/js/question.js');
+    /** @type {any} */
+    let sent = null;
+    const card = createQuestionCard({ onAnswer: (a) => { sent = a; }, scrollToEnd: () => {} });
+    const pane = /** @type {HTMLElement} */ (document.getElementById('question-preview'));
+    const read = () => ({ shown: !pane.hidden, head: pane.querySelector('.question__preview-head')?.textContent || '', body: pane.querySelector('pre')?.textContent || '', none: !!pane.querySelector('.question__preview-none') });
+
+    card.show({ toolCallId: 'p0', questions: [{ question: 'Plain?', options: [{ label: 'A' }, { label: 'B' }], multiple: false, other: false }] });
+    const plain = { shown: !pane.hidden, cls: document.getElementById('question').className };
+    card.hide();
+
+    card.show({
+      toolCallId: 'p1',
+      questions: [{ question: 'Where?', options: [{ label: 'Developer', preview: 'Preferences\n  General   look\n  Account   you' }, { label: 'Own section' }], multiple: false, other: true }],
+    });
+    const first = read();
+    const rows = [...document.querySelectorAll('#question-options .question__opt')];
+    rows[1].dispatchEvent(new PointerEvent('pointerenter'));
+    const hovered = read();
+    /** @type {HTMLElement} */ (rows[0]).focus();
+    const focused = read();
+    const box = pane.getBoundingClientRect();
+    const list = document.getElementById('question-options').getBoundingClientRect();
+    /** @type {HTMLElement} */ (rows[0]).click();
+    return { plain, first, hovered, focused, beside: box.left >= list.right - 1, sent, gone: document.getElementById('question').hidden };
+  });
+  check('a question without previews has no pane — drawn as it always was', !out.plain.shown && !/question--preview/.test(out.plain.cls), JSON.stringify(out.plain));
+  check('with them, the first option\'s preview is beside the list, its lines kept', out.first.shown && out.first.head === 'Developer' && out.first.body === 'Preferences\n  General   look\n  Account   you' && out.beside, JSON.stringify(out.first));
+  check('  pointing at an option without one says so', out.hovered.head === 'Own section' && out.hovered.none, JSON.stringify(out.hovered));
+  check('  and the keyboard moves it too', out.focused.head === 'Developer' && !out.focused.none, JSON.stringify(out.focused));
+  check('  choosing still answers, the preview only looked', out.sent?.given?.[0]?.picks?.join(',') === 'Developer' && out.gone, JSON.stringify(out.sent?.given));
+}
+
 section('your own words, sent from the pencil row, and the number keys');
 {
   const out = await page.evaluate(async () => {
@@ -9002,6 +9070,12 @@ section('the cloud browser is driven over a socket straight to the machine');
     stateCalls += 1;
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ open: true, stream: 'https://sb-ui.vercel.run/stream?t=view.2.y', live: { url: 'wss://blocked.example/never-opens', token: 'drive.9.z' }, title: 'x', url: 'https://x/', tabs: [] }) });
   });
+  /*
+   * The relay's picture is the machine's MJPEG stream. Unanswered, it failed to
+   * load and the picture went — and whether the wheel below landed on it was a
+   * race against that failure (it missed once in three runs, 2026-11-01).
+   */
+  await page.route('https://sb-ui.vercel.run/stream*', (route) => route.fulfill({ status: 200, contentType: 'image/jpeg', body: jpeg }));
   socket?.close();
   await waitFor(() => stateCalls > 0, 4000);
   check('a socket lost after frames came is asked for again, with fresh tokens', stateCalls > 0, `${stateCalls} state calls`);
@@ -9012,10 +9086,16 @@ section('the cloud browser is driven over a socket straight to the machine');
   // The move goes first, in a batch of its own; the wheel follows once that one is answered.
   await waitFor(() => relayed.flatMap((body) => body.events || []).some((e) => e.type === 'wheel'), 6000);
   const viaRelay = relayed.flatMap((body) => body.events || []);
-  check('when the socket is refused, gestures go through the server instead — batched, sideways part kept', viaRelay.some((e) => e.type === 'wheel' && e.deltaX > 0), JSON.stringify(relayed).slice(0, 200));
+  const relayState = await page.evaluate(() => {
+    const drive = /** @type {HTMLButtonElement} */ (document.getElementById('screen-drive'));
+    const img = document.getElementById('screen-img');
+    return { pressed: drive.getAttribute('aria-pressed'), disabled: drive.disabled, src: (img.getAttribute('src') || '').slice(0, 40), title: document.getElementById('screen-title').textContent };
+  });
+  check('when the socket is refused, gestures go through the server instead — batched, sideways part kept', viaRelay.some((e) => e.type === 'wheel' && e.deltaX > 0), `${JSON.stringify(relayed).slice(0, 200)} · ${JSON.stringify(relayState)}`);
   await page.keyboard.press('Escape');
   await page.unroute('**/api/cloud-browser/input');
   await page.unroute('**/api/cloud-browser/state*');
+  await page.unroute('https://sb-ui.vercel.run/stream*');
   await page.evaluate(() => {
     document.getElementById('screen').hidden = true;
   });
@@ -9579,6 +9659,8 @@ section('the + opens a menu of files, skills, connectors and plugins');
   await page.focus('#attach');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(400);
+  // The menu takes its keys from the frame after it opens (plus-menu.js): wait for two.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const first = await page.evaluate(() => document.activeElement?.closest('.plusmenu')?.dataset.level === '0');
   await page.keyboard.press('ArrowDown');
   const onRow = await page.evaluate(() => document.activeElement?.textContent?.trim());
@@ -9591,6 +9673,10 @@ section('the + opens a menu of files, skills, connectors and plugins');
     active: document.activeElement?.textContent?.trim().slice(0, 40),
     panels: [...document.querySelectorAll('.plusmenu')].map((p) => /** @type {HTMLElement} */ (p).dataset.level),
     banner: !(/** @type {HTMLElement} */ (document.getElementById('usage-alert')).hidden),
+    hidden: document.hidden,
+    focused: document.hasFocus(),
+    fullscreen: !!document.fullscreenElement,
+    dialogs: [...document.querySelectorAll('dialog[open]')].map((d) => d.id),
   }));
   await page.keyboard.press('Escape');
   await page.waitForTimeout(150);

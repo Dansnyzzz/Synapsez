@@ -250,6 +250,17 @@ function check(value, schema, where, notes = []) {
     value = unwrapLists(value);
   }
 
+  /*
+   * A bare string where an object of one required string field was wanted is
+   * that field: `"Weekly"` for `{ label }`. The opposite of the case below, and
+   * just as plainly meant — a choice written as its words (2026-11-01, when an
+   * option of ask_options became `{ label, description?, preview? }`).
+   */
+  const onlyField = schema.required?.length === 1 && schema.properties?.[schema.required[0]]?.type === 'string' ? schema.required[0] : null;
+  if (onlyField && typeof value === 'string' && types.length === 1 && types[0] === 'object') {
+    value = { [onlyField]: value };
+  }
+
   const wantsString = schema.type === 'string' || (Array.isArray(schema.type) && schema.type.length === 1 && schema.type[0] === 'string');
   if (wantsString && value && typeof value === 'object' && !Array.isArray(value)) {
     const text = unwrapText(value);

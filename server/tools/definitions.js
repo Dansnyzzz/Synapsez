@@ -1015,7 +1015,20 @@ export const TOOLS = [
                 description:
                   'Two to eight answers, written for this question rather than generic. Concrete and ' +
                   'distinct — two options meaning the same thing is a choice nobody can make.',
-                items: { type: 'string' },
+                items: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string' },
+                    description: { type: 'string' },
+                    preview: {
+                      type: 'string',
+                      description:
+                        'Optional, monospace, shown beside the list while the option is pointed at: a layout ' +
+                        'sketch, a snippet, a sample. Only when seeing it helps choose; most options have none.',
+                    },
+                  },
+                  required: ['label'],
+                },
               },
               kind: { type: 'string', enum: ['choice', 'text', 'email'], description: 'Default choice. text/email take no options.' },
               placeholder: { type: 'string' },

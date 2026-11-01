@@ -1420,6 +1420,7 @@ section('a tool cut off by its own deadline says so, not just "aborted"');
   stopped.abort();
   check('but not when the person pressed Stop', timedOutSentence(new Error('aborted'), stopped.signal) === '');
   check('and any other failure keeps its own words', timedOutSentence(new Error('HTTP 500')) === '');
+  check('  even one that mentions a timeout in its own explanation', timedOutSentence(new Error('Could not click [6]: locator.click: Timeout 10000ms exceeded; <div> intercepts pointer events')) === '' && timedOutSentence(new Error('timed out')) !== '');
 }
 
 section('the plan panel: one step running after a refresh, and updates say what changed');
@@ -1478,6 +1479,9 @@ section('a comparison card is read however the model lays it out');
   const { validateArguments } = await import('../server/tools/validate.js');
   const form = { questions: [{ question: 'Q?', options: ['a', 'b'] }, { question: 'Email?', kind: 'text', options: {} }, { question: 'Pick', options: { A: 'x', B: 'y' } }] };
   check('a form question with options {} or keyed by letter passes the check', validateArguments(TOOLS_BY_NAME.ask_options.parameters, form).ok, JSON.stringify(validateArguments(TOOLS_BY_NAME.ask_options.parameters, form).error || ''));
+  // Options are { label, description?, preview? } now; a bare string is still its label.
+  const mixed = validateArguments(TOOLS_BY_NAME.ask_options.parameters, { questions: [{ question: 'Q?', options: ['a', { label: 'b', preview: 'x\n  y' }] }] });
+  check('  an option as plain words, or as { label, preview }, both pass — the words read as the label', mixed.ok && mixed.input?.questions?.[0]?.options?.[0]?.label === 'a' && mixed.input.questions[0].options[1].preview === 'x\n  y', JSON.stringify(mixed));
 }
 
 section('a quiz answer is read however the model says it');

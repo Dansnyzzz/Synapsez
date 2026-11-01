@@ -487,6 +487,31 @@ function normaliseUrl(value) {
 /** The actions that may be one of `steps`. A PDF, closing and another batch may not. */
 const STEP_ACTIONS = new Set(['open', 'look', 'read', 'click', 'type', 'press', 'scroll', 'select', 'wait', 'back', 'forward', 'reload', 'tabs', 'new_tab', 'switch_tab', 'close_tab']);
 
+/**
+ * Why Playwright could not act on an element, in a sentence the model can act
+ * on. Its error's first line is only "locator.click: Timeout 10000ms exceeded."
+ * — the reason is further down the call log, and the first line alone was all
+ * that reached the model; the server then read "Timeout" as a slow site and
+ * said so (owner, 2026-10-31: a click on YouTube under its consent box). The
+ * covering element is named when the log names it, so the model knows what to
+ * close.
+ */
+export function actionProblem(err, verb, ref) {
+  const log = String(err?.message || err || '');
+  const what = ref != null && ref !== '' ? `[${ref}]` : 'that';
+  const cover = /(<[a-z][^>]{0,140}>)[^\n]*intercepts pointer events/i.exec(log)?.[1];
+  if (/intercepts pointer events/i.test(log)) {
+    return `Could not ${verb} ${what}: something else on the page is on top of it${cover ? ` (${cover})` : ''} — usually a cookie, consent, sign-in or pop-up box. Look, close or accept that box first, then try again.`;
+  }
+  if (/not visible|element is hidden/i.test(log)) return `Could not ${verb} ${what}: it is not visible — it may be in a closed menu or behind a tab. Open that first, or look again.`;
+  if (/not enabled|is disabled|element is not editable/i.test(log)) return `Could not ${verb} ${what}: it is disabled right now — something else on the page has to be filled or chosen first.`;
+  if (/not stable/i.test(log)) return `Could not ${verb} ${what}: it kept moving (an animation). Wait a moment and try again.`;
+  if (/outside of the viewport/i.test(log)) return `Could not ${verb} ${what}: it is off the page. Scroll to it, then try again.`;
+  if (/detached from the DOM|not attached/i.test(log)) return `Could not ${verb} ${what}: the page changed under it. Look again for fresh numbers.`;
+  if (/Timeout \d+ms exceeded/i.test(log)) return `Could not ${verb} ${what}: the page did not let it happen within 10 seconds. Look at the page before trying again.`;
+  return firstLine(err);
+}
+
 /** One action, as the assistant asked for it. */
 async function perform(input) {
   const a = String(input.action || 'look');
@@ -511,21 +536,28 @@ async function perform(input) {
       const target = await locatorFor(input);
       if (!target) throw new Error('Say what to click: a ref number from the last look, or its text.');
       await target.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
-      await target.click({ timeout: 10_000 });
+      await target.click({ timeout: 10_000 }).catch((err) => {
+        throw new Error(actionProblem(err, 'click', input.ref));
+      });
       break;
     }
     case 'type': {
       const value = String(input.value ?? '');
       const target = await locatorFor(input);
-      if (target) await target.fill(value, { timeout: 10_000 });
-      else await page.keyboard.type(value, { delay: 15 });
+      if (target) {
+        await target.fill(value, { timeout: 10_000 }).catch((err) => {
+          throw new Error(actionProblem(err, 'type into', input.ref));
+        });
+      } else await page.keyboard.type(value, { delay: 15 });
       if (input.submit) await page.keyboard.press('Enter');
       break;
     }
     case 'select': {
       const target = await locatorFor(input);
       if (!target) throw new Error('Say which list: a ref number from the last look.');
-      await target.selectOption(String(input.value ?? ''), { timeout: 10_000 });
+      await target.selectOption(String(input.value ?? ''), { timeout: 10_000 }).catch((err) => {
+        throw new Error(actionProblem(err, 'choose in', input.ref));
+      });
       break;
     }
     case 'press':

@@ -211,12 +211,12 @@ already have open, or click through, whichever suits. On a phone the code is usu
 
 ### Two-factor authentication
 
-**Settings → Account → Two-factor** shows a QR code for any authenticator app (Google Authenticator,
-1Password, Aegis, …), plus the key in text for when there is no camera to hand. Nothing is switched on
-until you type a code back, so a half-finished setup cannot lock you out.
-
-Enabling it hands over ten **recovery codes**, shown once and stored only as digests. Each works once,
-in place of the app, for when the phone is lost. Turning 2FA off needs the password *and* a live code.
+**No longer offered in Settings (2026-11-01).** The owner judged it more than this app needs, so there
+is no way to turn it on from the interface. The server side stays: an account that turned it on
+before still signs in with its code (or one of its ten single-use **recovery codes**, stored only as
+digests), and for that account alone Settings → Account shows a row to turn it off — which needs the
+password *and* a live code. The setup routes (`/api/account/2fa/setup`, `/confirm`) still answer;
+nothing in the app calls them.
 
 The implementation is plain TOTP (RFC 6238) using Node's own crypto — no dependency, and the test
 suite checks it against the RFC's published vectors, because an authenticator that disagrees with the
@@ -1453,6 +1453,27 @@ Customize has **Yours** (a list, with a ⋯ menu per row) and **Discover** (the 
 services not yet connected, the plugins switched off — no catalogue, no install counts). Old section
 names (`languages`, `behaviour`, `mcp`) still open where their settings went (`public/js/app.js`
 `SETTINGS_MOVED`, `public/js/customize.js`).
+
+### Questions with previews
+
+When the assistant asks the person to choose (`ask_options`), an option may be
+`{ label, description?, preview? }`. A preview — a layout sketch, a snippet, a sample, kept with its
+lines — is shown in a pane beside the list while that option is pointed at or moved to with the arrow
+keys, as in Claude Code; an option without one says so. A question with no previews is drawn as it
+always was. One-of-these questions only (`public/js/question.js`, `server/tools/askOptions.js`). A
+plain string is still an option's label.
+
+### The cloud browser panel
+
+- **Expand** goes to the browser's own full screen where it is allowed, the picture filling it; clicks
+  are placed by the picture as drawn, so they land where pointed.
+- **Control** (the hand) is there only while the browser is running. Resting, the panel says so over the
+  last step's picture, and the button waits.
+- **A click that cannot happen says why.** Something on top of the element — a cookie or consent box —
+  is named in the error the model reads, rather than reported as a slow site.
+- **A helper stopped as it starts** (the machine's session about to end, or a second start of the same
+  service) is retried once, and a start that did come up elsewhere is used; the error names the exit
+  code. Before starting, the machine's session is extended.
 
 ### Usage, devices, feedback, changelog
 

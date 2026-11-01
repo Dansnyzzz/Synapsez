@@ -622,4 +622,10 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   return { content: report.join('\n'), ...(shown ? { file: shown } : {}) };
 }
 
-export const __testing = { SNAPSHOT_DAYS };
+export const __testing = {
+  SNAPSHOT_DAYS,
+  /** A stand-in for @vercel/sandbox, so the suites can drive a start without a machine. */
+  useSdk(fake) {
+    sdk = fake;
+  },
+};

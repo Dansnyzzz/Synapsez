@@ -803,36 +803,6 @@ textarea {
   border-top: 1px solid var(--line-soft);
 }
 
-/* ── Two-factor enrolment ────────────────────────────────────── */
-
-.qr {
-  display: grid;
-  place-items: center;
-  width: 188px;
-  height: 188px;
-  margin: 12px 0;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #0d1216;
-}
-.qr svg { width: 100%; height: 100%; }
-
-.codes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 6px;
-  margin: 10px 0 12px;
-  padding: 14px;
-  border: 1px solid var(--accent-dim);
-  border-radius: 12px;
-  background: #0d1216;
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--accent);
-  user-select: all;
-}
-
 .meter {
   height: 7px;
   margin: 8px 0 6px;
@@ -847,20 +817,6 @@ textarea {
 }
 .meter__fill.is-high { background: var(--warn); }
 .meter__fill.is-full { background: var(--danger); }
-
-/* One-time secrets: shown once, monospace, easy to select. */
-.secret {
-  margin: 4px 0 12px;
-  padding: 12px;
-  border: 1px solid var(--accent-dim);
-  border-radius: var(--radius-sm);
-  background: #0d1216;
-  color: var(--accent);
-  font-family: var(--mono);
-  font-size: 12.5px;
-  word-break: break-all;
-  user-select: all;
-}
 
 .rows { display: grid; gap: 6px; margin-bottom: 14px; }
 .rows__item {
@@ -1879,13 +1835,25 @@ textarea {
      taller than the window pushes the whole panel off the bottom. */
   min-height: 0;
 }
-/* Fit the picture inside whatever is left, never crop it and never overflow. */
+/* The picture fills whatever is left — grown as well as shrunk — never cropped
+   and never overflowing. `width/height: auto` showed it at the size it arrived,
+   so a frame made for the rail stayed rail-sized in the middle of the window
+   (owner, 2026-10-31). Clicks are placed by the drawn picture (drawnBox). */
 .screen.is-expanded .screen__frame img {
-  width: auto;
-  height: auto;
-  max-width: 100%;
-  max-height: 100%;
+  /* Placed over the frame rather than sized in it: the frame is a centring
+     grid, whose auto row gives `height: 100%` nothing to be a percentage of —
+     the picture took its height from its width and ran off the bottom. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
 }
+.screen:fullscreen { width: 100vw; height: 100vh; }
+.screen__drive:disabled,
+#screen-drive:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /**
  * The header, and no line under it.
@@ -2827,14 +2795,20 @@ details.block.tool--error > summary > .mark,
    pointer's way (owner, 2026-10-26). */
 .tool__call { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .tool__call:empty { display: none; }
-/* The call is the quieter half: what it was asked, fainter than what it answered.
+/* The call is the quieter half: what it was asked, fainter than what it answered
+   — and framed, so the command and what came back are two things at a glance,
+   not one run of monospace (owner, 2026-10-31). The answer stays unboxed.
    Two classes deep on purpose: `details.block pre` and `.step__out pre` both set
    a size, and this has to outrank them without reaching for `!important`. */
 .block .tool__args,
 .step__out .tool__args {
-  margin: 0;
+  margin: 0 0 2px;
+  padding: 9px 12px;
   max-height: 260px;
   overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
   color: var(--text-faint);
   font-size: 11.5px;
 }
@@ -3785,6 +3759,24 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
   display: flex;
   gap: 8px;
   align-items: center;
+}
+/* With previews, Claude Code's two panes: the choices on the left, what the
+   one in hand looks like on the right (owner, 2026-11-01). Wider, so a layout
+   sketch has room; the panes stack on a narrow screen. */
+.question--preview { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); column-gap: 16px; max-width: 1040px; }
+.question--preview > .question__head,
+.question--preview > .question__foot { grid-column: 1 / -1; }
+.question--preview > .question__options { grid-column: 1; }
+.question__preview { grid-column: 2; min-width: 0; max-height: min(56vh, 520px); overflow: auto; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--bg) 70%, transparent); }
+.question__preview[hidden] { display: none; }
+.question__preview-head { margin: 0 0 10px; color: var(--text-dim); font-size: 13px; }
+.question__preview-body { margin: 0; color: var(--text); font-family: var(--mono); font-size: 13px; line-height: 1.6; white-space: pre; overflow-x: auto; }
+.question__preview-none { margin: 0; color: var(--text-faint); font-family: var(--mono); font-size: 13px; font-style: italic; }
+@media (max-width: 760px) {
+  .question--preview { grid-template-columns: minmax(0, 1fr); }
+  .question--preview > .question__options,
+  .question__preview { grid-column: 1; }
+  .question__preview { max-height: 34vh; }
 }
 .question__keys { flex: 1; color: var(--text-faint); font-size: 12.5px; }
 .question__keys[hidden] { display: none; }
@@ -10244,7 +10236,42 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .settings__search svg { position: absolute; left: 11px; color: var(--text-dim); pointer-events: none; }
 .settings__search input { width: 100%; padding: 8px 10px 8px 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--text); font: inherit; font-size: 14px; }
 .settings__search input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.sheet__tabs.settings__tabs { flex-direction: column; flex: 1; min-height: 0; gap: 2px; padding: 0 6px 8px 0; border-bottom: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; mask-image: none; -webkit-mask-image: none; }
+/* No `scrollbar-width` here: it makes Chromium draw Windows' own bar — a grey
+   track and stepper arrows — in place of the app's floating pill (owner,
+   2026-10-31, see the scrollbar notes above). */
+.sheet__tabs.settings__tabs { flex-direction: column; flex: 1; min-height: 0; gap: 2px; padding: 0 6px 8px 0; border-bottom: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: auto; mask-image: none; -webkit-mask-image: none; }
+/* Both of the sheet's scrolling parts float their thumb over nothing: no track. */
+#settings .settings__tabs::-webkit-scrollbar-track,
+#settings .settings__body::-webkit-scrollbar-track,
+#settings .settings__tabs::-webkit-scrollbar-corner,
+#settings .settings__body::-webkit-scrollbar-corner { background: transparent; }
+#settings .settings__tabs::-webkit-scrollbar,
+#settings .settings__body::-webkit-scrollbar { width: 10px; background: transparent; }
+
+/* A box to write in, as Claude's: darker than the sheet, its own scrollbar, a
+   blue edge while it is being written in. The browser's own dark default was
+   a flat light-grey slab (owner, 2026-10-31). */
+#settings .sarea {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  max-height: 440px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.6;
+  resize: vertical;
+  overflow-y: auto;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+#settings .sarea--short { min-height: 88px; }
+#settings .sarea::placeholder { color: var(--text-faint); }
+#settings .sarea:hover { border-color: color-mix(in srgb, var(--text) 20%, var(--line)); }
+#settings .sarea:focus { border-color: #4c8df6; box-shadow: 0 0 0 1px #4c8df6; outline: none; }
 .settings__group { margin: 16px 10px 6px; color: var(--text-faint); font-size: 12.5px; }
 .settings__group:first-child { margin-top: 4px; }
 .settings__tabs .tab { display: flex; flex: none; align-items: center; gap: 12px; width: 100%; padding: 8px 12px; border: 0; border-radius: 9px; color: var(--text); font-size: 14.5px; text-align: left; }

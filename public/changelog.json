@@ -1,6 +1,40 @@
 {
   "entries": [
     {
+      "version": "1.1.1",
+      "date": "2026-11-01",
+      "new": {
+        "vi": ["Khi trợ lý hỏi bạn chọn một trong vài hướng, lựa chọn nào có bản xem trước (một bố cục, một đoạn mẫu) sẽ hiện bản đó bên cạnh danh sách khi bạn rê chuột hoặc dùng phím mũi tên tới nó."],
+        "en": ["When the assistant asks you to choose a direction, an option with a preview (a layout, a sample) shows it beside the list while you point at it or move to it with the arrow keys."]
+      },
+      "improved": {
+        "vi": [
+          "Phần lệnh của mỗi công cụ có khung riêng, tách rõ khỏi kết quả bên dưới.",
+          "Ô Hướng dẫn tuỳ chỉnh có nền tối, thanh cuộn riêng và viền xanh khi đang gõ; thanh cuộn trong Cài đặt không còn nền xám.",
+          "Xác thực 2 lớp không còn trong Cài đặt."
+        ],
+        "en": [
+          "Each tool's command has a frame of its own, apart from what came back below it.",
+          "The custom instructions box is dark, scrolls on its own and is edged in blue while you write; the scrollbars in Settings have no grey track.",
+          "Two-factor authentication is no longer offered in Settings."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Trình duyệt đám mây: nhấp vào một mục bị hộp cookie hay hộp đồng ý che giờ báo đúng lý do, thay vì báo trang phản hồi chậm.",
+          "Trình duyệt đám mây: helper bị dừng lúc vừa khởi động (do phiên máy sắp hết hạn hoặc một lần khởi động khác) được thử lại và dùng lần khởi động đang chạy; báo lỗi kèm mã thoát.",
+          "Phóng to màn hình trình duyệt giờ vào toàn màn hình và ảnh phủ kín, nhấp vẫn trúng chỗ.",
+          "Khi trình duyệt đám mây đang nghỉ, khung không còn ghi “Đang khởi động…” mãi, và nút điều khiển chờ cho tới khi có gì để điều khiển."
+        ],
+        "en": [
+          "Cloud browser: a click on something under a cookie or consent box now says what is in the way, instead of calling the site slow.",
+          "Cloud browser: a helper stopped as it started (a machine session about to end, or a second start) is tried again, and a start that did come up is used; the error carries the exit code.",
+          "Expanding the browser panel now goes full screen with the picture filling it, and clicks still land where you point.",
+          "While the cloud browser rests, the panel no longer says “Starting…” for good, and the control button waits until there is something to control."
+        ]
+      }
+    },
+    {
       "version": "1.1.0",
       "date": "2026-10-31",
       "new": {

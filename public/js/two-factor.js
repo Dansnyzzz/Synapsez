@@ -25,9 +25,15 @@ const val = (id) => /** @type {HTMLInputElement} */ ($(id)).value;
  * @param {() => void} deps.fillSettings  redraw the sheet once the account changes
  */
 export function createTwoFactor({ state, fillSettings }) {
+  /**
+   * Two-factor is no longer offered (owner, 2026-11-01): there is no way to
+   * set it up from here. An account that turned it on before still signs in
+   * with its code, so for that account alone the row is shown — to turn it off.
+   */
   function renderTwoFactor() {
     const me = state.boot.user;
     const card = $('twofa-card');
+    $('twofa-row').hidden = !me.twoFactor;
 
     if (me.twoFactor) {
       card.innerHTML = `
@@ -57,65 +63,7 @@ export function createTwoFactor({ state, fillSettings }) {
       });
       return;
     }
-
-    card.innerHTML = `
-    <div class="provider">
-      <div class="provider__head">
-        <span class="provider__name">${escapeHtml(t('twofa.notEnabled'))}</span>
-        <span class="badge">${escapeHtml(t('twofa.off'))}</span>
-      </div>
-      <div class="hint">${escapeHtml(t('twofa.why'))}</div>
-      <button class="btn btn--primary" id="twofa-start" type="button">${escapeHtml(t('twofa.setUp'))}</button>
-    </div>`;
-
-    $('twofa-start').addEventListener('click', async () => {
-      try {
-        const { secret, uri, qr } = await api.startTwoFactor();
-        // Nothing is switched on until a code proves the app was set up, so a
-        // half-finished enrolment cannot lock anyone out.
-        card.innerHTML = `
-        <div class="provider">
-          <div class="provider__name">${escapeHtml(t('twofa.scanThis'))}</div>
-          <div class="qr">${qr}</div>
-          <div class="hint">
-            ${escapeHtml(t('twofa.cannotScan'))}<br />
-            <span class="secret" style="display:inline-block;margin-top:6px">${escapeHtml(secret)}</span><br />
-            ${t('twofa.onAPhone', { link: `<a href="${escapeHtml(uri)}">${escapeHtml(t('twofa.tapHere'))}</a>` })}
-          </div>
-          <div class="provider__row">
-            <input type="text" id="twofa-verify" placeholder="${escapeHtml(t('account.enterCode'))}" aria-label="${escapeHtml(t('account.enterCode'))}" inputmode="numeric" autocomplete="one-time-code" />
-            <button class="btn btn--primary" id="twofa-confirm" type="button">${escapeHtml(t('twofa.confirm'))}</button>
-          </div>
-        </div>`;
-
-        $('twofa-confirm').addEventListener('click', async () => {
-          try {
-            const { recoveryCodes } = await api.confirmTwoFactor(val('twofa-verify').trim());
-            // Shown once — the server keeps only digests.
-            card.innerHTML = `
-            <div class="provider">
-              <div class="provider__head">
-                <span class="provider__name">${escapeHtml(t('twofa.isOn'))}</span>
-                <span class="badge badge--ok">${escapeHtml(t('twofa.enabledBadge'))}</span>
-              </div>
-              <div class="hint">
-                <strong>${escapeHtml(t('twofa.saveCodes'))}</strong> ${escapeHtml(t('twofa.saveCodesWhy'))}
-              </div>
-              <div class="codes">${recoveryCodes.map((c) => escapeHtml(c)).join('')}</div>
-              <button class="btn btn--ghost" id="twofa-done" type="button">${escapeHtml(t('twofa.saved'))}</button>
-            </div>`;
-            $('twofa-done').addEventListener('click', async () => {
-              state.boot = await api.bootstrap();
-              fillSettings();
-            });
-          } catch (err) {
-            toast(err.message, 'error');
-          }
-        });
-      } catch (err) {
-        toast(err.message, 'error');
-      }
-    });
+    card.replaceChildren();
   }
 
   $('save-password').addEventListener('click', async () => {

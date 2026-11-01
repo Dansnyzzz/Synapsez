@@ -585,6 +585,9 @@
               <button class="icon-btn icon-btn--tiny" id="question-dismiss" type="button" data-i18n-aria-label="question.dismissAria" aria-label="Skip all of these">✕</button>
             </div>
             <div class="question__options" id="question-options" role="group"></div>
+            <!-- What the option in hand looks like, beside the list — only when the
+                 assistant gave its options a preview (question.js showPreview). -->
+            <div class="question__preview" id="question-preview" aria-live="polite" hidden></div>
             <!-- The last row of a question: an answer the list did not think of,
                  typed in place. Moved into the list by question.js; the send
                  arrow appears once there is something to send. -->
@@ -1456,7 +1459,7 @@
                 <label class="srow__label" for="system-prompt" data-i18n="behaviour.instructions">Custom instructions</label>
                 <p class="srow__desc" data-i18n="settings.instructionsHint">The assistant keeps these in mind in every conversation. Saved when you leave the box.</p>
               </div>
-              <textarea id="system-prompt" rows="6" placeholder="How should the assistant work with you?" data-i18n-placeholder="behaviour.instructionsPlaceholder"></textarea>
+              <textarea id="system-prompt" class="sarea" rows="8" placeholder="How should the assistant work with you?" data-i18n-placeholder="behaviour.instructionsPlaceholder"></textarea>
             </div>
             <p class="settings__status" id="behaviour-status" role="status" aria-live="polite"></p>
 
@@ -1486,7 +1489,11 @@
                 <button class="btn btn--small" id="save-password" type="button" data-i18n="account.updatePassword">Update password</button>
               </div>
             </div>
-            <div class="srow srow--stack">
+            <!-- Two-factor is no longer offered (owner, 2026-11-01). An account that
+                 turned it on before still signs in with its code, so it alone is
+                 shown this row — to turn it off; nobody is left with a setting
+                 they cannot see. two-factor.js. -->
+            <div class="srow srow--stack" id="twofa-row" hidden>
               <div class="srow__text"><span class="srow__label" data-i18n="account.twofa">Two-factor authentication</span></div>
               <div id="twofa-card"></div>
             </div>
@@ -1734,7 +1741,7 @@
               </div>
               <div class="srow__fields" id="memory-import-box" hidden>
                 <label for="memory-import-text" class="sr-only" data-i18n="memory.importLabel">Memory to import</label>
-                <textarea id="memory-import-text" rows="4"></textarea>
+                <textarea id="memory-import-text" class="sarea" rows="4"></textarea>
                 <button class="btn btn--small" id="memory-import" type="button" data-i18n="memory.import">Import</button>
               </div>
             </div>
@@ -1839,7 +1846,7 @@
                   to the browser.
                 </p>
               </div>
-              <textarea id="mcp-headers" rows="3" placeholder="Authorization: Bearer …"></textarea>
+              <textarea id="mcp-headers" class="sarea sarea--short" rows="3" placeholder="Authorization: Bearer …"></textarea>
             </div>
             <div class="settings__actions">
               <button class="btn btn--primary btn--small" id="mcp-add" type="button" data-i18n="mcp.add">Connect</button>

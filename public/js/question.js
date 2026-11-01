@@ -84,7 +84,8 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
   function hideQuestion() {
     asking = null;
     qEl('question').hidden = true;
-    qEl('question').classList.remove('question--form');
+    qEl('question').classList.remove('question--form', 'question--preview');
+    previewPane.hidden = true;
     qOther().value = '';
     sendButton.hidden = true;
   }
@@ -101,6 +102,35 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
     const last = asking.at === asking.questions.length - 1;
     return answeredHere() ? (last ? t('question.done') : t('question.next')) : t('question.skip');
   };
+
+  /**
+   * The pane beside the list, after Claude Code's: what the option in hand
+   * looks like — a layout, a snippet — shown while it is pointed at or moved
+   * to, before anything is chosen. Only for a one-of-these question where at
+   * least one option has a preview; the rest are drawn as they always were.
+   * Text, never markup: the model wrote it.
+   */
+  const previewPane = /** @type {HTMLElement} */ (document.getElementById('question-preview'));
+  const hasPreviews = (q) => !q.multiple && q.options.some((/** @type {any} */ o) => o.preview);
+  function showPreview(q, index) {
+    const option = q.options[index] || q.options[0];
+    previewPane.replaceChildren();
+    const head = document.createElement('p');
+    head.className = 'question__preview-head';
+    head.textContent = option.label;
+    previewPane.append(head);
+    if (option.preview) {
+      const body = document.createElement('pre');
+      body.className = 'question__preview-body';
+      body.textContent = option.preview;
+      previewPane.append(body);
+    } else {
+      const none = document.createElement('p');
+      none.className = 'question__preview-none';
+      none.textContent = t('question.noPreview');
+      previewPane.append(none);
+    }
+  }
 
   /** One option row: a number (or a tick box when several may be chosen), and the words. */
   function optionRow(q, slot, option, index, onPick) {
@@ -126,6 +156,17 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
     }
     button.append(mark, label);
     button.addEventListener('click', () => onPick(option, chosen));
+    // What it looks like follows the pointer and the keyboard, before it is chosen.
+    if (hasPreviews(q) && !asking?.form) {
+      const look = () => {
+        if (!asking) return;
+        asking.focus = index;
+        paintFocus();
+        showPreview(q, index);
+      };
+      button.addEventListener('pointerenter', look);
+      button.addEventListener('focus', look);
+    }
     return button;
   }
 
@@ -187,6 +228,11 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
 
     asking.focus = Math.min(asking.focus, q.options.length - 1);
     paintFocus();
+    // The pane beside the list, only for a question with something to show in it.
+    const previews = hasPreviews(q);
+    qEl('question').classList.toggle('question--preview', previews);
+    previewPane.hidden = !previews;
+    if (previews) showPreview(q, Math.max(0, asking.focus));
     qBtn('question-go').textContent = goLabel();
   }
 
@@ -198,6 +244,8 @@ export function createQuestionCard({ onAnswer, scrollToEnd }) {
     qEl('question-nav').hidden = true;
     qEl('question-keys').hidden = true;
     otherRow.hidden = true;
+    qEl('question').classList.remove('question--preview');
+    previewPane.hidden = true;
 
     const host = qEl('question-options');
     // Out of the list before it is cleared, so the row survives the repaint.

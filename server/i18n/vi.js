@@ -133,6 +133,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   "The cloud computer's helper started but did not answer. Try once more.":
     'Trình trợ giúp trên máy tính đám mây đã khởi động nhưng không phản hồi. Hãy thử lại một lần nữa.',
   "The cloud computer's helper stopped as it started.{0}": 'Trình trợ giúp trên máy tính đám mây dừng ngay khi vừa khởi động.{0}',
+  "The cloud computer's helper stopped as it started (exit code {0}).{1}":
+    'Trình trợ giúp trên máy tính đám mây dừng ngay khi vừa khởi động (mã thoát {0}).{1}',
+  "The cloud computer's helper was stopped from outside as it started (exit code {0}).{1}":
+    'Trình trợ giúp trên máy tính đám mây bị dừng từ bên ngoài ngay khi vừa khởi động (mã thoát {0}).{1}',
   '{0}\nThe page is now: {1} {2}. Look again before the next step.':
     '{0}\nTrang hiện tại: {1} {2}. Hãy xem lại trang trước bước tiếp theo.',
   'That is not something the screen can do.': 'Màn hình không làm được thao tác đó.',

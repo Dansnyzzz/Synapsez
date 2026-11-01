@@ -26,18 +26,46 @@ const MAX_QUESTION = 300;
 
 const text = (value, cap) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, cap);
 
+/** The most a preview may hold: a layout or a snippet, not a document. */
+const MAX_PREVIEW = 2000;
+const MAX_PREVIEW_LINES = 40;
+
+/**
+ * A preview, its lines kept — it is a layout, a snippet or a short table, and
+ * collapsing its spaces would lose the very thing it shows. Control characters
+ * go (a terminal escape has no business on a card); tabs become two spaces.
+ */
+export function previewText(value) {
+  const lines = String(value ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\t/g, '  ')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '')
+    .split('\n')
+    .map((line) => line.replace(/\s+$/, ''));
+  while (lines.length && !lines[0].trim()) lines.shift();
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  return lines.slice(0, MAX_PREVIEW_LINES).join('\n').slice(0, MAX_PREVIEW);
+}
+
 /**
  * One option, however the model wrote it.
  *
  * A bare string and `{ label, description }` are both natural things for a
  * model to produce, and refusing one of them would mean the tool fails on
  * output that was perfectly clear about what it meant.
+ *
+ * `preview`, when an option has one, is shown beside the list while that
+ * option is pointed at — a layout, a snippet, two versions of a sentence —
+ * so the choice is made looking at what it means (owner, 2026-11-01). Only
+ * the options that have one carry it; most questions have none.
  */
 function option(raw) {
   if (typeof raw === 'string') return { label: text(raw, MAX_LABEL) };
   const label = text(raw?.label ?? raw?.text ?? raw?.value, MAX_LABEL);
   const description = text(raw?.description ?? raw?.detail ?? '', MAX_LABEL * 2);
-  return description ? { label, description } : { label };
+  const preview = previewText(raw?.preview);
+  return { label, ...(description ? { description } : {}), ...(preview ? { preview } : {}) };
 }
 
 /**
@@ -242,4 +270,4 @@ function previewOf(raw) {
   };
 }
 
-export const __testing = { MAX_QUESTIONS, MIN_OPTIONS, MAX_OPTIONS };
+export const __testing = { MAX_QUESTIONS, MIN_OPTIONS, MAX_OPTIONS, MAX_PREVIEW, MAX_PREVIEW_LINES };

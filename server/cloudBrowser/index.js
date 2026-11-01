@@ -299,9 +299,13 @@ async function startAs(machine, userId, url, mode, { signal, firstTime }) {
   });
   // A start that dies says so at once, rather than after the whole wait.
   let exited = false;
+  let exitCode = null;
   Promise.resolve(command?.wait?.({ signal }))
     .then((done) => {
-      if (done) exited = true;
+      if (done) {
+        exited = true;
+        exitCode = typeof done.exitCode === 'number' ? done.exitCode : null;
+      }
     })
     .catch(() => {});
 
@@ -316,6 +320,18 @@ async function startAs(machine, userId, url, mode, { signal, firstTime }) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 
+  /*
+   * Gone — but perhaps not down. Another start of this account's service (a
+   * second instance of this server, a retried turn) writes the same pid file
+   * and stops this one on its way up: its own log then reads "helper service
+   * on 3000" while this command has ended (owner, 2026-10-31). Whichever start
+   * saved its connection last is the one running; if it answers, it is used.
+   */
+  if (exited) {
+    const other = await readConnection(userId).catch(() => null);
+    if (other && other.key !== conn.key && other.build === conn.build && (await call(other, '/health', undefined, { timeout: PEEK_MS, signal }))) return other;
+  }
+
   let log = '';
   try {
     const folder = mode === 'root' ? ROOT_DIR : DIR;
@@ -325,13 +341,21 @@ async function startAs(machine, userId, url, mode, { signal, firstTime }) {
   } catch {
     /* the log is a help, not a requirement */
   }
+  // 137 and 143 are a process stopped from outside — a kill, or the machine's session ending.
+  // Whole sentences, so each has its own entry in server/i18n; only the log after them stays as written.
+  const stoppedFromOutside = exitCode === 137 || exitCode === 143;
+  const tail = log ? `\nIts log ends:\n${log}` : '';
   throw Object.assign(
     new Error(
-      exited
-        ? `The cloud computer's helper stopped as it started.${log ? `\nIts log ends:\n${log}` : ''}`
-        : `The cloud browser did not come up in time.${log ? `\nIts log ends:\n${log}` : ''}`,
+      !exited
+        ? `The cloud browser did not come up in time.${tail}`
+        : exitCode == null
+          ? `The cloud computer's helper stopped as it started.${tail}`
+          : stoppedFromOutside
+            ? `The cloud computer's helper was stopped from outside as it started (exit code ${exitCode}).${tail}`
+            : `The cloud computer's helper stopped as it started (exit code ${exitCode}).${tail}`,
     ),
-    { exited },
+    { exited, exitCode },
   );
 }
 
@@ -349,15 +373,35 @@ async function startAs(machine, userId, url, mode, { signal, firstTime }) {
  */
 async function start(userId, { signal } = {}) {
   const machine = await machineForUser(userId, { signal });
+  /*
+   * Room to start in. A machine resumed with seconds left of its session
+   * stops — and everything on it with it — just after the service comes up,
+   * which reads exactly like a helper that died as it started.
+   */
+  const roomy = async (m) => Promise.resolve(m.extendTimeout?.(EXTEND_BY_MS, { signal })).catch(() => {});
+  await roomy(machine);
   const url = (await browserAddress(machine, { signal })).replace(/\/$/, '');
   const before = await readConnection(userId).catch(() => null);
   const firstTime = before?.build !== service().build;
-  if (!firstTime && before?.mode === 'user') return startAs(machine, userId, url, 'user', { signal, firstTime });
+  const asAccount = async (first) => {
+    try {
+      return await startAs(machine, userId, url, 'user', { signal, firstTime: first });
+    } catch (err) {
+      // Stopped from outside once — a session ending, a second start — is tried again once,
+      // on the machine as it is now (a session that ended is a new one, at its own address).
+      if (signal?.aborted || !err?.exited) throw err;
+      const again = await machineForUser(userId, { signal });
+      await roomy(again);
+      const there = (await browserAddress(again, { signal })).replace(/\/$/, '');
+      return startAs(again, userId, there, 'user', { signal, firstTime: false });
+    }
+  };
+  if (!firstTime && before?.mode === 'user') return asAccount(false);
   try {
     return await startAs(machine, userId, url, 'root', { signal, firstTime });
   } catch (err) {
     if (signal?.aborted || !err?.exited) throw err;
-    return startAs(machine, userId, url, 'user', { signal, firstTime: true });
+    return asAccount(true);
   }
 }
 

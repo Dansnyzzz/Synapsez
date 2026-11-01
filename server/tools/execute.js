@@ -606,8 +606,17 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
 export function timedOutSentence(err, signal) {
   if (signal?.aborted) return '';
   const name = String(err?.name || '');
-  const message = String(err?.message || err || '');
-  const cut = name === 'AbortError' || name === 'TimeoutError' || /^(the operation was )?aborted|timed? ?out|ETIMEDOUT|socket hang up/i.test(message);
+  const message = String(err?.message || err || '').trim();
+  /*
+   * Only a bare cut-off — the whole message is "aborted", "timed out" or a
+   * socket error. It matched "timeout" anywhere, so a tool's own explanation
+   * that happened to contain the word ("locator.click: Timeout 10000ms
+   * exceeded … intercepts pointer events") was replaced by "the site did not
+   * answer in time", and the model never learnt that a pop-up was in the way
+   * (owner, 2026-10-31).
+   */
+  const bare = /^(?:the operation was )?aborted(?: due to timeout)?\.?$|^(?:request |connection )?timed? ?out\.?$|^(?:connect )?ETIMEDOUT\b|^socket hang up$/i;
+  const cut = name === 'AbortError' || name === 'TimeoutError' || bare.test(message);
   if (!cut) return '';
   return (
     'it took too long and was stopped — the site or service did not answer in time, or the file was too large. ' +
