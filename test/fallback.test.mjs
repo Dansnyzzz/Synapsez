@@ -430,6 +430,12 @@ section('the rotation reacts to what actually came out');
       /rate limited until/i.test(run.error?.message || ''),
       run.error?.message,
     );
+    // UX-023: as an instant the browser shows in the person's own time, not the server's clock face (UTC on Vercel).
+    check(
+      '  as an ISO instant, with a code the browser acts on (UX-023, UX-024)',
+      run.error?.message?.includes(new Date(reset).toISOString()) && run.error?.code === 'rate_limited',
+      `${run.error?.message} ${run.error?.code}`,
+    );
   }
 
   /**

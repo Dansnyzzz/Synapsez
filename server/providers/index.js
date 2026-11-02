@@ -449,10 +449,16 @@ async function* streamAny(opts) {
         liftKeyRest(userId, provider, until);
         continue;
       }
-      throw new Error(
-        until
-          ? `${label}: every key is rate limited until ${new Date(until).toLocaleTimeString()}.`
-          : `${label}: every key was refused${refused ? ` (${refused})` : ''}.`,
+      // The moment as an ISO instant, not the server's clock face: Vercel's is
+      // UTC, so "12:00:00 AM" sat beside "resets at 7:00" for the same moment.
+      // The browser shows any such instant in the person's own time (UX-023).
+      throw Object.assign(
+        new Error(
+          until
+            ? `${label}: every key is rate limited until ${new Date(until).toISOString()}.`
+            : `${label}: every key was refused${refused ? ` (${refused})` : ''}.`,
+        ),
+        until ? { code: 'rate_limited' } : {},
       );
     }
 

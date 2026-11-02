@@ -350,6 +350,7 @@ export const vi = {
   'queue.remove': 'Xoá tin nhắn đang chờ này',
   'composer.attach': 'Gắn ảnh hoặc tệp',
   'composer.send': 'Gửi',
+  'composer.blockedFree': 'Đã hết lượt model miễn phí hôm nay trên OpenRouter — có lại lúc {when}. Chọn model trả phí hoặc thêm key để gửi ngay.',
   'composer.queue': 'Xếp hàng đợi — sẽ vào ở bước kế tiếp',
   'composer.stop': 'Dừng',
   'composer.stopped': 'Đã dừng.',

@@ -37,6 +37,7 @@ export const en = {
   'composer.attach': 'Attach photos or files',
   'composer.send': 'Send',
   'composer.queue': 'Queue this — it goes in at the next step',
+  'composer.blockedFree': 'Today\'s free requests on OpenRouter are used up — they come back {when}. Pick a paid model or add a key to send now.',
   'composer.stop': 'Stop',
   'composer.stopped': 'Stopped.',
   // Shown in the tab that is watching rather than driving — see mirror.js.

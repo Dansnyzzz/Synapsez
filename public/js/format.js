@@ -1,4 +1,4 @@
-import { t } from './i18n.js';
+import { t, currentLanguage } from './i18n.js';
 import { readCron } from './schedule-grammar.js';
 
 /**
@@ -9,6 +9,29 @@ import { readCron } from './schedule-grammar.js';
  * drift, which is the cost that makes duplication worth removing rather than
  * the duplication itself.
  */
+
+/** A moment on the person's own clock and calendar: "7:00 Th 3, 3 thg 11" / "Tue, Nov 3, 7:00 AM". */
+export const localMoment = (date) =>
+  new Intl.DateTimeFormat(currentLanguage() === 'vi' ? 'vi-VN' : 'en-US', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+
+/**
+ * Every instant the server wrote into a message (ISO, UTC), on the person's own
+ * clock (UX-023). The server's clock face is UTC on Vercel: "rate limited until
+ * 12:00:00 AM" sat beside "resets at 7:00" for the same moment.
+ *
+ * @param {string} text
+ */
+export const localTimes = (text) =>
+  String(text ?? '').replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z\b/g, (iso) => {
+    const at = new Date(iso);
+    return Number.isNaN(at.getTime()) ? iso : localMoment(at);
+  });
 
 /**
  * Bytes as something a person reads.

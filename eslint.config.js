@@ -70,6 +70,7 @@ const BROWSER_GLOBALS = {
   TextDecoderStream: 'readonly',
   AbortController: 'readonly',
   ResizeObserver: 'readonly',
+  MutationObserver: 'readonly',
   Intl: 'readonly',
   atob: 'readonly',
   btoa: 'readonly',

@@ -602,7 +602,7 @@ section('Usage, devices, feedback and what is new — from the account menu');
   // Near a limit: the bar turns amber, the line at the top says so, and the
   // composer carries Claude's banner until it is closed.
   report.live.openrouter[0].freeToday = { used: 46, limit: 50, remaining: 4 };
-  await page.evaluate(() => { try { localStorage.removeItem('synapsez.usageAlert'); } catch { /* none to clear */ } });
+  await page.evaluate(() => { try { for (const k of Object.keys(localStorage)) if (k.startsWith('synapsez.usageAlert')) localStorage.removeItem(k); } catch { /* none to clear */ } });
   await page.click('#usage-panel [data-refresh]');
   await page.waitForTimeout(500);
   const near = await page.evaluate(() => ({
@@ -615,10 +615,30 @@ section('Usage, devices, feedback and what is new — from the account menu');
   check('  and the composer warns, with when it resets and the way to Usage', near.banner && /92%/.test(near.said) && /resets|đặt lại/.test(near.said), near.said);
   await page.evaluate(() => document.getElementById('settings').close());
   await page.click('#usage-alert [data-alert-close]');
-  check('  closed, it stays closed until the next step up', await page.isHidden('#usage-alert'));
+  check('  closed, it stays closed', await page.isHidden('#usage-alert'));
+  check('  remembered for this account only, not the whole browser (PRV-019)', await page.evaluate(() => Object.keys(localStorage).some((k) => /^synapsez\.usageAlert:.+/.test(k)) && localStorage.getItem('synapsez.usageAlert') === null));
   await page.evaluate(() => document.getElementById('settings').showModal());
   await page.click('#tab-usage');
   await page.waitForTimeout(300);
+  // UX-021 (owner, 2026-11-02): it came back at the next send. Closed, it stays closed for that period — at the limit too.
+  report.live.openrouter[0].freeToday = { used: 50, limit: 50, remaining: 0 };
+  await page.click('#usage-panel [data-refresh]');
+  await page.waitForTimeout(500);
+  check('  for the rest of that period, even once the limit is reached (UX-021)', await page.isHidden('#usage-alert'));
+  // UX-024: every key out of today's free requests — a free model cannot be sent to, and says until when.
+  const held = await page.evaluate(async () => {
+    const { createUsageAlert } = await import('/js/usage-alert.js');
+    const host = document.createElement('div');
+    let told = null;
+    const alert = createUsageAlert(host, { load: async () => ({}), providers: () => ({}), openUsage() {}, openKeys() {}, user: () => 'u-x', changed: (until) => (told = until) });
+    const day = (used) => ({ live: { openrouter: [{ ok: true, index: 0, freeToday: { used, limit: 50 } }, { ok: true, index: 1, freeToday: { used: 50, limit: 50 } }] } });
+    alert.show(day(10));
+    const oneLeft = alert.freeBlockedUntil();
+    alert.show(day(50));
+    return { oneLeft, both: !!alert.freeBlockedUntil(), told: !!told };
+  });
+  check('  a key with requests left still sends; every key out holds a free model back, until the reset (UX-024)', held.oneLeft === null && held.both && held.told, JSON.stringify(held));
+  report.live.openrouter[0].freeToday = { used: 46, limit: 50, remaining: 4 };
   await page.unroute('**/api/usage/report');
 
   // Another browser signs in; this one sees it, and signs it out.

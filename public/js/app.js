@@ -28,7 +28,7 @@ import { createPages } from './pages.js';
 import { createProjectPage } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
-import { humanSize } from './format.js';
+import { humanSize, localMoment, localTimes } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
 import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
@@ -3092,6 +3092,12 @@ $('composer').addEventListener('submit', async (event) => {
   // failed — must not be silently dropped from a message that claims to have it.
   const ready = staged.filter((f) => f.id);
   if (!text && !ready.length) return;
+  // Every key out of today's free requests, on a free model: it would only fail (UX-024).
+  const blocked = sendBlockedUntil();
+  if (blocked) {
+    toast(t('composer.blockedFree', { when: localMoment(blocked) }));
+    return;
+  }
   state.lastAsked = text.slice(0, 140);
   state.liveTurn = (state.liveTurn || 0) + 1;
   // Not into a transcript that is being rewritten; the bar says how long.
@@ -3921,11 +3927,19 @@ async function streamOnce(run, decision, answers) {
           clearDrafts();
           run.turn?.finish();
           if (!onScreen(run)) return;
-          toast(message, 'error');
+          // An instant the server wrote, on this device's clock (UX-023).
+          const said = localTimes(message);
+          toast(said, 'error');
+          // Every key resting until a stated time: Continue would fail the same
+          // way until then, so it is not offered; the usage line says the rest (UX-024).
+          if (code === 'rate_limited') {
+            usageAlert.refresh({ soon: true });
+            return;
+          }
           // A quota or a missing model will say the same thing again; anything
           // else — a provider hiccup, every key failing, a stall — is worth
           // one press to carry on from where it stopped.
-          if (code !== 'quota_exceeded' && code !== 'no_auto_model') noteInterrupted(run, message);
+          if (code !== 'quota_exceeded' && code !== 'no_auto_model') noteInterrupted(run, said);
         },
         done: ({ stop }) => {
           outcome = 'done';
@@ -4416,7 +4430,19 @@ const usageAlert = createUsageAlert($('usage-alert'), {
   providers: () => state.boot?.providers || {},
   openUsage: () => openSettings('usage'),
   openKeys: () => openSettings('providers'),
+  user: () => state.boot?.user?.id,
+  changed: (until) => {
+    state.freeOutUntil = until;
+    refreshSendState();
+  },
 });
+// Not over a question or an approval: the line pushed a long question's top out of view (UX-020).
+{
+  const shelf = [$('question'), $('approval')];
+  const busy = () => shelf.some((node) => node && !node.hidden);
+  new MutationObserver(() => usageAlert.hold(busy())).observe($('question'), { attributes: true, attributeFilter: ['hidden'] });
+  new MutationObserver(() => usageAlert.hold(busy())).observe($('approval'), { attributes: true, attributeFilter: ['hidden'] });
+}
 const usagePanel = createUsagePanel($('usage-panel'), {
   load: () => api.usageReport(),
   sessions: () => api.sessions(),
@@ -6575,6 +6601,20 @@ function fitPlaceholder(running = !!runHere()) {
   if (box.placeholder !== chosen) box.placeholder = chosen;
 }
 if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitPlaceholder()).observe(input);
+
+/**
+ * Until when nothing can be sent, or null (UX-024, owner 2026-11-02): every
+ * OpenRouter key has used today's free requests and the model in use is a free
+ * one (Auto is OpenRouter's free router). A paid model, or another provider,
+ * is not held back by it.
+ */
+function sendBlockedUntil() {
+  const until = state.freeOutUntil;
+  if (!until || until <= new Date()) return null;
+  const model = String(state.model || '');
+  return model === 'auto' || model.endsWith(':free') ? until : null;
+}
+
 /**
  * Light the send button only when pressing it would do something.
  *
@@ -6599,15 +6639,16 @@ if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitPlaceholde
 function refreshSendState() {
   const ready = input.value.trim().length > 0 || staged.some((f) => f.id);
   const running = !!runHere();
+  const blocked = sendBlockedUntil();
 
   // Empty and working: the button in that corner is stop. Anything else: send.
   const showStop = running && !ready;
 
   $('send').hidden = showStop;
-  $('send').classList.toggle('is-ready', ready && !state.compacting);
-  $('send').disabled = !ready || !!state.compacting;
+  $('send').classList.toggle('is-ready', ready && !state.compacting && !blocked);
+  $('send').disabled = !ready || !!state.compacting || !!blocked;
   // Say what pressing it does now, since mid-run it does not send but queue.
-  $('send').title = running ? t('composer.queue') : t('composer.send');
+  $('send').title = blocked ? t('composer.blockedFree', { when: localMoment(blocked) }) : running ? t('composer.queue') : t('composer.send');
 
   $('stop').hidden = !showStop;
 
