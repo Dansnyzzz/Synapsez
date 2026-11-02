@@ -604,7 +604,7 @@ export async function setKeyMeta(userId, provider, index, meta) {
 
 /** Replace whatever is stored with this single key, or clear it. */
 export async function setApiKey(userId, provider, value, meta = {}) {
-  if (!(provider in ENV_KEYS)) throw new Error(`Unknown provider "${provider}"`);
+  if (!Object.hasOwn(ENV_KEYS, provider)) throw new Error(`Unknown provider "${provider}"`);
   const keys = await storedKeys(userId);
   if (value) keys[provider] = [{ cipher: encryptSecret(value), hint: hintFor(value), addedAt: new Date().toISOString(), ...keyMeta(meta) }];
   else delete keys[provider];
@@ -616,7 +616,7 @@ export async function setApiKey(userId, provider, value, meta = {}) {
 
 /** Add a spare, kept behind the ones already there. */
 export async function addApiKey(userId, provider, value, meta = {}) {
-  if (!(provider in ENV_KEYS)) throw new Error(`Unknown provider "${provider}"`);
+  if (!Object.hasOwn(ENV_KEYS, provider)) throw new Error(`Unknown provider "${provider}"`);
   const clean = String(value || '').trim();
   if (!clean) throw new Error('That is an empty key.');
 
@@ -636,7 +636,7 @@ export async function addApiKey(userId, provider, value, meta = {}) {
 
 /** Drop one key by its position, leaving the rest in order. */
 export async function removeApiKey(userId, provider, index) {
-  if (!(provider in ENV_KEYS)) throw new Error(`Unknown provider "${provider}"`);
+  if (!Object.hasOwn(ENV_KEYS, provider)) throw new Error(`Unknown provider "${provider}"`);
   const keys = await storedKeys(userId);
   const list = keyList(keys, provider);
   /**

@@ -123,7 +123,7 @@ const fail = (message) => Object.assign(new Error(message), { status: 400 });
 export async function intakeKey(userId, asked, value, { fetchImpl = fetch } = {}) {
   const secret = String(value || '').trim();
   if (!secret) throw fail('Paste a key.');
-  if (!(asked in PROVIDERS)) throw fail(`No provider called "${asked}".`);
+  if (!Object.hasOwn(PROVIDERS, asked)) throw fail(`No provider called "${asked}".`);
   const seen = recognise(secret);
 
   // A connector's token, pasted among the providers: connected where it belongs.

@@ -2058,6 +2058,11 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   } finally {
     globalThis.fetch = realFetch;
   }
+  // CODE-064: "constructor" is a property every object inherits, and `in` said it was a provider.
+  const inherited = await intake.intakeKey(user.id, 'constructor', 'x1234567890', { fetchImpl }).then(() => '', (e) => e.message);
+  const { setApiKey: setKey } = await import('../server/settings.js');
+  const inheritedSet = await setKey(user.id, '__proto__', 'x1234567890').then(() => '', (e) => e.message);
+  check('a name every object inherits is not a provider (CODE-064)', /No provider called "constructor"/.test(inherited) && /Unknown provider/.test(inheritedSet), `${inherited} | ${inheritedSet}`);
   if (hadKey === undefined) delete process.env.ENCRYPTION_KEY;
   void asked;
 }
