@@ -1006,6 +1006,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   // The cloud computer on E2B, with nothing to stand in (server/sandbox.js `unavailableError`).
   "The cloud computer could not be started: E2B did not accept this deployment's key (E2B_API_KEY). Tell the user plainly; the owner has to check the key.":
     'Không khởi động được máy tính đám mây: E2B không chấp nhận khoá của bản triển khai này (E2B_API_KEY). Hãy nói rõ với người dùng; chủ bản triển khai cần kiểm tra lại khoá.',
+  "The cloud computer could not be started: this server could not load its E2B library. Tell the user plainly; the owner has to check the deployment's logs.":
+    'Không khởi động được máy tính đám mây: máy chủ này không nạp được thư viện E2B. Hãy nói rõ với người dùng; chủ bản triển khai cần xem log của bản triển khai.',
   'The cloud computer could not be started: E2B is not answering right now. Try again in a few minutes; tell the user it is busy, not broken.':
     'Không khởi động được máy tính đám mây: E2B hiện không phản hồi. Hãy thử lại sau vài phút; nói với người dùng là dịch vụ đang bận, không phải bị hỏng.',
   '{0} does not exist in the machine — check the path with `ls`.': '{0} không có trong máy — kiểm tra đường dẫn bằng `ls`.',
