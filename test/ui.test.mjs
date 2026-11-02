@@ -3522,11 +3522,24 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
   check('  uploaded, the clean one is a skill — the refused one is not', names.includes('ui-weekly-status') && !names.includes('ui-leaky'), names.join(','));
 
   // Create: typed, kept as a draft; Cancel asks; reopened, it is all there.
+  // PRV-017: another account's draft on this browser — and one from before drafts had owners — is never shown.
+  await page.evaluate(() => {
+    const foreign = JSON.stringify({ name: 'not-yours', description: 'x', instructions: 'their secret', files: [], savedAt: '2999-01-01T00:00:00.000Z' });
+    localStorage.setItem('synapsez.skillDraft', foreign);
+    localStorage.setItem('synapsez.skillDraft:someone-else', foreign);
+  });
   await page.click('#tab-skills');
   await page.waitForTimeout(300);
   await page.click('#skill-add-open');
   await page.locator('#settings .cmenu .cmenu__item').nth(1).click();
   await page.waitForTimeout(600);
+  const opened = await page.evaluate(() => ({
+    name: /** @type {HTMLInputElement} */ (document.getElementById('skc-name')).value,
+    text: /** @type {HTMLTextAreaElement} */ (document.getElementById('skc-text')).value,
+    legacy: localStorage.getItem('synapsez.skillDraft'),
+  }));
+  check("Create a skill never opens on another account's draft, and the ownerless one is dropped (PRV-017)", opened.name !== 'not-yours' && !/their secret/.test(opened.text) && opened.legacy === null, JSON.stringify(opened));
+  await page.evaluate(() => localStorage.removeItem('synapsez.skillDraft:someone-else'));
   await page.fill('#skc-name', 'ui-draft-skill');
   await page.fill('#skc-desc', 'When testing drafts.');
   await page.click('#skc-text');
@@ -3543,7 +3556,7 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
   check('  Cancel with something written asks first, Keep editing ready', (await page.evaluate(() => /** @type {HTMLDialogElement} */ (document.getElementById('skc-discard')).open && document.activeElement?.id === 'skc-keep')) === true);
   await page.click('#skc-keep');
   await page.evaluate(() => {
-    localStorage.removeItem('synapsez.skillDraft');
+    for (const key of Object.keys(localStorage)) if (key.startsWith('synapsez.skillDraft')) localStorage.removeItem(key);
     /** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).close();
   });
   await page.click('#skill-add-open');
@@ -3555,7 +3568,7 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
   await page.waitForTimeout(200);
   await page.click('#skc-discard-yes');
   await page.waitForTimeout(500);
-  check('  Discard lets it go, everywhere', (await page.evaluate(async () => !(/** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).open) && !localStorage.getItem('synapsez.skillDraft') && !(await (await fetch('/api/skills/draft')).json()).draft)) === true);
+  check('  Discard lets it go, everywhere', (await page.evaluate(async () => !(/** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).open) && !Object.keys(localStorage).some((k) => k.startsWith('synapsez.skillDraft')) && !(await (await fetch('/api/skills/draft')).json()).draft)) === true);
 
   // Create with Claude: a new conversation, the request written, skill-creator picked.
   await page.click('#skill-add-open');

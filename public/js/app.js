@@ -36,7 +36,7 @@ import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './a
 import { createUsagePanel } from './usage-panel.js';
 import { createUsageAlert } from './usage-alert.js';
 import { createCustomize, openMenu as openPopoverMenu } from './customize.js';
-import { createSkillEditor } from './skills-editor.js';
+import { createSkillEditor, forgetLocalDrafts } from './skills-editor.js';
 import { serversInConfig } from './mcp-config.js';
 import { paintConnectorButton } from './cards.js';
 import { createYourData } from './your-data.js';
@@ -4406,6 +4406,7 @@ function openShortcuts() {
 
 async function signOut() {
   await api.logout();
+  forgetLocalDrafts();
   location.reload();
 }
 
@@ -5586,7 +5587,7 @@ const customize = createCustomize({
     plusDeps.pickSkill('skill-creator');
   },
 });
-const skillEditor = createSkillEditor({ onSaved: () => customize.loadSkills().catch(() => {}) });
+const skillEditor = createSkillEditor({ onSaved: () => customize.loadSkills().catch(() => {}), owner: () => state.boot?.user?.id });
 
 /**
  * The theme as Claude draws it: three faces — the system's, light, dark — one
