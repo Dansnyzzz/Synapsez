@@ -24,6 +24,8 @@ import { log } from './util/trace.js';
  *     An account's own key is its own and not counted here.
  *   - Stack Exchange: 300 requests a day per server address without a key,
  *     10,000 with a free one (STACKEXCHANGE_KEY, from stackapps.com).
+ *   - E2B, the cloud computer: a one-off credit, spread over the months before
+ *     it lapses (`e2bMonthCap`). Its ceiling is worked out, not set.
  *
  * Each ceiling can be set (EXA_FREE_MILLS, TAVILY_FREE_CREDITS,
  * BRAVE_FREE_REQUESTS, GOOGLE_FREE_DAILY, STACKEXCHANGE_FREE_DAILY), and
@@ -34,11 +36,50 @@ import { log } from './util/trace.js';
  * person cannot spend everyone's month in an afternoon.
  */
 
-const num = (name, fallback) => {
-  const raw = process.env[name];
+const numIn = (env, name, fallback) => {
+  const raw = env[name];
   const value = Number(raw);
   return raw !== undefined && raw !== '' && Number.isFinite(value) && value >= 0 ? value : fallback;
 };
+const num = (name, fallback) => numIn(process.env, name, fallback);
+
+/*
+ * E2B's credit (owner, 2026-11-02): $100 that lapses on 1 December 2027 and $5
+ * that never does, on the Hobby plan with no card — so a spent credit is a
+ * refusal, never a bill. The owner wants all of it used. A fixed ceiling a
+ * month would let whatever a quiet month left over lapse; instead a month may
+ * use what was left of the lapsing part when it began, divided by the months
+ * left before it lapses — so a quiet month passes its share on, and the last
+ * month may use everything still there. Once that part is gone, or has lapsed,
+ * the month may use what is left of the lasting part. Both are taken a little
+ * under the real figures, so a count a call or two behind never crosses them.
+ * Thousandths of a dollar, like Exa: E2B_CREDIT_MILLS, E2B_CREDIT_LASTING_MILLS,
+ * E2B_CREDIT_EXPIRES.
+ */
+const CREDIT_MARGIN = 0.97;
+const E2B_TOTAL = 'free:e2b:total';
+/** The whole credit's count outlives any month; it only has to outlast the credit. */
+const LIFETIME_END = new Date(Date.UTC(2100, 0, 1));
+
+/**
+ * What E2B may spend in the month `now` falls in, given what the whole credit
+ * had spent before that month began.
+ *
+ * @param {{ usedBefore?: number, now?: Date, env?: Record<string, string | undefined> }} [options]
+ */
+export function e2bMonthCap({ usedBefore = 0, now = new Date(), env = process.env } = {}) {
+  const lapsing = numIn(env, 'E2B_CREDIT_MILLS', 100_000) * CREDIT_MARGIN;
+  const lasting = numIn(env, 'E2B_CREDIT_LASTING_MILLS', 5_000) * CREDIT_MARGIN;
+  const parsed = new Date(env.E2B_CREDIT_EXPIRES || '2027-12-01T00:00:00Z');
+  const expires = Number.isNaN(parsed.getTime()) ? new Date(Date.UTC(2027, 11, 1)) : parsed;
+  // The credit is assumed spent lapsing-first, so the lasting part is what was spent past the lapsing one.
+  const lastingLeft = Math.max(0, lasting - Math.max(0, usedBefore - lapsing));
+  const lapsingLeft = Math.max(0, lapsing - usedBefore);
+  if (now >= expires || lapsingLeft <= 0) return Math.floor(lastingLeft);
+  const last = new Date(expires.getTime() - 1);
+  const monthsLeft = (last.getUTCFullYear() - now.getUTCFullYear()) * 12 + (last.getUTCMonth() - now.getUTCMonth()) + 1;
+  return Math.floor(lapsingLeft / Math.max(1, monthsLeft));
+}
 
 /** Each service's ceiling and the period it resets on. */
 const TIERS = {
@@ -47,6 +88,16 @@ const TIERS = {
   brave: { per: 'month', limit: () => num('BRAVE_FREE_REQUESTS', 950) },
   google: { per: 'day', limit: () => num('GOOGLE_FREE_DAILY', 450) },
   stackexchange: { per: 'day', limit: () => num('STACKEXCHANGE_FREE_DAILY', process.env.STACKEXCHANGE_KEY ? 9_500 : 280) },
+  // The cloud computer's machine time, in thousandths of a dollar (server/e2b.js).
+  e2b: {
+    per: 'month',
+    limit: () => e2bMonthCap(),
+    /** This month's ceiling, from what the whole credit had spent before the month began. */
+    async capFor(now, usedThisMonth) {
+      const total = await getStore().readCounter(E2B_TOTAL);
+      return e2bMonthCap({ usedBefore: Math.max(0, total - usedThisMonth), now });
+    },
+  },
 };
 
 export const FREE_SERVICES = Object.keys(TIERS);
@@ -79,21 +130,27 @@ const bucketOf = (service, now) => {
 export async function allowance(service, now = new Date()) {
   const tier = TIERS[service];
   if (!tier || !freeTierOnly()) return { left: Infinity, limit: Infinity };
-  const limit = tier.limit();
+  let limit = tier.limit();
   try {
     const used = await getStore().readCounter(bucketOf(service, now).bucket);
+    if (tier.capFor) limit = await tier.capFor(now, used);
     return { left: Math.max(0, limit - used), limit };
   } catch {
     return { left: Infinity, limit };
   }
 }
 
-/** Count what a call spent. Always counted — the totals are worth having even with the ceilings off. */
-export async function spend(service, amount, now = new Date()) {
+/**
+ * Count what a call spent. Always counted — the totals are worth having even
+ * with the ceilings off. E2B's is counted against its whole credit too, unless
+ * it is only a month being closed (`exhaust`), which spent nothing.
+ */
+export async function spend(service, amount, now = new Date(), { ofCredit = true } = {}) {
   if (!TIERS[service] || !(Number(amount) > 0)) return;
   try {
     const { bucket, ends } = bucketOf(service, now);
     await getStore().addToCounter(bucket, amount, ends);
+    if (service === 'e2b' && ofCredit) await getStore().addToCounter(E2B_TOTAL, amount, LIFETIME_END);
   } catch (err) {
     // No database at all is a script or a test, with nothing to count against.
     if (!/not ready yet/.test(String(err?.message))) log.warn('free tier: not counted', { service, error: String(err?.message || err).slice(0, 160) });
@@ -103,7 +160,7 @@ export async function spend(service, amount, now = new Date()) {
 /** Mark a service's allowance as used up for the period — when the service itself says so. */
 export async function exhaust(service, now = new Date()) {
   const { left } = await allowance(service, now);
-  if (Number.isFinite(left) && left > 0) await spend(service, left, now);
+  if (Number.isFinite(left) && left > 0) await spend(service, left, now, { ofCredit: false });
 }
 
 const userBucket = (userId, now) => `free:user:${userId}:${periodOf('day', now).key}`;
@@ -151,10 +208,11 @@ export const exaSpent = (json, estimate) => {
 export async function freeTierReport(now = new Date()) {
   const rows = [];
   for (const service of FREE_SERVICES) {
-    const { per, limit } = TIERS[service];
+    const { per, limit, capFor } = TIERS[service];
     const { bucket, ends } = bucketOf(service, now);
     const used = await getStore().readCounter(bucket).catch(() => null);
-    rows.push({ service, per, limit: limit(), used, resets: ends.toISOString() });
+    const ceiling = capFor ? await capFor(now, used || 0).catch(() => limit()) : limit();
+    rows.push({ service, per, limit: ceiling, used, resets: ends.toISOString() });
   }
   return { enforced: freeTierOnly(), userDaily: num('FREE_TIER_USER_DAILY', 30), services: rows };
 }
