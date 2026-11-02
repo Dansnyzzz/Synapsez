@@ -163,6 +163,19 @@ export function reasoningParams({ router, model, entry, effort }) {
 }
 
 /**
+ * The level a model last took, after refusing a higher one (PERF-025): `max` on
+ * a model that takes only `high` cost two refused requests on every step. Kept
+ * for the life of the instance, by provider address and model; null means it
+ * took no level at all.
+ *
+ * @type {Map<string, string | null>}
+ */
+const acceptedEffort = new Map();
+// The level a request carries, or null; and its place on the dial, none below every rung.
+const effortOf = (params) => params.reasoning?.effort ?? params.reasoning_effort ?? null;
+const rungOf = (level) => (level == null ? -1 : EFFORTS.indexOf(level));
+
+/**
  * One rung lower, after a provider refused the level asked for.
  *
  * "Not all reasoning models support every value" is the SDK's own warning, and
@@ -393,6 +406,12 @@ export async function* streamOpenAICompatible({
   if (markCache) markPromptCache(params, model);
   Object.assign(params, privacyParams({ router, privacy }));
 
+  // Start where this model last settled, rather than be refused on the way down again (PERF-025).
+  const where = `${baseURL || router || 'openai'}|${model}`;
+  const settled = acceptedEffort.get(where);
+  if (settled !== undefined) while (effortOf(params) !== settled && rungOf(effortOf(params)) > rungOf(settled) && stepDown(params));
+  const asked = effortOf(params);
+
   let stream;
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -404,6 +423,7 @@ export async function* streamOpenAICompatible({
       throw err;
     }
   }
+  if (effortOf(params) !== asked) acceptedEffort.set(where, effortOf(params));
 
   /** index -> { id, name, args } — tool call arguments arrive as JSON fragments. */
   const pending = new Map();
@@ -518,4 +538,4 @@ export async function* streamOpenAICompatible({
 }
 
 /** Exposed so the suite can assert what the OpenAI wire format is handed. */
-export const __testing = { toMessages, readUsage, textCallFilter, parseTextCalls, mergeDetails };
+export const __testing = { toMessages, readUsage, textCallFilter, parseTextCalls, mergeDetails, acceptedEffort };

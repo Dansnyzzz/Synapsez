@@ -883,6 +883,40 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
   while (stepDown(p)) steps.push(p.reasoning_effort ?? '(none)');
   check('a refused level steps down, then goes', steps.join(' → ') === 'xhigh → high → (none)', steps.join(' → '));
 
+  // PERF-025: `max` on a model that takes only `high` paid two refused requests on every step.
+  {
+    const { streamOpenAICompatible } = await import('../server/providers/openaiCompatible.js');
+    const realFetch = globalThis.fetch;
+    const asked = [];
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      asked.push(body.reasoning_effort ?? '(none)');
+      if (body.reasoning_effort === 'max' || body.reasoning_effort === 'xhigh') {
+        return new Response(JSON.stringify({ error: { message: `Unsupported value: 'reasoning_effort' does not support '${body.reasoning_effort}' with this model.`, type: 'invalid_request_error' } }), { status: 400, headers: { 'content-type': 'application/json' } });
+      }
+      const sse = 'data: {"choices":[{"index":0,"delta":{"content":"ok"}}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    };
+    const once = async () => {
+      let text = '';
+      for await (const ev of streamOpenAICompatible({ apiKey: 'sk-test', model: 'gpt-5.6-perf025', entry: {}, system: 's', messages: [{ role: 'user', text: 'hi' }], effort: 'max' })) {
+        if (ev.type === 'text') text += ev.delta;
+      }
+      return text;
+    };
+    try {
+      const first = await once();
+      const firstAsked = asked.splice(0).join(' → ');
+      const second = await once();
+      const secondAsked = asked.splice(0).join(' → ');
+      check('a level the model refused is not asked again: the next request starts where it settled (PERF-025)',
+        first === 'ok' && second === 'ok' && firstAsked === 'max → xhigh → high' && secondAsked === 'high', `${firstAsked} | ${secondAsked}`);
+    } finally {
+      globalThis.fetch = realFetch;
+      oa.acceptedEffort.clear();
+    }
+  }
+
   // TOK-001: only a refusal of the setting steps down; other 400s surface at once.
   const { refusedEffort } = await import('../server/providers/openaiCompatible.js');
   const bad = (message, extra = {}) => ({ status: 400, message, ...extra });
