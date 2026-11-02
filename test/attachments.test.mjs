@@ -926,6 +926,12 @@ section('a picture a step read: known by its bytes, shrunk to look at, with a th
     refused = String(err.message);
   }
   check('a picture claiming billions of pixels is refused, never decoded', /too many pixels/.test(refused), refused);
+  // SEC-062: a header made unreadable — a stray byte before the size — must not get past the ceiling by being unread.
+  const { __testing: seen } = await import('../server/util/picture.js');
+  const hidden = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0x00, 0x13]), jpeg.subarray(2)]);
+  const before = seen.decodes();
+  const keptAsIs = await viewCopy(hidden);
+  check('a picture whose size cannot be read is kept as it is, never decoded (SEC-062)', pictureSize(hidden) === null && seen.decodes() === before && keptAsIs?.width === 0 && keptAsIs.data.equals(hidden), JSON.stringify({ size: pictureSize(hidden), decodes: seen.decodes() - before }));
 }
 
 section('a picture a step read is kept with its name and a thumbnail');
