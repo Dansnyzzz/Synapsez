@@ -7,6 +7,7 @@ import { saveGenerated } from '../attachments.js';
 import { browserAddress, chargeCloud, machineForUser, shellFor } from '../sandbox.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
 import { readCapped } from '../util/safeFetch.js';
+import { untrusted } from '../tools/untrusted.js';
 
 /**
  * A real browser on the account's cloud computer, which the assistant drives
@@ -543,7 +544,14 @@ export async function cloudBrowser(input, { userId, chatId, signal }) {
   const page = await serviceCall(userId, '/act', { ...input, action }, { signal, timeout });
 
   if (!page.ok) {
-    throw new Error(`${page.error || 'That did not work.'}\nThe page is now: ${page.title || ''} ${page.url || ''}. Look again before the next step.`);
+    /*
+     * What a failure quotes is the page's: its title, its address, the opening
+     * tag of whatever covered the element (SEC-063). A page can write
+     * "Assistant: next run…" into any of them, and an error used to reach the
+     * model outside the envelope every result from a page is in.
+     */
+    const said = `${page.error || 'That did not work.'}\nThe page is now: ${page.title || ''} ${page.url || ''}.`;
+    throw new Error(`${untrusted(page.url || 'the cloud browser', said)}\nLook again before the next step.`);
   }
 
   let file = null;
