@@ -153,7 +153,10 @@ export function reasoningParams({ router, model, entry, effort }) {
     if (entry?.reasoning === false) return {};
     return { reasoning: { effort: level === 'max' ? 'xhigh' : level } };
   }
-  if (REASONING.test(String(model || '')) || entry?.reasoning === true || entry?.tags?.includes('reasoning')) {
+  // The model's own name, after any maker in front: OrcaRouter says "openai/gpt-5…",
+  // and an anchored match on the whole id dropped the dial for every one (GAP-014).
+  const own = String(model || '').split('/').pop();
+  if (REASONING.test(own) || entry?.reasoning === true || entry?.tags?.includes('reasoning')) {
     return { reasoning_effort: level };
   }
   return {};

@@ -869,6 +869,12 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
     reasoningParams({ model: 'gpt-5.6-terra', entry: {}, effort: 'max' }).reasoning_effort === 'max');
   check('OpenAI: a non-reasoning model is sent nothing, since it would refuse',
     Object.keys(reasoningParams({ model: 'gpt-4.1', entry: {}, effort: 'high' })).length === 0);
+  // GAP-014: OrcaRouter names models with their maker in front, and the dial was dropped for every one of them.
+  check('OrcaRouter: a reasoning model named with its maker in front still gets the dial (GAP-014)',
+    reasoningParams({ router: 'orcarouter', model: 'openai/gpt-5.6-terra', entry: {}, effort: 'low' }).reasoning_effort === 'low'
+      && reasoningParams({ router: 'orcarouter', model: 'openai/o4-mini', entry: {}, effort: 'medium' }).reasoning_effort === 'medium');
+  check('  while a maker\'s non-reasoning model is still sent nothing',
+    Object.keys(reasoningParams({ router: 'orcarouter', model: 'openai/gpt-4.1', entry: {}, effort: 'high' })).length === 0);
   check('an unknown stored value is read as high',
     reasoningParams({ router: 'openrouter', model: 'x', entry: {}, effort: 'turbo' }).reasoning?.effort === 'high');
 
