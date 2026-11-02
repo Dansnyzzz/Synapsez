@@ -43,6 +43,8 @@ export const LIMITS = {
   // Uploading skills: a scan on choosing the files and one more to keep them —
   // a few dozen an hour is a busy afternoon; each reads up to ten 2 MB files.
   skillUpload: { limit: 60, windowMs: 60 * 60_000 },
+  // Choosing a new username: each refusal says a name is taken, so a script could list them (SEC-059).
+  rename: { limit: 10, windowMs: 60 * 60_000 },
 };
 
 /**

@@ -1029,6 +1029,16 @@ section('a username to sign in with, or the email');
   check('  saving only a name leaves the username as it was', nameOnly.status === 200 && nameOnly.json?.user?.username == null, JSON.stringify(nameOnly.json?.user));
   const adopted = await alice.call('PATCH', '/api/account', { name: 'Alice', username: 'alice' });
   check('an account made before usernames can take one', adopted.status === 200 && adopted.json?.user?.username === 'alice', JSON.stringify(adopted.json));
+  // SEC-059: each "taken" says a sign-in name exists; a script trying name after name could list them.
+  let renameLimited = 0;
+  for (let i = 0; i < 14 && !renameLimited; i += 1) {
+    const probe = await alice.call('PATCH', '/api/account', { username: `probe.name${i}` }, at('10.40.0.1'));
+    if (probe.status === 429) renameLimited = i + 1;
+  }
+  check('choosing a new username has a ceiling, so names cannot be listed by trying them (SEC-059)', renameLimited > 0 && renameLimited <= 11, `limited at ${renameLimited || 'never'}`);
+  await store.clearRateLimit(`rename:id:${(await store.getUserByEmail('alice@example.com')).id}`);
+  await store.clearRateLimit('rename:ip:10.40.0.1');
+  await alice.call('PATCH', '/api/account', { username: 'alice' });
   const forgot = await jar().call('POST', '/api/password/forgot', { email: 'dana_t' }, at('10.20.0.3'));
   check('a forgotten password can be asked for by username too', forgot.status === 200 && forgot.json?.ok === true, `${forgot.status}`);
 }

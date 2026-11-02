@@ -24,7 +24,7 @@ import {
   refreshSession,
   endSession,
 } from './auth.js';
-import { limit as rateLimit, forgive } from './ratelimit.js';
+import { limit as rateLimit, forgive, consume as consumeLimit } from './ratelimit.js';
 import { publicUrlFor } from './util/net.js';
 import { emailBackend } from './email.js';
 import { summary as usageSummary, limitFor } from './usage.js';
@@ -1324,7 +1324,15 @@ export function createApp() {
       const wanted = String(req.body?.username ?? '').trim();
       try {
         let updated = req.user;
-        if (wanted && wanted.toLowerCase() !== (req.user.username || '')) updated = await setUsername(req.user.id, wanted);
+        if (wanted && wanted.toLowerCase() !== (req.user.username || '')) {
+          // A rename that says "taken" tells which sign-in names exist (SEC-059): a few an hour is a person, more is a list.
+          const blocked = await consumeLimit(req, 'rename', req.user.id);
+          if (blocked) {
+            res.set('Retry-After', String(blocked.retryAfterSec));
+            return res.status(blocked.status).json(blocked.body);
+          }
+          updated = await setUsername(req.user.id, wanted);
+        }
         if (hasName) updated = await getStore().updateUser(req.user.id, { name });
         res.json({ user: publicUser(updated) });
       } catch (err) {
