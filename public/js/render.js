@@ -2754,9 +2754,14 @@ export function assistantMessage() {
             if (asked.every((key) => key === 'path' || key === 'url' || key === 'file_id')) foldBody.querySelector(':scope > .tool__call')?.remove();
             foldBody.prepend(pictureBody(entry.picture));
           }
-          const printed = el('pre', 'step__output');
-          printed.textContent = workOutput(call, result.content) || t('chat.noOutput');
-          foldBody.append(printed);
+          // A question's answer is the person's bubble below; the lines the model
+          // reads, and the questions as JSON, are the same answer again (TOK-004).
+          if (result.answered) foldBody.querySelector(':scope > .tool__call')?.remove();
+          else {
+            const printed = el('pre', 'step__output');
+            printed.textContent = workOutput(call, result.content) || t('chat.noOutput');
+            foldBody.append(printed);
+          }
           if (result.ms != null) foldBody.append(el('p', 'step__took', escapeHtml(t('work.took', { time: ms(result.ms) }))));
           // A failure is the one row somebody needs to read; it is open already.
           // A success folds back to its title line — unless it was touched, or
@@ -2798,17 +2803,20 @@ export function assistantMessage() {
         // Errors are opened, successes are not. A failed step is the one thing
         // in the run somebody needs to read, and making them find and click it
         // is making them work for information the interface already has.
-        const out = el('details', 'step__out');
-        out.open = !!result.isError;
-        out.append(el('summary', null, escapeHtml(t('step.output'))));
-        // The call that produced it, above the result it produced — the same
-        // bargain the standalone cards make: plain words outside, the exact
-        // call and its arguments for whoever opens it.
-        out.append(toolCallDetail(call));
-        const pre = el('pre');
-        pre.textContent = forDisplay(result.content) || t('chat.noOutput');
-        out.append(pre);
-        item.append(out);
+        // A question's answer is the bubble below, not a second copy in here (TOK-004).
+        if (!result.answered) {
+          const out = el('details', 'step__out');
+          out.open = !!result.isError;
+          out.append(el('summary', null, escapeHtml(t('step.output'))));
+          // The call that produced it, above the result it produced — the same
+          // bargain the standalone cards make: plain words outside, the exact
+          // call and its arguments for whoever opens it.
+          out.append(toolCallDetail(call));
+          const pre = el('pre');
+          pre.textContent = forDisplay(result.content) || t('chat.noOutput');
+          out.append(pre);
+          item.append(out);
+        }
 
         if (result.file?.id) placeFile(body, result.file);
         if (drawable(result.widget)) body.append(widgetNode(result.widget, result.name));
@@ -3247,7 +3255,10 @@ export function assistantMessage() {
             doneMark(call.name, !!result.isError),
             result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '',
           );
-          output.textContent = forDisplay(result.content) || t('chat.noOutput');
+          // A question's answer is the person's bubble below; the model's copy of it,
+          // and the questions as JSON, are the same answer again (TOK-004).
+          if (result.answered) inner.replaceChildren();
+          else output.textContent = forDisplay(result.content) || t('chat.noOutput');
 
           /**
            * A document came out of this call.
