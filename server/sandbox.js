@@ -478,6 +478,9 @@ export async function browserAddress(machine, { signal } = {}) {
   return portAddress(machine, BROWSER_PORT, { signal });
 }
 
+/** /etc/profile, for the PATH it sets, read with no home to find the account's own files from (see shellFor). */
+const SYSTEM_PROFILE = '_home="$HOME"; HOME=/nonexistent; source /etc/profile >/dev/null 2>&1 || true; HOME="$_home"; unset _home';
+
 /**
  * How a command is run: `bash --noprofile --norc -c`, nothing loaded first (HAR-001).
  *
@@ -505,6 +508,12 @@ export async function browserAddress(machine, { signal } = {}) {
  * file), and what leaves the machine is graded per command by `assessRisk`.
  * Root (`as_root`) can still change /etc/profile.d — and asks first, every time.
  *
+ * **The system profile is read with no home** (`SYSTEM_PROFILE`). E2B's base image
+ * ends its /etc/profile with `source ~/.bashrc` and `source ~/.profile` — the
+ * account's own files, back in through the system's (found by the live probe,
+ * 2026-11-02). So it is read with HOME pointed at /nonexistent, where `~` finds
+ * nothing and the account cannot make anything, and HOME is put back after.
+ *
  * **As root** (`root: true`, the cloud browser's own start) "can the account
  * write here" is the wrong question to ask with `-w`, which answers for root
  * and is yes everywhere. What is kept is what only root can change: a folder
@@ -519,7 +528,7 @@ export async function browserAddress(machine, { signal } = {}) {
 export function shellFor(command, env = {}, { userBin = false, root = false } = {}) {
   if (root) {
     const rootPath = [
-      'source /etc/profile >/dev/null 2>&1 || true',
+      SYSTEM_PROFILE,
       '_keep=; IFS=: read -ra _dirs <<< "$PATH"; for _d in "${_dirs[@]}"; do case "$_d" in /*) ;; *) continue ;; esac; ' +
         '[ "$(stat -Lc %u "$_d" 2>/dev/null)" = 0 ] || continue; _m="$(stat -Lc %a "$_d" 2>/dev/null)"; ' +
         'case "${_m: -2}" in *[2367]*) continue ;; esac; _keep="${_keep:+$_keep:}$_d"; done',
@@ -533,7 +542,7 @@ export function shellFor(command, env = {}, { userBin = false, root = false } = 
     };
   }
   const systemPath = [
-    'source /etc/profile >/dev/null 2>&1 || true',
+    SYSTEM_PROFILE,
     // Every entry under the account's home, relative, or writable by the account
     // dropped from what the system set — the property that matters is who can
     // put a program there, not where the folder is.

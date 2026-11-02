@@ -145,6 +145,11 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   check('  with a time limit kept inside the machine', /^exec timeout -k 5 30 setpriv /.test(run.cmd));
   check('  the script quoted whole, quotes and all', run.cmd.includes(`echo '\\''it'\\'''\\''s'\\''`), run.cmd.slice(-60));
   check('  the environment passed as the platform\'s own', run.opts.envs?.BASH_ENV === '' && run.opts.envs?.ENV === '');
+  // E2B's /etc/profile ends by sourcing ~/.bashrc and ~/.profile (live probe, 2026-11-02).
+  for (const [label, options] of [['ordinary', { userBin: true }], ['root', { root: true }]]) {
+    const script = shellFor('true', {}, options).args[3];
+    check(`  /etc/profile is read with no home to find the account's files from (${label})`, script.startsWith('_home="$HOME"; HOME=/nonexistent; source /etc/profile >/dev/null 2>&1 || true; HOME="$_home"; unset _home\n'), script.slice(0, 120));
+  }
   check('  and the answer read the way the Vercel one is', done.exitCode === 0 && (await done.stdout()) === 'ok' && (await done.stderr()) === '');
 
   state.calls.length = 0;
@@ -187,8 +192,7 @@ section("one machine per account, found again — and paid for before it runs");
   e2b.__testing.useSdk(sdk);
   const first = await e2b.e2bMachineFor('u-e2b', 'synz-a');
   const create = state.calls.find((c) => c.kind === 'create');
-  check('made from the template, named for the account, pausing when idle', create.template === 'base' && create.opts.metadata.machine === 'synz-a' && create.opts.lifecycle?.onTimeout === 'pause' && create.opts.timeoutMs === 600_000, JSON.stringify(create.opts));
-  const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
+  check('made from the template, named for the account, pausing when idle', create.template === 'base' && create.opts.metadata.machine === 'synz-a' && create.opts.lifecycle?.onTimeout === 'pause' && create.opts.timeoutMs === 600_000, JSON.stringify(create.opts));  const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
   check('  and written down with its size', record?.id === first.sandboxId && record.cpu === 2 && record.memMb === 1024, JSON.stringify(record));
   const paid = await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`);
   check('  its first ten minutes paid for, at the price for its size', paid > 0 && paid <= Math.ceil(600 * (2 * 0.014 + 2 * 0.0045)), String(paid));

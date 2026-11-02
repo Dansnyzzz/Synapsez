@@ -275,7 +275,9 @@ section('a command on the cloud computer reads none of the account\'s login file
   const { shellFor } = await import('../server/sandbox.js');
   const shell = shellFor('echo hi', { SYNZ_KEY: 'k' });
   check('bash with no profile and no rc file', shell.cmd === 'bash' && shell.args.slice(0, 3).join(' ') === '--noprofile --norc -c', JSON.stringify(shell.args.slice(0, 3)));
-  check('  the system profile alone, then the command', /^source \/etc\/profile/.test(shell.args[3]) && shell.args[3].endsWith('\necho hi') && !/\.(bash_)?profile\b(?!.*etc)|bashrc/.test(shell.args[3].replace('/etc/profile', '')), shell.args[3]);
+  check('  the system profile alone, then the command', /^_home="\$HOME"; HOME=\/nonexistent; source \/etc\/profile /.test(shell.args[3]) && shell.args[3].endsWith('\necho hi') && !/\.(bash_)?profile\b(?!.*etc)|bashrc/.test(shell.args[3].replace('/etc/profile', '')), shell.args[3]);
+  // E2B's /etc/profile ends by sourcing ~/.bashrc and ~/.profile (live probe, 2026-11-02): read with no home, they are not found.
+  check('  read with no home, so a system profile that sources ~/.profile finds nothing of the account\'s', /HOME=\/nonexistent; source \/etc\/profile [^\n]*; HOME="\$_home"; unset _home\n/.test(shell.args[3]));
   check('  BASH_ENV cleared, and the caller\'s own environment kept', shell.env.BASH_ENV === '' && shell.env.ENV === '' && shell.env.SYNZ_KEY === 'k');
   const userShell = shellFor('echo hi', {}, { userBin: true });
   check('a service start keeps the account\'s own folders off its PATH', !/\.local\/bin/.test(shell.args[3]) && /case "\$_d" in "\$HOME"\*\|\[!\/\]\*/.test(shell.args[3]) && /if \[ -w "\$_d" \]; then _open=/.test(shell.args[3]) && shell.args[3].indexOf('$_open') < shell.args[3].indexOf(':$_orig'), shell.args[3]);
