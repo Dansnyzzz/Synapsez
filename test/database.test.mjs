@@ -184,11 +184,24 @@ section('db:copy merges an old account into the one with the same email');
   const { checkCopy, whyUnreachable } = await import('../scripts/copy-database.js');
   const looked = await checkCopy(driverOf(source), driverOf(target));
   check('--check says what the old database holds and which accounts merge', looked.accounts === 1 && looked.merging === 1 && looked.tables.chats === 1 && looked.tables.messages === 1, JSON.stringify({ ...looked, tables: undefined }));
+  check('  naming each email both databases have', JSON.stringify(looked.collisions) === '["owner@example.com"]', JSON.stringify(looked.collisions));
   check('  and writes nothing', (await now.getChat('u-supabase', 'c-from-neon')) == null);
   check("  a Neon project out of compute is said as that, with what to do", /quota resets/.test(whyUnreachable(new Error('HTTP status 402: Your project has exceeded the compute time quota'))) && whyUnreachable(new Error('ECONNREFUSED')) === 'ECONNREFUSED');
 
+  /*
+   * SEC-057: sign-up does not prove an email, so whoever registered the
+   * owner's address on the new database first would have received every old
+   * conversation, note, key and Google grant. No account merges unless the
+   * owner names it.
+   */
+  const refused = await copyDatabase(driverOf(source), driverOf(target), { say: () => {} }).then(() => '', (e) => e.message);
+  check('an email on both sides that the owner did not name stops the copy (SEC-057)', /owner@example\.com/.test(refused) && /--merge/.test(refused), refused);
+  check('  before a single row is copied', (await now.getChat('u-supabase', 'c-from-neon')) == null && (await now.getUserSetting('u-supabase', 'memory_note')) == null);
+  const elsewhere = await copyDatabase(driverOf(source), driverOf(target), { say: () => {}, merge: ['someone.else@example.com'] }).then(() => '', (e) => e.message);
+  check('  naming a different email does not let it through', /owner@example\.com/.test(elsewhere));
+
   const said = [];
-  await copyDatabase(driverOf(source), driverOf(target), { say: (line) => said.push(line) });
+  await copyDatabase(driverOf(source), driverOf(target), { say: (line) => said.push(line), merge: [' Owner@Example.com '] });
   const users = (await target.query("SELECT id, username FROM users WHERE email = 'owner@example.com'")).rows;
   check('one account, the one already there', users.length === 1 && users[0].id === 'u-supabase' && users[0].username === 'owner.one', JSON.stringify(users));
   const before = await now.getChat('u-supabase', 'c-from-neon');
