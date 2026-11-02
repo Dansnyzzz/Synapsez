@@ -88,9 +88,12 @@ const installLines = (build) => [
   '  printf \'{"private":true}\' > package.json',
   `  npm install --no-save --no-audit --no-fund --loglevel=error ${DEPS.join(' ')} > setup.log 2>&1`,
   // Fonts for accented and non-Latin pages, with whichever package manager
-  // the image has. Best effort: a page in a fallback font is still a page.
+  // the image has: dnf and its kin on Vercel's Amazon Linux, apt-get on E2B's
+  // Debian. Best effort: a page in a fallback font is still a page.
   '  (for pm in dnf microdnf yum; do if command -v $pm >/dev/null 2>&1 || sudo -n sh -c "command -v $pm" >/dev/null 2>&1; then',
   '     sudo -n $pm install -y dejavu-sans-fonts google-noto-sans-fonts google-noto-serif-fonts >> setup.log 2>&1 && break; fi; done) || true',
+  '  if command -v apt-get >/dev/null 2>&1; then ( if [ "$(id -u)" = 0 ]; then su_=; else su_="sudo -n"; fi;',
+  '     $su_ apt-get update -q >> setup.log 2>&1 && $su_ env DEBIAN_FRONTEND=noninteractive apt-get install -y -q fonts-noto-core fonts-dejavu-core >> setup.log 2>&1 ) || true; fi',
   `  echo "${build}" > build`,
   'fi',
 ];

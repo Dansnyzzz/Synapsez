@@ -1616,6 +1616,7 @@ export const vi = {
   'freetier.brave': 'Brave Search',
   'freetier.google': 'Google search (khoá Gemini của bản triển khai)',
   'freetier.stackexchange': 'Stack Exchange',
+  'freetier.e2b': 'E2B (máy tính đám mây)',
   'feedback.admin.markRead': 'Đánh dấu đã đọc',
   'changelog.title': 'Có gì mới',
   'changelog.versions': 'Các phiên bản',

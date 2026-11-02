@@ -147,6 +147,7 @@ section('the cloud computer: offered only where it can start, and fenced to its 
   check('on Vercel it is', sandboxConfigured({ VERCEL: '1' }));
   check('elsewhere it needs all three settings', !sandboxConfigured({ VERCEL_TOKEN: 't' }) && sandboxConfigured({ VERCEL_TOKEN: 't', VERCEL_TEAM_ID: 'x', VERCEL_PROJECT_ID: 'p' }));
   check('and can be switched off', !sandboxConfigured({ VERCEL: '1', SANDBOX_DISABLED: '1' }));
+  check('an E2B key alone is enough (owner, 2026-11-02)', sandboxConfigured({ E2B_API_KEY: 'e2b_x' }) && !sandboxConfigured({ E2B_API_KEY: 'e2b_x', SANDBOX_DISABLED: '1' }));
   check('one machine per account, the same from every conversation', sandboxName('u') === sandboxName('u') && sandboxName('u') !== sandboxName('v'));
   check('its name gives nothing away', !sandboxName('user-123').includes('user') && /^synz-[0-9a-f]{32}$/.test(sandboxName('a')));
   // The reported failure: every command ran in a hard-coded /vercel/sandbox
@@ -398,8 +399,8 @@ section('page views and speed: on Vercel only, the path only, never against the 
   const speedSrc = fs.readFileSync(new URL('../public/vendor/vercel/speed-insights.mjs', import.meta.url), 'utf8');
   check('the scripts they add come from this origin, which `script-src \'self\'` allows', analyticsSrc.includes('return "/_vercel/insights/script.js"') && speedSrc.includes('return "/_vercel/speed-insights/script.js"'));
   const csp = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value;
-  // The one addition is the cloud browser's socket to the account's own machine — nothing for these.
-  check('  and the policy was not widened for them', /script-src 'self';/.test(csp) && /connect-src 'self'(?: wss:\/\/\*\.vercel\.run)?;/.test(csp));
+  // The one addition is the cloud browser's socket to the account's own machine, on E2B or Vercel — nothing for these.
+  check('  and the policy was not widened for them', /script-src 'self';/.test(csp) && /connect-src 'self'(?: wss:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.vercel\.run)?;/.test(csp));
   const appSrc = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   check('the app starts it from the session, and says so only where it measures', /startInsights\(session\.insights\)/.test(appSrc) && /insightsNote\.hidden = !session\.insights/.test(appSrc) && /id="insights-note" data-i18n="memory\.insights" hidden/.test(html));
@@ -1335,6 +1336,7 @@ section('what people see of a tool answer, and money in convert_units');
   const { readNote, shotNote } = await import('../server/tools/execute.js');
   const printed = 'exit 0 · 0.1s\nstdout:\nP90564719.jpg';
   check("the cloud computer's note to the model is not drawn", forDisplay(`${printed}\n${machineNote('/home/user')}`) === printed && forDisplay(`${printed}\n${machineNote('')}`) === printed);
+  check('  on E2B, or on the stand-in Vercel one, either', forDisplay(`${printed}\n${machineNote('/home/user', { provider: 'e2b' })}`) === printed && forDisplay(`${printed}\n${machineNote('/vercel', { standIn: true })}`) === printed);
   check('  nor the Python session line, fresh or kept', forDisplay(`${pythonReport({ fresh: true, output: 'hi\n' })}`) === 'output:\nhi' && forDisplay(pythonReport({ output: '42\n' })) === 'output:\n42');
   check('  but a session that ended mid-call still says so', /session ended/.test(forDisplay(pythonReport({ ended: true, output: 'x' }))));
   check('  nor who read a picture and how to look again', forDisplay(`It is a chart.\n\n${readNote('gemini-2.5-flash', 'f_1')}`) === 'It is a chart.');

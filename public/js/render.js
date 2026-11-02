@@ -64,7 +64,7 @@ const ms = (n) => (n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`);
  * says something similar is left alone.
  */
 const MODEL_NOTES = [
-  /\n*^\(This account's own cloud computer: it keeps its files and installs between conversations[^\n]* — about fifteen idle minutes\.\)$/m,
+  /\n*^\((?:This account's own cloud computer: it keeps its files and installs between conversations|A stand-in cloud computer for this account: its usual one is unavailable right now)[^\n]* — about (?:ten|fifteen) idle minutes\.\)$/m,
   /^\[Python: (?:the same live session|a new session) — [^\n]*\]\n?/m,
   /\n*^Showed the user (?:the figure|\d+ figures) in the conversation: [^\n]*\(id [^\n)]*\)\.$/m,
   /\n*^Handed [^\n]* to the user — it is in the conversation to open and download\. Its id is [^\n]*; publish_file with that id makes a link to share\.$/m,

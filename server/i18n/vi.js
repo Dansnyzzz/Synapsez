@@ -1003,6 +1003,11 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     '{0} lớn hơn 2MB; hãy ghi từng phần hoặc tạo nó ngay trong máy.',
   'The cloud computer could not be started: {0}. On Vercel this needs OIDC enabled for the project; elsewhere VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.':
     'Không khởi động được máy tính đám mây: {0}. Trên Vercel cần bật OIDC cho dự án; nơi khác cần VERCEL_TOKEN, VERCEL_TEAM_ID và VERCEL_PROJECT_ID.',
+  // The cloud computer on E2B, with nothing to stand in (server/sandbox.js `unavailableError`).
+  "The cloud computer could not be started: E2B did not accept this deployment's key (E2B_API_KEY). Tell the user plainly; the owner has to check the key.":
+    'Không khởi động được máy tính đám mây: E2B không chấp nhận khoá của bản triển khai này (E2B_API_KEY). Hãy nói rõ với người dùng; chủ bản triển khai cần kiểm tra lại khoá.',
+  'The cloud computer could not be started: E2B is not answering right now. Try again in a few minutes; tell the user it is busy, not broken.':
+    'Không khởi động được máy tính đám mây: E2B hiện không phản hồi. Hãy thử lại sau vài phút; nói với người dùng là dịch vụ đang bận, không phải bị hỏng.',
   '{0} does not exist in the machine — check the path with `ls`.': '{0} không có trong máy — kiểm tra đường dẫn bằng `ls`.',
   '{0} is over 10MB, too large to hand over.': '{0} lớn hơn 10MB, quá lớn để gửi.',
   '{0} is not a kind of file the conversation can show (PDF, image, Office, text, CSV, JSON). Convert it first.':

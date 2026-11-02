@@ -24,14 +24,14 @@ export const CONTENT_SECURITY_POLICY = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   // The cloud browser's live screen streams from the account's own machine, at
-  // an address Vercel gives it under vercel.run.
-  "img-src 'self' data: blob: https://*.vercel.run",
+  // an address E2B gives it under e2b.app, or Vercel under vercel.run.
+  "img-src 'self' data: blob: https://*.e2b.app https://*.vercel.run",
   "font-src 'self'",
   // A YouTube link in a reply plays in place, from the no-cookie domain only.
   "frame-src 'self' https://www.youtube-nocookie.com",
   // The cloud browser's live screen and a person's gestures, over one socket
   // straight to the account's machine — never through this app's server.
-  "connect-src 'self' wss://*.vercel.run",
+  "connect-src 'self' wss://*.e2b.app wss://*.vercel.run",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

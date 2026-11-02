@@ -1629,6 +1629,7 @@ export const en = {
   'freetier.brave': 'Brave Search',
   'freetier.google': 'Google search (deployment Gemini key)',
   'freetier.stackexchange': 'Stack Exchange',
+  'freetier.e2b': 'E2B (cloud computer)',
   'feedback.admin.markRead': 'Mark as read',
   'changelog.title': 'What\'s new',
   'changelog.versions': 'Versions',

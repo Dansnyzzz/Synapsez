@@ -5853,7 +5853,8 @@ async function loadFreeTier() {
     const report = await api.freeTier();
     const locale = currentLanguage() === 'vi' ? 'vi-VN' : 'en-US';
     const day = (iso) => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(new Date(iso));
-    const amount = (s, n) => (s.service === 'exa' ? `$${(n / 1000).toFixed(2)}` : Number(n).toLocaleString(locale));
+    // Exa and E2B are counted in thousandths of a dollar; the rest in requests or credits.
+    const amount = (s, n) => (s.service === 'exa' || s.service === 'e2b' ? `$${(n / 1000).toFixed(2)}` : Number(n).toLocaleString(locale));
     const rows = report.services
       .map((s) => {
         const used = s.used == null ? '—' : `${amount(s, s.used)} / ${amount(s, s.limit)}`;

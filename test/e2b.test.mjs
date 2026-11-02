@@ -53,5 +53,258 @@ section("E2B's credit: all of it used, none of it overspent (owner, 2026-11-02)"
   check("the administrators' view has it, with this month's ceiling", row?.limit === Math.floor(97_000 / 13) && row?.per === 'month', JSON.stringify(row));
 }
 
+/**
+ * A stand-in for the `e2b` SDK: sandboxes in a map, every call written down,
+ * errors named the way the SDK names them (`name`, and `statusCode` from the
+ * API), which is all server/e2b.js reads of them.
+ */
+const named = (name, message, extra = {}) => Object.assign(new Error(message), { name }, extra);
+function fakeSdk() {
+  const state = { boxes: new Map(), calls: [], next: 1, clock: 1, files: {}, onRun: null, createError: null, afterCreate: null };
+  class Sandbox {
+    constructor(id, metadata) {
+      this.sandboxId = id;
+      this.metadata = metadata;
+      this.startedAt = state.clock++;
+      this.commands = {
+        run: async (cmd, opts) => {
+          state.calls.push({ kind: 'run', id, cmd, opts });
+          return state.onRun ? state.onRun(cmd, opts) : { exitCode: 0, stdout: 'ok', stderr: '' };
+        },
+      };
+      this.files = {
+        write: async (entries) => state.calls.push({ kind: 'write', entries }),
+        read: async (path, opts) => {
+          state.calls.push({ kind: 'read', path, opts });
+          if (!(path in state.files)) throw named('FileNotFoundError', `${path} not found`);
+          return new Uint8Array(Buffer.from(state.files[path]));
+        },
+      };
+    }
+    getHost(port) {
+      return `${port}-${this.sandboxId}.e2b.app`;
+    }
+    async setTimeout(ms) {
+      state.calls.push({ kind: 'setTimeout', ms });
+    }
+    async getInfo() {
+      return { cpuCount: 2, memoryMB: 1024 };
+    }
+    async pause() {
+      state.calls.push({ kind: 'pause', id: this.sandboxId });
+    }
+    async kill() {
+      state.boxes.delete(this.sandboxId);
+      state.calls.push({ kind: 'kill', id: this.sandboxId });
+    }
+    static async create(template, opts) {
+      state.calls.push({ kind: 'create', template, opts });
+      if (state.createError) throw state.createError;
+      const box = new Sandbox(`sbx${state.next++}`, opts.metadata);
+      state.boxes.set(box.sandboxId, box);
+      if (state.afterCreate) await state.afterCreate(box);
+      return box;
+    }
+    static async connect(id, opts) {
+      state.calls.push({ kind: 'connect', id, opts });
+      const box = state.boxes.get(id);
+      if (!box) throw named('SandboxNotFoundError', `404: sandbox ${id} not found`, { statusCode: 404 });
+      return box;
+    }
+    static list({ query } = {}) {
+      return {
+        hasNext: false,
+        nextItems: async () =>
+          [...state.boxes.values()]
+            .filter((b) => Object.entries(query?.metadata || {}).every(([k, v]) => b.metadata?.[k] === v))
+            .map((b) => ({ sandboxId: b.sandboxId, metadata: b.metadata, startedAt: new Date(b.startedAt), state: 'running' })),
+      };
+    }
+  }
+  return { state, sdk: { Sandbox } };
+}
+
+process.env.E2B_API_KEY = 'e2b_test_key';
+const e2b = await import('../server/e2b.js');
+const { shellFor } = await import('../server/sandbox.js');
+await store.createUser({ id: 'u-e2b', email: 'e2b@example.com', passwordHash: 'x', name: 'E', role: 'user' });
+// The credit checks above closed November; this suite's machines run in today's month.
+const resetCounters = async () => memory.query("DELETE FROM rate_limits WHERE bucket LIKE 'free:e2b:%'");
+
+section('a command on E2B runs as root, and drops to the account itself (HAR-001)');
+{
+  await resetCounters();
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-test');
+  const done = await machine.runCommand({ ...shellFor("echo 'it''s'", {}, { userBin: true }), timeoutMs: 30_000 });
+  const run = state.calls.find((c) => c.kind === 'run');
+  check('every command is sent as root, from the account\'s home', run.opts.user === 'root' && run.opts.cwd === '/home/user', JSON.stringify(run.opts));
+  check('  so E2B\'s login shell reads only files root can write', /^exec /.test(run.cmd));
+  check('  and an ordinary command drops to the account before it starts', /setpriv --reuid="\$\(id -u user\)" --regid="\$\(id -g user\)" --init-groups env HOME=\/home\/user USER=user LOGNAME=user 'bash' '--noprofile' '--norc' '-c' /.test(run.cmd), run.cmd.slice(0, 220));
+  check('  with a time limit kept inside the machine', /^exec timeout -k 5 30 setpriv /.test(run.cmd));
+  check('  the script quoted whole, quotes and all', run.cmd.includes(`echo '\\''it'\\'''\\''s'\\''`), run.cmd.slice(-60));
+  check('  the environment passed as the platform\'s own', run.opts.envs?.BASH_ENV === '' && run.opts.envs?.ENV === '');
+  check('  and the answer read the way the Vercel one is', done.exitCode === 0 && (await done.stdout()) === 'ok' && (await done.stderr()) === '');
+
+  state.calls.length = 0;
+  await machine.runCommand({ ...shellFor('apt-get install -y jq'), sudo: true, timeoutMs: 60_000 });
+  const root = state.calls.find((c) => c.kind === 'run');
+  check('as_root stays root, still without a login profile', root.opts.user === 'root' && !root.cmd.includes('setpriv') && /^exec timeout -k 5 60 'bash' '--noprofile' '--norc' '-c' /.test(root.cmd), root.cmd.slice(0, 80));
+
+  state.onRun = async () => {
+    throw named('CommandExitError', 'exit status 3', { exitCode: 3, stdout: 'partial', stderr: 'boom' });
+  };
+  const failed = await machine.runCommand({ ...shellFor('false'), timeoutMs: 5_000 });
+  check('a command that fails is an exit code, as on Vercel — not a thrown error', failed.exitCode === 3 && (await failed.stdout()) === 'partial' && (await failed.stderr()) === 'boom');
+
+  state.onRun = async () => ({ wait: async () => Promise.reject(named('CommandExitError', 'killed', { exitCode: 143 })) });
+  const started = await machine.runCommand({ ...shellFor('exec node service.mjs'), detached: true });
+  const background = state.calls.filter((c) => c.kind === 'run').pop();
+  check('a detached start runs in the background, with no time limit of its own', background.opts.background === true && !/timeout -k/.test(background.cmd));
+  check('  and its end reads as an exit code', (await started.wait()).exitCode === 143);
+  state.onRun = async () => ({ wait: async () => Promise.reject(named('TimeoutError', 'stream closed')) });
+  const watched = await machine.runCommand({ ...shellFor('exec node service.mjs'), detached: true });
+  check('  while losing sight of it is not mistaken for its end', (await watched.wait().then(() => 'resolved', (e) => e.name)) === 'TimeoutError');
+  state.onRun = null;
+
+  check('a port is the https address E2B gives it', machine.domain(3000) === `https://3000-${machine.sandboxId}.e2b.app`);
+  check('the working folder is the account\'s home', machine.currentSession().cwd === '/home/user');
+  state.files['/home/user/out/a.txt'] = 'hello';
+  check('a relative path is read from the home folder', String(await machine.readFileToBuffer({ path: 'out/a.txt' })) === 'hello');
+  check('  and a missing file is null, as on Vercel', (await machine.readFileToBuffer({ path: '/nowhere.txt' })) === null);
+  await machine.writeFiles([{ path: 'data/in.csv', content: Buffer.from('a,b') }]);
+  const wrote = state.calls.find((c) => c.kind === 'write');
+  check('files are written under the home folder', wrote.entries[0].path === '/home/user/data/in.csv' && Buffer.from(wrote.entries[0].data).toString() === 'a,b');
+  e2b.__testing.useSdk(null);
+}
+
+section("one machine per account, found again — and paid for before it runs");
+{
+  await resetCounters();
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  const first = await e2b.e2bMachineFor('u-e2b', 'synz-a');
+  const create = state.calls.find((c) => c.kind === 'create');
+  check('made from the template, named for the account, pausing when idle', create.template === 'base' && create.opts.metadata.machine === 'synz-a' && create.opts.lifecycle?.onTimeout === 'pause' && create.opts.timeoutMs === 600_000, JSON.stringify(create.opts));
+  const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
+  check('  and written down with its size', record?.id === first.sandboxId && record.cpu === 2 && record.memMb === 1024, JSON.stringify(record));
+  const paid = await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`);
+  check('  its first ten minutes paid for, at the price for its size', paid > 0 && paid <= Math.ceil(600 * (2 * 0.014 + 2 * 0.0045)), String(paid));
+
+  state.calls.length = 0;
+  const again = await e2b.e2bMachineFor('u-e2b', 'synz-a');
+  check('the next call resumes the same machine', again.sandboxId === first.sandboxId && state.calls.some((c) => c.kind === 'connect') && !state.calls.some((c) => c.kind === 'create'));
+  check('  without paying twice for time already paid', (await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`)) - paid <= 1);
+
+  await again.extendTimeout(15 * 60_000);
+  check('keeping it awake longer sets its timeout and pays only the extra time', state.calls.some((c) => c.kind === 'setTimeout' && c.ms === 900_000));
+
+  state.boxes.clear();
+  state.calls.length = 0;
+  const remade = await e2b.e2bMachineFor('u-e2b', 'synz-a');
+  check('a machine that no longer exists is made again', remade.sandboxId !== first.sandboxId && state.calls.some((c) => c.kind === 'create'));
+
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  state.calls.length = 0;
+  const found = await e2b.e2bMachineFor('u-e2b', 'synz-a');
+  check('with no record, a machine of that name is found rather than made', found.sandboxId === remade.sandboxId && !state.calls.some((c) => c.kind === 'create'));
+
+  // Two instances making the same account's machine at once.
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  state.boxes.clear();
+  state.afterCreate = async () => {
+    state.afterCreate = null;
+    const other = new sdk.Sandbox('sbx-other', { app: 'synapsez', machine: 'synz-b' });
+    other.startedAt = 0;
+    state.boxes.set(other.sandboxId, other);
+  };
+  const raced = await e2b.e2bMachineFor('u-e2b', 'synz-b');
+  check('two made at once: the older is kept, the newer killed', raced.sandboxId === 'sbx-other' && state.calls.some((c) => c.kind === 'kill' && c.id !== 'sbx-other'), raced.sandboxId);
+
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  state.boxes.clear();
+  state.calls.length = 0;
+  await tiers.exhaust('e2b');
+  const refused = await e2b.e2bMachineFor('u-e2b', 'synz-c').then(() => null, (err) => err);
+  check("with this month's credit spent, no machine is made at all", refused instanceof e2b.E2BOutOfCredit && !state.calls.some((c) => c.kind === 'create'), String(refused?.message));
+  e2b.__testing.useSdk(null);
+  await resetCounters();
+}
+
+section('which refusals send the work elsewhere');
+{
+  const u = e2b.e2bUnavailable;
+  check('too many machines at once: busy', u(named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 })) === 'busy');
+  check('  even when it speaks of a quota or credits — busy never closes the month', u(named('RateLimitError', 'Rate limit exceeded - concurrent sandbox quota, upgrade for more credits', { statusCode: 429 })) === 'busy');
+  check('no capacity: down', u(named('ServiceBusyError', 'Service temporarily unavailable', { statusCode: 503 })) === 'down');
+  check('a bad key: auth', u(named('AuthenticationError', 'Unauthorized')) === 'auth');
+  check('credit spent, however it is said: credit', u(named('SandboxError', '402: payment required', { statusCode: 402 })) === 'credit' && u(named('SandboxError', '403: You have run out of credits')) === 'credit' && u(new e2b.E2BOutOfCredit()) === 'credit');
+  check('the network: down', u(new TypeError('fetch failed')) === 'down' && u(named('TimeoutError', 'Request timed out')) === 'down');
+  check('a command that failed is not a reason to move', u(named('CommandExitError', 'exit status 1', { exitCode: 1 })) === null && u(new Error('something else')) === null);
+  check('configured by its key alone', e2b.e2bConfigured({ E2B_API_KEY: 'k' }) && !e2b.e2bConfigured({}));
+}
+
+section('E2B first, Vercel standing in when it cannot');
+{
+  const sandbox = await import('../server/sandbox.js');
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  let vercelStarts = 0;
+  sandbox.__testing.useSdk({
+    Sandbox: {
+      getOrCreate: async () => {
+        vercelStarts += 1;
+        return { provider: undefined, domain: () => 'https://sb.vercel.run' };
+      },
+      create: async () => ({ domain: () => 'https://scratch.vercel.run', stop: async () => {}, delete: async () => {} }),
+    },
+  });
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  await resetCounters();
+  process.env.VERCEL_TOKEN = 't';
+  process.env.VERCEL_TEAM_ID = 'team';
+  process.env.VERCEL_PROJECT_ID = 'p';
+
+  const usual = await sandbox.machineForUser('u-e2b');
+  check('with a key, the account\'s machine is on E2B', usual.provider === 'e2b' && !usual.standIn && vercelStarts === 0);
+
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  state.boxes.clear();
+  state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
+  const busy = await sandbox.machineForUser('u-e2b');
+  check('all twenty E2B machines running: Vercel stands in, and says it is a stand-in', busy.standIn === true && vercelStarts === 1);
+  check('  the model is told what that means', /A stand-in cloud computer for this account: its usual one is unavailable right now/.test(sandbox.machineNote('', { standIn: busy.standIn })));
+
+  state.createError = named('SandboxError', '403: Your team has run out of credits', { statusCode: 403 });
+  await sandbox.machineForUser('u-e2b');
+  check("E2B saying its credit is gone is believed for the month", (await tiers.allowance('e2b')).left === 0 && vercelStarts === 2);
+  state.createError = null;
+  state.calls.length = 0;
+  await sandbox.machineForUser('u-e2b');
+  check('  so the next call goes straight to Vercel, without asking E2B', vercelStarts === 3 && !state.calls.some((c) => c.kind === 'create'));
+  await resetCounters();
+
+  state.createError = new Error('something no platform would cure');
+  const odd = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
+  check('an error that would follow the work anywhere is not hidden behind a stand-in', odd === 'something no platform would cure' && vercelStarts === 3);
+
+  for (const name of ['VERCEL_TOKEN', 'VERCEL_TEAM_ID', 'VERCEL_PROJECT_ID']) delete process.env[name];
+  state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
+  const alone = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
+  check('with no Vercel to stand in, busy reads as busy', /in use by other people right now/.test(alone), alone);
+  state.createError = named('AuthenticationError', 'Unauthorized, please check your credentials.');
+  const badKey = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
+  check('  and a key E2B refuses says whose key to check', /did not accept this deployment's key \(E2B_API_KEY\)/.test(badKey), badKey);
+  state.createError = null;
+  state.calls.length = 0;
+  const aside = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
+  check('  E2B is then set aside for a while rather than asked again at once', /E2B_API_KEY/.test(aside) && !state.calls.some((c) => c.kind === 'create'));
+
+  sandbox.__testing.useSdk(null);
+  e2b.__testing.useSdk(null);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll E2B checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);

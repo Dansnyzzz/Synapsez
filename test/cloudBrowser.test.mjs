@@ -337,6 +337,7 @@ section('the start script installs once per build and then runs the service');
   check('as root, PATH keeps only folders root alone can write, and never falls back to the original', /stat -Lc %u/.test(rootShell) && /\*\[2367\]\*\) continue/.test(rootShell) && !rootShell.includes('_orig'), rootShell);
   check('fonts are a best effort that cannot fail the start', /install -y[^]*\|\| true/.test(script));
   check('  with whichever package manager the image has', /dnf microdnf yum/.test(script));
+  check('  apt-get too, for E2B\'s Debian, root or not', /command -v apt-get[^]*fonts-noto-core[^]*\) \|\| true; fi/.test(script) && /if \[ "\$\(id -u\)" = 0 \]; then su_=; else su_="sudo -n"; fi/.test(script));
   check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec node'));
   // `pkill -f 'node service.mjs'` matched the shell running this script, whose
   // own command line holds those words, and killed it before `exec`.

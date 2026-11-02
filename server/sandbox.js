@@ -1,6 +1,9 @@
 import crypto from 'node:crypto';
 import { classify, saveGenerated } from './attachments.js';
 import { getStore } from './store/index.js';
+import { exhaust } from './freeTier.js';
+import { e2bConfigured, e2bMachineFor, e2bScratch, e2bUnavailable } from './e2b.js';
+import { log } from './util/trace.js';
 
 /**
  * A private Linux computer in the cloud, one per account.
@@ -8,8 +11,14 @@ import { getStore } from './store/index.js';
  * `run_command` runs on the person's own PC, through the worker — which is the
  * right place for their files and the wrong place for "work this out in
  * Python", and does not exist at all for somebody who never paired a machine.
- * This is the other half: a Vercel Sandbox, a Firecracker microVM with bash,
- * Python, Node, git, root and a 64 GB disk.
+ * This is the other half: a microVM with bash, Python, Node, git and root.
+ *
+ * **Two places one can run** (owner, 2026-11-02). E2B first (server/e2b.js):
+ * twenty at once on its free plan, paused rather than stopped when idle, paid
+ * from a one-off credit spread over the months before it lapses. Vercel
+ * Sandbox, below, when E2B cannot — no key, the month's share of the credit
+ * spent, all twenty running, E2B down — as a stand-in: a different machine,
+ * without the usual one's files, which the model is told (`machineNote`).
  *
  * **One per account, kept.** The same machine is found again by name from every
  * conversation, and its disk is snapshotted when it pauses — so what was
@@ -179,12 +188,19 @@ export function machineStartError(err) {
 }
 
 /**
- * Whether there is anything to start a sandbox with. On Vercel the platform
- * hands the function an OIDC token; elsewhere it takes a token, team and
- * project from the environment. Neither, and the tool is not offered at all —
- * a model that can see it would promise a computer it cannot have.
+ * Whether there is anything to start a sandbox with: an E2B key, or Vercel —
+ * on Vercel the platform hands the function an OIDC token; elsewhere it takes
+ * a token, team and project from the environment. None, and the tool is not
+ * offered at all — a model that can see it would promise a computer it cannot
+ * have.
  */
 export function sandboxConfigured(env = process.env) {
+  if (env.SANDBOX_DISABLED === '1') return false;
+  return e2bConfigured(env) || vercelConfigured(env);
+}
+
+/** Whether a Vercel Sandbox can be started: the stand-in, or the only place when there is no E2B key. */
+export function vercelConfigured(env = process.env) {
   if (env.SANDBOX_DISABLED === '1') return false;
   if (env.VERCEL || env.VERCEL_OIDC_TOKEN) return true;
   return !!(env.VERCEL_TOKEN && env.VERCEL_TEAM_ID && env.VERCEL_PROJECT_ID);
@@ -287,6 +303,18 @@ async function machineFor(name, { signal } = {}) {
  * @param {{ signal?: AbortSignal }} [options]
  */
 export async function scratchMachine({ signal } = {}) {
+  if (e2bConfigured()) {
+    /** @type {'credit' | 'busy' | 'auth' | 'down' | null} */
+    let declined = e2bAsideFor;
+    if (e2bReady()) {
+      try {
+        return await e2bScratch();
+      } catch (err) {
+        declined = await setE2bAside(err);
+      }
+    }
+    if (!vercelConfigured()) throw unavailableError(declined);
+  }
   const { Sandbox } = await loadSdk();
   try {
     return await Sandbox.create({
@@ -306,6 +334,11 @@ export async function scratchMachine({ signal } = {}) {
 
 /** Stop and delete a scratch machine; never throws — it is cleanup. @param {any} machine */
 export async function discardMachine(machine) {
+  // An E2B machine's stop is a pause, a snapshot of it nobody will resume.
+  if (machine?.provider === 'e2b') {
+    await machine.delete().catch(() => {});
+    return;
+  }
   try {
     await machine?.stop?.();
   } catch {
@@ -341,13 +374,77 @@ export async function portAddress(machine, port, { signal } = {}) {
  * @param {{ signal?: AbortSignal }} [options]
  */
 export async function machineForUser(userId, { signal } = {}) {
+  let declined = null;
+  if (e2bConfigured()) {
+    if (!e2bReady()) declined = e2bAsideFor;
+    else {
+      try {
+        return await e2bMachineFor(userId, sandboxName(userId));
+      } catch (err) {
+        declined = await setE2bAside(err);
+      }
+    }
+    if (!vercelConfigured()) throw unavailableError(declined);
+  }
   let machine;
   try {
     machine = await machineFor(sandboxName(userId), { signal });
   } catch (err) {
     throw machineStartError(err);
   }
+  // Standing in for the E2B machine: a different computer, which the model is told.
+  if (declined) machine.standIn = true;
   return machine;
+}
+
+/**
+ * E2B set aside on this instance for a while after it refused for a reason
+ * that will not pass in seconds — a key it does not accept, or no answer — so
+ * each call does not wait on it before going to Vercel. Busy and out of credit
+ * are not set aside here: busy may clear by the next call, and the credit is
+ * counted in the database, for every instance.
+ */
+let e2bAsideUntil = 0;
+/** @type {'auth' | 'down' | null} */
+let e2bAsideFor = null;
+const AUTH_ASIDE_MS = 10 * 60_000;
+const DOWN_ASIDE_MS = 60_000;
+const e2bReady = () => e2bConfigured() && Date.now() >= e2bAsideUntil;
+
+/**
+ * Why E2B declined this one, having noted what follows from it; rethrows an
+ * error that would follow the work to any machine (a bug, a bad argument).
+ *
+ * @param {any} err
+ */
+async function setE2bAside(err) {
+  const declined = e2bUnavailable(err);
+  if (!declined) throw err;
+  log.warn('cloud computer: E2B declined, Vercel stands in', { reason: declined, error: String(err?.message || err).slice(0, 160) });
+  // E2B saying its credit is gone is believed for the rest of the month; our own count already knew.
+  if (declined === 'credit' && err?.name !== 'E2BOutOfCredit') await exhaust('e2b').catch(() => {});
+  if (declined === 'auth' || declined === 'down') {
+    e2bAsideUntil = Date.now() + (declined === 'auth' ? AUTH_ASIDE_MS : DOWN_ASIDE_MS);
+    e2bAsideFor = declined;
+  }
+  return declined;
+}
+
+/**
+ * The sentence for no machine at all: E2B declined (now, or when it was set
+ * aside) and there is no Vercel to stand in. Busy and spent read as the
+ * platform's own refusals always have.
+ *
+ * @param {'credit' | 'busy' | 'auth' | 'down' | null} declinedNow
+ */
+function unavailableError(declinedNow) {
+  const declined = declinedNow || e2bAsideFor;
+  if (declined === 'busy') return machineStartError({ status: 429 });
+  if (declined === 'credit') return machineStartError({ status: 402 });
+  if (declined === 'auth') {
+    return new Error("The cloud computer could not be started: E2B did not accept this deployment's key (E2B_API_KEY). Tell the user plainly; the owner has to check the key.");
+  }
+  return new Error('The cloud computer could not be started: E2B is not answering right now. Try again in a few minutes; tell the user it is busy, not broken.');
 }
 
 /**
@@ -486,13 +583,22 @@ export function pythonReport(cell, ran = true) {
  * the person's: the screen leaves it out (`forDisplay` in render.js, held to
  * this sentence by test/features).
  *
+ * A stand-in (Vercel, while E2B cannot) says so: what was saved on the usual
+ * computer is not on this one, and what is made here may not be there later.
+ * An E2B computer pauses after ten idle minutes, a Vercel one rests after
+ * fifteen.
+ *
  * @param {string} home  the session's working folder, when the SDK says
+ * @param {{ standIn?: boolean, provider?: string }} [machine]
  */
-export function machineNote(home) {
+export function machineNote(home, { standIn = false, provider = '' } = {}) {
+  const opening = standIn
+    ? "(A stand-in cloud computer for this account: its usual one is unavailable right now, so what was saved or installed there is not here, and what is made here may not be there later"
+    : "(This account's own cloud computer: it keeps its files and installs between conversations";
   return (
-    `(This account's own cloud computer: it keeps its files and installs between conversations${home ? `; working folder ${home}` : ''}. ` +
+    `${opening}${home ? `; working folder ${home}` : ''}. ` +
     'Full internet access; as_root: true for system packages. ' +
-    'The Python session keeps its variables while the computer is awake — about fifteen idle minutes.)'
+    `The Python session keeps its variables while the computer is awake — about ${provider === 'e2b' ? 'ten' : 'fifteen'} idle minutes.)`
   );
 }
 
@@ -617,7 +723,7 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   } catch {
     /* an older SDK without sessions; the note just omits the folder */
   }
-  report.push(machineNote(home));
+  report.push(machineNote(home, { standIn: !!machine?.standIn, provider: machine?.provider || '' }));
   const shown = file || pictures[0] || null;
   return { content: report.join('\n'), ...(shown ? { file: shown } : {}) };
 }
