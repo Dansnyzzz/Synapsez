@@ -25,7 +25,7 @@
 <body>
 <main>
   <h1>Chính sách quyền riêng tư của Synapsez</h1>
-  <p class="dim">Phiên bản privacy-2026-11-02, có hiệu lực từ ngày 02/11/2026. <a href="#en">English below</a>. <a href="/">Về Synapsez</a> · <a href="/terms.html">Điều khoản dịch vụ</a> · <a href="/usage-policy.html">Chính sách sử dụng</a></p>
+  <p class="dim">Phiên bản privacy-2026-11-03, có hiệu lực từ ngày 03/11/2026. <a href="#en">English below</a>. <a href="/">Về Synapsez</a> · <a href="/terms.html">Điều khoản dịch vụ</a> · <a href="/usage-policy.html">Chính sách sử dụng</a></p>
   <p>
     Synapsez (<a href="https://synapsez.vercel.app/">synapsez.vercel.app</a>) là trợ lý AI trên web: bạn trò chuyện với mô hình
     AI mình chọn, làm việc với tệp của mình và, chỉ khi bạn tự kết nối, với Gmail, Drive, Lịch và các ứng dụng Google khác.
@@ -43,19 +43,21 @@
     <li>Nhật ký bảo mật: thời điểm đăng nhập, đổi mật khẩu, xuất dữ liệu…, kèm mạng gửi yêu cầu và loại trình duyệt — không lưu nguyên địa chỉ IP.</li>
     <li>Nếu bạn ghép máy tính của mình: thông tin máy và những gì bạn cho phép trợ lý đọc trên đó.</li>
     <li>Nếu bạn kết nối Google: những gì bạn cho phép trợ lý đọc và thay đổi trong tài khoản Google — xem mục 5.</li>
+    <li>Nếu bạn gửi phản hồi (Gửi phản hồi trong menu tài khoản, hoặc nút đánh giá dưới một câu trả lời): điều bạn viết, và — khi phản hồi về một cuộc trò chuyện — bản sao cuộc trò chuyện đó, gồm tin nhắn, lời gọi công cụ và kết quả (có thể có nội dung Gmail hay Drive nếu cuộc trò chuyện có), kèm loại trình duyệt và ngôn ngữ. Quản trị viên của Synapsez đọc phản hồi để xử lý.</li>
     <li>Vị trí gần đúng (cỡ thành phố), suy ra từ kết nối mạng của bạn — chỉ dùng khi bạn nhờ tìm thứ gì đó "gần tôi" mà không nêu địa điểm. Toạ độ được làm tròn khoảng 1 km và không được lưu. Câu trả lời thì nằm lại trong cuộc trò chuyện như mọi kết quả khác — tên thành phố, các địa điểm tìm được và khoảng cách tới chúng: được gửi tới nhà cung cấp mô hình, và có trong liên kết chia sẻ nếu bạn chia sẻ cuộc trò chuyện đó.</li>
   </ul>
 
   <h2>3. Mục đích</h2>
-  <p>Để trợ lý trả lời và làm việc bạn yêu cầu, giữ an toàn cho tài khoản, và vận hành dịch vụ. Dữ liệu của bạn không được bán, không dùng cho quảng cáo, và không dùng để huấn luyện mô hình AI.</p>
+  <p>Để trợ lý trả lời và làm việc bạn yêu cầu, giữ an toàn cho tài khoản, và vận hành dịch vụ. Synapsez không bán dữ liệu của bạn, không dùng cho quảng cáo, và không dùng để huấn luyện mô hình AI. Ở mức riêng tư <strong>Tiêu chuẩn</strong>, nhà cung cấp mà OpenRouter định tuyến tới (kể cả mô hình miễn phí và Auto) có thể lưu hoặc huấn luyện trên dữ liệu theo điều khoản riêng của họ; mức <strong>Nghiêm ngặt</strong> ở mục 6 ngăn điều đó.</p>
 
   <h2>4. Nơi dữ liệu được gửi tới, kể cả ra nước ngoài</h2>
   <ul>
     <li><strong>Nhà cung cấp mô hình bạn chọn</strong> — Anthropic, OpenAI, Google, OpenRouter (và nhà cung cấp mà OpenRouter định tuyến tới, gồm cả mô hình miễn phí và Auto), OrcaRouter. Tin nhắn và nội dung tệp liên quan được gửi để tạo câu trả lời. Máy chủ của họ chủ yếu ở Hoa Kỳ và các nước khác ngoài Việt Nam. Dữ liệu từ tài khoản Google chỉ đi tới một phần trong số này — xem mục 5.</li>
-    <li><strong>Vercel</strong> (chạy ứng dụng và máy tính đám mây) và <strong>Supabase</strong> (cơ sở dữ liệu) — vị trí máy chủ theo cấu hình của Synapsez. Trước ngày 19/10/2026 cơ sở dữ liệu ở <strong>Neon</strong>, nơi có thể còn bản sao dữ liệu cũ cho tới khi được xoá.</li>
+    <li><strong>Vercel</strong> (chạy ứng dụng), <strong>E2B</strong> (máy tính đám mây: nhận lệnh, tệp, mã Python và phiên trình duyệt đám mây của bạn; trình duyệt của bạn kết nối thẳng tới máy E2B để xem màn hình) — khi E2B không dùng được, <strong>Vercel Sandbox</strong> thay thế — và <strong>Supabase</strong> (cơ sở dữ liệu) — vị trí máy chủ theo cấu hình của Synapsez. Trước ngày 19/10/2026 cơ sở dữ liệu ở <strong>Neon</strong>, nơi có thể còn bản sao dữ liệu cũ cho tới khi được xoá.</li>
     <li><strong>Tìm kiếm web</strong>, khi trợ lý tìm kiếm: câu truy vấn tới Exa, DuckDuckGo, Tavily, Brave hoặc Google; khi trợ lý tìm mã nguồn hoặc tài liệu lập trình, câu truy vấn cũng tới Stack Exchange (Stack Overflow). Khi một trang web từ chối cho trợ lý đọc trực tiếp (hoặc chỉ hiện nội dung bằng script), địa chỉ trang đó được gửi tới Exa để đọc qua Exa.</li>
     <li><strong>Email</strong>, khi bạn nhờ gửi: qua dịch vụ email Synapsez cấu hình (Gmail, Resend hoặc SMTP).</li>
     <li><strong>Google</strong>, chỉ khi bạn tự kết nối Gmail, Drive, Lịch…: các yêu cầu cần để làm việc bạn nhờ — xem mục 5.</li>
+    <li><strong>Dịch vụ bạn tự kết nối</strong> — GitHub, Notion, Slack, YouTube (qua Supadata), Telegram, Meta: các yêu cầu cần để làm việc bạn nhờ, bằng khoá hay token bạn cung cấp.</li>
     <li><strong>Bản đồ OpenStreetMap</strong> (Nominatim, Overpass, OSRM), khi trợ lý tra địa điểm, tìm quanh một nơi hoặc chỉ đường: tên địa điểm, và toạ độ của nơi được tìm quanh — kể cả vị trí gần đúng ở mục 2 khi bạn hỏi "gần tôi". Các dịch vụ này do cộng đồng OpenStreetMap vận hành, máy chủ chủ yếu ở châu Âu.</li>
     <li><strong>Vercel Web Analytics và Speed Insights</strong>: số liệu truy cập và tốc độ trang, ẩn danh, không có nội dung hội thoại.</li>
   </ul>
@@ -118,19 +120,19 @@
 
   <h2>6. Biện pháp bảo vệ bạn có thể bật</h2>
   <ul>
-    <li><strong>Nghiêm ngặt</strong> (Cài đặt → Bộ nhớ &amp; quyền riêng tư): chỉ gửi tới nhà cung cấp không lưu và không huấn luyện trên dữ liệu (áp dụng cho OpenRouter). Cuộc trò chuyện có dữ liệu Google luôn được xử lý như vậy, dù bạn chọn gì.</li>
+    <li><strong>Nghiêm ngặt</strong> (Cài đặt → Quyền riêng tư): chỉ gửi tới nhà cung cấp không lưu và không huấn luyện trên dữ liệu (áp dụng cho OpenRouter). Cuộc trò chuyện có dữ liệu Google luôn được xử lý như vậy, dù bạn chọn gì.</li>
     <li><strong>Che thông tin cá nhân</strong>: email, số điện thoại, số CMND/CCCD, số tài khoản, số thẻ và tên có nhãn trong chữ và trong tệp PDF được thay bằng mã giữ chỗ trước khi gửi cho nhà cung cấp. Ảnh và trang scan vẫn gửi nguyên.</li>
     <li><strong>Hội thoại ẩn danh</strong>: không vào lịch sử, không vào bộ nhớ, tự xoá một ngày sau lần dùng cuối.</li>
     <li>Tắt bộ nhớ, tắt tìm trong hội thoại cũ, chọn thời hạn lưu.</li>
   </ul>
 
   <h2>7. Thời gian lưu</h2>
-  <p>Đến khi bạn xoá, hoặc theo thời hạn bạn chọn (30, 90, 180 hoặc 365 ngày sau lần dùng cuối); hội thoại ghim luôn được giữ. Nhật ký bảo mật được giữ 180 ngày — trừ bản ghi đồng ý (bạn đồng ý với văn bản nào, phiên bản nào, khi nào), được giữ đến khi xoá tài khoản vì đó là bằng chứng bạn đã đồng ý. Xoá tài khoản là xoá toàn bộ dữ liệu của tài khoản. Nhà cung cấp mô hình có thể lưu theo điều khoản riêng của họ — xem mục 5 và 6.</p>
+  <p>Đến khi bạn xoá, hoặc theo thời hạn bạn chọn (30, 90, 180 hoặc 365 ngày sau lần dùng cuối); hội thoại ghim luôn được giữ. Nhật ký bảo mật được giữ 180 ngày — trừ bản ghi đồng ý (bạn đồng ý với văn bản nào, phiên bản nào, khi nào), được giữ đến khi xoá tài khoản vì đó là bằng chứng bạn đã đồng ý. Phản hồi được giữ đến khi bạn xoá nó (Cài đặt → Quyền riêng tư → Dữ liệu của bạn); bản sao cuộc trò chuyện kèm theo bị xoá khi cuộc trò chuyện bị xoá. Tối đa 1.200 ký tự đầu của phản hồi được gửi email cho quản trị viên để xử lý — email đã gửi thì không thu hồi được. Xoá tài khoản là xoá toàn bộ dữ liệu của tài khoản. Nhà cung cấp mô hình có thể lưu theo điều khoản riêng của họ — xem mục 5 và 6.</p>
 
   <h2>8. Quyền của bạn</h2>
   <ul>
     <li>Biết và xem dữ liệu: mọi thứ hiện trong ứng dụng; nhật ký bảo mật ở Cài đặt → Tài khoản.</li>
-    <li>Nhận bản sao: Cài đặt → Tài khoản → Xuất dữ liệu.</li>
+    <li>Nhận bản sao: Cài đặt → Quyền riêng tư → Xuất dữ liệu.</li>
     <li>Sửa, xoá: sửa hoặc xoá từng hội thoại, tệp, ghi chú; xoá tài khoản.</li>
     <li>Rút lại đồng ý: xoá tài khoản; ngắt kết nối Google; hoặc tắt bộ nhớ và các tính năng ở mục 6.</li>
     <li>Yêu cầu khác, khiếu nại: gửi tới địa chỉ ở mục 1.</li>
@@ -138,13 +140,13 @@
 
   <h2>9. Thay đổi</h2>
   <p>Khi chính sách này thay đổi, phiên bản và ngày ở đầu trang thay đổi theo, và lần sau bạn mở Synapsez sẽ được hỏi đồng ý với bản mới.</p>
-  <p class="dim">So với bản privacy-2026-11-01: khi một trang web từ chối cho đọc trực tiếp, địa chỉ trang được gửi tới Exa để đọc qua Exa.</p>
+  <p class="dim">So với bản privacy-2026-11-02: nêu E2B (máy tính đám mây) và các dịch vụ bạn tự kết nối; phản hồi bạn gửi — giữ bao lâu, ai đọc; ở mức Tiêu chuẩn nhà cung cấp qua OpenRouter có thể huấn luyện trên dữ liệu; vị trí mới của các cài đặt.</p>
 
   <hr />
 
   <h1 id="en" lang="en">Synapsez Privacy Policy</h1>
   <div lang="en">
-    <p class="dim">Version privacy-2026-11-02, effective 2 November 2026. <a href="/">Back to Synapsez</a> · <a href="/terms.html">Terms of Service</a> · <a href="/usage-policy.html">Usage Policy</a></p>
+    <p class="dim">Version privacy-2026-11-03, effective 3 November 2026. <a href="/">Back to Synapsez</a> · <a href="/terms.html">Terms of Service</a> · <a href="/usage-policy.html">Usage Policy</a></p>
     <p>
       Synapsez (<a href="https://synapsez.vercel.app/">synapsez.vercel.app</a>) is a web AI assistant: you chat with the AI model you
       choose, work with your files and, only if you connect them yourself, with your Gmail, Drive, Calendar and other Google apps. This
@@ -153,11 +155,11 @@
     <h2>1. Controller</h2>
     <p>Synapsez — contact: <a href="mailto:herozombie06@gmail.com">herozombie06@gmail.com</a>. Send any question, request about your data, or complaint there.</p>
     <h2>2. What is processed</h2>
-    <p>Your account (name, email, a password stored only as a hash, settings); what you write and send, the files the assistant makes, memory notes, projects and schedules; API keys you add (encrypted); a security record of sign-ins and similar events with the network and browser type, never the full IP address; if you pair a computer, what you allow the assistant to read there; if you connect Google, what you allow the assistant to read and change in your Google account — see 5; and your approximate location (about a city, from your network connection) — only when you ask for something "near me" without naming a place. The coordinates are rounded to about a kilometre and never stored. The answer stays in the conversation like any other result — the city's name, the places found and how far away they are: it is sent to the model provider, and it is in the share link if you share that conversation.</p>
+    <p>Your account (name, email, a password stored only as a hash, settings); what you write and send, the files the assistant makes, memory notes, projects and schedules; API keys you add (encrypted); a security record of sign-ins and similar events with the network and browser type, never the full IP address; if you pair a computer, what you allow the assistant to read there; if you connect Google, what you allow the assistant to read and change in your Google account — see 5; if you send feedback (Give feedback in the account menu, or the rating under an answer), what you write and — for feedback about a conversation — a copy of it, with its messages, tool calls and results (Gmail or Drive content included, if the conversation has any), your browser type and language, read by Synapsez's administrators to act on it; and your approximate location (about a city, from your network connection) — only when you ask for something "near me" without naming a place. The coordinates are rounded to about a kilometre and never stored. The answer stays in the conversation like any other result — the city's name, the places found and how far away they are: it is sent to the model provider, and it is in the share link if you share that conversation.</p>
     <h2>3. Why</h2>
-    <p>To answer you and do what you ask, to keep your account safe, and to run the service. Your data is not sold, not used for advertising, and not used to train AI models.</p>
+    <p>To answer you and do what you ask, to keep your account safe, and to run the service. Synapsez does not sell your data, use it for advertising, or train AI models on it. Under <strong>Standard</strong> provider privacy, the providers OpenRouter routes to (free models and Auto included) may keep or train on what they receive under their own terms; <strong>Strict</strong> (see 6) prevents that.</p>
     <h2>4. Where it goes, including outside Vietnam</h2>
-    <p>The model provider you choose — Anthropic, OpenAI, Google, OpenRouter (and the providers it routes to, free models and Auto included), OrcaRouter — receives your messages and the content of the files involved, mostly on servers in the United States and elsewhere; data from your Google account goes to only some of them — see 5. Vercel runs the app and the cloud computer; Supabase holds the database (before 19 October 2026 it was Neon, which may still hold an old copy until it is deleted). Web searches go to Exa, DuckDuckGo, Tavily, Brave or Google, and a search for code or programming documentation also to Stack Exchange (Stack Overflow); when a website refuses to let the assistant read it directly (or shows its content only by script), that page's address goes to Exa to be read through Exa; emails you ask for go through the email service Synapsez set up; Google receives the requests needed to do what you ask, only if you connect it — see 5. OpenStreetMap's services (Nominatim, Overpass, OSRM) receive place names, and the coordinates a search is centred on — your approximate location when you ask for something near you — when the assistant looks up a place, searches around one, or plans a route; they are run by the OpenStreetMap community, on servers mostly in Europe. Vercel Web Analytics and Speed Insights receive anonymous page and speed figures, never conversation content.</p>
+    <p>The model provider you choose — Anthropic, OpenAI, Google, OpenRouter (and the providers it routes to, free models and Auto included), OrcaRouter — receives your messages and the content of the files involved, mostly on servers in the United States and elsewhere; data from your Google account goes to only some of them — see 5. Vercel runs the app; E2B runs the cloud computer — your commands, files, Python and the cloud browser session go there, and your browser connects to the E2B machine directly to show its screen — with Vercel Sandbox standing in when E2B cannot; Supabase holds the database (before 19 October 2026 it was Neon, which may still hold an old copy until it is deleted). Web searches go to Exa, DuckDuckGo, Tavily, Brave or Google, and a search for code or programming documentation also to Stack Exchange (Stack Overflow); when a website refuses to let the assistant read it directly (or shows its content only by script), that page's address goes to Exa to be read through Exa; emails you ask for go through the email service Synapsez set up; Google receives the requests needed to do what you ask, only if you connect it — see 5; services you connect yourself — GitHub, Notion, Slack, YouTube (through Supadata), Telegram, Meta — receive the requests needed to do what you ask, with the key or token you gave. OpenStreetMap's services (Nominatim, Overpass, OSRM) receive place names, and the coordinates a search is centred on — your approximate location when you ask for something near you — when the assistant looks up a place, searches around one, or plans a route; they are run by the OpenStreetMap community, on servers mostly in Europe. Vercel Web Analytics and Speed Insights receive anonymous page and speed figures, never conversation content.</p>
 
     <h2 id="google-user-data">5. Google user data</h2>
     <h3>When</h3>
@@ -187,14 +189,14 @@
     <p>Synapsez's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
 
     <h2>6. Protections you can switch on</h2>
-    <p>Strict provider privacy (OpenRouter only to providers that keep and train on nothing — always applied to a conversation holding Google user data, whatever you chose); hiding personal details from the provider (emails, phone, ID, account and card numbers, labelled names become placeholders in text and in PDFs; pictures and scans go as they are); incognito conversations; turning memory and conversation search off; a retention period.</p>
+    <p>Strict provider privacy (Settings → Privacy; OpenRouter only to providers that keep and train on nothing — always applied to a conversation holding Google user data, whatever you chose); hiding personal details from the provider (emails, phone, ID, account and card numbers, labelled names become placeholders in text and in PDFs; pictures and scans go as they are); incognito conversations; turning memory and conversation search off; a retention period.</p>
     <h2>7. How long</h2>
-    <p>Until you delete it, or for the period you choose (30, 90, 180 or 365 days after last use; pinned conversations are kept). The security record is kept for 180 days — except the record of what you agreed to (which documents, which versions, when), kept until the account is deleted, because it is the proof you agreed. Deleting the account deletes everything in it. Model providers may keep data under their own terms — see 5 and 6.</p>
+    <p>Until you delete it, or for the period you choose (30, 90, 180 or 365 days after last use; pinned conversations are kept). The security record is kept for 180 days — except the record of what you agreed to (which documents, which versions, when), kept until the account is deleted, because it is the proof you agreed. Feedback is kept until you delete it (Settings → Privacy → Your data); the conversation copy with it goes when that conversation is deleted. Up to the first 1,200 characters of feedback are emailed to the administrators to act on — an email sent cannot be recalled. Deleting the account deletes everything in it. Model providers may keep data under their own terms — see 5 and 6.</p>
     <h2>8. Your rights</h2>
-    <p>See and export your data (Settings → Account, where the security record is too), correct or delete any of it, delete the account or disconnect Google to withdraw consent, and send any other request or complaint to the address in 1.</p>
+    <p>See and export your data (Settings → Privacy; the security record is in Settings → Account), correct or delete any of it, delete the account or disconnect Google to withdraw consent, and send any other request or complaint to the address in 1.</p>
     <h2>9. Changes</h2>
     <p>When this policy changes, the version and date at the top change with it, and the next time you open Synapsez you are asked to agree to the new one.</p>
-    <p class="dim">Since privacy-2026-11-01: when a website refuses a direct read, the page's address goes to Exa to be read through Exa.</p>
+    <p class="dim">Since privacy-2026-11-02: E2B (the cloud computer) and the services you connect are named; feedback you send — how long it is kept and who reads it; under Standard, providers reached through OpenRouter may train on data; where the settings now are.</p>
   </div>
 </main>
 </body>
