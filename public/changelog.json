@@ -1,6 +1,26 @@
 {
   "entries": [
     {
+      "version": "1.7.0",
+      "date": "2026-11-02",
+      "new": {
+        "vi": [
+          "Dán key vào ô nào cũng được: hệ thống nhận ra key của nhà cung cấp nào (hoặc token của kết nối nào), lưu đúng chỗ và báo cho bạn; key được kiểm tra với nhà cung cấp trước khi lưu.",
+          "Mỗi tài khoản OpenRouter chỉ gắn một key — key thứ hai phải từ tài khoản khác, vì hai key cùng tài khoản dùng chung hạn mức.",
+          "Model gợi ý: quản trị chọn một model miễn phí tốt nhất (mặc định Auto) và một model trả phí tốt nhất; key đã nạp tiền được gợi ý model trả phí, còn lại được gợi ý model miễn phí — ai chưa chọn model sẽ dùng luôn."
+        ],
+        "en": [
+          "Paste a key in any box: it is recognised (a provider's key, or a connector's token), kept where it belongs and said so; and checked with its provider before it is kept.",
+          "One OpenRouter account, one key — a second key must come from another account, since two keys of one account share its limits.",
+          "Suggested models: administrators pick the best free model (Auto by default) and the best paid one; a key that has paid for credit is suggested the paid one, everyone else the free one — and someone who never chose a model uses it."
+        ]
+      },
+      "improved": {
+        "vi": ["Mục Nhà cung cấp được vẽ lại: mỗi nhà cung cấp một thẻ có logo, mô tả và trạng thái; mỗi key cho biết đã nạp tiền hay đang ở gói miễn phí."],
+        "en": ["Settings → Providers redrawn: a card per provider with its logo, what it is for and where it stands; each key says whether it has paid credit or is on the free tier."]
+      }
+    },
+    {
       "version": "1.6.0",
       "date": "2026-11-02",
       "new": {

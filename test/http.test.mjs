@@ -891,15 +891,24 @@ section('the default model is one the account can run');
 
   await fresh.call('PUT', '/api/providers/openrouter/key', { apiKey: 'sk-or-v1-test-key' });
   const withRouter = await fresh.call('GET', '/api/bootstrap');
+  // The administrators' free suggestion — Auto until they choose another (recommend.js, owner 2026-11-02).
   check(
-    'an OpenRouter key lands a new account on the newest free model',
-    withRouter.json?.prefs?.defaultModel === 'openrouter/vendor/free-new:free',
-    withRouter.json?.prefs?.defaultModel,
+    'an OpenRouter key lands a new account on the suggested free model — Auto, until an administrator picks one',
+    withRouter.json?.prefs?.defaultModel === 'auto' && withRouter.json?.suggestion?.id === 'auto' && withRouter.json?.suggestion?.kind === 'free',
+    JSON.stringify({ model: withRouter.json?.prefs?.defaultModel, suggestion: withRouter.json?.suggestion }),
   );
+  await (await import('../server/recommend.js')).setRecommended({ free: 'openrouter/vendor/free-new:free', paid: 'openrouter/vendor/paid-newest' });
+  const picked = await fresh.call('GET', '/api/bootstrap');
+  check(
+    '  and on the free model an administrator picked, once they have — not the paid one, which runs on an OpenRouter key that never paid',
+    picked.json?.prefs?.defaultModel === 'openrouter/vendor/free-new:free' && picked.json?.recommended?.paid?.id === 'openrouter/vendor/paid-newest',
+    picked.json?.prefs?.defaultModel,
+  );
+  const withRouterAgain = picked;
   check(
     'and not on the newest model overall, which is a paid one',
-    withRouter.json?.prefs?.defaultModel !== 'openrouter/vendor/paid-newest',
-    withRouter.json?.prefs?.defaultModel,
+    withRouterAgain.json?.prefs?.defaultModel !== 'openrouter/vendor/paid-newest',
+    withRouterAgain.json?.prefs?.defaultModel,
   );
 
   // So the chip can say "free" and offer the swap in one press.

@@ -21,6 +21,7 @@ import { CONNECTORS, CONNECTOR_BY_ID, CATEGORIES, relatedTo } from './connector-
  *   pickSkill: (name: string) => void,
  *   closeSettings: () => void,
  *   addMcpServer: () => void,
+ *   keySaved: () => Promise<void>,
  *   onPlugins?: () => void,
  *   selectTab: (tab: string) => void,
  *   editSkill: (skill: any) => void,
@@ -734,10 +735,22 @@ export function createCustomize(deps) {
       const field = /** @type {HTMLInputElement} */ (document.getElementById('connector-token'));
       button.disabled = true;
       try {
-        const { account } = await api.connect(id, field.value);
-        toast(t('connectors.connectedAs', { account }), 'ok');
+        const { account, saved } = await api.connect(id, field.value);
+        // Recognised by its shape (server keyIntake.js): another connector's
+        // token went to that connector, a provider's key to Providers — said so.
+        if (saved?.kind === 'provider') {
+          const names = { openrouter: 'OpenRouter', google: 'Google Gemini', orcarouter: 'OrcaRouter', anthropic: 'Anthropic', openai: 'OpenAI' };
+          toast(t('conn.wasProviderKey', { provider: names[saved.id] || saved.id }), 'ok', { ms: 9000 });
+          await deps.keySaved();
+          field.value = '';
+          button.disabled = false;
+          return;
+        }
+        const landed = saved?.kind === 'service' ? saved.id : id;
+        if (landed !== id) toast(t('conn.movedTo', { from: c.name, to: CONNECTOR_BY_ID.get(landed)?.name || landed, account: account || '' }), 'ok', { ms: 9000 });
+        else toast(t('connectors.connectedAs', { account }), 'ok');
         await loadConnectors();
-        showConnectorPage(id);
+        showConnectorPage(landed);
       } catch (err) {
         toast(err.message, 'error');
         button.disabled = false;

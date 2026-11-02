@@ -2,6 +2,7 @@ import { getStore } from './store/index.js';
 import { encryptSecret, decryptSecret } from './crypto.js';
 import { CATALOG } from './providers/catalog.js';
 import { PLUGIN_IDS } from '../public/js/plugins.js';
+import { suggestionFor } from './recommend.js';
 
 const PREFS_KEY = 'prefs';
 const KEYS_KEY = 'providerKeys';
@@ -182,7 +183,10 @@ export async function getPrefs(userId) {
 /**
  * Where somebody who has not chosen a model should land.
  *
- * The newest free model on OpenRouter, when there is an OpenRouter key. That is
+ * The administrators' suggestion (recommend.js): their free model — Auto until
+ * they pick another — or, for an account whose key has paid for credit, their
+ * paid one. Failing that (no suggestion this account's keys can run), the
+ * newest free model on OpenRouter, when there is an OpenRouter key. That is
  * a deliberate reordering: this used to prefer the built-in flagships and only
  * fall back to a free model when *nothing else* was configured, so an account
  * with an Anthropic key started on Claude Opus and started spending immediately,
@@ -200,6 +204,13 @@ export async function getPrefs(userId) {
  */
 async function usableDefaultModel(userId, fallback) {
   const status = await providerStatus(userId).catch(() => ({}));
+
+  // The administrators' suggestion first (recommend.js, owner 2026-11-02): the
+  // paid one for an account whose key has paid for credit, the free one —
+  // Auto, unless they chose another — for everyone else. Only what the
+  // account's keys can run.
+  const suggested = await suggestionFor(status).catch(() => null);
+  if (suggested) return suggested.id;
 
   if (status.openrouter?.configured) {
     const [free] = await getStore()
@@ -534,11 +545,42 @@ export async function usesSharedKey(userId, provider) {
 /** The last four characters, which is how everybody tells one key from another. */
 const hintFor = (value) => `…${String(value).slice(-4)}`;
 
+/**
+ * What a check with the provider learned about a key, kept beside it
+ * (keyIntake.js): a hash of its account, whether that account has paid for
+ * credit, and when it was asked. Never the key; nothing else.
+ */
+const keyMeta = (meta = {}) => ({
+  ...(typeof meta.account === 'string' && meta.account ? { account: meta.account.slice(0, 40) } : {}),
+  ...(typeof meta.paid === 'boolean' ? { paid: meta.paid } : {}),
+  ...(typeof meta.checkedAt === 'string' ? { checkedAt: meta.checkedAt } : {}),
+});
+
+/** This account's own keys for a provider, readable — for the checks keyIntake.js makes, never for the browser. */
+export async function keyEntries(userId, provider) {
+  return keyList(await storedKeys(userId), provider).map((entry, index) => ({
+    index,
+    key: decryptSecret(entry.cipher) || '',
+    account: entry.account || null,
+    paid: typeof entry.paid === 'boolean' ? entry.paid : null,
+  }));
+}
+
+/** Remember what was learned about one key, by its position. */
+export async function setKeyMeta(userId, provider, index, meta) {
+  const keys = await storedKeys(userId);
+  const list = keyList(keys, provider);
+  if (!list[index]) return;
+  list[index] = { ...list[index], ...keyMeta(meta) };
+  keys[provider] = list;
+  await getStore().setUserSetting(userId, KEYS_KEY, keys);
+}
+
 /** Replace whatever is stored with this single key, or clear it. */
-export async function setApiKey(userId, provider, value) {
+export async function setApiKey(userId, provider, value, meta = {}) {
   if (!(provider in ENV_KEYS)) throw new Error(`Unknown provider "${provider}"`);
   const keys = await storedKeys(userId);
-  if (value) keys[provider] = [{ cipher: encryptSecret(value), hint: hintFor(value), addedAt: new Date().toISOString() }];
+  if (value) keys[provider] = [{ cipher: encryptSecret(value), hint: hintFor(value), addedAt: new Date().toISOString(), ...keyMeta(meta) }];
   else delete keys[provider];
   await getStore().setUserSetting(userId, KEYS_KEY, keys);
   cursor.delete(cursorKey(userId, provider));
@@ -547,7 +589,7 @@ export async function setApiKey(userId, provider, value) {
 }
 
 /** Add a spare, kept behind the ones already there. */
-export async function addApiKey(userId, provider, value) {
+export async function addApiKey(userId, provider, value, meta = {}) {
   if (!(provider in ENV_KEYS)) throw new Error(`Unknown provider "${provider}"`);
   const clean = String(value || '').trim();
   if (!clean) throw new Error('That is an empty key.');
@@ -560,7 +602,7 @@ export async function addApiKey(userId, provider, value) {
   }
   if (list.length >= 8) throw new Error('Eight keys per provider is the limit.');
 
-  list.push({ cipher: encryptSecret(clean), hint: hintFor(clean), addedAt: new Date().toISOString() });
+  list.push({ cipher: encryptSecret(clean), hint: hintFor(clean), addedAt: new Date().toISOString(), ...keyMeta(meta) });
   keys[provider] = list;
   await getStore().setUserSetting(userId, KEYS_KEY, keys);
   return list.length;
@@ -622,6 +664,10 @@ export async function providerStatus(userId) {
         position: index + 1,
         hint: entry.hint || '',
         addedAt: entry.addedAt || null,
+        // What the provider said when the key was checked: has its account paid
+        // for credit (true), never (false), or not said (null).
+        paid: typeof entry.paid === 'boolean' ? entry.paid : null,
+        checked: !!entry.checkedAt,
       })),
       // Whether there is anywhere to fall back to if the first one is refused.
       spare: Math.max(0, list.length - 1) + (list.length && shared ? 1 : 0),

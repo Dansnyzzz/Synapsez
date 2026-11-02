@@ -1880,6 +1880,102 @@ section('connectors: each Google product its own, the catalogue page, logos, and
   if (hadKey === undefined) delete process.env.ENCRYPTION_KEY;
 }
 
+section('keys: recognised wherever pasted, checked with their provider, one OpenRouter account one key; the suggested model (owner, 2026-11-02)');
+{
+  const db = await PGlite.create();
+  const { initStore } = await import('../server/store/index.js');
+  const store = await initStore({ driver: { query: async (text, params = []) => (await db.query(text, params)).rows } });
+  const hadKey = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY ||= 'features-suite-encryption-key';
+  const intake = await import('../server/keyIntake.js');
+  const rec = await import('../server/recommend.js');
+  const { providerStatus, getPrefs } = await import('../server/settings.js');
+  const OR = (n) => `sk-or-v1-${String(n).repeat(64).slice(0, 64)}`;
+  const shapes = [
+    [OR('a'), 'provider:openrouter'],
+    ['AIzaSyA-features-0123456789abcdefghijklmn', 'provider:google'],
+    ['sk-ant-api03-features0123456789', 'provider:anthropic'],
+    ['sk-orca-features0123', 'provider:orcarouter'],
+    ['sk-proj-features0123456789', 'provider:openai'],
+    ['ghp_0123456789abcdefghijklmnopqrstuvwxyz', 'service:github'],
+    ['github_pat_11ABCDEFG0123456789_abcdefghijklmnop', 'service:github'],
+    ['ntn_0123456789abcdefghijklmn', 'service:notion'],
+    ['xoxb-12345-67890-abcdefghij', 'service:slack'],
+    ['123456789:AAFabcdefghijklmnopqrstuvwxyz012345', 'service:telegram'],
+    ['plainly not a key', 'none'],
+  ];
+  const seen = shapes.map(([secret]) => intake.recognise(secret)).map((r) => (r ? `${r.kind}:${r.id}` : 'none'));
+  check('every key and token is told by its shape', JSON.stringify(seen) === JSON.stringify(shapes.map(([, want]) => want)), seen.join(', '));
+
+  // What OpenRouter says of a key: its account, and whether that account has paid.
+  const accounts = { [OR('a')]: { creator_user_id: 'user_A', is_free_tier: true }, [OR('b')]: { creator_user_id: 'user_A', is_free_tier: true }, [OR('c')]: { creator_user_id: 'user_C', is_free_tier: false }, [OR('d')]: null };
+  const asked = [];
+  const fetchImpl = async (url, init) => {
+    asked.push(String(url));
+    if (String(url).includes('openrouter.ai/api/v1/key')) {
+      const key = String(init.headers.Authorization).replace('Bearer ', '');
+      const data = accounts[key];
+      return data ? new Response(JSON.stringify({ data }), { status: 200 }) : new Response('{}', { status: 401 });
+    }
+    return new Response('{}', { status: 500 });
+  };
+  const checked = await intake.inspectKey('openrouter', OR('c'), { fetchImpl });
+  check('OpenRouter says whose key it is and whether that account has paid — kept as a hash, never the id', checked.ok === true && checked.paid === true && checked.account && checked.account !== 'user_C', JSON.stringify(checked));
+  check('  a key OpenRouter refuses is refused; one it cannot be asked about is not', (await intake.inspectKey('openrouter', OR('d'), { fetchImpl })).ok === false && (await intake.inspectKey('openrouter', OR('e'), { fetchImpl: async () => { throw new Error('offline'); } })).ok === null);
+
+  const user = await store.createUser({ id: 'u-keys', email: 'keys@example.com', passwordHash: 'x', name: 'K', role: 'user' });
+  const moved = await intake.intakeKey(user.id, 'google', OR('a'), { fetchImpl });
+  let status = await providerStatus(user.id);
+  check("an OpenRouter key pasted in Google's box is kept under OpenRouter, and the answer says so", moved.moved && moved.id === 'openrouter' && moved.from === 'google' && status.openrouter.keys.length === 1 && !status.google.own && status.openrouter.keys[0].paid === false, JSON.stringify(moved));
+  let sameAccount = '';
+  await intake.intakeKey(user.id, 'openrouter', OR('b'), { fetchImpl }).catch((err) => (sameAccount = err.message));
+  check('a second key of the same OpenRouter account is refused — one account, one key', /same OpenRouter account as key 1/.test(sameAccount), sameAccount);
+  let dead = '';
+  await intake.intakeKey(user.id, 'openrouter', OR('d'), { fetchImpl }).catch((err) => (dead = err.message));
+  check('  a key OpenRouter refuses is not kept', /OpenRouter refused that key/.test(dead), dead);
+  let shapeless = '';
+  await intake.intakeKey(user.id, 'openrouter', 'just some words', { fetchImpl }).catch((err) => (shapeless = err.message));
+  check('  nor is something that is no OpenRouter key at all', /does not look like an OpenRouter key — those begin sk-or-v1-/.test(shapeless), shapeless);
+
+  // The suggestion: free while no key has paid, the paid one once one has.
+  const lib = [
+    { id: 'openrouter/vendor/best-free:free', provider: 'openrouter', model: 'vendor/best-free:free', family: 'vendor', label: 'Best Free', context: 128000, maxOutput: 8000, priceIn: 0, priceOut: 0, isFree: true, releasedAt: new Date().toISOString(), vision: false },
+    { id: 'openrouter/vendor/best-paid', provider: 'openrouter', model: 'vendor/best-paid', family: 'vendor', label: 'Best Paid', context: 200000, maxOutput: 32000, priceIn: 3, priceOut: 15, isFree: false, releasedAt: new Date().toISOString(), vision: true },
+  ];
+  await store.upsertModels(lib);
+  let refusal = '';
+  await rec.setRecommended({ free: 'openrouter/vendor/best-paid' }).catch((err) => (refusal = err.message));
+  let refusal2 = '';
+  await rec.setRecommended({ free: 'auto', paid: 'openrouter/vendor/best-free:free' }).catch((err) => (refusal2 = err.message));
+  check('an administrator cannot make a paid model the free suggestion, nor a free one the paid', /has to be a free model/.test(refusal) && /has to be a paid model/.test(refusal2), `${refusal} / ${refusal2}`);
+  await rec.setRecommended({ free: 'openrouter/vendor/best-free:free', paid: 'openrouter/vendor/best-paid' });
+  const free = await rec.suggestionFor(status);
+  check('a key that never paid is suggested the free model — and an account that never chose a model uses it', free?.id === 'openrouter/vendor/best-free:free' && free.kind === 'free' && (await getPrefs(user.id)).defaultModel === free.id, JSON.stringify(free));
+  await intake.intakeKey(user.id, 'openrouter', OR('c'), { fetchImpl });
+  status = await providerStatus(user.id);
+  const paid = await rec.suggestionFor(status);
+  check('  another account’s key that has paid for credit: the paid model, by the same rule', status.openrouter.keys.length === 2 && status.openrouter.keys[1].paid === true && paid?.id === 'openrouter/vendor/best-paid' && paid.kind === 'paid' && (await getPrefs(user.id)).defaultModel === paid.id, JSON.stringify(paid));
+  await rec.setRecommended({ free: 'auto', paid: null });
+  check('  Auto counts as the free suggestion, and is the default', (await rec.getRecommended()).free === 'auto' && (await rec.suggestionFor({ openrouter: { configured: true, own: true, keys: [{ paid: false }] } }))?.id === 'auto');
+  check('  a suggestion the keys cannot run is not made', (await rec.suggestionFor({ google: { configured: true, own: true, keys: [{ paid: null }] } })) === null);
+
+  // A provider's key pasted in a connector's box is kept among the providers; a connector's token in a provider's box is connected.
+  const toProviders = await intake.intakeToken(user.id, 'github', 'AIzaSyA-features-0123456789abcdefghijklmn', { fetchImpl });
+  check("a Google key pasted in GitHub's box is kept under Google", toProviders.kind === 'provider' && toProviders.id === 'google' && (await providerStatus(user.id)).google.own, JSON.stringify(toProviders));
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => (String(url).includes('api.github.com/user') ? new Response(JSON.stringify({ login: 'octo' }), { status: 200 }) : realFetch(url));
+  try {
+    const toGithub = await intake.intakeKey(user.id, 'openrouter', 'ghp_0123456789abcdefghijklmnopqrstuvwxyz', { fetchImpl });
+    check("  a GitHub token pasted in OpenRouter's box connects GitHub", toGithub.kind === 'service' && toGithub.id === 'github' && toGithub.account === 'octo' && !!(await store.getConnector(user.id, 'github')), JSON.stringify(toGithub));
+    const notionBox = await intake.intakeToken(user.id, 'notion', 'ghp_0123456789abcdefghijklmnopqrstuvwxyz', { fetchImpl });
+    check("  and pasted in Notion's box, it connects GitHub, saying it moved", notionBox.id === 'github' && notionBox.moved && notionBox.from === 'notion', JSON.stringify(notionBox));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  if (hadKey === undefined) delete process.env.ENCRYPTION_KEY;
+  void asked;
+}
+
 section('free tiers: one allowance per service for the whole deployment, a fair share each, and nothing past them (owner, 2026-11-02)');
 {
   const db = await PGlite.create();

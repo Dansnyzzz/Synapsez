@@ -42,6 +42,7 @@ import { paintConnectorButton } from './cards.js';
 import { createYourData } from './your-data.js';
 import { createFeedback, renderFeedbackList, transcriptLines, answerLines } from './feedback.js';
 import { createAnswerFeedback } from './answer-feedback.js';
+import { CONNECTOR_BY_ID } from './connector-catalog.js';
 import { createChangelog, appVersion } from './changelog.js';
 import { contextPanel } from './context-panel.js';
 import { createModelNews } from './model-news.js';
@@ -5309,80 +5310,147 @@ function fillSettings() {
    * enough to tell one from another, which is the only thing this screen has to
    * help you do.
    */
-  const keyRow = (provider, entry, spare) => `
-    <div class="keyrow">
-      <span class="keyrow__no">${entry.position}</span>
+  const keyRow = (provider, entry, spare) => {
+    // What the provider said when the key was checked (keyIntake.js): has its account paid for credit?
+    const plan =
+      entry.paid === true
+        ? `<span class="keyrow__plan is-paid">${escapeHtml(t('keys.planPaid'))}</span>`
+        : entry.paid === false
+          ? `<span class="keyrow__plan">${escapeHtml(t('keys.planFree'))}</span>`
+          : '';
+    return `
+    <div class="keyrow" role="listitem">
+      <span class="keyrow__no" aria-hidden="true">${entry.position}</span>
       <span class="keyrow__hint">${escapeHtml(entry.hint || t('keys.saved'))}</span>
-      <span class="keyrow__when">${entry.addedAt ? escapeHtml(addedAgo(entry.addedAt)) : ''}</span>
+      ${plan}
       ${entry.position === 1 && spare ? `<span class="keyrow__badge">${escapeHtml(t('devices.inUse'))}</span>` : ''}
+      <span class="keyrow__when">${entry.addedAt ? escapeHtml(addedAgo(entry.addedAt)) : ''}</span>
       <button class="keyrow__drop" data-drop-key="${escapeHtml(provider)}" data-position="${entry.position}"
-              type="button" aria-label="${escapeHtml(t('keys.removeAria', { position: entry.position }))}">✕</button>
+              type="button" title="${escapeHtml(t('keys.removeAria', { position: entry.position }))}" aria-label="${escapeHtml(t('keys.removeAria', { position: entry.position }))}">${svg('<path d="M5 5l10 10M15 5 5 15"/>', 14)}</button>
     </div>`;
+  };
 
-  $('provider-list').innerHTML = Object.entries(providerMeta)
-    .map(([key, meta]) => {
-      const status = providers[key] || {};
-      const keys = status.keys || [];
-      const label = status.own
-        ? keys.length > 1
-          ? t('keys.count', { n: keys.length })
-          : t('keys.yours')
-        : status.shared
-          ? t('keys.shared')
-          : t('keys.notSet');
+  /**
+   * The model suggested for this account's keys (recommend.js, owner 2026-11-02):
+   * the administrators' free one, or their paid one when a key has paid for
+   * credit. Used already when the account never chose; one press away when it did.
+   */
+  const suggestion = state.boot.suggestion;
+  const suggest = suggestion
+    ? `<div class="psuggest" role="status">
+        <span class="psuggest__icon" aria-hidden="true">${svg('<path d="M10 2.5l1.9 4.6 4.9.4-3.7 3.2 1.1 4.8L10 13l-4.2 2.5 1.1-4.8L3.2 7.5l4.9-.4Z"/>', 18)}</span>
+        <div class="psuggest__text">
+          <p class="psuggest__title">${escapeHtml(t('suggest.title', { model: suggestion.id === 'auto' ? t('models.autoName') : suggestion.label }))}</p>
+          <p class="psuggest__why">${escapeHtml(t(suggestion.kind === 'paid' ? 'suggest.whyPaid' : 'suggest.whyFree'))}</p>
+        </div>
+        ${
+          suggestion.inUse && state.model === suggestion.id
+            ? `<span class="psuggest__used">${svg('<path d="m5 10.5 3 3 7-7"/>', 15)}${escapeHtml(t('suggest.inUse'))}</span>`
+            : `<button class="btn btn--small btn--primary" type="button" id="use-suggestion">${escapeHtml(t('suggest.use'))}</button>`
+        }
+      </div>`
+    : '';
 
-      return `
-        <div class="provider">
-          <div class="provider__head">
-            <span class="provider__name">${escapeHtml(meta.label)}</span>
-            <span class="badge ${status.own ? 'badge--ok' : ''}">${escapeHtml(label)}</span>
-          </div>
-          ${
-            status.shared
-              ? `<div class="hint">${t('keys.sharedFallback', { envVar: `<code>${escapeHtml(status.envVar || '')}</code>` })}</div>`
-              : ''
-          }
-          ${keys.length ? `<div class="keylist">${keys.map((entry) => keyRow(key, entry, keys.length > 1)).join('')}</div>` : ''}
-          <div class="provider__row">
-            <input type="password" placeholder="${escapeHtml(meta.keyHint)}" data-key="${escapeHtml(key)}" autocomplete="off" />
-            <button class="btn btn--ghost" data-save-key="${escapeHtml(key)}" type="button">
-              ${escapeHtml(keys.length ? t('keys.add') : t('action.save'))}
-            </button>
-          </div>
-          <div class="hint">
-            <a href="${escapeHtml(meta.console)}" target="_blank" rel="noopener">${escapeHtml(t('keys.getOne'))}</a>
-            ${
-              keys.length > 1
-                ? ` · ${escapeHtml(t('keys.triedInOrder'))}`
-                : keys.length
-                  ? ` · ${escapeHtml(t('keys.addFallback'))}`
-                  : ''
-            }
-          </div>
-        </div>`;
-    })
-    .join('');
+  $('provider-list').innerHTML =
+    suggest +
+    Object.entries(providerMeta)
+      .map(([key, meta]) => {
+        const status = providers[key] || {};
+        const keys = status.keys || [];
+        const standing = status.own ? 'on' : status.shared ? 'shared' : 'off';
+        const label = status.own ? (keys.length > 1 ? t('keys.count', { n: keys.length }) : t('keys.yours')) : status.shared ? t('keys.shared') : t('keys.notSet');
+        const site = { google: 'gemini.google.com', openrouter: 'openrouter.ai', orcarouter: 'orcarouter.ai', anthropic: 'anthropic.com', openai: 'openai.com' }[key] || '';
+        const note = key === 'openrouter' ? t('keys.oneAccountOneKey') : keys.length > 1 ? t('keys.triedInOrder') : keys.length ? t('keys.addFallback') : '';
+        return `
+        <section class="pcard pcard--${standing}" id="pcard-${escapeHtml(key)}" aria-labelledby="pcard-${escapeHtml(key)}-name">
+          <header class="pcard__head">
+            <span class="pcard__logo">${site ? `<img src="/api/favicon/${escapeHtml(site)}" alt="" width="22" height="22" loading="lazy" />` : ''}</span>
+            <div class="pcard__title">
+              <h4 id="pcard-${escapeHtml(key)}-name">${escapeHtml(meta.label)}</h4>
+              <p>${escapeHtml(t(`providers.about.${key}`))}</p>
+            </div>
+            <span class="pcard__status is-${standing}"><span class="pcard__dot" aria-hidden="true"></span>${escapeHtml(label)}</span>
+          </header>
+          ${status.shared ? `<p class="pcard__note">${t('keys.sharedFallback', { envVar: `<code>${escapeHtml(status.envVar || '')}</code>` })}</p>` : ''}
+          ${keys.length ? `<div class="keylist" role="list" aria-label="${escapeHtml(t('keys.listAria', { provider: meta.label }))}">${keys.map((entry) => keyRow(key, entry, keys.length > 1)).join('')}</div>` : ''}
+          <form class="pcard__add" data-save-form="${escapeHtml(key)}">
+            <input class="pcard__input" type="password" placeholder="${escapeHtml(meta.keyHint)}" data-key="${escapeHtml(key)}" autocomplete="off" spellcheck="false" aria-label="${escapeHtml(t('keys.pasteFor', { provider: meta.label }))}" />
+            <button class="btn btn--primary pcard__save" data-save-key="${escapeHtml(key)}" type="submit">${escapeHtml(keys.length ? t('keys.add') : t('action.save'))}</button>
+          </form>
+          <p class="pcard__foot">
+            <a href="${escapeHtml(meta.console)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('keys.getOne'))}</a>${note ? ` · ${escapeHtml(note)}` : ''}
+          </p>
+        </section>`;
+      })
+      .join('');
 
-  for (const btn of document.querySelectorAll('[data-save-key]')) {
-    btn.addEventListener('click', async () => {
-      const provider = btn.dataset.saveKey;
-      const input = document.querySelector(`[data-key="${provider}"]`);
+  for (const img of /** @type {NodeListOf<HTMLImageElement>} */ ($('provider-list').querySelectorAll('.pcard__logo img'))) {
+    img.addEventListener('error', () => img.remove(), { once: true });
+  }
+
+  $('use-suggestion')?.addEventListener('click', async () => {
+    try {
+      const { prefs: saved, suggestion: used } = await api.useSuggestion();
+      state.boot.prefs = saved;
+      state.boot.suggestion = { ...used, inUse: true };
+      state.model = saved.defaultModel;
+      renderTopbar();
+      refreshModelFacts();
+      toast(t('suggest.switched', { model: used.id === 'auto' ? t('models.autoName') : used.label }));
+      fillSettings();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  /**
+   * A key pasted, taken where it belongs (server keyIntake.js): checked with
+   * its provider, saved under the provider it is really for — or connected as
+   * the connector it is — and the model suggested for the account's keys now.
+   */
+  for (const form of /** @type {NodeListOf<HTMLFormElement>} */ (document.querySelectorAll('[data-save-form]'))) {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const provider = form.dataset.saveForm;
+      const input = /** @type {HTMLInputElement} */ (form.querySelector('[data-key]'));
+      const button = /** @type {HTMLButtonElement} */ (form.querySelector('[data-save-key]'));
       const value = input.value.trim();
-      const existing = (providers[provider]?.keys || []).length;
-
+      if (!value) {
+        input.focus();
+        return toast(t('keys.pasteFirst'), 'error');
+      }
+      button.disabled = true;
       try {
-        // Adding when there is one already, replacing when there is not — and
-        // an empty box on a provider with no keys still means "clear it", which
-        // is what the hint under an empty provider has always said.
-        state.boot.providers = existing && value ? await api.addKey(provider, value) : await api.saveKey(provider, value);
+        const before = state.model;
+        const result = await api.intakeKey(provider, value);
+        state.boot.providers = result.providers;
+        if (result.providerMeta) state.boot.providerMeta = result.providerMeta;
+        state.boot.suggestion = result.suggestion;
         input.value = '';
         // Step 2 of the guide says whether a key exists. It is open behind this
         // sheet, so telling somebody to paste a key they have just pasted would
         // be the guide arguing with them.
         onboarding.refresh();
-        toast(t(value ? 'keys.savedFor' : 'keys.removedFor', { provider: providerMeta[provider].label }));
+        const saved = result.saved;
+        const nameOf = (id) => state.boot.providerMeta?.[id]?.label || id;
+        if (saved.kind === 'service') toast(t('keys.wasConnector', { service: CONNECTOR_BY_ID.get(saved.id)?.name || saved.id }), 'ok', { ms: 9000 });
+        else if (saved.moved) toast(t('keys.movedTo', { from: nameOf(saved.from), to: nameOf(saved.id) }), 'ok', { ms: 9000 });
+        else toast(t('keys.savedFor', { provider: nameOf(saved.id) }));
+        // An account that never chose a model is on the suggestion from now on.
+        if (result.suggestion?.inUse && result.suggestion.id !== before) {
+          state.boot.prefs.defaultModel = result.suggestion.id;
+          state.model = result.suggestion.id;
+          renderTopbar();
+          refreshModelFacts();
+        }
         fillSettings();
+        if (saved.kind === 'provider') {
+          const card = document.getElementById(`pcard-${saved.id}`);
+          card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          if (saved.moved) card?.classList.add('is-flash');
+        }
       } catch (err) {
+        button.disabled = false;
         toast(err.message, 'error');
       }
     });
@@ -5495,6 +5563,12 @@ const customize = createCustomize({
   closeSettings: () => $('settings').close(),
   // Add an MCP server by hand, from Connectors' + Add: Extensions → Advanced settings, the form open.
   addMcpServer: () => openExtAdvanced({ form: true }),
+  // A provider's key pasted in a connector's box was kept among the providers: their rows, and the suggestion, again.
+  keySaved: async () => {
+    const boot = await api.bootstrap();
+    Object.assign(state.boot, { providers: boot.providers, providerMeta: boot.providerMeta, suggestion: boot.suggestion });
+    onboarding.refresh();
+  },
   onPlugins: () => paintPluginSwitches(),
   selectTab: (tab) => selectTab(tab),
   editSkill: (skill) => skillEditor.open(skill),
@@ -5801,10 +5875,58 @@ async function loadFreeTier() {
   }
 }
 
+/**
+ * The two models suggested to everyone (server/recommend.js, owner 2026-11-02):
+ * a free one — Auto, OpenRouter's free router, counts — and a paid one, chosen
+ * from the library, grouped by maker.
+ */
+async function loadRecommended() {
+  const host = $('admin-recommended');
+  try {
+    const { current, options } = await api.adminRecommended();
+    const grouped = (list, chosen) => {
+      const groups = new Map();
+      for (const m of list) {
+        const family = m.family || '';
+        if (!groups.has(family)) groups.set(family, []);
+        groups.get(family).push(m);
+      }
+      const option = (m) => `<option value="${escapeHtml(m.id)}"${m.id === chosen ? ' selected' : ''}>${escapeHtml(m.id === 'auto' ? t('recommend.autoOption') : m.label)}</option>`;
+      return [...groups]
+        .map(([family, models]) => (family ? `<optgroup label="${escapeHtml(family)}">${models.map(option).join('')}</optgroup>` : models.map(option).join('')))
+        .join('');
+    };
+    host.innerHTML = `<div class="rec">
+        <div class="rec__row">
+          <div class="rec__label"><label for="rec-free">${escapeHtml(t('recommend.free'))}</label><p>${escapeHtml(t('recommend.freeHint'))}</p></div>
+          <select id="rec-free" class="sselect sselect--wide">${grouped(options.free, current.free)}</select>
+        </div>
+        <div class="rec__row">
+          <div class="rec__label"><label for="rec-paid">${escapeHtml(t('recommend.paid'))}</label><p>${escapeHtml(t('recommend.paidHint'))}</p></div>
+          <select id="rec-paid" class="sselect sselect--wide"><option value="">${escapeHtml(t('recommend.none'))}</option>${grouped(options.paid, current.paid)}</select>
+        </div>
+        <div class="settings__actions"><button class="btn btn--primary btn--small" type="button" id="rec-save">${escapeHtml(t('action.save'))}</button></div>
+      </div>`;
+    $('rec-save').addEventListener('click', async () => {
+      try {
+        await api.setRecommended({ free: /** @type {HTMLSelectElement} */ ($('rec-free')).value, paid: /** @type {HTMLSelectElement} */ ($('rec-paid')).value || null });
+        const boot = await api.bootstrap();
+        Object.assign(state.boot, { recommended: boot.recommended, suggestion: boot.suggestion });
+        toast(t('recommend.saved'), 'ok');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+  } catch (err) {
+    host.textContent = err.message;
+  }
+}
+
 async function loadAdmin() {
   privacy.loadAdminActivity();
   loadAdminFeedback();
   loadFreeTier();
+  loadRecommended();
   try {
     const { users } = await api.users();
 
@@ -5914,6 +6036,8 @@ $('logout').addEventListener('click', signOut);
  * having to work out which of two numbers is the live one.
  */
 const browser = createModelBrowser({
+  // The administrators' two suggestions, marked and shown first (owner, 2026-11-02).
+  recommended: () => state.boot?.recommended || null,
   onPick: async (modelId) => {
     // Repaint first: the press should feel immediate, and this is a preference
     // rather than something that can be refused halfway.

@@ -1208,6 +1208,36 @@ first token is retried and a failure mid-answer is reported. The key that worked
 dead first key costs one failed request rather than one per turn — and the failover is announced,
 because a fallback nobody can see is how somebody finds out their first key died from the bill.
 
+### A key pasted anywhere, kept where it belongs
+
+`POST /api/providers/intake` (`server/keyIntake.js`), which every box in Settings → Providers uses:
+
+- **Recognised by its shape.** OpenRouter `sk-or-v1-`, OrcaRouter `sk-orca-`, Anthropic `sk-ant-`, Google
+  `AIza…`, OpenAI `sk-proj-`; and the connectors' tokens — GitHub `ghp_`/`github_pat_`, Notion
+  `ntn_`/`secret_`, Slack `xox…`, Telegram `123456:AA…`, Supadata `sd_`, a Facebook Page `EAA…`. Pasted in
+  the wrong provider's box, a key is kept under the right one; a connector's token is connected as that
+  connector; and the toast says where it went. The connectors' boxes do the same the other way. A secret
+  that fits no shape is refused in OpenRouter's, Google's and Anthropic's boxes, saying what one looks like.
+- **Checked with its provider** before it is kept (`KEY_CHECKS=off` skips it): a refused key is said to be
+  refused now, not on the first message; an outage never refuses one.
+- **One OpenRouter account, one key.** OpenRouter's `GET /api/v1/key` says whose key it is
+  (`organization_id` or `creator_user_id`, kept only as a hash) — a second key of the same account shares
+  its limits, the free models' daily allowance included, so it is refused as no fallback. Keys saved
+  before the rule are asked once, when the next one arrives.
+- **Paid or free.** The same answer says whether the account has ever paid for credit (`is_free_tier`):
+  each key shows *Paid credit* or *Free tier*. An Anthropic or OpenAI key is a paying one by nature (no
+  free models there); a Gemini key cannot be asked, and counts as free.
+
+### The models suggested to everyone
+
+An administrator picks two in Settings → People → *Recommended models* (`server/recommend.js`): the best
+free one — Auto, OpenRouter's free router, by default and counted as free — and the best paid one; the
+server refuses a paid model as the free suggestion and the other way round. An account whose key pays
+through the paid model's provider is suggested the paid one; everyone else the free one, and only what
+the account's keys can run. An account that never chose a model uses the suggestion at once (`getPrefs`);
+one that did sees it above the provider cards with **Use this model**. The model picker marks both and
+shows them first.
+
 The key itself never comes back out. What the screen shows is a position, the last four characters
 and a date, which is enough to tell one key from another and not enough to use one.
 
@@ -1796,6 +1826,7 @@ step, with the optional certificate and how to bring data over from another data
 | `DEFAULT_MONTHLY_TOKEN_LIMIT` | optional | Monthly cap for accounts using a shared key. Ignored for accounts with their own. |
 | `TAVILY_API_KEY` or `BRAVE_API_KEY` | recommended | Reliable web search. Without one, search scrapes DuckDuckGo, which is best-effort. |
 | `STACKEXCHANGE_KEY` | recommended | A free Stack Apps key for `code_context`: 10,000 Stack Exchange requests a day instead of 300 — a quota of the server's address, shared by every account. |
+| `KEY_CHECKS` | optional | On by default: a key pasted in Settings → Providers is checked with its provider before it is kept (and OpenRouter says whose account it is, and whether it has paid). `off` skips the check — for test suites that save made-up keys. |
 | `FREE_TIER_ONLY` | optional | On by default: every metered search service stops at its free allowance (see "Free tiers"). `false` counts them but stops none, for a deployment that pays. |
 | `FREE_TIER_USER_DAILY` | optional | Metered searches one account may make a day (default `30`); past it, its searches use the free engines. |
 | `EXA_FREE_MILLS`, `TAVILY_FREE_CREDITS`, `BRAVE_FREE_REQUESTS`, `GOOGLE_FREE_DAILY`, `STACKEXCHANGE_FREE_DAILY` | optional | Each service's ceiling, if its free tier is not the default one: Exa in thousandths of a dollar a month (9500), Tavily credits a month (950), Brave requests a month (950), Google grounded searches a day on the deployment's Gemini key (450), Stack Exchange requests a day (280, or 9500 with a key). |

@@ -1,4 +1,5 @@
-import { connectedServices, connect, disconnect } from '../connectors.js';
+import { connectedServices, disconnect } from '../connectors.js';
+import { intakeToken } from '../keyIntake.js';
 import { limit as rateLimit } from '../ratelimit.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 import { authUrl, finishAuth, googleConfigured, googleGrants, pickProducts, readState, dropGoogleProduct, GOOGLE_PRODUCTS } from '../google.js';
@@ -252,9 +253,13 @@ export function mountConnectorRoutes(api, { wrap }) {
       rateLimit('connect', (req) => req.user?.id),
       wrap(async (req, res) => {
         try {
-          res.json(await connect(req.user.id, req.params.service, req.body?.token));
+          // Recognised by its shape (keyIntake.js, owner 2026-11-02): another
+          // connector's token is connected where it belongs, a provider's key
+          // is kept among the providers — and the answer says where it went.
+          const saved = await intakeToken(req.user.id, req.params.service, req.body?.token);
+          res.json({ service: saved.kind === 'service' ? saved.id : req.params.service, account: saved.account ?? null, saved });
         } catch (err) {
-          res.status(400).json({ error: err.message });
+          res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
         }
       }),
     );

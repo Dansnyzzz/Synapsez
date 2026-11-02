@@ -35,7 +35,9 @@ import { getStore, initStore, isServerless } from './store/index.js';
 import { RUN_LEASE_STALE_MS } from './store/pg.js';
 import { workerStatus, usesInProcessTools, handleIndexPayload } from './localTools.js';
 import { publish, subscribe, poll, forget as forgetScreen } from './screenHub.js';
-import { keyProviderMeta } from './providers/catalog.js';
+import { keyProviderMeta, CATALOG } from './providers/catalog.js';
+import { intakeKey } from './keyIntake.js';
+import { getRecommended, setRecommended, suggestionFor, recommendedWithLabels } from './recommend.js';
 import {
   browse,
   refreshLibrary,
@@ -854,13 +856,16 @@ export function createApp() {
         await setPrefs(req.user.id, { timezone: zone }).catch(() => {});
       }
 
-      const [providers, worker, usage, library, consented] = await Promise.all([
+      const [providers, worker, usage, library, consented, recommended] = await Promise.all([
         providerStatus(req.user.id),
         workerStatus(req.user, prefs),
         usageSummary(req.user.id),
         store.modelLibraryStatus(),
         store.latestConsent(req.user.id),
+        recommendedWithLabels().catch(() => ({ free: null, paid: null })),
       ]);
+      const suggestion = await suggestionFor(providers).catch(() => null);
+      const chose = !!((await store.getUserSetting(req.user.id, 'prefs').catch(() => null)) || {}).defaultModel;
       res.json({
         user: publicUser(req.user),
         // Whether this account has agreed to the documents as they are now; if
@@ -871,6 +876,10 @@ export function createApp() {
         providers,
         // The key rows Settings draws — see OFFERED_KEY_PROVIDERS.
         providerMeta: keyProviderMeta(providers),
+        // The administrators' two suggestions, marked in the model picker, and
+        // the one for this account's keys (recommend.js, owner 2026-11-02).
+        recommended,
+        suggestion: suggestion ? { ...suggestion, inUse: !chose || prefs.defaultModel === suggestion.id } : null,
         library,
         tools: TOOLS.map(({ name, scope, readOnly, description }) => ({
           name,
@@ -1064,6 +1073,48 @@ export function createApp() {
       } catch (err) {
         res.status(400).json({ error: err.message });
       }
+    }),
+  );
+
+  /**
+   * A key pasted in Settings → Providers, taken where it belongs (keyIntake.js,
+   * owner 2026-11-02): recognised by its shape — saved under the provider it
+   * is for, or connected as the connector it is, whichever box it was pasted
+   * in — checked with the provider, one OpenRouter account one key. The answer
+   * carries where it went and the model now suggested for the account: taken
+   * at once when the account never chose one, offered when it did.
+   */
+  api.post(
+    '/providers/intake',
+    rateLimit('connect', (req) => req.user?.id),
+    wrap(async (req, res) => {
+      const language = languageOf(req);
+      try {
+        const saved = await intakeKey(req.user.id, String(req.body?.provider || ''), req.body?.apiKey);
+        if (saved.kind === 'provider') await audit(req, req.user.id, 'key_added', { provider: saved.id.slice(0, 40) });
+        const providers = await providerStatus(req.user.id);
+        const stored = (await getStore().getUserSetting(req.user.id, 'prefs')) || {};
+        const suggestion = await suggestionFor(providers).catch(() => null);
+        res.status(201).json({
+          providers,
+          // A key of a provider not offered before (Anthropic, say) brings its row.
+          providerMeta: keyProviderMeta(providers),
+          saved,
+          suggestion: suggestion ? { ...suggestion, inUse: !stored.defaultModel || stored.defaultModel === suggestion.id } : null,
+        });
+      } catch (err) {
+        res.status(err.status || 400).json({ error: translateMessage(String(err.message), language) });
+      }
+    }),
+  );
+
+  /** Use the suggested model, as the account's own choice from now on. */
+  api.post(
+    '/providers/suggestion/use',
+    wrap(async (req, res) => {
+      const suggestion = await suggestionFor(await providerStatus(req.user.id));
+      if (!suggestion) return res.status(404).json({ error: translateMessage('There is no model to suggest for the keys on this account yet.', languageOf(req)) });
+      res.json({ prefs: await setPrefs(req.user.id, { defaultModel: suggestion.id }), suggestion });
     }),
   );
 
@@ -2322,6 +2373,38 @@ export function createApp() {
 
   // ── admin ───────────────────────────────────────────────────────────
   // The router itself, and its guard, are created above mountAccountRoutes.
+
+  // The two models suggested to everyone (recommend.js), with the library to choose them from.
+  admin.get(
+    '/recommended',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const [current, free, paid] = await Promise.all([
+        getRecommended(),
+        store.listSharedModels({ tier: 'free', sort: 'name', limit: 400 }),
+        store.listSharedModels({ tier: 'paid', sort: 'name', limit: 1000 }),
+      ]);
+      const option = (m) => ({ id: m.id, label: m.label || m.model, family: m.family || null });
+      res.json({
+        current,
+        options: {
+          free: [{ id: 'auto', label: 'Auto', family: null }, ...free.map(option)],
+          paid: [...CATALOG.map((m) => ({ id: m.id, label: m.label, family: m.provider })), ...paid.map(option)],
+        },
+      });
+    }),
+  );
+
+  admin.put(
+    '/recommended',
+    wrap(async (req, res) => {
+      try {
+        res.json({ current: await setRecommended({ free: req.body?.free, paid: req.body?.paid }) });
+      } catch (err) {
+        res.status(err.status || 400).json({ error: translateMessage(String(err.message), languageOf(req)) });
+      }
+    }),
+  );
 
   // How much of each free allowance this deployment has used this period (freeTier.js).
   admin.get(

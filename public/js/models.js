@@ -43,7 +43,11 @@ const relative = (iso) => {
 /** The library row Auto runs on; see AUTO_ROUTER in server/autoPick.js. */
 const AUTO_ROUTER_ID = 'openrouter/openrouter/free';
 
-export function createModelBrowser({ onPick }) {
+/**
+ * @param {{ onPick: (id: string) => void, recommended?: () => ({ free?: { id: string, label: string } | null, paid?: { id: string, label: string } | null } | null) }} options
+ *   `recommended`: the administrators' two suggestions (server recommend.js), marked where they appear and shown first.
+ */
+export function createModelBrowser({ onPick, recommended = () => null }) {
   const dialog = document.getElementById('models');
   const searchInput = document.getElementById('model-search');
   const clearButton = document.getElementById('model-search-clear');
@@ -197,8 +201,41 @@ export function createModelBrowser({ onPick }) {
       : t('models.empty');
   }
 
+  /** The mark on a suggested model: the free one, or the paid one. */
+  const suggestedTag = (id) => {
+    const rec = recommended() || {};
+    const which = rec.free?.id === id ? 'free' : rec.paid?.id === id ? 'paid' : null;
+    return which ? `<span class="tag tag--suggested">${escapeHtml(t(which === 'free' ? 'models.suggestedFree' : 'models.suggestedPaid'))}</span>` : '';
+  };
+
+  /**
+   * The suggestions, first — for somebody who has no idea which is best, the
+   * two the administrators picked are the answer, one press away. Not on a
+   * search, which is looking for something else; only where they belong (the
+   * free one on the paid tab is noise, and the other way round).
+   */
+  function suggestedHtml(tier) {
+    const rec = recommended() || {};
+    // Auto has its own card just below, marked there.
+    const picks = [tier !== 'paid' && rec.free?.id !== 'auto' ? rec.free : null, tier !== 'free' ? rec.paid : null].filter(Boolean);
+    if (!picks.length || state.query) return '';
+    return (
+      `<div class="model-group__label">${escapeHtml(t('models.suggested'))}</div>` +
+      picks
+        .map(
+          (m) =>
+            `<button class="model-card model-card--suggested ${m.id === state.current ? 'is-current' : ''}" data-model="${escapeHtml(m.id)}" type="button">` +
+            `<span class="model-card__main"><span class="model-card__name">${escapeHtml(m.id === 'auto' ? t('models.autoName') : m.label)} ${suggestedTag(m.id)}</span>` +
+            `<span class="model-card__id">${escapeHtml(m.id)}</span></span></button>`,
+        )
+        .join('')
+    );
+  }
+
   function card(model, isBuiltin) {
     const tags = [];
+    const mark = suggestedTag(model.id);
+    if (mark) tags.push(mark);
     if (model.isFree) tags.push(`<span class="tag tag--free">${escapeHtml(t('models.tagFree'))}</span>`);
     if (isRecent(model.releasedAt)) tags.push(`<span class="tag tag--new">${escapeHtml(t('models.tagNew'))}</span>`);
     // The one capability that fails loudly rather than quietly: send a picture
@@ -250,7 +287,7 @@ export function createModelBrowser({ onPick }) {
       `<div class="model-group__label">${escapeHtml(t('models.automatic'))}</div>` +
       `<button class="model-card ${state.current === 'auto' ? 'is-current' : ''}" data-model="auto" type="button">` +
       `<span class="model-card__main">` +
-      `<span class="model-card__name">${escapeHtml(t('models.autoName'))}</span>` +
+      `<span class="model-card__name">${escapeHtml(t('models.autoName'))} ${suggestedTag('auto')}</span>` +
       `<span class="model-card__meta">${escapeHtml(t('models.autoMeta'))}</span>` +
       `</span></button>`
     );
@@ -258,6 +295,7 @@ export function createModelBrowser({ onPick }) {
 
   function renderResults(builtin, models, tier, provider) {
     const sections = [];
+    if (provider === 'all') sections.push(suggestedHtml(tier));
     if (tier !== 'paid' && (provider === 'all' || provider === 'openrouter')) sections.push(autoCardHtml());
 
     if (!builtin.length && !models.length) {

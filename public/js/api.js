@@ -271,6 +271,12 @@ export const api = {
   saveKey: (provider, apiKey) => request('PUT', `/api/providers/${provider}/key`, { apiKey }),
   /** A spare, behind the ones already saved — tried in order when one is refused. */
   addKey: (provider, apiKey) => request('POST', `/api/providers/${provider}/keys`, { apiKey }),
+  // A key pasted in Settings → Providers: recognised, checked and kept where it belongs (owner, 2026-11-02).
+  intakeKey: (provider, apiKey) => request('POST', '/api/providers/intake', { provider, apiKey }),
+  useSuggestion: () => request('POST', '/api/providers/suggestion/use'),
+  // The two models an administrator suggests to everyone.
+  adminRecommended: () => request('GET', '/api/admin/recommended'),
+  setRecommended: (body) => request('PUT', '/api/admin/recommended', body),
   removeKey: (provider, position) => request('DELETE', `/api/providers/${provider}/keys/${position}`),
 
   chats: () => request('GET', '/api/chats'),

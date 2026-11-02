@@ -14,6 +14,8 @@ import { removeTemp } from './lib/tmp.mjs';
 
 process.env.ENCRYPTION_KEY ||= 'ui-test-encryption-key';
 process.env.SESSION_SECRET ||= 'ui-test-session-secret';
+// The keys saved here are made up: they are not taken to their providers to be checked (keyIntake.js).
+process.env.KEY_CHECKS = 'off';
 process.env.DATA_DIR = path.join(os.tmpdir(), 'ai-remote-ui-test');
 // A folder for the workspace browser to actually browse.
 process.env.WORKSPACE = path.join(os.tmpdir(), 'ai-remote-ui-workspace');
@@ -3262,6 +3264,51 @@ section('Connectors: Claude\'s table and cards, every Google product its own, an
   check('  ← Connectors goes back', await page.isVisible('#panel-connectors'));
   await getStore().deleteConnector(me.id, 'google');
   await getStore().deleteConnector(me.id, 'github');
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.waitForTimeout(200);
+}
+
+section('Providers: a card each, a key pasted in the wrong box kept where it belongs, and the model suggested (owner, 2026-11-02)');
+{
+  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  await openSettings();
+  await page.click('#tab-providers');
+  await page.waitForTimeout(500);
+  const cards = await page.evaluate(() =>
+    [...document.querySelectorAll('#provider-list .pcard')].map((c) => ({
+      id: c.id,
+      name: c.querySelector('h4')?.textContent,
+      about: !!c.querySelector('.pcard__title p')?.textContent,
+      status: c.querySelector('.pcard__status')?.textContent?.trim(),
+      logo: !!c.querySelector('.pcard__logo'),
+    })),
+  );
+  check('a card per provider: its logo, its name, what it is for, where it stands', cards.length >= 3 && cards.every((c) => c.name && c.about && c.status && c.logo), JSON.stringify(cards));
+  // An OpenRouter key pasted in Google's box.
+  await page.fill('[data-key="google"]', 'sk-or-v1-ui-moved-key-0123456789');
+  await page.press('[data-key="google"]', 'Enter');
+  await page.waitForTimeout(1200);
+  const moved = await page.evaluate(() => ({
+    toast: [...document.querySelectorAll('#toasts > *, #toasts-alert > *')].map((n) => n.textContent).join(' | '),
+    openrouter: [...document.querySelectorAll('#pcard-openrouter .keyrow__hint')].map((n) => n.textContent),
+    google: document.querySelectorAll('#pcard-google .keyrow').length,
+    flashed: document.getElementById('pcard-openrouter')?.classList.contains('is-flash'),
+  }));
+  check("pasted in Google's box, an OpenRouter key is kept under OpenRouter — and said so", moved.openrouter.includes('…6789') && moved.google === 0 && /OpenRouter/.test(moved.toast) && moved.flashed, JSON.stringify(moved));
+  await page.fill('[data-key="openrouter"]', 'not a key at all');
+  await page.press('[data-key="openrouter"]', 'Enter');
+  await page.waitForTimeout(700);
+  const refused = await page.evaluate(() => [...document.querySelectorAll('#toasts > *, #toasts-alert > *')].map((n) => n.textContent).join(' | '));
+  check('  something that is no key at all is refused, saying what one looks like', /sk-or-v1/.test(refused), refused);
+  const suggestion = await page.evaluate(() => ({
+    shown: !!document.querySelector('#provider-list .psuggest'),
+    title: document.querySelector('.psuggest__title')?.textContent || '',
+  }));
+  check('the model suggested for these keys sits above the cards', suggestion.shown && /Auto/.test(suggestion.title), JSON.stringify(suggestion));
   await page.evaluate(() => document.getElementById('settings').close());
   await page.waitForTimeout(200);
 }
