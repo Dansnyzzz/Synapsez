@@ -70,6 +70,19 @@ export class E2BOutOfCredit extends Error {
   }
 }
 
+/**
+ * The SDK itself could not be loaded on this server (SBX-002). Nothing E2B said:
+ * no machine can start here until the deployment changes, so the work goes to
+ * Vercel, and the reason stays in the server's log rather than in the chat.
+ */
+export class E2BSdkError extends Error {
+  /** @param {unknown} cause */
+  constructor(cause) {
+    super('The E2B library could not be loaded on this server.', { cause });
+    this.name = 'E2BSdkError';
+  }
+}
+
 /** Whether there is a key to start an E2B machine with. */
 export function e2bConfigured(env = process.env) {
   return !!String(env.E2B_API_KEY || '').trim();
@@ -93,22 +106,30 @@ const connection = () => ({ apiKey: process.env.E2B_API_KEY });
  */
 let sdk = null;
 async function loadSdk() {
-  if (!sdk) sdk = await import('e2b/dist/index.mjs');
+  if (!sdk) {
+    try {
+      sdk = await import('e2b/dist/index.mjs');
+    } catch (err) {
+      throw new E2BSdkError(err);
+    }
+  }
   return sdk;
 }
 
 /**
  * Why E2B cannot take this work, if that is what an error says — `credit`,
- * `busy` (its twenty machines are running), `auth` or `down` — and null for an
- * error that would follow the work anywhere: a command that failed, a bad path.
+ * `busy` (its twenty machines are running), `auth`, `down`, or `broken` (its
+ * library would not load here) — and null for an error that would follow the
+ * work anywhere: a command that failed, a bad path.
  *
  * @param {any} err
- * @returns {'credit' | 'busy' | 'auth' | 'down' | null}
+ * @returns {'credit' | 'busy' | 'auth' | 'down' | 'broken' | null}
  */
 export function e2bUnavailable(err) {
   if (!err) return null;
   const name = String(err.name || '');
   if (name === 'CommandExitError') return null;
+  if (name === 'E2BSdkError') return 'broken';
   const status = Number(err.statusCode || err.status || 0);
   const raw = String(err.message || err);
   if (name === 'E2BOutOfCredit' || status === 402) return 'credit';

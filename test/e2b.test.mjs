@@ -249,6 +249,7 @@ section('which refusals send the work elsewhere');
   check('the network: down', u(new TypeError('fetch failed')) === 'down' && u(named('TimeoutError', 'Request timed out')) === 'down');
   check('a command that failed is not a reason to move', u(named('CommandExitError', 'exit status 1', { exitCode: 1 })) === null && u(new Error('something else')) === null);
   check('configured by its key alone', e2b.e2bConfigured({ E2B_API_KEY: 'k' }) && !e2b.e2bConfigured({}));
+  check('a library that will not load here: broken (SBX-002)', u(new e2b.E2BSdkError(new Error('require() of ES Module x not supported'))) === 'broken');
 }
 
 section('E2B first, Vercel standing in when it cannot');
@@ -295,6 +296,19 @@ section('E2B first, Vercel standing in when it cannot');
   const odd = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
   check('an error that would follow the work anywhere is not hidden behind a stand-in', odd === 'something no platform would cure' && vercelStarts === 3);
 
+  // SBX-002: the production failure of 2026-11-02, had it been caught — a library that will not load.
+  const loadFailure = () => new e2b.E2BSdkError(new Error('require() of ES Module /var/task/node_modules/e2b/node_modules/chalk/source/index.js not supported'));
+  sandbox.__testing.clearE2bAside();
+  state.createError = loadFailure();
+  const before = vercelStarts;
+  const stoodIn = await sandbox.machineForUser('u-e2b');
+  check('an E2B library that will not load sends the work to Vercel, which is told it stands in (SBX-002)', stoodIn.standIn === true && vercelStarts === before + 1);
+  state.calls.length = 0;
+  state.createError = null;
+  await sandbox.machineForUser('u-e2b');
+  check('  and E2B is set aside rather than loaded again at once', !state.calls.some((c) => c.kind === 'create') && vercelStarts === before + 2);
+  sandbox.__testing.clearE2bAside();
+
   for (const name of ['VERCEL_TOKEN', 'VERCEL_TEAM_ID', 'VERCEL_PROJECT_ID']) delete process.env[name];
   state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
   const alone = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
@@ -306,6 +320,13 @@ section('E2B first, Vercel standing in when it cannot');
   state.calls.length = 0;
   const aside = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
   check('  E2B is then set aside for a while rather than asked again at once', /E2B_API_KEY/.test(aside) && !state.calls.some((c) => c.kind === 'create'));
+
+  sandbox.__testing.clearE2bAside();
+  state.createError = loadFailure();
+  const broken = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
+  check('with no Vercel, a library that will not load says the owner must read the logs — not the raw loader text', /could not load its E2B library/.test(broken) && !/var\/task|require\(\)/.test(broken), broken);
+  state.createError = null;
+  sandbox.__testing.clearE2bAside();
 
   sandbox.__testing.useSdk(null);
   e2b.__testing.useSdk(null);
