@@ -524,6 +524,14 @@ section('creating a file in each format');
   const csv = office.createDocument({ format: 'csv', name: 'x', content: markdown });
   check('a CSV takes the table rather than the prose above it', csv.buffer.toString('utf8').includes('A,B'), csv.buffer.toString('utf8').slice(0, 40));
   check('and starts with a BOM so Excel reads UTF-8', csv.buffer.toString('utf8').charCodeAt(0) === 0xfeff);
+  // SEC-065: rows from the web, opened in Excel, would run as formulas.
+  const risky = office.createDocument({
+    format: 'csv',
+    name: 'r',
+    content: '| A | B | C | D |\n|---|---|---|---|\n| =HYPERLINK("http://x.example","hi") | +cmd|calc | @SUM(A1) | -5 |\n| +3.5% | 1,200 | -x | ok |',
+  }).buffer.toString('utf8');
+  check('a cell that would run as a formula is written as text (SEC-065)', /"'=HYPERLINK\(""http:\/\/x\.example"",""hi""\)"/.test(risky) && risky.includes("'@SUM(A1)") && risky.includes("'-x"), risky.slice(0, 160));
+  check('  while a plain number keeps its sign', /,-5\r?\n/.test(risky) && risky.includes('+3.5%') && !risky.includes("'+3.5%"), risky.slice(0, 160));
 
   const json = office.createDocument({ format: 'json', name: 'data', content: '{"b":2,"a":[1,2]}' });
   check('JSON is reformatted, which also validates it', json.buffer.toString('utf8').includes('\n  "b": 2'));
