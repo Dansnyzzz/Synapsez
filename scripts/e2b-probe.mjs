@@ -77,6 +77,17 @@ try {
   const rawPlanted = await raw.commands.run('ls /tmp | grep planted || echo none', { user: 'root' });
   check('  (and E2B run plainly as the account would have run them — why every command goes as root)', rawPlanted.stdout.trim() !== 'none', rawPlanted.stdout.trim().replace(/\n/g, ' '));
 
+  section('what the template put there');
+  // E2B leaves /usr/local, where node is, writable by everyone; a root start must not run that node.
+  const rootNode = await machine.runCommand({ ...shellFor('command -v node || echo none', {}, { root: true }), sudo: true, timeoutMs: 30_000 });
+  const local = await machine.runCommand({ ...shellFor('stat -c %a /usr/local/bin'), sudo: true, timeoutMs: 30_000 });
+  const writable = /[2367]$/.test((await local.stdout()).trim());
+  check('a root start never runs a node the account could have replaced', !writable || (await rootNode.stdout()).trim() === 'none', `/usr/local/bin ${(await local.stdout()).trim()} · root finds ${(await rootNode.stdout()).trim()}`);
+  const py = await run('python3 -c "import numpy, pandas, matplotlib, openpyxl, docx, pptx, fpdf, PIL, requests, bs4, lxml; print(\'ok\')" 2>&1 | tail -1');
+  check(template === 'base' ? 'Python libraries (base: not expected)' : 'the Python the assistant reaches for is already installed', template === 'base' || (await py.stdout()).trim() === 'ok', (await py.stdout()).trim().slice(0, 160));
+  const fonts = await run('fc-list 2>/dev/null | grep -ciE "noto|dejavu" || echo 0');
+  check(template === 'base' ? 'fonts (base: not expected)' : 'fonts for Vietnamese pages are there', template === 'base' || Number((await fonts.stdout()).trim()) > 0, (await fonts.stdout()).trim());
+
   section('time limits, failures, files');
   const t0 = Date.now();
   const slow = await run('sleep 20', { timeoutMs: 2_000 });
@@ -91,16 +102,14 @@ try {
 
   section('a program started in the background, and its port');
   await machine.runCommand({ ...shellFor('cd /tmp && exec python3 -m http.server 3000'), detached: true });
-  // E2B's ports are private unless a machine is made with public traffic: a request needs its traffic token.
-  const token = raw.trafficAccessToken;
+  // Opened to the person's browser (server/e2b.js NETWORK): no E2B traffic token, which a browser cannot send.
   let page = null;
+  let status = 0;
   for (let i = 0; i < 20 && !page; i += 1) {
     await new Promise((r) => setTimeout(r, 1000));
-    page = await fetch(`${machine.domain(3000)}/`, { headers: token ? { 'e2b-traffic-access-token': token } : {}, signal: AbortSignal.timeout(5_000) }).then((r) => (r.ok ? r : null), () => null);
+    page = await fetch(`${machine.domain(3000)}/`, { signal: AbortSignal.timeout(5_000) }).then((r) => ((status = r.status), r.ok ? r : null), () => null);
   }
-  check('its port answers over https to a request carrying the traffic token', !!page, machine.domain(3000));
-  const bare = await fetch(`${machine.domain(3000)}/`, { signal: AbortSignal.timeout(5_000) }).then((r) => r.status, () => 0);
-  console.log(`  (without the token: ${bare} — ${bare === 403 ? "private; a person's browser cannot reach it" : 'public'})`);
+  check("its port answers over https, as the person's browser will ask — no E2B token", !!page, `${machine.domain(3000)} → ${status}`);
   // The watch on a background start ends; the program must not end with it.
   await raw.commands
     .run('sleep 600', { user: 'user', background: true, timeoutMs: 3_000 })

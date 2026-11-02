@@ -45,7 +45,8 @@ const SETTING = 'cloudBrowser';
 const DIR = '.synz-browser';
 /** Where the service lives when it runs as root, out of the account's reach. */
 const ROOT_DIR = '/opt/synz';
-const DEPS = ['playwright-core@1.63.0', '@sparticuz/chromium@153.0.0', 'ws@8.21.1'];
+/** The service's packages, pinned — exported so the E2B template (scripts/e2b-template.mjs) can warm the same ones. */
+export const DEPS = ['playwright-core@1.63.0', '@sparticuz/chromium@153.0.0', 'ws@8.21.1'];
 const FIRST_START_MS = 180_000;
 const START_MS = 40_000;
 const ACT_MS = 75_000;

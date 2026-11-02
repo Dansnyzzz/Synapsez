@@ -189,6 +189,27 @@ từ `base` với 2 vCPU, 2 GiB và font. Chủ dự án chạy một lần, r�
   Mỗi lần chạy tốn khoảng một xu.
 - Những gì chưa kiểm trên máy thật sẽ được ghi rõ trong báo cáo, không nói là xong.
 
+## Kết quả kiểm trên máy E2B thật (2026-11-02)
+
+Đã chạy `npm run e2b:probe -- --browser` trên template `synapsez-computer`; mọi check đều pass.
+Trên đường đi, probe tìm ra ba điều mà spec ban đầu không lường trước:
+
+- **`/etc/profile` của E2B kết thúc bằng `source ~/.bashrc; source ~/.profile`.** Như vậy HAR-001
+  mở lại ngay qua file của hệ thống. Cách sửa: `shellFor` đọc `/etc/profile` với `HOME=/nonexistent`
+  rồi khôi phục `HOME`. Đã kiểm: file cài mìn có chạy dưới login shell của chính E2B, nhưng không
+  chạy dưới bất kỳ lệnh nào của mình.
+- **Cổng mặc định là riêng tư** (403 nếu thiếu `e2b-traffic-access-token`, và token đặt trong URL
+  không được chấp nhận). Chủ dự án chọn mở công khai (`network: { allowPublicTraffic: true }`), cùng
+  mô hình với `*.vercel.run`.
+- **E2B để `/usr/local` ở mode 777 khi máy chạy**, bất kể template đặt quyền gì. Hệ quả:
+  - helper không bao giờ chạy dưới root trên E2B, mà chạy dưới quyền tài khoản, đúng thiết kế của
+    `shellFor`;
+  - thư viện Python được cài cho `/usr/bin/python3`, bản `python3` mà lệnh của tài khoản và phiên
+    Python tìm thấy trước.
+
+Template `base` chỉ có 512 MiB RAM. Chromium chạy được và hiển thị đúng tiếng Việt qua
+`@sparticuz/chromium` với `VERCEL=1` trên Debian của E2B.
+
 ## Ngoài phạm vi
 
 - Lỗi Vercel Sandbox mà chủ dự án nhắc ngày 2026-11-02 chưa có thông báo lỗi cụ thể. Sẽ

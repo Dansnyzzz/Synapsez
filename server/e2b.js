@@ -51,6 +51,16 @@ const VCPU_MILLS = 0.014;
 const GIB_MILLS = 0.0045;
 /** What a machine is assumed to be until it says — the larger guess, so a first start never pays too little. */
 const ASSUMED = { cpu: 2, memMb: 2048 };
+/**
+ * A machine's ports open to the person's browser (owner's choice, 2026-11-02).
+ * E2B makes them private by default — a request without the
+ * `e2b-traffic-access-token` header is refused (live probe, 2026-11-02) — and
+ * a browser cannot add a header to the cloud browser's socket or its picture
+ * stream. What listens on them checks its own key and short-lived tokens
+ * (cloudBrowser/service.mjs `tokenScope`, mcp/bridge.mjs), exactly as on
+ * Vercel, whose machine addresses are public too.
+ */
+const NETWORK = { allowPublicTraffic: true };
 
 /** The month's E2B allowance cannot pay for the time a machine would be awake. */
 export class E2BOutOfCredit extends Error {
@@ -295,6 +305,7 @@ async function open(userId, name) {
     timeoutMs: IDLE_MS,
     metadata: { app: 'synapsez', machine: name },
     lifecycle: { onTimeout: 'pause', autoResume: false },
+    network: NETWORK,
   });
   /*
    * Two instances making this account's machine at once each find none and make
@@ -338,7 +349,7 @@ export async function e2bMachineFor(userId, name) {
 export async function e2bScratch() {
   const { Sandbox } = await loadSdk();
   await payUntil({ ...ASSUMED }, Date.now() + SCRATCH_MS);
-  const box = await Sandbox.create(template(), { ...connection(), timeoutMs: SCRATCH_MS, metadata: { app: 'synapsez', role: 'mcp-check' } });
+  const box = await Sandbox.create(template(), { ...connection(), timeoutMs: SCRATCH_MS, metadata: { app: 'synapsez', role: 'mcp-check' }, network: NETWORK });
   return machine(box);
 }
 
