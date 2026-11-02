@@ -141,8 +141,15 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   const run = state.calls.find((c) => c.kind === 'run');
   check('every command is sent as root, from the account\'s home', run.opts.user === 'root' && run.opts.cwd === '/home/user', JSON.stringify(run.opts));
   check('  so E2B\'s login shell reads only files root can write', /^exec /.test(run.cmd));
-  check('  and an ordinary command drops to the account before it starts', /setpriv --reuid="\$\(id -u user\)" --regid="\$\(id -g user\)" --init-groups env HOME=\/home\/user USER=user LOGNAME=user 'bash' '--noprofile' '--norc' '-c' /.test(run.cmd), run.cmd.slice(0, 220));
-  check('  with a time limit kept inside the machine', /^exec timeout -k 5 30 setpriv /.test(run.cmd));
+  check('  and an ordinary command drops to the account before it starts', /\/usr\/bin\/setpriv --reuid="\$\(\/usr\/bin\/id -u user\)" --regid="\$\(\/usr\/bin\/id -g user\)" --init-groups \/usr\/bin\/env HOME=\/home\/user USER=user LOGNAME=user 'bash' '--noprofile' '--norc' '-c' /.test(run.cmd), run.cmd.slice(0, 240));
+  check('  with a time limit kept inside the machine', /^exec \/usr\/bin\/timeout -k 5 30 \/usr\/bin\/setpriv /.test(run.cmd));
+  /*
+   * SBX-004: root runs these before the drop, and E2B's /usr/local is writable
+   * by the account. A bare `id` or `timeout` would be whatever the account last
+   * put in /usr/local/sbin — run as root, ahead of every later command.
+   */
+  const rootRuns = run.cmd.replace(/'[^']*'/g, '').match(/(?:^exec |\$\(|\s)(timeout|setpriv|id|env)\b/g) || [];
+  check('  every program root starts before the drop is named by its full path (SBX-004)', rootRuns.length === 0, rootRuns.join(' | '));
   check('  the script quoted whole, quotes and all', run.cmd.includes(`echo '\\''it'\\'''\\''s'\\''`), run.cmd.slice(-60));
   check('  the environment passed as the platform\'s own', run.opts.envs?.BASH_ENV === '' && run.opts.envs?.ENV === '');
   // E2B's /etc/profile ends by sourcing ~/.bashrc and ~/.profile (live probe, 2026-11-02).
@@ -153,9 +160,10 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   check('  and the answer read the way the Vercel one is', done.exitCode === 0 && (await done.stdout()) === 'ok' && (await done.stderr()) === '');
 
   state.calls.length = 0;
-  await machine.runCommand({ ...shellFor('apt-get install -y jq'), sudo: true, timeoutMs: 60_000 });
+  await machine.runCommand({ ...shellFor('apt-get install -y jq', {}, { root: true }), sudo: true, timeoutMs: 60_000 });
   const root = state.calls.find((c) => c.kind === 'run');
-  check('as_root stays root, still without a login profile', root.opts.user === 'root' && !root.cmd.includes('setpriv') && /^exec timeout -k 5 60 'bash' '--noprofile' '--norc' '-c' /.test(root.cmd), root.cmd.slice(0, 80));
+  check('as_root stays root, still without a login profile', root.opts.user === 'root' && !root.cmd.includes('setpriv') && /^exec \/usr\/bin\/timeout -k 5 60 \/usr\/bin\/env PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin 'bash' '--noprofile' '--norc' '-c' /.test(root.cmd), root.cmd.slice(0, 120));
+  check('  its shell found on a fixed PATH of root-only folders, not on what the account can write (SBX-004)', /PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin 'bash'/.test(root.cmd));
 
   state.onRun = async () => {
     throw named('CommandExitError', 'exit status 3', { exitCode: 3, stdout: 'partial', stderr: 'boom' });

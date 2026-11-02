@@ -173,20 +173,30 @@ async function payUntil(paid, until) {
 const quote = (word) => `'${String(word).replace(/'/g, `'\\''`)}'`;
 
 /**
+ * Where root finds a program it runs as root (SBX-004): folders only root can
+ * write. On E2B `/usr/local` is writable by the account whatever the template
+ * set (live probe, 2026-11-02), and root's login PATH starts there — so a bare
+ * `id` or `timeout` in the line below would be whatever the account last put in
+ * `/usr/local/sbin`, run as root before every later command.
+ */
+const ROOT_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
+
+/**
  * The line E2B's root login shell is given for one command: the program as
  * root, or dropped to the account first; under `timeout` when it has a limit,
  * so a command past its time stops inside the machine rather than running on
- * unseen. Exported for the probe and the suite.
+ * unseen. Everything root starts is named by its full path, and a program run
+ * as root is looked up on `ROOT_PATH`. Exported for the probe and the suite.
  *
  * @param {{ cmd: string, args?: string[], sudo?: boolean, seconds?: number }} command
  */
 export function commandLine({ cmd, args = [], sudo = false, seconds = 0 }) {
   const program = [cmd, ...args].map(quote).join(' ');
-  const limit = seconds > 0 ? `timeout -k 5 ${Math.ceil(seconds)} ` : '';
-  if (sudo) return `exec ${limit}${program}`;
+  const limit = seconds > 0 ? `/usr/bin/timeout -k 5 ${Math.ceil(seconds)} ` : '';
+  if (sudo) return `exec ${limit}/usr/bin/env PATH=${ROOT_PATH} ${program}`;
   return (
-    `exec ${limit}setpriv --reuid="$(id -u ${ACCOUNT})" --regid="$(id -g ${ACCOUNT})" --init-groups ` +
-    `env HOME=${HOME} USER=${ACCOUNT} LOGNAME=${ACCOUNT} ${program}`
+    `exec ${limit}/usr/bin/setpriv --reuid="$(/usr/bin/id -u ${ACCOUNT})" --regid="$(/usr/bin/id -g ${ACCOUNT})" --init-groups ` +
+    `/usr/bin/env HOME=${HOME} USER=${ACCOUNT} LOGNAME=${ACCOUNT} ${program}`
   );
 }
 

@@ -675,9 +675,12 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
     // No `cwd`: the session's own working folder, which is where relative
     // paths in `files` and `download` land too. Root only when asked for —
     // installing a system package — so ordinary work runs as the normal user.
+    // As root, the shell keeps only folders root alone can write (SBX-004): the
+    // account's branch would put E2B's account-writable /usr/local/bin first.
+    const asRoot = !!input?.as_root;
     const done = await machine.runCommand({
-      ...shellFor(command, {}, { userBin: true }),
-      sudo: !!input?.as_root,
+      ...shellFor(command, {}, asRoot ? { root: true } : { userBin: true }),
+      sudo: asRoot,
       timeoutMs: seconds * 1000,
       signal,
     });
