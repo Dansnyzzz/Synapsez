@@ -79,10 +79,21 @@ export function e2bConfigured(env = process.env) {
 const template = () => String(process.env.E2B_TEMPLATE || '').trim() || 'base';
 const connection = () => ({ apiKey: process.env.E2B_API_KEY });
 
-/** Loaded on first use: most requests never start a machine. */
+/**
+ * The SDK's ES module build, named outright (SBX-001).
+ *
+ * `e2b` has no `exports` map, so a bare `import('e2b')` follows `main` to the
+ * CommonJS build, and that build require()s chalk 5, which is ES-only. That
+ * works only where Node can require() an ES module; Vercel's runtime could not,
+ * and every command on the cloud computer failed while loading the SDK. The
+ * `.mjs` build imports chalk instead, which works on every runtime.
+ *
+ * Loaded on first use (most requests never start a machine), and written as a
+ * literal so Vercel's file tracer finds the file to ship.
+ */
 let sdk = null;
 async function loadSdk() {
-  if (!sdk) sdk = await import('e2b');
+  if (!sdk) sdk = await import('e2b/dist/index.mjs');
   return sdk;
 }
 
@@ -359,4 +370,5 @@ export const __testing = {
   useSdk(fake) {
     sdk = fake;
   },
+  loadSdk,
 };

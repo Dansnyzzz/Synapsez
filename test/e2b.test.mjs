@@ -311,5 +311,31 @@ section('E2B first, Vercel standing in when it cannot');
   e2b.__testing.useSdk(null);
 }
 
+section('the SDK loads on a runtime that cannot require() an ES module (SBX-001)');
+{
+  /*
+   * Production broke here (owner, 2026-11-02): every sandbox_run answered
+   * "require() of ES Module …/e2b/node_modules/chalk/source/index.js … not
+   * supported". `e2b` has no `exports`, so a bare import reaches its CommonJS
+   * build, which require()s the ES-only chalk 5 — fine on this PC, fatal on
+   * Vercel's runtime. Run the app's own loader in a Node that refuses
+   * require(esm), the way that runtime does.
+   */
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const script =
+    "const m = await import('./server/e2b.js');" +
+    'const sdk = await m.__testing.loadSdk();' +
+    'console.log(typeof sdk.Sandbox?.create);';
+  const run = spawnSync(process.execPath, ['--no-experimental-require-module', '--input-type=module', '-e', script], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, ENCRYPTION_KEY: 'test-encryption-key-for-the-e2b-suite' },
+  });
+  const said = `${run.stdout}${run.stderr}`.trim();
+  check('the SDK the app loads has Sandbox.create', run.status === 0 && run.stdout.trim() === 'function', said.split('\n')[0]);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll E2B checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
