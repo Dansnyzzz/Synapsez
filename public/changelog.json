@@ -1,6 +1,30 @@
 {
   "entries": [
     {
+      "version": "1.8.0",
+      "date": "2026-11-02",
+      "new": {
+        "vi": [
+          "Máy tính đám mây chạy trên E2B: tối đa 20 máy cùng lúc, mỗi máy 2 vCPU và 2 GB RAM, có sẵn pandas, matplotlib, thư viện Word/Excel/PowerPoint/PDF và font tiếng Việt. Máy rảnh 10 phút thì tạm dừng — giữ nguyên tệp và chương trình đang chạy, không tốn tiền khi dừng.",
+          "Khi E2B hết phần credit của tháng, đủ 20 máy hoặc không phản hồi, Vercel Sandbox tự thay chỗ; trợ lý được báo đây là máy tạm, không có tệp của máy thường dùng."
+        ],
+        "en": [
+          "The cloud computer runs on E2B: up to 20 at once, each with 2 vCPU and 2 GB, with pandas, matplotlib, Word/Excel/PowerPoint/PDF libraries and fonts for Vietnamese already there. A machine idle for ten minutes pauses — files and running programs kept, nothing billed while paused.",
+          "When E2B has used this month's share of its credit, has all twenty running, or is not answering, the Vercel Sandbox stands in; the assistant is told it is a stand-in, without the usual machine's files."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Credit E2B được chia đều theo tháng đến ngày hết hạn, tháng dùng ít thì dồn sang tháng sau — dùng hết mà không bao giờ vượt; xem trong Cài đặt → Người dùng → Hạn mức miễn phí.",
+          "An toàn hơn: lệnh trên máy đám mây không còn chạy các tệp khởi động của tài khoản, kể cả khi hệ thống của máy tự gọi đến chúng."
+        ],
+        "en": [
+          "E2B's credit is spread over the months until it lapses, a quiet month passing its share on — all of it used, never overspent; see Settings → People → Free allowances.",
+          "Safer: commands on the cloud computer no longer run the account's own login files, even where the machine's system profile reads them."
+        ]
+      }
+    },
+    {
       "version": "1.7.0",
       "date": "2026-11-02",
       "new": {
