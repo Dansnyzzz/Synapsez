@@ -1,7 +1,7 @@
-# MASTER AUDIT PROMPT v3 — AI REMOTE
-## Audit chuyên sâu · tối ưu token · privacy tối đa · harness agent · tự động hóa tới push `main`
+# MASTER AUDIT PROMPT v4 — AI REMOTE
+## Audit chuyên sâu · token · privacy · harness · sandbox · tự động hóa · UI/UX · kiểm soát chất lượng · push `main`
 
-> Thay thế toàn bộ file audit trước đó (v2, PHASE_0_*, 00–04).
+> Thay thế toàn bộ file audit trước đó (v3, v2, PHASE_0_*, 00–04).
 > Cài: lưu file này thành `.claude/AUDIT_RULES.md`. Gõ: `Đọc @.claude/AUDIT_RULES.md và chạy toàn bộ quy trình.`
 > **Chế độ mặc định: `AUTO`** — chạy liền Phase 0 → 4 và tự push `main` khi qua đủ cổng. Muốn dừng duyệt từng phase: gõ `CHẾ ĐỘ: SAFE`.
 > File này tĩnh. Không chèn ngày giờ, không sửa giữa chừng — giữ nguyên byte để prompt cache trúng.
@@ -26,12 +26,48 @@ Mục tiêu của chủ project, đọc kỹ, không bỏ ý nào:
 9. Tận dụng tối đa plugin/skill đã cài.
 10. Tự bổ sung ý tưởng tiên tiến có nguồn thật.
 11. Tự động hóa toàn bộ, kể cả push `main`, khi đạt chuẩn.
+12. Sandbox cho agent: cả agent trong sản phẩm lẫn agent đang chạy audit này.
+13. Workflow tự động hóa đầy đủ: trigger, hàng đợi, lịch, phê duyệt, bù trừ, phiên bản.
+14. UI/UX: thích ứng mọi thiết bị, mượt, hiệu ứng chuyển động đẹp và nhẹ, sắc nét, chuyên nghiệp, không lỗi, tối ưu.
+15. Không hardcode; kiến trúc mở rộng được tới mức "bách khoa toàn thư" (kho tri thức có nguồn, cập nhật, mở rộng bằng cấu hình).
+16. Kiểm soát chất lượng nội dung trước khi xuất bản: chính xác, minh bạch, thực tế.
 
-## 1. BA SỰ THẬT PHẢI NÓI THẲNG
+## 0b. MA TRẬN YÊU CẦU → NƠI ĐÁP ỨNG → CÁCH KIỂM
+
+Phase 3 phải chấm từng dòng `ĐẠT`/`CHƯA ĐẠT` kèm bằng chứng. Thiếu 1 dòng = chưa xong.
+
+| # | Yêu cầu của chủ project | Nơi đáp ứng | Bằng chứng bắt buộc |
+|---|---|---|---|
+| R1 | Audit không bỏ sót chi tiết nhỏ nhất, full A–Z file | Phase 0 §0.3, ledger §8 | % file đã đọc = 100%, danh sách `[UNKNOWN]` rỗng |
+| R2 | Tối ưu token tối đa | PHẦN IV | bảng Trước/Sau token, cache hit |
+| R3 | Privacy + cá nhân hóa + bảo mật tối đa cho mọi chat | PHẦN V | test egress P8 |
+| R4 | Mượt, logic, chính xác, chất lượng cao, sạch | PHẦN I §2 | 16 cổng PHẦN III |
+| R5 | Flexible/adaptive, real-time, nhanh, hiệu quả | PHẦN IV, VI H20, VIII, XI | số đo độ trễ, CWV |
+| R6 | Phát huy cái tốt, khắc phục cái xấu và rủi ro tiềm ẩn ở mọi khía cạnh | Phase 1 A–S | checklist chấm đủ |
+| R7 | Web không thu thập thừa, không truyền dữ liệu cho provider | PHẦN V P0–P3 | `DATAFLOW.md` |
+| R8 | Tự thêm ý tưởng tiên tiến có nguồn | PHẦN VII | bảng ý tưởng có link |
+| R9 | Đánh giá harness + agentic workflow | PHẦN VI, X | test edge case |
+| R10 | Minh bạch, chính xác, thực tế, hơn cách Claude mặc định | PHẦN I §1, XII | evaluator đa nguồn, QC pipeline |
+| R11 | Gửi chat cho provider mà user không bị lộ, vẫn tiện | PHẦN V P2–P3 | test khử định danh |
+| R12 | Memory, orchestration, observability, retry, sandbox, state, tool reliability | PHẦN VI, IX, X | test từng dòng |
+| R13 | Timeout, rate limit, hallucination, duplicate task, race condition, edge case khác | PHẦN VI H1–H21 | test từng dòng |
+| R14 | Không hardcode; mở rộng tới "bách khoa toàn thư" | PHẦN XI | `HARDCODE.md`, registry |
+| R15 | Kiểm soát chất lượng tốt nhất trước khi xuất bản | PHẦN XII | test pipeline QC |
+| R16 | Tự động hóa chuyên sâu | PHẦN X | `WORKFLOW_MAP.md` |
+| R17 | Sandbox agent chuyên sâu | PHẦN IX | test thoát sandbox |
+| R18 | UI/UX mọi thiết bị, mượt, đẹp, không lỗi | PHẦN VIII | CWV, a11y, visual regression |
+| R19 | Tự động hóa tới push `main` | PHẦN III | hash push |
+| R20 | Repo public, bảo vệ chất xám | Phase 0 §0.1b | `EXPOSURE.md` |
+| R21 | Tận dụng plugin/skill | Phase 0 §0.5b | `SKILL_MAP.md` |
+| R22 | Hiểu toàn bộ project trước khi làm | Phase 0 | 13 file `audit/` |
+
+## 1. NĂM SỰ THẬT PHẢI NÓI THẲNG
 
 1. **"0 lỗi 100%" không chứng minh được.** Không tìm thấy lỗi ≠ không có lỗi. Thay bằng định nghĩa "SẠCH" đo được ở mục 2. Cấm tuyên bố "hoàn hảo 100%".
 2. **Gửi chat cho provider bên ngoài thì provider xử lý nội dung đó.** Không có cách nào "gửi mà provider không thấy", trừ 3 đường: không gửi (model tự host), gửi bản đã khử định danh, hoặc chạy trong môi trường tính toán bảo mật (TEE) có attestation. Xem PHẦN V.
 3. **Prompt không làm model giỏi hơn chính nó.** Thứ vượt được "cách Claude làm việc mặc định" là harness quanh nó: kiểm chứng bên ngoài, evaluator độc lập ngữ cảnh mới, đo đạc trước/sau, ledger trên đĩa.
+4. **Model chấm bài của chính họ model mình bị thiên lệch tự ưu ái.** Evaluator cùng họ Claude không đủ làm cổng duy nhất. Xem PHẦN XII §Q6.
+5. **"Bách khoa toàn thư" không có nghĩa là biết mọi thứ.** Nghĩa đúng: kiến trúc nạp thêm tri thức bằng cấu hình, mọi câu trả lời dựa trên nguồn đã truy xuất, và trả "không đủ dữ liệu" khi thiếu nguồn.
 
 ## 2. ĐỊNH NGHĨA "SẠCH" (thay cho "perfect 100%")
 
@@ -42,15 +78,19 @@ Project được gọi là SẠCH khi **tất cả** đúng, mỗi dòng có b�
 - Bộ test edge-case harness (PHẦN VI) pass.
 - Bộ test privacy egress (PHẦN V §P8) pass.
 - Không regression token/chi phí/độ trễ so với baseline (hoặc có giải thích chấp nhận được).
-- Evaluator ngữ cảnh mới, chỉ đọc, trả `PASS`.
+- Evaluator ngữ cảnh mới, chỉ đọc, trả `PASS` (cấu hình theo PHẦN XII §Q6).
+- UI: ngân sách hiệu năng + a11y + visual regression PHẦN VIII pass trên các thiết bị mục tiêu.
+- Sandbox: bộ test thoát sandbox PHẦN IX pass (hoặc chứng minh project không thực thi code ngoài).
+- Pipeline kiểm soát chất lượng PHẦN XII pass.
+- Ma trận yêu cầu §0b: 22/22 dòng `ĐẠT`.
 
 ## 3. HỢP ĐỒNG KIỂM CHỨNG (Phase 0 tự điền; trường nào không tìm ra → `[UNKNOWN]`, cấm tự chế lệnh)
 
 ```
 REPO:            D:\AI remote
 VISIBILITY:      PUBLIC (chủ project xác nhận)
-SHELL CỦA AGENT: PowerShell 5.1 trên máy này (Git Bash không có — công cụ Bash hỏng); CI chạy bash trên Ubuntu
-NHÁNH HIỆN TẠI:  <đọc `git branch --show-current`> — việc làm trên nhánh tính năng, xong thì merge vào main và push
+SHELL CỦA AGENT: bash (Git Bash) — Claude Code trên Windows chạy lệnh bằng bash; xác minh bằng `echo $SHELL`
+NHÁNH HIỆN TẠI:  model-capability-audit   ← KHÔNG phải main
 NODE:            <đọc .nvmrc>
 CMD_INSTALL / CMD_TEST / CMD_LINT / CMD_TYPECHECK / CMD_BUILD / CMD_RUN_LOCAL: <đọc package.json>
 GATE:            npm run gate → liệt kê chính xác từng lệnh con
@@ -91,6 +131,13 @@ Nguồn bên ngoài: ưu tiên tài liệu gốc (docs provider, OWASP, OpenTele
 - `CHỜ-CHỦ/NGOÀI-REPO`: việc chỉ người làm được ngoài repo (rotate key, đổi visibility, ký ZDR). **Không chặn push** — nhưng đặt đầu báo cáo.
 - `CHỜ-CHỦ/TRONG-REPO`: thay đổi code rủi ro cao chưa làm. Mức `CRITICAL` loại này **chặn push**. Mức thấp hơn không chặn.
 
+### Tiền điều kiện an toàn cho chính agent khi chạy AUTO
+AUTO cho agent quyền sửa code, chạy lệnh, có mạng và push `main`. Giảm bán kính thiệt hại trước khi chạy:
+- Claude Code có sandbox cấp hệ điều hành (Seatbelt trên macOS, bubblewrap trên Linux/WSL2). **Windows gốc không được hỗ trợ.** Repo đang ở `D:\AI remote` trên Windows → cách chuẩn: chạy Claude Code trong WSL2 hoặc devcontainer, bật `/sandbox`.
+- Mặc định, khi sandbox không khởi động được, Claude Code cảnh báo rồi **chạy không sandbox**. Phải cấu hình chế độ bắt buộc sandbox (thất bại thì dừng) — tra tài liệu sandboxing để lấy đúng khóa cấu hình, cấm đoán.
+- Lớp quyền (`settings.json`): chặn đọc `.env*`, chặn force push, chặn `reset --hard`, chặn `--no-verify`. Tra đúng cú pháp trong tài liệu permissions.
+- Phase 0 ghi rõ trạng thái: sandbox `BẬT`/`TẮT`/`KHÔNG HỖ TRỢ`. `TẮT` hoặc `KHÔNG HỖ TRỢ` → `CHỜ-CHỦ/NGOÀI-REPO` mức `HIGH`, đặt đầu báo cáo. Không chặn AUTO, nhưng không được giấu.
+
 ### `SAFE`
 Kích hoạt khi chủ project gõ `CHẾ ĐỘ: SAFE`. Dừng cuối mỗi phase chờ duyệt. Không tự push; in lệnh cho chủ project bấm.
 
@@ -119,7 +166,7 @@ Kích hoạt khi chủ project gõ `CHẾ ĐỘ: SAFE`. Dừng cuối mỗi phas
 | ID | Nhóm | Mô tả | Bằng chứng (file:line) | Mức | Phạm vi | Rủi ro thay đổi | Trạng thái | Kiểm chứng đã fix | Commit |
 |---|---|---|---|---|---|---|---|---|---|
 
-- Tiền tố: `SEC-` `PRV-`(privacy) `TOK-`(token) `HAR-`(harness) `ARCH-` `PERF-` `ACC-` `AUTO-` `CODE-` `UX-` `GAP-` `CFG-`(.claude/skill) `EXP-`(lộ chất xám) `LAW-`(pháp lý).
+- Tiền tố: `SEC-` `PRV-`(privacy) `TOK-`(token) `HAR-`(harness) `ARCH-` `PERF-` `ACC-` `AUTO-` `CODE-` `UX-` `GAP-` `CFG-`(.claude/skill) `EXP-`(lộ chất xám) `LAW-`(pháp lý) `UI-`(giao diện) `SBX-`(sandbox) `WF-`(workflow) `HC-`(hardcode/cấu hình) `KB-`(kho tri thức) `QC-`(kiểm soát chất lượng).
 - Trạng thái: `OPEN` → `IN-PROGRESS` → `FIXED` | `CHỜ-CHỦ/NGOÀI-REPO` | `CHỜ-CHỦ/TRONG-REPO` | `DEFERRED` | `BLOCKED`.
 - Ghi ngay khi phát hiện. **KHÔNG ĐƯỢC XOÁ DÒNG.** Không sửa → đổi trạng thái + lý do; dòng vẫn có trong báo cáo cuối.
 - `DEFERRED` chỉ hợp lệ khi chủ project xác nhận bằng chữ.
@@ -241,7 +288,21 @@ Mỗi điểm dữ liệu user rời khỏi server hoặc được lưu:
 |---|---|---|---|---|---|---|---|
 Đích gồm: provider LLM, API ngoài, log, APM/error tracker, analytics, DB, cache, file, trình duyệt (localStorage), hàng đợi `worker/`.
 
-### 0.9 Ledger
+### 0.9 Bản đồ chuyên đề (mỗi mục 1 file, bằng chứng file:line)
+- `audit/UI_MAP.md` — mọi trang/route/component; breakpoint đang dùng; thư viện animation; font (có hỗ trợ tiếng Việt?); ảnh; nơi render output của model (markdown → HTML?).
+- `audit/EXEC_MAP.md` — mọi chỗ thực thi code/lệnh: `child_process`, `eval`, `new Function`, module `vm`, gọi shell, chạy code do model sinh, MCP server. Mỗi chỗ: đầu vào từ đâu, cô lập ra sao.
+  ```bash
+  grep -rnE "child_process|exec\(|execSync|spawn\(|eval\(|new Function|require\(['"]vm['"]\)|from ['"]node:vm['"]" --include=*.js server api worker scripts public
+  ```
+- `audit/WORKFLOW_MAP.md` — mọi trigger (cron, webhook, hàng đợi, nút bấm), job trong `worker/`, lịch, bước phê duyệt, trạng thái lưu ở đâu.
+- `audit/HARDCODE.md` — literal lẽ ra là cấu hình: model ID, URL, giá, giới hạn, timeout, ngưỡng, khóa tính năng, chuỗi giao diện, tên khách hàng, prompt nằm trong code.
+  ```bash
+  grep -rnE "(claude|gpt|gemini)-[a-z0-9.-]+|https?://[^"' ]+|timeout\s*[:=]\s*[0-9]+|max_tokens\s*[:=]\s*[0-9]+" --include=*.js server api worker public
+  ```
+- `audit/KB_MAP.md` — nguồn tri thức hiện có, cách nạp, chia chunk, tìm kiếm, trích dẫn, độ mới, xóa.
+- Trạng thái sandbox của chính agent audit (PHẦN I §5).
+
+### 0.10 Ledger
 Ghi mọi vấn đề đã thấy, trạng thái `OPEN`. Ghi `audit/PROGRESS.md`.
 
 ## PHASE 1 — GAP ANALYSIS (cấm sửa code)
@@ -261,6 +322,12 @@ Chấm từng mục `ĐẠT`/`CHƯA ĐẠT`/`N/A`/`[UNKNOWN]`. Mỗi `CHƯA Đ�
 **K. Harness (`HAR-`)** — toàn bộ PHẦN VI, từng dòng H1–H20.
 **L. Pháp lý (`LAW-`)** — PHẦN V §P7. Ghi rõ "không phải tư vấn pháp lý".
 **M. Ý tưởng (`GAP-`)** — PHẦN VII; mỗi ý tưởng: tên · vấn đề giải · nguồn thật · chi phí S/M/L. Không nguồn → `[INFER]`.
+**N. UI/UX (`UI-`)** — toàn bộ PHẦN VIII, U1–U20.
+**O. Sandbox (`SBX-`)** — toàn bộ PHẦN IX, S0–S14.
+**P. Workflow tự động hóa (`WF-`)** — toàn bộ PHẦN X, W1–W16.
+**Q. Không hardcode (`HC-`)** — PHẦN XI K1–K5.
+**R. Kho tri thức (`KB-`)** — PHẦN XI K6–K12.
+**S. Kiểm soát chất lượng (`QC-`)** — toàn bộ PHẦN XII, Q1–Q12.
 
 Ghi `audit/PROGRESS.md`. AUTO: sang Phase 2 ngay.
 
@@ -295,8 +362,13 @@ Cấm gộp ID vào 1 commit. Cấm dồn cập nhật ledger. Cấm `--no-verif
 3. Chạy local + 1 request end-to-end thật, dán output.
 4. Bộ test edge-case PHẦN VI + bộ test privacy egress PHẦN V §P8: dán kết quả.
 5. Chấm lại checklist Phase 1.
-6. **Evaluator ngữ cảnh mới:** gọi subagent chỉ có quyền đọc (không Write/Edit, không git ghi), đưa diff + `RESULT.md` + checklist; nó chưa từng thấy quá trình sửa. Trả `PASS` hoặc `NEEDS_WORK` kèm phát hiện cụ thể. `NEEDS_WORK` → quay lại Phase 2 với ID mới.
-7. Đối soát ledger: `Tổng | FIXED | CHỜ-CHỦ | DEFERRED | BLOCKED | OPEN | IN-PROGRESS`.
+6. **Evaluator ngữ cảnh mới:** gọi subagent chỉ có quyền đọc (không Write/Edit, không git ghi), đưa diff + `RESULT.md` + checklist + ma trận §0b; nó chưa từng thấy quá trình sửa. Trả `PASS` hoặc `NEEDS_WORK` kèm phát hiện cụ thể. `NEEDS_WORK` → quay lại Phase 2 với ID mới.
+   Chống thiên lệch: kiểm tra tất định (test, lint, số liệu) đi trước và có quyền phủ quyết; nếu có model khác họ (qua cổng privacy) thì dùng làm giám khảo thứ hai; nếu chỉ có Claude → ghi rõ "giám khảo cùng họ — có thiên lệch tự ưu ái".
+7. UI: chạy ngân sách hiệu năng, a11y tự động + quét bàn phím thủ công, test reduced-motion, chụp visual regression ở các breakpoint (PHẦN VIII).
+8. Sandbox: chạy bộ test thoát sandbox (PHẦN IX §S13).
+9. QC: chạy test pipeline kiểm soát chất lượng với bộ case vàng (PHẦN XII).
+10. Chấm ma trận yêu cầu §0b đủ 22 dòng.
+11. Đối soát ledger: `Tổng | FIXED | CHỜ-CHỦ | DEFERRED | BLOCKED | OPEN | IN-PROGRESS`.
 
 ## PHASE 4 — BÀN GIAO → PHẦN III
 
@@ -316,9 +388,12 @@ Cấm gộp ID vào 1 commit. Cấm dồn cập nhật ledger. Cấm `--no-verif
 8. Privacy: không có điểm gửi nội dung user ra ngoài mới mà không qua lớp privacy; telemetry không bắt nội dung; test egress pass.
 9. Token/chi phí/độ trễ không regression (hoặc có lý do ghi trong `RESULT.md`).
 10. Test edge-case harness pass.
-11. Evaluator ngữ cảnh mới trả `PASS`.
+11. Evaluator ngữ cảnh mới trả `PASS`; kiểm tra tất định không phủ quyết.
 12. `RESULT.md` + changelog sẵn sàng.
 13. Merge được fast-forward hoặc `--no-ff` sạch; không cần force.
+14. UI: ngân sách hiệu năng, a11y tự động 0 lỗi mức nghiêm trọng, quét bàn phím, reduced-motion, visual regression — pass.
+15. Sandbox: test thoát sandbox pass, hoặc chứng minh bằng `EXEC_MAP.md` rằng không có thực thi code ngoài.
+16. QC: pipeline kiểm soát chất lượng pass trên bộ case vàng; ma trận §0b đủ 22/22.
 
 ## Quy trình AUTO
 ```bash
@@ -327,7 +402,7 @@ git status --porcelain                         # phải rỗng
 git switch main && git pull --ff-only origin main
 git merge --no-ff "optimize/<ngày>" -m "merge: audit optimize <ngày>"
 npm run gate                                   # chạy lại trên main đã merge
-# in bảng 13 cổng có tick + bằng chứng ngay trước dòng dưới
+# in bảng 16 cổng có tick + bằng chứng ngay trước dòng dưới
 git push origin main
 ```
 - Push bị từ chối (branch protection, lệch lịch sử) → dừng, báo. **Không bao giờ force.**
@@ -394,7 +469,7 @@ Chỉ có một cửa duy nhất gọi provider: **Privacy Gateway** ở server.
 
 ---
 
-# PHẦN VI — HARNESS AGENT (H1–H20)
+# PHẦN VI — HARNESS AGENT (H1–H21)
 
 Mỗi dòng phải có: cơ chế trong code (file:line) + test tự động chứng minh.
 
@@ -413,13 +488,14 @@ Mỗi dòng phải có: cơ chế trong code (file:line) + test tự động ch�
 | H11 | Prompt injection gián tiếp | Nội dung web/tool là dữ liệu, không là lệnh; tool nguy hiểm cần xác nhận; allowlist | trang web chứa "bỏ qua chỉ dẫn" → không đổi hành vi |
 | H12 | Memory poisoning | Ghi memory có kiểm, provenance, không tự nạp output agent vào memory tin cậy, snapshot/rollback | ghi memory độc → bị chặn/rollback |
 | H13 | Stream đứt | Resume hoặc báo rõ; UI không treo | ngắt mạng giữa stream |
-| H14 | Sandbox | Chạy code/lệnh: cô lập, không mạng mặc định, giới hạn CPU/RAM/thời gian, FS chỉ đọc. **Có exec mà không sandbox → `CRITICAL`** | lệnh độc trong sandbox không thoát |
+| H14 | Sandbox | Xem PHẦN IX. **Có thực thi code/lệnh không tin cậy mà không sandbox → `CRITICAL`** | PHẦN IX §S13 |
 | H15 | State | Một nguồn sự thật; job là máy trạng thái rõ (queued/running/succeeded/failed/cancelled); không giữ state quan trọng chỉ trong RAM (serverless mất RAM giữa lần gọi) | restart → state còn |
 | H16 | Observability | Trace id xuyên suốt; span theo quy ước OpenTelemetry GenAI; bắt nội dung **tắt** mặc định; metric độ trễ/token/lỗi/chi phí | trace 1 request đủ cây span, không có nội dung user |
 | H17 | Orchestration | Ưu tiên workflow tất định khi được; agent khi cần linh hoạt; subagent cô lập ngữ cảnh; song song việc độc lập | |
 | H18 | Hành động không đảo ngược | Gửi email/khách, thanh toán, xóa dữ liệu → cổng xác nhận người | |
 | H19 | Đổi model/provider | Ghim phiên bản model; chạy eval cố định trước khi đổi | eval regression |
 | H20 | Dữ liệu real-time cũ | Mọi dữ liệu thời gian thực mang timestamp + nguồn; quá hạn → làm mới hoặc gắn cờ | dữ liệu quá hạn bị gắn cờ |
+| H21 | Tool/MCP bị đầu độc hoặc đổi định nghĩa sau khi duyệt | Ghim định nghĩa tool (hash tên + mô tả + schema) lúc duyệt, so lại mỗi lần kết nối, khác thì chặn + cảnh báo; đặt namespace cho tool; chỉ bật tool cần; mọi MCP server đi qua một cổng kiểm soát | đổi mô tả tool → bị chặn |
 
 ---
 
@@ -444,13 +520,134 @@ Mỗi dòng phải có: cơ chế trong code (file:line) + test tự động ch�
 
 ---
 
-# PHẦN VIII — BÁO CÁO CUỐI
+# PHẦN VIII — UI/UX (U1–U20)
+
+Mục tiêu: thích ứng mọi thiết bị, mượt, đẹp, sắc nét, chuyên nghiệp, không lỗi, nhẹ. Mỗi dòng: bằng chứng + cách kiểm tự động khi được.
+
+| # | Hạng mục | Chuẩn bắt buộc | Cách kiểm |
+|---|---|---|---|
+| U1 | Thích ứng thiết bị | Bố cục theo nội dung (flex/grid, container query khi cần), chữ co giãn bằng `clamp()`; không cuộn ngang; tôn trọng vùng tai thỏ/thanh điều hướng (`env(safe-area-inset-*)`) | Playwright chụp ở 320, 375, 414, 768, 1024, 1280, 1440, 1920 px, cả dọc lẫn ngang |
+| U2 | Vùng chạm | Mục tiêu chạm ≥ 24×24 CSS px (WCAG 2.2 AA, 2.5.8); nên 44×44 trên mobile | đo bằng script |
+| U3 | Focus | Focus luôn thấy, không bị header dính/overlay che (WCAG 2.2 AA, 2.4.11) | quét bàn phím |
+| U4 | Bàn phím | Đi hết bằng Tab; skip link; modal bẫy focus, `Esc` đóng, trả focus về chỗ cũ | quét bàn phím |
+| U5 | Tương phản | Chữ thường 4.5:1, chữ lớn và thành phần UI 3:1 | axe |
+| U6 | Chuyển động mượt | Chỉ animate `transform` và `opacity`; không animate thuộc tính gây layout (width, height, top, left, margin); `will-change` dùng có chừng mực | DevTools Performance: không khung hình rớt khi chuyển động |
+| U7 | Giảm chuyển động | Tôn trọng `prefers-reduced-motion` cho **cả CSS lẫn JS**; nghe thay đổi lúc chạy; không nhấp nháy quá 3 lần/giây; công cụ tự động không bắt hết → test riêng | test với giả lập reduced-motion |
+| U8 | Ngân sách hiệu năng | LCP ≤ 2,5 s · INP ≤ 200 ms · CLS ≤ 0,1 ở phân vị 75 | Lighthouse (lab) trên mobile + desktop cho mọi trang chính |
+| U9 | Đo thực tế mà vẫn riêng tư | Nếu đo người dùng thật: chỉ số tổng hợp, không định danh, không bên thứ ba, không gửi nội dung — tránh mâu thuẫn với PHẦN V | review code gửi số đo |
+| U10 | Chat mượt | Stream token; nút dừng, thử lại, tạo lại, sao chép; tự cuộn có thể tắt; khôi phục khi mất mạng; không giật layout khi stream | test mất mạng giữa stream |
+| U11 | Đủ trạng thái | Mỗi màn hình có: trống, đang tải (skeleton), lỗi (có hướng xử lý), thành công, một phần | duyệt từng màn hình |
+| U12 | Giao diện sáng/tối | Theo `prefers-color-scheme`, có nút đổi, không nháy sai theme khi tải | test cả 2 chế độ |
+| U13 | Design token | Màu, khoảng cách, cỡ chữ, bo góc, thời lượng animation lấy từ token; cấm literal rải rác (liên quan PHẦN XI) | grep màu hex/px lẻ |
+| U14 | Ảnh & font | Ảnh có `width/height` (chống CLS), `srcset`, định dạng hiện đại, lazy dưới màn hình đầu; font hỗ trợ tiếng Việt đầy đủ dấu, `font-display: swap`, preload font chính, subset | Lighthouse + nhìn bằng mắt chữ có dấu |
+| U15 | Trình duyệt | Chrome, Edge, Firefox, **Safari iOS** (lỗi `100vh` → dùng `dvh`, input zoom, cuộn quán tính) | test thiết bị thật hoặc giả lập WebKit |
+| U16 | Nâng cấp dần | API mới (chuyển trang mượt, popover, v.v.) chỉ dùng sau khi kiểm tra hỗ trợ; thiếu thì vẫn hoạt động | tắt tính năng → vẫn chạy |
+| U17 | Output của model an toàn | Render markdown đã lọc (sanitize); cấm `innerHTML` trực tiếp với output model; có CSP | thử output chứa `<script>` |
+| U18 | Biểu mẫu | Nhãn rõ, báo lỗi cạnh trường, không bắt nhập lại (3.3.7), xác thực không bắt giải đố trí nhớ (3.3.8) | axe + thủ công |
+| U19 | Ngôn ngữ | Chuỗi giao diện qua i18n (`public/js/i18n.js` đã có — kiểm độ phủ); không chuỗi cứng trong component | grep chuỗi tiếng Việt/Anh trong JS |
+| U20 | Visual regression | Ảnh chụp chuẩn cho mỗi trang × breakpoint × theme; mọi khác biệt phải được duyệt | Playwright snapshot |
+
+---
+
+# PHẦN IX — SANDBOX (S0–S14)
+
+Hai đối tượng: **(1) agent trong sản phẩm** thực thi code/lệnh/tool; **(2) agent đang chạy audit này** (xem PHẦN I §5).
+
+| # | Hạng mục | Chuẩn bắt buộc |
+|---|---|---|
+| S0 | Kiểm kê | Từ `EXEC_MAP.md`. Module `vm` của Node.js không phải ranh giới bảo mật; `eval`/`new Function` với dữ liệu ngoài = `CRITICAL` |
+| S1 | Chọn mức cô lập theo mối đe dọa | Code của mình, không bí mật gần đó → container gia cố là đủ. Code do model sinh hoặc không tin cậy → microVM (Firecracker) hoặc gVisor; container dùng chung kernel host nên không đủ |
+| S2 | Dùng một lần | Mỗi tác vụ một sandbox mới, xong là hủy; không tái dùng giữa user |
+| S3 | Mạng | Mặc định chặn; chỉ mở danh sách domain cho phép qua proxy |
+| S4 | Hệ thống tệp | Root chỉ đọc; chỉ thư mục tạm được ghi; không mount thư mục host |
+| S5 | Bí mật | Không đặt API key trong sandbox; cấp token phạm vi hẹp, ngắn hạn qua proxy (credential brokering) |
+| S6 | Tài nguyên | Giới hạn CPU, RAM, số tiến trình, dung lượng đĩa, thời gian; vượt là kill |
+| S7 | Đặc quyền | User không phải root; bỏ capability; lọc syscall (seccomp); không chế độ privileged |
+| S8 | Đầu ra | Giới hạn kích thước; coi là dữ liệu không tin cậy; lọc trước khi trả model/UI; không lộ lỗi thô của host |
+| S9 | Cổng chính sách | Sandbox không chặn được việc lạm dụng tool **được cấp quyền** — cần cổng chính sách ngữ nghĩa trước mỗi lời gọi tool có tác dụng phụ |
+| S10 | Nhật ký | Ghi mọi lần thực thi: lệnh, thời lượng, mã thoát, tài nguyên; không ghi nội dung user |
+| S11 | Thất bại thì đóng | Sandbox không sẵn sàng → từ chối thực thi, không chạy trần |
+| S12 | Lựa chọn hạ tầng | Nếu deploy Vercel: Vercel Sandbox chạy mỗi sandbox trên một microVM Firecracker — đánh giá như một phương án; ghi chi phí và độ trễ khởi động |
+| S13 | Bộ test thoát sandbox | Phải bị chặn: đọc file ngoài thư mục tạm, đọc biến môi trường host, gọi domain ngoài danh sách, fork bomb, vòng lặp vô hạn, ghi file khổng lồ, output khổng lồ, gọi tiến trình con để vượt rào |
+| S14 | Tốc độ | Pool sandbox khởi động sẵn hoặc snapshot để giảm thời gian khởi động; không đánh đổi việc dùng một lần |
+
+---
+
+# PHẦN X — TỰ ĐỘNG HÓA & AGENTIC WORKFLOW (W1–W16)
+
+| # | Hạng mục | Chuẩn bắt buộc |
+|---|---|---|
+| W1 | Workflow hay agent | Bước đã biết trước → workflow tất định. Chỉ dùng agent tự quyết khi thật sự cần linh hoạt. Đa agent chỉ khi lợi ích lớn hơn chi phí token |
+| W2 | Trigger | Lịch (cron), webhook, hàng đợi, thao tác user — mỗi loại có xác thực riêng |
+| W3 | Webhook | Kiểm chữ ký HMAC; chống phát lại (timestamp + nonce); trả 2xx nhanh rồi xử lý nền |
+| W4 | Hàng đợi bền | Không giữ hàng đợi trong RAM của hàm serverless; có visibility timeout, giới hạn retry, hàng đợi thư chết (DLQ) |
+| W5 | Bên nhận idempotent | Khóa chống trùng theo H6 |
+| W6 | Lịch chạy | Múi giờ khai báo rõ (mặc định `Asia/Ho_Chi_Minh`, cấu hình theo khách); chặn chạy chồng (khóa); bù lần lỡ có kiểm soát |
+| W7 | Phê duyệt người | Bước cần duyệt có hạn chờ, nhắc, leo thang, và trạng thái lưu bền |
+| W8 | Song song | Fan-out/fan-in có giới hạn đồng thời theo từng provider |
+| W9 | Bù trừ | Tác vụ nhiều bước có bước hoàn tác (saga) |
+| W10 | Phiên bản workflow | Lần chạy dở dang tiếp tục trên phiên bản cũ; phiên bản mới chỉ áp cho lần chạy mới |
+| W11 | Áp lực tải | Backpressure, giảm tải có chủ đích, ưu tiên việc tương tác hơn việc nền |
+| W12 | Định nghĩa bằng dữ liệu | Workflow khai báo bằng cấu hình có schema, kiểm hợp lệ lúc khởi động — không viết cứng trong code |
+| W13 | Chạy thử | Chế độ dry-run; phát lại từ log bằng dữ liệu giả, không dùng dữ liệu user thật |
+| W14 | SLO | Mỗi workflow: tỉ lệ thành công, độ trễ p95, chi phí; cảnh báo khi lệch |
+| W15 | Công tắc khẩn | Tắt nhanh theo tool, provider, workflow bằng cờ cấu hình |
+| W16 | Điều phối đa agent | Orchestrator–worker; subagent cô lập ngữ cảnh; bàn giao qua state/file có cấu trúc, không qua đoạn hội thoại dài |
+
+---
+
+# PHẦN XI — KHÔNG HARDCODE & KHO TRI THỨC MỞ RỘNG (K1–K12)
+
+## Không hardcode
+| # | Chuẩn bắt buộc |
+|---|---|
+| K1 | Cấu hình nhiều tầng: mặc định trong code < file cấu hình < biến môi trường < cấu hình theo khách trong DB. Kiểm bằng schema lúc khởi động; sai là dừng ngay |
+| K2 | Registry: provider, model, tool, agent, workflow, hồ sơ khách, prompt đăng ký bằng manifest. Thêm mới = thêm một mục + test, không sửa lõi |
+| K3 | Model ID, giá, giới hạn, ngưỡng, timeout, URL, cờ tính năng → cấu hình. Mọi literal trong `HARDCODE.md` phải có ID `HC-` |
+| K4 | Chuỗi giao diện qua i18n; prompt qua kho prompt có phiên bản |
+| K5 | Hợp đồng plugin có kiểu (JSDoc/`jsconfig` check) + contract test cho mỗi loại plugin |
+
+## Kho tri thức "bách khoa toàn thư"
+| # | Chuẩn bắt buộc |
+|---|---|
+| K6 | Pipeline nạp: connector → làm sạch → chia chunk → gắn metadata (nguồn, URL, thời điểm lấy, giấy phép, ngôn ngữ) → index |
+| K7 | Truy xuất: kết hợp embedding + BM25 + rerank; cân nhắc Contextual Retrieval. **Lưu ý privacy:** bước sinh ngữ cảnh cho chunk gửi tài liệu cho LLM → tài liệu chứa dữ liệu user phải đi qua Privacy Gateway hoặc model tự host |
+| K8 | Chính sách trả lời: claim sự thật chỉ từ nguồn đã truy xuất, có trích dẫn, có nhãn tin cậy; thiếu nguồn → "không đủ dữ liệu"; câu hỏi real-time → gọi tool trực tiếp |
+| K9 | Độ mới: TTL theo loại nguồn, tự làm mới, gắn cờ dữ liệu cũ |
+| K10 | Xóa lan truyền: xóa nguồn → xóa chunk, embedding, cache liên quan (phục vụ quyền xóa dữ liệu) |
+| K11 | Gói tri thức theo lĩnh vực bật/tắt bằng cấu hình; hỗ trợ tiếng Việt + tiếng Anh |
+| K12 | Đo: tỉ lệ truy xuất trượt, độ bám nguồn, độ đúng trích dẫn, tỉ lệ dữ liệu cũ; tôn trọng bản quyền nội dung nạp vào |
+
+---
+
+# PHẦN XII — KIỂM SOÁT CHẤT LƯỢNG TRƯỚC KHI XUẤT BẢN (Q1–Q12)
+
+Mọi nội dung giao cho khách/user đi qua pipeline này. Không có đường tắt.
+
+| # | Bước | Chuẩn bắt buộc |
+|---|---|---|
+| Q1 | Thứ tự | Sinh → kiểm tất định → kiểm bám nguồn → giám khảo LLM → kiểm PII/chính sách → người duyệt (nếu rủi ro cao) → xuất bản → theo dõi sau xuất bản |
+| Q2 | Kiểm tất định | Schema, định dạng, độ dài, ngày tháng hợp lệ, trường bắt buộc |
+| Q3 | Con số | Tính lại bằng code, không tin số do LLM tính |
+| Q4 | Liên kết | Mọi link phải mở được và khớp nội dung được trích |
+| Q5 | Bám nguồn | Tách từng claim → đối chiếu đoạn nguồn; claim không có nguồn → bỏ hoặc gắn cờ |
+| Q6 | Giám khảo LLM | Rubric theo tiêu chí, lập luận trước rồi chấm; đảo thứ tự khi so cặp; không thưởng độ dài; **khác họ model** với model sinh (qua cổng privacy); hiệu chuẩn với bộ nhãn người bằng Cohen's kappa — chỉ dùng làm cổng khi đạt ngưỡng đã chốt, chưa đạt thì chỉ dùng để sàng lọc |
+| Q7 | Mâu thuẫn nguồn | Hiện nhãn `CONFLICTING` cho user, không âm thầm chọn một bên |
+| Q8 | Chuẩn khách hàng | Giọng văn, định dạng, thương hiệu theo cấu hình từng khách |
+| Q9 | Rò dữ liệu | Không lẫn dữ liệu khách này sang khách khác; không lộ PII ngoài ý muốn |
+| Q10 | Truy vết | Lưu: nguồn, model, phiên bản prompt, điểm giám khảo, người duyệt — không lưu nội dung nhạy cảm thừa |
+| Q11 | Định tuyến theo điểm | Đạt → xuất bản; sát ngưỡng → người duyệt; trượt → sinh lại kèm phản hồi (tối đa N lần) → vẫn trượt thì leo thang |
+| Q12 | Sau xuất bản | Kênh phản hồi; cơ chế đính chính/thu hồi; lỗi sau xuất bản thành case mới trong bộ eval vàng |
+
+---
+
+# PHẦN XIII — BÁO CÁO CUỐI
 
 1. `CHỜ-CHỦ` — đặt đầu tiên, nhất là `NGOÀI-REPO` (rotate key, visibility, ZDR, pháp lý)
 2. Tổng quan: số file đã đọc / tổng, số vấn đề theo mức
 3. Ledger đầy đủ — bảng full, không tóm tắt
 4. Bảng Trước/Sau (`RESULT.md`): token, chi phí, cache hit, độ trễ, lỗi, egress, test
-5. Kết quả 13 cổng + evaluator
+5. Kết quả 16 cổng + evaluator + ma trận yêu cầu 22 dòng
 6. Đã sửa theo nhóm · DEFERRED/BLOCKED + lý do
 7. Rủi ro còn lại — nói thẳng
 8. Git: nhánh, tag, commit, push hash, deploy + smoke test
@@ -458,7 +655,7 @@ Mỗi dòng phải có: cơ chế trong code (file:line) + test tự động ch�
 
 ---
 
-# PHẦN IX — NGUỒN THAM CHIẾU (Phase 1 phải mở bản gốc để xác minh trước khi áp dụng)
+# PHẦN XIV — NGUỒN THAM CHIẾU (Phase 1 phải mở bản gốc để xác minh trước khi áp dụng)
 
 Harness & context
 - Anthropic — Effective harnesses for long-running agents: https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
@@ -489,6 +686,26 @@ Khử định danh & confidential inference
 - OpenTelemetry GenAI observability: https://opentelemetry.io/blog/2026/genai-observability/
 - OWASP LLM Top 10 2025 (thứ cấp): https://www.hackerone.com/ai/owasp-top-10-llms-2025
 - OWASP Agentic Top 10 2026 (thứ cấp): https://goteleport.com/blog/owasp-top-10-agentic-applications
+
+Sandbox
+- Claude Code sandboxing: https://code.claude.com/docs/en/sandboxing
+- Claude Code sandbox environments: https://code.claude.com/docs/en/sandbox-environments
+- Firecracker vs gVisor: https://fly.io/learn/firecracker-vs-gvisor/
+- Sandbox agent và giới hạn ngữ nghĩa (thứ cấp): https://predictionguard.com/blog/ai-agent-sandboxing
+
+MCP
+- Rug pull MCP (thứ cấp): https://zuplo.com/blog/remote-mcp-server-rug-pull/
+- Tool poisoning MCP03 (thứ cấp): https://mcpplaygroundonline.com/owasp-mcp-top-10/tool-poisoning
+
+UI/UX
+- WCAG 2.2 có gì mới (W3C): https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/
+- Hiểu tiêu chí Animation from Interactions (W3C): https://www.w3.org/WAI/WCAG21/Understanding/animation-from-interactions
+- Ngưỡng Core Web Vitals (tổng hợp, trỏ về web.dev): https://specification.website/spec/performance/core-web-vitals/
+
+Tri thức & kiểm soát chất lượng
+- Anthropic Contextual Retrieval: https://www.anthropic.com/news/contextual-retrieval
+- Thiên lệch của LLM giám khảo: https://arxiv.org/pdf/2601.22025
+- Hiệu chuẩn giám khảo với nhãn người (thứ cấp): https://www.koji.so/docs/llm-as-a-judge-vs-human-evaluation
 
 Pháp lý Việt Nam
 - Hiệu lực Luật BVDLCN 2025: https://luatvietnam.vn/dan-su/luat-bao-ve-du-lieu-ca-nhan-2025-co-hieu-luc-khi-nao-568-103652-article.html

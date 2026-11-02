@@ -27,3 +27,28 @@
 | Vercel insights trên prod | `/_vercel/insights/script.js` → 200 · `/_vercel/speed-insights/script.js` → 200 (đã bật trong dashboard, chưa có trang nào nạp) | [FACT] HEAD 2026-10-04 |
 
 ## Baseline gate (trước khi sửa) — xem `audit/BASELINE.md` mục v3
+
+---
+
+# HỢP ĐỒNG KIỂM CHỨNG — vòng v4 (2026-11-02, AUDIT_RULES v4, AUTO)
+
+Phạm vi: `502717f..a7098d1` (103 commit, 190 file, +37.833/−2.983 dòng) + các mục toàn cục v4 mới (SBX/WF/HC/KB/QC/UI).
+Chỉ ghi các dòng đổi so với v3; dòng không nhắc = như v3.
+
+| Trường | Giá trị v4 | Bằng chứng |
+|---|---|---|
+| VISIBILITY | **PUBLIC** (đổi so với v3: lúc đó API ẩn danh trả 404) | [FACT] `Invoke-RestMethod https://api.github.com/repos/Dansnyzzz/Synapsez` → `visibility=public private=False` (2026-11-02) |
+| SHELL CỦA AGENT | PowerShell 5.1 (tool Bash vẫn hỏng) | [FACT] memory `machine-bash-broken`; phiên này |
+| NHÁNH LÚC BẮT ĐẦU | `main` @ `a7098d1` (= `origin/main`). Cây có 3 mục untracked của chủ: `.env.example`, `.vscode/`, `Exa Deep Research-3.4.1-v1/` — không phải của audit, không commit | [FACT] `git status` đầu phiên |
+| SANDBOX CỦA AGENT AUDIT | **KHÔNG HỖ TRỢ** — Windows gốc. Tài liệu: "Native Windows is not supported… run Claude Code inside a WSL2 distribution"; khoá bắt buộc là `sandbox.failIfUnavailable: true` (+ `sandbox.enabled: true`, `allowUnsandboxedCommands: false`). Không có khoá `sandbox` nào trong `.claude/settings.json` hay `~/.claude/settings.json`. → CFG-033 | [FACT] https://code.claude.com/docs/en/sandboxing (đọc 2026-11-02); `.claude/settings.json` |
+| LỚP QUYỀN CỦA AGENT | `deny` Read `.env`/`.env.*`/`worker/.env*`/`data/pgdata/**`; `guard-bash.js` chặn force-push (`:125`), `reset --hard`/`clean -f` (`:129`), xoá `.env` (`:147`). **Không** chặn `--no-verify` — nhưng repo không có git hook nào (`core.hooksPath` trống, `.git/hooks` chỉ `*.sample`) nên cờ này không vượt được gì hôm nay | [FACT] `.claude/settings.json`; `.claude/hooks/guard-bash.js:116-186`; `git config --get core.hooksPath` |
+| NODE | `22` (`.nvmrc`); máy: v22.16.0 | [FACT] |
+| CMD_TEST | `npm test` — **51** file `test/*.test.mjs` (thêm `database`, `e2b`) | [FACT] `package.json` `scripts.test` |
+| GATE | như v3: `.claude/hooks/gate.js run` → lint · test:hooks · eval · typecheck · test | [FACT] |
+| TYPECHECK BASELINE | `total: 296` (v3: 315 → 306 → 296; co lại) | [FACT] `.typecheck-baseline.json` |
+| LLM PROVIDERS | như v3 + nhà cung cấp dịch vụ ngoài mới nhận dữ liệu: **E2B** (máy tính đám mây, `server/e2b.js`), Exa (search/code_context), Stack Exchange; xem `DATAFLOW.md` mục v4 | [FACT] `server/e2b.js`, `server/tools/codeContext.js`, `server/search.js` |
+| DB | Supabase Postgres (Transaction pooler, cổng 6543) thay Neon (Neon 402 do pinger, 2026-10-19) | [FACT] `.claude/commands/deploy-check.md` diff; `docs/database.md` |
+| CSP | `connect-src 'self' wss://*.e2b.app wss://*.vercel.run`; `img-src … https://*.e2b.app https://*.vercel.run` (mở rộng so với v3) | [FACT] `vercel.json` diff |
+| DEPLOY / PROD URL | như v3: push `main` → Vercel tự deploy; `https://synapsez.vercel.app` | [FACT] v3 |
+| SECRET SCAN | `gitleaks` không cài. Quét regex hình dạng key (Anthropic/OpenRouter/OrcaRouter/OpenAI/Google/GitHub/Slack/Notion/E2B/Google OAuth/PEM/URL Postgres có mật khẩu) trên mọi dòng thêm `502717f..HEAD` và toàn cây HEAD: chỉ key giả trong test (`features0123…`) và placeholder tài liệu. `.env*` chưa từng vào lịch sử; `client_secret*.json` đã ignore | [FACT] lệnh quét phiên này |
+| `npm audit` | prod: 3 moderate (e2b → glob 13.0.6 → minimatch 10.2.6); tất cả: 9 moderate; 0 high/critical | [FACT] `npm audit --omit=dev --json` |

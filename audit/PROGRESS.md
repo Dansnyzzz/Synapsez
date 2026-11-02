@@ -1,3 +1,17 @@
+# PROGRESS — vòng audit v4 (AUDIT_RULES v4, chế độ AUTO) — bắt đầu 2026-11-02
+
+> Đọc file này + `audit/ISSUE_LEDGER.md` (mục "VÒNG v4") trước tiên khi mở phiên mới hoặc sau khi
+> ngữ cảnh bị nén. Không suy đoán tiến độ từ trí nhớ hội thoại.
+
+## Trạng thái v4
+
+- **Phase hiện tại:** 0 (hiểu toàn bộ) — chưa sửa code.
+- **Phạm vi:** `502717f..a7098d1` (103 commit, 190 file, +37.833/−2.983) + mục toàn cục mới của v4.
+- **Đã xong Phase 0:** §0.1 an toàn (sạch, xem `CONTRACT.md` v4) · §0.1b visibility = **PUBLIC** · §0.2 hợp đồng v4 · §0.5 `.claude/` (chỉ `commands/deploy-check.md` đổi) · §0.5b `SKILL_MAP.md` §5 · §0.6 `BASELINE.md` v4 (gate xanh 329 s, 5.611 ✓, typecheck 279/296).
+- **Đọc theo lô:** giao 5 sub-agent chỉ-đọc (biên server · thực thi/sandbox · harness/provider · frontend lõi · frontend cài đặt). Lần 1 (≈14:00) **cả 5 chết vì giới hạn 5 giờ (429)** trước khi báo cáo. 16:55 cho chạy tiếp đợt 1: biên server, thực thi/sandbox, frontend lõi. Đợt 2: harness/provider, frontend cài đặt.
+- **ID mới đã biết (chưa ghi ledger):** CFG-033 sandbox agent audit KHÔNG HỖ TRỢ (Windows gốc) · SEC-055 e2b→glob→minimatch moderate (chỉ đường build template) · CODE-063 typecheck baseline chưa khoá 279 · SEC-056 CSP mở `wss://*.e2b.app`/`*.vercel.run` (mọi sandbox, kể cả của người khác) · CFG-024 `.env.example` nay có trên đĩa nhưng untracked, agent không được đọc.
+
+---
 # PROGRESS — vòng audit v3 (AUDIT_RULES v3, chế độ AUTO)
 
 > Đọc file này + `audit/ISSUE_LEDGER.md` (mục "VÒNG v3") trước tiên khi mở phiên mới hoặc sau khi
