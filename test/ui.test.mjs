@@ -8502,6 +8502,28 @@ section("an answer reads back as the person's own bubble");
   check('  once: the note written for the model, and the questions as JSON, are not shown beside it', !out.noteShown && !out.callShown, JSON.stringify(out));
 }
 
+section('the quality gate\'s correction replaces the answer on screen, and keeps its reasoning (QC-001)');
+{
+  const out = await page.evaluate(async () => {
+    const { assistantMessage, markdownOf } = await import('/js/render.js');
+    const turn = assistantMessage();
+    document.body.append(turn.node);
+    turn.appendThinking?.('Checking the rate.');
+    turn.appendText('Xem [phân tích](https://made-up.example/x).');
+    turn.flushText();
+    turn.replaceText('Xem phân tích (chưa kiểm chứng).\n\n*Kiểm tra nguồn: đã sửa 1 chỗ trích dẫn.*');
+    const prose = turn.node.querySelector('.prose');
+    const result = {
+      shown: prose?.textContent || '',
+      copied: markdownOf(turn.node.querySelector('.msg--assistant') || turn.node),
+      prose: turn.node.querySelectorAll('.prose').length,
+    };
+    turn.node.remove();
+    return result;
+  });
+  check('the corrected answer is what is shown, once', out.prose === 1 && /chưa kiểm chứng/.test(out.shown) && !/made-up/.test(out.shown), JSON.stringify(out));
+}
+
 section('a quiz card can be done again, and the missed ones come back (UX-022)');
 {
   const out = await page.evaluate(async () => {

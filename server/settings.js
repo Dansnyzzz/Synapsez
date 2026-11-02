@@ -128,6 +128,13 @@ export const DEFAULT_PREFS = {
    * Off, `search_connectors` and `suggest_connectors` are withheld.
    */
   connectorSearch: true,
+  /**
+   * The quality gate on a finished answer (QC-001, owner 2026-11-02): a web
+   * address the conversation does not account for is sent back to the model to
+   * correct — that sentence only — and dropped if it is not. Costs a call only
+   * when there is something to correct. See server/qualityGate.js.
+   */
+  qualityGate: true,
 };
 
 /** How the catalogue is sent: held back when it would crowd the window, or always whole. */

@@ -1164,6 +1164,23 @@ purpose: Exa's Agent and Research runs ($0.012–$1 each, a large share of a $10
 `deep_research` does that job on free models), summaries and subpages (charged per page), and the
 deprecated `includeText`/`excludeText`.
 
+### The quality gate
+
+A finished answer is checked before it is kept. The check is one that needs no model's opinion: every web
+address the answer cites must be somewhere in the conversation — in what you wrote, or in a page, search
+result or file a tool brought back. An address the model wrote from memory is the commonest invention a
+reader acts on, because they click it.
+
+- **Nothing to check, nothing spent.** An answer whose addresses are all accounted for is kept as it streamed.
+- **Only the wrong sentence is redone.** The model is sent the flagged addresses and the sources that were
+  read, and answers with find-and-replace edits. An edit is applied only if it touches a sentence holding a
+  flagged address, matches the answer exactly once, and brings no new unsourced address; everything else
+  stays byte for byte as you saw it. Up to `QUALITY_GATE_ROUNDS` rounds (default 2), and a round that changes
+  nothing ends them.
+- **Never published as fact.** Whatever is still unsourced loses its link (its words stay), and a line at the
+  end says what the check did. The screen is updated to the corrected answer, which is also what is stored.
+- Addresses inside code blocks are examples, not citations, and are not checked. `qualityGate: false` in an
+  account's preferences turns it off. See `server/qualityGate.js`.
 ### Free tiers: one allowance per service, shared by everyone
 
 The deployment pays nothing (`server/freeTier.js`). Every metered service has **one** free allowance —
@@ -1829,6 +1846,7 @@ step, with the optional certificate and how to bring data over from another data
 | `KEY_CHECKS` | optional | On by default: a key pasted in Settings → Providers is checked with its provider before it is kept (and OpenRouter says whose account it is, and whether it has paid). `off` skips the check — for test suites that save made-up keys. |
 | `FREE_TIER_ONLY` | optional | On by default: every metered search service stops at its free allowance (see "Free tiers"). `false` counts them but stops none, for a deployment that pays. |
 | `FREE_TIER_USER_DAILY` | optional | Metered searches one account may make a day (default `30`); past it, its searches use the free engines. |
+| `QUALITY_GATE_ROUNDS` | optional | How many times a finished answer citing an address no source holds is sent back to correct that sentence, before the link is dropped (1–3, default `2`). Each round is one short call, made only while something is still flagged. See "The quality gate". |
 | `EXA_FREE_MILLS`, `TAVILY_FREE_CREDITS`, `BRAVE_FREE_REQUESTS`, `GOOGLE_FREE_DAILY`, `STACKEXCHANGE_FREE_DAILY` | optional | Each service's ceiling, if its free tier is not the default one: Exa in thousandths of a dollar a month (9500), Tavily credits a month (950), Brave requests a month (950), Google grounded searches a day on the deployment's Gemini key (450), Stack Exchange requests a day (280, or 9500 with a key). |
 | `ANTHROPIC_API_KEY` etc. | **usually leave blank** | A shared fallback every account without its own key spends against. See the warning above. |
 | `PUBLIC_URL` | recommended | Your deployment URL. Used to build links in emails; without it they are guessed from the request. |

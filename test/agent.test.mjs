@@ -1634,6 +1634,39 @@ section('the same read twice in a turn runs once');
   check('a stray control tag the model wrote is not stored, so the next turn does not replay it (UX-017)',
     !!storedReply && !/<system>/.test(storedReply.text) && /Kết quả: 42\./.test(storedReply.text), JSON.stringify(storedReply?.text));
 
+  /*
+   * QC-001 (owner, 2026-11-02): an answer citing an address nothing in the
+   * conversation holds is sent back once to correct that sentence — only it —
+   * and the rest is stored as it was streamed.
+   */
+  await store.createChat(dupUser.id, { id: 'c-qc', title: 'qc' });
+  await store.appendMessage(dupUser.id, 'c-qc', { id: 'u-qc-1', role: 'user', text: 'lãi suất hôm nay? nguồn https://sbv.gov.vn/lai-suat' });
+  const qcEvents = [];
+  const qcPrompts = [];
+  let qcCalls = 0;
+  const qcStream = async function* scripted(opts) {
+    qcCalls += 1;
+    if (qcCalls === 1) {
+      yield { type: 'text', delta: 'Giữ nguyên ([SBV](https://sbv.gov.vn/lai-suat)). Xem [phân tích](https://made-up.example/x).' };
+    } else {
+      qcPrompts.push({ system: opts.system, tools: opts.tools?.length || 0, text: opts.messages?.at(-1)?.text || '' });
+      yield { type: 'text', delta: '{"edits":[{"find":"Xem [phân tích](https://made-up.example/x).","replace":"Xem phân tích (chưa kiểm chứng)."}]}' };
+    }
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+  };
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc', emit: (type, payload) => qcEvents.push({ type, payload }), stream: qcStream });
+  const qcReply = (await store.listMessages(dupUser.id, 'c-qc')).find((m) => m.role === 'assistant');
+  check('an invented address is sent back once, and only its sentence changes (QC-001)',
+    qcCalls === 2 && qcPrompts[0]?.tools === 0 && /made-up\.example/.test(qcPrompts[0]?.text) &&
+      !!qcReply && qcReply.text.startsWith('Giữ nguyên ([SBV](https://sbv.gov.vn/lai-suat)). Xem phân tích (chưa kiểm chứng).') && !/made-up/.test(qcReply.text),
+    JSON.stringify(qcReply?.text));
+  check('  the screen is given the corrected answer', qcEvents.some((e) => e.type === 'answer_revised' && !/made-up/.test(e.payload?.text || '')));
+  const plainCalls = qcCalls;
+  await store.createChat(dupUser.id, { id: 'c-qc2', title: 'qc2' });
+  await store.appendMessage(dupUser.id, 'c-qc2', { id: 'u-qc-2', role: 'user', text: 'chào' });
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc2', emit: () => {}, stream: scriptedProvider([{ text: 'Chào bạn.' }]).stream });
+  check('  an answer with nothing to check costs no extra call', qcCalls === plainCalls);
+
   const memo = new Map();
   const counts = {};
   let refused = null;
@@ -1688,6 +1721,7 @@ section('something connected mid-turn is there at the next step (owner, 2026-10-
   check('the first step did not have it', !/GitHub/i.test(text(systems[0]).split('## Connected services')[1] || ''), `${calls} steps`);
   check('  the next step of the same turn does', /## Connected services[\s\S]*GitHub/i.test(text(systems[1] || '')), text(systems[1] || '').split('## Connected services')[1]?.slice(0, 120));
   check('the fingerprint changed with it, and holds nothing of the token', before !== (await connectionsSignature(liveUser.id)) && !(await connectionsSignature(liveUser.id)).includes('ghp_'));
+
   check('the model is told the list is live, so it never asks for a new conversation', /a new conversation is never needed/.test(text(systems[0])));
 
   // The owner's own case: an MCP server added while the turn runs. One that cannot be

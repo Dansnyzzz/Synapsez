@@ -3095,6 +3095,18 @@ export function assistantMessage() {
       paintProse();
     },
 
+    /** The answer, whole, in place of what streamed — the quality gate's correction (QC-001); its reasoning stays. */
+    replaceText(text) {
+      if (!prose) {
+        api.appendText(String(text ?? ''));
+        api.flushText();
+        return;
+      }
+      rawText = String(text ?? '');
+      paintQueued = false;
+      paintProse();
+    },
+
     /**
      * Throw away the prose written so far.
      *

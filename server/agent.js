@@ -31,6 +31,7 @@ import { lendEyes } from './vision.js';
 import { memoryForTurn, withheldTools } from './memory.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
 import { withoutStrayTags } from '../public/js/model-text.js';
+import { checkAnswer } from './qualityGate.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
@@ -1702,6 +1703,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   /** The progress gate's note for the next request, and whether it has fired this turn. */
   let progressGate = null;
   let progressGated = false;
+  /** The quality gate runs once a turn (QC-001). */
+  let qualityChecked = false;
 
   /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
   let movedToAuto = false;
@@ -2056,6 +2059,41 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     if (promoteReasoning(assistant)) emit('reasoning_was_reply', { text: assistant.text });
     // Stored as shown: a stray `<system>…</system>` line kept here would be replayed next turn (UX-017).
     assistant.text = withoutStrayTags(assistant.text);
+    /*
+     * The quality gate (QC-001, owner 2026-11-02): a finished answer citing an
+     * address the conversation does not hold goes back once, for that sentence
+     * only; whatever is still unsourced loses its link. Before the answer is
+     * stored, so the stored copy is the corrected one; the screen is told.
+     * Nothing to check, no call. See server/qualityGate.js.
+     */
+    if (!qualityChecked && !assistant.toolCalls.length && !done?.stop?.message && assistant.text.trim() && prefs.qualityGate !== false && !signal?.aborted) {
+      qualityChecked = true;
+      const gated = await checkAnswer({
+        answer: assistant.text,
+        messages,
+        language: prefs.language || 'en',
+        ask: async (system, prompt) => {
+          let said = '';
+          for await (const ev of stream({ userId, entry, system, messages: [{ role: 'user', text: prompt }], tools: [], effort: 'low', signal, googleData })) {
+            if (ev.type === 'text') said += ev.delta ?? '';
+            else if (ev.type === 'done' && ev.usage) {
+              const priced = priceTurn(entry, ev.usage);
+              await recordUsage(userId, { chatId, model: entry.id, usage: ev.usage, costUsd: priced?.usd || 0, role: 'qc' }).catch((err) =>
+                log.error('usage not recorded', err, { role: 'qc', model: entry.id }),
+              );
+            }
+          }
+          return said;
+        },
+      }).catch((err) => {
+        log.warn('quality gate did not run', { error: String(err?.message || err).slice(0, 160) });
+        return null;
+      });
+      if (gated?.changed) {
+        assistant.text = gated.text;
+        emit('answer_revised', { text: gated.text, flagged: gated.flagged.length, fixed: gated.fixed, removed: gated.removed });
+      }
+    }
     if (done?.usage) {
       assistant.usage = done.usage;
       totals.input += done.usage.input || 0;

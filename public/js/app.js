@@ -3878,6 +3878,12 @@ async function streamOnce(run, decision, answers) {
           block().adoptThinkingAsReply(text);
           maybeScroll(run);
         },
+        // The quality gate corrected an unsourced address in the answer just
+        // streamed (QC-001): the stored copy is the corrected one, so is this.
+        answer_revised: ({ text }) => {
+          block().replaceText(String(text || ''));
+          maybeScroll(run);
+        },
         // The account's model was withdrawn; the server moved it to Auto and
         // carries on there. The chip follows whichever conversation is on screen.
         model_switched: ({ from }) => noteModelRetired(from),
