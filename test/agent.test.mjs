@@ -2593,6 +2593,10 @@ section('a conversation holding Google data is marked, and the mark follows its 
   check('no picture is made through a Gemini key from a marked turn', picture.isError && /holds data from the person's Google account/.test(picture.content), picture.content);
   const docs = await withGoogleData(true, () => executeTool({ user: gUser, name: 'search_docs', input: { query: 'invoice' }, chatId: null }));
   check('  nor are indexed folders searched through one', docs.isError && /Gemini key/.test(docs.content), docs.content);
+  // PRV-023: a skill is put in front of every later conversation, on any provider — so none is written from a marked turn.
+  const skill = await withGoogleData(true, () => executeTool({ user: gUser, name: 'skill_write', input: { name: 'inbox-digest', description: 'From the Gmail thread', instructions: 'Reply to Ann at ann@example.com about the invoice.' }, chatId: null }));
+  const kept = (await store.listSkills(gUser.id).catch(() => [])).some((s) => s.name === 'inbox-digest');
+  check('no skill is written from a turn holding Google data (PRV-023)', skill.isError && /Google account/.test(skill.content) && !kept, skill.content);
   const { search } = await import('../server/search.js');
   const saved = { order: process.env.SEARCH_ORDER, gemini: process.env.GEMINI_API_KEY, fetch: globalThis.fetch };
   process.env.SEARCH_ORDER = 'google';

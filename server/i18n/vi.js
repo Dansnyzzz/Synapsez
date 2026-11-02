@@ -141,6 +141,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     '{0}\nHãy xem lại trang trước bước tiếp theo.',
   '{0} is too large to read here ({1} MB; the most is {2} MB).':
     '{0} quá lớn để đọc ở đây ({1} MB; tối đa {2} MB).',
+  "This conversation holds data from the person's Google account, and a skill is offered in every later conversation, whichever model runs it — so it is not written from here. Tell the user; they can write the skill in a new conversation.":
+    'Cuộc trò chuyện này có dữ liệu từ tài khoản Google của người dùng, mà một kỹ năng sẽ được đưa vào mọi cuộc trò chuyện sau, dù model nào chạy — nên không tạo kỹ năng từ đây. Hãy nói với người dùng; họ có thể tạo kỹ năng trong một cuộc trò chuyện mới.',
   'That is not something the screen can do.': 'Màn hình không làm được thao tác đó.',
   'The cloud browser is resting. Ask the assistant to open a page and it will start again.':
     'Trình duyệt đám mây đang nghỉ. Hãy nhờ trợ lý mở một trang, nó sẽ khởi động lại.',

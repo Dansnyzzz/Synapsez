@@ -1726,6 +1726,14 @@ async function skillRead({ name }, { userId }) {
 }
 
 async function skillWrite({ name, description, instructions }, { userId }) {
+  // A skill is put in front of every later conversation, on any provider; one
+  // written from a turn holding Gmail or Drive would carry it there (PRV-023).
+  if (googleDataInScope()) {
+    throw new Error(
+      "This conversation holds data from the person's Google account, and a skill is offered in every later conversation, " +
+        'whichever model runs it — so it is not written from here. Tell the user; they can write the skill in a new conversation.',
+    );
+  }
   const saved = await saveSkill(userId, { name, description, instructions });
   return `Saved the skill "${saved.name}". It will be offered to you in future conversations.`;
 }
