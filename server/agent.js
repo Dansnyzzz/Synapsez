@@ -35,6 +35,9 @@ import { withoutStrayTags } from '../public/js/model-text.js';
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
 
+/** A model that costs nothing to call — tagged free, or priced at zero both ways (as `usableDefaultModel` in app.js reads it). */
+const isFreeEntry = (entry) => !!entry?.tags?.includes('free') || (entry?.price?.in === 0 && entry?.price?.out === 0);
+
 /**
  * There is one mode.
  *
@@ -2012,8 +2015,16 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * turn only: the account keeps its model, and is told which one answered.
        * Not when the model already is Auto (there is nowhere further to go), and
        * only for a library model, whose account already holds the key Auto runs on.
+       *
+       * Only from a free model, and never for an incognito conversation
+       * (PRV-022): Auto is OpenRouter's free endpoints, which may keep or train
+       * on what they are sent. A paid model's provider was the person's choice,
+       * and incognito was a promise; a bad hour at the provider changes neither.
        */
-      if (err?.upstream && !switchedThisTurn && !assistant.text && isLibraryModel(entry) && !isAuto(entry.id)) {
+      if (
+        err?.upstream && !switchedThisTurn && !assistant.text && isLibraryModel(entry) && !isAuto(entry.id) &&
+        isFreeEntry(entry) && !chat?.incognito
+      ) {
         const auto = await pickAutoModel(userId);
         if (auto && auto.id !== entry.id) {
           switchedThisTurn = true;

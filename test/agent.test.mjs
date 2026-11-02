@@ -2301,8 +2301,8 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   ]);
 
   /** One turn on its own conversation; what the provider was handed, and what was said. */
-  const turn = async (chatId, script, extra = {}) => {
-    await store.createChat(moved.id, { id: chatId, title: 'model' });
+  const turn = async (chatId, script, extra = {}, chatExtra = {}) => {
+    await store.createChat(moved.id, { id: chatId, title: 'model', ...chatExtra });
     await store.appendMessage(moved.id, chatId, { id: `${chatId}-u`, role: 'user', text: 'Hello.' });
     const entries = [];
     const events = [];
@@ -2390,6 +2390,24 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   check('  once: when Auto fails as well, the turn says so rather than going round', twice.entries.length === 2 && /could not reach this model/.test(twice.thrown), `${JSON.stringify(twice.entries)} ${twice.thrown}`);
   const plainFail = await turn('c-not-upstream', [{ throws: '400 Bad request: tool schema invalid' }]);
   check('  and any other failure is not moved', plainFail.entries.length === 1 && /Bad request/.test(plainFail.thrown), plainFail.thrown);
+  /*
+   * PRV-022: Auto is OpenRouter's free endpoints, which may keep or train on
+   * what they are sent. An incognito conversation, or one on a paid model the
+   * person chose, is not re-sent there because its provider had a bad hour.
+   */
+  const hidden = await turn('c-upstream-incognito', [{ upstream: down }, { text: 'never' }], {}, { incognito: true });
+  check('an incognito conversation is not handed to Auto when its model fails (PRV-022)', hidden.entries.length === 1 && /could not reach this model/.test(hidden.thrown), `${JSON.stringify(hidden.entries)} ${hidden.thrown}`);
+  await store.upsertModels([
+    {
+      id: 'openrouter/lab/paid', provider: 'openrouter', model: 'lab/paid', family: 'lab', label: 'Paid',
+      description: null, context: 64_000, maxOutput: 8192, priceIn: 3, priceOut: 15, isFree: false, vision: false,
+      releasedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  await setPrefs(moved.id, { defaultModel: 'openrouter/lab/paid', modelNotice: null });
+  const paid = await turn('c-upstream-paid', [{ upstream: down }, { text: 'never' }]);
+  check('  nor is one on a paid model, whose provider the person chose', paid.entries.length === 1 && /could not reach this model/.test(paid.thrown), `${JSON.stringify(paid.entries)} ${paid.thrown}`);
+  await setPrefs(moved.id, { defaultModel: 'openrouter/lab/live', modelNotice: null });
 
   // An account on its own OrcaRouter key, moved to Auto mid-turn, lands on the
   // deployment's OpenRouter key: the shared key's limits apply from there.
