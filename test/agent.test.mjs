@@ -1722,6 +1722,33 @@ section('something connected mid-turn is there at the next step (owner, 2026-10-
   check('  the next step of the same turn does', /## Connected services[\s\S]*GitHub/i.test(text(systems[1] || '')), text(systems[1] || '').split('## Connected services')[1]?.slice(0, 120));
   check('the fingerprint changed with it, and holds nothing of the token', before !== (await connectionsSignature(liveUser.id)) && !(await connectionsSignature(liveUser.id)).includes('ghp_'));
 
+  /*
+   * PRV-021: pausing a connection in the + menu while a turn runs. The pause
+   * lives in the account's settings, not in what is plugged in, so the
+   * fingerprint never saw it — the rest of the turn kept the tool, including a
+   * call a fetched page could have asked for.
+   */
+  await store.createChat(liveUser.id, { id: 'c-live-pause', title: 'pause' });
+  await store.appendMessage(liveUser.id, 'c-live-pause', { id: 'c-live-pause-u', role: 'user', text: 'Look at my repos, then tell me.' });
+  const offered = [];
+  let pauseCalls = 0;
+  const pauseStream = async function* scripted(opts) {
+    offered.push((opts.tools || []).map((t) => t.name));
+    pauseCalls += 1;
+    if (pauseCalls === 1) {
+      // The person pauses GitHub in the + menu while the first step is answered.
+      await setPrefs(liveUser.id, { connectorsOff: ['github'] });
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'p1', name: 'memory_read', input: {} }], usage: { input: 10, output: 5 } };
+      return;
+    }
+    yield { type: 'text', delta: 'Done.' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+  };
+  await runAgent({ userId: liveUser.id, user: liveUser, chatId: 'c-live-pause', emit: () => {}, stream: pauseStream });
+  check('a connection paused mid-turn is gone from the next step of that turn (PRV-021)',
+    (offered[0] || []).some((n) => /^github/.test(n)) && !(offered[1] || []).some((n) => /^github/.test(n)),
+    `${(offered[0] || []).filter((n) => /^github/.test(n)).join(',')} → ${(offered[1] || []).filter((n) => /^github/.test(n)).join(',') || '(none)'}`);
+  await setPrefs(liveUser.id, { connectorsOff: [] });
   check('the model is told the list is live, so it never asks for a new conversation', /a new conversation is never needed/.test(text(systems[0])));
 
   // The owner's own case: an MCP server added while the turn runs. One that cannot be

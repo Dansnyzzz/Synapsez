@@ -164,6 +164,25 @@ const ENV_KEYS = {
 };
 
 /**
+ * What the person has switched off — connections paused in the + menu, plugins,
+ * memory, chat search, connector search — read on its own, for a turn checking
+ * between steps whether that changed (PRV-021). Without `getPrefs`' model lookup.
+ *
+ * @param {string} userId
+ */
+export async function getPauses(userId) {
+  const stored = (await getStore().getUserSetting(userId, PREFS_KEY)) || {};
+  const prefs = { ...DEFAULT_PREFS, ...stored };
+  return {
+    connectorsOff: prefs.connectorsOff,
+    pluginsOff: prefs.pluginsOff,
+    memory: prefs.memory,
+    chatSearch: prefs.chatSearch,
+    connectorSearch: prefs.connectorSearch,
+  };
+}
+
+/**
  * The preferences, with a default model the account can actually run.
  *
  * `DEFAULT_PREFS.defaultModel` names a Claude model, which is the right choice

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
-import { getPrefs, usesSharedKey, providerStatus } from './settings.js';
+import { getPrefs, getPauses, usesSharedKey, providerStatus } from './settings.js';
 import { checkQuota, record as recordUsage, turnTokenLimit } from './usage.js';
 import { normaliseQuestions, askLayout } from './tools/askOptions.js';
 import { streamCompletion } from './providers/index.js';
@@ -1395,8 +1395,11 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // Re-read mid-turn when what is plugged in changes — see `refreshConnections`.
   let connectors = connectorsAtStart;
   let mcp = mcpAtStart;
-  // What this conversation may not be given — see `withheldTools`.
-  const withhold = withheldTools({ chat, prefs });
+  // What this conversation may not be given — see `withheldTools`. Recomputed
+  // when the person pauses something mid-turn (PRV-021, `refreshConnections`).
+  let withhold = withheldTools({ chat, prefs });
+  const pausesOf = (p) => JSON.stringify([p.connectorsOff || [], p.pluginsOff || [], p.memory !== false, p.chatSearch !== false, p.connectorSearch !== false]);
+  let pausesSeen = pausesOf(prefs);
   const workerOnline = worker.online;
   /**
    * The account's setting, unless this particular run was given one.
@@ -1443,14 +1446,24 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * read the servers keeps the list it had and tries again next step.
    */
   const refreshConnections = async () => {
-    const now = await connectionsSignature(userId).catch(() => null);
-    if (!now || now === connectionsSeen) return;
+    // Also what the person paused in the + menu (PRV-021): that lives in the
+    // account's settings, not in what is plugged in, so the fingerprint never
+    // saw it, and the rest of the turn kept the tool.
+    const [now, pauses] = await Promise.all([connectionsSignature(userId).catch(() => null), getPauses(userId).catch(() => null)]);
+    const plugged = !!now && now !== connectionsSeen;
+    const paused = !!pauses && pausesOf(pauses) !== pausesSeen;
+    if (!plugged && !paused) return;
+    if (paused) {
+      Object.assign(prefs, pauses);
+      pausesSeen = pausesOf(pauses);
+      withhold = withheldTools({ chat, prefs });
+    }
     const [nextMcp, nextConnectors] = await Promise.all([
       mcpTools(userId).catch(() => ({ tools: [], servers: [], failed: true })),
       connectorSummary(userId, { off: prefs.connectorsOff }).catch(() => null),
     ]);
     if (nextMcp.failed || !nextConnectors) return;
-    connectionsSeen = now;
+    if (plugged) connectionsSeen = now;
     const servers = new Set(mcp.servers.map((s) => s.id));
     const linked = new Set(connectors.ids);
     mcp = nextMcp;
