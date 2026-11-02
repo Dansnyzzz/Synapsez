@@ -137,8 +137,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Trình trợ giúp trên máy tính đám mây dừng ngay khi vừa khởi động (mã thoát {0}).{1}',
   "The cloud computer's helper was stopped from outside as it started (exit code {0}).{1}":
     'Trình trợ giúp trên máy tính đám mây bị dừng từ bên ngoài ngay khi vừa khởi động (mã thoát {0}).{1}',
-  '{0}\nThe page is now: {1} {2}. Look again before the next step.':
-    '{0}\nTrang hiện tại: {1} {2}. Hãy xem lại trang trước bước tiếp theo.',
+  '{0}\nLook again before the next step.':
+    '{0}\nHãy xem lại trang trước bước tiếp theo.',
+  '{0} is too large to read here ({1} MB; the most is {2} MB).':
+    '{0} quá lớn để đọc ở đây ({1} MB; tối đa {2} MB).',
   'That is not something the screen can do.': 'Màn hình không làm được thao tác đó.',
   'The cloud browser is resting. Ask the assistant to open a page and it will start again.':
     'Trình duyệt đám mây đang nghỉ. Hãy nhờ trợ lý mở một trang, nó sẽ khởi động lại.',
