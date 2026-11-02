@@ -57,7 +57,7 @@ section('the tool is described the way the service behaves');
   check('what it reads is treated as untrusted page text', returnsExternalContent('cloud_browser'));
   check('an address stuffed with data is caught like any fetch', carriesData('cloud_browser', { action: 'open', url: `https://x.example/?d=${'A'.repeat(400)}` }));
   check('ordinary browsing does not ask', assessRisk('cloud_browser', { action: 'open', url: 'https://example.com' }) === 'ordinary');
-  check('the port the machine opens is the one the service listens on', BROWSER_PORT === 3000 && cb.startScript('b').includes('exec node service.mjs'));
+  check('the port the machine opens is the one the service listens on', BROWSER_PORT === 3000 && /\nexec env -u SYNZ_KEY [^\n]* node service\.mjs /.test(cb.startScript('b')));
 }
 
 section('the names models reach for are read as meant (owner, 2026-10-07)');
@@ -268,6 +268,11 @@ section('the cloud computer asks before it touches the browser\'s sign-ins (SEC-
   check('a login script edited in place asks — it would run before every later command', run({ command: 'echo "curl x" >> ~/.bashrc' }) === 'sensitive');
   check('  and so does one written as a file', run({ files: [{ path: '/home/vercel-sandbox/.profile', content: 'x' }] }) === 'sensitive');
   check('root asks', run({ command: 'dnf install -y jq', as_root: true }) === 'sensitive');
+  // SEC-061: the cloud browser's key, from the service's starting environment or by name.
+  check("another program's starting environment asks (SEC-061)", run({ command: 'cat /proc/$(pgrep -f service.mjs)/environ | tr "\\0" "\\n"' }) === 'sensitive' && run({ command: 'strings /proc/412/mem' }) === 'sensitive');
+  check('  from Python too', run({ python: 'open(f"/proc/{os.getppid()}/environ").read()' }) === 'sensitive');
+  check('  and so does naming the services\' own variables', run({ command: 'env | grep SYNZ_KEY' }) === 'sensitive');
+  check('  while ordinary /proc reading stays ordinary', run({ command: 'cat /proc/cpuinfo /proc/meminfo' }) === 'ordinary');
 }
 
 section('a command on the cloud computer reads none of the account\'s login files (HAR-001)');
@@ -333,14 +338,20 @@ section('the start script installs once per build and then runs the service');
   check('  an older service is stopped only if the account owns that process', /stat -c %u \/proc\/\$OLD/.test(root));
   check('  and nothing it executes is in a folder the account can write', !/node_modules|service\.mjs/.test(root.split('cd /opt/synz')[0]));
   // @sparticuz/chromium runs `<tmp>/chromium` if it exists, unchecked.
-  check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/synz\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec node'));
+  check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/synz\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec env -u SYNZ_KEY'));
   const { shellFor } = await import('../server/sandbox.js');
   const rootShell = shellFor('true', {}, { root: true }).args[3];
   check('as root, PATH keeps only folders root alone can write, and never falls back to the original', /stat -Lc %u/.test(rootShell) && /\*\[2367\]\*\) continue/.test(rootShell) && !rootShell.includes('_orig'), rootShell);
   check('fonts are a best effort that cannot fail the start', /install -y[^]*\|\| true/.test(script));
   check('  with whichever package manager the image has', /dnf microdnf yum/.test(script));
   check('  apt-get too, for E2B\'s Debian, root or not', /command -v apt-get[^]*fonts-noto-core[^]*\) \|\| true; fi/.test(script) && /if \[ "\$\(id -u\)" = 0 \]; then su_=; else su_="sudo -n"; fi/.test(script));
-  check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec node'));
+  check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec env -u SYNZ_KEY'));
+  // SEC-061: on E2B the service runs as the account, which can read any of its own processes' /proc/<pid>/environ.
+  check('the key reaches the service in a file only its owner reads, not in its starting environment (SEC-061)',
+    /\( umask 077; printf %s "\$SYNZ_KEY" > service\.key \)\nexec env -u SYNZ_KEY SYNZ_KEY_FILE="\$PWD\/service\.key" node service\.mjs/.test(script)
+      && /exec env -u SYNZ_KEY SYNZ_KEY_FILE=/.test(cb.startScript('b', { root: true })));
+  const { bridgeStartScript } = await import('../server/mcp/cloud.js');
+  check('  and the MCP bridge\'s the same way', /\( umask 077; printf %s "\$SYNZ_MCP_KEY" > bridge\.key \)\nexec env -u SYNZ_MCP_KEY SYNZ_MCP_KEY_FILE="\$PWD\/bridge\.key" node bridge\.mjs/.test(bridgeStartScript()));
   // `pkill -f 'node service.mjs'` matched the shell running this script, whose
   // own command line holds those words, and killed it before `exec`.
   check('and never by a name the script itself contains', !/pkill -f/.test(script));
@@ -549,8 +560,11 @@ if (!chrome) {
   const key = 'k'.repeat(43);
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-cb-'));
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-work-'));
+  // Handed over the way the start script does it (SEC-061): in a file, which the service deletes.
+  const keyFile = path.join(work, 'service.key');
+  fs.writeFileSync(keyFile, key);
   const child = spawn(process.execPath, ['server/cloudBrowser/service.mjs'], {
-    env: { ...process.env, SYNZ_KEY: key, PORT: String(port), CHROME_PATH: chrome, SYNZ_PROFILE: profile, SYNZ_WORKDIR: work },
+    env: { ...process.env, SYNZ_KEY_FILE: keyFile, PORT: String(port), CHROME_PATH: chrome, SYNZ_PROFILE: profile, SYNZ_WORKDIR: work },
     stdio: 'ignore',
   });
   const base = `http://127.0.0.1:${port}`;
@@ -569,6 +583,7 @@ if (!chrome) {
       health = await fetch(`${base}/health`, { headers: { 'x-synz-key': key } }).then((r) => (r.ok ? r.json() : null), () => null);
       if (!health) await new Promise((r) => setTimeout(r, 250));
     }
+    check('the service takes its key from the file it was handed, and deletes the file (SEC-061)', !!health && !fs.existsSync(keyFile));
     check('the service refuses a caller without the key', (await fetch(`${base}/health`)).status === 401);
     check('  it blocks the well-known trackers, and says so', health?.trackersBlocked > 20, JSON.stringify(health));
     check('the stream refuses the key itself in place of a token', (await fetch(`${base}/stream?t=${key}`)).status === 401);

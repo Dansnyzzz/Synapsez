@@ -99,7 +99,9 @@ export function bridgeStartScript() {
     'if [ -f bridge.pid ]; then kill "$(cat bridge.pid)" 2>/dev/null || true; sleep 0.3; fi',
     'echo $$ > bridge.pid',
     'echo "starting $(date -u +%FT%TZ) node $(node -v)" > bridge.log',
-    'exec node bridge.mjs >> bridge.log 2>&1',
+    // In a file only its owner reads, which the bridge deletes — not in node's starting environment (SEC-061).
+    '( umask 077; printf %s "$SYNZ_MCP_KEY" > bridge.key )',
+    'exec env -u SYNZ_MCP_KEY SYNZ_MCP_KEY_FILE="$PWD/bridge.key" node bridge.mjs >> bridge.log 2>&1',
   ].join('\n');
 }
 

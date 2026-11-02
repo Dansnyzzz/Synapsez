@@ -28,9 +28,26 @@
  */
 import http from 'node:http';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 
-const KEY = process.env.SYNZ_MCP_KEY || '';
+/**
+ * The key, from a file the start script wrote and this deletes (SEC-061), or
+ * from the environment for a caller that passes it so. A starting environment
+ * stays readable at /proc/<pid>/environ by any program of the same account.
+ */
+function readKey() {
+  const file = process.env.SYNZ_MCP_KEY_FILE;
+  if (!file) return process.env.SYNZ_MCP_KEY || '';
+  try {
+    return fs.readFileSync(file, 'utf8').trim();
+  } catch {
+    return '';
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+}
+const KEY = readKey();
 const PORT = Number(process.env.PORT) || 3100;
 /** A program nobody has used for this long is stopped; the next call starts it again. */
 const IDLE_MS = 20 * 60_000;

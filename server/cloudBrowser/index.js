@@ -136,7 +136,10 @@ export function startScript(build, { root = false } = {}) {
     'if [ -f service.pid ]; then kill "$(cat service.pid)" 2>/dev/null || true; sleep 0.3; fi',
     'echo $$ > service.pid',
     `echo "starting $(date -u +%FT%TZ) node $(node -v) ${where}" > service.log`,
-    'exec node service.mjs >> service.log 2>&1',
+    // The key goes over in a file only its owner can read, which the service
+    // deletes, and not in node's starting environment (SEC-061, service.mjs `readKey`).
+    '( umask 077; printf %s "$SYNZ_KEY" > service.key )',
+    'exec env -u SYNZ_KEY SYNZ_KEY_FILE="$PWD/service.key" node service.mjs >> service.log 2>&1',
   ];
   if (!root) {
     return [
