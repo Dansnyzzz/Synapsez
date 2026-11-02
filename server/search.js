@@ -611,7 +611,9 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
     // Set when a metered engine was asked, so the account's share is counted once.
     drew: false,
   };
-  const cacheKey = JSON.stringify([query.trim().toLowerCase(), chain, wanted, plan.exa, plan.tavily, plan.snippet, plan.fuse, ask.recency, ask.sites, ask.category, ask.country]);
+  // One account's cache (PRV-016, T13): shared, an instant answer told B that somebody had just searched
+  // these words, and served B what A's own key had paid for.
+  const cacheKey = JSON.stringify([userId || '', query.trim().toLowerCase(), chain, wanted, plan.exa, plan.tavily, plan.snippet, plan.fuse, ask.recency, ask.sites, ask.category, ask.country]);
   const cached = recall(cacheKey);
   if (cached) return cached;
 

@@ -357,6 +357,20 @@ section('when a second API key would help');
   );
 }
 
+section("one account is never answered from another account's search (PRV-016)");
+{
+  // Ten minutes of results were shared by everyone on the instance, keyed by the words alone:
+  // B could tell from an instant answer that somebody had just searched them — and was served
+  // what A's own key had paid for.
+  stubFetch({ 'duckduckgo.com': () => html(ddgPage(3)) });
+  await search('benh vien gan nha toi', { userId: 'u-a' });
+  const first = calls.length;
+  await search('benh vien gan nha toi', { userId: 'u-a' });
+  const again = calls.length;
+  await search('benh vien gan nha toi', { userId: 'u-b' });
+  check('the same account asking twice is answered from the cache', first > 0 && again === first, `${first} → ${again}`);
+  check('  another account asking the same is not (PRV-016)', calls.length > again, `${again} → ${calls.length}`);
+}
 console.log(
   failures === 0
     ? '\n[32mAll search checks passed.[0m\n'
