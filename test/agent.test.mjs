@@ -1625,6 +1625,15 @@ section('the same read twice in a turn runs once');
   const repeated = seenResults.filter((r) => /already ran in this turn/.test(r.content || ''));
   check('a duplicate in the same batch and one in the next step are both answered from the first', repeated.length === 2, `${repeated.length} of ${seenResults.length}`);
 
+  // UX-017: a free model wrote `<system>success</system>` on a line of its own (owner, 2026-11-02).
+  await store.createChat(dupUser.id, { id: 'c-stray', title: 'stray' });
+  await store.appendMessage(dupUser.id, 'c-stray', { id: 'u-stray-1', role: 'user', text: 'tính giúp tôi' });
+  const strayStream = scriptedProvider([{ text: 'Bảng đã xong.\n\n<system>success</system>\n\nKết quả: 42.' }]).stream;
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-stray', emit: () => {}, stream: strayStream });
+  const storedReply = (await store.listMessages(dupUser.id, 'c-stray')).find((m) => m.role === 'assistant');
+  check('a stray control tag the model wrote is not stored, so the next turn does not replay it (UX-017)',
+    !!storedReply && !/<system>/.test(storedReply.text) && /Kết quả: 42\./.test(storedReply.text), JSON.stringify(storedReply?.text));
+
   const memo = new Map();
   const counts = {};
   let refused = null;

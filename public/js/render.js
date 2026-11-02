@@ -12,6 +12,7 @@ import { normalisePlan, planItemHtml, planChange } from './plan.js';
 import { canonicalInput, TITLED } from './tool-aliases.js';
 import { registerPictures, pictureThumb, pictureUrl, openGallery } from './gallery.js';
 import { doneMark, ICONS } from './icons.js';
+import { withoutStrayTags } from './model-text.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -1998,6 +1999,13 @@ export function assistantMessage() {
   let rawText = '';
   /** Whether a repaint is already scheduled for the next frame — see appendText. */
   let paintQueued = false;
+  /** The reply as drawn and as copied: without a model's stray control tags (UX-017). */
+  const paintProse = () => {
+    if (!prose) return;
+    const shown = withoutStrayTags(rawText);
+    RAW.set(wrap, shown);
+    prose.innerHTML = renderMarkdown(shown);
+  };
   /**
    * Redrawing a saved turn rather than watching one. A step drawn now did not
    * start now, so it starts no clock: a run reloaded three minutes in must not
@@ -3069,14 +3077,14 @@ export function assistantMessage() {
         // painting — a provider restarting the reply on another key does exactly
         // that — and painting into the removed node would resurrect the draft
         // this whole mechanism exists to discard.
-        if (prose) prose.innerHTML = renderMarkdown(rawText);
+        paintProse();
       });
     },
 
     /** Paint whatever is pending right now, without waiting for a frame. */
     flushText() {
       paintQueued = false;
-      if (prose) prose.innerHTML = renderMarkdown(rawText);
+      paintProse();
     },
 
     /**

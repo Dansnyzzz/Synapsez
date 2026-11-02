@@ -30,6 +30,7 @@ import { sandboxConfigured } from './sandbox.js';
 import { lendEyes } from './vision.js';
 import { memoryForTurn, withheldTools } from './memory.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
+import { withoutStrayTags } from '../public/js/model-text.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
@@ -1952,6 +1953,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           assistant.model = entry.id;
           assistant.toolCalls = [];
           assistant.stopped = true;
+          assistant.text = withoutStrayTags(assistant.text);
           await store.appendMessage(userId, chatId, assistant).catch((e) =>
             log.error('stopped reply not saved', e, { chatId }));
         }
@@ -2041,6 +2043,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     if (done?.raw) assistant.raw = done.raw;
 
     if (promoteReasoning(assistant)) emit('reasoning_was_reply', { text: assistant.text });
+    // Stored as shown: a stray `<system>…</system>` line kept here would be replayed next turn (UX-017).
+    assistant.text = withoutStrayTags(assistant.text);
     if (done?.usage) {
       assistant.usage = done.usage;
       totals.input += done.usage.input || 0;

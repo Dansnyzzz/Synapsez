@@ -5,12 +5,13 @@
 
 ## Trạng thái v4
 
-- **Phase hiện tại:** 0 (hiểu toàn bộ) — chưa sửa code.
-- **Phạm vi:** `502717f..a7098d1` (103 commit, 190 file, +37.833/−2.983) + mục toàn cục mới của v4.
-- **Đã xong Phase 0:** §0.1 an toàn (sạch, xem `CONTRACT.md` v4) · §0.1b visibility = **PUBLIC** · §0.2 hợp đồng v4 · §0.5 `.claude/` (chỉ `commands/deploy-check.md` đổi) · §0.5b `SKILL_MAP.md` §5 · §0.6 `BASELINE.md` v4 (gate xanh 329 s, 5.611 ✓, typecheck 279/296).
-- **Đọc theo lô:** giao 5 sub-agent chỉ-đọc (biên server · thực thi/sandbox · harness/provider · frontend lõi · frontend cài đặt). Lần 1 (≈14:00) **cả 5 chết vì giới hạn 5 giờ (429)** trước khi báo cáo. 16:55 cho chạy tiếp đợt 1: biên server, thực thi/sandbox, frontend lõi. Đợt 2: harness/provider, frontend cài đặt.
-- **ID mới đã biết (chưa ghi ledger):** CFG-033 sandbox agent audit KHÔNG HỖ TRỢ (Windows gốc) · SEC-055 e2b→glob→minimatch moderate (chỉ đường build template) · CODE-063 typecheck baseline chưa khoá 279 · SEC-056 CSP mở `wss://*.e2b.app`/`*.vercel.run` (mọi sandbox, kể cả của người khác) · CFG-024 `.env.example` nay có trên đĩa nhưng untracked, agent không được đọc.
-
+- **Phase hiện tại:** 2 (thực thi) trên nhánh `optimize/2026-11-02` (tag `backup/pre-optimize-20261102-1701` = `a7098d1`).
+- **Phase 0 xong:** `CONTRACT.md` v4, `BASELINE.md` v4 (gate xanh 329 s, 5.611 ✓, typecheck 279/296), `SKILL_MAP.md` §5; 5 lát đọc chỉ-đọc đã báo cáo đủ (biên server, thực thi/sandbox, harness/provider, frontend lõi, frontend cài đặt) — kết quả nằm hết trong ledger v4. Lần 1 cả 5 chết vì 429; lần 2 (16:55) xong.
+- **Yêu cầu chủ trong lượt 2026-11-02 (ưu tiên trên AUDIT_RULES):** (1) `<system>success</system>` hiện trong câu trả lời → UX-017; (2) `sandbox_run failed: require() of ES Module` trên prod → SBX-001/002/003; (3) kiểm logic + tận dụng tài nguyên; (4) cổng chất lượng bắt model làm lại **chỉ phần sai**, giữ phần đúng → QC-001; (5) mức suy luận tương đương mọi model → GAP-013/014.
+- **FIXED:** SBX-001 `67fc3d5` · SBX-002 `998c15e` · SBX-003 (cùng `998c15e`, ngoại lệ ghi trong ledger).
+- **Thứ tự kế tiếp:** UX-017 → HIGH trong repo: SEC-057, PRV-017, SBX-004, SEC-061, LAW-003 → QC-001 (thiết kế: kiểm tất định sau câu trả lời + sửa có mục tiêu bằng cặp thay thế, phần đúng giữ nguyên byte) → GAP-014 → MEDIUM → LOW.
+- **CHỜ-CHỦ:** CFG-033 (sandbox agent: WSL2), SEC-060 (DATABASE_CA_CERT), CFG-034 (`.claude/hooks`), CFG-024 (`.env.example` untracked — chủ tự `git add` sau khi xem).
+- **Script:** `scratchpad/ledger.mjs <ID> <STATUS> <verify> <commit>` (cập nhật dòng cuối cùng có ID đó). Commit message ghi file bằng `[IO.File]::WriteAllText` rồi `git commit -F`.
 ---
 # PROGRESS — vòng audit v3 (AUDIT_RULES v3, chế độ AUTO)
 
