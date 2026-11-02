@@ -214,6 +214,23 @@ section("one machine per account, found again — and paid for before it runs");
   await again.extendTimeout(15 * 60_000);
   check('keeping it awake longer sets its timeout and pays only the extra time', state.calls.some((c) => c.kind === 'setTimeout' && c.ms === 900_000));
 
+  /*
+   * HAR-010: paid for before it runs — and given back when it did not. With
+   * E2B's twenty machines all busy, every failed start used to cost ten
+   * minutes of the month's credit; about 325 of them closed E2B for the month
+   * with no machine time used at all.
+   */
+  {
+    const month = `free:e2b:${new Date().toISOString().slice(0, 7)}`;
+    await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+    state.boxes.clear();
+    const before = await store.readCounter(month);
+    state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
+    const busy = await e2b.e2bMachineFor('u-e2b', 'synz-a').then(() => '', (e) => e.name);
+    state.createError = null;
+    check('a start that does not happen costs nothing: what it paid is given back (HAR-010)', busy === 'RateLimitError' && (await store.readCounter(month)) === before, `${busy} ${before} → ${await store.readCounter(month)}`);
+  }
+
   state.boxes.clear();
   state.calls.length = 0;
   const remade = await e2b.e2bMachineFor('u-e2b', 'synz-a');

@@ -4128,15 +4128,19 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT count FROM rate_limits WHERE bucket = $1 AND expires_at > NOW()', [bucket]);
       return Number(rows[0]?.count || 0);
     },
-    /** Add to a running total in one upsert — a period that has ended starts again from this amount. */
+    /**
+     * Add to a running total in one upsert — a period that has ended starts again
+     * from this amount. A negative amount takes back what was counted for work
+     * that never ran (freeTier.js `refund`); the total never goes below nothing.
+     */
     async addToCounter(bucket, amount, expiresAt) {
       const rows = await q(
-        `INSERT INTO rate_limits (bucket, count, expires_at) VALUES ($1, $2::int, $3::timestamptz)
+        `INSERT INTO rate_limits (bucket, count, expires_at) VALUES ($1, GREATEST(0, $2::int), $3::timestamptz)
          ON CONFLICT (bucket) DO UPDATE SET
-           count = CASE WHEN rate_limits.expires_at < NOW() THEN $2::int ELSE rate_limits.count + $2::int END,
+           count = CASE WHEN rate_limits.expires_at < NOW() THEN GREATEST(0, $2::int) ELSE GREATEST(0, rate_limits.count + $2::int) END,
            expires_at = CASE WHEN rate_limits.expires_at < NOW() THEN $3::timestamptz ELSE rate_limits.expires_at END
       RETURNING count`,
-        [bucket, Math.max(0, Math.round(Number(amount) || 0)), new Date(expiresAt).toISOString()],
+        [bucket, Math.round(Number(amount) || 0), new Date(expiresAt).toISOString()],
       );
       return Number(rows[0]?.count || 0);
     },

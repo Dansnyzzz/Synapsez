@@ -157,6 +157,22 @@ export async function spend(service, amount, now = new Date(), { ofCredit = true
   }
 }
 
+/**
+ * Give back what was counted for work that never ran (HAR-010): a cloud
+ * computer paid for before it started, whose start then failed. Taken off the
+ * period and, for E2B, off its whole credit — as `spend` put it on both.
+ */
+export async function refund(service, amount, now = new Date()) {
+  if (!TIERS[service] || !(Number(amount) > 0)) return;
+  try {
+    const { bucket, ends } = bucketOf(service, now);
+    await getStore().addToCounter(bucket, -amount, ends);
+    if (service === 'e2b') await getStore().addToCounter(E2B_TOTAL, -amount, LIFETIME_END);
+  } catch (err) {
+    if (!/not ready yet/.test(String(err?.message))) log.warn('free tier: not given back', { service, error: String(err?.message || err).slice(0, 160) });
+  }
+}
+
 /** Mark a service's allowance as used up for the period — when the service itself says so. */
 export async function exhaust(service, now = new Date()) {
   const { left } = await allowance(service, now);

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { getStore } from './store/index.js';
-import { allowance, spend } from './freeTier.js';
+import { allowance, spend, refund } from './freeTier.js';
 
 /**
  * The account's cloud computer on E2B (owner, 2026-11-02) — the first place one
@@ -161,12 +161,28 @@ const priceOf = (size, from, until) => Math.ceil(((until - from) / 1000) * (size
  */
 async function payUntil(paid, until) {
   const from = Math.max(Date.now(), Number(paid.paidUntil) || 0);
-  if (until <= from) return;
+  if (until <= from) return null;
   const cost = priceOf(paid, from, until);
   const { left } = await allowance('e2b');
   if (cost > left) throw new E2BOutOfCredit();
   await spend('e2b', cost);
+  const before = paid.paidUntil;
   paid.paidUntil = until;
+  return { cost, before };
+}
+
+/**
+ * What `payUntil` took for a start that then did not happen, given back
+ * (HAR-010): with E2B's machines all busy, each failed start cost ten minutes
+ * of the month's credit, and a few hundred closed E2B for the month.
+ *
+ * @param {{ paidUntil?: number }} paid
+ * @param {{ cost: number, before?: number } | null} receipt
+ */
+async function giveBack(paid, receipt) {
+  if (!receipt) return;
+  paid.paidUntil = receipt.before;
+  await refund('e2b', receipt.cost);
 }
 
 /** A word as one shell argument. */
@@ -315,15 +331,17 @@ async function readRecord(userId) {
 
 /** Resume a machine by id, paid for first; null when it no longer exists. */
 async function resume(Sandbox, userId, record) {
-  await payUntil(record, Date.now() + IDLE_MS);
+  const receipt = await payUntil(record, Date.now() + IDLE_MS);
+  let box;
   try {
-    const box = await Sandbox.connect(record.id, { ...connection(), timeoutMs: IDLE_MS });
-    await getStore().setUserSetting(userId, SETTING, record);
-    return machine(box, { userId, record });
+    box = await Sandbox.connect(record.id, { ...connection(), timeoutMs: IDLE_MS });
   } catch (err) {
+    await giveBack(record, receipt);
     if (notFound(err)) return null;
     throw err;
   }
+  await getStore().setUserSetting(userId, SETTING, record);
+  return machine(box, { userId, record });
 }
 
 async function open(userId, name) {
@@ -341,14 +359,20 @@ async function open(userId, name) {
   }
 
   const record = { ...ASSUMED, id: '', paidUntil: known?.paidUntil };
-  await payUntil(record, Date.now() + IDLE_MS);
-  let box = await Sandbox.create(template(), {
-    ...connection(),
-    timeoutMs: IDLE_MS,
-    metadata: { app: 'synapsez', machine: name },
-    lifecycle: { onTimeout: 'pause', autoResume: false },
-    network: NETWORK,
-  });
+  const receipt = await payUntil(record, Date.now() + IDLE_MS);
+  let box;
+  try {
+    box = await Sandbox.create(template(), {
+      ...connection(),
+      timeoutMs: IDLE_MS,
+      metadata: { app: 'synapsez', machine: name },
+      lifecycle: { onTimeout: 'pause', autoResume: false },
+      network: NETWORK,
+    });
+  } catch (err) {
+    await giveBack(record, receipt);
+    throw err;
+  }
   /*
    * Two instances making this account's machine at once each find none and make
    * one. Whichever was made first is the account's; a later one is killed at once,
