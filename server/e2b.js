@@ -185,6 +185,12 @@ async function giveBack(paid, receipt) {
   await refund('e2b', receipt.cost);
 }
 
+// The most of a command's output, and of a file, this server takes in (SBX-005).
+// The model sees 16k of output (sandbox.js `clipOutput`); a file past 32 MB is
+// past what every caller keeps anyway.
+const OUTPUT_CAP_BYTES = 2 * 1024 * 1024;
+const READ_CAP_BYTES = 32 * 1024 * 1024;
+
 /** A word as one shell argument. */
 const quote = (word) => `'${String(word).replace(/'/g, `'\\''`)}'`;
 
@@ -251,17 +257,44 @@ function machine(box, { userId, record } = {}) {
         };
       }
       const limitMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : 120_000;
+      /*
+       * Watched as it comes (SBX-005): the SDK keeps all of stdout in one
+       * string, so `cat /dev/urandom | base64` grew it in this server's memory
+       * until the instance fell over, taking other accounts' requests with it.
+       * Past the ceiling the command is stopped, and what came is cut with a note.
+       */
+      let seen = 0;
+      let flooded = false;
+      /** @type {any} */
+      let handle = null;
+      const watch = (data) => {
+        seen += Buffer.byteLength(String(data ?? ''));
+        if (seen > OUTPUT_CAP_BYTES && !flooded) {
+          flooded = true;
+          handle?.kill().catch(() => {});
+        }
+      };
       let done;
       try {
         // Fifteen seconds over the limit inside the machine, so `timeout` speaks first.
-        done = await box.commands.run(commandLine({ cmd, args, sudo, seconds: limitMs / 1000 }), { ...base, timeoutMs: limitMs + 15_000 });
+        handle = await box.commands.run(commandLine({ cmd, args, sudo, seconds: limitMs / 1000 }), {
+          ...base,
+          background: true,
+          timeoutMs: limitMs + 15_000,
+          onStdout: watch,
+          onStderr: watch,
+        });
+        if (flooded) handle.kill().catch(() => {});
+        done = await handle.wait();
       } catch (err) {
         // A failing command is an exit code, as on Vercel, not a thrown error.
         if (!exited(err)) throw err;
         done = err;
       }
-      const stdout = String(done.stdout ?? '');
-      const stderr = String(done.stderr ?? '');
+      const capped = (text) =>
+        flooded && text.length > OUTPUT_CAP_BYTES ? `${text.slice(0, OUTPUT_CAP_BYTES)}\n[output passed ${OUTPUT_CAP_BYTES / 1024 / 1024} MB, so the command was stopped]` : text;
+      const stdout = capped(String(done.stdout ?? ''));
+      const stderr = capped(String(done.stderr ?? ''));
       return { exitCode: done.exitCode, stdout: async () => stdout, stderr: async () => stderr };
     },
 
@@ -275,10 +308,22 @@ function machine(box, { userId, record } = {}) {
       );
     },
 
-    /** @param {{ path: string }} file */
-    async readFileToBuffer({ path: file }) {
+    /**
+     * A file on the machine, or null when there is none. Its size is asked
+     * first (SBX-005): a read takes the whole file into this server's memory,
+     * and a download of several gigabytes would have been read before any
+     * check could see it. The caller's deadline goes with the read.
+     *
+     * @param {{ path: string, signal?: AbortSignal }} file
+     */
+    async readFileToBuffer({ path: file, signal }) {
+      const where = onMachine(file);
       try {
-        return Buffer.from(await box.files.read(onMachine(file), { format: 'bytes' }));
+        const info = await box.files.getInfo(where, { signal });
+        if (Number(info?.size) > READ_CAP_BYTES) {
+          throw new Error(`${file} is too large to read here (${Math.round(Number(info.size) / 1024 / 1024)} MB; the most is ${READ_CAP_BYTES / 1024 / 1024} MB).`);
+        }
+        return Buffer.from(await box.files.read(where, { format: 'bytes', signal }));
       } catch (err) {
         if (notFound(err)) return null;
         throw err;

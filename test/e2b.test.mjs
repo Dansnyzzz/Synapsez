@@ -69,7 +69,10 @@ function fakeSdk() {
       this.commands = {
         run: async (cmd, opts) => {
           state.calls.push({ kind: 'run', id, cmd, opts });
-          return state.onRun ? state.onRun(cmd, opts) : { exitCode: 0, stdout: 'ok', stderr: '' };
+          const out = state.onRun ? await state.onRun(cmd, opts) : { exitCode: 0, stdout: 'ok', stderr: '' };
+          // In the background E2B hands back a handle to wait on or kill, as the real SDK does.
+          if (!opts?.background || typeof out?.wait === 'function') return out;
+          return { wait: async () => out, kill: async () => state.calls.push({ kind: 'killCommand', id }) };
         },
       };
       this.files = {
@@ -78,6 +81,10 @@ function fakeSdk() {
           state.calls.push({ kind: 'read', path, opts });
           if (!(path in state.files)) throw named('FileNotFoundError', `${path} not found`);
           return new Uint8Array(Buffer.from(state.files[path]));
+        },
+        getInfo: async (path) => {
+          if (!(path in state.files)) throw named('FileNotFoundError', `${path} not found`);
+          return { name: path.split('/').pop(), path, size: state.sizes?.[path] ?? Buffer.byteLength(state.files[path]) };
         },
       };
     }
@@ -186,6 +193,28 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   state.files['/home/user/out/a.txt'] = 'hello';
   check('a relative path is read from the home folder', String(await machine.readFileToBuffer({ path: 'out/a.txt' })) === 'hello');
   check('  and a missing file is null, as on Vercel', (await machine.readFileToBuffer({ path: '/nowhere.txt' })) === null);
+
+  // SBX-005: a file of several gigabytes was read whole into the server's memory before any size was checked.
+  state.files['/home/user/dump.bin'] = 'x';
+  state.sizes = { '/home/user/dump.bin': 3 * 1024 ** 3 };
+  state.calls.length = 0;
+  const huge = await machine.readFileToBuffer({ path: 'dump.bin' }).then(() => '', (e) => e.message);
+  check('a file too large to read is refused by its size, before a byte is read (SBX-005)', /too large/i.test(huge) && !state.calls.some((c) => c.kind === 'read'), huge);
+  state.sizes = {};
+  const stop = new AbortController();
+  await machine.readFileToBuffer({ path: 'out/a.txt', signal: stop.signal });
+  check('  and a read carries the caller\'s deadline', state.calls.some((c) => c.kind === 'read' && c.opts?.signal === stop.signal));
+
+  // SBX-005: `cat /dev/urandom | base64` grew one string in the server's memory until the instance fell over.
+  state.calls.length = 0;
+  state.onRun = async (_cmd, opts) => {
+    opts.onStdout?.('x'.repeat(3 * 1024 * 1024));
+    return { exitCode: 137, stdout: 'x'.repeat(3 * 1024 * 1024), stderr: '' };
+  };
+  const flood = await machine.runCommand({ ...shellFor('cat /dev/urandom | base64'), timeoutMs: 30_000 });
+  const floodOut = await flood.stdout();
+  state.onRun = null;
+  check('output past the ceiling stops the command, and is cut with a note (SBX-005)', state.calls.some((c) => c.kind === 'killCommand') && floodOut.length < 2.2 * 1024 * 1024 && /stopped/i.test(floodOut.slice(-200)), `${floodOut.length} chars`);
   await machine.writeFiles([{ path: 'data/in.csv', content: Buffer.from('a,b') }]);
   const wrote = state.calls.find((c) => c.kind === 'write');
   check('files are written under the home folder', wrote.entries[0].path === '/home/user/data/in.csv' && Buffer.from(wrote.entries[0].data).toString() === 'a,b');
