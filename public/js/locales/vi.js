@@ -2183,7 +2183,7 @@ export const vi = {
   'settings.network': 'Mạng',
   'settings.signedInAt': 'Đăng nhập lúc',
   'settings.current': 'Hiện tại',
-  'settings.privacyLede': 'Những gì bạn viết nằm trong cơ sở dữ liệu của chính ứng dụng này. Nó chỉ đến model bạn chọn như một phần của cuộc trò chuyện, và nhà cung cấp của model đó xử lý theo điều khoản của họ.',
+  'settings.privacyLede': 'Những gì bạn viết nằm trong cơ sở dữ liệu của chính ứng dụng này. Nó đến model bạn chọn như một phần của cuộc trò chuyện, và nhà cung cấp của model đó xử lý theo điều khoản của họ — và, khi trợ lý dùng tới, các dịch vụ trang quyền riêng tư nêu tên: tìm kiếm web, bản đồ, máy tính đám mây, dịch vụ bạn kết nối.',
   'settings.privacyNotice': 'Thông báo quyền riêng tư — những gì được xử lý, đi đâu, và quyền của bạn',
   'settings.preferences': 'Tuỳ chọn',
   'settings.exportAction': 'Xuất dữ liệu',

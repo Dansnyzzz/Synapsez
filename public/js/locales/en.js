@@ -2196,7 +2196,7 @@ export const en = {
   'settings.network': 'Network',
   'settings.signedInAt': 'Signed in',
   'settings.current': 'Current',
-  'settings.privacyLede': 'What you write stays in this app\'s own database. It reaches the model you chose only as part of a conversation, and that model\'s provider handles it under its own terms.',
+  'settings.privacyLede': 'What you write stays in this app\'s own database. It reaches the model you chose as part of a conversation, and that model\'s provider handles it under its own terms — and, when the assistant uses them, the services the privacy notice names: web search, maps, the cloud computer, the services you connect.',
   'settings.privacyNotice': 'The privacy notice — what is processed, where it goes, and your rights',
   'settings.preferences': 'Preferences',
   'settings.exportAction': 'Export data',
