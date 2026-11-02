@@ -188,7 +188,8 @@ export const repairRounds = (env = process.env) => Math.max(1, Math.min(3, Numbe
  *   messages: any[],
  *   language?: string,
  *   ask: (system: string, prompt: string) => Promise<string>,
- * }} input  `ask` makes the one repair call and returns the model's text
+ *   rounds?: number,
+ * }} input  `ask` makes a repair call and returns the model's text; `rounds` caps them
  * @returns {Promise<{ text: string, changed: boolean, flagged: string[], fixed: number, removed: number }>}
  */
 export async function checkAnswer({ answer, messages, language = 'en', ask, rounds = repairRounds() }) {
