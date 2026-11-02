@@ -65,6 +65,7 @@ import {
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
 import { redactSecrets } from './redact.js';
+import { clientError } from './util/clientError.js';
 import { audit, networkOf, agentOf } from './audit.js';
 import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { usageReport } from './usageReport.js';
@@ -427,7 +428,7 @@ export function createApp() {
         await audit(req, user.id, 'sign_in');
         res.json({ user: publicUser(user) });
       } catch (err) {
-        res.status(err.status || 400).json({ error: err.message, code: err.code });
+        res.status(err.status || 400).json({ error: clientError(err), code: err.code });
       }
     }),
   );
@@ -458,7 +459,7 @@ export function createApp() {
         if (user?.id) await audit(req, user.id, 'password_reset');
         res.json({ ok: true });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -552,7 +553,7 @@ export function createApp() {
       } catch (err) {
         // A closed deployment is a 403, not a bad request — the client can tell
         // "you may not" from "you got that wrong" and say something useful.
-        res.status(err.status || 400).json({ error: err.message });
+        res.status(err.status || 400).json({ error: clientError(err) });
       }
     }),
   );
@@ -722,7 +723,7 @@ export function createApp() {
       } catch (err) {
         // The worker turns this into the tool's error text, so it has to say
         // something a person can act on — "add an OpenAI key", not "HTTP 500".
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -834,7 +835,7 @@ export function createApp() {
         const { device, token: deviceToken } = await redeemEnrolment(token, { name, info });
         res.status(201).json({ token: deviceToken, deviceId: device.id, name: device.name });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1054,7 +1055,7 @@ export function createApp() {
         res.json(saved);
       } catch (err) {
         // A rejected language is the caller's mistake, not a server fault.
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1085,7 +1086,7 @@ export function createApp() {
         await audit(req, req.user.id, 'key_added', { provider: String(req.params.provider).slice(0, 40) });
         res.status(201).json(await providerStatus(req.user.id));
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1145,7 +1146,7 @@ export function createApp() {
         await audit(req, req.user.id, 'key_removed', { provider: String(req.params.provider).slice(0, 40) });
         res.json(await providerStatus(req.user.id));
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1180,7 +1181,7 @@ export function createApp() {
         const model = await addModelById(req.body?.id, req.user.id);
         res.status(201).json({ model });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1217,7 +1218,7 @@ export function createApp() {
           },
         });
       } catch (err) {
-        res.status(404).json({ error: err.message });
+        res.status(404).json({ error: clientError(err) });
       }
     }),
   );
@@ -1279,7 +1280,7 @@ export function createApp() {
           : await getPrefs(req.user.id);
         res.json({ ...outcome, prefs });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1306,7 +1307,7 @@ export function createApp() {
       try {
         res.json(await refreshLibrary());
       } catch (err) {
-        res.status(502).json({ error: err.message });
+        res.status(502).json({ error: clientError(err) });
       }
     }),
   );
@@ -1327,7 +1328,7 @@ export function createApp() {
         if (hasName) updated = await getStore().updateUser(req.user.id, { name });
         res.json({ user: publicUser(updated) });
       } catch (err) {
-        res.status(err.status || 400).json({ error: err.message });
+        res.status(err.status || 400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1344,7 +1345,7 @@ export function createApp() {
         await audit(req, req.user.id, 'password_changed');
         res.json({ ok: true, signedOutOtherDevices: true });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1376,7 +1377,7 @@ export function createApp() {
         await audit(req, req.user.id, 'two_factor_on');
         res.json({ ok: true, recoveryCodes: codes });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1390,7 +1391,7 @@ export function createApp() {
         await audit(req, req.user.id, 'two_factor_off');
         res.json({ ok: true });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1442,7 +1443,7 @@ export function createApp() {
         const { userInput } = await import('../worker/browser.js');
         res.json({ ok: true, did: await userInput(req.body || {}) });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1466,7 +1467,7 @@ export function createApp() {
         await getStore().clearScreen(req.user.id).catch(() => {});
         res.json({ ok: !output.isError, message: output.content });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1496,7 +1497,7 @@ export function createApp() {
       try {
         res.json(await cloudBrowserInput(req.user.id, req.body || {}));
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1546,7 +1547,7 @@ export function createApp() {
         // the machine's credential, not the page's.
         res.status(201).json({ device: { id: device.id, name: device.name } });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1566,7 +1567,7 @@ export function createApp() {
         const device = await setDeviceWorkspace(req.user.id, req.params.id, req.body?.path);
         res.json({ device: { id: device.id, name: device.name, wanted: device.workspace } });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1616,7 +1617,7 @@ export function createApp() {
         await getStore().cancelJobsForDevice(req.user.id, req.params.id);
         res.json({ ok: true, name: gone.name });
       } catch (err) {
-        res.status(404).json({ error: err.message });
+        res.status(404).json({ error: clientError(err) });
       }
     }),
   );
@@ -1788,7 +1789,7 @@ export function createApp() {
         const file = await addSource(req.user.id, req.params.id, req.body || {});
         res.status(201).json({ file });
       } catch (err) {
-        res.status(err.status || 400).json({ error: err.message });
+        res.status(err.status || 400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1816,7 +1817,7 @@ export function createApp() {
       try {
         res.status(201).json({ skill: await saveSkill(req.user.id, req.body || {}) });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -2017,7 +2018,7 @@ export function createApp() {
         });
         res.status(201).json({ task });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -2069,7 +2070,7 @@ export function createApp() {
           Object.assign(patch, schedulePatch(b, current));
         }
       } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({ error: clientError(err) });
       }
 
       let task = Object.keys(patch).length ? await store.updateTask(req.user.id, req.params.id, patch) : null;

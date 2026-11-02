@@ -618,6 +618,16 @@ section('a map\'s zoom buttons are reachable by a screen reader (ACC-011)');
   check('  and the marker layer is hidden from it', /overlay\.setAttribute\('aria-hidden', 'true'\)/.test(cardsSrc));
 }
 
+section("a database's own words do not reach the browser; a route's refusal does (CODE-065)");
+{
+  const { clientError } = await import('../server/util/clientError.js');
+  const pg = Object.assign(new Error('duplicate key value violates unique constraint "users_username_key"'), { code: '23505', severity: 'ERROR' });
+  const pool = new Error('connect ECONNREFUSED postgres://app:hunter2@db.internal:5432/main');
+  check('a database failure is said plainly, not in its own words', !/users_username_key/.test(clientError(pg)) && /Try again/.test(clientError(pg)), clientError(pg));
+  check('  nor is a connection failure, which can carry the address and password', !/hunter2|db\.internal/.test(clientError(pool)), clientError(pool));
+  check("  while a route's own refusal is the person's to read", clientError(new Error('That username is taken.')) === 'That username is taken.');
+  check('  and a key in one is still blanked', !/sk-ant-api03-[A-Za-z0-9]{20}/.test(clientError(new Error('Bad key sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX'))));
+}
 section('answering a quiz question keeps the keyboard in the quiz (ACC-012)');
 {
   const cardsSrc = fs.readFileSync(new URL('../public/js/cards.js', import.meta.url), 'utf8');
