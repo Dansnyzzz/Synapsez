@@ -382,13 +382,27 @@ export function createApp() {
     }),
   );
 
+  /**
+   * One ceiling per account, however it is named (SEC-058): its email or its
+   * username, padded or not. A name no account has is a bucket of its own, as
+   * before. Looked up on every attempt alike, so the lookup tells nobody who exists.
+   *
+   * @param {unknown} identifier
+   */
+  const accountKey = async (identifier) => {
+    const named = String(identifier ?? '').trim().toLowerCase();
+    if (!named) return '';
+    const account = await findUserByIdentifier(named).catch(() => null);
+    return account ? `user:${account.id}` : named;
+  };
+
   // Throttled on two axes at once — the caller's address and the email being
   // tried — so one person grinding one account cannot lock out an office behind
   // the same address, and a botnet spread across addresses still hits the
   // per-account ceiling.
   app.post(
     '/api/login',
-    rateLimit('login', (req) => req.body?.email),
+    rateLimit('login', (req) => accountKey(req.body?.email)),
     wrap(async (req, res) => {
       try {
         const user = await loginUser(body(req), req, res);
@@ -409,7 +423,7 @@ export function createApp() {
         }
         // A correct sign-in clears the tally, so a forgetful morning does not
         // cost somebody their afternoon.
-        await forgive(req, 'login', req.body?.email);
+        await forgive(req, 'login', await accountKey(req.body?.email));
         await audit(req, user.id, 'sign_in');
         res.json({ user: publicUser(user) });
       } catch (err) {
@@ -421,7 +435,7 @@ export function createApp() {
   // ── password reset ──────────────────────────────────────────────────
   app.post(
     '/api/password/forgot',
-    rateLimit('forgot', (req) => req.body?.email),
+    rateLimit('forgot', (req) => accountKey(req.body?.email)),
     wrap(async (req, res) => {
       // Always the same answer, so this cannot be used to discover who has an
       // account here.
@@ -432,7 +446,7 @@ export function createApp() {
 
   app.post(
     '/api/password/reset',
-    rateLimit('reset', (req) => req.body?.email),
+    rateLimit('reset', (req) => accountKey(req.body?.email)),
     wrap(async (req, res) => {
       try {
         const user = await resetPassword({
@@ -2355,7 +2369,8 @@ export function createApp() {
         });
       } catch (err) {
         log.error('turn failed', err, { ms: since(started) });
-        emit('error', { message: readableFailure(err) });
+        // A code the browser acts on, where there is one (`rate_limited`: every key resting — UX-024).
+        emit('error', { message: readableFailure(err), ...(err?.code === 'rate_limited' ? { code: err.code } : {}) });
         emit('done', { stopReason: 'error' });
       } finally {
         log.info('turn ended', { ms: since(started) });

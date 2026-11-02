@@ -1006,6 +1006,21 @@ section('a username to sign in with, or the email');
     `${wrong.json?.error} | ${nobody.json?.error}`,
   );
 
+  /*
+   * SEC-058: the per-account ceiling was keyed on the string sent, lowercased
+   * but not trimmed, while sign-in also takes a username — so " dana@…", "dana@…\t"
+   * and "dana.tran" were each a fresh ten tries at the same account. From
+   * addresses that change every time, only the per-account ceiling stands.
+   */
+  const names = ['dana@example.com', ' DANA@example.com ', 'dana.tran', 'Dana.Tran\t', 'dana@example.com  '];
+  let throttledAt = 0;
+  for (let i = 0; i < 16 && !throttledAt; i += 1) {
+    const tried = await jar().call('POST', '/api/login', { email: names[i % names.length], password: `guess-${i}` }, at(`10.30.0.${i + 1}`));
+    if (tried.status === 429) throttledAt = i + 1;
+  }
+  check('one account is one ceiling, however it is named and from wherever (SEC-058)', throttledAt > 0 && throttledAt <= 11, `throttled at attempt ${throttledAt || 'never'}`);
+  await store.clearRateLimit?.(`login:id:user:${made.json?.user?.id}`);
+
   const renamed = await dana.call('PATCH', '/api/account', { name: 'Dana', username: 'dana_t' });
   check('a username can be changed in the account settings', renamed.status === 200 && renamed.json?.user?.username === 'dana_t', JSON.stringify(renamed.json));
   const clash = await alice.call('PATCH', '/api/account', { name: 'Alice', username: 'Dana_T' });
