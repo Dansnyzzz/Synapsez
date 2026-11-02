@@ -625,6 +625,50 @@ section('answering a quiz question keeps the keyboard in the quiz (ACC-012)');
   check('  and takes it after the repaint, instead of focus falling to the page', /paint\(\);[\s\S]{0,300}stage\.querySelector\('\.xquiz__verdict'\)\)\?\.focus\(\)/.test(cardsSrc));
 }
 
+section("a quiz card asks the way Quizizz does: sets of twenty, the wrong ones again, twice (UX-022)");
+{
+  const { createQuizPlan } = await import('../public/js/quiz-plan.js');
+  /** Walk a plan, answering by `rightOn(index, round)`; the questions in the order they were asked. */
+  const walk = (plan, rightOn) => {
+    const asked = [];
+    for (let guard = 0; guard < 500 && !plan.done(); guard += 1) {
+      const now = plan.current();
+      asked.push(`${now.set}:${now.round}:${now.index}`);
+      plan.answer(rightOn(now.index, now.round));
+      plan.advance();
+    }
+    return asked;
+  };
+  const range = (n) => Array.from({ length: n }, (_, i) => i);
+
+  const perfect = createQuizPlan(range(5));
+  const once = walk(perfect, () => true);
+  check('all right: each question once, then done', once.length === 5 && perfect.done() && perfect.summary().firstTryRight === 5 && perfect.summary().missed.length === 0, once.join(' '));
+
+  // Question 2 is missed the first time, then got.
+  const learned = createQuizPlan(range(4));
+  const relearned = walk(learned, (i, round) => i !== 2 || round > 0);
+  check('a missed one comes back after the set, once got it is done', relearned.join(' ') === '0:0:0 0:0:1 0:0:2 0:0:3 0:1:2' && learned.summary().firstTryRight === 3 && learned.summary().missed.length === 0, relearned.join(' '));
+
+  // Question 1 is never got: two more rounds, then it is missed at the end.
+  const stubborn = createQuizPlan(range(3));
+  const tried = walk(stubborn, (i) => i !== 1);
+  check('  two rounds more at most, then it is missed', tried.join(' ') === '0:0:0 0:0:1 0:0:2 0:1:1 0:2:1' && JSON.stringify(stubborn.summary().missed) === '[1]', tried.join(' '));
+
+  // Forty-five questions: three sets. Question 3 (set 0) is never got; it goes with set 1's wrong ones.
+  const long = createQuizPlan(range(45));
+  const asked = walk(long, (i) => i !== 3 && i !== 25);
+  const firstSet = asked.filter((a) => a.startsWith('0:0:')).length;
+  const carriedInto1 = asked.filter((a) => a === '1:1:3' || a === '1:2:3').length;
+  check('twenty at a time', firstSet === 20 && asked.filter((a) => a.startsWith('1:0:')).length === 20 && asked.filter((a) => a.startsWith('2:0:')).length === 5, `${firstSet}`);
+  check("  still wrong after two rounds, it joins the next set's wrong ones", carriedInto1 === 2 && asked.indexOf('1:1:3') > asked.indexOf('1:0:39'), asked.filter((a) => /:3$/.test(a)).join(' '));
+  check('  and what is never got is missed at the end', JSON.stringify(long.summary().missed.sort((a, b) => a - b)) === '[3,25]' && long.summary().asked === 45, JSON.stringify(long.summary()));
+
+  // The missed ones, tried again on their own: a plan over just those.
+  const again = createQuizPlan(long.summary().missed);
+  check('the missed ones can be tried again on their own', again.current().index === 3 && again.current().total === 2);
+}
+
 section('Escape in a sketch label drops the label, not the sketch (UX-006)');
 {
   const src = fs.readFileSync(new URL('../public/js/sketch.js', import.meta.url), 'utf8');

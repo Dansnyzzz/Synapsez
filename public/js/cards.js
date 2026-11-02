@@ -10,6 +10,7 @@
  * "this app only".
  */
 import { t } from './i18n.js';
+import { createQuizPlan } from './quiz-plan.js';
 
 /** A tag with a class and, optionally, text. */
 function h(tag, className, text) {
@@ -388,24 +389,65 @@ function comparison(card, body) {
   if (card.verdict) body.append(h('p', 'xcard__verdict', card.verdict));
 }
 
+/**
+ * A quiz the way Quizizz runs one (UX-022, owner 2026-11-02): twenty at a time,
+ * the missed ones again for two more rounds, any still missed carried into the
+ * next set's — and it can be started over, or the missed ones tried again, as
+ * often as the person likes. The order is quiz-plan.js; this draws it.
+ */
 function quiz(card, body) {
   const qs = card.questions;
-  const answers = new Array(qs.length).fill(null);
-  let at = 0;
+  const everyQuestion = qs.map((_, i) => i);
+  let plan = createQuizPlan(everyQuestion);
+  /** The option picked for the question on screen; null until it is answered. */
+  let chosen = null;
   const progress = h('div', 'xquiz__progress');
   const stage = h('div', 'xquiz__stage');
   const nav = h('div', 'xquiz__nav');
-  const prev = h('button', 'xbtn', t('card.prev'));
+  const restart = h('button', 'xbtn', t('card.restart'));
   const next = h('button', 'xbtn xbtn--primary', t('card.next'));
-  prev.type = 'button';
+  restart.type = 'button';
   next.type = 'button';
   const score = h('div', 'xquiz__score');
   score.setAttribute('role', 'status');
-  nav.append(prev, score, next);
+  nav.append(restart, score, next);
+
+  const begin = (order) => {
+    plan = createQuizPlan(order);
+    chosen = null;
+    paint();
+    /** @type {HTMLElement|null} */ (stage.querySelector('button'))?.focus();
+  };
+
+  const paintEnd = () => {
+    const { firstTryRight, asked, missed } = plan.summary();
+    progress.textContent = '';
+    stage.replaceChildren(
+      h('p', 'xquiz__q', t('card.quizDone', { n: String(firstTryRight), total: String(asked) })),
+      h('p', 'xquiz__why', missed.length ? t('card.stillMissed', { n: String(missed.length) }) : t('card.allLearned')),
+    );
+    if (missed.length) {
+      const again = h('button', 'xbtn xbtn--primary', t('card.retryMissed'));
+      again.type = 'button';
+      again.addEventListener('click', () => begin(missed));
+      stage.append(again);
+    }
+    score.textContent = '';
+    next.hidden = true;
+  };
 
   const paint = () => {
-    const q = qs[at];
-    progress.textContent = t('card.questionOf', { n: String(at + 1), total: String(qs.length) });
+    const now = plan.current();
+    if (!now) return paintEnd();
+    next.hidden = false;
+    const q = qs[now.index];
+    const where = t('card.questionOf', { n: String(now.n), total: String(now.total) });
+    progress.textContent =
+      now.round > 0
+        ? `${t('card.redoRound', { round: String(now.round), rounds: String(now.rounds) })} · ${where}`
+        : now.sets > 1
+          ? `${where} · ${t('card.setOf', { n: String(now.set + 1), total: String(now.sets) })}`
+          : where;
     stage.replaceChildren();
     stage.append(h('p', 'xquiz__q', q.question));
     const options = h('div', 'xquiz__options');
@@ -414,14 +456,14 @@ function quiz(card, body) {
       const b = h('button', 'xquiz__opt');
       b.type = 'button';
       b.append(h('span', 'xquiz__key', String.fromCharCode(65 + i)), h('span', null, option));
-      const chosen = answers[at];
       if (chosen != null) {
         b.disabled = true;
         if (i === q.answer) b.classList.add('is-right');
         else if (i === chosen) b.classList.add('is-wrong');
       }
       b.addEventListener('click', () => {
-        answers[at] = i;
+        chosen = i;
+        plan.answer(i === q.answer);
         paint();
         // The pressed option is gone with the repaint; focus goes to the
         // verdict, which is read out, rather than falling to the top of the
@@ -431,27 +473,25 @@ function quiz(card, body) {
       options.append(b);
     });
     stage.append(options);
-    if (answers[at] != null) {
-      const right = answers[at] === q.answer;
+    if (chosen != null) {
+      const right = chosen === q.answer;
       const verdict = h('p', `xquiz__verdict ${right ? 'is-right' : 'is-wrong'}`, right ? t('card.correct') : t('card.wrong', { answer: q.options[q.answer] }));
       verdict.tabIndex = -1;
       stage.append(verdict);
       if (q.explanation) stage.append(h('p', 'xquiz__why', q.explanation));
     }
-    const done = answers.filter((a) => a != null).length;
-    const good = answers.filter((a, i) => a === qs[i].answer).length;
-    score.textContent = done ? t('card.score', { n: String(good), total: String(done) }) : '';
-    prev.disabled = at === 0;
-    next.disabled = at === qs.length - 1;
+    const { firstTryRight, asked } = plan.summary();
+    score.textContent = asked ? t('card.score', { n: String(firstTryRight), total: String(asked) }) : '';
+    next.disabled = chosen == null;
   };
-  prev.addEventListener('click', () => {
-    at = Math.max(0, at - 1);
-    paint();
-  });
   next.addEventListener('click', () => {
-    at = Math.min(qs.length - 1, at + 1);
+    if (chosen == null) return;
+    plan.advance();
+    chosen = null;
     paint();
+    /** @type {HTMLElement|null} */ (stage.querySelector('button'))?.focus();
   });
+  restart.addEventListener('click', () => begin(everyQuestion));
   body.append(progress, stage, nav);
   paint();
 }

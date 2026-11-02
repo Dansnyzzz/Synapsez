@@ -8502,6 +8502,35 @@ section("an answer reads back as the person's own bubble");
   check('  once: the note written for the model, and the questions as JSON, are not shown beside it', !out.noteShown && !out.callShown, JSON.stringify(out));
 }
 
+section('a quiz card can be done again, and the missed ones come back (UX-022)');
+{
+  const out = await page.evaluate(async () => {
+    const { cardFigure } = await import('/js/cards.js');
+    const figure = cardFigure({ card: { type: 'quiz', title: 'Q', questions: [
+      { question: 'One?', options: ['right', 'wrong'], answer: 0 },
+      { question: 'Two?', options: ['wrong', 'right'], answer: 1 },
+    ] } });
+    document.body.append(figure);
+    const pick = (label) => [...figure.querySelectorAll('.xquiz__opt')].find((b) => b.textContent.includes(label))?.click();
+    const next = () => /** @type {HTMLButtonElement} */ (figure.querySelector('.xquiz__nav .xbtn--primary')).click();
+    const read = () => ({ q: figure.querySelector('.xquiz__q')?.textContent, progress: figure.querySelector('.xquiz__progress')?.textContent || '' });
+    const nextDisabledBefore = /** @type {HTMLButtonElement} */ (figure.querySelector('.xquiz__nav .xbtn--primary')).disabled;
+    pick('right'); next();          // One? right
+    pick('wrong'); next();          // Two? wrong
+    const redo = read();            // Two? again, round 1
+    pick('right'); next();          // got it
+    const end = figure.querySelector('.xquiz__stage')?.textContent || '';
+    /** @type {HTMLButtonElement} */ ([...figure.querySelectorAll('.xquiz__nav .xbtn')].find((b) => !b.classList.contains('xbtn--primary'))).click();
+    const again = read();
+    figure.remove();
+    return { nextDisabledBefore, redo, end, again };
+  });
+  check('Next waits for an answer', out.nextDisabledBefore === true);
+  check('a missed question comes back after the set, marked as a second round', out.redo.q === 'Two?' && /1\/2|1 of 2/.test(out.redo.progress), JSON.stringify(out.redo));
+  check('  and the end says how it went the first time', /1\/2|1 of 2/.test(out.end), out.end);
+  check('Start over begins again from the first question', out.again.q === 'One?', JSON.stringify(out.again));
+}
+
 section('skipping a question is an answer, not a cancel');
 {
   const out = await page.evaluate(async () => {
