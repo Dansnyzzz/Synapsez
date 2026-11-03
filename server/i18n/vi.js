@@ -1138,8 +1138,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Đây là cuộc trò chuyện ẩn danh, nên không tìm trong các cuộc trò chuyện trước từ đây.",
   "No provider serving this model promises not to store or train on what you send, so the strict privacy setting kept it from running. Pick another model, or set Provider privacy back to Standard in Settings → Memory.":
     "Không nhà cung cấp nào phục vụ mô hình này cam kết không lưu hay huấn luyện trên nội dung bạn gửi, nên chế độ riêng tư nghiêm ngặt đã chặn nó. Hãy chọn mô hình khác, hoặc đặt Quyền riêng tư với nhà cung cấp về Tiêu chuẩn trong Cài đặt → Bộ nhớ.",
-  "This conversation holds data from your Google account, and {0} may keep what it is sent or learn from it, so it was not sent there. Pick a model from OpenRouter, Anthropic or OpenAI.":
-    "Cuộc trò chuyện này có dữ liệu từ tài khoản Google của bạn, mà {0} có thể lưu lại hoặc dùng để học, nên nó không được gửi tới đó. Hãy chọn một mô hình của OpenRouter, Anthropic hoặc OpenAI.",
+  "This conversation holds data from your Google account, and {0} may keep what it is sent or learn from it, so it was not sent there. Pick a model on OpenRouter — Claude and GPT are there too.":
+    "Cuộc trò chuyện này có dữ liệu từ tài khoản Google của bạn, mà {0} có thể lưu lại hoặc dùng để học, nên nó không được gửi tới đó. Hãy chọn một mô hình trên OpenRouter — ở đó cũng có Claude và GPT.",
   "This conversation holds data from your Google account, so it goes only to providers that neither keep it nor train on it, and none serving {0} promises that. Pick another model.":
     "Cuộc trò chuyện này có dữ liệu từ tài khoản Google của bạn, nên chỉ được gửi tới nhà cung cấp không lưu và không huấn luyện trên nó — và không nhà cung cấp nào phục vụ {0} cam kết điều đó. Hãy chọn mô hình khác.",
   "Not saved: the note contains {0}. Notes never hold identity, passport, tax, bank or card numbers, criminal records or immigration status — not even when the user asks, because a note is read into every future conversation. Save the useful part without that detail if there is one, and tell the user plainly what was left out and why.":

@@ -638,7 +638,7 @@ export async function* streamCompletion(opts) {
   if (!mayReceiveGoogleData(provider)) {
     const label = PROVIDERS[provider]?.label || provider;
     throw new Error(
-      `This conversation holds data from your Google account, and ${label} may keep what it is sent or learn from it, so it was not sent there. Pick a model from OpenRouter, Anthropic or OpenAI.`,
+      `This conversation holds data from your Google account, and ${label} may keep what it is sent or learn from it, so it was not sent there. Pick a model on OpenRouter — Claude and GPT are there too.`,
     );
   }
   try {
