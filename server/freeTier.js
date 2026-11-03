@@ -173,6 +173,47 @@ export async function refund(service, amount, now = new Date()) {
   }
 }
 
+/**
+ * One account's share of E2B's month (HAR-007). The credit is one pool for the
+ * whole deployment, and the daily action ceiling still let one account keep its
+ * machine awake about ten hours a day — the month gone in under a week, for
+ * everybody. Past its share an account's work goes to the Vercel stand-in.
+ * E2B_ACCOUNT_SHARE, a fraction of the month (default 0.34).
+ */
+export const e2bAccountShare = (env = process.env) => {
+  const n = Number(env.E2B_ACCOUNT_SHARE);
+  return n > 0 && n <= 1 ? n : 0.34;
+};
+
+const accountBucketOf = (userId, now) => {
+  const { bucket, ends } = bucketOf('e2b', now);
+  return { bucket: `${bucket}:user:${userId}`, ends };
+};
+
+/** What is left of this account's share of E2B's month; unbounded with the ceilings off or the count unreadable. */
+export async function e2bAccountAllowance(userId, now = new Date()) {
+  if (!userId || !freeTierOnly()) return { left: Infinity };
+  const { limit } = await allowance('e2b', now);
+  if (!Number.isFinite(limit)) return { left: Infinity };
+  try {
+    const used = await getStore().readCounter(accountBucketOf(userId, now).bucket);
+    return { left: Math.max(0, Math.floor(limit * e2bAccountShare()) - used) };
+  } catch {
+    return { left: Infinity };
+  }
+}
+
+/** Count (or, negative, give back) what an account's machine time cost against its share. */
+export async function e2bAccountSpend(userId, amount, now = new Date()) {
+  if (!userId || !Number(amount)) return;
+  try {
+    const { bucket, ends } = accountBucketOf(userId, now);
+    await getStore().addToCounter(bucket, amount, ends);
+  } catch (err) {
+    if (!/not ready yet/.test(String(err?.message))) log.warn('free tier: account share not counted', { error: String(err?.message || err).slice(0, 160) });
+  }
+}
+
 /** Mark a service's allowance as used up for the period — when the service itself says so. */
 export async function exhaust(service, now = new Date()) {
   const { left } = await allowance(service, now);

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { getStore } from './store/index.js';
-import { allowance, spend, refund } from './freeTier.js';
+import { allowance, spend, refund, e2bAccountAllowance, e2bAccountSpend } from './freeTier.js';
 
 /**
  * The account's cloud computer on E2B (owner, 2026-11-02) — the first place one
@@ -155,20 +155,25 @@ const priceOf = (size, from, until) => Math.ceil(((until - from) / 1000) * (size
 /**
  * Pay for keeping a machine awake until `until`, from where it was last paid
  * to. Time already paid for is not paid again. Mutates `paid.paidUntil`.
+ * An account's machine is paid from its share of the month too (HAR-007); a
+ * scratch machine, which belongs to nobody, from the pool alone.
  *
  * @param {{ cpu: number, memMb: number, paidUntil?: number }} paid
  * @param {number} until
+ * @param {string} [userId]
  */
-async function payUntil(paid, until) {
+async function payUntil(paid, until, userId) {
   const from = Math.max(Date.now(), Number(paid.paidUntil) || 0);
   if (until <= from) return null;
   const cost = priceOf(paid, from, until);
   const { left } = await allowance('e2b');
   if (cost > left) throw new E2BOutOfCredit();
+  if (userId && cost > (await e2bAccountAllowance(userId)).left) throw new E2BOutOfCredit();
   await spend('e2b', cost);
+  if (userId) await e2bAccountSpend(userId, cost);
   const before = paid.paidUntil;
   paid.paidUntil = until;
-  return { cost, before };
+  return { cost, before, userId };
 }
 
 /**
@@ -177,12 +182,13 @@ async function payUntil(paid, until) {
  * of the month's credit, and a few hundred closed E2B for the month.
  *
  * @param {{ paidUntil?: number }} paid
- * @param {{ cost: number, before?: number } | null} receipt
+ * @param {{ cost: number, before?: number, userId?: string } | null} receipt
  */
 async function giveBack(paid, receipt) {
   if (!receipt) return;
   paid.paidUntil = receipt.before;
   await refund('e2b', receipt.cost);
+  if (receipt.userId) await e2bAccountSpend(receipt.userId, -receipt.cost);
 }
 
 // The most of a command's output, and of a file, this server takes in (SBX-005).
@@ -341,7 +347,7 @@ function machine(box, { userId, record } = {}) {
     /** Awake for `ms` from now, paid for first. @param {number} ms */
     async extendTimeout(ms) {
       if (record) {
-        await payUntil(record, Date.now() + ms);
+        await payUntil(record, Date.now() + ms, userId);
         await getStore().setUserSetting(userId, SETTING, record);
       }
       await box.setTimeout(ms);
@@ -376,7 +382,7 @@ async function readRecord(userId) {
 
 /** Resume a machine by id, paid for first; null when it no longer exists. */
 async function resume(Sandbox, userId, record) {
-  const receipt = await payUntil(record, Date.now() + IDLE_MS);
+  const receipt = await payUntil(record, Date.now() + IDLE_MS, userId);
   let box;
   try {
     box = await Sandbox.connect(record.id, { ...connection(), timeoutMs: IDLE_MS });
@@ -404,7 +410,7 @@ async function open(userId, name) {
   }
 
   const record = { ...ASSUMED, id: '', paidUntil: known?.paidUntil };
-  const receipt = await payUntil(record, Date.now() + IDLE_MS);
+  const receipt = await payUntil(record, Date.now() + IDLE_MS, userId);
   let box;
   try {
     box = await Sandbox.create(template(), {

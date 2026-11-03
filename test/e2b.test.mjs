@@ -258,6 +258,18 @@ section("one machine per account, found again — and paid for before it runs");
     const busy = await e2b.e2bMachineFor('u-e2b', 'synz-a').then(() => '', (e) => e.name);
     state.createError = null;
     check('a start that does not happen costs nothing: what it paid is given back (HAR-010)', busy === 'RateLimitError' && (await store.readCounter(month)) === before, `${busy} ${before} → ${await store.readCounter(month)}`);
+
+    // HAR-007: one account keeping its machine awake could spend the whole month's pool for everybody.
+    await store.createUser({ id: 'u-e2b-greedy', email: 'greedy@example.com', passwordHash: 'x', name: 'G', role: 'user' }).catch(() => {});
+    process.env.E2B_ACCOUNT_SHARE = '0.001';
+    try {
+      const greedy = await e2b.e2bMachineFor('u-e2b-greedy', 'synz-greedy').then(() => '', (e) => e.name);
+      check('an account past its share of the month is not given more of the pool (HAR-007)', greedy === 'E2BOutOfCredit', greedy || 'started');
+    } finally {
+      delete process.env.E2B_ACCOUNT_SHARE;
+    }
+    const fair = await e2b.e2bMachineFor('u-e2b-greedy', 'synz-greedy').then((m) => m.provider, (e) => e.name);
+    check('  while within its share it starts as before', fair === 'e2b', fair);
   }
 
   state.boxes.clear();
