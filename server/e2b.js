@@ -18,14 +18,16 @@ import { log } from './util/trace.js';
  * next call finds the Python session's variables and the browser's open pages
  * where they were, which a Vercel machine resting cannot do.
  *
- * **Root, then the account (HAR-001).** E2B starts every command as
+ * **Root, then the account (HAR-001).** The SDK starts every command as
  * `/bin/bash -l -c`, a login shell: run as the account, it would read the
  * account's own ~/.bash_profile and ~/.profile first — files one command talked
  * into it by a web page can write — ahead of every command after, the helper
- * starts with their keys among them. So every command is sent as root, whose
- * login files only root can change, and an ordinary one drops to the account
- * with `setpriv` before it starts, through `bash --noprofile --norc` as on
- * Vercel. Root itself (`as_root`) is asked about first, every time (assessRisk).
+ * starts with their keys among them. So every command is sent as root, and an
+ * ordinary one drops to the account with `setpriv` before it starts, through
+ * `bash --noprofile --norc` as on Vercel. Root's own login is not read either
+ * (`withoutLoginShell`), and a machine is closed when the app first meets it
+ * (`CLOSE_MACHINE`). Root itself (`as_root`) is asked about first, every time
+ * (assessRisk).
  *
  * **Paid for before it runs.** E2B bills a machine for every second it is
  * awake, used or not, and the credit is one-off. Each start, resume or
@@ -211,7 +213,7 @@ const quote = (word) => `'${String(word).replace(/'/g, `'\\''`)}'`;
 const ROOT_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
 
 /**
- * The line E2B's root login shell is given for one command: the program as
+ * The line E2B's root shell is given for one command: the program as
  * root, or dropped to the account first; under `timeout` when it has a limit,
  * so a command past its time stops inside the machine rather than running on
  * unseen. Everything root starts is named by its full path, and a program run
@@ -276,6 +278,59 @@ export function withoutLoginShell(box) {
   };
   rpc[NO_LOGIN_SHELL] = true;
   return true;
+}
+
+/**
+ * What is closed on a machine when the app first meets it (SBX-011).
+ *
+ * E2B makes every file under /usr/local mode 777 on a running machine, whatever
+ * a template set, and gives the account `sudo` with no password. /usr/local is
+ * where root's Perl, Python and dynamic linker read from: a module or a library
+ * left there by an ordinary command ran as root at the next `apt-get`, and a
+ * grading of the words of a command cannot see `s''udo`. So on a running
+ * machine, before any command of the account's: /usr/local is root's alone, the
+ * account has no sudo (root is `as_root`, which goes through `user: 'root'` and
+ * asks the person first), and /etc/inittab, also left open, is closed.
+ *
+ * What the account's commands find does not change: its PATH keeps the system
+ * first, so /usr/bin/python3 with its libraries still comes before the other
+ * python3 in /usr/local/bin, which being closed would otherwise have put first;
+ * and `npm install -g` goes to ~/.local, which is on that PATH.
+ *
+ * Holds through a pause and a resume (live, 2026-11-03). Takes about two seconds.
+ * A program left in /usr/local before this is not found out: this closes the door
+ * on what comes next.
+ */
+const CLOSE_MACHINE = [
+  '/usr/bin/chown -hR root:root /usr/local',
+  '/usr/bin/chmod -R go-w /usr/local',
+  '{ [ ! -e /etc/inittab ] || /usr/bin/chmod go-w /etc/inittab; }',
+  `/usr/bin/sed -i '/^${ACCOUNT}[[:space:]].*NOPASSWD/d' /etc/sudoers`,
+  `{ /usr/bin/gpasswd -d ${ACCOUNT} sudo >/dev/null 2>&1 || true; }`,
+  `/usr/bin/sed -i 's|PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"|PATH="/usr/bin:/bin:/usr/games:/usr/local/bin:/usr/local/games"|' /etc/profile`,
+  '/usr/bin/mkdir -p /usr/local/etc',
+  // For npm to read: ${HOME} is npm's own, and is the home of whoever runs it.
+  "/usr/bin/printf '%s\\n' 'prefix=${HOME}/.local' > /usr/local/etc/npmrc",
+].join(' && ');
+
+/**
+ * Close a machine, once: the record remembers, and one that could not be closed
+ * is tried again the next time it is opened. Never blocks the machine from being
+ * used — a failure here leaves it as E2B made it, which is said in the log.
+ *
+ * @param {any} box  the SDK's Sandbox
+ * @param {{ closed?: boolean } | null} [record]  the account's record; none for a scratch machine
+ */
+async function closeMachine(box, record = null) {
+  if (record?.closed) return;
+  // Before anything runs as root on it: see `withoutLoginShell`.
+  withoutLoginShell(box);
+  try {
+    await box.commands.run(CLOSE_MACHINE, { user: 'root', timeoutMs: 60_000 });
+    if (record) record.closed = true;
+  } catch (err) {
+    log.warn('e2b: machine not closed', { error: String(err?.message || err).slice(0, 160) });
+  }
 }
 
 /**
@@ -436,6 +491,7 @@ async function resume(Sandbox, userId, record) {
     if (notFound(err)) return null;
     throw err;
   }
+  await closeMachine(box, record);
   await getStore().setUserSetting(userId, SETTING, record);
   return machine(box, { userId, record });
 }
@@ -487,6 +543,7 @@ async function open(userId, name) {
   } catch {
     /* priced at the larger guess until it says */
   }
+  await closeMachine(box, record);
   await getStore().setUserSetting(userId, SETTING, record);
   return machine(box, { userId, record });
 }
@@ -512,11 +569,13 @@ export async function e2bScratch() {
   const { Sandbox } = await loadSdk();
   await payUntil({ ...ASSUMED }, Date.now() + SCRATCH_MS);
   const box = await Sandbox.create(template(), { ...connection(), timeoutMs: SCRATCH_MS, metadata: { app: 'synapsez', role: 'mcp-check' }, network: NETWORK });
+  await closeMachine(box);
   return machine(box);
 }
 
 export const __testing = {
   SETTING,
+  CLOSE_MACHINE,
   /** A stand-in for the `e2b` SDK, so the suites can drive a machine without one. */
   useSdk(fake) {
     sdk = fake;

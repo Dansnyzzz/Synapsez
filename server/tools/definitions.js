@@ -1494,7 +1494,7 @@ export const TOOLS = [
             'lines starting with ! run in the shell (!pip install pandas).',
         },
         python_reset: { type: 'boolean', description: 'Start this conversation\'s Python session afresh first, forgetting its variables.' },
-        as_root: { type: 'boolean', description: 'Run as root — only to install system packages (dnf install …).' },
+        as_root: { type: 'boolean', description: 'Run as root — only to install system packages (apt-get or dnf install …). Use this, not sudo in the command.' },
         files: {
           type: 'array',
           description: 'Text files to write before the command runs.',

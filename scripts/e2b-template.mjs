@@ -10,16 +10,16 @@
  *   - fonts for Vietnamese and other accented or non-Latin pages;
  *   - the Python the system prompt points at — data, charts, Word, Excel,
  *     PowerPoint, PDF (fpdf2), web pages — for /usr/bin/python3, the one a
- *     command and the Python session find first. E2B leaves /usr/local
- *     writable by everyone (mode 777 on a running machine, whatever a build
- *     step sets — live probe, 2026-11-02), so shellFor puts it after the
- *     system's folders, and its own python3 is not the one that runs;
+ *     command and the Python session find first. Nothing a build step closes
+ *     holds: E2B leaves /usr/local at mode 777 and the account with `sudo` on a
+ *     running machine, whatever is set here (live probe, 2026-11-02). The app
+ *     closes those when it first meets a machine (server/e2b.js `CLOSE_MACHINE`);
  *   - a node only root can change (SBX-006): the image's own node and npm,
  *     copied at build time — before anything of the account's has run — into
- *     /opt/synz-node, owned by root and written by nobody else. With node only
- *     in that writable /usr/local, the cloud browser's root start found no node
- *     it could trust and came up as the account, the sign-ins within its
- *     reach; shellFor uses this one when /opt and the whole folder are root's;
+ *     /opt/synz-node, owned by root and written by nobody else, which holds
+ *     even on a machine that could not be closed. shellFor uses it when /opt
+ *     and the whole folder are root's, and the cloud browser's helper runs as
+ *     root with it, the sign-ins out of reach;
  *   - the cloud browser's own packages, fetched once into root's npm cache and
  *     the account's (the root start falls back to the account's), so a first
  *     start unpacks rather than downloads.

@@ -43,7 +43,7 @@ const check = (label, pass, detail = '') => {
 const said = async (done) => `${(await done.stdout()).trim()}${(await done.stderr()).trim() ? ` [stderr: ${(await done.stderr()).trim().slice(0, 200)}]` : ''}`;
 
 const { Sandbox } = await import('e2b');
-const { e2bScratch } = await import('../server/e2b.js');
+const { e2bScratch, __testing } = await import('../server/e2b.js');
 const { shellFor, ROOT_NODE_DIR } = await import('../server/sandbox.js');
 const { startScript } = await import('../server/cloudBrowser/index.js');
 const template = String(process.env.E2B_TEMPLATE || '').trim() || 'base';
@@ -94,12 +94,23 @@ try {
   const fonts = await run('fc-list 2>/dev/null | grep -ciE "noto|dejavu" || echo 0');
   check(template === 'base' ? 'fonts (base: not expected)' : 'fonts for Vietnamese pages are there', template === 'base' || Number((await fonts.stdout()).trim()) > 0, (await fonts.stdout()).trim());
 
-  section('what an ordinary command can leave in /usr/local, which E2B lets anyone write (SBX-007..010)');
-  // Each writes who ran it, one log per uid: fs.protected_regular stops root appending to another uid's file in /tmp.
+  section('the machine, closed when the app first meets it (SBX-011)');
+  const closed = await run("/usr/bin/stat -c '%a %U' /usr/local /usr/local/bin /usr/local/bin/node; touch /usr/local/bin/planted 2>/dev/null && echo wrote || echo refused; touch /usr/local/share/planted.pm 2>/dev/null && echo wrote || echo refused; /usr/bin/sudo -n /usr/bin/id -u 2>/dev/null || echo no-sudo; id -nG");
+  const closedSaid = (await closed.stdout()).trim().split('\n');
+  check('/usr/local is root\'s alone, and the account cannot write there', closedSaid.slice(0, 3).every((l) => /^755 root$/.test(l)) && closedSaid[3] === 'refused' && closedSaid[4] === 'refused', closedSaid.slice(0, 5).join(' · '));
+  check('  the account has no sudo', closedSaid[5] === 'no-sudo' && !/\bsudo\b/.test(closedSaid[6]), closedSaid.slice(5).join(' · '));
+  const tools = await run('for t in python3 pip3 node npm; do command -v $t; done; python3 -V; npm config get prefix');
+  const toolsSaid = (await tools.stdout()).trim().split('\n');
+  check("  and what its commands find is as it was: the system's python3, node and npm, npm -g in its own folder", toolsSaid[0] === '/usr/bin/python3' && toolsSaid[2] === '/usr/local/bin/node' && toolsSaid[3] === '/usr/local/bin/npm' && toolsSaid[5] === '/home/user/.local', toolsSaid.join(' · '));
+
+  section('on a machine that could not be closed, what an ordinary command leaves in /usr/local does not run as root (SBX-007..010)');
+  // Opened again as E2B leaves it, and filled by the account. Each writes who ran it, one
+  // log per uid: fs.protected_regular stops root appending to another uid's file in /tmp.
   const PLANTED = ['id', 'mesg', 'sh', 'dnf', 'stat', 'find', 'readlink', 'bash', 'env', 'setpriv', 'timeout', 'sudo', 'apt-get', 'npm', 'grep', 'sed', 'cat', 'mkdir', 'chmod', 'chown'];
   const planter = PLANTED.map((name) => `/usr/bin/printf '#!/bin/sh\\necho "$(/usr/bin/id -u) ${name}" >> "/tmp/ran.$(/usr/bin/id -u).log"\\nfor d in /usr/bin /bin /usr/sbin /sbin; do [ -x "$d/${name}" ] && exec "$d/${name}" "$@"; done\\n' > /usr/local/bin/${name}; /usr/bin/chmod 755 /usr/local/bin/${name}`).join('; ');
-  await run(planter);
   const asRoot = (command, options = {}) => machine.runCommand({ ...shellFor(command, {}, { root: true }), sudo: true, timeoutMs: 30_000, ...options });
+  await asRoot('/usr/bin/chmod -R a+rwX /usr/local');
+  await run(planter);
   // Root's log only: the read's own /etc/profile runs as nobody, by design.
   const rootRan = async () => {
     const log = await asRoot('/usr/bin/sort -u /tmp/ran.0.log 2>/dev/null | /usr/bin/tr "\\n" " "; /usr/bin/rm -f /tmp/ran.*.log');
@@ -116,8 +127,10 @@ try {
   check('  nor does a root command (SBX-007, SBX-008, SBX-010)', afterRoot === '', afterRoot);
   const started = await machine.runCommand({ ...shellFor(startScript(`probe-${Date.now()}`, { root: true }), { SYNZ_SERVICE: Buffer.from('process.exit(0)').toString('base64'), SYNZ_KERNEL: '', SYNZ_KEY: 'probe' }, { root: true }), sudo: true, timeoutMs: 180_000 });
   const afterStart = await rootRan();
-  check("  nor does the cloud browser's real root start, its install included (SBX-009)", afterStart === '', `exit ${started.exitCode}${afterStart ? ` · ${afterStart}` : ''}`);
+  // The template's node is root's whatever happens to /usr/local; on base root then trusts no node, and stops.
+  check("  nor does the cloud browser's real root start, its install included (SBX-009)", afterStart === '' && started.exitCode === (template === 'base' ? 127 : 0), `exit ${started.exitCode}${afterStart ? ` · ${afterStart}` : ''}`);
   await asRoot(`/usr/bin/rm -f ${PLANTED.map((name) => `/usr/local/bin/${name}`).join(' ')} /tmp/ran.*.log`);
+  await asRoot(__testing.CLOSE_MACHINE);
 
   section('time limits, failures, files');
   const t0 = Date.now();
@@ -153,11 +166,14 @@ try {
   section('paused, and resumed with its memory');
   const paused = await Sandbox.create(template, { apiKey: process.env.E2B_API_KEY, timeoutMs: 5 * 60_000, metadata: { app: 'synapsez', role: 'probe' }, lifecycle: { onTimeout: 'pause', autoResume: false } });
   machines.push({ delete: () => paused.kill() });
+  await paused.commands.run(__testing.CLOSE_MACHINE, { user: 'root' });
   await paused.commands.run('echo kept > /home/user/kept.txt; nohup sleep 900 >/dev/null 2>&1 &', { user: 'user' });
   await paused.pause();
   const back = await Sandbox.connect(paused.sandboxId, { apiKey: process.env.E2B_API_KEY, timeoutMs: 60_000 });
   const after = await back.commands.run('cat /home/user/kept.txt; pgrep -x sleep >/dev/null && echo running || echo stopped', { user: 'user' });
   check('its files and its running programs are there after a pause', /kept\s+running/.test(after.stdout), after.stdout.trim().replace(/\n/g, ' '));
+  const stayed = await back.commands.run("/usr/bin/stat -c '%a %U' /usr/local/bin; /usr/bin/sudo -n /usr/bin/id -u 2>/dev/null || echo no-sudo", { user: 'user' });
+  check('  and it comes back closed (SBX-011)', stayed.stdout.trim().replace(/\n/g, ' ') === '755 root no-sudo', stayed.stdout.trim().replace(/\n/g, ' '));
 
   if (process.argv.includes('--browser')) {
     section('Chromium, the way the cloud browser starts it');

@@ -145,7 +145,8 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   e2b.__testing.useSdk(sdk);
   const machine = await e2b.e2bMachineFor('u-e2b', 'synz-test');
   const done = await machine.runCommand({ ...shellFor("echo 'it''s'", {}, { userBin: true }), timeoutMs: 30_000 });
-  const run = state.calls.find((c) => c.kind === 'run');
+  // The last: the first is the machine being closed, which has a section of its own.
+  const run = state.calls.filter((c) => c.kind === 'run').at(-1);
   check('every command is sent as root, from the account\'s home', run.opts.user === 'root' && run.opts.cwd === '/home/user', JSON.stringify(run.opts));
   check('  so E2B\'s login shell reads only files root can write', /^exec /.test(run.cmd));
   check('  and an ordinary command drops to the account before it starts', /\/usr\/bin\/setpriv --reuid="\$\(\/usr\/bin\/id -u user\)" --regid="\$\(\/usr\/bin\/id -g user\)" --init-groups \/usr\/bin\/env PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin HOME=\/home\/user USER=user LOGNAME=user 'bash' '--noprofile' '--norc' '-c' /.test(run.cmd), run.cmd.slice(0, 240));
@@ -424,6 +425,65 @@ section('the SDK loads on a runtime that cannot require() an ES module (SBX-001)
   });
   const said = `${run.stdout}${run.stderr}`.trim();
   check('the SDK the app loads has Sandbox.create', run.status === 0 && run.stdout.trim() === 'function', said.split('\n')[0]);
+}
+
+section('a machine is closed once, before anything of the account\'s runs on it (SBX-011)');
+{
+  await resetCounters();
+  await store.createUser({ id: 'u-e2b-close', email: 'close@example.com', passwordHash: 'x', name: 'C', role: 'user' });
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  let shimmedFirst = null;
+  state.afterCreate = async (box) => {
+    box.commands.rpc = { start: () => {} };
+  };
+  state.onRun = async (_cmd, opts) => {
+    if (shimmedFirst === null) shimmedFirst = opts?.user === 'root' && Object.getOwnPropertySymbols(state.boxes.values().next().value.commands.rpc).length > 0;
+    return { exitCode: 0, stdout: 'ok', stderr: '' };
+  };
+  const runs = () => state.calls.filter((c) => c.kind === 'run');
+  const closing = (c) => /chmod -R go-w \/usr\/local/.test(c.cmd);
+  const machine = await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  const first = runs()[0];
+  check('the first thing to run on a new machine closes it, as root', closing(first) && first.opts.user === 'root', first?.cmd?.slice(0, 80));
+  check('  and with no login shell, already', shimmedFirst === true);
+  check('  /usr/local becomes root\'s alone, links not followed', /\/usr\/bin\/chown -hR root:root \/usr\/local && \/usr\/bin\/chmod -R go-w \/usr\/local/.test(first.cmd));
+  check('  the account loses its sudo: the line that gives it, and the group', /sed -i '\/\^user\[\[:space:\]\]\.\*NOPASSWD\/d' \/etc\/sudoers/.test(first.cmd) && /gpasswd -d user sudo/.test(first.cmd));
+  check('  /etc/inittab, also left open, is closed', /chmod go-w \/etc\/inittab/.test(first.cmd));
+  check('  and what the account\'s commands find stays: the system first, npm -g in its own folder', /PATH="\/usr\/bin:\/bin:\/usr\/games:\/usr\/local\/bin:\/usr\/local\/games"\|' \/etc\/profile/.test(first.cmd) && /'prefix=\$\{HOME\}\/\.local' > \/usr\/local\/etc\/npmrc/.test(first.cmd));
+  const bare = first.cmd.replace(/'[^']*'/g, '').match(/(?:^|&&\s*|\{\s*|\|\|\s*)(chown|chmod|sed|gpasswd|mkdir|printf)\b/g) || [];
+  check('  every program in it named by its full path, /usr/local being what is closed', bare.length === 0, bare.join(' | '));
+  const record = await store.getUserSetting('u-e2b-close', e2b.__testing.SETTING);
+  check('the record remembers', record?.closed === true, JSON.stringify(record));
+
+  state.calls.length = 0;
+  await machine.runCommand({ ...shellFor('true', {}, { userBin: true }), timeoutMs: 5_000 });
+  await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  check('  so it is not done again, on a command or on a resume', !runs().some(closing));
+
+  // A machine made before this, whose account has already had the run of it.
+  await store.setUserSetting('u-e2b-close', e2b.__testing.SETTING, { ...record, closed: undefined });
+  state.calls.length = 0;
+  await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  check('a machine made before this is closed when it is next opened', runs().some(closing) && (await store.getUserSetting('u-e2b-close', e2b.__testing.SETTING))?.closed === true);
+
+  // A failure leaves the machine usable, and is tried again.
+  await store.setUserSetting('u-e2b-close', e2b.__testing.SETTING, { ...record, closed: undefined });
+  state.onRun = async (cmd) => {
+    if (/go-w \/usr\/local/.test(cmd)) throw new Error('no room');
+    return { exitCode: 0, stdout: 'ok', stderr: '' };
+  };
+  const stillThere = await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  check('one that could not be closed still opens, and is not remembered as closed', typeof stillThere.runCommand === 'function' && !(await store.getUserSetting('u-e2b-close', e2b.__testing.SETTING))?.closed);
+  state.onRun = null;
+  state.calls.length = 0;
+  await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  check('  so the next time it is opened, it is tried again', runs().some(closing) && (await store.getUserSetting('u-e2b-close', e2b.__testing.SETTING))?.closed === true);
+
+  state.calls.length = 0;
+  await e2b.e2bScratch();
+  check('a scratch machine is closed too', runs().some(closing));
+  e2b.__testing.useSdk(null);
 }
 
 section('a command starts without a login shell, whoever it runs as (SBX-008)');
