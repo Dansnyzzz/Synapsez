@@ -769,6 +769,12 @@ section('export is the whole account, streamed, without secrets');
   check('  and the deep-research runs (PRV-029)', run?.report === 'RESEARCH-REPORT' && run?.sources?.[0]?.url === 'https://example.com/a', JSON.stringify(run)?.slice(0, 160));
   check('  and the MCP servers added, with no header, environment or token-shaped value', server?.url?.startsWith('https://mcp.example.com/') && !/HEADERS-CIPHER|ENV-CIPHER|sk-ant-api03-ABCDEF/.test(withMore.text), JSON.stringify(server));
   await store.deleteMcpServer(aliceId, 'mcp-export');
+  // PRV-031: a token of no known shape, named as one in the address or the arguments.
+  const { urlWithoutSecrets, argsWithoutSecrets } = await import('../server/routes/account.js');
+  const cleanUrl = urlWithoutSecrets('https://user:hunter2@mcp.example.com/sse?token=plainvalue111&mode=fast');
+  const cleanArgs = argsWithoutSecrets(['--api-key', 'plainvalue222', '--token=plainvalue333', '--verbose', 'run']).join(' ');
+  check('  a generic token in an MCP address or its arguments is blanked, the rest kept (PRV-031)',
+    !/plainvalue|hunter2/.test(cleanUrl + cleanArgs) && /mode=fast/.test(cleanUrl) && /--verbose run$/.test(cleanArgs), `${cleanUrl} · ${cleanArgs}`);
   // PRV-030: an incognito conversation's deep research is never part of the record, and a
   // deleted conversation takes its research with it.
   await store.createChat(aliceId, { id: 'c-incog-rr', title: 'secret', incognito: true });

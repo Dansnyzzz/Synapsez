@@ -463,6 +463,35 @@ export function mountAccountRoutes(api, admin, { wrap }) {
   );
 }
 
+/** A parameter or flag named for what it holds: a key, token, secret, password or credential. */
+const SECRET_NAME = /key|token|secret|passw(or)?d|auth|credential|signature|\bsig\b/i;
+
+/** An MCP server's address with its secrets blanked: a password in it, and any query value so named (PRV-031). */
+export function urlWithoutSecrets(raw) {
+  let text = raw;
+  try {
+    const url = new URL(raw);
+    if (url.password) url.password = 'redacted';
+    for (const name of [...url.searchParams.keys()]) if (SECRET_NAME.test(name)) url.searchParams.set(name, '[redacted]');
+    text = url.toString();
+  } catch {
+    // Not an address after all: the known shapes below are still blanked.
+  }
+  return redactSecrets(text).text;
+}
+
+/** A server's arguments with secrets blanked: `--api-key=…`, and the value after `--token` (PRV-031). */
+export function argsWithoutSecrets(args) {
+  return args.map((arg, i) => {
+    const text = String(arg);
+    const flag = /^(--?[\w.-]+)=(.*)$/.exec(text);
+    if (flag && SECRET_NAME.test(flag[1])) return `${flag[1]}=[redacted]`;
+    const before = i > 0 ? String(args[i - 1]) : '';
+    if (/^--?[\w.-]+$/.test(before) && SECRET_NAME.test(before) && !text.startsWith('-')) return '[redacted]';
+    return redactSecrets(text).text;
+  });
+}
+
 /**
  * The export's body, a piece at a time through `write` — see the route.
  *
@@ -489,9 +518,10 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
           name: s.name,
           transport: s.config?.transport ?? null,
           command: s.config?.command ?? null,
-          // An address or an argument can carry a token; whatever looks like one is blanked.
-          args: (Array.isArray(s.config?.args) ? s.config.args : []).map((a) => redactSecrets(String(a)).text),
-          url: s.config?.url ? redactSecrets(String(s.config.url)).text : null,
+          // An address or an argument can carry a token: a known key shape, or any
+          // value named as a key, token, secret or password (PRV-031) is blanked.
+          args: argsWithoutSecrets(Array.isArray(s.config?.args) ? s.config.args : []),
+          url: s.config?.url ? urlWithoutSecrets(String(s.config.url)) : null,
           enabled: s.enabled,
           createdAt: s.created_at,
         })),
