@@ -31,7 +31,7 @@ import { lendEyes } from './vision.js';
 import { memoryForTurn, withheldTools } from './memory.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
 import { withoutStrayTags } from '../public/js/model-text.js';
-import { checkAnswer, textsIn } from './qualityGate.js';
+import { checkAnswer, checkFigures, textsIn } from './qualityGate.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
@@ -1281,12 +1281,22 @@ export async function connectionsSignature(userId) {
  * after a fold can be that summary.
  *
  * @param {{ system?: string, grounded?: any[], outgoing?: any[], passages?: string, messages?: any[] }} step
+ * @param {{ every?: boolean }} [options]  every string, not only those that could hold an address — the figure check's (QC-002)
  * @returns {string[]}
  */
-export function gateSources({ system, grounded = [], outgoing = [], passages = '', messages = [] }) {
+export function gateSources({ system, grounded = [], outgoing = [], passages = '', messages = [] }, { every = false } = {}) {
   const summaries = new Set(messages.filter((m) => m.role === 'summary').map((m) => m.id));
   const notOwn = (m) => m?.role !== 'assistant' && !summaries.has(m?.id);
-  return textsIn({ system, passages, grounded: grounded.filter(notOwn), outgoing: outgoing.filter(notOwn) });
+  return textsIn({ system, passages, grounded: grounded.filter(notOwn), outgoing: outgoing.filter(notOwn) }, [], 0, every);
+}
+
+/** The tools whose results are facts from outside — what the figure check is for (QC-002). */
+const READS_THE_WEB = new Set(['web_search', 'web_fetch', 'deep_research', 'code_context', 'sports', 'place_lookup']);
+
+/** Whether this turn — since the person last wrote — called one of them. */
+export function readTheWeb(messages) {
+  const lastUser = messages.findLastIndex((m) => m.role === 'user');
+  return messages.slice(lastUser + 1).some((m) => (m.toolCalls || []).some((c) => READS_THE_WEB.has(c.name)));
 }
 
 // A turn's model calls end by this long after it began (HAR-015): a Vercel
@@ -1752,6 +1762,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   let shown = [];
   /** The files that step sent, for the PDFs among them it sent as bytes (QC-005). */
   let shownFiles = null;
+  /** That step as sent, for the figure check, which reads every string in it (QC-002). */
+  let shownStep = null;
 
   /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
   let movedToAuto = false;
@@ -1927,7 +1939,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         onLooking: () => emit('status', { phase: 'tool', name: 'look_at' }),
       }));
       const outgoing = withAttachments(grounded, loaded, entry, { masking });
-      shown = gateSources({ system, grounded, outgoing, passages: project?.passages, messages });
+      shownStep = { system, grounded, outgoing, passages: project?.passages, messages };
+      shown = gateSources(shownStep);
       shownFiles = loaded;
 
       for await (const ev of stream({
@@ -2117,36 +2130,44 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
      * only; whatever is still unsourced loses its link. Before the answer is
      * stored, so the stored copy is the corrected one; the screen is told.
      * Nothing to check, no call. See server/qualityGate.js.
+     *
+     * Then the figure check (QC-002), off unless the person chose it: after a
+     * turn that read the web, a figure none of it holds goes back the same way,
+     * and is marked "(unverified)" if it is not corrected.
      */
-    if (!qualityChecked && !assistant.toolCalls.length && !done?.stop?.message && assistant.text.trim() && prefs.qualityGate !== false && !signal?.aborted) {
+    if (!qualityChecked && !assistant.toolCalls.length && !done?.stop?.message && assistant.text.trim() && !signal?.aborted) {
       qualityChecked = true;
-      const gated = await checkAnswer({
-        answer: assistant.text,
-        messages,
-        sources: shown,
-        moreSources: () => pdfTextsOf(shownFiles, { deadline }),
-        language: prefs.language || 'en',
-        ask: async (system, prompt) => {
-          let said = '';
-          for await (const ev of stream({ userId, entry, system, messages: [{ role: 'user', text: prompt }], tools: [], effort: 'low', signal, googleData, deadline })) {
-            if (ev.type === 'text') said += ev.delta ?? '';
-            else if (ev.type === 'done' && ev.usage) {
-              const priced = priceTurn(entry, ev.usage);
-              await recordUsage(userId, { chatId, model: entry.id, usage: ev.usage, costUsd: priced?.usd || 0, role: 'qc' }).catch((err) =>
-                log.error('usage not recorded', err, { role: 'qc', model: entry.id }),
-              );
-            }
+      const language = prefs.language || 'en';
+      const moreSources = () => pdfTextsOf(shownFiles, { deadline });
+      const ask = async (system, prompt) => {
+        let said = '';
+        for await (const ev of stream({ userId, entry, system, messages: [{ role: 'user', text: prompt }], tools: [], effort: 'low', signal, googleData, deadline })) {
+          if (ev.type === 'text') said += ev.delta ?? '';
+          else if (ev.type === 'done' && ev.usage) {
+            const priced = priceTurn(entry, ev.usage);
+            await recordUsage(userId, { chatId, model: entry.id, usage: ev.usage, costUsd: priced?.usd || 0, role: 'qc' }).catch((err) =>
+              log.error('usage not recorded', err, { role: 'qc', model: entry.id }),
+            );
           }
-          return said;
-        },
-      }).catch((err) => {
-        log.warn('quality gate did not run', { error: String(err?.message || err).slice(0, 160) });
-        return null;
-      });
-      if (gated?.changed) {
-        assistant.text = gated.text;
-        emit('answer_revised', { text: gated.text, flagged: gated.flagged.length, fixed: gated.fixed, removed: gated.removed });
+        }
+        return said;
+      };
+      const streamed = assistant.text;
+      if (prefs.qualityGate !== false) {
+        const gated = await checkAnswer({ answer: assistant.text, messages, sources: shown, moreSources, language, ask }).catch((err) => {
+          log.warn('quality gate did not run', { error: String(err?.message || err).slice(0, 160) });
+          return null;
+        });
+        if (gated?.changed) assistant.text = gated.text;
       }
+      if (prefs.figureCheck === true && readTheWeb(messages) && !signal?.aborted) {
+        const checked = await checkFigures({ answer: assistant.text, messages, sources: gateSources(shownStep || {}, { every: true }), moreSources, language, ask }).catch((err) => {
+          log.warn('figure check did not run', { error: String(err?.message || err).slice(0, 160) });
+          return null;
+        });
+        if (checked?.changed) assistant.text = checked.text;
+      }
+      if (assistant.text !== streamed) emit('answer_revised', { text: assistant.text });
     }
     if (done?.usage) {
       assistant.usage = done.usage;

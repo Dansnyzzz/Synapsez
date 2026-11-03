@@ -1748,6 +1748,14 @@
               </div>
               <div class="srow__control"><input type="checkbox" class="switch" id="quality-gate" /></div>
             </div>
+            <!-- The figure check (QC-002), off by default; checkFigures in server/qualityGate.js. -->
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="figure-check" data-i18n="settings.figureCheck">Figure check</label>
+                <p class="srow__desc" data-i18n="settings.figureCheckHint">After the assistant reads the web, every number, percentage and date in its answer is looked for in what it read. One that is not there is corrected or marked "(unverified)", including figures it worked out itself. A correction uses one more request.</p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="figure-check" /></div>
+            </div>
             <div class="srow">
               <div class="srow__text">
                 <label class="srow__label" for="max-steps" data-i18n="behaviour.maxSteps">Max tool steps per turn</label>

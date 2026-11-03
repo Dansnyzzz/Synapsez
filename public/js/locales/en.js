@@ -2218,6 +2218,8 @@ export const en = {
   'settings.connectorSearchHint': 'Let the assistant search the connector directory and surface ones relevant to your conversation.',
   'settings.qualityGate': 'Source check',
   'settings.qualityGateHint': 'Before an answer is kept, every web address in it is checked against what was read. One that was not read is corrected, or its link is removed.',
+  'settings.figureCheck': 'Figure check',
+  'settings.figureCheckHint': 'After the assistant reads the web, every number, percentage and date in its answer is looked for in what it read. One that is not there is corrected or marked "(unverified)", including figures it worked out itself. A correction uses one more request.',
   'consug.connect': 'Connect',
   'consug.connected': 'Connected',
   'consug.turnOn': 'Turn on',

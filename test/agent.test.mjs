@@ -1772,6 +1772,48 @@ section('the same read twice in a turn runs once');
       `${sentAs} · ${JSON.stringify(qc5Reply?.text)}`);
   }
 
+  // QC-002: the figure check, off by default; on, a figure no search result holds is marked after one repair call.
+  {
+    const { readTheWeb } = await import('../server/agent.js');
+    const searched = async (chatId) => {
+      await store.createChat(dupUser.id, { id: chatId, title: chatId });
+      await store.appendMessage(dupUser.id, chatId, { id: `${chatId}-u`, role: 'user', text: 'inflation and the rate?' });
+      await store.appendMessage(dupUser.id, chatId, { id: `${chatId}-a`, role: 'assistant', text: '', toolCalls: [{ id: `${chatId}-c`, name: 'web_search', input: { query: 'rate' } }] });
+      await store.appendMessage(dupUser.id, chatId, { id: `${chatId}-t`, role: 'tool', results: [{ toolCallId: `${chatId}-c`, name: 'web_search', content: 'The policy rate stays at 4.5%.' }] });
+    };
+    let figCalls = 0;
+    const figStream = async function* scripted() {
+      figCalls += 1;
+      yield { type: 'text', delta: figCalls === 1 ? 'The rate is 4.5% and inflation is 7.2% this year.' : '{"edits":[]}' };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+    };
+    await searched('c-fig-off');
+    await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-fig-off', emit: () => {}, stream: figStream });
+    const offReply = (await store.listMessages(dupUser.id, 'c-fig-off')).filter((m) => m.role === 'assistant').at(-1);
+    check('the figure check is off by default: no extra call, the answer as streamed (QC-002)', figCalls === 1 && offReply?.text === 'The rate is 4.5% and inflation is 7.2% this year.', `${figCalls} · ${JSON.stringify(offReply?.text)}`);
+
+    await setPrefs(dupUser.id, { figureCheck: true });
+    figCalls = 0;
+    const figEvents = [];
+    await searched('c-fig-on');
+    await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-fig-on', emit: (type, payload) => figEvents.push({ type, payload }), stream: figStream });
+    const onReply = (await store.listMessages(dupUser.id, 'c-fig-on')).filter((m) => m.role === 'assistant').at(-1);
+    check('  on, after a search: one repair call, the found figure left alone, the unfound one marked',
+      figCalls === 2 && /The rate is 4\.5% and inflation is 7\.2% \((unverified|chưa kiểm chứng)\) this year\./.test(onReply?.text || ''), `${figCalls} · ${JSON.stringify(onReply?.text)}`);
+    check('  and the screen is given the marked answer', figEvents.some((e) => e.type === 'answer_revised' && /7\.2% \(/.test(e.payload?.text || '')));
+
+    figCalls = 0;
+    await store.createChat(dupUser.id, { id: 'c-fig-chat', title: 'fig chat' });
+    await store.appendMessage(dupUser.id, 'c-fig-chat', { id: 'c-fig-chat-u', role: 'user', text: 'inflation?' });
+    await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-fig-chat', emit: () => {}, stream: figStream });
+    check('  a turn that read nothing from the web is not checked', figCalls === 1);
+    check('readTheWeb looks only at this turn, since the person last wrote',
+      readTheWeb([{ role: 'assistant', toolCalls: [{ name: 'web_search' }] }, { role: 'user', text: 'x' }]) === false &&
+        readTheWeb([{ role: 'user', text: 'x' }, { role: 'assistant', toolCalls: [{ name: 'web_fetch' }] }]) === true &&
+        readTheWeb([{ role: 'user', text: 'x' }, { role: 'assistant', toolCalls: [{ name: 'calculate' }] }]) === false);
+    await setPrefs(dupUser.id, { figureCheck: false });
+  }
+
   const memo = new Map();
   const counts = {};
   let refused = null;

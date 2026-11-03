@@ -74,14 +74,15 @@ function textsOf(message) {
  * @param {any} value
  * @returns {string[]}
  */
-export function textsIn(value, out = [], depth = 0) {
+export function textsIn(value, out = [], depth = 0, every = false) {
   if (depth > 12 || value == null) return out;
   if (typeof value === 'string') {
-    if (value.length <= 2_000_000 && value.includes('http')) out.push(value);
+    // Only what could hold an address, unless `every` — the figure check reads all of it (QC-002).
+    if (value.length <= 2_000_000 && (every || value.includes('http'))) out.push(value);
   } else if (Array.isArray(value)) {
-    for (const item of value) textsIn(item, out, depth + 1);
+    for (const item of value) textsIn(item, out, depth + 1, every);
   } else if (typeof value === 'object') {
-    for (const [key, item] of Object.entries(value)) if (!/^(data|base64|bytes|image)$/i.test(key)) textsIn(item, out, depth + 1);
+    for (const [key, item] of Object.entries(value)) if (!/^(data|base64|bytes|image)$/i.test(key)) textsIn(item, out, depth + 1, every);
   }
   return out;
 }
@@ -278,4 +279,245 @@ export async function checkAnswer({ answer, messages, sources = [], moreSources 
   if (left.length) text = unlink(text, left);
   const note = gateNote({ fixed, removed: left.length }, language);
   return { text: note ? `${text.trimEnd()}\n\n${note}` : text, changed: true, flagged, fixed, removed: left.length };
+}
+
+/*
+ * The figure check (QC-002, owner 2026-11-03) — off unless `prefs.figureCheck`.
+ *
+ * A figure is the next invention a reader acts on after a link: a price, a
+ * rate, a date. After a turn that read the web, each figure in the answer —
+ * two digits or more, a percentage, a date — is looked for in what was read,
+ * the same way an address is: found, it passes with no call and no model's
+ * opinion; found nowhere, its sentence goes back once to be corrected from a
+ * source or marked "(unverified)", and whatever is still unfound is marked.
+ * A figure worked out from the sources (a sum, a change) is in none of them
+ * either and is marked too: this check cannot tell arithmetic from invention,
+ * which is why it is a choice, not the default. Not checked: names, which no
+ * rule tells from words, and figures written in words ("five").
+ */
+
+/**
+ * A figure in an answer: digits not glued to a word before them (`gpt-5`,
+ * `v1.25`, `H2O` are names) — nor the tail of such a name once its head was
+ * passed over.
+ */
+const FIGURE_RE = /(?<![\p{L}\p{N}_]|[\p{L}\p{N}_][.,:/-])\d+(?:[.,:/-]\d+)*%?/gu;
+/** Figures in a source, read loosely: `100km` and `12.000đ` hold 100 and 12.000. */
+const SOURCE_FIGURE_RE = /\d+(?:[.,:/-]\d+)*/g;
+/** What marks a figure the check could not find, in either language. */
+const UNVERIFIED_RE = /\((?:unverified|chưa kiểm chứng)\)/i;
+const unverifiedMark = (language) => (language === 'vi' ? '(chưa kiểm chứng)' : '(unverified)');
+
+/** The digit runs of a figure, without leading zeros: `03/11/2026` is 3, 11, 2026. */
+const runsOf = (token) => (token.match(/\d+/g) || []).map((run) => run.replace(/^0+(?=\d)/, ''));
+
+/**
+ * The ways one figure can be written and still be the same one: `4,5` and
+ * `4.5`, `1,234,567` and `1234567`, `03/11/2026` and `2026-11-03`.
+ */
+function figureKeys(token) {
+  const runs = runsOf(token);
+  const keys = [runs.join('.')];
+  if (/[/:-]/.test(token)) keys.push(`d:${[...runs].sort().join('.')}`);
+  else if (runs.join('').length >= 4) keys.push(`n:${runs.join('')}`);
+  return keys;
+}
+
+/** Every figure the sources hold, as keys. */
+export function figureEvidenceOf(messages, sources = []) {
+  const keys = new Set();
+  for (const text of [...(messages || []).flatMap((m) => textsOf(m)), ...sources]) {
+    for (const token of text.match(SOURCE_FIGURE_RE) || []) for (const key of figureKeys(token)) keys.add(key);
+  }
+  return keys;
+}
+
+/** A figure worth checking: two digits or more, or a percentage. */
+const worthChecking = (token) => token.endsWith('%') || token.replace(/\D/g, '').length >= 2;
+
+/**
+ * Each figure in an answer, where it is, outside code, addresses and list
+ * numbers — and whether its sentence already says it is unverified.
+ *
+ * @param {string} answer
+ * @returns {{ line: number, start: number, end: number, token: string, marked: boolean }[]}
+ */
+function figuresIn(answer) {
+  const out = [];
+  let fenced = false;
+  String(answer || '')
+    .split('\n')
+    .forEach((line, n) => {
+      if (FENCE.test(line)) {
+        fenced = !fenced;
+        return;
+      }
+      if (fenced) return;
+      // Blanked rather than cut, so a position here is a position in the line.
+      const blank = (m) => ' '.repeat(m.length);
+      const seen = line
+        .replace(URL_RE, blank)
+        .replace(/`[^`]*`/g, blank)
+        .replace(/\[\d+\]/g, blank)
+        .replace(/^(\s*)(\d+[.)])(?=\s)/, (_m, lead, marker) => lead + blank(marker));
+      for (const m of seen.matchAll(FIGURE_RE)) {
+        const token = m[0];
+        if (!worthChecking(token)) continue;
+        const end = m.index + token.length;
+        const stop = line.slice(end).search(/[.!?…](?:\s|$)/);
+        const rest = stop === -1 ? line.slice(end) : line.slice(end, end + stop + 1);
+        out.push({ line: n, start: m.index, end, token, marked: UNVERIFIED_RE.test(rest) });
+      }
+    });
+  return out;
+}
+
+const accountedFigure = (token, evidence) => figureKeys(token).some((key) => evidence.has(key));
+
+/**
+ * The figures in an answer that nothing read holds and nothing marks, once each.
+ *
+ * @param {string} answer
+ * @param {Set<string>} evidence  `figureEvidenceOf`
+ * @returns {string[]}
+ */
+export function unsourcedFigures(answer, evidence) {
+  const found = new Set();
+  for (const f of figuresIn(answer)) if (!f.marked && !accountedFigure(f.token, evidence)) found.add(f.token);
+  return [...found];
+}
+
+/**
+ * The model's edits to flagged figures, applied where they are safe: `find`
+ * once in the answer and holding a flagged figure, `replace` bringing no new
+ * unfound figure and no address `find` did not have.
+ */
+export function applyFigureEdits(answer, reply, flagged, evidence) {
+  let parsed;
+  try {
+    const json = String(reply || '').match(/\{[\s\S]*\}/)?.[0];
+    parsed = json ? JSON.parse(json) : null;
+  } catch {
+    return null;
+  }
+  const edits = Array.isArray(parsed?.edits) ? parsed.edits.slice(0, 20) : [];
+  const unfound = (s) => new Set(figuresIn(s).filter((f) => !accountedFigure(f.token, evidence)).map((f) => f.token));
+  let text = answer;
+  let applied = 0;
+  for (const e of edits) {
+    const find = typeof e?.find === 'string' ? e.find : '';
+    const replace = typeof e?.replace === 'string' ? e.replace : null;
+    if (!find || replace == null || find.length > 600) continue;
+    if (text.indexOf(find) === -1 || text.indexOf(find) !== text.lastIndexOf(find)) continue;
+    if (!flagged.some((token) => find.includes(token))) continue;
+    const before = unfound(find);
+    if ([...unfound(replace)].some((token) => !before.has(token))) continue;
+    const links = new Set(find.match(URL_RE) || []);
+    if ((replace.match(URL_RE) || []).some((url) => !links.has(url))) continue;
+    text = text.replace(find, () => replace);
+    applied += 1;
+  }
+  return { text, applied };
+}
+
+/** Each unfound, unmarked figure is followed by the mark; nothing else changes. */
+export function markFigures(answer, evidence, language = 'en') {
+  const lines = String(answer || '').split('\n');
+  const marks = figuresIn(answer).filter((f) => !f.marked && !accountedFigure(f.token, evidence));
+  // From the end of each line, so a mark does not move the figures before it.
+  for (const f of marks.reverse()) {
+    lines[f.line] = `${lines[f.line].slice(0, f.end)} ${unverifiedMark(language)}${lines[f.line].slice(f.end)}`;
+  }
+  return { text: lines.join('\n'), marked: marks.length };
+}
+
+/** What the figure check says it did. */
+export function figureNote({ fixed, marked }, language = 'en') {
+  const vi = language === 'vi';
+  const parts = [];
+  if (fixed) parts.push(vi ? `sửa ${fixed} chỗ` : `corrected ${fixed}`);
+  if (marked) parts.push(vi ? `đánh dấu ${marked} số liệu không có trong nguồn đã đọc` : `marked ${marked} figure${marked === 1 ? '' : 's'} not found in any source read`);
+  if (!parts.length) return '';
+  return vi ? `*Kiểm tra số liệu: đã ${parts.join(', ')}.*` : `*Figure check: ${parts.join('; ')}.*`;
+}
+
+const FIGURE_REPAIR_SYSTEM =
+  'You correct one thing in an answer you wrote: figures that are in no source that was read. ' +
+  'Reply with JSON only: {"edits":[{"find":"…","replace":"…"}]}.';
+
+/** The most of the sources the repair call is shown — a bound on what it costs (QC-002). */
+const FIGURE_SOURCE_CHARS = 24_000;
+
+/**
+ * The figure check, run on a finished answer: one repair call at most, and
+ * only when a figure is found nowhere.
+ *
+ * @param {{
+ *   answer: string,
+ *   messages: any[],
+ *   sources?: string[],
+ *   moreSources?: (() => Promise<string[]>) | null,
+ *   language?: string,
+ *   ask: (system: string, prompt: string) => Promise<string>,
+ * }} input  as `checkAnswer`'s; `sources` here is every string shown, not only those holding an address
+ * @returns {Promise<{ text: string, changed: boolean, flagged: string[], fixed: number, marked: number }>}
+ */
+export async function checkFigures({ answer, messages, sources = [], moreSources = null, language = 'en', ask }) {
+  let evidence = figureEvidenceOf(messages, sources);
+  let flagged = unsourcedFigures(answer, evidence);
+  if (flagged.length && moreSources) {
+    const more = await Promise.resolve()
+      .then(moreSources)
+      .catch(() => []);
+    if (more?.length) {
+      evidence = figureEvidenceOf(messages, [...sources, ...more]);
+      flagged = unsourcedFigures(answer, evidence);
+    }
+  }
+  if (!flagged.length) return { text: answer, changed: false, flagged, fixed: 0, marked: 0 };
+
+  // The repair is shown the tool results themselves, newest first, up to FIGURE_SOURCE_CHARS:
+  // what a reader would check the figure against.
+  const results = (messages || [])
+    .flatMap((m) => (m?.results || []).filter((r) => r?.content && !r.isError).map((r) => String(r.content)))
+    .reverse();
+  let room = FIGURE_SOURCE_CHARS;
+  const shown = [];
+  for (const text of results) {
+    if (room <= 0) break;
+    shown.push(text.slice(0, room));
+    room -= text.length;
+  }
+  const prompt = [
+    'Answer:',
+    '<<<',
+    answer,
+    '>>>',
+    '',
+    'These figures are in the answer but in nothing the user gave and no page or result read in this conversation:',
+    ...flagged.slice(0, 20).map((f) => `- ${f}`),
+    '',
+    'What was read:',
+    '<<<',
+    shown.join('\n\n---\n\n') || '(nothing)',
+    '>>>',
+    '',
+    `For each sentence holding one of those figures: correct the figure to what a source above says, or keep it and put "${unverifiedMark(language)}" right after it — a figure worked out from the sources included.`,
+    'Change nothing else. Each "find" is copied exactly from the answer and is at most one sentence.',
+  ].join('\n');
+
+  let text = answer;
+  let fixed = 0;
+  try {
+    const edited = applyFigureEdits(answer, await ask(FIGURE_REPAIR_SYSTEM, prompt), flagged, evidence);
+    if (edited?.applied) {
+      text = edited.text;
+      fixed = edited.applied;
+    }
+  } catch {
+    /* the repair is a courtesy; the marks below still hold */
+  }
+  const marked = markFigures(text, evidence, language);
+  const note = figureNote({ fixed, marked: marked.marked }, language);
+  return { text: note ? `${marked.text.trimEnd()}\n\n${note}` : marked.text, changed: true, flagged, fixed, marked: marked.marked };
 }

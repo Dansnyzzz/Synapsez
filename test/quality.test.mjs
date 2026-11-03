@@ -162,5 +162,46 @@ section('a PDF the model was handed as a file is read only when something is fla
   check('  and a PDF that cannot be read leaves the gate as it was', broken.removed === 1 && !/made-up/.test(broken.text), broken.text);
 }
 
+section('the figure check: a figure nothing read holds is corrected or marked (QC-002)');
+{
+  const { figureEvidenceOf, unsourcedFigures, applyFigureEdits, markFigures, checkFigures } = await import('../server/qualityGate.js');
+  const read = [
+    { role: 'user', text: 'Lãi suất hôm nay?' },
+    { role: 'assistant', text: '', toolCalls: [{ id: 'f1', name: 'web_search', input: { query: 'lãi suất' } }] },
+    { role: 'tool', results: [{ toolCallId: 'f1', content: 'SBV giữ lãi suất 4.5% từ 2026-11-03; dư nợ 1234567 tỷ; giá 12.000đ; xe chạy 100km.' }] },
+  ];
+  const evidence = figureEvidenceOf(read);
+  const found = (answer) => unsourcedFigures(answer, evidence);
+
+  check('a figure a source holds passes, however it is written', found('Lãi suất 4,5% từ 03/11/2026, dư nợ 1,234,567 tỷ, giá 12.000 đồng, quãng 100 km.').length === 0, JSON.stringify(found('Lãi suất 4,5% từ 03/11/2026, dư nợ 1,234,567 tỷ, giá 12.000 đồng, quãng 100 km.')));
+  check('  one no source holds is flagged', JSON.stringify(found('Lạm phát 7,2% và lãi suất 4,5%.')) === '["7,2%"]', JSON.stringify(found('Lạm phát 7,2% và lãi suất 4,5%.')));
+  check('  names, versions, single digits, list numbers, footnotes, code and addresses are not figures',
+    found('1. Dùng gpt-5, bản v1.25, nước H2O, 3 bước [12], `port 8080`, https://example.com/2024/99.').length === 0,
+    JSON.stringify(found('1. Dùng gpt-5, bản v1.25, nước H2O, 3 bước [12], `port 8080`, https://example.com/2024/99.')));
+  check('  nor is one in a fenced code block', found('```\ntotal = 98765\n```').length === 0);
+  check('  and a figure already marked as unverified is not flagged again', found('Lạm phát 7,2% (chưa kiểm chứng).').length === 0 && found('Inflation 7.2% (unverified).').length === 0);
+
+  const answer = 'Lãi suất 4,5%. Lạm phát 7,2% năm nay.';
+  const fixedTo = applyFigureEdits(answer, '{"edits":[{"find":"Lạm phát 7,2% năm nay.","replace":"Lạm phát 4,5% năm nay."}]}', ['7,2%'], evidence);
+  check('a correction to a figure a source holds is applied, the rest byte for byte', fixedTo?.applied === 1 && fixedTo.text === 'Lãi suất 4,5%. Lạm phát 4,5% năm nay.', fixedTo?.text);
+  const another = applyFigureEdits(answer, '{"edits":[{"find":"Lạm phát 7,2% năm nay.","replace":"Lạm phát 8,1% năm nay."}]}', ['7,2%'], evidence);
+  check('  trading it for another unfound figure is refused', another?.applied === 0, another?.text);
+  const reach = applyFigureEdits(answer, '{"edits":[{"find":"Lãi suất 4,5%.","replace":"Lãi suất cao."}]}', ['7,2%'], evidence);
+  check('  as is an edit to a sentence with no flagged figure', reach?.applied === 0);
+  const linked = applyFigureEdits(answer, '{"edits":[{"find":"Lạm phát 7,2% năm nay.","replace":"Lạm phát 7,2% (https://made-up.example/cpi)."}]}', ['7,2%'], evidence);
+  check('  and one that brings in an address', linked?.applied === 0);
+  check('the fall-back marks the figure and changes nothing else', markFigures(answer, evidence, 'vi').text === 'Lãi suất 4,5%. Lạm phát 7,2% (chưa kiểm chứng) năm nay.', markFigures(answer, evidence, 'vi').text);
+
+  let calls = 0;
+  const clean = await checkFigures({ answer: 'Lãi suất 4,5%.', messages: read, ask: async () => { calls += 1; return '{}'; } });
+  check('an answer whose figures are all found costs no call and is not touched', !clean.changed && calls === 0 && clean.text === 'Lãi suất 4,5%.');
+  const repaired = await checkFigures({ answer, messages: read, language: 'en', ask: async (_s, prompt) => { calls += 1; return /7,2%/.test(prompt) && /4\.5%/.test(prompt) ? '{"edits":[{"find":"Lạm phát 7,2% năm nay.","replace":"Lạm phát 4,5% năm nay."}]}' : '{}'; } });
+  check('one call, shown the flagged figure and what was read; the correction kept', calls === 1 && repaired.fixed === 1 && repaired.marked === 0 && repaired.text.startsWith('Lãi suất 4,5%. Lạm phát 4,5% năm nay.') && /Figure check: corrected 1/.test(repaired.text), repaired.text);
+  const stubborn = await checkFigures({ answer, messages: read, language: 'vi', ask: async () => 'không' });
+  check('  a repair that does not come still leaves the figure marked, and says so', stubborn.marked === 1 && /7,2% \(chưa kiểm chứng\)/.test(stubborn.text) && /Kiểm tra số liệu: đã đánh dấu 1 số liệu/.test(stubborn.text), stubborn.text);
+  const fromPdf = await checkFigures({ answer: 'Doanh thu 7,2%.', messages: read, moreSources: async () => ['--- page 1 ---\nDoanh thu tăng 7.2%'], ask: async () => '{}' });
+  check('  a figure from a PDF the model was handed as a file is found there (QC-005)', !fromPdf.changed, fromPdf.text);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll quality-gate checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);

@@ -1181,6 +1181,21 @@ reader acts on, because they click it.
   end says what the check did. The screen is updated to the corrected answer, which is also what is stored.
 - Addresses inside code blocks are examples, not citations, and are not checked. Settings → Capabilities →
   **Source check** turns it off (`qualityGate`). See `server/qualityGate.js`.
+
+**The figure check** (Settings → Capabilities → **Figure check**, `figureCheck`, off by default) does the same
+for figures after a turn that read the web (search, fetch, research, docs, sports, places):
+
+- Every figure in the answer is looked for in what was read. A figure is two digits or more, a percentage, or a
+  date, outside code, addresses and list numbers. `4,5` and `4.5` count as the same figure, as do `1,234,567`
+  and `1234567`, and `03/11/2026` and `2026-11-03`. Found, it passes with no call.
+- **Not found:** one call (effort `low`) gets the sentences holding those figures and the tool results (at
+  most 24,000 characters). The model may correct the figure from a source or mark it. It may bring in no
+  figure and no address that was not already there.
+- **Still not found:** the figure is marked "(unverified)" / "(chưa kiểm chứng)", and a line at the end says
+  what was done.
+- **Why off by default:** a figure the model worked out from the sources (a sum, a change) is in none of them
+  either, so it is marked too. Names, and figures written as words, are not checked.
+
 ### Free tiers: one allowance per service, shared by everyone
 
 The deployment pays nothing (`server/freeTier.js`). Every metered service has **one** free allowance —
