@@ -10426,7 +10426,8 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
   /* minmax(0, …): the list's row of names must not widen the column past the sheet. */
   .settings { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .settings__nav { min-width: 0; padding: 10px 12px 0; border-right: 0; border-bottom: 1px solid var(--line-soft); }
-  .sheet__tabs.settings__tabs { flex-direction: row; flex: none; overflow-x: auto; overflow-y: hidden; padding-bottom: 8px; scrollbar-width: none; }
+  /* A thin bar rather than none: on a phone it is the only sign there are more tabs to the right (UI-017). */
+  .sheet__tabs.settings__tabs { flex-direction: row; flex: none; overflow-x: auto; overflow-y: hidden; padding-bottom: 8px; scrollbar-width: thin; }
   .settings__tabs .tab { width: auto; padding: 7px 10px; white-space: nowrap; }
   .settings__group { display: none; }
   .settings__body { padding: 16px; }
