@@ -4920,7 +4920,17 @@ $('ext-add-hand').addEventListener('click', () => {
   $('mcp-name').focus();
 });
 
-/** Install from a config file: each server in it added as though typed in, one at a time, and said which took. */
+/**
+ * Install from a config file: shown first, then each server added as though
+ * typed in, one at a time, and said which took.
+ *
+ * Shown first (SEC-064): adding a server starts it, so a config copied from a
+ * web page with `sh -c "curl … | sh"` in it ran the moment the file was chosen
+ * — on the cloud computer, or for an administrator with local servers on this
+ * server itself. Each command and address is read out, and the names (never
+ * the values) of what it is given, before anything runs.
+ */
+let pendingConfig = null;
 $('ext-config-file').addEventListener('change', async (event) => {
   const input = /** @type {HTMLInputElement} */ (event.target);
   const file = input.files?.[0];
@@ -4938,6 +4948,49 @@ $('ext-config-file').addEventListener('change', async (event) => {
     status.textContent = t('ext.configEmpty');
     return;
   }
+  pendingConfig = servers;
+  const review = document.createElement('div');
+  review.className = 'ext-review';
+  const lead = document.createElement('p');
+  lead.textContent = t('ext.configReview', { n: String(servers.length) });
+  const list = document.createElement('ul');
+  for (const server of servers) {
+    const row = document.createElement('li');
+    const name = document.createElement('strong');
+    name.textContent = server.name;
+    const what = document.createElement('code');
+    what.textContent = server.transport === 'http' ? server.url : [server.command, ...(server.args || [])].join(' ');
+    row.append(name, ' ', what);
+    const given = Object.keys(server.env || server.headers || {});
+    if (given.length) row.append(` — ${t('ext.configGiven', { names: given.join(', ') })}`);
+    list.append(row);
+  }
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'btn btn--primary';
+  go.dataset.extConfigGo = '';
+  go.textContent = t('ext.configInstall');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn--ghost';
+  cancel.dataset.extConfigCancel = '';
+  cancel.textContent = t('action.cancel');
+  review.append(lead, list, go, ' ', cancel);
+  status.replaceChildren(review);
+  go.focus();
+});
+
+$('ext-status').addEventListener('click', async (event) => {
+  const target = /** @type {HTMLElement} */ (event.target);
+  const status = $('ext-status');
+  if (target.closest('[data-ext-config-cancel]')) {
+    pendingConfig = null;
+    status.textContent = '';
+    return;
+  }
+  if (!target.closest('[data-ext-config-go]') || !pendingConfig) return;
+  const servers = pendingConfig;
+  pendingConfig = null;
   const added = [];
   const failed = [];
   for (const server of servers) {
