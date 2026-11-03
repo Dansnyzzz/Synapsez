@@ -165,7 +165,10 @@ export function createFeedback(deps) {
   function pageTwo() {
     const chats = deps.chats();
     const chosen = chats.find((c) => c.id === s.chatId) || chats[0] || null;
-    if (chosen && !s.chatId) s.chatId = chosen.id;
+    // The conversation named on screen is the one sent (PRV-018): the one open
+    // can be missing from the list (incognito ones are left out), and the first
+    // on the list was shown while the open one went.
+    if ((chosen?.id ?? null) !== s.chatId) s.chatId = chosen?.id ?? null;
     const include = s.affect
       ? `<div class="fb__include">
           <div class="fb__include-head">

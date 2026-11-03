@@ -692,6 +692,38 @@ section('Usage, devices, feedback and what is new — from the account menu');
   const sent = (await getStore().listFeedback(5)).find((f) => f.body === 'The Word file came out empty.');
   check('  sent, it reaches the administrators as written', !(await page.$('#feedback[open]')) && sent?.topic === 'files' && sent?.kind === 'bug' && sent?.affect === 'blocks' && sent?.frequency === 'daily' && !sent?.transcript_count, JSON.stringify(sent));
 
+  // PRV-018: the open conversation missing from the list (an incognito one) — what is shown is what is sent.
+  const picked = await page.evaluate(async () => {
+    const { createFeedback } = await import('/js/feedback.js');
+    let sentWith = null;
+    const fb = createFeedback({
+      chats: () => [{ id: 'shown-chat', title: 'Shown' }],
+      currentChat: () => 'incognito-chat',
+      send: async (body) => { sentWith = body; },
+      done: () => {},
+      language: () => 'en',
+      version: async () => 'test',
+    });
+    fb.open?.();
+    const dialog = /** @type {HTMLDialogElement} */ ([...document.querySelectorAll('dialog#feedback')].pop());
+    const click = (sel) => /** @type {HTMLElement} */ (dialog.querySelector(sel))?.click();
+    click('[data-topic="files"]');
+    click('[data-kind="bug"]');
+    const body = /** @type {HTMLTextAreaElement} */ (dialog.querySelector('#fb-body'));
+    body.value = 'x';
+    body.dispatchEvent(new Event('input', { bubbles: true }));
+    click('[data-next]');
+    click('[data-affect="blocks"]');
+    click('[data-include]');
+    const shown = dialog.querySelector('.fb__pick-btn')?.textContent || '';
+    click('[data-submit]');
+    await new Promise((r) => setTimeout(r, 200));
+    dialog.close();
+    dialog.remove();
+    return { shown, chatId: sentWith?.chatId ?? null };
+  });
+  check('  the conversation named in the picker is the one sent (PRV-018)', /Shown/.test(picked.shown) && picked.chatId === 'shown-chat', JSON.stringify(picked));
+
   // An administrator's list counts a conversation sent with one, and reads it when it is opened.
   const fbUser = await getStore().getUserByEmail('ui@test.local');
   await getStore().createChat(fbUser.id, { id: 'ui-fb-chat', title: 'Word export', model: 'm' });
