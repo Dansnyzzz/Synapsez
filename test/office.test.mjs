@@ -654,6 +654,15 @@ section('Word, Excel and PowerPoint come out designed');
   const { slideKind } = await import('../server/office/slides.js');
   check('points that open with a date are a list, not cards with "15" in them', slideKind({ title: 'Lịch', bullets: ['15/03: Khởi động', '20/04: Lắp đặt', '2026-05-01 Bàn giao'] }, 2, 5) === 'bullets');
   check('  while "**120+** khách hàng" and "3x nhanh hơn" are figures', slideKind({ title: 'Kết quả', bullets: ['**120+** khách hàng', '3x nhanh hơn'] }, 2, 5) === 'stats');
+  // CODE-073: a kind asked for that the slide cannot fill is not taken.
+  const forced = [
+    slideKind({ title: 'T', kind: 'table', bullets: ['a', 'b'] }, 2, 5),
+    slideKind({ title: 'T', kind: 'stats', bullets: ['plain words', 'more words'] }, 2, 5),
+    slideKind({ title: 'T', kind: 'statement' }, 2, 5),
+    slideKind({ title: 'T', kind: 'nonsense', bullets: ['a', 'b'] }, 2, 5),
+    slideKind({ title: 'T', kind: 'section', bullets: ['a', 'b'] }, 2, 5),
+  ];
+  check('a forced table with no table, stats with no figures, or an unknown kind falls back; a fitting one is kept (CODE-073)', forced.join(',') === 'bullets,bullets,section,bullets,section', forced.join(','));
 
   // A table under a few lines of intro starts below them — seen in PowerPoint, the
   // third line used to run under the table's header (2026-10-25).
