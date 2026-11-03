@@ -592,11 +592,15 @@ export async function keyEntries(userId, provider) {
   }));
 }
 
-/** Remember what was learned about one key, by its position. */
-export async function setKeyMeta(userId, provider, index, meta) {
+/**
+ * Remember what was learned about one key — found by the key itself, not its
+ * position, which may have changed while it was being asked about (HAR-008).
+ */
+export async function setKeyMeta(userId, provider, key, meta) {
   const keys = await storedKeys(userId);
   const list = keyList(keys, provider);
-  if (!list[index]) return;
+  const index = list.findIndex((entry) => decryptSecret(entry.cipher) === key);
+  if (index < 0) return;
   list[index] = { ...list[index], ...keyMeta(meta) };
   keys[provider] = list;
   await getStore().setUserSetting(userId, KEYS_KEY, keys);

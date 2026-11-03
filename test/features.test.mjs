@@ -2064,6 +2064,13 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   await intake.intakeKey(user.id, 'openrouter', 'just some words', { fetchImpl }).catch((err) => (shapeless = err.message));
   check('  nor is something that is no OpenRouter key at all', /does not look like an OpenRouter key — those begin sk-or-v1-/.test(shapeless), shapeless);
 
+  // HAR-008: two keys pasted at once on a provider with none both read an empty list.
+  const twin = await store.createUser({ id: 'u-keys-2', email: 'keys2@example.com', passwordHash: 'x', name: 'K2', role: 'user' });
+  accounts[OR('f')] = { creator_user_id: 'user_F', is_free_tier: true };
+  await Promise.all([intake.intakeKey(twin.id, 'openrouter', OR('c'), { fetchImpl }), intake.intakeKey(twin.id, 'openrouter', OR('f'), { fetchImpl })]);
+  const both = (await providerStatus(twin.id)).openrouter.keys;
+  check('two keys pasted at once are both kept, neither over the other (HAR-008)', both.length === 2, JSON.stringify(both.map((k) => k.hint)));
+
   // The suggestion: free while no key has paid, the paid one once one has.
   const lib = [
     { id: 'openrouter/vendor/best-free:free', provider: 'openrouter', model: 'vendor/best-free:free', family: 'vendor', label: 'Best Free', context: 128000, maxOutput: 8000, priceIn: 0, priceOut: 0, isFree: true, releasedAt: new Date().toISOString(), vision: false },
