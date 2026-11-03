@@ -4,6 +4,7 @@ import { getPrefs } from './settings.js';
 import { runAgent } from './agent.js';
 import { nextRunOf, scheduledRunNote } from './scheduler.js';
 import { redactSecrets } from './redact.js';
+import { clientError } from './util/clientError.js';
 import { TOOLS_BY_NAME } from './tools/definitions.js';
 
 /**
@@ -154,7 +155,7 @@ async function runStep({ user, chatId, modelId, instruction, resume = false, run
       unattended: true,
       runNote,
       emit(event, data) {
-        if (event === 'error') error = clean(data?.message || 'failed', 400);
+        if (event === 'error') error = clean(clientError(data?.message || 'failed'), 400);
         // A question stops a step exactly as an approval does: nobody is there.
         else if (event === 'approval_required' || event === 'question_required') awaitingApproval = true;
         else if (event === 'done') stopReason = String(data?.stopReason || '');
@@ -164,7 +165,7 @@ async function runStep({ user, chatId, modelId, instruction, resume = false, run
       },
     });
   } catch (err) {
-    error = clean(err?.message || err, 400);
+    error = clean(clientError(err), 400);
   }
 
   if (error) return { status: 'failed', summary, error };

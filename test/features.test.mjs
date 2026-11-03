@@ -644,6 +644,13 @@ section("a database's own words do not reach the browser; a route's refusal does
   });
   check('  no route answers with an error\'s raw text, translated, held or not (CODE-074, CODE-076, CODE-077)', raw.length === 0, raw.join(' | '));
   const appSrc500 = fs.readFileSync(new URL('../server/app.js', import.meta.url), 'utf8');
+  // CODE-079: a run with nobody watching stores its failure where the page and the API show it.
+  check('  a failure passed on as text is judged the same way (CODE-079)', /Something went wrong on the server/.test(clientError('connect ECONNREFUSED 10.0.0.5:5432')) && clientError('No API key for Anthropic.') === 'No API key for Anthropic.');
+  const unattendedRaw = ['scheduler.js', 'workflows.js'].flatMap((f) => {
+    const src = fs.readFileSync(new URL(`../server/${f}`, import.meta.url), 'utf8');
+    return [...src.matchAll(/(status|error) = [^;\n]*(redactSecrets\(String\((err|data)\?\.message|clean\((err|data)\?\.message)/g)].map((m) => `${f}: ${m[0]}`);
+  });
+  check("  and a scheduled task's or a workflow step's stored failure goes through it (CODE-079)", unattendedRaw.length === 0, unattendedRaw.join(' | '));
   check('  and the last-resort handler says only that the server failed (CODE-076)', /res\.status\(500\)\.json\(\{ error: SERVER_TROUBLE \}\)/.test(appSrc500) && !/res\.status\(500\)\.json\(\{ error: clientError/.test(appSrc500));
 }
 section('answering a quiz question keeps the keyboard in the quiz (ACC-012)');
