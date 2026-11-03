@@ -327,6 +327,24 @@ export function mapShows(maps, z, x, y) {
  * a new `shared_at`, so a remembered scope from before is not reused either.
  */
 const gateCache = new Map();
+
+/**
+ * A shared conversation's transcript as published: `publicTranscript`, with
+ * every file the person picked from their Google Drive left out — its bytes,
+ * its thumbnail and its name (PRV-026, owner 2026-11-03). Google tool results
+ * were already withheld (PUBLISHABLE_TOOLS); a Drive file attached by hand is
+ * the same Google data under Limited Use, and a public link is not a place it
+ * may go. One door for the page, the file gate and the fork, so none of them
+ * can serve what another leaves out.
+ */
+async function publishedTranscript(store, chat, options = {}) {
+  const stored = await store.listSharedMessages(chat.id, chat.shared_at);
+  const named = [...new Set(stored.flatMap((m) => (m.attachments || []).map((a) => a?.id).filter(Boolean)))];
+  const drive = new Set(named.length ? await store.driveAttachmentIds(chat.user_id, named) : []);
+  const kept = drive.size ? stored.map((m) => (m.attachments?.length ? { ...m, attachments: m.attachments.filter((a) => !drive.has(a?.id)) } : m)) : stored;
+  return publicTranscript(kept, options);
+}
+
 async function sharedScope(token) {
   const store = getStore();
   const chat = TOKEN.test(token || '') ? await store.getSharedChat(token) : null;
@@ -335,10 +353,12 @@ async function sharedScope(token) {
     gateCache.delete(token);
     return null;
   }
-  if (hit?.scope && hit.until > Date.now() && String(hit.scope.chat.shared_at) === String(chat.shared_at)) return hit.scope;
+  // Compared as instants (CODE-080): as strings, two shares in the same second
+  // read alike, and the first one's snapshot was served for up to a minute.
+  if (hit?.scope && hit.until > Date.now() && new Date(hit.scope.chat.shared_at).getTime() === new Date(chat.shared_at).getTime()) return hit.scope;
   // The files of the published transcript, not of the stored one: a picture a
   // withheld step produced (a screenshot of a signed-in page) is not the visitor's to fetch.
-  const published = chat ? publicTranscript(await store.listSharedMessages(chat.id, chat.shared_at)) : null;
+  const published = chat ? await publishedTranscript(store, chat) : null;
   const scope = published ? { chat, files: referencedFiles(published), drawn: drawnFrom(published) } : null;
   if (gateCache.size > 500) gateCache.delete(gateCache.keys().next().value);
   gateCache.set(token, { scope, until: Date.now() + 60_000 });
@@ -365,7 +385,7 @@ export function mountPublicChatShare(app, { wrap }) {
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');
       if (!scope) return res.status(404).json({ error: 'This link does not exist, or was taken back.' });
 
-      const messages = publicTranscript(await getStore().listSharedMessages(scope.chat.id, scope.chat.shared_at));
+      const messages = await publishedTranscript(getStore(), scope.chat);
       const viewer = await currentUser(req).catch(() => null);
       const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
       res.setHeader(
@@ -538,7 +558,7 @@ export async function forkSharedChat(userId, token) {
   // The copy is made from what the link publishes, never from the stored
   // transcript: carrying a conversation on must not hand a stranger the steps
   // the shared page leaves out, or the reasoning it does not show.
-  const messages = publicTranscript(await store.listSharedMessages(chat.id, chat.shared_at), { placeholder: LEFT_OUT });
+  const messages = await publishedTranscript(store, chat, { placeholder: LEFT_OUT });
   const newChatId = crypto.randomUUID();
   await store.createChat(userId, { id: newChatId, title: chat.title, model: null });
 

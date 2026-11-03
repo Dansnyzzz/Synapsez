@@ -64,6 +64,124 @@ function pushesToProtected(command) {
 }
 
 /**
+ * The command as the shell splits it: `{ text, quoted }` words with their
+ * quotes taken off, and a `null` wherever an unquoted `;`, `&`, `|`, newline,
+ * `(`, `)` or backtick ends one command — so `(git …)`, `$(git …)` and
+ * `` `git …` `` are commands of their own (CFG-036). A PowerShell here-string,
+ * `@'…'@` or `@"…"@`, is one quoted word: an apostrophe inside it ends nothing.
+ */
+function shellWords(command) {
+  const words = [];
+  let word = null;
+  let quoted = false;
+  let quote = '';
+  const end = () => {
+    if (word !== null) words.push({ text: word, quoted });
+    word = null;
+    quoted = false;
+  };
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (quote) {
+      if (ch === quote) quote = '';
+      else word += ch;
+    } else if (ch === '@' && (command[i + 1] === "'" || command[i + 1] === '"') && command[i + 2] === '\n') {
+      const close = command.indexOf(`\n${command[i + 1]}@`, i + 2);
+      const stop = close < 0 ? command.length : close;
+      end();
+      words.push({ text: command.slice(i + 3, stop), quoted: true });
+      i = close < 0 ? command.length : close + 2;
+    } else if ((ch === '\\' || ch === '`') && (command[i + 1] === '\n' || (command[i + 1] === '\r' && command[i + 2] === '\n'))) {
+      // A line continued with `\` (bash) or a backtick (PowerShell) is one command (CFG-037).
+      end();
+      i += command[i + 1] === '\r' ? 2 : 1;
+    } else if (ch === '`' && command[i + 1] === '-') {
+      // PowerShell's escape before a dash: the dash goes through as itself.
+      word = (word ?? '') + '-';
+      i += 1;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      quoted = true;
+      word ??= '';
+    } else if (/[;&|\n()`]/.test(ch)) {
+      end();
+      words.push(null);
+    } else if (/\s/.test(ch)) {
+      end();
+    } else {
+      word = (word ?? '') + ch;
+    }
+  }
+  end();
+  return words;
+}
+
+// Options of git itself, before its subcommand, that take the next word as their value.
+const GIT_VALUE_OPTIONS = /^(-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$/;
+// commit's short options that take a value — the rest of their group, or the next word.
+const COMMIT_VALUE_SHORT = new Set(['m', 'F', 'C', 'c', 't']);
+const COMMIT_VALUE_LONG = /^--(message|file|reuse-message|reedit-message|author|date|template|fixup|squash|trailer|cleanup)$/;
+
+/**
+ * Does this command run a git step past the repo's hooks (CFG-034…036)?
+ *
+ * Read the way git reads it, as `pushesToProtected` reads a push: git's own
+ * options skipped to find the subcommand, and the value of `-m`, `-F` and the
+ * like skipped as data — so a message that names the flag is not the flag,
+ * while `git commit "--no-verify"` (quotes the shell takes off) still is.
+ * Blocked: `--no-verify` and every prefix git would take for it (`--no-veri`
+ * on; shorter ones are ambiguous with `--no-verbose`), and for `commit`, `-n`
+ * in a group of short flags — read a letter at a time, as git does, so `-Ft
+ * -n` is `-F t` and then `-n`, and `-mnote` is the message "note". A quoted
+ * word with spaces that is not such a value is read again as a command
+ * (`bash -c "git …"`), and so is an alias defined on the spot with `-c`.
+ */
+export function skipsHooks(command, depth = 0) {
+  if (depth > 3) return false;
+  const words = shellWords(String(command || ''));
+  const values = new Set();
+  const text = (k) => (words[k] ? words[k].text : null);
+  for (let start = 0; start < words.length; start += 1) {
+    if (!words[start] || !/(^|[\\/])git(\.exe)?$/i.test(words[start].text)) continue;
+    let i = start + 1;
+    while (text(i)?.startsWith('-')) {
+      if (!GIT_VALUE_OPTIONS.test(text(i))) {
+        i += 1;
+        continue;
+      }
+      values.add(i + 1);
+      const alias = /^alias\.[^=]+=(.+)$/s.exec(text(i + 1) || '');
+      // An alias that starts with `!` is run by the shell, not by git (CFG-037).
+      const body = alias ? (alias[1].startsWith('!') ? alias[1].slice(1) : `git ${alias[1]}`) : '';
+      if (text(i) === '-c' && alias && skipsHooks(body, depth + 1)) return true;
+      i += 2;
+    }
+    const sub = text(i);
+    if (!/^(commit|push|merge|rebase|am|cherry-pick|revert|pull)$/.test(sub || '')) continue;
+    for (let j = i + 1; text(j) !== null; j += 1) {
+      const word = text(j);
+      // After `--` come paths, not options: `-- -n` is a file named -n (CFG-037).
+      if (word === '--') break;
+      const name = word.split('=')[0];
+      if (name.length >= '--no-veri'.length && '--no-verify'.startsWith(name)) return true;
+      if (sub !== 'commit') continue;
+      if (/^-[a-zA-Z]/.test(word) && !word.startsWith('--')) {
+        for (let k = 1; k < word.length; k += 1) {
+          if (word[k] === 'n') return true;
+          if (COMMIT_VALUE_SHORT.has(word[k])) {
+            if (k === word.length - 1) values.add((j += 1));
+            break;
+          }
+        }
+      } else if (COMMIT_VALUE_LONG.test(word)) {
+        values.add((j += 1));
+      }
+    }
+  }
+  return words.some((w, k) => w?.quoted && /\s/.test(w.text) && !values.has(k) && skipsHooks(w.text, depth + 1));
+}
+
+/**
  * The command with heredoc *bodies* removed, so rules match commands and not data.
  *
  * Every rule below tests the raw text, which means a word inside something being
@@ -182,6 +300,13 @@ const RULES = [
   [
     /\bvercel\s+(deploy|--prod|env\s+rm)\b/,
     'Deploying or removing production env vars is the user\'s call, not an automated step. Ask first.',
+  ],
+  [
+    // CFG-034: skipping the repo's own checks. No git hook exists today, but the
+    // day one does, this flag is how an agent would walk past it — and the
+    // owner's rules forbid it outright. Parsed, not matched — see `skipsHooks`.
+    (command) => skipsHooks(command),
+    'Skipping the repo\'s hooks (--no-verify) is not allowed. Fix what the hook reports and commit again.',
   ],
 ];
 

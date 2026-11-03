@@ -1965,6 +1965,11 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT thumb FROM attachments WHERE user_id = $1 AND id = $2', [userId, id]);
       return rows[0]?.thumb ?? null;
     },
+    // Which of these files the person picked from their Google Drive — never published (PRV-026).
+    async driveAttachmentIds(userId, ids) {
+      const rows = await q(`SELECT id FROM attachments WHERE user_id = $1 AND id = ANY($2::text[]) AND origin = 'google_drive'`, [userId, ids.map(String)]);
+      return rows.map((row) => row.id);
+    },
     /** Metadata only — the bytes are the expensive part and rarely the point. */
     async listAttachments(userId, ids) {
       if (!ids?.length) return [];
@@ -2193,9 +2198,11 @@ export function createPgStore(connectionString) {
       const upload = origin === 'upload';
       const like = likeOf(query);
       const sharedChat = `c.share_token IS NOT NULL AND c.shared_at IS NOT NULL AND a.created_at <= c.shared_at`;
-      const isShared = upload ? `(${sharedChat})` : 'a.share_token IS NOT NULL';
-      // What the person sent is an upload or a file picked from their Drive (PRV-015): a shared
-      // conversation hands both out, and both are theirs to see and delete here.
+      // A file picked from Drive is never handed out by a link (PRV-026), so it is
+      // never listed as shared (PRV-036) — only an upload in a shared conversation is.
+      const isShared = upload ? `(a.origin = 'upload' AND ${sharedChat})` : 'a.share_token IS NOT NULL';
+      // What the person sent is an upload or a file picked from their Drive (PRV-015): both are
+      // theirs to see and delete here; only uploads go out with a shared conversation.
       const origins = upload ? ['upload', 'google_drive'] : ['generated'];
       const where = `a.user_id = $1 AND a.origin = ANY($2::text[])
         AND NOT COALESCE(c.incognito, FALSE)
@@ -2260,7 +2267,7 @@ export function createPgStore(connectionString) {
              WHERE a.user_id = $1 AND a.origin = 'generated' AND a.share_token IS NOT NULL
                AND NOT COALESCE(c.incognito, FALSE)) AS artifacts,
            (SELECT COUNT(*)::int FROM attachments a JOIN chats c ON c.id = a.chat_id AND c.user_id = a.user_id
-             WHERE a.user_id = $1 AND a.origin IN ('upload', 'google_drive') AND NOT COALESCE(c.incognito, FALSE)
+             WHERE a.user_id = $1 AND a.origin = 'upload' AND NOT COALESCE(c.incognito, FALSE)
                AND c.share_token IS NOT NULL AND c.shared_at IS NOT NULL AND a.created_at <= c.shared_at) AS uploads,
            (SELECT COUNT(*)::int FROM feedback f JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id
              WHERE f.user_id = $1 AND f.transcript IS NOT NULL) AS feedback`,

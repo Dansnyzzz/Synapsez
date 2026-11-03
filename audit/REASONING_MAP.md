@@ -21,6 +21,20 @@ Mỗi lời gọi đều đi qua một cửa: `streamCompletion` (`server/provid
 | OpenAI trực tiếp, OrcaRouter | `reasoning_effort` chỉ cho model suy luận — nay đọc **tên sau dấu `/` cuối** nên `openai/gpt-5…` của OrcaRouter nhận được (GAP-014) | gửi `max` | hạ bậc + nhớ (PERF-025) | `openaiCompatible.js:150-160` |
 | Google Gemini | `thinkingLevel` (low/medium/high); `xhigh`,`max` → HIGH (trần của API); dạng budget cũ tăng dần 1.024 / 8.192 / 16.384 / 24.576 / 24.576 (GAP-014, `80c9eb2` — high từng là −1 "model tự quyết", có thể nghĩ ít hơn medium) | = HIGH | MEDIUM bị từ chối → HIGH (làm tròn lên, giữ chất lượng); budget bị từ chối → −1 → bỏ | `server/providers/google.js:20-55` |
 
-**Tương đương (M15):** "tương đương" = đạt cùng ngưỡng trên cùng bộ eval, không phải cùng tham số. Bộ eval scripted (`test/eval/`, 15 ca) không đo chất lượng theo mức effort — **[UNKNOWN]: ma trận eval loại tác vụ × effort × model (M14) chưa có**, cần key sống và chi phí thật; ghi là việc của chủ (RSN-001). Haiku 4.5 không nhận `effort` lẫn thinking `adaptive` nên hiện không có mức suy luận nào — đề xuất dạng `budget_tokens` ở RSN-002 (cần key Anthropic thật để kiểm).
+**Tương đương (M15):** "tương đương" = đạt cùng ngưỡng trên cùng bộ eval, không phải cùng tham số. Bộ eval scripted (`test/eval/`, 15 ca) không đo chất lượng theo mức effort.
+
+**Ma trận live đầu tiên (M14, RSN-001, 2026-11-03, chủ cho phép ~30 request):** `EVAL_MODEL=openrouter/nvidia/nemotron-3.5-super-vl:free` (free, có tools + reasoning), `EVAL_EFFORT` = low / medium / high, 7 ca có lựa chọn tool để đo → 21 request, chạy với DB trong bộ nhớ (không chạm dữ liệu deployment).
+
+| Ca | low | medium | high |
+|---|---|---|---|
+| tool-choice/own-documents | ✓ | ✓ | ✓ |
+| tool-choice/current-events | ✓ | ✓ | ✓ |
+| tool-choice/read-before-write | ✗ grep | ✗ glob | ✗ glob |
+| tool-choice/one-page-extract | ✗ web_fetch | ✗ web_fetch | ✗ web_fetch |
+| tool-choice/picture-on-the-computer | ✗ list_dir | ✗ glob | ✗ glob |
+| tool-choice/figure-on-the-cloud-computer | ✗ list_dir | ✗ list_dir | ✗ list_dir |
+| budget/simple-question | ✗ không gọi tool | ✗ | ✗ |
+
+Đọc: với model này, **lựa chọn tool như nhau ở cả ba mức** (2/7) → `low` là điểm rẻ nhất không mất gì cho bước chọn tool; chọn model quan trọng hơn chọn mức. Giới hạn của phép đo (evaluator, 2026-11-03): không ghi token theo từng mức, nên chưa tách được "effort không đổi gì" với "effort không được áp dụng"; mỗi ô một lượt, chỉ chấm lời gọi đầu; Gemini và OrcaRouter chưa đo. Lần sau: `--json` giữ model, mức effort, lý do và chi phí từng ca — input, output và phần reasoning trong output (RSN-003) — để thấy mức effort có thật sự được áp dụng không. Ba ca "thăm dò trước" (grep/glob/list_dir trước khi đọc) là cách làm chấp nhận được, eval chấm khắt khe lời gọi đầu; hai ca là sai thật (web_fetch thay vì extract; tính nhẩm thay vì calculate). Phạm vi: một model, một lượt mỗi ô — chưa phải ma trận nhiều model; chạy thêm model = thêm request trên hạn mức free dùng chung. Haiku 4.5 (RSN-002) không còn áp dụng: chủ đã bỏ provider Anthropic.
 
 **Kiểm tham số hợp lệ:** Anthropic không dùng `thinking.type: "enabled"` + `budget_tokens` (M1) — [FACT] `anthropic.js:170-172` chỉ dùng `adaptive`; không đặt `temperature/top_p` ở lời gọi có thinking (M7) — [FACT] grep `temperature` trong `server/providers/` không có ở các adapter chat. Cắt cụt (`max_tokens`) được nhận diện là lỗi, không phải thành công (M9) — [FACT] `server/providers/stop.js` (`truncated`) + ghi chú trên transcript.

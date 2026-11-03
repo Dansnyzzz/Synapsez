@@ -31,6 +31,38 @@ process.env.SESSION_SECRET ||= 'eval-session-secret';
 const live = process.argv.includes('--live');
 const asJson = process.argv.includes('--json');
 
+/**
+ * Live runs (RSN-001): the provider keys from `.env` and nothing else from it —
+ * never the database address, so a run cannot touch the deployment's data — and
+ * a database that lives in memory for the length of the run. The keys are never
+ * printed. `EVAL_EFFORT` picks the dial (default low), `EVAL_MODEL` the model.
+ */
+if (live) {
+  const fs = await import('node:fs');
+  const envFile = new URL('../../.env', import.meta.url);
+  if (fs.existsSync(envFile)) {
+    for (const raw of fs.readFileSync(envFile, 'utf8').split('\n')) {
+      const line = raw.trim();
+      const at = line.indexOf('=');
+      if (!line || line.startsWith('#') || at < 0) continue;
+      const key = line.slice(0, at).trim();
+      if (!/^(OPENROUTER|ORCAROUTER|GEMINI|GOOGLE)_API_KEYS?$/.test(key) || key in process.env) continue;
+      process.env[key] = line.slice(at + 1).trim().replace(/^["']|["']$/g, '');
+    }
+  }
+  process.env.DATABASE_URL = '';
+  process.env.POSTGRES_URL = '';
+  const { PGlite } = await import('@electric-sql/pglite');
+  const memory = await PGlite.create();
+  const { initStore } = await import('../../server/store/index.js');
+  await initStore({ driver: { query: async (text, params = []) => (await memory.query(text, params)).rows } });
+}
+const liveEffort = process.env.EVAL_EFFORT || 'low';
+// A free OpenRouter model with tools and reasoning — the owner keeps OpenRouter,
+// OrcaRouter and Gemini only (2026-11-03). Free models come and go; EVAL_MODEL overrides.
+const DEFAULT_EVAL_MODEL = 'openrouter/nvidia/nemotron-3.5-super-vl:free';
+const liveModel = process.env.EVAL_MODEL || DEFAULT_EVAL_MODEL;
+
 const { availableTools, assessRisk } = await import('../../server/tools/definitions.js');
 const { UNTRUSTED_RULE } = await import('../../server/tools/untrusted.js');
 const { renderProject } = await import('../../server/projects.js');
@@ -188,7 +220,7 @@ async function liveRun(testCase) {
   const { streamCompletion } = await import('../../server/providers/index.js');
   const { resolveModel } = await import('../../server/providers/catalog.js');
 
-  const entry = resolveModel(process.env.EVAL_MODEL || 'anthropic/claude-haiku-4-5');
+  const entry = resolveModel(liveModel);
   const tools = toolsFor(situation);
 
   /**
@@ -206,7 +238,7 @@ async function liveRun(testCase) {
     system: promptFor(situation),
     messages: [{ id: 'eval', role: 'user', text: testCase.ask }],
     tools,
-    effort: 'low',
+    effort: liveEffort,
   })) {
     if (event.type === 'tool_call_start' && !first) first = event.name;
     else if (event.type === 'done') {
@@ -215,7 +247,9 @@ async function liveRun(testCase) {
     }
   }
 
-  const cost = { tokens: (usage?.input || 0) + (usage?.output || 0) };
+  // Reasoning shown apart — it is the part the dial moves (RSN-003). Both adapters
+  // already count it inside `output`, so it is not added to the total again.
+  const cost = { tokens: (usage?.input || 0) + (usage?.output || 0), input: usage?.input || 0, output: usage?.output || 0, reasoning: usage?.reasoning || 0 };
 
   if (!first) {
     return { pass: false, why: 'no tool was called at all', cost };
@@ -280,7 +314,10 @@ if (asJson) {
             return [axis, { total: of.length, passed: of.filter((r) => r.pass).length }];
           }),
         ),
-        cases: results.map(({ id, axis, pass, why, notes, ms }) => ({ id, axis, pass, why, notes, ms })),
+        // A live run's model and dial, and what each case cost — the record a later
+        // reading of "did the effort level matter" needs (RSN-003).
+        ...(live ? { model: liveModel, effort: liveEffort } : {}),
+        cases: results.map(({ id, axis, pass, why, notes, ms, cost }) => ({ id, axis, pass, why, notes, ms, ...(cost ? { cost } : {}) })),
       },
       null,
       2,

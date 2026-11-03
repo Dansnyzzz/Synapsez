@@ -360,6 +360,35 @@ section('a shared conversation opens with no account, and shows only its own fil
     const copies = (await Promise.all((await store.listMessages(reader.id, forked.chatId)).flatMap((m) => (m.results || []).map((r) => r.file?.id)).filter(Boolean).map((id) => store.getAttachment(reader.id, id)))).filter(Boolean);
     const copied = copies.map((f) => Buffer.from(f.data, 'base64').toString());
     check('  and a fork copies that version, not the rewrite', copied.includes('as it was then') && !copied.some((t) => t.includes('SECRET')), copied.join(' | '));
+
+    // PRV-026 (owner, 2026-11-03): a file picked from Google Drive is Google data under Limited Use —
+    // not its bytes, its thumbnail, nor its name on a public link, and a fork does not copy it.
+    await store.createAttachment(owner.id, { id: 'from-drive', name: 'hop-dong-drive.pdf', mime: 'application/pdf', kind: 'document', bytes: 3, data: Buffer.from('pdf').toString('base64'), origin: 'google_drive' });
+    await store.appendMessage(owner.id, 'c-sc', { id: 'sc-drive', role: 'user', text: 'and this one from Drive', attachments: [{ id: 'from-drive', name: 'hop-dong-drive.pdf', kind: 'document' }, { id: 'in-chat', name: 'map.png', kind: 'image' }] });
+    // Shared again a moment later: the link's time is kept to the millisecond, the message's finer.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await store.setChatShare(owner.id, 'c-sc', token);
+    const withDrive = await (await fetch(`${base}/api/shared-chat/${token}`)).json();
+    const driveFile = await fetch(`${base}/api/attachments/from-drive`, { headers: { cookie } });
+    const driveThumb = await fetch(`${base}/api/attachments/from-drive/thumb`, { headers: { cookie } });
+    const sameMessage = withDrive.messages?.find((m) => m.id === 'sc-drive');
+    check('a conversation shared again within the same second shows what was added before it (CODE-080)', !!sameMessage, (withDrive.messages || []).map((m) => m.id).join(','));
+    check('a file picked from Google Drive is not on the public page, by name or by file (PRV-026)',
+      !!sameMessage && !JSON.stringify(withDrive.messages).includes('hop-dong-drive') && sameMessage.attachments?.some((a) => a.id === 'in-chat') && driveFile.status === 401 && driveThumb.status === 401,
+      `${driveFile.status}/${driveThumb.status} ${JSON.stringify(sameMessage?.attachments)}`);
+    // CODE-080 without leaning on the clock: a scope cached from a share in the same
+    // second, at another millisecond, is not reused (a string comparison read them alike).
+    const { __testing: gate } = await import('../server/routes/chatShare.js');
+    const fresh = await store.getSharedChat(token);
+    const at = new Date(fresh.shared_at);
+    const sameSecond = new Date(at.getMilliseconds() === 0 ? at.getTime() + 1 : at.getTime() - at.getMilliseconds());
+    gate.gateCache.set(token, { scope: { chat: { ...fresh, shared_at: sameSecond }, files: new Set(['stale-sentinel']), drawn: drawnFrom([]) }, until: Date.now() + 60_000 });
+    const staleScope = await fetch(`${base}/api/attachments/stale-sentinel`, { headers: { cookie } });
+    gate.gateCache.delete(token);
+    check('  and a scope cached from a share in the same second, at another millisecond, is not reused (CODE-080)', staleScope.status === 401, String(staleScope.status));
+    const forkedAgain = await forkSharedChat(reader.id, token);
+    const forkedNames = (await store.listMessages(reader.id, forkedAgain.chatId)).flatMap((m) => (m.attachments || []).map((a) => a.name));
+    check('  and a fork does not copy it', !forkedNames.includes('hop-dong-drive.pdf') && forkedNames.includes('map.png'), forkedNames.join(','));
   } finally {
     server.close();
   }
@@ -2481,14 +2510,19 @@ section('your data: the lists and deletions behind Privacy → Manage (owner, 20
     check("another account's upload cannot be deleted from here", (await del('/api/data/uploads/yd-theirs')) === 404 && (await store.getAttachment(other.id, 'yd-theirs')) != null);
     check('  nor its feedback', (await del('/api/data/feedback/yd-fb', other.id)) === 404);
     check('  its own feedback can', (await del('/api/data/feedback/yd-fb')) === 200 && (await get('/api/data/feedback')).body.total === 0);
-    // PRV-015: a file picked from Drive is a file the person sent, and a shared conversation hands it out like one.
+    // PRV-015: a file picked from Drive is a file the person sent, listed and deletable with them.
+    // PRV-036: but a shared conversation no longer hands it out (PRV-026), so it is never "shared".
     await store.createChat(me.id, { id: 'c-yd-drive', title: 'With a Drive file', model: 'm' });
     await store.createAttachment(me.id, { id: 'yd-drive', name: 'hop-dong.pdf', mime: 'application/pdf', kind: 'document', bytes: 900, data: 'AAA', origin: 'google_drive', chatId: 'c-yd-drive' });
     await new Promise((r) => setTimeout(r, 20));
     await store.setChatShare(me.id, 'c-yd-drive', 'w'.repeat(43));
     const sentShared = await get('/api/data/uploads?shared=1');
+    const sentPrivate = await get('/api/data/uploads');
     const counted = await get('/api/data');
-    check('a file picked from Drive is listed and counted with what you sent (PRV-015)', sentShared.body.items.some((i) => i.id === 'yd-drive' || i.name === 'hop-dong.pdf') && counted.body.shared?.uploads === 1, JSON.stringify({ items: sentShared.body.items.map((i) => i.name), uploads: counted.body.shared?.uploads }));
+    const isDrive = (i) => i.id === 'yd-drive' || i.name === 'hop-dong.pdf';
+    check('a file picked from Drive is listed with what you sent, as not shared, and not counted as shared (PRV-015, PRV-036)',
+      sentPrivate.body.items.some(isDrive) && !sentShared.body.items.some(isDrive) && counted.body.shared?.uploads === 0,
+      JSON.stringify({ shared: sentShared.body.items.map((i) => i.name), private: sentPrivate.body.items.map((i) => i.name), uploads: counted.body.shared?.uploads }));
     check('  and can be deleted from there', (await del('/api/data/uploads/yd-drive')) === 200 && (await store.getAttachment(me.id, 'yd-drive')) == null);
   } finally {
     server.close();
