@@ -2148,6 +2148,19 @@ section('free tiers: one allowance per service for the whole deployment, a fair 
     await tiers.spend('tavily', 3);
     check('what is spent is counted once for everyone, in the database', fresh.limit === 950 && (await tiers.allowance('tavily')).left === 945);
 
+    // HAR-009: Brave keeps a card on file and has no cap of its own.
+    process.env.BRAVE_FREE_REQUESTS = '3';
+    const took = await Promise.all(Array.from({ length: 6 }, () => tiers.take('brave', 1)));
+    check('six Brave searches at once against a ceiling of three: three go, three do not (HAR-009)', took.filter(Boolean).length === 3 && (await tiers.allowance('brave')).left === 0, JSON.stringify(took));
+    const readCounter = store.readCounter;
+    store.readCounter = async () => {
+      throw new Error('database away');
+    };
+    const unread = { brave: (await tiers.allowance('brave')).left, tavily: (await tiers.allowance('tavily')).left };
+    store.readCounter = readCounter;
+    delete process.env.BRAVE_FREE_REQUESTS;
+    check('  a count that cannot be read is none left for Brave, as before for the services that stop themselves', unread.brave === 0 && unread.tavily === Infinity, JSON.stringify(unread));
+
     process.env.TAVILY_API_KEY = 'tv';
     process.env.SEARCH_ORDER = 'tavily,duckduckgo';
     await tiers.spend('tavily', 944);

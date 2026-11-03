@@ -85,7 +85,8 @@ export function e2bMonthCap({ usedBefore = 0, now = new Date(), env = process.en
 const TIERS = {
   exa: { per: 'month', limit: () => num('EXA_FREE_MILLS', 9_500) },
   tavily: { per: 'month', limit: () => num('TAVILY_FREE_CREDITS', 950) },
-  brave: { per: 'month', limit: () => num('BRAVE_FREE_REQUESTS', 950) },
+  // `billed`: a card on file and no cap of the service's own — see `take`.
+  brave: { per: 'month', limit: () => num('BRAVE_FREE_REQUESTS', 950), billed: true },
   google: { per: 'day', limit: () => num('GOOGLE_FREE_DAILY', 450) },
   stackexchange: { per: 'day', limit: () => num('STACKEXCHANGE_FREE_DAILY', process.env.STACKEXCHANGE_KEY ? 9_500 : 280) },
   // The cloud computer's machine time, in thousandths of a dollar (server/e2b.js).
@@ -123,7 +124,8 @@ const bucketOf = (service, now) => {
 /**
  * What is left of a service's allowance this period, beside its ceiling.
  * Unbounded when the ceilings are off, or when the count cannot be read — the
- * services with no card on file refuse by themselves once they are spent.
+ * services with no card on file refuse by themselves once they are spent. A
+ * `billed` one does not, so an unreadable count is none left (HAR-009).
  *
  * @returns {Promise<{ left: number, limit: number }>}
  */
@@ -135,8 +137,31 @@ export async function allowance(service, now = new Date()) {
     const used = await getStore().readCounter(bucketOf(service, now).bucket);
     if (tier.capFor) limit = await tier.capFor(now, used);
     return { left: Math.max(0, limit - used), limit };
-  } catch {
-    return { left: Infinity, limit };
+  } catch (err) {
+    return { left: tier.billed && !noDatabase(err) ? 0 : Infinity, limit };
+  }
+}
+
+/** No database at all is a script or a test, with nothing to count against — not a database that is down. */
+const noDatabase = (err) => /not ready yet/.test(String(err?.message));
+
+/**
+ * Count a call before it is made, and say whether it fits (HAR-009). Reading
+ * the count, calling, then adding let every call made at the same moment near
+ * the ceiling through; this adds first, in one upsert, and takes it back when
+ * the total has gone over. For a `billed` service, where going over is a bill.
+ */
+export async function take(service, amount, now = new Date()) {
+  const tier = TIERS[service];
+  if (!tier || !(Number(amount) > 0)) return true;
+  const { bucket, ends } = bucketOf(service, now);
+  try {
+    const total = await getStore().addToCounter(bucket, amount, ends);
+    if (!freeTierOnly() || total <= tier.limit()) return true;
+    await getStore().addToCounter(bucket, -amount, ends);
+    return false;
+  } catch (err) {
+    return !freeTierOnly() || !tier.billed || noDatabase(err);
   }
 }
 
