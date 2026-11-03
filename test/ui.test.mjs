@@ -3464,6 +3464,19 @@ section('The composer\'s pictures, dragged into another order — or moved with 
   await page.waitForTimeout(200);
   const keyed = await page.evaluate(() => ({ focus: document.activeElement?.closest('.stage')?.getAttribute('data-index') }));
   check('Alt+→ moves the focused picture one place on, the focus going with it', (await names()).join() === 'three.png,two.png,one.png' && keyed.focus === '1', `${(await names()).join()} ${JSON.stringify(keyed)}`);
+  // UI-004: the tray redrawn mid-drag, as an upload finishing does, takes the tile away.
+  const order = (await names()).join();
+  await page.mouse.move(boxes[0].x, boxes[0].y);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i += 1) await page.mouse.move(boxes[0].x + ((boxes[2].x - boxes[0].x) * i) / 6, boxes[0].y);
+  await page.evaluate(() => {
+    const tray = /** @type {HTMLElement} */ (document.getElementById('attachments'));
+    tray.innerHTML = tray.innerHTML.replace(/ is-dragging/g, '').replace(/ style="[^"]*"/g, '');
+  });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const ghost = await page.evaluate(() => document.getElementById('attachments')?.classList.contains('is-sorting'));
+  check('a tray redrawn mid-drag ends the drag: not left sorting, nothing moved (UI-004)', !ghost && (await names()).join() === order, `${ghost} ${(await names()).join()}`);
   // One at a time: each removal draws the tray again.
   for (let i = 0; i < 3; i += 1) await page.click('#attachments .stage__remove').catch(() => {});
   await page.waitForTimeout(200);
