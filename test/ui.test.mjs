@@ -678,6 +678,14 @@ section('Usage, devices, feedback and what is new — from the account menu');
   await page.click('#feedback [data-frequency="daily"]');
   check('Give feedback lists the areas, then asks the kind, then the words — Next once there are some', topics === 12 && /files|tệp/i.test(chosen) && noNextYet && nextShown, JSON.stringify({ topics, chosen, noNextYet, nextShown }));
   check('  the second page waits for how much it affects you', submitWaits === true);
+  // UX-018: a refusal used to re-enable the button and say nothing.
+  await page.route('**/api/feedback', (route) => (route.request().method() === 'POST'
+    ? route.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ error: 'You have sent a lot of feedback — try again later.' }) })
+    : route.continue()), { times: 1 });
+  await page.keyboard.press('Control+Enter');
+  await page.waitForTimeout(500);
+  const refusedSaid = await page.$eval('#feedback .fb__error', (el) => `${el.getAttribute('role')}|${el.textContent}`).catch(() => '');
+  check('  a send the server refuses says why, out loud, and the dialog stays (UX-018)', /^alert\|.*a lot of feedback/.test(refusedSaid) && !!(await page.$('#feedback[open]')), refusedSaid);
   await page.keyboard.press('Control+Enter');
   await page.waitForTimeout(900);
   const { getStore } = await import('../server/store/index.js');

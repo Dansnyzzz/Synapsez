@@ -135,10 +135,10 @@ export function createFeedback(deps) {
   /** Focus the first element matching, if there is one. */
   const focusOn = (selector) => /** @type {HTMLElement | null} */ (dialog.querySelector(selector))?.focus();
 
-  /** @type {{ page: number, topic: string | null, other: string, kind: string | null, body: string, affect: string | null, frequency: string | null, worked: string | null, include: boolean, chatId: string | null, picking: boolean, sending: boolean }} */
+  /** @type {{ page: number, topic: string | null, other: string, kind: string | null, body: string, affect: string | null, frequency: string | null, worked: string | null, include: boolean, chatId: string | null, picking: boolean, sending: boolean, error: string }} */
   let s;
   const reset = () => {
-    s = { page: 1, topic: null, other: '', kind: null, body: '', affect: null, frequency: null, worked: null, include: false, chatId: deps.currentChat(), picking: false, sending: false };
+    s = { page: 1, topic: null, other: '', kind: null, body: '', affect: null, frequency: null, worked: null, include: false, chatId: deps.currentChat(), picking: false, sending: false, error: '' };
   };
 
   const topicLabel = () => (s.topic === 'other' ? s.other : t(`feedback.topic.${s.topic}`));
@@ -197,8 +197,10 @@ export function createFeedback(deps) {
         ? `<button type="button" class="btn fb__go" data-next>${escapeHtml(t('feedback.next'))} ${shortcut}</button>`
         : ''
       : `<button type="button" class="btn btn--ghost" data-prev>${escapeHtml(t('action.back'))}</button><button type="button" class="btn fb__go" data-submit ${s.affect && !s.sending ? '' : 'disabled'}>${escapeHtml(t('feedback.submit'))} ${shortcut}</button>`;
+    // Why the last send failed, read out (UX-018): it used to re-enable the button and say nothing.
+    const failed = s.error && !one ? `<p class="fb__error" role="alert">${escapeHtml(s.error)}</p>` : '';
     dialog.innerHTML = `<form method="dialog" class="fb__head"><h2 id="feedback-title">${escapeHtml(t('feedback.title'))}</h2><button class="icon-btn" value="close" aria-label="${escapeHtml(t('action.close'))}">✕</button></form>
-      <div class="fb__body">${one ? pageOne() : pageTwo()}</div>
+      <div class="fb__body">${one ? pageOne() : pageTwo()}${failed}</div>
       <div class="fb__foot">${pager}<span class="fb__spacer"></span>${actions}</div>`;
   }
 
@@ -218,6 +220,7 @@ export function createFeedback(deps) {
   async function submit() {
     if (!s.affect || s.sending) return;
     s.sending = true;
+    s.error = '';
     paint();
     try {
       await deps.send({
@@ -234,8 +237,9 @@ export function createFeedback(deps) {
       });
       dialog.close();
       deps.done();
-    } catch {
+    } catch (err) {
       s.sending = false;
+      s.error = String(err?.message || t('feedback.failed'));
       paint();
       focusOn('[data-submit]');
     }

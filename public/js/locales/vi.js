@@ -1566,6 +1566,7 @@ export const vi = {
   'feedback.page': '{n} / 2',
   'feedback.next': 'Tiếp',
   'feedback.submit': 'Gửi',
+  'feedback.failed': 'Chưa gửi được. Thử lại sau ít phút.',
   'feedback.thanks': 'Cảm ơn bạn — đã gửi góp ý.',
   'feedback.admin.title': 'Góp ý',
   'feedback.admin.none': 'Chưa có góp ý nào.',

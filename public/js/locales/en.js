@@ -1579,6 +1579,7 @@ export const en = {
   'feedback.page': '{n} of 2',
   'feedback.next': 'Next',
   'feedback.submit': 'Submit',
+  'feedback.failed': 'That did not send. Try again in a moment.',
   'feedback.thanks': 'Thank you — your feedback is sent.',
   'feedback.admin.title': 'Feedback',
   'feedback.admin.none': 'No feedback yet.',
