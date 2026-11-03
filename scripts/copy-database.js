@@ -14,6 +14,12 @@
  *
  * Needs both databases reachable: a Neon project whose compute hours have run
  * out answers 402 until its next billing period, or until it is upgraded.
+ *
+ * Run it twice when the target deployment is live. Rows whose parents arrive
+ * later in the order — a deep-research run before its conversation, a file
+ * before its project's — can be tidied away by that deployment's hourly sweep
+ * as orphans in between (pruneResearchRuns, pruneUnreachableFiles); the second
+ * run copies them again, and nothing else twice.
  */
 import { pathToFileURL } from 'node:url';
 import { createPgStore } from '../server/store/pg.js';
