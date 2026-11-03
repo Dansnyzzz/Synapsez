@@ -760,6 +760,15 @@ section('export is the whole account, streamed, without secrets');
   const withArtifact = (await alice.call('GET', '/api/account/export')).body;
   check("  and what an artifact's page saved (PRV-028)", withArtifact.artifactData?.['art-export']?.score === 'ARTIFACT-VALUE', JSON.stringify(withArtifact.artifactData)?.slice(0, 160));
   await store.removeUserSettingKey(aliceId, 'artifactStorage', 'art-export');
+  // PRV-029: deep-research runs and the MCP servers added — the latter without the secrets they hold.
+  await store.saveResearchRun(aliceId, { id: 'rr-export', question: 'RESEARCH-QUESTION', status: 'complete', transcript: [], sources: [{ url: 'https://example.com/a' }], report: 'RESEARCH-REPORT' });
+  await store.saveMcpServer(aliceId, { id: 'mcp-export', name: 'export-server', config: { transport: 'http', url: 'https://mcp.example.com/?token=sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX', headersCipher: 'HEADERS-CIPHER', envCipher: 'ENV-CIPHER' } });
+  const withMore = await alice.call('GET', '/api/account/export');
+  const run = withMore.body.research?.find((r) => r.question === 'RESEARCH-QUESTION');
+  const server = withMore.body.mcpServers?.find((s) => s.name === 'export-server');
+  check('  and the deep-research runs (PRV-029)', run?.report === 'RESEARCH-REPORT' && run?.sources?.[0]?.url === 'https://example.com/a', JSON.stringify(run)?.slice(0, 160));
+  check('  and the MCP servers added, with no header, environment or token-shaped value', server?.url?.startsWith('https://mcp.example.com/') && !/HEADERS-CIPHER|ENV-CIPHER|sk-ant-api03-ABCDEF/.test(withMore.text), JSON.stringify(server));
+  await store.deleteMcpServer(aliceId, 'mcp-export');
   await store.deleteSkill(aliceId, 'sk-export');
 
   // More than one page, all created in the same instant: the cursor must neither

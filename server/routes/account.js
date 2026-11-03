@@ -270,7 +270,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
     wrap(async (req, res) => {
       const store = getStore();
       const userId = req.user.id;
-      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData] = await Promise.all([
+      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData, research, mcpServers] = await Promise.all([
         getPrefs(userId),
         store.listMemoryBuckets(userId),
         store.listSkills(userId),
@@ -282,6 +282,8 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         store.getUserSetting(userId, 'skillDraft'),
         // What an artifact's page saved with window.storage (artifactStorage.js), by artifact (PRV-028).
         store.getUserSetting(userId, 'artifactStorage'),
+        store.exportResearchRuns(userId),
+        store.listMcpServers(userId),
       ]);
 
       const stamp = new Date().toISOString().slice(0, 10);
@@ -336,7 +338,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
       let count = 0;
       try {
-        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData });
+        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers });
       } catch (err) {
         /*
          * Half a JSON file that downloads as "complete" is worse than a failed
@@ -466,10 +468,13 @@ export function mountAccountRoutes(api, admin, { wrap }) {
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null }) {
+async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [] }) {
   // The username, a skill's files, the feedback sent (PRV-014), the skill draft
-  // kept on the account (PRV-027) and what artifacts' pages saved (PRV-028) are
-  // held too, so they are in it.
+  // kept on the account (PRV-027), what artifacts' pages saved (PRV-028), the
+  // deep-research runs and the MCP servers added (PRV-029) are held too, so they
+  // are in it — a server's headers and environment, which hold its secrets, are
+  // not. Left out, and said so in the README: usage figures, sign-in sessions and
+  // the account's activity log, each shown in Settings, and keys and tokens.
   await write(
     `{"format":"synapsez-export","version":1,"exportedAt":${JSON.stringify(new Date().toISOString())},` +
       `"account":${JSON.stringify({ name: user.name, username: user.username ?? null, email: user.email, createdAt: user.created_at })},` +
@@ -478,6 +483,19 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
       `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, files: Array.isArray(s.files) ? s.files : [] })))},` +
       `"skillDraft":${JSON.stringify(skillDraft || null)},` +
       `"artifactData":${JSON.stringify(artifactData || {})},` +
+      `"research":${JSON.stringify(research.map((r) => ({ chatId: r.chat_id, question: r.question, status: r.status, transcript: r.transcript, sources: r.sources, report: r.report, createdAt: r.created_at, completedAt: r.completed_at })))},` +
+      `"mcpServers":${JSON.stringify(
+        mcpServers.map((s) => ({
+          name: s.name,
+          transport: s.config?.transport ?? null,
+          command: s.config?.command ?? null,
+          // An address or an argument can carry a token; whatever looks like one is blanked.
+          args: (Array.isArray(s.config?.args) ? s.config.args : []).map((a) => redactSecrets(String(a)).text),
+          url: s.config?.url ? redactSecrets(String(s.config.url)).text : null,
+          enabled: s.enabled,
+          createdAt: s.created_at,
+        })),
+      )},` +
       `"scheduledTasks":${JSON.stringify(tasks.map((t) => ({ title: t.title, prompt: t.prompt, cron: t.cron, timezone: t.tz, enabled: t.enabled, projectId: t.project_id })))},` +
       `"workflows":${JSON.stringify(workflows.map((w) => ({ title: w.title, steps: w.steps, cron: w.cron, enabled: w.enabled })))},` +
       `"feedback":${JSON.stringify(

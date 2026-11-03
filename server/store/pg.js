@@ -3930,6 +3930,14 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT * FROM research_runs WHERE user_id = $1 AND id = $2', [userId, id]);
       return rows[0] ?? null;
     },
+    // Every deep-research run the account keeps (90 days), for the export (PRV-029).
+    async exportResearchRuns(userId) {
+      return q(
+        `SELECT chat_id, question, status, transcript, sources, report, created_at, completed_at
+           FROM research_runs WHERE user_id = $1 ORDER BY created_at, id`,
+        [userId],
+      );
+    },
 
     /**
      * The `WHERE` on the conflict is the ownership check, and it has to be here.
