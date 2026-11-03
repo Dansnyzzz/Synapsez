@@ -413,6 +413,11 @@ function cellFor(value, column = {}) {
 
 function readCell(value, { thousands = false } = {}) {
   if (value == null || value === '') return null;
+  // More digits than Excel keeps (fifteen) is an id, a card or a phone number:
+  // stored as a number its last digits turn to zeros, so it stays text (CODE-072).
+  if (typeof value === 'string' && /^[-\d.,\s]+$/.test(value.trim()) && value.replace(/\D/g, '').length > 15) {
+    return { type: 's', value, format: FORMAT.general };
+  }
   // A whole number of five digits or more is shown with its thousands; any
   // other number as it is — "3.14159" must not be shown as 3.14.
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -438,11 +443,15 @@ function readCell(value, { thousands = false } = {}) {
     const plain = t.replace(/,/g, '');
     return { type: 'n', value: plain, format: plain.includes('.') ? FORMAT.decimal : FORMAT.integer };
   }
-  // 64% · 64,4% · -12.5 %
-  const percent = /^(-?\d+(?:[.,]\d+)?)\s?%$/.exec(t);
+  // 64% · 64,4% · -12.5 % · 1,234% — a comma before three digits groups
+  // thousands, as everywhere else in this reader (COMMAED); it was read as
+  // 1.234% (CODE-072).
+  const grouped = /^(-?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?)\s?%$/.exec(t);
+  const percent = grouped || /^(-?\d+(?:[.,]\d+)?)\s?%$/.exec(t);
   if (percent) {
-    const n = Number(percent[1].replace(',', '.')) / 100;
-    return { type: 'n', value: String(Number(n.toFixed(10))), format: /[.,]/.test(percent[1]) ? FORMAT.percent1 : FORMAT.percent };
+    const n = Number(grouped ? percent[1].replace(/,/g, '') : percent[1].replace(',', '.')) / 100;
+    const decimals = grouped ? percent[1].includes('.') : /[.,]/.test(percent[1]);
+    return { type: 'n', value: String(Number(n.toFixed(10))), format: decimals ? FORMAT.percent1 : FORMAT.percent };
   }
   // 1.250.000 ₫ · 1.250.000đ · 1.250.000 VND
   const dong = /^(-?[1-9]\d{0,2}(?:\.\d{3})+|-?\d+)\s?(?:₫|đ|vnđ|vnd|đồng)$/i.exec(t);

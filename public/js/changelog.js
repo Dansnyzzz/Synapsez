@@ -114,11 +114,14 @@ export function createChangelog() {
       picking = false;
       paint();
       dialog.showModal();
-      if (!log) log = await readLog();
-      if (!log.entries.length) {
+      // Kept only once it has something in it (CODE-070): a fetch that failed
+      // once said "none" for the rest of the page, never asking again.
+      const read = log || (await readLog());
+      if (!read.entries?.length) {
         dialog.querySelector('.whatsnew__body').innerHTML = `<p class="whatsnew__muted">${escapeHtml(t('changelog.none'))}</p>`;
         return;
       }
+      log = read;
       paint();
       focusOn('[data-pick]');
     },

@@ -55,8 +55,8 @@ in the old database changes, and a row the new one already has is left alone —
 can simply be run again.
 
 **Check first.** The same command with `--check` reads both and writes nothing: whether Neon answers
-yet, how many rows each table holds, and how many of its accounts the new database already has (those
-merge by email). Run it the morning Neon's quota resets; if it still answers 402, it says so.
+yet, how many rows each table holds, and which of its accounts' emails the new database already has.
+Run it the morning Neon's quota resets; if it still answers 402, it says so.
 
 ```bash
 npm run db:copy -- --from "<the old Neon DATABASE_URL>" --to "<the Supabase DATABASE_URL>" --check
@@ -68,10 +68,13 @@ not be typed where a shell keeps its history.
 - **Neon has to be reachable.** A project whose compute hours ran out answers 402 until its next
   billing period (shown under *Billing*), or until it is upgraded — a month of Neon's paid plan is
   enough to make the copy, then downgrade.
-- **Signed up on the new database already?** That is fine. An account there with the same email is
-  kept, and the old account's conversations, files, settings and paired computers are merged into
-  it. Where both have the same thing — the same setting — the new database's stays. The copy says
-  which accounts it merged.
+- **Signed up on the new database already?** An account there with the same email can take the old
+  account's conversations, files, settings and paired computers — but only if you name it. Signing
+  up does not prove an email, so the account under your address on the new database could be
+  someone else's; merged, it would receive everything the old one held. The copy stops before
+  writing a row and lists each such email. Check each is the same person, then add
+  `--merge a@example.com,b@example.com`. Where both have the same thing — the same setting — the new
+  database's stays. The copy says which accounts it merged.
 
 ## Keeping an eye on the free limits
 

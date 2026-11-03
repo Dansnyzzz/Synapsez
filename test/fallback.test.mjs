@@ -226,7 +226,7 @@ section('the rotation reacts to what actually came out');
    * already takes its `stream` — the point is to watch the decisions without a
    * network, and without real seconds passing.
    */
-  const drive = async (script, keys = ['key-one', 'key-two'], signal = undefined, model = entry) => {
+  const drive = async (script, keys = ['key-one', 'key-two'], signal = undefined, model = entry, extra = {}) => {
     await setApiKey(uid, 'openrouter', keys[0]);
     for (const spare of keys.slice(1)) await addApiKey(uid, 'openrouter', spare);
     clearKeyRest(uid, 'openrouter');
@@ -251,6 +251,7 @@ section('the rotation reacts to what actually came out');
         signal,
         streamOne,
         sleep: async (ms) => waits.push(ms),
+        ...extra,
       })) {
         events.push(event);
       }
@@ -395,6 +396,18 @@ section('the rotation reacts to what actually came out');
       run.waits.some((ms) => ms > 2000 && ms <= 3000),
       run.waits.join(','),
     );
+    // HAR-016: the same rest, with the turn's deadline too close to wait it out and still try.
+    const short = await drive(
+      [
+        { throw: err(429, 'Rate limit', { 'retry-after': '30' }) },
+        { emit: [{ type: 'text', delta: 'too late' }, { type: 'done', stopReason: 'end_turn' }] },
+      ],
+      ['only-key'],
+      undefined,
+      entry,
+      { deadline: Date.now() + 40_000 },
+    );
+    check("  but not past the turn's deadline: with too little left, it says when the key is free instead (HAR-016)", short.seen.length === 1 && short.waits.length === 0 && /rate limited until/i.test(short.error?.message || ''), `${short.seen.length} tries · ${short.waits.join(',')} · ${short.error?.message}`);
   }
 
   // Pressing stop ends the turn. A failure that arrives once the signal is set
@@ -429,6 +442,30 @@ section('the rotation reacts to what actually came out');
       'and the message says when it lifts',
       /rate limited until/i.test(run.error?.message || ''),
       run.error?.message,
+    );
+    // HAR-012: a provider that stumbles and says "come back in four minutes" is not waited for past a minute —
+    // a Vercel function lives 300 s, and a request that outlives it ends with nothing said.
+    {
+      const slow = await drive([{ throw: err(503, 'Service unavailable', { 'retry-after': '240' }) }, { emit: [{ type: 'text', delta: 'ok' }, { type: 'done' }] }], ['only-key']);
+      check('a stumble that asks for four minutes is waited at most one (HAR-012)', slow.waits.length === 1 && slow.waits[0] <= 60_000 && slow.error === null, JSON.stringify(slow.waits));
+      const before = process.env.PROVIDER_REQUEST_BUDGET_MS;
+      process.env.PROVIDER_REQUEST_BUDGET_MS = '30000';
+      try {
+        const tight = await drive([{ throw: err(503, 'Service unavailable', { 'retry-after': '50' }) }, { emit: [{ type: 'text', delta: 'late' }, { type: 'done' }] }], ['only-key']);
+        check('  and with too little of the request\'s time left for another try, it says so rather than starting one', tight.seen.length === 1 && tight.waits.length === 0 && tight.error?.upstream === true, `${tight.seen.length} tries · ${tight.error?.message}`);
+      } finally {
+        if (before === undefined) delete process.env.PROVIDER_REQUEST_BUDGET_MS;
+        else process.env.PROVIDER_REQUEST_BUDGET_MS = before;
+      }
+      // HAR-015: the request's budget restarts with every call; the turn's deadline does not.
+      const late = await drive([{ throw: err(503, 'Service unavailable', { 'retry-after': '50' }) }, { emit: [{ type: 'text', delta: 'late' }, { type: 'done' }] }], ['only-key'], undefined, entry, { deadline: Date.now() + 30_000 });
+      check("  and the turn's own deadline holds too, however much a single request's budget has left (HAR-015)", late.seen.length === 1 && late.waits.length === 0 && late.error?.upstream === true, `${late.seen.length} tries · ${late.waits.join(',')} · ${late.error?.message}`);
+    }
+    // UX-023: as an instant the browser shows in the person's own time, not the server's clock face (UTC on Vercel).
+    check(
+      '  as an ISO instant, with a code the browser acts on (UX-023, UX-024)',
+      run.error?.message?.includes(new Date(reset).toISOString()) && run.error?.code === 'rate_limited',
+      `${run.error?.message} ${run.error?.code}`,
     );
   }
 
@@ -561,6 +598,9 @@ section('a provider failing on one key is tried on the next (owner, 2026-10-19)'
   const lost = await drive([{ throw: down() }, { throw: down() }, { throw: down() }, { throw: down() }, { throw: down() }], ['k-one', 'k-two', 'k-three']);
   check('every key failing is one error, marked so the turn can change model', lost.error?.upstream === true && /could not reach this model on any key/.test(lost.error.message) && !/was refused/.test(lost.error.message), lost.error?.message);
   check('  after one try on each further key, not three', lost.seen.join(',') === 'k-one,k-one,k-one,k-two,k-three', lost.seen.join(','));
+  // HAR-013: with eight keys an outage cost ten failed calls a step, each spending allowance — then the same again on Auto.
+  const many = await drive(Array.from({ length: 12 }, () => ({ throw: down() })), ['k-1', 'k-2', 'k-3', 'k-4', 'k-5', 'k-6', 'k-7', 'k-8']);
+  check('an outage stops at a ceiling of failed calls, however many keys there are (HAR-013)', many.error?.upstream === true && many.seen.length === 5, `${many.seen.length}: ${many.seen.join(',')}`);
 
   const one = await drive([{ throw: down() }, { throw: down() }, { throw: down() }], ['k-only']);
   check('with one key, three tries and the same marked error', one.error?.upstream === true && one.seen.length === 3, `${one.seen.length} ${one.error?.message}`);

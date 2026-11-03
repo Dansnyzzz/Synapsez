@@ -26,7 +26,7 @@
 import { untrusted } from './tools/untrusted.js';
 import { log } from './util/trace.js';
 import { googleDataInScope } from './googleData.js';
-import { allowance, spend, exhaust, mayMeter, countMetered, exaMills, exaSpent } from './freeTier.js';
+import { allowance, spend, take, exhaust, mayMeter, countMetered, exaMills, exaSpent } from './freeTier.js';
 
 const DEFAULT_ORDER = ['exa', 'google', 'duckduckgo', 'tavily', 'brave'];
 
@@ -301,6 +301,8 @@ const BRAVE_FRESHNESS = { day: 'pd', week: 'pw', month: 'pm', year: 'py' };
 /** Brave: a card on file and no cap of its own, so the count in freeTier.js is the cap. */
 async function searchBrave(query, ask) {
   await metered('brave', ask, 1);
+  // Counted before the call, whatever comes back — a refused call may still be a billed one.
+  if (!(await take('brave', 1))) throw standAside('brave: the free allowance for this period is used');
   const url = new URL('https://api.search.brave.com/res/v1/web/search');
   url.searchParams.set('q', keywordQuery(query, ask));
   url.searchParams.set('count', String(Math.min(ask.count, 20)));
@@ -310,8 +312,6 @@ async function searchBrave(query, ask) {
     headers: { Accept: 'application/json', 'X-Subscription-Token': process.env.BRAVE_API_KEY },
     signal: AbortSignal.timeout(ask.plan.timeoutMs),
   });
-  // Counted whatever came back: a refused call may still be a billed one.
-  await spend('brave', 1);
   if (!res.ok) throw await refusal('Brave Search', res);
 
   const json = await res.json();
@@ -611,7 +611,9 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
     // Set when a metered engine was asked, so the account's share is counted once.
     drew: false,
   };
-  const cacheKey = JSON.stringify([query.trim().toLowerCase(), chain, wanted, plan.exa, plan.tavily, plan.snippet, plan.fuse, ask.recency, ask.sites, ask.category, ask.country]);
+  // One account's cache (PRV-016, T13): shared, an instant answer told B that somebody had just searched
+  // these words, and served B what A's own key had paid for.
+  const cacheKey = JSON.stringify([userId || '', query.trim().toLowerCase(), chain, wanted, plan.exa, plan.tavily, plan.snippet, plan.fuse, ask.recency, ask.sites, ask.category, ask.country]);
   const cached = recall(cacheKey);
   if (cached) return cached;
 

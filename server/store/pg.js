@@ -695,6 +695,16 @@ export function createPgStore(connectionString) {
         [userId, String(days)],
       );
     },
+    /** This month's calls and cost per model — the Usage page's month line for one provider (CODE-066). */
+    async usageThisMonthByModel(userId) {
+      return q(
+        `SELECT model, COUNT(*)::int AS calls, COALESCE(SUM(cost_usd), 0) AS cost
+           FROM usage_events
+          WHERE user_id = $1 AND created_at >= date_trunc('month', NOW())
+          GROUP BY model`,
+        [userId],
+      );
+    },
     /**
      * Calls per hour per model, the last `hours` of them — what Settings →
      * Usage draws its week, heatmap and pace from, in the browser's own zone.
@@ -1087,6 +1097,10 @@ export function createPgStore(connectionString) {
          ), files AS (
            DELETE FROM attachments a USING gone
             WHERE a.chat_id = gone.id AND a.user_id = gone.user_id
+         ), research AS (
+           -- Its deep research too (PRV-030): research_runs.chat_id has no foreign key either.
+           DELETE FROM research_runs r USING gone
+            WHERE r.chat_id = gone.id AND r.user_id = gone.user_id
          )
          SELECT id FROM gone`,
         [cutoff],
@@ -1117,6 +1131,9 @@ export function createPgStore(connectionString) {
          ), files AS (
            DELETE FROM attachments a USING gone
             WHERE a.chat_id = gone.id AND a.user_id = gone.user_id
+         ), research AS (
+           DELETE FROM research_runs r USING gone
+            WHERE r.chat_id = gone.id AND r.user_id = gone.user_id
          )
          SELECT id FROM gone`,
         [userId, n],
@@ -1490,6 +1507,22 @@ export function createPgStore(connectionString) {
     async setChatContextParts(userId, id, parts) {
       await q('UPDATE chats SET context_parts = $3::jsonb WHERE id = $1 AND user_id = $2', [id, userId, toJson(parts ?? null)]);
     },
+    /**
+     * Delete a memory note, and its name from every conversation's context
+     * breakdown (PRV-024): the gauge kept the names of the notes read into a
+     * conversation's last step, a deleted one — or one made from Gmail —
+     * included, until that conversation took another step.
+     */
+    async removeMemoryNote(userId, bucket, key) {
+      await this.removeUserSettingKey(userId, bucket, key);
+      await q(
+        `UPDATE chats SET context_parts = jsonb_set(context_parts, '{details,memory,rows}',
+            COALESCE((SELECT jsonb_agg(r) FROM jsonb_array_elements(context_parts #> '{details,memory,rows}') r WHERE r->>'name' IS DISTINCT FROM $2), '[]'::jsonb))
+          WHERE user_id = $1 AND jsonb_typeof(context_parts #> '{details,memory,rows}') = 'array'
+            AND context_parts #> '{details,memory,rows}' @> jsonb_build_array(jsonb_build_object('name', $2::text))`,
+        [userId, String(key)],
+      );
+    },
 
     /**
      * Claim the right to run the agent loop on this conversation.
@@ -1647,6 +1680,9 @@ export function createPgStore(connectionString) {
       // So does any copy of it sent with feedback (33): the words and the title,
       // not the feedback itself, which is the sender's own message.
       await q('UPDATE feedback SET transcript = NULL, chat_title = NULL, answer = NULL WHERE user_id = $1 AND chat_id = $2', [userId, id]);
+      // And its deep research (PRV-030): the question, the debate and the report
+      // were the conversation's, and stayed 90 days after it.
+      await q('DELETE FROM research_runs WHERE user_id = $1 AND chat_id = $2', [userId, id]);
       await q('DELETE FROM chats WHERE id = $1 AND user_id = $2', [id, userId]);
     },
 
@@ -2158,7 +2194,10 @@ export function createPgStore(connectionString) {
       const like = likeOf(query);
       const sharedChat = `c.share_token IS NOT NULL AND c.shared_at IS NOT NULL AND a.created_at <= c.shared_at`;
       const isShared = upload ? `(${sharedChat})` : 'a.share_token IS NOT NULL';
-      const where = `a.user_id = $1 AND a.origin = $2
+      // What the person sent is an upload or a file picked from their Drive (PRV-015): a shared
+      // conversation hands both out, and both are theirs to see and delete here.
+      const origins = upload ? ['upload', 'google_drive'] : ['generated'];
+      const where = `a.user_id = $1 AND a.origin = ANY($2::text[])
         AND NOT COALESCE(c.incognito, FALSE)
         AND ${shared ? isShared : `NOT COALESCE(${isShared}, FALSE)`}
         AND ($3::text IS NULL OR a.name ILIKE $3 ESCAPE '\\')`;
@@ -2171,9 +2210,9 @@ export function createPgStore(connectionString) {
              ${from}
             WHERE ${where}
          ORDER BY updated_at DESC, a.id LIMIT $4 OFFSET $5`,
-          [userId, upload ? 'upload' : 'generated', like, pageSize(limit), pageStart(offset)],
+          [userId, origins, like, pageSize(limit), pageStart(offset)],
         ),
-        q(`SELECT COUNT(*)::int AS n ${from} WHERE ${where}`, [userId, upload ? 'upload' : 'generated', like]),
+        q(`SELECT COUNT(*)::int AS n ${from} WHERE ${where}`, [userId, origins, like]),
       ]);
       return { items: rows, total: count[0]?.n ?? 0 };
     },
@@ -2200,6 +2239,14 @@ export function createPgStore(connectionString) {
       ]);
       return { items: rows, total: count[0]?.n ?? 0 };
     },
+    /** Everything kept of the feedback this account sent, any conversation copy included — for the export (PRV-014). */
+    async exportFeedback(userId) {
+      return q(
+        `SELECT topic, topic_other, kind, issue, body, affect, frequency, worked_before, chat_title, transcript, answer, client, created_at
+           FROM feedback WHERE user_id = $1 ORDER BY created_at, id`,
+        [userId],
+      );
+    },
     /**
      * How much of each kind can be reached from outside now — the count beside
      * each Manage in Privacy. One statement; the same rules as the lists above.
@@ -2213,7 +2260,7 @@ export function createPgStore(connectionString) {
              WHERE a.user_id = $1 AND a.origin = 'generated' AND a.share_token IS NOT NULL
                AND NOT COALESCE(c.incognito, FALSE)) AS artifacts,
            (SELECT COUNT(*)::int FROM attachments a JOIN chats c ON c.id = a.chat_id AND c.user_id = a.user_id
-             WHERE a.user_id = $1 AND a.origin = 'upload' AND NOT COALESCE(c.incognito, FALSE)
+             WHERE a.user_id = $1 AND a.origin IN ('upload', 'google_drive') AND NOT COALESCE(c.incognito, FALSE)
                AND c.share_token IS NOT NULL AND c.shared_at IS NOT NULL AND a.created_at <= c.shared_at) AS uploads,
            (SELECT COUNT(*)::int FROM feedback f JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id
              WHERE f.user_id = $1 AND f.transcript IS NOT NULL) AS feedback`,
@@ -2222,9 +2269,9 @@ export function createPgStore(connectionString) {
       const row = rows[0] || {};
       return { chats: row.chats ?? 0, artifacts: row.artifacts ?? 0, uploads: row.uploads ?? 0, feedback: row.feedback ?? 0 };
     },
-    /** Throw away a file this account sent. Only an upload: a made file goes by deleteGeneratedFile. */
+    /** Throw away a file this account sent — uploaded, or picked from Drive. A made file goes by deleteGeneratedFile. */
     async deleteUpload(userId, id) {
-      const rows = await q(`DELETE FROM attachments WHERE id = $1 AND user_id = $2 AND origin = 'upload' RETURNING id`, [id, userId]);
+      const rows = await q(`DELETE FROM attachments WHERE id = $1 AND user_id = $2 AND origin IN ('upload', 'google_drive') RETURNING id`, [id, userId]);
       return rows.length > 0;
     },
     /** Feedback this account sent, deleted by its sender. */
@@ -2607,10 +2654,14 @@ export function createPgStore(connectionString) {
      * not for ever; nothing was deleting them at all.
      */
     async pruneResearchRuns(keepDays = 90) {
+      // And any run whose conversation is gone (PRV-032): left from before a
+      // delete took its research with it, or saved by a run that finished
+      // just after its conversation was deleted.
       await q(
         `DELETE FROM research_runs
-          WHERE completed_at IS NOT NULL
-            AND completed_at < NOW() - ($1 || ' days')::interval`,
+          WHERE (completed_at IS NOT NULL AND completed_at < NOW() - ($1 || ' days')::interval)
+             OR (chat_id IS NOT NULL AND NOT EXISTS (
+                   SELECT 1 FROM chats c WHERE c.id = research_runs.chat_id AND c.user_id = research_runs.user_id))`,
         [String(keepDays)],
       );
     },
@@ -3893,6 +3944,19 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT * FROM research_runs WHERE user_id = $1 AND id = $2', [userId, id]);
       return rows[0] ?? null;
     },
+    // Every deep-research run the account keeps (90 days), for the export (PRV-029) —
+    // not one from an incognito conversation, which is never part of the record (PRV-030),
+    // nor one whose conversation is gone (PRV-032): only a run with no conversation, or
+    // with an ordinary one that is still there.
+    async exportResearchRuns(userId) {
+      return q(
+        `SELECT r.chat_id, r.question, r.status, r.transcript, r.sources, r.report, r.created_at, r.completed_at
+           FROM research_runs r LEFT JOIN chats c ON c.id = r.chat_id AND c.user_id = r.user_id
+          WHERE r.user_id = $1 AND (r.chat_id IS NULL OR c.incognito = false)
+          ORDER BY r.created_at, r.id`,
+        [userId],
+      );
+    },
 
     /**
      * The `WHERE` on the conflict is the ownership check, and it has to be here.
@@ -4128,15 +4192,19 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT count FROM rate_limits WHERE bucket = $1 AND expires_at > NOW()', [bucket]);
       return Number(rows[0]?.count || 0);
     },
-    /** Add to a running total in one upsert — a period that has ended starts again from this amount. */
+    /**
+     * Add to a running total in one upsert — a period that has ended starts again
+     * from this amount. A negative amount takes back what was counted for work
+     * that never ran (freeTier.js `refund`); the total never goes below nothing.
+     */
     async addToCounter(bucket, amount, expiresAt) {
       const rows = await q(
-        `INSERT INTO rate_limits (bucket, count, expires_at) VALUES ($1, $2::int, $3::timestamptz)
+        `INSERT INTO rate_limits (bucket, count, expires_at) VALUES ($1, GREATEST(0, $2::int), $3::timestamptz)
          ON CONFLICT (bucket) DO UPDATE SET
-           count = CASE WHEN rate_limits.expires_at < NOW() THEN $2::int ELSE rate_limits.count + $2::int END,
+           count = CASE WHEN rate_limits.expires_at < NOW() THEN GREATEST(0, $2::int) ELSE GREATEST(0, rate_limits.count + $2::int) END,
            expires_at = CASE WHEN rate_limits.expires_at < NOW() THEN $3::timestamptz ELSE rate_limits.expires_at END
       RETURNING count`,
-        [bucket, Math.max(0, Math.round(Number(amount) || 0)), new Date(expiresAt).toISOString()],
+        [bucket, Math.round(Number(amount) || 0), new Date(expiresAt).toISOString()],
       );
       return Number(rows[0]?.count || 0);
     },

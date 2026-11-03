@@ -44,6 +44,8 @@ const STATS = { min: 2, max: 6 };
 // into a date ("15/03", "2026-03-15"), which is a point with a date, not a KPI.
 const FIGURE = /^\s*(?:\*\*)?([+\-−]?(?:[$€£¥₫]\s?)?\d[\d.,]*(?:\s?(?:%|‰|[kKmMbB]\b|tr\b|triệu|tỷ|nghìn|ngàn|USD|VND|VNĐ|đ|₫|x\b|lần|năm|giờ|phút|km|kg|\+))?)(?![-/.]\d)(?=\*\*|\s|[:\-–—|]|$)(?:\*\*)?\s*(?:[:\-–—|]\s*)?(\S[\s\S]*)$/u;
 const CLOSING = /cảm ơn|thank|q\s*&\s*a|hỏi\s*(?:&|và)?\s*đáp|liên hệ|contact|kết thúc|the end|questions/i;
+/** Every layout a slide can have — what `designedSlideXml` draws. */
+const KINDS = ['cover', 'closing', 'section', 'stats', 'table', 'statement', 'bullets'];
 
 /* ── text measurement ────────────────────────────────────────────────── */
 
@@ -274,7 +276,11 @@ export function slideKind(slide, index, count) {
   const points = normalisePoints(slide.bullets);
   const table = slide.table?.rows?.length ? slide.table : null;
   const title = String(slide.title || '').trim();
-  if (slide.kind) return slide.kind;
+  // A kind asked for is taken only when the slide has what that layout draws:
+  // 'table' with no table, or 'stats' with no figures, read null (CODE-073).
+  // One that does not fit, or no layout of that name, is chosen as below.
+  const fits = { table: () => !!table, stats: () => !!figuresOf(points), statement: () => points.length > 0 };
+  if (KINDS.includes(slide.kind) && (fits[slide.kind]?.() ?? true)) return slide.kind;
   if (index === 0 && count > 1 && title && !table && points.length <= 2 && points.every((p) => p.text.length <= 160)) return 'cover';
   if (index === count - 1 && count > 1 && CLOSING.test(title) && !table && points.length <= 4) return 'closing';
   if (title && !points.length && !table) return index === 0 ? 'cover' : 'section';

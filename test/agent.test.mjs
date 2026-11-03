@@ -893,6 +893,11 @@ section('output budget follows the model');
     const picture = 'A'.repeat(900_000);
     const est = estimatePromptTokens({ system: 'x'.repeat(3000), messages: [{ content: [{ data: picture }] }] });
     check('  a pasted picture is not counted by its base64', est < 3000, String(est));
+    // TOK-002: a tool's schema is sent as JSON — its property names and punctuation are paid for too.
+    const tool = { name: 'web_search', description: 'Search.', input_schema: { type: 'object', properties: { query: { type: 'string' }, count: { type: 'integer' }, recency: { type: 'string' }, sites: { type: 'array', items: { type: 'string' } } }, required: ['query'] } };
+    const asSent = Math.ceil(JSON.stringify(tool).length / 3);
+    const counted = estimatePromptTokens({ tools: [tool] });
+    check('  a tool is counted near its JSON size, keys and all (TOK-002)', counted >= asSent * 0.85 && counted <= asSent * 1.3, `${counted} vs ${asSent}`);
   }
 
   const unknown = outputBudget({ id: 'openrouter/mystery/model', provider: 'openrouter' });
@@ -1625,6 +1630,126 @@ section('the same read twice in a turn runs once');
   const repeated = seenResults.filter((r) => /already ran in this turn/.test(r.content || ''));
   check('a duplicate in the same batch and one in the next step are both answered from the first', repeated.length === 2, `${repeated.length} of ${seenResults.length}`);
 
+  // UX-017: a free model wrote `<system>success</system>` on a line of its own (owner, 2026-11-02).
+  await store.createChat(dupUser.id, { id: 'c-stray', title: 'stray' });
+  await store.appendMessage(dupUser.id, 'c-stray', { id: 'u-stray-1', role: 'user', text: 'tính giúp tôi' });
+  const strayStream = scriptedProvider([{ text: 'Bảng đã xong.\n\n<system>success</system>\n\nKết quả: 42.' }]).stream;
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-stray', emit: () => {}, stream: strayStream });
+  const storedReply = (await store.listMessages(dupUser.id, 'c-stray')).find((m) => m.role === 'assistant');
+  check('a stray control tag the model wrote is not stored, so the next turn does not replay it (UX-017)',
+    !!storedReply && !/<system>/.test(storedReply.text) && /Kết quả: 42\./.test(storedReply.text), JSON.stringify(storedReply?.text));
+
+  /*
+   * QC-001 (owner, 2026-11-02): an answer citing an address nothing in the
+   * conversation holds is sent back once to correct that sentence — only it —
+   * and the rest is stored as it was streamed.
+   */
+  await store.createChat(dupUser.id, { id: 'c-qc', title: 'qc' });
+  await store.appendMessage(dupUser.id, 'c-qc', { id: 'u-qc-1', role: 'user', text: 'lãi suất hôm nay? nguồn https://sbv.gov.vn/lai-suat' });
+  const qcEvents = [];
+  const qcPrompts = [];
+  let qcCalls = 0;
+  const qcStream = async function* scripted(opts) {
+    qcCalls += 1;
+    if (qcCalls === 1) {
+      yield { type: 'text', delta: 'Giữ nguyên ([SBV](https://sbv.gov.vn/lai-suat)). Xem [phân tích](https://made-up.example/x).' };
+    } else {
+      qcPrompts.push({ system: opts.system, tools: opts.tools?.length || 0, text: opts.messages?.at(-1)?.text || '' });
+      yield { type: 'text', delta: '{"edits":[{"find":"Xem [phân tích](https://made-up.example/x).","replace":"Xem phân tích (chưa kiểm chứng)."}]}' };
+    }
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+  };
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc', emit: (type, payload) => qcEvents.push({ type, payload }), stream: qcStream });
+  const qcReply = (await store.listMessages(dupUser.id, 'c-qc')).find((m) => m.role === 'assistant');
+  check('an invented address is sent back once, and only its sentence changes (QC-001)',
+    qcCalls === 2 && qcPrompts[0]?.tools === 0 && /made-up\.example/.test(qcPrompts[0]?.text) &&
+      !!qcReply && qcReply.text.startsWith('Giữ nguyên ([SBV](https://sbv.gov.vn/lai-suat)). Xem phân tích (chưa kiểm chứng).') && !/made-up/.test(qcReply.text),
+    JSON.stringify(qcReply?.text));
+  check('  the screen is given the corrected answer', qcEvents.some((e) => e.type === 'answer_revised' && !/made-up/.test(e.payload?.text || '')));
+  const plainCalls = qcCalls;
+  await store.createChat(dupUser.id, { id: 'c-qc2', title: 'qc2' });
+  await store.appendMessage(dupUser.id, 'c-qc2', { id: 'u-qc-2', role: 'user', text: 'chào' });
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc2', emit: () => {}, stream: scriptedProvider([{ text: 'Chào bạn.' }]).stream });
+  check('  an answer with nothing to check costs no extra call', qcCalls === plainCalls);
+
+  // QC-003/QC-004: what the step sent counts as a source — a memory note does — but the model's own earlier words do not.
+  await store.mergeUserSetting(dupUser.id, 'memory', { wiki: { content: 'The team wiki is https://wiki.acme-internal.example/home', updatedAt: new Date().toISOString(), by: 'user' } });
+  await store.createChat(dupUser.id, { id: 'c-qc3', title: 'qc3' });
+  await store.appendMessage(dupUser.id, 'c-qc3', { id: 'u-qc-3', role: 'user', text: 'where is the wiki?' });
+  await store.appendMessage(dupUser.id, 'c-qc3', { id: 'a-qc-3', role: 'assistant', text: 'Earlier I guessed https://made-up.example/old-guess.' });
+  await store.appendMessage(dupUser.id, 'c-qc3', { id: 'u-qc-4', role: 'user', text: 'and the report?' });
+  let qc3Calls = 0;
+  const deadlines = [];
+  const qc3Stream = async function* scripted(opts) {
+    qc3Calls += 1;
+    deadlines.push(opts.deadline);
+    if (qc3Calls === 1) {
+      yield { type: 'text', delta: 'Wiki: https://wiki.acme-internal.example/home. Report: https://made-up.example/old-guess.' };
+    } else {
+      yield { type: 'text', delta: '{"edits":[]}' };
+    }
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+  };
+  const startedAt = Date.now();
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc3', emit: () => {}, stream: qc3Stream });
+  const qc3Reply = (await store.listMessages(dupUser.id, 'c-qc3')).filter((m) => m.role === 'assistant').at(-1);
+  check('  a link from a memory note stands; one only the model itself wrote before is still flagged (QC-003, QC-004)',
+    qc3Calls === 2 && /wiki\.acme-internal\.example\/home/.test(qc3Reply?.text || '') && !/made-up\.example/.test(qc3Reply?.text || ''), JSON.stringify(qc3Reply?.text));
+  check("the turn's step and the quality gate's repair call are both given the turn's one deadline, under the function's 300 s (HAR-015)",
+    deadlines.length === 2 && deadlines.every((d) => typeof d === 'number' && d > startedAt && d <= startedAt + 300_000 && d === deadlines[0]), JSON.stringify(deadlines.map((d) => d - startedAt)));
+  // HAR-016: folding the conversation passes the deadline on to its own call.
+  {
+    const { compact } = await import('../server/compact.js');
+    let foldDeadline = null;
+    const many = Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, seq: i + 1, role: i % 2 ? 'assistant' : 'user', text: `turn ${i} ${'words '.repeat(40)}` }));
+    await compact({
+      userId: dupUser.id,
+      chatId: 'c-qc3',
+      entry: { provider: 'anthropic', model: 'claude-haiku-4-5', context: 200_000 },
+      prefs: {},
+      messages: many,
+      deadline: startedAt + 123_000,
+      stream: async function* (opts) {
+        foldDeadline = opts.deadline;
+        yield { type: 'text', delta: 'A summary.' };
+        yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+      },
+    }).catch(() => null);
+    check("  and so does folding the conversation (HAR-016)", foldDeadline === startedAt + 123_000, String(foldDeadline));
+  }
+  await store.removeUserSettingKey(dupUser.id, 'memory', 'wiki');
+
+  // QC-007: after a fold the summary can be the last question, and the project's passages ride on it.
+  {
+    const { gateSources } = await import('../server/agent.js');
+    const passages = 'From the project: pricing is at https://acme-internal.example/pricing';
+    const sources = gateSources({
+      system: 'You help.',
+      passages,
+      messages: [{ id: 's-1', role: 'summary', text: 'Earlier the assistant guessed https://made-up.example/summary-guess' }],
+      grounded: [{ id: 's-1', role: 'user', text: `${passages}\n\n---\n\nSummary: the assistant guessed https://made-up.example/summary-guess` }],
+      outgoing: [{ id: 'a-1', role: 'assistant', text: 'https://made-up.example/own-words' }],
+    }).join('\n');
+    check("a project passage on a folded conversation's summary is still a source (QC-007)", /acme-internal\.example\/pricing/.test(sources), sources);
+    check('  while the summary and the assistant\'s own words are not (QC-004, QC-006)', !/made-up\.example/.test(sources), sources);
+  }
+
+  // QC-006: a folded conversation's summary, handed over as the user's, carries what the assistant wrote too.
+  await store.createChat(dupUser.id, { id: 'c-qc4', title: 'qc4' });
+  await store.appendMessage(dupUser.id, 'c-qc4', { id: 'u-qc-5', role: 'user', text: 'find the report' });
+  await store.appendMessage(dupUser.id, 'c-qc4', { id: 'a-qc-5', role: 'assistant', text: 'It may be at https://made-up.example/folded-guess.' });
+  await store.appendMessage(dupUser.id, 'c-qc4', { id: 's-qc-5', role: 'summary', text: 'The assistant suggested https://made-up.example/folded-guess for the report.', replaced: 2, covers: 2 });
+  await store.appendMessage(dupUser.id, 'c-qc4', { id: 'u-qc-6', role: 'user', text: 'link again?' });
+  let qc4Calls = 0;
+  const qc4Stream = async function* scripted() {
+    qc4Calls += 1;
+    yield { type: 'text', delta: qc4Calls === 1 ? 'Here: https://made-up.example/folded-guess.' : '{"edits":[]}' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+  };
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc4', emit: () => {}, stream: qc4Stream });
+  const qc4Reply = (await store.listMessages(dupUser.id, 'c-qc4')).filter((m) => m.role === 'assistant').at(-1);
+  check('  nor is a folded conversation\'s summary a source for an address the assistant made up (QC-006)', qc4Calls === 2 && !/made-up\.example/.test(qc4Reply?.text || ''), JSON.stringify(qc4Reply?.text));
+
   const memo = new Map();
   const counts = {};
   let refused = null;
@@ -1679,6 +1804,34 @@ section('something connected mid-turn is there at the next step (owner, 2026-10-
   check('the first step did not have it', !/GitHub/i.test(text(systems[0]).split('## Connected services')[1] || ''), `${calls} steps`);
   check('  the next step of the same turn does', /## Connected services[\s\S]*GitHub/i.test(text(systems[1] || '')), text(systems[1] || '').split('## Connected services')[1]?.slice(0, 120));
   check('the fingerprint changed with it, and holds nothing of the token', before !== (await connectionsSignature(liveUser.id)) && !(await connectionsSignature(liveUser.id)).includes('ghp_'));
+
+  /*
+   * PRV-021: pausing a connection in the + menu while a turn runs. The pause
+   * lives in the account's settings, not in what is plugged in, so the
+   * fingerprint never saw it — the rest of the turn kept the tool, including a
+   * call a fetched page could have asked for.
+   */
+  await store.createChat(liveUser.id, { id: 'c-live-pause', title: 'pause' });
+  await store.appendMessage(liveUser.id, 'c-live-pause', { id: 'c-live-pause-u', role: 'user', text: 'Look at my repos, then tell me.' });
+  const offered = [];
+  let pauseCalls = 0;
+  const pauseStream = async function* scripted(opts) {
+    offered.push((opts.tools || []).map((t) => t.name));
+    pauseCalls += 1;
+    if (pauseCalls === 1) {
+      // The person pauses GitHub in the + menu while the first step is answered.
+      await setPrefs(liveUser.id, { connectorsOff: ['github'] });
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'p1', name: 'memory_read', input: {} }], usage: { input: 10, output: 5 } };
+      return;
+    }
+    yield { type: 'text', delta: 'Done.' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 10, output: 5 } };
+  };
+  await runAgent({ userId: liveUser.id, user: liveUser, chatId: 'c-live-pause', emit: () => {}, stream: pauseStream });
+  check('a connection paused mid-turn is gone from the next step of that turn (PRV-021)',
+    (offered[0] || []).some((n) => /^github/.test(n)) && !(offered[1] || []).some((n) => /^github/.test(n)),
+    `${(offered[0] || []).filter((n) => /^github/.test(n)).join(',')} → ${(offered[1] || []).filter((n) => /^github/.test(n)).join(',') || '(none)'}`);
+  await setPrefs(liveUser.id, { connectorsOff: [] });
   check('the model is told the list is live, so it never asks for a new conversation', /a new conversation is never needed/.test(text(systems[0])));
 
   // The owner's own case: an MCP server added while the turn runs. One that cannot be
@@ -2292,8 +2445,8 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   ]);
 
   /** One turn on its own conversation; what the provider was handed, and what was said. */
-  const turn = async (chatId, script, extra = {}) => {
-    await store.createChat(moved.id, { id: chatId, title: 'model' });
+  const turn = async (chatId, script, extra = {}, chatExtra = {}) => {
+    await store.createChat(moved.id, { id: chatId, title: 'model', ...chatExtra });
     await store.appendMessage(moved.id, chatId, { id: `${chatId}-u`, role: 'user', text: 'Hello.' });
     const entries = [];
     const events = [];
@@ -2381,6 +2534,24 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   check('  once: when Auto fails as well, the turn says so rather than going round', twice.entries.length === 2 && /could not reach this model/.test(twice.thrown), `${JSON.stringify(twice.entries)} ${twice.thrown}`);
   const plainFail = await turn('c-not-upstream', [{ throws: '400 Bad request: tool schema invalid' }]);
   check('  and any other failure is not moved', plainFail.entries.length === 1 && /Bad request/.test(plainFail.thrown), plainFail.thrown);
+  /*
+   * PRV-022: Auto is OpenRouter's free endpoints, which may keep or train on
+   * what they are sent. An incognito conversation, or one on a paid model the
+   * person chose, is not re-sent there because its provider had a bad hour.
+   */
+  const hidden = await turn('c-upstream-incognito', [{ upstream: down }, { text: 'never' }], {}, { incognito: true });
+  check('an incognito conversation is not handed to Auto when its model fails (PRV-022)', hidden.entries.length === 1 && /could not reach this model/.test(hidden.thrown), `${JSON.stringify(hidden.entries)} ${hidden.thrown}`);
+  await store.upsertModels([
+    {
+      id: 'openrouter/lab/paid', provider: 'openrouter', model: 'lab/paid', family: 'lab', label: 'Paid',
+      description: null, context: 64_000, maxOutput: 8192, priceIn: 3, priceOut: 15, isFree: false, vision: false,
+      releasedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  await setPrefs(moved.id, { defaultModel: 'openrouter/lab/paid', modelNotice: null });
+  const paid = await turn('c-upstream-paid', [{ upstream: down }, { text: 'never' }]);
+  check('  nor is one on a paid model, whose provider the person chose', paid.entries.length === 1 && /could not reach this model/.test(paid.thrown), `${JSON.stringify(paid.entries)} ${paid.thrown}`);
+  await setPrefs(moved.id, { defaultModel: 'openrouter/lab/live', modelNotice: null });
 
   // An account on its own OrcaRouter key, moved to Auto mid-turn, lands on the
   // deployment's OpenRouter key: the shared key's limits apply from there.
@@ -2566,6 +2737,10 @@ section('a conversation holding Google data is marked, and the mark follows its 
   check('no picture is made through a Gemini key from a marked turn', picture.isError && /holds data from the person's Google account/.test(picture.content), picture.content);
   const docs = await withGoogleData(true, () => executeTool({ user: gUser, name: 'search_docs', input: { query: 'invoice' }, chatId: null }));
   check('  nor are indexed folders searched through one', docs.isError && /Gemini key/.test(docs.content), docs.content);
+  // PRV-023: a skill is put in front of every later conversation, on any provider — so none is written from a marked turn.
+  const skill = await withGoogleData(true, () => executeTool({ user: gUser, name: 'skill_write', input: { name: 'inbox-digest', description: 'From the Gmail thread', instructions: 'Reply to Ann at ann@example.com about the invoice.' }, chatId: null }));
+  const kept = (await store.listSkills(gUser.id).catch(() => [])).some((s) => s.name === 'inbox-digest');
+  check('no skill is written from a turn holding Google data (PRV-023)', skill.isError && /Google account/.test(skill.content) && !kept, skill.content);
   const { search } = await import('../server/search.js');
   const saved = { order: process.env.SEARCH_ORDER, gemini: process.env.GEMINI_API_KEY, fetch: globalThis.fetch };
   process.env.SEARCH_ORDER = 'google';

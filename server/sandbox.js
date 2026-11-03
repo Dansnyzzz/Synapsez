@@ -304,7 +304,7 @@ async function machineFor(name, { signal } = {}) {
  */
 export async function scratchMachine({ signal } = {}) {
   if (e2bConfigured()) {
-    /** @type {'credit' | 'busy' | 'auth' | 'down' | null} */
+    /** @type {'credit' | 'busy' | 'auth' | 'down' | 'broken' | null} */
     let declined = e2bAsideFor;
     if (e2bReady()) {
       try {
@@ -399,13 +399,14 @@ export async function machineForUser(userId, { signal } = {}) {
 
 /**
  * E2B set aside on this instance for a while after it refused for a reason
- * that will not pass in seconds — a key it does not accept, or no answer — so
- * each call does not wait on it before going to Vercel. Busy and out of credit
- * are not set aside here: busy may clear by the next call, and the credit is
- * counted in the database, for every instance.
+ * that will not pass in seconds — a key it does not accept, no answer, or a
+ * library that will not load here — so each call does not wait on it before
+ * going to Vercel. Busy and out of credit are not set aside here: busy may clear
+ * by the next call, and the credit is counted in the database, for every
+ * instance.
  */
 let e2bAsideUntil = 0;
-/** @type {'auth' | 'down' | null} */
+/** @type {'auth' | 'down' | 'broken' | null} */
 let e2bAsideFor = null;
 const AUTH_ASIDE_MS = 10 * 60_000;
 const DOWN_ASIDE_MS = 60_000;
@@ -420,11 +421,13 @@ const e2bReady = () => e2bConfigured() && Date.now() >= e2bAsideUntil;
 async function setE2bAside(err) {
   const declined = e2bUnavailable(err);
   if (!declined) throw err;
-  log.warn('cloud computer: E2B declined, Vercel stands in', { reason: declined, error: String(err?.message || err).slice(0, 160) });
+  // The cause is what the owner needs to read (a library that would not load says why only there).
+  const said = err?.cause instanceof Error ? err.cause.message : err?.message || err;
+  log.warn('cloud computer: E2B declined, Vercel stands in', { reason: declined, error: String(said).slice(0, 300) });
   // E2B saying its credit is gone is believed for the rest of the month; our own count already knew.
   if (declined === 'credit' && err?.name !== 'E2BOutOfCredit') await exhaust('e2b').catch(() => {});
-  if (declined === 'auth' || declined === 'down') {
-    e2bAsideUntil = Date.now() + (declined === 'auth' ? AUTH_ASIDE_MS : DOWN_ASIDE_MS);
+  if (declined === 'auth' || declined === 'down' || declined === 'broken') {
+    e2bAsideUntil = Date.now() + (declined === 'down' ? DOWN_ASIDE_MS : AUTH_ASIDE_MS);
     e2bAsideFor = declined;
   }
   return declined;
@@ -435,7 +438,7 @@ async function setE2bAside(err) {
  * aside) and there is no Vercel to stand in. Busy and spent read as the
  * platform's own refusals always have.
  *
- * @param {'credit' | 'busy' | 'auth' | 'down' | null} declinedNow
+ * @param {'credit' | 'busy' | 'auth' | 'down' | 'broken' | null} declinedNow
  */
 function unavailableError(declinedNow) {
   const declined = declinedNow || e2bAsideFor;
@@ -443,6 +446,9 @@ function unavailableError(declinedNow) {
   if (declined === 'credit') return machineStartError({ status: 402 });
   if (declined === 'auth') {
     return new Error("The cloud computer could not be started: E2B did not accept this deployment's key (E2B_API_KEY). Tell the user plainly; the owner has to check the key.");
+  }
+  if (declined === 'broken') {
+    return new Error("The cloud computer could not be started: this server could not load its E2B library. Tell the user plainly; the owner has to check the deployment's logs.");
   }
   return new Error('The cloud computer could not be started: E2B is not answering right now. Try again in a few minutes; tell the user it is busy, not broken.');
 }
@@ -669,9 +675,12 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
     // No `cwd`: the session's own working folder, which is where relative
     // paths in `files` and `download` land too. Root only when asked for —
     // installing a system package — so ordinary work runs as the normal user.
+    // As root, the shell keeps only folders root alone can write (SBX-004): the
+    // account's branch would put E2B's account-writable /usr/local/bin first.
+    const asRoot = !!input?.as_root;
     const done = await machine.runCommand({
-      ...shellFor(command, {}, { userBin: true }),
-      sudo: !!input?.as_root,
+      ...shellFor(command, {}, asRoot ? { root: true } : { userBin: true }),
+      sudo: asRoot,
       timeoutMs: seconds * 1000,
       signal,
     });
@@ -742,5 +751,10 @@ export const __testing = {
   /** A stand-in for @vercel/sandbox, so the suites can drive a start without a machine. */
   useSdk(fake) {
     sdk = fake;
+  },
+  /** E2B no longer set aside, so a suite can show one refusal after another. */
+  clearE2bAside() {
+    e2bAsideUntil = 0;
+    e2bAsideFor = null;
   },
 };

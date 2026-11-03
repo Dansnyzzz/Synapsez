@@ -1,6 +1,7 @@
 import { getStore } from '../store/index.js';
 import { executeTool } from '../tools/execute.js';
 import { previewOf, mediaOf, liveRevision } from '../attachments.js';
+import { clientError } from '../util/clientError.js';
 
 /**
  * The workspace routes, lifted out of server/app.js.
@@ -65,7 +66,7 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
       try {
         await handler(req, res);
       } catch (err) {
-        res.status(err.status || 400).json({ error: err.message });
+        res.status(err.status || 400).json({ error: clientError(err) });
       }
     });
 
@@ -178,7 +179,7 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
       } catch (err) {
         // A corrupt or password-protected document is an answer, not a 500 —
         // the viewer says what happened and still offers the download.
-        res.json({ file: meta, preview: { kind: 'unreadable', message: err.message } });
+        res.json({ file: meta, preview: { kind: 'unreadable', message: clientError(err) } });
       }
     }),
   );
@@ -294,7 +295,7 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
         // happened to look at.
         res.json({ file: meta, preview: await previewOf({ ...past, id: `${past.attachment_id}#v${past.revision}` }) });
       } catch (err) {
-        res.json({ file: meta, preview: { kind: 'unreadable', message: err.message } });
+        res.json({ file: meta, preview: { kind: 'unreadable', message: clientError(err) } });
       }
     }),
   );

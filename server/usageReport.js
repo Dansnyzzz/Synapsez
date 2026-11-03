@@ -117,9 +117,10 @@ async function askOpenRouterNow(key, fetchImpl) {
  */
 export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}) {
   const store = getStore();
-  const [hours, month, openrouterKeys, status] = await Promise.all([
+  const [hours, month, monthModels, openrouterKeys, status] = await Promise.all([
     part === 'limits' ? [] : store.usageByHour(user.id, HOURS_BACK),
     store.usageThisMonth(user.id),
+    part === 'limits' ? [] : store.usageThisMonthByModel(user.id),
     getApiKeys(user.id, 'openrouter', { includeResting: true }),
     providerStatus(user.id),
   ]);
@@ -139,6 +140,14 @@ export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}
       cost: withMarkup(Number(row.cost) || 0),
     })),
     month: { tokens: month.tokens, calls: month.calls, cost: withMarkup(Number(month.cost) || 0) },
+    // The same month by provider (CODE-066): the page's month line was summed from
+    // the hour rows, which reach back fifteen days — too low from the 16th on.
+    monthByProvider: monthModels.reduce((all, row) => {
+      const at = (all[providerOf(row.model)] ||= { calls: 0, cost: 0 });
+      at.calls += Number(row.calls) || 0;
+      at.cost = Math.round((at.cost + (withMarkup(Number(row.cost) || 0) || 0)) * 1e6) / 1e6;
+      return all;
+    }, /** @type {Record<string, { calls: number, cost: number }>} */ ({})),
     // The deployment's own monthly ceiling, which applies only on its shared keys.
     sharedLimit: limitFor(user),
     live: { openrouter: live },

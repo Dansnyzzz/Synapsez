@@ -618,11 +618,154 @@ section('a map\'s zoom buttons are reachable by a screen reader (ACC-011)');
   check('  and the marker layer is hidden from it', /overlay\.setAttribute\('aria-hidden', 'true'\)/.test(cardsSrc));
 }
 
+section("a database's own words do not reach the browser; a route's refusal does (CODE-065)");
+{
+  const { clientError } = await import('../server/util/clientError.js');
+  const pg = Object.assign(new Error('duplicate key value violates unique constraint "users_username_key"'), { code: '23505', severity: 'ERROR' });
+  const pool = new Error('connect ECONNREFUSED postgres://app:hunter2@db.internal:5432/main');
+  check('a database failure is said plainly, not in its own words', !/users_username_key/.test(clientError(pg)) && /Try again/.test(clientError(pg)), clientError(pg));
+  check('  nor is a connection failure, which can carry the address and password', !/hunter2|db\.internal/.test(clientError(pool)), clientError(pool));
+  check("  while a route's own refusal is the person's to read", clientError(new Error('That username is taken.')) === 'That username is taken.');
+  check('  and a key in one is still blanked', !/sk-ant-api03-[A-Za-z0-9]{20}/.test(clientError(new Error('Bad key sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX'))));
+  // CODE-074: every route, the last-resort error handler included — not only the ones CODE-065 reached.
+  const routeFiles = [...fs.readdirSync(new URL('../server/routes/', import.meta.url)).filter((f) => f.endsWith('.js')).map((f) => `routes/${f}`), 'app.js'];
+  // CODE-076: also inside translateMessage(…), which passes text it does not know through unchanged.
+  const raw = routeFiles.flatMap((f) => {
+    const src = fs.readFileSync(new URL(`../server/${f}`, import.meta.url), 'utf8');
+    const sinks = [/json\(\{\s*error:[^}\n]*\berr\??\.message/g, /json\(\{\s*error:\s*String\(err/g, /translateMessage\(\s*(String\()?err\??\.message/g];
+    const shaped = sinks.flatMap((re) => [...src.matchAll(re)].map((m) => `${f}: ${m[0]}`));
+    // CODE-077: any other use of an error's text as a value — held in a variable, under
+    // another key — unless it is logged or only compared.
+    const held = src
+      .split('\n')
+      .filter((line) => /\berr\??\.message\b/.test(line) && !/clientError\(err\)|log\.(warn|error|info|debug)\(|[!=]==|\.test\(|includes\(/.test(line))
+      .map((line) => `${f}: ${line.trim().slice(0, 90)}`);
+    return [...shaped, ...held];
+  });
+  check('  no route answers with an error\'s raw text, translated, held or not (CODE-074, CODE-076, CODE-077)', raw.length === 0, raw.join(' | '));
+  const appSrc500 = fs.readFileSync(new URL('../server/app.js', import.meta.url), 'utf8');
+  // CODE-079: a run with nobody watching stores its failure where the page and the API show it.
+  check('  a failure passed on as text is judged the same way (CODE-079)', /Something went wrong on the server/.test(clientError('connect ECONNREFUSED 10.0.0.5:5432')) && clientError('No API key for Anthropic.') === 'No API key for Anthropic.');
+  const unattendedRaw = ['scheduler.js', 'workflows.js'].flatMap((f) => {
+    const src = fs.readFileSync(new URL(`../server/${f}`, import.meta.url), 'utf8');
+    return [...src.matchAll(/(status|error) = [^;\n]*(redactSecrets\(String\((err|data)\?\.message|clean\((err|data)\?\.message)/g)].map((m) => `${f}: ${m[0]}`);
+  });
+  check("  and a scheduled task's or a workflow step's stored failure goes through it (CODE-079)", unattendedRaw.length === 0, unattendedRaw.join(' | '));
+  check('  and the last-resort handler says only that the server failed (CODE-076)', /res\.status\(500\)\.json\(\{ error: SERVER_TROUBLE \}\)/.test(appSrc500) && !/res\.status\(500\)\.json\(\{ error: clientError/.test(appSrc500));
+}
 section('answering a quiz question keeps the keyboard in the quiz (ACC-012)');
 {
   const cardsSrc = fs.readFileSync(new URL('../public/js/cards.js', import.meta.url), 'utf8');
   check('the verdict can take focus', /verdict\.tabIndex = -1;/.test(cardsSrc));
   check('  and takes it after the repaint, instead of focus falling to the page', /paint\(\);[\s\S]{0,300}stage\.querySelector\('\.xquiz__verdict'\)\)\?\.focus\(\)/.test(cardsSrc));
+}
+
+section('a token count reads in the page language and rolls over to M (UI-018)');
+{
+  const { fmtTokens } = await import('../public/js/context-panel.js');
+  const english = [163, 20_900, 999_949, 999_950, 1_234_567].map(fmtTokens).join(' ');
+  check('English: 163 20.9K 999.9K 1M 1.2M — never "1000K"', english === '163 20.9K 999.9K 1M 1.2M', english);
+  const i18n = await import('../public/js/i18n.js');
+  const savedDocument = globalThis.document;
+  globalThis.document = /** @type {any} */ ({ querySelectorAll: () => [], documentElement: {} });
+  i18n.setLanguage('vi');
+  const vietnamese = [20_900, 1_234_567].map(fmtTokens).join(' ');
+  i18n.setLanguage('en');
+  globalThis.document = savedDocument;
+  check('Vietnamese: a decimal comma', vietnamese === '20,9K 1,2M', vietnamese);
+}
+
+section('menus, connector cards and reorders a keyboard and a screen reader can follow (UI-008, UI-011, UI-012)');
+{
+  const customizeSrc = fs.readFileSync(new URL('../public/js/customize.js', import.meta.url), 'utf8');
+  const attachSrc = fs.readFileSync(new URL('../public/js/attachments.js', import.meta.url), 'utf8');
+  const gallerySrc = fs.readFileSync(new URL('../public/js/gallery.js', import.meta.url), 'utf8');
+  check('a menu choice gives focus back to what opened the menu (UI-011)', /close\(\);[\s\S]{0,200}OPENERS\.get\(menu\)\?\.focus/.test(customizeSrc));
+  check('  and Escape in a sub-menu steps back to its row instead of a removed menu', /\(event\.key === 'ArrowLeft' \|\| event\.key === 'Escape'\) && root/.test(customizeSrc) && !/button\.closest\('\.cmenu'\)\)\?\.focus/.test(customizeSrc));
+  check('a connector row or card is not itself focusable around its buttons (UI-012)', !/role="link"/.test(customizeSrc) && !/ctable__row--open[^>]*tabindex="0"/.test(customizeSrc) && /class="cname" type="button"/.test(customizeSrc));
+  check('  and the permissions box takes focus when it opens', /box\.tabIndex = -1;\s*box\.focus\(\);/.test(customizeSrc));
+  check('an Alt+arrow reorder and a copied picture are announced (UI-008)', /announce\(t\('attachment\.movedTo'/.test(attachSrc) && /announce\(t\('media\.copied'\)\)/.test(gallerySrc));
+}
+
+section('the Privacy and Memory switches save in the order pressed (UI-005)');
+{
+  const privacySrc = fs.readFileSync(new URL('../public/js/privacy.js', import.meta.url), 'utf8');
+  const appSrc = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+  check('Privacy is handed the ordered save the + menu uses (CODE-068)', /createPrivacy\(\{[\s\S]{0,200}savePrefs: \(patch\) => savePrefsInOrder\(patch\)/.test(appSrc));
+  check('  and its switches save through it, not side by side', /state\.boot\.prefs = await savePrefs\(patch\(\)\)/.test(privacySrc) && !/await api\.savePrefs\(patch\(\)\)/.test(privacySrc));
+}
+
+section('closing the cloud browser while driving it stops driving first (UI-002)');
+{
+  const screenSrc = fs.readFileSync(new URL('../public/js/screen.js', import.meta.url), 'utf8');
+  check('the close button hands the controls back before the machine is closed', /closeButton\.addEventListener\('click', async \(\) => \{[\s\S]{0,400}if \(driving\) setDriving\(false\);[\s\S]{0,200}api\.closeCloudBrowser/.test(screenSrc));
+}
+
+section('a thumbnail on a summary is not a control inside a control (UI-006)');
+{
+  const renderSrc = fs.readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8');
+  check('the card and row headers use summaryThumb: out of the Tab order, hidden from readers', /run\.thumbs\.append\(summaryThumb\(/.test(renderSrc) && /head\.append\(summaryThumb\(/.test(renderSrc) && /thumb\.tabIndex = -1;\s*thumb\.setAttribute\('aria-hidden', 'true'\)/.test(renderSrc));
+  check('  while the same picture stays a real button inside', /open\.dataset\.pic = picture\.id/.test(renderSrc) && /item\.append\(pictureThumb\(entry\.picture, 'step__shot pic-thumb'\)\)/.test(renderSrc));
+}
+
+section('times, sizes and step counts read in the page language (UI-009)');
+{
+  const { tookText, clockText, humanSize, counted } = await import('../public/js/format.js');
+  const i18n = await import('../public/js/i18n.js');
+  const read = () => [tookText(30), tookText(1234), clockText(800), clockText(12_000), clockText(72_000), clockText(7_380_000), humanSize(1_572_864), counted(1, 'steps.count'), counted(3, 'steps.count')].join(' | ');
+  const english = read();
+  check('English as before: 30ms, 1.2s, 12s, 1m 12s, 2h 3m, 1.5 MB — and "1 step", not "1 steps"', english === '30ms | 1.2s |  | 12s | 1m 12s | 2h 3m | 1.5 MB | 1 step | 3 steps', english);
+  const savedDocument = globalThis.document;
+  globalThis.document = /** @type {any} */ ({ querySelectorAll: () => [], documentElement: {} });
+  i18n.setLanguage('vi');
+  const vietnamese = read();
+  i18n.setLanguage('en');
+  globalThis.document = savedDocument;
+  check('Vietnamese: giây, phút, giờ and a decimal comma', vietnamese === '30 ms | 1,2 giây |  | 12 giây | 1 phút 12 giây | 2 giờ 3 phút | 1,5 MB | 1 bước | 3 bước', vietnamese);
+}
+
+section("a quiz card asks the way Quizizz does: sets of twenty, the wrong ones again, twice (UX-022)");
+{
+  const { createQuizPlan } = await import('../public/js/quiz-plan.js');
+  /** Walk a plan, answering by `rightOn(index, round)`; the questions in the order they were asked. */
+  const walk = (plan, rightOn) => {
+    const asked = [];
+    for (let guard = 0; guard < 500 && !plan.done(); guard += 1) {
+      const now = plan.current();
+      asked.push(`${now.set}:${now.round}:${now.index}`);
+      plan.answer(rightOn(now.index, now.round));
+      plan.advance();
+    }
+    return asked;
+  };
+  const range = (n) => Array.from({ length: n }, (_, i) => i);
+
+  const perfect = createQuizPlan(range(5));
+  const once = walk(perfect, () => true);
+  check('all right: each question once, then done', once.length === 5 && perfect.done() && perfect.summary().firstTryRight === 5 && perfect.summary().missed.length === 0, once.join(' '));
+
+  // Question 2 is missed the first time, then got.
+  const learned = createQuizPlan(range(4));
+  const relearned = walk(learned, (i, round) => i !== 2 || round > 0);
+  check('a missed one comes back after the set, once got it is done', relearned.join(' ') === '0:0:0 0:0:1 0:0:2 0:0:3 0:1:2' && learned.summary().firstTryRight === 3 && learned.summary().missed.length === 0, relearned.join(' '));
+
+  // Question 1 is never got: two more rounds, then it is missed at the end.
+  const stubborn = createQuizPlan(range(3));
+  const tried = walk(stubborn, (i) => i !== 1);
+  check('  two rounds more at most, then it is missed', tried.join(' ') === '0:0:0 0:0:1 0:0:2 0:1:1 0:2:1' && JSON.stringify(stubborn.summary().missed) === '[1]', tried.join(' '));
+
+  // Forty-five questions: three sets. Question 3 (set 0) is never got; it goes with set 1's wrong ones.
+  const long = createQuizPlan(range(45));
+  const asked = walk(long, (i) => i !== 3 && i !== 25);
+  const firstSet = asked.filter((a) => a.startsWith('0:0:')).length;
+  const carriedInto1 = asked.filter((a) => a === '1:1:3' || a === '1:2:3').length;
+  check('twenty at a time', firstSet === 20 && asked.filter((a) => a.startsWith('1:0:')).length === 20 && asked.filter((a) => a.startsWith('2:0:')).length === 5, `${firstSet}`);
+  check("  still wrong after two rounds, it joins the next set's wrong ones", carriedInto1 === 2 && asked.indexOf('1:1:3') > asked.indexOf('1:0:39'), asked.filter((a) => /:3$/.test(a)).join(' '));
+  check('  and what is never got is missed at the end', JSON.stringify(long.summary().missed.sort((a, b) => a - b)) === '[3,25]' && long.summary().asked === 45, JSON.stringify(long.summary()));
+
+  // The missed ones, tried again on their own: a plan over just those.
+  const again = createQuizPlan(long.summary().missed);
+  check('the missed ones can be tried again on their own', again.current().index === 3 && again.current().total === 2);
 }
 
 section('Escape in a sketch label drops the label, not the sketch (UX-006)');
@@ -825,7 +968,7 @@ section('every setting the server and worker read is in the README (CODE-047)');
   const NOT_SETTINGS = new Set([
     'COMPUTERNAME', 'HOSTNAME', 'SHELL', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'NODE_ENV',
     'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
-    'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY', 'SYNZ_WORKDIR', 'SYNZ_RUN_UID',
+    'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_KEY_FILE', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY', 'SYNZ_MCP_KEY_FILE', 'SYNZ_WORKDIR', 'SYNZ_RUN_UID',
     'SYNZ_RUN_GID', 'SYNZ_RUN_HOME', 'SYNZ_PYTHON', 'SYNZ_KERNEL_PATH', 'SYNZ_TRACKERS', 'HOME', 'PATH', 'TMPDIR',
   ]);
   const read = new Map();
@@ -869,6 +1012,12 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
     reasoningParams({ model: 'gpt-5.6-terra', entry: {}, effort: 'max' }).reasoning_effort === 'max');
   check('OpenAI: a non-reasoning model is sent nothing, since it would refuse',
     Object.keys(reasoningParams({ model: 'gpt-4.1', entry: {}, effort: 'high' })).length === 0);
+  // GAP-014: OrcaRouter names models with their maker in front, and the dial was dropped for every one of them.
+  check('OrcaRouter: a reasoning model named with its maker in front still gets the dial (GAP-014)',
+    reasoningParams({ router: 'orcarouter', model: 'openai/gpt-5.6-terra', entry: {}, effort: 'low' }).reasoning_effort === 'low'
+      && reasoningParams({ router: 'orcarouter', model: 'openai/o4-mini', entry: {}, effort: 'medium' }).reasoning_effort === 'medium');
+  check('  while a maker\'s non-reasoning model is still sent nothing',
+    Object.keys(reasoningParams({ router: 'orcarouter', model: 'openai/gpt-4.1', entry: {}, effort: 'high' })).length === 0);
   check('an unknown stored value is read as high',
     reasoningParams({ router: 'openrouter', model: 'x', entry: {}, effort: 'turbo' }).reasoning?.effort === 'high');
 
@@ -876,6 +1025,40 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
   const steps = [];
   while (stepDown(p)) steps.push(p.reasoning_effort ?? '(none)');
   check('a refused level steps down, then goes', steps.join(' → ') === 'xhigh → high → (none)', steps.join(' → '));
+
+  // PERF-025: `max` on a model that takes only `high` paid two refused requests on every step.
+  {
+    const { streamOpenAICompatible } = await import('../server/providers/openaiCompatible.js');
+    const realFetch = globalThis.fetch;
+    const asked = [];
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      asked.push(body.reasoning_effort ?? '(none)');
+      if (body.reasoning_effort === 'max' || body.reasoning_effort === 'xhigh') {
+        return new Response(JSON.stringify({ error: { message: `Unsupported value: 'reasoning_effort' does not support '${body.reasoning_effort}' with this model.`, type: 'invalid_request_error' } }), { status: 400, headers: { 'content-type': 'application/json' } });
+      }
+      const sse = 'data: {"choices":[{"index":0,"delta":{"content":"ok"}}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    };
+    const once = async () => {
+      let text = '';
+      for await (const ev of streamOpenAICompatible({ apiKey: 'sk-test', model: 'gpt-5.6-perf025', entry: {}, system: 's', messages: [{ role: 'user', text: 'hi' }], effort: 'max' })) {
+        if (ev.type === 'text') text += ev.delta;
+      }
+      return text;
+    };
+    try {
+      const first = await once();
+      const firstAsked = asked.splice(0).join(' → ');
+      const second = await once();
+      const secondAsked = asked.splice(0).join(' → ');
+      check('a level the model refused is not asked again: the next request starts where it settled (PERF-025)',
+        first === 'ok' && second === 'ok' && firstAsked === 'max → xhigh → high' && secondAsked === 'high', `${firstAsked} | ${secondAsked}`);
+    } finally {
+      globalThis.fetch = realFetch;
+      oa.acceptedEffort.clear();
+    }
+  }
 
   // TOK-001: only a refusal of the setting steps down; other 400s surface at once.
   const { refusedEffort } = await import('../server/providers/openaiCompatible.js');
@@ -908,6 +1091,9 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
 
   const g = thinkingAttempts('medium').map((a) => JSON.stringify(a));
   check('Gemini: MEDIUM, then HIGH, then a budget, then nothing', g[0].includes('MEDIUM') && g[1].includes('HIGH') && g.some((x) => x.includes('thinkingBudget')) && g.at(-1) === '{}', g.join(' '));
+  // GAP-014: the older models' budget climbs with the dial — High was -1, "decide for yourself".
+  const budgets = ['low', 'medium', 'high', 'xhigh', 'max'].map((e) => thinkingAttempts(e).find((a) => 'thinkingBudget' in a).thinkingBudget);
+  check('  the budget for older Gemini models never falls as the dial rises (GAP-014)', budgets.every((b, i) => b > 0 && (i === 0 || b >= budgets[i - 1])), budgets.join(','));
 
   check('the library reads reasoning from what the model accepts', reasonsFor({ supported_parameters: ['tools', 'reasoning'] }) === true && reasonsFor({ supported_parameters: ['tools'] }) === false && reasonsFor({}) === null);
   check('a library row carries it', resolveModel('openrouter/x/y', { id: 'openrouter/x/y', provider: 'openrouter', model: 'x/y', reasoning: true }).reasoning === true);
@@ -1939,6 +2125,19 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   await intake.intakeKey(user.id, 'openrouter', 'just some words', { fetchImpl }).catch((err) => (shapeless = err.message));
   check('  nor is something that is no OpenRouter key at all', /does not look like an OpenRouter key — those begin sk-or-v1-/.test(shapeless), shapeless);
 
+  // HAR-008: two keys pasted at once on a provider with none both read an empty list.
+  const twin = await store.createUser({ id: 'u-keys-2', email: 'keys2@example.com', passwordHash: 'x', name: 'K2', role: 'user' });
+  accounts[OR('f')] = { creator_user_id: 'user_F', is_free_tier: true };
+  await Promise.all([intake.intakeKey(twin.id, 'openrouter', OR('c'), { fetchImpl }), intake.intakeKey(twin.id, 'openrouter', OR('f'), { fetchImpl })]);
+  const both = (await providerStatus(twin.id)).openrouter.keys;
+  check('two keys pasted at once are both kept, neither over the other (HAR-008)', both.length === 2, JSON.stringify(both.map((k) => k.hint)));
+  // HAR-014: every provider's keys are one stored setting, so two providers at once raced the same way.
+  const triple = await store.createUser({ id: 'u-keys-3', email: 'keys3@example.com', passwordHash: 'x', name: 'K3', role: 'user' });
+  accounts[OR('h')] = { creator_user_id: 'user_H', is_free_tier: true };
+  await Promise.all([intake.intakeKey(triple.id, 'openrouter', OR('h'), { fetchImpl }), intake.intakeKey(triple.id, 'google', `AIza${'G'.repeat(35)}`, { fetchImpl })]);
+  const crossed = await providerStatus(triple.id);
+  check('  an OpenRouter key and a Google key pasted at once are both kept (HAR-014)', crossed.openrouter.keys.length === 1 && crossed.google.keys?.length === 1, JSON.stringify({ openrouter: crossed.openrouter.keys.length, google: crossed.google.keys?.length }));
+
   // The suggestion: free while no key has paid, the paid one once one has.
   const lib = [
     { id: 'openrouter/vendor/best-free:free', provider: 'openrouter', model: 'vendor/best-free:free', family: 'vendor', label: 'Best Free', context: 128000, maxOutput: 8000, priceIn: 0, priceOut: 0, isFree: true, releasedAt: new Date().toISOString(), vision: false },
@@ -1974,6 +2173,11 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   } finally {
     globalThis.fetch = realFetch;
   }
+  // CODE-064: "constructor" is a property every object inherits, and `in` said it was a provider.
+  const inherited = await intake.intakeKey(user.id, 'constructor', 'x1234567890', { fetchImpl }).then(() => '', (e) => e.message);
+  const { setApiKey: setKey } = await import('../server/settings.js');
+  const inheritedSet = await setKey(user.id, '__proto__', 'x1234567890').then(() => '', (e) => e.message);
+  check('a name every object inherits is not a provider (CODE-064)', /No provider called "constructor"/.test(inherited) && /Unknown provider/.test(inheritedSet), `${inherited} | ${inheritedSet}`);
   if (hadKey === undefined) delete process.env.ENCRYPTION_KEY;
   void asked;
 }
@@ -2010,6 +2214,19 @@ section('free tiers: one allowance per service for the whole deployment, a fair 
     await tiers.spend('tavily', 2);
     await tiers.spend('tavily', 3);
     check('what is spent is counted once for everyone, in the database', fresh.limit === 950 && (await tiers.allowance('tavily')).left === 945);
+
+    // HAR-009: Brave keeps a card on file and has no cap of its own.
+    process.env.BRAVE_FREE_REQUESTS = '3';
+    const took = await Promise.all(Array.from({ length: 6 }, () => tiers.take('brave', 1)));
+    check('six Brave searches at once against a ceiling of three: three go, three do not (HAR-009)', took.filter(Boolean).length === 3 && (await tiers.allowance('brave')).left === 0, JSON.stringify(took));
+    const readCounter = store.readCounter;
+    store.readCounter = async () => {
+      throw new Error('database away');
+    };
+    const unread = { brave: (await tiers.allowance('brave')).left, tavily: (await tiers.allowance('tavily')).left };
+    store.readCounter = readCounter;
+    delete process.env.BRAVE_FREE_REQUESTS;
+    check('  a count that cannot be read is none left for Brave, as before for the services that stop themselves', unread.brave === 0 && unread.tavily === Infinity, JSON.stringify(unread));
 
     process.env.TAVILY_API_KEY = 'tv';
     process.env.SEARCH_ORDER = 'tavily,duckduckgo';
@@ -2264,6 +2481,15 @@ section('your data: the lists and deletions behind Privacy → Manage (owner, 20
     check("another account's upload cannot be deleted from here", (await del('/api/data/uploads/yd-theirs')) === 404 && (await store.getAttachment(other.id, 'yd-theirs')) != null);
     check('  nor its feedback', (await del('/api/data/feedback/yd-fb', other.id)) === 404);
     check('  its own feedback can', (await del('/api/data/feedback/yd-fb')) === 200 && (await get('/api/data/feedback')).body.total === 0);
+    // PRV-015: a file picked from Drive is a file the person sent, and a shared conversation hands it out like one.
+    await store.createChat(me.id, { id: 'c-yd-drive', title: 'With a Drive file', model: 'm' });
+    await store.createAttachment(me.id, { id: 'yd-drive', name: 'hop-dong.pdf', mime: 'application/pdf', kind: 'document', bytes: 900, data: 'AAA', origin: 'google_drive', chatId: 'c-yd-drive' });
+    await new Promise((r) => setTimeout(r, 20));
+    await store.setChatShare(me.id, 'c-yd-drive', 'w'.repeat(43));
+    const sentShared = await get('/api/data/uploads?shared=1');
+    const counted = await get('/api/data');
+    check('a file picked from Drive is listed and counted with what you sent (PRV-015)', sentShared.body.items.some((i) => i.id === 'yd-drive' || i.name === 'hop-dong.pdf') && counted.body.shared?.uploads === 1, JSON.stringify({ items: sentShared.body.items.map((i) => i.name), uploads: counted.body.shared?.uploads }));
+    check('  and can be deleted from there', (await del('/api/data/uploads/yd-drive')) === 200 && (await store.getAttachment(me.id, 'yd-drive')) == null);
   } finally {
     server.close();
   }

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { normaliseSteps, runWorkflowNow } from '../workflows.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
+import { clientError } from '../util/clientError.js';
 
 /**
  * Lifted out of server/app.js — see the note on mountWorkspaceRoutes for why.
@@ -92,7 +93,7 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
         });
         res.status(201).json({ workflow });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -133,7 +134,7 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
         if (!workflow) return res.status(404).json({ error: 'Workflow not found' });
         res.json({ workflow });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -164,7 +165,7 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
       } catch (err) {
         // 409 for "already running" — the client can say something true about
         // it, which a flat 400 would not let it do.
-        res.status(err.status || (err.message === 'No such workflow.' ? 404 : 400)).json({ error: err.message });
+        res.status(err.status || (err.message === 'No such workflow.' ? 404 : 400)).json({ error: clientError(err) });
       }
     }),
   );

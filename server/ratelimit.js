@@ -43,6 +43,8 @@ export const LIMITS = {
   // Uploading skills: a scan on choosing the files and one more to keep them —
   // a few dozen an hour is a busy afternoon; each reads up to ten 2 MB files.
   skillUpload: { limit: 60, windowMs: 60 * 60_000 },
+  // Choosing a new username: each refusal says a name is taken, so a script could list them (SEC-059).
+  rename: { limit: 10, windowMs: 60 * 60_000 },
 };
 
 /**
@@ -79,8 +81,7 @@ export async function consume(req, action, extra = '') {
   const store = getStore();
   if (typeof store.hitRateLimit !== 'function') return null;
 
-  const buckets = [`${action}:ip:${clientKey(req)}`];
-  if (extra) buckets.push(`${action}:id:${String(extra).toLowerCase().slice(0, 120)}`);
+  const buckets = bucketsFor(req, action, extra);
 
   for (const bucket of buckets) {
     /**
@@ -121,9 +122,18 @@ export async function consume(req, action, extra = '') {
 export async function forgive(req, action, extra = '') {
   const store = getStore();
   if (typeof store.clearRateLimit !== 'function') return;
+  await Promise.all(bucketsFor(req, action, extra).map((b) => store.clearRateLimit(b).catch(() => {})));
+}
+
+/**
+ * The caller's address, and the second dimension in one spelling (SEC-058):
+ * trimmed and lower-cased, so " Dana@x " and "dana@x" are the same ceiling.
+ */
+function bucketsFor(req, action, extra) {
   const buckets = [`${action}:ip:${clientKey(req)}`];
-  if (extra) buckets.push(`${action}:id:${String(extra).toLowerCase().slice(0, 120)}`);
-  await Promise.all(buckets.map((b) => store.clearRateLimit(b).catch(() => {})));
+  const second = String(extra ?? '').trim().toLowerCase().slice(0, 120);
+  if (second) buckets.push(`${action}:id:${second}`);
+  return buckets;
 }
 
 /**
@@ -134,13 +144,13 @@ export async function forgive(req, action, extra = '') {
  */
 /**
  * @param {string} action
- * @param {(req: any) => string} [identify]  the second dimension, read off the
- *   request — the email being tried, or the account id.
+ * @param {(req: any) => string | Promise<string>} [identify]  the second dimension,
+ *   read off the request — the email being tried, or the account id.
  */
 export function limit(action, identify = (/** @type {any} */ _req) => '') {
   return async (req, res, next) => {
     try {
-      const blocked = await consume(req, action, identify(req));
+      const blocked = await consume(req, action, await identify(req));
       if (!blocked) return next();
       res.set('Retry-After', String(blocked.retryAfterSec));
       res.status(blocked.status).json(blocked.body);

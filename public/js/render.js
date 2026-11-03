@@ -1,6 +1,6 @@
 import { renderMarkdown, escapeHtml } from './markdown.js';
 import { t, currentLanguage } from './i18n.js';
-import { humanSize, repeatsAs, cronParts } from './format.js';
+import { humanSize, repeatsAs, cronParts, counted, oneDecimal, tookText, clockText } from './format.js';
 import { chartFigure } from './chart.js';
 import { richWidget } from './cards.js';
 import { api } from './api.js';
@@ -12,6 +12,7 @@ import { normalisePlan, planItemHtml, planChange } from './plan.js';
 import { canonicalInput, TITLED } from './tool-aliases.js';
 import { registerPictures, pictureThumb, pictureUrl, openGallery } from './gallery.js';
 import { doneMark, ICONS } from './icons.js';
+import { withoutStrayTags } from './model-text.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -46,7 +47,7 @@ const el = (tag, className, html) => {
   return node;
 };
 
-const ms = (n) => (n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`);
+const ms = tookText;
 
 /**
  * A tool's answer as a person reads it.
@@ -226,7 +227,7 @@ export function summariseToolInput(name, input = {}) {
     case 'memory_read':
       return input.key || t('tool.arg.allNotes');
     case 'update_plan':
-      return `${(input.steps || []).length} steps`;
+      return counted((input.steps || []).length, 'steps.count');
     default: {
       const json = JSON.stringify(input);
       return json.length > 90 ? `${json.slice(0, 90)}…` : json;
@@ -435,7 +436,7 @@ const tailPath = (raw, max = 52) => {
 };
 
 const seconds = (n) => t('step.seconds').replace('{n}', String(Number(n) || 0));
-const count = (n) => t('steps.count').replace('{n}', String(Number(n) || 0));
+const count = (n) => counted(Number(n) || 0, 'steps.count');
 
 /**
  * What to show beside the verb, per tool.
@@ -921,20 +922,6 @@ function workSummary(steps) {
 }
 
 /**
- * How long a run has been at it, the way Claude Code counts: "12s", "1m 12s".
- * The whole run, not the step in its title — Claude's clock runs on from one
- * step's title to the next ("Reading the table 1m 1s", then "Checking the
- * options 1m 12s"), and so does this one, through the thinking between them.
- */
-function clockText(elapsed) {
-  const s = Math.floor(elapsed / 1000);
-  if (s < 1) return '';
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h ? `${h}h ${m}m` : m ? `${m}m ${s % 60}s` : `${s}s`;
-}
-
-/**
  * The runs whose title carries a running clock, ticked together.
  *
  * One timer for all of them rather than one each, stopped when none is
@@ -1222,17 +1209,28 @@ async function drawDiagram(svg, width = 2400) {
 /** Each drawing's picture for the lightbox, made once. */
 const DIAGRAMS = new WeakMap();
 
+/**
+ * A drawing's PNG lives at a blob: URL for as long as the drawing does (PERF-024):
+ * once the chat that held it is gone and the drawing collected, the URL is let go
+ * too, instead of keeping a picture of up to 16 MP alive for the rest of the tab.
+ */
+const DIAGRAM_URLS = new FinalizationRegistry((url) => URL.revokeObjectURL(url));
+
 /** A drawing as a picture the lightbox can show — a PNG; see `drawDiagram`. */
 function diagramPicture(widget, svg) {
   if (!DIAGRAMS.has(svg)) {
-    const made = drawDiagram(svg).then((blob) => ({
-      id: '',
-      src: URL.createObjectURL(blob),
-      name: fileNameFrom(widget.title, 'png'),
-      label: widget.title || t('chat.diagram'),
-      ground: groundColour(),
-      png: async () => blob,
-    }));
+    const made = drawDiagram(svg).then((blob) => {
+      const src = URL.createObjectURL(blob);
+      DIAGRAM_URLS.register(svg, src);
+      return {
+        id: '',
+        src,
+        name: fileNameFrom(widget.title, 'png'),
+        label: widget.title || t('chat.diagram'),
+        ground: groundColour(),
+        png: async () => blob,
+      };
+    });
     // A drawing that failed to draw is tried again on the next click.
     made.catch(() => DIAGRAMS.delete(svg));
     DIAGRAMS.set(svg, made);
@@ -1998,6 +1996,13 @@ export function assistantMessage() {
   let rawText = '';
   /** Whether a repaint is already scheduled for the next frame — see appendText. */
   let paintQueued = false;
+  /** The reply as drawn and as copied: without a model's stray control tags (UX-017). */
+  const paintProse = () => {
+    if (!prose) return;
+    const shown = withoutStrayTags(rawText);
+    RAW.set(wrap, shown);
+    prose.innerHTML = renderMarkdown(shown);
+  };
   /**
    * Redrawing a saved turn rather than watching one. A step drawn now did not
    * start now, so it starts no clock: a run reloaded three minutes in must not
@@ -2354,7 +2359,7 @@ export function assistantMessage() {
     if (!now && !thinking) run.clock.textContent = '';
     // A run of commands counts in its title, failures too ("ran 5 commands
     // (1 failed)"); a browsing session counts beside it.
-    const tally = run.family === 'work' ? [] : [t('steps.count').replace('{n}', String(run.count))];
+    const tally = run.family === 'work' ? [] : [counted(run.count, 'steps.count')];
     if (run.failures && run.family !== 'work') tally.push(t('steps.failedCount', { n: run.failures }));
     run.tally.textContent = tally.join(' · ');
     const working = run.pending > 0 || thinking;
@@ -2415,11 +2420,24 @@ export function assistantMessage() {
       plus.title = t('gallery.more', { n: more });
       run.thumbs.append(plus);
     }
-    for (const picture of shown) run.thumbs.append(pictureThumb(picture, 'pic-thumb pic-thumb--head'));
+    for (const picture of shown) run.thumbs.append(summaryThumb(picture, 'pic-thumb pic-thumb--head'));
   }
 
   /** Every picture a run has looked at, in the order it looked. */
   const runPictures = (run) => run.steps.filter((s) => s.picture).map((s) => s.picture);
+
+  /**
+   * A thumbnail on a <summary> (UI-006): a press opens it, but it is out of the
+   * Tab order and hidden from screen readers — a button inside the control that
+   * folds the card is one a reader cannot reach properly. The same picture is a
+   * real button inside, once the row or card is open (`pictureBody`, step shots).
+   */
+  function summaryThumb(picture, className) {
+    const thumb = pictureThumb(picture, className);
+    thumb.tabIndex = -1;
+    thumb.setAttribute('aria-hidden', 'true');
+    return thumb;
+  }
 
   /**
    * An opened picture row: the path it read, then the picture — Claude's
@@ -2672,7 +2690,10 @@ export function assistantMessage() {
       if (!hydrating) {
         const began = Date.now();
         running = el('p', 'step__running');
-        running.setAttribute('role', 'status');
+        // Kept out of the transcript's live region (UI-003): it changes every
+        // second, and a screen reader would read every one. It is there to be
+        // read on demand; the step's own mark says when it ends.
+        running.setAttribute('aria-live', 'off');
         const say = () => {
           running.textContent = t('work.running', { s: Math.floor((Date.now() - began) / 1000) });
         };
@@ -2739,16 +2760,21 @@ export function assistantMessage() {
 
         if (work) {
           if (entry.picture && head) {
-            head.append(pictureThumb(entry.picture, 'pic-thumb pic-thumb--row'));
+            head.append(summaryThumb(entry.picture, 'pic-thumb pic-thumb--row'));
             // `file_path:` says what the call said, unless it asked something
             // more — a question to `look_at` — which stays in view.
             const asked = Object.keys(canonicalInput(call.name, call.input) || call.input || {});
             if (asked.every((key) => key === 'path' || key === 'url' || key === 'file_id')) foldBody.querySelector(':scope > .tool__call')?.remove();
             foldBody.prepend(pictureBody(entry.picture));
           }
-          const printed = el('pre', 'step__output');
-          printed.textContent = workOutput(call, result.content) || t('chat.noOutput');
-          foldBody.append(printed);
+          // A question's answer is the person's bubble below; the lines the model
+          // reads, and the questions as JSON, are the same answer again (TOK-004).
+          if (result.answered) foldBody.querySelector(':scope > .tool__call')?.remove();
+          else {
+            const printed = el('pre', 'step__output');
+            printed.textContent = workOutput(call, result.content) || t('chat.noOutput');
+            foldBody.append(printed);
+          }
           if (result.ms != null) foldBody.append(el('p', 'step__took', escapeHtml(t('work.took', { time: ms(result.ms) }))));
           // A failure is the one row somebody needs to read; it is open already.
           // A success folds back to its title line — unless it was touched, or
@@ -2790,17 +2816,20 @@ export function assistantMessage() {
         // Errors are opened, successes are not. A failed step is the one thing
         // in the run somebody needs to read, and making them find and click it
         // is making them work for information the interface already has.
-        const out = el('details', 'step__out');
-        out.open = !!result.isError;
-        out.append(el('summary', null, escapeHtml(t('step.output'))));
-        // The call that produced it, above the result it produced — the same
-        // bargain the standalone cards make: plain words outside, the exact
-        // call and its arguments for whoever opens it.
-        out.append(toolCallDetail(call));
-        const pre = el('pre');
-        pre.textContent = forDisplay(result.content) || t('chat.noOutput');
-        out.append(pre);
-        item.append(out);
+        // A question's answer is the bubble below, not a second copy in here (TOK-004).
+        if (!result.answered) {
+          const out = el('details', 'step__out');
+          out.open = !!result.isError;
+          out.append(el('summary', null, escapeHtml(t('step.output'))));
+          // The call that produced it, above the result it produced — the same
+          // bargain the standalone cards make: plain words outside, the exact
+          // call and its arguments for whoever opens it.
+          out.append(toolCallDetail(call));
+          const pre = el('pre');
+          pre.textContent = forDisplay(result.content) || t('chat.noOutput');
+          out.append(pre);
+          item.append(out);
+        }
 
         if (result.file?.id) placeFile(body, result.file);
         if (drawable(result.widget)) body.append(widgetNode(result.widget, result.name));
@@ -2841,6 +2870,8 @@ export function assistantMessage() {
     const detail = el('span', 'steps__detail');
     detail.hidden = true;
     const clock = el('span', 'steps__clock');
+    // Twice a second is no pace to announce at (UI-003); see the row's running line.
+    clock.setAttribute('aria-live', 'off');
     const tally = el('span', 'steps__tally');
     // The pictures the run looked at, on its folded header — see paintThumbs.
     const thumbs = el('span', 'steps__thumbs');
@@ -3069,14 +3100,26 @@ export function assistantMessage() {
         // painting — a provider restarting the reply on another key does exactly
         // that — and painting into the removed node would resurrect the draft
         // this whole mechanism exists to discard.
-        if (prose) prose.innerHTML = renderMarkdown(rawText);
+        paintProse();
       });
     },
 
     /** Paint whatever is pending right now, without waiting for a frame. */
     flushText() {
       paintQueued = false;
-      if (prose) prose.innerHTML = renderMarkdown(rawText);
+      paintProse();
+    },
+
+    /** The answer, whole, in place of what streamed — the quality gate's correction (QC-001); its reasoning stays. */
+    replaceText(text) {
+      if (!prose) {
+        api.appendText(String(text ?? ''));
+        api.flushText();
+        return;
+      }
+      rawText = String(text ?? '');
+      paintQueued = false;
+      paintProse();
     },
 
     /**
@@ -3180,7 +3223,7 @@ export function assistantMessage() {
         progress(chars) {
           const kb = chars / 1024;
           size.textContent = t('chat.drafting', {
-            size: kb >= 1 ? `${kb >= 100 ? Math.round(kb) : kb.toFixed(1)} KB` : `${chars} B`,
+            size: kb >= 1 ? `${kb >= 100 ? Math.round(kb) : oneDecimal(kb)} KB` : `${chars} B`,
           });
         },
         remove() {
@@ -3239,7 +3282,10 @@ export function assistantMessage() {
             doneMark(call.name, !!result.isError),
             result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '',
           );
-          output.textContent = forDisplay(result.content) || t('chat.noOutput');
+          // A question's answer is the person's bubble below; the model's copy of it,
+          // and the questions as JSON, are the same answer again (TOK-004).
+          if (result.answered) inner.replaceChildren();
+          else output.textContent = forDisplay(result.content) || t('chat.noOutput');
 
           /**
            * A document came out of this call.
@@ -3478,4 +3524,18 @@ export function toast(message, kind = 'info', { ms } = {}) {
   node.textContent = message;
   host.append(node);
   setTimeout(() => node.remove(), ms || (kind === 'error' ? 6500 : 3200));
+}
+
+/**
+ * Say something to a screen reader only (UI-008): a success the screen already
+ * shows another way — a tick on the button, a tile in its new place. Emptied
+ * first, so the same words a second time are read a second time.
+ */
+export function announce(message) {
+  const host = document.getElementById('announcer');
+  if (!host) return;
+  host.textContent = '';
+  setTimeout(() => {
+    host.textContent = message;
+  }, 60);
 }

@@ -290,7 +290,7 @@ export const BUILTIN_SKILLS = [
     id: 'builtin:skill-creator',
     name: 'skill-creator',
     description:
-      'When asked to create, write or improve a skill — a procedure the assistant should follow every time a kind of request comes up. Interview the person, draft it, and save it with skill_write once they agree.',
+      'When asked to create or improve a skill: interview the person, draft it, save it with skill_write once they agree.',
     instructions: [
       '# skill-creator',
       '',

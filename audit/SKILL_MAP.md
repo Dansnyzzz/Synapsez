@@ -123,3 +123,29 @@ that guard's branch protection is currently **switched off**.
 - **Verifying repo visibility.** `gh` is not installed; no skill reads it.
 - **The exposure classification.** Deciding what a public repo should not carry
   is a judgement about this business, and no skill holds that context.
+
+---
+
+## 5. Vòng v4 (2026-11-02) — bản kê lại theo manifest của phiên này
+
+Nguồn: danh sách skill/agent/MCP trong manifest phiên 2026-11-02. Không đoán tên.
+
+**Mới so với v2/v3:** project skills thêm `audit-performance`, `audit-security`, `audit-tokens`, `deploy-check`, `eval`, `gen-docs`, `migrate`, `new-provider`, `new-tool`, `ship`, `trace`, `verify` (lệnh trong `.claude/commands`); project agents `backend-engineer`, `frontend-engineer`, `database-architect`, `qa-tester`, `security-auditor`, `performance-optimizer`, `code-reviewer`, `technical-writer`, `ui-ux-designer`; plugin `agent-skills:*` (spec/plan/build/test/review/ship, security-and-hardening, performance-optimization, …), `mattpocock-skills:*`, `context-engineering:*`, các bundle `agentic-bundle-*`, `searchfit-seo:*`, `marketing-skills:*`, `canva:*`, `airtable:*`, `desktop-commander:*`, MCP `context7`, `gitnexus`, `repomix`, `claude-mem`, Claude Docs, Google Drive.
+
+| Skill / agent | Phase | Việc cụ thể | Rủi ro | Quyết định |
+|---|---|---|---|---|
+| agent `security-auditor` (project) | 0 | 2 lát đọc tĩnh: biên server; thực thi/sandbox | đã từng bắn hộp thoại thật (2026-09-03) | `CÓ ĐIỀU KIỆN` — brief cấm chạy bất cứ thứ gì, chỉ Read/Grep/`git diff` |
+| agent `code-reviewer` (project) | 0, 3 | 3 lát đọc: harness/provider; frontend lõi; frontend cài đặt. Phase 3: evaluator ngữ cảnh mới (không Edit/Write) | cùng họ Claude → thiên lệch tự ưu ái | `DÙNG` |
+| `verify` (project) | 2, 3 | cổng DoD trước mỗi commit | — | `DÙNG` |
+| `audit-security`, `audit-tokens`, `audit-performance` (project) | 1 | danh mục kiểm theo threat model của app | trùng PHẦN IV–VI → chỉ dùng làm checklist | `CÓ ĐIỀU KIỆN` |
+| `superpowers:systematic-debugging` | 2 | khi test đỏ | — | `DÙNG` |
+| `superpowers:test-driven-development` / `agent-skills:test` | 2 | test trước khi sửa mỗi ID | — | `DÙNG` |
+| `superpowers:verification-before-completion` | 2–4 | bằng chứng trước khi nói "xong" | — | `DÙNG` |
+| `superpowers:finishing-a-development-branch` | 4 | — | đưa menu merge/PR/giữ; chủ đã chốt "luôn push main" (memory `always-push-to-main`) | `KHÔNG DÙNG` |
+| `claude-mem:version-bump`, `agent-skills:ship` | 4 | — | tự tag/release/publish → bị `guard-bash.js:178` chặn | `KHÔNG DÙNG` |
+| `gitnexus:*` (impact/taint) | 1 | — | index chưa xác minh là mới; tốn token | `KHÔNG DÙNG` vòng này |
+| `context7` | 2 | tra API thư viện khi sửa (e2b, glob) | — | `CÓ ĐIỀU KIỆN` |
+| `searchfit-seo:*`, `marketing-skills:*`, `canva:*`, `airtable:*`, `agentic-bundle-aas-marketing-*`, `anthropic-skills:xlsx/pptx/docx` | — | không liên quan audit code | — | `KHÔNG DÙNG` |
+| Google Drive / Claude Docs MCP | — | không gửi dữ liệu repo ra ngoài | rò chất xám | `KHÔNG DÙNG` |
+
+Skill nạp Phase 0 v4: [] — chỉ dùng agent project `security-auditor`, `code-reviewer`.

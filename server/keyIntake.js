@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { PROVIDERS } from './providers/catalog.js';
-import { keyEntries, setKeyMeta, setApiKey, addApiKey } from './settings.js';
+import { keyEntries, setKeyMeta, addApiKey } from './settings.js';
 import { connect } from './connectors.js';
 
 /**
@@ -123,7 +123,7 @@ const fail = (message) => Object.assign(new Error(message), { status: 400 });
 export async function intakeKey(userId, asked, value, { fetchImpl = fetch } = {}) {
   const secret = String(value || '').trim();
   if (!secret) throw fail('Paste a key.');
-  if (!(asked in PROVIDERS)) throw fail(`No provider called "${asked}".`);
+  if (!Object.hasOwn(PROVIDERS, asked)) throw fail(`No provider called "${asked}".`);
   const seen = recognise(secret);
 
   // A connector's token, pasted among the providers: connected where it belongs.
@@ -144,30 +144,50 @@ export async function intakeKey(userId, asked, value, { fetchImpl = fetch } = {}
     throw fail(`${PROVIDERS[provider].label} refused that key. Check that it was copied whole and has not been revoked.`);
   }
 
-  const held = await keyEntries(userId, provider);
-  if (held.some((entry) => entry.key === secret)) throw fail('That key is already on this provider.');
+  return oneAtATime(userId, async () => {
+    const held = await keyEntries(userId, provider);
+    if (held.some((entry) => entry.key === secret)) throw fail('That key is already on this provider.');
 
-  // One OpenRouter account, one key — the keys kept before this rule are asked once, and remembered.
-  if (provider === 'openrouter' && check.account) {
-    for (const entry of held) {
-      let account = entry.account;
-      if (!account && entry.key) {
-        const info = await inspectKey('openrouter', entry.key, { fetchImpl });
-        account = info.account || null;
-        if (account) await setKeyMeta(userId, 'openrouter', entry.index, { account, paid: info.paid ?? null, checkedAt: new Date().toISOString() });
-      }
-      if (account && account === check.account) {
-        throw fail(
-          `That key belongs to the same OpenRouter account as key ${entry.index + 1}. One account, one key: two keys of one account share its limits, so the second is no fallback. Add a key from another OpenRouter account.`,
-        );
+    // One OpenRouter account, one key — the keys kept before this rule are asked once, and remembered.
+    if (provider === 'openrouter' && check.account) {
+      for (const entry of held) {
+        let account = entry.account;
+        if (!account && entry.key) {
+          const info = await inspectKey('openrouter', entry.key, { fetchImpl });
+          account = info.account || null;
+          if (account) await setKeyMeta(userId, 'openrouter', entry.key, { account, paid: info.paid ?? null, checkedAt: new Date().toISOString() });
+        }
+        if (account && account === check.account) {
+          throw fail(
+            `That key belongs to the same OpenRouter account as key ${entry.index + 1}. One account, one key: two keys of one account share its limits, so the second is no fallback. Add a key from another OpenRouter account.`,
+          );
+        }
       }
     }
-  }
 
-  const meta = { account: check.account ?? null, paid: check.paid ?? null, checkedAt: check.ok ? new Date().toISOString() : null };
-  if (held.length) await addApiKey(userId, provider, secret, meta);
-  else await setApiKey(userId, provider, secret, meta);
-  return { kind: 'provider', id: provider, moved: provider !== asked, from: asked, account: null, paid: check.paid ?? null };
+    const meta = { account: check.account ?? null, paid: check.paid ?? null, checkedAt: check.ok ? new Date().toISOString() : null };
+    // Added to the list as it is now, read again inside addApiKey — not set over
+    // a list read before the checks above, which could be seconds old (HAR-008).
+    await addApiKey(userId, provider, secret, meta);
+    return { kind: 'provider', id: provider, moved: provider !== asked, from: asked, account: null, paid: check.paid ?? null };
+  });
+}
+
+/**
+ * One key intake at a time for an account, on this instance (HAR-008). Two
+ * pasted at once both read an empty list, and the second replaced the first.
+ * Per account, not per provider (HAR-014): every provider's keys are one
+ * stored setting, read and written whole, so an OpenRouter key and a Google
+ * key pasted together raced the same way. Two serverless instances can still
+ * interleave; that needs a database-side update, and is rarer by far.
+ */
+const intakes = new Map();
+function oneAtATime(slot, work) {
+  const run = (intakes.get(slot) || Promise.resolve()).then(work, work);
+  const settled = run.catch(() => {});
+  intakes.set(slot, settled);
+  settled.then(() => intakes.get(slot) === settled && intakes.delete(slot));
+  return run;
 }
 
 /**

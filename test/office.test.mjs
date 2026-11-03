@@ -524,6 +524,14 @@ section('creating a file in each format');
   const csv = office.createDocument({ format: 'csv', name: 'x', content: markdown });
   check('a CSV takes the table rather than the prose above it', csv.buffer.toString('utf8').includes('A,B'), csv.buffer.toString('utf8').slice(0, 40));
   check('and starts with a BOM so Excel reads UTF-8', csv.buffer.toString('utf8').charCodeAt(0) === 0xfeff);
+  // SEC-065: rows from the web, opened in Excel, would run as formulas.
+  const risky = office.createDocument({
+    format: 'csv',
+    name: 'r',
+    content: '| A | B | C | D |\n|---|---|---|---|\n| =HYPERLINK("http://x.example","hi") | +cmd|calc | @SUM(A1) | -5 |\n| +3.5% | 1,200 | -x | ok |',
+  }).buffer.toString('utf8');
+  check('a cell that would run as a formula is written as text (SEC-065)', /"'=HYPERLINK\(""http:\/\/x\.example"",""hi""\)"/.test(risky) && risky.includes("'@SUM(A1)") && risky.includes("'-x"), risky.slice(0, 160));
+  check('  while a plain number keeps its sign', /,-5\r?\n/.test(risky) && risky.includes('+3.5%') && !risky.includes("'+3.5%"), risky.slice(0, 160));
 
   const json = office.createDocument({ format: 'json', name: 'data', content: '{"b":2,"a":[1,2]}' });
   check('JSON is reformatted, which also validates it', json.buffer.toString('utf8').includes('\n  "b": 2'));
@@ -646,6 +654,15 @@ section('Word, Excel and PowerPoint come out designed');
   const { slideKind } = await import('../server/office/slides.js');
   check('points that open with a date are a list, not cards with "15" in them', slideKind({ title: 'Lịch', bullets: ['15/03: Khởi động', '20/04: Lắp đặt', '2026-05-01 Bàn giao'] }, 2, 5) === 'bullets');
   check('  while "**120+** khách hàng" and "3x nhanh hơn" are figures', slideKind({ title: 'Kết quả', bullets: ['**120+** khách hàng', '3x nhanh hơn'] }, 2, 5) === 'stats');
+  // CODE-073: a kind asked for that the slide cannot fill is not taken.
+  const forced = [
+    slideKind({ title: 'T', kind: 'table', bullets: ['a', 'b'] }, 2, 5),
+    slideKind({ title: 'T', kind: 'stats', bullets: ['plain words', 'more words'] }, 2, 5),
+    slideKind({ title: 'T', kind: 'statement' }, 2, 5),
+    slideKind({ title: 'T', kind: 'nonsense', bullets: ['a', 'b'] }, 2, 5),
+    slideKind({ title: 'T', kind: 'section', bullets: ['a', 'b'] }, 2, 5),
+  ];
+  check('a forced table with no table, stats with no figures, or an unknown kind falls back; a fitting one is kept (CODE-073)', forced.join(',') === 'bullets,bullets,section,bullets,section', forced.join(','));
 
   // A table under a few lines of intro starts below them — seen in PowerPoint, the
   // third line used to run under the table's header (2026-10-25).
@@ -744,6 +761,12 @@ section('Word, Excel and PowerPoint come out designed');
   check('"1.560.000.000" is the number it says, not text', cells[1][1].t === 'n' && cells[1][1].v === '1560000000', JSON.stringify(cells[1][1]));
   check('"64,4%" is 0.644, "$31,200.50" is 31200.5, "2026-03-15" a date', cells[2][2].v === '0.644' && cells[2][3].v === '31200.5' && cells[1][4].t === 'd', JSON.stringify([cells[2][2], cells[2][3], cells[1][4]]));
   check('  while a code with a leading zero stays text', cells[1][5].t === 's' && cells[1][5].v === '0123');
+  // CODE-072: a thousands comma in a percent, and an id longer than Excel keeps.
+  {
+    const odd = readXlsx(writeXlsx({ sheets: [{ name: 'Odd', rows: [['Growth', 'Card'], ['1,234%', '4111111111111111'], ['64,4%', '1234567890123456789'], ['12.5%', '123456789012345']] }] })).sheets[0].rows;
+    check('"1,234%" is 12.34, not 0.01234; "64,4%" still 0.644 and "12.5%" 0.125 (CODE-072)', odd[1][0].v === '12.34' && odd[2][0].v === '0.644' && odd[3][0].v === '0.125', JSON.stringify(odd.map((r) => r[0])));
+    check('  sixteen digits or more stay text, every digit kept; fifteen are still a number', odd[1][1].t === 's' && odd[1][1].v === '4111111111111111' && odd[2][1].v === '1234567890123456789' && odd[3][1].t === 'n', JSON.stringify(odd.map((r) => r[1])));
+  }
   // A column decides what "150.000" is (code review, 2026-10-25): read alone it was 150, and a
   // column of 150.000, 1.500 and 1.200.000 summed to 1,200,151.5.
   {

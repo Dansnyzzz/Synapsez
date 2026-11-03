@@ -137,8 +137,16 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Trình trợ giúp trên máy tính đám mây dừng ngay khi vừa khởi động (mã thoát {0}).{1}',
   "The cloud computer's helper was stopped from outside as it started (exit code {0}).{1}":
     'Trình trợ giúp trên máy tính đám mây bị dừng từ bên ngoài ngay khi vừa khởi động (mã thoát {0}).{1}',
-  '{0}\nThe page is now: {1} {2}. Look again before the next step.':
-    '{0}\nTrang hiện tại: {1} {2}. Hãy xem lại trang trước bước tiếp theo.',
+  'Something went wrong on the server. Try again in a moment.':
+    'Máy chủ gặp lỗi. Thử lại sau ít phút.',
+  'That is too large to send in one request.': 'Nội dung đó quá lớn để gửi trong một yêu cầu.',
+  'That request could not be read.': 'Không đọc được yêu cầu đó.',
+  '{0}\nLook again before the next step.':
+    '{0}\nHãy xem lại trang trước bước tiếp theo.',
+  '{0} is too large to read here ({1} MB; the most is {2} MB).':
+    '{0} quá lớn để đọc ở đây ({1} MB; tối đa {2} MB).',
+  "This conversation holds data from the person's Google account, and a skill is offered in every later conversation, whichever model runs it — so it is not written from here. Tell the user; they can write the skill in a new conversation.":
+    'Cuộc trò chuyện này có dữ liệu từ tài khoản Google của người dùng, mà một kỹ năng sẽ được đưa vào mọi cuộc trò chuyện sau, dù model nào chạy — nên không tạo kỹ năng từ đây. Hãy nói với người dùng; họ có thể tạo kỹ năng trong một cuộc trò chuyện mới.',
   'That is not something the screen can do.': 'Màn hình không làm được thao tác đó.',
   'The cloud browser is resting. Ask the assistant to open a page and it will start again.':
     'Trình duyệt đám mây đang nghỉ. Hãy nhờ trợ lý mở một trang, nó sẽ khởi động lại.',
@@ -1006,6 +1014,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   // The cloud computer on E2B, with nothing to stand in (server/sandbox.js `unavailableError`).
   "The cloud computer could not be started: E2B did not accept this deployment's key (E2B_API_KEY). Tell the user plainly; the owner has to check the key.":
     'Không khởi động được máy tính đám mây: E2B không chấp nhận khoá của bản triển khai này (E2B_API_KEY). Hãy nói rõ với người dùng; chủ bản triển khai cần kiểm tra lại khoá.',
+  "The cloud computer could not be started: this server could not load its E2B library. Tell the user plainly; the owner has to check the deployment's logs.":
+    'Không khởi động được máy tính đám mây: máy chủ này không nạp được thư viện E2B. Hãy nói rõ với người dùng; chủ bản triển khai cần xem log của bản triển khai.',
   'The cloud computer could not be started: E2B is not answering right now. Try again in a few minutes; tell the user it is busy, not broken.':
     'Không khởi động được máy tính đám mây: E2B hiện không phản hồi. Hãy thử lại sau vài phút; nói với người dùng là dịch vụ đang bận, không phải bị hỏng.',
   '{0} does not exist in the machine — check the path with `ls`.': '{0} không có trong máy — kiểm tra đường dẫn bằng `ls`.',
@@ -1130,8 +1140,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Đây là cuộc trò chuyện ẩn danh, nên không tìm trong các cuộc trò chuyện trước từ đây.",
   "No provider serving this model promises not to store or train on what you send, so the strict privacy setting kept it from running. Pick another model, or set Provider privacy back to Standard in Settings → Memory.":
     "Không nhà cung cấp nào phục vụ mô hình này cam kết không lưu hay huấn luyện trên nội dung bạn gửi, nên chế độ riêng tư nghiêm ngặt đã chặn nó. Hãy chọn mô hình khác, hoặc đặt Quyền riêng tư với nhà cung cấp về Tiêu chuẩn trong Cài đặt → Bộ nhớ.",
-  "This conversation holds data from your Google account, and {0} may keep what it is sent or learn from it, so it was not sent there. Pick a model from OpenRouter, Anthropic or OpenAI.":
-    "Cuộc trò chuyện này có dữ liệu từ tài khoản Google của bạn, mà {0} có thể lưu lại hoặc dùng để học, nên nó không được gửi tới đó. Hãy chọn một mô hình của OpenRouter, Anthropic hoặc OpenAI.",
+  "This conversation holds data from your Google account, and {0} may keep what it is sent or learn from it, so it was not sent there. Pick a model on OpenRouter — Claude and GPT are there too.":
+    "Cuộc trò chuyện này có dữ liệu từ tài khoản Google của bạn, mà {0} có thể lưu lại hoặc dùng để học, nên nó không được gửi tới đó. Hãy chọn một mô hình trên OpenRouter — ở đó cũng có Claude và GPT.",
   "This conversation holds data from your Google account, so it goes only to providers that neither keep it nor train on it, and none serving {0} promises that. Pick another model.":
     "Cuộc trò chuyện này có dữ liệu từ tài khoản Google của bạn, nên chỉ được gửi tới nhà cung cấp không lưu và không huấn luyện trên nó — và không nhà cung cấp nào phục vụ {0} cam kết điều đó. Hãy chọn mô hình khác.",
   "Not saved: the note contains {0}. Notes never hold identity, passport, tax, bank or card numbers, criminal records or immigration status — not even when the user asks, because a note is read into every future conversation. Save the useful part without that detail if there is one, and tell the user plainly what was left out and why.":

@@ -13,6 +13,7 @@ export const MIN_MANUAL_COMPACT = 0.25;
 import { getPrefs } from '../settings.js';
 import { chosenSkills } from '../skills.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
+import { clientError } from '../util/clientError.js';
 
 /**
  * Lifted out of server/app.js — see the note on mountWorkspaceRoutes for why.
@@ -329,7 +330,7 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         // Ownership checked here, not trusted: the ids come from the browser.
         files = await verifyOwned(req.user.id, req.body?.attachments);
       } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({ error: clientError(err) });
       }
 
       // A photo on its own is a perfectly good message — "what is this?" is
@@ -395,7 +396,7 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         if (!message) return res.status(404).json({ error: 'Message not found' });
         res.json({ message });
       } catch (err) {
-        res.status(err.status || 400).json({ error: err.message });
+        res.status(err.status || 400).json({ error: clientError(err) });
       }
     }),
   );
@@ -469,7 +470,7 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
           context,
         });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );

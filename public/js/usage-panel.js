@@ -1,5 +1,6 @@
 import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
+import { rovingKeys } from './roving.js';
 import { weekDays, rowsFor, callsByDay, heatmap, heatmapBy, shareBy, pace, busiest, usualDay, standing, knownLimits, tightest, project } from './usage-math.js';
 
 /**
@@ -26,6 +27,8 @@ const CONSOLE = {
   google: 'https://aistudio.google.com/usage',
   orcarouter: 'https://www.orcarouter.ai/keys',
   openrouter: 'https://openrouter.ai/settings/credits',
+  anthropic: 'https://platform.claude.com/usage',
+  openai: 'https://platform.openai.com/usage',
 };
 const LIMITS_DOC = 'https://openrouter.ai/docs/api-reference/limits';
 
@@ -82,12 +85,13 @@ function bar({ label, sub = '', used, limit, note = '' }) {
 
 const segmented = (name, options, current) =>
   `<div class="usage__seg" role="tablist">${options
-    .map(([id, label]) => `<button type="button" role="tab" data-${name}="${id}" aria-selected="${id === current}">${escapeHtml(label)}</button>`)
+    .map(([id, label]) => `<button type="button" role="tab" data-${name}="${id}" aria-selected="${id === current}" tabindex="${id === current ? 0 : -1}">${escapeHtml(label)}</button>`)
     .join('')}</div>`;
 
 /** @param {HTMLElement} host @param {Deps} deps */
 export function createUsagePanel(host, deps) {
   const view = { scope: 'all', where: 'model', week: 'grid', weekTable: false, report: null, sessions: null, loadedAt: 0, error: '' };
+  rovingKeys(host, '[role="tab"]');
   /** The grid as drawn, for the line a pointed-at cell shows: its days, counts and what each was made of. */
   let cells = null;
 
@@ -120,7 +124,9 @@ export function createUsagePanel(host, deps) {
       }
     }
     if (scope !== 'all' && scope !== 'openrouter') {
-      out.push(`<p class="usage__note">${escapeHtml(t('usage.noAllowance', { provider: deps.meta()?.[scope]?.label || scope }))} <a href="${CONSOLE[scope] || '#'}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a></p>`);
+      // No console known, no link: '#' in a new tab opened a second copy of the app (UI-010).
+      const link = CONSOLE[scope] ? ` <a href="${CONSOLE[scope]}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a>` : '';
+      out.push(`<p class="usage__note">${escapeHtml(t('usage.noAllowance', { provider: deps.meta()?.[scope]?.label || scope }))}${link}</p>`);
     }
     return out.join('');
   }
@@ -323,9 +329,12 @@ export function createUsagePanel(host, deps) {
       }
       parts.push(`<div class="usage__actions"><a class="btn btn--ghost btn--small" href="https://openrouter.ai/settings/credits" target="_blank" rel="noopener">${escapeHtml(t('usage.buyCredits'))} ↗</a><span class="usage__muted">${escapeHtml(t('usage.autoTopUp'))}</span></div>`);
     }
-    const rows = rowsFor(view.report.hours, scope).filter((r) => new Date(r.at) >= new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-    const estimate = rows.reduce((n, r) => n + (r.cost || 0), 0);
-    parts.push(`<p>${escapeHtml(t('usage.estimate', { cost: money(estimate), n: count(rows.reduce((n, r) => n + r.calls, 0)) }))}</p><p class="usage__muted">${escapeHtml(t('usage.estimateHint'))}</p>`);
+    // The month as the server counts it (CODE-066): the hour rows reach back fifteen
+    // days, so summing them came out too low from the 16th on.
+    const month = scope === 'all' ? view.report.month : view.report.monthByProvider?.[scope];
+    const estimate = Number(month?.cost) || 0;
+    const calls = Number(month?.calls) || 0;
+    parts.push(`<p>${escapeHtml(t('usage.estimate', { cost: money(estimate), n: count(calls) }))}</p><p class="usage__muted">${escapeHtml(t('usage.estimateHint'))}</p>`);
     return parts.join('');
   }
 

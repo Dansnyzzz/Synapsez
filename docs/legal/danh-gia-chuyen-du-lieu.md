@@ -2,7 +2,7 @@
 
 > Bản mẫu do mã nguồn cung cấp (LAW-001), để bên vận hành một bản triển khai Synapsez lập hồ sơ theo Luật
 > Bảo vệ dữ liệu cá nhân số 91/2025/QH15 (hiệu lực 01/01/2026) và văn bản hướng dẫn. Phần mô tả kỹ thuật dưới
-> đây đúng với phần mềm tại phiên bản `privacy-2026-11-02`; phần pháp lý — biểu mẫu, thời hạn nộp, cơ quan tiếp
+> đây đúng với phần mềm tại phiên bản `privacy-2026-11-03`; phần pháp lý — biểu mẫu, thời hạn nộp, cơ quan tiếp
 > nhận, căn cứ điều khoản — **phải được luật sư đối chiếu với văn bản hiện hành**. Đây không phải tư vấn pháp lý.
 
 ## 1. Bên chuyển dữ liệu
@@ -31,7 +31,8 @@
 | Google (Gemini) | như trên | Mô hình Gemini; key gói miễn phí: Google có thể dùng để cải thiện sản phẩm | Hoa Kỳ / toàn cầu | *[điền]* |
 | OpenRouter và nhà cung cấp được định tuyến | như trên | Mô hình qua OpenRouter, Auto, mô hình miễn phí | Hoa Kỳ và nhiều nước | Chế độ Nghiêm ngặt chỉ định tuyến tới nhà cung cấp không lưu/không huấn luyện |
 | OrcaRouter | như trên | Mô hình qua OrcaRouter | *[điền]* | *[điền]* |
-| Vercel | Toàn bộ dữ liệu ứng dụng khi xử lý; máy tính đám mây | Luôn | Hoa Kỳ / vùng chọn | *[điền]* |
+| Vercel | Toàn bộ dữ liệu ứng dụng khi xử lý; máy tính đám mây dự phòng (Vercel Sandbox) | Luôn | Hoa Kỳ / vùng chọn | *[điền]* |
+| E2B | Máy tính đám mây: lệnh, tệp, mã Python, phiên trình duyệt đám mây | Khi dùng máy tính đám mây | Hoa Kỳ | *[điền]* |
 | Supabase | Cơ sở dữ liệu | Luôn | Vùng chọn | *[điền]* |
 | Neon | Bản sao cơ sở dữ liệu cũ (trước 19/10/2026) | Cho tới khi bên vận hành xoá | Vùng đã chọn khi đó | *[điền]* |
 | Exa, DuckDuckGo, Tavily, Brave, Google | Câu truy vấn tìm kiếm (kèm khoảng thời gian, trang web được giới hạn nếu có) | Khi trợ lý tìm kiếm web | Hoa Kỳ | *[điền]* |

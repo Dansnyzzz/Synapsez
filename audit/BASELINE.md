@@ -1,5 +1,32 @@
 # BASELINE — measured before any change
 
+## Vòng v4 — 2026-11-02, `main` @ `a7098d1`
+
+Đo trước khi sửa trong vòng v4. Cây có 3 mục untracked của chủ (`.env.example`, `.vscode/`, `Exa Deep Research-3.4.1-v1/`) và `.claude/AUDIT_RULES.md` (bản v4 chủ vừa lưu) — không ảnh hưởng gate.
+
+| Chỉ số | Cách đo | Giá trị | Nhãn |
+|---|---|---|---|
+| `npm run gate` (full) | chạy thật, log `scratchpad/gate-baseline.txt` | **exit 0, 329 s**, stamp `2026-11-02T05:02:33Z` trên `a7098d1` | [FACT] |
+| ✓ / ✗ trong log gate | đếm ký tự trong log | **5.611 ✓ / 0 ✗** (v3: 4.282 / 0) | [FACT] |
+| Skip | grep `skipped` | **3**, đều phụ thuộc môi trường: 2× "no bash here — this runs in CI on Linux", 1× "no working POSIX Python here" (chạy trên CI Ubuntu) | [FACT] |
+| lint | bước 1 | exit 0 | [FACT] |
+| test:hooks | bước 2 | **168/168** | [FACT] |
+| eval (scripted) | bước 3 | **15/15**, PROMPT_STAMP `bc830e108fcb` | [FACT] |
+| typecheck thật | bước 4 | **279 lỗi treo, trần 296** — baseline chưa khoá phần co (17 lỗi) | [FACT] log: "Type-check within baseline. 279 outstanding (ceiling 296)" |
+| `npm audit --omit=dev` | chạy thật | 3 moderate (e2b → glob 13.0.6 → minimatch 10.2.6), 0 high/critical | [FACT] |
+| `npm audit` (cả dev) | chạy thật | 9 moderate, 0 high/critical | [FACT] |
+| Dòng nguồn `server/ api/ worker/ public/js/ scripts/` (trừ vendor) | đếm | 236 file, 96.905 dòng | [FACT] |
+| `console.(log\|info\|debug)` trong server/api/worker/public | grep | 64 (37 `worker/index.js`, 17 `server/index.js` — dòng khởi động; 5 `server/email.js:222-226` chỉ khi **không** chạy trên Vercel, `:216-220`) | [FACT] |
+| `fetch(` trần trong `server/` | grep | 40 (connectors 14, search 7, models 5, google 4, …) — từng đường phải qua `safeFetch` hoặc host cố định; xem `DATAFLOW.md` v4 | [FACT] |
+| Chỗ có thể thực thi (child_process/exec/spawn/eval/new Function/vm) | grep | 44 dòng; xem `EXEC_MAP.md` | [FACT] |
+| `AbortSignal.timeout` / `new AbortController` | grep | 69 | [FACT] |
+| Sink HTML (`innerHTML=`/`insertAdjacentHTML`/`outerHTML=`) trong `public/js` | grep | 167 | [FACT] |
+| Literal model id `'(claude\|gpt\|gemini\|oN)-…'` | grep | 26 | [FACT] |
+| TODO/FIXME/XXX | grep | 3 | [FACT] |
+| Secret hardcode nghi vấn | regex hình dạng key, toàn cây HEAD | 0 thật (chỉ key giả trong test) | [FACT] |
+| Token/cache/chi phí/độ trễ thật mỗi request | cần key provider sống + phiên thật | [UNKNOWN] — như v3: không gửi dữ liệu thật ra ngoài để đo (vùng cấm §6); eval scripted dùng luồng giả | [UNKNOWN] |
+| Coverage c8 | `npm run coverage` | [UNKNOWN] chưa chạy vòng này (thêm một lượt test đầy đủ ~5 phút) | [UNKNOWN] |
+
 ## Vòng v3 — 2026-10-04, `main` @ `58b1ab4`, cây sạch
 
 Đo trước khi sửa bất cứ thứ gì trong vòng v3. Đây là cột Phase 3 phải so sánh.

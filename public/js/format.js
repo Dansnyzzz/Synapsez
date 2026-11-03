@@ -1,4 +1,4 @@
-import { t } from './i18n.js';
+import { t, currentLanguage } from './i18n.js';
 import { readCron } from './schedule-grammar.js';
 
 /**
@@ -9,6 +9,29 @@ import { readCron } from './schedule-grammar.js';
  * drift, which is the cost that makes duplication worth removing rather than
  * the duplication itself.
  */
+
+/** A moment on the person's own clock and calendar: "7:00 Th 3, 3 thg 11" / "Tue, Nov 3, 7:00 AM". */
+export const localMoment = (date) =>
+  new Intl.DateTimeFormat(currentLanguage() === 'vi' ? 'vi-VN' : 'en-US', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+
+/**
+ * Every instant the server wrote into a message (ISO, UTC), on the person's own
+ * clock (UX-023). The server's clock face is UTC on Vercel: "rate limited until
+ * 12:00:00 AM" sat beside "resets at 7:00" for the same moment.
+ *
+ * @param {string} text
+ */
+export const localTimes = (text) =>
+  String(text ?? '').replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z\b/g, (iso) => {
+    const at = new Date(iso);
+    return Number.isNaN(at.getTime()) ? iso : localMoment(at);
+  });
 
 /**
  * Bytes as something a person reads.
@@ -26,10 +49,33 @@ export const humanSize = (bytes) =>
   bytes == null
     ? ''
     : bytes >= 1024 * 1024
-      ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+      ? `${oneDecimal(bytes / 1024 / 1024)} MB`
       : bytes >= 1024
         ? `${Math.round(bytes / 1024)} KB`
         : `${bytes} B`;
+
+/** One decimal in the page's language: "1.2" in English, "1,2" in Vietnamese (UI-009). */
+export const oneDecimal = (x) =>
+  x.toLocaleString(currentLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+/** How long a step took: "30ms", "1.2s" in English; "30 ms", "1,2 giây" in Vietnamese. */
+export const tookText = (n) => (n < 1000 ? t('time.millis', { n }) : t('time.secs', { n: oneDecimal(n / 1000) }));
+
+/**
+ * How long a run has been at it, the way Claude Code counts: "12s", "1m 12s".
+ * The whole run, not the step in its title — Claude's clock runs on from one
+ * step's title to the next ("Reading the table 1m 1s", then "Checking the
+ * options 1m 12s"), and so does this one, through the thinking between them.
+ * Each unit is the translation's own ("1 phút 12 giây"); empty under a second.
+ */
+export function clockText(elapsed) {
+  const s = Math.floor(elapsed / 1000);
+  if (s < 1) return '';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h) return t('time.hourMin', { h, m });
+  return m ? t('time.minSec', { m, s: s % 60 }) : t('time.secs', { n: s });
+}
 
 /**
  * A count and its noun, as one translated phrase.

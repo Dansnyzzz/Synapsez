@@ -8,6 +8,7 @@ import { audit } from '../audit.js';
 import { log } from '../util/trace.js';
 import { MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage, stampNote } from '../memory.js';
 import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.js';
+import { clientError } from '../util/clientError.js';
 
 /**
  * The account's own data: what is remembered, what happened, and the right to
@@ -93,7 +94,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       try {
         key = noteName(req.params.key);
       } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({ error: clientError(err) });
       }
       const { text } = redactSecrets(String(req.body?.content ?? ''));
       if (!text.trim()) return res.status(400).json({ error: 'A note cannot be empty. Delete it instead.' });
@@ -102,9 +103,12 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       }
       const refusal = memoryRefusal(text, { allowSensitive: true });
       if (refusal) return res.status(400).json({ error: refusalMessage(refusal) });
-      // No earlier version to read: a person's own edit keeps none (PRV-006),
-      // so fetching the note first was a database round trip for nothing (CODE-057).
-      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: stampNote(text, { by: 'user' }) });
+      // A person's own edit keeps no earlier version (PRV-006). What it keeps is
+      // the "from Google" mark (PRV-025): an edited note made from someone's mail
+      // is still made from it, and without the mark it went to every provider.
+      const notes = (await getStore().getUserSetting(req.user.id, bucket)) || {};
+      const google = Object.hasOwn(notes, key) && notes[key]?.google === true;
+      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: stampNote(text, { by: 'user', google }) });
       res.json({ ok: true });
     }),
   );
@@ -144,7 +148,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       if (!bucket) return res.status(404).json({ error: 'No such project.' });
       const notes = (await getStore().getUserSetting(req.user.id, bucket)) || {};
       if (!Object.hasOwn(notes, req.params.key)) return res.status(404).json({ error: 'No such note.' });
-      await getStore().removeUserSettingKey(req.user.id, bucket, req.params.key);
+      await getStore().removeMemoryNote(req.user.id, bucket, req.params.key);
       res.json({ ok: true });
     }),
   );
@@ -266,7 +270,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
     wrap(async (req, res) => {
       const store = getStore();
       const userId = req.user.id;
-      const [prefs, buckets, skills, active, archived, tasks, workflows] = await Promise.all([
+      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData, research, mcpServers] = await Promise.all([
         getPrefs(userId),
         store.listMemoryBuckets(userId),
         store.listSkills(userId),
@@ -274,6 +278,12 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         store.listProjects(userId, { archived: true }),
         store.listTasks(userId),
         store.listWorkflows(userId),
+        store.exportFeedback(userId),
+        store.getUserSetting(userId, 'skillDraft'),
+        // What an artifact's page saved with window.storage (artifactStorage.js), by artifact (PRV-028).
+        store.getUserSetting(userId, 'artifactStorage'),
+        store.exportResearchRuns(userId),
+        store.listMcpServers(userId),
       ]);
 
       const stamp = new Date().toISOString().slice(0, 10);
@@ -311,6 +321,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
             // out stored text is not the whole of what is kept.
             by: note?.by || null,
             chatId: note?.chatId || null,
+            ...(note?.google === true ? { google: true } : {}),
             ...(typeof note?.previous?.content === 'string'
               ? {
                   previous: {
@@ -327,7 +338,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
       let count = 0;
       try {
-        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects });
+        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers });
       } catch (err) {
         /*
          * Half a JSON file that downloads as "complete" is worse than a failed
@@ -432,7 +443,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       try {
         await confirmIdentity(req.user, { password: req.body?.password, code: req.body?.code });
       } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({ error: clientError(err) });
       }
       const store = getStore();
       if (req.user.role === 'admin') {
@@ -452,20 +463,117 @@ export function mountAccountRoutes(api, admin, { wrap }) {
   );
 }
 
+/** A parameter or flag named for what it holds: a key, token, secret, password or credential. */
+const SECRET_NAME = /key|token|secret|passw(or)?d|auth|credential|signature|\bsig\b/i;
+
+/** An MCP server's address with its secrets blanked: a password in it, and any query value so named (PRV-031). */
+export function urlWithoutSecrets(raw) {
+  let text = raw;
+  try {
+    const url = new URL(raw);
+    // Whatever sits before the @ is a credential, a token used as the user name included (PRV-033).
+    if (url.username) url.username = 'redacted';
+    if (url.password) url.password = 'redacted';
+    for (const name of [...url.searchParams.keys()]) if (SECRET_NAME.test(name)) url.searchParams.set(name, '[redacted]');
+    // A fragment written as parameters (`#access_token=…`) is read the same way (PRV-033).
+    if (url.hash.includes('=')) {
+      const hash = new URLSearchParams(url.hash.slice(1));
+      for (const name of [...hash.keys()]) if (SECRET_NAME.test(name)) hash.set(name, '[redacted]');
+      url.hash = hash.toString();
+    }
+    text = url.toString();
+  } catch {
+    // Not an address after all: the known shapes below are still blanked.
+  }
+  return redactSecrets(text).text;
+}
+
+/** A header written `Name: value`, with the value blanked when the name says it is a secret. */
+const headerWithoutSecret = (text) => {
+  const header = /^([\w-]+):\s*\S/.exec(text);
+  return header && SECRET_NAME.test(header[1]) ? `${header[1]}: [redacted]` : null;
+};
+
+/**
+ * One argument's value, or a `--flag=`'s, with its secrets blanked: an address
+ * read as the server's own address is (mcp-remote takes it as an argument,
+ * PRV-034), a `Name: value` header named for a secret (PRV-033), and any known
+ * key shape.
+ */
+const valueWithoutSecrets = (text) =>
+  /^[a-z][\w+.-]*:\/\//i.test(text) ? urlWithoutSecrets(text) : (headerWithoutSecret(text) ?? redactSecrets(text).text);
+
+/**
+ * A server's arguments with secrets blanked, in this order (PRV-035): the
+ * value after a flag named for a secret (`--token …`), whatever it is unless
+ * it starts with `-` (read as the next flag) — an address included, whose
+ * secret may sit in its path; then a `--flag=value`,
+ * blanked whole when the flag is so named and read as a value otherwise
+ * (`--url=…`, `--header=…`); then the argument on its own.
+ */
+export function argsWithoutSecrets(args) {
+  return args.map((arg, i) => {
+    const text = String(arg);
+    const before = i > 0 ? String(args[i - 1]) : '';
+    if (/^--?[\w.-]+$/.test(before) && SECRET_NAME.test(before) && !text.startsWith('-')) return '[redacted]';
+    const flag = /^(--?[\w.-]+)=(.*)$/.exec(text);
+    if (flag) return SECRET_NAME.test(flag[1]) ? `${flag[1]}=[redacted]` : `${flag[1]}=${valueWithoutSecrets(flag[2])}`;
+    return valueWithoutSecrets(text);
+  });
+}
+
 /**
  * The export's body, a piece at a time through `write` — see the route.
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects }) {
+async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [] }) {
+  // The username, a skill's files, the feedback sent (PRV-014), the skill draft
+  // kept on the account (PRV-027), what artifacts' pages saved (PRV-028), the
+  // deep-research runs and the MCP servers added (PRV-029) are held too, so they
+  // are in it — a server's headers and environment, which hold its secrets, are
+  // not. Left out, and said so in the README: usage figures, sign-in sessions and
+  // the account's activity log, each shown in Settings, and keys and tokens.
   await write(
     `{"format":"synapsez-export","version":1,"exportedAt":${JSON.stringify(new Date().toISOString())},` +
-      `"account":${JSON.stringify({ name: user.name, email: user.email, createdAt: user.created_at })},` +
+      `"account":${JSON.stringify({ name: user.name, username: user.username ?? null, email: user.email, createdAt: user.created_at })},` +
       `"prefs":${JSON.stringify(prefs)},` +
       `"memory":${JSON.stringify(memory)},` +
-      `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled })))},` +
+      `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, files: Array.isArray(s.files) ? s.files : [] })))},` +
+      `"skillDraft":${JSON.stringify(skillDraft || null)},` +
+      `"artifactData":${JSON.stringify(artifactData || {})},` +
+      `"research":${JSON.stringify(research.map((r) => ({ chatId: r.chat_id, question: r.question, status: r.status, transcript: r.transcript, sources: r.sources, report: r.report, createdAt: r.created_at, completedAt: r.completed_at })))},` +
+      `"mcpServers":${JSON.stringify(
+        mcpServers.map((s) => ({
+          name: s.name,
+          transport: s.config?.transport ?? null,
+          command: s.config?.command ?? null,
+          // An address or an argument can carry a token: a known key shape, or any
+          // value named as a key, token, secret or password (PRV-031) is blanked.
+          args: argsWithoutSecrets(Array.isArray(s.config?.args) ? s.config.args : []),
+          url: s.config?.url ? urlWithoutSecrets(String(s.config.url)) : null,
+          enabled: s.enabled,
+          createdAt: s.created_at,
+        })),
+      )},` +
       `"scheduledTasks":${JSON.stringify(tasks.map((t) => ({ title: t.title, prompt: t.prompt, cron: t.cron, timezone: t.tz, enabled: t.enabled, projectId: t.project_id })))},` +
       `"workflows":${JSON.stringify(workflows.map((w) => ({ title: w.title, steps: w.steps, cron: w.cron, enabled: w.enabled })))},` +
+      `"feedback":${JSON.stringify(
+        feedback.map((f) => ({
+          topic: f.topic_other || f.topic,
+          kind: f.kind,
+          issue: f.issue ?? null,
+          body: f.body,
+          affect: f.affect,
+          frequency: f.frequency,
+          workedBefore: f.worked_before,
+          chatTitle: f.chat_title,
+          transcript: f.transcript ?? null,
+          answer: f.answer ?? null,
+          client: f.client || {},
+          createdAt: f.created_at,
+        })),
+      )},` +
       '"projects":[',
   );
   for (const [i, project] of projects.entries()) {

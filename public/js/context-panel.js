@@ -1,4 +1,4 @@
-import { t } from './i18n.js';
+import { currentLanguage, t } from './i18n.js';
 
 /**
  * What the context window is spent on, drawn in the gauge's popover (owner,
@@ -17,12 +17,14 @@ import { t } from './i18n.js';
 /** The parts in the order they sit on the bar and in the list. */
 const PARTS = ['messages', 'mcp', 'tools', 'system', 'skills', 'memory', 'project'];
 
-/** 20,900 → "20.9K", 1,000,000 → "1M", 163 → "163". */
+/** One decimal at most, in the page's language: 20.9 in English, 20,9 in Vietnamese. */
+const oneDecimal = (x) => x.toLocaleString(currentLanguage(), { maximumFractionDigits: 1 });
+
+/** 20,900 → "20.9K", 999,950 → "1M" (not "1000K"), 163 → "163". */
 export function fmtTokens(value) {
   const n = Math.max(0, Math.round(Number(value) || 0));
-  const short = (x, unit) => `${Number(x.toFixed(1))}${unit}`;
-  if (n >= 1_000_000) return short(n / 1_000_000, 'M');
-  if (n >= 1000) return short(n / 1000, 'K');
+  if (n >= 999_950) return `${oneDecimal(n / 1_000_000)}M`;
+  if (n >= 1000) return `${oneDecimal(n / 1000)}K`;
   return String(n);
 }
 
@@ -30,7 +32,7 @@ export function fmtTokens(value) {
 function pct(part, whole) {
   if (!whole || !part) return '0%';
   const value = (part / whole) * 100;
-  return value < 0.1 ? '<0.1%' : `${Number(value.toFixed(1))}%`;
+  return value < 0.1 ? `<${oneDecimal(0.1)}%` : `${oneDecimal(value)}%`;
 }
 
 function node(tag, className, text) {

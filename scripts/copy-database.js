@@ -9,10 +9,17 @@
  * A row the target already has is left as it is, so running it twice is safe
  * and a copy cut short can simply be run again. Nothing in the source changes.
  * An account the target already has under the same email takes the old
- * account's rows rather than gaining a twin — see `merged` below.
+ * account's rows rather than gaining a twin — but only for an email the owner
+ * names with `--merge a@x,b@y` (SEC-057); see `merged` below.
  *
  * Needs both databases reachable: a Neon project whose compute hours have run
  * out answers 402 until its next billing period, or until it is upgraded.
+ *
+ * Run it twice when the target deployment is live. Rows whose parents arrive
+ * later in the order — a deep-research run before its conversation, a file
+ * before its project's — can be tidied away by that deployment's hourly sweep
+ * as orphans in between (pruneResearchRuns, pruneUnreachableFiles); the second
+ * run copies them again, and nothing else twice.
  */
 import { pathToFileURL } from 'node:url';
 import { createPgStore } from '../server/store/pg.js';
@@ -53,6 +60,20 @@ export function foreignKeyOrder(tables, links) {
   return { order: [...order, ...cycle], cycle };
 }
 
+/** An email as both databases are compared by it. */
+const emailKey = (email) => String(email ?? '').trim().toLowerCase();
+
+/** Why the copy stopped at accounts nobody vouched for, and the command that goes on. */
+function mergeRefusal(emails) {
+  const list = [...new Set(emails)].sort();
+  return (
+    `${list.length} account(s) in the old database already exist on the new one under the same email: ${list.join(', ')}. ` +
+    'Signing up does not prove an email, so an account there may belong to someone else. ' +
+    'Check each one is the same person (sign in to it, or look at when it was made), then run again with ' +
+    `--merge ${list.join(',')} — nothing has been copied yet.`
+  );
+}
+
 /** A value as a parameter: JSON columns go as JSON text, since an array would otherwise be sent as a Postgres array. */
 const asParam = (value, type) => (value != null && (type === 'json' || type === 'jsonb') ? JSON.stringify(value) : value);
 
@@ -65,11 +86,13 @@ const sizeOf = (row) => {
 /**
  * @param {{ query: Function }} from  a driver: `query(text, params)` → rows
  * @param {{ query: Function }} to
- * @param {{ say?: (line: string) => void }} [options]
+ * @param {{ say?: (line: string) => void, merge?: Iterable<string> }} [options]
+ *   `merge`: the emails whose old account may join the target's account of the same email
  * @returns {Promise<Record<string, number>>} rows copied per table
  */
-export async function copyDatabase(from, to, { say = console.log } = {}) {
+export async function copyDatabase(from, to, { say = console.log, merge = [] } = {}) {
   await createPgStore(to).init();
+  const vouched = new Set([...merge].map(emailKey));
 
   const tablesOf = async (db) =>
     (
@@ -114,19 +137,28 @@ export async function copyDatabase(from, to, { say = console.log } = {}) {
    * The old account is not added beside it; its rows go to the one there, and
    * where both have the same row (a setting under the same name) the target's
    * stays, as everything else already there does.
+   *
+   * Only for an email the owner named (SEC-057). Signing up does not prove an
+   * address, so "the account with this email" on the new database may be
+   * whoever registered it first — and a merge would hand them every old
+   * conversation, note, key and Google grant. Any other email on both sides
+   * stops the copy before a row is written.
    */
-  const onTarget = new Map(
-    (await to.query('SELECT id, email FROM users')).map((r) => [String(r.email).toLowerCase(), r.id]),
-  );
+  const onTarget = new Map((await to.query('SELECT id, email FROM users')).map((r) => [emailKey(r.email), r.id]));
   /** @type {Map<string, string>} old account id → the account it merges into */
   const merged = new Map();
+  const unvouched = [];
   for (const r of await from.query('SELECT id, email FROM users')) {
-    const there = onTarget.get(String(r.email).toLowerCase());
-    if (there && there !== r.id) {
-      merged.set(r.id, there);
-      say(`  ${r.email}: merged into the account that already has this email`);
+    const there = onTarget.get(emailKey(r.email));
+    if (!there || there === r.id) continue;
+    if (!vouched.has(emailKey(r.email))) {
+      unvouched.push(emailKey(r.email));
+      continue;
     }
+    merged.set(r.id, there);
+    say(`  ${r.email}: merged into the account that already has this email`);
   }
+  if (unvouched.length) throw new Error(mergeRefusal(unvouched));
   /** Columns that hold an account's id: every foreign key to `users`, and any `user_id`. */
   const accountColumns = new Map();
   const holds = (table, column) => {
@@ -219,7 +251,7 @@ export async function copyDatabase(from, to, { say = console.log } = {}) {
  * (those merge by email rather than arriving twice). The step to run first,
  * the morning Neon's quota resets (owner, 2026-11-01).
  *
- * @returns {Promise<{ tables: Record<string, number>, accounts: number, merging: number }>}
+ * @returns {Promise<{ tables: Record<string, number>, accounts: number, merging: number, collisions: string[] }>}
  */
 export async function checkCopy(from, to) {
   const tables = (
@@ -227,9 +259,10 @@ export async function checkCopy(from, to) {
   ).map((r) => r.table_name);
   const counts = {};
   for (const table of tables) counts[table] = (await from.query(`SELECT COUNT(*)::int AS n FROM ${ident(table)}`))[0]?.n ?? 0;
-  const emails = async (db) => new Set((await db.query('SELECT lower(email) AS email FROM users').catch(() => [])).map((r) => r.email));
+  const emails = async (db) => new Set((await db.query('SELECT email FROM users').catch(() => [])).map((r) => emailKey(r.email)));
   const [old, now] = await Promise.all([emails(from), emails(to)]);
-  return { tables: counts, accounts: old.size, merging: [...old].filter((e) => now.has(e)).length };
+  const collisions = [...old].filter((e) => now.has(e)).sort();
+  return { tables: counts, accounts: old.size, merging: collisions.length, collisions };
 }
 
 /** Why a database would not answer, in words that say what to do — Neon's quota above all. */
@@ -255,7 +288,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   const fromUrl = argument('from') || process.env.COPY_FROM_URL;
   const toUrl = argument('to') || process.env.COPY_TO_URL;
   if (!fromUrl || !toUrl) {
-    console.error('Usage: npm run db:copy -- --from "<old database URL>" --to "<new database URL>" [--check]');
+    console.error('Usage: npm run db:copy -- --from "<old database URL>" --to "<new database URL>" [--check] [--merge a@x,b@y]');
     process.exit(2);
   }
   if (fromUrl === toUrl) {
@@ -268,10 +301,14 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   if (process.argv.includes('--check')) {
     console.log(`\n  Checking ${new URL(fromUrl).host} → ${new URL(toUrl).host} (nothing is written)\n`);
     try {
-      const { tables, accounts, merging } = await checkCopy(from, to);
+      const { tables, accounts, collisions } = await checkCopy(from, to);
       for (const [table, n] of Object.entries(tables)) console.log(`  ${table}: ${n}`);
-      console.log(`\n  ${accounts} account(s) in the old database; ${merging} already on the new one, by email — those merge.`);
-      console.log('  Run the same command without --check to copy.\n');
+      console.log(`\n  ${accounts} account(s) in the old database; ${collisions.length} already on the new one, by email.`);
+      if (collisions.length) {
+        console.log(`  Those merge only if you name them: ${collisions.join(', ')}`);
+        console.log('  Sign-up does not prove an email — check each is the same person first.');
+        console.log(`  Then run without --check, adding --merge ${collisions.join(',')}\n`);
+      } else console.log('  Run the same command without --check to copy.\n');
     } catch (err) {
       console.error(`\n  Could not read it: ${whyUnreachable(err)}\n`);
       process.exitCode = 1;
@@ -283,7 +320,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   }
   console.log(`\n  Copying ${new URL(fromUrl).host} → ${new URL(toUrl).host}\n`);
   try {
-    const copied = await copyDatabase(from, to);
+    const merge = String(argument('merge') || '').split(',').map(emailKey).filter(Boolean);
+    const copied = await copyDatabase(from, to, { merge });
     const total = Object.values(copied).reduce((a, b) => a + b, 0);
     console.log(`\n  Done: ${total} rows in ${Object.keys(copied).length} tables.\n`);
   } catch (err) {

@@ -379,13 +379,26 @@ function blocksToSlides(blocks, title) {
   return slides.length ? slides : [{ title: title || 'Untitled', bullets: [] }];
 }
 
+/**
+ * A cell a spreadsheet would run as a formula, made text (SEC-065).
+ *
+ * The rows often come from the web, and `=HYPERLINK(…)` or a DDE call opened in
+ * Excel is a formula, not a word. OWASP's advice: a leading `'` for a cell that
+ * starts with `=`, `+`, `-`, `@`, a tab or a carriage return — except a plain
+ * number, so "-5" and "+3.5%" stay numbers.
+ */
+function notAFormula(text) {
+  if (!/^[=+\-@\t\r]/.test(text) || /^[+-]?\d[\d.,]*%?$/.test(text)) return text;
+  return `'${text}`;
+}
+
 /** Rows → CSV, quoted the way every spreadsheet expects to read it back. */
 function toCsv(rows) {
   return rows
     .map((row) =>
       row
         .map((value) => {
-          const text = value == null ? '' : String(value);
+          const text = notAFormula(value == null ? '' : String(value));
           return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
         })
         .join(','),

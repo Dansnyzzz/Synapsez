@@ -251,6 +251,12 @@ section('memory tools obey the guard and the account');
     check('  and keeps no copy of the text they removed (PRV-006)', !typed.previous && !JSON.stringify(typed).includes('diabetes'), JSON.stringify(typed));
     await alice.call('PUT', '/api/memory/account/language', { content: 'Answer in Vietnamese.' });
     check('  nor of their own earlier wording', !(await store.getUserSetting(aliceId, 'memory')).language.previous);
+    // PRV-025: a note made from someone's mail stays marked as such when they edit it.
+    await store.mergeUserSetting(aliceId, 'memory', { trip: memory.stampNote('Flight VN123 on 4 Dec', { by: 'assistant', google: true }) });
+    await alice.call('PUT', '/api/memory/account/trip', { content: 'Flight VN123 on 5 Dec' });
+    const trip = (await store.getUserSetting(aliceId, 'memory')).trip;
+    check('a note from Google data keeps its mark when the person edits it (PRV-025)', trip.google === true && trip.by === 'user' && trip.content === 'Flight VN123 on 5 Dec', JSON.stringify(trip));
+    await store.removeUserSettingKey(aliceId, 'memory', 'trip');
     check('an unknown note cannot be undone', (await alice.call('POST', '/api/memory/account/nope/undo')).status === 404);
   }
   const proto = await run('memory_delete', { key: 'toString' });
@@ -419,6 +425,12 @@ section('what came from Google is read only where Google data already is (Limite
   const breakdown = opened.body?.context?.breakdown;
   check('an opened conversation carries what its window is spent on', breakdown?.parts?.system > 0 && breakdown.parts.tools > breakdown.parts.system && breakdown.details?.memory?.rows?.[0]?.name === 'tea', JSON.stringify(breakdown)?.slice(0, 200));
   check('  and not the raw column, which is the gauge\'s, not the conversation\'s', opened.body?.chat && !('context_parts' in opened.body.chat));
+  // PRV-024: a deleted note's name leaves the breakdown at once, not at the next step.
+  await store.mergeUserSetting(aliceId, 'memory', { tea: memory.stampNote('Green tea, no sugar.', { by: 'user' }) });
+  await store.setChatContextParts(aliceId, zoo, { system: 3000, memory: 80, details: { memory: { rows: [{ name: 'tea', tokens: 50 }, { name: 'kept', tokens: 30 }] } } });
+  const removed = await alice.call('DELETE', '/api/memory/account/tea');
+  const after = (await alice.call('GET', `/api/chats/${zoo}`)).body?.context?.breakdown?.details?.memory?.rows?.map((r) => r.name);
+  check("deleting a note takes its name out of every conversation's breakdown (PRV-024)", removed.status === 200 && JSON.stringify(after) === '["kept"]', JSON.stringify(after));
   if (prior) await alice.call('PUT', '/api/prefs', { defaultModel: prior });
 
   // Out of the way of the sections below, which count notes and conversations.
@@ -443,12 +455,15 @@ section('retention deletes old conversations, never pinned ones');
   await store.importChat(aliceId, { id: 'old-1', title: 'old', createdAt: long, updatedAt: long }, [{ id: 'old-1-m', role: 'user', text: 'from long ago' }]);
   await store.importChat(aliceId, { id: 'old-2', title: 'old pinned', createdAt: long, updatedAt: long }, [{ id: 'old-2-m', role: 'user', text: 'keep me' }]);
   await store.updateChat(aliceId, 'old-2', { pinned: true });
+  // PRV-030/PRV-032: the old conversation's deep research goes with it.
+  await store.saveResearchRun(aliceId, { id: 'rr-old-1', chatId: 'old-1', question: 'OLD-QUESTION', status: 'complete', transcript: [], sources: [], report: 'r' });
   const accounts = await store.listRetentionAccounts();
   check('the sweep finds accounts that set a period', accounts.some((a) => a.userId === aliceId && a.days === 30));
   check('a period of 0 deletes nothing at all', (await store.deleteChatsOlderThan(aliceId, 0)) === 0 && !!(await store.getChat(aliceId, 'old-1')));
   check("another account's period deletes nothing here", (await store.deleteChatsOlderThan(bobId, 30)) === 0 && !!(await store.getChat(aliceId, 'old-1')));
   const removed = await store.deleteChatsOlderThan(aliceId, 30);
   check('an old conversation goes', removed === 1 && !(await store.getChat(aliceId, 'old-1')), `${removed}`);
+  check('  and its deep research with it (PRV-030)', !(await store.getResearchRun(aliceId, 'rr-old-1')));
   check('  a pinned one stays', !!(await store.getChat(aliceId, 'old-2')));
   check('  and recent ones stay', !!(await store.getChat(aliceId, normalId)));
   const { __retention } = await import('../server/scheduler.js');
@@ -558,6 +573,11 @@ section('usage: what each provider reports, and what Synapsez counted');
   check('  signed out, there is no report', (await jar().call('GET', '/api/usage/report')).status === 401);
   const lite = await alice.call('GET', '/api/usage/report?part=limits');
   check('  and ?part=limits is the same report without the hours', lite.status === 200 && Array.isArray(lite.body?.hours) && lite.body.hours.length === 0 && lite.body.month?.calls === route.body?.month?.calls, `${lite.status}`);
+  // CODE-066: the page's month line, for one provider, was summed from fifteen days of hours.
+  const byProvider = route.body?.monthByProvider || {};
+  check("the month, by provider, as the server counts it — not summed from the hours (CODE-066)",
+    byProvider.openrouter?.calls === 1 && byProvider.google?.calls === 1 && byProvider.google.cost > 0.001 && byProvider.google.cost < 0.0012 && !byProvider.orcarouter,
+    JSON.stringify(byProvider));
 
   // Live figures: asked of the account's own keys, never of the deployment's.
   const saved = await alice.call('POST', '/api/providers/openrouter/keys', { apiKey: 'sk-or-v1-own-key-for-usage-test-0001' });
@@ -722,6 +742,79 @@ section('export is the whole account, streamed, without secrets');
   const bobs = await bob.call('GET', '/api/account/export');
   check("another account's export holds none of this one", !bobs.text.includes('zebra'));
   globalThis.exported = res.body;
+
+  // PRV-014: everything else the account holds — a skill's files, the feedback
+  // it sent with the conversation copy and the answer it was about, its username.
+  const aliceId = (await alice.call('GET', '/api/bootstrap')).body.user.id;
+  await store.saveSkill(aliceId, { id: 'sk-export', name: 'export-check', description: 'd', instructions: 'i', files: [{ name: 'template.md', text: 'TEMPLATE-BODY' }] });
+  await store.createFeedback(aliceId, { id: 'fb-export', topic: 'answers', kind: 'bug', body: 'FEEDBACK-BODY', affect: 'some', chatTitle: 'T', transcript: [{ role: 'user', text: 'COPY-TEXT' }], client: {}, issue: 'wrong', answer: { replies: ['ANSWER-COPY'] } });
+  await store.updateUser(aliceId, { username: 'alice_export' });
+  // PRV-027: the skill draft is kept on the account (Create a skill saves it there), not only in the browser.
+  await alice.call('PUT', '/api/skills/draft', { name: 'half-written', description: 'd', instructions: 'DRAFT-BODY', files: [] });
+  const whole = (await alice.call('GET', '/api/account/export')).body;
+  const skill = whole.skills.find((s) => s.name === 'export-check');
+  const sent = whole.feedback?.find((f) => f.body === 'FEEDBACK-BODY');
+  check("the export carries a skill's files (PRV-014)", skill?.files?.[0]?.text === 'TEMPLATE-BODY', JSON.stringify(skill?.files));
+  check('  the feedback sent, its conversation copy and the answer it was about', sent?.issue === 'wrong' && JSON.stringify(sent?.transcript).includes('COPY-TEXT') && JSON.stringify(sent?.answer).includes('ANSWER-COPY'), JSON.stringify(sent));
+  check('  and the username', whole.account.username === 'alice_export', JSON.stringify(whole.account));
+  check('  and the skill draft kept on the account (PRV-027)', whole.skillDraft?.instructions === 'DRAFT-BODY', JSON.stringify(whole.skillDraft)?.slice(0, 160));
+  // PRV-028: what an artifact's page saved with window.storage.
+  await store.mergeUserSetting(aliceId, 'artifactStorage', { 'art-export': { score: 'ARTIFACT-VALUE' } });
+  const withArtifact = (await alice.call('GET', '/api/account/export')).body;
+  check("  and what an artifact's page saved (PRV-028)", withArtifact.artifactData?.['art-export']?.score === 'ARTIFACT-VALUE', JSON.stringify(withArtifact.artifactData)?.slice(0, 160));
+  await store.removeUserSettingKey(aliceId, 'artifactStorage', 'art-export');
+  // PRV-029: deep-research runs and the MCP servers added — the latter without the secrets they hold.
+  await store.saveResearchRun(aliceId, { id: 'rr-export', question: 'RESEARCH-QUESTION', status: 'complete', transcript: [], sources: [{ url: 'https://example.com/a' }], report: 'RESEARCH-REPORT' });
+  await store.saveMcpServer(aliceId, { id: 'mcp-export', name: 'export-server', config: { transport: 'http', url: 'https://mcp.example.com/?token=sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX', headersCipher: 'HEADERS-CIPHER', envCipher: 'ENV-CIPHER' } });
+  const withMore = await alice.call('GET', '/api/account/export');
+  const run = withMore.body.research?.find((r) => r.question === 'RESEARCH-QUESTION');
+  const server = withMore.body.mcpServers?.find((s) => s.name === 'export-server');
+  check('  and the deep-research runs (PRV-029)', run?.report === 'RESEARCH-REPORT' && run?.sources?.[0]?.url === 'https://example.com/a', JSON.stringify(run)?.slice(0, 160));
+  check('  and the MCP servers added, with no header, environment or token-shaped value', server?.url?.startsWith('https://mcp.example.com/') && !/HEADERS-CIPHER|ENV-CIPHER|sk-ant-api03-ABCDEF/.test(withMore.text), JSON.stringify(server));
+  await store.deleteMcpServer(aliceId, 'mcp-export');
+  // PRV-031: a token of no known shape, named as one in the address or the arguments.
+  const { urlWithoutSecrets, argsWithoutSecrets } = await import('../server/routes/account.js');
+  const cleanUrl = urlWithoutSecrets('https://user:hunter2@mcp.example.com/sse?token=plainvalue111&mode=fast');
+  const cleanArgs = argsWithoutSecrets(['--api-key', 'plainvalue222', '--token=plainvalue333', '--verbose', 'run']).join(' ');
+  check('  a generic token in an MCP address or its arguments is blanked, the rest kept (PRV-031)',
+    !/plainvalue|hunter2/.test(cleanUrl + cleanArgs) && /mode=fast/.test(cleanUrl) && /--verbose run$/.test(cleanArgs), `${cleanUrl} · ${cleanArgs}`);
+  // PRV-033: a header passed as an argument, a token as the address's user name, one in its fragment.
+  const headerArgs = argsWithoutSecrets(['--header', 'X-API-Key: plainvalue444', '--header', 'Authorization: Bearer plainvalue555', '--header', 'Accept: text/event-stream']).join(' ');
+  // `key=` in the fragment, which redactSecrets does not know on its own (the fragment branch's own check).
+  const userUrl = urlWithoutSecrets('https://plainvalue666@mcp.example.com/sse#key=plainvalue777&view=1');
+  check('  as is a header given as an argument, a token as the user name or in the fragment (PRV-033)',
+    !/plainvalue/.test(headerArgs + userUrl) && /Accept: text\/event-stream/.test(headerArgs) && /^https:\/\/redacted@mcp\.example\.com\/sse#/.test(userUrl), `${headerArgs} · ${userUrl}`);
+  // PRV-034: mcp-remote takes the address itself as an argument, and a header as --header=….
+  const remoteArgs = argsWithoutSecrets(['mcp-remote', 'https://plainvalue888@mcp.example.com/sse?token=plainvalue999&mode=fast', '--header=X-API-Key: plainvalue000', '--header=Accept: text/plain']).join(' ');
+  check('  and an address or a --header=… given as an argument is read the same way (PRV-034)',
+    !/plainvalue/.test(remoteArgs) && /^mcp-remote https:\/\/redacted@mcp\.example\.com\/sse\?/.test(remoteArgs) && /mode=fast/.test(remoteArgs) && /--header=Accept: text\/plain$/.test(remoteArgs), remoteArgs);
+  // PRV-035: an address after a secret-named flag is blanked whole (its secret may be its path), and --url=… is read as one.
+  const orderArgs = argsWithoutSecrets(['--token', 'https://hooks.example.com/services/T0/B0/plainvalue121', '--url=https://plainvalue131@mcp.example.com/sse?token=plainvalue141&mode=fast']).join(' ');
+  check('  in the right order: the value after --token whatever it is, and an address given as --url=… (PRV-035)',
+    !/plainvalue/.test(orderArgs) && /^--token \[redacted\] --url=https:\/\/redacted@mcp\.example\.com\/sse\?/.test(orderArgs) && /mode=fast/.test(orderArgs), orderArgs);
+  // PRV-030: an incognito conversation's deep research is never part of the record, and a
+  // deleted conversation takes its research with it.
+  await store.createChat(aliceId, { id: 'c-incog-rr', title: 'secret', incognito: true });
+  await store.saveResearchRun(aliceId, { id: 'rr-incog', chatId: 'c-incog-rr', question: 'INCOGNITO-QUESTION', status: 'complete', transcript: [], sources: [], report: 'INCOGNITO-REPORT' });
+  await store.createChat(aliceId, { id: 'c-gone-rr', title: 'to delete' });
+  await store.saveResearchRun(aliceId, { id: 'rr-gone', chatId: 'c-gone-rr', question: 'DELETED-QUESTION', status: 'complete', transcript: [], sources: [], report: 'DELETED-REPORT' });
+  const beforeDelete = (await alice.call('GET', '/api/account/export')).text;
+  await store.deleteChat(aliceId, 'c-gone-rr');
+  check('  but not deep research from an incognito conversation (PRV-030)', !/INCOGNITO-QUESTION|INCOGNITO-REPORT/.test(beforeDelete) && /DELETED-QUESTION/.test(beforeDelete));
+  check('  and deleting a conversation deletes its deep research', !(await store.getResearchRun(aliceId, 'rr-gone')));
+  const swept = await store.sweepIncognito(0);
+  check('  as the incognito sweep does', swept >= 1 && !(await store.getResearchRun(aliceId, 'rr-incog')), String(swept));
+  // PRV-032: a run whose conversation is gone — left from before, or saved just after a delete.
+  await store.saveResearchRun(aliceId, { id: 'rr-orphan', chatId: 'c-no-such-chat', question: 'ORPHAN-QUESTION', status: 'complete', transcript: [], sources: [], report: 'ORPHAN-REPORT' });
+  const withOrphan = (await alice.call('GET', '/api/account/export')).text;
+  check('  nor research whose conversation is gone (PRV-032)', !/ORPHAN-QUESTION/.test(withOrphan) && /RESEARCH-QUESTION/.test(withOrphan));
+  await store.createChat(aliceId, { id: 'c-kept-rr', title: 'kept' });
+  await store.saveResearchRun(aliceId, { id: 'rr-kept', chatId: 'c-kept-rr', question: 'KEPT-QUESTION', status: 'complete', transcript: [], sources: [], report: 'r' });
+  await store.pruneResearchRuns(90);
+  check('  and the research sweep removes such a run, keeping one with no conversation and one whose conversation is there',
+    !(await store.getResearchRun(aliceId, 'rr-orphan')) && !!(await store.getResearchRun(aliceId, 'rr-export')) && !!(await store.getResearchRun(aliceId, 'rr-kept')));
+  await store.deleteChat(aliceId, 'c-kept-rr');
+  await store.deleteSkill(aliceId, 'sk-export');
 
   // More than one page, all created in the same instant: the cursor must neither
   // skip nor repeat a conversation at a page boundary.

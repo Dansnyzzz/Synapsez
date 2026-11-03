@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
-import { getPrefs, usesSharedKey, providerStatus } from './settings.js';
+import { getPrefs, getPauses, usesSharedKey, providerStatus } from './settings.js';
 import { checkQuota, record as recordUsage, turnTokenLimit } from './usage.js';
 import { normaliseQuestions, askLayout } from './tools/askOptions.js';
 import { streamCompletion } from './providers/index.js';
@@ -30,9 +30,14 @@ import { sandboxConfigured } from './sandbox.js';
 import { lendEyes } from './vision.js';
 import { memoryForTurn, withheldTools } from './memory.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
+import { withoutStrayTags } from '../public/js/model-text.js';
+import { checkAnswer, textsIn } from './qualityGate.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
+
+/** A model that costs nothing to call — tagged free, or priced at zero both ways (as `usableDefaultModel` in app.js reads it). */
+const isFreeEntry = (entry) => !!entry?.tags?.includes('free') || (entry?.price?.in === 0 && entry?.price?.out === 0);
 
 /**
  * There is one mode.
@@ -199,10 +204,11 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
   }
 
   // The model, asked whether it would know about a server added mid-conversation,
-  // guessed "only in a new conversation" — the opposite of how this works.
+  // guessed "only in a new conversation" — the opposite of how this works. Sent
+  // every turn to everyone, so kept short (TOK-003).
   lines.push(
     '',
-    'What is connected — MCP servers, Google and the other connectors — is read fresh for every message and checked again before each of your steps. Something the user connects or switches off during this conversation is in (or out of) your tools from your next step; a new conversation is never needed.',
+    'Connectors and MCP servers are re-read before each of your steps: one added or switched off mid-conversation is in or out of your tools from the next step — a new conversation is never needed.',
   );
 
   /**
@@ -1264,12 +1270,41 @@ export async function connectionsSignature(userId) {
 }
 
 /**
+ * The quality gate's sources from what a step sent (QC-003): the system prompt
+ * (memory notes, project instructions) and the transcript as sent, with the
+ * text of attached files in it. Never the assistant's own earlier words
+ * (QC-004) — an address it wrote in a step that ended in a tool call, or in an
+ * example, is no source for its answer — nor a folded conversation's summary,
+ * handed over as the user's but written from those words too (QC-006); what
+ * the folded turns really held is read from the stored messages. The project's
+ * passages count on their own (QC-007): they ride on the last question, which
+ * after a fold can be that summary.
+ *
+ * @param {{ system?: string, grounded?: any[], outgoing?: any[], passages?: string, messages?: any[] }} step
+ * @returns {string[]}
+ */
+export function gateSources({ system, grounded = [], outgoing = [], passages = '', messages = [] }) {
+  const summaries = new Set(messages.filter((m) => m.role === 'summary').map((m) => m.id));
+  const notOwn = (m) => m?.role !== 'assistant' && !summaries.has(m?.id);
+  return textsIn({ system, passages, grounded: grounded.filter(notOwn), outgoing: outgoing.filter(notOwn) });
+}
+
+// A turn's model calls end by this long after it began (HAR-015): a Vercel
+// function lives 300 s, and the answer still has to be stored after the last
+// call. A provider's own request budget (HAR-012) restarts with every call, so
+// on its own it let a stall on a late step, or the move to Auto after one, run
+// past the function's life.
+const TURN_BUDGET_MS = 270_000;
+
+/**
  * @param stream  the provider call, injectable so the loop can be driven in a
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
 export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion }) {
   const store = getStore();
+  // This turn's deadline on this function, handed to every model call (HAR-015).
+  const deadline = Date.now() + TURN_BUDGET_MS;
   const prefs = await getPrefs(userId);
   /** Personal details masked before the provider sees them (PRV-003): files go as their text. */
   const masking = prefs.maskPersonal === true;
@@ -1390,8 +1425,11 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // Re-read mid-turn when what is plugged in changes — see `refreshConnections`.
   let connectors = connectorsAtStart;
   let mcp = mcpAtStart;
-  // What this conversation may not be given — see `withheldTools`.
-  const withhold = withheldTools({ chat, prefs });
+  // What this conversation may not be given — see `withheldTools`. Recomputed
+  // when the person pauses something mid-turn (PRV-021, `refreshConnections`).
+  let withhold = withheldTools({ chat, prefs });
+  const pausesOf = (p) => JSON.stringify([p.connectorsOff || [], p.pluginsOff || [], p.memory !== false, p.chatSearch !== false, p.connectorSearch !== false]);
+  let pausesSeen = pausesOf(prefs);
   const workerOnline = worker.online;
   /**
    * The account's setting, unless this particular run was given one.
@@ -1438,14 +1476,24 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * read the servers keeps the list it had and tries again next step.
    */
   const refreshConnections = async () => {
-    const now = await connectionsSignature(userId).catch(() => null);
-    if (!now || now === connectionsSeen) return;
+    // Also what the person paused in the + menu (PRV-021): that lives in the
+    // account's settings, not in what is plugged in, so the fingerprint never
+    // saw it, and the rest of the turn kept the tool.
+    const [now, pauses] = await Promise.all([connectionsSignature(userId).catch(() => null), getPauses(userId).catch(() => null)]);
+    const plugged = !!now && now !== connectionsSeen;
+    const paused = !!pauses && pausesOf(pauses) !== pausesSeen;
+    if (!plugged && !paused) return;
+    if (paused) {
+      Object.assign(prefs, pauses);
+      pausesSeen = pausesOf(pauses);
+      withhold = withheldTools({ chat, prefs });
+    }
     const [nextMcp, nextConnectors] = await Promise.all([
       mcpTools(userId).catch(() => ({ tools: [], servers: [], failed: true })),
       connectorSummary(userId, { off: prefs.connectorsOff }).catch(() => null),
     ]);
     if (nextMcp.failed || !nextConnectors) return;
-    connectionsSeen = now;
+    if (plugged) connectionsSeen = now;
     const servers = new Set(mcp.servers.map((s) => s.id));
     const linked = new Set(connectors.ids);
     mcp = nextMcp;
@@ -1698,6 +1746,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   /** The progress gate's note for the next request, and whether it has fired this turn. */
   let progressGate = null;
   let progressGated = false;
+  /** The quality gate runs once a turn (QC-001). */
+  let qualityChecked = false;
+  /** What the last step showed the model, as the gate's sources besides the stored messages — see `gateSources`. */
+  let shown = [];
 
   /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
   let movedToAuto = false;
@@ -1753,6 +1805,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           // goes out: "folding 24 earlier turns" is a great deal more settling
           // than a spinner while the conversation appears to stall.
           onProgress: (p) => emit('status', { phase: 'compacting', ...p }),
+          deadline,
         });
         if (summary) {
           messages.push(summary);
@@ -1871,6 +1924,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         signal,
         onLooking: () => emit('status', { phase: 'tool', name: 'look_at' }),
       }));
+      const outgoing = withAttachments(grounded, loaded, entry, { masking });
+      shown = gateSources({ system, grounded, outgoing, passages: project?.passages, messages });
 
       for await (const ev of stream({
         userId,
@@ -1886,7 +1941,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         // invalidate. `activeTranscript` is what makes a folded conversation
         // smaller: the page still holds every turn, and only the summary plus
         // what followed it is sent.
-        messages: withAttachments(grounded, loaded, entry, { masking }),
+        messages: outgoing,
         // Rebuilt per step: anything `load_tools` activated last step is in it
         // now. On a turn that activates nothing this returns the same list every
         // time, so the cached prefix is undisturbed.
@@ -1894,6 +1949,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         effort: prefs.effort,
         signal,
         googleData,
+        deadline,
       })) {
         // Anything at all counts as having started — a reasoning token, a tool
         // call, a notice that a key was refused. What is being timed is the
@@ -1952,6 +2008,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           assistant.model = entry.id;
           assistant.toolCalls = [];
           assistant.stopped = true;
+          assistant.text = withoutStrayTags(assistant.text);
           await store.appendMessage(userId, chatId, assistant).catch((e) =>
             log.error('stopped reply not saved', e, { chatId }));
         }
@@ -2010,8 +2067,16 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * turn only: the account keeps its model, and is told which one answered.
        * Not when the model already is Auto (there is nowhere further to go), and
        * only for a library model, whose account already holds the key Auto runs on.
+       *
+       * Only from a free model, and never for an incognito conversation
+       * (PRV-022): Auto is OpenRouter's free endpoints, which may keep or train
+       * on what they are sent. A paid model's provider was the person's choice,
+       * and incognito was a promise; a bad hour at the provider changes neither.
        */
-      if (err?.upstream && !switchedThisTurn && !assistant.text && isLibraryModel(entry) && !isAuto(entry.id)) {
+      if (
+        err?.upstream && !switchedThisTurn && !assistant.text && isLibraryModel(entry) && !isAuto(entry.id) &&
+        isFreeEntry(entry) && !chat?.incognito
+      ) {
         const auto = await pickAutoModel(userId);
         if (auto && auto.id !== entry.id) {
           switchedThisTurn = true;
@@ -2041,6 +2106,44 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     if (done?.raw) assistant.raw = done.raw;
 
     if (promoteReasoning(assistant)) emit('reasoning_was_reply', { text: assistant.text });
+    // Stored as shown: a stray `<system>…</system>` line kept here would be replayed next turn (UX-017).
+    assistant.text = withoutStrayTags(assistant.text);
+    /*
+     * The quality gate (QC-001, owner 2026-11-02): a finished answer citing an
+     * address the conversation does not hold goes back once, for that sentence
+     * only; whatever is still unsourced loses its link. Before the answer is
+     * stored, so the stored copy is the corrected one; the screen is told.
+     * Nothing to check, no call. See server/qualityGate.js.
+     */
+    if (!qualityChecked && !assistant.toolCalls.length && !done?.stop?.message && assistant.text.trim() && prefs.qualityGate !== false && !signal?.aborted) {
+      qualityChecked = true;
+      const gated = await checkAnswer({
+        answer: assistant.text,
+        messages,
+        sources: shown,
+        language: prefs.language || 'en',
+        ask: async (system, prompt) => {
+          let said = '';
+          for await (const ev of stream({ userId, entry, system, messages: [{ role: 'user', text: prompt }], tools: [], effort: 'low', signal, googleData, deadline })) {
+            if (ev.type === 'text') said += ev.delta ?? '';
+            else if (ev.type === 'done' && ev.usage) {
+              const priced = priceTurn(entry, ev.usage);
+              await recordUsage(userId, { chatId, model: entry.id, usage: ev.usage, costUsd: priced?.usd || 0, role: 'qc' }).catch((err) =>
+                log.error('usage not recorded', err, { role: 'qc', model: entry.id }),
+              );
+            }
+          }
+          return said;
+        },
+      }).catch((err) => {
+        log.warn('quality gate did not run', { error: String(err?.message || err).slice(0, 160) });
+        return null;
+      });
+      if (gated?.changed) {
+        assistant.text = gated.text;
+        emit('answer_revised', { text: gated.text, flagged: gated.flagged.length, fixed: gated.fixed, removed: gated.removed });
+      }
+    }
     if (done?.usage) {
       assistant.usage = done.usage;
       totals.input += done.usage.input || 0;

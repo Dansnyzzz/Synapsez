@@ -2,6 +2,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import { normaliseStop, refusalDetail } from './stop.js';
 import { EFFORTS } from './openaiCompatible.js';
 
+// The level each model last took after refusing a higher one, for the life of
+// the instance; null when it took none (PERF-025). See the step-down below.
+/** @type {Map<string, string | null>} */
+const acceptedEffort = new Map();
+
 /**
  * Anthropic adapter.
  *
@@ -182,6 +187,15 @@ export async function* streamAnthropic({
   let stream;
   let spoke = false;
   const lower = { max: 'xhigh', xhigh: 'high' };
+  // Where this model last settled, so the refusals on the way down are paid once per instance (PERF-025).
+  const settledAt = acceptedEffort.get(model);
+  if (settledAt !== undefined && params.output_config?.effort) {
+    while (params.output_config && params.output_config.effort !== settledAt && lower[params.output_config.effort] !== undefined) {
+      params.output_config = { ...params.output_config, effort: lower[params.output_config.effort] };
+    }
+    if (settledAt === null) delete params.output_config;
+  }
+  const askedLevel = params.output_config?.effort ?? null;
   for (let attempt = 0; ; attempt += 1) {
     stream = client.messages.stream(params, { signal });
     try {
@@ -197,6 +211,7 @@ export async function* streamAnthropic({
       else delete params.output_config;
     }
   }
+  if ((params.output_config?.effort ?? null) !== askedLevel) acceptedEffort.set(model, params.output_config?.effort ?? null);
 
   const final = await stream.finalMessage();
   yield* finish(final);

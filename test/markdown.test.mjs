@@ -421,6 +421,23 @@ section('pictures and videos in a reply');
   check('a bad id is not a video', !/mdvideo/.test(renderMarkdown('https://www.youtube.com/watch?v=<script>')));
 }
 
+section('control markup a model writes into its prose is not shown (UX-017)');
+{
+  const { withoutStrayTags } = await import('../public/js/model-text.js');
+  // The owner's screenshot, 2026-11-02: a free model wrote this line between two paragraphs.
+  const said = 'và các bảng nhạy cảm.\n\n<system>success</system>\n\nTính toán mô hình theo đề bài';
+  const kept = withoutStrayTags(said);
+  check('a line that is only <system>…</system> goes', !/<system>/.test(kept) && /bảng nhạy cảm/.test(kept) && /Tính toán/.test(kept), JSON.stringify(kept));
+  check('  so do its kin', withoutStrayTags('a\n<tool_result>ok</tool_result>\n  <function_results>done</function_results>  \nb') === 'a\nb');
+  const fenced = 'Example:\n```xml\n<system>success</system>\n```';
+  check('inside a code block it is the answer, and stays', withoutStrayTags(fenced) === fenced);
+  const inline = 'Write <system>success</system> in your prompt to mark it.';
+  check('mid-sentence it is the answer, and stays', withoutStrayTags(inline) === inline);
+  const long = `<system>${'x'.repeat(80)}</system>`;
+  check('a long body is content, not a stray marker, and stays', withoutStrayTags(long) === long);
+  check('plain prose comes back unchanged', withoutStrayTags('no tags here') === 'no tags here' && withoutStrayTags('') === '');
+}
+
 console.log(
   failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll markdown checks passed.\x1b[0m\n',
 );

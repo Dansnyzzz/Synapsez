@@ -51,10 +51,10 @@ const { buildSystemPrompt, promptVersion } = await import('../../server/agent.js
  * they still pass for the reason they claim, then update the value and say in the
  * commit what the prompt change was for.
  */
-// ecd004bc42ae: the memory line now says notes are shown at the start of each
-// conversation (they are, since server/memory.js) and forbids IDs and
-// sensitive details in a note, not only credentials.
-const PROMPT_STAMP = 'bc830e108fcb';
+// 101239f2dd8e: two every-turn lines said in fewer words (TOK-003) — that
+// connections are re-read before each step, and skill-creator's entry in the
+// skills index. No case rests on either.
+const PROMPT_STAMP = '101239f2dd8e';
 
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;

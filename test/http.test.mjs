@@ -318,6 +318,10 @@ section('a dead model reads as a sentence, not as JSON');
   // something they typed wrong when it is a catalogue entry that expired.
   check('and that it was not the user', /nothing you did/i.test(said), said.slice(0, 120));
   check('an ordinary error is left alone', readableFailure(new Error('Connection reset')) === 'Connection reset');
+  // CODE-077: a store failure inside a turn went over the stream in the database's own words.
+  const pgFailure = Object.assign(new Error('invalid byte sequence for encoding "UTF8": 0x00 in relation "messages"'), { code: '22021', severity: 'ERROR' });
+  const said22021 = readableFailure(pgFailure);
+  check("  while a database's own failure is said plainly, not in its words (CODE-077)", /Something went wrong on the server/.test(said22021) && !/relation|0x00/.test(said22021), said22021);
 
   /**
    * The one that was actually on screen.
@@ -1006,6 +1010,21 @@ section('a username to sign in with, or the email');
     `${wrong.json?.error} | ${nobody.json?.error}`,
   );
 
+  /*
+   * SEC-058: the per-account ceiling was keyed on the string sent, lowercased
+   * but not trimmed, while sign-in also takes a username — so " dana@…", "dana@…\t"
+   * and "dana.tran" were each a fresh ten tries at the same account. From
+   * addresses that change every time, only the per-account ceiling stands.
+   */
+  const names = ['dana@example.com', ' DANA@example.com ', 'dana.tran', 'Dana.Tran\t', 'dana@example.com  '];
+  let throttledAt = 0;
+  for (let i = 0; i < 16 && !throttledAt; i += 1) {
+    const tried = await jar().call('POST', '/api/login', { email: names[i % names.length], password: `guess-${i}` }, at(`10.30.0.${i + 1}`));
+    if (tried.status === 429) throttledAt = i + 1;
+  }
+  check('one account is one ceiling, however it is named and from wherever (SEC-058)', throttledAt > 0 && throttledAt <= 11, `throttled at attempt ${throttledAt || 'never'}`);
+  await store.clearRateLimit?.(`login:id:user:${made.json?.user?.id}`);
+
   const renamed = await dana.call('PATCH', '/api/account', { name: 'Dana', username: 'dana_t' });
   check('a username can be changed in the account settings', renamed.status === 200 && renamed.json?.user?.username === 'dana_t', JSON.stringify(renamed.json));
   const clash = await alice.call('PATCH', '/api/account', { name: 'Alice', username: 'Dana_T' });
@@ -1014,6 +1033,16 @@ section('a username to sign in with, or the email');
   check('  saving only a name leaves the username as it was', nameOnly.status === 200 && nameOnly.json?.user?.username == null, JSON.stringify(nameOnly.json?.user));
   const adopted = await alice.call('PATCH', '/api/account', { name: 'Alice', username: 'alice' });
   check('an account made before usernames can take one', adopted.status === 200 && adopted.json?.user?.username === 'alice', JSON.stringify(adopted.json));
+  // SEC-059: each "taken" says a sign-in name exists; a script trying name after name could list them.
+  let renameLimited = 0;
+  for (let i = 0; i < 14 && !renameLimited; i += 1) {
+    const probe = await alice.call('PATCH', '/api/account', { username: `probe.name${i}` }, at('10.40.0.1'));
+    if (probe.status === 429) renameLimited = i + 1;
+  }
+  check('choosing a new username has a ceiling, so names cannot be listed by trying them (SEC-059)', renameLimited > 0 && renameLimited <= 11, `limited at ${renameLimited || 'never'}`);
+  await store.clearRateLimit(`rename:id:${(await store.getUserByEmail('alice@example.com')).id}`);
+  await store.clearRateLimit('rename:ip:10.40.0.1');
+  await alice.call('PATCH', '/api/account', { username: 'alice' });
   const forgot = await jar().call('POST', '/api/password/forgot', { email: 'dana_t' }, at('10.20.0.3'));
   check('a forgotten password can be asked for by username too', forgot.status === 200 && forgot.json?.ok === true, `${forgot.status}`);
 }
@@ -1025,6 +1054,13 @@ section('signing out');
   check('logout succeeds', out.status === 200);
   const after = await alice.call('GET', '/api/bootstrap');
   check('and the session is gone', after.status === 401, `got ${after.status}`);
+}
+
+section("a body the parser refuses is the request's fault, not the server's (CODE-078)");
+{
+  const broken = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"email": "a@b.c",' });
+  const said = await broken.json().catch(() => ({}));
+  check('JSON that does not parse is a 400 that says so, not a 500 that says try again', broken.status === 400 && said.error === 'That request could not be read.', `${broken.status} ${said.error}`);
 }
 
 server.close();

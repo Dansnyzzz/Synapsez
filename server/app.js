@@ -24,7 +24,7 @@ import {
   refreshSession,
   endSession,
 } from './auth.js';
-import { limit as rateLimit, forgive } from './ratelimit.js';
+import { limit as rateLimit, forgive, consume as consumeLimit } from './ratelimit.js';
 import { publicUrlFor } from './util/net.js';
 import { emailBackend } from './email.js';
 import { summary as usageSummary, limitFor } from './usage.js';
@@ -65,6 +65,7 @@ import {
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
 import { redactSecrets } from './redact.js';
+import { clientError, fromTheDatabase, SERVER_TROUBLE } from './util/clientError.js';
 import { audit, networkOf, agentOf } from './audit.js';
 import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { usageReport } from './usageReport.js';
@@ -166,6 +167,9 @@ async function zoneOf(req, prefs = null) {
 }
 
 export function readableFailure(error) {
+  // A store failure inside a turn reached the browser over the stream in the
+  // database's own words (CODE-077); the caller has logged it.
+  if (fromTheDatabase(error)) return SERVER_TROUBLE;
   let message = redactSecrets(String(error?.message || error || 'Something went wrong.')).text;
 
   // Unwrap as many layers of encoded JSON as the providers have nested.
@@ -232,6 +236,12 @@ export function readableFailure(error) {
 // `public/` is also what Vercel serves straight from its CDN in a zero-config
 // project, so on a deployment these static routes are only a local fallback.
 const WEB_DIR = path.resolve(here, '../public');
+
+// What the body parser refused, in words for a person (CODE-078). Translated in server/i18n/vi.js.
+const BODY_REFUSED = {
+  'entity.too.large': 'That is too large to send in one request.',
+  'entity.parse.failed': 'That request could not be read.',
+};
 
 export function createApp() {
   const app = express();
@@ -382,13 +392,27 @@ export function createApp() {
     }),
   );
 
+  /**
+   * One ceiling per account, however it is named (SEC-058): its email or its
+   * username, padded or not. A name no account has is a bucket of its own, as
+   * before. Looked up on every attempt alike, so the lookup tells nobody who exists.
+   *
+   * @param {unknown} identifier
+   */
+  const accountKey = async (identifier) => {
+    const named = String(identifier ?? '').trim().toLowerCase();
+    if (!named) return '';
+    const account = await findUserByIdentifier(named).catch(() => null);
+    return account ? `user:${account.id}` : named;
+  };
+
   // Throttled on two axes at once — the caller's address and the email being
   // tried — so one person grinding one account cannot lock out an office behind
   // the same address, and a botnet spread across addresses still hits the
   // per-account ceiling.
   app.post(
     '/api/login',
-    rateLimit('login', (req) => req.body?.email),
+    rateLimit('login', (req) => accountKey(req.body?.email)),
     wrap(async (req, res) => {
       try {
         const user = await loginUser(body(req), req, res);
@@ -409,11 +433,11 @@ export function createApp() {
         }
         // A correct sign-in clears the tally, so a forgetful morning does not
         // cost somebody their afternoon.
-        await forgive(req, 'login', req.body?.email);
+        await forgive(req, 'login', await accountKey(req.body?.email));
         await audit(req, user.id, 'sign_in');
         res.json({ user: publicUser(user) });
       } catch (err) {
-        res.status(err.status || 400).json({ error: err.message, code: err.code });
+        res.status(err.status || 400).json({ error: clientError(err), code: err.code });
       }
     }),
   );
@@ -421,7 +445,7 @@ export function createApp() {
   // ── password reset ──────────────────────────────────────────────────
   app.post(
     '/api/password/forgot',
-    rateLimit('forgot', (req) => req.body?.email),
+    rateLimit('forgot', (req) => accountKey(req.body?.email)),
     wrap(async (req, res) => {
       // Always the same answer, so this cannot be used to discover who has an
       // account here.
@@ -432,7 +456,7 @@ export function createApp() {
 
   app.post(
     '/api/password/reset',
-    rateLimit('reset', (req) => req.body?.email),
+    rateLimit('reset', (req) => accountKey(req.body?.email)),
     wrap(async (req, res) => {
       try {
         const user = await resetPassword({
@@ -444,7 +468,7 @@ export function createApp() {
         if (user?.id) await audit(req, user.id, 'password_reset');
         res.json({ ok: true });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -513,7 +537,7 @@ export function createApp() {
     const workflows = await runDueWorkflows({ budgetMs: remaining() }).catch((err) => ({
       started: [],
       advanced: [],
-      error: String(err?.message || err).slice(0, 200),
+      error: clientError(err).slice(0, 200),
     }));
     // Conversations whose turn the 300s limit cut off, finished with nobody
     // watching — see server/resume.js.
@@ -538,7 +562,7 @@ export function createApp() {
       } catch (err) {
         // A closed deployment is a 403, not a bad request — the client can tell
         // "you may not" from "you got that wrong" and say something useful.
-        res.status(err.status || 400).json({ error: err.message });
+        res.status(err.status || 400).json({ error: clientError(err) });
       }
     }),
   );
@@ -708,7 +732,7 @@ export function createApp() {
       } catch (err) {
         // The worker turns this into the tool's error text, so it has to say
         // something a person can act on — "add an OpenAI key", not "HTTP 500".
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -820,7 +844,7 @@ export function createApp() {
         const { device, token: deviceToken } = await redeemEnrolment(token, { name, info });
         res.status(201).json({ token: deviceToken, deviceId: device.id, name: device.name });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1040,7 +1064,7 @@ export function createApp() {
         res.json(saved);
       } catch (err) {
         // A rejected language is the caller's mistake, not a server fault.
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1071,7 +1095,7 @@ export function createApp() {
         await audit(req, req.user.id, 'key_added', { provider: String(req.params.provider).slice(0, 40) });
         res.status(201).json(await providerStatus(req.user.id));
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1103,7 +1127,7 @@ export function createApp() {
           suggestion: suggestion ? { ...suggestion, inUse: !stored.defaultModel || stored.defaultModel === suggestion.id } : null,
         });
       } catch (err) {
-        res.status(err.status || 400).json({ error: translateMessage(String(err.message), language) });
+        res.status(err.status || 400).json({ error: translateMessage(clientError(err), language) });
       }
     }),
   );
@@ -1131,7 +1155,7 @@ export function createApp() {
         await audit(req, req.user.id, 'key_removed', { provider: String(req.params.provider).slice(0, 40) });
         res.json(await providerStatus(req.user.id));
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1166,7 +1190,7 @@ export function createApp() {
         const model = await addModelById(req.body?.id, req.user.id);
         res.status(201).json({ model });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1203,7 +1227,7 @@ export function createApp() {
           },
         });
       } catch (err) {
-        res.status(404).json({ error: err.message });
+        res.status(404).json({ error: clientError(err) });
       }
     }),
   );
@@ -1265,7 +1289,7 @@ export function createApp() {
           : await getPrefs(req.user.id);
         res.json({ ...outcome, prefs });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1292,7 +1316,7 @@ export function createApp() {
       try {
         res.json(await refreshLibrary());
       } catch (err) {
-        res.status(502).json({ error: err.message });
+        res.status(502).json({ error: clientError(err) });
       }
     }),
   );
@@ -1309,11 +1333,19 @@ export function createApp() {
       const wanted = String(req.body?.username ?? '').trim();
       try {
         let updated = req.user;
-        if (wanted && wanted.toLowerCase() !== (req.user.username || '')) updated = await setUsername(req.user.id, wanted);
+        if (wanted && wanted.toLowerCase() !== (req.user.username || '')) {
+          // A rename that says "taken" tells which sign-in names exist (SEC-059): a few an hour is a person, more is a list.
+          const blocked = await consumeLimit(req, 'rename', req.user.id);
+          if (blocked) {
+            res.set('Retry-After', String(blocked.retryAfterSec));
+            return res.status(blocked.status).json(blocked.body);
+          }
+          updated = await setUsername(req.user.id, wanted);
+        }
         if (hasName) updated = await getStore().updateUser(req.user.id, { name });
         res.json({ user: publicUser(updated) });
       } catch (err) {
-        res.status(err.status || 400).json({ error: err.message });
+        res.status(err.status || 400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1330,7 +1362,7 @@ export function createApp() {
         await audit(req, req.user.id, 'password_changed');
         res.json({ ok: true, signedOutOtherDevices: true });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1362,7 +1394,7 @@ export function createApp() {
         await audit(req, req.user.id, 'two_factor_on');
         res.json({ ok: true, recoveryCodes: codes });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1376,7 +1408,7 @@ export function createApp() {
         await audit(req, req.user.id, 'two_factor_off');
         res.json({ ok: true });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1428,7 +1460,7 @@ export function createApp() {
         const { userInput } = await import('../worker/browser.js');
         res.json({ ok: true, did: await userInput(req.body || {}) });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1452,7 +1484,7 @@ export function createApp() {
         await getStore().clearScreen(req.user.id).catch(() => {});
         res.json({ ok: !output.isError, message: output.content });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1482,7 +1514,7 @@ export function createApp() {
       try {
         res.json(await cloudBrowserInput(req.user.id, req.body || {}));
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1532,7 +1564,7 @@ export function createApp() {
         // the machine's credential, not the page's.
         res.status(201).json({ device: { id: device.id, name: device.name } });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1552,7 +1584,7 @@ export function createApp() {
         const device = await setDeviceWorkspace(req.user.id, req.params.id, req.body?.path);
         res.json({ device: { id: device.id, name: device.name, wanted: device.workspace } });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1602,7 +1634,7 @@ export function createApp() {
         await getStore().cancelJobsForDevice(req.user.id, req.params.id);
         res.json({ ok: true, name: gone.name });
       } catch (err) {
-        res.status(404).json({ error: err.message });
+        res.status(404).json({ error: clientError(err) });
       }
     }),
   );
@@ -1762,7 +1794,7 @@ export function createApp() {
       // Own keys only: `"constructor" in {}` is true.
       if (!Object.hasOwn(notes, req.params.key)) return res.status(404).json({ error: 'No such note.' });
 
-      await store.removeUserSettingKey(req.user.id, bucket, req.params.key);
+      await store.removeMemoryNote(req.user.id, bucket, req.params.key);
       res.json({ ok: true });
     }),
   );
@@ -1774,7 +1806,7 @@ export function createApp() {
         const file = await addSource(req.user.id, req.params.id, req.body || {});
         res.status(201).json({ file });
       } catch (err) {
-        res.status(err.status || 400).json({ error: err.message });
+        res.status(err.status || 400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1802,7 +1834,7 @@ export function createApp() {
       try {
         res.status(201).json({ skill: await saveSkill(req.user.id, req.body || {}) });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -1829,7 +1861,8 @@ export function createApp() {
           try {
             saved = (await saveSkill(req.user.id, read.skill)).name;
           } catch (err) {
-            error = err.message;
+            // A save the store refused, said plainly — not a driver's words (CODE-077).
+            error = clientError(err);
           }
         }
         results.push({
@@ -2003,7 +2036,7 @@ export function createApp() {
         });
         res.status(201).json({ task });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -2055,7 +2088,7 @@ export function createApp() {
           Object.assign(patch, schedulePatch(b, current));
         }
       } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({ error: clientError(err) });
       }
 
       let task = Object.keys(patch).length ? await store.updateTask(req.user.id, req.params.id, patch) : null;
@@ -2355,7 +2388,8 @@ export function createApp() {
         });
       } catch (err) {
         log.error('turn failed', err, { ms: since(started) });
-        emit('error', { message: readableFailure(err) });
+        // A code the browser acts on, where there is one (`rate_limited`: every key resting — UX-024).
+        emit('error', { message: readableFailure(err), ...(err?.code === 'rate_limited' ? { code: err.code } : {}) });
         emit('done', { stopReason: 'error' });
       } finally {
         log.info('turn ended', { ms: since(started) });
@@ -2401,7 +2435,7 @@ export function createApp() {
       try {
         res.json({ current: await setRecommended({ free: req.body?.free, paid: req.body?.paid }) });
       } catch (err) {
-        res.status(err.status || 400).json({ error: translateMessage(String(err.message), languageOf(req)) });
+        res.status(err.status || 400).json({ error: translateMessage(clientError(err), languageOf(req)) });
       }
     }),
   );
@@ -2502,7 +2536,16 @@ export function createApp() {
      */
     log.error('unhandled error', err, { method: req.method, path: req.path });
     if (res.headersSent) return res.end();
-    res.status(500).json({ error: err?.message || 'Internal error' });
+    // The request's own fault, which the body parser marks `expose` with a 4xx —
+    // too large, not JSON — is said as that (CODE-078): "try again" cannot help.
+    const status = Number(err?.status);
+    if (err?.expose && status >= 400 && status < 500) {
+      return res.status(status).json({ error: BODY_REFUSED[err.type] || clientError(err) });
+    }
+    // Anything else is never the error's own words (CODE-076): what reaches here
+    // was not written for the person — a TypeError, a file path — and it is in
+    // the log above.
+    res.status(500).json({ error: SERVER_TROUBLE });
   });
 
   return app;

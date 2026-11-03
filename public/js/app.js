@@ -28,7 +28,7 @@ import { createPages } from './pages.js';
 import { createProjectPage } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
-import { humanSize } from './format.js';
+import { humanSize, localMoment, localTimes } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
 import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
@@ -36,7 +36,7 @@ import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './a
 import { createUsagePanel } from './usage-panel.js';
 import { createUsageAlert } from './usage-alert.js';
 import { createCustomize, openMenu as openPopoverMenu } from './customize.js';
-import { createSkillEditor } from './skills-editor.js';
+import { createSkillEditor, forgetLocalDrafts } from './skills-editor.js';
 import { serversInConfig } from './mcp-config.js';
 import { paintConnectorButton } from './cards.js';
 import { createYourData } from './your-data.js';
@@ -3092,6 +3092,12 @@ $('composer').addEventListener('submit', async (event) => {
   // failed — must not be silently dropped from a message that claims to have it.
   const ready = staged.filter((f) => f.id);
   if (!text && !ready.length) return;
+  // Every key out of today's free requests, on a free model: it would only fail (UX-024).
+  const blocked = sendBlockedUntil();
+  if (blocked) {
+    toast(t('composer.blockedFree', { when: localMoment(blocked) }));
+    return;
+  }
   state.lastAsked = text.slice(0, 140);
   state.liveTurn = (state.liveTurn || 0) + 1;
   // Not into a transcript that is being rewritten; the bar says how long.
@@ -3872,6 +3878,12 @@ async function streamOnce(run, decision, answers) {
           block().adoptThinkingAsReply(text);
           maybeScroll(run);
         },
+        // The quality gate corrected an unsourced address in the answer just
+        // streamed (QC-001): the stored copy is the corrected one, so is this.
+        answer_revised: ({ text }) => {
+          block().replaceText(String(text || ''));
+          maybeScroll(run);
+        },
         // The account's model was withdrawn; the server moved it to Auto and
         // carries on there. The chip follows whichever conversation is on screen.
         model_switched: ({ from }) => noteModelRetired(from),
@@ -3921,11 +3933,19 @@ async function streamOnce(run, decision, answers) {
           clearDrafts();
           run.turn?.finish();
           if (!onScreen(run)) return;
-          toast(message, 'error');
+          // An instant the server wrote, on this device's clock (UX-023).
+          const said = localTimes(message);
+          toast(said, 'error');
+          // Every key resting until a stated time: Continue would fail the same
+          // way until then, so it is not offered; the usage line says the rest (UX-024).
+          if (code === 'rate_limited') {
+            usageAlert.refresh({ soon: true });
+            return;
+          }
           // A quota or a missing model will say the same thing again; anything
           // else — a provider hiccup, every key failing, a stall — is worth
           // one press to carry on from where it stopped.
-          if (code !== 'quota_exceeded' && code !== 'no_auto_model') noteInterrupted(run, message);
+          if (code !== 'quota_exceeded' && code !== 'no_auto_model') noteInterrupted(run, said);
         },
         done: ({ stop }) => {
           outcome = 'done';
@@ -4406,6 +4426,7 @@ function openShortcuts() {
 
 async function signOut() {
   await api.logout();
+  forgetLocalDrafts();
   location.reload();
 }
 
@@ -4415,7 +4436,19 @@ const usageAlert = createUsageAlert($('usage-alert'), {
   providers: () => state.boot?.providers || {},
   openUsage: () => openSettings('usage'),
   openKeys: () => openSettings('providers'),
+  user: () => state.boot?.user?.id,
+  changed: (until) => {
+    state.freeOutUntil = until;
+    refreshSendState();
+  },
 });
+// Not over a question or an approval: the line pushed a long question's top out of view (UX-020).
+{
+  const shelf = [$('question'), $('approval')];
+  const busy = () => shelf.some((node) => node && !node.hidden);
+  new MutationObserver(() => usageAlert.hold(busy())).observe($('question'), { attributes: true, attributeFilter: ['hidden'] });
+  new MutationObserver(() => usageAlert.hold(busy())).observe($('approval'), { attributes: true, attributeFilter: ['hidden'] });
+}
 const usagePanel = createUsagePanel($('usage-panel'), {
   load: () => api.usageReport(),
   sessions: () => api.sessions(),
@@ -4887,7 +4920,17 @@ $('ext-add-hand').addEventListener('click', () => {
   $('mcp-name').focus();
 });
 
-/** Install from a config file: each server in it added as though typed in, one at a time, and said which took. */
+/**
+ * Install from a config file: shown first, then each server added as though
+ * typed in, one at a time, and said which took.
+ *
+ * Shown first (SEC-064): adding a server starts it, so a config copied from a
+ * web page with `sh -c "curl … | sh"` in it ran the moment the file was chosen
+ * — on the cloud computer, or for an administrator with local servers on this
+ * server itself. Each command and address is read out, and the names (never
+ * the values) of what it is given, before anything runs.
+ */
+let pendingConfig = null;
 $('ext-config-file').addEventListener('change', async (event) => {
   const input = /** @type {HTMLInputElement} */ (event.target);
   const file = input.files?.[0];
@@ -4905,6 +4948,49 @@ $('ext-config-file').addEventListener('change', async (event) => {
     status.textContent = t('ext.configEmpty');
     return;
   }
+  pendingConfig = servers;
+  const review = document.createElement('div');
+  review.className = 'ext-review';
+  const lead = document.createElement('p');
+  lead.textContent = t('ext.configReview', { n: String(servers.length) });
+  const list = document.createElement('ul');
+  for (const server of servers) {
+    const row = document.createElement('li');
+    const name = document.createElement('strong');
+    name.textContent = server.name;
+    const what = document.createElement('code');
+    what.textContent = server.transport === 'http' ? server.url : [server.command, ...(server.args || [])].join(' ');
+    row.append(name, ' ', what);
+    const given = Object.keys(server.env || server.headers || {});
+    if (given.length) row.append(` — ${t('ext.configGiven', { names: given.join(', ') })}`);
+    list.append(row);
+  }
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'btn btn--primary';
+  go.dataset.extConfigGo = '';
+  go.textContent = t('ext.configInstall');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn--ghost';
+  cancel.dataset.extConfigCancel = '';
+  cancel.textContent = t('action.cancel');
+  review.append(lead, list, go, ' ', cancel);
+  status.replaceChildren(review);
+  go.focus();
+});
+
+$('ext-status').addEventListener('click', async (event) => {
+  const target = /** @type {HTMLElement} */ (event.target);
+  const status = $('ext-status');
+  if (target.closest('[data-ext-config-cancel]')) {
+    pendingConfig = null;
+    status.textContent = '';
+    return;
+  }
+  if (!target.closest('[data-ext-config-go]') || !pendingConfig) return;
+  const servers = pendingConfig;
+  pendingConfig = null;
   const added = [];
   const failed = [];
   for (const server of servers) {
@@ -5552,13 +5638,42 @@ const addedAgo = (iso) => {
 };
 
 /* Settings → Customize: Skills, Connectors, Plugins (customize.js). */
+
+/**
+ * A preference saved from a switch or a menu (CODE-068): applied here at once,
+ * so the next switch pressed builds on it, and sent in order. Each list was
+ * rebuilt from the copy the server last answered with, so pausing Gmail and
+ * then Slack within one round trip sent [slack] second, and the server ended
+ * with Gmail on while the menu showed it off. Only the last answer in flight
+ * is taken as the server's word; earlier ones would undo what came after.
+ *
+ * @param {Record<string, any>} patch
+ */
+let prefsSaving = Promise.resolve();
+let prefsInFlight = 0;
+async function savePrefsInOrder(patch) {
+  const before = Object.fromEntries(Object.keys(patch).map((key) => [key, state.boot.prefs?.[key]]));
+  state.boot.prefs = { ...(state.boot.prefs || {}), ...patch };
+  prefsInFlight += 1;
+  const run = prefsSaving.then(() => api.savePrefs(patch));
+  prefsSaving = run.catch(() => {});
+  try {
+    const saved = await run;
+    if (prefsInFlight === 1) state.boot.prefs = saved;
+    return state.boot.prefs;
+  } catch (err) {
+    // Not saved: what this switch changed goes back, so the next one does not build on it.
+    state.boot.prefs = { ...state.boot.prefs, ...before };
+    throw err;
+  } finally {
+    prefsInFlight -= 1;
+  }
+}
+
 const customize = createCustomize({
   armed,
   prefs: () => state.boot?.prefs || {},
-  savePrefs: async (patch) => {
-    state.boot.prefs = await api.savePrefs(patch);
-    return state.boot.prefs;
-  },
+  savePrefs: (patch) => savePrefsInOrder(patch),
   pickSkill: (name) => plusDeps.pickSkill(name),
   closeSettings: () => $('settings').close(),
   // Add an MCP server by hand, from Connectors' + Add: Extensions → Advanced settings, the form open.
@@ -5586,7 +5701,7 @@ const customize = createCustomize({
     plusDeps.pickSkill('skill-creator');
   },
 });
-const skillEditor = createSkillEditor({ onSaved: () => customize.loadSkills().catch(() => {}) });
+const skillEditor = createSkillEditor({ onSaved: () => customize.loadSkills().catch(() => {}), owner: () => state.boot?.user?.id });
 
 /**
  * The theme as Claude draws it: three faces — the system's, light, dark — one
@@ -5785,6 +5900,7 @@ const { renderTwoFactor } = createTwoFactor({ state, fillSettings: () => fillSet
 const privacy = createPrivacy({
   state,
   armed,
+  savePrefs: (patch) => savePrefsInOrder(patch),
   // An import adds conversations; the sidebar should show them without a reload.
   onImported: () => refreshChats().catch(() => {}),
 });
@@ -6441,10 +6557,7 @@ const plusDeps = {
   picked: () => state.pickedSkills,
   attach: (attachment) => stageAttachment(attachment),
   prefs: () => state.boot?.prefs || {},
-  savePrefs: async (patch) => {
-    state.boot.prefs = await api.savePrefs(patch);
-    return state.boot.prefs;
-  },
+  savePrefs: (patch) => savePrefsInOrder(patch),
   openSettings: (tab, focusId) => {
     openSettings(tab);
     if (!focusId) return;
@@ -6574,6 +6687,20 @@ function fitPlaceholder(running = !!runHere()) {
   if (box.placeholder !== chosen) box.placeholder = chosen;
 }
 if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitPlaceholder()).observe(input);
+
+/**
+ * Until when nothing can be sent, or null (UX-024, owner 2026-11-02): every
+ * OpenRouter key has used today's free requests and the model in use is a free
+ * one (Auto is OpenRouter's free router). A paid model, or another provider,
+ * is not held back by it.
+ */
+function sendBlockedUntil() {
+  const until = state.freeOutUntil;
+  if (!until || until <= new Date()) return null;
+  const model = String(state.model || '');
+  return model === 'auto' || model.endsWith(':free') ? until : null;
+}
+
 /**
  * Light the send button only when pressing it would do something.
  *
@@ -6598,15 +6725,16 @@ if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitPlaceholde
 function refreshSendState() {
   const ready = input.value.trim().length > 0 || staged.some((f) => f.id);
   const running = !!runHere();
+  const blocked = sendBlockedUntil();
 
   // Empty and working: the button in that corner is stop. Anything else: send.
   const showStop = running && !ready;
 
   $('send').hidden = showStop;
-  $('send').classList.toggle('is-ready', ready && !state.compacting);
-  $('send').disabled = !ready || !!state.compacting;
+  $('send').classList.toggle('is-ready', ready && !state.compacting && !blocked);
+  $('send').disabled = !ready || !!state.compacting || !!blocked;
   // Say what pressing it does now, since mid-run it does not send but queue.
-  $('send').title = running ? t('composer.queue') : t('composer.send');
+  $('send').title = blocked ? t('composer.blockedFree', { when: localMoment(blocked) }) : running ? t('composer.queue') : t('composer.send');
 
   $('stop').hidden = !showStop;
 

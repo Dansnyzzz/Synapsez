@@ -153,11 +153,27 @@ export function reasoningParams({ router, model, entry, effort }) {
     if (entry?.reasoning === false) return {};
     return { reasoning: { effort: level === 'max' ? 'xhigh' : level } };
   }
-  if (REASONING.test(String(model || '')) || entry?.reasoning === true || entry?.tags?.includes('reasoning')) {
+  // The model's own name, after any maker in front: OrcaRouter says "openai/gpt-5…",
+  // and an anchored match on the whole id dropped the dial for every one (GAP-014).
+  const own = String(model || '').split('/').pop();
+  if (REASONING.test(own) || entry?.reasoning === true || entry?.tags?.includes('reasoning')) {
     return { reasoning_effort: level };
   }
   return {};
 }
+
+/**
+ * The level a model last took, after refusing a higher one (PERF-025): `max` on
+ * a model that takes only `high` cost two refused requests on every step. Kept
+ * for the life of the instance, by provider address and model; null means it
+ * took no level at all.
+ *
+ * @type {Map<string, string | null>}
+ */
+const acceptedEffort = new Map();
+// The level a request carries, or null; and its place on the dial, none below every rung.
+const effortOf = (params) => params.reasoning?.effort ?? params.reasoning_effort ?? null;
+const rungOf = (level) => (level == null ? -1 : EFFORTS.indexOf(level));
 
 /**
  * One rung lower, after a provider refused the level asked for.
@@ -390,6 +406,12 @@ export async function* streamOpenAICompatible({
   if (markCache) markPromptCache(params, model);
   Object.assign(params, privacyParams({ router, privacy }));
 
+  // Start where this model last settled, rather than be refused on the way down again (PERF-025).
+  const where = `${baseURL || router || 'openai'}|${model}`;
+  const settled = acceptedEffort.get(where);
+  if (settled !== undefined) while (effortOf(params) !== settled && rungOf(effortOf(params)) > rungOf(settled) && stepDown(params));
+  const asked = effortOf(params);
+
   let stream;
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -401,6 +423,7 @@ export async function* streamOpenAICompatible({
       throw err;
     }
   }
+  if (effortOf(params) !== asked) acceptedEffort.set(where, effortOf(params));
 
   /** index -> { id, name, args } — tool call arguments arrive as JSON fragments. */
   const pending = new Map();
@@ -515,4 +538,4 @@ export async function* streamOpenAICompatible({
 }
 
 /** Exposed so the suite can assert what the OpenAI wire format is handed. */
-export const __testing = { toMessages, readUsage, textCallFilter, parseTextCalls, mergeDetails };
+export const __testing = { toMessages, readUsage, textCallFilter, parseTextCalls, mergeDetails, acceptedEffort };

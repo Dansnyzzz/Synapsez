@@ -13,7 +13,7 @@
 
 import { api } from './api.js';
 import { escapeHtml } from './markdown.js';
-import { toast } from './render.js';
+import { announce, toast } from './render.js';
 import { t } from './i18n.js';
 import { humanSize } from './format.js';
 import { preparedWithThumb, shrinkable, MAX_SHRINKABLE_BYTES } from './shrink.js';
@@ -235,24 +235,30 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
         to = best;
         mark();
       };
+      /*
+       * Heard on the window, not the tile (UI-004): an upload finishing mid-drag
+       * redraws the tray, the tile goes, and with its listeners went the only
+       * pointerup that would end the drag — the tray stayed "sorting" and the
+       * next press dragged a ghost. A drag whose tile was redrawn away is dropped.
+       */
       const finish = (/** @type {PointerEvent} */ e) => {
-        tile.removeEventListener('pointermove', onMove);
-        tile.removeEventListener('pointerup', finish);
-        tile.removeEventListener('pointercancel', finish);
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
         if (!dragging) return;
         swallowClickUntil = Date.now() + 400;
         tile.classList.remove('is-dragging');
         tile.style.transform = '';
         host.classList.remove('is-sorting');
-        const moved = e.type === 'pointerup' && move(from, to);
+        const moved = e.type === 'pointerup' && tile.isConnected && move(from, to);
         if (!moved) {
           dragging = false;
           mark();
         }
       };
-      tile.addEventListener('pointermove', onMove);
-      tile.addEventListener('pointerup', finish);
-      tile.addEventListener('pointercancel', finish);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
     });
     host.addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
       if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
@@ -262,7 +268,9 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       const from = Number(tile.dataset.index);
       const to = from + (event.key === 'ArrowLeft' ? -1 : 1);
       const which = /** @type {HTMLElement} */ (event.target).classList.contains('stage__remove') ? '.stage__remove' : '.stage__open';
-      if (move(from, to)) /** @type {HTMLElement | null} */ (host.querySelector(`.stage[data-index="${to}"] ${which}`))?.focus();
+      if (!move(from, to)) return;
+      /** @type {HTMLElement | null} */ (host.querySelector(`.stage[data-index="${to}"] ${which}`))?.focus();
+      announce(t('attachment.movedTo', { n: to + 1, total: staged.length }));
     });
   }
 

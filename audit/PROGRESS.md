@@ -1,3 +1,33 @@
+# PROGRESS — vòng audit v4 (AUDIT_RULES v4, chế độ AUTO) — bắt đầu 2026-11-02
+
+> Đọc file này + `audit/ISSUE_LEDGER.md` (mục "VÒNG v4") trước tiên khi mở phiên mới hoặc sau khi
+> ngữ cảnh bị nén. Không suy đoán tiến độ từ trí nhớ hội thoại.
+
+## Trạng thái v4
+
+- **Phase hiện tại:** 2 (thực thi) trên nhánh `optimize/2026-11-02` (tag `backup/pre-optimize-20261102-1701` = `a7098d1`).
+- **Phase 0 xong:** `CONTRACT.md` v4, `BASELINE.md` v4 (gate xanh 329 s, 5.611 ✓, typecheck 279/296), `SKILL_MAP.md` §5; 5 lát đọc chỉ-đọc đã báo cáo đủ (biên server, thực thi/sandbox, harness/provider, frontend lõi, frontend cài đặt) — kết quả nằm hết trong ledger v4. Lần 1 cả 5 chết vì 429; lần 2 (16:55) xong.
+- **Yêu cầu chủ trong lượt 2026-11-02 (ưu tiên trên AUDIT_RULES):** (1) `<system>success</system>` hiện trong câu trả lời → UX-017; (2) `sandbox_run failed: require() of ES Module` trên prod → SBX-001/002/003; (3) kiểm logic + tận dụng tài nguyên; (4) cổng chất lượng bắt model làm lại **chỉ phần sai**, giữ phần đúng → QC-001; (5) mức suy luận tương đương mọi model → GAP-013/014.
+- **FIXED (commit):** SBX-001 `67fc3d5` · SBX-002 `998c15e` (+vi `a76b05d`) · SBX-003 · UX-017 `0357fa5` · SEC-057 `ac75722` · SBX-004 `ada113d` · SEC-061 `4e4e79a` (+`4738a63`) · PRV-017 `83f33a0` · PRV-022 `4fd59d0` · SEC-065 `a7ef98a` · SEC-062 `c470620` · GAP-014 (OrcaRouter) `d94127a` · PERF-025 `f5e0c26` · SEC-058 `6bc8b90` · UX-020/021/023/024 + PRV-019 `3cfc744` · HAR-010 `d9b13d5` · SBX-005 `77bbea0` · SEC-063 `34051b0` (+vi `5cd1294`) · TOK-004 `6e6616b` · UX-022 `7e17b37` · PRV-023 `40f8e55` · PRV-016 `4e07379` · QC-001 `d942907` (+`d787cc5`) · PRV-021 `3956e01` · LAW-003/002/004/006 `c65f91a` (privacy-2026-11-03) · LAW-005/006 `721e011` (terms-2026-11-03) · LAW-007 `6f339e2` · CODE-064 `6d85e36` · CODE-065 `ece1325` · SEC-059 `301443e` · CODE-069 `450079d` · CODE-070 `c7cda6b` · SEC-064 `315a9ad` · UX-018 `aaa5ceb` · PRV-018 `d6ecd41` · PRV-015 `4ef37e1` · HAR-012 `0120aa3`.
+- **CHỜ-CHỦ thêm:** SBX-006 (template E2B chạy helper dưới uid khác), PRV-026 (share công khai có phục vụ tệp Drive không).
+- **Còn OPEN chính:** HAR-007 (phần tín dụng E2B theo tài khoản), CODE-066/067/068, UI-001 (MEDIUM frontend), SEC-055/056, CODE-063, các LOW (UI-002…018, CODE-071/072/073, TOK-002/003, PRV-014/020/024/025, HAR-008/009/011/013, UX-019, HC-001, PERF-024, CFG-034), GAP-013 (đã tách sang GAP-014).
+- **AUDIT_RULES đã lên v5** (chủ sửa giữa phiên, chưa commit — file của chủ): thêm XII-B (vòng sửa chọn lọc V1–V12), XIII (logic + tài nguyên L1–L14, `RESOURCE_MAP.md`), XIV (suy luận M1–M16, `REASONING_MAP.md`), 18 cổng push, 26 dòng ma trận. QC-001 đã theo V8 (số vòng cấu hình `QUALITY_GATE_ROUNDS`, dừng khi không tiến triển).
+- **Thứ tự kế tiếp:** LAW-003 (+LAW-002/004/005/006/007; privacy/terms; bump version `server/legal.js`) → SEC-064 (xem trước config MCP) → UX-018/PRV-018 (feedback) → CODE-066/067/068 → UI-001 → HAR-007/HAR-012 → LOW → `RESOURCE_MAP.md` + `REASONING_MAP.md` (v5) → CODE-063 (khoá typecheck) → `npm run gate` + UI suite → evaluator chỉ đọc → merge `--no-ff` + push main + smoke prod.
+- **CHỜ-CHỦ:** CFG-033 (sandbox agent: WSL2), SEC-060 (DATABASE_CA_CERT), CFG-034 (`.claude/hooks`), CFG-024 (`.env.example` untracked — chủ tự `git add` sau khi xem).
+- **Script:** `scratchpad/ledger.mjs <ID> <STATUS> <verify> <commit>` (cập nhật dòng cuối cùng có ID đó). Commit message ghi file bằng `[IO.File]::WriteAllText` rồi `git commit -F`.
+
+## Trạng thái v5 (2026-11-03) — lô OPEN cuối
+
+- **FIXED thêm (mỗi ID một commit):** HAR-007 `9c3dd75` · UX-019 `f71c50e` · TOK-002 `deb96ae` · HAR-013 `e5105c0` · UI-018 `276d6b3` · UI-014 `fdd1903` · UI-015 `2e1d6ca` · UI-016 `2d21f6c` · UI-017 `f617687` · HC-001 `088dd5e` · CODE-066 `b03707f` · CODE-067 `2bc1c70` · UI-001 `5e8afef` · CODE-068 `5581c03` · CODE-071 `0299ddf` · UI-007 `47b71a9` · PERF-024 `cf31879` · UI-003 `8802ffe` · UI-009 `88facbf` · HAR-011 `fd77044` · HAR-008 `93ab198` · HAR-009 `a0ba9b2` · PRV-025 `deaa12e` · UI-010 `b67b469` · UI-008 `3d3eddc` · UI-011 `7a01bb2` · UI-013 `53aff4c` · UI-012 `df5af2c` · PRV-014 `83a39dc` · PRV-024 `316718a` · TOK-003 `c3623a7` · CODE-072 `2fa94fd` · CODE-073 `ff8223b` · GAP-014 (Gemini) `80c9eb2`.
+- **Lô cuối (UI-002/004/005/006, PRV-020) + CODE-063:** commit sau khi test:ui batch 8 xanh.
+- **CHỜ-CHỦ mới:** GAP-013 (NGOÀI-REPO: ma trận eval effort với key thật = RSN-001), RSN-002 (Haiku 4.5 thinking dạng budget), QC-002 (đối chiếu khẳng định không link), SEC-055 (override minimatch, cần build template E2B thật), SEC-056 (CSP theo host sandbox, cần thử prod).
+- **Bằng chứng "trước khi sửa" đã chạy cho:** HAR-011 (đóng 4429), HAR-008 (còn 1 key), HAR-013 (10 lời gọi) — test đỏ khi gỡ phần sửa, xanh khi có.
+- **Lô cuối đã commit:** UI-005 `2b09454` · UI-002 `649078a` · UI-006 `469b5ad` · UI-004 `bddcac0` · PRV-020 `2f794da` · CODE-063 `28930f2` · stamp eval `07f6fff`; gate xanh 315 s trên `07f6fff`; test:ui batch 8 xanh.
+- **Evaluator lượt 1: NEEDS_WORK** (8 phát hiện) → ID mới, mỗi cái một commit có test đỏ khi gỡ phần sửa: QC-003 `14acd67` · PRV-027 `362c0d0` · HAR-014 `376c680` · HAR-015 `fc554fa` · CODE-074 `48abc75` · CODE-075 `700be9d`; `RESULT.md` sửa các con số nói quá.
+- **Evaluator lượt 2–7: NEEDS_WORK** (mỗi lượt hẹp hơn) → QC-004/006/007, CODE-076…079, HAR-016, PRV-028…035, QC-005 (CHỜ-CHỦ); **lượt 8: PASS** trên `5cc316d` (gate 5.758 ✓, 0 ✗). Chi tiết từng lượt: `RESULT.md` "## Evaluator".
+- **Kế tiếp:** merge `--no-ff` → gate trên `main` → push → smoke prod.
+
+---
 # PROGRESS — vòng audit v3 (AUDIT_RULES v3, chế độ AUTO)
 
 > Đọc file này + `audit/ISSUE_LEDGER.md` (mục "VÒNG v3") trước tiên khi mở phiên mới hoặc sau khi

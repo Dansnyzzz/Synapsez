@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { getStore, isServerless } from './store/index.js';
 import { getPrefs } from './settings.js';
 import { runAgent, deriveTitle } from './agent.js';
-import { redactSecrets } from './redact.js';
+import { clientError } from './util/clientError.js';
 // The same predicate the transcript uses to decide whether a reply is whole.
 // An unattended run needs it more, not less. See `runTask`.
 import { isComplete } from './providers/stop.js';
@@ -559,8 +559,9 @@ async function runTask(task) {
       runNote: scheduledRunNote({ title: task.title, timeZone: task.tz || prefs.timezone }),
       emit(event, data) {
         // Stored in last_status and shown in the interface, so a key quoted
-        // back by a provider must not survive the trip.
-        if (event === 'error') status = `error: ${redactSecrets(String(data?.message)).text.slice(0, 200)}`;
+        // back by a provider must not survive the trip — nor a database's own
+        // words, which the run with nobody watching stored as they were (CODE-079).
+        if (event === 'error') status = `error: ${clientError(data?.message ?? 'failed').slice(0, 200)}`;
         else if (event === 'done') ending = data?.stop?.kind || data?.stopReason || null;
         // A scheduled run that stops to ask is stopped for good: the prompt goes
         // nowhere, because nobody is watching a run that happens at 3am.
@@ -568,7 +569,7 @@ async function runTask(task) {
       },
     });
   } catch (err) {
-    status = `error: ${redactSecrets(String(err?.message)).text.slice(0, 200)}`;
+    status = `error: ${clientError(err).slice(0, 200)}`;
   }
 
   status = unattendedStatus(status, ending, waitingForApproval);

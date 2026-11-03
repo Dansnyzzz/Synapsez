@@ -5744,6 +5744,7 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 .menu--context {
   width: min(440px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
   overflow-y: auto;
 }
 
@@ -10382,7 +10383,7 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .crow__meta { color: var(--text-dim); font-size: 13px; white-space: nowrap; }
 .crow__more { width: 32px; height: 32px; }
 .crow__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 14px; }
 .ccard { position: relative; display: grid; grid-template-columns: 52px minmax(0, 1fr) 34px; align-items: start; gap: 14px; padding: 18px; border-radius: 14px; background: var(--surface-2); }
 .ccard__icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 12px; background: var(--bg); color: var(--text-dim); }
 .ccard__text { min-width: 0; }
@@ -10392,7 +10393,6 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .ccard__add { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); cursor: pointer; }
 .ccard__add:hover { background: color-mix(in srgb, var(--text) 17%, transparent); }
 .ccard__add:focus-visible, .crow__more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.ccard__detail { grid-column: 1 / -1; }
 .ctable { display: grid; }
 .ctable__head, .ctable__row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.7fr) minmax(0, 0.5fr) 34px; align-items: center; gap: 12px; padding: 10px 6px; }
 .ctable__head { border-bottom: 1px solid var(--line-soft); color: var(--text-dim); font-size: 13px; }
@@ -10425,7 +10425,8 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
   /* minmax(0, …): the list's row of names must not widen the column past the sheet. */
   .settings { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .settings__nav { min-width: 0; padding: 10px 12px 0; border-right: 0; border-bottom: 1px solid var(--line-soft); }
-  .sheet__tabs.settings__tabs { flex-direction: row; flex: none; overflow-x: auto; overflow-y: hidden; padding-bottom: 8px; scrollbar-width: none; }
+  /* A thin bar rather than none: on a phone it is the only sign there are more tabs to the right (UI-017). */
+  .sheet__tabs.settings__tabs { flex-direction: row; flex: none; overflow-x: auto; overflow-y: hidden; padding-bottom: 8px; scrollbar-width: thin; }
   .settings__tabs .tab { width: auto; padding: 7px 10px; white-space: nowrap; }
   .settings__group { display: none; }
   .settings__body { padding: 16px; }
@@ -10609,6 +10610,8 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .fb__include-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .fb__strong { margin: 0; font-weight: 600; }
 .fb__muted { margin: 2px 0 0; color: var(--text-dim); font-size: 13px; }
+/* Why a send failed (UX-018). */
+.fb__error { margin: 12px 0 0; color: var(--danger); font-size: 13px; }
 .fb__note { margin: 0; padding-top: 10px; border-top: 1px solid var(--line-soft); color: var(--text-dim); font-size: 13px; line-height: 1.55; }
 .fb__switch { position: relative; flex: none; width: 46px; height: 26px; border: 0; border-radius: 999px; background: var(--surface-2); cursor: pointer; }
 .fb__switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
@@ -10774,9 +10777,10 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 /* ── Extensions, Skills: Claude's heads, menus and pages (owner, 2026-11-01) ── */
 .cust__tool { width: 36px; height: 36px; color: var(--text-dim); }
 .cust__tool[aria-expanded='true'] { background: var(--tint-2); color: var(--text); }
-/* Claude's + Add: white, with its chevron. */
-.cust__add { gap: 6px; background: #f2f2f0; background-image: none; color: #141414; animation: none; }
-.cust__add:hover { background: #ffffff; filter: none; }
+/* Claude's + Add, with its chevron: the page's text colour as its fill, so it
+ * is light on the dark theme and dark on the light one (UI-015). */
+.cust__add { gap: 6px; background: var(--text); background-image: none; color: var(--surface); animation: none; }
+.cust__add:hover { background: color-mix(in srgb, var(--text) 86%, var(--surface)); filter: none; }
 .cust__search + .cust__tool { margin-left: -4px; }
 .cust__grouprow { display: flex; align-items: center; justify-content: space-between; }
 .cust__count { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text-dim); font-size: 12px; font-weight: 500; }
@@ -10907,8 +10911,9 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .ctable--conn .ctable__head, .ctable--conn .ctable__row { grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.6fr) minmax(150px, 0.6fr); }
 .ctable__row--open { cursor: pointer; transition: background 0.12s; }
 .ctable__row--open:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
-.ctable__row--open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.ctable__name strong { font-weight: 600; }
+/* A connector's name: the button that opens its page from the keyboard (UI-012). */
+.cname { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.cname:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .ctable__status { display: flex; align-items: center; gap: 10px; }
 .ctable__paused { color: var(--warn); font-size: 13px; }
 .ccard--open { cursor: pointer; transition: background 0.12s; }

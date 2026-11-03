@@ -320,13 +320,14 @@ const SYSTEM = [
  *   signal?: AbortSignal,
  *   stream?: (opts: any) => AsyncGenerator<any, void, unknown>,
  *   onProgress?: (p: { folding: number }) => void,
+ *   deadline?: number,
  * }} args
  *
  * `signal` is optional and was not marked so: the agent loop passes one because
  * a turn can be stopped, and the chat route does not because a compaction the
  * user asked for by pressing a button has nothing to cancel it.
  */
-export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion, onProgress }) {
+export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion, onProgress, deadline }) {
   const store = getStore();
   const live = activeTranscript(messages);
   const start = tailStart(live);
@@ -387,6 +388,8 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
     system: SYSTEM,
     messages: [{ id: 'compact', role: 'user', text: transcript }],
     googleData,
+    // The turn's deadline, when a turn is folding its own conversation (HAR-016).
+    deadline,
     // No tools: this is a writing job, and a summariser that starts running
     // commands is a summariser that has misunderstood the assignment.
     tools: [],

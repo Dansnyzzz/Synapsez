@@ -916,7 +916,7 @@
              An illustration only: the text below says everything the clip shows. -->
         <figure class="onb__media" id="onb-media">
           <video class="onb__video" id="onb-video" muted loop playsinline preload="metadata"></video>
-          <button class="onb__play" id="onb-play" type="button" aria-pressed="false"></button>
+          <button class="onb__play" id="onb-play" type="button"></button>
           <!-- No caption over the clip: "recorded from the app, with sample data"
                said what the clip plainly is, over the clip (owner, 2026-10-26). -->
         </figure>
@@ -2160,6 +2160,8 @@
          stack — see the .toasts rule. -->
     <div class="toasts" id="toasts" aria-live="polite"></div>
     <div class="toasts toasts--alert" id="toasts-alert" role="alert" aria-live="assertive"></div>
+    <!-- Words for a screen reader only, for what the screen shows another way (render.js announce). -->
+    <div class="sr-only" id="announcer" role="status" aria-live="polite"></div>
 
     <script type="module" src="/js/app.js"></script>
   </body>

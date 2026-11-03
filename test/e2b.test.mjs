@@ -69,7 +69,10 @@ function fakeSdk() {
       this.commands = {
         run: async (cmd, opts) => {
           state.calls.push({ kind: 'run', id, cmd, opts });
-          return state.onRun ? state.onRun(cmd, opts) : { exitCode: 0, stdout: 'ok', stderr: '' };
+          const out = state.onRun ? await state.onRun(cmd, opts) : { exitCode: 0, stdout: 'ok', stderr: '' };
+          // In the background E2B hands back a handle to wait on or kill, as the real SDK does.
+          if (!opts?.background || typeof out?.wait === 'function') return out;
+          return { wait: async () => out, kill: async () => state.calls.push({ kind: 'killCommand', id }) };
         },
       };
       this.files = {
@@ -78,6 +81,10 @@ function fakeSdk() {
           state.calls.push({ kind: 'read', path, opts });
           if (!(path in state.files)) throw named('FileNotFoundError', `${path} not found`);
           return new Uint8Array(Buffer.from(state.files[path]));
+        },
+        getInfo: async (path) => {
+          if (!(path in state.files)) throw named('FileNotFoundError', `${path} not found`);
+          return { name: path.split('/').pop(), path, size: state.sizes?.[path] ?? Buffer.byteLength(state.files[path]) };
         },
       };
     }
@@ -141,8 +148,15 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   const run = state.calls.find((c) => c.kind === 'run');
   check('every command is sent as root, from the account\'s home', run.opts.user === 'root' && run.opts.cwd === '/home/user', JSON.stringify(run.opts));
   check('  so E2B\'s login shell reads only files root can write', /^exec /.test(run.cmd));
-  check('  and an ordinary command drops to the account before it starts', /setpriv --reuid="\$\(id -u user\)" --regid="\$\(id -g user\)" --init-groups env HOME=\/home\/user USER=user LOGNAME=user 'bash' '--noprofile' '--norc' '-c' /.test(run.cmd), run.cmd.slice(0, 220));
-  check('  with a time limit kept inside the machine', /^exec timeout -k 5 30 setpriv /.test(run.cmd));
+  check('  and an ordinary command drops to the account before it starts', /\/usr\/bin\/setpriv --reuid="\$\(\/usr\/bin\/id -u user\)" --regid="\$\(\/usr\/bin\/id -g user\)" --init-groups \/usr\/bin\/env HOME=\/home\/user USER=user LOGNAME=user 'bash' '--noprofile' '--norc' '-c' /.test(run.cmd), run.cmd.slice(0, 240));
+  check('  with a time limit kept inside the machine', /^exec \/usr\/bin\/timeout -k 5 30 \/usr\/bin\/setpriv /.test(run.cmd));
+  /*
+   * SBX-004: root runs these before the drop, and E2B's /usr/local is writable
+   * by the account. A bare `id` or `timeout` would be whatever the account last
+   * put in /usr/local/sbin — run as root, ahead of every later command.
+   */
+  const rootRuns = run.cmd.replace(/'[^']*'/g, '').match(/(?:^exec |\$\(|\s)(timeout|setpriv|id|env)\b/g) || [];
+  check('  every program root starts before the drop is named by its full path (SBX-004)', rootRuns.length === 0, rootRuns.join(' | '));
   check('  the script quoted whole, quotes and all', run.cmd.includes(`echo '\\''it'\\'''\\''s'\\''`), run.cmd.slice(-60));
   check('  the environment passed as the platform\'s own', run.opts.envs?.BASH_ENV === '' && run.opts.envs?.ENV === '');
   // E2B's /etc/profile ends by sourcing ~/.bashrc and ~/.profile (live probe, 2026-11-02).
@@ -153,9 +167,10 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   check('  and the answer read the way the Vercel one is', done.exitCode === 0 && (await done.stdout()) === 'ok' && (await done.stderr()) === '');
 
   state.calls.length = 0;
-  await machine.runCommand({ ...shellFor('apt-get install -y jq'), sudo: true, timeoutMs: 60_000 });
+  await machine.runCommand({ ...shellFor('apt-get install -y jq', {}, { root: true }), sudo: true, timeoutMs: 60_000 });
   const root = state.calls.find((c) => c.kind === 'run');
-  check('as_root stays root, still without a login profile', root.opts.user === 'root' && !root.cmd.includes('setpriv') && /^exec timeout -k 5 60 'bash' '--noprofile' '--norc' '-c' /.test(root.cmd), root.cmd.slice(0, 80));
+  check('as_root stays root, still without a login profile', root.opts.user === 'root' && !root.cmd.includes('setpriv') && /^exec \/usr\/bin\/timeout -k 5 60 \/usr\/bin\/env PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin 'bash' '--noprofile' '--norc' '-c' /.test(root.cmd), root.cmd.slice(0, 120));
+  check('  its shell found on a fixed PATH of root-only folders, not on what the account can write (SBX-004)', /PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin 'bash'/.test(root.cmd));
 
   state.onRun = async () => {
     throw named('CommandExitError', 'exit status 3', { exitCode: 3, stdout: 'partial', stderr: 'boom' });
@@ -178,6 +193,28 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   state.files['/home/user/out/a.txt'] = 'hello';
   check('a relative path is read from the home folder', String(await machine.readFileToBuffer({ path: 'out/a.txt' })) === 'hello');
   check('  and a missing file is null, as on Vercel', (await machine.readFileToBuffer({ path: '/nowhere.txt' })) === null);
+
+  // SBX-005: a file of several gigabytes was read whole into the server's memory before any size was checked.
+  state.files['/home/user/dump.bin'] = 'x';
+  state.sizes = { '/home/user/dump.bin': 3 * 1024 ** 3 };
+  state.calls.length = 0;
+  const huge = await machine.readFileToBuffer({ path: 'dump.bin' }).then(() => '', (e) => e.message);
+  check('a file too large to read is refused by its size, before a byte is read (SBX-005)', /too large/i.test(huge) && !state.calls.some((c) => c.kind === 'read'), huge);
+  state.sizes = {};
+  const stop = new AbortController();
+  await machine.readFileToBuffer({ path: 'out/a.txt', signal: stop.signal });
+  check('  and a read carries the caller\'s deadline', state.calls.some((c) => c.kind === 'read' && c.opts?.signal === stop.signal));
+
+  // SBX-005: `cat /dev/urandom | base64` grew one string in the server's memory until the instance fell over.
+  state.calls.length = 0;
+  state.onRun = async (_cmd, opts) => {
+    opts.onStdout?.('x'.repeat(3 * 1024 * 1024));
+    return { exitCode: 137, stdout: 'x'.repeat(3 * 1024 * 1024), stderr: '' };
+  };
+  const flood = await machine.runCommand({ ...shellFor('cat /dev/urandom | base64'), timeoutMs: 30_000 });
+  const floodOut = await flood.stdout();
+  state.onRun = null;
+  check('output past the ceiling stops the command, and is cut with a note (SBX-005)', state.calls.some((c) => c.kind === 'killCommand') && floodOut.length < 2.2 * 1024 * 1024 && /stopped/i.test(floodOut.slice(-200)), `${floodOut.length} chars`);
   await machine.writeFiles([{ path: 'data/in.csv', content: Buffer.from('a,b') }]);
   const wrote = state.calls.find((c) => c.kind === 'write');
   check('files are written under the home folder', wrote.entries[0].path === '/home/user/data/in.csv' && Buffer.from(wrote.entries[0].data).toString() === 'a,b');
@@ -205,6 +242,35 @@ section("one machine per account, found again — and paid for before it runs");
 
   await again.extendTimeout(15 * 60_000);
   check('keeping it awake longer sets its timeout and pays only the extra time', state.calls.some((c) => c.kind === 'setTimeout' && c.ms === 900_000));
+
+  /*
+   * HAR-010: paid for before it runs — and given back when it did not. With
+   * E2B's twenty machines all busy, every failed start used to cost ten
+   * minutes of the month's credit; about 325 of them closed E2B for the month
+   * with no machine time used at all.
+   */
+  {
+    const month = `free:e2b:${new Date().toISOString().slice(0, 7)}`;
+    await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+    state.boxes.clear();
+    const before = await store.readCounter(month);
+    state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
+    const busy = await e2b.e2bMachineFor('u-e2b', 'synz-a').then(() => '', (e) => e.name);
+    state.createError = null;
+    check('a start that does not happen costs nothing: what it paid is given back (HAR-010)', busy === 'RateLimitError' && (await store.readCounter(month)) === before, `${busy} ${before} → ${await store.readCounter(month)}`);
+
+    // HAR-007: one account keeping its machine awake could spend the whole month's pool for everybody.
+    await store.createUser({ id: 'u-e2b-greedy', email: 'greedy@example.com', passwordHash: 'x', name: 'G', role: 'user' }).catch(() => {});
+    process.env.E2B_ACCOUNT_SHARE = '0.001';
+    try {
+      const greedy = await e2b.e2bMachineFor('u-e2b-greedy', 'synz-greedy').then(() => '', (e) => e.name);
+      check('an account past its share of the month is not given more of the pool (HAR-007)', greedy === 'E2BOutOfCredit', greedy || 'started');
+    } finally {
+      delete process.env.E2B_ACCOUNT_SHARE;
+    }
+    const fair = await e2b.e2bMachineFor('u-e2b-greedy', 'synz-greedy').then((m) => m.provider, (e) => e.name);
+    check('  while within its share it starts as before', fair === 'e2b', fair);
+  }
 
   state.boxes.clear();
   state.calls.length = 0;
@@ -249,6 +315,7 @@ section('which refusals send the work elsewhere');
   check('the network: down', u(new TypeError('fetch failed')) === 'down' && u(named('TimeoutError', 'Request timed out')) === 'down');
   check('a command that failed is not a reason to move', u(named('CommandExitError', 'exit status 1', { exitCode: 1 })) === null && u(new Error('something else')) === null);
   check('configured by its key alone', e2b.e2bConfigured({ E2B_API_KEY: 'k' }) && !e2b.e2bConfigured({}));
+  check('a library that will not load here: broken (SBX-002)', u(new e2b.E2BSdkError(new Error('require() of ES Module x not supported'))) === 'broken');
 }
 
 section('E2B first, Vercel standing in when it cannot');
@@ -295,6 +362,19 @@ section('E2B first, Vercel standing in when it cannot');
   const odd = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
   check('an error that would follow the work anywhere is not hidden behind a stand-in', odd === 'something no platform would cure' && vercelStarts === 3);
 
+  // SBX-002: the production failure of 2026-11-02, had it been caught — a library that will not load.
+  const loadFailure = () => new e2b.E2BSdkError(new Error('require() of ES Module /var/task/node_modules/e2b/node_modules/chalk/source/index.js not supported'));
+  sandbox.__testing.clearE2bAside();
+  state.createError = loadFailure();
+  const before = vercelStarts;
+  const stoodIn = await sandbox.machineForUser('u-e2b');
+  check('an E2B library that will not load sends the work to Vercel, which is told it stands in (SBX-002)', stoodIn.standIn === true && vercelStarts === before + 1);
+  state.calls.length = 0;
+  state.createError = null;
+  await sandbox.machineForUser('u-e2b');
+  check('  and E2B is set aside rather than loaded again at once', !state.calls.some((c) => c.kind === 'create') && vercelStarts === before + 2);
+  sandbox.__testing.clearE2bAside();
+
   for (const name of ['VERCEL_TOKEN', 'VERCEL_TEAM_ID', 'VERCEL_PROJECT_ID']) delete process.env[name];
   state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
   const alone = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
@@ -307,8 +387,41 @@ section('E2B first, Vercel standing in when it cannot');
   const aside = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
   check('  E2B is then set aside for a while rather than asked again at once', /E2B_API_KEY/.test(aside) && !state.calls.some((c) => c.kind === 'create'));
 
+  sandbox.__testing.clearE2bAside();
+  state.createError = loadFailure();
+  const broken = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
+  check('with no Vercel, a library that will not load says the owner must read the logs — not the raw loader text', /could not load its E2B library/.test(broken) && !/var\/task|require\(\)/.test(broken), broken);
+  state.createError = null;
+  sandbox.__testing.clearE2bAside();
+
   sandbox.__testing.useSdk(null);
   e2b.__testing.useSdk(null);
+}
+
+section('the SDK loads on a runtime that cannot require() an ES module (SBX-001)');
+{
+  /*
+   * Production broke here (owner, 2026-11-02): every sandbox_run answered
+   * "require() of ES Module …/e2b/node_modules/chalk/source/index.js … not
+   * supported". `e2b` has no `exports`, so a bare import reaches its CommonJS
+   * build, which require()s the ES-only chalk 5 — fine on this PC, fatal on
+   * Vercel's runtime. Run the app's own loader in a Node that refuses
+   * require(esm), the way that runtime does.
+   */
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const script =
+    "const m = await import('./server/e2b.js');" +
+    'const sdk = await m.__testing.loadSdk();' +
+    'console.log(typeof sdk.Sandbox?.create);';
+  const run = spawnSync(process.execPath, ['--no-experimental-require-module', '--input-type=module', '-e', script], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, ENCRYPTION_KEY: 'test-encryption-key-for-the-e2b-suite' },
+  });
+  const said = `${run.stdout}${run.stderr}`.trim();
+  check('the SDK the app loads has Sandbox.create', run.status === 0 && run.stdout.trim() === 'function', said.split('\n')[0]);
 }
 
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll E2B checks passed.\x1b[0m\n');

@@ -23,6 +23,8 @@ export const PICTURE_EXTENSIONS = /\.(png|jpe?g|webp|gif|bmp)$/i;
 
 /** @type {any} */
 let canvasApi;
+/** How many pictures were handed to the decoder — what the suite counts to show one was not. */
+let decodes = 0;
 async function canvas() {
   if (canvasApi === undefined) {
     try {
@@ -115,6 +117,11 @@ export function pictureSize(bytes) {
  * @returns {Promise<{ data: Buffer, mime: string, width: number, height: number, thumb: string|null } | null>}
  *   null when the bytes are not a picture at all.
  * @throws when the picture claims more than MAX_PIXELS — it is never decoded.
+ *
+ * A picture whose size cannot be read from its header is kept as it is and
+ * never decoded here (SEC-062): the ceiling has to know the size first, and a
+ * header made unreadable on purpose is how a 30000×30000 JPEG would pass it
+ * and take the instance's memory. imageGround.js has always refused the same way.
  */
 export async function viewCopy(bytes) {
   const mime = sniffPicture(bytes);
@@ -124,10 +131,12 @@ export async function viewCopy(bytes) {
     throw new Error(`It is ${claimed.width}×${claimed.height} — too many pixels to open safely. Make a smaller copy and read that.`);
   }
   const asItIs = { data: bytes, mime, width: 0, height: 0, thumb: null };
+  if (!claimed) return asItIs;
   const api = await canvas();
   if (!api) return asItIs;
   let picture;
   try {
+    decodes += 1;
     picture = await api.loadImage(bytes);
   } catch {
     return asItIs;
@@ -181,3 +190,5 @@ export async function viewCopy(bytes) {
     return { ...asItIs, width, height };
   }
 }
+
+export const __testing = { decodes: () => decodes };

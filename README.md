@@ -1164,6 +1164,23 @@ purpose: Exa's Agent and Research runs ($0.012–$1 each, a large share of a $10
 `deep_research` does that job on free models), summaries and subpages (charged per page), and the
 deprecated `includeText`/`excludeText`.
 
+### The quality gate
+
+A finished answer is checked before it is kept. The check is one that needs no model's opinion: every web
+address the answer cites must be somewhere in the conversation — in what you wrote, or in a page, search
+result or file a tool brought back. An address the model wrote from memory is the commonest invention a
+reader acts on, because they click it.
+
+- **Nothing to check, nothing spent.** An answer whose addresses are all accounted for is kept as it streamed.
+- **Only the wrong sentence is redone.** The model is sent the flagged addresses and the sources that were
+  read, and answers with find-and-replace edits. An edit is applied only if it touches a sentence holding a
+  flagged address, matches the answer exactly once, and brings no new unsourced address; everything else
+  stays byte for byte as you saw it. Up to `QUALITY_GATE_ROUNDS` rounds (default 2), and a round that changes
+  nothing ends them.
+- **Never published as fact.** Whatever is still unsourced loses its link (its words stay), and a line at the
+  end says what the check did. The screen is updated to the corrected answer, which is also what is stored.
+- Addresses inside code blocks are examples, not citations, and are not checked. `qualityGate: false` in an
+  account's preferences turns it off. See `server/qualityGate.js`.
 ### Free tiers: one allowance per service, shared by everyone
 
 The deployment pays nothing (`server/freeTier.js`). Every metered service has **one** free allowance —
@@ -1588,8 +1605,12 @@ day after their last use.
 
 Settings → Privacy → **Your data**:
 
-- **Export my data** downloads one JSON file — profile, preferences, notes, skills, projects with their
-  source text, scheduled tasks, workflows and every conversation with its messages. Streamed, so a large
+- **Export my data** downloads one JSON file — profile and username, preferences, notes, skills with
+  their files and the skill draft, projects with their source text, scheduled tasks, workflows, the
+  feedback you sent (with any conversation copy), what artifacts' pages saved, deep-research runs, the
+  MCP servers you added (without their headers and environment, where their secrets are), and every
+  conversation with its messages. Usage figures, sign-in sessions and the account's activity log are
+  shown in Settings and not repeated in it. Streamed, so a large
   account does not hit the host's response limit. API keys, connector tokens and uploaded files' bytes
   are not in it; incognito conversations are not part of the record.
 - **Import conversations** reads `conversations.json` from Claude or ChatGPT (only the branch ChatGPT
@@ -1829,6 +1850,8 @@ step, with the optional certificate and how to bring data over from another data
 | `KEY_CHECKS` | optional | On by default: a key pasted in Settings → Providers is checked with its provider before it is kept (and OpenRouter says whose account it is, and whether it has paid). `off` skips the check — for test suites that save made-up keys. |
 | `FREE_TIER_ONLY` | optional | On by default: every metered search service stops at its free allowance (see "Free tiers"). `false` counts them but stops none, for a deployment that pays. |
 | `FREE_TIER_USER_DAILY` | optional | Metered searches one account may make a day (default `30`); past it, its searches use the free engines. |
+| `QUALITY_GATE_ROUNDS` | optional | How many times a finished answer citing an address no source holds is sent back to correct that sentence, before the link is dropped (1–3, default `2`). Each round is one short call, made only while something is still flagged. See "The quality gate". |
+| `PROVIDER_REQUEST_BUDGET_MS` | optional | How long one call to a model may take, every key and retry together (default `240000`, under the 300 s a Vercel function lives). Waits and first-word timeouts are cut to what is left, and a stumble's Retry-After is waited a minute at most, so a provider that will not answer ends the turn with a reason rather than a cut-off stream. This budget starts again with each call, so a turn also has a deadline, 270 s after it began on this function, that bounds what a call waits for — a stumble's retry, a rate-limited key's rest, the wait for a first word — on the turn's steps and when it folds the conversation. It does not cut a reply that is already streaming, and a call still gets 20 s to start (the least worth trying), so a long turn can outlive the function; a turn cut off that way is picked up again (`server/resume.js`) rather than ended early.
 | `EXA_FREE_MILLS`, `TAVILY_FREE_CREDITS`, `BRAVE_FREE_REQUESTS`, `GOOGLE_FREE_DAILY`, `STACKEXCHANGE_FREE_DAILY` | optional | Each service's ceiling, if its free tier is not the default one: Exa in thousandths of a dollar a month (9500), Tavily credits a month (950), Brave requests a month (950), Google grounded searches a day on the deployment's Gemini key (450), Stack Exchange requests a day (280, or 9500 with a key). |
 | `ANTHROPIC_API_KEY` etc. | **usually leave blank** | A shared fallback every account without its own key spends against. See the warning above. |
 | `PUBLIC_URL` | recommended | Your deployment URL. Used to build links in emails; without it they are guessed from the request. |
@@ -1875,6 +1898,7 @@ assuming a fresh one, and that the serverless-only branches behave.
 | `E2B_API_KEY` | Runs each account's cloud computer on E2B first (`server/e2b.js`), with the Vercel Sandbox standing in when E2B cannot: no key, this month's share of the credit spent, all twenty E2B machines running, or E2B not answering. An E2B machine pauses after ten idle minutes, keeping its memory and disk, and is not billed while paused. Every command runs as root and drops to the account with `setpriv`, because E2B always starts a login shell. Use a Hobby key with no card on the team, so a spent credit is a refusal and never a bill. |
 | `E2B_TEMPLATE` | The E2B template machines are made from. Default `base` (512 MiB — too little for the cloud browser); `npm run e2b:template` builds `synapsez-computer`: 2 vCPU and 2 GiB (or `E2B_TEMPLATE_CPUS` / `E2B_TEMPLATE_MEMORY_MB`), fonts for Vietnamese pages, pandas, matplotlib, openpyxl, python-docx, python-pptx, fpdf2 and the like for `/usr/bin/python3`, and the cloud browser's packages in npm's cache. Set this to that name afterwards. E2B leaves `/usr/local` writable by everyone, so the cloud browser's helper runs as the account there, not as root. `npm run e2b:probe` checks a machine on E2B itself — who commands run as, time limits, background programs, a pause and resume — for about two cents. |
 | `E2B_CREDIT_MILLS` / `E2B_CREDIT_EXPIRES` / `E2B_CREDIT_LASTING_MILLS` | The E2B credit, in thousandths of a dollar: the part that lapses (default `100000`), the day it lapses (default `2027-12-01`), and the part that never does (default `5000`). A month may spend what was left of the lapsing part when it began, divided by the months left before it lapses, so a quiet month passes its share on and none of it lapses unused; then the lasting part. Each is taken at 97%. The use and this month's ceiling are in Settings → People → Free allowances. |
+| `E2B_ACCOUNT_SHARE` | The most of the month's E2B credit one account's machine may use (a fraction, default `0.34`). Past it, that account's cloud computer runs on the Vercel stand-in, so one busy account cannot spend the month for everybody. |
 | `CLOUD_ACTIONS_PER_DAY` / `CLOUD_ACTIONS_TOTAL_PER_DAY` | Cloud browser and sandbox actions a day, per account (default `60`) and in all (default `400`) — sized to Hobby's CPU allowance. Raise them on a paid plan. |
 | `CLOUD_BROWSER_BLOCK_TRACKERS` | `0` lets the cloud browser load the well-known analytics, advertising and session-recording hosts it otherwise cannot resolve (on by default; the list is `TRACKERS` in `server/cloudBrowser/service.mjs`). |
 | `CLOUD_CHECKS_PER_DAY` / `CLOUD_CHECKS_TOTAL_PER_DAY` | New stdio MCP servers checked on a scratch machine a day, per account (default `5`) and in all (default `30`). A check installs and starts a package on a machine of its own, so it costs far more than one action. A command somebody has already added needs no check. |

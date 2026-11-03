@@ -128,6 +128,13 @@ export const DEFAULT_PREFS = {
    * Off, `search_connectors` and `suggest_connectors` are withheld.
    */
   connectorSearch: true,
+  /**
+   * The quality gate on a finished answer (QC-001, owner 2026-11-02): a web
+   * address the conversation does not account for is sent back to the model to
+   * correct — that sentence only — and dropped if it is not. Costs a call only
+   * when there is something to correct. See server/qualityGate.js.
+   */
+  qualityGate: true,
 };
 
 /** How the catalogue is sent: held back when it would crowd the window, or always whole. */
@@ -155,6 +162,25 @@ const ENV_KEYS = {
   openrouter: 'OPENROUTER_API_KEY',
   orcarouter: 'ORCAROUTER_API_KEY',
 };
+
+/**
+ * What the person has switched off — connections paused in the + menu, plugins,
+ * memory, chat search, connector search — read on its own, for a turn checking
+ * between steps whether that changed (PRV-021). Without `getPrefs`' model lookup.
+ *
+ * @param {string} userId
+ */
+export async function getPauses(userId) {
+  const stored = (await getStore().getUserSetting(userId, PREFS_KEY)) || {};
+  const prefs = { ...DEFAULT_PREFS, ...stored };
+  return {
+    connectorsOff: prefs.connectorsOff,
+    pluginsOff: prefs.pluginsOff,
+    memory: prefs.memory,
+    chatSearch: prefs.chatSearch,
+    connectorSearch: prefs.connectorSearch,
+  };
+}
 
 /**
  * The preferences, with a default model the account can actually run.
@@ -566,11 +592,15 @@ export async function keyEntries(userId, provider) {
   }));
 }
 
-/** Remember what was learned about one key, by its position. */
-export async function setKeyMeta(userId, provider, index, meta) {
+/**
+ * Remember what was learned about one key — found by the key itself, not its
+ * position, which may have changed while it was being asked about (HAR-008).
+ */
+export async function setKeyMeta(userId, provider, key, meta) {
   const keys = await storedKeys(userId);
   const list = keyList(keys, provider);
-  if (!list[index]) return;
+  const index = list.findIndex((entry) => decryptSecret(entry.cipher) === key);
+  if (index < 0) return;
   list[index] = { ...list[index], ...keyMeta(meta) };
   keys[provider] = list;
   await getStore().setUserSetting(userId, KEYS_KEY, keys);
@@ -578,7 +608,7 @@ export async function setKeyMeta(userId, provider, index, meta) {
 
 /** Replace whatever is stored with this single key, or clear it. */
 export async function setApiKey(userId, provider, value, meta = {}) {
-  if (!(provider in ENV_KEYS)) throw new Error(`Unknown provider "${provider}"`);
+  if (!Object.hasOwn(ENV_KEYS, provider)) throw new Error(`Unknown provider "${provider}"`);
   const keys = await storedKeys(userId);
   if (value) keys[provider] = [{ cipher: encryptSecret(value), hint: hintFor(value), addedAt: new Date().toISOString(), ...keyMeta(meta) }];
   else delete keys[provider];
@@ -590,7 +620,7 @@ export async function setApiKey(userId, provider, value, meta = {}) {
 
 /** Add a spare, kept behind the ones already there. */
 export async function addApiKey(userId, provider, value, meta = {}) {
-  if (!(provider in ENV_KEYS)) throw new Error(`Unknown provider "${provider}"`);
+  if (!Object.hasOwn(ENV_KEYS, provider)) throw new Error(`Unknown provider "${provider}"`);
   const clean = String(value || '').trim();
   if (!clean) throw new Error('That is an empty key.');
 
@@ -610,7 +640,7 @@ export async function addApiKey(userId, provider, value, meta = {}) {
 
 /** Drop one key by its position, leaving the rest in order. */
 export async function removeApiKey(userId, provider, index) {
-  if (!(provider in ENV_KEYS)) throw new Error(`Unknown provider "${provider}"`);
+  if (!Object.hasOwn(ENV_KEYS, provider)) throw new Error(`Unknown provider "${provider}"`);
   const keys = await storedKeys(userId);
   const list = keyList(keys, provider);
   /**

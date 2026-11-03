@@ -1,5 +1,6 @@
-import { t, currentLanguage } from './i18n.js';
+import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
+import { localMoment } from './format.js';
 import { knownLimits, alertFor } from './usage-math.js';
 import { MORE, limitName } from './usage-panel.js';
 
@@ -9,19 +10,27 @@ import { MORE, limitName } from './usage-panel.js';
  * usage" (owner, 2026-10-31).
  *
  * From 80% of the tightest limit the page knows (usage-math.js `alertFor`),
- * again at 90%, and at the limit; closing it holds until the next of those or
- * the next period. Asked after every turn and as the app opens — the limits
- * only (`?part=limits`), and OpenRouter's answer is shared for a few seconds
- * with the Usage page (server/usageReport.js), so it costs next to nothing.
+ * again at 90%, and at the limit. Closing it holds for the rest of that
+ * limit's period, whatever level it reaches (UX-021, owner 2026-11-02): it came
+ * back at the next send before. Remembered per account (PRV-019), so on a
+ * shared browser one person's close is not another's.
  *
- * @typedef {{ load: () => Promise<any>, providers: () => any, openUsage: () => void, openKeys: () => void }} Deps
+ * Held back while something already sits above the composer — a question card
+ * or an approval (UX-020): pushed up under the line, a long question lost its
+ * top. Shown again when that goes.
+ *
+ * Asked after every turn and as the app opens — the limits only
+ * (`?part=limits`), and OpenRouter's answer is shared for a few seconds with
+ * the Usage page (server/usageReport.js), so it costs next to nothing.
+ *
+ * @typedef {{ load: () => Promise<any>, providers: () => any, openUsage: () => void, openKeys: () => void,
+ *   user: () => string | undefined, changed?: (freeOutUntil: Date | null) => void }} Deps
  */
 
-const DISMISSED = 'synapsez.usageAlert';
+/** Before closes were kept per account; whose it was cannot be told, so it is dropped. */
+const UNSCOPED = 'synapsez.usageAlert';
 /** Asked at most this often unless something has just happened that moves a limit. */
 const QUIET_MS = 20_000;
-
-const locale = () => (currentLanguage() === 'vi' ? 'vi-VN' : 'en-US');
 
 /** @param {HTMLElement} host @param {Deps} deps */
 export function createUsageAlert(host, deps) {
@@ -29,10 +38,24 @@ export function createUsageAlert(host, deps) {
   let askedAt = 0;
   /** @type {Promise<void> | null} */
   let asking = null;
+  /** The last report drawn from, so a hold can lift without asking again. */
+  let lastReport = null;
+  let held = false;
+  /**
+   * When every OpenRouter key is out of today's free requests, the moment they come back (UX-024).
+   * @type {Date | null}
+   */
+  let freeOutUntil = null;
 
+  const storeKey = () => {
+    const id = deps.user();
+    return id ? `${UNSCOPED}:${id}` : null;
+  };
   const remembered = () => {
     try {
-      return localStorage.getItem(DISMISSED) || '';
+      localStorage.removeItem(UNSCOPED);
+      const key = storeKey();
+      return key ? localStorage.getItem(key) || '' : '';
     } catch {
       return '';
     }
@@ -40,10 +63,16 @@ export function createUsageAlert(host, deps) {
 
   /** Draw it from a report — the composer's own ask, or the Usage page's. */
   function show(report) {
+    lastReport = report;
     const limits = knownLimits(report, 'all');
+    const free = limits.filter((l) => l.kind === 'free');
+    const wasOut = !!freeOutUntil;
+    freeOutUntil = free.length && free.every((l) => l.used >= l.limit) ? free.map((l) => l.to).filter(Boolean).sort((a, b) => a.getTime() - b.getTime())[0] || null : null;
+    if (wasOut !== !!freeOutUntil) deps.changed?.(freeOutUntil);
     const alert = alertFor(limits);
-    const id = alert ? `${alert.limit.id}|${alert.level}|${alert.limit.to ? alert.limit.to.toISOString() : ''}` : '';
-    if (!alert || id === remembered()) {
+    // The limit and its period, not its level: a close lasts until the period ends (UX-021).
+    const id = alert ? `${alert.limit.id}|${alert.limit.to ? alert.limit.to.toISOString() : ''}` : '';
+    if (!alert || id === remembered() || held) {
       host.hidden = true;
       shown = '';
       return;
@@ -54,7 +83,7 @@ export function createUsageAlert(host, deps) {
     const name = limitName(limit, deps.providers(), keys);
     // Floored, so 99.6% is not called 100% while there is still some left.
     const said = level === 'out' ? t('usage.alert.out', { limit: name }) : t('usage.alert.close', { pct: `${Math.floor(share * 100)}%`, limit: name });
-    const resets = limit.to ? t('usage.alert.resets', { when: new Intl.DateTimeFormat(locale(), { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(limit.to) }) : '';
+    const resets = limit.to ? t('usage.alert.resets', { when: localMoment(limit.to) }) : '';
     const more =
       limit.kind === 'shared'
         ? `<button type="button" class="usage-alert__link" data-alert-keys>${escapeHtml(t('usage.addOwnKey'))}</button>`
@@ -87,7 +116,8 @@ export function createUsageAlert(host, deps) {
     if (!el) return;
     if (el.hasAttribute('data-alert-close')) {
       try {
-        localStorage.setItem(DISMISSED, shown);
+        const key = storeKey();
+        if (key) localStorage.setItem(key, shown);
       } catch {
         /* a private window: closed for now, back next time */
       }
@@ -100,5 +130,21 @@ export function createUsageAlert(host, deps) {
     if (document.visibilityState === 'visible') refresh();
   });
 
-  return { show, refresh };
+  /** Held back while a question or an approval sits above the composer (UX-020); drawn again after. */
+  function hold(on) {
+    if (held === !!on) return;
+    held = !!on;
+    if (held) host.hidden = true;
+    else if (lastReport) show(lastReport);
+  }
+
+  /**
+   * When a free model cannot be sent to: every OpenRouter key has used today's
+   * free requests (UX-024). The moment they come back, or null when they have not run out.
+   *
+   * @returns {Date | null}
+   */
+  const freeBlockedUntil = () => (freeOutUntil && freeOutUntil > new Date() ? freeOutUntil : null);
+
+  return { show, refresh, hold, freeBlockedUntil };
 }

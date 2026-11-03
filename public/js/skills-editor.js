@@ -19,16 +19,37 @@ import { api } from './api.js';
 import { t, currentLanguage } from './i18n.js';
 import { toast } from './render.js';
 
-const LOCAL_KEY = 'synapsez.skillDraft';
+/**
+ * This browser's copy of a draft, one per account (PRV-017). It was one key for
+ * the whole browser: whoever signed in next and opened Create a skill was shown
+ * the last person's draft — and their first keystroke saved it to their own
+ * account. The old shared key is dropped on sight; nobody can tell whose it was.
+ */
+const LOCAL_PREFIX = 'synapsez.skillDraft';
 const MAX_FILE_CHARS = 20_000;
 const MAX_FILES = 10;
 
 const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
+/** Every account's copy on this browser gone — at sign-out, so nothing outlives the session here. */
+export function forgetLocalDrafts() {
+  try {
+    for (const key of Object.keys(localStorage)) if (key === LOCAL_PREFIX || key.startsWith(`${LOCAL_PREFIX}:`)) localStorage.removeItem(key);
+  } catch {
+    /* storage refused: there is nothing to forget */
+  }
+}
+
 /**
- * @param {{ onSaved: (skill: any) => void }} deps
+ * @param {{ onSaved: (skill: any) => void, owner: () => string | undefined }} deps
+ *   `owner`: the signed-in account's id, which this browser's copy belongs to
  */
-export function createSkillEditor({ onSaved }) {
+export function createSkillEditor({ onSaved, owner }) {
+  /** This account's key, or null when there is no account to tie a copy to. */
+  const localKey = () => {
+    const id = owner();
+    return id ? `${LOCAL_PREFIX}:${id}` : null;
+  };
   const dialog = /** @type {HTMLDialogElement} */ ($('skill-create'));
   const confirm = /** @type {HTMLDialogElement} */ ($('skc-discard'));
   const nameBox = /** @type {HTMLInputElement} */ ($('skc-name'));
@@ -122,7 +143,8 @@ export function createSkillEditor({ onSaved }) {
     docs[current].content = text.value;
     const draft = draftOf();
     try {
-      localStorage.setItem(LOCAL_KEY, JSON.stringify(draft));
+      const key = localKey();
+      if (key) localStorage.setItem(key, JSON.stringify(draft));
     } catch {
       /* the account's copy is the one that matters */
     }
@@ -135,6 +157,14 @@ export function createSkillEditor({ onSaved }) {
     try {
       const { savedAt } = await api.saveSkillDraft(draft);
       setPill('skills.draftSaved', savedAt);
+      // This browser's copy is now also the account's — see lastDraft (PRV-020).
+      try {
+        const key = localKey();
+        const local = key ? JSON.parse(localStorage.getItem(key) || 'null') : null;
+        if (local && local.savedAt === draft.savedAt) localStorage.setItem(key, JSON.stringify({ ...local, onAccount: true }));
+      } catch {
+        /* nothing kept here */
+      }
     } catch {
       setPill('skills.draftLocal', draft.savedAt);
     }
@@ -143,7 +173,8 @@ export function createSkillEditor({ onSaved }) {
   function forgetDraft() {
     clearTimeout(saveTimer);
     try {
-      localStorage.removeItem(LOCAL_KEY);
+      const key = localKey();
+      if (key) localStorage.removeItem(key);
     } catch {
       /* nothing kept here */
     }
@@ -154,11 +185,30 @@ export function createSkillEditor({ onSaved }) {
   async function lastDraft() {
     let local = null;
     try {
-      local = JSON.parse(localStorage.getItem(LOCAL_KEY) || 'null');
+      localStorage.removeItem(LOCAL_PREFIX);
+      const key = localKey();
+      local = key ? JSON.parse(localStorage.getItem(key) || 'null') : null;
     } catch {
       local = null;
     }
-    const remote = await api.skillDraft().then((r) => r.draft).catch(() => null);
+    let reached = true;
+    const remote = await api.skillDraft()
+      .then((r) => r.draft)
+      .catch(() => {
+        reached = false;
+        return null;
+      });
+    // A copy that reached the account, which now has none, was cancelled or made
+    // into a skill on another device (PRV-020): dropped, not brought back and
+    // saved again. One that never reached the account is this browser's own work.
+    if (reached && !remote && local?.onAccount) {
+      try {
+        localStorage.removeItem(localKey());
+      } catch {
+        /* nothing kept here */
+      }
+      local = null;
+    }
     const pick = [local, remote].filter((d) => d && (d.name || d.description || d.instructions || d.files?.length)).sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)))[0];
     return pick || null;
   }

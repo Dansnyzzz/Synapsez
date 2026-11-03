@@ -137,9 +137,17 @@ export function estimatePromptTokens({ system, messages, tools } = {}) {
         chars += value.length;
       }
     } else if (Array.isArray(value)) {
+      chars += 2 + value.length;
       for (const item of value) walk(item);
     } else if (value && typeof value === 'object') {
-      for (const item of Object.values(value)) walk(item);
+      // Sent as JSON: each property's name, its quotes, colon and comma are
+      // paid for too — a tool schema is mostly names (TOK-002).
+      for (const [name, item] of Object.entries(value)) {
+        chars += name.length + 4;
+        walk(item);
+      }
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      chars += String(value).length;
     }
   };
   walk(system);
@@ -345,6 +353,14 @@ const backoff = (attempt) => Math.min(8000, 500 * 2 ** attempt) + Math.floor(Mat
 
 /** Attempts at one key when it is the provider rather than the key at fault. */
 const UPSTREAM_TRIES = 3;
+// How long one request may take, every key and retry together (HAR-012): under the 300 s
+// a Vercel function lives, so a turn whose provider will not answer can still say so.
+// PROVIDER_REQUEST_BUDGET_MS; read per request, so a test can shorten it.
+const requestBudgetMs = () => Number(process.env.PROVIDER_REQUEST_BUDGET_MS) || 240_000;
+// Too little left to be worth starting another attempt.
+const MIN_ATTEMPT_MS = 20_000;
+// Failed calls to a stumbling provider one request may make across all its keys (HAR-013).
+const MAX_UPSTREAM_FAILURES = 5;
 
 /** Passes over the key list. More than one only because a wait can earn a key back. */
 const ROUNDS = 3;
@@ -385,7 +401,7 @@ const ROUNDS = 3;
  *       · {type:'done', stopReason, toolCalls, usage, raw?}
  */
 async function* streamAny(opts) {
-  const { streamOne: injected, sleep, googleData: _googleData, ...rest } = opts;
+  const { streamOne: injected, sleep, googleData: _googleData, deadline: _deadline, ...rest } = opts;
   const entry = opts.entry;
   const provider = entry.provider;
   const label = PROVIDERS[provider]?.label || provider;
@@ -422,6 +438,13 @@ async function* streamAny(opts) {
    */
   const gaveUp = new Set();
   let lastUpstream = null;
+  // The whole request's time, every key and retry together (HAR-012) — and
+  // never past the caller's own deadline, the turn's (HAR-015): this budget
+  // starts again with every call, so step 2 of a turn, or the move to Auto
+  // after a stall, could otherwise run past the function's 300 s.
+  const deadline = Math.min(Date.now() + requestBudgetMs(), Number(opts.deadline) || Infinity);
+  // Failed calls to a stumbling provider so far on this request (HAR-013).
+  let upstreamFailures = 0;
   const upstreamError = (failure) =>
     Object.assign(
       new Error(`${label} could not reach this model on any key: ${failure.message}`),
@@ -440,7 +463,9 @@ async function* streamAny(opts) {
 
       const until = keyRestingUntil(userId, provider);
       const left = until == null ? null : until - Date.now();
-      if (left != null && left <= MAX_WAIT_MS && round < ROUNDS - 1) {
+      // Only when the wait still leaves the request time for an attempt (HAR-016):
+      // a minute's wait for a resting key used to ignore the deadline entirely.
+      if (left != null && left <= MAX_WAIT_MS && round < ROUNDS - 1 && deadline - Date.now() - left >= MIN_ATTEMPT_MS) {
         yield {
           type: 'notice',
           text: `${label}: every key is rate limited. Waiting ${Math.ceil(left / 1000)}s.`,
@@ -449,10 +474,16 @@ async function* streamAny(opts) {
         liftKeyRest(userId, provider, until);
         continue;
       }
-      throw new Error(
-        until
-          ? `${label}: every key is rate limited until ${new Date(until).toLocaleTimeString()}.`
-          : `${label}: every key was refused${refused ? ` (${refused})` : ''}.`,
+      // The moment as an ISO instant, not the server's clock face: Vercel's is
+      // UTC, so "12:00:00 AM" sat beside "resets at 7:00" for the same moment.
+      // The browser shows any such instant in the person's own time (UX-023).
+      throw Object.assign(
+        new Error(
+          until
+            ? `${label}: every key is rate limited until ${new Date(until).toISOString()}.`
+            : `${label}: every key was refused${refused ? ` (${refused})` : ''}.`,
+        ),
+        until ? { code: 'rate_limited' } : {},
       );
     }
 
@@ -486,7 +517,9 @@ async function* streamAny(opts) {
         const restored = shield ? restoring(shield) : (event) => [event];
 
         try {
-          for await (const incoming of stallGuard(dispatch(entry, common))) {
+          // No attempt waits for a first word past what is left of the request (HAR-012).
+          const first = Math.max(MIN_ATTEMPT_MS, Math.min(STALL_FIRST_MS, deadline - Date.now()));
+          for await (const incoming of stallGuard(dispatch(entry, common), { first })) {
             for (const event of restored(incoming)) {
               if (event.type === 'text') emitted.text += 1;
               else if (event.type === 'thinking') emitted.thinking += 1;
@@ -552,22 +585,33 @@ async function* streamAny(opts) {
 
         if (kind === 'UPSTREAM') {
           // The provider stumbled rather than the key being wrong, so it is the
-          // same key that wants trying, a moment later.
-          if (attempt < tries - 1) {
+          // same key that wants trying, a moment later — a minute at most, and
+          // only while the request still has the time for it (HAR-012): a
+          // "Retry-After: 240" was waited in full, and the function died first.
+          const pause = Math.min(retryAfterMs ?? backoff(attempt), MAX_WAIT_MS);
+          const timeLeft = deadline - Date.now();
+          if (attempt < tries - 1 && timeLeft - pause >= MIN_ATTEMPT_MS) {
             if (emitted.text) {
               yield {
                 type: 'retry',
                 reason: `${label}: the provider dropped that reply; starting it again.`,
               };
             }
-            await wait(retryAfterMs ?? backoff(attempt), signal);
+            await wait(pause, signal);
             continue;
           }
           // Out of patience with this key. The next one, if any, gets a try —
-          // see `gaveUp`; with none left, the turn is told it may switch model.
+          // see `gaveUp`; with none left, no time left, or the request's share of
+          // failed calls spent (HAR-013: eight keys made ten failures a step, each
+          // spending allowance), the turn is told it may switch model.
           gaveUp.add(key);
           lastUpstream = failure;
-          if (!keys.slice(position + 1).some((next) => !gaveUp.has(next.key))) throw upstreamError(failure);
+          upstreamFailures += attempt + 1;
+          if (
+            timeLeft < MIN_ATTEMPT_MS ||
+            upstreamFailures >= MAX_UPSTREAM_FAILURES ||
+            !keys.slice(position + 1).some((next) => !gaveUp.has(next.key))
+          ) throw upstreamError(failure);
           yield { type: 'notice', text: `${label}: ${which} could not reach the model, trying the next key.` };
           if (emitted.text) {
             yield { type: 'retry', reason: `${label}: ${which} stopped mid-answer; starting that reply again.` };
@@ -618,7 +662,7 @@ export async function* streamCompletion(opts) {
   if (!mayReceiveGoogleData(provider)) {
     const label = PROVIDERS[provider]?.label || provider;
     throw new Error(
-      `This conversation holds data from your Google account, and ${label} may keep what it is sent or learn from it, so it was not sent there. Pick a model from OpenRouter, Anthropic or OpenAI.`,
+      `This conversation holds data from your Google account, and ${label} may keep what it is sent or learn from it, so it was not sent there. Pick a model on OpenRouter — Claude and GPT are there too.`,
     );
   }
   try {
