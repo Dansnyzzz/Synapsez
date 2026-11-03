@@ -746,12 +746,15 @@ section('export is the whole account, streamed, without secrets');
   await store.saveSkill(aliceId, { id: 'sk-export', name: 'export-check', description: 'd', instructions: 'i', files: [{ name: 'template.md', text: 'TEMPLATE-BODY' }] });
   await store.createFeedback(aliceId, { id: 'fb-export', topic: 'answers', kind: 'bug', body: 'FEEDBACK-BODY', affect: 'some', chatTitle: 'T', transcript: [{ role: 'user', text: 'COPY-TEXT' }], client: {}, issue: 'wrong', answer: { replies: ['ANSWER-COPY'] } });
   await store.updateUser(aliceId, { username: 'alice_export' });
+  // PRV-027: the skill draft is kept on the account (Create a skill saves it there), not only in the browser.
+  await alice.call('PUT', '/api/skills/draft', { name: 'half-written', description: 'd', instructions: 'DRAFT-BODY', files: [] });
   const whole = (await alice.call('GET', '/api/account/export')).body;
   const skill = whole.skills.find((s) => s.name === 'export-check');
   const sent = whole.feedback?.find((f) => f.body === 'FEEDBACK-BODY');
   check("the export carries a skill's files (PRV-014)", skill?.files?.[0]?.text === 'TEMPLATE-BODY', JSON.stringify(skill?.files));
   check('  the feedback sent, its conversation copy and the answer it was about', sent?.issue === 'wrong' && JSON.stringify(sent?.transcript).includes('COPY-TEXT') && JSON.stringify(sent?.answer).includes('ANSWER-COPY'), JSON.stringify(sent));
   check('  and the username', whole.account.username === 'alice_export', JSON.stringify(whole.account));
+  check('  and the skill draft kept on the account (PRV-027)', whole.skillDraft?.instructions === 'DRAFT-BODY', JSON.stringify(whole.skillDraft)?.slice(0, 160));
   await store.deleteSkill(aliceId, 'sk-export');
 
   // More than one page, all created in the same instant: the cursor must neither
