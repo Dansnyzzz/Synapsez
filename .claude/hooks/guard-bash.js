@@ -64,6 +64,80 @@ function pushesToProtected(command) {
 }
 
 /**
+ * The command as the shell splits it: words with their quotes taken off, and a
+ * `null` wherever an unquoted `;`, `&`, `|` or newline ends one command.
+ */
+function shellWords(command) {
+  const words = [];
+  let word = null;
+  let quote = '';
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (quote) {
+      if (ch === quote) quote = '';
+      else word += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      word ??= '';
+    } else if (/[;&|\n]/.test(ch)) {
+      if (word !== null) words.push(word);
+      word = null;
+      words.push(null);
+    } else if (/\s/.test(ch)) {
+      if (word !== null) words.push(word);
+      word = null;
+    } else {
+      word = (word ?? '') + ch;
+    }
+  }
+  if (word !== null) words.push(word);
+  return words;
+}
+
+// Options of git itself, before its subcommand, that take the next word as their value.
+const GIT_VALUE_OPTIONS = /^(-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$/;
+// commit's short options that take a value, and the long ones that do when not written `=…`.
+const COMMIT_VALUE_SHORT = /[mFCct]$/;
+const COMMIT_VALUE_LONG = /^--(message|file|reuse-message|reedit-message|author|date|template|fixup|squash|trailer|cleanup)$/;
+
+/**
+ * Does this command run a git step past the repo's hooks (CFG-034, CFG-035)?
+ *
+ * Read the way git reads it, as `pushesToProtected` reads a push: git's own
+ * options skipped to find the subcommand, and the value of `-m`, `-F` and the
+ * like skipped as data — so a message that names the flag is not the flag,
+ * while `git commit "--no-verify"` (quotes the shell takes off) still is.
+ * Blocked: `--no-verify` and every prefix git would take for it (`--no-veri`
+ * on; shorter ones are ambiguous with `--no-verbose`), and for `commit`, `-n`
+ * in any cluster of short flags, wherever it sits. The first version was one
+ * regex, and `git commit -m x -n`, `git -c a=b commit -n` and `--no-verif` all
+ * walked past it.
+ */
+export function skipsHooks(command) {
+  const words = shellWords(String(command || ''));
+  for (let start = 0; start < words.length; start += 1) {
+    if (words[start] === null || !/(^|[\\/])git(\.exe)?$/i.test(words[start])) continue;
+    let i = start + 1;
+    while (i < words.length && words[i] !== null && words[i].startsWith('-')) i += GIT_VALUE_OPTIONS.test(words[i]) ? 2 : 1;
+    const sub = words[i];
+    if (!/^(commit|push|merge|rebase|am|cherry-pick|revert|pull)$/.test(sub || '')) continue;
+    for (let j = i + 1; j < words.length && words[j] !== null; j += 1) {
+      const word = words[j];
+      const name = word.split('=')[0];
+      if (name.length >= '--no-veri'.length && '--no-verify'.startsWith(name)) return true;
+      if (sub !== 'commit') continue;
+      if (/^-[a-zA-Z]+$/.test(word)) {
+        if (word.includes('n')) return true;
+        if (COMMIT_VALUE_SHORT.test(word)) j += 1;
+      } else if (COMMIT_VALUE_LONG.test(word)) {
+        j += 1;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * The command with heredoc *bodies* removed, so rules match commands and not data.
  *
  * Every rule below tests the raw text, which means a word inside something being
@@ -186,9 +260,8 @@ const RULES = [
   [
     // CFG-034: skipping the repo's own checks. No git hook exists today, but the
     // day one does, this flag is how an agent would walk past it — and the
-    // owner's rules forbid it outright. `-n` is the same flag for commit, caught
-    // only among the short flags right after `commit`, never inside a message.
-    /\bgit\s+[\w-]+\b[^\n|;&]*\s--no-verify\b|\bgit\s+commit\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)/,
+    // owner's rules forbid it outright. Parsed, not matched — see `skipsHooks`.
+    (command) => skipsHooks(command),
     'Skipping the repo\'s hooks (--no-verify) is not allowed. Fix what the hook reports and commit again.',
   ],
 ];

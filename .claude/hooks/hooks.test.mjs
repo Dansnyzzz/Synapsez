@@ -139,12 +139,18 @@ check('guard-bash.js', bash(['rm', '-rf', 'build'].join(' ')), BLOCK, 'recursive
 check('guard-bash.js', bash(['rm', '-fr', 'build'].join(' ')), BLOCK, 'the flags in the other order');
 check('guard-bash.js', bash(['git', 'push', '--force', 'origin', 'main'].join(' ')), BLOCK, 'force-push');
 check('guard-bash.js', bash(['git', 'push', '-f', 'origin', 'main'].join(' ')), BLOCK, 'the short form of it');
-// CFG-034: skipping the repo's hooks, in either spelling — and nothing that merely mentions it.
-check('guard-bash.js', bash(['git', 'commit', '-m', 'x', '--no-verify'].join(' ')), BLOCK, 'committing past the hooks');
-check('guard-bash.js', bash(['git', 'push', '--no-verify', 'origin', 'feature'].join(' ')), BLOCK, '  pushing past them', onBranch('feature/x'));
-check('guard-bash.js', bash(['git', 'commit', '-qn', '-m', 'x'].join(' ')), BLOCK, '  -n among the short flags of commit');
+// CFG-034, CFG-035: skipping the repo's hooks, however it is spelled — and nothing that merely mentions it.
+const noVerify = ['--no', 'verify'].join('-');
+check('guard-bash.js', bash(`git commit -m x ${noVerify}`), BLOCK, 'committing past the hooks');
+check('guard-bash.js', bash(`git push ${noVerify} origin feature`), BLOCK, '  pushing past them', onBranch('feature/x'));
+check('guard-bash.js', bash('git commit -qn -m x'), BLOCK, '  -n among the short flags of commit');
+for (const spelled of ['git commit -m x -n', 'git commit -F msg -n', 'git commit --amend -n', 'git commit -C HEAD -n', 'git -c a=b commit -n', 'git -C . commit -n', `git commit ${noVerify.slice(0, -1)}`, `git commit ${noVerify.slice(0, -2)}`, `git commit "${noVerify}"`]) {
+  check('guard-bash.js', bash(spelled), BLOCK, `  ${spelled.replace(noVerify, 'the flag')}`);
+}
 check('guard-bash.js', bash('git commit -q -F msg.txt'), ALLOW, '  while an ordinary commit runs');
 check('guard-bash.js', bash('git commit -m "the -n flag is not used here"'), ALLOW, '  and a message that names the flag is not the flag');
+check('guard-bash.js', bash(`git commit -m "never use ${noVerify}"`), ALLOW, '  in either spelling');
+check('guard-bash.js', bash('git log -n 5'), ALLOW, '  nor is -n to another command');
 check('guard-bash.js', bash(['git', 'reset', '--hard'].join(' ')), BLOCK, 'discarding uncommitted work');
 check('guard-bash.js', bash(`psql -c "${['DROP', 'TABLE', 'users'].join(' ')}"`), BLOCK, 'dropping a table');
 check('guard-bash.js', bash(`psql -c "${['TRUNCATE', 'chats'].join(' ')}"`), BLOCK, 'truncating one');
