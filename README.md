@@ -1194,7 +1194,8 @@ for figures after a turn that read the web (search, fetch, research, docs, sport
 - **Still not found:** the figure is marked "(unverified)" / "(chưa kiểm chứng)", and a line at the end says
   what was done.
 - **Why off by default:** a figure the model worked out from the sources (a sum, a change) is in none of them
-  either, so it is marked too. Names, and figures written as words, are not checked.
+  either, so it is marked too, and so is a date a page writes in words ("15 April 2026"). Names, and figures
+  written as words, are not checked.
 
 ### Free tiers: one allowance per service, shared by everyone
 
