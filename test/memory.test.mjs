@@ -558,6 +558,11 @@ section('usage: what each provider reports, and what Synapsez counted');
   check('  signed out, there is no report', (await jar().call('GET', '/api/usage/report')).status === 401);
   const lite = await alice.call('GET', '/api/usage/report?part=limits');
   check('  and ?part=limits is the same report without the hours', lite.status === 200 && Array.isArray(lite.body?.hours) && lite.body.hours.length === 0 && lite.body.month?.calls === route.body?.month?.calls, `${lite.status}`);
+  // CODE-066: the page's month line, for one provider, was summed from fifteen days of hours.
+  const byProvider = route.body?.monthByProvider || {};
+  check("the month, by provider, as the server counts it — not summed from the hours (CODE-066)",
+    byProvider.openrouter?.calls === 1 && byProvider.google?.calls === 1 && byProvider.google.cost > 0.001 && byProvider.google.cost < 0.0012 && !byProvider.orcarouter,
+    JSON.stringify(byProvider));
 
   // Live figures: asked of the account's own keys, never of the deployment's.
   const saved = await alice.call('POST', '/api/providers/openrouter/keys', { apiKey: 'sk-or-v1-own-key-for-usage-test-0001' });

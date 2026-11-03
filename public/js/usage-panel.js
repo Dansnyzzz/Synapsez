@@ -323,9 +323,12 @@ export function createUsagePanel(host, deps) {
       }
       parts.push(`<div class="usage__actions"><a class="btn btn--ghost btn--small" href="https://openrouter.ai/settings/credits" target="_blank" rel="noopener">${escapeHtml(t('usage.buyCredits'))} ↗</a><span class="usage__muted">${escapeHtml(t('usage.autoTopUp'))}</span></div>`);
     }
-    const rows = rowsFor(view.report.hours, scope).filter((r) => new Date(r.at) >= new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-    const estimate = rows.reduce((n, r) => n + (r.cost || 0), 0);
-    parts.push(`<p>${escapeHtml(t('usage.estimate', { cost: money(estimate), n: count(rows.reduce((n, r) => n + r.calls, 0)) }))}</p><p class="usage__muted">${escapeHtml(t('usage.estimateHint'))}</p>`);
+    // The month as the server counts it (CODE-066): the hour rows reach back fifteen
+    // days, so summing them came out too low from the 16th on.
+    const month = scope === 'all' ? view.report.month : view.report.monthByProvider?.[scope];
+    const estimate = Number(month?.cost) || 0;
+    const calls = Number(month?.calls) || 0;
+    parts.push(`<p>${escapeHtml(t('usage.estimate', { cost: money(estimate), n: count(calls) }))}</p><p class="usage__muted">${escapeHtml(t('usage.estimateHint'))}</p>`);
     return parts.join('');
   }
 

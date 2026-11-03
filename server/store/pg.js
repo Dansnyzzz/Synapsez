@@ -695,6 +695,16 @@ export function createPgStore(connectionString) {
         [userId, String(days)],
       );
     },
+    /** This month's calls and cost per model — the Usage page's month line for one provider (CODE-066). */
+    async usageThisMonthByModel(userId) {
+      return q(
+        `SELECT model, COUNT(*)::int AS calls, COALESCE(SUM(cost_usd), 0) AS cost
+           FROM usage_events
+          WHERE user_id = $1 AND created_at >= date_trunc('month', NOW())
+          GROUP BY model`,
+        [userId],
+      );
+    },
     /**
      * Calls per hour per model, the last `hours` of them — what Settings →
      * Usage draws its week, heatmap and pace from, in the browser's own zone.
