@@ -455,12 +455,15 @@ section('retention deletes old conversations, never pinned ones');
   await store.importChat(aliceId, { id: 'old-1', title: 'old', createdAt: long, updatedAt: long }, [{ id: 'old-1-m', role: 'user', text: 'from long ago' }]);
   await store.importChat(aliceId, { id: 'old-2', title: 'old pinned', createdAt: long, updatedAt: long }, [{ id: 'old-2-m', role: 'user', text: 'keep me' }]);
   await store.updateChat(aliceId, 'old-2', { pinned: true });
+  // PRV-030/PRV-032: the old conversation's deep research goes with it.
+  await store.saveResearchRun(aliceId, { id: 'rr-old-1', chatId: 'old-1', question: 'OLD-QUESTION', status: 'complete', transcript: [], sources: [], report: 'r' });
   const accounts = await store.listRetentionAccounts();
   check('the sweep finds accounts that set a period', accounts.some((a) => a.userId === aliceId && a.days === 30));
   check('a period of 0 deletes nothing at all', (await store.deleteChatsOlderThan(aliceId, 0)) === 0 && !!(await store.getChat(aliceId, 'old-1')));
   check("another account's period deletes nothing here", (await store.deleteChatsOlderThan(bobId, 30)) === 0 && !!(await store.getChat(aliceId, 'old-1')));
   const removed = await store.deleteChatsOlderThan(aliceId, 30);
   check('an old conversation goes', removed === 1 && !(await store.getChat(aliceId, 'old-1')), `${removed}`);
+  check('  and its deep research with it (PRV-030)', !(await store.getResearchRun(aliceId, 'rr-old-1')));
   check('  a pinned one stays', !!(await store.getChat(aliceId, 'old-2')));
   check('  and recent ones stay', !!(await store.getChat(aliceId, normalId)));
   const { __retention } = await import('../server/scheduler.js');
@@ -787,6 +790,12 @@ section('export is the whole account, streamed, without secrets');
   check('  and deleting a conversation deletes its deep research', !(await store.getResearchRun(aliceId, 'rr-gone')));
   const swept = await store.sweepIncognito(0);
   check('  as the incognito sweep does', swept >= 1 && !(await store.getResearchRun(aliceId, 'rr-incog')), String(swept));
+  // PRV-032: a run whose conversation is gone — left from before, or saved just after a delete.
+  await store.saveResearchRun(aliceId, { id: 'rr-orphan', chatId: 'c-no-such-chat', question: 'ORPHAN-QUESTION', status: 'complete', transcript: [], sources: [], report: 'ORPHAN-REPORT' });
+  const withOrphan = (await alice.call('GET', '/api/account/export')).text;
+  check('  nor research whose conversation is gone (PRV-032)', !/ORPHAN-QUESTION/.test(withOrphan) && /RESEARCH-QUESTION/.test(withOrphan));
+  await store.pruneResearchRuns(90);
+  check('  and the research sweep removes such a run, keeping one with no conversation', !(await store.getResearchRun(aliceId, 'rr-orphan')) && !!(await store.getResearchRun(aliceId, 'rr-export')));
   await store.deleteSkill(aliceId, 'sk-export');
 
   // More than one page, all created in the same instant: the cursor must neither

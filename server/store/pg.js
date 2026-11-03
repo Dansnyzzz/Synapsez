@@ -2654,10 +2654,14 @@ export function createPgStore(connectionString) {
      * not for ever; nothing was deleting them at all.
      */
     async pruneResearchRuns(keepDays = 90) {
+      // And any run whose conversation is gone (PRV-032): left from before a
+      // delete took its research with it, or saved by a run that finished
+      // just after its conversation was deleted.
       await q(
         `DELETE FROM research_runs
-          WHERE completed_at IS NOT NULL
-            AND completed_at < NOW() - ($1 || ' days')::interval`,
+          WHERE (completed_at IS NOT NULL AND completed_at < NOW() - ($1 || ' days')::interval)
+             OR (chat_id IS NOT NULL AND NOT EXISTS (
+                   SELECT 1 FROM chats c WHERE c.id = research_runs.chat_id AND c.user_id = research_runs.user_id))`,
         [String(keepDays)],
       );
     },
@@ -3941,12 +3945,14 @@ export function createPgStore(connectionString) {
       return rows[0] ?? null;
     },
     // Every deep-research run the account keeps (90 days), for the export (PRV-029) —
-    // not one from an incognito conversation, which is never part of the record (PRV-030).
+    // not one from an incognito conversation, which is never part of the record (PRV-030),
+    // nor one whose conversation is gone (PRV-032): only a run with no conversation, or
+    // with an ordinary one that is still there.
     async exportResearchRuns(userId) {
       return q(
         `SELECT r.chat_id, r.question, r.status, r.transcript, r.sources, r.report, r.created_at, r.completed_at
            FROM research_runs r LEFT JOIN chats c ON c.id = r.chat_id AND c.user_id = r.user_id
-          WHERE r.user_id = $1 AND NOT COALESCE(c.incognito, false)
+          WHERE r.user_id = $1 AND (r.chat_id IS NULL OR c.incognito = false)
           ORDER BY r.created_at, r.id`,
         [userId],
       );
