@@ -15,6 +15,15 @@
 - **Thứ tự kế tiếp:** LAW-003 (+LAW-002/004/005/006/007; privacy/terms; bump version `server/legal.js`) → SEC-064 (xem trước config MCP) → UX-018/PRV-018 (feedback) → CODE-066/067/068 → UI-001 → HAR-007/HAR-012 → LOW → `RESOURCE_MAP.md` + `REASONING_MAP.md` (v5) → CODE-063 (khoá typecheck) → `npm run gate` + UI suite → evaluator chỉ đọc → merge `--no-ff` + push main + smoke prod.
 - **CHỜ-CHỦ:** CFG-033 (sandbox agent: WSL2), SEC-060 (DATABASE_CA_CERT), CFG-034 (`.claude/hooks`), CFG-024 (`.env.example` untracked — chủ tự `git add` sau khi xem).
 - **Script:** `scratchpad/ledger.mjs <ID> <STATUS> <verify> <commit>` (cập nhật dòng cuối cùng có ID đó). Commit message ghi file bằng `[IO.File]::WriteAllText` rồi `git commit -F`.
+
+## Trạng thái v5 (2026-11-03) — lô OPEN cuối
+
+- **FIXED thêm (mỗi ID một commit):** HAR-007 `9c3dd75` · UX-019 `f71c50e` · TOK-002 `deb96ae` · HAR-013 `e5105c0` · UI-018 `276d6b3` · UI-014 `fdd1903` · UI-015 `2e1d6ca` · UI-016 `2d21f6c` · UI-017 `f617687` · HC-001 `088dd5e` · CODE-066 `b03707f` · CODE-067 `2bc1c70` · UI-001 `5e8afef` · CODE-068 `5581c03` · CODE-071 `0299ddf` · UI-007 `47b71a9` · PERF-024 `cf31879` · UI-003 `8802ffe` · UI-009 `88facbf` · HAR-011 `fd77044` · HAR-008 `93ab198` · HAR-009 `a0ba9b2` · PRV-025 `deaa12e` · UI-010 `b67b469` · UI-008 `3d3eddc` · UI-011 `7a01bb2` · UI-013 `53aff4c` · UI-012 `df5af2c` · PRV-014 `83a39dc` · PRV-024 `316718a` · TOK-003 `c3623a7` · CODE-072 `2fa94fd` · CODE-073 `ff8223b` · GAP-014 (Gemini) `80c9eb2`.
+- **Lô cuối (UI-002/004/005/006, PRV-020) + CODE-063:** commit sau khi test:ui batch 8 xanh.
+- **CHỜ-CHỦ mới:** GAP-013 (NGOÀI-REPO: ma trận eval effort với key thật = RSN-001), RSN-002 (Haiku 4.5 thinking dạng budget), QC-002 (đối chiếu khẳng định không link), SEC-055 (override minimatch, cần build template E2B thật), SEC-056 (CSP theo host sandbox, cần thử prod).
+- **Bằng chứng "trước khi sửa" đã chạy cho:** HAR-011 (đóng 4429), HAR-008 (còn 1 key), HAR-013 (10 lời gọi) — test đỏ khi gỡ phần sửa, xanh khi có.
+- **Kế tiếp:** `npm run gate` → test:ui đầy đủ → `RESULT.md` v5 + ma trận 26 dòng → evaluator chỉ đọc → merge `--no-ff` → gate trên `main` → push → smoke prod.
+
 ---
 # PROGRESS — vòng audit v3 (AUDIT_RULES v3, chế độ AUTO)
 
