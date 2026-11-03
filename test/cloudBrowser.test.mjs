@@ -378,6 +378,8 @@ section('the start script installs once per build and then runs the service');
     beforeCommand.includes(`[ -x ${ROOT_NODE_DIR}/bin/node ]`) && beforeCommand.includes(`/usr/bin/find ${ROOT_NODE_DIR} ! -type l \\( ! -user root -o -perm /022 \\)`) && /stat -Lc %u \/opt/.test(beforeCommand) && /\$\{_node:\+\$_node:\}\/usr\/sbin:/.test(beforeCommand));
   check('  and with nothing kept, the system folders — never /usr/local', /export PATH="\$\{_keep:-\/usr\/sbin:\/usr\/bin:\/sbin:\/bin\}"/.test(beforeCommand) && !beforeCommand.includes(':-/usr/local'));
   check('fonts are a best effort that cannot fail the start', /install -y[^]*\|\| true/.test(script));
+  // SBX-009: sudo finds a program on its secure_path, which on E2B begins in the writable /usr/local.
+  check('  as root, nothing goes through sudo (SBX-009)', !/sudo -n (sh|\$pm|apt-get)/.test(root) && /\$su_ \$pm install/.test(root) && /\{ \[ -n "\$su_" \] && \$su_ sh -c/.test(root));
   check('  with whichever package manager the image has', /dnf microdnf yum/.test(script));
   check('  apt-get too, for E2B\'s Debian, root or not', /command -v apt-get[^]*fonts-noto-core[^]*\) \|\| true; fi/.test(script) && /if \[ "\$\(id -u\)" = 0 \]; then su_=; else su_="sudo -n"; fi/.test(script));
   check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec env SYNZ_KEY_FILE'));
