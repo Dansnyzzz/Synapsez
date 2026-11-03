@@ -3512,3 +3512,17 @@ export function toast(message, kind = 'info', { ms } = {}) {
   host.append(node);
   setTimeout(() => node.remove(), ms || (kind === 'error' ? 6500 : 3200));
 }
+
+/**
+ * Say something to a screen reader only (UI-008): a success the screen already
+ * shows another way — a tick on the button, a tile in its new place. Emptied
+ * first, so the same words a second time are read a second time.
+ */
+export function announce(message) {
+  const host = document.getElementById('announcer');
+  if (!host) return;
+  host.textContent = '';
+  setTimeout(() => {
+    host.textContent = message;
+  }, 60);
+}

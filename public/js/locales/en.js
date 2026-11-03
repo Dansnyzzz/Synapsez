@@ -1144,6 +1144,7 @@ export const en = {
   'attachment.uploading': 'Uploading…',
   'attachment.remove': 'Remove {name}',
   'attachment.moveHint': 'Drag to change the order, or Alt+← / Alt+→',
+  'attachment.movedTo': 'Moved to {n} of {total}',
   'attachment.edit': 'Open {name} to draw or write on it',
   'sketch.title': 'Draw on the picture',
   'sketch.back': 'Back without saving',

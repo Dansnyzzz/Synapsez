@@ -1131,6 +1131,7 @@ export const vi = {
   'attachment.uploading': 'Đang tải lên…',
   'attachment.remove': 'Bỏ {name}',
   'attachment.moveHint': 'Kéo để đổi thứ tự, hoặc Alt+← / Alt+→',
+  'attachment.movedTo': 'Đã chuyển tới vị trí {n}/{total}',
   'attachment.edit': 'Mở {name} để phác hoạ hoặc viết lên ảnh',
   'sketch.title': 'Phác hoạ lên ảnh',
   'sketch.back': 'Quay lại, không lưu',

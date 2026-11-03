@@ -2,7 +2,7 @@ import { t } from './i18n.js';
 // A cycle (media.js → render.js → this file), safe because both are called at
 // click time, long after every module has loaded.
 import { imageUrlToPng } from './media.js';
-import { toast } from './render.js';
+import { announce, toast } from './render.js';
 
 /**
  * The pictures a run looked at: a preview under the pointer, and a lightbox to
@@ -387,6 +387,7 @@ async function copyPicture() {
     const pending = picture.png ? picture.png() : imageUrlToPng(srcOf(picture));
     await navigator.clipboard.write([new globalThis.ClipboardItem({ 'image/png': pending })]);
     button.innerHTML = ICON_DONE;
+    announce(t('media.copied'));
     setTimeout(() => {
       button.innerHTML = ICON_COPY;
     }, 1400);

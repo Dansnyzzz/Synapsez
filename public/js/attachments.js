@@ -13,7 +13,7 @@
 
 import { api } from './api.js';
 import { escapeHtml } from './markdown.js';
-import { toast } from './render.js';
+import { announce, toast } from './render.js';
 import { t } from './i18n.js';
 import { humanSize } from './format.js';
 import { preparedWithThumb, shrinkable, MAX_SHRINKABLE_BYTES } from './shrink.js';
@@ -262,7 +262,9 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       const from = Number(tile.dataset.index);
       const to = from + (event.key === 'ArrowLeft' ? -1 : 1);
       const which = /** @type {HTMLElement} */ (event.target).classList.contains('stage__remove') ? '.stage__remove' : '.stage__open';
-      if (move(from, to)) /** @type {HTMLElement | null} */ (host.querySelector(`.stage[data-index="${to}"] ${which}`))?.focus();
+      if (!move(from, to)) return;
+      /** @type {HTMLElement | null} */ (host.querySelector(`.stage[data-index="${to}"] ${which}`))?.focus();
+      announce(t('attachment.movedTo', { n: to + 1, total: staged.length }));
     });
   }
 
