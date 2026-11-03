@@ -529,6 +529,10 @@ section("the words of a PDF sent as a file, for the quality gate (QC-005)");
   check('  one already sent as text, and a picture, are not', !texts.some((t) => /already sent as text/.test(t)));
   check('  and what the model was sent is left as it was', asFile.text === undefined);
   check('past the turn\'s deadline nothing is read', (await pdfTextsOf(new Map([[asFile.id, { ...asFile, id: 'qc5-d' }]]), { deadline: Date.now() - 1 })).length === 0);
+  // QC-013: a read begun near the deadline runs on for as long as its own limit allows.
+  const { TEXT_MS } = await import('../server/pdf.js');
+  check('  nor when a whole read would not fit before it (QC-013)', (await pdfTextsOf(new Map([[asFile.id, { ...asFile, id: 'qc5-e' }]]), { deadline: Date.now() + TEXT_MS - 1000 })).length === 0);
+  check('  while one that fits is', (await pdfTextsOf(new Map([[asFile.id, { ...asFile, id: 'qc5-f' }]]), { deadline: Date.now() + TEXT_MS + 60_000 })).length === 1);
   check('no files, no reads', (await pdfTextsOf(null)).length === 0);
 }
 
