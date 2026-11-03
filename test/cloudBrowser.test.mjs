@@ -366,7 +366,7 @@ section('the start script installs once per build and then runs the service');
   check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/synz\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec env SYNZ_KEY_FILE'));
   const { shellFor, ROOT_NODE_DIR } = await import('../server/sandbox.js');
   const rootShell = shellFor('true', {}, { root: true }).args[3];
-  check('as root, PATH keeps only folders root alone can write, and never falls back to the original', /stat -Lc %u/.test(rootShell) && /\*\[2367\]\*\) continue/.test(rootShell) && !rootShell.includes('_orig'), rootShell);
+  check('as root, PATH keeps only folders root alone can write, and never falls back to the original', /stat -c %u/.test(rootShell) && /\*\[2367\]\*\) _ok=; break/.test(rootShell) && !rootShell.includes('_orig'), rootShell);
   // SBX-006: /etc/profile puts /usr/local first, which E2B leaves writable by everyone.
   const beforeCommand = rootShell.slice(0, rootShell.lastIndexOf('\ntrue'));
   const asNobody = beforeCommand.match(/\/usr\/bin\/setpriv --reuid=65534 [^\n]*/)?.[0] || '';
@@ -376,6 +376,8 @@ section('the start script installs once per build and then runs the service');
     !/(^|[\s;(|&$"])(stat|find|setpriv|env) /m.test(beforeCommand.replace(/\/usr\/bin\/(stat|find|setpriv|env) /g, '')), beforeCommand);
   check("  the template's node comes first, only when /opt and all of it are root's alone",
     beforeCommand.includes(`[ -x ${ROOT_NODE_DIR}/bin/node ]`) && beforeCommand.includes(`/usr/bin/find ${ROOT_NODE_DIR} ! -type l \\( ! -user root -o -perm /022 \\)`) && /stat -Lc %u \/opt/.test(beforeCommand) && /\$\{_node:\+\$_node:\}\/usr\/sbin:/.test(beforeCommand));
+  check('  a folder is kept as it really is, only when it and every folder above it to / are root\'s alone (SBX-010)',
+    beforeCommand.includes('_d="$(/usr/bin/readlink -f "$_d" 2>/dev/null)" || continue') && beforeCommand.includes('_p="${_p%/*}"') && beforeCommand.includes('/usr/bin/stat -c %u "${_p:-/}"'), beforeCommand);
   check('  and with nothing kept, the system folders — never /usr/local', /export PATH="\$\{_keep:-\/usr\/sbin:\/usr\/bin:\/sbin:\/bin\}"/.test(beforeCommand) && !beforeCommand.includes(':-/usr/local'));
   check('fonts are a best effort that cannot fail the start', /install -y[^]*\|\| true/.test(script));
   // SBX-009: sudo finds a program on its secure_path, which on E2B begins in the writable /usr/local.

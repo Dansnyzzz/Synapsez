@@ -570,12 +570,19 @@ export function shellFor(command, env = {}, { userBin = false, root = false } = 
     const rootPath = [
       PROFILE_PATH_AS_NOBODY,
       TRUSTED_NODE,
+      /*
+       * Each folder as it really is (no link left to repoint), kept only when it
+       * and every folder above it, up to /, are root's and written by nobody
+       * else (SBX-010): a root-owned folder under E2B's writable /usr/local can
+       * be renamed away by the account and replaced after it is checked.
+       */
       `_keep=; IFS=: read -ra _dirs <<< "\${_node:+$_node:}${ROOT_SYSTEM_PATH}\${_seen:+:$_seen}"; for _d in "\${_dirs[@]}"; do case "$_d" in /*) ;; *) continue ;; esac; ` +
-        'case ":$_keep:" in *":$_d:"*) continue ;; esac; ' +
-        '[ "$(/usr/bin/stat -Lc %u "$_d" 2>/dev/null)" = 0 ] || continue; _m="$(/usr/bin/stat -Lc %a "$_d" 2>/dev/null)"; ' +
-        'case "${_m: -2}" in *[2367]*) continue ;; esac; _keep="${_keep:+$_keep:}$_d"; done',
+        '_d="$(/usr/bin/readlink -f "$_d" 2>/dev/null)" || continue; [ -d "$_d" ] || continue; case ":$_keep:" in *":$_d:"*) continue ;; esac; ' +
+        '_p="$_d"; _ok=1; while :; do [ "$(/usr/bin/stat -c %u "${_p:-/}" 2>/dev/null)" = 0 ] || { _ok=; break; }; _m="$(/usr/bin/stat -c %a "${_p:-/}" 2>/dev/null)"; ' +
+        'case "${_m: -2}" in *[2367]*) _ok=; break ;; esac; [ -z "$_p" ] && break; _p="${_p%/*}"; done; ' +
+        '[ -n "$_ok" ] && _keep="${_keep:+$_keep:}$_d"; done',
       `export PATH="\${_keep:-${ROOT_SYSTEM_PATH}}"`,
-      'unset _seen _node _keep _dirs _d _m',
+      'unset _seen _node _keep _dirs _d _m _p _ok',
     ].join('\n');
     return {
       cmd: 'bash',

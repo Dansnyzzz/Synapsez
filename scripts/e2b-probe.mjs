@@ -45,6 +45,7 @@ const said = async (done) => `${(await done.stdout()).trim()}${(await done.stder
 const { Sandbox } = await import('e2b');
 const { e2bScratch } = await import('../server/e2b.js');
 const { shellFor, ROOT_NODE_DIR } = await import('../server/sandbox.js');
+const { startScript } = await import('../server/cloudBrowser/index.js');
 const template = String(process.env.E2B_TEMPLATE || '').trim() || 'base';
 const machines = [];
 const started = Date.now();
@@ -88,15 +89,35 @@ try {
   check(template === 'base' ? "root's own node (base: not expected — the helper comes up as the account)" : "  root's node is the template's own, in a folder only root can change (SBX-006)", template === 'base' || rootFinds === `${ROOT_NODE_DIR}/bin/node`, rootFinds);
   const into = await run(`touch ${ROOT_NODE_DIR}/bin/planted 2>/dev/null && echo wrote || echo refused`);
   check('  which the account cannot write into', template === 'base' || (await into.stdout()).trim() === 'refused', await said(into));
-  // A `stat` planted where /etc/profile puts root's PATH first ran as root, on every root start, before the fix.
-  const plant = await run("printf '#!/bin/sh\\ntouch /tmp/planted-stat-ran\\nexec /usr/bin/stat \"$@\"\\n' > /usr/local/bin/stat && chmod +x /usr/local/bin/stat && echo planted || echo could-not");
-  await machine.runCommand({ ...shellFor('true', {}, { root: true }), sudo: true, timeoutMs: 30_000 });
-  const ranStat = await raw.commands.run('test -e /tmp/planted-stat-ran && echo ran || echo none; rm -f /usr/local/bin/stat /tmp/planted-stat-ran', { user: 'root' });
-  check('a program planted in /usr/local is never run by a root start (SBX-006)', ranStat.stdout.trim() === 'none', `${(await plant.stdout()).trim()} · ${ranStat.stdout.trim()}`);
   const py = await run('python3 -c "import numpy, pandas, matplotlib, openpyxl, docx, pptx, fpdf, PIL, requests, bs4, lxml; print(\'ok\')" 2>&1 | tail -1');
   check(template === 'base' ? 'Python libraries (base: not expected)' : 'the Python the assistant reaches for is already installed', template === 'base' || (await py.stdout()).trim() === 'ok', (await py.stdout()).trim().slice(0, 160));
   const fonts = await run('fc-list 2>/dev/null | grep -ciE "noto|dejavu" || echo 0');
   check(template === 'base' ? 'fonts (base: not expected)' : 'fonts for Vietnamese pages are there', template === 'base' || Number((await fonts.stdout()).trim()) > 0, (await fonts.stdout()).trim());
+
+  section('what an ordinary command can leave in /usr/local, which E2B lets anyone write (SBX-007..010)');
+  // Each writes who ran it, one log per uid: fs.protected_regular stops root appending to another uid's file in /tmp.
+  const PLANTED = ['id', 'mesg', 'sh', 'dnf', 'stat', 'find', 'readlink', 'bash', 'env', 'setpriv', 'timeout', 'sudo', 'apt-get', 'npm', 'grep', 'sed', 'cat', 'mkdir', 'chmod', 'chown'];
+  const planter = PLANTED.map((name) => `/usr/bin/printf '#!/bin/sh\\necho "$(/usr/bin/id -u) ${name}" >> "/tmp/ran.$(/usr/bin/id -u).log"\\nfor d in /usr/bin /bin /usr/sbin /sbin; do [ -x "$d/${name}" ] && exec "$d/${name}" "$@"; done\\n' > /usr/local/bin/${name}; /usr/bin/chmod 755 /usr/local/bin/${name}`).join('; ');
+  await run(planter);
+  const asRoot = (command, options = {}) => machine.runCommand({ ...shellFor(command, {}, { root: true }), sudo: true, timeoutMs: 30_000, ...options });
+  // Root's log only: the read's own /etc/profile runs as nobody, by design.
+  const rootRan = async () => {
+    const log = await asRoot('/usr/bin/sort -u /tmp/ran.0.log 2>/dev/null | /usr/bin/tr "\\n" " "; /usr/bin/rm -f /tmp/ran.*.log');
+    return (await log.stdout()).trim();
+  };
+  await raw.commands.run('true', { user: 'root' });
+  const asLogin = await rootRan();
+  check("  (E2B's own login shell does run them as root — so what they are put there for is real)", /\bid\b/.test(asLogin), asLogin);
+  await run('true');
+  const afterOrdinary = await rootRan();
+  check('an ordinary command runs none of them as root (SBX-008)', afterOrdinary === '', afterOrdinary);
+  await asRoot('true');
+  const afterRoot = await rootRan();
+  check('  nor does a root command (SBX-007, SBX-008, SBX-010)', afterRoot === '', afterRoot);
+  const started = await machine.runCommand({ ...shellFor(startScript(`probe-${Date.now()}`, { root: true }), { SYNZ_SERVICE: Buffer.from('process.exit(0)').toString('base64'), SYNZ_KERNEL: '', SYNZ_KEY: 'probe' }, { root: true }), sudo: true, timeoutMs: 180_000 });
+  const afterStart = await rootRan();
+  check("  nor does the cloud browser's real root start, its install included (SBX-009)", afterStart === '', `exit ${started.exitCode}${afterStart ? ` · ${afterStart}` : ''}`);
+  await asRoot(`/usr/bin/rm -f ${PLANTED.map((name) => `/usr/local/bin/${name}`).join(' ')} /tmp/ran.*.log`);
 
   section('time limits, failures, files');
   const t0 = Date.now();
