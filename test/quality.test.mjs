@@ -4,7 +4,7 @@
  *
  *   node test/quality.test.mjs
  */
-import { addressKey, evidenceOf, unsourcedLinks, applyEdits, unlink, checkAnswer } from '../server/qualityGate.js';
+import { addressKey, evidenceOf, unsourcedLinks, applyEdits, unlink, checkAnswer, textsIn } from '../server/qualityGate.js';
 
 let failures = 0;
 const section = (n) => console.log(`\n\x1b[1m${n}\x1b[0m`);
@@ -110,6 +110,32 @@ section('the gate end to end');
   let calls = 0;
   const clean = await checkAnswer({ answer: 'Không có liên kết nào.', messages, ask: async () => { calls += 1; return ''; } });
   check('an answer with nothing to check costs no call and is not touched', !clean.changed && calls === 0 && clean.text === 'Không có liên kết nào.');
+}
+
+section('what the model was shown counts, and emphasis is not part of an address (QC-003)');
+{
+  // A link from the person's own file, a memory note and a project passage: none of them is
+  // in the stored messages, all of them were in what the step sent.
+  const shown = {
+    system: '## Memory\n- **docs**: the team wiki is https://wiki.acme-internal.example/home',
+    outgoing: [
+      { role: 'user', text: 'Summarise the attached guide.', parts: [{ type: 'text', text: 'guide.pdf:\nSee https://docs.acme-internal.example/guide for setup.' }, { type: 'image', data: 'aHR0cHM6Ly9ub3QtYS1zb3VyY2UuZXhhbXBsZQ==' }] },
+    ],
+    grounded: [{ role: 'user', text: 'Project passage: pricing at https://acme-internal.example/pricing' }],
+  };
+  const sources = textsIn(shown);
+  const answer = 'Setup: https://docs.acme-internal.example/guide. Wiki: https://wiki.acme-internal.example/home. Prices: https://acme-internal.example/pricing.';
+  let asked = 0;
+  const kept = await checkAnswer({ answer, messages: [], sources, ask: async () => { asked += 1; return '{}'; } });
+  check('a link from an attached file, a memory note or a project passage is not taken for an invention', !kept.changed && asked === 0 && kept.text === answer, JSON.stringify(kept.flagged));
+  check("  and a picture's bytes are not read as text", !sources.some((s) => s.startsWith('aHR0')));
+
+  const searched = [{ role: 'assistant', results: [{ content: 'Result: https://example.com/docs/page' }] }];
+  for (const mark of ['**', '_', '~~']) {
+    const marked = `The page is ${mark}https://example.com/docs/page${mark} today.`;
+    const out = await checkAnswer({ answer: marked, messages: searched, ask: async () => '{}' });
+    check(`  a link a search returned, inside ${mark} emphasis, is left as it is`, !out.changed && out.text === marked, JSON.stringify(out.flagged));
+  }
 }
 
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll quality-gate checks passed.\x1b[0m\n');

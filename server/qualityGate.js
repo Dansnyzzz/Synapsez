@@ -29,10 +29,16 @@ const URL_RE = /https?:\/\/[^\s<>()[\]"'`]+/g;
 const FENCE = /^\s{0,3}(```|~~~)/;
 /** Tracking parameters that change nothing about which page an address is. */
 const TRACKING = /^(utm_\w+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$/i;
+/**
+ * What ends a sentence or a Markdown mark rather than an address: `**…**`,
+ * `_…_` and `~~…~~` round a link are emphasis, and read as part of it they
+ * made a page a search really returned look invented (QC-003).
+ */
+const TRAILING = /[.,;:!?)\]}>'"*_~\\]+$/;
 
 /** An address as compared: no scheme, no `www.`, no fragment or tracking, no trailing slash or punctuation. */
 export function addressKey(url) {
-  const raw = String(url || '').replace(/[.,;:!?)\]}>'"]+$/, '');
+  const raw = String(url || '').replace(TRAILING, '');
   try {
     const u = new URL(raw);
     for (const name of [...u.searchParams.keys()]) if (TRACKING.test(name)) u.searchParams.delete(name);
@@ -59,20 +65,42 @@ function textsOf(message) {
 }
 
 /**
+ * Every string in what a step sent the model (QC-003): the system prompt with
+ * the memory notes and project instructions in it, the transcript with the
+ * text of attached files and the project's passages. Stored messages alone
+ * missed all of those, so a link the person's own file gave was taken for an
+ * invention. A picture's or a document's bytes are not text and are skipped.
+ *
+ * @param {any} value
+ * @returns {string[]}
+ */
+export function textsIn(value, out = [], depth = 0) {
+  if (depth > 12 || value == null) return out;
+  if (typeof value === 'string') {
+    if (value.length <= 2_000_000 && value.includes('http')) out.push(value);
+  } else if (Array.isArray(value)) {
+    for (const item of value) textsIn(item, out, depth + 1);
+  } else if (typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) if (!/^(data|base64|bytes|image)$/i.test(key)) textsIn(item, out, depth + 1);
+  }
+  return out;
+}
+
+/**
  * Every address the conversation holds, as keys, and the hosts they are on.
  *
- * @param {any[]} messages
+ * @param {any[]} messages  the stored conversation
+ * @param {string[]} [sources]  what else the model was shown — `textsIn` of what was sent
  */
-export function evidenceOf(messages) {
+export function evidenceOf(messages, sources = []) {
   const keys = new Set();
   const hosts = new Set();
-  for (const m of messages || []) {
-    for (const text of textsOf(m)) {
-      for (const url of text.match(URL_RE) || []) {
-        const key = addressKey(url);
-        keys.add(key);
-        hosts.add(hostOf(key));
-      }
+  const texts = [...(messages || []).flatMap((m) => textsOf(m)), ...sources];
+  for (const text of texts) {
+    for (const url of text.match(URL_RE) || []) {
+      const key = addressKey(url);
+      keys.add(key);
+      hosts.add(hostOf(key));
     }
   }
   return { keys, hosts };
@@ -104,7 +132,7 @@ export function unsourcedLinks(answer, evidence) {
     }
     if (fenced) continue;
     for (const raw of line.match(URL_RE) || []) {
-      const url = raw.replace(/[.,;:!?)\]}>'"]+$/, '');
+      const url = raw.replace(TRAILING, '');
       if (!accountedFor(url, evidence) && !found.has(addressKey(url))) found.set(addressKey(url), url);
     }
   }
@@ -186,14 +214,15 @@ export const repairRounds = (env = process.env) => Math.max(1, Math.min(3, Numbe
  * @param {{
  *   answer: string,
  *   messages: any[],
+ *   sources?: string[],
  *   language?: string,
  *   ask: (system: string, prompt: string) => Promise<string>,
  *   rounds?: number,
  * }} input  `ask` makes a repair call and returns the model's text; `rounds` caps them
  * @returns {Promise<{ text: string, changed: boolean, flagged: string[], fixed: number, removed: number }>}
  */
-export async function checkAnswer({ answer, messages, language = 'en', ask, rounds = repairRounds() }) {
-  const evidence = evidenceOf(messages);
+export async function checkAnswer({ answer, messages, sources = [], language = 'en', ask, rounds = repairRounds() }) {
+  const evidence = evidenceOf(messages, sources);
   const flagged = unsourcedLinks(answer, evidence);
   if (!flagged.length) return { text: answer, changed: false, flagged, fixed: 0, removed: 0 };
 

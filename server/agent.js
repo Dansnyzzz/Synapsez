@@ -31,7 +31,7 @@ import { lendEyes } from './vision.js';
 import { memoryForTurn, withheldTools } from './memory.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
 import { withoutStrayTags } from '../public/js/model-text.js';
-import { checkAnswer } from './qualityGate.js';
+import { checkAnswer, textsIn } from './qualityGate.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
@@ -1719,6 +1719,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   let progressGated = false;
   /** The quality gate runs once a turn (QC-001). */
   let qualityChecked = false;
+  /** The last step's system prompt and transcript as sent — the gate's sources besides the stored messages (QC-003). */
+  let shown = null;
 
   /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
   let movedToAuto = false;
@@ -1892,6 +1894,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         signal,
         onLooking: () => emit('status', { phase: 'tool', name: 'look_at' }),
       }));
+      const outgoing = withAttachments(grounded, loaded, entry, { masking });
+      // What the model was shown this step, for the quality gate's sources (QC-003).
+      shown = { system, grounded, outgoing };
 
       for await (const ev of stream({
         userId,
@@ -1907,7 +1912,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         // invalidate. `activeTranscript` is what makes a folded conversation
         // smaller: the page still holds every turn, and only the summary plus
         // what followed it is sent.
-        messages: withAttachments(grounded, loaded, entry, { masking }),
+        messages: outgoing,
         // Rebuilt per step: anything `load_tools` activated last step is in it
         // now. On a turn that activates nothing this returns the same list every
         // time, so the cached prefix is undisturbed.
@@ -2085,6 +2090,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       const gated = await checkAnswer({
         answer: assistant.text,
         messages,
+        sources: textsIn(shown),
         language: prefs.language || 'en',
         ask: async (system, prompt) => {
           let said = '';
