@@ -505,8 +505,9 @@ const valueWithoutSecrets = (text) =>
 
 /**
  * A server's arguments with secrets blanked, in this order (PRV-035): the
- * value after a flag named for a secret (`--token …`), whatever it is — an
- * address included, whose secret may sit in its path; then a `--flag=value`,
+ * value after a flag named for a secret (`--token …`), whatever it is unless
+ * it starts with `-` (read as the next flag) — an address included, whose
+ * secret may sit in its path; then a `--flag=value`,
  * blanked whole when the flag is so named and read as a value otherwise
  * (`--url=…`, `--header=…`); then the argument on its own.
  */
