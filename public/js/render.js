@@ -2691,7 +2691,10 @@ export function assistantMessage() {
       if (!hydrating) {
         const began = Date.now();
         running = el('p', 'step__running');
-        running.setAttribute('role', 'status');
+        // Kept out of the transcript's live region (UI-003): it changes every
+        // second, and a screen reader would read every one. It is there to be
+        // read on demand; the step's own mark says when it ends.
+        running.setAttribute('aria-live', 'off');
         const say = () => {
           running.textContent = t('work.running', { s: Math.floor((Date.now() - began) / 1000) });
         };
@@ -2868,6 +2871,8 @@ export function assistantMessage() {
     const detail = el('span', 'steps__detail');
     detail.hidden = true;
     const clock = el('span', 'steps__clock');
+    // Twice a second is no pace to announce at (UI-003); see the row's running line.
+    clock.setAttribute('aria-live', 'off');
     const tally = el('span', 'steps__tally');
     // The pictures the run looked at, on its folded header — see paintThumbs.
     const thumbs = el('span', 'steps__thumbs');
