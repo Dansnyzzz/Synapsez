@@ -2203,6 +2203,8 @@ export const vi = {
   'settings.toolLoadingHint': 'Cách công cụ của trợ lý được nạp trong các cuộc trò chuyện mới.',
   'settings.connectorSearch': 'Tìm kết nối',
   'settings.connectorSearchHint': 'Cho phép trợ lý tìm trong danh mục kết nối và gợi ý những kết nối liên quan đến cuộc trò chuyện của bạn.',
+  'settings.qualityGate': 'Kiểm tra nguồn',
+  'settings.qualityGateHint': 'Trước khi lưu câu trả lời, mọi địa chỉ web trong đó được đối chiếu với những gì đã đọc. Địa chỉ không có trong nguồn sẽ được sửa, hoặc bị gỡ liên kết.',
   'consug.connect': 'Kết nối',
   'consug.connected': 'Đã kết nối',
   'consug.turnOn': 'Bật lại',

@@ -1179,8 +1179,8 @@ reader acts on, because they click it.
   nothing ends them.
 - **Never published as fact.** Whatever is still unsourced loses its link (its words stay), and a line at the
   end says what the check did. The screen is updated to the corrected answer, which is also what is stored.
-- Addresses inside code blocks are examples, not citations, and are not checked. `qualityGate: false` in an
-  account's preferences turns it off. See `server/qualityGate.js`.
+- Addresses inside code blocks are examples, not citations, and are not checked. Settings → Capabilities →
+  **Source check** turns it off (`qualityGate`). See `server/qualityGate.js`.
 ### Free tiers: one allowance per service, shared by everyone
 
 The deployment pays nothing (`server/freeTier.js`). Every metered service has **one** free allowance —

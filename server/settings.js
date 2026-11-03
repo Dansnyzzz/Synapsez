@@ -132,7 +132,8 @@ export const DEFAULT_PREFS = {
    * The quality gate on a finished answer (QC-001, owner 2026-11-02): a web
    * address the conversation does not account for is sent back to the model to
    * correct — that sentence only — and dropped if it is not. Costs a call only
-   * when there is something to correct. See server/qualityGate.js.
+   * when there is something to correct. See server/qualityGate.js. Settings →
+   * Capabilities → Source check (QC-008: until then nothing could set it).
    */
   qualityGate: true,
 };
@@ -316,7 +317,7 @@ export async function setPrefs(userId, patch) {
     throw new Error(`"${patch.language}" is not a language this interface has. Use one of: ${[...LANGUAGES].join(', ')}.`);
   }
   if ('onboarded' in patch) next.onboarded = !!patch.onboarded;
-  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'connectorSearch']) if (flag in patch) next[flag] = !!patch[flag];
+  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'connectorSearch', 'qualityGate']) if (flag in patch) next[flag] = !!patch[flag];
   if ('retentionDays' in patch) {
     const days = Number(patch.retentionDays);
     if (!RETENTION_DAYS.includes(days)) {

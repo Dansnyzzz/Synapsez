@@ -2216,6 +2216,8 @@ export const en = {
   'settings.toolLoadingHint': 'How the assistant\'s tools are loaded in new conversations.',
   'settings.connectorSearch': 'Connector search',
   'settings.connectorSearchHint': 'Let the assistant search the connector directory and surface ones relevant to your conversation.',
+  'settings.qualityGate': 'Source check',
+  'settings.qualityGateHint': 'Before an answer is kept, every web address in it is checked against what was read. One that was not read is corrected, or its link is removed.',
   'consug.connect': 'Connect',
   'consug.connected': 'Connected',
   'consug.turnOn': 'Turn on',

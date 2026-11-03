@@ -1740,6 +1740,14 @@
               </div>
               <div class="srow__control"><input type="checkbox" class="switch" id="connector-search" /></div>
             </div>
+            <!-- The quality gate (QC-001), on by default; server/qualityGate.js. -->
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="quality-gate" data-i18n="settings.qualityGate">Source check</label>
+                <p class="srow__desc" data-i18n="settings.qualityGateHint">Before an answer is kept, every web address in it is checked against what was read. One that was not read is corrected, or its link is removed.</p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="quality-gate" /></div>
+            </div>
             <div class="srow">
               <div class="srow__text">
                 <label class="srow__label" for="max-steps" data-i18n="behaviour.maxSteps">Max tool steps per turn</label>

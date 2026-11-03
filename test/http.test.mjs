@@ -975,6 +975,12 @@ section('opening the app on a model that has gone moves the account to Auto, and
   await store.setUserSetting(me.id, 'prefs', { ...(await store.getUserSetting(me.id, 'prefs')), defaultModel: 'openrouter/lab/still-here' });
   const live = await alice.call('GET', '/api/bootstrap');
   check('a model that is still served is left alone', live.json?.prefs?.defaultModel === 'openrouter/lab/still-here' && !live.json?.prefs?.modelNotice);
+
+  // QC-008: the quality gate's switch is one Settings can reach — before, the route dropped it.
+  const gateOff = await alice.call('PUT', '/api/prefs', { qualityGate: 0 });
+  check('the source check can be switched off from Settings, and is stored as a no (QC-008)', gateOff.status === 200 && gateOff.json?.qualityGate === false, JSON.stringify(gateOff.json?.qualityGate));
+  const gateOn = await alice.call('PUT', '/api/prefs', { qualityGate: 'yes' });
+  check('  and on again, as a yes', gateOn.json?.qualityGate === true, JSON.stringify(gateOn.json?.qualityGate));
 }
 
 /**

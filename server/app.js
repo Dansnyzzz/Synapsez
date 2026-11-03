@@ -1028,6 +1028,7 @@ export function createApp() {
         'connectorsOff',
         'toolLoading',
         'connectorSearch',
+        'qualityGate',
       ];
       const patch = {};
       for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
