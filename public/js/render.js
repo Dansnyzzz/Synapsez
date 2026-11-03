@@ -1223,17 +1223,28 @@ async function drawDiagram(svg, width = 2400) {
 /** Each drawing's picture for the lightbox, made once. */
 const DIAGRAMS = new WeakMap();
 
+/**
+ * A drawing's PNG lives at a blob: URL for as long as the drawing does (PERF-024):
+ * once the chat that held it is gone and the drawing collected, the URL is let go
+ * too, instead of keeping a picture of up to 16 MP alive for the rest of the tab.
+ */
+const DIAGRAM_URLS = new FinalizationRegistry((url) => URL.revokeObjectURL(url));
+
 /** A drawing as a picture the lightbox can show — a PNG; see `drawDiagram`. */
 function diagramPicture(widget, svg) {
   if (!DIAGRAMS.has(svg)) {
-    const made = drawDiagram(svg).then((blob) => ({
-      id: '',
-      src: URL.createObjectURL(blob),
-      name: fileNameFrom(widget.title, 'png'),
-      label: widget.title || t('chat.diagram'),
-      ground: groundColour(),
-      png: async () => blob,
-    }));
+    const made = drawDiagram(svg).then((blob) => {
+      const src = URL.createObjectURL(blob);
+      DIAGRAM_URLS.register(svg, src);
+      return {
+        id: '',
+        src,
+        name: fileNameFrom(widget.title, 'png'),
+        label: widget.title || t('chat.diagram'),
+        ground: groundColour(),
+        png: async () => blob,
+      };
+    });
     // A drawing that failed to draw is tried again on the next click.
     made.catch(() => DIAGRAMS.delete(svg));
     DIAGRAMS.set(svg, made);
