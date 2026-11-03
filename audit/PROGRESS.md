@@ -24,7 +24,8 @@
 - **Bằng chứng "trước khi sửa" đã chạy cho:** HAR-011 (đóng 4429), HAR-008 (còn 1 key), HAR-013 (10 lời gọi) — test đỏ khi gỡ phần sửa, xanh khi có.
 - **Lô cuối đã commit:** UI-005 `2b09454` · UI-002 `649078a` · UI-006 `469b5ad` · UI-004 `bddcac0` · PRV-020 `2f794da` · CODE-063 `28930f2` · stamp eval `07f6fff`; gate xanh 315 s trên `07f6fff`; test:ui batch 8 xanh.
 - **Evaluator lượt 1: NEEDS_WORK** (8 phát hiện) → ID mới, mỗi cái một commit có test đỏ khi gỡ phần sửa: QC-003 `14acd67` · PRV-027 `362c0d0` · HAR-014 `376c680` · HAR-015 `fc554fa` · CODE-074 `48abc75` · CODE-075 `700be9d`; `RESULT.md` sửa các con số nói quá.
-- **Kế tiếp:** gate lại → evaluator lượt 2 (ngữ cảnh mới) trên phần sửa → merge `--no-ff` → gate trên `main` → push → smoke prod.
+- **Evaluator lượt 2–7: NEEDS_WORK** (mỗi lượt hẹp hơn) → QC-004/006/007, CODE-076…079, HAR-016, PRV-028…035, QC-005 (CHỜ-CHỦ); **lượt 8: PASS** trên `5cc316d` (gate 5.758 ✓, 0 ✗). Chi tiết từng lượt: `RESULT.md` "## Evaluator".
+- **Kế tiếp:** merge `--no-ff` → gate trên `main` → push → smoke prod.
 
 ---
 # PROGRESS — vòng audit v3 (AUDIT_RULES v3, chế độ AUTO)
