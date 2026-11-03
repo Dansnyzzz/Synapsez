@@ -755,6 +755,11 @@ section('export is the whole account, streamed, without secrets');
   check('  the feedback sent, its conversation copy and the answer it was about', sent?.issue === 'wrong' && JSON.stringify(sent?.transcript).includes('COPY-TEXT') && JSON.stringify(sent?.answer).includes('ANSWER-COPY'), JSON.stringify(sent));
   check('  and the username', whole.account.username === 'alice_export', JSON.stringify(whole.account));
   check('  and the skill draft kept on the account (PRV-027)', whole.skillDraft?.instructions === 'DRAFT-BODY', JSON.stringify(whole.skillDraft)?.slice(0, 160));
+  // PRV-028: what an artifact's page saved with window.storage.
+  await store.mergeUserSetting(aliceId, 'artifactStorage', { 'art-export': { score: 'ARTIFACT-VALUE' } });
+  const withArtifact = (await alice.call('GET', '/api/account/export')).body;
+  check("  and what an artifact's page saved (PRV-028)", withArtifact.artifactData?.['art-export']?.score === 'ARTIFACT-VALUE', JSON.stringify(withArtifact.artifactData)?.slice(0, 160));
+  await store.removeUserSettingKey(aliceId, 'artifactStorage', 'art-export');
   await store.deleteSkill(aliceId, 'sk-export');
 
   // More than one page, all created in the same instant: the cursor must neither

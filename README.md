@@ -1605,8 +1605,10 @@ day after their last use.
 
 Settings → Privacy → **Your data**:
 
-- **Export my data** downloads one JSON file — profile, preferences, notes, skills, projects with their
-  source text, scheduled tasks, workflows and every conversation with its messages. Streamed, so a large
+- **Export my data** downloads one JSON file — profile and username, preferences, notes, skills with
+  their files and the skill draft, projects with their source text, scheduled tasks, workflows, the
+  feedback you sent (with any conversation copy), what artifacts' pages saved, and every conversation
+  with its messages. Streamed, so a large
   account does not hit the host's response limit. API keys, connector tokens and uploaded files' bytes
   are not in it; incognito conversations are not part of the record.
 - **Import conversations** reads `conversations.json` from Claude or ChatGPT (only the branch ChatGPT

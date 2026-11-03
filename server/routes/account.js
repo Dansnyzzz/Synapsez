@@ -270,7 +270,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
     wrap(async (req, res) => {
       const store = getStore();
       const userId = req.user.id;
-      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft] = await Promise.all([
+      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData] = await Promise.all([
         getPrefs(userId),
         store.listMemoryBuckets(userId),
         store.listSkills(userId),
@@ -280,6 +280,8 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         store.listWorkflows(userId),
         store.exportFeedback(userId),
         store.getUserSetting(userId, 'skillDraft'),
+        // What an artifact's page saved with window.storage (artifactStorage.js), by artifact (PRV-028).
+        store.getUserSetting(userId, 'artifactStorage'),
       ]);
 
       const stamp = new Date().toISOString().slice(0, 10);
@@ -334,7 +336,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
       let count = 0;
       try {
-        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft });
+        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData });
       } catch (err) {
         /*
          * Half a JSON file that downloads as "complete" is worse than a failed
@@ -464,9 +466,10 @@ export function mountAccountRoutes(api, admin, { wrap }) {
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null }) {
-  // The username, a skill's files, the feedback sent (PRV-014) and the skill
-  // draft kept on the account (PRV-027) are held too, so they are in it.
+async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null }) {
+  // The username, a skill's files, the feedback sent (PRV-014), the skill draft
+  // kept on the account (PRV-027) and what artifacts' pages saved (PRV-028) are
+  // held too, so they are in it.
   await write(
     `{"format":"synapsez-export","version":1,"exportedAt":${JSON.stringify(new Date().toISOString())},` +
       `"account":${JSON.stringify({ name: user.name, username: user.username ?? null, email: user.email, createdAt: user.created_at })},` +
@@ -474,6 +477,7 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
       `"memory":${JSON.stringify(memory)},` +
       `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, files: Array.isArray(s.files) ? s.files : [] })))},` +
       `"skillDraft":${JSON.stringify(skillDraft || null)},` +
+      `"artifactData":${JSON.stringify(artifactData || {})},` +
       `"scheduledTasks":${JSON.stringify(tasks.map((t) => ({ title: t.title, prompt: t.prompt, cron: t.cron, timezone: t.tz, enabled: t.enabled, projectId: t.project_id })))},` +
       `"workflows":${JSON.stringify(workflows.map((w) => ({ title: w.title, steps: w.steps, cron: w.cron, enabled: w.enabled })))},` +
       `"feedback":${JSON.stringify(
