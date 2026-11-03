@@ -3281,7 +3281,8 @@ section('Connectors: Claude\'s table and cards, every Google product its own, an
   await openSettings();
   await page.click('#tab-connectors');
   await page.waitForTimeout(1200);
-  const yours = await page.evaluate(() => [...document.querySelectorAll('#connector-list .ctable__row')].map((r) => r.querySelector('strong')?.textContent));
+  // The name is the row's button (UI-012), not a <strong> in a focusable row.
+  const yours = await page.evaluate(() => [...document.querySelectorAll('#connector-list .ctable__row')].map((r) => r.querySelector('.cname')?.textContent));
   check('Yours is a table of what is connected — each Google product on its own row', ['Google Drive', 'Gmail', 'GitHub'].every((n) => yours.includes(n)) && (await page.$$('#connector-list .ctable__head [role="columnheader"]')).length === 3, yours.join(','));
   await page.click('#panel-connectors [data-cust-view="discover"]');
   await page.waitForTimeout(600);

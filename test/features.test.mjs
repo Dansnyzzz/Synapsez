@@ -650,6 +650,18 @@ section('a token count reads in the page language and rolls over to M (UI-018)')
   check('Vietnamese: a decimal comma', vietnamese === '20,9K 1,2M', vietnamese);
 }
 
+section('menus, connector cards and reorders a keyboard and a screen reader can follow (UI-008, UI-011, UI-012)');
+{
+  const customizeSrc = fs.readFileSync(new URL('../public/js/customize.js', import.meta.url), 'utf8');
+  const attachSrc = fs.readFileSync(new URL('../public/js/attachments.js', import.meta.url), 'utf8');
+  const gallerySrc = fs.readFileSync(new URL('../public/js/gallery.js', import.meta.url), 'utf8');
+  check('a menu choice gives focus back to what opened the menu (UI-011)', /close\(\);[\s\S]{0,200}OPENERS\.get\(menu\)\?\.focus/.test(customizeSrc));
+  check('  and Escape in a sub-menu steps back to its row instead of a removed menu', /\(event\.key === 'ArrowLeft' \|\| event\.key === 'Escape'\) && root/.test(customizeSrc) && !/button\.closest\('\.cmenu'\)\)\?\.focus/.test(customizeSrc));
+  check('a connector row or card is not itself focusable around its buttons (UI-012)', !/role="link"/.test(customizeSrc) && !/ctable__row--open[^>]*tabindex="0"/.test(customizeSrc) && /class="cname" type="button"/.test(customizeSrc));
+  check('  and the permissions box takes focus when it opens', /box\.tabIndex = -1;\s*box\.focus\(\);/.test(customizeSrc));
+  check('an Alt+arrow reorder and a copied picture are announced (UI-008)', /announce\(t\('attachment\.movedTo'/.test(attachSrc) && /announce\(t\('media\.copied'\)\)/.test(gallerySrc));
+}
+
 section('times, sizes and step counts read in the page language (UI-009)');
 {
   const { tookText, clockText, humanSize, counted } = await import('../public/js/format.js');

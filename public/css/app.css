@@ -10912,8 +10912,9 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .ctable--conn .ctable__head, .ctable--conn .ctable__row { grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.6fr) minmax(150px, 0.6fr); }
 .ctable__row--open { cursor: pointer; transition: background 0.12s; }
 .ctable__row--open:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
-.ctable__row--open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.ctable__name strong { font-weight: 600; }
+/* A connector's name: the button that opens its page from the keyboard (UI-012). */
+.cname { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.cname:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .ctable__status { display: flex; align-items: center; gap: 10px; }
 .ctable__paused { color: var(--warn); font-size: 13px; }
 .ccard--open { cursor: pointer; transition: background 0.12s; }

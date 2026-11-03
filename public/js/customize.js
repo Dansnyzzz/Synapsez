@@ -596,8 +596,8 @@ export function createCustomize(deps) {
       <div class="ctable__head" role="row"><span role="columnheader">${escapeHtml(t('conn.colConnector'))}</span><span role="columnheader">${escapeHtml(t('conn.colType'))}</span><span role="columnheader">${escapeHtml(t('conn.colStatus'))}</span></div>
       ${rows
         .map(
-          (c) => `<div class="ctable__row ctable__row--open cust-item" role="row" tabindex="0" data-open-connector="${escapeHtml(c.id)}" data-search="${escapeHtml(`${c.name} ${c.by} ${tagline(c)}`.toLowerCase())}" aria-label="${escapeHtml(c.name)}">
-            <span role="cell" class="ctable__name">${logo(c, 'sm')}<strong>${escapeHtml(c.name)}</strong></span>
+          (c) => `<div class="ctable__row ctable__row--open cust-item" role="row" data-open-connector="${escapeHtml(c.id)}" data-search="${escapeHtml(`${c.name} ${c.by} ${tagline(c)}`.toLowerCase())}">
+            <span role="cell" class="ctable__name">${logo(c, 'sm')}<button class="cname" type="button">${escapeHtml(c.name)}</button></span>
             <span role="cell" class="crow__desc">${escapeHtml(t('conn.typeWeb'))}</span>
             <span role="cell" class="ctable__status">${status(c)}</span>
           </div>`,
@@ -616,10 +616,10 @@ export function createCustomize(deps) {
       : s.connected
         ? `<span class="ccard__add is-added" role="img" aria-label="${escapeHtml(t('conn.connectedName', { name: c.name }))}" title="${escapeHtml(t('conn.connected'))}">${ICON.check}</span>`
         : `<button class="ccard__add" type="button" data-connect-now="${escapeHtml(c.id)}" title="${escapeHtml(t('conn.connectName', { name: c.name }))}" aria-label="${escapeHtml(t('conn.connectName', { name: c.name }))}">${ICON.add}</button>`;
-    return `<div class="ccard ccard--ext ccard--open cust-item" data-open-connector="${escapeHtml(c.id)}" tabindex="0" role="link" aria-label="${escapeHtml(c.name)}" data-search="${escapeHtml(`${c.name} ${c.by} ${tagline(c)}`.toLowerCase())}">
+    return `<div class="ccard ccard--ext ccard--open cust-item" data-open-connector="${escapeHtml(c.id)}" data-search="${escapeHtml(`${c.name} ${c.by} ${tagline(c)}`.toLowerCase())}">
       <span class="ccard__icon ccard__icon--logo">${logo(c, 'md')}</span>
       <div class="ccard__text">
-        <p class="ccard__name">${escapeHtml(c.name)} <span class="ccard__badge" title="${escapeHtml(t('ext.publishedBy', { by: c.by }))}">${BADGE}</span></p>
+        <p class="ccard__name"><button class="cname" type="button">${escapeHtml(c.name)}</button> <span class="ccard__badge" title="${escapeHtml(t('ext.publishedBy', { by: c.by }))}">${BADGE}</span></p>
         <p class="ccard__desc">${escapeHtml(tagline(c))}</p>
         <p class="ccard__by">${escapeHtml(t('ext.by', { by: c.by }))}</p>
       </div>
@@ -789,13 +789,19 @@ export function createCustomize(deps) {
     box.addEventListener('toggle', (event) => {
       if (/** @type {any} */ (event).newState === 'closed') {
         button.setAttribute('aria-expanded', 'false');
+        // Focus was in the box (UI-012); it goes back to the button, not the page.
+        const hadFocus = box.contains(document.activeElement);
         box.remove();
+        if (hadFocus) button.focus();
       }
     });
     box.showPopover?.();
     const at = button.getBoundingClientRect();
     box.style.top = `${Math.min(at.bottom + 6, window.innerHeight - box.offsetHeight - 8)}px`;
     box.style.left = `${Math.max(8, at.right - box.offsetWidth)}px`;
+    // A dialog that opens takes focus, so its rules are read and Escape closes it.
+    box.tabIndex = -1;
+    box.focus();
   }
 
   /** Every press in the two panels: open a page, connect, turn on — one listener, whatever was drawn. */
@@ -808,14 +814,11 @@ export function createCustomize(deps) {
       const on = /** @type {HTMLElement | null} */ (el.closest('[data-turn-on]'));
       if (on) return turnOn(/** @type {string} */ (on.dataset.turnOn)).catch((err) => toast(err.message, 'error'));
       const open = /** @type {HTMLElement | null} */ (el.closest('[data-open-connector]'));
-      if (open && !el.closest('a, button, input')) showConnectorPage(/** @type {string} */ (open.dataset.openConnector));
-    });
-    panel.addEventListener('keydown', (event) => {
-      const open = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-open-connector]'));
-      if (open && event.target === open && (event.key === 'Enter' || event.key === ' ')) {
-        event.preventDefault();
-        showConnectorPage(/** @type {string} */ (open.dataset.openConnector));
-      }
+      // The whole row or card opens the page under a pointer; from the keyboard
+      // it is the name, a real button (UI-012) — the row and card themselves are
+      // no longer focusable, since a focusable box holding buttons is read as one
+      // control with the others lost inside it.
+      if (open && (!el.closest('a, button, input') || el.closest('.cname'))) showConnectorPage(/** @type {string} */ (open.dataset.openConnector));
     });
   }
 
