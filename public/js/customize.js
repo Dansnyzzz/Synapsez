@@ -59,6 +59,9 @@ const day = (iso) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(currentLanguage() === 'vi' ? 'vi-VN' : 'en-US', { day: 'numeric', month: 'short' });
 };
 
+/** Each open menu's opener — for a sub-menu, the button that opened the menu it is in. */
+const OPENERS = new WeakMap();
+
 /**
  * A ⋯ menu that sits above the settings sheet: a popover, so it is drawn in the
  * top layer rather than clipped by the scrolling panel, and dismissed by a
@@ -83,6 +86,7 @@ export function openMenu(button, items, { beside = null, root = null } = {}) {
   menu.className = `cmenu${root ? ' cmenu--sub' : ''}`;
   menu.setAttribute('role', 'menu');
   menu.setAttribute('popover', 'auto');
+  OPENERS.set(menu, root ? OPENERS.get(root) : button);
   const close = () => {
     /** @type {HTMLElement} */
     let top = menu;
@@ -133,6 +137,9 @@ export function openMenu(button, items, { beside = null, root = null } = {}) {
           return;
         }
         close();
+        // Focus goes back to what opened the menu (UI-011), before the choice
+        // runs, so a dialog the choice opens can take it from there.
+        OPENERS.get(menu)?.focus?.();
         try {
           await item.run?.();
         } catch (err) {
@@ -157,14 +164,16 @@ export function openMenu(button, items, { beside = null, root = null } = {}) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       rows[(at + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus();
-    } else if (event.key === 'ArrowLeft' && root) {
+    } else if ((event.key === 'ArrowLeft' || event.key === 'Escape') && root) {
+      // A sub-menu steps back to its row. Escape used to close everything and
+      // focus the menu it had just removed, leaving focus nowhere (UI-011).
       event.preventDefault();
       menu.remove();
       button.focus();
     } else if (event.key === 'Escape') {
       event.preventDefault();
       close();
-      /** @type {HTMLElement | null} */ (beside ? button.closest('.cmenu') : button)?.focus?.();
+      button.focus();
     }
   });
   menu.showPopover?.();
