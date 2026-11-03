@@ -64,44 +64,58 @@ function pushesToProtected(command) {
 }
 
 /**
- * The command as the shell splits it: words with their quotes taken off, and a
- * `null` wherever an unquoted `;`, `&`, `|` or newline ends one command.
+ * The command as the shell splits it: `{ text, quoted }` words with their
+ * quotes taken off, and a `null` wherever an unquoted `;`, `&`, `|`, newline,
+ * `(`, `)` or backtick ends one command — so `(git …)`, `$(git …)` and
+ * `` `git …` `` are commands of their own (CFG-036). A PowerShell here-string,
+ * `@'…'@` or `@"…"@`, is one quoted word: an apostrophe inside it ends nothing.
  */
 function shellWords(command) {
   const words = [];
   let word = null;
+  let quoted = false;
   let quote = '';
+  const end = () => {
+    if (word !== null) words.push({ text: word, quoted });
+    word = null;
+    quoted = false;
+  };
   for (let i = 0; i < command.length; i += 1) {
     const ch = command[i];
     if (quote) {
       if (ch === quote) quote = '';
       else word += ch;
+    } else if (ch === '@' && (command[i + 1] === "'" || command[i + 1] === '"') && command[i + 2] === '\n') {
+      const close = command.indexOf(`\n${command[i + 1]}@`, i + 2);
+      const stop = close < 0 ? command.length : close;
+      end();
+      words.push({ text: command.slice(i + 3, stop), quoted: true });
+      i = close < 0 ? command.length : close + 2;
     } else if (ch === '"' || ch === "'") {
       quote = ch;
+      quoted = true;
       word ??= '';
-    } else if (/[;&|\n]/.test(ch)) {
-      if (word !== null) words.push(word);
-      word = null;
+    } else if (/[;&|\n()`]/.test(ch)) {
+      end();
       words.push(null);
     } else if (/\s/.test(ch)) {
-      if (word !== null) words.push(word);
-      word = null;
+      end();
     } else {
       word = (word ?? '') + ch;
     }
   }
-  if (word !== null) words.push(word);
+  end();
   return words;
 }
 
 // Options of git itself, before its subcommand, that take the next word as their value.
 const GIT_VALUE_OPTIONS = /^(-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)$/;
-// commit's short options that take a value, and the long ones that do when not written `=…`.
-const COMMIT_VALUE_SHORT = /[mFCct]$/;
+// commit's short options that take a value — the rest of their group, or the next word.
+const COMMIT_VALUE_SHORT = new Set(['m', 'F', 'C', 'c', 't']);
 const COMMIT_VALUE_LONG = /^--(message|file|reuse-message|reedit-message|author|date|template|fixup|squash|trailer|cleanup)$/;
 
 /**
- * Does this command run a git step past the repo's hooks (CFG-034, CFG-035)?
+ * Does this command run a git step past the repo's hooks (CFG-034…036)?
  *
  * Read the way git reads it, as `pushesToProtected` reads a push: git's own
  * options skipped to find the subcommand, and the value of `-m`, `-F` and the
@@ -109,32 +123,50 @@ const COMMIT_VALUE_LONG = /^--(message|file|reuse-message|reedit-message|author|
  * while `git commit "--no-verify"` (quotes the shell takes off) still is.
  * Blocked: `--no-verify` and every prefix git would take for it (`--no-veri`
  * on; shorter ones are ambiguous with `--no-verbose`), and for `commit`, `-n`
- * in any cluster of short flags, wherever it sits. The first version was one
- * regex, and `git commit -m x -n`, `git -c a=b commit -n` and `--no-verif` all
- * walked past it.
+ * in a group of short flags — read a letter at a time, as git does, so `-Ft
+ * -n` is `-F t` and then `-n`, and `-mnote` is the message "note". A quoted
+ * word with spaces that is not such a value is read again as a command
+ * (`bash -c "git …"`), and so is an alias defined on the spot with `-c`.
  */
-export function skipsHooks(command) {
+export function skipsHooks(command, depth = 0) {
+  if (depth > 3) return false;
   const words = shellWords(String(command || ''));
+  const values = new Set();
+  const text = (k) => (words[k] ? words[k].text : null);
   for (let start = 0; start < words.length; start += 1) {
-    if (words[start] === null || !/(^|[\\/])git(\.exe)?$/i.test(words[start])) continue;
+    if (!words[start] || !/(^|[\\/])git(\.exe)?$/i.test(words[start].text)) continue;
     let i = start + 1;
-    while (i < words.length && words[i] !== null && words[i].startsWith('-')) i += GIT_VALUE_OPTIONS.test(words[i]) ? 2 : 1;
-    const sub = words[i];
+    while (text(i)?.startsWith('-')) {
+      if (!GIT_VALUE_OPTIONS.test(text(i))) {
+        i += 1;
+        continue;
+      }
+      values.add(i + 1);
+      const alias = /^alias\.[^=]+=(.+)$/s.exec(text(i + 1) || '');
+      if (text(i) === '-c' && alias && skipsHooks(`git ${alias[1]}`, depth + 1)) return true;
+      i += 2;
+    }
+    const sub = text(i);
     if (!/^(commit|push|merge|rebase|am|cherry-pick|revert|pull)$/.test(sub || '')) continue;
-    for (let j = i + 1; j < words.length && words[j] !== null; j += 1) {
-      const word = words[j];
+    for (let j = i + 1; text(j) !== null; j += 1) {
+      const word = text(j);
       const name = word.split('=')[0];
       if (name.length >= '--no-veri'.length && '--no-verify'.startsWith(name)) return true;
       if (sub !== 'commit') continue;
-      if (/^-[a-zA-Z]+$/.test(word)) {
-        if (word.includes('n')) return true;
-        if (COMMIT_VALUE_SHORT.test(word)) j += 1;
+      if (/^-[a-zA-Z]/.test(word) && !word.startsWith('--')) {
+        for (let k = 1; k < word.length; k += 1) {
+          if (word[k] === 'n') return true;
+          if (COMMIT_VALUE_SHORT.has(word[k])) {
+            if (k === word.length - 1) values.add((j += 1));
+            break;
+          }
+        }
       } else if (COMMIT_VALUE_LONG.test(word)) {
-        j += 1;
+        values.add((j += 1));
       }
     }
   }
-  return false;
+  return words.some((w, k) => w?.quoted && /\s/.test(w.text) && !values.has(k) && skipsHooks(w.text, depth + 1));
 }
 
 /**

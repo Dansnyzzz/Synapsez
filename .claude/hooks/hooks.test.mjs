@@ -151,6 +151,12 @@ check('guard-bash.js', bash('git commit -q -F msg.txt'), ALLOW, '  while an ordi
 check('guard-bash.js', bash('git commit -m "the -n flag is not used here"'), ALLOW, '  and a message that names the flag is not the flag');
 check('guard-bash.js', bash(`git commit -m "never use ${noVerify}"`), ALLOW, '  in either spelling');
 check('guard-bash.js', bash('git log -n 5'), ALLOW, '  nor is -n to another command');
+// CFG-036: a git step inside another command, an alias made on the spot, and short groups read a letter at a time.
+for (const nested of ['(git commit -n -m x)', 'echo $(git commit -n -m x)', 'x=`git commit -n -m x`', `bash -c "git commit ${noVerify} -m x"`, `powershell -Command "git commit ${noVerify} -m x"`, `git -c alias.ci="commit ${noVerify}" ci`, 'git commit -Ft -n', 'git commit -mm -n', 'git commit -qmc -n']) {
+  check('guard-bash.js', bash(nested), BLOCK, `  ${nested.replace(noVerify, 'the flag')}`);
+}
+check('guard-bash.js', bash('git commit -mnote'), ALLOW, '  while -mnote is the message "note"');
+check('guard-bash.js', bash("git commit -m @'\nit's done -n\n'@"), ALLOW, '  and a PowerShell here-string with an apostrophe is one message');
 check('guard-bash.js', bash(['git', 'reset', '--hard'].join(' ')), BLOCK, 'discarding uncommitted work');
 check('guard-bash.js', bash(`psql -c "${['DROP', 'TABLE', 'users'].join(' ')}"`), BLOCK, 'dropping a table');
 check('guard-bash.js', bash(`psql -c "${['TRUNCATE', 'chats'].join(' ')}"`), BLOCK, 'truncating one');
