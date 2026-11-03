@@ -2420,11 +2420,24 @@ export function assistantMessage() {
       plus.title = t('gallery.more', { n: more });
       run.thumbs.append(plus);
     }
-    for (const picture of shown) run.thumbs.append(pictureThumb(picture, 'pic-thumb pic-thumb--head'));
+    for (const picture of shown) run.thumbs.append(summaryThumb(picture, 'pic-thumb pic-thumb--head'));
   }
 
   /** Every picture a run has looked at, in the order it looked. */
   const runPictures = (run) => run.steps.filter((s) => s.picture).map((s) => s.picture);
+
+  /**
+   * A thumbnail on a <summary> (UI-006): a press opens it, but it is out of the
+   * Tab order and hidden from screen readers — a button inside the control that
+   * folds the card is one a reader cannot reach properly. The same picture is a
+   * real button inside, once the row or card is open (`pictureBody`, step shots).
+   */
+  function summaryThumb(picture, className) {
+    const thumb = pictureThumb(picture, className);
+    thumb.tabIndex = -1;
+    thumb.setAttribute('aria-hidden', 'true');
+    return thumb;
+  }
 
   /**
    * An opened picture row: the path it read, then the picture — Claude's
@@ -2747,7 +2760,7 @@ export function assistantMessage() {
 
         if (work) {
           if (entry.picture && head) {
-            head.append(pictureThumb(entry.picture, 'pic-thumb pic-thumb--row'));
+            head.append(summaryThumb(entry.picture, 'pic-thumb pic-thumb--row'));
             // `file_path:` says what the call said, unless it asked something
             // more — a question to `look_at` — which stays in view.
             const asked = Object.keys(canonicalInput(call.name, call.input) || call.input || {});
