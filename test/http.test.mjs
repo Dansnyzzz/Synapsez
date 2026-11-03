@@ -1056,6 +1056,13 @@ section('signing out');
   check('and the session is gone', after.status === 401, `got ${after.status}`);
 }
 
+section("a body the parser refuses is the request's fault, not the server's (CODE-078)");
+{
+  const broken = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"email": "a@b.c",' });
+  const said = await broken.json().catch(() => ({}));
+  check('JSON that does not parse is a 400 that says so, not a 500 that says try again', broken.status === 400 && said.error === 'That request could not be read.', `${broken.status} ${said.error}`);
+}
+
 server.close();
 await new Promise((r) => server.once('close', r));
 removeTemp(process.env.DATA_DIR);

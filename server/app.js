@@ -237,6 +237,12 @@ export function readableFailure(error) {
 // project, so on a deployment these static routes are only a local fallback.
 const WEB_DIR = path.resolve(here, '../public');
 
+// What the body parser refused, in words for a person (CODE-078). Translated in server/i18n/vi.js.
+const BODY_REFUSED = {
+  'entity.too.large': 'That is too large to send in one request.',
+  'entity.parse.failed': 'That request could not be read.',
+};
+
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
@@ -2530,8 +2536,15 @@ export function createApp() {
      */
     log.error('unhandled error', err, { method: req.method, path: req.path });
     if (res.headersSent) return res.end();
-    // Never the error's own words (CODE-076): what reaches here was not written
-    // for the person — a TypeError, a file path — and it is in the log above.
+    // The request's own fault, which the body parser marks `expose` with a 4xx —
+    // too large, not JSON — is said as that (CODE-078): "try again" cannot help.
+    const status = Number(err?.status);
+    if (err?.expose && status >= 400 && status < 500) {
+      return res.status(status).json({ error: BODY_REFUSED[err.type] || clientError(err) });
+    }
+    // Anything else is never the error's own words (CODE-076): what reaches here
+    // was not written for the person — a TypeError, a file path — and it is in
+    // the log above.
     res.status(500).json({ error: SERVER_TROUBLE });
   });
 

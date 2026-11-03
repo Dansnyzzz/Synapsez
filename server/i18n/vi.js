@@ -139,6 +139,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Trình trợ giúp trên máy tính đám mây bị dừng từ bên ngoài ngay khi vừa khởi động (mã thoát {0}).{1}',
   'Something went wrong on the server. Try again in a moment.':
     'Máy chủ gặp lỗi. Thử lại sau ít phút.',
+  'That is too large to send in one request.': 'Nội dung đó quá lớn để gửi trong một yêu cầu.',
+  'That request could not be read.': 'Không đọc được yêu cầu đó.',
   '{0}\nLook again before the next step.':
     '{0}\nHãy xem lại trang trước bước tiếp theo.',
   '{0} is too large to read here ({1} MB; the most is {2} MB).':
