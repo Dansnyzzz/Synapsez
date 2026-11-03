@@ -195,7 +195,7 @@ const listRow = ({ key, icon, name, tag = '', by, desc, meta = '', more = true, 
   </div>`;
 
 /** One card of a "Discover" grid. */
-const card = ({ key, icon, name, desc, by, search, detail = '' }) =>
+const card = ({ key, icon, name, desc, by, search }) =>
   `<div class="ccard cust-item" data-search="${escapeHtml(search.toLowerCase())}">
     <span class="ccard__icon">${icon}</span>
     <div class="ccard__text">
@@ -204,7 +204,6 @@ const card = ({ key, icon, name, desc, by, search, detail = '' }) =>
       <p class="ccard__by">${escapeHtml(by)}</p>
     </div>
     <button class="ccard__add" type="button" data-add="${escapeHtml(key)}" aria-label="${escapeHtml(t('settings.addThing', { name }))}" title="${escapeHtml(t('settings.addThing', { name }))}">${ICON.add}</button>
-    ${detail ? `<div class="ccard__detail" data-detail="${escapeHtml(key)}" hidden>${detail}</div>` : ''}
   </div>`;
 
 const group = (label, n) => `<p class="cust__group">${escapeHtml(label)} <span class="cust__count">${n}</span></p>`;
