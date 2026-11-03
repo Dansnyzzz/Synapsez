@@ -137,9 +137,17 @@ export function estimatePromptTokens({ system, messages, tools } = {}) {
         chars += value.length;
       }
     } else if (Array.isArray(value)) {
+      chars += 2 + value.length;
       for (const item of value) walk(item);
     } else if (value && typeof value === 'object') {
-      for (const item of Object.values(value)) walk(item);
+      // Sent as JSON: each property's name, its quotes, colon and comma are
+      // paid for too — a tool schema is mostly names (TOK-002).
+      for (const [name, item] of Object.entries(value)) {
+        chars += name.length + 4;
+        walk(item);
+      }
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      chars += String(value).length;
     }
   };
   walk(system);

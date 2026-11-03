@@ -893,6 +893,11 @@ section('output budget follows the model');
     const picture = 'A'.repeat(900_000);
     const est = estimatePromptTokens({ system: 'x'.repeat(3000), messages: [{ content: [{ data: picture }] }] });
     check('  a pasted picture is not counted by its base64', est < 3000, String(est));
+    // TOK-002: a tool's schema is sent as JSON — its property names and punctuation are paid for too.
+    const tool = { name: 'web_search', description: 'Search.', input_schema: { type: 'object', properties: { query: { type: 'string' }, count: { type: 'integer' }, recency: { type: 'string' }, sites: { type: 'array', items: { type: 'string' } } }, required: ['query'] } };
+    const asSent = Math.ceil(JSON.stringify(tool).length / 3);
+    const counted = estimatePromptTokens({ tools: [tool] });
+    check('  a tool is counted near its JSON size, keys and all (TOK-002)', counted >= asSent * 0.85 && counted <= asSent * 1.3, `${counted} vs ${asSent}`);
   }
 
   const unknown = outputBudget({ id: 'openrouter/mystery/model', provider: 'openrouter' });
