@@ -245,7 +245,9 @@ async function liveRun(testCase) {
     }
   }
 
-  const cost = { tokens: (usage?.input || 0) + (usage?.output || 0) };
+  // Reasoning shown apart — it is the part the dial moves (RSN-003). Both adapters
+  // already count it inside `output`, so it is not added to the total again.
+  const cost = { tokens: (usage?.input || 0) + (usage?.output || 0), input: usage?.input || 0, output: usage?.output || 0, reasoning: usage?.reasoning || 0 };
 
   if (!first) {
     return { pass: false, why: 'no tool was called at all', cost };
@@ -310,7 +312,10 @@ if (asJson) {
             return [axis, { total: of.length, passed: of.filter((r) => r.pass).length }];
           }),
         ),
-        cases: results.map(({ id, axis, pass, why, notes, ms }) => ({ id, axis, pass, why, notes, ms })),
+        // A live run's model and dial, and what each case cost — the record a later
+        // reading of "did the effort level matter" needs (RSN-003).
+        ...(live ? { model: process.env.EVAL_MODEL || null, effort: liveEffort } : {}),
+        cases: results.map(({ id, axis, pass, why, notes, ms, cost }) => ({ id, axis, pass, why, notes, ms, ...(cost ? { cost } : {}) })),
       },
       null,
       2,
