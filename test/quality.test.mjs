@@ -291,6 +291,14 @@ section('the same figure, and only the same figure, counts as found (QC-009)');
     check(`  while a page saying ${source} does for "${answer}"`, !flaggedBy(source, answer));
   }
   check('a date is its parts together: 15 April 2026 does not vouch for 15/03/2026', flaggedBy('ngày 15 tháng 4 năm 2026', 'ngày 15/03/2026'));
+
+  // QC-015, evaluator pass 2: the digits alone, and sorted dates, passed a hundredfold error and a swapped date.
+  for (const [source, answer] of [['$12.50', 'giá $1,250'], ['10,000', 'giá $100.00'], ['45.00', 'phí 4.500'], ['0.5-1.0%', 'lãi 0.05-1.0%'], ['03/11/2026', 'ngày 11/03/2026'], ['2026-11-03', 'ngày 11/03/2026'], ['1.5', 'mức 15.0']]) {
+    check(`a page saying ${source} does not vouch for "${answer}" (QC-015)`, flaggedBy(source, answer));
+  }
+  for (const [source, answer] of [['4.5%', 'mức 4.50%'], ['100', 'giá 100.00'], ['15,000 - 20,000', 'giá 15,000-20,000'], ['0.5-1.0%', 'lãi 0.5-1.0%'], ['0.5-1.0%', 'từ 0.5% đến 1.0%'], ['4.500', 'giá 4500'], ['2026-11-03', '2026/11/03'], ['3/11/2026', 'ngày 03-11-2026']]) {
+    check(`  while a page saying ${source} does for "${answer}"`, !flaggedBy(source, answer));
+  }
 }
 
 section('only what reached the model is a source (QC-012)');

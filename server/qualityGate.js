@@ -352,8 +352,12 @@ const SOURCE_FIGURE_RE = /\d+(?:[.,:/-]\d+)*/g;
 /** What marks a figure the check could not find, in the account's language. */
 const unverifiedMark = (language) => (language === 'vi' ? '(chưa kiểm chứng)' : '(unverified)');
 
-/** A date, a time or a range: written with `/`, `:` or `-`, and its runs are whole numbers. */
-const isDateLike = (token) => /[/:-]/.test(token);
+/** A date, a time or a range of whole numbers: written with `/`, `:` or `-`, with no decimal in it. */
+const isDateLike = (token) => /[/:-]/.test(token) && !/[.,]/.test(token);
+/** A range: two figures and one dash, `2020-2024`, `0.5-1.0%`, `15,000-20,000`. */
+const RANGE = /^([\d.,]+)-([\d.,]+)%?$/;
+/** A whole number, plain or grouped in thousands: `4500`, `4.500`, `1,234,567`. */
+const WHOLE_NUMBER = /^\d+$|^\d{1,3}(?:[.,]\d{3})+$/;
 
 /**
  * The digit runs of a figure. A date's lose their leading zeros, `03/11/2026`
@@ -367,24 +371,61 @@ const runsOf = (token) => {
 };
 
 /**
- * The ways one figure can be written and still be the same one: `4,5` and
- * `4.5`, `1,234,567` and `1234567`, `03/11/2026` and `2026-11-03`.
+ * A number as compared: a decimal's trailing zeros say nothing, so `4.50` is
+ * `4.5` and `100.00` is `100`. Three digits after a lone separator are left as
+ * they are: `4.500` is four thousand five hundred as often as it is four and a half.
  */
-function figureKeys(token) {
-  const runs = runsOf(token);
-  const keys = [runs.join('.')];
-  if (isDateLike(token)) keys.push(`d:${[...runs].sort().join('.')}`);
-  else if (runs.join('').length >= 4) keys.push(`n:${runs.join('')}`);
-  return keys;
+function numberKey(runs) {
+  const fraction = runs[1];
+  if (runs.length !== 2 || fraction.length === 3 || !fraction.endsWith('0')) return runs.join('.');
+  const kept = fraction.replace(/0+$/, '');
+  return kept ? `${runs[0]}.${kept}` : runs[0];
 }
 
-/** Every figure the sources hold, as keys — and the year or day inside a date, on its own. */
+/**
+ * A date as day, month, year, however it was written, so `03/11/2026` is
+ * `2026-11-03` and is not `11/03/2026`. Sorted, the runs made a swapped day and
+ * month the same date (QC-015). A page in month-first order is therefore marked
+ * when restated day-first: the safe way round.
+ */
+function dateKey(runs) {
+  if (runs.length !== 3) return null;
+  if (runs[0].length === 4) return `d:${runs[2]}.${runs[1]}.${runs[0]}`;
+  return runs[2].length === 4 ? `d:${runs.join('.')}` : null;
+}
+
+/**
+ * The ways one figure can be written and still be the same one: `4,5` and
+ * `4.5`, `1,234,567` and `1234567`, `03/11/2026` and `2026-11-03`. The digits
+ * alone count only for a whole number (QC-015): for anything else they made
+ * `$12.50` the same as `$1,250`, and `10,000` the same as `$100.00`.
+ */
+function figureKeys(token) {
+  const bare = token.replace(/\s*%$/, '');
+  const runs = runsOf(bare);
+  if (isDateLike(bare)) return [runs.join('.'), dateKey(runs)].filter(Boolean);
+  return WHOLE_NUMBER.test(bare) ? [numberKey(runs), `n:${runs.join('')}`] : [numberKey(runs)];
+}
+
+/**
+ * Every figure the sources hold, as keys — and, on its own, what a date or a
+ * range holds: the year in `2026-11-03`, each end of `0.5-1.0%`.
+ */
 export function figureEvidenceOf(messages, sources = []) {
   const keys = new Set();
+  const add = (token) => {
+    for (const key of figureKeys(token)) keys.add(key);
+  };
   for (const text of [...(messages || []).flatMap((m) => textsOf(m)), ...sources]) {
     for (const token of text.match(SOURCE_FIGURE_RE) || []) {
-      for (const key of figureKeys(token)) keys.add(key);
-      if (isDateLike(token)) for (const run of runsOf(token)) for (const key of figureKeys(run)) keys.add(key);
+      add(token);
+      const range = token.match(RANGE);
+      if (range) {
+        add(range[1]);
+        add(range[2]);
+      } else if (isDateLike(token) && !token.includes(':')) {
+        for (const run of runsOf(token)) add(run);
+      }
     }
   }
   return keys;
@@ -454,8 +495,10 @@ function figuresIn(answer) {
  * 15 April 2026.
  */
 function accountedFigure(token, evidence) {
-  if (figureKeys(token).some((key) => evidence.has(key))) return true;
-  return /^\d+-\d+$/.test(token) && runsOf(token).every((run) => evidence.has(run));
+  const holds = (figure) => figureKeys(figure).some((key) => evidence.has(key));
+  if (holds(token)) return true;
+  const range = token.match(RANGE);
+  return !!range && holds(range[1]) && holds(range[2]);
 }
 
 /**
