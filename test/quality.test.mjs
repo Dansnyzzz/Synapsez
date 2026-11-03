@@ -119,7 +119,8 @@ section('what the model was shown counts, and emphasis is not part of an address
   const shown = {
     system: '## Memory\n- **docs**: the team wiki is https://wiki.acme-internal.example/home',
     outgoing: [
-      { role: 'user', text: 'Summarise the attached guide.', parts: [{ type: 'text', text: 'guide.pdf:\nSee https://docs.acme-internal.example/guide for setup.' }, { type: 'image', data: 'aHR0cHM6Ly9ub3QtYS1zb3VyY2UuZXhhbXBsZQ==' }] },
+      // `data` holds what would otherwise read as a source: it is bytes, and must be skipped by its key.
+      { role: 'user', text: 'Summarise the attached guide.', parts: [{ type: 'text', text: 'guide.pdf:\nSee https://docs.acme-internal.example/guide for setup.' }, { type: 'image', data: 'https://not-a-source.example/bytes' }] },
     ],
     grounded: [{ role: 'user', text: 'Project passage: pricing at https://acme-internal.example/pricing' }],
   };
@@ -128,7 +129,7 @@ section('what the model was shown counts, and emphasis is not part of an address
   let asked = 0;
   const kept = await checkAnswer({ answer, messages: [], sources, ask: async () => { asked += 1; return '{}'; } });
   check('a link from an attached file, a memory note or a project passage is not taken for an invention', !kept.changed && asked === 0 && kept.text === answer, JSON.stringify(kept.flagged));
-  check("  and a picture's bytes are not read as text", !sources.some((s) => s.startsWith('aHR0')));
+  check("  and a picture's bytes are not read as text", !sources.some((s) => s.includes('not-a-source.example')), JSON.stringify(sources));
 
   const searched = [{ role: 'assistant', results: [{ content: 'Result: https://example.com/docs/page' }] }];
   for (const mark of ['**', '_', '~~']) {

@@ -1904,8 +1904,11 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         onLooking: () => emit('status', { phase: 'tool', name: 'look_at' }),
       }));
       const outgoing = withAttachments(grounded, loaded, entry, { masking });
-      // What the model was shown this step, for the quality gate's sources (QC-003).
-      shown = { system, grounded, outgoing };
+      // What the model was shown this step, for the quality gate's sources (QC-003)
+      // — never its own earlier words (QC-004): an address it wrote in a step that
+      // ended in a tool call, or in an example, is not a source for its answer.
+      const notOwn = (m) => m?.role !== 'assistant';
+      shown = { system, grounded: grounded.filter(notOwn), outgoing: outgoing.filter(notOwn) };
 
       for await (const ev of stream({
         userId,

@@ -1672,6 +1672,33 @@ section('the same read twice in a turn runs once');
   await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc2', emit: () => {}, stream: scriptedProvider([{ text: 'Chào bạn.' }]).stream });
   check('  an answer with nothing to check costs no extra call', qcCalls === plainCalls);
 
+  // QC-003/QC-004: what the step sent counts as a source — a memory note does — but the model's own earlier words do not.
+  await store.mergeUserSetting(dupUser.id, 'memory', { wiki: { content: 'The team wiki is https://wiki.acme-internal.example/home', updatedAt: new Date().toISOString(), by: 'user' } });
+  await store.createChat(dupUser.id, { id: 'c-qc3', title: 'qc3' });
+  await store.appendMessage(dupUser.id, 'c-qc3', { id: 'u-qc-3', role: 'user', text: 'where is the wiki?' });
+  await store.appendMessage(dupUser.id, 'c-qc3', { id: 'a-qc-3', role: 'assistant', text: 'Earlier I guessed https://made-up.example/old-guess.' });
+  await store.appendMessage(dupUser.id, 'c-qc3', { id: 'u-qc-4', role: 'user', text: 'and the report?' });
+  let qc3Calls = 0;
+  let turnDeadline = null;
+  const qc3Stream = async function* scripted(opts) {
+    qc3Calls += 1;
+    if (qc3Calls === 1) {
+      turnDeadline = opts.deadline;
+      yield { type: 'text', delta: 'Wiki: https://wiki.acme-internal.example/home. Report: https://made-up.example/old-guess.' };
+    } else {
+      yield { type: 'text', delta: '{"edits":[]}' };
+    }
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+  };
+  const startedAt = Date.now();
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc3', emit: () => {}, stream: qc3Stream });
+  const qc3Reply = (await store.listMessages(dupUser.id, 'c-qc3')).filter((m) => m.role === 'assistant').at(-1);
+  check('  a link from a memory note stands; one only the model itself wrote before is still flagged (QC-003, QC-004)',
+    qc3Calls === 2 && /wiki\.acme-internal\.example\/home/.test(qc3Reply?.text || '') && !/made-up\.example/.test(qc3Reply?.text || ''), JSON.stringify(qc3Reply?.text));
+  check("each model call is given the turn's deadline, under the function's 300 s (HAR-015)",
+    typeof turnDeadline === 'number' && turnDeadline > startedAt && turnDeadline <= startedAt + 300_000, String(turnDeadline && turnDeadline - startedAt));
+  await store.removeUserSettingKey(dupUser.id, 'memory', 'wiki');
+
   const memo = new Map();
   const counts = {};
   let refused = null;
