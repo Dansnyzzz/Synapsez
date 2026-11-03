@@ -359,6 +359,8 @@ const UPSTREAM_TRIES = 3;
 const requestBudgetMs = () => Number(process.env.PROVIDER_REQUEST_BUDGET_MS) || 240_000;
 // Too little left to be worth starting another attempt.
 const MIN_ATTEMPT_MS = 20_000;
+// Failed calls to a stumbling provider one request may make across all its keys (HAR-013).
+const MAX_UPSTREAM_FAILURES = 5;
 
 /** Passes over the key list. More than one only because a wait can earn a key back. */
 const ROUNDS = 3;
@@ -438,6 +440,8 @@ async function* streamAny(opts) {
   let lastUpstream = null;
   // The whole request's time, every key and retry together (HAR-012).
   const deadline = Date.now() + requestBudgetMs();
+  // Failed calls to a stumbling provider so far on this request (HAR-013).
+  let upstreamFailures = 0;
   const upstreamError = (failure) =>
     Object.assign(
       new Error(`${label} could not reach this model on any key: ${failure.message}`),
@@ -592,10 +596,17 @@ async function* streamAny(opts) {
             continue;
           }
           // Out of patience with this key. The next one, if any, gets a try —
-          // see `gaveUp`; with none left, or no time left, the turn is told it may switch model.
+          // see `gaveUp`; with none left, no time left, or the request's share of
+          // failed calls spent (HAR-013: eight keys made ten failures a step, each
+          // spending allowance), the turn is told it may switch model.
           gaveUp.add(key);
           lastUpstream = failure;
-          if (timeLeft < MIN_ATTEMPT_MS || !keys.slice(position + 1).some((next) => !gaveUp.has(next.key))) throw upstreamError(failure);
+          upstreamFailures += attempt + 1;
+          if (
+            timeLeft < MIN_ATTEMPT_MS ||
+            upstreamFailures >= MAX_UPSTREAM_FAILURES ||
+            !keys.slice(position + 1).some((next) => !gaveUp.has(next.key))
+          ) throw upstreamError(failure);
           yield { type: 'notice', text: `${label}: ${which} could not reach the model, trying the next key.` };
           if (emitted.text) {
             yield { type: 'retry', reason: `${label}: ${which} stopped mid-answer; starting that reply again.` };

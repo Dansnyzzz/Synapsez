@@ -582,6 +582,9 @@ section('a provider failing on one key is tried on the next (owner, 2026-10-19)'
   const lost = await drive([{ throw: down() }, { throw: down() }, { throw: down() }, { throw: down() }, { throw: down() }], ['k-one', 'k-two', 'k-three']);
   check('every key failing is one error, marked so the turn can change model', lost.error?.upstream === true && /could not reach this model on any key/.test(lost.error.message) && !/was refused/.test(lost.error.message), lost.error?.message);
   check('  after one try on each further key, not three', lost.seen.join(',') === 'k-one,k-one,k-one,k-two,k-three', lost.seen.join(','));
+  // HAR-013: with eight keys an outage cost ten failed calls a step, each spending allowance — then the same again on Auto.
+  const many = await drive(Array.from({ length: 12 }, () => ({ throw: down() })), ['k-1', 'k-2', 'k-3', 'k-4', 'k-5', 'k-6', 'k-7', 'k-8']);
+  check('an outage stops at a ceiling of failed calls, however many keys there are (HAR-013)', many.error?.upstream === true && many.seen.length === 5, `${many.seen.length}: ${many.seen.join(',')}`);
 
   const one = await drive([{ throw: down() }, { throw: down() }, { throw: down() }], ['k-only']);
   check('with one key, three tries and the same marked error', one.error?.upstream === true && one.seen.length === 3, `${one.seen.length} ${one.error?.message}`);
