@@ -769,6 +769,29 @@ if (!chrome) {
     strangers.send(JSON.stringify({ t: 'auth', token: forged }));
     check('a socket with a forged token is closed', (await closed) === 4401);
 
+    // HAR-011: the port is public. Twenty sockets that never authenticate used
+    // to fill the cap of eight and keep the person's own panel out.
+    const idle = await Promise.all(
+      Array.from({ length: 20 }, async () => {
+        const socket = new WebSocket(state.live.url);
+        socket.on('error', () => {});
+        await new Promise((resolve) => socket.once('open', resolve));
+        return socket;
+      }),
+    );
+    const mine = new WebSocket(state.live.url);
+    await new Promise((resolve) => mine.once('open', resolve));
+    let mineFrames = 0;
+    let mineClosed = null;
+    mine.on('message', (data, isBinary) => {
+      if (isBinary) mineFrames += 1;
+    });
+    mine.once('close', (code) => (mineClosed = code));
+    mine.send(JSON.stringify({ t: 'auth', token: state.live.token, width: 400, height: 250 }));
+    for (let waited = 0; !mineFrames && mineClosed === null && waited < 4000; waited += 100) await new Promise((r) => setTimeout(r, 100));
+    check("twenty sockets that never sign in do not keep the person's own panel out (HAR-011)", mineFrames > 0 && mineClosed === null, `${mineFrames} frames, closed ${mineClosed}`);
+    for (const socket of [...idle, mine]) socket.close();
+
     const moved2 = await cb.cloudBrowserInput('u-cb', { events: [{ type: 'back' }] });
     // Back from the moving page to the wide one opened before it.
     check('the relay still drives it when the socket cannot be had, several gestures at a time', moved2.ok && moved2.title === 'Wide', moved2.title);

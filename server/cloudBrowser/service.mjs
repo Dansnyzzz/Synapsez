@@ -1003,11 +1003,24 @@ const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMess
 /** More panels than this on one machine is not a person watching: a few tabs, at most. */
 const MAX_LIVES = 8;
 
+/**
+ * Sockets that have not yet said `auth`, oldest first (HAR-011). The port is
+ * public, and the cap used to count these too: nine sockets that never
+ * authenticate, each reopened as it timed out, kept the person's own panel
+ * out. Now only authenticated panels count against MAX_LIVES, and a full set
+ * of strangers makes room for a newcomer by dropping the oldest — a real panel
+ * authenticates within milliseconds of opening, so it is not the one dropped.
+ */
+const pending = new Set();
+const MAX_PENDING = 16;
+
 function openLive(ws) {
-  if (wss.clients.size > MAX_LIVES) {
-    ws.close(4429, 'too many');
-    return;
+  if (pending.size >= MAX_PENDING) {
+    const oldest = pending.values().next().value;
+    pending.delete(oldest);
+    oldest.close(4401, 'auth');
   }
+  pending.add(ws);
   const client = { ws, scope: null, inflight: 0, sent: null, behind: false, width: 640, height: 400, driving: false, queue: [], busy: false, window: { at: 0, n: 0 } };
   const unauthenticated = setTimeout(() => ws.close(4401, 'auth'), 5000);
   ws.on('message', (data, isBinary) => {
@@ -1025,6 +1038,11 @@ function openLive(ws) {
         return;
       }
       clearTimeout(unauthenticated);
+      pending.delete(ws);
+      if (lives.size >= MAX_LIVES) {
+        ws.close(4429, 'too many');
+        return;
+      }
       client.scope = scope;
       applyView(client, msg);
       lives.add(client);
@@ -1058,6 +1076,7 @@ function openLive(ws) {
   });
   ws.on('close', () => {
     clearTimeout(unauthenticated);
+    pending.delete(ws);
     lives.delete(client);
     reconfigure();
   });
