@@ -203,6 +203,31 @@ section('the figure check: a figure nothing read holds is corrected or marked (Q
   check('  a figure from a PDF the model was handed as a file is found there (QC-005)', !fromPdf.changed, fromPdf.text);
 }
 
+section('what the figure check reads, and where its mark goes (QC-010)');
+{
+  const { figureEvidenceOf, unsourcedFigures, markFigures } = await import('../server/qualityGate.js');
+  const none = figureEvidenceOf([], ['nothing here']);
+  const marks = (answer, language = 'en') => markFigures(answer, none, language);
+  // A check's own line is about the check.
+  for (const line of ['*Source check: removed 12 links not found in any source read.*', '*Kiểm tra nguồn: đã bỏ 12 liên kết không có trong nguồn nào đã đọc.*', '*Figure check: marked 15 figures not found in any source read.*', '*Kiểm tra số liệu: đã đánh dấu 15 số liệu không có trong nguồn đã đọc.*']) {
+    check(`a check's own note is not read: ${line.slice(1, 24)}…`, marks(line).marked === 0 && marks(line).text === line, marks(line).text);
+  }
+  // Numbering orders what follows; it says nothing about the world.
+  for (const line of ['## 10. Conclusion', '## 1.1 Overview', '### 2) Costs', '**12.** item', '__12.__ item', '10. item', '- 11. item', 'text[^12]', '[^12]: a note', 'see [12]', 'https://en.wikipedia.org/wiki/Foo_(2020)', '[link](https://x.example/a_(2021)_b)']) {
+    check(`  nor is numbering or an address: ${line}`, marks(line).marked === 0 && marks(line).text === line, marks(line).text);
+  }
+  // A figure at the start of a sentence is still a figure.
+  check('a figure at the start of a line is still read', marks('2024 was warm.').marked === 1 && marks('12 people came.').marked === 1, marks('12 people came.').text);
+  check('  and one inside a heading, past its number', marks('## 2. Growth of 30%').text === '## 2. Growth of 30% (unverified)', marks('## 2. Growth of 30%').text);
+  // The mark goes after what is written onto the figure, not between the two.
+  check('the mark goes after a unit written onto the figure', marks('giá 15.000đ', 'vi').text === 'giá 15.000đ (chưa kiểm chứng)' && marks('quãng 100km nữa').text === 'quãng 100km (unverified) nữa', marks('giá 15.000đ', 'vi').text);
+  check('  and inside emphasis, which still closes', marks('**30%**').text === '**30% (unverified)**', marks('**30%**').text);
+  // Marked means this figure, not the sentence.
+  check('a mark later in the sentence does not excuse the figures before it', JSON.stringify(unsourcedFigures('Price 500 and growth 30% (unverified).', none)) === '["500"]', JSON.stringify(unsourcedFigures('Price 500 and growth 30% (unverified).', none)));
+  check('  while the mark straight after one does', unsourcedFigures('Growth **30%** (chưa kiểm chứng) and 15.000đ (unverified).', none).length === 0, JSON.stringify(unsourcedFigures('Growth **30%** (chưa kiểm chứng) and 15.000đ (unverified).', none)));
+  check('  and marking twice over changes nothing', marks(marks('Growth 30% and 500 more.').text).marked === 0, marks('Growth 30% and 500 more.').text);
+}
+
 section('the same figure, and only the same figure, counts as found (QC-009)');
 {
   const { figureEvidenceOf, unsourcedFigures } = await import('../server/qualityGate.js');

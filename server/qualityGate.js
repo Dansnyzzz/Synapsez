@@ -313,8 +313,7 @@ export async function checkAnswer({ answer, messages, sources = [], moreSources 
 const FIGURE_RE = /(?<![\p{L}\p{N}_]|[\p{L}\p{N}_][.,:/-])\d+(?:[.,:/-]\d+)*%?/gu;
 /** Figures in a source, read loosely: `100km` and `12.000đ` hold 100 and 12.000. */
 const SOURCE_FIGURE_RE = /\d+(?:[.,:/-]\d+)*/g;
-/** What marks a figure the check could not find, in either language. */
-const UNVERIFIED_RE = /\((?:unverified|chưa kiểm chứng)\)/i;
+/** What marks a figure the check could not find, in the account's language. */
 const unverifiedMark = (language) => (language === 'vi' ? '(chưa kiểm chứng)' : '(unverified)');
 
 /** A date, a time or a range: written with `/`, `:` or `-`, and its runs are whole numbers. */
@@ -358,12 +357,28 @@ export function figureEvidenceOf(messages, sources = []) {
 /** A figure worth checking: two digits or more, or a percentage. */
 const worthChecking = (token) => token.endsWith('%') || token.replace(/\D/g, '').length >= 2;
 
+/** The line a check ends an answer with: it is about the check, not about the world. */
+const CHECK_NOTE = /^\*(?:Source check|Kiểm tra nguồn|Figure check|Kiểm tra số liệu):/;
+/** An address whole, brackets and all: URL_RE stops at `(`, which left `Foo_(2020)` a figure inside a link. */
+const WHOLE_ADDRESS = /https?:\/\/[^\s<>"'`]+/g;
+/** A number that only orders what follows: `12.`, `**12.**`, `- 3)`, and a heading's `## 1.1`. */
+const LIST_NUMBER = /^(\s*(?:[-*+]\s+)?(?:\*\*|__)?)(\d+[.)])(?=(?:\*\*|__)?\s)/;
+const HEADING_NUMBER = /^(\s*#{1,6}\s+(?:\*\*|__)?)(\d+(?:\.\d+)*[.)]?)(?=(?:\*\*|__)?\s)/;
+/** A figure's unit, written onto it: the `đ` of `15.000đ`, the `km` of `100km`. */
+const ATTACHED_UNIT = /^[\p{L}\p{N}_]*/u;
+/** The mark, straight after a figure — its unit and a closing `**` aside. */
+const MARKED_NEXT = /^[\p{L}\p{N}_]*[*_~]*\s*\((?:unverified|chưa kiểm chứng)\)/iu;
+
 /**
- * Each figure in an answer, where it is, outside code, addresses and list
- * numbers — and whether its sentence already says it is unverified.
+ * Each figure in an answer, where it is, outside code, addresses, footnotes
+ * and numbering — where its mark goes, and whether it already has one.
+ *
+ * Marked means straight after it (QC-010): any "(unverified)" later in the
+ * sentence let every figure before it through, and the source check writes
+ * that word too.
  *
  * @param {string} answer
- * @returns {{ line: number, start: number, end: number, token: string, marked: boolean }[]}
+ * @returns {{ line: number, after: number, token: string, marked: boolean }[]}
  */
 function figuresIn(answer) {
   const out = [];
@@ -375,21 +390,22 @@ function figuresIn(answer) {
         fenced = !fenced;
         return;
       }
-      if (fenced) return;
+      if (fenced || CHECK_NOTE.test(line)) return;
       // Blanked rather than cut, so a position here is a position in the line.
       const blank = (m) => ' '.repeat(m.length);
+      const numberless = (_m, lead, number) => lead + blank(number);
       const seen = line
-        .replace(URL_RE, blank)
+        .replace(WHOLE_ADDRESS, blank)
         .replace(/`[^`]*`/g, blank)
-        .replace(/\[\d+\]/g, blank)
-        .replace(/^(\s*)(\d+[.)])(?=\s)/, (_m, lead, marker) => lead + blank(marker));
+        .replace(/\[\^?\d+\]/g, blank)
+        .replace(LIST_NUMBER, numberless)
+        .replace(HEADING_NUMBER, numberless);
       for (const m of seen.matchAll(FIGURE_RE)) {
         const token = m[0];
         if (!worthChecking(token)) continue;
         const end = m.index + token.length;
-        const stop = line.slice(end).search(/[.!?…](?:\s|$)/);
-        const rest = stop === -1 ? line.slice(end) : line.slice(end, end + stop + 1);
-        out.push({ line: n, start: m.index, end, token, marked: UNVERIFIED_RE.test(rest) });
+        const rest = line.slice(end);
+        out.push({ line: n, after: end + (rest.match(ATTACHED_UNIT)?.[0].length || 0), token, marked: MARKED_NEXT.test(rest) });
       }
     });
   return out;
@@ -458,7 +474,7 @@ export function markFigures(answer, evidence, language = 'en') {
   const marks = figuresIn(answer).filter((f) => !f.marked && !accountedFigure(f.token, evidence));
   // From the end of each line, so a mark does not move the figures before it.
   for (const f of marks.reverse()) {
-    lines[f.line] = `${lines[f.line].slice(0, f.end)} ${unverifiedMark(language)}${lines[f.line].slice(f.end)}`;
+    lines[f.line] = `${lines[f.line].slice(0, f.after)} ${unverifiedMark(language)}${lines[f.line].slice(f.after)}`;
   }
   return { text: lines.join('\n'), marked: marks.length };
 }
