@@ -169,6 +169,7 @@ export function applyEdits(answer, reply, flagged, evidence) {
   const edits = Array.isArray(parsed?.edits) ? parsed.edits.slice(0, 20) : [];
   let text = answer;
   let applied = 0;
+  let dropped = 0;
   for (const e of edits) {
     const find = typeof e?.find === 'string' ? e.find : '';
     const replace = typeof e?.replace === 'string' ? e.replace : null;
@@ -179,8 +180,10 @@ export function applyEdits(answer, reply, flagged, evidence) {
     if (unsourcedLinks(replace, evidence).length) continue;
     text = text.replace(find, () => replace);
     applied += 1;
+    // Citing a source read corrects the sentence; keeping only its words takes the link away (QC-011).
+    if (!replace.match(URL_RE)) dropped += 1;
   }
-  return { text, applied };
+  return { text, applied, dropped };
 }
 
 /** Each address still flagged loses its link, and keeps its words. */
@@ -271,6 +274,7 @@ export async function checkAnswer({ answer, messages, sources = [], moreSources 
 
   let text = answer;
   let fixed = 0;
+  let dropped = 0;
   let still = flagged;
   for (let round = 0; round < rounds && still.length; round += 1) {
     let edited = null;
@@ -281,13 +285,15 @@ export async function checkAnswer({ answer, messages, sources = [], moreSources 
     }
     if (!edited?.applied) break;
     text = edited.text;
-    fixed += edited.applied;
+    fixed += edited.applied - edited.dropped;
+    dropped += edited.dropped;
     still = stillFlagged(text);
   }
   const left = stillFlagged(text);
   if (left.length) text = unlink(text, left);
-  const note = gateNote({ fixed, removed: left.length }, language);
-  return { text: note ? `${text.trimEnd()}\n\n${note}` : text, changed: true, flagged, fixed, removed: left.length };
+  const removed = left.length + dropped;
+  const note = gateNote({ fixed, removed }, language);
+  return { text: note ? `${text.trimEnd()}\n\n${note}` : text, changed: true, flagged, fixed, removed };
 }
 
 /*
@@ -452,6 +458,8 @@ export function applyFigureEdits(answer, reply, flagged, evidence) {
   const unfound = (s) => new Set(figuresIn(s).filter((f) => !accountedFigure(f.token, evidence)).map((f) => f.token));
   let text = answer;
   let applied = 0;
+  let corrected = 0;
+  let marked = 0;
   for (const e of edits) {
     const find = typeof e?.find === 'string' ? e.find : '';
     const replace = typeof e?.replace === 'string' ? e.replace : null;
@@ -464,8 +472,12 @@ export function applyFigureEdits(answer, reply, flagged, evidence) {
     if ((replace.match(URL_RE) || []).some((url) => !links.has(url))) continue;
     text = text.replace(find, () => replace);
     applied += 1;
+    // Corrected means every figure in it is now one that was read; a mark is a mark, whoever wrote it (QC-011).
+    const left = figuresIn(replace).filter((f) => !accountedFigure(f.token, evidence));
+    if (left.length) marked += left.filter((f) => f.marked).length;
+    else corrected += 1;
   }
-  return { text, applied };
+  return { text, applied, corrected, marked };
 }
 
 /** Each unfound, unmarked figure is followed by the mark; nothing else changes. */
@@ -556,16 +568,19 @@ export async function checkFigures({ answer, messages, sources = [], moreSources
 
   let text = answer;
   let fixed = 0;
+  let markedByModel = 0;
   try {
     const edited = applyFigureEdits(answer, await ask(FIGURE_REPAIR_SYSTEM, prompt), flagged, evidence);
     if (edited?.applied) {
       text = edited.text;
-      fixed = edited.applied;
+      fixed = edited.corrected;
+      markedByModel = edited.marked;
     }
   } catch {
     /* the repair is a courtesy; the marks below still hold */
   }
-  const marked = markFigures(text, evidence, language);
-  const note = figureNote({ fixed, marked: marked.marked }, language);
-  return { text: note ? `${marked.text.trimEnd()}\n\n${note}` : marked.text, changed: true, flagged, fixed, marked: marked.marked };
+  const marks = markFigures(text, evidence, language);
+  const marked = markedByModel + marks.marked;
+  const note = figureNote({ fixed, marked }, language);
+  return { text: note ? `${marks.text.trimEnd()}\n\n${note}` : marks.text, changed: true, flagged, fixed, marked };
 }

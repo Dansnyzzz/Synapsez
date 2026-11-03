@@ -102,7 +102,7 @@ section('the gate end to end');
   ];
   let rounds = 0;
   const both = await checkAnswer({ answer: two, messages, ask: async () => replies[rounds++] || '{}' });
-  check('one flagged address left after a round gets another round, up to the limit', rounds === 2 && both.fixed === 2 && both.removed === 0 && both.text.startsWith('A x (unverified). B y (unverified).'), `${rounds} rounds · ${both.text}`);
+  check('one flagged address left after a round gets another round, up to the limit', rounds === 2 && both.fixed === 0 && both.removed === 2 && both.text.startsWith('A x (unverified). B y (unverified).'), `${rounds} rounds · ${both.text}`);
   let idle = 0;
   const stuck = await checkAnswer({ answer: two, messages, rounds: 3, ask: async () => { idle += 1; return '{"edits":[]}'; } });
   check('  a round that changes nothing ends the rounds, and the fall-back holds', idle === 1 && stuck.removed === 2 && !/made-up/.test(stuck.text), `${idle} rounds`);
@@ -201,6 +201,25 @@ section('the figure check: a figure nothing read holds is corrected or marked (Q
   check('  a repair that does not come still leaves the figure marked, and says so', stubborn.marked === 1 && /7,2% \(chưa kiểm chứng\)/.test(stubborn.text) && /Kiểm tra số liệu: đã đánh dấu 1 số liệu/.test(stubborn.text), stubborn.text);
   const fromPdf = await checkFigures({ answer: 'Doanh thu 7,2%.', messages: read, moreSources: async () => ['--- page 1 ---\nDoanh thu tăng 7.2%'], ask: async () => '{}' });
   check('  a figure from a PDF the model was handed as a file is found there (QC-005)', !fromPdf.changed, fromPdf.text);
+}
+
+section('what a check says it did is what it did (QC-011)');
+{
+  const answer = 'Xem [đây](https://made-up.example/x).';
+  const cited = await checkAnswer({ answer, messages, ask: async () => '{"edits":[{"find":"[đây](https://made-up.example/x)","replace":"[đây](https://tuoitre.vn/bao-cao-456.htm)"}]}' });
+  check('citing a source that was read is a correction', cited.fixed === 1 && cited.removed === 0 && /corrected 1 citation\b/.test(cited.text), cited.text);
+  const words = await checkAnswer({ answer, messages, ask: async () => '{"edits":[{"find":"[đây](https://made-up.example/x)","replace":"đây (unverified)"}]}' });
+  check('  keeping only the words is a link removed, not a citation corrected', words.fixed === 0 && words.removed === 1 && /removed 1 link\b/.test(words.text) && !/corrected/.test(words.text), words.text);
+
+  const { checkFigures } = await import('../server/qualityGate.js');
+  const read = [{ role: 'tool', results: [{ content: 'The rate is 4.5%.' }] }];
+  const figures = 'Inflation is 7.2% now.';
+  const onlyMarked = await checkFigures({ answer: figures, messages: read, ask: async () => '{"edits":[{"find":"Inflation is 7.2% now.","replace":"Inflation is 7.2% (unverified) now."}]}' });
+  check('a figure the model only marked is marked, not corrected', onlyMarked.fixed === 0 && onlyMarked.marked === 1 && /marked 1 figure\b/.test(onlyMarked.text) && !/corrected/.test(onlyMarked.text), onlyMarked.text);
+  const reworded = await checkFigures({ answer: figures, messages: read, ask: async () => '{"edits":[{"find":"Inflation is 7.2% now.","replace":"Now inflation is 7.2%."}]}' });
+  check('  one it only moved about is not corrected either, and gets the mark', reworded.fixed === 0 && reworded.marked === 1 && reworded.text.startsWith('Now inflation is 7.2% (unverified).'), reworded.text);
+  const corrected = await checkFigures({ answer: figures, messages: read, ask: async () => '{"edits":[{"find":"Inflation is 7.2% now.","replace":"Inflation is 4.5% now."}]}' });
+  check('  one changed to a figure that was read is', corrected.fixed === 1 && corrected.marked === 0 && /corrected 1\./.test(corrected.text), corrected.text);
 }
 
 section('what the figure check reads, and where its mark goes (QC-010)');
