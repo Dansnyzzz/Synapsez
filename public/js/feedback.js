@@ -1,5 +1,6 @@
 import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
+import { rovingKeys } from './roving.js';
 
 /**
  * Give feedback, the way Claude asks for it (owner, 2026-10-31): first what it
@@ -131,6 +132,7 @@ export function createFeedback(deps) {
   dialog.id = 'feedback';
   dialog.setAttribute('aria-labelledby', 'feedback-title');
   document.body.append(dialog);
+  rovingKeys(dialog, '[role="radio"]');
 
   /** Focus the first element matching, if there is one. */
   const focusOn = (selector) => /** @type {HTMLElement | null} */ (dialog.querySelector(selector))?.focus();
@@ -146,7 +148,7 @@ export function createFeedback(deps) {
 
   const chips = (name, values, chosen, required = false) =>
     `<div class="fb__chips" role="radiogroup" aria-required="${required}">${values
-      .map((v) => `<button type="button" role="radio" class="fb__chip" data-${name}="${v}" aria-checked="${chosen === v}">${escapeHtml(t(`feedback.${name}.${v}`))}</button>`)
+      .map((v, i) => `<button type="button" role="radio" class="fb__chip" data-${name}="${v}" aria-checked="${chosen === v}" tabindex="${(chosen ? chosen === v : i === 0) ? 0 : -1}">${escapeHtml(t(`feedback.${name}.${v}`))}</button>`)
       .join('')}</div>`;
 
   function pageOne() {

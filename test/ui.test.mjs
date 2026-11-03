@@ -10479,6 +10479,45 @@ section("a project's box has the + too, and the shelf says how full it is");
   check('  and the tray is empty after', started.trayEmpty);
 }
 
+section('a row of tabs or radios is one Tab stop, walked with the arrows (UI-013)');
+{
+  const walked = await page.evaluate(async () => {
+    const { rovingKeys } = await import('/js/roving.js');
+    const host = document.createElement('div');
+    // Repainted on every choice, as the Usage panel and the feedback chips are.
+    let chosen = 'a';
+    const paint = () => {
+      host.innerHTML = `<div role="tablist">${['a', 'b', 'c'].map((id) => `<button type="button" role="tab" data-pick="${id}" aria-selected="${id === chosen}" tabindex="${id === chosen ? 0 : -1}">${id}</button>`).join('')}</div>`;
+    };
+    paint();
+    host.addEventListener('click', (event) => {
+      chosen = /** @type {HTMLElement} */ (event.target).closest('[data-pick]')?.getAttribute('data-pick') || chosen;
+      paint();
+    });
+    document.body.append(host);
+    rovingKeys(host, '[role="tab"]');
+    const press = (key) => document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    const stops = [...host.querySelectorAll('[tabindex="0"]')].length;
+    /** @type {HTMLElement} */ (host.querySelector('[data-pick="a"]')).focus();
+    press('ArrowRight');
+    const right = `${document.activeElement?.getAttribute('data-pick')}:${chosen}`;
+    press('ArrowLeft');
+    press('ArrowLeft');
+    const wrapped = `${document.activeElement?.getAttribute('data-pick')}:${chosen}`;
+    press('Home');
+    const home = `${document.activeElement?.getAttribute('data-pick')}:${chosen}`;
+    host.remove();
+    return { stops, right, wrapped, home };
+  });
+  check('one Tab stop; → chooses and focuses the next, even after a repaint', walked.stops === 1 && walked.right === 'b:b', JSON.stringify(walked));
+  check('  ← wraps round from the first to the last, Home goes back to the first', walked.wrapped === 'c:c' && walked.home === 'a:a', JSON.stringify(walked));
+  const marks = await page.evaluate(() => ({
+    announcer: document.getElementById('announcer')?.getAttribute('aria-live'),
+    usageTabs: [...document.querySelectorAll('.usage__seg [role="tab"]')].every((b) => b.hasAttribute('tabindex')),
+  }));
+  check('a screen-reader-only announcer is on the page (UI-008)', marks.announcer === 'polite', JSON.stringify(marks));
+}
+
 await browser.close();
 server.close();
 removeTemp(process.env.DATA_DIR);

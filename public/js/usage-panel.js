@@ -1,5 +1,6 @@
 import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
+import { rovingKeys } from './roving.js';
 import { weekDays, rowsFor, callsByDay, heatmap, heatmapBy, shareBy, pace, busiest, usualDay, standing, knownLimits, tightest, project } from './usage-math.js';
 
 /**
@@ -84,12 +85,13 @@ function bar({ label, sub = '', used, limit, note = '' }) {
 
 const segmented = (name, options, current) =>
   `<div class="usage__seg" role="tablist">${options
-    .map(([id, label]) => `<button type="button" role="tab" data-${name}="${id}" aria-selected="${id === current}">${escapeHtml(label)}</button>`)
+    .map(([id, label]) => `<button type="button" role="tab" data-${name}="${id}" aria-selected="${id === current}" tabindex="${id === current ? 0 : -1}">${escapeHtml(label)}</button>`)
     .join('')}</div>`;
 
 /** @param {HTMLElement} host @param {Deps} deps */
 export function createUsagePanel(host, deps) {
   const view = { scope: 'all', where: 'model', week: 'grid', weekTable: false, report: null, sessions: null, loadedAt: 0, error: '' };
+  rovingKeys(host, '[role="tab"]');
   /** The grid as drawn, for the line a pointed-at cell shows: its days, counts and what each was made of. */
   let cells = null;
 
