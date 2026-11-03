@@ -1695,9 +1695,45 @@ section('the same read twice in a turn runs once');
   const qc3Reply = (await store.listMessages(dupUser.id, 'c-qc3')).filter((m) => m.role === 'assistant').at(-1);
   check('  a link from a memory note stands; one only the model itself wrote before is still flagged (QC-003, QC-004)',
     qc3Calls === 2 && /wiki\.acme-internal\.example\/home/.test(qc3Reply?.text || '') && !/made-up\.example/.test(qc3Reply?.text || ''), JSON.stringify(qc3Reply?.text));
-  check("each model call is given the turn's deadline, under the function's 300 s (HAR-015)",
-    typeof turnDeadline === 'number' && turnDeadline > startedAt && turnDeadline <= startedAt + 300_000, String(turnDeadline && turnDeadline - startedAt));
+  check("the turn's step and the quality gate's repair call are both given the turn's one deadline, under the function's 300 s (HAR-015)",
+    deadlines.length === 2 && deadlines.every((d) => typeof d === 'number' && d > startedAt && d <= startedAt + 300_000 && d === deadlines[0]), JSON.stringify(deadlines.map((d) => d - startedAt)));
+  // HAR-016: folding the conversation passes the deadline on to its own call.
+  {
+    const { compact } = await import('../server/compact.js');
+    let foldDeadline = null;
+    const many = Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, seq: i + 1, role: i % 2 ? 'assistant' : 'user', text: `turn ${i} ${'words '.repeat(40)}` }));
+    await compact({
+      userId: dupUser.id,
+      chatId: 'c-qc3',
+      entry: { provider: 'anthropic', model: 'claude-haiku-4-5', context: 200_000 },
+      prefs: {},
+      messages: many,
+      deadline: startedAt + 123_000,
+      stream: async function* (opts) {
+        foldDeadline = opts.deadline;
+        yield { type: 'text', delta: 'A summary.' };
+        yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+      },
+    }).catch(() => null);
+    check("  and so does folding the conversation (HAR-016)", foldDeadline === startedAt + 123_000, String(foldDeadline));
+  }
   await store.removeUserSettingKey(dupUser.id, 'memory', 'wiki');
+
+  // QC-006: a folded conversation's summary, handed over as the user's, carries what the assistant wrote too.
+  await store.createChat(dupUser.id, { id: 'c-qc4', title: 'qc4' });
+  await store.appendMessage(dupUser.id, 'c-qc4', { id: 'u-qc-5', role: 'user', text: 'find the report' });
+  await store.appendMessage(dupUser.id, 'c-qc4', { id: 'a-qc-5', role: 'assistant', text: 'It may be at https://made-up.example/folded-guess.' });
+  await store.appendMessage(dupUser.id, 'c-qc4', { id: 's-qc-5', role: 'summary', text: 'The assistant suggested https://made-up.example/folded-guess for the report.', replaced: 2, covers: 2 });
+  await store.appendMessage(dupUser.id, 'c-qc4', { id: 'u-qc-6', role: 'user', text: 'link again?' });
+  let qc4Calls = 0;
+  const qc4Stream = async function* scripted() {
+    qc4Calls += 1;
+    yield { type: 'text', delta: qc4Calls === 1 ? 'Here: https://made-up.example/folded-guess.' : '{"edits":[]}' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+  };
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc4', emit: () => {}, stream: qc4Stream });
+  const qc4Reply = (await store.listMessages(dupUser.id, 'c-qc4')).filter((m) => m.role === 'assistant').at(-1);
+  check('  nor is a folded conversation\'s summary a source for an address the assistant made up (QC-006)', qc4Calls === 2 && !/made-up\.example/.test(qc4Reply?.text || ''), JSON.stringify(qc4Reply?.text));
 
   const memo = new Map();
   const counts = {};

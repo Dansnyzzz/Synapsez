@@ -1907,8 +1907,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       const outgoing = withAttachments(grounded, loaded, entry, { masking });
       // What the model was shown this step, for the quality gate's sources (QC-003)
       // — never its own earlier words (QC-004): an address it wrote in a step that
-      // ended in a tool call, or in an example, is not a source for its answer.
-      const notOwn = (m) => m?.role !== 'assistant';
+      // ended in a tool call, or in an example, is not a source for its answer. Nor
+      // a folded conversation's summary (QC-006), handed over as the user's but
+      // written from the assistant's replies too; what the folded turns really
+      // held is still read from the stored messages.
+      const summaries = new Set(messages.filter((m) => m.role === 'summary').map((m) => m.id));
+      const notOwn = (m) => m?.role !== 'assistant' && !summaries.has(m?.id);
       shown = { system, grounded: grounded.filter(notOwn), outgoing: outgoing.filter(notOwn) };
 
       for await (const ev of stream({
