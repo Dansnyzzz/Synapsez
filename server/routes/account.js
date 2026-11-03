@@ -147,7 +147,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       if (!bucket) return res.status(404).json({ error: 'No such project.' });
       const notes = (await getStore().getUserSetting(req.user.id, bucket)) || {};
       if (!Object.hasOwn(notes, req.params.key)) return res.status(404).json({ error: 'No such note.' });
-      await getStore().removeUserSettingKey(req.user.id, bucket, req.params.key);
+      await getStore().removeMemoryNote(req.user.id, bucket, req.params.key);
       res.json({ ok: true });
     }),
   );

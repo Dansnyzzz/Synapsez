@@ -1500,6 +1500,22 @@ export function createPgStore(connectionString) {
     async setChatContextParts(userId, id, parts) {
       await q('UPDATE chats SET context_parts = $3::jsonb WHERE id = $1 AND user_id = $2', [id, userId, toJson(parts ?? null)]);
     },
+    /**
+     * Delete a memory note, and its name from every conversation's context
+     * breakdown (PRV-024): the gauge kept the names of the notes read into a
+     * conversation's last step, a deleted one — or one made from Gmail —
+     * included, until that conversation took another step.
+     */
+    async removeMemoryNote(userId, bucket, key) {
+      await this.removeUserSettingKey(userId, bucket, key);
+      await q(
+        `UPDATE chats SET context_parts = jsonb_set(context_parts, '{details,memory,rows}',
+            COALESCE((SELECT jsonb_agg(r) FROM jsonb_array_elements(context_parts #> '{details,memory,rows}') r WHERE r->>'name' IS DISTINCT FROM $2), '[]'::jsonb))
+          WHERE user_id = $1 AND jsonb_typeof(context_parts #> '{details,memory,rows}') = 'array'
+            AND context_parts #> '{details,memory,rows}' @> jsonb_build_array(jsonb_build_object('name', $2::text))`,
+        [userId, String(key)],
+      );
+    },
 
     /**
      * Claim the right to run the agent loop on this conversation.

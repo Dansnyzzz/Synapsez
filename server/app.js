@@ -1785,7 +1785,7 @@ export function createApp() {
       // Own keys only: `"constructor" in {}` is true.
       if (!Object.hasOwn(notes, req.params.key)) return res.status(404).json({ error: 'No such note.' });
 
-      await store.removeUserSettingKey(req.user.id, bucket, req.params.key);
+      await store.removeMemoryNote(req.user.id, bucket, req.params.key);
       res.json({ ok: true });
     }),
   );

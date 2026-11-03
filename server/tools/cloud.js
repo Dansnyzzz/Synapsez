@@ -1453,7 +1453,7 @@ async function memoryDelete({ key: rawKey }, { userId, chatId }) {
 
   // Removes the one entry in SQL rather than writing back a copy of the object
   // that happens to be missing it — which would undo anything saved meanwhile.
-  await store.removeUserSettingKey(userId, inProject ? here.key : MEMORY_KEY, key);
+  await store.removeMemoryNote(userId, inProject ? here.key : MEMORY_KEY, key);
   const scope = inProject ? ` from ${here.where}` : '';
   return `Deleted the note "${key}"${scope}. It will not be read into future conversations any more.`;
 }

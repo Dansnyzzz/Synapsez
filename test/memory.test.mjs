@@ -425,6 +425,12 @@ section('what came from Google is read only where Google data already is (Limite
   const breakdown = opened.body?.context?.breakdown;
   check('an opened conversation carries what its window is spent on', breakdown?.parts?.system > 0 && breakdown.parts.tools > breakdown.parts.system && breakdown.details?.memory?.rows?.[0]?.name === 'tea', JSON.stringify(breakdown)?.slice(0, 200));
   check('  and not the raw column, which is the gauge\'s, not the conversation\'s', opened.body?.chat && !('context_parts' in opened.body.chat));
+  // PRV-024: a deleted note's name leaves the breakdown at once, not at the next step.
+  await store.mergeUserSetting(aliceId, 'memory', { tea: memory.stampNote('Green tea, no sugar.', { by: 'user' }) });
+  await store.setChatContextParts(aliceId, zoo, { system: 3000, memory: 80, details: { memory: { rows: [{ name: 'tea', tokens: 50 }, { name: 'kept', tokens: 30 }] } } });
+  const removed = await alice.call('DELETE', '/api/memory/account/tea');
+  const after = (await alice.call('GET', `/api/chats/${zoo}`)).body?.context?.breakdown?.details?.memory?.rows?.map((r) => r.name);
+  check("deleting a note takes its name out of every conversation's breakdown (PRV-024)", removed.status === 200 && JSON.stringify(after) === '["kept"]', JSON.stringify(after));
   if (prior) await alice.call('PUT', '/api/prefs', { defaultModel: prior });
 
   // Out of the way of the sections below, which count notes and conversations.
