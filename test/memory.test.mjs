@@ -780,9 +780,14 @@ section('export is the whole account, streamed, without secrets');
     !/plainvalue|hunter2/.test(cleanUrl + cleanArgs) && /mode=fast/.test(cleanUrl) && /--verbose run$/.test(cleanArgs), `${cleanUrl} · ${cleanArgs}`);
   // PRV-033: a header passed as an argument, a token as the address's user name, one in its fragment.
   const headerArgs = argsWithoutSecrets(['--header', 'X-API-Key: plainvalue444', '--header', 'Authorization: Bearer plainvalue555', '--header', 'Accept: text/event-stream']).join(' ');
-  const userUrl = urlWithoutSecrets('https://plainvalue666@mcp.example.com/sse#access_token=plainvalue777&view=1');
+  // `key=` in the fragment, which redactSecrets does not know on its own (the fragment branch's own check).
+  const userUrl = urlWithoutSecrets('https://plainvalue666@mcp.example.com/sse#key=plainvalue777&view=1');
   check('  as is a header given as an argument, a token as the user name or in the fragment (PRV-033)',
     !/plainvalue/.test(headerArgs + userUrl) && /Accept: text\/event-stream/.test(headerArgs) && /^https:\/\/redacted@mcp\.example\.com\/sse#/.test(userUrl), `${headerArgs} · ${userUrl}`);
+  // PRV-034: mcp-remote takes the address itself as an argument, and a header as --header=….
+  const remoteArgs = argsWithoutSecrets(['mcp-remote', 'https://plainvalue888@mcp.example.com/sse?token=plainvalue999&mode=fast', '--header=X-API-Key: plainvalue000', '--header=Accept: text/plain']).join(' ');
+  check('  and an address or a --header=… given as an argument is read the same way (PRV-034)',
+    !/plainvalue/.test(remoteArgs) && /^mcp-remote https:\/\/redacted@mcp\.example\.com\/sse\?/.test(remoteArgs) && /mode=fast/.test(remoteArgs) && /--header=Accept: text\/plain$/.test(remoteArgs), remoteArgs);
   // PRV-030: an incognito conversation's deep research is never part of the record, and a
   // deleted conversation takes its research with it.
   await store.createChat(aliceId, { id: 'c-incog-rr', title: 'secret', incognito: true });
@@ -799,8 +804,12 @@ section('export is the whole account, streamed, without secrets');
   await store.saveResearchRun(aliceId, { id: 'rr-orphan', chatId: 'c-no-such-chat', question: 'ORPHAN-QUESTION', status: 'complete', transcript: [], sources: [], report: 'ORPHAN-REPORT' });
   const withOrphan = (await alice.call('GET', '/api/account/export')).text;
   check('  nor research whose conversation is gone (PRV-032)', !/ORPHAN-QUESTION/.test(withOrphan) && /RESEARCH-QUESTION/.test(withOrphan));
+  await store.createChat(aliceId, { id: 'c-kept-rr', title: 'kept' });
+  await store.saveResearchRun(aliceId, { id: 'rr-kept', chatId: 'c-kept-rr', question: 'KEPT-QUESTION', status: 'complete', transcript: [], sources: [], report: 'r' });
   await store.pruneResearchRuns(90);
-  check('  and the research sweep removes such a run, keeping one with no conversation', !(await store.getResearchRun(aliceId, 'rr-orphan')) && !!(await store.getResearchRun(aliceId, 'rr-export')));
+  check('  and the research sweep removes such a run, keeping one with no conversation and one whose conversation is there',
+    !(await store.getResearchRun(aliceId, 'rr-orphan')) && !!(await store.getResearchRun(aliceId, 'rr-export')) && !!(await store.getResearchRun(aliceId, 'rr-kept')));
+  await store.deleteChat(aliceId, 'c-kept-rr');
   await store.deleteSkill(aliceId, 'sk-export');
 
   // More than one page, all created in the same instant: the cursor must neither

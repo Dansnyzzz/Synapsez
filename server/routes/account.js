@@ -488,18 +488,29 @@ export function urlWithoutSecrets(raw) {
   return redactSecrets(text).text;
 }
 
+/** A header written `Name: value`, with the value blanked when the name says it is a secret. */
+const headerWithoutSecret = (text) => {
+  const header = /^([\w-]+):\s*\S/.exec(text);
+  return header && SECRET_NAME.test(header[1]) ? `${header[1]}: [redacted]` : null;
+};
+
 /**
  * A server's arguments with secrets blanked: `--api-key=…`, the value after
- * `--token` (PRV-031), and a header given as an argument — `--header
- * "X-API-Key: …"`, the way mcp-remote takes one (PRV-033).
+ * `--token` (PRV-031), a header given as an argument — `--header "X-API-Key:
+ * …"` or `--header=…`, the way mcp-remote takes one (PRV-033, PRV-034) — and
+ * an address given as an argument, read as the server's own address is.
  */
 export function argsWithoutSecrets(args) {
   return args.map((arg, i) => {
     const text = String(arg);
+    // mcp-remote takes the server's address as an argument (PRV-034).
+    if (/^[a-z][\w+.-]*:\/\//i.test(text)) return urlWithoutSecrets(text);
     const flag = /^(--?[\w.-]+)=(.*)$/.exec(text);
     if (flag && SECRET_NAME.test(flag[1])) return `${flag[1]}=[redacted]`;
-    const header = /^([\w-]+):\s*\S/.exec(text);
-    if (header && SECRET_NAME.test(header[1])) return `${header[1]}: [redacted]`;
+    const flagHeader = flag ? headerWithoutSecret(flag[2]) : null;
+    if (flagHeader) return `${flag[1]}=${flagHeader}`;
+    const header = headerWithoutSecret(text);
+    if (header) return header;
     const before = i > 0 ? String(args[i - 1]) : '';
     if (/^--?[\w.-]+$/.test(before) && SECRET_NAME.test(before) && !text.startsWith('-')) return '[redacted]';
     return redactSecrets(text).text;
