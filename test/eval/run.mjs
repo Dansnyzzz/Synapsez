@@ -58,6 +58,10 @@ if (live) {
   await initStore({ driver: { query: async (text, params = []) => (await memory.query(text, params)).rows } });
 }
 const liveEffort = process.env.EVAL_EFFORT || 'low';
+// A free OpenRouter model with tools and reasoning — the owner keeps OpenRouter,
+// OrcaRouter and Gemini only (2026-11-03). Free models come and go; EVAL_MODEL overrides.
+const DEFAULT_EVAL_MODEL = 'openrouter/nvidia/nemotron-3.5-super-vl:free';
+const liveModel = process.env.EVAL_MODEL || DEFAULT_EVAL_MODEL;
 
 const { availableTools, assessRisk } = await import('../../server/tools/definitions.js');
 const { UNTRUSTED_RULE } = await import('../../server/tools/untrusted.js');
@@ -216,9 +220,7 @@ async function liveRun(testCase) {
   const { streamCompletion } = await import('../../server/providers/index.js');
   const { resolveModel } = await import('../../server/providers/catalog.js');
 
-  // A free OpenRouter model with tools and reasoning — the owner keeps OpenRouter,
-  // OrcaRouter and Gemini only (2026-11-03). Free models come and go; EVAL_MODEL overrides.
-  const entry = resolveModel(process.env.EVAL_MODEL || 'openrouter/nvidia/nemotron-3.5-super-vl:free');
+  const entry = resolveModel(liveModel);
   const tools = toolsFor(situation);
 
   /**
@@ -314,7 +316,7 @@ if (asJson) {
         ),
         // A live run's model and dial, and what each case cost — the record a later
         // reading of "did the effort level matter" needs (RSN-003).
-        ...(live ? { model: process.env.EVAL_MODEL || null, effort: liveEffort } : {}),
+        ...(live ? { model: liveModel, effort: liveEffort } : {}),
         cases: results.map(({ id, axis, pass, why, notes, ms, cost }) => ({ id, axis, pass, why, notes, ms, ...(cost ? { cost } : {}) })),
       },
       null,
