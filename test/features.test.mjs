@@ -635,6 +635,21 @@ section('answering a quiz question keeps the keyboard in the quiz (ACC-012)');
   check('  and takes it after the repaint, instead of focus falling to the page', /paint\(\);[\s\S]{0,300}stage\.querySelector\('\.xquiz__verdict'\)\)\?\.focus\(\)/.test(cardsSrc));
 }
 
+section('a token count reads in the page language and rolls over to M (UI-018)');
+{
+  const { fmtTokens } = await import('../public/js/context-panel.js');
+  const english = [163, 20_900, 999_949, 999_950, 1_234_567].map(fmtTokens).join(' ');
+  check('English: 163 20.9K 999.9K 1M 1.2M — never "1000K"', english === '163 20.9K 999.9K 1M 1.2M', english);
+  const i18n = await import('../public/js/i18n.js');
+  const savedDocument = globalThis.document;
+  globalThis.document = /** @type {any} */ ({ querySelectorAll: () => [], documentElement: {} });
+  i18n.setLanguage('vi');
+  const vietnamese = [20_900, 1_234_567].map(fmtTokens).join(' ');
+  i18n.setLanguage('en');
+  globalThis.document = savedDocument;
+  check('Vietnamese: a decimal comma', vietnamese === '20,9K 1,2M', vietnamese);
+}
+
 section("a quiz card asks the way Quizizz does: sets of twenty, the wrong ones again, twice (UX-022)");
 {
   const { createQuizPlan } = await import('../public/js/quiz-plan.js');
