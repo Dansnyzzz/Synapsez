@@ -319,7 +319,7 @@ const CLOSE_MACHINE = [
  * used — a failure here leaves it as E2B made it, which is said in the log.
  *
  * @param {any} box  the SDK's Sandbox
- * @param {{ closed?: boolean } | null} [record]  the account's record; none for a scratch machine
+ * @param {Record<string, any> | null} [record]  the account's record, where `closed` is kept; none for a scratch machine
  */
 async function closeMachine(box, record = null) {
   if (record?.closed) return;

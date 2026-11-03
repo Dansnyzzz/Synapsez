@@ -235,6 +235,25 @@ section('a link is removed by the whole address, however it is spelled (QC-014)'
   check('one edit that drops two links says two (QC-011)', dropped.removed === 2 && dropped.fixed === 0 && /removed 2 links/.test(dropped.text), dropped.text);
 }
 
+section('more of what the figure check reads, and where its mark goes (QC-016)');
+{
+  const { figureEvidenceOf, unsourcedFigures, markFigures } = await import('../server/qualityGate.js');
+  const none = figureEvidenceOf([], ['nothing here']);
+  const marks = (answer) => markFigures(answer, none, 'en').text;
+  for (const line of ['> 12. Item', '> - 13) Item', '> ## 14. Heading', '<img src="a.png" width="640">', '<td colspan="12">x</td>']) {
+    check(`numbering in a quote, and a tag's attributes, are not figures: ${line}`, marks(line) === line, marks(line));
+  }
+  check('a timestamp keeps together, its mark after all of it', marks('Lúc 2026-11-03T10:30:00Z đã xong.') === 'Lúc 2026-11-03T10:30:00Z (unverified) đã xong.', marks('Lúc 2026-11-03T10:30:00Z đã xong.'));
+  check('  a unit with a slash too', marks('chạy 100km/h nhanh') === 'chạy 100km/h (unverified) nhanh', marks('chạy 100km/h nhanh'));
+  check('  and a full stop ending the sentence is not part of the unit', marks('giá 15.000đ. Hết') === 'giá 15.000đ (unverified). Hết', marks('giá 15.000đ. Hết'));
+  check('a percentage with a space before its sign is read whole', marks('Tăng 15 % và 5 % nữa') === 'Tăng 15 % (unverified) và 5 % (unverified) nữa', marks('Tăng 15 % và 5 % nữa'));
+  check('  and is the same figure as one without', unsourcedFigures('Tăng 15 % nữa', figureEvidenceOf([], ['tăng 15%'])).length === 0);
+  check('a colon after a word is punctuation', marks('Giá:15.000 thôi') === 'Giá:15.000 (unverified) thôi', marks('Giá:15.000 thôi'));
+  check('a currency code does not hide its price', marks('Giá USD1,300 thôi') === 'Giá USD1,300 (unverified) thôi', marks('Giá USD1,300 thôi'));
+  check('  while a name with digits is still a name', marks('dùng gpt-5, H2O, v1.25') === 'dùng gpt-5, H2O, v1.25', marks('dùng gpt-5, H2O, v1.25'));
+  check('two figures ending at one place get one mark', marks('Tăng 30%-40% nữa') === 'Tăng 30%-40% (unverified) nữa', marks('Tăng 30%-40% nữa'));
+}
+
 section('what a check says it did is what it did (QC-011)');
 {
   const answer = 'Xem [đây](https://made-up.example/x).';

@@ -344,9 +344,10 @@ export async function checkAnswer({ answer, messages, sources = [], moreSources 
 /**
  * A figure in an answer: digits not glued to a word before them (`gpt-5`,
  * `v1.25`, `H2O` are names) — nor the tail of such a name once its head was
- * passed over.
+ * passed over. A colon after a word is punctuation (`Giá:15.000`); after a digit
+ * it is the rest of a time. A space before the percent sign still makes it one.
  */
-const FIGURE_RE = /(?<![\p{L}\p{N}_]|[\p{L}\p{N}_][.,:/-])\d+(?:[.,:/-]\d+)*%?/gu;
+const FIGURE_RE = /(?<![\p{L}\p{N}_]|[\p{L}\p{N}_][.,/-]|\p{N}:)\d+(?:[.,:/-]\d+)*(?:[ \u00A0]?%)?/gu;
 /** Figures in a source, read loosely: `100km` and `12.000đ` hold 100 and 12.000. */
 const SOURCE_FIGURE_RE = /\d+(?:[.,:/-]\d+)*/g;
 /** What marks a figure the check could not find, in the account's language. */
@@ -355,7 +356,7 @@ const unverifiedMark = (language) => (language === 'vi' ? '(chưa kiểm chứng
 /** A date, a time or a range of whole numbers: written with `/`, `:` or `-`, with no decimal in it. */
 const isDateLike = (token) => /[/:-]/.test(token) && !/[.,]/.test(token);
 /** A range: two figures and one dash, `2020-2024`, `0.5-1.0%`, `15,000-20,000`. */
-const RANGE = /^([\d.,]+)-([\d.,]+)%?$/;
+const RANGE = /^([\d.,]+)-([\d.,]+)\s*%?$/;
 /** A whole number, plain or grouped in thousands: `4500`, `4.500`, `1,234,567`. */
 const WHOLE_NUMBER = /^\d+$|^\d{1,3}(?:[.,]\d{3})+$/;
 
@@ -438,13 +439,21 @@ const worthChecking = (token) => token.endsWith('%') || token.replace(/\D/g, '')
 const CHECK_NOTE = /^\*(?:Source check|Kiểm tra nguồn|Figure check|Kiểm tra số liệu):/;
 /** An address whole, brackets and all: URL_RE stops at `(`, which left `Foo_(2020)` a figure inside a link. */
 const WHOLE_ADDRESS = /https?:\/\/[^\s<>"'`]+/g;
-/** A number that only orders what follows: `12.`, `**12.**`, `- 3)`, and a heading's `## 1.1`. */
-const LIST_NUMBER = /^(\s*(?:[-*+]\s+)?(?:\*\*|__)?)(\d+[.)])(?=(?:\*\*|__)?\s)/;
-const HEADING_NUMBER = /^(\s*#{1,6}\s+(?:\*\*|__)?)(\d+(?:\.\d+)*[.)]?)(?=(?:\*\*|__)?\s)/;
-/** A figure's unit, written onto it: the `đ` of `15.000đ`, the `km` of `100km`. */
-const ATTACHED_UNIT = /^[\p{L}\p{N}_]*/u;
-/** The mark, straight after a figure — its unit and a closing `**` aside. */
-const MARKED_NEXT = /^[\p{L}\p{N}_]*[*_~]*\s*\((?:unverified|chưa kiểm chứng)\)/iu;
+/** A number that only orders what follows: `12.`, `**12.**`, `- 3)`, `> 4.`, and a heading's `## 1.1`. */
+const LIST_NUMBER = /^(\s*(?:>\s*)*(?:[-*+]\s+)?(?:\*\*|__)?)(\d+[.)])(?=(?:\*\*|__)?\s)/;
+const HEADING_NUMBER = /^(\s*(?:>\s*)*#{1,6}\s+(?:\*\*|__)?)(\d+(?:\.\d+)*[.)]?)(?=(?:\*\*|__)?\s)/;
+/** A tag's attributes are markup: `width="640"` says nothing about the world. */
+const HTML_TAG = /<\/?[a-zA-Z][^>]*>/g;
+/** A currency's code, written onto its figure: it is not a name like `gpt-5`, and `USD1,300` is a price. */
+const CURRENCY_CODE = /\b(?:USD|VND|EUR|GBP|JPY|CNY|KRW|THB|AUD|CAD|SGD)(?=\d)/g;
+/**
+ * What is written onto a figure: the `đ` of `15.000đ`, the `km/h` of `100km/h`,
+ * the rest of `2026-11-03T10:30:00Z`. A mark goes after all of it.
+ */
+const ATTACHED = String.raw`(?:[\p{L}\p{N}_%]|[:.,/-](?=[\p{L}\p{N}]))*`;
+const ATTACHED_UNIT = new RegExp(`^${ATTACHED}`, 'u');
+/** The mark, straight after a figure — what is written onto it and a closing `**` aside. */
+const MARKED_NEXT = new RegExp(`^${ATTACHED}[*_~]*\\s*\\((?:unverified|chưa kiểm chứng)\\)`, 'iu');
 
 /**
  * Each figure in an answer, where it is, outside code, addresses, footnotes
@@ -474,6 +483,8 @@ function figuresIn(answer) {
       const seen = line
         .replace(WHOLE_ADDRESS, blank)
         .replace(/`[^`]*`/g, blank)
+        .replace(HTML_TAG, blank)
+        .replace(CURRENCY_CODE, blank)
         .replace(/\[\^?\d+\]/g, blank)
         .replace(LIST_NUMBER, numberless)
         .replace(HEADING_NUMBER, numberless);
@@ -557,9 +568,13 @@ export function applyFigureEdits(answer, reply, flagged, evidence) {
 export function markFigures(answer, evidence, language = 'en') {
   const lines = String(answer || '').split('\n');
   const marks = figuresIn(answer).filter((f) => !f.marked && !accountedFigure(f.token, evidence));
-  // From the end of each line, so a mark does not move the figures before it.
+  // From the end of each line, so a mark does not move the figures before it; one mark to a
+  // place, for `30%-40%`, whose two figures end there together.
+  let last = null;
   for (const f of marks.reverse()) {
+    if (last && last.line === f.line && last.after === f.after) continue;
     lines[f.line] = `${lines[f.line].slice(0, f.after)} ${unverifiedMark(language)}${lines[f.line].slice(f.after)}`;
+    last = f;
   }
   return { text: lines.join('\n'), marked: marks.length };
 }
