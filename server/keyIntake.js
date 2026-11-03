@@ -144,7 +144,7 @@ export async function intakeKey(userId, asked, value, { fetchImpl = fetch } = {}
     throw fail(`${PROVIDERS[provider].label} refused that key. Check that it was copied whole and has not been revoked.`);
   }
 
-  return oneAtATime(`${userId}\n${provider}`, async () => {
+  return oneAtATime(userId, async () => {
     const held = await keyEntries(userId, provider);
     if (held.some((entry) => entry.key === secret)) throw fail('That key is already on this provider.');
 
@@ -174,8 +174,12 @@ export async function intakeKey(userId, asked, value, { fetchImpl = fetch } = {}
 }
 
 /**
- * One key intake at a time for an account's provider, on this instance (HAR-008).
- * Two pasted at once both read an empty list, and the second replaced the first.
+ * One key intake at a time for an account, on this instance (HAR-008). Two
+ * pasted at once both read an empty list, and the second replaced the first.
+ * Per account, not per provider (HAR-014): every provider's keys are one
+ * stored setting, read and written whole, so an OpenRouter key and a Google
+ * key pasted together raced the same way. Two serverless instances can still
+ * interleave; that needs a database-side update, and is rarer by far.
  */
 const intakes = new Map();
 function oneAtATime(slot, work) {

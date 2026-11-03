@@ -2106,6 +2106,12 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   await Promise.all([intake.intakeKey(twin.id, 'openrouter', OR('c'), { fetchImpl }), intake.intakeKey(twin.id, 'openrouter', OR('f'), { fetchImpl })]);
   const both = (await providerStatus(twin.id)).openrouter.keys;
   check('two keys pasted at once are both kept, neither over the other (HAR-008)', both.length === 2, JSON.stringify(both.map((k) => k.hint)));
+  // HAR-014: every provider's keys are one stored setting, so two providers at once raced the same way.
+  const triple = await store.createUser({ id: 'u-keys-3', email: 'keys3@example.com', passwordHash: 'x', name: 'K3', role: 'user' });
+  accounts[OR('h')] = { creator_user_id: 'user_H', is_free_tier: true };
+  await Promise.all([intake.intakeKey(triple.id, 'openrouter', OR('h'), { fetchImpl }), intake.intakeKey(triple.id, 'google', `AIza${'G'.repeat(35)}`, { fetchImpl })]);
+  const crossed = await providerStatus(triple.id);
+  check('  an OpenRouter key and a Google key pasted at once are both kept (HAR-014)', crossed.openrouter.keys.length === 1 && crossed.google.keys?.length === 1, JSON.stringify({ openrouter: crossed.openrouter.keys.length, google: crossed.google.keys?.length }));
 
   // The suggestion: free while no key has paid, the paid one once one has.
   const lib = [
