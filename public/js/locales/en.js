@@ -624,6 +624,11 @@ export const en = {
   'steps.browser': 'Used the browser',
   'steps.desktop': 'Used the desktop',
   'steps.count': '{n} steps',
+  'steps.countOne': '1 step',
+  'time.millis': '{n}ms',
+  'time.secs': '{n}s',
+  'time.minSec': '{m}m {s}s',
+  'time.hourMin': '{h}h {m}m',
   'steps.failedCount': '{n} failed',
   /* A finished run of commands and file work, said the way Claude Code says it:
      "Ran 5 commands, read bibliometrics.py". `work.summary` joins the parts. */

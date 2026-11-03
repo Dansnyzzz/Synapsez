@@ -1,6 +1,6 @@
 import { renderMarkdown, escapeHtml } from './markdown.js';
 import { t, currentLanguage } from './i18n.js';
-import { humanSize, repeatsAs, cronParts } from './format.js';
+import { humanSize, repeatsAs, cronParts, counted, oneDecimal, tookText, clockText } from './format.js';
 import { chartFigure } from './chart.js';
 import { richWidget } from './cards.js';
 import { api } from './api.js';
@@ -47,7 +47,7 @@ const el = (tag, className, html) => {
   return node;
 };
 
-const ms = (n) => (n < 1000 ? `${n}ms` : `${(n / 1000).toFixed(1)}s`);
+const ms = tookText;
 
 /**
  * A tool's answer as a person reads it.
@@ -227,7 +227,7 @@ export function summariseToolInput(name, input = {}) {
     case 'memory_read':
       return input.key || t('tool.arg.allNotes');
     case 'update_plan':
-      return `${(input.steps || []).length} steps`;
+      return counted((input.steps || []).length, 'steps.count');
     default: {
       const json = JSON.stringify(input);
       return json.length > 90 ? `${json.slice(0, 90)}…` : json;
@@ -436,7 +436,7 @@ const tailPath = (raw, max = 52) => {
 };
 
 const seconds = (n) => t('step.seconds').replace('{n}', String(Number(n) || 0));
-const count = (n) => t('steps.count').replace('{n}', String(Number(n) || 0));
+const count = (n) => counted(Number(n) || 0, 'steps.count');
 
 /**
  * What to show beside the verb, per tool.
@@ -919,20 +919,6 @@ function workSummary(steps) {
   });
   const said = t('work.summary', { list: parts.join(', ') });
   return said.charAt(0).toUpperCase() + said.slice(1);
-}
-
-/**
- * How long a run has been at it, the way Claude Code counts: "12s", "1m 12s".
- * The whole run, not the step in its title — Claude's clock runs on from one
- * step's title to the next ("Reading the table 1m 1s", then "Checking the
- * options 1m 12s"), and so does this one, through the thinking between them.
- */
-function clockText(elapsed) {
-  const s = Math.floor(elapsed / 1000);
-  if (s < 1) return '';
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h ? `${h}h ${m}m` : m ? `${m}m ${s % 60}s` : `${s}s`;
 }
 
 /**
@@ -2373,7 +2359,7 @@ export function assistantMessage() {
     if (!now && !thinking) run.clock.textContent = '';
     // A run of commands counts in its title, failures too ("ran 5 commands
     // (1 failed)"); a browsing session counts beside it.
-    const tally = run.family === 'work' ? [] : [t('steps.count').replace('{n}', String(run.count))];
+    const tally = run.family === 'work' ? [] : [counted(run.count, 'steps.count')];
     if (run.failures && run.family !== 'work') tally.push(t('steps.failedCount', { n: run.failures }));
     run.tally.textContent = tally.join(' · ');
     const working = run.pending > 0 || thinking;
@@ -3224,7 +3210,7 @@ export function assistantMessage() {
         progress(chars) {
           const kb = chars / 1024;
           size.textContent = t('chat.drafting', {
-            size: kb >= 1 ? `${kb >= 100 ? Math.round(kb) : kb.toFixed(1)} KB` : `${chars} B`,
+            size: kb >= 1 ? `${kb >= 100 ? Math.round(kb) : oneDecimal(kb)} KB` : `${chars} B`,
           });
         },
         remove() {

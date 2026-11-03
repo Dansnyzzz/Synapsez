@@ -650,6 +650,22 @@ section('a token count reads in the page language and rolls over to M (UI-018)')
   check('Vietnamese: a decimal comma', vietnamese === '20,9K 1,2M', vietnamese);
 }
 
+section('times, sizes and step counts read in the page language (UI-009)');
+{
+  const { tookText, clockText, humanSize, counted } = await import('../public/js/format.js');
+  const i18n = await import('../public/js/i18n.js');
+  const read = () => [tookText(30), tookText(1234), clockText(800), clockText(12_000), clockText(72_000), clockText(7_380_000), humanSize(1_572_864), counted(1, 'steps.count'), counted(3, 'steps.count')].join(' | ');
+  const english = read();
+  check('English as before: 30ms, 1.2s, 12s, 1m 12s, 2h 3m, 1.5 MB — and "1 step", not "1 steps"', english === '30ms | 1.2s |  | 12s | 1m 12s | 2h 3m | 1.5 MB | 1 step | 3 steps', english);
+  const savedDocument = globalThis.document;
+  globalThis.document = /** @type {any} */ ({ querySelectorAll: () => [], documentElement: {} });
+  i18n.setLanguage('vi');
+  const vietnamese = read();
+  i18n.setLanguage('en');
+  globalThis.document = savedDocument;
+  check('Vietnamese: giây, phút, giờ and a decimal comma', vietnamese === '30 ms | 1,2 giây |  | 12 giây | 1 phút 12 giây | 2 giờ 3 phút | 1,5 MB | 1 bước | 3 bước', vietnamese);
+}
+
 section("a quiz card asks the way Quizizz does: sets of twenty, the wrong ones again, twice (UX-022)");
 {
   const { createQuizPlan } = await import('../public/js/quiz-plan.js');

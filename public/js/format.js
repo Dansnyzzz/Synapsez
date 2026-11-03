@@ -49,10 +49,33 @@ export const humanSize = (bytes) =>
   bytes == null
     ? ''
     : bytes >= 1024 * 1024
-      ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+      ? `${oneDecimal(bytes / 1024 / 1024)} MB`
       : bytes >= 1024
         ? `${Math.round(bytes / 1024)} KB`
         : `${bytes} B`;
+
+/** One decimal in the page's language: "1.2" in English, "1,2" in Vietnamese (UI-009). */
+export const oneDecimal = (x) =>
+  x.toLocaleString(currentLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+/** How long a step took: "30ms", "1.2s" in English; "30 ms", "1,2 giây" in Vietnamese. */
+export const tookText = (n) => (n < 1000 ? t('time.millis', { n }) : t('time.secs', { n: oneDecimal(n / 1000) }));
+
+/**
+ * How long a run has been at it, the way Claude Code counts: "12s", "1m 12s".
+ * The whole run, not the step in its title — Claude's clock runs on from one
+ * step's title to the next ("Reading the table 1m 1s", then "Checking the
+ * options 1m 12s"), and so does this one, through the thinking between them.
+ * Each unit is the translation's own ("1 phút 12 giây"); empty under a second.
+ */
+export function clockText(elapsed) {
+  const s = Math.floor(elapsed / 1000);
+  if (s < 1) return '';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h) return t('time.hourMin', { h, m });
+  return m ? t('time.minSec', { m, s: s % 60 }) : t('time.secs', { n: s });
+}
 
 /**
  * A count and its noun, as one translated phrase.

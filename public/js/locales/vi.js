@@ -60,6 +60,11 @@ export const vi = {
   'steps.browser': 'Đã dùng trình duyệt',
   'steps.desktop': 'Đã dùng máy tính',
   'steps.count': '{n} bước',
+  'steps.countOne': '1 bước',
+  'time.millis': '{n} ms',
+  'time.secs': '{n} giây',
+  'time.minSec': '{m} phút {s} giây',
+  'time.hourMin': '{h} giờ {m} phút',
   'steps.failedCount': '{n} lỗi',
   /* Một chuỗi lệnh và thao tác tệp đã xong: "Đã chạy 5 lệnh, đọc bibliometrics.py". */
   'work.summary': 'Đã {list}',
