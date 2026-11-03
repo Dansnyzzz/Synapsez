@@ -167,8 +167,10 @@ export function applyEdits(answer, reply, flagged, evidence) {
     return null;
   }
   const edits = Array.isArray(parsed?.edits) ? parsed.edits.slice(0, 20) : [];
+  const keys = new Set(flagged.map(addressKey));
   let text = answer;
   let applied = 0;
+  let cited = 0;
   let dropped = 0;
   for (const e of edits) {
     const find = typeof e?.find === 'string' ? e.find : '';
@@ -176,26 +178,54 @@ export function applyEdits(answer, reply, flagged, evidence) {
     if (!find || replace == null || find.length > 600) continue;
     // Exactly once, and about a flagged address: an edit cannot reach the parts that were right.
     if (text.indexOf(find) === -1 || text.indexOf(find) !== text.lastIndexOf(find)) continue;
-    if (!flagged.some((url) => find.includes(url))) continue;
+    // The whole address (QC-014): `…/docs/intro` holds `…/docs` as text, and is another page.
+    const about = new Set((find.match(URL_RE) || []).map(addressKey).filter((key) => keys.has(key)));
+    if (!about.size) continue;
     if (unsourcedLinks(replace, evidence).length) continue;
     text = text.replace(find, () => replace);
     applied += 1;
-    // Citing a source read corrects the sentence; keeping only its words takes the link away (QC-011).
-    if (!replace.match(URL_RE)) dropped += 1;
+    // Citing a source read corrects the sentence; keeping only its words takes the links away (QC-011).
+    if (replace.match(URL_RE)) cited += 1;
+    else dropped += about.size;
   }
-  return { text, applied, dropped };
+  return { text, applied, cited, dropped };
 }
 
-/** Each address still flagged loses its link, and keeps its words. */
+/** A link in Markdown, its address taken whole: brackets in it, a title after it, a picture's `!` before it. */
+const MARKDOWN_LINK = /!?\[([^\]]*)\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+"[^"]*")?\s*\)/g;
+const BARE_ADDRESS = /<?(https?:\/\/[^\s<>()[\]"'`]+)>?/g;
+
+/**
+ * Each address still flagged loses its link, and keeps its words. By the
+ * address as compared, whole (QC-014): matched as text, a flagged `…/docs` also
+ * took the true `…/docs/intro` with it, on every answer the gate touched, while
+ * the same page spelled another way (`www.`, a trailing slash, `utm_source`)
+ * kept its live link. Code blocks are examples, and are left as they are.
+ *
+ * @param {string} answer
+ * @param {string[]} flagged
+ */
 export function unlink(answer, flagged) {
-  let text = answer;
-  for (const url of flagged) {
-    const at = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    text = text
-      .replace(new RegExp(`\\[([^\\]]*)\\]\\(${at}[^)]*\\)`, 'g'), (_m, label) => label)
-      .replace(new RegExp(`<?${at}>?`, 'g'), '');
-  }
-  return text;
+  const keys = new Set(flagged.map(addressKey));
+  const isFlagged = (url) => keys.has(addressKey(url.match(URL_RE)?.[0] ?? url));
+  let fenced = false;
+  return String(answer || '')
+    .split('\n')
+    .map((line) => {
+      if (FENCE.test(line)) {
+        fenced = !fenced;
+        return line;
+      }
+      if (fenced) return line;
+      return line
+        .replace(MARKDOWN_LINK, (whole, label, url) => (isFlagged(url) ? label : whole))
+        .replace(BARE_ADDRESS, (whole, url) => {
+          if (!isFlagged(url)) return whole;
+          // The full stop that ended the sentence is not part of the address.
+          return url.slice(url.replace(TRAILING, '').length);
+        });
+    })
+    .join('\n');
 }
 
 /** What the gate says it did, in the account's language. */
@@ -285,7 +315,7 @@ export async function checkAnswer({ answer, messages, sources = [], moreSources 
     }
     if (!edited?.applied) break;
     text = edited.text;
-    fixed += edited.applied - edited.dropped;
+    fixed += edited.cited;
     dropped += edited.dropped;
     still = stillFlagged(text);
   }

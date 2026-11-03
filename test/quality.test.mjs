@@ -203,6 +203,38 @@ section('the figure check: a figure nothing read holds is corrected or marked (Q
   check('  a figure from a PDF the model was handed as a file is found there (QC-005)', !fromPdf.changed, fromPdf.text);
 }
 
+section('a link is removed by the whole address, however it is spelled (QC-014)');
+{
+  // Reproduced by evaluator pass 2: matched as text, a flagged page took a longer, true one with it.
+  const read = [{ role: 'tool', results: [{ content: 'read https://a.example/docs/intro and https://news.example/kinh-te-4812.html' }] }];
+  const answer = 'Doc [Intro](https://a.example/docs/intro). Trang chu [Docs](https://a.example/docs).';
+  const kept = await checkAnswer({ answer, messages: read, ask: async () => '{"edits":[]}' });
+  check('a page that was read stays linked when a shorter address is flagged', kept.text.startsWith('Doc [Intro](https://a.example/docs/intro). Trang chu Docs.') && kept.removed === 1, kept.text);
+  check('  bare, too, the full stop kept', unlink('A https://a.example/docs/intro, B https://a.example/docs.', ['https://a.example/docs']) === 'A https://a.example/docs/intro, B .', unlink('A https://a.example/docs/intro, B https://a.example/docs.', ['https://a.example/docs']));
+  check('  with no slash between them', unlink('[x](https://news.example/kinh-te-4812.html)', ['https://news.example/kinh-te']) === '[x](https://news.example/kinh-te-4812.html)');
+
+  const spelled = 'A https://fake.example/x?utm_source=a. B https://www.fake.example/x/ C [d](http://fake.example/x) E <https://fake.example/x#top>';
+  const gone = await checkAnswer({ answer: spelled, messages: [], ask: async () => '{"edits":[]}' });
+  check('every spelling of a flagged page loses its link, not only the first', !/fake\.example/.test(gone.text) && gone.removed === 1, gone.text);
+  check('  once each in the count: one page, one link', /removed 1 link\b/.test(gone.text), gone.text);
+
+  const coded = 'Xem https://fake.example/x\n```\ncurl https://fake.example/x\n```';
+  const fenced = await checkAnswer({ answer: coded, messages: [], ask: async () => '{"edits":[]}' });
+  check('a code block is left as it is, the same address and all', fenced.text.includes('curl https://fake.example/x\n') && !fenced.text.startsWith('Xem https'), fenced.text);
+
+  check('a title, brackets in the address and a picture are all taken whole',
+    unlink('[a](https://fake.example/x "T") [b](https://fake.example/y_(z)) ![c](https://fake.example/p.png)', ['https://fake.example/x', 'https://fake.example/y_', 'https://fake.example/p.png']) === 'a b c',
+    unlink('[a](https://fake.example/x "T") [b](https://fake.example/y_(z)) ![c](https://fake.example/p.png)', ['https://fake.example/x', 'https://fake.example/y_', 'https://fake.example/p.png']));
+
+  const evidence2 = evidenceOf(read);
+  const reach = applyEdits('See [x](https://news.example/kinh-te-4812.html).', '{"edits":[{"find":"See [x](https://news.example/kinh-te-4812.html).","replace":"Rewritten."}]}', ['https://news.example/kinh-te'], evidence2);
+  check('an edit cannot reach a sentence that only holds a longer address', reach?.applied === 0, reach?.text);
+
+  const two = 'Xem [a](https://fake.example/a) va [b](https://fake.example/b).';
+  const dropped = await checkAnswer({ answer: two, messages: [], ask: async () => '{"edits":[{"find":"Xem [a](https://fake.example/a) va [b](https://fake.example/b).","replace":"Xem a va b."}]}' });
+  check('one edit that drops two links says two (QC-011)', dropped.removed === 2 && dropped.fixed === 0 && /removed 2 links/.test(dropped.text), dropped.text);
+}
+
 section('what a check says it did is what it did (QC-011)');
 {
   const answer = 'Xem [đây](https://made-up.example/x).';
