@@ -376,6 +376,16 @@ section('a shared conversation opens with no account, and shows only its own fil
     check('a file picked from Google Drive is not on the public page, by name or by file (PRV-026)',
       !!sameMessage && !JSON.stringify(withDrive.messages).includes('hop-dong-drive') && sameMessage.attachments?.some((a) => a.id === 'in-chat') && driveFile.status === 401 && driveThumb.status === 401,
       `${driveFile.status}/${driveThumb.status} ${JSON.stringify(sameMessage?.attachments)}`);
+    // CODE-080 without leaning on the clock: a scope cached from a share in the same
+    // second, at another millisecond, is not reused (a string comparison read them alike).
+    const { __testing: gate } = await import('../server/routes/chatShare.js');
+    const fresh = await store.getSharedChat(token);
+    const at = new Date(fresh.shared_at);
+    const sameSecond = new Date(at.getMilliseconds() === 0 ? at.getTime() + 1 : at.getTime() - at.getMilliseconds());
+    gate.gateCache.set(token, { scope: { chat: { ...fresh, shared_at: sameSecond }, files: new Set(['stale-sentinel']), drawn: drawnFrom([]) }, until: Date.now() + 60_000 });
+    const staleScope = await fetch(`${base}/api/attachments/stale-sentinel`, { headers: { cookie } });
+    gate.gateCache.delete(token);
+    check('  and a scope cached from a share in the same second, at another millisecond, is not reused (CODE-080)', staleScope.status === 401, String(staleScope.status));
     const forkedAgain = await forkSharedChat(reader.id, token);
     const forkedNames = (await store.listMessages(reader.id, forkedAgain.chatId)).flatMap((m) => (m.attachments || []).map((a) => a.name));
     check('  and a fork does not copy it', !forkedNames.includes('hop-dong-drive.pdf') && forkedNames.includes('map.png'), forkedNames.join(','));
