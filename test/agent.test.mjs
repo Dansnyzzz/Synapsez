@@ -1679,11 +1679,11 @@ section('the same read twice in a turn runs once');
   await store.appendMessage(dupUser.id, 'c-qc3', { id: 'a-qc-3', role: 'assistant', text: 'Earlier I guessed https://made-up.example/old-guess.' });
   await store.appendMessage(dupUser.id, 'c-qc3', { id: 'u-qc-4', role: 'user', text: 'and the report?' });
   let qc3Calls = 0;
-  let turnDeadline = null;
+  const deadlines = [];
   const qc3Stream = async function* scripted(opts) {
     qc3Calls += 1;
+    deadlines.push(opts.deadline);
     if (qc3Calls === 1) {
-      turnDeadline = opts.deadline;
       yield { type: 'text', delta: 'Wiki: https://wiki.acme-internal.example/home. Report: https://made-up.example/old-guess.' };
     } else {
       yield { type: 'text', delta: '{"edits":[]}' };
