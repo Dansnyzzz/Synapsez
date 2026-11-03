@@ -5744,6 +5744,7 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 .menu--context {
   width: min(440px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
   overflow-y: auto;
 }
 
