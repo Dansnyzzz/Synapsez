@@ -1,6 +1,24 @@
 {
   "entries": [
     {
+      "version": "1.9.1",
+      "date": "2026-11-03",
+      "fixed": {
+        "vi": [
+          "Link chia sẻ công khai không còn hiện tệp bạn chọn từ Google Drive — cả nội dung lẫn tên tệp — và người khác sao chép cuộc trò chuyện cũng không chép được tệp đó.",
+          "Mục Dữ liệu của bạn không còn ghi tệp từ Drive là 'đang chia sẻ qua link'.",
+          "Chia sẻ lại một cuộc trò chuyện thì link hiện ngay phần mới thêm, không phải chờ một phút.",
+          "Cập nhật thư viện của máy tính đám mây để vá hai lỗi bảo mật mức vừa."
+        ],
+        "en": [
+          "A public share link no longer shows a file you picked from Google Drive — neither its contents nor its name — and copying the conversation does not copy it.",
+          "Your data no longer lists a Drive file as shared by link.",
+          "Sharing a conversation again shows what was added at once, rather than after a minute.",
+          "The cloud computer's library is updated, closing two moderate security advisories."
+        ]
+      }
+    },
+    {
       "version": "1.9.0",
       "date": "2026-11-03",
       "new": {
