@@ -317,8 +317,19 @@ const SOURCE_FIGURE_RE = /\d+(?:[.,:/-]\d+)*/g;
 const UNVERIFIED_RE = /\((?:unverified|chưa kiểm chứng)\)/i;
 const unverifiedMark = (language) => (language === 'vi' ? '(chưa kiểm chứng)' : '(unverified)');
 
-/** The digit runs of a figure, without leading zeros: `03/11/2026` is 3, 11, 2026. */
-const runsOf = (token) => (token.match(/\d+/g) || []).map((run) => run.replace(/^0+(?=\d)/, ''));
+/** A date, a time or a range: written with `/`, `:` or `-`, and its runs are whole numbers. */
+const isDateLike = (token) => /[/:-]/.test(token);
+
+/**
+ * The digit runs of a figure. A date's lose their leading zeros, `03/11/2026`
+ * being 3, 11, 2026. A number's keep them (QC-009): stripped, `0.05%` read as
+ * `0.5%`, `4.05` as `4.5` and `2,050,000` as `2,500` — ten times wrong, passed
+ * as found, which is the very error this check is for.
+ */
+const runsOf = (token) => {
+  const runs = token.match(/\d+/g) || [];
+  return isDateLike(token) ? runs.map((run) => run.replace(/^0+(?=\d)/, '')) : runs;
+};
 
 /**
  * The ways one figure can be written and still be the same one: `4,5` and
@@ -327,16 +338,19 @@ const runsOf = (token) => (token.match(/\d+/g) || []).map((run) => run.replace(/
 function figureKeys(token) {
   const runs = runsOf(token);
   const keys = [runs.join('.')];
-  if (/[/:-]/.test(token)) keys.push(`d:${[...runs].sort().join('.')}`);
+  if (isDateLike(token)) keys.push(`d:${[...runs].sort().join('.')}`);
   else if (runs.join('').length >= 4) keys.push(`n:${runs.join('')}`);
   return keys;
 }
 
-/** Every figure the sources hold, as keys. */
+/** Every figure the sources hold, as keys — and the year or day inside a date, on its own. */
 export function figureEvidenceOf(messages, sources = []) {
   const keys = new Set();
   for (const text of [...(messages || []).flatMap((m) => textsOf(m)), ...sources]) {
-    for (const token of text.match(SOURCE_FIGURE_RE) || []) for (const key of figureKeys(token)) keys.add(key);
+    for (const token of text.match(SOURCE_FIGURE_RE) || []) {
+      for (const key of figureKeys(token)) keys.add(key);
+      if (isDateLike(token)) for (const run of runsOf(token)) for (const key of figureKeys(run)) keys.add(key);
+    }
   }
   return keys;
 }
@@ -381,7 +395,16 @@ function figuresIn(answer) {
   return out;
 }
 
-const accountedFigure = (token, evidence) => figureKeys(token).some((key) => evidence.has(key));
+/**
+ * Whether what was read holds a figure: as written, or a range whose two ends
+ * are both there (`2020-2024`, where the page has "2020–2024"). Only a range: a
+ * date is its parts together, or `15/03/2026` would pass on a page that says
+ * 15 April 2026.
+ */
+function accountedFigure(token, evidence) {
+  if (figureKeys(token).some((key) => evidence.has(key))) return true;
+  return /^\d+-\d+$/.test(token) && runsOf(token).every((run) => evidence.has(run));
+}
 
 /**
  * The figures in an answer that nothing read holds and nothing marks, once each.

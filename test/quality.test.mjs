@@ -203,6 +203,20 @@ section('the figure check: a figure nothing read holds is corrected or marked (Q
   check('  a figure from a PDF the model was handed as a file is found there (QC-005)', !fromPdf.changed, fromPdf.text);
 }
 
+section('the same figure, and only the same figure, counts as found (QC-009)');
+{
+  const { figureEvidenceOf, unsourcedFigures } = await import('../server/qualityGate.js');
+  const flaggedBy = (source, answer) => unsourcedFigures(answer, figureEvidenceOf([], [source])).length > 0;
+  // Ten times wrong read as found, while leading zeros were stripped from every number.
+  for (const [source, answer] of [['0.5%', 'lãi 0.05%'], ['4.5', 'mức 4.05'], ['2,500', 'giá 2,050,000'], ['$12.50', 'giá 12,050'], ['7.5', 'mức 7.05']]) {
+    check(`a page saying ${source} does not vouch for "${answer}"`, flaggedBy(source, answer));
+  }
+  for (const [source, answer] of [['4.5%', '4,5%'], ['1234567', '1,234,567'], ['1.234.567', '1,234,567'], ['2026-11-03', '03/11/2026'], ['2026-11-03', 'năm 2026'], ['từ 2020–2024', 'giai đoạn 2020-2024'], ['0.05%', '0,05%'], ['08:30', '8:30']]) {
+    check(`  while a page saying ${source} does for "${answer}"`, !flaggedBy(source, answer));
+  }
+  check('a date is its parts together: 15 April 2026 does not vouch for 15/03/2026', flaggedBy('ngày 15 tháng 4 năm 2026', 'ngày 15/03/2026'));
+}
+
 section('only what reached the model is a source (QC-012)');
 {
   const step = {
