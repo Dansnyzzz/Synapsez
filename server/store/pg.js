@@ -1965,6 +1965,11 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT thumb FROM attachments WHERE user_id = $1 AND id = $2', [userId, id]);
       return rows[0]?.thumb ?? null;
     },
+    // Which of these files the person picked from their Google Drive — never published (PRV-026).
+    async driveAttachmentIds(userId, ids) {
+      const rows = await q(`SELECT id FROM attachments WHERE user_id = $1 AND id = ANY($2::text[]) AND origin = 'google_drive'`, [userId, ids.map(String)]);
+      return rows.map((row) => row.id);
+    },
     /** Metadata only — the bytes are the expensive part and rarely the point. */
     async listAttachments(userId, ids) {
       if (!ids?.length) return [];

@@ -360,6 +360,25 @@ section('a shared conversation opens with no account, and shows only its own fil
     const copies = (await Promise.all((await store.listMessages(reader.id, forked.chatId)).flatMap((m) => (m.results || []).map((r) => r.file?.id)).filter(Boolean).map((id) => store.getAttachment(reader.id, id)))).filter(Boolean);
     const copied = copies.map((f) => Buffer.from(f.data, 'base64').toString());
     check('  and a fork copies that version, not the rewrite', copied.includes('as it was then') && !copied.some((t) => t.includes('SECRET')), copied.join(' | '));
+
+    // PRV-026 (owner, 2026-11-03): a file picked from Google Drive is Google data under Limited Use —
+    // not its bytes, its thumbnail, nor its name on a public link, and a fork does not copy it.
+    await store.createAttachment(owner.id, { id: 'from-drive', name: 'hop-dong-drive.pdf', mime: 'application/pdf', kind: 'document', bytes: 3, data: Buffer.from('pdf').toString('base64'), origin: 'google_drive' });
+    await store.appendMessage(owner.id, 'c-sc', { id: 'sc-drive', role: 'user', text: 'and this one from Drive', attachments: [{ id: 'from-drive', name: 'hop-dong-drive.pdf', kind: 'document' }, { id: 'in-chat', name: 'map.png', kind: 'image' }] });
+    // Shared again a moment later: the link's time is kept to the millisecond, the message's finer.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await store.setChatShare(owner.id, 'c-sc', token);
+    const withDrive = await (await fetch(`${base}/api/shared-chat/${token}`)).json();
+    const driveFile = await fetch(`${base}/api/attachments/from-drive`, { headers: { cookie } });
+    const driveThumb = await fetch(`${base}/api/attachments/from-drive/thumb`, { headers: { cookie } });
+    const sameMessage = withDrive.messages?.find((m) => m.id === 'sc-drive');
+    check('a conversation shared again within the same second shows what was added before it (CODE-080)', !!sameMessage, (withDrive.messages || []).map((m) => m.id).join(','));
+    check('a file picked from Google Drive is not on the public page, by name or by file (PRV-026)',
+      !!sameMessage && !JSON.stringify(withDrive.messages).includes('hop-dong-drive') && sameMessage.attachments?.some((a) => a.id === 'in-chat') && driveFile.status === 401 && driveThumb.status === 401,
+      `${driveFile.status}/${driveThumb.status} ${JSON.stringify(sameMessage?.attachments)}`);
+    const forkedAgain = await forkSharedChat(reader.id, token);
+    const forkedNames = (await store.listMessages(reader.id, forkedAgain.chatId)).flatMap((m) => (m.attachments || []).map((a) => a.name));
+    check('  and a fork does not copy it', !forkedNames.includes('hop-dong-drive.pdf') && forkedNames.includes('map.png'), forkedNames.join(','));
   } finally {
     server.close();
   }
