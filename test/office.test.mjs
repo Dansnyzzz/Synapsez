@@ -752,6 +752,12 @@ section('Word, Excel and PowerPoint come out designed');
   check('"1.560.000.000" is the number it says, not text', cells[1][1].t === 'n' && cells[1][1].v === '1560000000', JSON.stringify(cells[1][1]));
   check('"64,4%" is 0.644, "$31,200.50" is 31200.5, "2026-03-15" a date', cells[2][2].v === '0.644' && cells[2][3].v === '31200.5' && cells[1][4].t === 'd', JSON.stringify([cells[2][2], cells[2][3], cells[1][4]]));
   check('  while a code with a leading zero stays text', cells[1][5].t === 's' && cells[1][5].v === '0123');
+  // CODE-072: a thousands comma in a percent, and an id longer than Excel keeps.
+  {
+    const odd = readXlsx(writeXlsx({ sheets: [{ name: 'Odd', rows: [['Growth', 'Card'], ['1,234%', '4111111111111111'], ['64,4%', '1234567890123456789'], ['12.5%', '123456789012345']] }] })).sheets[0].rows;
+    check('"1,234%" is 12.34, not 0.01234; "64,4%" still 0.644 and "12.5%" 0.125 (CODE-072)', odd[1][0].v === '12.34' && odd[2][0].v === '0.644' && odd[3][0].v === '0.125', JSON.stringify(odd.map((r) => r[0])));
+    check('  sixteen digits or more stay text, every digit kept; fifteen are still a number', odd[1][1].t === 's' && odd[1][1].v === '4111111111111111' && odd[2][1].v === '1234567890123456789' && odd[3][1].t === 'n', JSON.stringify(odd.map((r) => r[1])));
+  }
   // A column decides what "150.000" is (code review, 2026-10-25): read alone it was 150, and a
   // column of 150.000, 1.500 and 1.200.000 summed to 1,200,151.5.
   {
