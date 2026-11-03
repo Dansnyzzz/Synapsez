@@ -103,19 +103,22 @@ export function createAnswerFeedback(deps) {
   async function submit() {
     if (!target || sending) return;
     sending = true;
+    // Held: closing the dialog while it sends clears `target` (CODE-069), and a
+    // report that went was then followed by "Cannot read properties of null".
+    const about = target;
     const button = /** @type {HTMLButtonElement} */ ($('[data-submit]'));
     button.disabled = true;
     try {
       const sent = await deps.send({
-        chatId: target.chatId,
-        messageId: target.messageId || undefined,
+        chatId: about.chatId,
+        messageId: about.messageId || undefined,
         issue: issue || undefined,
         details: /** @type {HTMLTextAreaElement} */ ($('#afb-details')).value,
         language: deps.language(),
         version: await deps.version(),
       });
-      target.button?.classList.add('is-sent');
-      target.button?.setAttribute('aria-pressed', 'true');
+      about.button?.classList.add('is-sent');
+      about.button?.setAttribute('aria-pressed', 'true');
       dialog.close();
       deps.done(sent?.included !== false);
     } catch (err) {
