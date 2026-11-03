@@ -2213,6 +2213,14 @@ export function createPgStore(connectionString) {
       ]);
       return { items: rows, total: count[0]?.n ?? 0 };
     },
+    /** Everything kept of the feedback this account sent, any conversation copy included — for the export (PRV-014). */
+    async exportFeedback(userId) {
+      return q(
+        `SELECT topic, topic_other, kind, issue, body, affect, frequency, worked_before, chat_title, transcript, answer, client, created_at
+           FROM feedback WHERE user_id = $1 ORDER BY created_at, id`,
+        [userId],
+      );
+    },
     /**
      * How much of each kind can be reached from outside now — the count beside
      * each Manage in Privacy. One statement; the same rules as the lists above.

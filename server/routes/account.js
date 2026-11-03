@@ -269,7 +269,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
     wrap(async (req, res) => {
       const store = getStore();
       const userId = req.user.id;
-      const [prefs, buckets, skills, active, archived, tasks, workflows] = await Promise.all([
+      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback] = await Promise.all([
         getPrefs(userId),
         store.listMemoryBuckets(userId),
         store.listSkills(userId),
@@ -277,6 +277,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         store.listProjects(userId, { archived: true }),
         store.listTasks(userId),
         store.listWorkflows(userId),
+        store.exportFeedback(userId),
       ]);
 
       const stamp = new Date().toISOString().slice(0, 10);
@@ -314,6 +315,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
             // out stored text is not the whole of what is kept.
             by: note?.by || null,
             chatId: note?.chatId || null,
+            ...(note?.google === true ? { google: true } : {}),
             ...(typeof note?.previous?.content === 'string'
               ? {
                   previous: {
@@ -330,7 +332,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
       let count = 0;
       try {
-        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects });
+        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback });
       } catch (err) {
         /*
          * Half a JSON file that downloads as "complete" is worse than a failed
@@ -460,15 +462,33 @@ export function mountAccountRoutes(api, admin, { wrap }) {
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects }) {
+async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [] }) {
+  // The username, a skill's files and the feedback sent are kept too, so they
+  // are in it (PRV-014). A skill draft is not: it lives in the browser only.
   await write(
     `{"format":"synapsez-export","version":1,"exportedAt":${JSON.stringify(new Date().toISOString())},` +
-      `"account":${JSON.stringify({ name: user.name, email: user.email, createdAt: user.created_at })},` +
+      `"account":${JSON.stringify({ name: user.name, username: user.username ?? null, email: user.email, createdAt: user.created_at })},` +
       `"prefs":${JSON.stringify(prefs)},` +
       `"memory":${JSON.stringify(memory)},` +
-      `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled })))},` +
+      `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, files: Array.isArray(s.files) ? s.files : [] })))},` +
       `"scheduledTasks":${JSON.stringify(tasks.map((t) => ({ title: t.title, prompt: t.prompt, cron: t.cron, timezone: t.tz, enabled: t.enabled, projectId: t.project_id })))},` +
       `"workflows":${JSON.stringify(workflows.map((w) => ({ title: w.title, steps: w.steps, cron: w.cron, enabled: w.enabled })))},` +
+      `"feedback":${JSON.stringify(
+        feedback.map((f) => ({
+          topic: f.topic_other || f.topic,
+          kind: f.kind,
+          issue: f.issue ?? null,
+          body: f.body,
+          affect: f.affect,
+          frequency: f.frequency,
+          workedBefore: f.worked_before,
+          chatTitle: f.chat_title,
+          transcript: f.transcript ?? null,
+          answer: f.answer ?? null,
+          client: f.client || {},
+          createdAt: f.created_at,
+        })),
+      )},` +
       '"projects":[',
   );
   for (const [i, project] of projects.entries()) {
