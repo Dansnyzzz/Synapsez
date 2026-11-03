@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { getStore } from './store/index.js';
 import { allowance, spend, refund, e2bAccountAllowance, e2bAccountSpend } from './freeTier.js';
+import { log } from './util/trace.js';
 
 /**
  * The account's cloud computer on E2B (owner, 2026-11-02) — the first place one
@@ -214,7 +215,11 @@ const ROOT_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
  * root, or dropped to the account first; under `timeout` when it has a limit,
  * so a command past its time stops inside the machine rather than running on
  * unseen. Everything root starts is named by its full path, and a program run
- * as root is looked up on `ROOT_PATH`. Exported for the probe and the suite.
+ * as root is looked up on `ROOT_PATH`. So is the account's shell (SBX-008): on
+ * the PATH it came with, a `bash` the account left in /usr/local/bin ran ahead of
+ * every later command — and `id`, which /etc/profile calls before it sets a PATH
+ * — which is what starting with no login files is for (HAR-001). Exported for
+ * the probe and the suite.
  *
  * @param {{ cmd: string, args?: string[], sudo?: boolean, seconds?: number }} command
  */
@@ -224,7 +229,7 @@ export function commandLine({ cmd, args = [], sudo = false, seconds = 0 }) {
   if (sudo) return `exec ${limit}/usr/bin/env PATH=${ROOT_PATH} ${program}`;
   return (
     `exec ${limit}/usr/bin/setpriv --reuid="$(/usr/bin/id -u ${ACCOUNT})" --regid="$(/usr/bin/id -g ${ACCOUNT})" --init-groups ` +
-    `/usr/bin/env HOME=${HOME} USER=${ACCOUNT} LOGNAME=${ACCOUNT} ${program}`
+    `/usr/bin/env PATH=${ROOT_PATH} HOME=${HOME} USER=${ACCOUNT} LOGNAME=${ACCOUNT} ${program}`
   );
 }
 
@@ -234,6 +239,45 @@ const onMachine = (file) => {
   return raw.startsWith('/') ? raw : path.posix.join(HOME, raw);
 };
 
+const NO_LOGIN_SHELL = Symbol('synz.noLoginShell');
+
+/**
+ * Commands on this machine start without a login shell (SBX-008).
+ *
+ * The SDK starts every command as `/bin/bash -l -c …`, and every command here
+ * goes as root (see `commandLine`) — so root's login ran /etc/profile, which
+ * calls `id` by name, and /root/.profile, which calls `mesg`, on a PATH that
+ * begins in /usr/local, which E2B leaves writable by everyone. A program an
+ * ordinary command put at /usr/local/bin/id ran as root on the next command,
+ * any command, with whatever key was in its environment (live, 2026-11-03).
+ * The SDK builds that line itself and hands it to `commands.rpc.start`, so the
+ * call is rewritten there to `--noprofile --norc`; `commandLine` names every
+ * program by its full path and needs no profile. A SDK that no longer has that
+ * seam is said in the log, and fails the suite (test/e2b.test.mjs).
+ *
+ * @param {any} box  the SDK's Sandbox
+ * @returns {boolean} whether commands now start without a login shell
+ */
+export function withoutLoginShell(box) {
+  const rpc = box?.commands?.rpc;
+  if (!rpc || typeof rpc.start !== 'function') {
+    log.warn('e2b: commands still start in a login shell — the SDK changed');
+    return false;
+  }
+  if (rpc[NO_LOGIN_SHELL]) return true;
+  const start = rpc.start.bind(rpc);
+  rpc.start = (request, options) => {
+    const proc = request?.process;
+    const args = proc?.args;
+    if (proc?.cmd === '/bin/bash' && Array.isArray(args) && args.length === 3 && args[0] === '-l' && args[1] === '-c') {
+      return start({ ...request, process: { ...proc, args: ['--noprofile', '--norc', '-c', args[2]] } }, options);
+    }
+    return start(request, options);
+  };
+  rpc[NO_LOGIN_SHELL] = true;
+  return true;
+}
+
 /**
  * An E2B sandbox, in the shape the rest of the app drives a Vercel one.
  *
@@ -241,6 +285,7 @@ const onMachine = (file) => {
  * @param {{ userId?: string, record?: any }} [owner]  the account and its record; none for a scratch machine
  */
 function machine(box, { userId, record } = {}) {
+  withoutLoginShell(box);
   return {
     provider: 'e2b',
     sandboxId: box.sandboxId,

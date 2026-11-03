@@ -148,7 +148,7 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   const run = state.calls.find((c) => c.kind === 'run');
   check('every command is sent as root, from the account\'s home', run.opts.user === 'root' && run.opts.cwd === '/home/user', JSON.stringify(run.opts));
   check('  so E2B\'s login shell reads only files root can write', /^exec /.test(run.cmd));
-  check('  and an ordinary command drops to the account before it starts', /\/usr\/bin\/setpriv --reuid="\$\(\/usr\/bin\/id -u user\)" --regid="\$\(\/usr\/bin\/id -g user\)" --init-groups \/usr\/bin\/env HOME=\/home\/user USER=user LOGNAME=user 'bash' '--noprofile' '--norc' '-c' /.test(run.cmd), run.cmd.slice(0, 240));
+  check('  and an ordinary command drops to the account before it starts', /\/usr\/bin\/setpriv --reuid="\$\(\/usr\/bin\/id -u user\)" --regid="\$\(\/usr\/bin\/id -g user\)" --init-groups \/usr\/bin\/env PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin HOME=\/home\/user USER=user LOGNAME=user 'bash' '--noprofile' '--norc' '-c' /.test(run.cmd), run.cmd.slice(0, 240));
   check('  with a time limit kept inside the machine', /^exec \/usr\/bin\/timeout -k 5 30 \/usr\/bin\/setpriv /.test(run.cmd));
   /*
    * SBX-004: root runs these before the drop, and E2B's /usr/local is writable
@@ -424,6 +424,50 @@ section('the SDK loads on a runtime that cannot require() an ES module (SBX-001)
   });
   const said = `${run.stdout}${run.stderr}`.trim();
   check('the SDK the app loads has Sandbox.create', run.status === 0 && run.stdout.trim() === 'function', said.split('\n')[0]);
+}
+
+section('a command starts without a login shell, whoever it runs as (SBX-008)');
+{
+  /*
+   * Live on E2B, 2026-11-03: a program an ordinary command put at
+   * /usr/local/bin/id or .../mesg ran as uid 0 on the next command, because root's
+   * login shell calls both by name on a PATH that begins in that writable folder.
+   * The real SDK here, with no network: if an upgrade moves the line it builds
+   * or the seam it hands it to, this goes red rather than the hole coming back.
+   */
+  const { Sandbox } = await import('e2b/dist/index.mjs');
+  const box = new Sandbox({ sandboxId: 'offline', sandboxDomain: 'e2b.app', envdVersion: '0.4.0', envdAccessToken: 'x', apiKey: `e2b_${'x'.repeat(40)}` });
+  const sent = [];
+  box.commands.rpc = {
+    start: (request) => {
+      sent.push(request);
+      throw new Error('captured, not run');
+    },
+  };
+  check('the SDK this app pins still hands its line to commands.rpc.start', e2b.withoutLoginShell(box) === true);
+  check('  and doing it twice, as a machine wrapped again does, is the same', e2b.withoutLoginShell(box) === true);
+  await box.commands.run(e2b.commandLine({ cmd: 'bash', args: ['-c', 'true'] }), { user: 'root' }).catch(() => {});
+  const proc = sent[0]?.process;
+  check('  bash with no profile and no rc, never -l', proc?.cmd === '/bin/bash' && JSON.stringify(proc.args.slice(0, 3)) === '["--noprofile","--norc","-c"]' && !proc.args.includes('-l'), JSON.stringify(proc?.args?.slice(0, 3)));
+  check('  and the line itself is passed on whole', /^exec \/usr\/bin\/setpriv /.test(proc?.args?.[3] || ''), proc?.args?.[3]);
+  check("a SDK with no such seam is said, not assumed", e2b.withoutLoginShell({ commands: {} }) === false);
+
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  state.calls.length = 0;
+  const reached = [];
+  let made = null;
+  const before = sdk.Sandbox.create;
+  sdk.Sandbox.create = async (...args) => {
+    made = await before.apply(sdk.Sandbox, args);
+    made.commands.rpc = { start: (request) => reached.push(request) };
+    return made;
+  };
+  await e2b.e2bScratch();
+  made.commands.rpc.start({ process: { cmd: '/bin/bash', args: ['-l', '-c', 'x'] } });
+  check('every machine the app makes goes through it', reached[0]?.process?.args?.[0] === '--noprofile', JSON.stringify(reached[0]?.process?.args));
+  sdk.Sandbox.create = before;
+  e2b.__testing.useSdk(null);
 }
 
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll E2B checks passed.\x1b[0m\n');
