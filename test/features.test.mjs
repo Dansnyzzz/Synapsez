@@ -2363,6 +2363,15 @@ section('your data: the lists and deletions behind Privacy → Manage (owner, 20
     check("another account's upload cannot be deleted from here", (await del('/api/data/uploads/yd-theirs')) === 404 && (await store.getAttachment(other.id, 'yd-theirs')) != null);
     check('  nor its feedback', (await del('/api/data/feedback/yd-fb', other.id)) === 404);
     check('  its own feedback can', (await del('/api/data/feedback/yd-fb')) === 200 && (await get('/api/data/feedback')).body.total === 0);
+    // PRV-015: a file picked from Drive is a file the person sent, and a shared conversation hands it out like one.
+    await store.createChat(me.id, { id: 'c-yd-drive', title: 'With a Drive file', model: 'm' });
+    await store.createAttachment(me.id, { id: 'yd-drive', name: 'hop-dong.pdf', mime: 'application/pdf', kind: 'document', bytes: 900, data: 'AAA', origin: 'google_drive', chatId: 'c-yd-drive' });
+    await new Promise((r) => setTimeout(r, 20));
+    await store.setChatShare(me.id, 'c-yd-drive', 'w'.repeat(43));
+    const sentShared = await get('/api/data/uploads?shared=1');
+    const counted = await get('/api/data');
+    check('a file picked from Drive is listed and counted with what you sent (PRV-015)', sentShared.body.items.some((i) => i.id === 'yd-drive' || i.name === 'hop-dong.pdf') && counted.body.shared?.uploads === 1, JSON.stringify({ items: sentShared.body.items.map((i) => i.name), uploads: counted.body.shared?.uploads }));
+    check('  and can be deleted from there', (await del('/api/data/uploads/yd-drive')) === 200 && (await store.getAttachment(me.id, 'yd-drive')) == null);
   } finally {
     server.close();
   }

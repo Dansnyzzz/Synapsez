@@ -2158,7 +2158,10 @@ export function createPgStore(connectionString) {
       const like = likeOf(query);
       const sharedChat = `c.share_token IS NOT NULL AND c.shared_at IS NOT NULL AND a.created_at <= c.shared_at`;
       const isShared = upload ? `(${sharedChat})` : 'a.share_token IS NOT NULL';
-      const where = `a.user_id = $1 AND a.origin = $2
+      // What the person sent is an upload or a file picked from their Drive (PRV-015): a shared
+      // conversation hands both out, and both are theirs to see and delete here.
+      const origins = upload ? ['upload', 'google_drive'] : ['generated'];
+      const where = `a.user_id = $1 AND a.origin = ANY($2::text[])
         AND NOT COALESCE(c.incognito, FALSE)
         AND ${shared ? isShared : `NOT COALESCE(${isShared}, FALSE)`}
         AND ($3::text IS NULL OR a.name ILIKE $3 ESCAPE '\\')`;
@@ -2171,9 +2174,9 @@ export function createPgStore(connectionString) {
              ${from}
             WHERE ${where}
          ORDER BY updated_at DESC, a.id LIMIT $4 OFFSET $5`,
-          [userId, upload ? 'upload' : 'generated', like, pageSize(limit), pageStart(offset)],
+          [userId, origins, like, pageSize(limit), pageStart(offset)],
         ),
-        q(`SELECT COUNT(*)::int AS n ${from} WHERE ${where}`, [userId, upload ? 'upload' : 'generated', like]),
+        q(`SELECT COUNT(*)::int AS n ${from} WHERE ${where}`, [userId, origins, like]),
       ]);
       return { items: rows, total: count[0]?.n ?? 0 };
     },
@@ -2213,7 +2216,7 @@ export function createPgStore(connectionString) {
              WHERE a.user_id = $1 AND a.origin = 'generated' AND a.share_token IS NOT NULL
                AND NOT COALESCE(c.incognito, FALSE)) AS artifacts,
            (SELECT COUNT(*)::int FROM attachments a JOIN chats c ON c.id = a.chat_id AND c.user_id = a.user_id
-             WHERE a.user_id = $1 AND a.origin = 'upload' AND NOT COALESCE(c.incognito, FALSE)
+             WHERE a.user_id = $1 AND a.origin IN ('upload', 'google_drive') AND NOT COALESCE(c.incognito, FALSE)
                AND c.share_token IS NOT NULL AND c.shared_at IS NOT NULL AND a.created_at <= c.shared_at) AS uploads,
            (SELECT COUNT(*)::int FROM feedback f JOIN chats c ON c.id = f.chat_id AND c.user_id = f.user_id
              WHERE f.user_id = $1 AND f.transcript IS NOT NULL) AS feedback`,
@@ -2222,9 +2225,9 @@ export function createPgStore(connectionString) {
       const row = rows[0] || {};
       return { chats: row.chats ?? 0, artifacts: row.artifacts ?? 0, uploads: row.uploads ?? 0, feedback: row.feedback ?? 0 };
     },
-    /** Throw away a file this account sent. Only an upload: a made file goes by deleteGeneratedFile. */
+    /** Throw away a file this account sent — uploaded, or picked from Drive. A made file goes by deleteGeneratedFile. */
     async deleteUpload(userId, id) {
-      const rows = await q(`DELETE FROM attachments WHERE id = $1 AND user_id = $2 AND origin = 'upload' RETURNING id`, [id, userId]);
+      const rows = await q(`DELETE FROM attachments WHERE id = $1 AND user_id = $2 AND origin IN ('upload', 'google_drive') RETURNING id`, [id, userId]);
       return rows.length > 0;
     },
     /** Feedback this account sent, deleted by its sender. */
