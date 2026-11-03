@@ -345,6 +345,12 @@ const backoff = (attempt) => Math.min(8000, 500 * 2 ** attempt) + Math.floor(Mat
 
 /** Attempts at one key when it is the provider rather than the key at fault. */
 const UPSTREAM_TRIES = 3;
+// How long one request may take, every key and retry together (HAR-012): under the 300 s
+// a Vercel function lives, so a turn whose provider will not answer can still say so.
+// PROVIDER_REQUEST_BUDGET_MS; read per request, so a test can shorten it.
+const requestBudgetMs = () => Number(process.env.PROVIDER_REQUEST_BUDGET_MS) || 240_000;
+// Too little left to be worth starting another attempt.
+const MIN_ATTEMPT_MS = 20_000;
 
 /** Passes over the key list. More than one only because a wait can earn a key back. */
 const ROUNDS = 3;
@@ -422,6 +428,8 @@ async function* streamAny(opts) {
    */
   const gaveUp = new Set();
   let lastUpstream = null;
+  // The whole request's time, every key and retry together (HAR-012).
+  const deadline = Date.now() + requestBudgetMs();
   const upstreamError = (failure) =>
     Object.assign(
       new Error(`${label} could not reach this model on any key: ${failure.message}`),
@@ -492,7 +500,9 @@ async function* streamAny(opts) {
         const restored = shield ? restoring(shield) : (event) => [event];
 
         try {
-          for await (const incoming of stallGuard(dispatch(entry, common))) {
+          // No attempt waits for a first word past what is left of the request (HAR-012).
+          const first = Math.max(MIN_ATTEMPT_MS, Math.min(STALL_FIRST_MS, deadline - Date.now()));
+          for await (const incoming of stallGuard(dispatch(entry, common), { first })) {
             for (const event of restored(incoming)) {
               if (event.type === 'text') emitted.text += 1;
               else if (event.type === 'thinking') emitted.thinking += 1;
@@ -558,22 +568,26 @@ async function* streamAny(opts) {
 
         if (kind === 'UPSTREAM') {
           // The provider stumbled rather than the key being wrong, so it is the
-          // same key that wants trying, a moment later.
-          if (attempt < tries - 1) {
+          // same key that wants trying, a moment later — a minute at most, and
+          // only while the request still has the time for it (HAR-012): a
+          // "Retry-After: 240" was waited in full, and the function died first.
+          const pause = Math.min(retryAfterMs ?? backoff(attempt), MAX_WAIT_MS);
+          const timeLeft = deadline - Date.now();
+          if (attempt < tries - 1 && timeLeft - pause >= MIN_ATTEMPT_MS) {
             if (emitted.text) {
               yield {
                 type: 'retry',
                 reason: `${label}: the provider dropped that reply; starting it again.`,
               };
             }
-            await wait(retryAfterMs ?? backoff(attempt), signal);
+            await wait(pause, signal);
             continue;
           }
           // Out of patience with this key. The next one, if any, gets a try —
-          // see `gaveUp`; with none left, the turn is told it may switch model.
+          // see `gaveUp`; with none left, or no time left, the turn is told it may switch model.
           gaveUp.add(key);
           lastUpstream = failure;
-          if (!keys.slice(position + 1).some((next) => !gaveUp.has(next.key))) throw upstreamError(failure);
+          if (timeLeft < MIN_ATTEMPT_MS || !keys.slice(position + 1).some((next) => !gaveUp.has(next.key))) throw upstreamError(failure);
           yield { type: 'notice', text: `${label}: ${which} could not reach the model, trying the next key.` };
           if (emitted.text) {
             yield { type: 'retry', reason: `${label}: ${which} stopped mid-answer; starting that reply again.` };

@@ -430,6 +430,21 @@ section('the rotation reacts to what actually came out');
       /rate limited until/i.test(run.error?.message || ''),
       run.error?.message,
     );
+    // HAR-012: a provider that stumbles and says "come back in four minutes" is not waited for past a minute —
+    // a Vercel function lives 300 s, and a request that outlives it ends with nothing said.
+    {
+      const slow = await drive([{ throw: err(503, 'Service unavailable', { 'retry-after': '240' }) }, { emit: [{ type: 'text', delta: 'ok' }, { type: 'done' }] }], ['only-key']);
+      check('a stumble that asks for four minutes is waited at most one (HAR-012)', slow.waits.length === 1 && slow.waits[0] <= 60_000 && slow.error === null, JSON.stringify(slow.waits));
+      const before = process.env.PROVIDER_REQUEST_BUDGET_MS;
+      process.env.PROVIDER_REQUEST_BUDGET_MS = '30000';
+      try {
+        const tight = await drive([{ throw: err(503, 'Service unavailable', { 'retry-after': '50' }) }, { emit: [{ type: 'text', delta: 'late' }, { type: 'done' }] }], ['only-key']);
+        check('  and with too little of the request\'s time left for another try, it says so rather than starting one', tight.seen.length === 1 && tight.waits.length === 0 && tight.error?.upstream === true, `${tight.seen.length} tries · ${tight.error?.message}`);
+      } finally {
+        if (before === undefined) delete process.env.PROVIDER_REQUEST_BUDGET_MS;
+        else process.env.PROVIDER_REQUEST_BUDGET_MS = before;
+      }
+    }
     // UX-023: as an instant the browser shows in the person's own time, not the server's clock face (UTC on Vercel).
     check(
       '  as an ISO instant, with a code the browser acts on (UX-023, UX-024)',
