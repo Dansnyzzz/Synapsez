@@ -64,12 +64,21 @@ function textsOf(message) {
   return out;
 }
 
+/** The fields of a step that reach the model: see `textsIn`. */
+const SENT_FIELDS = /^(system|passages|grounded|outgoing|text|content|parts|results)$/;
+
 /**
  * Every string in what a step sent the model (QC-003): the system prompt with
  * the memory notes and project instructions in it, the transcript with the
  * text of attached files and the project's passages. Stored messages alone
  * missed all of those, so a link the person's own file gave was taken for an
- * invention. A picture's or a document's bytes are not text and are skipped.
+ * invention.
+ *
+ * Only the fields a provider is sent (QC-012): a message's `text`, its parts'
+ * and its results' `content`. A result also keeps what was never shown as
+ * reading — a drawing's markup, which the model wrote itself, so a figure it
+ * drew vouched for the same figure in its answer — and ids and dates of no
+ * meaning. A picture's or a document's bytes are not text either.
  *
  * @param {any} value
  * @returns {string[]}
@@ -82,7 +91,7 @@ export function textsIn(value, out = [], depth = 0, every = false) {
   } else if (Array.isArray(value)) {
     for (const item of value) textsIn(item, out, depth + 1, every);
   } else if (typeof value === 'object') {
-    for (const [key, item] of Object.entries(value)) if (!/^(data|base64|bytes|image)$/i.test(key)) textsIn(item, out, depth + 1, every);
+    for (const [key, item] of Object.entries(value)) if (SENT_FIELDS.test(key)) textsIn(item, out, depth + 1, every);
   }
   return out;
 }

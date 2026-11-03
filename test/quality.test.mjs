@@ -203,5 +203,30 @@ section('the figure check: a figure nothing read holds is corrected or marked (Q
   check('  a figure from a PDF the model was handed as a file is found there (QC-005)', !fromPdf.changed, fromPdf.text);
 }
 
+section('only what reached the model is a source (QC-012)');
+{
+  const step = {
+    system: 'Today is 2026-11-04.',
+    grounded: [{ id: 'msg-20261104', role: 'user', text: 'How did GDP do?', createdAt: '2025-01-02T03:04:05Z', attachments: [{ id: 'att-777', name: 'report-888.pdf' }] }],
+    outgoing: [
+      {
+        role: 'tool',
+        results: [
+          { toolCallId: 'call-999', name: 'web_search', content: 'GDP grew 4.5%.' },
+          { toolCallId: 'call-555', name: 'show_widget', content: 'Drew "GDP" in the conversation.', widget: { title: 'GDP', markup: '<svg><text>7.2%</text><a>https://made-up.example/own-drawing</a></svg>' } },
+        ],
+      },
+      { role: 'user', parts: [{ type: 'text', text: 'From the file: revenue 36,5' }, { type: 'image', mime: 'image/png', data: 'MTIz' }] },
+    ],
+  };
+  const every = textsIn(step, [], 0, true).join('\n');
+  check('what a provider is sent is read: the prompt, the words, results, the text of parts', ['2026-11-04', 'How did GDP do?', 'GDP grew 4.5%.', 'revenue 36,5'].every((s) => every.includes(s)), every);
+  check("  a drawing's markup is not, since the model wrote it", !every.includes('7.2%'), every);
+  check('  nor ids, dates of no meaning, names or bytes', !/msg-2026|2025-01-02|att-777|report-888|call-999|MTIz/.test(every), every);
+  const { figureEvidenceOf, unsourcedFigures } = await import('../server/qualityGate.js');
+  check('so a figure it drew does not vouch for the same figure in its answer', unsourcedFigures('GDP grew 7.2%.', figureEvidenceOf([], textsIn(step, [], 0, true))).length === 1);
+  check('  and a link in a drawing is no source for the source check', !textsIn(step).join('\n').includes('made-up.example'));
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll quality-gate checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
