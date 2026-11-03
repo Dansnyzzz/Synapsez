@@ -8,6 +8,7 @@ import { audit } from '../audit.js';
 import { log } from '../util/trace.js';
 import { MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage, stampNote } from '../memory.js';
 import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.js';
+import { clientError } from '../util/clientError.js';
 
 /**
  * The account's own data: what is remembered, what happened, and the right to
@@ -93,7 +94,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       try {
         key = noteName(req.params.key);
       } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({ error: clientError(err) });
       }
       const { text } = redactSecrets(String(req.body?.content ?? ''));
       if (!text.trim()) return res.status(400).json({ error: 'A note cannot be empty. Delete it instead.' });
@@ -438,7 +439,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       try {
         await confirmIdentity(req.user, { password: req.body?.password, code: req.body?.code });
       } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({ error: clientError(err) });
       }
       const store = getStore();
       if (req.user.role === 'admin') {

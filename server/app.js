@@ -2526,7 +2526,7 @@ export function createApp() {
      */
     log.error('unhandled error', err, { method: req.method, path: req.path });
     if (res.headersSent) return res.end();
-    res.status(500).json({ error: err?.message || 'Internal error' });
+    res.status(500).json({ error: clientError(err) });
   });
 
   return app;

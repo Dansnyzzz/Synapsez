@@ -1,6 +1,7 @@
 import { getStore } from '../store/index.js';
 import { executeTool } from '../tools/execute.js';
 import { previewOf, mediaOf, liveRevision } from '../attachments.js';
+import { clientError } from '../util/clientError.js';
 
 /**
  * The workspace routes, lifted out of server/app.js.
@@ -65,7 +66,7 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
       try {
         await handler(req, res);
       } catch (err) {
-        res.status(err.status || 400).json({ error: err.message });
+        res.status(err.status || 400).json({ error: clientError(err) });
       }
     });
 

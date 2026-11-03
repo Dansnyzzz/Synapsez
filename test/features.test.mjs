@@ -627,6 +627,13 @@ section("a database's own words do not reach the browser; a route's refusal does
   check('  nor is a connection failure, which can carry the address and password', !/hunter2|db\.internal/.test(clientError(pool)), clientError(pool));
   check("  while a route's own refusal is the person's to read", clientError(new Error('That username is taken.')) === 'That username is taken.');
   check('  and a key in one is still blanked', !/sk-ant-api03-[A-Za-z0-9]{20}/.test(clientError(new Error('Bad key sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX'))));
+  // CODE-074: every route, the last-resort error handler included — not only the ones CODE-065 reached.
+  const routeFiles = [...fs.readdirSync(new URL('../server/routes/', import.meta.url)).filter((f) => f.endsWith('.js')).map((f) => `routes/${f}`), 'app.js'];
+  const raw = routeFiles.flatMap((f) => {
+    const src = fs.readFileSync(new URL(`../server/${f}`, import.meta.url), 'utf8');
+    return [...src.matchAll(/json\(\{ error: (err\??\.message|String\(err)[^}]*\}\)/g)].map((m) => `${f}: ${m[0]}`);
+  });
+  check('  no route answers with an error\'s raw text (CODE-074)', raw.length === 0, raw.join(' | '));
 }
 section('answering a quiz question keeps the keyboard in the quiz (ACC-012)');
 {

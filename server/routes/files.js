@@ -6,6 +6,7 @@ import { saveUpload } from '../attachments.js';
 import { faviconFor, cleanHost } from '../favicon.js';
 import { proxiedImage, mapTile } from '../imageProxy.js';
 import { createDocument, extensionOf, RUNNABLE } from '../office/index.js';
+import { clientError } from '../util/clientError.js';
 import {
   withStorageShim,
   listArtifactStorage,
@@ -39,7 +40,7 @@ export function mountFileRoutes(api, { wrap, body }) {
         // just picked, and a round trip of the same megabytes helps nobody.
         res.status(201).json({ attachment: saved });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -277,7 +278,7 @@ export function mountFileRoutes(api, { wrap, body }) {
         const count = await setArtifactValue(req.user.id, req.params.id, req.body?.key, req.body?.value);
         return res.json({ ok: true, keys: count });
       } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({ error: clientError(err) });
       }
     }),
   );
@@ -361,7 +362,7 @@ export function mountFileRoutes(api, { wrap, body }) {
         });
         res.json({ file: saved });
       } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientError(err) });
       }
     }),
   );
