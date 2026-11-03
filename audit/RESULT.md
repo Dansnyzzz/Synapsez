@@ -16,7 +16,7 @@ before = `audit/BASELINE.md` 2026-09-09 column, `main` at `3e8273e`; after =
 
 Before = `audit/BASELINE.md` section "Vòng v4", `main` at `a7098d1` (tag `backup/pre-optimize-20261102-1701`).
 After = branch `optimize/2026-11-02`, first measured at `07f6fff` (84 commits — one per ledger ID, plus i18n and
-stamp follow-ups that name their ID), then after each evaluator pass: `e805883`, `555e34f`, `5d2ea98` and `20b521d`. Every
+stamp follow-ups that name their ID), then after each evaluator pass: `e805883`, `555e34f`, `5d2ea98`, `20b521d` and `a5d69d7`. Every
 row is a command that was run and an output that was read.
 
 ## The gate, and what runs outside it
@@ -29,7 +29,8 @@ row is a command that was run and an output that was read.
 | Gate after evaluator pass 2 | — | **exit 0, 343 s, 5,738 ✓, 0 ✗** on `555e34f`. The run before it was **red** at typecheck: HAR-016 passed `deadline` to `compact()` without declaring it (one new error each in `agent.js`, `compact.js`); declared in `555e34f`, back to 279/279 | log `scratchpad/gate-v5c.txt` |
 | Gate after evaluator pass 3 | — | **exit 0, 286 s, 5,744 ✓, 0 ✗** on `5d2ea98` | log `scratchpad/gate-v5d.txt` |
 | Gate after evaluator pass 4 | — | **exit 0, 325 s, 5,752 ✓, 0 ✗** on `20b521d` | log `scratchpad/gate-v5e.txt` |
-| Browser suite after pass 2 | — | **exit 0, 0 ✗, 698 s** (batch 9, on `22c8e37`; the pass-3 and pass-4 fixes after it touch server code, tests and the README, no page under `public/`) | `scratchpad/ui-batch9.txt` |
+| Gate after evaluator pass 5 | — | **exit 0, 351 s, 5,756 ✓, 0 ✗** on `a5d69d7` | log `scratchpad/gate-v5f.txt` |
+| Browser suite after pass 2 | — | **exit 0, 0 ✗, 698 s** (batch 9, on `22c8e37`; the fixes of passes 3–5 after it touch server code, tests and the README, no page under `public/`) | `scratchpad/ui-batch9.txt` |
 | `test:hooks` | 168/168 | **168/168** | gate step |
 | eval (scripted) | 15/15, `PROMPT_STAMP bc830e108fcb` | **15/15, `101239f2dd8e`** | gate step; the scripted eval checks the conditions for a right answer, not what a model does with them (`--live` costs money — RSN-001) |
 | typecheck ratchet | 279 outstanding, ceiling 296 | **279, ceiling 279** (CODE-063 locked the 17 the ceiling still allowed) | gate step; `.typecheck-baseline.json` |
@@ -41,11 +42,11 @@ row is a command that was run and an output that was read.
 
 | Check | Result |
 |---|---|
-| `git diff --shortstat backup/pre-optimize-20261102-1701 HEAD` | 85 files, +3,449 / −459, 84 commits at `07f6fff`; **97 files, +4,100 / −503, 108 commits at `20b521d`** (after four evaluator passes) |
+| `git diff --shortstat backup/pre-optimize-20261102-1701 HEAD` | 85 files, +3,449 / −459, 84 commits at `07f6fff`; 97 files, +4,100 / −503, 108 commits at `20b521d`; **97 files, +4,142 / −505, 111 commits at `a5d69d7`** (after five evaluator passes) |
 | `package-lock.json` | **unchanged**. `package.json`: `quality.test` added to `npm test`, and `test:quality` |
 | `.env` files in the diff | none |
 | New files over 300 KB | none |
-| Secret shapes in every added line (Anthropic, OpenRouter, OpenAI, Google, GitHub, Slack, AWS, PEM, Postgres URL with password) | At `20b521d`, **4 hits, none a secret**: the two in `test/features.test.mjs` (a made-up `postgres://app:hunter2@db.internal` and a regex — the input and the check of CODE-065's redaction), a made-up `sk-ant-` key in `test/memory.test.mjs` that PRV-029's export must blank, and this row's own list of patterns |
+| Secret shapes in every added line (Anthropic, OpenRouter, OpenAI, Google, GitHub, Slack, AWS, PEM, Postgres URL with password) | At `a5d69d7`, **4 lines by these patterns (an `sk-ant-` key needs 20 characters after it), none a secret**: the two in `test/features.test.mjs` (a made-up `postgres://app:hunter2@db.internal` and a regex — the input and the check of CODE-065's redaction), a made-up `sk-ant-` key in `test/memory.test.mjs` that PRV-029's export must blank, and this row's own list of patterns. A looser `sk-ant-` pattern (the fifth evaluator's) also matches that fixture's check line: 5 |
 
 ## Measured: tests that failed before their fix
 
@@ -69,7 +70,7 @@ Each of these was run with the fix stashed (`git stash push -- <file>`), then wi
 
 ## Ledger reconciliation (Phase 3 step 14)
 
-368 IDs after four evaluator passes, each counted at its last row: **FIXED 341 · CHỜ-CHỦ/TRONG-REPO 9 · CHỜ-CHỦ/NGOÀI-REPO 5 · BLOCKED 3 · DEFERRED 1 · OPEN 0 · IN-PROGRESS 0**, and 9 rows of rounds 1–2 written in their own words (RESOLVED, not a defect, PROPOSED — owner decision). BLOCKED are GAP-005/GAP-006/CODE-021 from round 3: each needs a live-model budget.
+370 IDs after five evaluator passes, each counted at its last row: **FIXED 343 · CHỜ-CHỦ/TRONG-REPO 9 · CHỜ-CHỦ/NGOÀI-REPO 5 · BLOCKED 3 · DEFERRED 1 · OPEN 0 · IN-PROGRESS 0**, and 9 rows of rounds 1–2 written in their own words (RESOLVED, not a defect, PROPOSED — owner decision). BLOCKED are GAP-005/GAP-006/CODE-021 from round 3: each needs a live-model budget.
 
 ## Requirement matrix §0b (Phase 3 step 13)
 
@@ -118,6 +119,7 @@ A fresh read-only `code-reviewer` agent, given the diff, this section, the ledge
 - **Pass 2 (a new agent): NEEDS_WORK**, 7 findings. Fixed as new IDs: **QC-004** (QC-003 had made the model's own earlier words a source, so a link it invented in an earlier step passed; now only the system prompt and the messages not the assistant's — an `agent.test` case, red without the fix; its deadline check then looked at the first call only, corrected in pass 3), **CODE-076** (eight more raw texts inside `translateMessage(…)`, an MCP start error, and the 500 handler now says only that the server failed; the source check widened to those shapes), **HAR-016** (a rate-limited key's rest is not waited past the turn deadline — red without the fix; compaction gets the deadline; the README says plainly what the deadline does not bound: a reply already streaming, the 20 s a call gets to start, a turn that outlives the function and is resumed by `server/resume.js`), **PRV-028** (what artifacts' pages saved is in the export; the README's export list completed). Recorded as **QC-005** (CHỜ-CHỦ/TRONG-REPO): a PDF sent as bytes has no text to source a link from. The QC-003 bytes check was rewritten so it can fail. Figures above updated (ledger tally, the gate after each pass).
 - **Pass 3 (a new agent): NEEDS_WORK**, 5 findings. Fixed as new IDs, each with a test run red without the fix: **CODE-077** (raw error text in three more shapes — a skill upload's per-file error held in a variable, a failed turn's message over the stream, the workspace's unreadable-preview message; `readableFailure` now applies the shared database test, and the source check flags any value use of `err.message` in a route file), **CODE-078** (CODE-076 had turned the body parser's own 4xx — too large, not JSON — into a 500 "try again"; they keep their status and say what was wrong), **QC-006** (a folded conversation's summary, handed over as the user's but written from the assistant's replies too, is not a source), **PRV-029** (deep-research runs and MCP servers in the export, the latter without headers, environment or token-shaped values; what is left out is said). The deadline check now records every call of a turn and folding is driven with one (`658de83`); `47a479f` [QC-006] also carries the folding check, which sat in the same hunk.
 - **Pass 4 (a new agent): NEEDS_WORK**, 5 findings. Fixed as new IDs: **PRV-030** (an incognito conversation's deep research stayed up to 90 days — no delete removed a run — and PRV-029 had put it in the export; all three deletes now take a conversation's research, and the export leaves out incognito runs; three checks red without the fix), **CODE-079** (a scheduled task's and a workflow step's stored failure kept a database's words; through `clientError` now — tested on the text form and by a source check, with no end-to-end case, as `runStep` has no seam for a database failure), **QC-007** (a project's passages, riding on a folded summary, were dropped with it; the gate's sources are now one pure, directly tested function, `gateSources`), **PRV-031** (PRV-029's MCP redaction knew only key shapes; generic `?token=`, address passwords and `--api-key`/`--token` values are blanked too — PRV-029's ledger row reworded). This section's diffstat and secret-scan rows brought to `20b521d`.
+- **Pass 5 (a new agent): NEEDS_WORK**, 1 MEDIUM and 3 LOW. Fixed as new IDs, each with a check red without the fix: **PRV-032** (PRV-030's export kept a run whose conversation is gone — left from before, or saved just after a delete; only runs with no conversation or an ordinary one still there are exported, and the research sweep removes the others; the retention sweep's research delete gets its test), **PRV-033** (a header passed as an argument — `--header "X-API-Key: …"` — and a token as the address's user name or in its fragment are blanked). The secret-scan row now says which pattern gives 4 and which 5.
 - Recorded, not changed: several UI fixes are pinned by source checks (see R18); commit `6bc8b90` [SEC-058] also carries UX-024's `code: 'rate_limited'` emit in `app.js`, and `3cfc744`, `c65f91a`, `721e011` each cover several IDs — history is not rewritten.
 
 ---
