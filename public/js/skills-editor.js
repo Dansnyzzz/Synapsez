@@ -157,6 +157,14 @@ export function createSkillEditor({ onSaved, owner }) {
     try {
       const { savedAt } = await api.saveSkillDraft(draft);
       setPill('skills.draftSaved', savedAt);
+      // This browser's copy is now also the account's — see lastDraft (PRV-020).
+      try {
+        const key = localKey();
+        const local = key ? JSON.parse(localStorage.getItem(key) || 'null') : null;
+        if (local && local.savedAt === draft.savedAt) localStorage.setItem(key, JSON.stringify({ ...local, onAccount: true }));
+      } catch {
+        /* nothing kept here */
+      }
     } catch {
       setPill('skills.draftLocal', draft.savedAt);
     }
@@ -183,7 +191,24 @@ export function createSkillEditor({ onSaved, owner }) {
     } catch {
       local = null;
     }
-    const remote = await api.skillDraft().then((r) => r.draft).catch(() => null);
+    let reached = true;
+    const remote = await api.skillDraft()
+      .then((r) => r.draft)
+      .catch(() => {
+        reached = false;
+        return null;
+      });
+    // A copy that reached the account, which now has none, was cancelled or made
+    // into a skill on another device (PRV-020): dropped, not brought back and
+    // saved again. One that never reached the account is this browser's own work.
+    if (reached && !remote && local?.onAccount) {
+      try {
+        localStorage.removeItem(localKey());
+      } catch {
+        /* nothing kept here */
+      }
+      local = null;
+    }
     const pick = [local, remote].filter((d) => d && (d.name || d.description || d.instructions || d.files?.length)).sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)))[0];
     return pick || null;
   }

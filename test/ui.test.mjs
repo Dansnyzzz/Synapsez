@@ -3619,11 +3619,14 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
 
   // Create: typed, kept as a draft; Cancel asks; reopened, it is all there.
   // PRV-017: another account's draft on this browser — and one from before drafts had owners — is never shown.
-  await page.evaluate(() => {
+  // PRV-020: this account's own copy, once saved to the account, whose draft was since
+  // cancelled on another device — the account has none now — is not brought back.
+  await page.evaluate((mine) => {
     const foreign = JSON.stringify({ name: 'not-yours', description: 'x', instructions: 'their secret', files: [], savedAt: '2999-01-01T00:00:00.000Z' });
     localStorage.setItem('synapsez.skillDraft', foreign);
     localStorage.setItem('synapsez.skillDraft:someone-else', foreign);
-  });
+    localStorage.setItem(`synapsez.skillDraft:${mine}`, JSON.stringify({ name: 'cancelled-elsewhere', description: 'x', instructions: 'gone', files: [], savedAt: '2998-01-01T00:00:00.000Z', onAccount: true }));
+  }, me.id);
   await page.click('#tab-skills');
   await page.waitForTimeout(300);
   await page.click('#skill-add-open');
@@ -3635,6 +3638,8 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
     legacy: localStorage.getItem('synapsez.skillDraft'),
   }));
   check("Create a skill never opens on another account's draft, and the ownerless one is dropped (PRV-017)", opened.name !== 'not-yours' && !/their secret/.test(opened.text) && opened.legacy === null, JSON.stringify(opened));
+  const stale = await page.evaluate((mine) => localStorage.getItem(`synapsez.skillDraft:${mine}`), me.id);
+  check('  nor on a draft cancelled on another device: the copy here is dropped (PRV-020)', opened.name !== 'cancelled-elsewhere' && !/cancelled-elsewhere/.test(stale || ''), JSON.stringify({ name: opened.name, stale }));
   await page.evaluate(() => localStorage.removeItem('synapsez.skillDraft:someone-else'));
   await page.fill('#skc-name', 'ui-draft-skill');
   await page.fill('#skc-desc', 'When testing drafts.');
