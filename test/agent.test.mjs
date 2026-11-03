@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { removeTemp } from './lib/tmp.mjs';
+import { tinyPdf } from './lib/pdf.mjs';
 
 process.env.ENCRYPTION_KEY ||= 'agent-test-encryption-key';
 process.env.SESSION_SECRET ||= 'agent-test-session-secret';
@@ -1749,6 +1750,27 @@ section('the same read twice in a turn runs once');
   await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc4', emit: () => {}, stream: qc4Stream });
   const qc4Reply = (await store.listMessages(dupUser.id, 'c-qc4')).filter((m) => m.role === 'assistant').at(-1);
   check('  nor is a folded conversation\'s summary a source for an address the assistant made up (QC-006)', qc4Calls === 2 && !/made-up\.example/.test(qc4Reply?.text || ''), JSON.stringify(qc4Reply?.text));
+
+  // QC-005: the account's model reads PDFs itself, so the file went as bytes and its words were in nothing sent.
+  {
+    const { saveUpload } = await import('../server/attachments.js');
+    const guide = await saveUpload(dupUser.id, { name: 'guide.pdf', mime: 'application/pdf', data: tinyPdf('See https://acme-docs.example/setup') });
+    await store.createChat(dupUser.id, { id: 'c-qc5', title: 'qc5' });
+    await store.appendMessage(dupUser.id, 'c-qc5', { id: 'u-qc5', role: 'user', text: 'where is setup?', attachments: [{ id: guide.id, name: guide.name, kind: guide.kind, mime: guide.mime }] });
+    let qc5Calls = 0;
+    let sentAs = '';
+    const qc5Stream = async function* scripted(opts) {
+      qc5Calls += 1;
+      if (qc5Calls === 1) sentAs = JSON.stringify(opts.messages?.at(-1)?.parts?.map((p) => p.type) || []);
+      yield { type: 'text', delta: qc5Calls === 1 ? 'Setup: https://acme-docs.example/setup. Also https://made-up.example/qc5.' : '{"edits":[]}' };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+    };
+    await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-qc5', emit: () => {}, stream: qc5Stream });
+    const qc5Reply = (await store.listMessages(dupUser.id, 'c-qc5')).filter((m) => m.role === 'assistant').at(-1);
+    check("a link from the person's own PDF, sent to the model as a file, stands; an invented one beside it is still removed (QC-005)",
+      /"document"/.test(sentAs) && /acme-docs\.example\/setup/.test(qc5Reply?.text || '') && !/made-up\.example/.test(qc5Reply?.text || '') && /removed 1 link|bỏ 1 liên kết/.test(qc5Reply?.text || ''),
+      `${sentAs} · ${JSON.stringify(qc5Reply?.text)}`);
+  }
 
   const memo = new Map();
   const counts = {};

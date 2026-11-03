@@ -19,7 +19,7 @@ import { skillMenu, skillNotes } from './skills.js';
 import { connectorSummary } from './connectors.js';
 import { mcpTools } from './mcp/registry.js';
 import { priceTurn } from './providers/catalog.js';
-import { loadForTranscript, toParts } from './attachments.js';
+import { loadForTranscript, pdfTextsOf, toParts } from './attachments.js';
 import { projectPrompt } from './projects.js';
 import { compact, shouldCompact, measure, activeTranscript, transcriptTokens } from './compact.js';
 import { promptParts, contextBreakdown } from './contextParts.js';
@@ -1750,6 +1750,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   let qualityChecked = false;
   /** What the last step showed the model, as the gate's sources besides the stored messages — see `gateSources`. */
   let shown = [];
+  /** The files that step sent, for the PDFs among them it sent as bytes (QC-005). */
+  let shownFiles = null;
 
   /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
   let movedToAuto = false;
@@ -1926,6 +1928,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       }));
       const outgoing = withAttachments(grounded, loaded, entry, { masking });
       shown = gateSources({ system, grounded, outgoing, passages: project?.passages, messages });
+      shownFiles = loaded;
 
       for await (const ev of stream({
         userId,
@@ -2121,6 +2124,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         answer: assistant.text,
         messages,
         sources: shown,
+        moreSources: () => pdfTextsOf(shownFiles, { deadline }),
         language: prefs.language || 'en',
         ask: async (system, prompt) => {
           let said = '';

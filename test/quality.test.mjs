@@ -139,5 +139,28 @@ section('what the model was shown counts, and emphasis is not part of an address
   }
 }
 
+section('a PDF the model was handed as a file is read only when something is flagged (QC-005)');
+{
+  const answer = 'Setup is at https://docs.acme-internal.example/pdf-guide.';
+  let reads = 0;
+  let asked = 0;
+  const fromPdf = async () => {
+    reads += 1;
+    return ['--- page 1 ---\nSetup: https://docs.acme-internal.example/pdf-guide'];
+  };
+  const kept = await checkAnswer({ answer, messages: [], moreSources: fromPdf, ask: async () => { asked += 1; return '{}'; } });
+  check("a link from the person's own PDF stands, with no repair call", !kept.changed && kept.text === answer && asked === 0 && reads === 1, JSON.stringify(kept.flagged));
+
+  reads = 0;
+  await checkAnswer({ answer: 'Nothing to check here.', messages: [], moreSources: fromPdf, ask: async () => '{}' });
+  check('  an answer with nothing flagged does not read the file', reads === 0);
+
+  const invented = await checkAnswer({ answer: 'See https://made-up.example/qc5.', messages: [], moreSources: fromPdf, ask: async () => '{}' });
+  check('  while an address the PDF does not hold is still removed', invented.removed === 1 && !/made-up/.test(invented.text), invented.text);
+
+  const broken = await checkAnswer({ answer: 'See https://made-up.example/qc5.', messages: [], moreSources: async () => { throw new Error('unreadable'); }, ask: async () => '{}' });
+  check('  and a PDF that cannot be read leaves the gate as it was', broken.removed === 1 && !/made-up/.test(broken.text), broken.text);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll quality-gate checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);

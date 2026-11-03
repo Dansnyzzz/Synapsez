@@ -474,6 +474,32 @@ export async function loadForTranscript(userId, messages, { extractText = false,
 }
 
 /**
+ * The words of the PDFs a step handed the model as files (QC-005), for the
+ * quality gate.
+ *
+ * A model that reads PDFs itself is sent the bytes, so the file's text is
+ * nowhere in what was sent, and an address the person's own PDF gave looked
+ * invented — the gate removed it and said so. Read only when the gate has
+ * something flagged (the read is a worker and seconds), at most once per file
+ * (`readDocument` remembers), and not past the turn's `deadline`. What the
+ * model was sent is not changed.
+ *
+ * @param {Map<string, any> | null} loaded  what `loadForTranscript` gave that step
+ * @param {{ deadline?: number }} [options]
+ * @returns {Promise<string[]>}
+ */
+export async function pdfTextsOf(loaded, { deadline = Infinity } = {}) {
+  const out = [];
+  for (const row of loaded?.values() || []) {
+    if (row.kind !== 'document' || row.text !== undefined || !row.data) continue;
+    if (Date.now() >= deadline) break;
+    const read = await readDocument(row);
+    if (read?.text) out.push(read.text);
+  }
+  return out;
+}
+
+/**
  * A transparent picture goes to the model on a ground it can see it against
  * (imageGround.js) — once per row, which the turn's cache keeps across steps.
  */

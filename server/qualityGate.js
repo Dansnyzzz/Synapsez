@@ -215,15 +215,28 @@ export const repairRounds = (env = process.env) => Math.max(1, Math.min(3, Numbe
  *   answer: string,
  *   messages: any[],
  *   sources?: string[],
+ *   moreSources?: (() => Promise<string[]>) | null,
  *   language?: string,
  *   ask: (system: string, prompt: string) => Promise<string>,
  *   rounds?: number,
- * }} input  `ask` makes a repair call and returns the model's text; `rounds` caps them
+ * }} input  `ask` makes a repair call and returns the model's text; `rounds` caps them.
+ *   `moreSources` is what the model was shown that costs something to read as
+ *   text — a PDF it was handed as a file (QC-005) — asked for once, and only
+ *   when an address is flagged.
  * @returns {Promise<{ text: string, changed: boolean, flagged: string[], fixed: number, removed: number }>}
  */
-export async function checkAnswer({ answer, messages, sources = [], language = 'en', ask, rounds = repairRounds() }) {
-  const evidence = evidenceOf(messages, sources);
-  const flagged = unsourcedLinks(answer, evidence);
+export async function checkAnswer({ answer, messages, sources = [], moreSources = null, language = 'en', ask, rounds = repairRounds() }) {
+  let evidence = evidenceOf(messages, sources);
+  let flagged = unsourcedLinks(answer, evidence);
+  if (flagged.length && moreSources) {
+    const more = await Promise.resolve()
+      .then(moreSources)
+      .catch(() => []);
+    if (more?.length) {
+      evidence = evidenceOf(messages, [...sources, ...more]);
+      flagged = unsourcedLinks(answer, evidence);
+    }
+  }
   if (!flagged.length) return { text: answer, changed: false, flagged, fixed: 0, removed: 0 };
 
   const read = [...evidence.keys].slice(0, 30).map((k) => `- https://${k}`).join('\n') || '- (none)';
