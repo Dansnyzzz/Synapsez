@@ -114,7 +114,8 @@ export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryProm
     play.innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
     play.setAttribute('aria-label', t(playing ? 'onb.video.pause' : 'onb.video.play'));
     play.title = t(playing ? 'onb.video.pause' : 'onb.video.play');
-    play.setAttribute('aria-pressed', String(!playing));
+    // The label already says what a press does; aria-pressed as well would
+    // announce "Pause, pressed" for a clip that is playing (UI-007).
   }
 
   function render() {
