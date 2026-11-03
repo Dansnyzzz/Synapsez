@@ -204,10 +204,11 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
   }
 
   // The model, asked whether it would know about a server added mid-conversation,
-  // guessed "only in a new conversation" — the opposite of how this works.
+  // guessed "only in a new conversation" — the opposite of how this works. Sent
+  // every turn to everyone, so kept short (TOK-003).
   lines.push(
     '',
-    'What is connected — MCP servers, Google and the other connectors — is read fresh for every message and checked again before each of your steps. Something the user connects or switches off during this conversation is in (or out of) your tools from your next step; a new conversation is never needed.',
+    'Connectors and MCP servers are re-read before each of your steps: one added or switched off mid-conversation is in or out of your tools from the next step — a new conversation is never needed.',
   );
 
   /**
