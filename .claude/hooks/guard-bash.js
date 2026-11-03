@@ -183,6 +183,14 @@ const RULES = [
     /\bvercel\s+(deploy|--prod|env\s+rm)\b/,
     'Deploying or removing production env vars is the user\'s call, not an automated step. Ask first.',
   ],
+  [
+    // CFG-034: skipping the repo's own checks. No git hook exists today, but the
+    // day one does, this flag is how an agent would walk past it — and the
+    // owner's rules forbid it outright. `-n` is the same flag for commit, caught
+    // only among the short flags right after `commit`, never inside a message.
+    /\bgit\s+[\w-]+\b[^\n|;&]*\s--no-verify\b|\bgit\s+commit\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)/,
+    'Skipping the repo\'s hooks (--no-verify) is not allowed. Fix what the hook reports and commit again.',
+  ],
 ];
 
 /**
