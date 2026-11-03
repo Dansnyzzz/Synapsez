@@ -769,6 +769,18 @@ section('export is the whole account, streamed, without secrets');
   check('  and the deep-research runs (PRV-029)', run?.report === 'RESEARCH-REPORT' && run?.sources?.[0]?.url === 'https://example.com/a', JSON.stringify(run)?.slice(0, 160));
   check('  and the MCP servers added, with no header, environment or token-shaped value', server?.url?.startsWith('https://mcp.example.com/') && !/HEADERS-CIPHER|ENV-CIPHER|sk-ant-api03-ABCDEF/.test(withMore.text), JSON.stringify(server));
   await store.deleteMcpServer(aliceId, 'mcp-export');
+  // PRV-030: an incognito conversation's deep research is never part of the record, and a
+  // deleted conversation takes its research with it.
+  await store.createChat(aliceId, { id: 'c-incog-rr', title: 'secret', incognito: true });
+  await store.saveResearchRun(aliceId, { id: 'rr-incog', chatId: 'c-incog-rr', question: 'INCOGNITO-QUESTION', status: 'complete', transcript: [], sources: [], report: 'INCOGNITO-REPORT' });
+  await store.createChat(aliceId, { id: 'c-gone-rr', title: 'to delete' });
+  await store.saveResearchRun(aliceId, { id: 'rr-gone', chatId: 'c-gone-rr', question: 'DELETED-QUESTION', status: 'complete', transcript: [], sources: [], report: 'DELETED-REPORT' });
+  const beforeDelete = (await alice.call('GET', '/api/account/export')).text;
+  await store.deleteChat(aliceId, 'c-gone-rr');
+  check('  but not deep research from an incognito conversation (PRV-030)', !/INCOGNITO-QUESTION|INCOGNITO-REPORT/.test(beforeDelete) && /DELETED-QUESTION/.test(beforeDelete));
+  check('  and deleting a conversation deletes its deep research', !(await store.getResearchRun(aliceId, 'rr-gone')));
+  const swept = await store.sweepIncognito(0);
+  check('  as the incognito sweep does', swept >= 1 && !(await store.getResearchRun(aliceId, 'rr-incog')), String(swept));
   await store.deleteSkill(aliceId, 'sk-export');
 
   // More than one page, all created in the same instant: the cursor must neither

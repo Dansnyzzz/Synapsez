@@ -1097,6 +1097,10 @@ export function createPgStore(connectionString) {
          ), files AS (
            DELETE FROM attachments a USING gone
             WHERE a.chat_id = gone.id AND a.user_id = gone.user_id
+         ), research AS (
+           -- Its deep research too (PRV-030): research_runs.chat_id has no foreign key either.
+           DELETE FROM research_runs r USING gone
+            WHERE r.chat_id = gone.id AND r.user_id = gone.user_id
          )
          SELECT id FROM gone`,
         [cutoff],
@@ -1127,6 +1131,9 @@ export function createPgStore(connectionString) {
          ), files AS (
            DELETE FROM attachments a USING gone
             WHERE a.chat_id = gone.id AND a.user_id = gone.user_id
+         ), research AS (
+           DELETE FROM research_runs r USING gone
+            WHERE r.chat_id = gone.id AND r.user_id = gone.user_id
          )
          SELECT id FROM gone`,
         [userId, n],
@@ -1673,6 +1680,9 @@ export function createPgStore(connectionString) {
       // So does any copy of it sent with feedback (33): the words and the title,
       // not the feedback itself, which is the sender's own message.
       await q('UPDATE feedback SET transcript = NULL, chat_title = NULL, answer = NULL WHERE user_id = $1 AND chat_id = $2', [userId, id]);
+      // And its deep research (PRV-030): the question, the debate and the report
+      // were the conversation's, and stayed 90 days after it.
+      await q('DELETE FROM research_runs WHERE user_id = $1 AND chat_id = $2', [userId, id]);
       await q('DELETE FROM chats WHERE id = $1 AND user_id = $2', [id, userId]);
     },
 
@@ -3930,11 +3940,14 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT * FROM research_runs WHERE user_id = $1 AND id = $2', [userId, id]);
       return rows[0] ?? null;
     },
-    // Every deep-research run the account keeps (90 days), for the export (PRV-029).
+    // Every deep-research run the account keeps (90 days), for the export (PRV-029) —
+    // not one from an incognito conversation, which is never part of the record (PRV-030).
     async exportResearchRuns(userId) {
       return q(
-        `SELECT chat_id, question, status, transcript, sources, report, created_at, completed_at
-           FROM research_runs WHERE user_id = $1 ORDER BY created_at, id`,
+        `SELECT r.chat_id, r.question, r.status, r.transcript, r.sources, r.report, r.created_at, r.completed_at
+           FROM research_runs r LEFT JOIN chats c ON c.id = r.chat_id AND c.user_id = r.user_id
+          WHERE r.user_id = $1 AND NOT COALESCE(c.incognito, false)
+          ORDER BY r.created_at, r.id`,
         [userId],
       );
     },
