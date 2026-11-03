@@ -491,6 +491,9 @@ export function createScreen() {
   // Closing the sandbox without having to ask the assistant and wait a turn.
   closeButton.addEventListener('click', async () => {
     closeButton.disabled = true;
+    // Hands off first (UI-002): left driving, its refresh timer reopened the
+    // panel and kept the machine awake for minutes after it was closed.
+    if (driving) setDriving(false);
     try {
       const { message } = mode === 'cloud' ? await api.closeCloudBrowser() : await api.closeScreen();
       toast(message || t('screen.sandboxClosed'));

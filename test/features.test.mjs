@@ -670,6 +670,12 @@ section('the Privacy and Memory switches save in the order pressed (UI-005)');
   check('  and its switches save through it, not side by side', /state\.boot\.prefs = await savePrefs\(patch\(\)\)/.test(privacySrc) && !/await api\.savePrefs\(patch\(\)\)/.test(privacySrc));
 }
 
+section('closing the cloud browser while driving it stops driving first (UI-002)');
+{
+  const screenSrc = fs.readFileSync(new URL('../public/js/screen.js', import.meta.url), 'utf8');
+  check('the close button hands the controls back before the machine is closed', /closeButton\.addEventListener\('click', async \(\) => \{[\s\S]{0,400}if \(driving\) setDriving\(false\);[\s\S]{0,200}api\.closeCloudBrowser/.test(screenSrc));
+}
+
 section('times, sizes and step counts read in the page language (UI-009)');
 {
   const { tookText, clockText, humanSize, counted } = await import('../public/js/format.js');
