@@ -1,6 +1,46 @@
 {
   "entries": [
     {
+      "version": "1.9.0",
+      "date": "2026-11-03",
+      "new": {
+        "vi": [
+          "Kiểm tra nguồn trước khi trả lời: câu nào dẫn một đường link không có trong bất kỳ nguồn nào đã đọc thì chỉ câu đó được sửa lại — phần đúng giữ nguyên từng chữ — và cuối câu trả lời ghi rõ đã sửa gì.",
+          "Thẻ câu hỏi kiểu Quizizz: mỗi lượt 20 câu, câu sai được làm lại thêm 2 vòng, còn sai thì dồn sang lượt 20 câu tiếp theo; có nút làm lại từ đầu hoặc chỉ làm lại câu sai."
+        ],
+        "en": [
+          "A source check before an answer is kept: a sentence citing a link found in nothing that was read is corrected — that sentence only, the rest word for word — and the answer says what was changed.",
+          "Quiz cards ask the way Quizizz does: sets of twenty, the wrong ones twice more, those still wrong carried into the next set; start over, or redo only the missed ones."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Cảnh báo hạn mức chỉ hiện khi không có gì nằm trên ô nhập; đã đóng thì không hiện lại tới kỳ sau; giờ theo múi giờ của bạn; hết lượt thì không gửi được nữa, không còn ô vàng 'bị gián đoạn'.",
+          "Bản xuất dữ liệu có đủ những gì tài khoản lưu: tệp và bản nháp của kỹ năng, góp ý đã gửi, tên đăng nhập, dữ liệu của artifact, deep research và máy chủ MCP (không kèm bí mật).",
+          "Dùng bằng bàn phím và trình đọc màn hình tốt hơn: tab và lựa chọn đi bằng phím mũi tên, menu trả lại vị trí focus, chép ảnh và sắp xếp tệp được đọc lên; đơn vị thời gian và dung lượng bằng tiếng Việt."
+        ],
+        "en": [
+          "The usage warning shows only when nothing sits above the message box; closed, it stays closed until the next period; times are in your own time zone; with the allowance used, sending is blocked, without the yellow 'interrupted' box.",
+          "The data export holds everything the account keeps: skills' files and draft, the feedback you sent, your username, artifacts' saved data, deep research and your MCP servers (without their secrets).",
+          "Better with a keyboard and a screen reader: tabs and choices move with the arrow keys, menus give focus back, a copied picture and a moved file are announced; times and sizes read in Vietnamese on a Vietnamese page."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Lệnh trên máy tính đám mây báo 'require() of ES Module' trên bản chính thức; câu trả lời hiện dòng '<system>success</system>'.",
+          "Kết quả của câu đã trả lời không còn hiện hai lần; bật/tắt nhanh hai công tắc hay dán hai key cùng lúc thì giữ được cả hai.",
+          "Deep research trong cuộc trò chuyện ẩn danh không còn được giữ hay xuất ra; xoá một cuộc trò chuyện thì research của nó cũng mất.",
+          "Lỗi của máy chủ không còn hiện nguyên văn lời của cơ sở dữ liệu."
+        ],
+        "en": [
+          "Cloud computer commands failing on the live app with 'require() of ES Module'; answers showing a '<system>success</system>' line.",
+          "An answered question's result is no longer shown twice; two switches flipped, or two keys pasted, at once are both kept.",
+          "Deep research in an incognito conversation is no longer kept or exported; deleting a conversation deletes its research.",
+          "Server errors no longer show the database's own words."
+        ]
+      }
+    },
+    {
       "version": "1.8.0",
       "date": "2026-11-02",
       "new": {
