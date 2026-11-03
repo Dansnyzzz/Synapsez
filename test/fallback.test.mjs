@@ -396,6 +396,18 @@ section('the rotation reacts to what actually came out');
       run.waits.some((ms) => ms > 2000 && ms <= 3000),
       run.waits.join(','),
     );
+    // HAR-016: the same rest, with the turn's deadline too close to wait it out and still try.
+    const short = await drive(
+      [
+        { throw: err(429, 'Rate limit', { 'retry-after': '30' }) },
+        { emit: [{ type: 'text', delta: 'too late' }, { type: 'done', stopReason: 'end_turn' }] },
+      ],
+      ['only-key'],
+      undefined,
+      entry,
+      { deadline: Date.now() + 40_000 },
+    );
+    check("  but not past the turn's deadline: with too little left, it says when the key is free instead (HAR-016)", short.seen.length === 1 && short.waits.length === 0 && /rate limited until/i.test(short.error?.message || ''), `${short.seen.length} tries · ${short.waits.join(',')} · ${short.error?.message}`);
   }
 
   // Pressing stop ends the turn. A failure that arrives once the signal is set

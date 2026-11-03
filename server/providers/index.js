@@ -463,7 +463,9 @@ async function* streamAny(opts) {
 
       const until = keyRestingUntil(userId, provider);
       const left = until == null ? null : until - Date.now();
-      if (left != null && left <= MAX_WAIT_MS && round < ROUNDS - 1) {
+      // Only when the wait still leaves the request time for an attempt (HAR-016):
+      // a minute's wait for a resting key used to ignore the deadline entirely.
+      if (left != null && left <= MAX_WAIT_MS && round < ROUNDS - 1 && deadline - Date.now() - left >= MIN_ATTEMPT_MS) {
         yield {
           type: 'notice',
           text: `${label}: every key is rate limited. Waiting ${Math.ceil(left / 1000)}s.`,

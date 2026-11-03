@@ -1785,6 +1785,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           // goes out: "folding 24 earlier turns" is a great deal more settling
           // than a spinner while the conversation appears to stall.
           onProgress: (p) => emit('status', { phase: 'compacting', ...p }),
+          deadline,
         });
         if (summary) {
           messages.push(summary);
