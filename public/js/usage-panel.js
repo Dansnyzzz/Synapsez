@@ -26,6 +26,8 @@ const CONSOLE = {
   google: 'https://aistudio.google.com/usage',
   orcarouter: 'https://www.orcarouter.ai/keys',
   openrouter: 'https://openrouter.ai/settings/credits',
+  anthropic: 'https://platform.claude.com/usage',
+  openai: 'https://platform.openai.com/usage',
 };
 const LIMITS_DOC = 'https://openrouter.ai/docs/api-reference/limits';
 
@@ -120,7 +122,9 @@ export function createUsagePanel(host, deps) {
       }
     }
     if (scope !== 'all' && scope !== 'openrouter') {
-      out.push(`<p class="usage__note">${escapeHtml(t('usage.noAllowance', { provider: deps.meta()?.[scope]?.label || scope }))} <a href="${CONSOLE[scope] || '#'}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a></p>`);
+      // No console known, no link: '#' in a new tab opened a second copy of the app (UI-010).
+      const link = CONSOLE[scope] ? ` <a href="${CONSOLE[scope]}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a>` : '';
+      out.push(`<p class="usage__note">${escapeHtml(t('usage.noAllowance', { provider: deps.meta()?.[scope]?.label || scope }))}${link}</p>`);
     }
     return out.join('');
   }
