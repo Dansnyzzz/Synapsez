@@ -216,7 +216,9 @@ async function liveRun(testCase) {
   const { streamCompletion } = await import('../../server/providers/index.js');
   const { resolveModel } = await import('../../server/providers/catalog.js');
 
-  const entry = resolveModel(process.env.EVAL_MODEL || 'anthropic/claude-haiku-4-5');
+  // A free OpenRouter model with tools and reasoning — the owner keeps OpenRouter,
+  // OrcaRouter and Gemini only (2026-11-03). Free models come and go; EVAL_MODEL overrides.
+  const entry = resolveModel(process.env.EVAL_MODEL || 'openrouter/nvidia/nemotron-3.5-super-vl:free');
   const tools = toolsFor(situation);
 
   /**
