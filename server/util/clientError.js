@@ -1,6 +1,9 @@
 import { redactSecrets } from '../redact.js';
 import { log } from './trace.js';
 
+// What the browser is told when the server itself failed. Translated in server/i18n/vi.js.
+export const SERVER_TROUBLE = 'Something went wrong on the server. Try again in a moment.';
+
 /**
  * What a refused request says to the browser (CODE-065).
  *
@@ -21,7 +24,7 @@ export function clientError(err) {
     /\b(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND)\b|connection (terminated|refused)|Connection terminated|timeout exceeded when trying to connect|relation "[^"]+" does not exist/i.test(text);
   if (fromTheDatabase) {
     log.error('request failed', err);
-    return 'Something went wrong on the server. Try again in a moment.';
+    return SERVER_TROUBLE;
   }
   return redactSecrets(text).text;
 }

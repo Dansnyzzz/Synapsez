@@ -629,11 +629,15 @@ section("a database's own words do not reach the browser; a route's refusal does
   check('  and a key in one is still blanked', !/sk-ant-api03-[A-Za-z0-9]{20}/.test(clientError(new Error('Bad key sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX'))));
   // CODE-074: every route, the last-resort error handler included — not only the ones CODE-065 reached.
   const routeFiles = [...fs.readdirSync(new URL('../server/routes/', import.meta.url)).filter((f) => f.endsWith('.js')).map((f) => `routes/${f}`), 'app.js'];
+  // CODE-076: also inside translateMessage(…), which passes text it does not know through unchanged.
   const raw = routeFiles.flatMap((f) => {
     const src = fs.readFileSync(new URL(`../server/${f}`, import.meta.url), 'utf8');
-    return [...src.matchAll(/json\(\{ error: (err\??\.message|String\(err)[^}]*\}\)/g)].map((m) => `${f}: ${m[0]}`);
+    const sinks = [/json\(\{\s*error:[^}\n]*\berr\??\.message/g, /json\(\{\s*error:\s*String\(err/g, /translateMessage\(\s*(String\()?err\??\.message/g];
+    return sinks.flatMap((re) => [...src.matchAll(re)].map((m) => `${f}: ${m[0]}`));
   });
-  check('  no route answers with an error\'s raw text (CODE-074)', raw.length === 0, raw.join(' | '));
+  check('  no route answers with an error\'s raw text, translated or not (CODE-074, CODE-076)', raw.length === 0, raw.join(' | '));
+  const appSrc500 = fs.readFileSync(new URL('../server/app.js', import.meta.url), 'utf8');
+  check('  and the last-resort handler says only that the server failed (CODE-076)', /res\.status\(500\)\.json\(\{ error: SERVER_TROUBLE \}\)/.test(appSrc500) && !/res\.status\(500\)\.json\(\{ error: clientError/.test(appSrc500));
 }
 section('answering a quiz question keeps the keyboard in the quiz (ACC-012)');
 {

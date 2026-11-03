@@ -13,6 +13,7 @@ import { TOOLS } from '../tools/definitions.js';
 import { DRIVE_ORIGIN } from '../googleData.js';
 import { connectorDirectory } from '../connectorDirectory.js';
 import { productIcon } from '../favicon.js';
+import { clientError } from '../util/clientError.js';
 
 /**
  * Connecting a third-party account — GitHub, Notion, Slack and the rest.
@@ -124,7 +125,7 @@ export function mountConnectorRoutes(api, { wrap }) {
         try {
           res.json({ products: await dropGoogleProduct(req.user.id, String(req.params.product)) });
         } catch (err) {
-          res.status(400).json({ error: translateMessage(err.message, languageOf(req)) });
+          res.status(400).json({ error: translateMessage(clientError(err), languageOf(req)) });
         }
       }),
     );
@@ -193,7 +194,7 @@ export function mountConnectorRoutes(api, { wrap }) {
           // The reason travels in a cookie only this origin can set, not in the
           // URL: `/?google=error&message=…` was a link anyone could send that put
           // their own words in this app's error toast.
-          const reason = encodeURIComponent(translateMessage(String(err.message), languageOf(req)).slice(0, 300));
+          const reason = encodeURIComponent(translateMessage(clientError(err), languageOf(req)).slice(0, 300));
           res.append('Set-Cookie', `g_err=${reason}; Path=/; Max-Age=60; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
           back({ google: 'error' });
         }
@@ -225,7 +226,7 @@ export function mountConnectorRoutes(api, { wrap }) {
         try {
           res.json({ files: await listDriveFiles(req.user.id, typeof req.query.q === 'string' ? req.query.q : '') });
         } catch (err) {
-          res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
+          res.status(400).json({ error: translateMessage(clientError(err), languageOf(req)) });
         }
       }),
     );
@@ -241,7 +242,7 @@ export function mountConnectorRoutes(api, { wrap }) {
           // to models that do not train on it (googleData.js).
           res.status(201).json({ attachment: await saveUpload(req.user.id, { ...file, origin: DRIVE_ORIGIN }) });
         } catch (err) {
-          res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
+          res.status(400).json({ error: translateMessage(clientError(err), languageOf(req)) });
         }
       }),
     );
@@ -259,7 +260,7 @@ export function mountConnectorRoutes(api, { wrap }) {
           const saved = await intakeToken(req.user.id, req.params.service, req.body?.token);
           res.json({ service: saved.kind === 'service' ? saved.id : req.params.service, account: saved.account ?? null, saved });
         } catch (err) {
-          res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
+          res.status(400).json({ error: translateMessage(clientError(err), languageOf(req)) });
         }
       }),
     );

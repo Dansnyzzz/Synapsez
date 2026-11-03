@@ -65,7 +65,7 @@ import {
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
 import { redactSecrets } from './redact.js';
-import { clientError } from './util/clientError.js';
+import { clientError, SERVER_TROUBLE } from './util/clientError.js';
 import { audit, networkOf, agentOf } from './audit.js';
 import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { usageReport } from './usageReport.js';
@@ -1118,7 +1118,7 @@ export function createApp() {
           suggestion: suggestion ? { ...suggestion, inUse: !stored.defaultModel || stored.defaultModel === suggestion.id } : null,
         });
       } catch (err) {
-        res.status(err.status || 400).json({ error: translateMessage(String(err.message), language) });
+        res.status(err.status || 400).json({ error: translateMessage(clientError(err), language) });
       }
     }),
   );
@@ -2425,7 +2425,7 @@ export function createApp() {
       try {
         res.json({ current: await setRecommended({ free: req.body?.free, paid: req.body?.paid }) });
       } catch (err) {
-        res.status(err.status || 400).json({ error: translateMessage(String(err.message), languageOf(req)) });
+        res.status(err.status || 400).json({ error: translateMessage(clientError(err), languageOf(req)) });
       }
     }),
   );
@@ -2526,7 +2526,9 @@ export function createApp() {
      */
     log.error('unhandled error', err, { method: req.method, path: req.path });
     if (res.headersSent) return res.end();
-    res.status(500).json({ error: clientError(err) });
+    // Never the error's own words (CODE-076): what reaches here was not written
+    // for the person — a TypeError, a file path — and it is in the log above.
+    res.status(500).json({ error: SERVER_TROUBLE });
   });
 
   return app;

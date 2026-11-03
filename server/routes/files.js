@@ -101,7 +101,7 @@ export function mountFileRoutes(api, { wrap, body }) {
         const saved = await saveToDrive(req.user.id, file);
         res.json({ id: saved.id, name: saved.name, link: saved.webViewLink });
       } catch (err) {
-        res.status(400).json({ error: translateMessage(String(err.message), languageOf(req)) });
+        res.status(400).json({ error: translateMessage(clientError(err), languageOf(req)) });
       }
     }),
   );

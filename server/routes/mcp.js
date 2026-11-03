@@ -8,6 +8,7 @@ import { searchCatalogue, MCP_CATALOGUE } from '../mcp/catalogue.js';
 import { connectorDirectory, siteFor } from '../connectorDirectory.js';
 import { stdioPlace } from '../mcp/cloud.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
+import { clientError } from '../util/clientError.js';
 
 /** A version out of what `node --version` and `python --version` print. */
 export function parseToolVersions(text) {
@@ -237,7 +238,7 @@ export function mountMcpRoutes(api, { wrap, body }) {
       try {
         probe = await probeMcpServer(config, { userId: req.user.id });
       } catch (err) {
-        return res.status(400).json({ error: `That server did not start: ${err.message}` });
+        return res.status(400).json({ error: `That server did not start: ${clientError(err)}` });
       }
 
       // A server on the cloud computer is offered from this list on every turn,
