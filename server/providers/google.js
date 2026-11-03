@@ -31,9 +31,11 @@ const THINKING_LEVEL = {
  * `-latest` is an alias that moves, and Gemini 2.5 answers `thinkingLevel` with
  * a 400 while Gemini 3 still takes a budget — so which of the two a request may
  * carry is not something this code can know ahead of time. 24,576 is the top of
- * every 2.5 model's range; `-1` is "decide for yourself".
+ * every 2.5 model's range. High is a figure too, not `-1` ("decide for
+ * yourself"), which could think less than Medium: each step of the dial is at
+ * least the one below it (GAP-014). `-1` is kept for the fallback below.
  */
-const THINKING_BUDGET = { low: 1024, medium: 8192, high: -1, xhigh: 24_576, max: 24_576 };
+const THINKING_BUDGET = { low: 1024, medium: 8192, high: 16_384, xhigh: 24_576, max: 24_576 };
 
 /**
  * What to try, in order, until the model takes one: the level the person

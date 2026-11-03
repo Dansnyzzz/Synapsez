@@ -1045,6 +1045,9 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
 
   const g = thinkingAttempts('medium').map((a) => JSON.stringify(a));
   check('Gemini: MEDIUM, then HIGH, then a budget, then nothing', g[0].includes('MEDIUM') && g[1].includes('HIGH') && g.some((x) => x.includes('thinkingBudget')) && g.at(-1) === '{}', g.join(' '));
+  // GAP-014: the older models' budget climbs with the dial — High was -1, "decide for yourself".
+  const budgets = ['low', 'medium', 'high', 'xhigh', 'max'].map((e) => thinkingAttempts(e).find((a) => 'thinkingBudget' in a).thinkingBudget);
+  check('  the budget for older Gemini models never falls as the dial rises (GAP-014)', budgets.every((b, i) => b > 0 && (i === 0 || b >= budgets[i - 1])), budgets.join(','));
 
   check('the library reads reasoning from what the model accepts', reasonsFor({ supported_parameters: ['tools', 'reasoning'] }) === true && reasonsFor({ supported_parameters: ['tools'] }) === false && reasonsFor({}) === null);
   check('a library row carries it', resolveModel('openrouter/x/y', { id: 'openrouter/x/y', provider: 'openrouter', model: 'x/y', reasoning: true }).reasoning === true);
