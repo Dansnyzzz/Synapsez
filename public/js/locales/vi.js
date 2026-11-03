@@ -1010,7 +1010,7 @@ export const vi = {
   'settings.language.label': 'Ngôn ngữ',
   'settings.language.hint': 'Áp dụng ngay, và theo tài khoản của bạn trên mọi thiết bị.',
   'settings.help.label': 'Hướng dẫn',
-  'settings.help.hint': 'Xem lại hướng dẫn 5 bước dành cho người mới bắt đầu.',
+  'settings.help.hint': 'Xem lại hướng dẫn 6 bước dành cho người mới bắt đầu.',
 /* ── MCP ───────────────────────────────────────────────────────── */
   'mcp.lede':
     'MCP server bổ sung công cụ từ bên ngoài ứng dụng — Figma, Jira, Sentry, cơ sở dữ liệu, và hàng trăm thứ khác. Cắm vào là trợ lý dùng được. Không có gì ở đây do trợ lý tự chọn: bạn tự gõ lệnh, và mọi công cụ từ server đều dừng lại hỏi bạn trước khi chạy.',

@@ -1023,7 +1023,7 @@ export const en = {
   'settings.language.label': 'Language',
   'settings.language.hint': 'Applies immediately, and follows your account onto every device.',
   'settings.help.label': 'Guide',
-  'settings.help.hint': 'Show the five-step guide for people just starting out.',
+  'settings.help.hint': 'Show the six-step guide for people just starting out.',
 /* ── MCP ───────────────────────────────────────────────────────── */
   'mcp.lede':
     'MCP servers add tools from outside this app — Figma, Jira, Sentry, a database, hundreds of others. Plug one in and the assistant can use it. Nothing here is chosen by the assistant: you type the command, and every tool from a server stops and asks before it runs.',
