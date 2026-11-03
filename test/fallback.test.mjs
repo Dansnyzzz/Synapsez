@@ -226,7 +226,7 @@ section('the rotation reacts to what actually came out');
    * already takes its `stream` — the point is to watch the decisions without a
    * network, and without real seconds passing.
    */
-  const drive = async (script, keys = ['key-one', 'key-two'], signal = undefined, model = entry) => {
+  const drive = async (script, keys = ['key-one', 'key-two'], signal = undefined, model = entry, extra = {}) => {
     await setApiKey(uid, 'openrouter', keys[0]);
     for (const spare of keys.slice(1)) await addApiKey(uid, 'openrouter', spare);
     clearKeyRest(uid, 'openrouter');
@@ -251,6 +251,7 @@ section('the rotation reacts to what actually came out');
         signal,
         streamOne,
         sleep: async (ms) => waits.push(ms),
+        ...extra,
       })) {
         events.push(event);
       }
@@ -444,6 +445,9 @@ section('the rotation reacts to what actually came out');
         if (before === undefined) delete process.env.PROVIDER_REQUEST_BUDGET_MS;
         else process.env.PROVIDER_REQUEST_BUDGET_MS = before;
       }
+      // HAR-015: the request's budget restarts with every call; the turn's deadline does not.
+      const late = await drive([{ throw: err(503, 'Service unavailable', { 'retry-after': '50' }) }, { emit: [{ type: 'text', delta: 'late' }, { type: 'done' }] }], ['only-key'], undefined, entry, { deadline: Date.now() + 30_000 });
+      check("  and the turn's own deadline holds too, however much a single request's budget has left (HAR-015)", late.seen.length === 1 && late.waits.length === 0 && late.error?.upstream === true, `${late.seen.length} tries · ${late.waits.join(',')} · ${late.error?.message}`);
     }
     // UX-023: as an instant the browser shows in the person's own time, not the server's clock face (UTC on Vercel).
     check(

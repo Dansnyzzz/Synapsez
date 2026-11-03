@@ -401,7 +401,7 @@ const ROUNDS = 3;
  *       · {type:'done', stopReason, toolCalls, usage, raw?}
  */
 async function* streamAny(opts) {
-  const { streamOne: injected, sleep, googleData: _googleData, ...rest } = opts;
+  const { streamOne: injected, sleep, googleData: _googleData, deadline: _deadline, ...rest } = opts;
   const entry = opts.entry;
   const provider = entry.provider;
   const label = PROVIDERS[provider]?.label || provider;
@@ -438,8 +438,11 @@ async function* streamAny(opts) {
    */
   const gaveUp = new Set();
   let lastUpstream = null;
-  // The whole request's time, every key and retry together (HAR-012).
-  const deadline = Date.now() + requestBudgetMs();
+  // The whole request's time, every key and retry together (HAR-012) — and
+  // never past the caller's own deadline, the turn's (HAR-015): this budget
+  // starts again with every call, so step 2 of a turn, or the move to Auto
+  // after a stall, could otherwise run past the function's 300 s.
+  const deadline = Math.min(Date.now() + requestBudgetMs(), Number(opts.deadline) || Infinity);
   // Failed calls to a stumbling provider so far on this request (HAR-013).
   let upstreamFailures = 0;
   const upstreamError = (failure) =>

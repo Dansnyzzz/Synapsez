@@ -1269,6 +1269,13 @@ export async function connectionsSignature(userId) {
   return crypto.createHash('sha256').update(shape).digest('hex').slice(0, 24);
 }
 
+// A turn's model calls end by this long after it began (HAR-015): a Vercel
+// function lives 300 s, and the answer still has to be stored after the last
+// call. A provider's own request budget (HAR-012) restarts with every call, so
+// on its own it let a stall on a late step, or the move to Auto after one, run
+// past the function's life.
+const TURN_BUDGET_MS = 270_000;
+
 /**
  * @param stream  the provider call, injectable so the loop can be driven in a
  *   test with no network — see `compact()` and `runParallel` for the same seam.
@@ -1276,6 +1283,8 @@ export async function connectionsSignature(userId) {
  */
 export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion }) {
   const store = getStore();
+  // This turn's deadline on this function, handed to every model call (HAR-015).
+  const deadline = Date.now() + TURN_BUDGET_MS;
   const prefs = await getPrefs(userId);
   /** Personal details masked before the provider sees them (PRV-003): files go as their text. */
   const masking = prefs.maskPersonal === true;
@@ -1920,6 +1929,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         effort: prefs.effort,
         signal,
         googleData,
+        deadline,
       })) {
         // Anything at all counts as having started — a reasoning token, a tool
         // call, a notice that a key was refused. What is being timed is the
@@ -2094,7 +2104,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         language: prefs.language || 'en',
         ask: async (system, prompt) => {
           let said = '';
-          for await (const ev of stream({ userId, entry, system, messages: [{ role: 'user', text: prompt }], tools: [], effort: 'low', signal, googleData })) {
+          for await (const ev of stream({ userId, entry, system, messages: [{ role: 'user', text: prompt }], tools: [], effort: 'low', signal, googleData, deadline })) {
             if (ev.type === 'text') said += ev.delta ?? '';
             else if (ev.type === 'done' && ev.usage) {
               const priced = priceTurn(entry, ev.usage);
