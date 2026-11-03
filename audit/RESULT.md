@@ -16,7 +16,7 @@ before = `audit/BASELINE.md` 2026-09-09 column, `main` at `3e8273e`; after =
 
 Before = `audit/BASELINE.md` section "Vòng v4", `main` at `a7098d1` (tag `backup/pre-optimize-20261102-1701`).
 After = branch `optimize/2026-11-02`, first measured at `07f6fff` (84 commits — one per ledger ID, plus i18n and
-stamp follow-ups that name their ID), then after each evaluator pass: `e805883`, `555e34f`, `5d2ea98`, `20b521d`, `a5d69d7` and `9408d13`. Every
+stamp follow-ups that name their ID), then after each evaluator pass: `e805883`, `555e34f`, `5d2ea98`, `20b521d`, `a5d69d7`, `9408d13` and `5cc316d`. Every
 row is a command that was run and an output that was read.
 
 ## The gate, and what runs outside it
@@ -31,7 +31,8 @@ row is a command that was run and an output that was read.
 | Gate after evaluator pass 4 | — | **exit 0, 325 s, 5,752 ✓, 0 ✗** on `20b521d` | log `scratchpad/gate-v5e.txt` |
 | Gate after evaluator pass 5 | — | **exit 0, 351 s, 5,756 ✓, 0 ✗** on `a5d69d7` | log `scratchpad/gate-v5f.txt` |
 | Gate after evaluator pass 6 | — | **exit 0, 339 s, 5,757 ✓, 0 ✗** on `9408d13` | log `scratchpad/gate-v5g.txt` |
-| Browser suite after pass 2 | — | **exit 0, 0 ✗, 698 s** (batch 9, on `22c8e37`; the fixes of passes 3–6 after it touch server code, tests, a script and the README, no page under `public/`) | `scratchpad/ui-batch9.txt` |
+| Gate after evaluator pass 7 | — | **exit 0, 344 s, 5,758 ✓, 0 ✗** on `5cc316d` | log `scratchpad/gate-v5h.txt` |
+| Browser suite after pass 2 | — | **exit 0, 0 ✗, 698 s** (batch 9, on `22c8e37`; the fixes of passes 3–7 after it touch server code, tests, a script and the README, no page under `public/`) | `scratchpad/ui-batch9.txt` |
 | `test:hooks` | 168/168 | **168/168** | gate step |
 | eval (scripted) | 15/15, `PROMPT_STAMP bc830e108fcb` | **15/15, `101239f2dd8e`** | gate step; the scripted eval checks the conditions for a right answer, not what a model does with them (`--live` costs money — RSN-001) |
 | typecheck ratchet | 279 outstanding, ceiling 296 | **279, ceiling 279** (CODE-063 locked the 17 the ceiling still allowed) | gate step; `.typecheck-baseline.json` |
@@ -43,7 +44,7 @@ row is a command that was run and an output that was read.
 
 | Check | Result |
 |---|---|
-| `git diff --shortstat backup/pre-optimize-20261102-1701 HEAD` | 85 files, +3,449 / −459, 84 commits at `07f6fff`; 97 files, +4,100 / −503, 108 commits at `20b521d`; 97 files, +4,142 / −505, 111 commits at `a5d69d7`; **97 files, +4,172 / −505, 114 commits at `9408d13`** (after six evaluator passes) |
+| `git diff --shortstat backup/pre-optimize-20261102-1701 HEAD` | 85 files, +3,449 / −459, 84 commits at `07f6fff`; 97 files, +4,100 / −503, 108 commits at `20b521d`; 97 files, +4,142 / −505, 111 commits at `a5d69d7`; 97 files, +4,172 / −505, 114 commits at `9408d13`; **97 files, +4,183 / −505, 116 commits at `5cc316d`** (after seven evaluator passes) |
 | `package-lock.json` | **unchanged**. `package.json`: `quality.test` added to `npm test`, and `test:quality` |
 | `.env` files in the diff | none |
 | New files over 300 KB | none |
@@ -71,7 +72,7 @@ Each of these was run with the fix stashed (`git stash push -- <file>`), then wi
 
 ## Ledger reconciliation (Phase 3 step 14)
 
-371 IDs after six evaluator passes, each counted at its last row: **FIXED 344 · CHỜ-CHỦ/TRONG-REPO 9 · CHỜ-CHỦ/NGOÀI-REPO 5 · BLOCKED 3 · DEFERRED 1 · OPEN 0 · IN-PROGRESS 0**, and 9 rows of rounds 1–2 written in their own words (RESOLVED, not a defect, PROPOSED — owner decision). BLOCKED are GAP-005/GAP-006/CODE-021 from round 3: each needs a live-model budget.
+372 IDs after seven evaluator passes, each counted at its last row, CFG-007b taken as CFG-007's and the 7 struck-through IDs left out (`~~ARCH-001~~`, `~~SEC-024~~`, `~~PERF-011~~`, `~~CODE-020~~`, `~~CODE-028~~`, `~~PERF-014~~`, `~~SEC-033~~`, withdrawn or renumbered in earlier rounds; counted, they make 379 with 16 rows in their own words): **FIXED 345 · CHỜ-CHỦ/TRONG-REPO 9 · CHỜ-CHỦ/NGOÀI-REPO 5 · BLOCKED 3 · DEFERRED 1 · OPEN 0 · IN-PROGRESS 0**, and 9 rows of rounds 1–2 written in their own words (RESOLVED, not a defect, PROPOSED — owner decision). BLOCKED are GAP-005/GAP-006/CODE-021 from round 3: each needs a live-model budget.
 
 ## Requirement matrix §0b (Phase 3 step 13)
 
@@ -122,6 +123,7 @@ A fresh read-only `code-reviewer` agent, given the diff, this section, the ledge
 - **Pass 4 (a new agent): NEEDS_WORK**, 5 findings. Fixed as new IDs: **PRV-030** (an incognito conversation's deep research stayed up to 90 days — no delete removed a run — and PRV-029 had put it in the export; all three deletes now take a conversation's research, and the export leaves out incognito runs; three checks red without the fix), **CODE-079** (a scheduled task's and a workflow step's stored failure kept a database's words; through `clientError` now — tested on the text form and by a source check, with no end-to-end case, as `runStep` has no seam for a database failure), **QC-007** (a project's passages, riding on a folded summary, were dropped with it; the gate's sources are now one pure, directly tested function, `gateSources`), **PRV-031** (PRV-029's MCP redaction knew only key shapes; generic `?token=`, address passwords and `--api-key`/`--token` values are blanked too — PRV-029's ledger row reworded). This section's diffstat and secret-scan rows brought to `20b521d`.
 - **Pass 5 (a new agent): NEEDS_WORK**, 1 MEDIUM and 3 LOW. Fixed as new IDs, each with a check red without the fix: **PRV-032** (PRV-030's export kept a run whose conversation is gone — left from before, or saved just after a delete; only runs with no conversation or an ordinary one still there are exported, and the research sweep removes the others; the retention sweep's research delete gets its test), **PRV-033** (a header passed as an argument — `--header "X-API-Key: …"` — and a token as the address's user name or in its fragment are blanked). The secret-scan row now says which pattern gives 4 and which 5.
 - **Pass 6 (a new agent): NEEDS_WORK**, LOW only. **PRV-034**: mcp-remote takes the server's address as an argument, which was not read as an address, and `--header=…` missed the header check — both redacted now, red without the fix. PRV-033's fragment check had passed without its branch (`redactSecrets` blanks `access_token=` by itself); it uses `key=` now, which only the branch blanks — so "each with a check red without the fix" was not true of that part until `b521721`. The research sweep is shown to keep a run whose conversation is there; `scripts/copy-database.js` says to run twice on a live target (`9408d13`).
+- **Pass 7 (a new agent): NEEDS_WORK**, LOW only. **PRV-035**: PRV-034 had put the address check before the one for the value after a secret-named flag, so `--token` followed by a webhook address — its secret in the path — was exported again, and `--url=…` was not read as an address. The checks now run in one stated order (value after a secret-named flag; `--flag=value`; the argument on its own), red without the fix. The tally above now says which rows it leaves out.
 - Recorded, not changed: several UI fixes are pinned by source checks (see R18); commit `6bc8b90` [SEC-058] also carries UX-024's `code: 'rate_limited'` emit in `app.js`, and `3cfc744`, `c65f91a`, `721e011` each cover several IDs — history is not rewritten.
 
 ---
