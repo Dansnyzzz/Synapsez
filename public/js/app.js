@@ -5900,6 +5900,7 @@ const { renderTwoFactor } = createTwoFactor({ state, fillSettings: () => fillSet
 const privacy = createPrivacy({
   state,
   armed,
+  savePrefs: (patch) => savePrefsInOrder(patch),
   // An import adds conversations; the sidebar should show them without a reload.
   onImported: () => refreshChats().catch(() => {}),
 });

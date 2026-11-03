@@ -37,8 +37,10 @@ function when(iso) {
  * @param {(button: HTMLElement, warning: string, run: () => Promise<void>) => void} deps.armed
  *   the two-press confirm every destructive button here uses
  * @param {() => void} [deps.onImported]  redraw the sidebar once conversations arrive
+ * @param {(patch: Record<string, any>) => Promise<any>} [deps.savePrefs]
+ *   save in the order pressed (app.js savePrefsInOrder), so the last switch wins (UI-005)
  */
-export function createPrivacy({ state, armed, onImported }) {
+export function createPrivacy({ state, armed, onImported, savePrefs = api.savePrefs }) {
   /* ── the switches ────────────────────────────────────────────────── */
 
   function fillMemory() {
@@ -71,7 +73,9 @@ export function createPrivacy({ state, armed, onImported }) {
   for (const [id, { status, patch }] of Object.entries(SAVED_ON_CHANGE)) {
     $(id).addEventListener('change', async () => {
       try {
-        state.boot.prefs = await api.savePrefs(patch());
+        // In order: two switches flipped within one round trip were sent side by
+        // side, and whichever answer came back last was taken as the settings.
+        state.boot.prefs = await savePrefs(patch());
         $(status).textContent = t('status.saved');
         setTimeout(() => ($(status).textContent = ''), 2000);
       } catch (err) {

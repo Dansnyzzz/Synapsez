@@ -662,6 +662,14 @@ section('menus, connector cards and reorders a keyboard and a screen reader can 
   check('an Alt+arrow reorder and a copied picture are announced (UI-008)', /announce\(t\('attachment\.movedTo'/.test(attachSrc) && /announce\(t\('media\.copied'\)\)/.test(gallerySrc));
 }
 
+section('the Privacy and Memory switches save in the order pressed (UI-005)');
+{
+  const privacySrc = fs.readFileSync(new URL('../public/js/privacy.js', import.meta.url), 'utf8');
+  const appSrc = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+  check('Privacy is handed the ordered save the + menu uses (CODE-068)', /createPrivacy\(\{[\s\S]{0,200}savePrefs: \(patch\) => savePrefsInOrder\(patch\)/.test(appSrc));
+  check('  and its switches save through it, not side by side', /state\.boot\.prefs = await savePrefs\(patch\(\)\)/.test(privacySrc) && !/await api\.savePrefs\(patch\(\)\)/.test(privacySrc));
+}
+
 section('times, sizes and step counts read in the page language (UI-009)');
 {
   const { tookText, clockText, humanSize, counted } = await import('../public/js/format.js');
