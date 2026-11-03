@@ -132,15 +132,20 @@ export function startScript(build, { root = false } = {}) {
   const write = [
     'printf %s "$SYNZ_SERVICE" | base64 -d > service.mjs',
     'printf %s "$SYNZ_KERNEL" | base64 -d > kernel.py',
+    /*
+     * The key goes over in a file only its owner can read, which the service
+     * deletes, and not in node's starting environment (SEC-061, service.mjs
+     * `readKey`) — and out of this shell's before anything is installed
+     * (SBX-006): an install runs the packages' own scripts in it.
+     */
+    '( umask 077; printf %s "$SYNZ_KEY" > service.key )',
+    'unset SYNZ_KEY',
   ];
   const run = (where) => [
     'if [ -f service.pid ]; then kill "$(cat service.pid)" 2>/dev/null || true; sleep 0.3; fi',
     'echo $$ > service.pid',
-    `echo "starting $(date -u +%FT%TZ) node $(node -v) ${where}" > service.log`,
-    // The key goes over in a file only its owner can read, which the service
-    // deletes, and not in node's starting environment (SEC-061, service.mjs `readKey`).
-    '( umask 077; printf %s "$SYNZ_KEY" > service.key )',
-    'exec env -u SYNZ_KEY SYNZ_KEY_FILE="$PWD/service.key" node service.mjs >> service.log 2>&1',
+    `echo "starting $(date -u +%FT%TZ) node $(node -v) at $(command -v node) ${where}" > service.log`,
+    'exec env SYNZ_KEY_FILE="$PWD/service.key" node service.mjs >> service.log 2>&1',
   ];
   if (!root) {
     return [

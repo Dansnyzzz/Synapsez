@@ -160,16 +160,18 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   check('  the script quoted whole, quotes and all', run.cmd.includes(`echo '\\''it'\\'''\\''s'\\''`), run.cmd.slice(-60));
   check('  the environment passed as the platform\'s own', run.opts.envs?.BASH_ENV === '' && run.opts.envs?.ENV === '');
   // E2B's /etc/profile ends by sourcing ~/.bashrc and ~/.profile (live probe, 2026-11-02).
-  for (const [label, options] of [['ordinary', { userBin: true }], ['root', { root: true }]]) {
-    const script = shellFor('true', {}, options).args[3];
-    check(`  /etc/profile is read with no home to find the account's files from (${label})`, script.startsWith('_home="$HOME"; HOME=/nonexistent; source /etc/profile >/dev/null 2>&1 || true; HOME="$_home"; unset _home\n'), script.slice(0, 120));
-  }
+  const ordinary = shellFor('true', {}, { userBin: true }).args[3];
+  check("  /etc/profile is read with no home to find the account's files from (ordinary)", ordinary.startsWith('_home="$HOME"; HOME=/nonexistent; source /etc/profile >/dev/null 2>&1 || true; HOME="$_home"; unset _home\n'), ordinary.slice(0, 120));
+  // SBX-006: as root it is read as nobody, with no home either, so what it runs never runs as root.
+  const asRoot = shellFor('true', {}, { root: true }).args[3];
+  check("  (root) as nobody, with no home and nothing in the environment (SBX-006)", asRoot.startsWith('_seen="$(/usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/env -i HOME=/nonexistent /bin/bash --noprofile --norc -c \'source /etc/profile'), asRoot.slice(0, 160));
   check('  and the answer read the way the Vercel one is', done.exitCode === 0 && (await done.stdout()) === 'ok' && (await done.stderr()) === '');
 
   state.calls.length = 0;
   await machine.runCommand({ ...shellFor('apt-get install -y jq', {}, { root: true }), sudo: true, timeoutMs: 60_000 });
   const root = state.calls.find((c) => c.kind === 'run');
-  check('as_root stays root, still without a login profile', root.opts.user === 'root' && !root.cmd.includes('setpriv') && /^exec \/usr\/bin\/timeout -k 5 60 \/usr\/bin\/env PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin 'bash' '--noprofile' '--norc' '-c' /.test(root.cmd), root.cmd.slice(0, 120));
+  // Not dropped to the account: its shell reads /etc/profile as nobody (SBX-006), which is not a drop.
+  check('as_root stays root, still without a login profile', root.opts.user === 'root' && !root.cmd.includes('--reuid="$(') && !root.cmd.startsWith('exec /usr/bin/setpriv') && /^exec \/usr\/bin\/timeout -k 5 60 \/usr\/bin\/env PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin 'bash' '--noprofile' '--norc' '-c' /.test(root.cmd), root.cmd.slice(0, 120));
   check('  its shell found on a fixed PATH of root-only folders, not on what the account can write (SBX-004)', /PATH=\/usr\/sbin:\/usr\/bin:\/sbin:\/bin 'bash'/.test(root.cmd));
 
   state.onRun = async () => {

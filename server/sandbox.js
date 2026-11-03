@@ -488,6 +488,37 @@ export async function browserAddress(machine, { signal } = {}) {
 const SYSTEM_PROFILE = '_home="$HOME"; HOME=/nonexistent; source /etc/profile >/dev/null 2>&1 || true; HOME="$_home"; unset _home';
 
 /**
+ * Where the template keeps a node only root can change (SBX-006,
+ * scripts/e2b-template.mjs): the image's own, copied there at build time,
+ * before anything of the account's has run. E2B's /usr/local, where the image
+ * has it, is writable by everyone on a running machine.
+ */
+export const ROOT_NODE_DIR = '/opt/synz-node';
+/** The system's folders, where root looks first and for the programs its checks run, by full path. */
+const ROOT_SYSTEM_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
+
+/**
+ * The folders /etc/profile names, learned as nobody with nothing in the
+ * environment (SBX-006): /etc/profile puts /usr/local first and runs what
+ * /etc/profile.d holds, so read as root it ran whatever the account had put in
+ * E2B's writable /usr/local — `stat` included — as root, key in reach. Read as
+ * nobody, a planted program runs as nobody and finds no key.
+ */
+const PROFILE_PATH_AS_NOBODY =
+  '_seen="$(/usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/env -i HOME=/nonexistent /bin/bash --noprofile --norc ' +
+  `-c 'source /etc/profile >/dev/null 2>&1; printf %s "$PATH"' 2>/dev/null || true)"`;
+
+/**
+ * The template's node, when /opt and everything under ROOT_NODE_DIR are root's
+ * alone — a link aside, which only a folder that can be written can change. A
+ * check that cannot run (no `find`) prints its error, and the node is not used.
+ */
+const TRUSTED_NODE =
+  `_node=; if [ "$(/usr/bin/stat -Lc %u /opt 2>/dev/null)" = 0 ] && [ -x ${ROOT_NODE_DIR}/bin/node ] && ` +
+  `[ -z "$(/usr/bin/find /opt -maxdepth 0 -perm /022 2>&1; /usr/bin/find ${ROOT_NODE_DIR} ! -type l \\( ! -user root -o -perm /022 \\) -print -quit 2>&1)" ]; ` +
+  `then _node=${ROOT_NODE_DIR}/bin; fi`;
+
+/**
  * How a command is run: `bash --noprofile --norc -c`, nothing loaded first (HAR-001).
  *
  * It was `bash -lc`, a login shell, which reads ~/.bash_profile and ~/.profile
@@ -525,7 +556,10 @@ const SYSTEM_PROFILE = '_home="$HOME"; HOME=/nonexistent; source /etc/profile >/
  * and is yes everywhere. What is kept is what only root can change: a folder
  * owned by root that neither its group nor anyone else may write. There is no
  * falling back to the PATH as it came — if node is not in such a folder, the
- * start fails and the service comes up as the account instead.
+ * start fails and the service comes up as the account instead. The folders are
+ * the template's node (ROOT_NODE_DIR), the system's, and those /etc/profile
+ * names — read as nobody, never run as root (SBX-006) — and every program the
+ * check itself runs is named by its full path.
  *
  * @param {string} command
  * @param {Record<string, string>} [env]
@@ -534,12 +568,14 @@ const SYSTEM_PROFILE = '_home="$HOME"; HOME=/nonexistent; source /etc/profile >/
 export function shellFor(command, env = {}, { userBin = false, root = false } = {}) {
   if (root) {
     const rootPath = [
-      SYSTEM_PROFILE,
-      '_keep=; IFS=: read -ra _dirs <<< "$PATH"; for _d in "${_dirs[@]}"; do case "$_d" in /*) ;; *) continue ;; esac; ' +
-        '[ "$(stat -Lc %u "$_d" 2>/dev/null)" = 0 ] || continue; _m="$(stat -Lc %a "$_d" 2>/dev/null)"; ' +
+      PROFILE_PATH_AS_NOBODY,
+      TRUSTED_NODE,
+      `_keep=; IFS=: read -ra _dirs <<< "\${_node:+$_node:}${ROOT_SYSTEM_PATH}\${_seen:+:$_seen}"; for _d in "\${_dirs[@]}"; do case "$_d" in /*) ;; *) continue ;; esac; ` +
+        'case ":$_keep:" in *":$_d:"*) continue ;; esac; ' +
+        '[ "$(/usr/bin/stat -Lc %u "$_d" 2>/dev/null)" = 0 ] || continue; _m="$(/usr/bin/stat -Lc %a "$_d" 2>/dev/null)"; ' +
         'case "${_m: -2}" in *[2367]*) continue ;; esac; _keep="${_keep:+$_keep:}$_d"; done',
-      'export PATH="${_keep:-/usr/local/bin:/usr/bin:/bin}"',
-      'unset _keep _dirs _d _m',
+      `export PATH="\${_keep:-${ROOT_SYSTEM_PATH}}"`,
+      'unset _seen _node _keep _dirs _d _m',
     ].join('\n');
     return {
       cmd: 'bash',

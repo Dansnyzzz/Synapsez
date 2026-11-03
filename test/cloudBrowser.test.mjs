@@ -57,7 +57,7 @@ section('the tool is described the way the service behaves');
   check('what it reads is treated as untrusted page text', returnsExternalContent('cloud_browser'));
   check('an address stuffed with data is caught like any fetch', carriesData('cloud_browser', { action: 'open', url: `https://x.example/?d=${'A'.repeat(400)}` }));
   check('ordinary browsing does not ask', assessRisk('cloud_browser', { action: 'open', url: 'https://example.com' }) === 'ordinary');
-  check('the port the machine opens is the one the service listens on', BROWSER_PORT === 3000 && /\nexec env -u SYNZ_KEY [^\n]* node service\.mjs /.test(cb.startScript('b')));
+  check('the port the machine opens is the one the service listens on', BROWSER_PORT === 3000 && /\nexec env [^\n]* node service\.mjs /.test(cb.startScript('b')));
 }
 
 section('the names models reach for are read as meant (owner, 2026-10-07)');
@@ -363,18 +363,31 @@ section('the start script installs once per build and then runs the service');
   check('  an older service is stopped only if the account owns that process', /stat -c %u \/proc\/\$OLD/.test(root));
   check('  and nothing it executes is in a folder the account can write', !/node_modules|service\.mjs/.test(root.split('cd /opt/synz')[0]));
   // @sparticuz/chromium runs `<tmp>/chromium` if it exists, unchecked.
-  check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/synz\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec env -u SYNZ_KEY'));
-  const { shellFor } = await import('../server/sandbox.js');
+  check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/synz\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec env SYNZ_KEY_FILE'));
+  const { shellFor, ROOT_NODE_DIR } = await import('../server/sandbox.js');
   const rootShell = shellFor('true', {}, { root: true }).args[3];
   check('as root, PATH keeps only folders root alone can write, and never falls back to the original', /stat -Lc %u/.test(rootShell) && /\*\[2367\]\*\) continue/.test(rootShell) && !rootShell.includes('_orig'), rootShell);
+  // SBX-006: /etc/profile puts /usr/local first, which E2B leaves writable by everyone.
+  const beforeCommand = rootShell.slice(0, rootShell.lastIndexOf('\ntrue'));
+  const asNobody = beforeCommand.match(/\/usr\/bin\/setpriv --reuid=65534 [^\n]*/)?.[0] || '';
+  check('  /etc/profile is read as nobody with nothing in the environment, never run as root (SBX-006)',
+    /--reuid=65534 --regid=65534 --clear-groups \/usr\/bin\/env -i /.test(asNobody) && asNobody.includes('source /etc/profile') && beforeCommand.split('source /etc/profile').length === 2, beforeCommand.slice(0, 300));
+  check('  every program the check runs as root is named by its full path',
+    !/(^|[\s;(|&$"])(stat|find|setpriv|env) /m.test(beforeCommand.replace(/\/usr\/bin\/(stat|find|setpriv|env) /g, '')), beforeCommand);
+  check("  the template's node comes first, only when /opt and all of it are root's alone",
+    beforeCommand.includes(`[ -x ${ROOT_NODE_DIR}/bin/node ]`) && beforeCommand.includes(`/usr/bin/find ${ROOT_NODE_DIR} ! -type l \\( ! -user root -o -perm /022 \\)`) && /stat -Lc %u \/opt/.test(beforeCommand) && /\$\{_node:\+\$_node:\}\/usr\/sbin:/.test(beforeCommand));
+  check('  and with nothing kept, the system folders — never /usr/local', /export PATH="\$\{_keep:-\/usr\/sbin:\/usr\/bin:\/sbin:\/bin\}"/.test(beforeCommand) && !beforeCommand.includes(':-/usr/local'));
   check('fonts are a best effort that cannot fail the start', /install -y[^]*\|\| true/.test(script));
   check('  with whichever package manager the image has', /dnf microdnf yum/.test(script));
   check('  apt-get too, for E2B\'s Debian, root or not', /command -v apt-get[^]*fonts-noto-core[^]*\) \|\| true; fi/.test(script) && /if \[ "\$\(id -u\)" = 0 \]; then su_=; else su_="sudo -n"; fi/.test(script));
-  check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec env -u SYNZ_KEY'));
+  check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec env SYNZ_KEY_FILE'));
   // SEC-061: on E2B the service runs as the account, which can read any of its own processes' /proc/<pid>/environ.
   check('the key reaches the service in a file only its owner reads, not in its starting environment (SEC-061)',
-    /\( umask 077; printf %s "\$SYNZ_KEY" > service\.key \)\nexec env -u SYNZ_KEY SYNZ_KEY_FILE="\$PWD\/service\.key" node service\.mjs/.test(script)
-      && /exec env -u SYNZ_KEY SYNZ_KEY_FILE=/.test(cb.startScript('b', { root: true })));
+    /\( umask 077; printf %s "\$SYNZ_KEY" > service\.key \)\nunset SYNZ_KEY\n/.test(script) && /\nexec env SYNZ_KEY_FILE="\$PWD\/service\.key" node service\.mjs /.test(script)
+      && /\nunset SYNZ_KEY\n/.test(root) && /\nexec env SYNZ_KEY_FILE=/.test(root));
+  // SBX-006: an install runs the packages' own scripts in this shell.
+  check('  and leaves this shell before anything is installed, as root or not (SBX-006)',
+    [script, root].every((s) => s.indexOf('unset SYNZ_KEY') > -1 && s.indexOf('unset SYNZ_KEY') < s.indexOf('npm install')));
   const { bridgeStartScript } = await import('../server/mcp/cloud.js');
   check('  and the MCP bridge\'s the same way', /\( umask 077; printf %s "\$SYNZ_MCP_KEY" > bridge\.key \)\nexec env -u SYNZ_MCP_KEY SYNZ_MCP_KEY_FILE="\$PWD\/bridge\.key" node bridge\.mjs/.test(bridgeStartScript()));
   // `pkill -f 'node service.mjs'` matched the shell running this script, whose
@@ -397,7 +410,8 @@ section('the start script really reaches the service, run under bash');
     fs.mkdirSync(bin);
     // A node that says it started and exits; an npm that installs nothing; no sudo.
     fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nif [ "$1" = "-v" ]; then echo v22; exit 0; fi\necho started > ran\n', { mode: 0o755 });
-    fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    // An npm that says so if it was handed the key (SBX-006).
+    fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\nif [ -n "$SYNZ_KEY" ]; then echo leaked > npm-saw-key; fi\nexit 0\n', { mode: 0o755 });
     fs.writeFileSync(path.join(bin, 'sudo'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     // `-c`, not the `-lc` the sandbox uses: a login shell on a CI runner reads
     // the image's profile, which resets PATH from /etc/environment — the fakes
@@ -406,7 +420,7 @@ section('the start script really reaches the service, run under bash');
     const run = () =>
       spawnSync('bash', ['-c', cb.startScript('t1')], {
         cwd: dir,
-        env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, SYNZ_SERVICE: Buffer.from('// service').toString('base64') },
+        env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, SYNZ_SERVICE: Buffer.from('// service').toString('base64'), SYNZ_KEY: 'k-start-test' },
         timeout: 20_000,
       });
     const first = run();
@@ -419,6 +433,7 @@ section('the start script really reaches the service, run under bash');
       }
     };
     check('a first start reaches the service', first.status === 0 && fs.existsSync(ran), `exit ${first.status} ${String(first.stderr).slice(0, 200)} ${logOf()}`);
+    check('  and its install never saw the key (SBX-006)', !fs.existsSync(path.join(dir, '.synz-browser', 'npm-saw-key')) && fs.readFileSync(path.join(dir, '.synz-browser', 'service.key'), 'utf8') === 'k-start-test');
     fs.rmSync(ran, { force: true });
     const second = run();
     check('  and so does a restart over an old pid', second.status === 0 && fs.existsSync(ran), `exit ${second.status}`);
