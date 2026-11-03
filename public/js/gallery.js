@@ -144,6 +144,10 @@ function build() {
   root.setAttribute('role', 'dialog');
   root.setAttribute('aria-modal', 'true');
   root.setAttribute('aria-label', t('gallery.dialog'));
+  // It can hold focus itself (UI-001): a press on the picture took focus from the
+  // button that had it, focus fell to the page, and Escape, the arrows and Tab
+  // went with it — Tab to the controls behind the dialog.
+  root.tabIndex = -1;
   root.innerHTML = `
     <button type="button" class="gallery__close"><span aria-hidden="true">✕</span></button>
     <div class="gallery__stage"><figure class="gallery__frame"><img class="gallery__img" alt="" draggable="false"></figure></div>
@@ -218,6 +222,7 @@ function build() {
   root.addEventListener('pointerdown', (event) => {
     pressedOn = event.target;
     lastPress = event.target;
+    if (!(/** @type {HTMLElement} */ (event.target)).closest('button, a')) root.focus({ preventScroll: true });
   }, true);
   root.addEventListener('click', (event) => {
     if (dragged) {
@@ -508,7 +513,14 @@ export function closeGallery() {
   if (!box?.root.isConnected) return;
   box.root.remove();
   document.documentElement.classList.remove('gallery-open');
-  box.returnTo?.focus?.();
+  // The thumbnail it opened from may have been drawn again meanwhile (a live run
+  // repaints them): then the same picture's thumbnail now on the page (UI-001).
+  const back = box.returnTo?.isConnected
+    ? box.returnTo
+    : box.returnTo?.dataset?.pic
+      ? /** @type {HTMLElement | null} */ ([...document.querySelectorAll('[data-pic]')].find((node) => /** @type {HTMLElement} */ (node).dataset.pic === box.returnTo.dataset.pic))
+      : null;
+  back?.focus?.();
 }
 
 /** For the interface suite. */

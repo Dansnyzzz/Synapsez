@@ -5780,6 +5780,14 @@ section('the lightbox under a real pointer: a click keeps it, a double click zoo
   await page.mouse.dblclick(box.x, box.y);
   await page.waitForTimeout(150);
   check('  and another goes back to fit', (await scale()) === 1, String(await scale()));
+  // UI-001: after pressing on the picture, the keys are still the lightbox's.
+  const held = await page.evaluate(() => !!document.activeElement?.closest('.gallery'));
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(250);
+  const paged = await page.evaluate(() => document.querySelector('.gallery__label')?.textContent || '');
+  check('a press on the picture keeps the keyboard in the lightbox: the arrows still page (UI-001)', held && /Two/.test(paged), JSON.stringify({ held, paged }));
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(250);
 
   // Zoomed all the way with the keyboard: the + button switches itself off, and the keys still work.
   await page.focus('.gallery__zoomin');
