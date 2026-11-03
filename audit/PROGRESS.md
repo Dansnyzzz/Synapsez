@@ -22,7 +22,9 @@
 - **Lô cuối (UI-002/004/005/006, PRV-020) + CODE-063:** commit sau khi test:ui batch 8 xanh.
 - **CHỜ-CHỦ mới:** GAP-013 (NGOÀI-REPO: ma trận eval effort với key thật = RSN-001), RSN-002 (Haiku 4.5 thinking dạng budget), QC-002 (đối chiếu khẳng định không link), SEC-055 (override minimatch, cần build template E2B thật), SEC-056 (CSP theo host sandbox, cần thử prod).
 - **Bằng chứng "trước khi sửa" đã chạy cho:** HAR-011 (đóng 4429), HAR-008 (còn 1 key), HAR-013 (10 lời gọi) — test đỏ khi gỡ phần sửa, xanh khi có.
-- **Kế tiếp:** `npm run gate` → test:ui đầy đủ → `RESULT.md` v5 + ma trận 26 dòng → evaluator chỉ đọc → merge `--no-ff` → gate trên `main` → push → smoke prod.
+- **Lô cuối đã commit:** UI-005 `2b09454` · UI-002 `649078a` · UI-006 `469b5ad` · UI-004 `bddcac0` · PRV-020 `2f794da` · CODE-063 `28930f2` · stamp eval `07f6fff`; gate xanh 315 s trên `07f6fff`; test:ui batch 8 xanh.
+- **Evaluator lượt 1: NEEDS_WORK** (8 phát hiện) → ID mới, mỗi cái một commit có test đỏ khi gỡ phần sửa: QC-003 `14acd67` · PRV-027 `362c0d0` · HAR-014 `376c680` · HAR-015 `fc554fa` · CODE-074 `48abc75` · CODE-075 `700be9d`; `RESULT.md` sửa các con số nói quá.
+- **Kế tiếp:** gate lại → evaluator lượt 2 (ngữ cảnh mới) trên phần sửa → merge `--no-ff` → gate trên `main` → push → smoke prod.
 
 ---
 # PROGRESS — vòng audit v3 (AUDIT_RULES v3, chế độ AUTO)

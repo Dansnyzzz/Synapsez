@@ -27,8 +27,8 @@ follow-ups that name their ID. Every row is a command that was run and an output
 | `test:hooks` | 168/168 | **168/168** | gate step |
 | eval (scripted) | 15/15, `PROMPT_STAMP bc830e108fcb` | **15/15, `101239f2dd8e`** | gate step; the scripted eval checks the conditions for a right answer, not what a model does with them (`--live` costs money — RSN-001) |
 | typecheck ratchet | 279 outstanding, ceiling 296 | **279, ceiling 279** (CODE-063 locked the 17 the ceiling still allowed) | gate step; `.typecheck-baseline.json` |
-| Skips | 3 environment | **4 lines, all environment**: three "runs in CI on Linux" (no bash / POSIX Python on this machine), one desktop branch that goes through `host.ps1` on Windows | gate log |
-| Suites in `npm test` | 48 | **49** (+`quality.test`, QC-001) | `package.json` |
+| Skips | 3 environment | **4 lines, all environment**: three "runs in CI on Linux" (no bash / POSIX Python on this machine), one desktop branch that goes through `host.ps1` on Windows. §2 and push gate 1 ask for 0 skips: on this machine that is **not met**; the same checks run in CI (`.github/workflows/ci.yml`, `ubuntu-latest`, `npm test`) on the push | gate log |
+| Suites in `npm test` | 50 | **51** (+`quality.test`, QC-001) | `package.json`, counted `node test/` entries |
 | `node test/ui.test.mjs` (real Chromium, not in the gate) | exit 0 | **exit 0, 0 ✗, 671 s** (batch 8, after the last UI change); batch 7 had **1 ✗** — a check still reading the connector name from `<strong>`, which UI-012 made a button; selector corrected, batch 8 green | `scratchpad/ui-batch{6,7,8}.txt` |
 
 ## Regression checks
@@ -58,7 +58,7 @@ Each of these was run with the fix stashed (`git stash push -- <file>`), then wi
 |---|---|---|---|
 | Every-turn system prompt, the connections line + skill-creator's index entry (TOK-003) | 503 characters, ≈127 tokens | **306, ≈77** (−50 a turn, for everyone) | character count ÷ 4 — an estimate; live token counts need a provider key (RSN-001) |
 | A tool's schema in the estimate (TOK-002) | property names not counted | counted | `test/features.test.mjs` |
-| An answered question's result (TOK-004) | shown twice | shown once | `test/ui.test.mjs` |
+| An answered question's result (TOK-004) | shown twice | shown once — **display only**: no extra request ever existed (the answer resumes the paused turn), so this saves no tokens | `test/ui.test.mjs` |
 | Effort a model refused (PERF-025) | a 400 and a retry on every step | remembered per model, one 400 per process | `test/features.test.mjs` |
 
 ## Ledger reconciliation (Phase 3 step 14)
@@ -72,10 +72,10 @@ Each of these was run with the fix stashed (`git stash push -- <file>`), then wi
 | # | Yêu cầu | Chấm | Bằng chứng |
 |---|---|---|---|
 | R1 | Audit không bỏ sót, A–Z | ĐẠT (phạm vi v5) | File đổi kể từ `a7098d1` đọc theo lô + agent chuyên đề chỉ đọc (frontend, bảo mật, harness/tài nguyên); file không đổi đã audit ở v2–v4 (`PROGRESS.md`). Không còn `[UNKNOWN]` mở trong ledger v5 |
-| R2 | Tối ưu token | ĐẠT | TOK-002 (đếm đúng schema tool), TOK-003 (≈−40 token/lượt cho mọi người), TOK-004 (không lặp kết quả tool đã trả lời), PERF-025 (nhớ mức effort đã hạ → không tốn 1 lượt 400 mỗi bước); đo token thật = CHỜ-CHỦ/NGOÀI-REPO (RSN-001) |
-| R3 | Privacy + bảo mật mọi chat | ĐẠT | PRV-014…025, SEC-057…065 FIXED kèm test; `test/memory.test.mjs`, `test/agent.test.mjs`, `test/cloudBrowser.test.mjs` |
-| R4 | Mượt, logic, chính xác, sạch | ĐẠT | gate xanh trên nhánh và trên `main` đã merge (bảng cổng bên dưới) |
-| R5 | Real-time, nhanh | ĐẠT (logic) | HAR-012 ngân sách request 240 s, HAR-013 dừng ở 5 lời gọi lỗi, UX-020/021/024; số đo CWV production = CHỜ-CHỦ/NGOÀI-REPO |
+| R2 | Tối ưu token | ĐẠT | TOK-002 (đếm đúng schema tool), TOK-003 (≈−50 token/lượt cho mọi người, ước tính chars/4), PERF-025 (nhớ mức effort đã hạ → không tốn 1 lượt 400 mỗi bước); đo token thật = CHỜ-CHỦ/NGOÀI-REPO (RSN-001) |
+| R3 | Privacy + bảo mật mọi chat | ĐẠT | PRV-014…025, PRV-027, SEC-057…059 và SEC-061…065 FIXED kèm test (SEC-060 = CHỜ-CHỦ/NGOÀI-REPO); `test/memory.test.mjs`, `test/agent.test.mjs`, `test/cloudBrowser.test.mjs` |
+| R4 | Mượt, logic, chính xác, sạch | ĐẠT trên nhánh | gate xanh trên nhánh (bảng trên); chạy lại trên `main` đã merge trước khi push — kết quả ghi ở báo cáo push |
+| R5 | Real-time, nhanh | ĐẠT (logic) | HAR-012 ngân sách request 240 s + HAR-015 hạn 270 s cho cả lượt, HAR-013 dừng ở 5 lời gọi lỗi, UX-020/021/024; số đo CWV production = CHỜ-CHỦ/NGOÀI-REPO |
 | R6 | Phát huy tốt, khắc phục xấu | ĐẠT | ledger v5: mọi dòng FIXED hoặc CHỜ-CHỦ có phương án |
 | R7 | Không thu thừa, không truyền thừa cho provider | ĐẠT | PRV-022 (incognito không rơi về Auto), PRV-023 (skill_write không mang dữ liệu Google), PRV-025 (dấu Google giữ khi sửa), `googleData.js` |
 | R8 | Ý tưởng tiên tiến có nguồn | ĐẠT | QC-001 vòng sửa chọn lọc (PHẦN XII-B), HAR-013 trần lời gọi lỗi; `REASONING_MAP.md`, `RESOURCE_MAP.md` |
@@ -83,12 +83,12 @@ Each of these was run with the fix stashed (`git stash push -- <file>`), then wi
 | R10 | Minh bạch, chính xác | ĐẠT | QC-001 + UX-017 (thẻ `<system>` lạc không lộ ra), CODE-067 (chi phí ghi rõ phần của app) |
 | R11 | Gửi provider không lộ | ĐẠT (như v4) | PRV-003 mask (v4); P2–P3 không đổi vòng này |
 | R12 | Memory, orchestration, retry, sandbox, state, tool reliability | ĐẠT | SBX-001…005, HAR-008/009/011/013, PRV-024 |
-| R13 | Timeout, rate limit, race, edge case | ĐẠT | HAR-008 (race nhập key), HAR-009 (race trần Brave), CODE-068/UI-005 (race lưu công tắc), HAR-012/013 |
+| R13 | Timeout, rate limit, race, edge case | ĐẠT | HAR-008/014 (race nhập key, theo tài khoản; 2 instance serverless vẫn có thể xen — ghi ở ledger), HAR-009 (race trần Brave), CODE-068/UI-005 (race lưu công tắc), HAR-012/013/015 (hạn của lượt) |
 | R14 | Không hardcode | ĐẠT | `QUALITY_GATE_ROUNDS`, `PROVIDER_REQUEST_BUDGET_MS`, `E2B_ACCOUNT_SHARE`, `BRAVE_FREE_REQUESTS` qua env, có README |
-| R15 | QC trước khi xuất bản | ĐẠT cho trích dẫn | `server/qualityGate.js`, `test/quality.test.mjs`; khẳng định không link → QC-002 |
+| R15 | QC trước khi xuất bản | ĐẠT cho trích dẫn | `server/qualityGate.js`, `test/quality.test.mjs`; evaluator tìm ra cổng gỡ nhầm link đúng (tệp đính kèm/memory/project, dấu `**`) → QC-003 FIXED; khẳng định không link → QC-002 |
 | R16 | Tự động hóa | ĐẠT (như v4) | không đổi vòng này |
 | R17 | Sandbox | ĐẠT trong repo / CHỜ-CHỦ | SBX-001…005 FIXED; SBX-006 (helper khác uid, cần build lại template) và CFG-033 (sandbox agent audit trên Windows cần WSL2) = CHỜ-CHỦ |
-| R18 | UI/UX mọi thiết bị | ĐẠT (tự động) | UI-001…018 FIXED; `test/ui.test.mjs` (Chromium thật) xanh; visual regression nhiều thiết bị thật = CHỜ-CHỦ/NGOÀI-REPO |
+| R18 | UI/UX mọi thiết bị | ĐẠT (tự động) | UI-001…018 FIXED; `test/ui.test.mjs` (Chromium thật) xanh. Lưu ý: UI-002/005/006/008/011/012 được ghim bằng kiểm tra mã nguồn trong `features.test` (chứng minh mã có đó, không chứng minh hành vi); UI-003/007/014…017, PERF-024, CODE-069/070 không có test riêng; visual regression nhiều thiết bị thật = CHỜ-CHỦ/NGOÀI-REPO |
 | R19 | Tự động tới push `main` | ĐẠT khi push xong | hash push ghi ở báo cáo |
 | R20 | Repo public, bảo vệ chất xám | ĐẠT (như v4) | `EXPOSURE.md`; phương án A–D là quyết định của chủ |
 | R21 | Tận dụng plugin/skill | ĐẠT | `SKILL_MAP.md` v4/v5 |
@@ -103,6 +103,13 @@ Each of these was run with the fix stashed (`git stash push -- <file>`), then wi
 - Live token, cache hit, cost and latency per request, and the effort × task eval: need provider keys and real spend — RSN-001, CHỜ-CHỦ/NGOÀI-REPO.
 - E2B commands end to end on production after SBX-001…005: need the deployment's E2B key — verified by `test/e2b.test.mjs` and by reproducing the `require()` crash locally with `node --no-experimental-require-module`, not live.
 - Core Web Vitals and visual regression on real phones: the automated browser suite ran in Chromium only.
+
+## Evaluator (Phase 3 step 6) — giám khảo cùng họ, có thiên lệch tự ưu ái
+
+A fresh read-only `code-reviewer` agent, given the diff, this section, the ledger and §0b. Deterministic checks (gate, tests) take precedence over it.
+
+- **Pass 1: NEEDS_WORK**, 8 findings. Fixed as new IDs, each with a test that fails without it: **QC-003** (the quality gate removed correct links — from attached files, memory notes, project passages, or inside `**…**` — and said so falsely), **PRV-027** (the skill draft is kept on the account, so the export carries it; PRV-014's note that it lived only in the browser was wrong), **HAR-014** (one key intake at a time per account, not per provider), **HAR-015** (a turn deadline every model call respects; HAR-012's budget restarted per call), **CODE-074** (12 more raw error texts, and the 500 handler), **CODE-075** (a stale stamp note, a dead CSS rule). This section's overstated figures were corrected: suites 50→51, one TOK-003 figure, TOK-004 not a saving, SEC-060 not FIXED, R4 not yet measured on `main`, skips not 0 here.
+- Recorded, not changed: several UI fixes are pinned by source checks (see R18); commit `6bc8b90` [SEC-058] also carries UX-024's `code: 'rate_limited'` emit in `app.js`, and `3cfc744`, `c65f91a`, `721e011` each cover several IDs — history is not rewritten.
 
 ---
 
