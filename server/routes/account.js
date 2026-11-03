@@ -471,8 +471,16 @@ export function urlWithoutSecrets(raw) {
   let text = raw;
   try {
     const url = new URL(raw);
+    // Whatever sits before the @ is a credential, a token used as the user name included (PRV-033).
+    if (url.username) url.username = 'redacted';
     if (url.password) url.password = 'redacted';
     for (const name of [...url.searchParams.keys()]) if (SECRET_NAME.test(name)) url.searchParams.set(name, '[redacted]');
+    // A fragment written as parameters (`#access_token=…`) is read the same way (PRV-033).
+    if (url.hash.includes('=')) {
+      const hash = new URLSearchParams(url.hash.slice(1));
+      for (const name of [...hash.keys()]) if (SECRET_NAME.test(name)) hash.set(name, '[redacted]');
+      url.hash = hash.toString();
+    }
     text = url.toString();
   } catch {
     // Not an address after all: the known shapes below are still blanked.
@@ -480,12 +488,18 @@ export function urlWithoutSecrets(raw) {
   return redactSecrets(text).text;
 }
 
-/** A server's arguments with secrets blanked: `--api-key=…`, and the value after `--token` (PRV-031). */
+/**
+ * A server's arguments with secrets blanked: `--api-key=…`, the value after
+ * `--token` (PRV-031), and a header given as an argument — `--header
+ * "X-API-Key: …"`, the way mcp-remote takes one (PRV-033).
+ */
 export function argsWithoutSecrets(args) {
   return args.map((arg, i) => {
     const text = String(arg);
     const flag = /^(--?[\w.-]+)=(.*)$/.exec(text);
     if (flag && SECRET_NAME.test(flag[1])) return `${flag[1]}=[redacted]`;
+    const header = /^([\w-]+):\s*\S/.exec(text);
+    if (header && SECRET_NAME.test(header[1])) return `${header[1]}: [redacted]`;
     const before = i > 0 ? String(args[i - 1]) : '';
     if (/^--?[\w.-]+$/.test(before) && SECRET_NAME.test(before) && !text.startsWith('-')) return '[redacted]';
     return redactSecrets(text).text;

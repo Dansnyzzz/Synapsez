@@ -778,6 +778,11 @@ section('export is the whole account, streamed, without secrets');
   const cleanArgs = argsWithoutSecrets(['--api-key', 'plainvalue222', '--token=plainvalue333', '--verbose', 'run']).join(' ');
   check('  a generic token in an MCP address or its arguments is blanked, the rest kept (PRV-031)',
     !/plainvalue|hunter2/.test(cleanUrl + cleanArgs) && /mode=fast/.test(cleanUrl) && /--verbose run$/.test(cleanArgs), `${cleanUrl} · ${cleanArgs}`);
+  // PRV-033: a header passed as an argument, a token as the address's user name, one in its fragment.
+  const headerArgs = argsWithoutSecrets(['--header', 'X-API-Key: plainvalue444', '--header', 'Authorization: Bearer plainvalue555', '--header', 'Accept: text/event-stream']).join(' ');
+  const userUrl = urlWithoutSecrets('https://plainvalue666@mcp.example.com/sse#access_token=plainvalue777&view=1');
+  check('  as is a header given as an argument, a token as the user name or in the fragment (PRV-033)',
+    !/plainvalue/.test(headerArgs + userUrl) && /Accept: text\/event-stream/.test(headerArgs) && /^https:\/\/redacted@mcp\.example\.com\/sse#/.test(userUrl), `${headerArgs} · ${userUrl}`);
   // PRV-030: an incognito conversation's deep research is never part of the record, and a
   // deleted conversation takes its research with it.
   await store.createChat(aliceId, { id: 'c-incog-rr', title: 'secret', incognito: true });
