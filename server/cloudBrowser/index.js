@@ -188,7 +188,9 @@ export function startScript(build, { root = false } = {}) {
     // between the test above and the move it could have become a link, and
     // `chmod` follows links.
     '  if [ -L profile.moving ] || [ ! -d profile.moving ]; then rm -f profile.moving; else',
-    '    chmod 700 profile.moving && chown -R root:root profile.moving',
+    // Everything in it, not only the top (SBX-012): a program left running with its
+    // working folder inside keeps its way in through a folder still open to it.
+    '    chmod 700 profile.moving && chown -R root:root profile.moving && chmod -R go-rwx profile.moving',
     '    if command -v find >/dev/null 2>&1 && find profile.moving -type l -exec rm -f {} +; then mv profile.moving profile; else rm -rf profile.moving; fi',
     '  fi',
     'fi',

@@ -505,7 +505,8 @@ const ROOT_SYSTEM_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
  * nobody, a planted program runs as nobody and finds no key.
  */
 const PROFILE_PATH_AS_NOBODY =
-  '_seen="$(/usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/env -i HOME=/nonexistent /bin/bash --noprofile --norc ' +
+  // With a limit (SBX-012): a planted `id` that sleeps must not hold every root start.
+  '_seen="$(/usr/bin/timeout 5 /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/env -i HOME=/nonexistent /bin/bash --noprofile --norc ' +
   `-c 'source /etc/profile >/dev/null 2>&1; printf %s "$PATH"' 2>/dev/null || true)"`;
 
 /**
@@ -582,6 +583,8 @@ export function shellFor(command, env = {}, { userBin = false, root = false } = 
         'case "${_m: -2}" in *[2367]*) _ok=; break ;; esac; [ -z "$_p" ] && break; _p="${_p%/*}"; done; ' +
         '[ -n "$_ok" ] && _keep="${_keep:+$_keep:}$_d"; done',
       `export PATH="\${_keep:-${ROOT_SYSTEM_PATH}}"`,
+      // A root command starts in the account's folder, and `python3 -m pip` would import a `pip` left there (SBX-012).
+      'export PYTHONSAFEPATH=1',
       'unset _seen _node _keep _dirs _d _m _p _ok',
     ].join('\n');
     return {

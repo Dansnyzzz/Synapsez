@@ -354,6 +354,7 @@ section('the start script installs once per build and then runs the service');
   check('as root: refuses to go on when it is not root', /if \[ "\$\(id -u\)" != 0 \]; then echo "not root" >&2; exit 3; fi/.test(root));
   check('  lives in a folder root owns, not the account\'s working folder', root.includes(`cd ${cb.__testing.ROOT_DIR}`) && /chown root:root \/opt\/synz/.test(root) && !root.includes(`cd ${cb.__testing.DIR}`));
   check('  the sign-ins move there once and are closed to everybody else', root.indexOf('mv "$OLDPROFILE" profile.moving') < root.indexOf('chmod 700 profile.moving') && root.includes('chmod 700 profile && chown -R root:root profile'));
+  check('  all of it, folders inside included, before any link in it is looked for (SBX-012)', root.indexOf('chmod -R go-rwx profile.moving') > root.indexOf('chown -R root:root profile.moving') && root.indexOf('chmod -R go-rwx profile.moving') < root.indexOf('find profile.moving -type l'));
   check('  only a real folder moves, never a link the account planted', /\[ -d "\$OLDPROFILE" \] && \[ ! -L "\$OLDPROFILE" \]/.test(root));
   // The account could swap the folder for a link between that test and the move;
   // once moved it is in root's folder and cannot be swapped, so it is checked there.
@@ -378,6 +379,7 @@ section('the start script installs once per build and then runs the service');
     beforeCommand.includes(`[ -x ${ROOT_NODE_DIR}/bin/node ]`) && beforeCommand.includes(`/usr/bin/find ${ROOT_NODE_DIR} ! -type l \\( ! -user root -o -perm /022 \\)`) && /stat -Lc %u \/opt/.test(beforeCommand) && /\$\{_node:\+\$_node:\}\/usr\/sbin:/.test(beforeCommand));
   check('  a folder is kept as it really is, only when it and every folder above it to / are root\'s alone (SBX-010)',
     beforeCommand.includes('_d="$(/usr/bin/readlink -f "$_d" 2>/dev/null)" || continue') && beforeCommand.includes('_p="${_p%/*}"') && beforeCommand.includes('/usr/bin/stat -c %u "${_p:-/}"'), beforeCommand);
+  check('  and python3 run as root imports nothing from the folder it starts in (SBX-012)', /\nexport PYTHONSAFEPATH=1\n/.test(beforeCommand), beforeCommand.slice(-120));
   check('  and with nothing kept, the system folders — never /usr/local', /export PATH="\$\{_keep:-\/usr\/sbin:\/usr\/bin:\/sbin:\/bin\}"/.test(beforeCommand) && !beforeCommand.includes(':-/usr/local'));
   check('fonts are a best effort that cannot fail the start', /install -y[^]*\|\| true/.test(script));
   // SBX-009: sudo finds a program on its secure_path, which on E2B begins in the writable /usr/local.

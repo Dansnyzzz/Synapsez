@@ -165,7 +165,7 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   check("  /etc/profile is read with no home to find the account's files from (ordinary)", ordinary.startsWith('_home="$HOME"; HOME=/nonexistent; source /etc/profile >/dev/null 2>&1 || true; HOME="$_home"; unset _home\n'), ordinary.slice(0, 120));
   // SBX-006: as root it is read as nobody, with no home either, so what it runs never runs as root.
   const asRoot = shellFor('true', {}, { root: true }).args[3];
-  check("  (root) as nobody, with no home and nothing in the environment (SBX-006)", asRoot.startsWith('_seen="$(/usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/env -i HOME=/nonexistent /bin/bash --noprofile --norc -c \'source /etc/profile'), asRoot.slice(0, 160));
+  check("  (root) as nobody, with no home and nothing in the environment (SBX-006)", asRoot.startsWith('_seen="$(/usr/bin/timeout 5 /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/env -i HOME=/nonexistent /bin/bash --noprofile --norc -c \'source /etc/profile'), asRoot.slice(0, 160));
   check('  and the answer read the way the Vercel one is', done.exitCode === 0 && (await done.stdout()) === 'ok' && (await done.stderr()) === '');
 
   state.calls.length = 0;

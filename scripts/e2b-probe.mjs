@@ -131,6 +131,11 @@ try {
   check("  nor does the cloud browser's real root start, its install included (SBX-009)", afterStart === '' && started.exitCode === (template === 'base' ? 127 : 0), `exit ${started.exitCode}${afterStart ? ` · ${afterStart}` : ''}`);
   await asRoot(`/usr/bin/rm -f ${PLANTED.map((name) => `/usr/local/bin/${name}`).join(' ')} /tmp/ran.*.log`);
   await asRoot(__testing.CLOSE_MACHINE);
+  // A root command starts in the account's folder.
+  await run("mkdir -p ~/pip && echo 'print(\"planted\")' > ~/pip/__main__.py");
+  const fromHome = await asRoot('/usr/bin/python3 -m pip --version 2>&1');
+  check('a root command imports nothing the account left in the folder it starts in (SBX-012)', !(await fromHome.stdout()).includes('planted'), (await fromHome.stdout()).trim().slice(0, 80));
+  await run('rm -rf ~/pip');
 
   section('time limits, failures, files');
   const t0 = Date.now();
