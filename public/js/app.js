@@ -5638,13 +5638,42 @@ const addedAgo = (iso) => {
 };
 
 /* Settings → Customize: Skills, Connectors, Plugins (customize.js). */
+
+/**
+ * A preference saved from a switch or a menu (CODE-068): applied here at once,
+ * so the next switch pressed builds on it, and sent in order. Each list was
+ * rebuilt from the copy the server last answered with, so pausing Gmail and
+ * then Slack within one round trip sent [slack] second, and the server ended
+ * with Gmail on while the menu showed it off. Only the last answer in flight
+ * is taken as the server's word; earlier ones would undo what came after.
+ *
+ * @param {Record<string, any>} patch
+ */
+let prefsSaving = Promise.resolve();
+let prefsInFlight = 0;
+async function savePrefsInOrder(patch) {
+  const before = Object.fromEntries(Object.keys(patch).map((key) => [key, state.boot.prefs?.[key]]));
+  state.boot.prefs = { ...(state.boot.prefs || {}), ...patch };
+  prefsInFlight += 1;
+  const run = prefsSaving.then(() => api.savePrefs(patch));
+  prefsSaving = run.catch(() => {});
+  try {
+    const saved = await run;
+    if (prefsInFlight === 1) state.boot.prefs = saved;
+    return state.boot.prefs;
+  } catch (err) {
+    // Not saved: what this switch changed goes back, so the next one does not build on it.
+    state.boot.prefs = { ...state.boot.prefs, ...before };
+    throw err;
+  } finally {
+    prefsInFlight -= 1;
+  }
+}
+
 const customize = createCustomize({
   armed,
   prefs: () => state.boot?.prefs || {},
-  savePrefs: async (patch) => {
-    state.boot.prefs = await api.savePrefs(patch);
-    return state.boot.prefs;
-  },
+  savePrefs: (patch) => savePrefsInOrder(patch),
   pickSkill: (name) => plusDeps.pickSkill(name),
   closeSettings: () => $('settings').close(),
   // Add an MCP server by hand, from Connectors' + Add: Extensions → Advanced settings, the form open.
@@ -6527,10 +6556,7 @@ const plusDeps = {
   picked: () => state.pickedSkills,
   attach: (attachment) => stageAttachment(attachment),
   prefs: () => state.boot?.prefs || {},
-  savePrefs: async (patch) => {
-    state.boot.prefs = await api.savePrefs(patch);
-    return state.boot.prefs;
-  },
+  savePrefs: (patch) => savePrefsInOrder(patch),
   openSettings: (tab, focusId) => {
     openSettings(tab);
     if (!focusId) return;

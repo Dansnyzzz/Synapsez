@@ -10238,6 +10238,21 @@ section('the + opens a menu of files, skills, connectors and plugins');
   await rowOf(1, 'GitHub').click();
   await page.waitForTimeout(400);
   check('  and on again', prefsPuts.some((p) => Array.isArray(p.connectorsOff) && p.connectorsOff.length === 0));
+  // CODE-068: two switches within one round trip — the second used to be built from the list before the first.
+  await page.route('**/api/prefs', async (route) => {
+    if (route.request().method() === 'PUT') await new Promise((r) => setTimeout(r, 400));
+    await route.continue();
+  });
+  prefsPuts.length = 0;
+  await rowOf(1, 'GitHub').click();
+  await rowOf(1, 'Google').click();
+  await page.waitForTimeout(1500);
+  await page.unroute('**/api/prefs');
+  const lastPut = prefsPuts.at(-1)?.connectorsOff || [];
+  check('two switches pressed within one round trip are both kept (CODE-068)', lastPut.includes('github') && lastPut.includes('google'), JSON.stringify(prefsPuts));
+  await rowOf(1, 'GitHub').click();
+  await rowOf(1, 'Google').click();
+  await page.waitForTimeout(800);
 
   const driveLabel = connectors.rows.find((r) => /Google Drive/.test(r.label)).label;
   await rowOf(1, driveLabel).click();
