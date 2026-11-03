@@ -633,9 +633,16 @@ section("a database's own words do not reach the browser; a route's refusal does
   const raw = routeFiles.flatMap((f) => {
     const src = fs.readFileSync(new URL(`../server/${f}`, import.meta.url), 'utf8');
     const sinks = [/json\(\{\s*error:[^}\n]*\berr\??\.message/g, /json\(\{\s*error:\s*String\(err/g, /translateMessage\(\s*(String\()?err\??\.message/g];
-    return sinks.flatMap((re) => [...src.matchAll(re)].map((m) => `${f}: ${m[0]}`));
+    const shaped = sinks.flatMap((re) => [...src.matchAll(re)].map((m) => `${f}: ${m[0]}`));
+    // CODE-077: any other use of an error's text as a value — held in a variable, under
+    // another key — unless it is logged or only compared.
+    const held = src
+      .split('\n')
+      .filter((line) => /\berr\??\.message\b/.test(line) && !/clientError\(err\)|log\.(warn|error|info|debug)\(|[!=]==|\.test\(|includes\(/.test(line))
+      .map((line) => `${f}: ${line.trim().slice(0, 90)}`);
+    return [...shaped, ...held];
   });
-  check('  no route answers with an error\'s raw text, translated or not (CODE-074, CODE-076)', raw.length === 0, raw.join(' | '));
+  check('  no route answers with an error\'s raw text, translated, held or not (CODE-074, CODE-076, CODE-077)', raw.length === 0, raw.join(' | '));
   const appSrc500 = fs.readFileSync(new URL('../server/app.js', import.meta.url), 'utf8');
   check('  and the last-resort handler says only that the server failed (CODE-076)', /res\.status\(500\)\.json\(\{ error: SERVER_TROUBLE \}\)/.test(appSrc500) && !/res\.status\(500\)\.json\(\{ error: clientError/.test(appSrc500));
 }

@@ -65,7 +65,7 @@ import {
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
 import { redactSecrets } from './redact.js';
-import { clientError, SERVER_TROUBLE } from './util/clientError.js';
+import { clientError, fromTheDatabase, SERVER_TROUBLE } from './util/clientError.js';
 import { audit, networkOf, agentOf } from './audit.js';
 import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { usageReport } from './usageReport.js';
@@ -167,6 +167,9 @@ async function zoneOf(req, prefs = null) {
 }
 
 export function readableFailure(error) {
+  // A store failure inside a turn reached the browser over the stream in the
+  // database's own words (CODE-077); the caller has logged it.
+  if (fromTheDatabase(error)) return SERVER_TROUBLE;
   let message = redactSecrets(String(error?.message || error || 'Something went wrong.')).text;
 
   // Unwrap as many layers of encoded JSON as the providers have nested.
@@ -528,7 +531,7 @@ export function createApp() {
     const workflows = await runDueWorkflows({ budgetMs: remaining() }).catch((err) => ({
       started: [],
       advanced: [],
-      error: String(err?.message || err).slice(0, 200),
+      error: clientError(err).slice(0, 200),
     }));
     // Conversations whose turn the 300s limit cut off, finished with nobody
     // watching — see server/resume.js.
@@ -1852,7 +1855,8 @@ export function createApp() {
           try {
             saved = (await saveSkill(req.user.id, read.skill)).name;
           } catch (err) {
-            error = err.message;
+            // A save the store refused, said plainly — not a driver's words (CODE-077).
+            error = clientError(err);
           }
         }
         results.push({

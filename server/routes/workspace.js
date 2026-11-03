@@ -179,7 +179,7 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
       } catch (err) {
         // A corrupt or password-protected document is an answer, not a 500 —
         // the viewer says what happened and still offers the download.
-        res.json({ file: meta, preview: { kind: 'unreadable', message: err.message } });
+        res.json({ file: meta, preview: { kind: 'unreadable', message: clientError(err) } });
       }
     }),
   );
@@ -295,7 +295,7 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
         // happened to look at.
         res.json({ file: meta, preview: await previewOf({ ...past, id: `${past.attachment_id}#v${past.revision}` }) });
       } catch (err) {
-        res.json({ file: meta, preview: { kind: 'unreadable', message: err.message } });
+        res.json({ file: meta, preview: { kind: 'unreadable', message: clientError(err) } });
       }
     }),
   );

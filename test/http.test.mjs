@@ -318,6 +318,10 @@ section('a dead model reads as a sentence, not as JSON');
   // something they typed wrong when it is a catalogue entry that expired.
   check('and that it was not the user', /nothing you did/i.test(said), said.slice(0, 120));
   check('an ordinary error is left alone', readableFailure(new Error('Connection reset')) === 'Connection reset');
+  // CODE-077: a store failure inside a turn went over the stream in the database's own words.
+  const pgFailure = Object.assign(new Error('invalid byte sequence for encoding "UTF8": 0x00 in relation "messages"'), { code: '22021', severity: 'ERROR' });
+  const said22021 = readableFailure(pgFailure);
+  check("  while a database's own failure is said plainly, not in its words (CODE-077)", /Something went wrong on the server/.test(said22021) && !/relation|0x00/.test(said22021), said22021);
 
   /**
    * The one that was actually on screen.
