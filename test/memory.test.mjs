@@ -788,6 +788,10 @@ section('export is the whole account, streamed, without secrets');
   const remoteArgs = argsWithoutSecrets(['mcp-remote', 'https://plainvalue888@mcp.example.com/sse?token=plainvalue999&mode=fast', '--header=X-API-Key: plainvalue000', '--header=Accept: text/plain']).join(' ');
   check('  and an address or a --header=… given as an argument is read the same way (PRV-034)',
     !/plainvalue/.test(remoteArgs) && /^mcp-remote https:\/\/redacted@mcp\.example\.com\/sse\?/.test(remoteArgs) && /mode=fast/.test(remoteArgs) && /--header=Accept: text\/plain$/.test(remoteArgs), remoteArgs);
+  // PRV-035: an address after a secret-named flag is blanked whole (its secret may be its path), and --url=… is read as one.
+  const orderArgs = argsWithoutSecrets(['--token', 'https://hooks.example.com/services/T0/B0/plainvalue121', '--url=https://plainvalue131@mcp.example.com/sse?token=plainvalue141&mode=fast']).join(' ');
+  check('  in the right order: the value after --token whatever it is, and an address given as --url=… (PRV-035)',
+    !/plainvalue/.test(orderArgs) && /^--token \[redacted\] --url=https:\/\/redacted@mcp\.example\.com\/sse\?/.test(orderArgs) && /mode=fast/.test(orderArgs), orderArgs);
   // PRV-030: an incognito conversation's deep research is never part of the record, and a
   // deleted conversation takes its research with it.
   await store.createChat(aliceId, { id: 'c-incog-rr', title: 'secret', incognito: true });

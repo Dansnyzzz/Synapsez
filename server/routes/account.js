@@ -495,25 +495,29 @@ const headerWithoutSecret = (text) => {
 };
 
 /**
- * A server's arguments with secrets blanked: `--api-key=…`, the value after
- * `--token` (PRV-031), a header given as an argument — `--header "X-API-Key:
- * …"` or `--header=…`, the way mcp-remote takes one (PRV-033, PRV-034) — and
- * an address given as an argument, read as the server's own address is.
+ * One argument's value, or a `--flag=`'s, with its secrets blanked: an address
+ * read as the server's own address is (mcp-remote takes it as an argument,
+ * PRV-034), a `Name: value` header named for a secret (PRV-033), and any known
+ * key shape.
+ */
+const valueWithoutSecrets = (text) =>
+  /^[a-z][\w+.-]*:\/\//i.test(text) ? urlWithoutSecrets(text) : (headerWithoutSecret(text) ?? redactSecrets(text).text);
+
+/**
+ * A server's arguments with secrets blanked, in this order (PRV-035): the
+ * value after a flag named for a secret (`--token …`), whatever it is — an
+ * address included, whose secret may sit in its path; then a `--flag=value`,
+ * blanked whole when the flag is so named and read as a value otherwise
+ * (`--url=…`, `--header=…`); then the argument on its own.
  */
 export function argsWithoutSecrets(args) {
   return args.map((arg, i) => {
     const text = String(arg);
-    // mcp-remote takes the server's address as an argument (PRV-034).
-    if (/^[a-z][\w+.-]*:\/\//i.test(text)) return urlWithoutSecrets(text);
-    const flag = /^(--?[\w.-]+)=(.*)$/.exec(text);
-    if (flag && SECRET_NAME.test(flag[1])) return `${flag[1]}=[redacted]`;
-    const flagHeader = flag ? headerWithoutSecret(flag[2]) : null;
-    if (flagHeader) return `${flag[1]}=${flagHeader}`;
-    const header = headerWithoutSecret(text);
-    if (header) return header;
     const before = i > 0 ? String(args[i - 1]) : '';
     if (/^--?[\w.-]+$/.test(before) && SECRET_NAME.test(before) && !text.startsWith('-')) return '[redacted]';
-    return redactSecrets(text).text;
+    const flag = /^(--?[\w.-]+)=(.*)$/.exec(text);
+    if (flag) return SECRET_NAME.test(flag[1]) ? `${flag[1]}=[redacted]` : `${flag[1]}=${valueWithoutSecrets(flag[2])}`;
+    return valueWithoutSecrets(text);
   });
 }
 
