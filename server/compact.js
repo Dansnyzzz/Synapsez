@@ -320,6 +320,7 @@ const SYSTEM = [
  *   signal?: AbortSignal,
  *   stream?: (opts: any) => AsyncGenerator<any, void, unknown>,
  *   onProgress?: (p: { folding: number }) => void,
+ *   deadline?: number,
  * }} args
  *
  * `signal` is optional and was not marked so: the agent loop passes one because
