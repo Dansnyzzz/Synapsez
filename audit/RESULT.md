@@ -15,8 +15,9 @@ before = `audit/BASELINE.md` 2026-09-09 column, `main` at `3e8273e`; after =
 # Round 4 — audit v4 → v5, 2026-11-02 → 2026-11-03
 
 Before = `audit/BASELINE.md` section "Vòng v4", `main` at `a7098d1` (tag `backup/pre-optimize-20261102-1701`).
-After = branch `optimize/2026-11-02` at `07f6fff`, 84 commits — one per ledger ID, plus i18n and stamp
-follow-ups that name their ID. Every row is a command that was run and an output that was read.
+After = branch `optimize/2026-11-02`, first measured at `07f6fff` (84 commits — one per ledger ID, plus i18n and
+stamp follow-ups that name their ID), then after each evaluator pass: `e805883` and `555e34f`. Every row is a
+command that was run and an output that was read.
 
 ## The gate, and what runs outside it
 
@@ -24,6 +25,8 @@ follow-ups that name their ID. Every row is a command that was run and an output
 |---|---|---|---|
 | `npm run gate` (full) | exit 0, 329 s | **exit 0, 315 s**, stamped 2026-11-03T03:37:46Z | `npm run gate`, log `scratchpad/gate-v5.txt`. The first run on this tree was **red** at the eval step: the system prompt had changed (TOK-003); the 15 cases were re-read, none rests on the two shortened lines, stamp moved in `07f6fff` |
 | ✓ in the gate log | 5,611 | **5,724** (+113), **0 ✗** | count of ✓/✗ lines |
+| Gate after evaluator pass 1 | — | **exit 0, 304 s, 5,733 ✓, 0 ✗** on `e805883` | log `scratchpad/gate-v5b.txt` |
+| Gate after evaluator pass 2 | — | **exit 0, 343 s, 5,738 ✓, 0 ✗** on `555e34f`. The run before it was **red** at typecheck: HAR-016 passed `deadline` to `compact()` without declaring it (one new error each in `agent.js`, `compact.js`); declared in `555e34f`, back to 279/279 | log `scratchpad/gate-v5c.txt` |
 | `test:hooks` | 168/168 | **168/168** | gate step |
 | eval (scripted) | 15/15, `PROMPT_STAMP bc830e108fcb` | **15/15, `101239f2dd8e`** | gate step; the scripted eval checks the conditions for a right answer, not what a model does with them (`--live` costs money — RSN-001) |
 | typecheck ratchet | 279 outstanding, ceiling 296 | **279, ceiling 279** (CODE-063 locked the 17 the ceiling still allowed) | gate step; `.typecheck-baseline.json` |
@@ -63,7 +66,7 @@ Each of these was run with the fix stashed (`git stash push -- <file>`), then wi
 
 ## Ledger reconciliation (Phase 3 step 14)
 
-349 IDs, each counted at its last row: **FIXED 323 · CHỜ-CHỦ/TRONG-REPO 8 · CHỜ-CHỦ/NGOÀI-REPO 5 · BLOCKED 3 · DEFERRED 1 · OPEN 0 · IN-PROGRESS 0**, and 9 rows of rounds 1–2 written in their own words (RESOLVED, not a defect, PROPOSED — owner decision). BLOCKED are GAP-005/GAP-006/CODE-021 from round 3: each needs a live-model budget.
+360 IDs after both evaluator passes, each counted at its last row: **FIXED 333 · CHỜ-CHỦ/TRONG-REPO 9 · CHỜ-CHỦ/NGOÀI-REPO 5 · BLOCKED 3 · DEFERRED 1 · OPEN 0 · IN-PROGRESS 0**, and 9 rows of rounds 1–2 written in their own words (RESOLVED, not a defect, PROPOSED — owner decision). BLOCKED are GAP-005/GAP-006/CODE-021 from round 3: each needs a live-model budget.
 
 ## Requirement matrix §0b (Phase 3 step 13)
 
@@ -108,7 +111,8 @@ Each of these was run with the fix stashed (`git stash push -- <file>`), then wi
 
 A fresh read-only `code-reviewer` agent, given the diff, this section, the ledger and §0b. Deterministic checks (gate, tests) take precedence over it.
 
-- **Pass 1: NEEDS_WORK**, 8 findings. Fixed as new IDs, each with a test that fails without it: **QC-003** (the quality gate removed correct links — from attached files, memory notes, project passages, or inside `**…**` — and said so falsely), **PRV-027** (the skill draft is kept on the account, so the export carries it; PRV-014's note that it lived only in the browser was wrong), **HAR-014** (one key intake at a time per account, not per provider), **HAR-015** (a turn deadline every model call respects; HAR-012's budget restarted per call), **CODE-074** (12 more raw error texts, and the 500 handler), **CODE-075** (a stale stamp note, a dead CSS rule). This section's overstated figures were corrected: suites 50→51, one TOK-003 figure, TOK-004 not a saving, SEC-060 not FIXED, R4 not yet measured on `main`, skips not 0 here.
+- **Pass 1: NEEDS_WORK**, 8 findings. Fixed as new IDs — QC-003, PRV-027, HAR-014 and HAR-015 each with a test run red without the fix; CODE-074's test is a source check over every route file; CODE-075 has none: **QC-003** (the quality gate removed correct links — from attached files, memory notes, project passages, or inside `**…**` — and said so falsely), **PRV-027** (the skill draft is kept on the account, so the export carries it; PRV-014's note that it lived only in the browser was wrong), **HAR-014** (one key intake at a time per account, not per provider), **HAR-015** (a turn deadline every model call respects; HAR-012's budget restarted per call), **CODE-074** (12 more raw error texts, and the 500 handler), **CODE-075** (a stale stamp note, a dead CSS rule). This section's overstated figures were corrected: suites 50→51, one TOK-003 figure, TOK-004 not a saving, SEC-060 not FIXED, R4 not yet measured on `main`, skips not 0 here.
+- **Pass 2 (a new agent): NEEDS_WORK**, 7 findings. Fixed as new IDs: **QC-004** (QC-003 had made the model's own earlier words a source, so a link it invented in an earlier step passed; now only the system prompt and the messages not the assistant's — an `agent.test` case, red without the fix, also checks every call carries the turn deadline), **CODE-076** (eight more raw texts inside `translateMessage(…)`, an MCP start error, and the 500 handler now says only that the server failed; the source check widened to those shapes), **HAR-016** (a rate-limited key's rest is not waited past the turn deadline — red without the fix; compaction gets the deadline; the README says plainly what the deadline does not bound: a reply already streaming, the 20 s a call gets to start, a turn that outlives the function and is resumed by `server/resume.js`), **PRV-028** (what artifacts' pages saved is in the export; the README's export list completed). Recorded as **QC-005** (CHỜ-CHỦ/TRONG-REPO): a PDF sent as bytes has no text to source a link from. The QC-003 bytes check was rewritten so it can fail. Figures above updated (ledger tally, the gate after each pass).
 - Recorded, not changed: several UI fixes are pinned by source checks (see R18); commit `6bc8b90` [SEC-058] also carries UX-024's `code: 'rate_limited'` emit in `app.js`, and `3cfc744`, `c65f91a`, `721e011` each cover several IDs — history is not rewritten.
 
 ---
