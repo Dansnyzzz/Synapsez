@@ -102,9 +102,12 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       }
       const refusal = memoryRefusal(text, { allowSensitive: true });
       if (refusal) return res.status(400).json({ error: refusalMessage(refusal) });
-      // No earlier version to read: a person's own edit keeps none (PRV-006),
-      // so fetching the note first was a database round trip for nothing (CODE-057).
-      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: stampNote(text, { by: 'user' }) });
+      // A person's own edit keeps no earlier version (PRV-006). What it keeps is
+      // the "from Google" mark (PRV-025): an edited note made from someone's mail
+      // is still made from it, and without the mark it went to every provider.
+      const notes = (await getStore().getUserSetting(req.user.id, bucket)) || {};
+      const google = Object.hasOwn(notes, key) && notes[key]?.google === true;
+      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: stampNote(text, { by: 'user', google }) });
       res.json({ ok: true });
     }),
   );

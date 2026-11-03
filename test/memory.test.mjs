@@ -251,6 +251,12 @@ section('memory tools obey the guard and the account');
     check('  and keeps no copy of the text they removed (PRV-006)', !typed.previous && !JSON.stringify(typed).includes('diabetes'), JSON.stringify(typed));
     await alice.call('PUT', '/api/memory/account/language', { content: 'Answer in Vietnamese.' });
     check('  nor of their own earlier wording', !(await store.getUserSetting(aliceId, 'memory')).language.previous);
+    // PRV-025: a note made from someone's mail stays marked as such when they edit it.
+    await store.mergeUserSetting(aliceId, 'memory', { trip: memory.stampNote('Flight VN123 on 4 Dec', { by: 'assistant', google: true }) });
+    await alice.call('PUT', '/api/memory/account/trip', { content: 'Flight VN123 on 5 Dec' });
+    const trip = (await store.getUserSetting(aliceId, 'memory')).trip;
+    check('a note from Google data keeps its mark when the person edits it (PRV-025)', trip.google === true && trip.by === 'user' && trip.content === 'Flight VN123 on 5 Dec', JSON.stringify(trip));
+    await store.removeUserSettingKey(aliceId, 'memory', 'trip');
     check('an unknown note cannot be undone', (await alice.call('POST', '/api/memory/account/nope/undo')).status === 404);
   }
   const proto = await run('memory_delete', { key: 'toString' });
