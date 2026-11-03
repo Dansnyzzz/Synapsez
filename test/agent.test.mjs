@@ -1719,6 +1719,21 @@ section('the same read twice in a turn runs once');
   }
   await store.removeUserSettingKey(dupUser.id, 'memory', 'wiki');
 
+  // QC-007: after a fold the summary can be the last question, and the project's passages ride on it.
+  {
+    const { gateSources } = await import('../server/agent.js');
+    const passages = 'From the project: pricing is at https://acme-internal.example/pricing';
+    const sources = gateSources({
+      system: 'You help.',
+      passages,
+      messages: [{ id: 's-1', role: 'summary', text: 'Earlier the assistant guessed https://made-up.example/summary-guess' }],
+      grounded: [{ id: 's-1', role: 'user', text: `${passages}\n\n---\n\nSummary: the assistant guessed https://made-up.example/summary-guess` }],
+      outgoing: [{ id: 'a-1', role: 'assistant', text: 'https://made-up.example/own-words' }],
+    }).join('\n');
+    check("a project passage on a folded conversation's summary is still a source (QC-007)", /acme-internal\.example\/pricing/.test(sources), sources);
+    check('  while the summary and the assistant\'s own words are not (QC-004, QC-006)', !/made-up\.example/.test(sources), sources);
+  }
+
   // QC-006: a folded conversation's summary, handed over as the user's, carries what the assistant wrote too.
   await store.createChat(dupUser.id, { id: 'c-qc4', title: 'qc4' });
   await store.appendMessage(dupUser.id, 'c-qc4', { id: 'u-qc-5', role: 'user', text: 'find the report' });

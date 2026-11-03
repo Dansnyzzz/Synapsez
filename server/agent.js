@@ -1269,6 +1269,26 @@ export async function connectionsSignature(userId) {
   return crypto.createHash('sha256').update(shape).digest('hex').slice(0, 24);
 }
 
+/**
+ * The quality gate's sources from what a step sent (QC-003): the system prompt
+ * (memory notes, project instructions) and the transcript as sent, with the
+ * text of attached files in it. Never the assistant's own earlier words
+ * (QC-004) — an address it wrote in a step that ended in a tool call, or in an
+ * example, is no source for its answer — nor a folded conversation's summary,
+ * handed over as the user's but written from those words too (QC-006); what
+ * the folded turns really held is read from the stored messages. The project's
+ * passages count on their own (QC-007): they ride on the last question, which
+ * after a fold can be that summary.
+ *
+ * @param {{ system?: string, grounded?: any[], outgoing?: any[], passages?: string, messages?: any[] }} step
+ * @returns {string[]}
+ */
+export function gateSources({ system, grounded = [], outgoing = [], passages = '', messages = [] }) {
+  const summaries = new Set(messages.filter((m) => m.role === 'summary').map((m) => m.id));
+  const notOwn = (m) => m?.role !== 'assistant' && !summaries.has(m?.id);
+  return textsIn({ system, passages, grounded: grounded.filter(notOwn), outgoing: outgoing.filter(notOwn) });
+}
+
 // A turn's model calls end by this long after it began (HAR-015): a Vercel
 // function lives 300 s, and the answer still has to be stored after the last
 // call. A provider's own request budget (HAR-012) restarts with every call, so
@@ -1728,8 +1748,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   let progressGated = false;
   /** The quality gate runs once a turn (QC-001). */
   let qualityChecked = false;
-  /** The last step's system prompt and transcript as sent — the gate's sources besides the stored messages (QC-003). */
-  let shown = null;
+  /** What the last step showed the model, as the gate's sources besides the stored messages — see `gateSources`. */
+  let shown = [];
 
   /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
   let movedToAuto = false;
@@ -1905,15 +1925,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         onLooking: () => emit('status', { phase: 'tool', name: 'look_at' }),
       }));
       const outgoing = withAttachments(grounded, loaded, entry, { masking });
-      // What the model was shown this step, for the quality gate's sources (QC-003)
-      // — never its own earlier words (QC-004): an address it wrote in a step that
-      // ended in a tool call, or in an example, is not a source for its answer. Nor
-      // a folded conversation's summary (QC-006), handed over as the user's but
-      // written from the assistant's replies too; what the folded turns really
-      // held is still read from the stored messages.
-      const summaries = new Set(messages.filter((m) => m.role === 'summary').map((m) => m.id));
-      const notOwn = (m) => m?.role !== 'assistant' && !summaries.has(m?.id);
-      shown = { system, grounded: grounded.filter(notOwn), outgoing: outgoing.filter(notOwn) };
+      shown = gateSources({ system, grounded, outgoing, passages: project?.passages, messages });
 
       for await (const ev of stream({
         userId,
@@ -2108,7 +2120,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       const gated = await checkAnswer({
         answer: assistant.text,
         messages,
-        sources: textsIn(shown),
+        sources: shown,
         language: prefs.language || 'en',
         ask: async (system, prompt) => {
           let said = '';
