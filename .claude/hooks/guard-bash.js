@@ -91,6 +91,14 @@ function shellWords(command) {
       end();
       words.push({ text: command.slice(i + 3, stop), quoted: true });
       i = close < 0 ? command.length : close + 2;
+    } else if ((ch === '\\' || ch === '`') && (command[i + 1] === '\n' || (command[i + 1] === '\r' && command[i + 2] === '\n'))) {
+      // A line continued with `\` (bash) or a backtick (PowerShell) is one command (CFG-037).
+      end();
+      i += command[i + 1] === '\r' ? 2 : 1;
+    } else if (ch === '`' && command[i + 1] === '-') {
+      // PowerShell's escape before a dash: the dash goes through as itself.
+      word = (word ?? '') + '-';
+      i += 1;
     } else if (ch === '"' || ch === "'") {
       quote = ch;
       quoted = true;
@@ -143,13 +151,17 @@ export function skipsHooks(command, depth = 0) {
       }
       values.add(i + 1);
       const alias = /^alias\.[^=]+=(.+)$/s.exec(text(i + 1) || '');
-      if (text(i) === '-c' && alias && skipsHooks(`git ${alias[1]}`, depth + 1)) return true;
+      // An alias that starts with `!` is run by the shell, not by git (CFG-037).
+      const body = alias ? (alias[1].startsWith('!') ? alias[1].slice(1) : `git ${alias[1]}`) : '';
+      if (text(i) === '-c' && alias && skipsHooks(body, depth + 1)) return true;
       i += 2;
     }
     const sub = text(i);
     if (!/^(commit|push|merge|rebase|am|cherry-pick|revert|pull)$/.test(sub || '')) continue;
     for (let j = i + 1; text(j) !== null; j += 1) {
       const word = text(j);
+      // After `--` come paths, not options: `-- -n` is a file named -n (CFG-037).
+      if (word === '--') break;
       const name = word.split('=')[0];
       if (name.length >= '--no-veri'.length && '--no-verify'.startsWith(name)) return true;
       if (sub !== 'commit') continue;

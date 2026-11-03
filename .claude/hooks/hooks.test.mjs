@@ -156,6 +156,11 @@ for (const nested of ['(git commit -n -m x)', 'echo $(git commit -n -m x)', 'x=`
   check('guard-bash.js', bash(nested), BLOCK, `  ${nested.replace(noVerify, 'the flag')}`);
 }
 check('guard-bash.js', bash('git commit -mnote'), ALLOW, '  while -mnote is the message "note"');
+// CFG-037: a shell alias, a continued line, an escaped dash — and a path after `--` is not a flag.
+for (const spelled of ['git -c alias.ci="!git commit -n" ci', 'git commit -q \\\n-n', 'git commit -q `\n-n', 'git commit -q `\r\n-n', 'git commit `-n']) {
+  check('guard-bash.js', bash(spelled), BLOCK, `  ${JSON.stringify(spelled)}`);
+}
+check('guard-bash.js', bash('git commit -m x -- -n'), ALLOW, '  while -- -n names a file');
 check('guard-bash.js', bash("git commit -m @'\nit's done -n\n'@"), ALLOW, '  and a PowerShell here-string with an apostrophe is one message');
 check('guard-bash.js', bash(['git', 'reset', '--hard'].join(' ')), BLOCK, 'discarding uncommitted work');
 check('guard-bash.js', bash(`psql -c "${['DROP', 'TABLE', 'users'].join(' ')}"`), BLOCK, 'dropping a table');
