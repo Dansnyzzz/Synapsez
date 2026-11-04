@@ -1,6 +1,48 @@
 {
   "entries": [
     {
+      "version": "1.10.0",
+      "date": "2026-11-04",
+      "new": {
+        "vi": [
+          "Kiểm tra số liệu (Cài đặt → Khả năng, mặc định tắt): sau khi trợ lý đọc web, số, tỉ lệ phần trăm và ngày tháng không có trong những gì đã đọc sẽ được sửa, hoặc đánh dấu (chưa kiểm chứng).",
+          "Công tắc Kiểm tra nguồn trong cùng mục, để tắt việc đối chiếu địa chỉ web nếu bạn muốn."
+        ],
+        "en": [
+          "Figure check (Settings → Capabilities, off by default): after the assistant reads the web, a number, percentage or date that is not in what it read is corrected, or marked (unverified).",
+          "A Source check switch in the same place, to turn off checking web addresses if you want."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Máy tính đám mây an toàn hơn: một lệnh thường không còn lên được root, và việc cần root đều hỏi bạn trước. python3, node và npm vẫn như cũ; npm install -g cài vào thư mục của bạn.",
+          "Trình duyệt đám mây chạy tách khỏi các lệnh trên máy, nên thông tin đăng nhập nằm ngoài tầm với của chúng."
+        ],
+        "en": [
+          "The cloud computer is safer: an ordinary command can no longer become root, and anything needing root asks you first. python3, node and npm are as they were; npm install -g installs to your own folder.",
+          "The cloud browser runs apart from the machine's commands, so your sign-ins are out of their reach."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Kiểm tra nguồn không còn gỡ nhầm link thật: địa chỉ trong bảng, trong ngoặc kép, cạnh dấu câu tiếng Trung, viết theo cách mã hoá khác, hay dài hơn một địa chỉ bị gắn cờ.",
+          "Link bịa bị gỡ dù viết theo cách nào, chứ không chỉ cách viết đầu tiên.",
+          "Địa chỉ trong code, cả code block lẫn code trong dòng, được giữ nguyên.",
+          "Link trong tệp PDF bạn đính kèm được tính là nguồn.",
+          "Ghi chú cuối câu trả lời nói đúng việc đã làm: đã sửa, đã gỡ hay chỉ đánh dấu.",
+          "Một câu trả lời hoặc trang web có dòng rất dài không còn làm chậm server tới hàng chục giây."
+        ],
+        "en": [
+          "The source check no longer removes true links: an address in a table, in quotes, beside Chinese punctuation, encoded another way, or longer than one that was flagged.",
+          "An invented link goes however it is spelled, not only the first spelling.",
+          "Addresses in code, a block or inline, are left as they are.",
+          "A link in a PDF you attach counts as a source.",
+          "The note at the end of an answer says what was really done: corrected, removed or only marked.",
+          "An answer or page with a very long line no longer holds the server up for tens of seconds."
+        ]
+      }
+    },
+    {
       "version": "1.9.1",
       "date": "2026-11-03",
       "fixed": {
