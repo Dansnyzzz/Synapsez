@@ -34,12 +34,9 @@
  * `Foo_(other)` are two pages, and the `)` closing a Markdown link is neither. An
  * apostrophe with a letter after it is part of it, as in `Moore's_law` and
  * `L'État`; one without is a closing quote. NUL is what `unlink` sets code aside
- * with. An em dash or an ellipsis stays part of it, as a page's title can hold one
- * (see `RAN_ON`).
+ * with. An em dash or an ellipsis stays part of it, as a page's title can hold one.
  */
 const URL_RE = /https?:\/\/(?:(?!,https?:\/\/)[^\s<>()[\]"'`|“”‘’«»，。；：！？、）】》（【《\0]|'(?=[\p{L}\p{N}_])|\([^\s()]*\))+/gu;
-/** Where a sentence may have run on from an address with no space: `…/q2—bản đầy đủ`, `…/q2… rồi`. */
-const RAN_ON = /[—…]/;
 const FENCE = /^\s{0,3}(```|~~~)/;
 /** Inline code, an example as a code block is: `curl https://…` was left as `curl `. */
 const CODE_SPAN = /``[^`]*``|`[^`]*`/g;
@@ -169,11 +166,8 @@ function accountedFor(url, evidence) {
     // bare: `?p=99999` and `#/report` on that site are pages, and nobody read them (QC-019).
     return evidence.keys.has(key) || (key === hostOf(key) && evidence.hosts.has(key));
   };
-  if (known(url)) return true;
-  // Words run on from one that was read: `…/a's blog`, `…/q2—bản đầy đủ` (QC-020). Tried once, on
-  // what comes before them, and only after the whole, since a title can hold a dash.
-  const head = url.replace(/'s$/, '').split(RAN_ON, 1)[0];
-  return head !== url && known(head);
+  // English's possessive on one that was read: `https://x.example/a's blog` (QC-020). Once.
+  return known(url) || (url.endsWith("'s") && known(url.slice(0, -2)));
 }
 
 /**
@@ -310,10 +304,9 @@ export function unlink(answer, flagged) {
         .replace(MARKDOWN_LINK, (whole, label, url) => (isFlagged(url) ? label : whole))
         .replace(BARE_ADDRESS, (whole, mark, url) => {
           if (!isFlagged(url)) return whole;
-          // The full stop that ended the sentence is not part of the address, nor are words run on
-          // from it. Emphasis closing over nothing goes with what opened it, rather than staying as `****`.
-          const ranOn = url.search(RAN_ON);
-          const after = ranOn === -1 ? url.slice(trimEnd(url, TRAILING).length) : url.slice(ranOn);
+          // The full stop that ended the sentence is not part of the address. Emphasis
+          // closing over nothing goes with what opened it, rather than staying as `****`.
+          const after = url.slice(trimEnd(url, TRAILING).length);
           return mark && after.startsWith(mark) ? after.slice(mark.length) : `${mark || ''}${after}`;
         })
         .replace(/\0(\d+)\0/g, (_m, at) => code[at]);
