@@ -235,6 +235,30 @@ section('a link is removed by the whole address, however it is spelled (QC-014)'
   check('one edit that drops two links says two (QC-011)', dropped.removed === 2 && dropped.fixed === 0 && /removed 2 links/.test(dropped.text), dropped.text);
 }
 
+section('the last of what makes an address the same one (QC-020)');
+{
+  const read = (...urls) => [{ role: 'tool', results: [{ content: urls.join('\n') }] }];
+  const passes = (answer, ...urls) => unsourcedLinks(answer, evidenceOf(read(...urls))).length === 0;
+  // Evaluator pass 5, regressions of QC-019 on the source check that is on for everyone.
+  check("English's possessive on a page that was read is that page", passes("Trang https://x.example/a's blog", 'https://x.example/a') && passes("Trang https://x.example's blog", 'https://x.example/a'));
+  check("  while a word after the apostrophe is still another page", !passes("https://x.example/Moore's_fake", "https://x.example/Moore's_law"));
+  check('an apostrophe before any letter is part of it, accents included', passes("[L'État](https://x.example/L'État)", 'https://x.example/L%27%C3%89tat'), JSON.stringify(unsourcedLinks("[L'État](https://x.example/L'État)", evidenceOf(read('https://x.example/L%27%C3%89tat')))));
+  check("  and tells two pages apart", !passes("https://x.example/L'Épée", "https://x.example/L'État"));
+  check('a route with a trailing slash is the same route', passes('https://x.example/#/report/', 'https://x.example/#/report'));
+  check('  and a bare #/ is the site', passes('https://x.example/#/', 'https://x.example/a'));
+  // Sweeping the class.
+  check('an em dash and an ellipsis end an address, with the sentence going on after', passes('https://x.example/q2—bản đầy đủ', 'https://x.example/q2') && passes('https://x.example/q2… rồi đọc tiếp', 'https://x.example/q2'));
+  check('  and what follows stays when it goes', unlink('https://bad.example/a—bản đầy đủ', ['https://bad.example/a']) === '—bản đầy đủ', unlink('https://bad.example/a—bản đầy đủ', ['https://bad.example/a']));
+  check('  an en dash does not: it is in the titles of pages', !passes('https://x.example/2020–2024', 'https://x.example/2020'));
+  check('another port is another address', !passes('https://x.example:9999/a', 'https://x.example/a'));
+  check('  the usual one is not', passes('https://x.example:443/a', 'https://x.example/a'));
+  check('  and a site with a port is that site', passes('https://x.example:8080', 'https://x.example:8080/a'));
+  // What removal leaves.
+  for (const [text, want] of [['**https://bad.example/a**', ''], ['_https://bad.example/a_', ''], ['~~https://bad.example/a~~ hết', ' hết'], ['Xem **https://bad.example/a**.', 'Xem .'], ['**xem https://bad.example/a**', '**xem **']]) {
+    check(`emphasis closing over nothing goes: ${text}`, unlink(text, ['https://bad.example/a']) === want, JSON.stringify(unlink(text, ['https://bad.example/a'])));
+  }
+}
+
 section('a link taken out whole, and what stays (QC-019)');
 {
   const read = (...urls) => [{ role: 'tool', results: [{ content: urls.join('\n') }] }];
@@ -252,7 +276,10 @@ section('a link taken out whole, and what stays (QC-019)');
 
   const span = await checkAnswer({ answer: 'Call https://bad.example/users/`id` now', messages: [], ask: async () => '{"edits":[]}' });
   check('an address touching inline code goes, and the code stays', span.text.startsWith('Call `id` now') && span.removed === 1, span.text);
-  check('NUL in an answer is not taken for code set aside', unlink('a\u00007\u0000 b `c` https://bad.example/a', ['https://bad.example/a']) === 'a\u00007\u0000 b `c` ', JSON.stringify(unlink('a\u00007\u0000 b `c` https://bad.example/a', ['https://bad.example/a'])));
+  for (const at of ['7', '0']) {
+    const nul = `a\u0000${at}\u0000 b \`c\` https://bad.example/a`;
+    check(`NUL in an answer is not taken for code set aside: position ${at}`, unlink(nul, ['https://bad.example/a']) === `a${at} b \`c\` `, JSON.stringify(unlink(nul, ['https://bad.example/a'])));
+  }
 
   // A bare site is the site; anything more is a page, and nobody read it.
   const site = evidenceOf(read('https://x.example/read-this'));

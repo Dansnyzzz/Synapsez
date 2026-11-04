@@ -32,10 +32,12 @@
  * it, they and the word after them made a true link look invented, and went with
  * it. Brackets are part of it only when they balance, so `Foo_(planet)` and
  * `Foo_(other)` are two pages, and the `)` closing a Markdown link is neither. An
- * apostrophe with a letter after it is part of it, as in `Moore's_law`; one
- * without is a closing quote. NUL is what `unlink` sets code aside with.
+ * apostrophe with a letter after it is part of it, as in `Moore's_law` and
+ * `L'État`; one without is a closing quote. An em dash and an ellipsis end it, as
+ * a sentence goes on after them; an en dash does not, being in Wikipedia's titles.
+ * NUL is what `unlink` sets code aside with.
  */
-const URL_RE = /https?:\/\/(?:(?!,https?:\/\/)[^\s<>()[\]"'`|“”‘’«»，。；：！？、）】》（【《\0]|'(?=\w)|\([^\s()]*\))+/g;
+const URL_RE = /https?:\/\/(?:(?!,https?:\/\/)[^\s<>()[\]"'`|“”‘’«»，。；：！？、）】》（【《—…\0]|'(?=[\p{L}\p{N}_])|\([^\s()]*\))+/gu;
 const FENCE = /^\s{0,3}(```|~~~)/;
 /** Inline code, an example as a code block is: `curl https://…` was left as `curl `. */
 const CODE_SPAN = /``[^`]*``|`[^`]*`/g;
@@ -68,8 +70,9 @@ function decodedPath(pathname) {
 }
 
 /**
- * An address as compared: no scheme, no `www.`, no fragment or tracking, no
- * trailing slash or punctuation, and however its letters were encoded. The query
+ * An address as compared: no scheme, no `www.`, no tracking, no fragment unless
+ * it is a route, no trailing slash or punctuation, and however its letters were
+ * encoded. A port makes it another address, the usual one aside. The query
  * by its decoded values (QC-017): deleting a tracking parameter re-serialises the
  * rest, which made `?q=a%20b&utm_source=rss` another page from `?q=a%20b`.
  */
@@ -77,10 +80,10 @@ export function addressKey(url) {
   const raw = trimEnd(String(url || '').replace(/&amp;/g, '&').normalize('NFC'), TRAILING);
   try {
     const u = new URL(raw);
-    const host = u.hostname.toLowerCase().replace(/^www\./, '');
+    const host = u.host.toLowerCase().replace(/^www\./, '');
     const query = [...u.searchParams].filter(([name]) => !TRACKING.test(name)).map(([name, value]) => `${name}=${value}`).join('&');
-    // A fragment that is a route, `#/report` or `#!/report`, is a page; any other is a place on one.
-    const route = /^#!?\//.test(u.hash) ? u.hash : '';
+    // A fragment that is a route, `#/report` or `#!/report`, is a page; any other, and a bare `#/`, is a place on one.
+    const route = /^#!?\/./.test(u.hash) ? trimEnd(u.hash, SLASH) : '';
     return `${host}${trimEnd(decodedPath(u.pathname), SLASH)}${query ? `?${query}` : ''}${route}`;
   } catch {
     return raw.toLowerCase();
@@ -162,7 +165,9 @@ function accountedFor(url, evidence) {
   if (evidence.keys.has(key)) return true;
   // "https://vnexpress.net" for a site whose pages were read is the site, not an invention. Only
   // bare: `?p=99999` and `#/report` on that site are pages, and nobody read them (QC-019).
-  return key === hostOf(key) && evidence.hosts.has(key);
+  if (key === hostOf(key) && evidence.hosts.has(key)) return true;
+  // English's possessive on one that was read: `https://x.example/a's blog` (QC-020).
+  return /'s$/.test(url) && accountedFor(url.slice(0, -2), evidence);
 }
 
 /**
@@ -260,7 +265,8 @@ const MARKDOWN_LINK = /!?\[((?:[^[\]]|\[[^[\]]*\](?!\())*)\]\(\s*<?(https?:\/\/(
  * words, and stay when the address goes.
  */
 const LINK_DEFINITION = /^\s*\[[^\]]+\]:\s*<?(https?:\/\/[^\s>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
-const BARE_ADDRESS = new RegExp(`<?(${URL_RE.source})>?`, 'g');
+/** An address on its own, with any emphasis opened just before it. */
+const BARE_ADDRESS = new RegExp(`(\\*\\*|__|~~|\\*|_)?<?(${URL_RE.source})>?`, 'gu');
 
 /**
  * Each address still flagged loses its link, and keeps its words. By the
@@ -287,20 +293,23 @@ export function unlink(answer, flagged) {
       if (fenced) return line;
       const defined = line.match(LINK_DEFINITION);
       if (defined && isFlagged(defined[1])) return '';
-      // Code is set aside and put back, so nothing in it is touched.
+      // Code is set aside and put back, so nothing in it is touched. NUL marks the place, and is
+      // nothing an answer can keep: the database refuses it.
       const code = [];
-      const open = line.replace(CODE_SPAN, (span) => {
+      const open = line.replaceAll('\0', '').replace(CODE_SPAN, (span) => {
         code.push(span);
         return `\0${code.length - 1}\0`;
       });
       return open
         .replace(MARKDOWN_LINK, (whole, label, url) => (isFlagged(url) ? label : whole))
-        .replace(BARE_ADDRESS, (whole, url) => {
+        .replace(BARE_ADDRESS, (whole, mark, url) => {
           if (!isFlagged(url)) return whole;
-          // The full stop that ended the sentence is not part of the address.
-          return url.slice(trimEnd(url, TRAILING).length);
+          // The full stop that ended the sentence is not part of the address. Emphasis
+          // closing over nothing goes with what opened it, rather than staying as `****`.
+          const after = url.slice(trimEnd(url, TRAILING).length);
+          return mark && after.startsWith(mark) ? after.slice(mark.length) : `${mark || ''}${after}`;
         })
-        .replace(/\0(\d+)\0/g, (whole, at) => code[at] ?? whole);
+        .replace(/\0(\d+)\0/g, (_m, at) => code[at]);
     })
     .join('\n');
 }
