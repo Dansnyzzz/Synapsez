@@ -408,6 +408,9 @@ const isDateLike = (token) => /[/:-]/.test(token) && !/[.,]/.test(token);
 const RANGE = /^([\d.,]+)-([\d.,]+)\s*%?$/;
 /** A whole number, plain or grouped in thousands: `4500`, `4.500`, `1,234,567`. */
 const WHOLE_NUMBER = /^\d+$|^\d{1,3}(?:[.,]\d{3})+$/;
+/** A decimal, its whole part plain or grouped: `1234.56`, `1,234.56`, `1.234,5`. */
+const GROUPED_DECIMAL = /^(\d+|\d{1,3}(?:[.,]\d{3})+)[.,](\d{1,2})$/;
+const ZERO = new Set('0');
 
 /**
  * The digit runs of a figure. A date's lose their leading zeros, `03/11/2026`
@@ -446,20 +449,26 @@ function dateKey(runs) {
 
 /**
  * The ways one figure can be written and still be the same one: `4,5` and
- * `4.5`, `1,234,567` and `1234567`, `03/11/2026` and `2026-11-03`. The digits
- * alone count only for a whole number (QC-015): for anything else they made
- * `$12.50` the same as `$1,250`, and `10,000` the same as `$100.00`.
+ * `4.5`, `1,234,567` and `1234567`, `1,234.56` and `1234.56`, `03/11/2026` and
+ * `2026-11-03`. The digits alone count only for a whole number (QC-015): for
+ * anything else they made `$12.50` the same as `$1,250`, and `10,000` the same as
+ * `$100.00`. A date or a time is kept apart from a decimal (QC-018), or `10:05`
+ * passed on a page saying 10.5%, and `3/11` on 3.11%.
  */
 function figureKeys(token) {
   const bare = token.replace(/\s*%$/, '');
   const runs = runsOf(bare);
-  if (isDateLike(bare)) return [runs.join('.'), dateKey(runs)].filter(Boolean);
-  return WHOLE_NUMBER.test(bare) ? [numberKey(runs), `n:${runs.join('')}`] : [numberKey(runs)];
+  if (isDateLike(bare)) return [`t:${runs.join('.')}`, dateKey(runs)].filter(Boolean);
+  if (WHOLE_NUMBER.test(bare)) return [numberKey(runs), `n:${runs.join('')}`];
+  const decimal = bare.match(GROUPED_DECIMAL);
+  return decimal ? [numberKey(runs), `v:${decimal[1].replace(/\D/g, '')}.${trimEnd(decimal[2], ZERO)}`] : [numberKey(runs)];
 }
 
 /**
  * Every figure the sources hold, as keys — and, on its own, what a date or a
- * range holds: the year in `2026-11-03`, each end of `0.5-1.0%`.
+ * range holds: each end of `0.5-1.0%`, and the year in `2026-11-03`. Only the
+ * year (QC-018): with every part, a page's date of 2026-11-03 vouched for an
+ * invented "11%", and 12/05/2026 for "12 tỷ".
  */
 export function figureEvidenceOf(messages, sources = []) {
   const keys = new Set();
@@ -474,7 +483,7 @@ export function figureEvidenceOf(messages, sources = []) {
         add(range[1]);
         add(range[2]);
       } else if (isDateLike(token) && !token.includes(':')) {
-        for (const run of runsOf(token)) add(run);
+        for (const run of runsOf(token)) if (run.length === 4) add(run);
       }
     }
   }
@@ -490,7 +499,7 @@ const CHECK_NOTE = /^\*(?:Source check|Kiểm tra nguồn|Figure check|Kiểm tr
 const LIST_NUMBER = /^(\s*(?:>\s*)*(?:[-*+]\s+)?(?:\*\*|__)?)(\d+[.)])(?=(?:\*\*|__)?\s)/;
 const HEADING_NUMBER = /^(\s*(?:>\s*)*#{1,6}\s+(?:\*\*|__)?)(\d+(?:\.\d+)*[.)]?)(?=(?:\*\*|__)?\s)/;
 /** A tag's attributes are markup: `width="640"` says nothing about the world. */
-const HTML_TAG = /<\/?[a-zA-Z][^>]*>/g;
+const HTML_TAG = /<\/?[a-zA-Z][^<>]*>/g;
 /** A currency's code, written onto its figure: it is not a name like `gpt-5`, and `USD1,300` is a price. */
 const CURRENCY_CODE = /\b(?:USD|VND|EUR|GBP|JPY|CNY|KRW|THB|AUD|CAD|SGD)(?=\d)/g;
 /**
@@ -539,7 +548,8 @@ function figuresIn(answer) {
         const token = m[0];
         if (!worthChecking(token)) continue;
         const end = m.index + token.length;
-        const rest = line.slice(end);
+        // Far enough for any unit and mark, and no further: a long line is read once, not once per figure.
+        const rest = line.slice(end, end + 200);
         out.push({ line: n, after: end + (rest.match(ATTACHED_UNIT)?.[0].length || 0), token, marked: MARKED_NEXT.test(rest) });
       }
     });

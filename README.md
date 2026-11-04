@@ -1179,7 +1179,7 @@ reader acts on, because they click it.
   nothing ends them.
 - **Never published as fact.** Whatever is still unsourced loses its link (its words stay), and a line at the
   end says what the check did. The screen is updated to the corrected answer, which is also what is stored.
-- Addresses inside code blocks are examples, not citations, and are not checked. Settings → Capabilities →
+- Addresses in code, a block or a span, are examples, not citations, and are not checked. Settings → Capabilities →
   **Source check** turns it off (`qualityGate`). See `server/qualityGate.js`.
 
 **The figure check** (Settings → Capabilities → **Figure check**, `figureCheck`, off by default) does the same

@@ -369,6 +369,18 @@ section('the same figure, and only the same figure, counts as found (QC-009)');
   for (const [source, answer] of [['$12.50', 'giá $1,250'], ['10,000', 'giá $100.00'], ['45.00', 'phí 4.500'], ['0.5-1.0%', 'lãi 0.05-1.0%'], ['03/11/2026', 'ngày 11/03/2026'], ['2026-11-03', 'ngày 11/03/2026'], ['1.5', 'mức 15.0']]) {
     check(`a page saying ${source} does not vouch for "${answer}" (QC-015)`, flaggedBy(source, answer));
   }
+  // QC-018, evaluator pass 3: a date vouched for its month and day, and a time for a decimal.
+  for (const [source, answer] of [['ngày 2026-11-03', 'tăng 11%'], ['ngày 12/05/2026', '12 tỷ'], ['10.5%', 'lúc 10:05'], ['3.11%', 'tỉ số 3/11'], ['lúc 10:05', 'tăng 10.5%']]) {
+    check(`a page saying ${source} does not vouch for "${answer}" (QC-018)`, flaggedBy(source, answer));
+  }
+  for (const [source, answer] of [['1234.56', 'giá 1,234.56'], ['1,234.56', 'giá 1234.56'], ['1.234,5', 'giá 1234.50'], ['ngày 2026-11-03', 'năm 2026'], ['2020-2024', 'năm 2020']]) {
+    check(`  while a page saying ${source} does for "${answer}" (QC-018)`, !flaggedBy(source, answer));
+  }
+  for (const [label, text] of [['12___', `12${'_'.repeat(100_000)}`], ['<a<a', '<a'.repeat(50_000)], ['figures', '12 '.repeat(50_000)], ['one long figure', '1,'.repeat(50_000)]]) {
+    const started = Date.now();
+    unsourcedFigures(text, figureEvidenceOf([], [text]));
+    check(`a line of ${label} takes little time (QC-018)`, Date.now() - started < 1500, `${Date.now() - started} ms`);
+  }
   for (const [source, answer] of [['4.5%', 'mức 4.50%'], ['100', 'giá 100.00'], ['15,000 - 20,000', 'giá 15,000-20,000'], ['0.5-1.0%', 'lãi 0.5-1.0%'], ['0.5-1.0%', 'từ 0.5% đến 1.0%'], ['4.500', 'giá 4500'], ['2026-11-03', '2026/11/03'], ['3/11/2026', 'ngày 03-11-2026']]) {
     check(`  while a page saying ${source} does for "${answer}"`, !flaggedBy(source, answer));
   }
