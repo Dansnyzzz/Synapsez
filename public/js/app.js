@@ -5565,6 +5565,8 @@ function fillSettings() {
   $('auto-preview').value = prefs.autoPreview === false ? 'off' : 'on';
   /** @type {HTMLSelectElement} */ ($('tool-loading')).value = prefs.toolLoading === 'all' ? 'all' : 'auto';
   /** @type {HTMLInputElement} */ ($('connector-search')).checked = prefs.connectorSearch !== false;
+  /** @type {HTMLInputElement} */ ($('quality-gate')).checked = prefs.qualityGate !== false;
+  /** @type {HTMLInputElement} */ ($('figure-check')).checked = prefs.figureCheck === true;
   $('system-prompt').value = prefs.systemPrompt || '';
   // Per-browser, not per-account — so it is read back from storage, not prefs.
   paintThemeChoice(storedTheme());
@@ -6216,6 +6218,8 @@ const SAVED_ON_CHANGE = {
   'auto-preview': { status: 'capabilities-status', patch: (v) => ({ autoPreview: v !== 'off' }), back: (p) => (p.autoPreview === false ? 'off' : 'on') },
   'tool-loading': { status: 'capabilities-status', patch: (v) => ({ toolLoading: v === 'all' ? 'all' : 'auto' }), back: (p) => (p.toolLoading === 'all' ? 'all' : 'auto') },
   'connector-search': { status: 'capabilities-status', patch: (on) => ({ connectorSearch: !!on }), back: (p) => p.connectorSearch !== false },
+  'quality-gate': { status: 'capabilities-status', patch: (on) => ({ qualityGate: !!on }), back: (p) => p.qualityGate !== false },
+  'figure-check': { status: 'capabilities-status', patch: (on) => ({ figureCheck: !!on }), back: (p) => p.figureCheck === true },
   'system-prompt': { status: 'behaviour-status', patch: (v) => ({ systemPrompt: v }), back: (p) => p.systemPrompt || '' },
 };
 for (const [id, rule] of Object.entries(SAVED_ON_CHANGE)) {

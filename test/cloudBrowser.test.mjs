@@ -57,7 +57,7 @@ section('the tool is described the way the service behaves');
   check('what it reads is treated as untrusted page text', returnsExternalContent('cloud_browser'));
   check('an address stuffed with data is caught like any fetch', carriesData('cloud_browser', { action: 'open', url: `https://x.example/?d=${'A'.repeat(400)}` }));
   check('ordinary browsing does not ask', assessRisk('cloud_browser', { action: 'open', url: 'https://example.com' }) === 'ordinary');
-  check('the port the machine opens is the one the service listens on', BROWSER_PORT === 3000 && /\nexec env -u SYNZ_KEY [^\n]* node service\.mjs /.test(cb.startScript('b')));
+  check('the port the machine opens is the one the service listens on', BROWSER_PORT === 3000 && /\nexec env [^\n]* node service\.mjs /.test(cb.startScript('b')));
 }
 
 section('the names models reach for are read as meant (owner, 2026-10-07)');
@@ -354,6 +354,7 @@ section('the start script installs once per build and then runs the service');
   check('as root: refuses to go on when it is not root', /if \[ "\$\(id -u\)" != 0 \]; then echo "not root" >&2; exit 3; fi/.test(root));
   check('  lives in a folder root owns, not the account\'s working folder', root.includes(`cd ${cb.__testing.ROOT_DIR}`) && /chown root:root \/opt\/synz/.test(root) && !root.includes(`cd ${cb.__testing.DIR}`));
   check('  the sign-ins move there once and are closed to everybody else', root.indexOf('mv "$OLDPROFILE" profile.moving') < root.indexOf('chmod 700 profile.moving') && root.includes('chmod 700 profile && chown -R root:root profile'));
+  check('  all of it, folders inside included, before any link in it is looked for (SBX-012)', root.indexOf('chmod -R go-rwx profile.moving') > root.indexOf('chown -R root:root profile.moving') && root.indexOf('chmod -R go-rwx profile.moving') < root.indexOf('find profile.moving -type l'));
   check('  only a real folder moves, never a link the account planted', /\[ -d "\$OLDPROFILE" \] && \[ ! -L "\$OLDPROFILE" \]/.test(root));
   // The account could swap the folder for a link between that test and the move;
   // once moved it is in root's folder and cannot be swapped, so it is checked there.
@@ -363,18 +364,36 @@ section('the start script installs once per build and then runs the service');
   check('  an older service is stopped only if the account owns that process', /stat -c %u \/proc\/\$OLD/.test(root));
   check('  and nothing it executes is in a folder the account can write', !/node_modules|service\.mjs/.test(root.split('cd /opt/synz')[0]));
   // @sparticuz/chromium runs `<tmp>/chromium` if it exists, unchecked.
-  check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/synz\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec env -u SYNZ_KEY'));
-  const { shellFor } = await import('../server/sandbox.js');
+  check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/synz\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec env SYNZ_KEY_FILE'));
+  const { shellFor, ROOT_NODE_DIR } = await import('../server/sandbox.js');
   const rootShell = shellFor('true', {}, { root: true }).args[3];
-  check('as root, PATH keeps only folders root alone can write, and never falls back to the original', /stat -Lc %u/.test(rootShell) && /\*\[2367\]\*\) continue/.test(rootShell) && !rootShell.includes('_orig'), rootShell);
+  check('as root, PATH keeps only folders root alone can write, and never falls back to the original', /stat -c %u/.test(rootShell) && /\*\[2367\]\*\) _ok=; break/.test(rootShell) && !rootShell.includes('_orig'), rootShell);
+  // SBX-006: /etc/profile puts /usr/local first, which E2B leaves writable by everyone.
+  const beforeCommand = rootShell.slice(0, rootShell.lastIndexOf('\ntrue'));
+  const asNobody = beforeCommand.match(/\/usr\/bin\/setpriv --reuid=65534 [^\n]*/)?.[0] || '';
+  check('  /etc/profile is read as nobody with nothing in the environment, never run as root (SBX-006)',
+    /--reuid=65534 --regid=65534 --clear-groups \/usr\/bin\/env -i /.test(asNobody) && asNobody.includes('source /etc/profile') && beforeCommand.split('source /etc/profile').length === 2, beforeCommand.slice(0, 300));
+  check('  every program the check runs as root is named by its full path',
+    !/(^|[\s;(|&$"])(stat|find|setpriv|env) /m.test(beforeCommand.replace(/\/usr\/bin\/(stat|find|setpriv|env) /g, '')), beforeCommand);
+  check("  the template's node comes first, only when /opt and all of it are root's alone",
+    beforeCommand.includes(`[ -x ${ROOT_NODE_DIR}/bin/node ]`) && beforeCommand.includes(`/usr/bin/find ${ROOT_NODE_DIR} ! -type l \\( ! -user root -o -perm /022 \\)`) && /stat -Lc %u \/opt/.test(beforeCommand) && /\$\{_node:\+\$_node:\}\/usr\/sbin:/.test(beforeCommand));
+  check('  a folder is kept as it really is, only when it and every folder above it to / are root\'s alone (SBX-010)',
+    beforeCommand.includes('_d="$(/usr/bin/readlink -f "$_d" 2>/dev/null)" || continue') && beforeCommand.includes('_p="${_p%/*}"') && beforeCommand.includes('/usr/bin/stat -c %u "${_p:-/}"'), beforeCommand);
+  check('  and python3 run as root imports nothing from the folder it starts in (SBX-012)', /\nexport PYTHONSAFEPATH=1\n/.test(beforeCommand), beforeCommand.slice(-120));
+  check('  and with nothing kept, the system folders — never /usr/local', /export PATH="\$\{_keep:-\/usr\/sbin:\/usr\/bin:\/sbin:\/bin\}"/.test(beforeCommand) && !beforeCommand.includes(':-/usr/local'));
   check('fonts are a best effort that cannot fail the start', /install -y[^]*\|\| true/.test(script));
+  // SBX-009: sudo finds a program on its secure_path, which on E2B begins in the writable /usr/local.
+  check('  as root, nothing goes through sudo (SBX-009)', !/sudo -n (sh|\$pm|apt-get)/.test(root) && /\$su_ \$pm install/.test(root) && /\{ \[ -n "\$su_" \] && \$su_ sh -c/.test(root));
   check('  with whichever package manager the image has', /dnf microdnf yum/.test(script));
   check('  apt-get too, for E2B\'s Debian, root or not', /command -v apt-get[^]*fonts-noto-core[^]*\) \|\| true; fi/.test(script) && /if \[ "\$\(id -u\)" = 0 \]; then su_=; else su_="sudo -n"; fi/.test(script));
-  check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec env -u SYNZ_KEY'));
+  check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec env SYNZ_KEY_FILE'));
   // SEC-061: on E2B the service runs as the account, which can read any of its own processes' /proc/<pid>/environ.
   check('the key reaches the service in a file only its owner reads, not in its starting environment (SEC-061)',
-    /\( umask 077; printf %s "\$SYNZ_KEY" > service\.key \)\nexec env -u SYNZ_KEY SYNZ_KEY_FILE="\$PWD\/service\.key" node service\.mjs/.test(script)
-      && /exec env -u SYNZ_KEY SYNZ_KEY_FILE=/.test(cb.startScript('b', { root: true })));
+    /\( umask 077; printf %s "\$SYNZ_KEY" > service\.key \)\nunset SYNZ_KEY\n/.test(script) && /\nexec env SYNZ_KEY_FILE="\$PWD\/service\.key" node service\.mjs /.test(script)
+      && /\nunset SYNZ_KEY\n/.test(root) && /\nexec env SYNZ_KEY_FILE=/.test(root));
+  // SBX-006: an install runs the packages' own scripts in this shell.
+  check('  and leaves this shell before anything is installed, as root or not (SBX-006)',
+    [script, root].every((s) => s.indexOf('unset SYNZ_KEY') > -1 && s.indexOf('unset SYNZ_KEY') < s.indexOf('npm install')));
   const { bridgeStartScript } = await import('../server/mcp/cloud.js');
   check('  and the MCP bridge\'s the same way', /\( umask 077; printf %s "\$SYNZ_MCP_KEY" > bridge\.key \)\nexec env -u SYNZ_MCP_KEY SYNZ_MCP_KEY_FILE="\$PWD\/bridge\.key" node bridge\.mjs/.test(bridgeStartScript()));
   // `pkill -f 'node service.mjs'` matched the shell running this script, whose
@@ -397,7 +416,8 @@ section('the start script really reaches the service, run under bash');
     fs.mkdirSync(bin);
     // A node that says it started and exits; an npm that installs nothing; no sudo.
     fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nif [ "$1" = "-v" ]; then echo v22; exit 0; fi\necho started > ran\n', { mode: 0o755 });
-    fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    // An npm that says so if it was handed the key (SBX-006).
+    fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\nif [ -n "$SYNZ_KEY" ]; then echo leaked > npm-saw-key; fi\nexit 0\n', { mode: 0o755 });
     fs.writeFileSync(path.join(bin, 'sudo'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     // `-c`, not the `-lc` the sandbox uses: a login shell on a CI runner reads
     // the image's profile, which resets PATH from /etc/environment — the fakes
@@ -406,7 +426,7 @@ section('the start script really reaches the service, run under bash');
     const run = () =>
       spawnSync('bash', ['-c', cb.startScript('t1')], {
         cwd: dir,
-        env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, SYNZ_SERVICE: Buffer.from('// service').toString('base64') },
+        env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, SYNZ_SERVICE: Buffer.from('// service').toString('base64'), SYNZ_KEY: 'k-start-test' },
         timeout: 20_000,
       });
     const first = run();
@@ -419,6 +439,7 @@ section('the start script really reaches the service, run under bash');
       }
     };
     check('a first start reaches the service', first.status === 0 && fs.existsSync(ran), `exit ${first.status} ${String(first.stderr).slice(0, 200)} ${logOf()}`);
+    check('  and its install never saw the key (SBX-006)', !fs.existsSync(path.join(dir, '.synz-browser', 'npm-saw-key')) && fs.readFileSync(path.join(dir, '.synz-browser', 'service.key'), 'utf8') === 'k-start-test');
     fs.rmSync(ran, { force: true });
     const second = run();
     check('  and so does a restart over an old pid', second.status === 0 && fs.existsSync(ran), `exit ${second.status}`);
@@ -430,6 +451,83 @@ section('the start script really reaches the service, run under bash');
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+section('as root on E2B the helper listens where only root can, and only root being unavailable sends it to the account (SBX-013, SBX-014)');
+{
+  const { __testing: sandboxTesting, ROOT_BROWSER_PORT } = await import('../server/sandbox.js');
+  let exitAsRoot = null;
+  // A root start that exits has nothing listening on its port.
+  const answering = http.createServer((req, res) => {
+    if (exitAsRoot != null && req.url.startsWith(`/${ROOT_BROWSER_PORT}`)) {
+      res.statusCode = 503;
+      res.end();
+      return;
+    }
+    res.end('{"ok":true,"isolated":true}');
+  });
+  await new Promise((r) => answering.listen(0, '127.0.0.1', r));
+  const at = `http://127.0.0.1:${answering.address().port}`;
+  const started = [];
+  const machine = {
+    provider: 'e2b',
+    sandboxId: 'sbx-port',
+    domain: (port) => `${at}/${port}`,
+    extendTimeout: async () => {},
+    readFileToBuffer: async () => Buffer.from(''),
+    runCommand: async (command) => {
+      started.push({ port: command.env.PORT, sudo: !!command.sudo, script: command.args[3] });
+      const code = command.sudo ? exitAsRoot : null;
+      return { wait: () => (code == null ? new Promise(() => {}) : Promise.resolve({ exitCode: code })) };
+    },
+  };
+  sandboxTesting.useSdk({ Sandbox: { getOrCreate: async () => machine } });
+  await store.createUser({ id: 'u-port', email: 'port@example.com', passwordHash: 'x', name: 'P', role: 'user' }).catch(() => {});
+  const fresh = (conn = {}) => cb.__testing.saveConnection('u-port', { url: 'http://127.0.0.1:9', key: 'z'.repeat(43), build: 'an older build', extendedAt: 1, mode: 'root', ...conn });
+  const go = () => throws(() => cb.__testing.serviceCall('u-port', '/health', undefined, { timeout: 2000 }));
+
+  check('the port is one only root can open', ROOT_BROWSER_PORT < 1024);
+  await fresh();
+  const up = await go();
+  const conn = await cb.__testing.readConnection('u-port');
+  check('as root on E2B: that port, and the address of that port', up === '' && started[0]?.port === String(ROOT_BROWSER_PORT) && started[0]?.sudo && conn.url.endsWith(`/${ROOT_BROWSER_PORT}`) && conn.mode === 'root', `${up} · ${JSON.stringify(started[0]?.port)} · ${conn.url}`);
+
+  for (const code of [3, 127]) {
+    started.length = 0;
+    exitAsRoot = code;
+    await fresh();
+    await go();
+    check(`  exit ${code}, root is not to be had here: the account, on its own port`, started.length === 2 && started[1].port === '3000' && !started[1].sudo, JSON.stringify(started.map((s) => [s.port, s.sudo])));
+  }
+  started.length = 0;
+  exitAsRoot = 1;
+  await fresh();
+  const failed = await go();
+  check('anything else is not a reason to give up the sign-ins\' protection: said, and no start as the account', started.length === 1 && started[0].sudo && /exit code 1/.test(failed), `${started.length} starts · ${failed.slice(0, 80)}`);
+  started.length = 0;
+  exitAsRoot = 143;
+  await fresh();
+  await go();
+  check('  stopped from outside is tried once more, as root', started.length === 2 && started.every((s) => s.sudo), JSON.stringify(started.map((s) => [s.port, s.sudo])));
+
+  // SBX-014: a folder of that name is otherwise whatever an ordinary command put there.
+  const adopts = (s) => s.script.includes('OLDPROFILE');
+  exitAsRoot = null;
+  started.length = 0;
+  await fresh();
+  await go();
+  check('a profile in the account\'s folder is not adopted on a machine whose helper never ran as the account', !adopts(started[0]) && started[0].script.includes('mkdir -p profile'));
+  started.length = 0;
+  await fresh({ mode: 'user', url: 'https://3000-sbx-other.e2b.app' });
+  await go();
+  check('  nor because one did on another machine', !adopts(started[0]));
+  started.length = 0;
+  await fresh({ mode: 'user', url: 'https://3000-sbx-port.e2b.app' });
+  await go();
+  check('  only where it did, on this very machine', adopts(started[0]));
+  check('no package\'s own scripts run as part of the install (SBX-014)', /npm install [^\n]*--ignore-scripts/.test(started[0].script) && /npm install [^\n]*--ignore-scripts/.test(cb.startScript('b')));
+  sandboxTesting.useSdk(null);
+  answering.close();
 }
 
 section('a person\'s gestures are checked before they reach the machine');

@@ -1179,8 +1179,24 @@ reader acts on, because they click it.
   nothing ends them.
 - **Never published as fact.** Whatever is still unsourced loses its link (its words stay), and a line at the
   end says what the check did. The screen is updated to the corrected answer, which is also what is stored.
-- Addresses inside code blocks are examples, not citations, and are not checked. `qualityGate: false` in an
-  account's preferences turns it off. See `server/qualityGate.js`.
+- Addresses in code, a block or a span, are examples, not citations, and are not checked. Settings → Capabilities →
+  **Source check** turns it off (`qualityGate`). See `server/qualityGate.js`.
+
+**The figure check** (Settings → Capabilities → **Figure check**, `figureCheck`, off by default) does the same
+for figures after a turn that read the web (search, fetch, research, docs, sports, places):
+
+- Every figure in the answer is looked for in what was read. A figure is two digits or more, a percentage, or a
+  date, outside code, addresses and list numbers. `4,5` and `4.5` count as the same figure, as do `1,234,567`
+  and `1234567`, and `03/11/2026` and `2026-11-03`. Found, it passes with no call.
+- **Not found:** one call (effort `low`) gets the sentences holding those figures and the tool results (at
+  most 24,000 characters). The model may correct the figure from a source or mark it. It may bring in no
+  figure and no address that was not already there.
+- **Still not found:** the figure is marked "(unverified)" / "(chưa kiểm chứng)", and a line at the end says
+  what was done.
+- **Why off by default:** a figure the model worked out from the sources (a sum, a change) is in none of them
+  either, so it is marked too, and so is a date a page writes in words ("15 April 2026"). Names, and figures
+  written as words, are not checked.
+
 ### Free tiers: one allowance per service, shared by everyone
 
 The deployment pays nothing (`server/freeTier.js`). Every metered service has **one** free allowance —
@@ -1895,8 +1911,8 @@ assuming a fresh one, and that the serverless-only branches behave.
 | `THESPORTSDB_KEY` | Your own TheSportsDB key for the scores card. Default is their free test key. |
 | `RESEARCH_REPUTABLE_DOMAINS` | Comma-separated sites deep research counts as reputable, on top of its built-in list. |
 | `SANDBOX_DISABLED` | `1` hides the cloud sandbox. On Vercel it is offered automatically; elsewhere it needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`. |
-| `E2B_API_KEY` | Runs each account's cloud computer on E2B first (`server/e2b.js`), with the Vercel Sandbox standing in when E2B cannot: no key, this month's share of the credit spent, all twenty E2B machines running, or E2B not answering. An E2B machine pauses after ten idle minutes, keeping its memory and disk, and is not billed while paused. Every command runs as root and drops to the account with `setpriv`, because E2B always starts a login shell. Use a Hobby key with no card on the team, so a spent credit is a refusal and never a bill. |
-| `E2B_TEMPLATE` | The E2B template machines are made from. Default `base` (512 MiB — too little for the cloud browser); `npm run e2b:template` builds `synapsez-computer`: 2 vCPU and 2 GiB (or `E2B_TEMPLATE_CPUS` / `E2B_TEMPLATE_MEMORY_MB`), fonts for Vietnamese pages, pandas, matplotlib, openpyxl, python-docx, python-pptx, fpdf2 and the like for `/usr/bin/python3`, and the cloud browser's packages in npm's cache. Set this to that name afterwards. E2B leaves `/usr/local` writable by everyone, so the cloud browser's helper runs as the account there, not as root. `npm run e2b:probe` checks a machine on E2B itself — who commands run as, time limits, background programs, a pause and resume — for about two cents. |
+| `E2B_API_KEY` | Runs each account's cloud computer on E2B first (`server/e2b.js`), with the Vercel Sandbox standing in when E2B cannot: no key, this month's share of the credit spent, all twenty E2B machines running, or E2B not answering. An E2B machine pauses after ten idle minutes, keeping its memory and disk, and is not billed while paused. Every command is sent as root and drops to the account with `setpriv`; none reads a login file, the account's or root's. When the app first meets a machine it closes what E2B leaves open: `/usr/local` becomes root's alone and the account loses its `sudo`, so root is only `as_root`, which asks first. Use a Hobby key with no card on the team, so a spent credit is a refusal and never a bill. |
+| `E2B_TEMPLATE` | The E2B template machines are made from. Default `base` (512 MiB: Chromium does not start there, so the cloud browser needs the template); `npm run e2b:template` builds `synapsez-computer`: 2 vCPU and 2 GiB (or `E2B_TEMPLATE_CPUS` / `E2B_TEMPLATE_MEMORY_MB`), fonts for Vietnamese pages, pandas, matplotlib, openpyxl, python-docx, python-pptx, fpdf2 and the like for `/usr/bin/python3`, and the cloud browser's packages in npm's cache. Set this to that name afterwards. The template also copies the image's node into `/opt/synz-node`, which only root can change, and the cloud browser's helper runs as root, its sign-ins closed to the account's commands. `npm run e2b:probe` checks a machine on E2B itself — who commands run as, what is closed, time limits, background programs, a pause and resume — for about two cents. |
 | `E2B_CREDIT_MILLS` / `E2B_CREDIT_EXPIRES` / `E2B_CREDIT_LASTING_MILLS` | The E2B credit, in thousandths of a dollar: the part that lapses (default `100000`), the day it lapses (default `2027-12-01`), and the part that never does (default `5000`). A month may spend what was left of the lapsing part when it began, divided by the months left before it lapses, so a quiet month passes its share on and none of it lapses unused; then the lasting part. Each is taken at 97%. The use and this month's ceiling are in Settings → People → Free allowances. |
 | `E2B_ACCOUNT_SHARE` | The most of the month's E2B credit one account's machine may use (a fraction, default `0.34`). Past it, that account's cloud computer runs on the Vercel stand-in, so one busy account cannot spend the month for everybody. |
 | `CLOUD_ACTIONS_PER_DAY` / `CLOUD_ACTIONS_TOTAL_PER_DAY` | Cloud browser and sandbox actions a day, per account (default `60`) and in all (default `400`) — sized to Hobby's CPU allowance. Raise them on a paid plan. |

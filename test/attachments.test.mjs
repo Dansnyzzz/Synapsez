@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { removeTemp } from './lib/tmp.mjs';
+import { tinyPdf } from './lib/pdf.mjs';
 
 process.env.ENCRYPTION_KEY ||= 'attach-test-encryption-key';
 process.env.SESSION_SECRET ||= 'attach-test-session-secret';
@@ -426,39 +427,6 @@ section('what each provider is handed');
   check('and one without does not invent one', !('thoughtSignature' in calls[1]), JSON.stringify(calls[1]));
 }
 
-/**
- * A valid one-page PDF, built by hand.
- *
- * A real fixture would be a binary blob in the repository that nobody can read
- * a diff of; this is a few lines of the format itself, and it exercises the
- * same parser. Vietnamese in a subset font — the case that started this — was
- * checked against a Chromium-printed document, which needs a browser and so
- * does not belong in the suite that has to stay fast.
- */
-function tinyPdf(line = 'Hello from a test PDF') {
-  const objects = [
-    '<</Type/Catalog/Pages 2 0 R>>',
-    '<</Type/Pages/Kids[3 0 R]/Count 1>>',
-    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
-    null, // the content stream, built below
-    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
-  ];
-  const stream = `BT /F1 14 Tf 20 120 Td (${line.replace(/([()\\])/g, '\\$1')}) Tj ET`;
-  objects[3] = `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`;
-
-  let pdf = '%PDF-1.4\n';
-  const offsets = [];
-  objects.forEach((body, i) => {
-    offsets.push(pdf.length);
-    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
-  });
-  const startxref = pdf.length;
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
-  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${startxref}\n%%EOF\n`;
-  return Buffer.from(pdf, 'latin1').toString('base64');
-}
-
 section('reading a PDF for a model that cannot be handed one');
 {
   const { extractPdfText } = await import('../server/pdf.js');
@@ -548,6 +516,24 @@ section('a PDF on a model that cannot read one');
     'and Claude gets a document block',
     claude[0].content.some((b) => b.type === 'document' && b.source?.media_type === 'application/pdf'),
   );
+}
+
+section("the words of a PDF sent as a file, for the quality gate (QC-005)");
+{
+  const { pdfTextsOf } = await import('../server/attachments.js');
+  const asFile = { id: 'qc5-a', name: 'guide.pdf', mime: 'application/pdf', kind: 'document', data: tinyPdf('See https://acme-docs.example/setup') };
+  const asText = { id: 'qc5-b', name: 'read.pdf', mime: 'application/pdf', kind: 'document', data: tinyPdf('ignored'), text: { text: 'already sent as text' } };
+  const picture = { id: 'qc5-c', name: 'p.png', mime: 'image/png', kind: 'image', data: 'iVBORw0KGgo=' };
+  const texts = await pdfTextsOf(new Map([[asFile.id, asFile], [asText.id, asText], [picture.id, picture]]));
+  check('a PDF the model was handed as bytes is read', texts.length === 1 && /acme-docs\.example\/setup/.test(texts[0]), JSON.stringify(texts));
+  check('  one already sent as text, and a picture, are not', !texts.some((t) => /already sent as text/.test(t)));
+  check('  and what the model was sent is left as it was', asFile.text === undefined);
+  check('past the turn\'s deadline nothing is read', (await pdfTextsOf(new Map([[asFile.id, { ...asFile, id: 'qc5-d' }]]), { deadline: Date.now() - 1 })).length === 0);
+  // QC-013: a read begun near the deadline runs on for as long as its own limit allows.
+  const { TEXT_MS } = await import('../server/pdf.js');
+  check('  nor when a whole read would not fit before it (QC-013)', (await pdfTextsOf(new Map([[asFile.id, { ...asFile, id: 'qc5-e' }]]), { deadline: Date.now() + TEXT_MS - 1000 })).length === 0);
+  check('  while one that fits is', (await pdfTextsOf(new Map([[asFile.id, { ...asFile, id: 'qc5-f' }]]), { deadline: Date.now() + TEXT_MS + 60_000 })).length === 1);
+  check('no files, no reads', (await pdfTextsOf(null)).length === 0);
 }
 
 // ── the bug this whole section exists for ───────────────────────────

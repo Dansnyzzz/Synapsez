@@ -10,14 +10,19 @@
  *   - fonts for Vietnamese and other accented or non-Latin pages;
  *   - the Python the system prompt points at — data, charts, Word, Excel,
  *     PowerPoint, PDF (fpdf2), web pages — for /usr/bin/python3, the one a
- *     command and the Python session find first. E2B leaves /usr/local
- *     writable by everyone (mode 777 on a running machine, whatever a build
- *     step sets — live probe, 2026-11-02), so shellFor puts it after the
- *     system's folders, and its own python3 is not the one that runs;
- *   - the cloud browser's own packages, fetched once into the account's npm
- *     cache, so its first start unpacks rather than downloads. Not root's:
- *     with node only in that writable /usr/local, the root start finds no
- *     node it can trust and comes up as the account, by design (shellFor).
+ *     command and the Python session find first. Nothing a build step closes
+ *     holds: E2B leaves /usr/local at mode 777 and the account with `sudo` on a
+ *     running machine, whatever is set here (live probe, 2026-11-02). The app
+ *     closes those when it first meets a machine (server/e2b.js `CLOSE_MACHINE`);
+ *   - a node only root can change (SBX-006): the image's own node and npm,
+ *     copied at build time — before anything of the account's has run — into
+ *     /opt/synz-node, owned by root and written by nobody else, which holds
+ *     even on a machine that could not be closed. shellFor uses it when /opt
+ *     and the whole folder are root's, and the cloud browser's helper runs as
+ *     root with it, the sign-ins out of reach;
+ *   - the cloud browser's own packages, fetched once into root's npm cache and
+ *     the account's (the root start falls back to the account's), so a first
+ *     start unpacks rather than downloads.
  *
  * Run it once, then set E2B_TEMPLATE to the name it prints — on Vercel as well
  * as in .env. Running it again rebuilds the same name.
@@ -52,9 +57,21 @@ const memoryMB = Math.max(512, Number(process.env.E2B_TEMPLATE_MEMORY_MB) || 204
 const PYTHON = ['numpy', 'pandas', 'matplotlib', 'openpyxl', 'python-docx', 'python-pptx', 'fpdf2', 'pillow', 'requests', 'beautifulsoup4', 'lxml'];
 
 const { DEPS } = await import('../server/cloudBrowser/index.js');
+const { ROOT_NODE_DIR } = await import('../server/sandbox.js');
 const warm = (folder) =>
   `mkdir -p ${folder} && cd ${folder} && printf '{"private":true}' > package.json && ` +
   `npm install --no-save --no-audit --no-fund --loglevel=error ${DEPS.join(' ')} && cd / && rm -rf ${folder}`;
+
+// The image's node and npm, wherever it keeps them, copied whole: a link would
+// still lead back into /usr/local. One command, so the names set first hold.
+const rootNode = [
+  'NODE="$(readlink -f "$(command -v node)")" && NPM="$(dirname "$NODE")/../lib/node_modules/npm" && test -x "$NODE" && test -f "$NPM/bin/npm-cli.js"',
+  `rm -rf ${ROOT_NODE_DIR} && install -d -m 755 -o root -g root ${ROOT_NODE_DIR} ${ROOT_NODE_DIR}/bin ${ROOT_NODE_DIR}/lib ${ROOT_NODE_DIR}/lib/node_modules`,
+  `cp "$NODE" ${ROOT_NODE_DIR}/bin/node && cp -R "$NPM" ${ROOT_NODE_DIR}/lib/node_modules/npm`,
+  `ln -s ../lib/node_modules/npm/bin/npm-cli.js ${ROOT_NODE_DIR}/bin/npm && ln -s ../lib/node_modules/npm/bin/npx-cli.js ${ROOT_NODE_DIR}/bin/npx`,
+  `chown -R root:root ${ROOT_NODE_DIR} && chmod -R u+rwX,go+rX,go-w ${ROOT_NODE_DIR} && chmod 755 /opt`,
+  `${ROOT_NODE_DIR}/bin/node -v && PATH=${ROOT_NODE_DIR}/bin:/usr/bin:/bin ${ROOT_NODE_DIR}/bin/npm -v`,
+].join(' && ');
 
 const { Template, defaultBuildLogger } = await import('e2b');
 const template = Template()
@@ -65,9 +82,11 @@ const template = Template()
       '/usr/bin/python3 -m pip --version >/dev/null 2>&1 || (apt-get update -q && apt-get install -y -q --no-install-recommends python3-pip)',
       // Debian marks its Python as managed by apt (PEP 668); pip older than that has no such flag.
       `/usr/bin/python3 -m pip install -q --no-cache-dir --break-system-packages ${PYTHON.join(' ')} || /usr/bin/python3 -m pip install -q --no-cache-dir ${PYTHON.join(' ')}`,
+      rootNode,
     ],
     { user: 'root' },
   )
+  .runCmd(`PATH=${ROOT_NODE_DIR}/bin:/usr/bin:/bin && ${warm('/tmp/synz-warm-root')}`, { user: 'root' })
   .runCmd(warm('/tmp/synz-warm-user'), { user: 'user' });
 
 console.log(`\n  Building ${NAME} (${cpuCount} vCPU, ${memoryMB} MiB) from E2B's base…\n`);

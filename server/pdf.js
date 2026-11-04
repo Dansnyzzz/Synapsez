@@ -168,7 +168,7 @@ export async function drawPdfPagesHere(file, { pages = null, max = 8, width = 14
 }
 
 /** How long one PDF's text may take, and how much memory its read may hold (PERF-022). */
-const TEXT_MS = 25_000;
+export const TEXT_MS = 25_000;
 const TEXT_HEAP_MB = 384;
 
 /**

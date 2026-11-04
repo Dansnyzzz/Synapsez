@@ -132,9 +132,18 @@ export const DEFAULT_PREFS = {
    * The quality gate on a finished answer (QC-001, owner 2026-11-02): a web
    * address the conversation does not account for is sent back to the model to
    * correct — that sentence only — and dropped if it is not. Costs a call only
-   * when there is something to correct. See server/qualityGate.js.
+   * when there is something to correct. See server/qualityGate.js. Settings →
+   * Capabilities → Source check (QC-008: until then nothing could set it).
    */
   qualityGate: true,
+  /**
+   * The figure check (QC-002, owner 2026-11-03): after a turn that read the
+   * web, a figure in the answer that nothing read holds is sent back to be
+   * corrected, or marked "(unverified)". Off by default: a figure worked out
+   * from the sources is marked too, and the repair is a call on the person's
+   * model — a choice to make knowingly. Settings → Capabilities → Figure check.
+   */
+  figureCheck: false,
 };
 
 /** How the catalogue is sent: held back when it would crowd the window, or always whole. */
@@ -316,7 +325,7 @@ export async function setPrefs(userId, patch) {
     throw new Error(`"${patch.language}" is not a language this interface has. Use one of: ${[...LANGUAGES].join(', ')}.`);
   }
   if ('onboarded' in patch) next.onboarded = !!patch.onboarded;
-  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'connectorSearch']) if (flag in patch) next[flag] = !!patch[flag];
+  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'connectorSearch', 'qualityGate', 'figureCheck']) if (flag in patch) next[flag] = !!patch[flag];
   if ('retentionDays' in patch) {
     const days = Number(patch.retentionDays);
     if (!RETENTION_DAYS.includes(days)) {

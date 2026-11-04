@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { MAX_ATTACHMENT_BYTES } from './store/pg.js';
-import { extractPdfText } from './pdf.js';
+import { extractPdfText, TEXT_MS } from './pdf.js';
 import { isLegacyOffice, officeFormat, readOffice, readOfficeAsync } from './office/index.js';
 import { log } from './util/trace.js';
 import { groundedImage } from './imageGround.js';
@@ -471,6 +471,36 @@ export async function loadForTranscript(userId, messages, { extractText = false,
     loaded.set(id, row);
   }
   return loaded;
+}
+
+/**
+ * The words of the PDFs a step handed the model as files (QC-005), for the
+ * quality gate.
+ *
+ * A model that reads PDFs itself is sent the bytes, so the file's text is
+ * nowhere in what was sent, and an address the person's own PDF gave looked
+ * invented — the gate removed it and said so. Read only when the gate has
+ * something flagged (the read is a worker and seconds), at most once per file
+ * (`readDocument` remembers), and only when a whole read fits before the turn's
+ * `deadline` (QC-013): one begun near it ran on for its 25 seconds, up against
+ * the end of the function, with the answer still to store. Not by a shorter
+ * limit on the read, whose failure would be remembered as "this PDF cannot be
+ * read" for the next model that needs its words. What the model was sent is not
+ * changed.
+ *
+ * @param {Map<string, any> | null} loaded  what `loadForTranscript` gave that step
+ * @param {{ deadline?: number }} [options]
+ * @returns {Promise<string[]>}
+ */
+export async function pdfTextsOf(loaded, { deadline = Infinity } = {}) {
+  const out = [];
+  for (const row of loaded?.values() || []) {
+    if (row.kind !== 'document' || row.text !== undefined || !row.data) continue;
+    if (Date.now() + TEXT_MS >= deadline) break;
+    const read = await readDocument(row);
+    if (read?.text) out.push(read.text);
+  }
+  return out;
 }
 
 /**

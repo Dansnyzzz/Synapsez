@@ -40,11 +40,11 @@
  * where it can be, the service keeps its code, its profile — the sign-ins — and
  * its key where the account's ordinary commands cannot read them; the Python
  * session runs as the account's ordinary user, with nothing of the service's in
- * its environment. Not a wall: the platform gives the account's user `sudo`
- * without a password, so a command that uses it can still reach them — and
- * `assessRisk` asks the person before any command, Python or file that names
- * `sudo` or the profile runs. That is a pattern list, so it raises the bar
- * rather than closing the door.
+ * its environment. On E2B the account has no `sudo` (server/e2b.js
+ * `CLOSE_MACHINE`). On Vercel it has, without a password, so a command that uses
+ * it can still reach them — and `assessRisk` asks the person before any command,
+ * Python or file that names `sudo` or the profile runs. That is a pattern list,
+ * so there it raises the bar rather than closing the door.
  * Chromium's own telemetry is switched off, and the best-known trackers are
  * unresolvable from this browser, so a page cannot report the person's visit
  * to the usual third parties. Nothing here logs a page, an address or a key.
@@ -65,8 +65,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 /**
  * The key, from a file the start script wrote and this deletes (SEC-061) — or,
- * for a caller that still passes it that way, from the environment. On E2B this
- * runs as the account, and a process's starting environment stays readable at
+ * for a caller that still passes it that way, from the environment. Where this
+ * runs as the account, a process's starting environment stays readable at
  * /proc/<pid>/environ by any program of that account, whatever is later deleted
  * from `process.env`; so the start script hands it over in a file instead.
  */
@@ -1149,7 +1149,7 @@ function startKernel(session) {
   child.on('error', (err) =>
     fail(
       err?.code === 'ENOENT'
-        ? 'Python is not installed on the cloud computer. Install it with sandbox_run, as_root: dnf install -y python3.'
+        ? 'Python is not installed on the cloud computer. Install it with sandbox_run, as_root: apt-get or dnf install -y python3.'
         : `Python could not start: ${firstLine(err)}`,
     ),
   );

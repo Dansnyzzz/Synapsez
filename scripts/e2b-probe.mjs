@@ -43,8 +43,9 @@ const check = (label, pass, detail = '') => {
 const said = async (done) => `${(await done.stdout()).trim()}${(await done.stderr()).trim() ? ` [stderr: ${(await done.stderr()).trim().slice(0, 200)}]` : ''}`;
 
 const { Sandbox } = await import('e2b');
-const { e2bScratch } = await import('../server/e2b.js');
-const { shellFor } = await import('../server/sandbox.js');
+const { e2bScratch, __testing } = await import('../server/e2b.js');
+const { shellFor, ROOT_NODE_DIR, ROOT_BROWSER_PORT } = await import('../server/sandbox.js');
+const { startScript } = await import('../server/cloudBrowser/index.js');
 const template = String(process.env.E2B_TEMPLATE || '').trim() || 'base';
 const machines = [];
 const started = Date.now();
@@ -78,15 +79,71 @@ try {
   check('  (and E2B run plainly as the account would have run them — why every command goes as root)', rawPlanted.stdout.trim() !== 'none', rawPlanted.stdout.trim().replace(/\n/g, ' '));
 
   section('what the template put there');
-  // E2B leaves /usr/local, where node is, writable by everyone; a root start must not run that node.
+  // E2B leaves /usr/local, where the image's node is, writable by everyone; a root start must not run that node.
   const rootNode = await machine.runCommand({ ...shellFor('command -v node || echo none', {}, { root: true }), sudo: true, timeoutMs: 30_000 });
   const local = await machine.runCommand({ ...shellFor('stat -c %a /usr/local/bin'), sudo: true, timeoutMs: 30_000 });
   const writable = /[2367]$/.test((await local.stdout()).trim());
-  check('a root start never runs a node the account could have replaced', !writable || (await rootNode.stdout()).trim() === 'none', `/usr/local/bin ${(await local.stdout()).trim()} · root finds ${(await rootNode.stdout()).trim()}`);
+  const rootFinds = (await rootNode.stdout()).trim();
+  check('a root start never runs a node the account could have replaced', !writable || !rootFinds.startsWith('/usr/local'), `/usr/local/bin ${(await local.stdout()).trim()} · root finds ${rootFinds}`);
+  // SBX-006: the template's own node, which only root can change, so the cloud browser's helper can run as root.
+  check(template === 'base' ? "  root's node (base: the image's, which closing /usr/local made root's)" : "  root's node is the template's own, in a folder only root can change (SBX-006)", template === 'base' ? rootFinds === '/usr/local/bin/node' : rootFinds === `${ROOT_NODE_DIR}/bin/node`, rootFinds);
+  const into = await run(`touch ${ROOT_NODE_DIR}/bin/planted 2>/dev/null && echo wrote || echo refused`);
+  check('  which the account cannot write into', template === 'base' || (await into.stdout()).trim() === 'refused', await said(into));
   const py = await run('python3 -c "import numpy, pandas, matplotlib, openpyxl, docx, pptx, fpdf, PIL, requests, bs4, lxml; print(\'ok\')" 2>&1 | tail -1');
   check(template === 'base' ? 'Python libraries (base: not expected)' : 'the Python the assistant reaches for is already installed', template === 'base' || (await py.stdout()).trim() === 'ok', (await py.stdout()).trim().slice(0, 160));
   const fonts = await run('fc-list 2>/dev/null | grep -ciE "noto|dejavu" || echo 0');
   check(template === 'base' ? 'fonts (base: not expected)' : 'fonts for Vietnamese pages are there', template === 'base' || Number((await fonts.stdout()).trim()) > 0, (await fonts.stdout()).trim());
+
+  section('the machine, closed when the app first meets it (SBX-011)');
+  const closed = await run("/usr/bin/stat -c '%a %U' /usr/local /usr/local/bin /usr/local/bin/node; touch /usr/local/bin/planted 2>/dev/null && echo wrote || echo refused; touch /usr/local/share/planted.pm 2>/dev/null && echo wrote || echo refused; /usr/bin/sudo -n /usr/bin/id -u 2>/dev/null || echo no-sudo; id -nG");
+  const closedSaid = (await closed.stdout()).trim().split('\n');
+  check('/usr/local is root\'s alone, and the account cannot write there', closedSaid.slice(0, 3).every((l) => /^755 root$/.test(l)) && closedSaid[3] === 'refused' && closedSaid[4] === 'refused', closedSaid.slice(0, 5).join(' · '));
+  check('  the account has no sudo', closedSaid[5] === 'no-sudo' && !/\bsudo\b/.test(closedSaid[6]), closedSaid.slice(5).join(' · '));
+  const tools = await run('for t in python3 pip3 node npm; do command -v $t; done; python3 -V; npm config get prefix');
+  const toolsSaid = (await tools.stdout()).trim().split('\n');
+  check("  and what its commands find is as it was: the system's python3, node and npm, npm -g in its own folder", toolsSaid[0] === '/usr/bin/python3' && toolsSaid[2] === '/usr/local/bin/node' && toolsSaid[3] === '/usr/local/bin/npm' && toolsSaid[5] === '/home/user/.local', toolsSaid.join(' · '));
+
+  // SBX-013: the helper's port as root, which an ordinary command must not be able to take first.
+  const lowPort = await run(`node -e "require('net').createServer().on('error',(e)=>{console.log(e.code);process.exit()}).listen(${ROOT_BROWSER_PORT},()=>{console.log('bound');process.exit()})"`);
+  check("  and it cannot open the helper's port", (await lowPort.stdout()).trim() === 'EACCES', (await lowPort.stdout()).trim());
+  // envd answers on the machine itself; without its token it must not act for root.
+  const envd = await run("for u in 'files?path=/etc/shadow&username=root' 'health'; do /usr/bin/curl -s -m 5 -o /dev/null -w '%{http_code} ' \"http://localhost:49983/$u\"; done");
+  check('  nor have the machine\'s own agent read a root file for it', (await envd.stdout()).trim() === '401 204', (await envd.stdout()).trim());
+
+  section('on a machine that could not be closed, what an ordinary command leaves in /usr/local does not run as root (SBX-007..010)');
+  // Opened again as E2B leaves it, and filled by the account. Each writes who ran it, one
+  // log per uid: fs.protected_regular stops root appending to another uid's file in /tmp.
+  const PLANTED = ['id', 'mesg', 'sh', 'dnf', 'stat', 'find', 'readlink', 'bash', 'env', 'setpriv', 'timeout', 'sudo', 'apt-get', 'npm', 'grep', 'sed', 'cat', 'mkdir', 'chmod', 'chown'];
+  const planter = PLANTED.map((name) => `/usr/bin/rm -f /usr/local/bin/${name}; /usr/bin/printf '#!/bin/sh\\necho "$(/usr/bin/id -u) ${name}" >> "/tmp/ran.$(/usr/bin/id -u).log"\\nfor d in /usr/bin /bin /usr/sbin /sbin; do [ -x "$d/${name}" ] && exec "$d/${name}" "$@"; done\\n' > /usr/local/bin/${name}; /usr/bin/chmod 755 /usr/local/bin/${name}`).join('; ');
+  const asRoot = (command, options = {}) => machine.runCommand({ ...shellFor(command, {}, { root: true }), sudo: true, timeoutMs: 30_000, ...options });
+  await asRoot('/usr/bin/chmod -R a+rwX /usr/local');
+  await run(planter);
+  // Root's log only: the read's own /etc/profile runs as nobody, by design.
+  const rootRan = async () => {
+    const log = await asRoot('/usr/bin/sort -u /tmp/ran.0.log 2>/dev/null | /usr/bin/tr "\\n" " "; /usr/bin/rm -f /tmp/ran.*.log');
+    return (await log.stdout()).trim();
+  };
+  await raw.commands.run('true', { user: 'root' });
+  const asLogin = await rootRan();
+  check("  (E2B's own login shell does run them as root — so what they are put there for is real)", /\bid\b/.test(asLogin), asLogin);
+  await run('true');
+  const afterOrdinary = await rootRan();
+  check('an ordinary command runs none of them as root (SBX-008)', afterOrdinary === '', afterOrdinary);
+  await asRoot('true');
+  const afterRoot = await rootRan();
+  check('  nor does a root command (SBX-007, SBX-008, SBX-010)', afterRoot === '', afterRoot);
+  const started = await machine.runCommand({ ...shellFor(startScript(`probe-${Date.now()}`, { root: true }), { SYNZ_SERVICE: Buffer.from('process.exit(0)').toString('base64'), SYNZ_KERNEL: '', SYNZ_KEY: 'probe' }, { root: true }), sudo: true, timeoutMs: 180_000 });
+  const afterStart = await rootRan();
+  // The template's node is root's whatever happens to /usr/local; on base root then trusts no node, and stops before its install.
+  check(template === 'base' ? "  nor does the cloud browser's root start, which finds no node it trusts and stops (SBX-009)" : "  nor does the cloud browser's real root start, its install included (SBX-009)", afterStart === '' && started.exitCode === (template === 'base' ? 127 : 0), `exit ${started.exitCode}${afterStart ? ` · ${afterStart}` : ''}`);
+  // npm is a link in the image, which the planting took the place of.
+  await asRoot(`/usr/bin/rm -f ${PLANTED.map((name) => `/usr/local/bin/${name}`).join(' ')} /tmp/ran.*.log; /usr/bin/ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm`);
+  await asRoot(__testing.CLOSE_MACHINE);
+  // A root command starts in the account's folder.
+  await run("mkdir -p ~/pip && echo 'print(\"planted\")' > ~/pip/__main__.py");
+  const fromHome = await asRoot('/usr/bin/python3 -m pip --version 2>&1');
+  check('a root command imports nothing the account left in the folder it starts in (SBX-012)', !(await fromHome.stdout()).includes('planted'), (await fromHome.stdout()).trim().slice(0, 80));
+  await run('rm -rf ~/pip');
 
   section('time limits, failures, files');
   const t0 = Date.now();
@@ -122,16 +179,19 @@ try {
   section('paused, and resumed with its memory');
   const paused = await Sandbox.create(template, { apiKey: process.env.E2B_API_KEY, timeoutMs: 5 * 60_000, metadata: { app: 'synapsez', role: 'probe' }, lifecycle: { onTimeout: 'pause', autoResume: false } });
   machines.push({ delete: () => paused.kill() });
+  await paused.commands.run(__testing.CLOSE_MACHINE, { user: 'root' });
   await paused.commands.run('echo kept > /home/user/kept.txt; nohup sleep 900 >/dev/null 2>&1 &', { user: 'user' });
   await paused.pause();
   const back = await Sandbox.connect(paused.sandboxId, { apiKey: process.env.E2B_API_KEY, timeoutMs: 60_000 });
   const after = await back.commands.run('cat /home/user/kept.txt; pgrep -x sleep >/dev/null && echo running || echo stopped', { user: 'user' });
   check('its files and its running programs are there after a pause', /kept\s+running/.test(after.stdout), after.stdout.trim().replace(/\n/g, ' '));
+  const stayed = await back.commands.run("/usr/bin/stat -c '%a %U' /usr/local/bin; /usr/bin/sudo -n /usr/bin/id -u 2>/dev/null || echo no-sudo", { user: 'user' });
+  check('  and it comes back closed (SBX-011)', stayed.stdout.trim().replace(/\n/g, ' ') === '755 root no-sudo', stayed.stdout.trim().replace(/\n/g, ' '));
 
   if (process.argv.includes('--browser')) {
     section('Chromium, the way the cloud browser starts it');
     const install = await machine.runCommand({
-      ...shellFor('mkdir -p ~/b && cd ~/b && printf \'{"private":true}\' > package.json && npm install --no-save --no-audit --no-fund --loglevel=error playwright-core@1.63.0 @sparticuz/chromium@153.0.0 2>&1 | tail -3'),
+      ...shellFor('mkdir -p ~/b && cd ~/b && printf \'{"private":true}\' > package.json && npm install --no-save --no-audit --no-fund --ignore-scripts --loglevel=error playwright-core@1.63.0 @sparticuz/chromium@153.0.0 2>&1 | tail -3; exit ${PIPESTATUS[0]}'),
       timeoutMs: 240_000,
     });
     check('its packages install', install.exitCode === 0, await said(install));
@@ -145,7 +205,7 @@ try {
       'await browser.close();',
     ].join('\n');
     await machine.writeFiles([{ path: 'b/launch.mjs', content: Buffer.from(script) }]);
-    const launched = await machine.runCommand({ cmd: 'bash', args: ['--noprofile', '--norc', '-c', 'cd ~/b && node launch.mjs 2>&1 | tail -5'], env: { VERCEL: '1', AWS_LAMBDA_JS_RUNTIME: 'nodejs22.x' }, timeoutMs: 120_000 });
+    const launched = await machine.runCommand({ ...shellFor('cd ~/b && node launch.mjs 2>&1 | tail -5', { VERCEL: '1', AWS_LAMBDA_JS_RUNTIME: 'nodejs22.x' }, { userBin: true }), timeoutMs: 120_000 });
     check('Chromium starts and renders a page', (await launched.stdout()).includes('Tiếng Việt'), await said(launched));
   }
 } catch (err) {

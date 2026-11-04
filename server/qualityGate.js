@@ -22,11 +22,30 @@
  *      link (the words stay), and a line says what the check did — so the
  *      person sees that it ran and what it changed.
  *
- * Addresses inside code blocks are examples, not citations, and are left alone.
+ * Addresses in code, a block or a span, are examples, not citations, and are
+ * left alone.
  */
 
-const URL_RE = /https?:\/\/[^\s<>()[\]"'`]+/g;
+/**
+ * An address in text, and where it ends (QC-017). A table's `|`, curly quotes and
+ * CJK punctuation end it, as does a comma before the next address: read as part of
+ * it, they and the word after them made a true link look invented, and went with
+ * it. Brackets are part of it only when they balance, so `Foo_(planet)` and
+ * `Foo_(other)` are two pages, and the `)` closing a Markdown link is neither. An
+ * apostrophe with a letter after it is part of it, as in `Moore's_law` and
+ * `L'État`; one without is a closing quote. NUL is what `unlink` sets code aside
+ * with. An em dash or an ellipsis stays part of it, as a page's title can hold one.
+ */
+const URL_RE = /https?:\/\/(?:(?!,https?:\/\/)[^\s<>()[\]"'`|“”‘’«»，。；：！？、）】》（【《\0]|'(?=[\p{L}\p{N}_])|\([^\s()]*\))+/gu;
 const FENCE = /^\s{0,3}(```|~~~)/;
+/**
+ * Text as the check reads it, everywhere it reads: NUL is nothing an answer can
+ * keep, the database refuses it, and read one way here and another there an
+ * address holding one was flagged by half and went out whole (QC-023).
+ */
+const withoutNul = (text) => String(text || '').replaceAll('\0', '');
+/** Inline code, an example as a code block is: `curl https://…` was left as `curl `. */
+const CODE_SPAN = /``[^`]*``|`[^`]*`/g;
 /** Tracking parameters that change nothing about which page an address is. */
 const TRACKING = /^(utm_\w+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$/i;
 /**
@@ -34,23 +53,49 @@ const TRACKING = /^(utm_\w+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$/i;
  * `_…_` and `~~…~~` round a link are emphasis, and read as part of it they
  * made a page a search really returned look invented (QC-003).
  */
-const TRAILING = /[.,;:!?)\]}>'"*_~\\]+$/;
+const TRAILING = new Set('.,;:!?]}>\'"*_~\\');
 
-/** An address as compared: no scheme, no `www.`, no fragment or tracking, no trailing slash or punctuation. */
+/** A string without what ends it from `chars`. A loop: a regex for this took 15 s on a long run of dots in a page. */
+function trimEnd(text, chars) {
+  let end = text.length;
+  while (end > 0 && chars.has(text[end - 1])) end -= 1;
+  return text.slice(0, end);
+}
+
+const SLASH = new Set('/');
+
+/** A path's words, however they were encoded: `%e1%bb%87`, `%E1%BB%87` and `ệ` are one letter. */
+function decodedPath(pathname) {
+  const upper = pathname.replace(/%[0-9a-f]{2}/gi, (hex) => hex.toUpperCase());
+  try {
+    return decodeURI(upper).normalize('NFC');
+  } catch {
+    return upper;
+  }
+}
+
+/**
+ * An address as compared: no scheme, no `www.`, no tracking, no fragment unless
+ * it is a route, no trailing slash or punctuation, and however its letters were
+ * encoded. A port makes it another address, the usual one aside. The query
+ * by its decoded values (QC-017): deleting a tracking parameter re-serialises the
+ * rest, which made `?q=a%20b&utm_source=rss` another page from `?q=a%20b`.
+ */
 export function addressKey(url) {
-  const raw = String(url || '').replace(TRAILING, '');
+  const raw = trimEnd(String(url || '').replace(/&amp;/g, '&').normalize('NFC'), TRAILING);
   try {
     const u = new URL(raw);
-    for (const name of [...u.searchParams.keys()]) if (TRACKING.test(name)) u.searchParams.delete(name);
-    const host = u.hostname.toLowerCase().replace(/^www\./, '');
-    const rest = `${u.pathname.replace(/\/+$/, '')}${u.search}`;
-    return `${host}${rest}`;
+    const host = u.host.toLowerCase().replace(/^www\./, '');
+    const query = [...u.searchParams].filter(([name]) => !TRACKING.test(name)).map(([name, value]) => `${name}=${value}`).join('&');
+    // A fragment that is a route, `#/report` or `#!/report`, is a page; any other, and a bare `#/`, is a place on one.
+    const route = /^#!?\/./.test(u.hash) ? trimEnd(u.hash, SLASH) : '';
+    return `${host}${trimEnd(decodedPath(u.pathname), SLASH)}${query ? `?${query}` : ''}${route}`;
   } catch {
     return raw.toLowerCase();
   }
 }
 
-const hostOf = (key) => key.split('/')[0].split('?')[0];
+const hostOf = (key) => key.match(/^[^/?#]*/)[0];
 
 /** The text of a message a reader could have taken an address from. */
 function textsOf(message) {
@@ -64,24 +109,34 @@ function textsOf(message) {
   return out;
 }
 
+/** The fields of a step that reach the model: see `textsIn`. */
+const SENT_FIELDS = /^(system|passages|grounded|outgoing|text|content|parts|results)$/;
+
 /**
  * Every string in what a step sent the model (QC-003): the system prompt with
  * the memory notes and project instructions in it, the transcript with the
  * text of attached files and the project's passages. Stored messages alone
  * missed all of those, so a link the person's own file gave was taken for an
- * invention. A picture's or a document's bytes are not text and are skipped.
+ * invention.
+ *
+ * Only the fields a provider is sent (QC-012): a message's `text`, its parts'
+ * and its results' `content`. A result also keeps what was never shown as
+ * reading — a drawing's markup, which the model wrote itself, so a figure it
+ * drew vouched for the same figure in its answer — and ids and dates of no
+ * meaning. A picture's or a document's bytes are not text either.
  *
  * @param {any} value
  * @returns {string[]}
  */
-export function textsIn(value, out = [], depth = 0) {
+export function textsIn(value, out = [], depth = 0, every = false) {
   if (depth > 12 || value == null) return out;
   if (typeof value === 'string') {
-    if (value.length <= 2_000_000 && value.includes('http')) out.push(value);
+    // Only what could hold an address, unless `every` — the figure check reads all of it (QC-002).
+    if (value.length <= 2_000_000 && (every || value.includes('http'))) out.push(value);
   } else if (Array.isArray(value)) {
-    for (const item of value) textsIn(item, out, depth + 1);
+    for (const item of value) textsIn(item, out, depth + 1, every);
   } else if (typeof value === 'object') {
-    for (const [key, item] of Object.entries(value)) if (!/^(data|base64|bytes|image)$/i.test(key)) textsIn(item, out, depth + 1);
+    for (const [key, item] of Object.entries(value)) if (SENT_FIELDS.test(key)) textsIn(item, out, depth + 1, every);
   }
   return out;
 }
@@ -95,28 +150,56 @@ export function textsIn(value, out = [], depth = 0) {
 export function evidenceOf(messages, sources = []) {
   const keys = new Set();
   const hosts = new Set();
+  /** Each page as it was written, for the repair to cite: a key is decoded, and is not an address to copy. */
+  const spelled = new Map();
   const texts = [...(messages || []).flatMap((m) => textsOf(m)), ...sources];
   for (const text of texts) {
-    for (const url of text.match(URL_RE) || []) {
+    for (const url of withoutNul(text).match(URL_RE) || []) {
       const key = addressKey(url);
       keys.add(key);
       hosts.add(hostOf(key));
+      if (!spelled.has(key)) spelled.set(key, trimEnd(url, TRAILING));
     }
   }
-  return { keys, hosts };
+  return { keys, hosts, spelled };
 }
 
 /** Whether the conversation accounts for an address: the page itself, or — for a bare site address — its site. */
 function accountedFor(url, evidence) {
-  const key = addressKey(url);
-  if (evidence.keys.has(key)) return true;
-  // "https://vnexpress.net" for a site whose pages were read is the site, not an invention.
-  return !key.includes('/') && evidence.hosts.has(hostOf(key));
+  const known = (address) => {
+    const key = addressKey(address);
+    // "https://vnexpress.net" for a site whose pages were read is the site, not an invention. Only
+    // bare: `?p=99999` and `#/report` on that site are pages, and nobody read them (QC-019).
+    return evidence.keys.has(key) || (key === hostOf(key) && evidence.hosts.has(key));
+  };
+  // English's possessive on one that was read: `https://x.example/a's blog` (QC-020). Once.
+  return known(url) || (url.endsWith("'s") && known(url.slice(0, -2)));
+}
+
+/**
+ * The edits in a repair's reply: the JSON from its first `{` to its last `}`, at
+ * most twenty. Null for a reply that will not parse. Found by position: a regex
+ * for this took 2.5 s on a reply of `{`s.
+ *
+ * @param {string} reply
+ * @returns {any[] | null}
+ */
+function editsIn(reply) {
+  const text = String(reply || '');
+  const from = text.indexOf('{');
+  const to = text.lastIndexOf('}');
+  if (from === -1 || to < from) return [];
+  try {
+    const parsed = JSON.parse(text.slice(from, to + 1));
+    return Array.isArray(parsed?.edits) ? parsed.edits.slice(0, 20) : [];
+  } catch {
+    return null;
+  }
 }
 
 /**
  * The addresses in an answer that nothing in the conversation accounts for,
- * once each, outside code blocks.
+ * once each, outside code.
  *
  * @param {string} answer
  * @param {{ keys: Set<string>, hosts: Set<string> }} evidence
@@ -125,14 +208,14 @@ function accountedFor(url, evidence) {
 export function unsourcedLinks(answer, evidence) {
   const found = new Map();
   let fenced = false;
-  for (const line of String(answer || '').split('\n')) {
+  for (const line of withoutNul(answer).split('\n')) {
     if (FENCE.test(line)) {
       fenced = !fenced;
       continue;
     }
     if (fenced) continue;
-    for (const raw of line.match(URL_RE) || []) {
-      const url = raw.replace(TRAILING, '');
+    for (const raw of line.replace(CODE_SPAN, ' ').match(URL_RE) || []) {
+      const url = trimEnd(raw, TRAILING);
       if (!accountedFor(url, evidence) && !found.has(addressKey(url))) found.set(addressKey(url), url);
     }
   }
@@ -149,40 +232,91 @@ export function unsourcedLinks(answer, evidence) {
  * @param {{ keys: Set<string>, hosts: Set<string> }} evidence
  */
 export function applyEdits(answer, reply, flagged, evidence) {
-  let parsed;
-  try {
-    const json = String(reply || '').match(/\{[\s\S]*\}/)?.[0];
-    parsed = json ? JSON.parse(json) : null;
-  } catch {
-    return null;
-  }
-  const edits = Array.isArray(parsed?.edits) ? parsed.edits.slice(0, 20) : [];
+  const edits = editsIn(reply);
+  if (!edits) return null;
+  const keys = new Set(flagged.map(addressKey));
   let text = answer;
   let applied = 0;
+  let cited = 0;
+  let dropped = 0;
   for (const e of edits) {
     const find = typeof e?.find === 'string' ? e.find : '';
     const replace = typeof e?.replace === 'string' ? e.replace : null;
     if (!find || replace == null || find.length > 600) continue;
     // Exactly once, and about a flagged address: an edit cannot reach the parts that were right.
     if (text.indexOf(find) === -1 || text.indexOf(find) !== text.lastIndexOf(find)) continue;
-    if (!flagged.some((url) => find.includes(url))) continue;
+    // The whole address (QC-014): `…/docs/intro` holds `…/docs` as text, and is another page.
+    const about = new Set((find.match(URL_RE) || []).map(addressKey).filter((key) => keys.has(key)));
+    if (!about.size) continue;
     if (unsourcedLinks(replace, evidence).length) continue;
     text = text.replace(find, () => replace);
     applied += 1;
+    // Citing a source read corrects the sentence; keeping only its words takes the links away (QC-011).
+    if (replace.match(URL_RE)) cited += 1;
+    else dropped += about.size;
   }
-  return { text, applied };
+  return { text, applied, cited, dropped };
 }
 
-/** Each address still flagged loses its link, and keeps its words. */
+/**
+ * A link in Markdown, its address taken whole: brackets in it, a title after it,
+ * a picture's `!` before it. Its words may hold brackets, `[Report [PDF]](…)`, but
+ * not a whole link, so a picture inside a link is its own match. Built so that a
+ * line of `[[[[` fails at once at each one, rather than reading on to the end.
+ */
+const MARKDOWN_LINK = /!?\[((?:[^[\]]|\[[^[\]]*\](?!\())*)\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g;
+/**
+ * `[1]: https://… "Title"`, a link's address kept apart from it: flagged, the
+ * line goes, not only the address. Only a title may follow: words after it are
+ * words, and stay when the address goes.
+ */
+const LINK_DEFINITION = /^\s*\[[^\]]+\]:\s*<?(https?:\/\/[^\s>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
+/** An address on its own, with any emphasis opened just before it. */
+const BARE_ADDRESS = new RegExp(`(\\*\\*|__|~~|\\*|_)?<?(${URL_RE.source})>?`, 'gu');
+
+/**
+ * Each address still flagged loses its link, and keeps its words. By the
+ * address as compared, whole (QC-014): matched as text, a flagged `…/docs` also
+ * took the true `…/docs/intro` with it, on every answer the gate touched, while
+ * the same page spelled another way (`www.`, a trailing slash, `utm_source`)
+ * kept its live link. Code is an example, and is left as it is.
+ *
+ * @param {string} answer
+ * @param {string[]} flagged
+ */
 export function unlink(answer, flagged) {
-  let text = answer;
-  for (const url of flagged) {
-    const at = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    text = text
-      .replace(new RegExp(`\\[([^\\]]*)\\]\\(${at}[^)]*\\)`, 'g'), (_m, label) => label)
-      .replace(new RegExp(`<?${at}>?`, 'g'), '');
-  }
-  return text;
+  const keys = new Set(flagged.map(addressKey));
+  // A link's target is taken whole, and may run past where an address in text would stop.
+  const isFlagged = (url) => keys.has(addressKey(url)) || keys.has(addressKey(url.match(URL_RE)?.[0] ?? url));
+  let fenced = false;
+  return withoutNul(answer)
+    .split('\n')
+    .map((line) => {
+      if (FENCE.test(line)) {
+        fenced = !fenced;
+        return line;
+      }
+      if (fenced) return line;
+      const defined = line.match(LINK_DEFINITION);
+      if (defined && isFlagged(defined[1])) return '';
+      // Code is set aside and put back, so nothing in it is touched. NUL marks the place.
+      const code = [];
+      const open = line.replace(CODE_SPAN, (span) => {
+        code.push(span);
+        return `\0${code.length - 1}\0`;
+      });
+      return open
+        .replace(MARKDOWN_LINK, (whole, label, url) => (isFlagged(url) ? label : whole))
+        .replace(BARE_ADDRESS, (whole, mark, url) => {
+          if (!isFlagged(url)) return whole;
+          // The full stop that ended the sentence is not part of the address. Emphasis
+          // closing over nothing goes with what opened it, rather than staying as `****`.
+          const after = url.slice(trimEnd(url, TRAILING).length);
+          return mark && after.startsWith(mark) ? after.slice(mark.length) : `${mark || ''}${after}`;
+        })
+        .replace(/\0(\d+)\0/g, (_m, at) => code[at]);
+    })
+    .join('\n');
 }
 
 /** What the gate says it did, in the account's language. */
@@ -215,18 +349,32 @@ export const repairRounds = (env = process.env) => Math.max(1, Math.min(3, Numbe
  *   answer: string,
  *   messages: any[],
  *   sources?: string[],
+ *   moreSources?: (() => Promise<string[]>) | null,
  *   language?: string,
  *   ask: (system: string, prompt: string) => Promise<string>,
  *   rounds?: number,
- * }} input  `ask` makes a repair call and returns the model's text; `rounds` caps them
+ * }} input  `ask` makes a repair call and returns the model's text; `rounds` caps them.
+ *   `moreSources` is what the model was shown that costs something to read as
+ *   text — a PDF it was handed as a file (QC-005) — asked for once, and only
+ *   when an address is flagged.
  * @returns {Promise<{ text: string, changed: boolean, flagged: string[], fixed: number, removed: number }>}
  */
-export async function checkAnswer({ answer, messages, sources = [], language = 'en', ask, rounds = repairRounds() }) {
-  const evidence = evidenceOf(messages, sources);
-  const flagged = unsourcedLinks(answer, evidence);
+export async function checkAnswer({ answer: written, messages, sources = [], moreSources = null, language = 'en', ask, rounds = repairRounds() }) {
+  const answer = withoutNul(written);
+  let evidence = evidenceOf(messages, sources);
+  let flagged = unsourcedLinks(answer, evidence);
+  if (flagged.length && moreSources) {
+    const more = await Promise.resolve()
+      .then(moreSources)
+      .catch(() => []);
+    if (more?.length) {
+      evidence = evidenceOf(messages, [...sources, ...more]);
+      flagged = unsourcedLinks(answer, evidence);
+    }
+  }
   if (!flagged.length) return { text: answer, changed: false, flagged, fixed: 0, removed: 0 };
 
-  const read = [...evidence.keys].slice(0, 30).map((k) => `- https://${k}`).join('\n') || '- (none)';
+  const read = [...evidence.spelled.values()].slice(0, 30).map((url) => `- ${url}`).join('\n') || '- (none)';
   const promptFor = (text, still) =>
     [
       'Answer:',
@@ -248,6 +396,7 @@ export async function checkAnswer({ answer, messages, sources = [], language = '
 
   let text = answer;
   let fixed = 0;
+  let dropped = 0;
   let still = flagged;
   for (let round = 0; round < rounds && still.length; round += 1) {
     let edited = null;
@@ -258,11 +407,367 @@ export async function checkAnswer({ answer, messages, sources = [], language = '
     }
     if (!edited?.applied) break;
     text = edited.text;
-    fixed += edited.applied;
+    fixed += edited.cited;
+    dropped += edited.dropped;
     still = stillFlagged(text);
   }
   const left = stillFlagged(text);
   if (left.length) text = unlink(text, left);
-  const note = gateNote({ fixed, removed: left.length }, language);
-  return { text: note ? `${text.trimEnd()}\n\n${note}` : text, changed: true, flagged, fixed, removed: left.length };
+  const removed = left.length + dropped;
+  const note = gateNote({ fixed, removed }, language);
+  return { text: note ? `${text.trimEnd()}\n\n${note}` : text, changed: true, flagged, fixed, removed };
+}
+
+/*
+ * The figure check (QC-002, owner 2026-11-03) — off unless `prefs.figureCheck`.
+ *
+ * A figure is the next invention a reader acts on after a link: a price, a
+ * rate, a date. After a turn that read the web, each figure in the answer —
+ * two digits or more, a percentage, a date — is looked for in what was read,
+ * the same way an address is: found, it passes with no call and no model's
+ * opinion; found nowhere, its sentence goes back once to be corrected from a
+ * source or marked "(unverified)", and whatever is still unfound is marked.
+ * A figure worked out from the sources (a sum, a change) is in none of them
+ * either and is marked too: this check cannot tell arithmetic from invention,
+ * which is why it is a choice, not the default. Not checked: names, which no
+ * rule tells from words, and figures written in words ("five").
+ */
+
+/**
+ * A figure in an answer: digits not glued to a word before them (`gpt-5`,
+ * `v1.25`, `H2O` are names) — nor the tail of such a name once its head was
+ * passed over. A colon after a word is punctuation (`Giá:15.000`); after a digit
+ * it is the rest of a time. A space before the percent sign still makes it one.
+ */
+const FIGURE_RE = /(?<![\p{L}\p{N}_]|[\p{L}\p{N}_][.,/-]|\p{N}:)\d+(?:[.,:/-]\d+)*(?:[ \u00A0]?%)?/gu;
+/** Figures in a source, read loosely: `100km` and `12.000đ` hold 100 and 12.000. */
+const SOURCE_FIGURE_RE = /\d+(?:[.,:/-]\d+)*/g;
+/** What marks a figure the check could not find, in the account's language. */
+const unverifiedMark = (language) => (language === 'vi' ? '(chưa kiểm chứng)' : '(unverified)');
+
+/** A date, a time or a range of whole numbers: written with `/`, `:` or `-`, with no decimal in it. */
+const isDateLike = (token) => /[/:-]/.test(token) && !/[.,]/.test(token);
+/** A range: two figures and one dash, `2020-2024`, `0.5-1.0%`, `15,000-20,000`. */
+const RANGE = /^([\d.,]+)-([\d.,]+)\s*%?$/;
+/** A whole number, plain or grouped in thousands: `4500`, `4.500`, `1,234,567`. */
+const WHOLE_NUMBER = /^\d+$|^\d{1,3}(?:[.,]\d{3})+$/;
+/** A decimal, its whole part plain or grouped: `1234.56`, `1,234.56`, `1.234,5`. */
+const GROUPED_DECIMAL = /^(\d+|\d{1,3}(?:[.,]\d{3})+)[.,](\d{1,2})$/;
+const ZERO = new Set('0');
+
+/**
+ * The digit runs of a figure. A date's lose their leading zeros, `03/11/2026`
+ * being 3, 11, 2026. A number's keep them (QC-009): stripped, `0.05%` read as
+ * `0.5%`, `4.05` as `4.5` and `2,050,000` as `2,500` — ten times wrong, passed
+ * as found, which is the very error this check is for.
+ */
+const runsOf = (token) => {
+  const runs = token.match(/\d+/g) || [];
+  return isDateLike(token) ? runs.map((run) => run.replace(/^0+(?=\d)/, '')) : runs;
+};
+
+/**
+ * A number as compared: a decimal's trailing zeros say nothing, so `4.50` is
+ * `4.5` and `100.00` is `100`. Three digits after a lone separator are left as
+ * they are: `4.500` is four thousand five hundred as often as it is four and a half.
+ */
+function numberKey(runs) {
+  const fraction = runs[1];
+  if (runs.length !== 2 || fraction.length === 3 || !fraction.endsWith('0')) return runs.join('.');
+  const kept = fraction.replace(/0+$/, '');
+  return kept ? `${runs[0]}.${kept}` : runs[0];
+}
+
+/**
+ * A date as day, month, year, however it was written, so `03/11/2026` is
+ * `2026-11-03` and is not `11/03/2026`. Sorted, the runs made a swapped day and
+ * month the same date (QC-015). A page in month-first order is therefore marked
+ * when restated day-first: the safe way round.
+ */
+function dateKey(runs) {
+  if (runs.length !== 3) return null;
+  if (runs[0].length === 4) return `d:${runs[2]}.${runs[1]}.${runs[0]}`;
+  return runs[2].length === 4 ? `d:${runs.join('.')}` : null;
+}
+
+/**
+ * The ways one figure can be written and still be the same one: `4,5` and
+ * `4.5`, `1,234,567` and `1234567`, `1,234.56` and `1234.56`, `03/11/2026` and
+ * `2026-11-03`. The digits alone count only for a whole number (QC-015): for
+ * anything else they made `$12.50` the same as `$1,250`, and `10,000` the same as
+ * `$100.00`. A date or a time is kept apart from a decimal (QC-018), or `10:05`
+ * passed on a page saying 10.5%, and `3/11` on 3.11%.
+ */
+function figureKeys(token) {
+  const bare = token.replace(/\s*%$/, '');
+  const runs = runsOf(bare);
+  if (isDateLike(bare)) return [`t:${runs.join('.')}`, dateKey(runs)].filter(Boolean);
+  if (WHOLE_NUMBER.test(bare)) return [numberKey(runs), `n:${runs.join('')}`];
+  const decimal = bare.match(GROUPED_DECIMAL);
+  return decimal ? [numberKey(runs), `v:${decimal[1].replace(/\D/g, '')}.${trimEnd(decimal[2], ZERO)}`] : [numberKey(runs)];
+}
+
+/**
+ * Every figure the sources hold, as keys — and, on its own, what a date or a
+ * range holds: each end of `0.5-1.0%`, and the year in `2026-11-03`. Only the
+ * year (QC-018): with every part, a page's date of 2026-11-03 vouched for an
+ * invented "11%", and 12/05/2026 for "12 tỷ".
+ */
+export function figureEvidenceOf(messages, sources = []) {
+  const keys = new Set();
+  const add = (token) => {
+    for (const key of figureKeys(token)) keys.add(key);
+  };
+  for (const text of [...(messages || []).flatMap((m) => textsOf(m)), ...sources]) {
+    for (const token of text.match(SOURCE_FIGURE_RE) || []) {
+      add(token);
+      const range = token.match(RANGE);
+      if (range) {
+        add(range[1]);
+        add(range[2]);
+      } else if (isDateLike(token) && !token.includes(':')) {
+        for (const run of runsOf(token)) if (run.length === 4) add(run);
+      }
+    }
+  }
+  return keys;
+}
+
+/** A figure worth checking: two digits or more, or a percentage. */
+const worthChecking = (token) => token.endsWith('%') || token.replace(/\D/g, '').length >= 2;
+
+/** The line a check ends an answer with: it is about the check, not about the world. */
+const CHECK_NOTE = /^\*(?:Source check|Kiểm tra nguồn|Figure check|Kiểm tra số liệu):/;
+/** A number that only orders what follows: `12.`, `**12.**`, `- 3)`, `> 4.`, and a heading's `## 1.1`. */
+const LIST_NUMBER = /^(\s*(?:>\s*)*(?:[-*+]\s+)?(?:\*\*|__)?)(\d+[.)])(?=(?:\*\*|__)?\s)/;
+const HEADING_NUMBER = /^(\s*(?:>\s*)*#{1,6}\s+(?:\*\*|__)?)(\d+(?:\.\d+)*[.)]?)(?=(?:\*\*|__)?\s)/;
+/** A tag's attributes are markup: `width="640"` says nothing about the world. */
+const HTML_TAG = /<\/?[a-zA-Z][^<>]*>/g;
+/** A currency's code, written onto its figure: it is not a name like `gpt-5`, and `USD1,300` is a price. */
+const CURRENCY_CODE = /\b(?:USD|VND|EUR|GBP|JPY|CNY|KRW|THB|AUD|CAD|SGD)(?=\d)/g;
+/**
+ * What is written onto a figure: the `đ` of `15.000đ`, the `km/h` of `100km/h`,
+ * the rest of `2026-11-03T10:30:00Z`. A mark goes after all of it.
+ */
+const ATTACHED = String.raw`(?:[\p{L}\p{N}_%]|[:.,/-](?=[\p{L}\p{N}]))*`;
+const ATTACHED_UNIT = new RegExp(`^${ATTACHED}`, 'u');
+/** The mark, straight after a figure — what is written onto it and a closing `**` aside. */
+const MARKED_NEXT = new RegExp(`^${ATTACHED}[*_~]*\\s*\\((?:unverified|chưa kiểm chứng)\\)`, 'iu');
+
+/**
+ * Each figure in an answer, where it is, outside code, addresses, footnotes
+ * and numbering — where its mark goes, and whether it already has one.
+ *
+ * Marked means straight after it (QC-010): any "(unverified)" later in the
+ * sentence let every figure before it through, and the source check writes
+ * that word too.
+ *
+ * @param {string} answer
+ * @returns {{ line: number, after: number, token: string, marked: boolean }[]}
+ */
+function figuresIn(answer) {
+  const out = [];
+  let fenced = false;
+  String(answer || '')
+    .split('\n')
+    .forEach((line, n) => {
+      if (FENCE.test(line)) {
+        fenced = !fenced;
+        return;
+      }
+      if (fenced || CHECK_NOTE.test(line)) return;
+      // Blanked rather than cut, so a position here is a position in the line.
+      const blank = (m) => ' '.repeat(m.length);
+      const numberless = (_m, lead, number) => lead + blank(number);
+      const seen = line
+        .replace(URL_RE, blank)
+        .replace(CODE_SPAN, blank)
+        .replace(HTML_TAG, blank)
+        .replace(CURRENCY_CODE, blank)
+        .replace(/\[\^?\d+\]/g, blank)
+        .replace(LIST_NUMBER, numberless)
+        .replace(HEADING_NUMBER, numberless);
+      for (const m of seen.matchAll(FIGURE_RE)) {
+        const token = m[0];
+        if (!worthChecking(token)) continue;
+        const end = m.index + token.length;
+        // Far enough for any unit and mark, and no further: a long line is read once, not once per figure.
+        const rest = line.slice(end, end + 200);
+        out.push({ line: n, after: end + (rest.match(ATTACHED_UNIT)?.[0].length || 0), token, marked: MARKED_NEXT.test(rest) });
+      }
+    });
+  return out;
+}
+
+/**
+ * Whether what was read holds a figure: as written, or a range whose two ends
+ * are both there (`2020-2024`, where the page has "2020–2024"). Only a range: a
+ * date is its parts together, or `15/03/2026` would pass on a page that says
+ * 15 April 2026.
+ */
+function accountedFigure(token, evidence) {
+  const holds = (figure) => figureKeys(figure).some((key) => evidence.has(key));
+  if (holds(token)) return true;
+  const range = token.match(RANGE);
+  return !!range && holds(range[1]) && holds(range[2]);
+}
+
+/**
+ * The figures in an answer that nothing read holds and nothing marks, once each.
+ *
+ * @param {string} answer
+ * @param {Set<string>} evidence  `figureEvidenceOf`
+ * @returns {string[]}
+ */
+export function unsourcedFigures(answer, evidence) {
+  const found = new Set();
+  for (const f of figuresIn(answer)) if (!f.marked && !accountedFigure(f.token, evidence)) found.add(f.token);
+  return [...found];
+}
+
+/**
+ * The model's edits to flagged figures, applied where they are safe: `find`
+ * once in the answer and holding a flagged figure, `replace` bringing no new
+ * unfound figure and no address `find` did not have.
+ */
+export function applyFigureEdits(answer, reply, flagged, evidence) {
+  const edits = editsIn(reply);
+  if (!edits) return null;
+  const unfound = (s) => new Set(figuresIn(s).filter((f) => !accountedFigure(f.token, evidence)).map((f) => f.token));
+  let text = answer;
+  let applied = 0;
+  let corrected = 0;
+  let marked = 0;
+  for (const e of edits) {
+    const find = typeof e?.find === 'string' ? e.find : '';
+    const replace = typeof e?.replace === 'string' ? e.replace : null;
+    if (!find || replace == null || find.length > 600) continue;
+    if (text.indexOf(find) === -1 || text.indexOf(find) !== text.lastIndexOf(find)) continue;
+    if (!flagged.some((token) => find.includes(token))) continue;
+    const before = unfound(find);
+    if ([...unfound(replace)].some((token) => !before.has(token))) continue;
+    const links = new Set(find.match(URL_RE) || []);
+    if ((replace.match(URL_RE) || []).some((url) => !links.has(url))) continue;
+    text = text.replace(find, () => replace);
+    applied += 1;
+    // Corrected means every figure in it is now one that was read; a mark is a mark, whoever wrote it (QC-011).
+    const left = figuresIn(replace).filter((f) => !accountedFigure(f.token, evidence));
+    if (left.length) marked += left.filter((f) => f.marked).length;
+    else corrected += 1;
+  }
+  return { text, applied, corrected, marked };
+}
+
+/** Each unfound, unmarked figure is followed by the mark; nothing else changes. */
+export function markFigures(answer, evidence, language = 'en') {
+  const lines = String(answer || '').split('\n');
+  const marks = figuresIn(answer).filter((f) => !f.marked && !accountedFigure(f.token, evidence));
+  // One mark to a place, for `30%-40%`, whose two figures end there together.
+  const places = new Map();
+  for (const f of marks) places.set(f.line, (places.get(f.line) || new Set()).add(f.after));
+  // Each line put together once: splicing a mark in per figure took 13 s on a long line of them.
+  for (const [n, ats] of places) {
+    const parts = [];
+    let from = 0;
+    for (const at of ats) {
+      parts.push(lines[n].slice(from, at), ` ${unverifiedMark(language)}`);
+      from = at;
+    }
+    lines[n] = [...parts, lines[n].slice(from)].join('');
+  }
+  return { text: lines.join('\n'), marked: marks.length };
+}
+
+/** What the figure check says it did. */
+export function figureNote({ fixed, marked }, language = 'en') {
+  const vi = language === 'vi';
+  const parts = [];
+  if (fixed) parts.push(vi ? `sửa ${fixed} chỗ` : `corrected ${fixed}`);
+  if (marked) parts.push(vi ? `đánh dấu ${marked} số liệu không có trong nguồn đã đọc` : `marked ${marked} figure${marked === 1 ? '' : 's'} not found in any source read`);
+  if (!parts.length) return '';
+  return vi ? `*Kiểm tra số liệu: đã ${parts.join(', ')}.*` : `*Figure check: ${parts.join('; ')}.*`;
+}
+
+const FIGURE_REPAIR_SYSTEM =
+  'You correct one thing in an answer you wrote: figures that are in no source that was read. ' +
+  'Reply with JSON only: {"edits":[{"find":"…","replace":"…"}]}.';
+
+/** The most of the sources the repair call is shown — a bound on what it costs (QC-002). */
+const FIGURE_SOURCE_CHARS = 24_000;
+
+/**
+ * The figure check, run on a finished answer: one repair call at most, and
+ * only when a figure is found nowhere.
+ *
+ * @param {{
+ *   answer: string,
+ *   messages: any[],
+ *   sources?: string[],
+ *   moreSources?: (() => Promise<string[]>) | null,
+ *   language?: string,
+ *   ask: (system: string, prompt: string) => Promise<string>,
+ * }} input  as `checkAnswer`'s; `sources` here is every string shown, not only those holding an address
+ * @returns {Promise<{ text: string, changed: boolean, flagged: string[], fixed: number, marked: number }>}
+ */
+export async function checkFigures({ answer, messages, sources = [], moreSources = null, language = 'en', ask }) {
+  let evidence = figureEvidenceOf(messages, sources);
+  let flagged = unsourcedFigures(answer, evidence);
+  if (flagged.length && moreSources) {
+    const more = await Promise.resolve()
+      .then(moreSources)
+      .catch(() => []);
+    if (more?.length) {
+      evidence = figureEvidenceOf(messages, [...sources, ...more]);
+      flagged = unsourcedFigures(answer, evidence);
+    }
+  }
+  if (!flagged.length) return { text: answer, changed: false, flagged, fixed: 0, marked: 0 };
+
+  // The repair is shown the tool results themselves, newest first, up to FIGURE_SOURCE_CHARS:
+  // what a reader would check the figure against.
+  const results = (messages || [])
+    .flatMap((m) => (m?.results || []).filter((r) => r?.content && !r.isError).map((r) => String(r.content)))
+    .reverse();
+  let room = FIGURE_SOURCE_CHARS;
+  const shown = [];
+  for (const text of results) {
+    if (room <= 0) break;
+    shown.push(text.slice(0, room));
+    room -= text.length;
+  }
+  const prompt = [
+    'Answer:',
+    '<<<',
+    answer,
+    '>>>',
+    '',
+    'These figures are in the answer but in nothing the user gave and no page or result read in this conversation:',
+    ...flagged.slice(0, 20).map((f) => `- ${f}`),
+    '',
+    'What was read:',
+    '<<<',
+    shown.join('\n\n---\n\n') || '(nothing)',
+    '>>>',
+    '',
+    `For each sentence holding one of those figures: correct the figure to what a source above says, or keep it and put "${unverifiedMark(language)}" right after it — a figure worked out from the sources included.`,
+    'Change nothing else. Each "find" is copied exactly from the answer and is at most one sentence.',
+  ].join('\n');
+
+  let text = answer;
+  let fixed = 0;
+  let markedByModel = 0;
+  try {
+    const edited = applyFigureEdits(answer, await ask(FIGURE_REPAIR_SYSTEM, prompt), flagged, evidence);
+    if (edited?.applied) {
+      text = edited.text;
+      fixed = edited.corrected;
+      markedByModel = edited.marked;
+    }
+  } catch {
+    /* the repair is a courtesy; the marks below still hold */
+  }
+  const marks = markFigures(text, evidence, language);
+  const marked = markedByModel + marks.marked;
+  const note = figureNote({ fixed, marked }, language);
+  return { text: note ? `${marks.text.trimEnd()}\n\n${note}` : marks.text, changed: true, flagged, fixed, marked };
 }
