@@ -39,7 +39,7 @@ import { log } from '../util/trace.js';
 import { search, formatResults, searchPlan, readThroughExa, countryOf } from '../search.js';
 import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
-import { normaliseQuestions, answerText, answerSummary } from './askOptions.js';
+import { normaliseQuestions, answerText } from './askOptions.js';
 import {
   MEMORY_KEY, MAX_NOTE_CHARS, memoryScope, readBothScopes, noteName, memoryRefusal, refusalMessage, rankNotes, stampNote,
   withoutGoogleNotes, heldNotesLine,
@@ -456,9 +456,7 @@ async function askOptionsTool(input, { answers }) {
         'Do not retry it; ask in prose instead.',
     );
   }
-  // The person's own reading of what they chose, drawn on their side of the
-  // conversation; the model reads `answerText`.
-  return { content: answerText(questions, answers), answered: answerSummary(questions, answers) };
+  return { content: answerText(questions, answers) };
 }
 
 /* ── A video, as words ───────────────────────────────────────────
