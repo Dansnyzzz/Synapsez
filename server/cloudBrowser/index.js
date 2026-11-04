@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getStore } from '../store/index.js';
 import { saveGenerated } from '../attachments.js';
-import { browserAddress, chargeCloud, machineForUser, shellFor } from '../sandbox.js';
+import { BROWSER_PORT, ROOT_BROWSER_PORT, browserAddress, chargeCloud, machineForUser, portAddress, shellFor } from '../sandbox.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
 import { readCapped } from '../util/safeFetch.js';
 import { untrusted } from '../tools/untrusted.js';
@@ -88,7 +88,9 @@ function service() {
 const installLines = (build) => [
   `if [ "$(cat build 2>/dev/null)" != "${build}" ]; then`,
   '  printf \'{"private":true}\' > package.json',
-  `  npm install --no-save --no-audit --no-fund --loglevel=error ${DEPS.join(' ')} > setup.log 2>&1`,
+  // No package's own scripts (SBX-014): as root they would run as root, the key file
+  // beside them, and none of these needs one.
+  `  npm install --no-save --no-audit --no-fund --ignore-scripts --loglevel=error ${DEPS.join(' ')} > setup.log 2>&1`,
   // Fonts for accented and non-Latin pages, with whichever package manager
   // the image has: dnf and its kin on Vercel's Amazon Linux, apt-get on E2B's
   // Debian. Best effort: a page in a fallback font is still a page. As root,
@@ -107,17 +109,18 @@ const installLines = (build) => [
 /**
  * The script that brings the helper service up, as root or as the account.
  *
- * **As root** (`root: true`, run with the platform's `sudo`) the service, its
- * dependencies and the browser profile live in /opt/synz, owned by root: the
- * profile is readable by nobody else, and nothing the account's own commands
- * can write is ever run by root — so an ordinary command talked into it by a
- * web page can neither read the sign-ins nor plant code the service would run
- * with its key. The platform does give the account's user passwordless `sudo`,
- * so this keeps out the ordinary command, not one that uses sudo: those are
- * graded `sensitive` and asked about first (`assessRisk`).
- * The profile made before this, in the account's folder, moves there once. The
- * Python session is still the account's: the service starts it as the owner of
- * the working folder.
+ * **As root** (`root: true`) the service, its dependencies and the browser
+ * profile live in /opt/synz, owned by root: the profile is readable by nobody
+ * else, and nothing the account's own commands can write is ever run by root —
+ * so an ordinary command talked into it by a web page can neither read the
+ * sign-ins nor plant code the service would run with its key. On E2B the account
+ * has no `sudo` (server/e2b.js `CLOSE_MACHINE`) and the service listens on a port
+ * only root can open (`ROOT_BROWSER_PORT`). Vercel gives the account passwordless
+ * `sudo`, so there this keeps out the ordinary command, not one that uses sudo:
+ * those are graded `sensitive` and asked about first (`assessRisk`).
+ * The profile made before this, in the account's folder, moves there once
+ * (`moveProfile`). The Python session is still the account's: the service starts
+ * it as the owner of the working folder.
  *
  * **As the account** — where the platform will not run it as root — it is what
  * it always was: everything in `.synz-browser` in the working folder, the
@@ -130,9 +133,9 @@ const installLines = (build) => [
  * up in time" on every first start.
  *
  * @param {string} build
- * @param {{ root?: boolean }} [options]
+ * @param {{ root?: boolean, moveProfile?: boolean }} [options]
  */
-export function startScript(build, { root = false } = {}) {
+export function startScript(build, { root = false, moveProfile = true } = {}) {
   const write = [
     'printf %s "$SYNZ_SERVICE" | base64 -d > service.mjs',
     'printf %s "$SYNZ_KERNEL" | base64 -d > kernel.py',
@@ -140,7 +143,7 @@ export function startScript(build, { root = false } = {}) {
      * The key goes over in a file only its owner can read, which the service
      * deletes, and not in node's starting environment (SEC-061, service.mjs
      * `readKey`) — and out of this shell's before anything is installed
-     * (SBX-006): an install runs the packages' own scripts in it.
+     * (SBX-006), so what an install runs does not simply inherit it.
      */
     '( umask 077; printf %s "$SYNZ_KEY" > service.key )',
     'unset SYNZ_KEY',
@@ -181,19 +184,23 @@ export function startScript(build, { root = false } = {}) {
      * `find` to do that, the old profile is dropped and the person signs in
      * again rather than root trusting it.
      */
-    `OLDPROFILE="$WORK/${DIR}/profile"`,
-    'if [ ! -e profile ] && [ -d "$OLDPROFILE" ] && [ ! -L "$OLDPROFILE" ]; then',
-    '  mv "$OLDPROFILE" profile.moving || true',
-    // Checked again once it is here, where the account can no longer swap it:
-    // between the test above and the move it could have become a link, and
-    // `chmod` follows links.
-    '  if [ -L profile.moving ] || [ ! -d profile.moving ]; then rm -f profile.moving; else',
-    // Everything in it, not only the top (SBX-012): a program left running with its
-    // working folder inside keeps its way in through a folder still open to it.
-    '    chmod 700 profile.moving && chown -R root:root profile.moving && chmod -R go-rwx profile.moving',
-    '    if command -v find >/dev/null 2>&1 && find profile.moving -type l -exec rm -f {} +; then mv profile.moving profile; else rm -rf profile.moving; fi',
-    '  fi',
-    'fi',
+    ...(moveProfile
+      ? [
+          `OLDPROFILE="$WORK/${DIR}/profile"`,
+          'if [ ! -e profile ] && [ -d "$OLDPROFILE" ] && [ ! -L "$OLDPROFILE" ]; then',
+          '  mv "$OLDPROFILE" profile.moving || true',
+          // Checked again once it is here, where the account can no longer swap it:
+          // between the test above and the move it could have become a link, and
+          // `chmod` follows links.
+          '  if [ -L profile.moving ] || [ ! -d profile.moving ]; then rm -f profile.moving; else',
+          // Everything in it, not only the top (SBX-012): a program left running with its
+          // working folder inside keeps its way in through a folder still open to it.
+          '    chmod 700 profile.moving && chown -R root:root profile.moving && chmod -R go-rwx profile.moving',
+          '    if command -v find >/dev/null 2>&1 && find profile.moving -type l -exec rm -f {} +; then mv profile.moving profile; else rm -rf profile.moving; fi',
+          '  fi',
+          'fi',
+        ]
+      : []),
     'mkdir -p profile && chmod 700 profile && chown -R root:root profile',
     `export SYNZ_PROFILE=${ROOT_DIR}/profile SYNZ_KERNEL_PATH=${ROOT_DIR}/kernel.py`,
     /*
@@ -289,14 +296,14 @@ async function call(conn, route, body, { timeout = ACT_MS, signal } = {}) {
  * One attempt at starting the service, as root or as the account, and waiting
  * until it answers. A new key every start, so an old token stops working.
  */
-async function startAs(machine, userId, url, mode, { signal, firstTime }) {
+async function startAs(machine, userId, url, mode, { signal, firstTime, port = BROWSER_PORT, moveProfile = true }) {
   const { source, kernel, build } = service();
   const conn = { url, key: key(), build, extendedAt: Date.now(), mode, isolated: false };
   const env = {
     SYNZ_SERVICE: source.toString('base64'),
     SYNZ_KERNEL: kernel.toString('base64'),
     SYNZ_KEY: conn.key,
-    PORT: '3000',
+    PORT: String(port),
     /*
      * Tells @sparticuz/chromium it is on an AL2023-compatible host, so it
      * unpacks the shared libraries Chromium needs (libnss3 and the rest) and
@@ -311,7 +318,7 @@ async function startAs(machine, userId, url, mode, { signal, firstTime }) {
   };
   // No login profile first (HAR-001, shellFor): the service's key is in this environment.
   const command = await machine.runCommand({
-    ...shellFor(startScript(build, { root: mode === 'root' }), env, { root: mode === 'root' }),
+    ...shellFor(startScript(build, { root: mode === 'root', moveProfile }), env, { root: mode === 'root' }),
     sudo: mode === 'root',
     detached: true,
     signal,
@@ -378,6 +385,9 @@ async function startAs(machine, userId, url, mode, { signal, firstTime }) {
   );
 }
 
+/** Exit codes that mean root is not to be had here: the script's own "not root", and no node root can trust. */
+const NO_ROOT_HERE = new Set([3, 127]);
+
 /**
  * Start (or restart) the helper service on the account's machine.
  *
@@ -416,11 +426,33 @@ async function start(userId, { signal } = {}) {
     }
   };
   if (!firstTime && before?.mode === 'user') return asAccount(false);
+  const onE2B = machine.provider === 'e2b';
+  const asRoot = async (on, first) => {
+    const port = onE2B ? ROOT_BROWSER_PORT : BROWSER_PORT;
+    const at = (await portAddress(on, port, { signal })).replace(/\/$/, '');
+    /*
+     * On E2B a profile is adopted only from a helper known to have run as the
+     * account on this very machine (SBX-014). A folder of that name otherwise
+     * is whatever an ordinary command put there, and root's browser would start
+     * up signed in to someone else's account.
+     */
+    const moveProfile = !onE2B || (before?.mode === 'user' && String(before?.url || '').includes(on.sandboxId));
+    return startAs(on, userId, at, 'root', { signal, firstTime: first, port, moveProfile });
+  };
   try {
-    return await startAs(machine, userId, url, 'root', { signal, firstTime });
+    return await asRoot(machine, firstTime);
   } catch (err) {
     if (signal?.aborted || !err?.exited) throw err;
-    return asAccount(true);
+    if (!onE2B || NO_ROOT_HERE.has(err.exitCode)) return asAccount(true);
+    /*
+     * Anything else on E2B is not root being unavailable, and is not a reason to
+     * give up the sign-ins' protection (SBX-013): stopped from outside is tried
+     * once more, as the account's start is, and the rest is said.
+     */
+    if (err.exitCode !== 137 && err.exitCode !== 143) throw err;
+    const again = await machineForUser(userId, { signal });
+    await roomy(again);
+    return asRoot(again, false);
   }
 }
 

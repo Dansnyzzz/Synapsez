@@ -44,7 +44,7 @@ const said = async (done) => `${(await done.stdout()).trim()}${(await done.stder
 
 const { Sandbox } = await import('e2b');
 const { e2bScratch, __testing } = await import('../server/e2b.js');
-const { shellFor, ROOT_NODE_DIR } = await import('../server/sandbox.js');
+const { shellFor, ROOT_NODE_DIR, ROOT_BROWSER_PORT } = await import('../server/sandbox.js');
 const { startScript } = await import('../server/cloudBrowser/index.js');
 const template = String(process.env.E2B_TEMPLATE || '').trim() || 'base';
 const machines = [];
@@ -102,6 +102,13 @@ try {
   const tools = await run('for t in python3 pip3 node npm; do command -v $t; done; python3 -V; npm config get prefix');
   const toolsSaid = (await tools.stdout()).trim().split('\n');
   check("  and what its commands find is as it was: the system's python3, node and npm, npm -g in its own folder", toolsSaid[0] === '/usr/bin/python3' && toolsSaid[2] === '/usr/local/bin/node' && toolsSaid[3] === '/usr/local/bin/npm' && toolsSaid[5] === '/home/user/.local', toolsSaid.join(' · '));
+
+  // SBX-013: the helper's port as root, which an ordinary command must not be able to take first.
+  const lowPort = await run(`node -e "require('net').createServer().on('error',(e)=>{console.log(e.code);process.exit()}).listen(${ROOT_BROWSER_PORT},()=>{console.log('bound');process.exit()})"`);
+  check("  and it cannot open the helper's port", (await lowPort.stdout()).trim() === 'EACCES', (await lowPort.stdout()).trim());
+  // envd answers on the machine itself; without its token it must not act for root.
+  const envd = await run("for u in 'files?path=/etc/shadow&username=root' 'health'; do /usr/bin/curl -s -m 5 -o /dev/null -w '%{http_code} ' \"http://localhost:49983/$u\"; done");
+  check('  nor have the machine\'s own agent read a root file for it', (await envd.stdout()).trim() === '401 204', (await envd.stdout()).trim());
 
   section('on a machine that could not be closed, what an ordinary command leaves in /usr/local does not run as root (SBX-007..010)');
   // Opened again as E2B leaves it, and filled by the account. Each writes who ran it, one

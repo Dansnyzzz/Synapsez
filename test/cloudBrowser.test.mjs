@@ -453,6 +453,83 @@ section('the start script really reaches the service, run under bash');
   }
 }
 
+section('as root on E2B the helper listens where only root can, and only root being unavailable sends it to the account (SBX-013, SBX-014)');
+{
+  const { __testing: sandboxTesting, ROOT_BROWSER_PORT } = await import('../server/sandbox.js');
+  let exitAsRoot = null;
+  // A root start that exits has nothing listening on its port.
+  const answering = http.createServer((req, res) => {
+    if (exitAsRoot != null && req.url.startsWith(`/${ROOT_BROWSER_PORT}`)) {
+      res.statusCode = 503;
+      res.end();
+      return;
+    }
+    res.end('{"ok":true,"isolated":true}');
+  });
+  await new Promise((r) => answering.listen(0, '127.0.0.1', r));
+  const at = `http://127.0.0.1:${answering.address().port}`;
+  const started = [];
+  const machine = {
+    provider: 'e2b',
+    sandboxId: 'sbx-port',
+    domain: (port) => `${at}/${port}`,
+    extendTimeout: async () => {},
+    readFileToBuffer: async () => Buffer.from(''),
+    runCommand: async (command) => {
+      started.push({ port: command.env.PORT, sudo: !!command.sudo, script: command.args[3] });
+      const code = command.sudo ? exitAsRoot : null;
+      return { wait: () => (code == null ? new Promise(() => {}) : Promise.resolve({ exitCode: code })) };
+    },
+  };
+  sandboxTesting.useSdk({ Sandbox: { getOrCreate: async () => machine } });
+  await store.createUser({ id: 'u-port', email: 'port@example.com', passwordHash: 'x', name: 'P', role: 'user' }).catch(() => {});
+  const fresh = (conn = {}) => cb.__testing.saveConnection('u-port', { url: 'http://127.0.0.1:9', key: 'z'.repeat(43), build: 'an older build', extendedAt: 1, mode: 'root', ...conn });
+  const go = () => throws(() => cb.__testing.serviceCall('u-port', '/health', undefined, { timeout: 2000 }));
+
+  check('the port is one only root can open', ROOT_BROWSER_PORT < 1024);
+  await fresh();
+  const up = await go();
+  const conn = await cb.__testing.readConnection('u-port');
+  check('as root on E2B: that port, and the address of that port', up === '' && started[0]?.port === String(ROOT_BROWSER_PORT) && started[0]?.sudo && conn.url.endsWith(`/${ROOT_BROWSER_PORT}`) && conn.mode === 'root', `${up} · ${JSON.stringify(started[0]?.port)} · ${conn.url}`);
+
+  for (const code of [3, 127]) {
+    started.length = 0;
+    exitAsRoot = code;
+    await fresh();
+    await go();
+    check(`  exit ${code}, root is not to be had here: the account, on its own port`, started.length === 2 && started[1].port === '3000' && !started[1].sudo, JSON.stringify(started.map((s) => [s.port, s.sudo])));
+  }
+  started.length = 0;
+  exitAsRoot = 1;
+  await fresh();
+  const failed = await go();
+  check('anything else is not a reason to give up the sign-ins\' protection: said, and no start as the account', started.length === 1 && started[0].sudo && /exit code 1/.test(failed), `${started.length} starts · ${failed.slice(0, 80)}`);
+  started.length = 0;
+  exitAsRoot = 143;
+  await fresh();
+  await go();
+  check('  stopped from outside is tried once more, as root', started.length === 2 && started.every((s) => s.sudo), JSON.stringify(started.map((s) => [s.port, s.sudo])));
+
+  // SBX-014: a folder of that name is otherwise whatever an ordinary command put there.
+  const adopts = (s) => s.script.includes('OLDPROFILE');
+  exitAsRoot = null;
+  started.length = 0;
+  await fresh();
+  await go();
+  check('a profile in the account\'s folder is not adopted on a machine whose helper never ran as the account', !adopts(started[0]) && started[0].script.includes('mkdir -p profile'));
+  started.length = 0;
+  await fresh({ mode: 'user', url: 'https://3000-sbx-other.e2b.app' });
+  await go();
+  check('  nor because one did on another machine', !adopts(started[0]));
+  started.length = 0;
+  await fresh({ mode: 'user', url: 'https://3000-sbx-port.e2b.app' });
+  await go();
+  check('  only where it did, on this very machine', adopts(started[0]));
+  check('no package\'s own scripts run as part of the install (SBX-014)', /npm install [^\n]*--ignore-scripts/.test(started[0].script) && /npm install [^\n]*--ignore-scripts/.test(cb.startScript('b')));
+  sandboxTesting.useSdk(null);
+  answering.close();
+}
+
 section('a person\'s gestures are checked before they reach the machine');
 {
   check('an unknown gesture is refused', cb.cleanInput({ type: 'eval', code: 'x' }) === null);

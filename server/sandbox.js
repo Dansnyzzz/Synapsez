@@ -46,6 +46,13 @@ const DOWNLOAD_BYTES = 10 * 1024 * 1024;
 const SNAPSHOT_DAYS = 30;
 /** The port the cloud browser listens on — see server/cloudBrowser. */
 export const BROWSER_PORT = 3000;
+/**
+ * Where the helper listens when it runs as root on E2B (SBX-013): under 1024,
+ * where only root can open a port. On 3000 an ordinary command could take the
+ * port while the helper rested: the root start then died on it and fell back to
+ * the account, and whatever answered was taken for the helper and handed its key.
+ */
+export const ROOT_BROWSER_PORT = 843;
 /** The port the MCP bridge listens on — see server/mcp/cloud.js. */
 export const MCP_PORT = 3100;
 /** Every port a machine opens, so neither service waits on a reconfigure. */

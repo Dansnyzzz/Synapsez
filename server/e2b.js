@@ -205,10 +205,11 @@ const quote = (word) => `'${String(word).replace(/'/g, `'\\''`)}'`;
 
 /**
  * Where root finds a program it runs as root (SBX-004): folders only root can
- * write. On E2B `/usr/local` is writable by the account whatever the template
- * set (live probe, 2026-11-02), and root's login PATH starts there — so a bare
- * `id` or `timeout` in the line below would be whatever the account last put in
- * `/usr/local/sbin`, run as root before every later command.
+ * write. Until a machine is closed (`CLOSE_MACHINE`), `/usr/local` is writable by
+ * the account whatever the template set (live probe, 2026-11-02), and the usual
+ * root PATH starts there — so a bare `id` or `timeout` in the line below would be
+ * whatever the account last put in `/usr/local/sbin`, run as root before every
+ * later command.
  */
 const ROOT_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
 
@@ -292,10 +293,12 @@ export function withoutLoginShell(box) {
  * account has no sudo (root is `as_root`, which goes through `user: 'root'` and
  * asks the person first), and /etc/inittab, also left open, is closed.
  *
- * What the account's commands find does not change: its PATH keeps the system
+ * What the account's commands find stays as it was: its PATH keeps the system
  * first, so /usr/bin/python3 with its libraries still comes before the other
  * python3 in /usr/local/bin, which being closed would otherwise have put first;
- * and `npm install -g` goes to ~/.local, which is on that PATH.
+ * and `npm install -g` goes to ~/.local, which is on that PATH — last, so a
+ * newer `npm` installed that way does not shadow the image's, and the MCP
+ * bridge, which runs without that folder, finds such a program only by `npx`.
  *
  * Holds through a pause and a resume (live, 2026-11-03). Takes about two seconds.
  * A program left in /usr/local before this is not found out: this closes the door

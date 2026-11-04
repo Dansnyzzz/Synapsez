@@ -1149,7 +1149,7 @@ function startKernel(session) {
   child.on('error', (err) =>
     fail(
       err?.code === 'ENOENT'
-        ? 'Python is not installed on the cloud computer. Install it with sandbox_run, as_root: dnf install -y python3.'
+        ? 'Python is not installed on the cloud computer. Install it with sandbox_run, as_root: apt-get or dnf install -y python3.'
         : `Python could not start: ${firstLine(err)}`,
     ),
   );
