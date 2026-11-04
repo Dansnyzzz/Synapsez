@@ -286,6 +286,8 @@ section('a link taken out whole, and what stays (QC-019)');
 
   const span = await checkAnswer({ answer: 'Call https://bad.example/users/`id` now', messages: [], ask: async () => '{"edits":[]}' });
   check('an address touching inline code goes, and the code stays', span.text.startsWith('Call `id` now') && span.removed === 1, span.text);
+  const split = await checkAnswer({ answer: 'See https://invented.example\u0000/login now', messages: read('https://true.example/a'), ask: async () => '{"edits":[]}' });
+  check('an invented address with NUL in it goes whole, rather than coming back live', !split.text.includes('invented.example') && split.removed === 1, JSON.stringify(split.text));
   for (const at of ['7', '0']) {
     const nul = `a\u0000${at}\u0000 b \`c\` https://bad.example/a`;
     check(`NUL in an answer is not taken for code set aside: position ${at}`, unlink(nul, ['https://bad.example/a']) === `a${at} b \`c\` `, JSON.stringify(unlink(nul, ['https://bad.example/a'])));

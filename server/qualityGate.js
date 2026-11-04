@@ -208,7 +208,8 @@ export function unsourcedLinks(answer, evidence) {
       continue;
     }
     if (fenced) continue;
-    for (const raw of line.replace(CODE_SPAN, ' ').match(URL_RE) || []) {
+    // NUL as `unlink` reads it, gone, or an address with one in it is flagged by half and goes on whole.
+    for (const raw of line.replaceAll('\0', '').replace(CODE_SPAN, ' ').match(URL_RE) || []) {
       const url = trimEnd(raw, TRAILING);
       if (!accountedFor(url, evidence) && !found.has(addressKey(url))) found.set(addressKey(url), url);
     }
