@@ -110,6 +110,8 @@ export function createPages({
   onShowPage = () => {},
   /** A conversation was restored or deleted from the Archive; the sidebar redraws. */
   onChatsChanged = () => {},
+  /** One was deleted, which may be the conversation open behind this shelf. */
+  onChatDeleted = (_id) => {},
 }) {
   const page = $('page');
   const title = $('page-title');
@@ -850,6 +852,7 @@ export function createPages({
       for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-drop-archived]'))) {
         armed(button, t('pages.archive.deleteConfirm'), async () => {
           await api.deleteChat(button.dataset.dropArchived);
+          onChatDeleted(button.dataset.dropArchived);
           onChatsChanged();
           await load();
         });

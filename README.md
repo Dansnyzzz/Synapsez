@@ -2403,6 +2403,7 @@ npm test                      # every fast suite
 npm run gate                  # lint, hook tests, eval, type-check, npm test — what "done" means here
 npm run test:deploy           # just the Vercel paths
 npm run test:ui               # the real app in a real browser: layout, theme, filtering
+npm run test:ui-chat          # just the conversation screen's part of that, about a minute
 npm run onboarding:record     # re-record the getting-started guide's clips (vi + en)
 ```
 

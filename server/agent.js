@@ -1156,7 +1156,7 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         memo.set(seen.key, running);
         running.then((r) => r?.isError && memo.get(seen.key) === running && memo.delete(seen.key)).catch(() => memo.delete(seen.key));
       }
-      const { content, isError, file, widget, shot, schedule, answered, chats } = await running;
+      const { content, isError, file, widget, shot, schedule, chats } = await running;
       const result = {
         toolCallId: call.id,
         name: call.name,
@@ -1181,9 +1181,6 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         // On the result for the same reason as `file`: the transcript is what
         // a reopened conversation is rebuilt from.
         ...(schedule ? { schedule } : {}),
-        // A question card's answer as the person would say it, drawn as their
-        // own bubble — live and when the conversation is reopened.
-        ...(answered ? { answered } : {}),
         // The conversations search_chats found, as the screen lists them —
         // stored with the result so a reopened conversation lists them again.
         ...(chats?.length ? { chats } : {}),

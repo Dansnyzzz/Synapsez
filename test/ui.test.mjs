@@ -8570,27 +8570,6 @@ section('a setup form asks everything at once, with one button');
   check('a confirm step shows what will be set up, not active yet', out.preview?.name === 'AI Intelligence Daily' && out.preview?.badge === 'Chưa kích hoạt', JSON.stringify(out.preview));
 }
 
-section("an answer reads back as the person's own bubble");
-{
-  const out = await page.evaluate(async () => {
-    const { assistantMessage } = await import('/js/render.js');
-    const turn = assistantMessage();
-    document.body.append(turn.node);
-    turn.startTool({ id: 'a1', name: 'ask_options', input: { questions: [{ question: 'Tần suất?', options: [{ label: 'Hằng ngày' }] }] } }).complete({
-      content: 'The user answered:\n\nQ: Tần suất?\nA: "Hằng ngày"\n\nCarry on with what they chose. Do not ask this again.',
-      ms: 2,
-      answered: 'Tần suất: Hằng ngày\nEmail: an@example.com',
-    });
-    const text = turn.node.querySelector('.answerbubble')?.textContent || '';
-    const elsewhere = turn.node.textContent.replace(text, '');
-    turn.node.remove();
-    return { text, noteShown: /The user answered|Carry on with what they chose/.test(elsewhere), callShown: /"question"/.test(elsewhere) };
-  });
-  check('the answer is drawn in the transcript', /Tần suất: Hằng ngày/.test(out.text) && /an@example\.com/.test(out.text), out.text);
-  // TOK-004 (owner, 2026-11-02): the model's copy of the same answer, printed above the bubble, read as a second send.
-  check('  once: the note written for the model, and the questions as JSON, are not shown beside it', !out.noteShown && !out.callShown, JSON.stringify(out));
-}
-
 section('the quality gate\'s correction replaces the answer on screen, and keeps its reasoning (QC-001)');
 {
   const out = await page.evaluate(async () => {

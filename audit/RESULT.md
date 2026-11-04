@@ -67,7 +67,7 @@ Each of these was run with the fix stashed (`git stash push -- <file>`), then wi
 |---|---|---|---|
 | Every-turn system prompt, the connections line + skill-creator's index entry (TOK-003) | 503 characters, ≈127 tokens | **306, ≈77** (−50 a turn, for everyone) | character count ÷ 4 — an estimate; live token counts need a provider key (RSN-001) |
 | A tool's schema in the estimate (TOK-002) | property names not counted | counted | `test/features.test.mjs` |
-| An answered question's result (TOK-004) | shown twice | shown once — **display only**: no extra request ever existed (the answer resumes the paused turn), so this saves no tokens | `test/ui.test.mjs` |
+| An answered question's result (TOK-004) | shown twice | shown once — **display only**: no extra request ever existed (the answer resumes the paused turn), so this saves no tokens. Since 2026-11-04, at the owner's request, that one place is the step's own call and result, and the bubble is gone | `test/ui-chat.test.mjs` |
 | Effort a model refused (PERF-025) | a 400 and a retry on every step | remembered per model, one 400 per process | `test/features.test.mjs` |
 
 ## Ledger reconciliation (Phase 3 step 14)

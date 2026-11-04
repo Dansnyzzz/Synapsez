@@ -17,9 +17,11 @@ import {
   revealInStrip,
   stopNote,
   markdownOf,
-  withLinks,
+  fillBubble,
   sentFiles,
 } from './render.js';
+import { pastedExcerpt, showStoredPasted } from './pasted.js';
+import { newestOnly } from './serial.js';
 import { createModelBrowser } from './models.js';
 import { createScreen } from './screen.js';
 import { createViewer } from './viewer.js';
@@ -830,8 +832,8 @@ async function start() {
   const shouldRun = takeUrlToken('run') === '1';
   if (handoff) {
     try {
-      await openChat(handoff);
-      if (shouldRun) await stream();
+      const opened = await openChat(handoff);
+      if (opened && shouldRun) await stream();
     } catch {
       toast(t('chat.openFailed'), 'error');
     }
@@ -964,7 +966,9 @@ function chatRow(chat, { nested = false } = {}) {
   btn.className = 'chat-item';
   btn.textContent = chat.title || t('chat.untitled');
   btn.title = chat.title || t('chat.untitled');
-  btn.addEventListener('click', () => openChat(chat.id));
+  btn.addEventListener('click', () => {
+    openChat(chat.id).catch((err) => toast(err.message, 'error'));
+  });
 
   if (chat.pinned) {
     const pin = document.createElement('span');
@@ -1445,24 +1449,47 @@ function chatMenuItems(chat, { titleButton = null, onDone = async () => refreshC
     arm: t('action.reallyDelete'),
     run: async () => {
       closeRowMenu();
+      // Home before the server has answered, and the row gone with it: it has been
+      // confirmed twice by now, and a free-tier database can take seconds to reply.
+      if (chat.id === state.chatId) closeSidebar();
+      chatGone(chat.id);
+      for (const row of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.chat-row'))) {
+        if (row.dataset.chat === chat.id) row.remove();
+      }
       try {
         await api.deleteChat(chat.id);
-        if (chat.id === state.chatId) {
-          state.chatId = null;
-          $('messages').innerHTML = '';
-          $('chat-title').textContent = t('nav.newChat');
-          setEmpty(true);
-          hideApproval();
-        }
         await refreshChats();
         toast(t('chat.deleted'), 'ok');
       } catch (err) {
         toast(err.message, 'error');
+        // Not deleted after all: the list says so again.
+        refreshChats().catch(() => {});
       }
     },
   });
 
   return items;
+}
+
+/**
+ * A conversation is going away: nothing may keep working in it or pointing at it.
+ *
+ * Every place that deletes one comes through here. Its run is stopped, because
+ * the model would otherwise go on spending the person's tokens on a conversation
+ * they have just thrown away. If it is the one on screen — or the one still on
+ * its way there — the screen goes home, the same home New chat goes to; a shelf
+ * open over it stays open, because deleting on a shelf is tidying that shelf.
+ */
+function chatGone(id) {
+  if (backTo === id) backTo = null;
+  leftover.delete(id);
+  const run = runs.get(id);
+  if (run) {
+    run.queue.length = 0;
+    run.abort.abort();
+  }
+  if (run || state.chats?.find((c) => c.id === id)?.running) api.stopChat(id).catch(() => {});
+  if (id === state.chatId) startBlankChat(null, { stayOnPage: true });
 }
 
 /**
@@ -2079,22 +2106,178 @@ function followBackground(id, seen) {
   backgroundFollow = setTimeout(tick, BACKGROUND_FOLLOW_MS);
 }
 
-async function openChat(id) {
-  // Leaving an incognito conversation for another is the moment it goes.
+/**
+ * The conversation on its way to the screen.
+ *
+ * Pressing one used to change nothing until its answer came back, so a slow
+ * database looked like a dead click, and pressing another meanwhile left both on
+ * their way: each drew itself as it arrived, and whichever came back *last* won,
+ * however long ago it was pressed (owner, 2026-11-04). So a press now takes the
+ * screen at once, says it is loading, and cancels the one before it. Only the
+ * newest press may draw anything; `newestOpen` is what says which that is, and
+ * aborting is only so the older request stops costing anything.
+ */
+const newestOpen = newestOnly();
+/** @type {AbortController | null} */
+let openingAbort = null;
+/** What was on screen before the loading began, to return to if this never arrives. */
+let backTo = null;
+let backToProject = null;
+
+function setChatLoading(loading) {
+  state.opening = loading;
+  $('chat-loading').hidden = !loading;
+  $('messages').setAttribute('aria-busy', String(loading));
+  // Nothing goes anywhere until there is a conversation on screen to send it to.
+  refreshSendState();
+}
+
+/** Stop waiting for whatever is on its way, and let its answer be dropped when it comes. */
+function stopOpening() {
+  openingAbort?.abort();
+  openingAbort = null;
+  newestOpen();
+  if (state.opening) setChatLoading(false);
+}
+
+/**
+ * Everything on screen that described the conversation being left.
+ *
+ * A conversation is its own context on the server — a new one starts with
+ * nothing behind it — but the interface was still showing the previous one's
+ * numbers: the token count for its last turn, and the plan it was working
+ * through. Both only changed once a new turn produced new ones, so a fresh
+ * chat looked like a continuation of the old one until you sent something,
+ * which is a reasonable thing to conclude from what was on the screen and
+ * completely wrong.
+ */
+function clearConversationView() {
+  state.files = [];
+  state.transcript = [];
+  state.liveTools = [];
+  state.sentFiles = [];
+  state.sentTexts = [];
+  closeToolPane();
+  renderContext(null);
+  renderFilesChip();
+  renderRail();
+  // The header describes the conversation, and this is a different one — so the
+  // breadcrumb has to let go of the last conversation's project, or a blank
+  // chat keeps claiming to be filed under whatever you were just reading.
+  renderTopbar();
+  // The composer may still be showing the last one's queue.
+  renderQueue();
+  renderUsage({ input: 0, output: 0, cost: 0, priced: false });
+  renderProgress([]);
+  resetDetailAutoOpen();
+  $('messages').innerHTML = '';
+  $('status-host').innerHTML = '';
+  hideApproval();
+}
+
+/**
+ * The screen taken for `id` before its answer is back: its name, its row, and a
+ * ring turning. On the way back from a failure, where they came from is already
+ * known, and what is on screen is the conversation that failed.
+ */
+function beginOpening(id, restoring) {
+  if (!state.opening && !restoring) {
+    backTo = state.chatId;
+    backToProject = state.pendingProject;
+  }
+  // The incognito one being left is deleted on the way out: there is no returning to it.
+  if (backTo && backTo === state.incognitoChat && backTo !== id) backTo = null;
   leaveIncognito(id);
+  state.chatId = id;
+  state.project = null;
+  state.pendingProject = null;
+  clearConversationView();
+  setStatus(null);
+  setRunning(!!runHere());
+  setEmpty(false);
+  $('chat-title').textContent = state.chats?.find((c) => c.id === id)?.title || t('chat.untitled');
+  for (const row of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.chat-row'))) {
+    row.classList.toggle('is-active', row.dataset.chat === id);
+  }
+  setChatLoading(true);
+}
+
+/** It did not arrive. Back where they were, and said once. */
+async function openFailed(id, replacing, restoring) {
+  openingAbort = null;
+  setChatLoading(false);
+  if (!restoring) toast(t('chat.openFailed'), 'error');
+  // Deleted on another device, most likely: its row should not still be offered.
+  refreshChats().catch(() => {});
+  // The same conversation, refreshing: its messages are all still up.
+  if (!replacing) {
+    const run = runs.get(id);
+    if (run) showStage(run);
+    return false;
+  }
+  const back = restoring ? null : backTo;
+  if (back && back !== id) {
+    await openChat(back, { restoring: true });
+    return false;
+  }
+  startBlankChat(backToProject, { stayOnPage: true });
+  return false;
+}
+
+/**
+ * @param {string} id
+ * @param {{ restoring?: boolean }} [options]  `restoring`: going back after another
+ *   would not open, so one more failure ends at a blank conversation rather than
+ *   going round again.
+ * @returns {Promise<boolean>} whether this conversation is the one that landed:
+ *   false when another press overtook it, or it would not open.
+ */
+async function openChat(id, { restoring = false } = {}) {
+  openingAbort?.abort();
+  const abort = new AbortController();
+  openingAbort = abort;
+  const current = newestOpen();
+  /*
+   * Refreshing the conversation already on screen — a run ending, a move to
+   * another project, its own row pressed again — keeps its messages up. A ring
+   * over a transcript that is about to come back identical is only a flicker.
+   */
+  const replacing = !!state.opening || id !== state.chatId;
+
   clearTimeout(backgroundFollow);
   backgroundFollow = null;
   followingChat = null;
   setComposeMode(null);
   hideRun();
-  closeSidebar();
-  // A conversation replaces whichever shelf was on screen.
-  leavePages();
-  // Files were staged for the conversation you were in, not this one. Carrying
-  // them across would attach a screenshot to a completely unrelated question.
-  clearStaged();
-  clearSkills();
-  const { chat, messages, pendingApproval, pendingQuestion, context, project, files, running, background } = await api.chat(id);
+  // A conversation replaces whichever shelf was on screen — one it was pressed
+  // from, that is. Going back after a failure was nobody's press, and a shelf open
+  // by then was opened after it.
+  if (!restoring) {
+    closeSidebar();
+    leavePages();
+  }
+  if (replacing) {
+    // Files were staged for the conversation you were in, not this one. Carrying
+    // them across would attach a screenshot to a completely unrelated question.
+    // Only then: a refresh is the same conversation, and what is waiting to go
+    // into it should still be waiting when the last turn finishes.
+    clearStaged();
+    clearSkills();
+    beginOpening(id, restoring);
+  } else leaveIncognito(id);
+
+  let answer;
+  try {
+    answer = await api.chat(id, { signal: abort.signal });
+  } catch {
+    if (!current()) return false;
+    return openFailed(id, replacing, restoring);
+  }
+  if (!current()) return false;
+  openingAbort = null;
+  if (state.opening) setChatLoading(false);
+
+  const { chat, messages, pendingApproval, pendingQuestion, context, project, files, running, background } = answer;
   state.chatId = id;
   // Not `chat.model`. There is one model for the whole app, so a conversation
   // opened today runs on whatever is chosen today — the stored value is history
@@ -2228,6 +2411,7 @@ async function openChat(id) {
   resetDetailAutoOpen();
 
   await refreshChats();
+  if (!current()) return false;
   scrollToEnd();
 
   /**
@@ -2286,6 +2470,7 @@ async function openChat(id) {
         /* `stream` reports its own failures; a lost race with another tab is not one */
       });
   }
+  return true;
 }
 
 /**
@@ -2318,19 +2503,21 @@ function setComposeMode(mode) {
 $('composer-mode-clear').addEventListener('click', () => setComposeMode(null));
 
 /**
- * @param {{ keepDraft?: boolean }} [options]  `keepDraft` keeps the files and
- *   skills already picked — a conversation started from a project's page takes
- *   with it what was picked there.
+ * @param {{ keepDraft?: boolean, stayOnPage?: boolean }} [options]  `keepDraft`
+ *   keeps the files and skills already picked — a conversation started from a
+ *   project's page takes with it what was picked there. `stayOnPage` leaves a
+ *   shelf open over it (`chatGone`).
  */
 function startBlankChat(project = null, options = {}) {
-  const { keepDraft = false } = options;
+  const { keepDraft = false, stayOnPage = false } = options;
+  // A conversation pressed a moment ago, still on its way, must not land on this.
+  stopOpening();
   leaveIncognito();
   // Same reason as `openChat`: the run carries on, but its nodes come off the
   // page so they are not sitting in the blank conversation now on screen.
   hideRun();
-  setRunning(false);
   setStatus(null);
-  leavePages();
+  if (!stayOnPage) leavePages();
   if (!keepDraft) {
     clearStaged();
     clearSkills();
@@ -2340,44 +2527,13 @@ function startBlankChat(project = null, options = {}) {
     renderSkillChips();
   }
   state.chatId = null;
+  // After the id has gone: send or stop depends on whose run this is, and asked
+  // before, a blank conversation kept the Stop of the one just left.
+  setRunning(false);
   setComposeMode(null);
   state.pendingProject = project;
   state.project = project;
-  state.files = [];
-  state.transcript = [];
-  state.liveTools = [];
-  state.sentFiles = [];
-  state.sentTexts = [];
-  closeToolPane();
-  renderContext(null);
-  renderFilesChip();
-  renderRail();
-  // The header describes the conversation, and this is a different one — so the
-  // breadcrumb has to let go of the last conversation's project, or a blank
-  // chat keeps claiming to be filed under whatever you were just reading.
-  renderTopbar();
-  // A conversation that does not exist yet cannot have a run, so there is no
-  // queue to draw — but the composer may still be showing the last one's.
-  renderQueue();
-
-  /**
-   * Everything that described the last conversation, cleared.
-   *
-   * A conversation is its own context on the server — a new one starts with
-   * nothing behind it — but the interface was still showing the previous one's
-   * numbers: the token count for its last turn, and the plan it was working
-   * through. Both only changed once a new turn produced new ones, so a fresh
-   * chat looked like a continuation of the old one until you sent something,
-   * which is a reasonable thing to conclude from what was on the screen and
-   * completely wrong.
-   */
-  renderUsage({ input: 0, output: 0, cost: 0, priced: false });
-  renderProgress([]);
-  resetDetailAutoOpen();
-
-  $('messages').innerHTML = '';
-  $('status-host').innerHTML = '';
-  hideApproval();
+  clearConversationView();
   $('chat-title').textContent = project ? t('chat.newIn', { project: project.name }) : t('nav.newChat');
   setEmpty(true);
   // Nothing in the sidebar is selected any more, because what you are looking
@@ -2495,6 +2651,7 @@ function settleAttachments(node, previews, ids) {
           isImage: f.isImage,
           // A PDF's first page is already in hand; a picture reads its stored copy.
           thumb: f.isImage ? null : f.thumb,
+          excerpt: f.excerpt,
         })),
       ),
     );
@@ -2644,6 +2801,7 @@ const pages = createPages({
   onTasksChanged: () => refreshTasks().catch(() => {}),
   // Restored or deleted on the Archive shelf: the sidebar list changes with it.
   onChatsChanged: () => refreshChats().catch(() => {}),
+  onChatDeleted: (id) => chatGone(id),
   // The rail holds one thing at a time, the same rule as a file: open it if it
   // was closed, and let whatever else was in it stand down.
   onPaneOpen: () => {
@@ -2797,6 +2955,14 @@ async function newChatInProject(project, options = {}) {
  * little every time and cost more than the feature is worth.
  */
 $('messages').addEventListener('click', async (event) => {
+  // A long paste opens in its own window, the same one it opened in before it was sent.
+  const pasted = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-pasted]'));
+  if (pasted) {
+    event.preventDefault();
+    showStoredPasted(pasted.dataset.pasted);
+    return;
+  }
+
   /**
    * Anything carrying a file id opens it — a chip, a thumbnail, an Open button.
    *
@@ -2981,7 +3147,6 @@ function beginEdit(message, text) {
   if (message.classList.contains('is-editing')) return;
 
   const bubble = message.querySelector('.bubble');
-  const previous = bubble.innerHTML;
   message.classList.add('is-editing');
 
   const box = document.createElement('textarea');
@@ -3020,7 +3185,7 @@ function beginEdit(message, text) {
 
   const cancel = () => {
     message.classList.remove('is-editing');
-    bubble.innerHTML = previous;
+    fillBubble(bubble, text);
   };
 
   const save = async () => {
@@ -3028,9 +3193,15 @@ function beginEdit(message, text) {
     if (!next) return toast(t('composer.empty'), 'error');
     if (next === text) return cancel();
 
+    // Pinned here. Every await below is a moment in which another conversation can
+    // be pressed, and `state.chatId` then names that one: read afterwards, it
+    // started an unasked-for run there and left this edit unanswered.
+    const chatId = state.chatId;
+    const here = () => state.chatId === chatId;
+
     row.querySelectorAll('button').forEach((b) => (b.disabled = true));
     try {
-      await api.editMessage(state.chatId, id, next);
+      await api.editMessage(chatId, id, next);
     } catch (err) {
       row.querySelectorAll('button').forEach((b) => (b.disabled = false));
       return toast(err.message, 'error');
@@ -3039,30 +3210,28 @@ function beginEdit(message, text) {
     // The server has already dropped what followed; the page has to agree.
     while (message.nextSibling) message.nextSibling.remove();
     message.classList.remove('is-editing');
-    bubble.innerHTML = '';
-    const body = document.createElement('div');
-    body.className = 'bubble__text';
     // The same treatment the bubble had before it was opened for editing.
     // Rebuilt with `textContent`, a rewritten message lost every link in it —
     // and the commonest edit is fixing a typo in the sentence *around* a link,
     // so saving a correction was how you broke the address you had just pasted.
-    body.append(withLinks(next));
-    bubble.append(body);
+    fillBubble(bubble, next);
 
     // The page's picture of the conversation has to lose those turns too: the
     // side panel is drawn from it, and kept the tools, outputs and sources of
     // replies that no longer exist. Re-read from the server, which is the truth.
-    state.liveTools = [];
+    if (here()) state.liveTools = [];
     try {
-      const fresh = await api.chat(state.chatId);
-      state.transcript = fresh.messages || [];
-      state.files = fresh.files || [];
+      const fresh = await api.chat(chatId);
+      if (here()) {
+        state.transcript = fresh.messages || [];
+        state.files = fresh.files || [];
+      }
     } catch {
-      state.transcript = (state.transcript || []).slice(0, Math.max(0, state.transcript.findIndex((m) => m.id === id) + 1));
+      if (here()) state.transcript = (state.transcript || []).slice(0, Math.max(0, state.transcript.findIndex((m) => m.id === id) + 1));
     }
-    renderRail();
+    if (here()) renderRail();
 
-    await stream();
+    await stream(undefined, undefined, { chatId });
   };
 
   row.addEventListener('click', (event) => {
@@ -3092,6 +3261,13 @@ $('composer').addEventListener('submit', async (event) => {
   // failed — must not be silently dropped from a message that claims to have it.
   const ready = staged.filter((f) => f.id);
   if (!text && !ready.length) return;
+  // The conversation on screen is still arriving, and `state.chatId` already names
+  // it. Sending now would be a question nobody can see the context of; what was
+  // typed stays in the box.
+  if (state.opening) {
+    toast(t('chat.stillOpening'));
+    return;
+  }
   // Every key out of today's free requests, on a free model: it would only fail (UX-024).
   const blocked = sendBlockedUntil();
   if (blocked) {
@@ -3112,20 +3288,23 @@ $('composer').addEventListener('submit', async (event) => {
 
   // Held for the optimistic bubble, which needs the local previews: the server
   // copy is not fetchable until it has been sent.
-  const sending = ready.map((f) => ({ name: f.name, preview: f.preview, size: f.size, mime: f.mime, isImage: f.isImage, thumb: f.thumb }));
+  const sending = ready.map((f) => ({ name: f.name, preview: f.preview, size: f.size, mime: f.mime, isImage: f.isImage, thumb: f.thumb, excerpt: f.pastedText == null ? undefined : pastedExcerpt(f.pastedText) }));
   const ids = ready.map((f) => f.id);
   // Picked in the + menu; they go with this message and no further.
   const skills = [...state.pickedSkills];
   // What this session sent, which the transcript only holds after a reload —
   // the citation check must count a file attached a minute ago as given.
   state.sentFiles = [...(state.sentFiles || []), ...sending.map((f) => f.name)];
-  state.sentTexts = [...(state.sentTexts || []), text];
+  state.sentTexts = [...(state.sentTexts || []), text, ...ready.filter((f) => f.pastedText != null).map((f) => f.pastedText)];
 
   input.value = '';
   autosize(input);
   // Detached rather than cleared, so the object URLs survive for the bubble that
-  // is about to use them.
+  // is about to use them. A paste whose upload failed did not go with this message
+  // and stays where it can still be had back; nothing else holds those words.
+  const unsent = staged.filter((f) => f.failed && f.pastedText != null);
   staged.length = 0;
+  staged.push(...unsent);
   renderStaged();
   clearSkills();
   refreshSendState();
@@ -3147,12 +3326,15 @@ $('composer').addEventListener('submit', async (event) => {
    */
   const queueing = runHere();
   if (queueing) {
-    queueing.queue.push({ text, files: sending, ids, skills });
+    queueing.queue.push({ text, files: sending, ids, skills, entries: ready });
     renderQueue();
     scrollToEnd();
     return;
   }
 
+  /** @type {HTMLElement | null} */
+  let node = null;
+  let reached = false;
   try {
     // Where the conversation actually comes into existence: at the first thing
     // anybody says in it, carrying the project it was started under.
@@ -3175,7 +3357,7 @@ $('composer').addEventListener('submit', async (event) => {
       renderIncognito();
     }
     const here = () => state.chatId === chatId;
-    const node = userMessage(text, sending, null, new Date(), skills);
+    node = userMessage(text, sending, null, new Date(), skills);
     if (here()) {
       setEmpty(false);
       $('messages').append(node);
@@ -3186,6 +3368,7 @@ $('composer').addEventListener('submit', async (event) => {
     const intent = state.composeMode;
     setComposeMode(null);
     const { message } = await api.sendMessage(chatId, text, ids, intent, skills);
+    reached = true;
     if (message?.id) node.dataset.messageId = message.id;
     settleAttachments(node, sending, ids);
     await refreshChats();
@@ -3193,9 +3376,37 @@ $('composer').addEventListener('submit', async (event) => {
 
     await stream(undefined, undefined, { chatId });
   } catch (err) {
+    if (!reached) {
+      node?.remove();
+      if (!$('messages').childElementCount) setEmpty(true);
+      giveBack(text, ready);
+    }
     toast(err.message, 'error');
   }
 });
+
+/**
+ * A message that never reached the server goes back where it was written.
+ *
+ * Its bubble is taken down rather than left claiming it was sent, and everything
+ * in it returns: the words before whatever has been typed since, and the files
+ * and cards to the tray. The tray has to be given them because it was emptied on
+ * the way out, and for a long paste it was the only copy of the words there was.
+ */
+function giveBack(text, entries = []) {
+  const missing = entries.filter((entry) => !staged.includes(entry));
+  if (missing.length) {
+    staged.unshift(...missing);
+    renderStaged();
+    renderVisionWarning();
+  }
+  if (text) {
+    const box = /** @type {HTMLTextAreaElement} */ (input);
+    box.value = box.value ? `${text}\n${box.value}` : text;
+    autosize(box);
+  }
+  refreshSendState();
+}
 
 /* ── what is waiting to be sent ─────────────────────────────────── */
 
@@ -3289,13 +3500,15 @@ function renderQueue() {
   }
   for (const button of host.querySelectorAll('[data-now]')) {
     button.addEventListener('click', async () => {
+      if (state.opening) return toast(t('chat.stillOpening'));
       const here = runHere();
+      const chatId = state.chatId;
       const [item] = queueHere().splice(Number(button.dataset.now), 1);
       renderQueue();
       if (!item) return;
       // A line a finished run left behind has no run to join: it starts one.
       if (here) await deliver(item, { interrupting: true, run: here });
-      else if (await deliver(item)) await stream();
+      else if (await deliver(item, { chatId })) await stream(undefined, undefined, { chatId });
     });
   }
 }
@@ -3325,6 +3538,7 @@ async function deliver(item, { interrupting = false, run = null, chatId = null }
     return true;
   } catch (err) {
     node.remove();
+    giveBack(item.text, item.entries);
     if (!run || onScreen(run)) toast(err.message, 'error');
     return false;
   }
@@ -3356,20 +3570,23 @@ let flushing = false;
  * @param chatId the conversation they were typed into.
  */
 async function flushQueue(queue, chatId) {
-  if (flushing || !queue.length || runs.has(chatId) || state.chatId !== chatId) return;
+  // Still arriving counts as not here: the bubble would go into a page about to be
+  // redrawn, past the Send block. `openChat` flushes what is left once it lands.
+  const here = () => state.chatId === chatId && !state.opening;
+  if (flushing || !queue.length || runs.has(chatId) || !here()) return;
   flushing = true;
   try {
     // Re-checked every pass rather than snapshotted: an answer can arrive while
     // this is working, the user can delete a queued line, and a stop mid-drain
     // must leave the rest of the queue alone rather than firing it anyway.
-    while (queue.length && !runs.has(chatId) && state.chatId === chatId) {
+    while (queue.length && !runs.has(chatId) && here()) {
       const [item] = queue.splice(0, 1);
       renderQueue();
       // A message that could not be sent has already told the user why. Carry on
       // to the next rather than stranding the whole queue behind it.
       if (!(await deliver(item, { chatId }))) continue;
       await refreshChats();
-      await stream();
+      await stream(undefined, undefined, { chatId });
     }
   } finally {
     flushing = false;
@@ -4496,13 +4713,7 @@ const yourData = createYourData({
   },
   // As the sidebar's own Delete leaves it: the conversation on screen, if it was this one, gone.
   chatDeleted: async (id) => {
-    if (id === state.chatId) {
-      state.chatId = null;
-      $('messages').innerHTML = '';
-      $('chat-title').textContent = t('nav.newChat');
-      setEmpty(true);
-      hideApproval();
-    }
+    chatGone(id);
     await refreshChats();
   },
 });
@@ -6664,10 +6875,27 @@ function autosize(node) {
    */
   if (!node.value) {
     node.style.height = '';
+    node.style.overflowY = '';
     return;
   }
+  /*
+   * The bar is there only when the words really run past the box's height
+   * (owner, 2026-11-04, screenshots 7 and 8) — and then it is the app's own clear
+   * one, to hold and drag. Decided here rather than left to `overflow: auto`,
+   * which would draw one on a box of two lines: `scrollHeight` is a rounded
+   * integer, so a line that is really 22.5px tall leaves it half a pixel short.
+   * Measured with the bar off, since the bar takes width and more wrapping would
+   * change the answer. Where the words had been scrolled to is put back, because
+   * going through `auto` height throws it away.
+   */
+  const top = node.scrollTop;
+  node.style.overflowY = 'hidden';
   node.style.height = 'auto';
   node.style.height = `${node.scrollHeight}px`;
+  if (node.scrollHeight > node.clientHeight + 1) {
+    node.style.overflowY = 'auto';
+    node.scrollTop = top;
+  }
 }
 
 /**
@@ -6690,7 +6918,23 @@ function fitPlaceholder(running = !!runHere()) {
   const box = /** @type {HTMLTextAreaElement} */ (input);
   if (box.placeholder !== chosen) box.placeholder = chosen;
 }
-if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitPlaceholder()).observe(input);
+/*
+ * The box measured again when it changes shape, and not only on a keystroke. Its
+ * height is what the words took when last typed, and it hides overflow unless they
+ * really spill — so words wrapped past that by a narrower window were clipped with
+ * no bar and no wheel to reach them. Width only, because this sets the height.
+ */
+if (typeof ResizeObserver === 'function') {
+  let measuredWidth = 0;
+  new ResizeObserver(() => {
+    fitPlaceholder();
+    if (input.clientWidth === measuredWidth) return;
+    autosize(input);
+    measuredWidth = input.clientWidth;
+  }).observe(input);
+}
+// `max-height` is in vh, so a shorter window can put them past it with the width unchanged.
+window.addEventListener('resize', () => autosize(input));
 
 /**
  * Until when nothing can be sent, or null (UX-024, owner 2026-11-02): every
@@ -6735,8 +6979,8 @@ function refreshSendState() {
   const showStop = running && !ready;
 
   $('send').hidden = showStop;
-  $('send').classList.toggle('is-ready', ready && !state.compacting && !blocked);
-  $('send').disabled = !ready || !!state.compacting || !!blocked;
+  $('send').classList.toggle('is-ready', ready && !state.compacting && !blocked && !state.opening);
+  $('send').disabled = !ready || !!state.compacting || !!blocked || !!state.opening;
   // Say what pressing it does now, since mid-run it does not send but queue.
   $('send').title = blocked ? t('composer.blockedFree', { when: localMoment(blocked) }) : running ? t('composer.queue') : t('composer.send');
 
@@ -6808,6 +7052,26 @@ thread.addEventListener('scroll', () => {
   lastTop = top;
   paintJump();
 });
+
+/*
+ * Show more is somebody starting to read. A short conversation gains a scrollbar
+ * when a long message opens, and that change in width is one the observer below
+ * answers by following to the end — straight past the message they just opened.
+ * Heard on the way down, before the button acts; let go of the end for this
+ * layout, then ask where they really are.
+ */
+thread.addEventListener(
+  'click',
+  (event) => {
+    if (!(/** @type {Element} */ (event.target).closest('.bubble__more'))) return;
+    pinned = false;
+    requestAnimationFrame(() => {
+      pinned = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 120;
+      paintJump();
+    });
+  },
+  true,
+);
 
 /**
  * Back to the newest message: the round button over the composer, the way

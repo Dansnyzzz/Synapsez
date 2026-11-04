@@ -1,6 +1,44 @@
 {
   "entries": [
     {
+      "version": "1.11.0",
+      "date": "2026-11-04",
+      "new": {
+        "vi": [
+          "Dán đoạn văn dài (từ 4.000 ký tự) sẽ thành một thẻ phía trên ô soạn tin. Bấm vào thẻ để xem toàn bộ, kèm dung lượng và số dòng; bấm bút chì để đưa nội dung về ô soạn và sửa.",
+          "Bấm vào một cuộc trò chuyện sẽ chuyển ngay sang màn hình tải có vòng xoay."
+        ],
+        "en": [
+          "Pasting long text (4,000 characters or more) makes a card above the message box. Press the card to see all of it, with its size and line count; press the pencil to bring it back into the box and edit it.",
+          "Pressing a conversation goes straight to a loading screen with a spinner."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Tin nhắn dài chỉ hiện 8 dòng đầu, có nút Xem thêm và Thu gọn.",
+          "Ô soạn tin có thanh cuộn nền trong suốt, kéo được khi nội dung dài.",
+          "Câu trả lời của bạn cho câu hỏi của trợ lý nằm trong hàng \"Hỏi bạn\": mở ra sẽ thấy lệnh và kết quả, không còn hiện thêm bong bóng tin nhắn."
+        ],
+        "en": [
+          "Long messages show their first 8 lines, with Show more and Show less.",
+          "The message box has a clear scrollbar you can drag when the text is long.",
+          "Your answer to the assistant's question now lives in the question's step: open it to see the call and the result, with no extra message bubble."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Xoá cuộc trò chuyện đang mở sẽ về trang chủ ngay, và cuộc trò chuyện đã xoá không còn hiện lại.",
+          "Bấm liên tiếp nhiều cuộc trò chuyện chỉ mở cuộc được bấm sau cùng, màn hình không còn nhảy qua lại.",
+          "Trong lúc cuộc trò chuyện đang tải, tin nhắn không còn bị gửi nhầm vào cuộc trò chuyện trước đó."
+        ],
+        "en": [
+          "Deleting the open conversation goes home at once, and the deleted conversation no longer comes back.",
+          "Pressing several conversations in a row opens only the last one pressed, with no jumping between them.",
+          "While a conversation is loading, a message can no longer be sent to the previous one by mistake."
+        ]
+      }
+    },
+    {
       "version": "1.10.0",
       "date": "2026-11-04",
       "new": {

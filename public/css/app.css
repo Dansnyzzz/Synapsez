@@ -2278,18 +2278,36 @@ textarea {
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* A question card's answer: the person's words, so on their side and in their
-   bubble, even though it sits inside the assistant's turn. */
-.answerbubble {
-  width: fit-content;
-  max-width: 82%;
-  margin: 12px 0 12px auto;
-  padding: 11px 15px;
-  border-radius: 16px 16px 4px 16px;
-  background: var(--surface-2);
-  white-space: pre-wrap;
-  word-break: break-word;
+/* A long message folded to eight lines (`fillBubble`). The height is in lines so
+   it stays eight at any font size; `1.55em` is the same thing for a browser
+   without the `lh` unit. The fade only once there is something under it. */
+.bubble__text.is-folded {
+  max-height: calc(8 * 1.55em);
+  max-height: calc(8 * 1lh);
+  overflow: hidden;
 }
+.bubble__text.is-folded.is-faded {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5lh), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5lh), transparent);
+}
+.bubble__more {
+  display: block;
+  margin-top: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  /* A drag across the message should copy its words, not this button's. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+.bubble__more[hidden] { display: none; }
+.bubble__more:hover { color: var(--accent); }
+.bubble__more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
 /* Copy and edit: present only while you are pointing at the message.
    The row keeps its height whether or not it is visible — fading in is one
@@ -2405,16 +2423,16 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
   resize: vertical;
   outline: none;
   /* A long message scrolls inside the box, with a thin bar that can be grabbed
-     and dragged — hidden, there was no way to see where you were in it. */
+     and dragged — hidden, there was no way to see where you were in it. The app's
+     own bar, which is why the standard properties are fenced off below. */
   max-height: 55vh;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
 }
-.bubble__edit::-webkit-scrollbar { width: 6px; }
-.bubble__edit::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--line); }
-.bubble__edit::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
-.bubble__edit::-webkit-scrollbar-track { background: transparent; }
+.bubble__edit::-webkit-scrollbar-thumb { background-color: var(--text-faint); }
+.bubble__edit::-webkit-scrollbar-thumb:hover { background-color: var(--text-dim); }
+@supports not selector(::-webkit-scrollbar) {
+  .bubble__edit { scrollbar-width: thin; scrollbar-color: var(--text-faint) transparent; }
+}
 .bubble__editrow {
   display: flex;
   justify-content: flex-end;
@@ -3946,17 +3964,18 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
   outline: none;
   font-size: 15px;
   line-height: 1.5;
-  /* No scrollbar in the writing box.
-     Windows draws a classic bar *with arrow buttons* — a little grey stepper
-     that appeared inside the composer and looked like a control you were
-     supposed to press. It showed up on an empty box too: autosize sets the
-     height from `scrollHeight`, which is a rounded integer, so a line that is
-     really 22.5px tall leaves the element believing it overflows by half a
-     pixel. It still scrolls with the wheel and the keyboard when the text is
-     genuinely long; there is simply nothing drawn. */
-  scrollbar-width: none;
+  /* A bar only when the words really run past `max-height`, and `autosize` is what
+     says so: `auto` here would draw one on an empty box, because `scrollHeight` is
+     a rounded integer and a 22.5px line leaves the element half a pixel short. */
+  overflow-y: hidden;
 }
-.composer textarea::-webkit-scrollbar { display: none; }
+/* The app's own clear bar, with no arrows: see the block above `.thread`. A long
+   message is the one place somebody grabs this, so the thumb is easy to find. */
+.composer textarea::-webkit-scrollbar-thumb { background-color: var(--text-faint); }
+.composer textarea::-webkit-scrollbar-thumb:hover { background-color: var(--text-dim); }
+@supports not selector(::-webkit-scrollbar) {
+  .composer textarea { scrollbar-width: thin; scrollbar-color: var(--text-faint) transparent; }
+}
 /* The hint never wraps: an empty box is one straight line, whatever the width.
    `fitPlaceholder` swaps in the short hint when the long one would be cut. */
 .composer textarea:placeholder-shown {
@@ -5392,6 +5411,141 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 }
 .stage__remove:hover { background: var(--danger); color: #0b0e11; }
 .stage:not(:hover):not(:focus-within) .stage__remove { opacity: 0.85; }
+
+/* A long paste (pasted.js): the opening of its words, what it is, and a pencil to
+   have it back in the box. One tile waiting and sent. */
+.stage--pasted {
+  width: 148px;
+  height: 148px;
+}
+.stage--sent.stage--pasted,
+.stage__paste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.stage__paste:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 16px; }
+.stage__excerpt {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.4;
+  /* Cut anywhere, the way a tile this small has to be: a long word or address
+     pushed the rest out of it. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.stage__badge {
+  flex: none;
+  align-self: flex-start;
+  padding: 1px 6px;
+  border: 1px solid var(--glass-line);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.stage__pencil {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.stage__pencil:hover { background: var(--accent-dim, var(--surface-2)); }
+.stage__pencil:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Along the top on this tile: an upload that failed is exactly when the pencil at
+   the foot is wanted, to have the words back, and the strip must not cover it. */
+.stage--pasted .stage__err {
+  inset: 0 0 auto 0;
+  padding-right: 34px;
+}
+
+/* The window that shows the whole of one, as Claude's does. */
+.pasted {
+  width: min(760px, 94vw);
+  height: min(80dvh, 860px);
+}
+.pasted__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 4px;
+}
+.pasted__head h2 { margin: 0; font-size: 17px; }
+.pasted__facts {
+  margin: 0;
+  padding: 0 20px 12px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.pasted__body {
+  flex: 1;
+  min-height: 0;
+  margin: 0 20px 20px;
+  padding: 14px 16px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.pasted__body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* A conversation on its way: a ring in the middle of where it will be. */
+.chat-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  color: var(--text-faint);
+  font-size: 13px;
+  /* Past the quickest answers: a local database replies before this could be
+     read, and a ring blinking for a tenth of a second is only a flicker. */
+  animation: chat-loading-in 0.2s ease 0.12s both;
+}
+.chat-loading[hidden] { display: none; }
+.chat-loading__ring {
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes chat-loading-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* Still a ring, and the words under it say what it means. */
+@media (prefers-reduced-motion: reduce) {
+  .chat-loading,
+  .chat-loading__ring { animation: none; }
+}
 
 /* ── drawing on a picture before it goes ─────────────────────── */
 .sketch {

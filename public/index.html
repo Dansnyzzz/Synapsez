@@ -527,6 +527,12 @@
                their content: a live region has to be in the DOM *before* it
                changes, or assistive technology routinely misses the first
                insertion. -->
+          <!-- A conversation on its way, from the moment it is pressed until its
+               messages are here (`openChat`). -->
+          <div class="chat-loading" id="chat-loading" role="status" hidden>
+            <span class="chat-loading__ring" aria-hidden="true"></span>
+            <span class="chat-loading__words" data-i18n="chat.loading">Loading this conversation…</span>
+          </div>
           <div id="messages" aria-live="polite" aria-relevant="additions text" aria-atomic="false"></div>
           <div id="status-host" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>

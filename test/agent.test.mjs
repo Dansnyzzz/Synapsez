@@ -2187,7 +2187,7 @@ section('the turn-token ceiling reaches the browser too');
  * what counts as a well-formed question, and what the model is told was said.
  * ───────────────────────────────────────────────────────────────── */
 
-const { normaliseQuestions, answerText, answerSummary, askLayout } = await import('../server/tools/askOptions.js');
+const { normaliseQuestions, answerText, askLayout } = await import('../server/tools/askOptions.js');
 const { toolsToPreload } = await import('../server/agent.js');
 
 section('what counts as a question worth drawing');
@@ -2259,11 +2259,6 @@ section('what counts as a question worth drawing');
   check('a preview with no title is dropped', !askLayout({ preview: { rows: ['x'] } }, form).preview);
   const given = [{ picks: ['Hằng ngày'], other: '' }, { picks: [], other: 'an@example.com' }];
   check('the model reads the typed value', /"an@example\.com"/.test(answerText(form, given)));
-  check(
-    'and the person sees their answers as they would say them',
-    answerSummary(form, given) === 'Tần suất: Hằng ngày\nEmail nhận: an@example.com',
-    JSON.stringify(answerSummary(form, given)),
-  );
   check(
     'an address that is not one is flagged to the model',
     /does not look like an email/.test(answerText(form, [given[0], { picks: [], other: 'not-an-address' }])),

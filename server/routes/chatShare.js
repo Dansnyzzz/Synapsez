@@ -173,7 +173,6 @@ function publicMessage(m, { placeholder = '', calls = new Map() } = {}) {
               ...(r.file ? { file: r.file } : {}),
               ...(r.widget ? { widget: r.widget } : {}),
               ...(r.shot ? { shot: r.shot } : {}),
-              ...(r.answered ? { answered: r.answered } : {}),
             }
           : { toolCallId: r.toolCallId, name: r.name, content: placeholder, isError: !!r.isError, ms: r.ms, hidden: true };
       }),

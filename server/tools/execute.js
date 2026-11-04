@@ -526,8 +526,6 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           // card with a way into it. The third field this return has had to
           // learn; see the note on `widget` above for what forgetting one costs.
           schedule: result.schedule,
-          // What the person answered on a question card, in their words.
-          answered: result.answered,
           // The conversations search_chats found, listed on screen as "Relevant chats".
           chats: Array.isArray(result.chats) ? result.chats : undefined,
           // A picture of the page the cloud browser is on, kept like a worker's.

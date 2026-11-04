@@ -1713,9 +1713,40 @@ section('tool boxes keep the app\'s own clear scrollbar');
     const at = css.indexOf(`${selector} {`);
     return at < 0 ? '' : css.slice(at, css.indexOf('}', at));
   };
-  for (const selector of ['details.block pre', '.step__out pre', '.mdgallery']) {
+  // The two writing boxes too (owner, 2026-11-04): their bars are for holding and
+  // dragging, and the same property would make those Windows' grey one with arrows.
+  for (const selector of ['details.block pre', '.step__out pre', '.mdgallery', '.composer textarea', '.bubble__edit', '.pasted__body']) {
     check(`${selector} does not opt into the native scrollbar`, !/scrollbar-width/.test(rule(selector)), rule(selector).slice(0, 80));
   }
+  check('the writing box no longer turns its bar off', !/\.composer textarea::-webkit-scrollbar \{ display: none/.test(css));
+}
+
+section('a long paste, as the browser counts it (owner, 2026-11-04)');
+{
+  const { PASTE_CARD_CHARS, isLongPaste, pastedExcerpt, pastedFacts, pastedName, tidyPaste, isPastedName } = await import('../public/js/pasted.js');
+  check('the line is 4,000 characters', PASTE_CARD_CHARS === 4000);
+  check('  one under it stays in the box', !isLongPaste('x'.repeat(3999)));
+  check('  at it, a card', isLongPaste('x'.repeat(4000)));
+  check('  blank lines alone are not worth one', !isLongPaste(' \n'.repeat(4000)));
+  check('Windows line endings are counted the way a text box has them', tidyPaste('a\r\nb\rc\n') === 'a\nb\nc\n', JSON.stringify(tidyPaste('a\r\nb\rc\n')));
+  const facts = pastedFacts('a\nb\nc');
+  check('lines are counted, and bytes rather than characters', /^3 /.test(facts.lines) && pastedFacts('ệ').size === '0.00 KB' && pastedFacts('ệ'.repeat(1024)).size === '3.00 KB', JSON.stringify([facts, pastedFacts('ệ'.repeat(1024))]));
+  check('the excerpt skips leading blank lines, and is short', pastedExcerpt(`\n\n  hello${'x'.repeat(5000)}`).startsWith('hello') && pastedExcerpt('x'.repeat(5000)).length < 300);
+  check('the first is pasted.txt', pastedName([]) === 'pasted.txt');
+  check('the next take the next free number, whatever else is in the tray', pastedName(['photo.png', 'pasted.txt']) === 'pasted-2.txt' && pastedName(['pasted.txt', 'pasted-2.txt', 'pasted-3.txt']) === 'pasted-4.txt' && pastedName(['pasted-2.txt']) === 'pasted.txt');
+  check('every name it gives is one it recognises', ['pasted.txt', 'pasted-2.txt', 'pasted-40.txt'].every(isPastedName));
+  check('and a person\'s own file is not mistaken for one', !isPastedName('pasted notes.txt') && !isPastedName('report.txt'));
+}
+
+section('a question\'s answer has one home (owner, 2026-11-04)');
+{
+  const fs = await import('node:fs');
+  const read = (file) => fs.readFileSync(new URL(file, import.meta.url), 'utf8');
+  const askOptions = await import('../server/tools/askOptions.js');
+  check('nothing writes a second copy for a bubble', !('answerSummary' in askOptions));
+  check('the tool result is not given one', !/\banswered:/.test(read('../server/tools/cloud.js')));
+  check('nothing stores or shares it', !/\.answered\b|\banswered \?/.test(read('../server/agent.js')) && !/\.answered\b/.test(read('../server/routes/chatShare.js')));
+  check('nothing draws it', !/answerbubble|placeAnswer|\.answered\b/.test(read('../public/js/render.js') + read('../public/css/app.css')));
 }
 
 section('a comparison card is read however the model lays it out');

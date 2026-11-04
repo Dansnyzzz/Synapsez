@@ -1,6 +1,7 @@
 import { renderMarkdown, escapeHtml } from './markdown.js';
 import { t, currentLanguage } from './i18n.js';
 import { humanSize, repeatsAs, cronParts, counted, oneDecimal, tookText, clockText } from './format.js';
+import { isPastedName, pastedExcerpt, readPasted } from './pasted.js';
 import { chartFigure } from './chart.js';
 import { richWidget } from './cards.js';
 import { api } from './api.js';
@@ -71,6 +72,9 @@ const MODEL_NOTES = [
   /\n*^Handed [^\n]* to the user — it is in the conversation to open and download\. Its id is [^\n]*; publish_file with that id makes a link to share\.$/m,
   /\n*^\[Read by [^\n]* — look_at with that file_id and a question looks again\.\]$/m,
   /\n*^\[Screenshot of this step: file [^\n]* — look_at with that file_id reads what is on screen\.\]$/m,
+  // What a question's result tells the model to do next (`answerText`).
+  /\n*^Carry on with what they chose\. Do not ask this again\.$/m,
+  /\n*^Carry on with your own best judgement, and do not ask this again — they have already declined once\.$/m,
 ];
 
 export function forDisplay(text) {
@@ -1032,9 +1036,76 @@ function fileFace(tile, name) {
   tile.append(icon, label, kind);
 }
 
+/**
+ * Reading a card's words only once it has stayed on screen.
+ *
+ * Opening a conversation glides from the top to the end, past every card in it.
+ * Reading each as it went by would be one request per card for words nobody
+ * looked at, so a card has to stay in view a moment first.
+ */
+const CARD_SETTLE_MS = 300;
+/** @type {IntersectionObserver | null} */
+let cardWatch = null;
+/** @type {WeakMap<Element, { read: () => void, timer: ReturnType<typeof setTimeout> | null }>} */
+const watchedCards = new WeakMap();
+
+function readWhenSeen(tile, read) {
+  if (typeof IntersectionObserver !== 'function') {
+    read();
+    return;
+  }
+  cardWatch ||= new IntersectionObserver((entries) => {
+    for (const { target, isIntersecting } of entries) {
+      const watched = watchedCards.get(target);
+      if (!watched) continue;
+      clearTimeout(watched.timer);
+      watched.timer = null;
+      if (!isIntersecting) continue;
+      watched.timer = setTimeout(() => {
+        cardWatch.unobserve(target);
+        watchedCards.delete(target);
+        watched.read();
+      }, CARD_SETTLE_MS);
+    }
+  });
+  watchedCards.set(tile, { read, timer: null });
+  cardWatch.observe(tile);
+}
+
+/**
+ * A long paste, on the message it went with: the opening of its words and what it
+ * is. Pressing it shows the whole of it (`showStoredPasted`, wherever the page
+ * listens). `excerpt` is there when this tab has just sent it; after a reload the
+ * words are read back once the card is on screen.
+ */
+function pastedTile(file) {
+  const tile = el(file.id ? 'button' : 'div', 'stage stage--sent stage--pasted');
+  const words = el('span', 'stage__excerpt');
+  words.textContent = file.excerpt || '';
+  const badge = el('span', 'stage__badge');
+  badge.textContent = t('pasted.badge');
+  tile.append(words, badge);
+  if (file.id) {
+    tile.type = 'button';
+    tile.dataset.pasted = file.id;
+    tile.title = t('pasted.view');
+    tile.setAttribute('aria-label', t('pasted.view'));
+    if (!file.excerpt) {
+      readWhenSeen(tile, () => {
+        // The card still says what it is without them, and still opens.
+        readPasted(file.id).then((text) => {
+          words.textContent = pastedExcerpt(text);
+        }).catch(() => {});
+      });
+    }
+  }
+  return tile;
+}
+
 function sentTile(file) {
   const name = file.name || 'file';
   const mime = String(file.mime || '');
+  if (isPastedName(name) && !/^image\//i.test(mime)) return pastedTile(file);
   const isImage = !!file.isImage || /^image\//i.test(mime) || (!!file.preview && !/pdf/i.test(mime));
   const isPdf = /pdf/i.test(mime) || /\.pdf$/i.test(name);
   const tile = el(file.id ? 'button' : 'div', 'stage stage--sent');
@@ -1644,14 +1715,6 @@ function placeScheduleCard(body, schedule) {
   else body.append(card);
 }
 
-/** A question card's answer, drawn as the person's own bubble. */
-function placeAnswer(body, text) {
-  const bubble = el('div', 'answerbubble');
-  bubble.setAttribute('aria-label', t('chat.yourAnswer'));
-  bubble.textContent = text;
-  body.append(bubble);
-}
-
 export function fileCard(file) {
   const card = el('div', 'filecard');
   card.dataset.file = file.id;
@@ -1894,6 +1957,73 @@ export function timeStamp(at) {
 }
 
 /**
+ * A long message: its first eight lines, and a button for the rest (owner,
+ * 2026-11-04, after Claude's).
+ *
+ * Measured rather than counted from the characters: whether something is more
+ * than eight lines depends on how wide the bubble is, and that changes with the
+ * window and the panels beside it. So one observer watches them all, and answers
+ * again whenever a bubble's size changes — which includes the moment one arrives
+ * in the page, since a bubble is built before it is placed.
+ *
+ * All the words stay in the page, only clipped. Copying, editing and a screen
+ * reader get the whole message, and so does anything reading `.bubble__text`.
+ */
+const BUBBLE_LINES = 8;
+/** @type {ResizeObserver | null} */
+let bubbleWatch = null;
+
+function paintBubbleFold(body) {
+  const more = body.nextElementSibling;
+  if (!more?.classList.contains('bubble__more')) return;
+  const style = getComputedStyle(body);
+  const line = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.55;
+  const long = body.scrollHeight > line * BUBBLE_LINES + 1;
+  const open = more.getAttribute('aria-expanded') === 'true';
+  more.hidden = !long;
+  body.classList.toggle('is-faded', long && !open);
+}
+
+/** Put the words in a bubble, folded if they are long. The one way words get in there. */
+export function fillBubble(bubble, text) {
+  bubble.replaceChildren();
+  if (!text) return;
+  const body = el('div', 'bubble__text is-folded');
+  // `textContent` still reads back the message exactly as typed — an anchor
+  // contributes its own text — so copying and editing a bubble are unchanged.
+  body.append(withLinks(text));
+
+  const more = el('button', 'bubble__more');
+  more.type = 'button';
+  more.hidden = true;
+  more.setAttribute('aria-expanded', 'false');
+  more.textContent = t('queue.more');
+  more.addEventListener('click', () => {
+    const open = more.getAttribute('aria-expanded') !== 'true';
+    more.setAttribute('aria-expanded', String(open));
+    more.textContent = t(open ? 'queue.less' : 'queue.more');
+    body.classList.toggle('is-folded', !open);
+    paintBubbleFold(body);
+    if (open) return;
+    // Folding takes away what was above the button. Without this, the message
+    // just read is left somewhere far above the screen.
+    const edge = bubble.closest('.thread')?.getBoundingClientRect().top ?? 0;
+    if (bubble.getBoundingClientRect().top < edge) bubble.scrollIntoView({ block: 'start' });
+  });
+  bubble.append(body, more);
+
+  if (typeof ResizeObserver !== 'function') return;
+  bubbleWatch ||= new ResizeObserver((entries) => {
+    for (const { target } of entries) {
+      // A bubble taken off the page answers once more on its way out. Done with it.
+      if (target.isConnected) paintBubbleFold(target);
+      else bubbleWatch.unobserve(target);
+    }
+  });
+  bubbleWatch.observe(body);
+}
+
+/**
  * @param at  when it was sent; the time is shown beside its copy button.
  * @param skills  the skills picked for it in the + menu, said above the bubble
  *   so a reload shows what the answer was asked to follow.
@@ -1914,13 +2044,7 @@ export function userMessage(text, files = [], id = null, at = null, skills = [])
   }
 
 
-  if (text) {
-    const body = el('div', 'bubble__text');
-    // `textContent` still reads back the message exactly as typed — an anchor
-    // contributes its own text — so copying and editing a bubble are unchanged.
-    body.append(withLinks(text));
-    bubble.append(body);
-  }
+  fillBubble(bubble, text);
 
   // The files above the words, and outside them — see sentFiles.
   if (files.length) wrap.append(sentFiles(files));
@@ -2767,14 +2891,9 @@ export function assistantMessage() {
             if (asked.every((key) => key === 'path' || key === 'url' || key === 'file_id')) foldBody.querySelector(':scope > .tool__call')?.remove();
             foldBody.prepend(pictureBody(entry.picture));
           }
-          // A question's answer is the person's bubble below; the lines the model
-          // reads, and the questions as JSON, are the same answer again (TOK-004).
-          if (result.answered) foldBody.querySelector(':scope > .tool__call')?.remove();
-          else {
-            const printed = el('pre', 'step__output');
-            printed.textContent = workOutput(call, result.content) || t('chat.noOutput');
-            foldBody.append(printed);
-          }
+          const printed = el('pre', 'step__output');
+          printed.textContent = workOutput(call, result.content) || t('chat.noOutput');
+          foldBody.append(printed);
           if (result.ms != null) foldBody.append(el('p', 'step__took', escapeHtml(t('work.took', { time: ms(result.ms) }))));
           // A failure is the one row somebody needs to read; it is open already.
           // A success folds back to its title line — unless it was touched, or
@@ -2792,10 +2911,6 @@ export function assistantMessage() {
           }
           if (result.schedule?.id) {
             placeScheduleCard(body, result.schedule);
-            placed = true;
-          }
-          if (result.answered) {
-            placeAnswer(body, result.answered);
             placed = true;
           }
           if (placed) endRunAt(run);
@@ -2816,25 +2931,21 @@ export function assistantMessage() {
         // Errors are opened, successes are not. A failed step is the one thing
         // in the run somebody needs to read, and making them find and click it
         // is making them work for information the interface already has.
-        // A question's answer is the bubble below, not a second copy in here (TOK-004).
-        if (!result.answered) {
-          const out = el('details', 'step__out');
-          out.open = !!result.isError;
-          out.append(el('summary', null, escapeHtml(t('step.output'))));
-          // The call that produced it, above the result it produced — the same
-          // bargain the standalone cards make: plain words outside, the exact
-          // call and its arguments for whoever opens it.
-          out.append(toolCallDetail(call));
-          const pre = el('pre');
-          pre.textContent = forDisplay(result.content) || t('chat.noOutput');
-          out.append(pre);
-          item.append(out);
-        }
+        const out = el('details', 'step__out');
+        out.open = !!result.isError;
+        out.append(el('summary', null, escapeHtml(t('step.output'))));
+        // The call that produced it, above the result it produced — the same
+        // bargain the standalone cards make: plain words outside, the exact
+        // call and its arguments for whoever opens it.
+        out.append(toolCallDetail(call));
+        const pre = el('pre');
+        pre.textContent = forDisplay(result.content) || t('chat.noOutput');
+        out.append(pre);
+        item.append(out);
 
         if (result.file?.id) placeFile(body, result.file);
         if (drawable(result.widget)) body.append(widgetNode(result.widget, result.name));
         if (result.schedule?.id) placeScheduleCard(body, result.schedule);
-        if (result.answered) placeAnswer(body, result.answered);
       },
     };
   }
@@ -3282,10 +3393,9 @@ export function assistantMessage() {
             doneMark(call.name, !!result.isError),
             result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '',
           );
-          // A question's answer is the person's bubble below; the model's copy of it,
-          // and the questions as JSON, are the same answer again (TOK-004).
-          if (result.answered) inner.replaceChildren();
-          else output.textContent = forDisplay(result.content) || t('chat.noOutput');
+          // A question's answer is read here, and nowhere beside it: the bubble this
+          // used to draw said the same thing a second time (owner, 2026-11-04).
+          output.textContent = forDisplay(result.content) || t('chat.noOutput');
 
           /**
            * A document came out of this call.
@@ -3315,13 +3425,6 @@ export function assistantMessage() {
            * change it" is what was asked for.
            */
           if (result.schedule?.id) placeScheduleCard(body, result.schedule);
-
-          /**
-           * What the person answered on a question card, on their side of the
-           * conversation — so a setup filled in through a form reads back like
-           * something they said, live and after a reload.
-           */
-          if (result.answered) placeAnswer(body, result.answered);
         },
       };
     },

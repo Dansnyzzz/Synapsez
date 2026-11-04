@@ -14,8 +14,9 @@
 import { api } from './api.js';
 import { escapeHtml } from './markdown.js';
 import { announce, toast } from './render.js';
-import { t } from './i18n.js';
+import { t, currentLanguage } from './i18n.js';
 import { humanSize } from './format.js';
+import { MODEL_READS_CHARS, isLongPaste, pastedExcerpt, pastedFacts, pastedName, showPasted, tidyPaste } from './pasted.js';
 import { preparedWithThumb, shrinkable, MAX_SHRINKABLE_BYTES } from './shrink.js';
 import { thumbnailFor } from './thumbnail.js';
 import { openSketch } from './sketch.js';
@@ -118,17 +119,20 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
         const state = `${file.failed ? ' is-failed' : ''}${!file.id && !file.failed ? ' is-uploading' : ''}`;
         const say = file.failed || file.note || file.name;
         const keys = movable ? ' aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"' : '';
-        const face = file.isImage
-          ? `<button class="stage__open" data-open="${i}" type="button" aria-label="${escapeHtml(t('attachment.edit', { name: file.name }))}"${keys}>
-               <img class="stage__img" src="${file.preview}" alt="" draggable="false">
-             </button>`
-          : file.thumb
-            ? `<img class="stage__img" src="${file.thumb}" alt="" draggable="false">`
-            : `<span class="stage__icon" aria-hidden="true">${escapeHtml(type.slice(0, 4))}</span>
-               <span class="stage__name">${escapeHtml(file.name)}</span>
-               <span class="stage__type">${escapeHtml(type)}</span>`;
+        const pasted = file.pastedText != null;
+        const face = pasted
+          ? pastedFace(file, i, keys)
+          : file.isImage
+            ? `<button class="stage__open" data-open="${i}" type="button" aria-label="${escapeHtml(t('attachment.edit', { name: file.name }))}"${keys}>
+                 <img class="stage__img" src="${file.preview}" alt="" draggable="false">
+               </button>`
+            : file.thumb
+              ? `<img class="stage__img" src="${file.thumb}" alt="" draggable="false">`
+              : `<span class="stage__icon" aria-hidden="true">${escapeHtml(type.slice(0, 4))}</span>
+                 <span class="stage__name">${escapeHtml(file.name)}</span>
+                 <span class="stage__type">${escapeHtml(type)}</span>`;
         return `
-      <div class="stage ${file.isImage || file.thumb ? 'stage--media' : 'stage--file'}${state}${movable ? ' stage--movable' : ''}" data-index="${i}" title="${escapeHtml(movable ? `${say} — ${t('attachment.moveHint')}` : say)}">
+      <div class="stage ${pasted ? 'stage--pasted' : file.isImage || file.thumb ? 'stage--media' : 'stage--file'}${state}${movable ? ' stage--movable' : ''}" data-index="${i}" title="${escapeHtml(movable ? `${say} — ${t('attachment.moveHint')}` : say)}">
         ${face}
         ${file.failed ? `<span class="stage__err">${escapeHtml(file.failed)}</span>` : ''}
         ${!file.id && !file.failed ? `<span class="stage__spin" aria-label="${escapeHtml(t('attachment.uploading'))}"></span>` : ''}
@@ -143,6 +147,7 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       btn.addEventListener('click', () => {
         const [gone] = staged.splice(Number(btn.dataset.drop), 1);
         if (gone?.preview) URL.revokeObjectURL(gone.preview);
+        forgetPaste(gone);
         renderStaged();
         refreshSendState();
         renderVisionWarning();
@@ -151,6 +156,60 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-open]'))) {
       btn.addEventListener('click', () => editPicture(staged[Number(btn.dataset.open)]));
     }
+    for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-view]'))) {
+      btn.addEventListener('click', () => showPasted(staged[Number(btn.dataset.view)].pastedText));
+    }
+    for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-unpaste]'))) {
+      btn.addEventListener('click', () => backIntoTheBox(Number(btn.dataset.unpaste)));
+    }
+  }
+
+  /** A long paste's tile: the opening of the words, what it is, and a pencil. */
+  function pastedFace(file, i, keys) {
+    const { size, lines } = pastedFacts(file.pastedText);
+    return `<button class="stage__open stage__paste" data-view="${i}" type="button" aria-label="${escapeHtml(t('pasted.viewFacts', { size, lines }))}"${keys}>
+        <span class="stage__excerpt">${escapeHtml(pastedExcerpt(file.pastedText))}</span>
+        <span class="stage__badge">${escapeHtml(t('pasted.badge'))}</span>
+      </button>
+      <button class="stage__pencil" data-unpaste="${i}" type="button" title="${escapeHtml(t('pasted.edit'))}" aria-label="${escapeHtml(t('pasted.edit'))}">
+        <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 2.9a1.9 1.9 0 0 1 2.7 2.7L7.8 14 4 15l1-3.8Z"/></svg>
+      </button>`;
+  }
+
+  /**
+   * A paste thrown away: its stored copy goes too.
+   *
+   * Somebody's words they decided not to send should not sit on the server until
+   * a clean-up comes round, which is what a removed file does. One still on its
+   * way up is deleted when it lands — see `upload`.
+   */
+  function forgetPaste(entry) {
+    if (entry?.pastedText == null) return;
+    entry.discarded = true;
+    if (entry.id) api.deleteUpload(entry.id).catch(() => {});
+  }
+
+  /**
+   * The pencil: the whole paste goes into the box being written in, to edit there.
+   *
+   * After whatever is already typed, with the caret at the start of what came
+   * back — the opening is the part somebody has just been looking at on the card.
+   * An `input` event rather than a call, so each box's own sizing and Send button
+   * answer as they do to typing.
+   */
+  function backIntoTheBox(index) {
+    const [entry] = staged.splice(index, 1);
+    if (!entry) return;
+    forgetPaste(entry);
+    const box = /** @type {HTMLTextAreaElement} */ ($('project-page')?.hidden === false ? $('project-page-ask') : $('input'));
+    const before = box.value;
+    box.value = before ? `${before}\n${entry.pastedText}` : entry.pastedText;
+    renderStaged();
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.focus({ preventScroll: true });
+    const at = before ? before.length + 1 : 0;
+    box.setSelectionRange(at, at);
+    if (!before) box.scrollTop = 0;
   }
 
   /**
@@ -194,7 +253,7 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     host.addEventListener('pointerdown', (/** @type {PointerEvent} */ event) => {
       const target = /** @type {HTMLElement} */ (event.target);
       const tile = /** @type {HTMLElement | null} */ (target.closest('.stage--movable'));
-      if (!tile || target.closest('.stage__remove') || event.button > 0) return;
+      if (!tile || target.closest('.stage__remove, .stage__pencil') || event.button > 0) return;
       const from = Number(tile.dataset.index);
       const tiles = /** @type {HTMLElement[]} */ ([...host.querySelectorAll('.stage')]);
       const centres = tiles.map((node) => {
@@ -326,6 +385,10 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
         renderStaged();
       }
       const { attachment } = await api.uploadAttachment({ ...ready, thumb: drawn.thumb || undefined });
+      if (entry.discarded) {
+        api.deleteUpload(attachment.id).catch(() => {});
+        return;
+      }
       if (!current()) return;
       entry.id = attachment.id;
       entry.name = ready.name;
@@ -383,9 +446,16 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     }
   }
 
+  /**
+   * A paste stays. It is somebody's words, like what they have typed — and those
+   * stay in the box when the conversation changes, so a card must not be the one
+   * thing that vanishes, with no way back but the clipboard. ✕ is how one goes.
+   */
   function clearStaged() {
+    const words = staged.filter((file) => file.pastedText != null);
     for (const file of staged) if (file.preview) URL.revokeObjectURL(file.preview);
     staged.length = 0;
+    staged.push(...words);
     renderStaged();
     renderVisionWarning();
   }
@@ -454,13 +524,33 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     await stageFiles(files);
   });
 
-  // Pasting a screenshot is how most images actually arrive.
-  $('input').addEventListener('paste', async (/** @type {ClipboardEvent} */ event) => {
-    const files = [...(event.clipboardData?.files || [])];
-    if (!files.length) return;
+  /**
+   * A long paste becomes a card (pasted.js). Whatever cannot be one — the message
+   * already holds as many as it may, or it is over the size of a file — is left
+   * to the browser, so it lands in the box: never a refusal that loses the words.
+   */
+  function stagePaste(/** @type {ClipboardEvent} */ event) {
+    const text = tidyPaste(event.clipboardData?.getData('text/plain'));
+    if (!isLongPaste(text)) return;
+    const limits = state.boot?.attachments || { maxBytes: 5 * 1024 * 1024, maxPerMessage: 6 };
+    const file = new File([text], pastedName(staged.map((f) => f.name)), { type: 'text/plain' });
+    if (staged.length >= limits.maxPerMessage || file.size > limits.maxBytes) return;
     event.preventDefault();
-    await stageFiles(files);
-  });
+    if (text.length > MODEL_READS_CHARS) toast(t('pasted.tooLong', { n: MODEL_READS_CHARS.toLocaleString(currentLanguage()) }));
+    const entry = { name: file.name, size: file.size, mime: file.type, id: null, isImage: false, isPdf: false, preview: null, thumb: null, pastedText: text };
+    staged.push(entry);
+    void upload(entry, file);
+  }
+
+  // Pasting a screenshot is how most images actually arrive, and both boxes share the tray.
+  for (const box of [$('input'), $('project-page-ask')]) {
+    box?.addEventListener('paste', async (/** @type {ClipboardEvent} */ event) => {
+      const files = [...(event.clipboardData?.files || [])];
+      if (!files.length) return stagePaste(event);
+      event.preventDefault();
+      await stageFiles(files);
+    });
+  }
 
   // And dragging one onto the window is the other way.
   for (const type of ['dragover', 'drop']) {

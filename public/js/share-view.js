@@ -12,6 +12,7 @@
  */
 import { t, applyI18n, currentLanguage } from './i18n.js';
 import { userMessage, assistantMessage } from './render.js';
+import { showStoredPasted } from './pasted.js';
 
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get('t') || '';
@@ -111,6 +112,13 @@ async function show() {
 // A file tile or card opens the file itself, in a new tab.
 document.addEventListener('click', (event) => {
   const target = /** @type {HTMLElement} */ (event.target);
+  // A long paste opens where it can be read, the way it does in the conversation.
+  const pasted = /** @type {HTMLElement|null} */ (target.closest?.('[data-pasted]'));
+  if (pasted) {
+    event.preventDefault();
+    showStoredPasted(pasted.dataset.pasted);
+    return;
+  }
   const file = target.closest?.('[data-file]');
   if (!file || target.closest('a[download], [data-no-open]')) return;
   event.preventDefault();
