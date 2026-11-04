@@ -235,6 +235,51 @@ section('a link is removed by the whole address, however it is spelled (QC-014)'
   check('one edit that drops two links says two (QC-011)', dropped.removed === 2 && dropped.fixed === 0 && /removed 2 links/.test(dropped.text), dropped.text);
 }
 
+section('a link taken out whole, and what stays (QC-019)');
+{
+  const read = (...urls) => [{ role: 'tool', results: [{ content: urls.join('\n') }] }];
+  // Evaluator pass 4, regressions of QC-017: the link stayed, and its head was cut out of it.
+  const moore = "See [Moore's law](https://en.wikipedia.org/wiki/Moore's_law) for more.";
+  const invented = await checkAnswer({ answer: moore, messages: [], ask: async () => '{"edits":[]}' });
+  check('an address with an apostrophe goes whole, its words kept', invented.text.startsWith("See Moore's law for more."), invented.text);
+  check('  and is found whole when it was read, written either way', unsourcedLinks(moore, evidenceOf(read("https://en.wikipedia.org/wiki/Moore's_law"))).length === 0 && unsourcedLinks(moore, evidenceOf(read('https://en.wikipedia.org/wiki/Moore%27s_law'))).length === 0);
+  check('  a closing quote is still not part of one', unsourcedLinks("Xem 'https://x.example/a' nhé", evidenceOf(read('https://x.example/a'))).length === 0);
+  check('a link whose target runs past where an address in text stops goes whole', unlink('[x](https://fake.example/a|b)', ['https://fake.example/a']) === 'x', unlink('[x](https://fake.example/a|b)', ['https://fake.example/a']));
+
+  const left = (text) => unlink(text, ['https://bad.example/a']);
+  check('words after a reference\'s address are words, and stay', left('[1]: https://bad.example/a - World Bank report') === '[1]:  - World Bank report' && left('[^1]: https://bad.example/a World Bank, 2023') === '[^1]:  World Bank, 2023', left('[1]: https://bad.example/a - World Bank report'));
+  check('  a title goes with it, however it is quoted, a line ending included', ['[1]: https://bad.example/a "T"', "[1]: https://bad.example/a 'T'", '[1]: https://bad.example/a (T)', '[1]: https://bad.example/a "T"\r', '[1]: <https://bad.example/a>'].every((l) => left(l) === ''), JSON.stringify(left('[1]: https://bad.example/a "T"\r')));
+
+  const span = await checkAnswer({ answer: 'Call https://bad.example/users/`id` now', messages: [], ask: async () => '{"edits":[]}' });
+  check('an address touching inline code goes, and the code stays', span.text.startsWith('Call `id` now') && span.removed === 1, span.text);
+  check('NUL in an answer is not taken for code set aside', unlink('a\u00007\u0000 b `c` https://bad.example/a', ['https://bad.example/a']) === 'a\u00007\u0000 b `c` ', JSON.stringify(unlink('a\u00007\u0000 b `c` https://bad.example/a', ['https://bad.example/a'])));
+
+  // A bare site is the site; anything more is a page, and nobody read it.
+  const site = evidenceOf(read('https://x.example/read-this'));
+  for (const url of ['https://x.example/?p=99999', 'https://x.example/#/fake', 'https://x.example/#!/fake', 'https://x.example/other']) {
+    check(`a page nobody read on a site that was read is flagged: ${url}`, unsourcedLinks(url, site).length === 1, JSON.stringify(unsourcedLinks(url, site)));
+  }
+  for (const url of ['https://x.example', 'https://www.x.example/', 'https://x.example/read-this#top']) {
+    check(`  the bare site, or a place on a page that was read, is not: ${url}`, unsourcedLinks(url, site).length === 0, JSON.stringify(unsourcedLinks(url, site)));
+  }
+
+  let prompt = '';
+  await checkAnswer({ answer: 'Xem https://fake.example/x.', messages: read('http://x.example/a%20b?q=c%20d&e=f'), ask: async (_s, p) => { prompt = p; return '{"edits":[]}'; } });
+  check('the repair is shown what was read as it was written, to cite', prompt.includes('- http://x.example/a%20b?q=c%20d&e=f'), prompt.split('\n').filter((l) => l.startsWith('- ')).join(' '));
+
+  const { markFigures, figureEvidenceOf, checkFigures } = await import('../server/qualityGate.js');
+  const none = figureEvidenceOf([], ['nothing']);
+  const manyFigures = '12 '.repeat(66_000);
+  let started = Date.now();
+  const marked = markFigures(manyFigures, none);
+  check('a long line of figures is marked in no time', Date.now() - started < 1500 && marked.marked === 66_000, `${Date.now() - started} ms`);
+  check('  each in its place', markFigures('a 12 b 34 c', none).text === 'a 12 (unverified) b 34 (unverified) c', markFigures('a 12 b 34 c', none).text);
+  started = Date.now();
+  await checkAnswer({ answer: 'Xem https://fake.example/x.', messages: [], ask: async () => '{'.repeat(100_000) });
+  await checkFigures({ answer: 'Giá 500', messages: [], ask: async () => '{'.repeat(100_000) });
+  check('a repair reply of braces takes no time', Date.now() - started < 1000, `${Date.now() - started} ms`);
+}
+
 section('where an address ends, and what makes it the same page (QC-017)');
 {
   const read = (...urls) => [{ role: 'tool', results: [{ content: urls.join('\n') }] }];

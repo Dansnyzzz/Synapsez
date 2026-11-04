@@ -31,9 +31,11 @@
  * CJK punctuation end it, as does a comma before the next address: read as part of
  * it, they and the word after them made a true link look invented, and went with
  * it. Brackets are part of it only when they balance, so `Foo_(planet)` and
- * `Foo_(other)` are two pages, and the `)` closing a Markdown link is neither.
+ * `Foo_(other)` are two pages, and the `)` closing a Markdown link is neither. An
+ * apostrophe with a letter after it is part of it, as in `Moore's_law`; one
+ * without is a closing quote. NUL is what `unlink` sets code aside with.
  */
-const URL_RE = /https?:\/\/(?:(?!,https?:\/\/)[^\s<>()[\]"'`|“”‘’«»，。；：！？、）】》（【《]|\([^\s()]*\))+/g;
+const URL_RE = /https?:\/\/(?:(?!,https?:\/\/)[^\s<>()[\]"'`|“”‘’«»，。；：！？、）】》（【《\0]|'(?=\w)|\([^\s()]*\))+/g;
 const FENCE = /^\s{0,3}(```|~~~)/;
 /** Inline code, an example as a code block is: `curl https://…` was left as `curl `. */
 const CODE_SPAN = /``[^`]*``|`[^`]*`/g;
@@ -77,13 +79,15 @@ export function addressKey(url) {
     const u = new URL(raw);
     const host = u.hostname.toLowerCase().replace(/^www\./, '');
     const query = [...u.searchParams].filter(([name]) => !TRACKING.test(name)).map(([name, value]) => `${name}=${value}`).join('&');
-    return `${host}${trimEnd(decodedPath(u.pathname), SLASH)}${query ? `?${query}` : ''}`;
+    // A fragment that is a route, `#/report` or `#!/report`, is a page; any other is a place on one.
+    const route = /^#!?\//.test(u.hash) ? u.hash : '';
+    return `${host}${trimEnd(decodedPath(u.pathname), SLASH)}${query ? `?${query}` : ''}${route}`;
   } catch {
     return raw.toLowerCase();
   }
 }
 
-const hostOf = (key) => key.split('/')[0].split('?')[0];
+const hostOf = (key) => key.match(/^[^/?#]*/)[0];
 
 /** The text of a message a reader could have taken an address from. */
 function textsOf(message) {
@@ -138,23 +142,48 @@ export function textsIn(value, out = [], depth = 0, every = false) {
 export function evidenceOf(messages, sources = []) {
   const keys = new Set();
   const hosts = new Set();
+  /** Each page as it was written, for the repair to cite: a key is decoded, and is not an address to copy. */
+  const spelled = new Map();
   const texts = [...(messages || []).flatMap((m) => textsOf(m)), ...sources];
   for (const text of texts) {
     for (const url of text.match(URL_RE) || []) {
       const key = addressKey(url);
       keys.add(key);
       hosts.add(hostOf(key));
+      if (!spelled.has(key)) spelled.set(key, trimEnd(url, TRAILING));
     }
   }
-  return { keys, hosts };
+  return { keys, hosts, spelled };
 }
 
 /** Whether the conversation accounts for an address: the page itself, or — for a bare site address — its site. */
 function accountedFor(url, evidence) {
   const key = addressKey(url);
   if (evidence.keys.has(key)) return true;
-  // "https://vnexpress.net" for a site whose pages were read is the site, not an invention.
-  return !key.includes('/') && evidence.hosts.has(hostOf(key));
+  // "https://vnexpress.net" for a site whose pages were read is the site, not an invention. Only
+  // bare: `?p=99999` and `#/report` on that site are pages, and nobody read them (QC-019).
+  return key === hostOf(key) && evidence.hosts.has(key);
+}
+
+/**
+ * The edits in a repair's reply: the JSON from its first `{` to its last `}`, at
+ * most twenty. Null for a reply that will not parse. Found by position: a regex
+ * for this took 2.5 s on a reply of `{`s.
+ *
+ * @param {string} reply
+ * @returns {any[] | null}
+ */
+function editsIn(reply) {
+  const text = String(reply || '');
+  const from = text.indexOf('{');
+  const to = text.lastIndexOf('}');
+  if (from === -1 || to < from) return [];
+  try {
+    const parsed = JSON.parse(text.slice(from, to + 1));
+    return Array.isArray(parsed?.edits) ? parsed.edits.slice(0, 20) : [];
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -192,14 +221,8 @@ export function unsourcedLinks(answer, evidence) {
  * @param {{ keys: Set<string>, hosts: Set<string> }} evidence
  */
 export function applyEdits(answer, reply, flagged, evidence) {
-  let parsed;
-  try {
-    const json = String(reply || '').match(/\{[\s\S]*\}/)?.[0];
-    parsed = json ? JSON.parse(json) : null;
-  } catch {
-    return null;
-  }
-  const edits = Array.isArray(parsed?.edits) ? parsed.edits.slice(0, 20) : [];
+  const edits = editsIn(reply);
+  if (!edits) return null;
   const keys = new Set(flagged.map(addressKey));
   let text = answer;
   let applied = 0;
@@ -231,8 +254,12 @@ export function applyEdits(answer, reply, flagged, evidence) {
  * line of `[[[[` fails at once at each one, rather than reading on to the end.
  */
 const MARKDOWN_LINK = /!?\[((?:[^[\]]|\[[^[\]]*\](?!\())*)\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g;
-/** `[1]: https://…`, a link's address kept apart from it: flagged, the whole line goes, not only the address. */
-const LINK_DEFINITION = /^\s*\[[^\]]+\]:\s*<?(https?:\/\/[^\s>]+)>?(?:\s.*)?$/;
+/**
+ * `[1]: https://… "Title"`, a link's address kept apart from it: flagged, the
+ * line goes, not only the address. Only a title may follow: words after it are
+ * words, and stay when the address goes.
+ */
+const LINK_DEFINITION = /^\s*\[[^\]]+\]:\s*<?(https?:\/\/[^\s>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
 const BARE_ADDRESS = new RegExp(`<?(${URL_RE.source})>?`, 'g');
 
 /**
@@ -247,7 +274,8 @@ const BARE_ADDRESS = new RegExp(`<?(${URL_RE.source})>?`, 'g');
  */
 export function unlink(answer, flagged) {
   const keys = new Set(flagged.map(addressKey));
-  const isFlagged = (url) => keys.has(addressKey(url));
+  // A link's target is taken whole, and may run past where an address in text would stop.
+  const isFlagged = (url) => keys.has(addressKey(url)) || keys.has(addressKey(url.match(URL_RE)?.[0] ?? url));
   let fenced = false;
   return String(answer || '')
     .split('\n')
@@ -272,7 +300,7 @@ export function unlink(answer, flagged) {
           // The full stop that ended the sentence is not part of the address.
           return url.slice(trimEnd(url, TRAILING).length);
         })
-        .replace(/\0(\d+)\0/g, (_m, at) => code[at]);
+        .replace(/\0(\d+)\0/g, (whole, at) => code[at] ?? whole);
     })
     .join('\n');
 }
@@ -331,7 +359,7 @@ export async function checkAnswer({ answer, messages, sources = [], moreSources 
   }
   if (!flagged.length) return { text: answer, changed: false, flagged, fixed: 0, removed: 0 };
 
-  const read = [...evidence.keys].slice(0, 30).map((k) => `- https://${k}`).join('\n') || '- (none)';
+  const read = [...evidence.spelled.values()].slice(0, 30).map((url) => `- ${url}`).join('\n') || '- (none)';
   const promptFor = (text, still) =>
     [
       'Answer:',
@@ -588,14 +616,8 @@ export function unsourcedFigures(answer, evidence) {
  * unfound figure and no address `find` did not have.
  */
 export function applyFigureEdits(answer, reply, flagged, evidence) {
-  let parsed;
-  try {
-    const json = String(reply || '').match(/\{[\s\S]*\}/)?.[0];
-    parsed = json ? JSON.parse(json) : null;
-  } catch {
-    return null;
-  }
-  const edits = Array.isArray(parsed?.edits) ? parsed.edits.slice(0, 20) : [];
+  const edits = editsIn(reply);
+  if (!edits) return null;
   const unfound = (s) => new Set(figuresIn(s).filter((f) => !accountedFigure(f.token, evidence)).map((f) => f.token));
   let text = answer;
   let applied = 0;
@@ -625,13 +647,18 @@ export function applyFigureEdits(answer, reply, flagged, evidence) {
 export function markFigures(answer, evidence, language = 'en') {
   const lines = String(answer || '').split('\n');
   const marks = figuresIn(answer).filter((f) => !f.marked && !accountedFigure(f.token, evidence));
-  // From the end of each line, so a mark does not move the figures before it; one mark to a
-  // place, for `30%-40%`, whose two figures end there together.
-  let last = null;
-  for (const f of marks.reverse()) {
-    if (last && last.line === f.line && last.after === f.after) continue;
-    lines[f.line] = `${lines[f.line].slice(0, f.after)} ${unverifiedMark(language)}${lines[f.line].slice(f.after)}`;
-    last = f;
+  // One mark to a place, for `30%-40%`, whose two figures end there together.
+  const places = new Map();
+  for (const f of marks) places.set(f.line, (places.get(f.line) || new Set()).add(f.after));
+  // Each line put together once: splicing a mark in per figure took 13 s on a long line of them.
+  for (const [n, ats] of places) {
+    const parts = [];
+    let from = 0;
+    for (const at of ats) {
+      parts.push(lines[n].slice(from, at), ` ${unverifiedMark(language)}`);
+      from = at;
+    }
+    lines[n] = [...parts, lines[n].slice(from)].join('');
   }
   return { text: lines.join('\n'), marked: marks.length };
 }
