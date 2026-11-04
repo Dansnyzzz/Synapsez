@@ -309,6 +309,70 @@ let chatId;
   check('with the limit named', /limit/.test(toomany.json?.error || ''), toomany.json?.error);
 }
 
+section('a long paste, sent as a card (owner, 2026-11-04)');
+{
+  const { loadForTranscript, toParts, isPastedName, pastedOpening } = await import('../server/attachments.js');
+  const browser = await import('../public/js/pasted.js');
+  const aliceId = (await store.getUserByEmail('alice@example.com')).id;
+  const words = `bạn dịch giúp tôi: Reviewer(s)' Comments to Author\n${'Dòng tiếp theo của nội dung đã dán. '.repeat(200)}`;
+  const upload = (who, name, text) => who.call('POST', '/api/attachments', { name, mime: 'text/plain', data: Buffer.from(text, 'utf8').toString('base64') });
+
+  const made = await upload(alice, 'pasted.txt', words);
+  const pastedId = made.json?.attachment?.id;
+  check('it is taken as an ordinary text file', made.status === 201 && made.json?.attachment?.kind === 'text', JSON.stringify(made.json).slice(0, 90));
+
+  const chat = (await alice.call('POST', '/api/chats', {})).json.chat.id;
+  const sent = await alice.call('POST', `/api/chats/${chat}/messages`, { text: '', attachments: [pastedId] });
+  check('a message that is nothing but a card is accepted', sent.status === 201, `got ${sent.status}`);
+
+  const stored = await store.listMessages(aliceId, chat);
+  const parts = toParts(stored[0], await loadForTranscript(aliceId, stored));
+  // The failure reported of Claude's own: the attachment reaching the model empty.
+  check('the model is handed every word of it, not an empty attachment', parts.length === 1 && parts[0].type === 'text' && parts[0].text.includes(words), `${parts[0]?.text?.length} chars`);
+  check('  under its name', parts[0]?.text.startsWith('--- pasted.txt ---'));
+
+  const opened = await alice.call('GET', `/api/chats/${chat}`);
+  check('the conversation is named from the words, not "pasted.txt"', opened.json.chat.title.startsWith("bạn dịch giúp tôi: Reviewer(s)'"), opened.json.chat.title);
+  check('  and the title is the short form, not all of it', opened.json.chat.title.length <= 60, String(opened.json.chat.title.length));
+
+  const worded = (await alice.call('POST', '/api/chats', {})).json.chat.id;
+  await alice.call('POST', `/api/chats/${worded}/messages`, { text: 'dịch giúp tôi', attachments: [pastedId] });
+  check('words typed beside it name the conversation instead', (await alice.call('GET', `/api/chats/${worded}`)).json.chat.title === 'dịch giúp tôi');
+
+  // Google data never goes where a share link can carry it (PRV-026). A title does.
+  const { saveUpload } = await import('../server/attachments.js');
+  const fromDrive = await saveUpload(aliceId, { name: 'pasted.txt', mime: 'text/plain', data: Buffer.from('words out of a Drive file').toString('base64'), origin: 'google_drive' });
+  check('a Drive file that happens to be called this gives no words to a title', (await pastedOpening(aliceId, [fromDrive])) === '', await pastedOpening(aliceId, [fromDrive]));
+  const fromPaste = await saveUpload(aliceId, { name: 'pasted.txt', mime: 'text/plain', data: Buffer.from('words actually pasted').toString('base64') });
+  check('  and a real paste beside it still does', (await pastedOpening(aliceId, [fromDrive, fromPaste])) === 'words actually pasted');
+
+  const report = (await alice.call('POST', '/api/attachments', { name: 'report.txt', mime: 'text/plain', data: Buffer.from('a report').toString('base64') })).json.attachment;
+  const plain = (await alice.call('POST', '/api/chats', {})).json.chat.id;
+  await alice.call('POST', `/api/chats/${plain}/messages`, { text: '', attachments: [report.id] });
+  check('any other file still names it by its name', (await alice.call('GET', `/api/chats/${plain}`)).json.chat.title === 'report.txt');
+
+  const read = await alice.call('GET', `/api/attachments/${pastedId}`);
+  check('its owner reads the words back', read.status === 200);
+  const stranger = await bob.call('GET', `/api/attachments/${pastedId}`);
+  check('nobody else does', stranger.status === 404, `got ${stranger.status}`);
+  const bobId = (await store.getUserByEmail('bob@example.com')).id;
+  check('  nor can another account get its opening as a title', (await pastedOpening(bobId, [{ id: pastedId, name: 'pasted.txt', kind: 'text' }])) === '');
+  const lifted = await bob.call('POST', `/api/chats/${(await bob.call('POST', '/api/chats', {})).json.chat.id}/messages`, { text: '', attachments: [pastedId] });
+  check('  nor send it as their own', lifted.status === 400, `got ${lifted.status}`);
+
+  // The route the tray calls. `/api/attachments/:id` is for files the assistant
+  // made, and answers 404 for an upload — which the first version of this called.
+  const dropped = (await upload(alice, 'pasted-2.txt', words)).json.attachment.id;
+  const gone = await alice.call('DELETE', `/api/data/uploads/${dropped}`);
+  check('one thrown away before sending can be deleted', gone.status === 200, `got ${gone.status}`);
+  check('  and it is gone', !(await store.getAttachment(aliceId, dropped)));
+
+  for (const name of ['pasted.txt', 'pasted-2.txt', 'PASTED-12.TXT', 'pasted-.txt', 'pasted2.txt', 'my-pasted.txt', 'pasted.txt.exe', 'pasted.md', '', null]) {
+    check(`server and browser agree on ${JSON.stringify(name)}`, isPastedName(name) === browser.isPastedName(name), String(isPastedName(name)));
+  }
+  check('the browser counts a limit the server really has', browser.MODEL_READS_CHARS === 100_000 && toParts({ attachments: [{ id: 'long', name: 'pasted.txt', kind: 'text' }] }, new Map([['long', { kind: 'text', name: 'pasted.txt', data: Buffer.from('z'.repeat(100_001)).toString('base64') }]]))[0].text.includes('[truncated]'));
+}
+
 // ── what actually reaches the model ─────────────────────────────────
 section('what each provider is handed');
 {

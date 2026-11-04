@@ -2,9 +2,16 @@
 import { narrate } from './mirror.js';
 import { t, currentLanguage } from './i18n.js';
 
-async function request(method, path, body) {
+/**
+ * @param {string} method
+ * @param {string} path
+ * @param {any} [body]
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+async function request(method, path, body, options = {}) {
   const res = await fetch(path, {
     method,
+    signal: options.signal,
     // The language rides on every call, so a message the server writes — an
     // error, a status line — comes back in it. See server/i18n.
     headers: { 'X-Language': currentLanguage(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -298,7 +305,8 @@ export const api = {
       /* the sweep removes it within a day regardless */
     }
   },
-  chat: (id) => request('GET', `/api/chats/${id}`),
+  // `signal`: pressing another conversation cancels this one's answer (`openChat`).
+  chat: (id, options) => request('GET', `/api/chats/${id}`, undefined, options),
   searchChats: (q) => request('GET', `/api/chats/search?q=${encodeURIComponent(q)}`),
   updateChat: (id, patch) => request('PATCH', `/api/chats/${id}`, patch),
   deleteChat: (id) => request('DELETE', `/api/chats/${id}`),

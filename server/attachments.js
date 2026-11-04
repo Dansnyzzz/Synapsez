@@ -297,6 +297,27 @@ export async function verifyOwned(userId, ids) {
 }
 
 /**
+ * A long paste sent as a card: an ordinary text file, marked by its name. The
+ * browser's copy of this is in public/js/pasted.js; a test holds them together.
+ */
+const PASTED_NAME = /^pasted(?:-\d+)?\.txt$/i;
+export const isPastedName = (name) => PASTED_NAME.test(String(name || ''));
+
+/**
+ * The opening of the first paste among these files, for a conversation's title.
+ * The list rows carry no bytes, so this reads the one file — only for a first
+ * message with no words of its own. Empty when there is none, or it is gone.
+ * A file from Drive with this name is not a paste: a title is published with a
+ * shared conversation, and Google's data never is (PRV-026).
+ */
+export async function pastedOpening(userId, files) {
+  const first = (files || []).find((file) => file.kind === 'text' && isPastedName(file.name) && file.origin !== DRIVE_ORIGIN);
+  if (!first) return '';
+  const row = await getStore().getAttachment(userId, first.id);
+  return row?.data ? Buffer.from(row.data, 'base64').toString('utf8').slice(0, 200) : '';
+}
+
+/**
  * How many attachments to actually send to the model.
  *
  * Images are expensive in tokens and a long conversation accumulates them, so

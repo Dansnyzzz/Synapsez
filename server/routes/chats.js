@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { riskReason } from '../tools/definitions.js';
 import { resolveForUser } from '../autoPick.js';
 import { getStore } from '../store/index.js';
-import { verifyOwned } from '../attachments.js';
+import { pastedOpening, verifyOwned } from '../attachments.js';
 import { deriveTitle, needsApproval as pendingApproval } from '../agent.js';
 import { normaliseQuestions, askLayout } from '../tools/askOptions.js';
 import { compact as compactChat, measure as measureContext, transcriptTokens } from '../compact.js';
@@ -361,7 +361,8 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       // The first message doubles as the title until the user renames it.
       const existing = await store.listMessages(req.user.id, chatId);
       if (existing.length === 1 || chat.title === 'New chat') {
-        const title = text || files.map((f) => f.name).join(', ');
+        // A message that is only a long paste is named from the words, not "pasted.txt".
+        const title = text || (await pastedOpening(req.user.id, files)) || files.map((f) => f.name).join(', ');
         await store.updateChat(req.user.id, chatId, { title: deriveTitle(title) });
       }
       res.status(201).json({ message });
