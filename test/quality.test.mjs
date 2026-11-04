@@ -288,6 +288,11 @@ section('a link taken out whole, and what stays (QC-019)');
   check('an address touching inline code goes, and the code stays', span.text.startsWith('Call `id` now') && span.removed === 1, span.text);
   const split = await checkAnswer({ answer: 'See https://invented.example\u0000/login now', messages: read('https://true.example/a'), ask: async () => '{"edits":[]}' });
   check('an invented address with NUL in it goes whole, rather than coming back live', !split.text.includes('invented.example') && split.removed === 1, JSON.stringify(split.text));
+  check('  a reference definition holding one goes whole too', unlink('[1]: https://x.example\u0000/a "T"', ['https://x.example/a']) === '', JSON.stringify(unlink('[1]: https://x.example\u0000/a "T"', ['https://x.example/a'])));
+  const nulSource = await checkAnswer({ answer: 'See https://t.example/p/q now', messages: read('https://t.example/p\u0000/q'), ask: async () => { throw new Error('no call'); } });
+  check('  one in what was read is the same page', !nulSource.changed, JSON.stringify(nulSource.flagged));
+  const nulEdit = await checkAnswer({ answer: 'See https://bad.example\u0000/a now', messages: read('https://t.example/p'), ask: async () => '{"edits":[{"find":"See https://bad.example/a now","replace":"See [it](https://t.example/p) now"}]}' });
+  check('  and a repair copying the answer applies', nulEdit.fixed === 1 && nulEdit.text.startsWith('See [it](https://t.example/p) now'), nulEdit.text);
   for (const at of ['7', '0']) {
     const nul = `a\u0000${at}\u0000 b \`c\` https://bad.example/a`;
     check(`NUL in an answer is not taken for code set aside: position ${at}`, unlink(nul, ['https://bad.example/a']) === `a${at} b \`c\` `, JSON.stringify(unlink(nul, ['https://bad.example/a'])));

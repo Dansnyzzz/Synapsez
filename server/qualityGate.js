@@ -38,6 +38,12 @@
  */
 const URL_RE = /https?:\/\/(?:(?!,https?:\/\/)[^\s<>()[\]"'`|“”‘’«»，。；：！？、）】》（【《\0]|'(?=[\p{L}\p{N}_])|\([^\s()]*\))+/gu;
 const FENCE = /^\s{0,3}(```|~~~)/;
+/**
+ * Text as the check reads it, everywhere it reads: NUL is nothing an answer can
+ * keep, the database refuses it, and read one way here and another there an
+ * address holding one was flagged by half and went out whole (QC-023).
+ */
+const withoutNul = (text) => String(text || '').replaceAll('\0', '');
 /** Inline code, an example as a code block is: `curl https://…` was left as `curl `. */
 const CODE_SPAN = /``[^`]*``|`[^`]*`/g;
 /** Tracking parameters that change nothing about which page an address is. */
@@ -148,7 +154,7 @@ export function evidenceOf(messages, sources = []) {
   const spelled = new Map();
   const texts = [...(messages || []).flatMap((m) => textsOf(m)), ...sources];
   for (const text of texts) {
-    for (const url of text.match(URL_RE) || []) {
+    for (const url of withoutNul(text).match(URL_RE) || []) {
       const key = addressKey(url);
       keys.add(key);
       hosts.add(hostOf(key));
@@ -202,14 +208,13 @@ function editsIn(reply) {
 export function unsourcedLinks(answer, evidence) {
   const found = new Map();
   let fenced = false;
-  for (const line of String(answer || '').split('\n')) {
+  for (const line of withoutNul(answer).split('\n')) {
     if (FENCE.test(line)) {
       fenced = !fenced;
       continue;
     }
     if (fenced) continue;
-    // NUL as `unlink` reads it, gone, or an address with one in it is flagged by half and goes on whole.
-    for (const raw of line.replaceAll('\0', '').replace(CODE_SPAN, ' ').match(URL_RE) || []) {
+    for (const raw of line.replace(CODE_SPAN, ' ').match(URL_RE) || []) {
       const url = trimEnd(raw, TRAILING);
       if (!accountedFor(url, evidence) && !found.has(addressKey(url))) found.set(addressKey(url), url);
     }
@@ -284,7 +289,7 @@ export function unlink(answer, flagged) {
   // A link's target is taken whole, and may run past where an address in text would stop.
   const isFlagged = (url) => keys.has(addressKey(url)) || keys.has(addressKey(url.match(URL_RE)?.[0] ?? url));
   let fenced = false;
-  return String(answer || '')
+  return withoutNul(answer)
     .split('\n')
     .map((line) => {
       if (FENCE.test(line)) {
@@ -294,10 +299,9 @@ export function unlink(answer, flagged) {
       if (fenced) return line;
       const defined = line.match(LINK_DEFINITION);
       if (defined && isFlagged(defined[1])) return '';
-      // Code is set aside and put back, so nothing in it is touched. NUL marks the place, and is
-      // nothing an answer can keep: the database refuses it.
+      // Code is set aside and put back, so nothing in it is touched. NUL marks the place.
       const code = [];
-      const open = line.replaceAll('\0', '').replace(CODE_SPAN, (span) => {
+      const open = line.replace(CODE_SPAN, (span) => {
         code.push(span);
         return `\0${code.length - 1}\0`;
       });
@@ -355,7 +359,8 @@ export const repairRounds = (env = process.env) => Math.max(1, Math.min(3, Numbe
  *   when an address is flagged.
  * @returns {Promise<{ text: string, changed: boolean, flagged: string[], fixed: number, removed: number }>}
  */
-export async function checkAnswer({ answer, messages, sources = [], moreSources = null, language = 'en', ask, rounds = repairRounds() }) {
+export async function checkAnswer({ answer: written, messages, sources = [], moreSources = null, language = 'en', ask, rounds = repairRounds() }) {
+  const answer = withoutNul(written);
   let evidence = evidenceOf(messages, sources);
   let flagged = unsourcedLinks(answer, evidence);
   if (flagged.length && moreSources) {
