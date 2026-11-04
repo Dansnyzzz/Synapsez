@@ -247,9 +247,22 @@ section('the last of what makes an address the same one (QC-020)');
   check('a route with a trailing slash is the same route', passes('https://x.example/#/report/', 'https://x.example/#/report'));
   check('  and a bare #/ is the site', passes('https://x.example/#/', 'https://x.example/a'));
   // Sweeping the class.
-  check('an em dash and an ellipsis end an address, with the sentence going on after', passes('https://x.example/q2—bản đầy đủ', 'https://x.example/q2') && passes('https://x.example/q2… rồi đọc tiếp', 'https://x.example/q2'));
-  check('  and what follows stays when it goes', unlink('https://bad.example/a—bản đầy đủ', ['https://bad.example/a']) === '—bản đầy đủ', unlink('https://bad.example/a—bản đầy đủ', ['https://bad.example/a']));
-  check('  an en dash does not: it is in the titles of pages', !passes('https://x.example/2020–2024', 'https://x.example/2020'));
+  check('a sentence running on from a page that was read, by an em dash or an ellipsis, leaves it found', passes('https://x.example/q2—bản đầy đủ', 'https://x.example/q2') && passes('https://x.example/q2… rồi đọc tiếp', 'https://x.example/q2'));
+  const ranOn = await checkAnswer({ answer: 'https://bad.example/a—bản đầy đủ', messages: [], ask: async () => '{"edits":[]}' });
+  check('  an invented one goes, and the words run on from it stay', ranOn.text.startsWith('—bản đầy đủ') && ranOn.removed === 1, ranOn.text);
+  check('  an en dash runs on from nothing: it is in the titles of pages', !passes('https://x.example/2020–2024', 'https://x.example/2020'));
+  // Evaluator, narrow pass: as stops in raw text they missed the same character decoded, and a true link went.
+  for (const [answer, source] of [['[trang](https://x.example/A—B)', 'https://x.example/A%E2%80%94B'], ['[trang](https://x.example/A%E2%80%94B)', 'https://x.example/A—B'], ['https://x.example/A…B', 'https://x.example/A%E2%80%A6B'], ['https://x.example/s?q=A—B', 'https://x.example/s?q=A%E2%80%94B']]) {
+    check(`a title holding one is one page, however written: ${answer} and ${source}`, passes(answer, source), JSON.stringify(unsourcedLinks(answer, evidenceOf(read(source)))));
+    const kept = await checkAnswer({ answer, messages: read(source), ask: async () => { throw new Error('no call'); } });
+    check('  and is not touched', !kept.changed && kept.text === answer, kept.text);
+  }
+  // Tried once: it recursed, so `a's's` passed and a long run threw, which skipped the whole check.
+  check("  the possessive is taken off once", !passes("https://x.example/a's's", 'https://x.example/a'));
+  const manyS = `https://fake.example/a${"'s".repeat(100_000)}`;
+  const startedS = Date.now();
+  const longRun = await checkAnswer({ answer: manyS, messages: [], ask: async () => '{"edits":[]}' });
+  check('  and a long run of them neither throws nor takes time', longRun.removed === 1 && Date.now() - startedS < 1500, `${Date.now() - startedS} ms`);
   check('another port is another address', !passes('https://x.example:9999/a', 'https://x.example/a'));
   check('  the usual one is not', passes('https://x.example:443/a', 'https://x.example/a'));
   check('  and a site with a port is that site', passes('https://x.example:8080', 'https://x.example:8080/a'));
