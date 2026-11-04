@@ -22,11 +22,21 @@
  *      link (the words stay), and a line says what the check did — so the
  *      person sees that it ran and what it changed.
  *
- * Addresses inside code blocks are examples, not citations, and are left alone.
+ * Addresses in code, a block or a span, are examples, not citations, and are
+ * left alone.
  */
 
-const URL_RE = /https?:\/\/[^\s<>()[\]"'`]+/g;
+/**
+ * An address in text, and where it ends (QC-017). A table's `|`, curly quotes and
+ * CJK punctuation end it, as does a comma before the next address: read as part of
+ * it, they and the word after them made a true link look invented, and went with
+ * it. Brackets are part of it only when they balance, so `Foo_(planet)` and
+ * `Foo_(other)` are two pages, and the `)` closing a Markdown link is neither.
+ */
+const URL_RE = /https?:\/\/(?:(?!,https?:\/\/)[^\s<>()[\]"'`|“”‘’«»，。；：！？、）】》（【《]|\([^\s()]*\))+/g;
 const FENCE = /^\s{0,3}(```|~~~)/;
+/** Inline code, an example as a code block is: `curl https://…` was left as `curl `. */
+const CODE_SPAN = /``[^`]*``|`[^`]*`/g;
 /** Tracking parameters that change nothing about which page an address is. */
 const TRACKING = /^(utm_\w+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$/i;
 /**
@@ -34,17 +44,40 @@ const TRACKING = /^(utm_\w+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$/i;
  * `_…_` and `~~…~~` round a link are emphasis, and read as part of it they
  * made a page a search really returned look invented (QC-003).
  */
-const TRAILING = /[.,;:!?)\]}>'"*_~\\]+$/;
+const TRAILING = new Set('.,;:!?]}>\'"*_~\\');
 
-/** An address as compared: no scheme, no `www.`, no fragment or tracking, no trailing slash or punctuation. */
+/** A string without what ends it from `chars`. A loop: a regex for this took 15 s on a long run of dots in a page. */
+function trimEnd(text, chars) {
+  let end = text.length;
+  while (end > 0 && chars.has(text[end - 1])) end -= 1;
+  return text.slice(0, end);
+}
+
+const SLASH = new Set('/');
+
+/** A path's words, however they were encoded: `%e1%bb%87`, `%E1%BB%87` and `ệ` are one letter. */
+function decodedPath(pathname) {
+  const upper = pathname.replace(/%[0-9a-f]{2}/gi, (hex) => hex.toUpperCase());
+  try {
+    return decodeURI(upper).normalize('NFC');
+  } catch {
+    return upper;
+  }
+}
+
+/**
+ * An address as compared: no scheme, no `www.`, no fragment or tracking, no
+ * trailing slash or punctuation, and however its letters were encoded. The query
+ * by its decoded values (QC-017): deleting a tracking parameter re-serialises the
+ * rest, which made `?q=a%20b&utm_source=rss` another page from `?q=a%20b`.
+ */
 export function addressKey(url) {
-  const raw = String(url || '').replace(TRAILING, '');
+  const raw = trimEnd(String(url || '').replace(/&amp;/g, '&').normalize('NFC'), TRAILING);
   try {
     const u = new URL(raw);
-    for (const name of [...u.searchParams.keys()]) if (TRACKING.test(name)) u.searchParams.delete(name);
     const host = u.hostname.toLowerCase().replace(/^www\./, '');
-    const rest = `${u.pathname.replace(/\/+$/, '')}${u.search}`;
-    return `${host}${rest}`;
+    const query = [...u.searchParams].filter(([name]) => !TRACKING.test(name)).map(([name, value]) => `${name}=${value}`).join('&');
+    return `${host}${trimEnd(decodedPath(u.pathname), SLASH)}${query ? `?${query}` : ''}`;
   } catch {
     return raw.toLowerCase();
   }
@@ -126,7 +159,7 @@ function accountedFor(url, evidence) {
 
 /**
  * The addresses in an answer that nothing in the conversation accounts for,
- * once each, outside code blocks.
+ * once each, outside code.
  *
  * @param {string} answer
  * @param {{ keys: Set<string>, hosts: Set<string> }} evidence
@@ -141,8 +174,8 @@ export function unsourcedLinks(answer, evidence) {
       continue;
     }
     if (fenced) continue;
-    for (const raw of line.match(URL_RE) || []) {
-      const url = raw.replace(TRAILING, '');
+    for (const raw of line.replace(CODE_SPAN, ' ').match(URL_RE) || []) {
+      const url = trimEnd(raw, TRAILING);
       if (!accountedFor(url, evidence) && !found.has(addressKey(url))) found.set(addressKey(url), url);
     }
   }
@@ -191,23 +224,30 @@ export function applyEdits(answer, reply, flagged, evidence) {
   return { text, applied, cited, dropped };
 }
 
-/** A link in Markdown, its address taken whole: brackets in it, a title after it, a picture's `!` before it. */
-const MARKDOWN_LINK = /!?\[([^\]]*)\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+"[^"]*")?\s*\)/g;
-const BARE_ADDRESS = /<?(https?:\/\/[^\s<>()[\]"'`]+)>?/g;
+/**
+ * A link in Markdown, its address taken whole: brackets in it, a title after it,
+ * a picture's `!` before it. Its words may hold brackets, `[Report [PDF]](…)`, but
+ * not a whole link, so a picture inside a link is its own match. Built so that a
+ * line of `[[[[` fails at once at each one, rather than reading on to the end.
+ */
+const MARKDOWN_LINK = /!?\[((?:[^[\]]|\[[^[\]]*\](?!\())*)\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g;
+/** `[1]: https://…`, a link's address kept apart from it: flagged, the whole line goes, not only the address. */
+const LINK_DEFINITION = /^\s*\[[^\]]+\]:\s*<?(https?:\/\/[^\s>]+)>?(?:\s.*)?$/;
+const BARE_ADDRESS = new RegExp(`<?(${URL_RE.source})>?`, 'g');
 
 /**
  * Each address still flagged loses its link, and keeps its words. By the
  * address as compared, whole (QC-014): matched as text, a flagged `…/docs` also
  * took the true `…/docs/intro` with it, on every answer the gate touched, while
  * the same page spelled another way (`www.`, a trailing slash, `utm_source`)
- * kept its live link. Code blocks are examples, and are left as they are.
+ * kept its live link. Code is an example, and is left as it is.
  *
  * @param {string} answer
  * @param {string[]} flagged
  */
 export function unlink(answer, flagged) {
   const keys = new Set(flagged.map(addressKey));
-  const isFlagged = (url) => keys.has(addressKey(url.match(URL_RE)?.[0] ?? url));
+  const isFlagged = (url) => keys.has(addressKey(url));
   let fenced = false;
   return String(answer || '')
     .split('\n')
@@ -217,13 +257,22 @@ export function unlink(answer, flagged) {
         return line;
       }
       if (fenced) return line;
-      return line
+      const defined = line.match(LINK_DEFINITION);
+      if (defined && isFlagged(defined[1])) return '';
+      // Code is set aside and put back, so nothing in it is touched.
+      const code = [];
+      const open = line.replace(CODE_SPAN, (span) => {
+        code.push(span);
+        return `\0${code.length - 1}\0`;
+      });
+      return open
         .replace(MARKDOWN_LINK, (whole, label, url) => (isFlagged(url) ? label : whole))
         .replace(BARE_ADDRESS, (whole, url) => {
           if (!isFlagged(url)) return whole;
           // The full stop that ended the sentence is not part of the address.
-          return url.slice(url.replace(TRAILING, '').length);
-        });
+          return url.slice(trimEnd(url, TRAILING).length);
+        })
+        .replace(/\0(\d+)\0/g, (_m, at) => code[at]);
     })
     .join('\n');
 }
@@ -437,8 +486,6 @@ const worthChecking = (token) => token.endsWith('%') || token.replace(/\D/g, '')
 
 /** The line a check ends an answer with: it is about the check, not about the world. */
 const CHECK_NOTE = /^\*(?:Source check|Kiểm tra nguồn|Figure check|Kiểm tra số liệu):/;
-/** An address whole, brackets and all: URL_RE stops at `(`, which left `Foo_(2020)` a figure inside a link. */
-const WHOLE_ADDRESS = /https?:\/\/[^\s<>"'`]+/g;
 /** A number that only orders what follows: `12.`, `**12.**`, `- 3)`, `> 4.`, and a heading's `## 1.1`. */
 const LIST_NUMBER = /^(\s*(?:>\s*)*(?:[-*+]\s+)?(?:\*\*|__)?)(\d+[.)])(?=(?:\*\*|__)?\s)/;
 const HEADING_NUMBER = /^(\s*(?:>\s*)*#{1,6}\s+(?:\*\*|__)?)(\d+(?:\.\d+)*[.)]?)(?=(?:\*\*|__)?\s)/;
@@ -481,8 +528,8 @@ function figuresIn(answer) {
       const blank = (m) => ' '.repeat(m.length);
       const numberless = (_m, lead, number) => lead + blank(number);
       const seen = line
-        .replace(WHOLE_ADDRESS, blank)
-        .replace(/`[^`]*`/g, blank)
+        .replace(URL_RE, blank)
+        .replace(CODE_SPAN, blank)
         .replace(HTML_TAG, blank)
         .replace(CURRENCY_CODE, blank)
         .replace(/\[\^?\d+\]/g, blank)

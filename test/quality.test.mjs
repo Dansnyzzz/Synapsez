@@ -223,8 +223,8 @@ section('a link is removed by the whole address, however it is spelled (QC-014)'
   check('a code block is left as it is, the same address and all', fenced.text.includes('curl https://fake.example/x\n') && !fenced.text.startsWith('Xem https'), fenced.text);
 
   check('a title, brackets in the address and a picture are all taken whole',
-    unlink('[a](https://fake.example/x "T") [b](https://fake.example/y_(z)) ![c](https://fake.example/p.png)', ['https://fake.example/x', 'https://fake.example/y_', 'https://fake.example/p.png']) === 'a b c',
-    unlink('[a](https://fake.example/x "T") [b](https://fake.example/y_(z)) ![c](https://fake.example/p.png)', ['https://fake.example/x', 'https://fake.example/y_', 'https://fake.example/p.png']));
+    unlink('[a](https://fake.example/x "T") [b](https://fake.example/y_(z)) ![c](https://fake.example/p.png)', ['https://fake.example/x', 'https://fake.example/y_(z)', 'https://fake.example/p.png']) === 'a b c',
+    unlink('[a](https://fake.example/x "T") [b](https://fake.example/y_(z)) ![c](https://fake.example/p.png)', ['https://fake.example/x', 'https://fake.example/y_(z)', 'https://fake.example/p.png']));
 
   const evidence2 = evidenceOf(read);
   const reach = applyEdits('See [x](https://news.example/kinh-te-4812.html).', '{"edits":[{"find":"See [x](https://news.example/kinh-te-4812.html).","replace":"Rewritten."}]}', ['https://news.example/kinh-te'], evidence2);
@@ -233,6 +233,60 @@ section('a link is removed by the whole address, however it is spelled (QC-014)'
   const two = 'Xem [a](https://fake.example/a) va [b](https://fake.example/b).';
   const dropped = await checkAnswer({ answer: two, messages: [], ask: async () => '{"edits":[{"find":"Xem [a](https://fake.example/a) va [b](https://fake.example/b).","replace":"Xem a va b."}]}' });
   check('one edit that drops two links says two (QC-011)', dropped.removed === 2 && dropped.fixed === 0 && /removed 2 links/.test(dropped.text), dropped.text);
+}
+
+section('where an address ends, and what makes it the same page (QC-017)');
+{
+  const read = (...urls) => [{ role: 'tool', results: [{ content: urls.join('\n') }] }];
+  const passes = (answer, ...urls) => unsourcedLinks(answer, evidenceOf(read(...urls))).length === 0;
+
+  // Inline code is an example, as a code block is.
+  for (const answer of ['Chạy `curl https://api.example.com/v1/health` để kiểm tra.', 'Mở `http://localhost:3000` trong trình duyệt.', 'Xem ``https://x.example/a`` nhé.']) {
+    const out = await checkAnswer({ answer, messages: [], ask: async () => { throw new Error('no call'); } });
+    check(`an address in inline code is not checked, and costs no call: ${answer.slice(0, 24)}…`, !out.changed && out.text === answer, out.text);
+  }
+  const mixed = unlink('Dùng `curl https://fake.example/x` chứ không phải https://fake.example/x.', ['https://fake.example/x']);
+  check('  the same address outside it still goes, and the code stays', mixed === 'Dùng `curl https://fake.example/x` chứ không phải .', mixed);
+
+  // What ends an address: read as part of it, these took a true link and the words after it.
+  for (const answer of ['|https://x.example/a|Bài viết|', '“https://x.example/a”.', '《https://x.example/a》', '请看https://x.example/a，然后继续阅读全文。', 'Xem https://x.example/a; rồi đọc tiếp.', 'Xem (https://x.example/a).', 'Xem **https://x.example/a**.']) {
+    check(`a true link is found where it ends: ${answer}`, passes(answer, 'https://x.example/a'), JSON.stringify(unsourcedLinks(answer, evidenceOf(read('https://x.example/a')))));
+  }
+  check('  two addresses and a comma between them are two', passes('https://x.example/a,https://x.example/b', 'https://x.example/a', 'https://x.example/b'));
+  check('  an invented one in a table loses only itself, the cell\'s words stay', unlink('|https://fake.example/a|Bài viết|', ['https://fake.example/a']) === '||Bài viết|', unlink('|https://fake.example/a|Bài viết|', ['https://fake.example/a']));
+
+  // The same page, however it was written.
+  for (const [answer, source] of [
+    ['https://x.example/ti%e1%bb%87m', 'https://x.example/ti%E1%BB%87m'],
+    ['https://x.example/tiệm', 'https://x.example/ti%E1%BB%87m'],
+    ['https://x.example/tiệm', 'https://x.example/tiệm'],
+    ['https://x.example/s?q=a%20b', 'https://x.example/s?q=a%20b&utm_source=rss'],
+    ['https://x.example/s?q=a+b', 'https://x.example/s?q=a%20b'],
+    ['https://x.example/s?a=1&b=2', 'https://x.example/s?a=1&amp;b=2'],
+  ]) {
+    check(`one page, however written: ${answer} and ${source}`, passes(answer, source), `${addressKey(answer)} / ${addressKey(source)}`);
+  }
+  // Two pages, however alike.
+  for (const [answer, source] of [['https://x.example/Mercury_(invented)', 'https://x.example/Mercury_(planet)'], ['https://x.example/s?q=a', 'https://x.example/s?q=b'], ['https://x.example/a%2Fb', 'https://x.example/a/c']]) {
+    check(`  two pages, however alike: ${answer} and ${source}`, !passes(answer, source), addressKey(answer));
+  }
+  check('brackets that balance stay with the address, and the one closing a link does not', unlink('[a](https://x.example/F_(p)) và https://x.example/F_(p).', ['https://x.example/F_(p)']) === 'a và .', unlink('[a](https://x.example/F_(p)) và https://x.example/F_(p).', ['https://x.example/F_(p)']));
+
+  // What a link's removal leaves.
+  const left = (text) => unlink(text, ['https://fake.example/x']);
+  check("words holding brackets stay whole", left('[Báo cáo [PDF]](https://fake.example/x)') === 'Báo cáo [PDF]', left('[Báo cáo [PDF]](https://fake.example/x)'));
+  check('  a title in single quotes goes with it', left("[a](https://fake.example/x 'tiêu đề')") === 'a', left("[a](https://fake.example/x 'tiêu đề')"));
+  check('  a reference definition goes whole', left('[1]: https://fake.example/x "T"') === '', left('[1]: https://fake.example/x "T"'));
+  check('  a picture inside a true link loses only the picture', left('[![b](https://fake.example/x)](https://x.example/a)') === '[b](https://x.example/a)', left('[![b](https://fake.example/x)](https://x.example/a)'));
+
+  // Model output and page text, at their longest: none of this may hold the turn up.
+  for (const [label, text] of [['[', '['.repeat(200_000)], ['[a', '[a'.repeat(100_000)], ['dots in a page', `https://x.example/${'.'.repeat(200_000)}a`], ['slashes', `https://x.example/${'/'.repeat(100_000)}a`], ['brackets', `https://x.example/${'('.repeat(100_000)}`]]) {
+    const started = Date.now();
+    unlink(text, ['https://fake.example/x']);
+    unsourcedLinks(text, evidenceOf(read(text)));
+    const took = Date.now() - started;
+    check(`  a line of ${label} takes no time`, took < 1500, `${took} ms`);
+  }
 }
 
 section('more of what the figure check reads, and where its mark goes (QC-016)');
