@@ -86,7 +86,7 @@ try {
   const rootFinds = (await rootNode.stdout()).trim();
   check('a root start never runs a node the account could have replaced', !writable || !rootFinds.startsWith('/usr/local'), `/usr/local/bin ${(await local.stdout()).trim()} · root finds ${rootFinds}`);
   // SBX-006: the template's own node, which only root can change, so the cloud browser's helper can run as root.
-  check(template === 'base' ? "root's own node (base: not expected — the helper comes up as the account)" : "  root's node is the template's own, in a folder only root can change (SBX-006)", template === 'base' || rootFinds === `${ROOT_NODE_DIR}/bin/node`, rootFinds);
+  check(template === 'base' ? "  root's node (base: the image's, which closing /usr/local made root's)" : "  root's node is the template's own, in a folder only root can change (SBX-006)", template === 'base' ? rootFinds === '/usr/local/bin/node' : rootFinds === `${ROOT_NODE_DIR}/bin/node`, rootFinds);
   const into = await run(`touch ${ROOT_NODE_DIR}/bin/planted 2>/dev/null && echo wrote || echo refused`);
   check('  which the account cannot write into', template === 'base' || (await into.stdout()).trim() === 'refused', await said(into));
   const py = await run('python3 -c "import numpy, pandas, matplotlib, openpyxl, docx, pptx, fpdf, PIL, requests, bs4, lxml; print(\'ok\')" 2>&1 | tail -1');
@@ -114,7 +114,7 @@ try {
   // Opened again as E2B leaves it, and filled by the account. Each writes who ran it, one
   // log per uid: fs.protected_regular stops root appending to another uid's file in /tmp.
   const PLANTED = ['id', 'mesg', 'sh', 'dnf', 'stat', 'find', 'readlink', 'bash', 'env', 'setpriv', 'timeout', 'sudo', 'apt-get', 'npm', 'grep', 'sed', 'cat', 'mkdir', 'chmod', 'chown'];
-  const planter = PLANTED.map((name) => `/usr/bin/printf '#!/bin/sh\\necho "$(/usr/bin/id -u) ${name}" >> "/tmp/ran.$(/usr/bin/id -u).log"\\nfor d in /usr/bin /bin /usr/sbin /sbin; do [ -x "$d/${name}" ] && exec "$d/${name}" "$@"; done\\n' > /usr/local/bin/${name}; /usr/bin/chmod 755 /usr/local/bin/${name}`).join('; ');
+  const planter = PLANTED.map((name) => `/usr/bin/rm -f /usr/local/bin/${name}; /usr/bin/printf '#!/bin/sh\\necho "$(/usr/bin/id -u) ${name}" >> "/tmp/ran.$(/usr/bin/id -u).log"\\nfor d in /usr/bin /bin /usr/sbin /sbin; do [ -x "$d/${name}" ] && exec "$d/${name}" "$@"; done\\n' > /usr/local/bin/${name}; /usr/bin/chmod 755 /usr/local/bin/${name}`).join('; ');
   const asRoot = (command, options = {}) => machine.runCommand({ ...shellFor(command, {}, { root: true }), sudo: true, timeoutMs: 30_000, ...options });
   await asRoot('/usr/bin/chmod -R a+rwX /usr/local');
   await run(planter);
@@ -134,9 +134,10 @@ try {
   check('  nor does a root command (SBX-007, SBX-008, SBX-010)', afterRoot === '', afterRoot);
   const started = await machine.runCommand({ ...shellFor(startScript(`probe-${Date.now()}`, { root: true }), { SYNZ_SERVICE: Buffer.from('process.exit(0)').toString('base64'), SYNZ_KERNEL: '', SYNZ_KEY: 'probe' }, { root: true }), sudo: true, timeoutMs: 180_000 });
   const afterStart = await rootRan();
-  // The template's node is root's whatever happens to /usr/local; on base root then trusts no node, and stops.
-  check("  nor does the cloud browser's real root start, its install included (SBX-009)", afterStart === '' && started.exitCode === (template === 'base' ? 127 : 0), `exit ${started.exitCode}${afterStart ? ` · ${afterStart}` : ''}`);
-  await asRoot(`/usr/bin/rm -f ${PLANTED.map((name) => `/usr/local/bin/${name}`).join(' ')} /tmp/ran.*.log`);
+  // The template's node is root's whatever happens to /usr/local; on base root then trusts no node, and stops before its install.
+  check(template === 'base' ? "  nor does the cloud browser's root start, which finds no node it trusts and stops (SBX-009)" : "  nor does the cloud browser's real root start, its install included (SBX-009)", afterStart === '' && started.exitCode === (template === 'base' ? 127 : 0), `exit ${started.exitCode}${afterStart ? ` · ${afterStart}` : ''}`);
+  // npm is a link in the image, which the planting took the place of.
+  await asRoot(`/usr/bin/rm -f ${PLANTED.map((name) => `/usr/local/bin/${name}`).join(' ')} /tmp/ran.*.log; /usr/bin/ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm`);
   await asRoot(__testing.CLOSE_MACHINE);
   // A root command starts in the account's folder.
   await run("mkdir -p ~/pip && echo 'print(\"planted\")' > ~/pip/__main__.py");
@@ -190,7 +191,7 @@ try {
   if (process.argv.includes('--browser')) {
     section('Chromium, the way the cloud browser starts it');
     const install = await machine.runCommand({
-      ...shellFor('mkdir -p ~/b && cd ~/b && printf \'{"private":true}\' > package.json && npm install --no-save --no-audit --no-fund --loglevel=error playwright-core@1.63.0 @sparticuz/chromium@153.0.0 2>&1 | tail -3'),
+      ...shellFor('mkdir -p ~/b && cd ~/b && printf \'{"private":true}\' > package.json && npm install --no-save --no-audit --no-fund --ignore-scripts --loglevel=error playwright-core@1.63.0 @sparticuz/chromium@153.0.0 2>&1 | tail -3; exit ${PIPESTATUS[0]}'),
       timeoutMs: 240_000,
     });
     check('its packages install', install.exitCode === 0, await said(install));
@@ -204,7 +205,7 @@ try {
       'await browser.close();',
     ].join('\n');
     await machine.writeFiles([{ path: 'b/launch.mjs', content: Buffer.from(script) }]);
-    const launched = await machine.runCommand({ cmd: 'bash', args: ['--noprofile', '--norc', '-c', 'cd ~/b && node launch.mjs 2>&1 | tail -5'], env: { VERCEL: '1', AWS_LAMBDA_JS_RUNTIME: 'nodejs22.x' }, timeoutMs: 120_000 });
+    const launched = await machine.runCommand({ ...shellFor('cd ~/b && node launch.mjs 2>&1 | tail -5', { VERCEL: '1', AWS_LAMBDA_JS_RUNTIME: 'nodejs22.x' }, { userBin: true }), timeoutMs: 120_000 });
     check('Chromium starts and renders a page', (await launched.stdout()).includes('Tiếng Việt'), await said(launched));
   }
 } catch (err) {

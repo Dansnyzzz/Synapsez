@@ -426,9 +426,10 @@ async function start(userId, { signal } = {}) {
     }
   };
   if (!firstTime && before?.mode === 'user') return asAccount(false);
-  const onE2B = machine.provider === 'e2b';
+  const onE2B = (m) => m.provider === 'e2b';
   const asRoot = async (on, first) => {
-    const port = onE2B ? ROOT_BROWSER_PORT : BROWSER_PORT;
+    // Of the machine it is, not the first: a retry can be given the Vercel one standing in.
+    const port = onE2B(on) ? ROOT_BROWSER_PORT : BROWSER_PORT;
     const at = (await portAddress(on, port, { signal })).replace(/\/$/, '');
     /*
      * On E2B a profile is adopted only from a helper known to have run as the
@@ -436,14 +437,14 @@ async function start(userId, { signal } = {}) {
      * is whatever an ordinary command put there, and root's browser would start
      * up signed in to someone else's account.
      */
-    const moveProfile = !onE2B || (before?.mode === 'user' && String(before?.url || '').includes(on.sandboxId));
+    const moveProfile = !onE2B(on) || (before?.mode === 'user' && String(before?.url || '').includes(on.sandboxId));
     return startAs(on, userId, at, 'root', { signal, firstTime: first, port, moveProfile });
   };
   try {
     return await asRoot(machine, firstTime);
   } catch (err) {
     if (signal?.aborted || !err?.exited) throw err;
-    if (!onE2B || NO_ROOT_HERE.has(err.exitCode)) return asAccount(true);
+    if (!onE2B(machine) || NO_ROOT_HERE.has(err.exitCode)) return asAccount(true);
     /*
      * Anything else on E2B is not root being unavailable, and is not a reason to
      * give up the sign-ins' protection (SBX-013): stopped from outside is tried
