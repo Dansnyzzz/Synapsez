@@ -1645,6 +1645,39 @@ section('Settings → Usage: the week, the busiest hour and the pace, in the rea
   check('at the pace so far, when a limit runs out — before its reset, or not at all', runs?.runsOut instanceof Date && Math.abs(runs.runsOut.getTime() - (utc.getTime() + 2 * 3600_000)) < 1000 && m.project({ ...all[0], used: 5 }, utc)?.runsOut === null, String(runs?.runsOut?.toISOString()));
   check('  and says nothing in the first half hour of a period, or with nothing used', m.project({ ...all[0], from: new Date(utc.getTime() - 10 * 60_000) }, utc) === null && m.project({ ...all[0], used: 0 }, utc) === null && m.project({ ...all[2], from: null }, utc) === null);
   check('the warning above the composer starts at 80%, again at 90%, and at the limit', m.alertFor([{ used: 79, limit: 100 }]) === null && m.alertFor([{ used: 80, limit: 100 }]).level === '80' && m.alertFor([{ used: 93, limit: 100 }]).level === '90' && m.alertFor([{ used: 100, limit: 100 }]).level === 'out');
+
+  /*
+   * The owner's screenshot 1 (2026-11-04): "you have used all your free requests
+   * (key 1)" in red, with key 2 at 2 of 50 and already in use. The Overview adds
+   * a provider up; a provider's page warns about the key being spent.
+   */
+  const two = (a, b, inUse = 1) => ({
+    live: { openrouter: [{ index: 0, ok: true, freeToday: { used: a, limit: 50 } }, { index: 1, ok: true, freeToday: { used: b, limit: 50 } }], orcarouter: [] },
+    free: {},
+    inUse: { openrouter: inUse },
+  });
+  const owners = two(51, 2);
+  const totals = m.overviewLimits(owners, utc);
+  check('the Overview has one line for the provider, not one per key', totals.length === 1 && totals[0].kind === 'free' && totals[0].provider === 'openrouter' && totals[0].index === undefined, JSON.stringify(totals.map((l) => l.id)));
+  check('  of the total: 51 of 50 and 2 of 50 is 52 of 100', totals[0].used === 52 && totals[0].limit === 100, `${totals[0].used}/${totals[0].limit}`);
+  check('  and no warning, on the Overview or above the composer', m.alertFor(m.decisiveLimits(owners, 'all', utc)) === null);
+  check("  nor on the provider's page, where key 2 is in use", m.alertFor(m.decisiveLimits(owners, 'openrouter', utc)) === null && m.decisiveLimits(owners, 'openrouter', utc).every((l) => l.index === 1));
+  check('  and every key still has its bar there', m.knownLimits(owners, 'openrouter', utc).length === 2);
+
+  check('the total crossing 80% warns on the Overview', m.alertFor(m.decisiveLimits(two(50, 30), 'all', utc))?.level === '80', JSON.stringify(m.decisiveLimits(two(50, 30), 'all', utc).map((l) => [l.used, l.limit])));
+  check("the key in use crossing 80% warns on the provider's page, though the total has not", m.alertFor(m.decisiveLimits(two(0, 45), 'openrouter', utc))?.level === '90' && m.alertFor(m.decisiveLimits(two(0, 45), 'all', utc)) === null);
+  check('a key not in use crossing 80% does not', m.alertFor(m.decisiveLimits(two(45, 0), 'openrouter', utc)) === null);
+  const allOut = two(50, 50, null);
+  check('every key out, with none in use, is said to be out on both pages', m.alertFor(m.decisiveLimits(allOut, 'all', utc))?.level === 'out' && m.alertFor(m.decisiveLimits(allOut, 'openrouter', utc))?.level === 'out');
+
+  const orca = { live: { openrouter: [{ index: 0, ok: true, freeToday: { used: 45, limit: 50 } }], orcarouter: [{ index: 0, ok: true, balance: 6 }] }, free: { orcarouter: { used: 700, limit: 800, tier: 'high', tiers: [], models: [{ id: 'orcarouter/tencent/hy4-preview-free', used: 3, limit: 4000 }] } }, inUse: { openrouter: 0 } };
+  const mixed = m.overviewLimits(orca, utc);
+  check('two providers are not added together', mixed.some((l) => l.provider === 'openrouter' && l.limit === 50) && mixed.some((l) => l.provider === 'orcarouter' && l.limit === 800 && !l.bucket), JSON.stringify(mixed.map((l) => [l.id, l.used, l.limit])));
+  check('  and neither is a free id with a ladder of its own', mixed.some((l) => l.bucket && l.limit === 4000));
+  check('  a provider near its limit warns, whatever the other has left', m.alertFor(mixed)?.limit.provider === 'openrouter');
+  check("OrcaRouter's limit is one for the workspace, and says it was counted here", m.knownLimits(orca, 'orcarouter', utc).find((l) => !l.bucket)?.counted === true && m.knownLimits(orca, 'orcarouter', utc).every((l) => l.index === undefined));
+  check('  and it resets at 00:00 UTC, as its docs say', m.knownLimits(orca, 'orcarouter', utc)[0].to.toISOString() === '2026-11-01T00:00:00.000Z');
+  check('  with no ceiling known, no limit is invented', m.knownLimits({ free: { orcarouter: { used: 700, limit: null, tiers: [{ minPaidUsd: 0, rpd: 50 }] } } }, 'orcarouter', utc).length === 0);
 }
 
 section('the changelog: newest first, the version the app is, in both languages');
@@ -2220,6 +2253,76 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   check('  Auto counts as the free suggestion, and is the default', (await rec.getRecommended()).free === 'auto' && (await rec.suggestionFor({ openrouter: { configured: true, own: true, keys: [{ paid: false }] } }))?.id === 'auto');
   check('  a suggestion the keys cannot run is not made', (await rec.suggestionFor({ google: { configured: true, own: true, keys: [{ paid: null }] } })) === null);
 
+  /*
+   * Two free ones, and one model through either router (owner, 2026-11-04). The
+   * best free model is DeepSeek V4.1 Flash on OrcaRouter, which refuses a
+   * workspace that has not paid enough; the second is for everyone that leaves out.
+   */
+  const row = (id, label, free) => {
+    const [provider, ...rest] = id.split('/');
+    return { id, provider, model: rest.join('/'), family: rest[0], label, context: 1000000, maxOutput: 8000, priceIn: free ? 0 : 3, priceOut: free ? 0 : 15, isFree: free, releasedAt: new Date().toISOString(), vision: false };
+  };
+  await store.upsertModels([
+    row('orcarouter/deepseek/deepseek-v4.1-flash-free', 'DeepSeek V4.1 Flash (Free)', true),
+    row('openrouter/deepseek/deepseek-v4.1-flash:free', 'DeepSeek V4.1 Flash (free)', true),
+    row('openrouter/nvidia/nemotron:free', 'Nemotron (free)', true),
+    row('openrouter/anthropic/claude-best', 'Claude Best', false),
+    row('orcarouter/anthropic/claude-best', 'Claude Best', false),
+    row('orcarouter/grok/grok-9', 'Grok 9', false),
+    row('openrouter/x-ai/grok-9', 'Grok 9', false),
+    row('orcarouter/lab/only-here', 'Only here', false),
+  ]);
+  const held = (extra) => Object.fromEntries(Object.entries(extra).map(([p, keys]) => [p, keys === 'shared' ? { configured: true, own: false, shared: true, keys: [] } : { configured: true, own: true, keys }]));
+  const orOnly = held({ openrouter: [{ paid: false }] });
+  const orcaOnly = held({ orcarouter: [{ paid: true, freeTier: null }] });
+  const bothKeys = held({ openrouter: [{ paid: false }], orcarouter: [{ paid: true }] });
+  const FREE = 'orcarouter/deepseek/deepseek-v4.1-flash-free';
+
+  await rec.setRecommended({ free: FREE, freeSecond: 'openrouter/nvidia/nemotron:free' });
+  check('the second free choice is kept', (await rec.getRecommended()).freeSecond === 'openrouter/nvidia/nemotron:free');
+  let badSecond = '';
+  await rec.setRecommended({ free: FREE, freeSecond: 'openrouter/anthropic/claude-best' }).catch((err) => (badSecond = err.message));
+  check('  a paid model cannot be the second free one', /has to be a free model/.test(badSecond), badSecond);
+  await rec.setRecommended({ free: FREE, freeSecond: FREE });
+  check('  and the same one twice is one', (await rec.getRecommended()).freeSecond === null);
+  await rec.setRecommended({ free: FREE, freeSecond: 'openrouter/nvidia/nemotron:free' });
+
+  check('with an OpenRouter key, the same model through OpenRouter', (await rec.suggestionFor(orOnly))?.id === 'openrouter/deepseek/deepseek-v4.1-flash:free', JSON.stringify(await rec.suggestionFor(orOnly)));
+  check('with an OrcaRouter key, through OrcaRouter', (await rec.suggestionFor(orcaOnly))?.id === FREE);
+  check('with both, a free model goes through OrcaRouter', (await rec.suggestionFor(bothKeys))?.id === FREE);
+  check('  even when the administrator chose it on the other router', (await rec.pickRoute('openrouter/deepseek/deepseek-v4.1-flash:free', 'free', bothKeys, new Set()))=== FREE);
+  check('a free route never turns into the paid model of the same name', (await rec.pickRoute('openrouter/deepseek/deepseek-v4.1-flash:free', 'free', orcaOnly, new Set()))?.endsWith('-free'));
+  check('a workspace OrcaRouter refused for not having paid goes to the second choice', (await rec.suggestionFor(held({ orcarouter: [{ paid: true, freeTier: 'low' }], openrouter: [{ paid: false }] })))?.id === 'openrouter/deepseek/deepseek-v4.1-flash:free');
+  await rec.setRecommended({ free: 'orcarouter/lab/free-only-here-free', freeSecond: null }).catch(() => {});
+  await store.upsertModels([row('orcarouter/lab/free-only-here-free', 'Only on Orca (Free)', true)]);
+  await rec.setRecommended({ free: 'orcarouter/lab/free-only-here-free', freeSecond: 'openrouter/nvidia/nemotron:free' });
+  check('  a model only OrcaRouter has, refused there: the second choice', (await rec.suggestionFor(held({ orcarouter: [{ paid: true, freeTier: 'low' }], openrouter: [{ paid: false }] })))?.id === 'openrouter/nvidia/nemotron:free');
+  check('  no credit at all reads the same', (await rec.suggestionFor(held({ orcarouter: [{ paid: false, freeTier: null }], openrouter: [{ paid: false }] })))?.id === 'openrouter/nvidia/nemotron:free');
+  check('  proof of the upper rung outweighs an empty balance', (await rec.suggestionFor(held({ orcarouter: [{ paid: false, freeTier: 'high' }] })))?.id === 'orcarouter/lab/free-only-here-free');
+  check('  nothing known yet gets the benefit of the doubt', (await rec.suggestionFor(held({ orcarouter: [{ paid: null, freeTier: null }] })))?.id === 'orcarouter/lab/free-only-here-free');
+  check('  neither choice runnable: no suggestion', (await rec.suggestionFor(held({ google: [{ paid: null }] }))) === null);
+
+  await rec.setRecommended({ free: 'auto', paid: 'orcarouter/anthropic/claude-best' });
+  const payingBoth = held({ openrouter: [{ paid: true }], orcarouter: [{ paid: true }] });
+  check('with both paying, a paid model goes through OpenRouter', (await rec.suggestionFor(payingBoth))?.id === 'openrouter/anthropic/claude-best', JSON.stringify(await rec.suggestionFor(payingBoth)));
+  check('  with only OrcaRouter paying, through OrcaRouter', (await rec.suggestionFor(held({ orcarouter: [{ paid: true }] })))?.id === 'orcarouter/anthropic/claude-best');
+  check('  OpenRouter unpaid and OrcaRouter paying is still OrcaRouter: an unpaid key cannot run it', (await rec.suggestionFor(held({ openrouter: [{ paid: false }], orcarouter: [{ paid: true }] })))?.id === 'orcarouter/anthropic/claude-best');
+  check('  nobody paying: the free one', (await rec.suggestionFor(held({ openrouter: [{ paid: false }] })))?.id === 'auto');
+  check("a maker's other name is the same model", (await rec.pickRoute('orcarouter/grok/grok-9', 'paid', payingBoth, new Set(['openrouter', 'orcarouter']))) === 'openrouter/x-ai/grok-9');
+  check('a model only one router lists stays there', (await rec.pickRoute('orcarouter/lab/only-here', 'paid', payingBoth, new Set(['openrouter', 'orcarouter']))) === 'orcarouter/lab/only-here');
+  check('  and is not suggested to a key that cannot reach it', (await rec.pickRoute('orcarouter/lab/only-here', 'paid', orOnly, new Set(['openrouter']))) === null);
+  check('its own key comes before a deployment-wide one', (await rec.pickRoute('orcarouter/anthropic/claude-best', 'paid', held({ orcarouter: 'shared', openrouter: [{ paid: true }] }), new Set(['openrouter', 'orcarouter']))) === 'openrouter/anthropic/claude-best');
+  check('first-party models are untouched by any of it', (await rec.pickRoute('anthropic/claude-opus-5', 'paid', held({ anthropic: [{ paid: true }] }), new Set(['anthropic']))) === 'anthropic/claude-opus-5');
+  const shown = await rec.recommendedWithLabels(orOnly);
+  check("the picker's mark is through this account's router, even before it has paid", shown.paid?.id === 'openrouter/anthropic/claude-best', JSON.stringify(shown.paid));
+  const nobody = await rec.recommendedWithLabels(held({ google: [{ paid: null }] }));
+  check('  and with no key for either, as the administrator chose it', nobody.paid?.id === 'orcarouter/anthropic/claude-best', JSON.stringify(nobody.paid));
+  const { routesOf, canonicalModel } = await import('../server/modelRoutes.js');
+  check('free and paid spellings on each router', routesOf('openrouter/x-ai/grok-4:free').orcarouter === 'orcarouter/grok/grok-4-free' && routesOf('orcarouter/kimi/k3').openrouter === 'openrouter/moonshotai/k3');
+  check('  a first-party model has no routes', Object.keys(routesOf('anthropic/claude-opus-5')).length === 0 && Object.keys(routesOf('auto')).length === 0);
+  check('  the free and paid variants of a model are one model', canonicalModel('x-ai/grok-4:free') === canonicalModel('grok/grok-4'));
+  await rec.setRecommended({ free: 'auto', freeSecond: null, paid: null });
+
   // A provider's key pasted in a connector's box is kept among the providers; a connector's token in a provider's box is connected.
   const toProviders = await intake.intakeToken(user.id, 'github', 'AIzaSyA-features-0123456789abcdefghijklmn', { fetchImpl });
   check("a Google key pasted in GitHub's box is kept under Google", toProviders.kind === 'provider' && toProviders.id === 'google' && (await providerStatus(user.id)).google.own, JSON.stringify(toProviders));
@@ -2412,7 +2515,8 @@ section('feedback on one answer: the problem, the words, and that turn as it ran
   app.use(express.json());
   const api = express.Router();
   api.use((req, res, next) => {
-    req.user = { id: user.id, username: 'afb' };
+    // The owner, for the admin routes below: reading feedback is a permission now.
+    req.user = { id: user.id, username: 'afb', role: 'admin', is_owner: true };
     next();
   });
   const admin = express.Router();

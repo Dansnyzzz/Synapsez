@@ -160,6 +160,9 @@ export function measure(messages, entry, { maxOutput } = {}) {
     // Whether `used` rests on a provider's figure at all — which, unlike the
     // estimate, includes the system prompt and the tools. See contextParts.js.
     provided: !folded && lastCounted >= 0,
+    // The window is our assumption, not the model's published figure. Said on the
+    // gauge: "42K / 128K" read as a fact about a model OrcaRouter gives 1M.
+    assumed: !(Number(entry?.context) > 0),
   };
 }
 

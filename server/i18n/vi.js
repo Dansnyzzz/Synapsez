@@ -756,6 +756,23 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     '{0} ở định dạng Office cũ, không đọc được. Hãy lưu thành .docx, .xlsx hoặc .pptx rồi thêm tệp đó.',
   '{0} is not a kind of file that can be read. PDFs, Word, Excel, PowerPoint, text and code work.':
     '{0} không phải loại tệp đọc được. Đọc được PDF, Word, Excel, PowerPoint, văn bản và mã nguồn.',
+  'You own this deployment. Hand it to another administrator in Settings → People before deleting your account.': 'Bạn là chủ sở hữu của bản triển khai này. Hãy giao quyền sở hữu cho một quản trị viên khác trong Cài đặt → Người dùng trước khi xoá tài khoản.',
+  'The deployment can only be handed to another active administrator.': 'Chỉ có thể giao quyền sở hữu cho một quản trị viên khác đang hoạt động.',
+  'Choose what an administrator may do under Settings → People.': 'Hãy chọn việc quản trị viên được làm trong Cài đặt → Người dùng.',
+  'A stdio server runs a program on this server with access to everyone’s stored keys, so only the owner of this deployment can use one.': 'Máy chủ stdio chạy một chương trình trên máy chủ này và có thể đọc key đã lưu của mọi người, nên chỉ chủ sở hữu mới dùng được.',
+  'You do not have permission for that.': 'Bạn không có quyền làm việc đó.',
+  'Only the owner of this deployment can do that.': 'Chỉ chủ sở hữu của bản triển khai này mới làm được việc đó.',
+  'The owner holds every permission already.': 'Chủ sở hữu đã có mọi quyền.',
+  'Choose at least one thing this administrator may do.': 'Hãy chọn ít nhất một việc quản trị viên này được làm.',
+  'The owner cannot be removed as an administrator.': 'Không thể gỡ quyền quản trị của chủ sở hữu.',
+  'Only the owner can change another administrator, and nobody can change the owner.': 'Chỉ chủ sở hữu mới tác động được lên quản trị viên khác, và không ai tác động được lên chủ sở hữu.',
+  "{0}'s free tier limits how long one request may be until an account has paid enough, and this conversation is longer. Add credit on {1}, or pick another model.":
+    'Gói miễn phí của {0} giới hạn độ dài mỗi yêu cầu khi tài khoản chưa nạp đủ, và cuộc trò chuyện này dài hơn mức đó. Hãy nạp credit trên {1}, hoặc chọn model khác.',
+  "{0}'s free tier needs the workspace owner to link an established GitHub account, or to add credit. Do either on {1}, or pick another model.":
+    'Gói miễn phí của {0} yêu cầu chủ workspace liên kết một tài khoản GitHub đã dùng đủ lâu, hoặc nạp credit. Hãy làm một trong hai trên {1}, hoặc chọn model khác.',
+  'That list is too long to work out in one call. Send fewer figures at a time.': 'Danh sách đó quá dài để tính trong một lần. Hãy gửi ít số hơn mỗi lần.',
+  'No rate from {0} to {1}. Use ISO codes like USD, VND, EUR, or coin symbols like USDT, BTC.': 'Không có tỷ giá từ {0} sang {1}. Hãy dùng mã ISO như USD, VND, EUR, hoặc ký hiệu coin như USDT, BTC.',
+  'Currencies are ISO codes like USD, VND, EUR, or coin symbols like USDT, BTC.': 'Tiền tệ là mã ISO như USD, VND, EUR, hoặc ký hiệu coin như USDT, BTC.',
   '{0}: every key is rate limited until {1}.':
     '{0}: mọi key đều bị giới hạn tần suất cho đến {1}.',
   '{0} The provider said: {1}':

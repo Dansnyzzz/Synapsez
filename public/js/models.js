@@ -44,8 +44,8 @@ const relative = (iso) => {
 const AUTO_ROUTER_ID = 'openrouter/openrouter/free';
 
 /**
- * @param {{ onPick: (id: string) => void, recommended?: () => ({ free?: { id: string, label: string } | null, paid?: { id: string, label: string } | null } | null) }} options
- *   `recommended`: the administrators' two suggestions (server recommend.js), marked where they appear and shown first.
+ * @param {{ onPick: (id: string) => void, recommended?: () => ({ free?: { id: string, label: string } | null, freeSecond?: { id: string, label: string } | null, paid?: { id: string, label: string } | null } | null) }} options
+ *   `recommended`: the administrators' suggestions (server recommend.js), marked where they appear and shown first.
  */
 export function createModelBrowser({ onPick, recommended = () => null }) {
   const dialog = document.getElementById('models');
@@ -204,7 +204,7 @@ export function createModelBrowser({ onPick, recommended = () => null }) {
   /** The mark on a suggested model: the free one, or the paid one. */
   const suggestedTag = (id) => {
     const rec = recommended() || {};
-    const which = rec.free?.id === id ? 'free' : rec.paid?.id === id ? 'paid' : null;
+    const which = rec.free?.id === id || rec.freeSecond?.id === id ? 'free' : rec.paid?.id === id ? 'paid' : null;
     return which ? `<span class="tag tag--suggested">${escapeHtml(t(which === 'free' ? 'models.suggestedFree' : 'models.suggestedPaid'))}</span>` : '';
   };
 
@@ -217,7 +217,7 @@ export function createModelBrowser({ onPick, recommended = () => null }) {
   function suggestedHtml(tier) {
     const rec = recommended() || {};
     // Auto has its own card just below, marked there.
-    const picks = [tier !== 'paid' && rec.free?.id !== 'auto' ? rec.free : null, tier !== 'free' ? rec.paid : null].filter(Boolean);
+    const picks = [tier !== 'paid' && rec.free?.id !== 'auto' ? rec.free : null, tier !== 'paid' && rec.freeSecond?.id !== 'auto' ? rec.freeSecond : null, tier !== 'free' ? rec.paid : null].filter(Boolean);
     if (!picks.length || state.query) return '';
     return (
       `<div class="model-group__label">${escapeHtml(t('models.suggested'))}</div>` +

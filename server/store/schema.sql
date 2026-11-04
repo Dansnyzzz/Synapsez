@@ -21,6 +21,16 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at      TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_token_limit BIGINT;
 
+-- Who may do what in Settings → Administration (server/adminRoles.js). One owner,
+-- the first administrator, and what each other administrator was given: NULL for
+-- one made before this, who keeps every permission in the page.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_owner BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_permissions JSONB;
+UPDATE users SET is_owner = TRUE
+ WHERE id = (SELECT id FROM users WHERE role = 'admin' ORDER BY suspended_at IS NOT NULL, created_at ASC LIMIT 1)
+   AND NOT EXISTS (SELECT 1 FROM users WHERE is_owner);
+CREATE UNIQUE INDEX IF NOT EXISTS users_one_owner ON users (is_owner) WHERE is_owner;
+
 -- Two-factor. The shared secret is encrypted with ENCRYPTION_KEY, never stored
 -- in the clear; recovery codes are kept only as digests and burned on use.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret     TEXT;

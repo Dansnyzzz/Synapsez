@@ -1,4 +1,5 @@
 import { getStore } from '../store/index.js';
+import { isOwner } from '../adminRoles.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
 import { connectMcp } from './client.js';
 import { stdioPlace, mcpSignature, checkOnScratch } from './cloud.js';
@@ -211,6 +212,11 @@ export function sealConfig(config = {}) {
   return out;
 }
 
+/** Whether this row would start a program as a child of this process (see `connectMcp`). */
+const runsBesideServer = (row) => row?.config?.transport !== 'http' && row?.config?.place !== 'cloud' && stdioPlace() === 'local';
+
+const isTheOwner = async (userId) => isOwner(await getStore().getUserById(userId).catch(() => null));
+
 /**
  * Connect to every enabled server for this account, and list their tools.
  *
@@ -297,6 +303,20 @@ export async function mcpTools(userId) {
     unique.map(async (row) => {
       const id = slugify(row.name);
       const held = mine.get(id);
+
+      /**
+       * A program beside the server runs with everyone's stored keys in reach, so
+       * it is the owner's, whenever it was added. Asked here as well as when a row
+       * is added or enabled: a row kept by somebody since narrowed or removed as an
+       * administrator would otherwise go on starting that program on every turn.
+       */
+      if (runsBesideServer(row) && !(await isTheOwner(userId))) {
+        held?.connection?.close?.();
+        const error = 'A stdio server runs a program on this server with access to everyone’s stored keys, so only the owner of this deployment can use one.';
+        mine.set(id, { connection: null, tools: [], error, at: Date.now() });
+        servers.push({ id, name: row.name, error, tools: 0 });
+        return;
+      }
 
       // Drop a connection whose transport has died, so the next turn reconnects
       // rather than reporting tools that can no longer be called.

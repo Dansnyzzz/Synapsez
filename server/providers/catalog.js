@@ -212,7 +212,8 @@ export const PROVIDERS = {
   openai: { label: 'OpenAI', keyHint: 'sk-…', console: 'https://platform.openai.com/api-keys' },
   google: { label: 'Google Gemini', keyHint: 'AIza…', console: 'https://aistudio.google.com/apikey' },
   openrouter: { label: 'OpenRouter', keyHint: 'sk-or-v1-…', console: 'https://openrouter.ai/keys' },
-  orcarouter: { label: 'OrcaRouter', keyHint: 'sk-orca-…', console: 'https://www.orcarouter.ai/keys' },
+  // Keys and spend both live in the dashboard (docs: getting-started/get-api-key).
+  orcarouter: { label: 'OrcaRouter', keyHint: 'sk-orca-…', console: 'https://www.orcarouter.ai/console' },
 };
 
 /**
@@ -385,6 +386,9 @@ export function resolveModel(id, sharedRow = null) {
   throw new Error(`Unknown model "${id}". Pick one from the model browser.`);
 }
 
+/** Whether a resolved model costs nothing: the library says so, or it is priced at nothing. */
+export const isFreeEntry = (entry) => !!entry?.tags?.includes('free') || (entry?.price?.in === 0 && entry?.price?.out === 0);
+
 /**
  * What a cached prompt token costs, as a multiple of the ordinary input rate.
  *
@@ -435,7 +439,7 @@ export function estimateCost(entry, usage) {
  * `estimateCost` is exactly that — an estimate, from a price table somebody has
  * to keep current, and null for the large majority of the model library where
  * no price was ever verified. OpenRouter and OrcaRouter both report the real
- * billed amount on `usage.cost`, in dollars, on the final streamed chunk. When
+ * billed amount, in dollars, on the final streamed chunk (`readUsage`). When
  * a provider has told us what it charged, believing it beats recomputing it:
  * the figure is right even for a model whose price we never knew, and it stays
  * right when a provider changes its rates without telling anybody.

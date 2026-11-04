@@ -322,6 +322,22 @@ const labelInput = (c) =>
   String(c.input?.query || c.input?.url || c.input?.question || c.input?.path || c.input?.name || c.name).slice(0, 160);
 
 /**
+ * Why a search came back with nothing, when that was not the web having nothing.
+ *
+ * The tool says `No results for "…". Tried: Exa (HTTP 402), DuckDuckGo (no results).`
+ * When an engine failed, or none could run at all, "0 results" tells somebody the
+ * wrong thing: it reads as nothing existing, when nothing was asked.
+ *
+ * @returns {string | null} the engines and what each said, or null for a real zero
+ */
+export function searchFailure(content) {
+  const tried = /^No results for [\s\S]*?\. Tried: ([\s\S]*?)\.\s*$/.exec(String(content || '').trim())?.[1];
+  if (tried == null) return null;
+  if (tried === 'nothing') return tried;
+  return tried.split(/,\s*(?=[^()]*\()/).every((attempt) => /\(no results\)$/.test(attempt.trim())) ? null : tried;
+}
+
+/**
  * The results a web search returned, from the text the model was given:
  * numbered lines, a title then its address. See formatResults on the server.
  */

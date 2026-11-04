@@ -15,7 +15,7 @@ import { cloudBrowser } from '../cloudBrowser/index.js';
 import { shareFile } from '../routes/share.js';
 import { see } from '../vision.js';
 import { groundedImage } from '../imageGround.js';
-import { evaluate } from './calc.js';
+import { calculate } from './calc.js';
 import { extractFromPage } from './extract.js';
 import { resolveForUser } from '../autoPick.js';
 import { parseSchedule } from '../scheduler.js';
@@ -692,9 +692,39 @@ export function nameForFile({ name, filename, file_name: fileName, title, conten
   return heading ? heading.trim() : 'Document';
 }
 
+/**
+ * What kind of file to write when the call did not say.
+ *
+ * Refusing cost the same as a missing name, above: a whole document written twice
+ * (owner, 2026-11-04, a 9 KB report refused for `format`). The name's extension
+ * says it where there is one, a page or a JSON document says what it is, and
+ * anything else is a document, which is what this tool is asked for most.
+ *
+ * @returns {string} one of the tool's formats
+ */
+export function formatForFile({ format, name, filename, file_name: fileName, title, content }) {
+  if (typeof format === 'string' && format.trim()) return format.trim().toLowerCase();
+  const known = TOOLS_BY_NAME.create_file?.parameters?.properties?.format?.enum || [];
+  for (const given of [name, filename, fileName, title]) {
+    const extension = /\.([a-z0-9]{1,5})\s*$/i.exec(String(given || ''))?.[1]?.toLowerCase();
+    if (extension && known.includes(extension)) return extension;
+  }
+  const text = String(content || '').trim();
+  if (/^(?:<!doctype html|<html[\s>])/i.test(text)) return 'html';
+  if (/^[[{]/.test(text)) {
+    try {
+      JSON.parse(text);
+      return 'json';
+    } catch {
+      /* it only looked like JSON */
+    }
+  }
+  return 'docx';
+}
+
 async function createFileTool({ name, format, content, title, filename, file_name, theme }, { userId, chatId }) {
   const built = createDocument({
-    format,
+    format: formatForFile({ format, name, filename, file_name, title, content }),
     name: nameForFile({ name, filename, file_name, title, content }),
     content,
     title,
@@ -711,6 +741,7 @@ async function createFileTool({ name, format, content, title, filename, file_nam
 
   return {
     content:
+      (format ? '' : `No format was given, so this is a ${built.format}. `) +
       `Created ${saved.name} (${humanSize(saved.bytes)}). It is in the conversation now — the user can open it ` +
       'in the viewer and download it, so do not paste its contents into your reply. ' +
       `Its id is ${saved.id}; pass that to update_file to change this same file rather than making a second one.`,
@@ -1251,6 +1282,47 @@ export function describeRate(data, base, quote, amount) {
   );
 }
 
+/**
+ * Coins, which the table above does not hold: `USDT→VND` was refused for not
+ * being an ISO code, on the owner's own question (2026-11-04). Coinbase's public
+ * rates give one coin against every currency and coin in one free call, with no
+ * key; CoinGecko's, for the commonest coins, if that one does not answer.
+ */
+const COIN_IDS = {
+  USDT: 'tether', USDC: 'usd-coin', DAI: 'dai', BTC: 'bitcoin', ETH: 'ethereum', BNB: 'binancecoin', SOL: 'solana',
+  XRP: 'ripple', ADA: 'cardano', DOGE: 'dogecoin', TRX: 'tron', TON: 'the-open-network', LTC: 'litecoin', DOT: 'polkadot',
+  LINK: 'chainlink', AVAX: 'avalanche-2', SHIB: 'shiba-inu', XLM: 'stellar',
+};
+const isCoin = (code) => Object.hasOwn(COIN_IDS, code);
+
+/** How a rate against a coin is said: a market reference, which is not what a given exchange will pay. */
+export function describeCoinRate(rate, base, quote, amount, source) {
+  if (!(rate > 0)) throw new Error(`No rate from ${base} to ${quote}. Use ISO codes like USD, VND, EUR, or coin symbols like USDT, BTC.`);
+  const fmt = (n) => n.toLocaleString('en-US', { maximumFractionDigits: n >= 100 ? 0 : n >= 1 ? 4 : 8 });
+  return `${fmt(amount)} ${base} = ${fmt(amount * rate)} ${quote} (1 ${base} = ${fmt(rate)} ${quote}). Source: ${source} — a live market reference, not what a given exchange or P2P seller will quote.`;
+}
+
+/** One unit of `base` in `quote`, from whichever public source answers, and that source's name. */
+async function coinRate(base, quote) {
+  try {
+    const data = await getJson(`https://api.coinbase.com/v2/exchange-rates?currency=${encodeURIComponent(base)}`);
+    const rate = Number(data?.data?.rates?.[quote]);
+    if (rate > 0) return { rate, source: 'Coinbase public rates' };
+    // A coin given as the quote may only be listed the other way round.
+    const back = await getJson(`https://api.coinbase.com/v2/exchange-rates?currency=${encodeURIComponent(quote)}`);
+    const inverse = Number(back?.data?.rates?.[base]);
+    if (inverse > 0) return { rate: 1 / inverse, source: 'Coinbase public rates' };
+  } catch (err) {
+    log.warn('coin rate: Coinbase did not answer', { error: String(err?.message || err).slice(0, 160) });
+  }
+  const id = COIN_IDS[base] || COIN_IDS[quote];
+  if (!id) return { rate: 0, source: '' };
+  const data = await getJson(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=${(isCoin(base) ? quote : base).toLowerCase()}`);
+  const price = Number(data?.[id]?.[(isCoin(base) ? quote : base).toLowerCase()]);
+  if (!(price > 0)) return { rate: 0, source: '' };
+  return { rate: isCoin(base) ? price : 1 / price, source: 'CoinGecko' };
+}
+
 /** JSON from one of the fixed public services above, with a timeout. */
 async function getJson(url) {
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { Accept: 'application/json' } });
@@ -1295,17 +1367,27 @@ async function worldFactsTool({ kind, location, timezone, base, quote, amount },
   if (kind === 'exchange_rate') {
     const from = String(base || 'USD').trim().toUpperCase();
     const to = String(quote || 'VND').trim().toUpperCase();
-    if (!/^[A-Z]{3}$/.test(from) || !/^[A-Z]{3}$/.test(to)) throw new Error('Currencies are ISO codes: USD, VND, EUR, JPY…');
+    const code = /^[A-Z0-9]{2,10}$/;
+    if (!code.test(from) || !code.test(to)) throw new Error('Currencies are ISO codes like USD, VND, EUR, or coin symbols like USDT, BTC.');
+    const units = Number(amount) > 0 ? Number(amount) : 1;
+    if (isCoin(from) || isCoin(to) || from.length !== 3 || to.length !== 3) {
+      const { rate, source } = await coinRate(from, to);
+      return describeCoinRate(rate, from, to, units, source);
+    }
     const data = await getJson(`https://open.er-api.com/v6/latest/${from}`);
-    return describeRate(data, from, to, Number(amount) > 0 ? Number(amount) : 1);
+    // Three letters is not always a currency: most coins are three letters too.
+    if (data?.result !== 'success' || !data?.rates?.[to]) {
+      const { rate, source } = await coinRate(from, to).catch(() => ({ rate: 0, source: '' }));
+      if (rate > 0) return describeCoinRate(rate, from, to, units, source);
+    }
+    return describeRate(data, from, to, units);
   }
 
   throw new Error('kind is one of: time, weather, exchange_rate.');
 }
 
 async function calculateTool({ expression }) {
-  const { value, expression: shown } = evaluate(expression);
-  return `${shown} = ${value}`;
+  return calculate(expression);
 }
 
 async function chartTool({ title, type, data, format, x_label: xLabel, y_label: yLabel }) {

@@ -1,16 +1,18 @@
 import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { localMoment } from './format.js';
-import { knownLimits, alertFor } from './usage-math.js';
-import { MORE, limitName } from './usage-panel.js';
+import { knownLimits, decisiveLimits, alertFor } from './usage-math.js';
+import { moreLink, limitName } from './usage-panel.js';
 
 /**
  * Near a limit, a line above the composer, after Claude's "You've used 85% of
  * your weekly limit · resets Sun, Nov 1 at 12:00 PM · Get more usage · View
  * usage" (owner, 2026-10-31).
  *
- * From 80% of the tightest limit the page knows (usage-math.js `alertFor`),
- * again at 90%, and at the limit. Closing it holds for the rest of that
+ * From 80% of what the Usage page's Overview goes by (usage-math.js
+ * `decisiveLimits` and `alertFor`: the same two functions, so the two cannot
+ * disagree), again at 90%, and at the limit: each provider's total, so one key out
+ * of requests beside others with plenty says nothing (owner, 2026-11-04). Closing it holds for the rest of that
  * limit's period, whatever level it reaches (UX-021, owner 2026-11-02): it came
  * back at the next send before. Remembered per account (PRV-019), so on a
  * shared browser one person's close is not another's.
@@ -64,12 +66,12 @@ export function createUsageAlert(host, deps) {
   /** Draw it from a report — the composer's own ask, or the Usage page's. */
   function show(report) {
     lastReport = report;
-    const limits = knownLimits(report, 'all');
-    const free = limits.filter((l) => l.kind === 'free');
+    // Whether a free model can be sent to at all is a question about each key.
+    const free = knownLimits(report, 'openrouter').filter((l) => l.kind === 'free');
     const wasOut = !!freeOutUntil;
     freeOutUntil = free.length && free.every((l) => l.used >= l.limit) ? free.map((l) => l.to).filter(Boolean).sort((a, b) => a.getTime() - b.getTime())[0] || null : null;
     if (wasOut !== !!freeOutUntil) deps.changed?.(freeOutUntil);
-    const alert = alertFor(limits);
+    const alert = alertFor(decisiveLimits(report, 'all'));
     // The limit and its period, not its level: a close lasts until the period ends (UX-021).
     const id = alert ? `${alert.limit.id}|${alert.limit.to ? alert.limit.to.toISOString() : ''}` : '';
     if (!alert || id === remembered() || held) {
@@ -79,15 +81,14 @@ export function createUsageAlert(host, deps) {
     }
     shown = id;
     const { limit, share, level } = alert;
-    const keys = (report.live?.openrouter || []).length;
-    const name = limitName(limit, deps.providers(), keys);
+    const name = limitName(limit, deps.providers(), (report.live?.[limit.provider || 'openrouter'] || []).length);
     // Floored, so 99.6% is not called 100% while there is still some left.
     const said = level === 'out' ? t('usage.alert.out', { limit: name }) : t('usage.alert.close', { pct: `${Math.floor(share * 100)}%`, limit: name });
     const resets = limit.to ? t('usage.alert.resets', { when: localMoment(limit.to) }) : '';
     const more =
       limit.kind === 'shared'
         ? `<button type="button" class="usage-alert__link" data-alert-keys>${escapeHtml(t('usage.addOwnKey'))}</button>`
-        : `<a class="usage-alert__link" href="${MORE[limit.kind]}" target="_blank" rel="noopener">${escapeHtml(t('usage.getMore'))}</a>`;
+        : `<a class="usage-alert__link" href="${moreLink(limit)}" target="_blank" rel="noopener">${escapeHtml(t('usage.getMore'))}</a>`;
     host.className = `usage-alert${level === 'out' ? ' is-out' : ''}`;
     host.innerHTML = `<p class="usage-alert__text">${escapeHtml(said)}${resets ? ` · ${escapeHtml(resets)}` : ''} · ${more} · <button type="button" class="usage-alert__link" data-alert-usage>${escapeHtml(t('usage.alert.view'))}</button></p>
       <button type="button" class="usage-alert__close" data-alert-close aria-label="${escapeHtml(t('action.close'))}" title="${escapeHtml(t('action.close'))}">✕</button>`;

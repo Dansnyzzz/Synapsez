@@ -1179,7 +1179,7 @@ export const TOOLS = [
             'c', 'h', 'cpp', 'php', 'sh', 'ps1', 'sql', 'css', 'scss', 'yaml', 'yml',
             'toml', 'ini', 'xml', 'svg',
           ],
-          description: 'Which kind of file to write. `html` with real markup is a runnable artifact.',
+          description: 'Which kind of file to write; docx unless the name or content says otherwise. `html` with real markup is a runnable artifact.',
         },
         content: { type: 'string', description: 'The document in Markdown, the page as HTML, or the source as itself.' },
         title: { type: 'string', description: "Document title for the file's own properties. Defaults to the first heading." },
@@ -1189,10 +1189,10 @@ export const TOOLS = [
           description: 'Colour palette for docx, xlsx and pptx, only when the user asked for a look. Left out, it is picked from the topic.',
         },
       },
-      // `name` is asked for and not required: a missing one is taken from the
-      // page's own title rather than refusing a call whose content took minutes
-      // to write. See `nameForFile`.
-      required: ['format', 'content'],
+      // `name` and `format` are asked for and not required: a missing one is
+      // worked out rather than refusing a call whose content took minutes to
+      // write. See `nameForFile` and `formatForFile`.
+      required: ['content'],
     },
   },
   {
@@ -1354,8 +1354,8 @@ export const TOOLS = [
         kind: { type: 'string', enum: ['time', 'weather', 'exchange_rate'] },
         location: { type: 'string', description: 'weather: city in English' },
         timezone: { type: 'string', description: 'time: IANA zone; omit for the user\'s' },
-        base: { type: 'string', description: 'ISO code, e.g. USD' },
-        quote: { type: 'string', description: 'ISO code, e.g. VND' },
+        base: { type: 'string', description: 'ISO code or coin symbol, e.g. USD, USDT, BTC' },
+        quote: { type: 'string', description: 'ISO code or coin symbol, e.g. VND' },
         amount: { type: 'number' },
       },
       required: ['kind'],
@@ -1770,11 +1770,11 @@ export const TOOLS = [
       'constants pi, e. Functions: sum avg median min max count product geomean stdev stdevp var varp, abs sqrt cbrt pow exp ln ' +
       'log(x[, base]) floor ceil trunc round(x, places) mod sign, sin cos tan, fact comb perm, and finance in Excel order — ' +
       'fv(rate, nper, pmt[, pv]) pv(rate, nper, pmt[, fv]) pmt(rate, nper, pv) npv(rate, cf1, cf2…) irr(cf0, cf1…) effect(nominal, n). ' +
-      'One call per figure. Example: `round((1200 - 950) / 950 * 100, 1)` for a percentage change.',
+      'A bare list `[a, b, c]` works out each item, so several figures can go in one call. Example: `round((1200 - 950) / 950 * 100, 1)` for a percentage change.',
     parameters: {
       type: 'object',
       properties: {
-        expression: { type: 'string', description: 'The arithmetic to work out, e.g. sum([36, 26, 27, 34]) / 4' },
+        expression: { type: 'string', description: 'The arithmetic to work out, as one string, e.g. sum([36, 26, 27, 34]) / 4 or [8 - 5.5, 5 * 2]' },
       },
       required: ['expression'],
     },

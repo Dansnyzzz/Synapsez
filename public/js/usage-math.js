@@ -189,12 +189,15 @@ export function periodOf(interval, now) {
  * figures: what it is, how much of it is used, and the period it counts —
  * `from` and `to` (its reset), either null when the provider does not say.
  *
- *   - `free`: an own OpenRouter key's free-model requests today, as OpenRouter reports them.
+ *   - `free`: an own OpenRouter key's free-model requests today, as OpenRouter
+ *     reports them; or OrcaRouter's, as Synapsez counted them (`counted`), one
+ *     for the workspace and not per key — OrcaRouter counts by workspace, and a
+ *     free id with a ladder of its own has a `bucket` of its own.
  *   - `cap`: an own OpenRouter key's spending limit or budget, in dollars.
  *   - `shared`: the deployment's monthly token allowance, which applies while
  *     the account rides one of its shared keys (server/usage.js checkQuota).
  *
- * @returns {{ id: string, kind: 'free' | 'cap' | 'shared', index?: number, used: number, limit: number, unit: 'requests' | 'usd' | 'tokens', interval?: string | null, from: Date | null, to: Date | null }[]}
+ * @returns {{ id: string, kind: 'free' | 'cap' | 'shared', provider?: string, index?: number, bucket?: string, counted?: boolean, used: number, limit: number, unit: 'requests' | 'usd' | 'tokens', interval?: string | null, from: Date | null, to: Date | null }[]}
  */
 export function knownLimits(report, scope = 'all', now = new Date()) {
   const out = [];
@@ -203,7 +206,7 @@ export function knownLimits(report, scope = 'all', now = new Date()) {
   for (const live of openrouter ? report.live?.openrouter || [] : []) {
     if (!live.ok) continue;
     if (live.freeToday?.limit > 0) {
-      out.push({ id: `free:${live.index}`, kind: 'free', index: live.index, used: live.freeToday.used || 0, limit: live.freeToday.limit, unit: 'requests', ...periodOf('daily', now) });
+      out.push({ id: `free:${live.index}`, kind: 'free', provider: 'openrouter', index: live.index, used: live.freeToday.used || 0, limit: live.freeToday.limit, unit: 'requests', ...periodOf('daily', now) });
     }
     const budget = live.budget?.limit > 0 ? live.budget : null;
     const amount = live.limit?.amount > 0 ? live.limit : null;
@@ -213,6 +216,7 @@ export function knownLimits(report, scope = 'all', now = new Date()) {
       out.push({
         id: `cap:${live.index}`,
         kind: 'cap',
+        provider: 'openrouter',
         index: live.index,
         used: budget ? budget.spent ?? 0 : amount.amount - (amount.remaining ?? amount.amount),
         limit: budget ? budget.limit : amount.amount,
@@ -223,6 +227,13 @@ export function knownLimits(report, scope = 'all', now = new Date()) {
       });
     }
   }
+  const orcaFree = scope === 'all' || scope === 'orcarouter' ? report.free?.orcarouter : null;
+  if (orcaFree?.limit > 0) {
+    out.push({ id: 'free:orcarouter', kind: 'free', provider: 'orcarouter', counted: true, used: orcaFree.used || 0, limit: orcaFree.limit, unit: 'requests', ...periodOf('daily', now) });
+  }
+  for (const model of orcaFree?.models || []) {
+    if (model.limit > 0) out.push({ id: `free:${model.id}`, kind: 'free', provider: 'orcarouter', bucket: model.id, counted: true, used: model.used || 0, limit: model.limit, unit: 'requests', ...periodOf('daily', now) });
+  }
   const shared = report.sharedKey || {};
   const onShared = scope === 'all' ? Object.values(shared).some(Boolean) : !!shared[scope];
   if (onShared && report.sharedLimit > 0) {
@@ -230,6 +241,57 @@ export function knownLimits(report, scope = 'all', now = new Date()) {
     out.push({ id: 'shared', kind: 'shared', used: report.month?.tokens || 0, limit: report.sharedLimit, unit: 'tokens', from: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)), to: nextMonth(now) });
   }
   return out;
+}
+
+/**
+ * The Overview's limits: one for each provider and kind, however many keys make
+ * it up (owner, 2026-11-04). The keys are on the provider's own page.
+ *
+ * What a key has used past its limit is not counted: 51 of 50 on one key and 2 of
+ * 50 on the next is 52 of 100, because what is left of the total is 48. Two
+ * providers are never added together: running out on one is not made to look fine
+ * by a whole allowance on the other, which a free model there cannot use.
+ */
+export function overviewLimits(report, now = new Date()) {
+  const groups = new Map();
+  for (const limit of knownLimits(report, 'all', now)) {
+    if (limit.kind === 'shared' || limit.bucket) {
+      groups.set(limit.id, limit);
+      continue;
+    }
+    const id = `total:${limit.kind}:${limit.provider}`;
+    const used = Math.min(limit.used, limit.limit);
+    const total = groups.get(id);
+    if (!total) {
+      const { index: _index, ...rest } = limit;
+      groups.set(id, { ...rest, id, used });
+      continue;
+    }
+    total.used += used;
+    total.limit += limit.limit;
+    // Soonest first, and "does not reset" only if none of them does.
+    if (limit.to && (!total.to || limit.to < total.to)) total.to = limit.to;
+    if (limit.from && (!total.from || limit.from > total.from)) total.from = limit.from;
+    if (total.interval !== limit.interval) total.interval = null;
+  }
+  return [...groups.values()];
+}
+
+/**
+ * The limits a warning goes by, on each page (owner, 2026-11-04): on the Overview,
+ * each provider's total; on a provider's page, the key being used now (the server
+ * says which: `report.inUse`). A first key out of requests with the system already
+ * on the second is no reason to say anything, and neither that page nor the line
+ * above the composer may disagree about it: both read this.
+ *
+ * @param {any} report
+ * @param {string} [scope]  a provider, or 'all'
+ */
+export function decisiveLimits(report, scope = 'all', now = new Date()) {
+  if (scope === 'all') return overviewLimits(report, now);
+  const limits = knownLimits(report, scope, now);
+  const inUse = report?.inUse?.[scope];
+  return inUse == null ? limits : limits.filter((limit) => limit.index == null || limit.index === inUse);
 }
 
 /** The limit with the largest share used, or null. */

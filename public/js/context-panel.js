@@ -87,7 +87,7 @@ function fold(title, count, list, perRow = null) {
 /**
  * The panel itself.
  *
- * @param {{ used: number, context: number, breakdown?: any }} info  what the gauge was given
+ * @param {{ used: number, context: number, assumed?: boolean, breakdown?: any }} info  what the gauge was given
  */
 export function contextPanel(info) {
   const context = Number(info?.context) || 0;
@@ -103,9 +103,10 @@ export function contextPanel(info) {
   head.append(
     node('span', 'ctx__title', t('context.title')),
     node('span', 'ctx__used', t('context.usedPct', { percent: Math.round(context ? (used / context) * 100 : 0) })),
-    node('span', 'ctx__total', t('context.ofTotal', { used: fmtTokens(used), total: fmtTokens(context) })),
+    node('span', 'ctx__total', t(info?.assumed ? 'context.ofAssumed' : 'context.ofTotal', { used: fmtTokens(used), total: fmtTokens(context) })),
   );
   panel.append(head);
+  if (info?.assumed) panel.append(node('p', 'ctx__note', t('context.assumedNote', { total: fmtTokens(context) })));
 
   // What is drawn, in order: the measured parts (or "used" as one piece before
   // anything was measured), the free track, and the reply's room at the end.

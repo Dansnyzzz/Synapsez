@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { can, requirePermission } from '../adminRoles.js';
 import { getStore } from '../store/index.js';
 import { sendEmail, senderName, publicUrl } from '../email.js';
 import { composeMessage } from '../mailTemplate.js';
@@ -218,7 +219,8 @@ async function tellAdministrators(req, user, value) {
     const mine = await store.hitRateLimit(`feedback:mail:${user.id}`, FEEDBACK_LIMITS.mailsPerAccount, HOUR_MS);
     const all = mine.allowed ? await store.hitRateLimit('feedback:mail', FEEDBACK_LIMITS.mailsPerHour, HOUR_MS) : null;
     if (!all?.allowed) return;
-    const admins = (await store.listUsers()).filter((u) => u.role === 'admin' && !u.suspended_at && u.email);
+    // Only those given the feedback to read: a mail is the same words by another door.
+    const admins = (await store.listUsers()).filter((u) => can(u, 'feedback') && !u.suspended_at && u.email);
     if (!admins.length) return;
     const { subject, markdown } = feedbackMail(user, value, publicUrl(req));
     const mail = composeMessage({ brand: senderName(), subject, markdown, kind: 'announcement', language: 'en' });
@@ -330,8 +332,10 @@ export function mountFeedbackRoutes(api, admin, { wrap }) {
     }),
   );
 
+  const readsFeedback = requirePermission('feedback');
   admin.get(
     '/feedback',
+    readsFeedback,
     wrap(async (req, res) => {
       res.json({ feedback: await getStore().listFeedback(200) });
     }),
@@ -341,6 +345,7 @@ export function mountFeedbackRoutes(api, admin, { wrap }) {
   // list only counts them. Gone once the conversation is deleted.
   admin.get(
     '/feedback/:id/transcript',
+    readsFeedback,
     wrap(async (req, res) => {
       const found = await getStore().getFeedbackTranscript(req.params.id);
       if (!found) return res.status(404).json({ error: 'That conversation was not found.' });
@@ -350,6 +355,7 @@ export function mountFeedbackRoutes(api, admin, { wrap }) {
 
   admin.put(
     '/feedback/:id/read',
+    readsFeedback,
     wrap(async (req, res) => {
       if (!(await getStore().markFeedbackRead(req.params.id))) return res.status(404).json({ error: 'That feedback was not found.' });
       res.json({ ok: true });
@@ -358,6 +364,7 @@ export function mountFeedbackRoutes(api, admin, { wrap }) {
 
   admin.delete(
     '/feedback/:id',
+    readsFeedback,
     wrap(async (req, res) => {
       if (!(await getStore().deleteFeedback(req.params.id))) return res.status(404).json({ error: 'That feedback was not found.' });
       res.json({ ok: true });

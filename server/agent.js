@@ -5,7 +5,7 @@ import { checkQuota, record as recordUsage, turnTokenLimit } from './usage.js';
 import { normaliseQuestions, askLayout } from './tools/askOptions.js';
 import { streamCompletion } from './providers/index.js';
 import { withMarkup } from './pricing.js';
-import { budgetStop } from './providers/stop.js';
+import { budgetStop, normaliseStop } from './providers/stop.js';
 import { resolve as resolveModelId } from './models.js';
 import { AUTO_ID, isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
 import { settleAccountModel, goneModel, isModelGoneError, isLibraryModel, moveAccountToAuto } from './modelRetirement.js';
@@ -18,7 +18,7 @@ import { workerStatus } from './localTools.js';
 import { skillMenu, skillNotes } from './skills.js';
 import { connectorSummary } from './connectors.js';
 import { mcpTools } from './mcp/registry.js';
-import { priceTurn } from './providers/catalog.js';
+import { priceTurn, isFreeEntry } from './providers/catalog.js';
 import { loadForTranscript, pdfTextsOf, toParts } from './attachments.js';
 import { projectPrompt } from './projects.js';
 import { compact, shouldCompact, measure, activeTranscript, transcriptTokens } from './compact.js';
@@ -35,9 +35,6 @@ import { checkAnswer, checkFigures, textsIn } from './qualityGate.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
-
-/** A model that costs nothing to call — tagged free, or priced at zero both ways (as `usableDefaultModel` in app.js reads it). */
-const isFreeEntry = (entry) => !!entry?.tags?.includes('free') || (entry?.price?.in === 0 && entry?.price?.out === 0);
 
 /**
  * There is one mode.
@@ -937,17 +934,90 @@ function approvalReason(call, policy, readOutside) {
  * twice under two headings, and `reasonedAloud` records that this happened —
  * the turn did not come back the way it was written down.
  *
+ * And only when the model finished saying it (`stop`, when the caller has one).
+ * Reasoning cut off by the output limit, a filter or a dropped stream is half a
+ * thought, not an answer: it was pasted into the conversation as the reply, ending
+ * mid-word, under a notice about a reply being cut off (owner, 2026-11-04). A
+ * stream that says nothing about why it ended (`raw` null) is the one a dropped
+ * connection also leaves, so it does not count as finishing.
+ *
+ * @param {{ text?: string, thinking?: string, toolCalls?: unknown[], reasonedAloud?: boolean }} assistant
+ * @param {{ kind?: string, raw?: string | null } | null} [stop]  the normalised stop, where known
  * @returns whether the promotion happened, so the caller can tell the browser.
  */
-export function promoteReasoning(assistant) {
+export function promoteReasoning(assistant, stop = null) {
   if (!assistant || String(assistant.text || '').trim()) return false;
   if (assistant.toolCalls?.length) return false;
   if (!String(assistant.thinking || '').trim()) return false;
+  if (stop && (stop.kind !== 'end_turn' || stop.raw == null)) return false;
 
   assistant.text = assistant.thinking;
   assistant.thinking = '';
   assistant.reasonedAloud = true;
   return true;
+}
+
+/**
+ * How many more requests one reply may take after the output limit cuts it off.
+ * Four parts is well past any reply on a model with a real limit (384K on the
+ * owner's); on one whose limit is small or unknown it is still a long answer, and
+ * it bounds what a model that never stops can spend.
+ */
+const MAX_REPLY_CONTINUATIONS = 3;
+/** Too little of the turn left to start another part. */
+const MIN_CONTINUATION_MS = 30_000;
+
+export const CUT_OFF_NOTE =
+  "[System note: your last reply reached this model's output limit and was cut off. Continue from the very next character. " +
+  'Do not repeat anything already written, do not add an ellipsis or an introduction, and do not mention this note.]';
+export const CUT_WHILE_REASONING_NOTE =
+  '[System note: your last attempt ran out of output length while still reasoning, before any answer was written. ' +
+  'Reason only briefly, then write the answer now. Do not mention this note.]';
+export const CUT_TOOL_CALL_NOTE =
+  "[System note: your last reply reached this model's output limit in the middle of a tool call, so that call was not run. " +
+  'Send it again in a smaller form. For a long document, use create_file with the first part, then update_file with append: true for each next part, each under about 15 KB.]';
+
+/** Why a part of a reply needs another, or null when it is finished. */
+export function partCutOff(done, assistant) {
+  const stop = done?.stop;
+  if (!stop) return null;
+  const calls = done.toolCalls || [];
+  // Whole calls run, and the model carries on from their results anyway.
+  if (calls.some((call) => !call.input?.__malformed)) return null;
+  if (calls.length) return stop.kind === 'truncated' || stop.raw == null ? 'tool_call' : null;
+  if (stop.kind === 'truncated') return String(assistant.text || '').trim() ? 'text' : String(assistant.thinking || '').trim() ? 'reasoning' : 'text';
+  // Ended with no reason given, mid-thought and with nothing said: a dropped stream.
+  if (stop.kind === 'end_turn' && stop.raw == null && !String(assistant.text || '').trim() && String(assistant.thinking || '').trim()) return 'reasoning';
+  return null;
+}
+
+/**
+ * How much of what comes next the reply already ends with. A model picking up a
+ * sentence often starts a few words back. Only words count: a table's rule, a row
+ * of dashes or a line of code that repeats really does come twice, and dropping one
+ * would eat what was written. So it has to be long, and hold at least three words.
+ */
+export function overlapAtSeam(tail, head, { least = 20, most = 400 } = {}) {
+  const limit = Math.min(most, tail.length, head.length);
+  for (let n = limit; n >= least; n -= 1) {
+    const said = head.slice(0, n);
+    if (tail.endsWith(said)) return (said.match(/\p{L}{2,}/gu) || []).length >= 3 ? n : 0;
+  }
+  return 0;
+}
+
+/**
+ * A Claude reply's own record, with the parts of it that came before. That record
+ * is replayed instead of the words on a turn that called a tool, and it describes
+ * only the last request. The earlier text goes after the signed thinking, which has
+ * to stay first and unchanged.
+ */
+function withEarlierParts(raw, earlier) {
+  if (!Array.isArray(raw?.anthropic) || !String(earlier || '').trim()) return raw;
+  const after = raw.anthropic.findIndex((block) => block?.type !== 'thinking' && block?.type !== 'redacted_thinking');
+  const blocks = [...raw.anthropic];
+  blocks.splice(after < 0 ? blocks.length : after, 0, { type: 'text', text: earlier });
+  return { ...raw, anthropic: blocks };
 }
 
 /**
@@ -1852,6 +1922,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     let done = null;
     /** What to book once the reply itself is safely stored. See below. */
     let pendingUsage = null;
+    /** Whether this reply took more than one request, because the output limit cut it off. */
+    let continuedReply = false;
+    /** What was written before the request being read, when there were several. */
+    let writtenBefore = '';
 
     /**
      * Say when the provider has not started answering yet.
@@ -1940,59 +2014,152 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       shown = gateSources(shownStep);
       shownFiles = loaded;
 
-      for await (const ev of stream({
-        userId,
-        entry,
-        system,
-        // Ordered defensively: a mid-run message must never split a tool call
-        // from its result.
-        // `activeTranscript` is what makes a folded conversation smaller: the
-        // page still holds every turn, and only the summary plus what followed
-        // it is sent.
-        // The project's passages and pictures ride on the question they were
-        // chosen for, rather than in the cached system block they used to
-        // invalidate. `activeTranscript` is what makes a folded conversation
-        // smaller: the page still holds every turn, and only the summary plus
-        // what followed it is sent.
-        messages: outgoing,
-        // Rebuilt per step: anything `load_tools` activated last step is in it
-        // now. On a turn that activates nothing this returns the same list every
-        // time, so the cached prefix is undisturbed.
-        tools: buildTools(),
-        effort: prefs.effort,
-        signal,
-        googleData,
-        deadline,
-      })) {
-        // Anything at all counts as having started — a reasoning token, a tool
-        // call, a notice that a key was refused. What is being timed is the
-        // silence before the provider says its first word, not the silence
-        // before it says something the interface happens to draw.
-        started = true;
-        if (ev.type === 'text' || ev.type === 'retry') {
-          applyStreamEvent(ev, assistant, emit);
-        } else if (ev.type === 'thinking') {
-          assistant.thinking += ev.delta;
-          emit('thinking', { delta: ev.delta });
-        } else if (ev.type === 'tool_call_start') {
-          emit('status', { phase: 'tool', name: ev.name });
-        } else if (ev.type === 'tool_call_progress') {
-          // A long file being written: its arguments arrive over a minute or
-          // more. Four updates a second is plenty to watch it grow, and far
-          // fewer than the provider's per-fragment chunks.
-          const now = Date.now();
-          if (now - lastDraftAt >= 250) {
-            lastDraftAt = now;
-            emit('status', { phase: 'drafting', name: ev.name, chars: ev.chars });
+      /**
+       * One request's worth of this reply. Usually the only one; see below for
+       * the others. `carryOn` holds what was already written when this request
+       * continues a reply the output limit cut off.
+       */
+      const readPart = async (sending, effort, carryOn = null) => {
+        // The first words of a continuation are held until there are enough to
+        // compare with where the reply stopped.
+        let seam = carryOn === null ? null : '';
+        const releaseSeam = () => {
+          if (seam === null) return;
+          const held = seam.replace(/^\s*(?:…|\.\.\.)\s*/, '');
+          seam = null;
+          const rest = held.slice(overlapAtSeam(assistant.text, held));
+          if (rest) applyStreamEvent({ type: 'text', delta: rest }, assistant, emit);
+        };
+        // Kept however this part ends: a stop or a failure takes the rest of it, not
+        // the words already here.
+        try {
+        for await (const ev of stream({
+          userId,
+          entry,
+          system,
+          // Ordered defensively: a mid-run message must never split a tool call
+          // from its result.
+          // `activeTranscript` is what makes a folded conversation smaller: the
+          // page still holds every turn, and only the summary plus what followed
+          // it is sent.
+          // The project's passages and pictures ride on the question they were
+          // chosen for, rather than in the cached system block they used to
+          // invalidate. `activeTranscript` is what makes a folded conversation
+          // smaller: the page still holds every turn, and only the summary plus
+          // what followed it is sent.
+          messages: sending,
+          // Rebuilt per step: anything `load_tools` activated last step is in it
+          // now. On a turn that activates nothing this returns the same list every
+          // time, so the cached prefix is undisturbed.
+          tools: buildTools(),
+          effort,
+          signal,
+          googleData,
+          deadline,
+        })) {
+          // Anything at all counts as having started — a reasoning token, a tool
+          // call, a notice that a key was refused. What is being timed is the
+          // silence before the provider says its first word, not the silence
+          // before it says something the interface happens to draw.
+          started = true;
+          if (carryOn !== null && ev.type === 'retry') {
+            // A key gave out on this part. The parts before it are still good, so
+            // only this one starts again, and the screen is cut back to match.
+            seam = '';
+            assistant.text = carryOn;
+            emit('answer_revised', { text: carryOn });
+          } else if (seam !== null && ev.type === 'text') {
+            seam += ev.delta ?? '';
+            if (seam.length >= 200) releaseSeam();
+          } else if (ev.type === 'text' || ev.type === 'retry') {
+            applyStreamEvent(ev, assistant, emit);
+          } else if (ev.type === 'thinking') {
+            // Once the reply has words, what a model thinks while finishing them
+            // is not worth a second reasoning trace.
+            if (carryOn) continue;
+            assistant.thinking += ev.delta;
+            emit('thinking', { delta: ev.delta });
+          } else if (ev.type === 'tool_call_start') {
+            emit('status', { phase: 'tool', name: ev.name });
+          } else if (ev.type === 'tool_call_progress') {
+            // A long file being written: its arguments arrive over a minute or
+            // more. Four updates a second is plenty to watch it grow, and far
+            // fewer than the provider's per-fragment chunks.
+            const now = Date.now();
+            if (now - lastDraftAt >= 250) {
+              lastDraftAt = now;
+              emit('status', { phase: 'drafting', name: ev.name, chars: ev.chars });
+            }
+          } else if (ev.type === 'notice') {
+            // A key was refused and the next one is being tried. Worth seeing:
+            // silent failover is how somebody discovers their first key died a
+            // week ago from the bill rather than from the app.
+            emit('status', { message: ev.text });
+          } else if (ev.type === 'done') {
+            releaseSeam();
+            done = ev;
           }
-        } else if (ev.type === 'notice') {
-          // A key was refused and the next one is being tried. Worth seeing:
-          // silent failover is how somebody discovers their first key died a
-          // week ago from the bill rather than from the app.
-          emit('status', { message: ev.text });
-        } else if (ev.type === 'done') {
-          done = ev;
         }
+        } finally {
+          releaseSeam();
+        }
+      };
+
+      await readPart(outgoing, prefs.effort);
+
+      /**
+       * The output limit is the model's, not the person's: a reply it cut off is
+       * asked for again from where it stopped, inside this same message, rather
+       * than ending on a notice telling somebody to type "continue" (owner,
+       * 2026-11-04). What was cut is handled by what it was:
+       *
+       *   - prose goes on from the next character;
+       *   - reasoning with no answer yet is asked for the answer;
+       *   - a tool call cut in half is not run, and is sent again smaller. Calls
+       *     that arrived whole beside it run as usual.
+       *
+       * Each request is booked as it ends: every one counts against what an
+       * allowance counts. A turn's token limit and deadline stop this as they
+       * stop anything else; when they do, or it has tried enough, the turn ends
+       * with the notice after all, and a Continue button.
+       */
+      for (let more = 0; more < MAX_REPLY_CONTINUATIONS; more += 1) {
+        const cut = partCutOff(done, assistant);
+        if (!cut || signal?.aborted) break;
+        const tokens = (Number(done.usage?.input) || 0) + (Number(done.usage?.output) || 0);
+        if (turnLimit && turnTokens + tokens >= turnLimit) break;
+        if (Number(deadline) - Date.now() < MIN_CONTINUATION_MS) break;
+        if (done.usage) {
+          totals.input += done.usage.input || 0;
+          totals.output += done.usage.output || 0;
+          totals.cacheRead += done.usage.cacheRead || 0;
+          const priced = priceTurn(entry, done.usage);
+          if (priced) {
+            totals.cost += priced.usd;
+            if (priced.source === 'estimate') totals.estimated = true;
+          }
+          turnTokens += tokens;
+          await recordUsage(userId, { chatId, model: entry.id, usage: done.usage, costUsd: priced?.usd || 0, role: 'turn' }).catch((err) =>
+            log.error('usage not recorded', err, { role: 'turn', model: entry.id }),
+          );
+        }
+        emit('status', { phase: 'continuing' });
+        const written = assistant.text;
+        const asked = cut === 'text' ? CUT_OFF_NOTE : cut === 'tool_call' ? CUT_TOOL_CALL_NOTE : CUT_WHILE_REASONING_NOTE;
+        // Set before it can fail, and `done` is what this part says: the last one
+        // has been booked, and a part ending with no word must not be booked again.
+        continuedReply = true;
+        writtenBefore = written;
+        done = null;
+        await readPart(
+          [...outgoing, ...(written.trim() ? [{ id: `${assistant.id}-so-far`, role: 'assistant', text: written }] : []), { id: `${assistant.id}-carry-on`, role: 'user', text: asked }],
+          'low',
+          written,
+        );
+      }
+      // A call still cut in half when it stopped trying: nothing can run it.
+      if (done?.toolCalls?.some((call) => call.input?.__malformed) && done.stop?.kind === 'truncated') {
+        done.toolCalls = done.toolCalls.filter((call) => !call.input?.__malformed);
       }
     } catch (err) {
       if (signal?.aborted) {
@@ -2108,7 +2275,19 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           continue;
         }
       }
-      throw err;
+      /**
+       * Carrying on failed, with a finished part already written, shown and paid
+       * for. That is a reply cut off, not a turn that produced nothing: throwing here
+       * threw all of it away, and the next turn would have paid for it again. It is
+       * stored, and ends with the Continue the limit would have ended on. No usage:
+       * every part that finished has been booked.
+       */
+      if (continuedReply && String(assistant.text || '').trim()) {
+        log.warn('a reply could not be carried on', { model: entry?.id, error: String(err?.message || err).slice(0, 160) });
+        done = { type: 'done', stopReason: 'length', stop: normaliseStop('length'), toolCalls: [] };
+      } else {
+        throw err;
+      }
     } finally {
       // In a `finally` rather than after the loop: a turn that throws, or one
       // the user stops, must not leave a timer narrating a wait that ended.
@@ -2116,9 +2295,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     }
 
     assistant.toolCalls = done?.toolCalls || [];
-    if (done?.raw) assistant.raw = done.raw;
+    // A provider's own record of a reply describes one request. Across several it
+    // holds only the last, so with no call to replay it for, the words are replayed.
+    if (done?.raw && !continuedReply) assistant.raw = done.raw;
+    else if (done?.raw && assistant.toolCalls.length) assistant.raw = withEarlierParts(done.raw, writtenBefore);
 
-    if (promoteReasoning(assistant)) emit('reasoning_was_reply', { text: assistant.text });
+    if (promoteReasoning(assistant, done?.stop || null)) emit('reasoning_was_reply', { text: assistant.text });
     // Stored as shown: a stray `<system>…</system>` line kept here would be replayed next turn (UX-017).
     assistant.text = withoutStrayTags(assistant.text);
     /*
@@ -2232,7 +2414,17 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * content filter. All three used to end the turn looking identical to a
        * complete one, which is the whole reason this travels.
        */
-      const stop = done?.stop || { kind: done?.stopReason ? 'unknown' : 'end_turn', raw: done?.stopReason ?? null, message: null };
+      let stop = done?.stop || { kind: done?.stopReason ? 'unknown' : 'end_turn', raw: done?.stopReason ?? null, message: null };
+      /**
+       * Only here when carrying on did not finish it (see `readPart`). Reasoning
+       * with no answer is said as what it is, since the message in front of the
+       * person is empty; both can be carried on from with one press.
+       */
+      if (!String(assistant.text || '').trim() && String(assistant.thinking || '').trim() && (stop.kind === 'truncated' || (stop.kind === 'end_turn' && stop.raw == null && done?.stop))) {
+        stop = budgetStop('reasoning_cut', 'The model used up its output length while still reasoning, so there is no answer yet. Press Continue, or pick a model with a larger output limit.');
+      } else if (stop.kind === 'truncated') {
+        stop = { ...stop, resumable: true };
+      }
       /**
        * The progress gate: finishing with the plan behind is sent back once.
        *
@@ -2261,8 +2453,11 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
      * that follows will fail on an argument nobody mangled deliberately. Said
      * here rather than only on the `done` path, because on this path the loop
      * carries on and the reason would otherwise never be seen at all.
+     *
+     * Not for the output limit: the calls that arrived whole run, and the model
+     * carries on from their results. Nothing has gone wrong that anyone can act on.
      */
-    if (done?.stop?.message) emit('status', { message: done.stop.message, stop: done.stop.kind });
+    if (done?.stop?.message && done.stop.kind !== 'truncated') emit('status', { message: done.stop.message, stop: done.stop.kind });
 
     /**
      * A question for the person, which no policy waives.

@@ -307,6 +307,46 @@ section('DuckDuckGo is paced');
   delete process.env.SEARCH_ORDER;
 }
 
+/**
+ * The owner's screenshot 12 (2026-11-04): every search "0 results" while
+ * DuckDuckGo's HTML page answered with an apology. Measured the same day: its lite
+ * page answered the same machine with ten results.
+ */
+section('DuckDuckGo has a second page to ask');
+{
+  process.env.SEARCH_ORDER = 'duckduckgo';
+  const litePage =
+    `<a rel="nofollow" href="https://duckduckgo.com/y.js?ad=1" class='result-link'>An advertisement</a><td class='result-snippet'>Buy now</td>` +
+    `<a rel="nofollow" href="https://sepay.vn/bang-gia.html" class='result-link'>Bảng giá SePay - SePay</a><td class='result-snippet'>Bảng giá <b>SePay</b>, bắt đầu với 0 đồng.</td>` +
+    `<a rel="nofollow" href="//duckduckgo.com/l/?uddg=${encodeURIComponent('https://sepay.vn/')}" class='result-link'>SePay</a><td class='result-snippet'>API Ngân Hàng</td>`;
+  stubFetch({
+    'html.duckduckgo.com': () => html('<html><body>If this persists, please email us. anomaly detected</body></html>'),
+    'lite.duckduckgo.com': () => html(litePage),
+  });
+  const found = await search('SePay bảng giá phí');
+  check('the HTML page blocked, the lite page answers', found.results.length === 2 && found.engine === 'DuckDuckGo', JSON.stringify(found.results.map((r) => r.url)));
+  check('  an advertisement is not a result', !found.results.some((r) => /y\.js/.test(r.url)));
+  check('  its title and snippet read', found.results[0].title === 'Bảng giá SePay - SePay' && /bắt đầu với 0 đồng/.test(found.results[0].snippet), JSON.stringify(found.results[0]));
+  check('  the snippet is the one beside that link', found.results[1].snippet === 'API Ngân Hàng', found.results[1].snippet);
+  check('  a wrapped link is unwrapped', found.results[1].url === 'https://sepay.vn/', found.results[1].url);
+
+  stubFetch({ 'duckduckgo.com': () => html('<html><body>Our systems have detected unusual traffic</body></html>') });
+  const blocked = await search('another thing entirely');
+  check('both blocked: what the first said is what is reported', /rate-limit page/.test(blocked.attempts[0]?.error || ''), JSON.stringify(blocked.attempts));
+  delete process.env.SEARCH_ORDER;
+
+  // What the transcript does with it. `searchFailure` is read from the page's own module.
+  const { searchFailure, parseResults } = await import('../public/js/rail.js');
+  const { formatResults } = await import('../server/search.js');
+  const failed = formatResults('q', { results: [], attempts: [{ engine: 'DuckDuckGo', error: 'DuckDuckGo served a rate-limit page rather than results.' }] });
+  check('a search no engine could run is told from a real zero', /rate-limit page/.test(searchFailure(failed) || ''), searchFailure(failed));
+  check('  every engine finding nothing is a real zero', searchFailure(formatResults('q', { results: [], attempts: [{ engine: 'Exa', error: 'no results' }, { engine: 'DuckDuckGo', error: 'no results' }] })) === null);
+  check('  one failing beside one finding nothing is not', searchFailure(formatResults('q', { results: [], attempts: [{ engine: 'Exa', error: 'HTTP 402' }, { engine: 'DuckDuckGo', error: 'no results' }] })) !== null);
+  check('  no engine able to run at all is not', searchFailure(formatResults('q', { results: [], attempts: [] })) === 'nothing');
+  check('  and results are not a failure', searchFailure(formatResults('q', { engine: 'Exa', results: [{ title: 'T', url: 'https://a.example/', snippet: 's' }], attempts: [] })) === null);
+  check('  nor is an error some other tool wrote', searchFailure('HTTP 500') === null && parseResults('HTTP 500').length === 0);
+}
+
 section('nothing configured at all');
 {
   const saved = { ...process.env };

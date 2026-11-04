@@ -260,6 +260,9 @@ export const api = {
 
   users: () => request('GET', '/api/admin/users'),
   deleteUser: (id) => request('DELETE', `/api/admin/users/${id}`),
+  setAdmin: (id, permissions) => request('PUT', `/api/admin/admins/${encodeURIComponent(id)}`, { permissions }),
+  removeAdmin: (id) => request('DELETE', `/api/admin/admins/${encodeURIComponent(id)}`),
+  handOwnership: (id) => request('POST', `/api/admin/admins/${encodeURIComponent(id)}/owner`),
 
   /**
    * The zone rides along on the first call of every session.

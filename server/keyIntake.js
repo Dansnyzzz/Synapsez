@@ -50,10 +50,11 @@ const SERVICE_SHAPES = [
 
 /**
  * Providers whose keys always have their shape: a secret without it, pasted
- * there, is refused rather than saved to fail later. OrcaRouter and OpenAI are
- * left out — an OpenAI-compatible server behind OPENAI_BASE_URL takes any key.
+ * there, is refused rather than saved to fail later. OpenAI is left out — an
+ * OpenAI-compatible server behind OPENAI_BASE_URL takes any key. OrcaRouter's
+ * docs: "Every key starts with `sk-orca-`".
  */
-const STRICT = new Set(['openrouter', 'google', 'anthropic']);
+const STRICT = new Set(['openrouter', 'google', 'anthropic', 'orcarouter']);
 
 /** What a pasted secret looks like it is, or null when it fits no shape known here. */
 export function recognise(secret) {
@@ -70,12 +71,37 @@ const checksOn = () => !/^(0|false|no|off)$/i.test(String(process.env.KEY_CHECKS
 const accountHash = (id) => crypto.createHash('sha256').update(String(id)).digest('base64url').slice(0, 22);
 
 /**
+ * What OrcaRouter's billing summary says about a key: the credit it can draw on,
+ * as a number, or null if it did not say. Live, 2026-11-04: `hard_limit_usd` is
+ * the balance left — it is not what was ever paid, which no endpoint reports.
+ *
+ * @param {any} body  `GET /v1/dashboard/billing/subscription`
+ */
+export const orcaBalance = (body) => (typeof body?.hard_limit_usd === 'number' && Number.isFinite(body.hard_limit_usd) ? body.hard_limit_usd : null);
+
+/**
+ * What a balance proves. Any credit can pay for a paid model. Whether the
+ * workspace has reached the free tier's upper rung is lifetime spend, unreadable,
+ * except that a balance past the rung cannot have been paid for with less. No
+ * credit at all reads as not paid: it could be spent, and either way a paid model
+ * has nothing to draw on.
+ *
+ * @param {number | null} balance
+ * @param {number} rung  the spend that unlocks the upper rung (`free_tier.tiers`)
+ * @returns {{ paid: boolean | null, freeTier: 'high' | null }}
+ */
+export function orcaStanding(balance, rung = 20) {
+  if (balance == null) return { paid: null, freeTier: null };
+  return { paid: balance > 0, freeTier: balance >= rung ? 'high' : null };
+}
+
+/**
  * Ask the provider about a key. `ok` is true (it answers), false (it refuses
  * the key) or null (it could not be asked — a key is never refused for an
  * outage). `paid` is true when the account has paid for credit, false when it
  * never has, null when the provider does not say.
  *
- * @returns {Promise<{ ok: boolean | null, account?: string | null, paid?: boolean | null }>}
+ * @returns {Promise<{ ok: boolean | null, account?: string | null, paid?: boolean | null, freeTier?: 'high' | null }>}
  */
 export async function inspectKey(provider, key, { fetchImpl = fetch } = {}) {
   if (!checksOn()) return { ok: null };
@@ -89,6 +115,12 @@ export async function inspectKey(provider, key, { fetchImpl = fetch } = {}) {
       // An organisation's keys share its credit and its limits; a person's, theirs.
       const owner = data.organization_id || data.creator_user_id || null;
       return { ok: true, account: owner ? accountHash(owner) : null, paid: typeof data.is_free_tier === 'boolean' ? !data.is_free_tier : null };
+    }
+    if (provider === 'orcarouter') {
+      const res = await get('https://api.orcarouter.ai/v1/dashboard/billing/subscription', { Authorization: `Bearer ${key}` });
+      if (res.status === 401 || res.status === 403) return { ok: false };
+      if (!res.ok) return { ok: null };
+      return { ok: true, ...orcaStanding(orcaBalance(await res.json())) };
     }
     if (provider === 'google') {
       const res = await get('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', { 'x-goog-api-key': key });
@@ -165,7 +197,7 @@ export async function intakeKey(userId, asked, value, { fetchImpl = fetch } = {}
       }
     }
 
-    const meta = { account: check.account ?? null, paid: check.paid ?? null, checkedAt: check.ok ? new Date().toISOString() : null };
+    const meta = { account: check.account ?? null, paid: check.paid ?? null, freeTier: check.freeTier ?? null, checkedAt: check.ok ? new Date().toISOString() : null };
     // Added to the list as it is now, read again inside addApiKey — not set over
     // a list read before the checks above, which could be seconds old (HAR-008).
     await addApiKey(userId, provider, secret, meta);

@@ -308,6 +308,23 @@ section('a model leaves the library on the day its provider ends it');
     await refreshIfStale({ tz, now: new Date(Math.max(six.getTime(), refreshed.getTime()) + 86400_000 + 60_000) });
     check('a library refreshed before six this morning is refreshed again', refreshedAgain);
     check('  one refreshed since is left alone', refreshed.getTime() >= six.getTime() ? !firstTry : true);
+
+    // Rows written before a source was read this way do not wait for tomorrow:
+    // OrcaRouter's free models knew nothing but their price (owner, 2026-11-04).
+    await store.upsertModels([{ ...model({ id: 'orcarouter/lab/sparse-free', family: 'lab', provider: 'orcarouter' }), context: null, maxOutput: null }]);
+    const recent = refreshed.getTime() < six.getTime() ? six : beforeNextSix;
+    refreshedAgain = false;
+    await refreshIfStale({ tz, now: recent });
+    check('a free OrcaRouter model that knows only its price is refreshed at once, however recent', refreshedAgain);
+    await store.setSetting('model_library_shape', 2);
+    refreshedAgain = false;
+    await refreshIfStale({ tz, now: recent });
+    check('  once, not on every load, if a list did not answer that time', !refreshedAgain);
+    await store.setSetting('model_library_shape', 1);
+    await store.pruneMissingModels('orcarouter', ['orcarouter/nothing-listed']);
+    refreshedAgain = false;
+    await refreshIfStale({ tz, now: recent });
+    check('  and a library with no such row is left alone, whatever build wrote it', !refreshedAgain);
   } finally {
     globalThis.fetch = realFetch;
   }

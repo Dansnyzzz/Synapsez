@@ -140,6 +140,96 @@ section('the working is shown, so a number can be checked');
   check('and the expression it evaluated', out.expression === 'sum([2, 3]) * 4', out.expression);
 }
 
+/**
+ * The owner's screenshots 14–16 (2026-11-04): a table's worth of figures sent as
+ * one list, refused four times in a row for not being a number, and then sent as
+ * JSON no parser could read.
+ */
+section('several figures in one call');
+{
+  const { calculate, tidyNumber } = await import('../server/tools/calc.js');
+  const { canonicalInput, salvageArguments } = await import('../public/js/tool-aliases.js');
+  const { TOOLS_BY_NAME } = await import('../server/tools/definitions.js');
+  const { validateArguments } = await import('../server/tools/validate.js');
+
+  const said = calculate('[55.00-29.30, 80.00-29.30, 40.00-29.30]');
+  check('a list is worked out item by item', said === '[55.00-29.30, 80.00-29.30, 40.00-29.30] = [25.7, 50.7, 10.7]', said);
+  check('functions inside the items keep their own commas', calculate('[round(1.234, 1), sum([1, 2]), 2]').endsWith('= [1.2, 3, 2]'), calculate('[round(1.234, 1), sum([1, 2]), 2]'));
+  check('  and a list inside a function is still that function', calculate('sum([1, 2, 3])') === 'sum([1, 2, 3]) = 6', calculate('sum([1, 2, 3])'));
+  check('one bad item is the error, not a wrong list', /divides by zero/.test((() => { try { return calculate('[1, 1/0]'); } catch (e) { return e.message; } })()));
+
+  const refused = (src) => {
+    try {
+      calculate(src);
+      return '';
+    } catch (e) {
+      return e.message;
+    }
+  };
+  check('an empty list has nothing to work out', /nothing to calculate/.test(refused('[]')), refused('[]'));
+  check('two lists side by side are not one list', refused('[1, 2] * [3]') !== '', refused('[1, 2] * [3]'));
+  check('code inside a list is refused as code is anywhere', refused('[1, process.exit(1)]') !== '', refused('[1, process.exit(1)]'));
+  check('twelve hundred is not read as two figures', refused('1,200 * 3') !== '', refused('1,200 * 3'));
+  check('a list past any sum is refused', /too long/.test(refused(`[${Array(201).fill(1).join(',')}]`)));
+
+  check('floating-point dust is taken off what a report would copy', calculate('0.1 + 0.2') === '0.1 + 0.2 = 0.3', calculate('0.1 + 0.2'));
+  check('  a real fraction is untouched', tidyNumber(1 / 3) === 0.333333333333333, String(tidyNumber(1 / 3)));
+  check('  and so is a large whole number', tidyNumber(2 ** 52) === 2 ** 52);
+
+  const schema = TOOLS_BY_NAME.calculate.parameters;
+  const sentAsList = canonicalInput('calculate', { expression: ['8-5.5', 8, '(8-5.5)/2.5'] });
+  check('a JSON list of figures reads as the list form', sentAsList.expression === '[8-5.5, 8, (8-5.5)/2.5]' && validateArguments(schema, sentAsList).ok, JSON.stringify(sentAsList));
+  check('  another name for the expression does too', canonicalInput('calculate', { formula: '1 + 1' }).expression === '1 + 1');
+
+  const raw = '{"expression": [8-5.5, 8, 5-5.5, (8-5.5)/2.5, 5.5]}';
+  const saved = salvageArguments('calculate', raw);
+  check('arithmetic written straight into the JSON is read as meant', saved?.expression === '[8-5.5, 8, 5-5.5, (8-5.5)/2.5, 5.5]', JSON.stringify(saved));
+  check('  and works out', calculate(saved.expression).endsWith('= [2.5, 8, -0.5, 1, 5.5]'), calculate(saved.expression));
+  check('  one cut off before it closed is left refused', salvageArguments('calculate', '{"expression": [8-5.5, 8') === null);
+  check('  and no other tool gets this reading', salvageArguments('run_command', '{"command": rm -rf /}') === null);
+
+  // Through the wire the provider adapter reads.
+  const { createServer } = await import('node:http');
+  const { streamOpenAICompatible } = await import('../server/providers/openaiCompatible.js');
+  const chunk = (delta, finish = null) => `data: ${JSON.stringify({ id: 'x', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(chunk({ role: 'assistant', tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'calculate', arguments: raw } }] }) + chunk({}, 'tool_calls') + 'data: [DONE]\n\n');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = /** @type {import('node:net').AddressInfo} */ (server.address());
+  let calls = [];
+  for await (const event of streamOpenAICompatible({ apiKey: 'k', baseURL: `http://127.0.0.1:${port}/v1`, model: 'm', entry: { id: 'm' }, system: '', messages: [{ role: 'user', text: 'work it out' }], tools: [{ name: 'calculate', description: 'd', parameters: schema }] })) {
+    if (event.type === 'done') calls = event.toolCalls || [];
+  }
+  server.close();
+  check('  so the call runs, rather than coming back as a red row', calls[0]?.input?.expression === saved.expression && !calls[0]?.input?.__malformed, JSON.stringify(calls[0]?.input));
+}
+
+/**
+ * The owner's screenshot 17 (2026-11-04): a whole report, written twice, because
+ * the first call left out one word the tool could work out.
+ */
+section('a file with no format given is still written');
+{
+  const { formatForFile } = await import('../server/tools/cloud.js');
+  const { TOOLS_BY_NAME } = await import('../server/tools/definitions.js');
+  const { validateArguments } = await import('../server/tools/validate.js');
+  check('the tool no longer refuses the call', validateArguments(TOOLS_BY_NAME.create_file.parameters, { name: 'Report', content: '# Long' }).ok);
+  check('  content is still required', !validateArguments(TOOLS_BY_NAME.create_file.parameters, { name: 'Report' }).ok);
+  check('what it was told wins', formatForFile({ format: 'PPTX', name: 'a.docx', content: 'x' }) === 'pptx');
+  check('the name says it', formatForFile({ name: 'Bang gia.xlsx', content: 'x' }) === 'xlsx');
+  check('  under any of the names a call uses', formatForFile({ filename: 'notes.md', content: 'x' }) === 'md');
+  check('  an extension nothing writes is not believed', formatForFile({ name: 'Version 1.5', content: 'x' }) === 'docx');
+  check('a page is a page', formatForFile({ name: 'Trang', content: '<!doctype html><html></html>' }) === 'html');
+  check('JSON is JSON', formatForFile({ name: 'Du lieu', content: '{"a":1}' }) === 'json');
+  check('  and what only looks like it is not', formatForFile({ name: 'Ghi chu', content: '[Xem thêm] phần sau' }) === 'docx');
+  check('anything else is a document', formatForFile({ name: 'Giai phap web trung gian', content: '## 3. Bốn con đường' }) === 'docx');
+}
+
 console.log(
   failures === 0 ? '\n\x1b[32mAll calculator checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`,
 );

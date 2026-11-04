@@ -49,6 +49,15 @@ export async function svgToPng(svg, { scale = 2, background = surfaceColour() } 
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('width', String(width));
   clone.setAttribute('height', String(height));
+  // Its ink as the page shows it, since the page's stylesheet does not come along:
+  // the attributes are written for a dark ground, and on a light theme's white
+  // background the labels of the saved picture would not be there at all.
+  const live = svg.querySelectorAll('text, line');
+  clone.querySelectorAll('text, line').forEach((node, i) => {
+    const style = getComputedStyle(live[i]);
+    if (node.nodeName === 'text') node.setAttribute('fill', style.fill);
+    else node.setAttribute('stroke', style.stroke);
+  });
   // The live guide line and dimming are for reading on screen, not for keeping.
   clone.querySelectorAll('.chart__guide').forEach((n) => n.remove());
   clone.classList.remove('is-reading');

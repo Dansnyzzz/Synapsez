@@ -233,8 +233,10 @@ export function splitStatements(sql) {
  *  35  feedback.message_id / issue / answer — feedback on one answer, from the
  *      button beside its copy button: which turn, what kind of problem, and
  *      that turn as it ran (tool calls, results, model), for the administrators
+ *  36  users.is_owner / admin_permissions — one owner, the first administrator,
+ *      who says what each other administrator may do (server/adminRoles.js)
  */
-export const SCHEMA_VERSION = 35;
+export const SCHEMA_VERSION = 36;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -467,8 +469,9 @@ export function createPgStore(connectionString) {
     },
     async createUser(user) {
       await q(
-        `INSERT INTO users (id, email, name, password_hash, role, username)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        // The first administrator is the owner, however the account was made.
+        `INSERT INTO users (id, email, name, password_hash, role, username, is_owner)
+         VALUES ($1, $2, $3, $4, $5::text, $6, $5::text = 'admin' AND NOT EXISTS (SELECT 1 FROM users WHERE is_owner))`,
         [user.id, user.email, user.name ?? null, user.passwordHash, user.role, user.username ?? null],
       );
       return this.getUserById(user.id);
@@ -489,7 +492,7 @@ export function createPgStore(connectionString) {
     async listUsers() {
       return q(
         `SELECT u.id, u.email, u.username, u.name, u.role, u.created_at, u.last_seen_at,
-                u.email_verified_at, u.suspended_at, u.monthly_token_limit,
+                u.email_verified_at, u.suspended_at, u.monthly_token_limit, u.is_owner, u.admin_permissions,
                 (u.worker_token IS NOT NULL) AS has_worker,
                 (SELECT COUNT(*)::int FROM chats c WHERE c.user_id = u.id) AS chat_count,
                 COALESCE((SELECT SUM(e.input_tokens + e.output_tokens) FROM usage_events e
@@ -503,7 +506,26 @@ export function createPgStore(connectionString) {
     },
     async setUserRole(id, role) {
       if (role !== 'admin' && role !== 'user') throw new Error(`Unknown role "${role}".`);
-      await q('UPDATE users SET role = $2 WHERE id = $1', [id, role]);
+      // Made an administrator with no owner on the deployment, this one is it. No
+      // longer one, nothing it was given stays behind to come back with the role.
+      await q(
+        `UPDATE users SET role = $2::text,
+                admin_permissions = CASE WHEN $2::text = 'user' THEN NULL ELSE admin_permissions END,
+                is_owner = ($2::text = 'admin' AND (is_owner OR NOT EXISTS (SELECT 1 FROM users u WHERE u.is_owner AND u.id <> $1)))
+          WHERE id = $1`,
+        [id, role],
+      );
+    },
+    /**
+     * Make this account an administrator holding exactly these permissions, or
+     * change what one already holds. Never the owner, whose powers are not a list.
+     */
+    async setAdminPermissions(id, permissions) {
+      const rows = await q(
+        `UPDATE users SET role = 'admin', admin_permissions = $2 WHERE id = $1 AND NOT is_owner RETURNING id`,
+        [id, toJson(permissions)],
+      );
+      return rows.length > 0;
     },
     /**
      * Change the password, and make that mean what people assume it means.
@@ -597,8 +619,23 @@ export function createPgStore(connectionString) {
       );
       return rows.length > 0;
     },
+    /**
+     * Hand the deployment over. In two steps, in this order: one index allows one
+     * owner at a time, and between them there is none, which nothing can act on.
+     */
+    async transferOwnership(fromId, toId) {
+      await q('UPDATE users SET is_owner = FALSE WHERE id = $1', [fromId]);
+      await q(`UPDATE users SET is_owner = TRUE, role = 'admin', admin_permissions = NULL WHERE id = $1`, [toId]);
+    },
     async deleteUser(id) {
-      await q('DELETE FROM users WHERE id = $1', [id]);
+      const gone = await q('DELETE FROM users WHERE id = $1 RETURNING is_owner', [id]);
+      // A deployment always has an owner while it has an administrator: the longest-serving one.
+      if (gone[0]?.is_owner) {
+        await q(
+          `UPDATE users SET is_owner = TRUE, admin_permissions = NULL
+            WHERE id = (SELECT id FROM users WHERE role = 'admin' AND suspended_at IS NULL ORDER BY created_at ASC LIMIT 1)`,
+        );
+      }
     },
 
     // ── one-time links ──────────────────────────────────────────────
@@ -4100,6 +4137,7 @@ export function createPgStore(connectionString) {
       const rows = await q(
         `SELECT COUNT(*)::int AS total,
                 COUNT(*) FILTER (WHERE is_free AND (expires_at IS NULL OR expires_at > NOW()))::int AS free,
+                COUNT(*) FILTER (WHERE provider = 'orcarouter' AND is_free AND context IS NULL AND model LIKE '%-free')::int AS sparse,
                 MAX(refreshed_at) AS refreshed_at
            FROM shared_models`,
       );
@@ -4107,6 +4145,8 @@ export function createPgStore(connectionString) {
       return {
         total: Number(r.total || 0),
         free: Number(r.free || 0),
+        // OrcaRouter free models that know nothing but their price: see LIBRARY_SHAPE.
+        sparse: Number(r.sparse || 0),
         refreshedAt: r.refreshed_at ?? null,
       };
     },

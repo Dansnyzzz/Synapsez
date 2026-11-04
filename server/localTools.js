@@ -2,15 +2,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { getStore, isServerless } from './store/index.js';
 import { publish } from './screenHub.js';
+import { isOwner } from './adminRoles.js';
 
 /**
  * When the server process is running on someone's own machine, it can execute
  * the local tools itself — no second process, no queue round-trip.
  *
  * Two conditions, and both matter. **Not serverless**, because on Vercel there
- * is no durable filesystem or shell worth reaching. And **admin only**, because
+ * is no durable filesystem or shell worth reaching. And **the owner only**, because
  * otherwise any account on a locally-run instance would get a shell on the
- * owner's computer for free.
+ * owner's computer for free — and that includes somebody made an administrator to
+ * read the feedback (server/adminRoles.js).
  *
  * Note this is about where the *server* runs, not where the database lives: a
  * local server backed by hosted Neon still has a real machine under it.
@@ -21,7 +23,7 @@ import { publish } from './screenHub.js';
 export function usesInProcessTools(user) {
   if (process.env.WORKER_MODE === 'remote') return false;
   if (isServerless()) return false;
-  return user?.role === 'admin';
+  return isOwner(user);
 }
 
 let runtime = null;
@@ -181,7 +183,7 @@ export async function workerStatus(user, prefs = null, deviceHint = null) {
   // worker. On a server someone is running on their own desk, the tools attach
   // to the administrator's account and only theirs — so a second account here
   // is not misconfigured, it simply is not the owner of this computer.
-  const ownersMachine = !isServerless() && process.env.WORKER_MODE !== 'remote' && user?.role !== 'admin';
+  const ownersMachine = !isServerless() && process.env.WORKER_MODE !== 'remote' && !isOwner(user);
   return {
     online: false,
     local: false,

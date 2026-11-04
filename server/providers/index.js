@@ -12,8 +12,9 @@ import {
   liftKeyRest,
   providerPrivacyFor,
   maskPersonalFor,
+  setKeyMeta,
 } from '../settings.js';
-import { resolveModel, PROVIDERS } from './catalog.js';
+import { resolveModel, PROVIDERS, isFreeEntry } from './catalog.js';
 import { startChatSpan } from '../util/genaiSpan.js';
 import crypto from 'node:crypto';
 import { createShield } from '../deidentify.js';
@@ -31,6 +32,13 @@ function routerHeaders() {
   return { 'HTTP-Referer': referer, 'X-Title': 'Synapsez' };
 }
 
+/**
+ * OrcaRouter's, plus the one that makes it say what a call cost: without it
+ * `usage.cost_usd` is stripped, and every turn was priced from our own table
+ * (docs: operations/per-request-cost). Its peak-hour rates are not in that table.
+ */
+export const orcaHeaders = () => ({ ...routerHeaders(), 'X-OrcaRouter-Include-Cost': 'true' });
+
 /** One provider's stream, for one key. */
 async function* streamOne(entry, common) {
   switch (entry.provider) {
@@ -44,7 +52,7 @@ async function* streamOne(entry, common) {
       yield* streamOpenAICompatible({ ...common, baseURL: OPENROUTER_BASE, headers: routerHeaders(), markCache: true, router: 'openrouter' });
       return;
     case 'orcarouter':
-      yield* streamOpenAICompatible({ ...common, baseURL: ORCAROUTER_BASE, headers: routerHeaders(), router: 'orcarouter' });
+      yield* streamOpenAICompatible({ ...common, baseURL: ORCAROUTER_BASE, headers: orcaHeaders(), router: 'orcarouter' });
       return;
     case 'google':
       yield* streamGoogle(common);
@@ -267,11 +275,31 @@ const TRANSIENT =
  * - `UPSTREAM`     — the provider stumbled. Same key, after a pause.
  * - `FATAL`        — broken in a way every key shares. Report it and stop:
  *                    walking five keys turns one clear error into five slow ones.
+ * - `FREE_PROMPT_CAP`, `FREE_DENIED` — OrcaRouter's free tier will not take this
+ *                    request from this workspace, however long anybody waits.
+ *                    Another key may belong to a workspace it will take it from.
+ *
+ * OrcaRouter says which free-tier rejection it is in `error.metadata.reason`, and
+ * its docs say to read that rather than the message (localised, no numbers) or
+ * the status: all of them are `free_rate_limited`, one is a 400.
  */
-function classify(error) {
+export function classify(error) {
   const status = Number(error?.status || error?.statusCode || error?.response?.status) || 0;
   const message = String(error?.message || '').toLowerCase();
   const retryAfterMs = waitFrom(error);
+  const metadata = error?.error?.metadata || error?.metadata || null;
+  const code = String(error?.code || error?.error?.code || '');
+
+  if (metadata?.reason === 'err_free_prompt_cap') return { kind: 'FREE_PROMPT_CAP', retryAfterMs: null };
+  if (metadata?.reason === 'err_free_access_denied') return { kind: 'FREE_DENIED', retryAfterMs: null };
+  if (metadata?.reason === 'err_free_rate') {
+    const stated = Number(metadata.retry_after_seconds);
+    const wait = retryAfterMs ?? (stated > 0 ? stated * 1000 : null);
+    // No wait stated: the free channel is saturated, not this window. A pause, then another way.
+    return wait == null ? { kind: 'UPSTREAM', retryAfterMs: null } : { kind: 'RATE_LIMITED', retryAfterMs: wait };
+  }
+  // `orcarouter/free` found no free model able to serve this. The key is fine.
+  if (code === 'free_quota_exhausted') return { kind: 'UPSTREAM', retryAfterMs };
 
   // Status first. Plenty of 429 bodies say "quota", and reading that as a spent
   // key is exactly the misgrading this function exists to stop.
@@ -438,6 +466,15 @@ async function* streamAny(opts) {
    */
   const gaveUp = new Set();
   let lastUpstream = null;
+  // What OrcaRouter's free tier said about the keys that it will not take this from.
+  let freeRefusal = null;
+  /**
+   * A free model's limit is the free tier's, not the key's. Resting the whole key
+   * over it told an account with credit that "every key is rate limited" on a paid
+   * model it was free to call: OrcaRouter counts the two apart in its docs, and a
+   * paid call on OpenRouter does not touch the free allowance either.
+   */
+  const freeModel = isFreeEntry(entry);
   // The whole request's time, every key and retry together (HAR-012) — and
   // never past the caller's own deadline, the turn's (HAR-015): this budget
   // starts again with every call, so step 2 of a turn, or the move to Auto
@@ -452,7 +489,7 @@ async function* streamAny(opts) {
     );
 
   for (let round = 0; round < ROUNDS; round += 1) {
-    const keys = await getApiKeys(userId, provider);
+    const keys = await getApiKeys(userId, provider, { free: freeModel });
 
     if (!keys.length) {
       // Nothing usable. Whether that is a missing key or a resting one changes
@@ -461,7 +498,7 @@ async function* streamAny(opts) {
       const all = await getApiKeys(userId, provider, { includeResting: true });
       if (!all.length) throw new Error(`No API key for ${label}. Add one in Settings → Providers.`);
 
-      const until = keyRestingUntil(userId, provider);
+      const until = keyRestingUntil(userId, provider, { free: freeModel });
       const left = until == null ? null : until - Date.now();
       // Only when the wait still leaves the request time for an attempt (HAR-016):
       // a minute's wait for a resting key used to ignore the deadline entirely.
@@ -583,6 +620,21 @@ async function* streamAny(opts) {
         };
         if (kind === 'FATAL') throw giveUp();
 
+        /**
+         * The free tier will not take this from this workspace. Waiting changes
+         * nothing and neither does trying again, so no rest and no retry: the
+         * next key is asked once, in case it is another workspace's, and the next
+         * turn asks again, so topping up works the moment it is done. What was
+         * learned is kept beside the key — the suggestion and the Usage page read
+         * it (recommend.js, usageReport.js).
+         */
+        if (kind === 'FREE_PROMPT_CAP' || kind === 'FREE_DENIED') {
+          gaveUp.add(key);
+          freeRefusal = kind;
+          if (!shared) await setKeyMeta(userId, provider, key, { freeTier: 'low', freeTierAt: new Date().toISOString() }).catch(() => {});
+          break;
+        }
+
         if (kind === 'UPSTREAM') {
           // The provider stumbled rather than the key being wrong, so it is the
           // same key that wants trying, a moment later — a minute at most, and
@@ -622,7 +674,7 @@ async function* streamAny(opts) {
         refused = `${which} was refused: ${failure.message}`;
 
         if (kind === 'RATE_LIMITED') {
-          markKeyLimited(userId, provider, index, Date.now() + (retryAfterMs ?? MAX_WAIT_MS));
+          markKeyLimited(userId, provider, index, Date.now() + (retryAfterMs ?? MAX_WAIT_MS), { free: freeModel });
         } else if (kind === 'KEY_DEAD') {
           markKeyDead(userId, provider, index);
         }
@@ -642,6 +694,18 @@ async function* streamAny(opts) {
     }
   }
 
+  // `upstream`, so a turn on a free model can go on elsewhere (agent.js): it is
+  // this tier that said no, and the person's other free models have not.
+  if (freeRefusal) {
+    throw Object.assign(
+      new Error(
+        freeRefusal === 'FREE_PROMPT_CAP'
+          ? `${label}'s free tier limits how long one request may be until an account has paid enough, and this conversation is longer. Add credit on ${label}, or pick another model.`
+          : `${label}'s free tier needs the workspace owner to link an established GitHub account, or to add credit. Do either on ${label}, or pick another model.`,
+      ),
+      { upstream: true, code: 'free_tier_refused' },
+    );
+  }
   // Some keys refused and the rest could not reach the model: the model is the
   // part worth changing, so it is reported the way that lets the turn change it.
   if (lastUpstream) throw upstreamError(lastUpstream);
