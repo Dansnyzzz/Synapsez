@@ -1732,8 +1732,8 @@
               </div>
               <div class="srow__control">
                 <select id="tool-loading" class="sselect">
-                  <option value="auto" data-i18n="plus.toolsOnDemand">Load tools when needed</option>
-                  <option value="all" data-i18n="plus.toolsLoaded">Tools already loaded</option>
+                  <option value="auto" data-i18n="plus.toolsOnDemand" data-desc-key="settings.toolsOnDemandHint">Load tools when needed</option>
+                  <option value="all" data-i18n="plus.toolsLoaded" data-desc-key="settings.toolsLoadedHint">Tools already loaded</option>
                 </select>
               </div>
             </div>
@@ -1779,8 +1779,8 @@
               </div>
               <div class="srow__control">
                 <select id="auto-compact" class="sselect">
-                  <option value="on" data-i18n="settings.compactOn">Fold older turns</option>
-                  <option value="off" data-i18n="settings.compactOff">Keep every word</option>
+                  <option value="on" data-i18n="settings.compactOn" data-desc-key="settings.compactOnHint">Fold older turns</option>
+                  <option value="off" data-i18n="settings.compactOff" data-desc-key="settings.compactOffHint">Keep every word</option>
                 </select>
               </div>
             </div>
@@ -1797,8 +1797,8 @@
               </div>
               <div class="srow__control">
                 <select id="auto-preview" class="sselect">
-                  <option value="on" data-i18n="settings.previewOn">Open beside the conversation</option>
-                  <option value="off" data-i18n="settings.previewOff">Leave as cards</option>
+                  <option value="on" data-i18n="settings.previewOn" data-desc-key="settings.previewOnHint">Open beside the conversation</option>
+                  <option value="off" data-i18n="settings.previewOff" data-desc-key="settings.previewOffHint">Leave as cards</option>
                 </select>
               </div>
             </div>
@@ -2152,18 +2152,30 @@
               pairs its own computer — never yours. Set <code>ALLOW_SIGNUP=false</code> to close
               registration once everyone you want is in.
             </p>
-            <div id="user-list"></div>
-            <!-- The two models suggested to everyone (server/recommend.js). -->
+            <div id="user-list" data-needs="users delete_users"></div>
+            <!-- Who administers the deployment, and what each may do: the owner's (server/adminRoles.js). -->
+            <div data-needs="owner">
+              <h3 class="settings__title" data-i18n="admins.title">Administrators</h3>
+              <p class="settings__lede" data-i18n="admins.lede">The owner decides who else helps run this deployment, and what each of them may do.</p>
+              <div id="admin-admins"></div>
+            </div>
+            <!-- The models suggested to everyone (server/recommend.js). -->
+            <div data-needs="models">
             <h3 class="settings__title" data-i18n="recommend.title">Recommended models</h3>
             <p class="settings__lede" data-i18n="recommend.lede">Suggested to everyone. An account whose key has paid for credit is given the paid one; everyone else the free one. Someone who never chose a model uses it at once.</p>
             <div id="admin-recommended"></div>
+            </div>
             <!-- The deployment's free allowances, shared by every account (server/freeTier.js). -->
+            <div data-needs="free_tier">
             <h3 class="settings__title" data-i18n="freetier.title">Free allowances</h3>
             <p class="settings__lede" data-i18n="freetier.lede">One allowance per service for the whole deployment, shared by every account. A service that has used its own stands aside until it resets, and the free engines carry on.</p>
             <div id="admin-free-tier"></div>
+            </div>
+            <div data-needs="activity">
             <h3 class="settings__title" data-i18n="activity.title">Security activity</h3>
             <p class="settings__lede" data-i18n="activity.adminHint">The newest events across every account on this deployment.</p>
             <div id="admin-activity"></div>
+            </div>
           </section>
 
           <!-- What people sent from Give feedback (routes/feedback.js). -->

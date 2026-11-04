@@ -40,6 +40,95 @@ const scores = { labels: ['ADA', 'FIL', 'WLD', 'ENA'], series: [{ name: 'Tổng 
 /** The heights of the drawn bars, in document order. */
 const barHeights = (svg) => [...svg.matchAll(/<rect[^>]*class="bar"[^>]*height="([\d.]+)"/g)].map((m) => Number(m[1]));
 
+/**
+ * The owner's screenshot 10 (2026-11-04): the fourth legend entry cut to "D" at
+ * the right edge and "$100,000" cut to "$100.00". Everything drawn stays inside
+ * the picture, whatever it is given. The real check of this, with a real font, is
+ * in test/ui-round.test.mjs; this one is every form and every kind of bad day.
+ */
+section('everything drawn stays inside the picture');
+{
+  const { textWidth, fitText } = __testing;
+  /** Each piece of text and where it reaches, by the same reckoning the layout uses. */
+  const overflow = (svg) => {
+    const [, W, H] = /viewBox="0 0 (\d+) (\d+)"/.exec(svg);
+    const out = [];
+    const legend = /<g class="legend" transform="translate\(([\d.]+),([\d.]+)\)">/.exec(svg);
+    for (const m of svg.matchAll(/(<g class="legend-item"[^>]*transform="translate\(([\d.]+),([\d.]+)\)">[\s\S]*?)?<text ([^>]*)>([^<]*)<\/text>/g)) {
+      const attrs = m[4];
+      if (/rotate/.test(attrs)) continue;
+      const size = Number(/font-size="([\d.]+)"/.exec(attrs)?.[1] || 11);
+      const text = m[5].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      const inLegend = m[1] && legend;
+      const x = Number(/\bx="([\d.-]+)"/.exec(attrs)?.[1] || 0) + (inLegend ? Number(legend[1]) + Number(m[2]) : 0);
+      const y = Number(/\by="([\d.-]+)"/.exec(attrs)?.[1] || 0) + (inLegend ? Number(legend[2]) + Number(m[3]) : 0);
+      const anchor = /text-anchor="(\w+)"/.exec(attrs)?.[1] || 'start';
+      const width = textWidth(text, size);
+      const from = anchor === 'middle' ? x - width / 2 : anchor === 'end' ? x - width : x;
+      if (from < -0.5 || from + width > Number(W) + 0.5 || y < 0 || y > Number(H)) out.push(`"${text}" ${from.toFixed(0)}..${(from + width).toFixed(0)} at y ${y} in ${W}x${H}`);
+    }
+    return out;
+  };
+  const long = 'Doanh thu ròng của nền tảng trên mỗi khách hàng mỗi tháng theo từng mô hình kinh doanh khác nhau';
+  const manyNames = ['A. 5,5% thuần (OpenRouter Standard)', 'B. Hybrid đúng: $99 + 3%', 'C. Thuê bao thuần (OrcaRouter $499)', 'D. Hybrid đề xuất: $99 + 1,1%', 'E. Một mô hình nữa với cái tên rất dài để xem nó có xuống dòng không', 'F. Thêm một cái'];
+  const dollars = ['$200', '$1.000', '$5.000', '$20.000', '$100.000'];
+  const cases = {
+    'the owner\'s chart': { labels: dollars, series: manyNames.slice(0, 4).map((name, i) => ({ name, values: [10 + i, 40, 120, 500 * (i + 1), 2600 / (i + 1)] })) },
+    'six long series': { labels: dollars, series: manyNames.map((name, i) => ({ name, values: [1, 2, 3, 4, 5 + i] })) },
+    'a name longer than the picture': { labels: ['A', 'B'], series: [{ name: long.repeat(3), values: [1, 2] }, { name: 'Ngắn', values: [3, 4] }] },
+    'long labels': { labels: [long, `${long} 2`, `${long} 3`], series: [{ name: 'x', values: [1, 2, 3] }] },
+    'many labels': { labels: Array.from({ length: 60 }, (_, i) => `Tháng ${i + 1}`), series: [{ name: 'x', values: Array.from({ length: 60 }, (_, i) => i * 3) }, { name: 'y', values: Array.from({ length: 60 }, (_, i) => 200 - i) }] },
+    'huge figures': { labels: ['A', 'B', 'C'], series: [{ name: 'x', values: [1_234_567_890, 987_654_321, 5_000_000_000] }, { name: 'y', values: [1, 2, 3] }] },
+    'below zero': { labels: ['A', 'B', 'C'], series: [{ name: 'x', values: [-500, 200, -50] }, { name: 'y', values: [10, -900, 30] }] },
+    'one point': { labels: [long], series: [{ name: 'x', values: [7] }] },
+  };
+  for (const [name, data] of Object.entries(cases)) {
+    for (const type of ['bar', 'hbar', 'line', 'stacked', 'pie']) {
+      for (const format of ['number', 'currency']) {
+        const svg = renderChart({ type, title: long, data, format });
+        const out = overflow(svg);
+        check(`${type} · ${name} · ${format}`, out.length === 0, out.slice(0, 3).join(' | '));
+      }
+    }
+  }
+  const scatter = renderChart({ type: 'scatter', title: long, xLabel: long, yLabel: 'y', data: { series: manyNames.map((name, i) => ({ name, points: [[-1000000 * i, 2000000], [5_000_000, -3 * i]] })) }, format: 'currency' });
+  check('scatter · long names and huge figures', overflow(scatter).length === 0, overflow(scatter).slice(0, 3).join(' | '));
+
+  const ownersLegend = renderChart({ type: 'line', title: 'T', data: cases['the owner\'s chart'] });
+  for (const name of cases['the owner\'s chart'].series.map((s) => s.name)) check(`  the legend names "${name.slice(0, 12)}…" whole`, ownersLegend.includes(`>${name.replace(/&/g, '&amp;')}<`));
+  check('  over more than one row', new Set([...ownersLegend.matchAll(/class="legend-item"[^>]*translate\([\d.]+,(\d+)\)/g)].map((m) => m[1])).size > 1);
+  check('  every label on the axis is there whole', dollars.every((label) => ownersLegend.includes(`>${label}<`)));
+
+  const ends = [...renderChart({ type: 'line', title: 'T', data: { labels: ['a', 'b'], series: [{ name: 'x', values: [1, 100] }, { name: 'y', values: [1, 99] }, { name: 'z', values: [1, 98] }] } }).matchAll(/<text data-s="\d" [^>]*y="([\d.]+)"/g)].map((m) => Number(m[1])).sort((a, b) => a - b);
+  check('figures at the end of close lines do not sit on each other', ends.length === 3 && ends[1] - ends[0] >= 12 && ends[2] - ends[1] >= 12, ends.join(','));
+
+  const below = renderChart({ type: 'line', title: 'T', data: cases['below zero'] });
+  const dots = [...below.matchAll(/class="dot"[^>]*cy="([\d.]+)"/g)].map((m) => Number(m[1]));
+  const baseline = Math.max(...[...below.matchAll(/<line [^>]*y1="([\d.]+)"/g)].map((m) => Number(m[1])));
+  check('a value below zero is on the plot, not over its labels', Math.max(...dots) <= baseline + 0.5, `${Math.max(...dots)} vs ${baseline}`);
+  check('text is cut with an ellipsis, and only when it must be', fitText('short', 11, 500) === 'short' && fitText(long, 11, 100).endsWith('…') && textWidth(fitText(long, 11, 100), 11) <= 100);
+  check('a tag cut in half by the ellipsis still cannot become markup', !renderChart({ type: 'bar', title: `<script>${long}`, data: { labels: [`<img src=x onerror=1>${long}`], series: [{ name: 'a', values: [1] }, { name: `<b>${long}${long}`, values: [2] }] } }).match(/<(script|img|b)\b/));
+}
+
+/*
+ * Found by the security review of 2026-11-04: two points so large that a step is
+ * lost in rounding never finished, and took the process down.
+ */
+section('numbers past what a step can move ends too');
+{
+  const { rangeTicks } = __testing;
+  const big = rangeTicks(1e16, 10000000000000002);
+  check('the axis comes to an end', big.length >= 1 && big.length <= 51, String(big.length));
+  const svg = renderChart({ type: 'scatter', title: 'Big', data: { series: [{ name: 'a', points: [[1e16, 1], [10000000000000002, 2]] }] } });
+  check('  and the chart is drawn', svg.startsWith('<svg'));
+  check('the widest there are do not overflow into nothing', rangeTicks(-1.7e308, 1.7e308).length >= 1);
+  check('small ones keep their steps', new Set(rangeTicks(0.00000012, 0.00000099)).size >= 3, JSON.stringify(rangeTicks(0.00000012, 0.00000099)));
+  const long = 'x'.repeat(5_000_000);
+  const started = Date.now();
+  renderChart({ type: 'bar', title: long, data: { labels: [long, long], series: [{ name: long, values: [1, 2] }, { name: long, values: [3, 4] }] } });
+  check('a label of millions of characters costs next to nothing', Date.now() - started < 2000, `${Date.now() - started} ms`);
+}
+
 section('a bar chart is drawn in proportion');
 {
   const svg = renderChart({ type: 'bar', title: 'So sánh', data: scores });

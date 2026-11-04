@@ -7,7 +7,7 @@ import { richWidget } from './cards.js';
 import { api } from './api.js';
 import { mediaTools, svgToPng, fileNameFrom, imageUrlToPng } from './media.js';
 import { webRowHtml, titleFromContent } from './webrows.js';
-import { parseResults } from './rail.js';
+import { parseResults, searchFailure } from './rail.js';
 import { rememberSearch, rememberPage, auditCitations } from './cite.js';
 import { normalisePlan, planItemHtml, planChange } from './plan.js';
 import { canonicalInput, TITLED } from './tool-aliases.js';
@@ -428,6 +428,22 @@ const clip = (text, max = 60) => {
 };
 
 /**
+ * The names of the files this page has seen, by id.
+ *
+ * A tool that works on a file takes its id, and a row drawn from the arguments
+ * read "Rewrite 7e25a809-8b9c-4c63-…", which tells nobody anything and looks like
+ * something has gone wrong (owner, 2026-11-04). Filled as each file's card is
+ * placed, which a conversation does in order as it is drawn, so a file made
+ * earlier is known by the time a later call changes it.
+ *
+ * @type {Map<string, string>}
+ */
+const FILE_NAMES = new Map();
+
+/** A file as a row names it: never by its id. */
+const fileLabel = (id) => FILE_NAMES.get(String(id || '')) || t('work.aFile');
+
+/**
  * A path, clipped from the *front*.
  *
  * `clip` keeps the beginning, which for a path is the half that says nothing:
@@ -494,9 +510,10 @@ const STEP_DETAILS = {
 
   /* documents it writes */
   create_file: (i) => `${clip(i.name || i.title || '')}${i.format ? ` (${i.format})` : ''}`,
-  update_file: (i) => clip(i.name || i.file_id || ''),
-  read_generated_file: (i) => clip(i.file_id, 24),
-  file_versions: (i) => clip(i.file_id, 24),
+  update_file: (i) => clip(i.name || fileLabel(i.file_id)),
+  // With no id it lists them all, and there is no one file to name.
+  read_generated_file: (i) => (i.file_id ? clip(fileLabel(i.file_id)) : ''),
+  file_versions: (i) => clip(fileLabel(i.file_id)),
   generate_image: (i) => clip(i.prompt, 64),
   show_widget: (i) => clip(i.title),
   chart: (i) => `${clip(i.title)}${i.type ? ` (${i.type})` : ''}`,
@@ -522,8 +539,8 @@ const STEP_DETAILS = {
   // A Python call has no `command`; it was drawn with nothing beside the verb.
   sandbox_run: (i) => clip(firstLine(i.command) || firstLine(i.python) || i.download || (i.files || []).map((f) => f?.path).join(', '), 72),
   cloud_browser: (i) => clip([i.action, i.url || i.value || i.text || i.key || (i.ref != null ? `#${i.ref}` : '')].filter(Boolean).join(' · '), 72),
-  publish_file: (i) => clip(i.file_id, 24),
-  look_at: (i) => clip(i.question || i.url || i.file_id, 64),
+  publish_file: (i) => clip(fileLabel(i.file_id)),
+  look_at: (i) => clip(i.question || i.url || fileLabel(i.file_id), 64),
   gmail: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
   google_calendar: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
   google_drive: (i) => clip([i.action, i.query || i.subject || i.summary || i.title || i.name || i.range || i.to].filter(Boolean).join(' · '), 64),
@@ -1457,7 +1474,7 @@ export function widgetFrame(widget) {
     'body{padding:12px}body>*{margin-left:auto;margin-right:auto;max-width:100%}' +
     'svg{max-width:100%;height:auto;display:block;margin:0 auto}body>svg:only-child{cursor:zoom-in}' +
     `table{border-collapse:collapse;font-size:12px}td,th{border:1px solid ${rule};padding:4px 8px}` +
-    'a{color:#7cc7ff}' +
+    `a{color:${scheme === 'light' ? '#1b6fc4' : '#7cc7ff'}}` +
     '</style>' +
     `<body>${widget.markup}</body>`;
 
@@ -1831,6 +1848,7 @@ const MADE = new WeakMap();
  * corner buttons to copy or download it.
  */
 function placeFile(body, file) {
+  if (file.id && file.name) FILE_NAMES.set(file.id, file.name);
   const card = fileCard(file);
   const existing = [...body.querySelectorAll('.filecard')].find((node) => node.dataset.file === file.id);
   if (existing) existing.replaceWith(card);
@@ -2199,7 +2217,13 @@ export function assistantMessage() {
     w.title.textContent = t(w.searched ? (working ? 'web.searching' : 'web.searched') : working ? 'web.reading' : 'web.read');
     w.node.classList.toggle('web--search', w.searched);
     w.query.textContent = w.queryText;
-    w.count.textContent = w.searched && !working && !allFailed ? t(w.hits === 1 ? 'web.result' : 'web.results', { n: w.hits }) : '';
+    // Every row under the line counts: a search that found nothing followed by a
+    // page read directly drew "0 results" over that very page (owner, 2026-11-04).
+    const found = Math.max(w.hits, w.rows.size);
+    // Nothing found because no engine could look is not the same as nothing there.
+    const couldNotLook = w.searched && !working && !allFailed && !found && w.searchFailed != null;
+    w.count.textContent = !w.searched || working || allFailed ? '' : couldNotLook ? t('web.searchDown') : t(found === 1 ? 'web.result' : 'web.results', { n: found });
+    w.count.title = couldNotLook && w.searchFailed !== 'nothing' ? w.searchFailed : '';
     w.node.classList.toggle('web--error', allFailed);
     w.list.innerHTML = [...w.rows.values()].map((row) => webRowHtml(row)).join('');
     w.list.hidden = w.rows.size === 0;
@@ -2401,6 +2425,7 @@ export function assistantMessage() {
           if (!result.isError) rememberSearch(result.content);
           const hits = parseResults(result.content);
           w.hits = hits.length;
+          w.searchFailed = result.isError ? null : searchFailure(result.content);
           for (const hit of hits) {
             const row = w.rows.get(hit.url);
             if (row) row.title ||= hit.title;
@@ -3358,7 +3383,8 @@ export function assistantMessage() {
 
       // The headline is what was done; the function name and its arguments are
       // inside, one click away, for whoever wants them.
-      const { verb, detail } = describeStep(call.name, call.input);
+      const { verb, detail: asked } = describeStep(call.name, call.input);
+      let detail = asked;
       const href = stepLink(call.input);
       /**
        * Drawn in two halves: markup for the parts that are markup, and a real
@@ -3389,6 +3415,8 @@ export function assistantMessage() {
       return {
         complete(result) {
           block.classList.toggle('tool--error', !!result.isError);
+          // A call on a file made before this page was opened: its result knows the name.
+          if (call.input?.file_id && !call.input?.question && result.file?.name) detail = clip(result.file.name);
           paintHead(
             doneMark(call.name, !!result.isError),
             result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '',

@@ -5,10 +5,25 @@ import { log } from './util/trace.js';
 import { lastLocalHour } from './util/zone.js';
 import { markedPrice } from './pricing.js';
 import { AUTO_ROUTER } from './autoPick.js';
+import { canonicalModel } from './modelRoutes.js';
 
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const ORCAROUTER_MODELS = 'https://api.orcarouter.ai/v1/models';
+/** The two lists that say what `/v1/models` leaves out; see `enrichOrcaCatalogue`. */
+const ORCAROUTER_DETAILS = 'https://api.orcarouter.ai/api/pricing';
+const ORCAROUTER_FREE_PACKAGE = 'https://api.orcarouter.ai/api/free-package/public';
 const STALE_AFTER_MS = 25 * 60 * 60 * 1000; // a day plus the cron's ±59min slop
+
+/**
+ * Raised when `refreshLibrary` starts reading a source differently, so rows
+ * written the old way do not wait for tomorrow's refresh. 2: OrcaRouter's
+ * `-free` models were stored knowing nothing but their price (owner, 2026-11-04).
+ */
+const LIBRARY_SHAPE = 2;
+const LIBRARY_SHAPE_SETTING = 'model_library_shape';
+
+/** OrcaRouter's free tier as last published: the requests a day each lifetime spend unlocks. */
+export const ORCA_FREE_SETTING = 'orcarouter_free_package';
 
 /**
  * The hour, on each person's own clock, by which the library is expected to be
@@ -96,6 +111,105 @@ function supportsTools(entry) {
   // Absent field: assume yes rather than hiding a working model on a hunch.
   if (!Array.isArray(params)) return true;
   return params.includes('tools');
+}
+
+/**
+ * Whether this app can talk to the model at all: it speaks Chat Completions.
+ *
+ * OrcaRouter lists its video, image, embedding and speech models beside the chat
+ * ones, and many of those rows say nothing about what they output — so the two
+ * checks above waved them through as text models with tools, and `kling/kling-v3`
+ * sat in the picker waiting to fail. `supported_endpoint_types` says it plainly.
+ * OpenRouter does not send the field, and everything it lists here is chat.
+ */
+function isChatModel(entry) {
+  const types = entry?.supported_endpoint_types;
+  if (!Array.isArray(types)) return true;
+  return types.includes('openai');
+}
+
+/** What `/v1/models` says when it has no date for a model: 20 July 2021, on most of them. */
+const ORCA_PLACEHOLDER_DATE = 1_626_777_600;
+/** OrcaRouter's router over the free tier: no price listed, and documented never to bill. */
+const ORCA_FREE_ROUTERS = new Set(['orcarouter/free']);
+
+/**
+ * OrcaRouter's three lists, read as one.
+ *
+ * `/v1/models` is the list of what may be called, and it is the sparse one: a
+ * `-free` id arrives with nothing but its price. Read alone, that made DeepSeek
+ * V4.1 Flash (Free) a model of unknown window that cannot see, and with no window
+ * and no output limit the reply budget fell to its cautious 4,096 tokens — the
+ * owner's "cut off" notice on a model OrcaRouter gives 1M and 384K (2026-11-04).
+ *
+ * In order of who should know best, for each fact: the row itself; its row in
+ * `/api/pricing`, the catalogue the site is drawn from; the paid model a free id
+ * shadows (OrcaRouter's docs: "same weights and same capabilities", named by
+ * `free_base_model` or the free package); and last, the same model on OpenRouter,
+ * for the few OrcaRouter says nothing about at all.
+ *
+ * Facts only. The price stays the row's own: a free id is never given its paid
+ * twin's price, and no other router's price is ever OrcaRouter's.
+ *
+ * @param {any[]} entries  `/v1/models` `data`
+ * @param {{ details?: any[], freePackage?: any, siblings?: any[] }} [sources]
+ *   each optional: a list that did not answer leaves its facts unknown, not wrong
+ */
+export function enrichOrcaCatalogue(entries, { details = [], freePackage = null, siblings = [] } = {}) {
+  const detailOf = new Map(details.map((row) => [row.model_name, row]));
+  const entryOf = new Map(entries.map((row) => [row.id, row]));
+  const aliasBase = new Map((freePackage?.models || []).map((row) => [row.free_alias, row.base_model]));
+  const siblingOf = new Map();
+  for (const row of siblings) {
+    const key = canonicalModel(row.id);
+    // A paid listing over a free one, where both exist: it is the fuller row.
+    if (!siblingOf.has(key) || !/:free$/.test(row.id)) siblingOf.set(key, row);
+  }
+  const known = (value) => value != null && value !== '' && !(Array.isArray(value) && !value.length);
+  const first = (...values) => values.find(known) ?? null;
+  const date = (value) => (Number(value) > 0 && Number(value) !== ORCA_PLACEHOLDER_DATE ? Number(value) : null);
+
+  return entries.map((entry) => {
+    const detail = detailOf.get(entry.id);
+    const baseId = detail?.free_base_model || aliasBase.get(entry.id) || (/-free$/.test(entry.id) ? entry.id.replace(/-free$/, '') : null);
+    const base = baseId ? entryOf.get(baseId) : null;
+    const baseDetail = baseId ? detailOf.get(baseId) : null;
+    const twin = siblingOf.get(canonicalModel(baseId || entry.id));
+    const inputs = first(entry.architecture?.input_modalities, detail?.input_modalities, base?.architecture?.input_modalities, baseDetail?.input_modalities, twin?.architecture?.input_modalities);
+    const outputs = first(entry.architecture?.output_modalities, detail?.output_modalities, base?.architecture?.output_modalities, baseDetail?.output_modalities, twin?.architecture?.output_modalities);
+    return {
+      ...entry,
+      name: first(entry.name, detail?.display_name, base?.name, baseDetail?.display_name),
+      description: first(entry.description, detail?.description, base?.description, baseDetail?.description),
+      context_length: first(entry.context_length, entry.top_provider?.context_length, detail?.context_length, base?.context_length, baseDetail?.context_length, twin?.context_length),
+      max_completion_tokens: first(entry.max_completion_tokens, entry.top_provider?.max_completion_tokens, detail?.max_completion_tokens, base?.max_completion_tokens, baseDetail?.max_completion_tokens, twin?.top_provider?.max_completion_tokens),
+      architecture: { ...entry.architecture, ...(inputs ? { input_modalities: inputs } : {}), ...(outputs ? { output_modalities: outputs } : {}) },
+      supported_parameters: first(entry.supported_parameters, detail?.supported_parameters, base?.supported_parameters, baseDetail?.supported_parameters, twin?.supported_parameters) ?? undefined,
+      supported_endpoint_types: first(entry.supported_endpoint_types, detail?.supported_endpoint_types, base?.supported_endpoint_types, baseDetail?.supported_endpoint_types) ?? [],
+      created: first(date(detail?.created), date(entry.created), date(baseDetail?.created), date(base?.created)) ?? 0,
+      pricing: ORCA_FREE_ROUTERS.has(entry.id) && !entry.pricing ? { request: '0' } : entry.pricing,
+    };
+  });
+}
+
+/**
+ * The free tier as OrcaRouter publishes it, kept short: each lifetime spend and
+ * the requests it unlocks, and the few free ids with a ladder of their own. The
+ * docs say to read these numbers rather than remember them, "they are tuned live".
+ *
+ * @returns {{ tiers: { minPaidUsd: number, rpm: number, rpd: number }[], models: Record<string, { minPaidUsd: number, rpm: number, rpd: number }[]> } | null}
+ */
+export function readFreePackage(data) {
+  const tier = (row) => ({ minPaidUsd: Number(row?.min_paid_usd) || 0, rpm: Number(row?.rpm) || 0, rpd: Number(row?.rpd) || 0 });
+  const tiers = (data?.free_tier?.tiers || []).map(tier).filter((row) => row.rpd > 0).sort((a, b) => a.minPaidUsd - b.minPaidUsd);
+  if (!tiers.length) return null;
+  const models = {};
+  for (const row of data?.models || []) {
+    if (!row?.free_alias) continue;
+    if (Array.isArray(row.tiers) && row.tiers.length) models[row.free_alias] = row.tiers.map(tier).filter((t) => t.rpd > 0).sort((a, b) => a.minPaidUsd - b.minPaidUsd);
+    else if (Number(row.override_rpd) > 0) models[row.free_alias] = [{ minPaidUsd: 0, rpm: Number(row.override_rpm) || 0, rpd: Number(row.override_rpd) }];
+  }
+  return { tiers, models };
 }
 
 /**
@@ -225,6 +339,25 @@ async function fetchCatalogue(url, label) {
   return json.data;
 }
 
+/**
+ * OrcaRouter's two other lists. Never throws: either one failing leaves the
+ * facts it held unknown for a day, and the models themselves still listed.
+ */
+async function orcaSources() {
+  const read = async (url, label) => {
+    try {
+      const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) throw new Error(`${label} returned HTTP ${res.status}`);
+      return (await res.json())?.data ?? null;
+    } catch (err) {
+      log.warn('an OrcaRouter list did not answer', { list: label, error: String(err?.message || err).slice(0, 160) });
+      return null;
+    }
+  };
+  const [details, freePackage] = await Promise.all([read(ORCAROUTER_DETAILS, 'pricing'), read(ORCAROUTER_FREE_PACKAGE, 'free package')]);
+  return { details: Array.isArray(details) ? details : [], freePackage: freePackage && typeof freePackage === 'object' ? freePackage : null };
+}
+
 /** The OpenRouter catalogue alone — the one `addModelById` still checks against. */
 const fetchOpenRouterCatalogue = () => fetchCatalogue(OPENROUTER_MODELS, 'OpenRouter');
 
@@ -238,20 +371,32 @@ const fetchOpenRouterCatalogue = () => fetchCatalogue(OPENROUTER_MODELS, 'OpenRo
  * never collide in the upsert.
  */
 export async function refreshLibrary() {
-  const settled = await Promise.allSettled(
-    CATALOGUE_SOURCES.map(async ({ provider, url }) => {
-      const entries = await fetchCatalogue(url, provider);
-      /*
-       * A model already past its end date is not imported, even if the source
-       * still lists it for a day or two afterwards — so it also falls to the
-       * prune below, rather than lingering in the Free list.
-       */
-      return entries
-        .filter((e) => isTextModel(e) && supportsTools(e))
-        .map((e) => normalise(e, provider))
-        .filter((m) => m.model && !hasExpired(m));
-    }),
-  );
+  const lists = await Promise.allSettled(CATALOGUE_SOURCES.map(({ provider, url }) => fetchCatalogue(url, provider)));
+  const listOf = (name) => {
+    const at = CATALOGUE_SOURCES.findIndex((source) => source.provider === name);
+    return lists[at]?.status === 'fulfilled' ? lists[at].value : null;
+  };
+  // Only asked when OrcaRouter's own list answered: there is nothing to add to otherwise.
+  const orca = listOf('orcarouter') ? await orcaSources() : null;
+  const freePackage = orca?.freePackage ? readFreePackage(orca.freePackage) : null;
+  if (freePackage) await getStore().setSetting(ORCA_FREE_SETTING, freePackage);
+
+  /** @type {any[]} */
+  const settled = lists.map((list, i) => {
+    if (list.status !== 'fulfilled') return list;
+    const { provider } = CATALOGUE_SOURCES[i];
+    const entries = provider === 'orcarouter' ? enrichOrcaCatalogue(list.value, { ...orca, siblings: listOf('openrouter') || [] }) : list.value;
+    /*
+     * A model already past its end date is not imported, even if the source
+     * still lists it for a day or two afterwards — so it also falls to the
+     * prune below, rather than lingering in the Free list.
+     */
+    const value = entries
+      .filter((e) => isChatModel(e) && isTextModel(e) && supportsTools(e))
+      .map((e) => normalise(e, provider))
+      .filter((m) => m.model && !hasExpired(m));
+    return { status: 'fulfilled', value };
+  });
 
   const models = [];
   /** Sources that actually answered, with everything they listed. */
@@ -294,6 +439,9 @@ export async function refreshLibrary() {
     dropped += gone;
   }
 
+  // Only once every source was read this way: one that failed still holds old rows.
+  if (settled.every((r) => r.status === 'fulfilled')) await getStore().setSetting(LIBRARY_SHAPE_SETTING, LIBRARY_SHAPE);
+
   const status = await getStore().modelLibraryStatus();
   return { imported: models.length, dropped, ...status };
 }
@@ -315,7 +463,10 @@ export async function refreshIfStale({ tz = null, now = new Date() } = {}) {
   const refreshed = status.refreshedAt ? new Date(status.refreshedAt).getTime() : 0;
   const age = refreshed ? now.getTime() - refreshed : Infinity;
   const beforeMorning = tz ? refreshed < lastLocalHour(DAILY_REFRESH_HOUR, tz, now).getTime() : false;
-  if (age < STALE_AFTER_MS && !beforeMorning) return status;
+  // Rows written before this build read its sources this way, and only until one
+  // refresh has run: a list that did not answer then is not asked again on every load.
+  const shape = status.sparse ? await getStore().getSetting(LIBRARY_SHAPE_SETTING).catch(() => LIBRARY_SHAPE) : LIBRARY_SHAPE;
+  if (age < STALE_AFTER_MS && !beforeMorning && Number(shape) === LIBRARY_SHAPE) return status;
 
   // One refresh at a time per instance: the first page loads after six each
   // morning arrive together, and each used to fetch and prune the whole library.
@@ -577,4 +728,4 @@ const summarise = (entry) => ({
 });
 
 /** Exposed for the suite that pins how each aggregator's /models shape is read. */
-export const __testing = { normalise, maxOutputOf, acceptsImages, expiryOf, hasExpired };
+export const __testing = { normalise, maxOutputOf, acceptsImages, expiryOf, hasExpired, enrichOrcaCatalogue, isChatModel, readFreePackage };

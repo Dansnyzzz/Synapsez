@@ -238,6 +238,7 @@ export async function getPrefs(userId) {
  * second-guessed.** Only `getPrefs` calls this, and only when nothing is stored.
  */
 async function usableDefaultModel(userId, fallback) {
+  /** @type {Record<string, any>} */
   const status = await providerStatus(userId).catch(() => ({}));
 
   // The administrators' suggestion first (recommend.js, owner 2026-11-02): the
@@ -254,6 +255,14 @@ async function usableDefaultModel(userId, fallback) {
     if (free) return free.id;
     // An OpenRouter key but an empty library — the daily refresh has not landed
     // yet. Fall through rather than returning nothing.
+  }
+
+  // An OrcaRouter key alone: Auto is OpenRouter's, so that router's own free tier.
+  if (status.orcarouter?.configured) {
+    const [free] = await getStore()
+      .listSharedModels({ tier: 'free', sort: 'new', limit: 1, provider: 'orcarouter' })
+      .catch(() => []);
+    if (free) return free.id;
   }
 
   const stated = CATALOG.find((m) => m.id === fallback);
@@ -426,13 +435,19 @@ export function rememberWorkingKey(userId, provider, index) {
  */
 const resting = new Map();
 
-const restKey = (userId, provider, index) => `${userId}:${provider}:${index}`;
+const FREE_SLOT = ':free';
+const restKey = (userId, provider, index, free = false) => `${userId}:${provider}:${index}${free ? FREE_SLOT : ''}`;
 
-/** This key returned a rate limit; leave it alone until `untilMs`. */
-export function markKeyLimited(userId, provider, index, untilMs) {
+/**
+ * This key returned a rate limit; leave it alone until `untilMs`.
+ *
+ * `free`: the limit was a free model's, so only free models leave the key alone.
+ * The same key still reaches paid models, which are counted apart.
+ */
+export function markKeyLimited(userId, provider, index, untilMs, { free = false } = {}) {
   const until = Number(untilMs);
   if (!Number.isFinite(until)) return;
-  resting.set(restKey(userId, provider, index), until);
+  resting.set(restKey(userId, provider, index, free), until);
   sweepIfCrowded();
 }
 
@@ -472,14 +487,16 @@ function sweepIfCrowded() {
 }
 
 /** Whether this key is currently resting. An elapsed cooldown has lifted. */
-function isResting(userId, provider, index) {
-  const slot = restKey(userId, provider, index);
-  const until = resting.get(slot);
-  if (until == null) return false;
-  if (until === Infinity) return true;
-  if (until > Date.now()) return true;
-  resting.delete(slot);
-  return false;
+function isResting(userId, provider, index, { free = false } = {}) {
+  const slotIsResting = (slot) => {
+    const until = resting.get(slot);
+    if (until == null) return false;
+    if (until === Infinity) return true;
+    if (until > Date.now()) return true;
+    resting.delete(slot);
+    return false;
+  };
+  return slotIsResting(restKey(userId, provider, index)) || (free && slotIsResting(restKey(userId, provider, index, true)));
 }
 
 /**
@@ -488,12 +505,13 @@ function isResting(userId, provider, index) {
  * Dead keys are deliberately not counted: they have no reset, and reporting
  * `Infinity` as "try again at" would be a lie with a timestamp on it.
  */
-export function keyRestingUntil(userId, provider) {
+export function keyRestingUntil(userId, provider, { free = false } = {}) {
   const prefix = `${userId}:${provider}:`;
   const now = Date.now();
   let soonest = null;
   for (const [slot, until] of resting) {
     if (!slot.startsWith(prefix) || until === Infinity || until <= now) continue;
+    if (!free && slot.endsWith(FREE_SLOT)) continue;
     if (soonest == null || until < soonest) soonest = until;
   }
   return soonest;
@@ -533,9 +551,13 @@ export const __testing = { isResting };
  * whichever key last worked, then wraps, so a dead first key costs one failed
  * request per process rather than one per turn.
  *
+ * @param {string} userId
+ * @param {string} provider
+ * @param {{ includeResting?: boolean, free?: boolean }} [options]
+ *   `free`: the call is for a free model, so a key resting for free models is left out too
  * @returns `[{ key, index, shared }]`
  */
-export async function getApiKeys(userId, provider, { includeResting = false } = {}) {
+export async function getApiKeys(userId, provider, { includeResting = false, free = false } = {}) {
   const list = keyList(await storedKeys(userId), provider);
 
   const own = [];
@@ -546,7 +568,7 @@ export async function getApiKeys(userId, provider, { includeResting = false } = 
     // OpenRouter the failed request it would earn still counts against the
     // day's allowance. `includeResting` exists so a caller can tell "no keys at
     // all" apart from "none free just now" — they need very different sentences.
-    if (!includeResting && isResting(userId, provider, index)) return;
+    if (!includeResting && isResting(userId, provider, index, { free })) return;
     own.push({ key: decrypted, index, shared: false });
   });
 
@@ -555,7 +577,7 @@ export async function getApiKeys(userId, provider, { includeResting = false } = 
   const ordered = from > 0 ? [...own.slice(from), ...own.slice(0, from)] : own;
 
   const environment = process.env[ENV_KEYS[provider]];
-  if (environment && (includeResting || !isResting(userId, provider, -1))) {
+  if (environment && (includeResting || !isResting(userId, provider, -1, { free }))) {
     ordered.push({ key: environment, index: -1, shared: true });
   }
   return ordered;
@@ -584,11 +606,18 @@ const hintFor = (value) => `…${String(value).slice(-4)}`;
  * What a check with the provider learned about a key, kept beside it
  * (keyIntake.js): a hash of its account, whether that account has paid for
  * credit, and when it was asked. Never the key; nothing else.
+ *
+ * `freeTier` is OrcaRouter's ladder, which no endpoint reports: 'low' after its
+ * free tier refused this workspace for not having paid enough, with `freeTierAt`
+ * saying when, and 'high' once there is proof it has (usageReport.js). Absent until
+ * one or the other is seen; null once a later request has shown 'low' no longer holds.
  */
 const keyMeta = (meta = {}) => ({
   ...(typeof meta.account === 'string' && meta.account ? { account: meta.account.slice(0, 40) } : {}),
   ...(typeof meta.paid === 'boolean' ? { paid: meta.paid } : {}),
   ...(typeof meta.checkedAt === 'string' ? { checkedAt: meta.checkedAt } : {}),
+  ...(meta.freeTier === 'low' || meta.freeTier === 'high' || meta.freeTier === null ? { freeTier: meta.freeTier } : {}),
+  ...(typeof meta.freeTierAt === 'string' ? { freeTierAt: meta.freeTierAt } : {}),
 });
 
 /** This account's own keys for a provider, readable — for the checks keyIntake.js makes, never for the browser. */
@@ -598,6 +627,8 @@ export async function keyEntries(userId, provider) {
     key: decryptSecret(entry.cipher) || '',
     account: entry.account || null,
     paid: typeof entry.paid === 'boolean' ? entry.paid : null,
+    freeTier: entry.freeTier === 'low' || entry.freeTier === 'high' ? entry.freeTier : null,
+    freeTierAt: typeof entry.freeTierAt === 'string' ? entry.freeTierAt : null,
   }));
 }
 
@@ -707,6 +738,7 @@ export async function providerStatus(userId) {
         // for credit (true), never (false), or not said (null).
         paid: typeof entry.paid === 'boolean' ? entry.paid : null,
         checked: !!entry.checkedAt,
+        freeTier: entry.freeTier === 'low' || entry.freeTier === 'high' ? entry.freeTier : null,
       })),
       // Whether there is anywhere to fall back to if the first one is refused.
       spare: Math.max(0, list.length - 1) + (list.length && shared ? 1 : 0),

@@ -548,6 +548,169 @@ const bob = jar();
   check('an admin cannot suspend themselves', selfHarm.status === 400, `got ${selfHarm.status}`);
 }
 
+/**
+ * More administrators, each given what the owner chose (owner, 2026-11-04). This
+ * is what stops a person made an administrator to read feedback from deleting
+ * accounts, making themselves more, or starting a program on the owner's computer.
+ */
+section('the owner decides who administers, and what each may do');
+{
+  const aliceRow = await store.getUserByEmail('alice@example.com');
+  const bobRow = await store.getUserByEmail('bob@example.com');
+  const adminsMe = await alice.call('GET', '/api/bootstrap');
+  check('the first administrator is the owner', adminsMe.json?.user?.isOwner === true && aliceRow.is_owner === true, JSON.stringify(adminsMe.json?.user?.isOwner));
+  check('  and holds every permission', adminsMe.json?.user?.permissions?.length === 6, JSON.stringify(adminsMe.json?.user?.permissions));
+  const bobMe = await bob.call('GET', '/api/bootstrap');
+  check('an ordinary account is no owner and holds nothing', bobMe.json?.user?.isOwner === false && bobMe.json?.user?.permissions?.length === 0, JSON.stringify(bobMe.json?.user));
+
+  // Nobody but the owner reaches the door.
+  check('an ordinary account cannot make itself one', (await bob.call('PUT', `/api/admin/admins/${bobRow.id}`, { permissions: ['users'] })).status === 403);
+  check('  through the other door either', (await bob.call('PATCH', `/api/admin/users/${bobRow.id}`, { role: 'admin' })).status === 403);
+
+  // Made directly: the sections after this count on the sign-up limit not being spent here.
+  const { hashPassword } = await import('../server/crypto.js');
+  const carol = jar();
+  const carolId = (await store.createUser({ id: 'u-carol', email: 'carol@example.com', name: 'Carol', passwordHash: await hashPassword('carols-long-enough-password'), role: 'user' })).id;
+  await carol.call('POST', '/api/login', { email: 'carol@example.com', password: 'carols-long-enough-password' });
+
+  const none = await alice.call('PUT', `/api/admin/admins/${bobRow.id}`, { permissions: [] });
+  check('an administrator with nothing to do is refused', none.status === 400, `${none.status} ${none.json?.error}`);
+  const junk = await alice.call('PUT', `/api/admin/admins/${bobRow.id}`, { permissions: ['root', 'owner', { a: 1 }] });
+  check('  so is one given only names that mean nothing', junk.status === 400, `${junk.status}`);
+  const nobody = await alice.call('PUT', '/api/admin/admins/no-such-account', { permissions: ['users'] });
+  check('  and an account that does not exist is a 404', nobody.status === 404);
+  const onOwner = await alice.call('PUT', `/api/admin/admins/${aliceRow.id}`, { permissions: ['users'] });
+  check("  the owner's powers are not a list", onOwner.status === 400 && (await store.getUserByEmail('alice@example.com')).admin_permissions == null, `${onOwner.status}`);
+
+  const granted = await alice.call('PUT', `/api/admin/admins/${bobRow.id}`, { permissions: ['feedback', 'made-up'] });
+  check('the owner gives one permission', granted.status === 200 && granted.json?.permissions?.join() === 'feedback', JSON.stringify(granted.json));
+  const bobNow = (await bob.call('GET', '/api/bootstrap')).json?.user;
+  check('  at once, on the next request', bobNow?.role === 'admin' && bobNow?.isOwner === false && bobNow?.permissions?.join() === 'feedback', JSON.stringify(bobNow));
+
+  // What they were given, and nothing else.
+  check('they can read feedback', (await bob.call('GET', '/api/admin/feedback')).status === 200);
+  for (const [method, url, what, body] of [
+    ['GET', '/api/admin/users', 'list people'],
+    ['PATCH', `/api/admin/users/${carolId}`, 'suspend someone', { suspended: true }],
+    ['DELETE', `/api/admin/users/${carolId}`, 'delete someone'],
+    ['GET', '/api/admin/recommended', 'see the model suggestions'],
+    ['PUT', '/api/admin/recommended', 'set the model suggestions', { free: 'auto' }],
+    ['GET', '/api/admin/free-tier', 'see the free allowances'],
+    ['GET', '/api/admin/activity', 'see security activity'],
+    ['PUT', `/api/admin/admins/${carolId}`, 'make another administrator', { permissions: ['users'] }],
+    ['DELETE', `/api/admin/admins/${aliceRow.id}`, 'remove the owner'],
+    ['PUT', `/api/admin/admins/${bobRow.id}`, 'give themselves more', { permissions: ['users', 'delete_users', 'models', 'feedback', 'activity', 'free_tier'] }],
+  ]) {
+    const refused = await bob.call(method, url, body);
+    check(`  but cannot ${what}`, refused.status === 403, `got ${refused.status}`);
+  }
+  check("  none of which changed anything", (await store.getUserByEmail('carol@example.com')).suspended_at == null && (await store.getUserByEmail('carol@example.com')).role === 'user');
+  check('  nor did they make themselves more', JSON.stringify((await store.getUserByEmail('bob@example.com')).admin_permissions) === '["feedback"]');
+
+  // An administrator is still not the owner of the computer under the server.
+  const { usesInProcessTools } = await import('../server/localTools.js');
+  const hadVercel = process.env.VERCEL;
+  delete process.env.VERCEL;
+  const hadMode = process.env.WORKER_MODE;
+  delete process.env.WORKER_MODE;
+  check('the local tools are the owner\'s', usesInProcessTools(await store.getUserByEmail('alice@example.com')) === true);
+  check('  and not another administrator\'s', usesInProcessTools(await store.getUserByEmail('bob@example.com')) === false);
+  if (hadVercel !== undefined) process.env.VERCEL = hadVercel;
+  if (hadMode !== undefined) process.env.WORKER_MODE = hadMode;
+  const hadStdio = process.env.ALLOW_MCP_STDIO;
+  process.env.ALLOW_MCP_STDIO = '1';
+  const stdio = await bob.call('POST', '/api/mcp', { name: 'Sneaky', transport: 'stdio', command: 'node', args: ['-e', '1'] });
+  if (hadStdio === undefined) delete process.env.ALLOW_MCP_STDIO;
+  else process.env.ALLOW_MCP_STDIO = hadStdio;
+  check('  nor is a program started beside the server', stdio.status === 403, `got ${stdio.status}`);
+
+  // A change takes effect, and is recorded where the security record is read.
+  const changed = await alice.call('PUT', `/api/admin/admins/${bobRow.id}`, { permissions: ['users', 'delete_users'] });
+  check('the owner can change what they may do', changed.status === 200);
+  check('  feedback is gone', (await bob.call('GET', '/api/admin/feedback')).status === 403);
+  check('  the people list is there', (await bob.call('GET', '/api/admin/users')).status === 200);
+  const seen = (await alice.call('GET', '/api/admin/activity')).json?.events || [];
+  check('  and it is in the security record', seen.some((e) => e.kind === 'admin_changed'), seen.slice(0, 3).map((e) => e.kind).join());
+
+  // Acting on other administrators is the owner's.
+  await alice.call('PUT', `/api/admin/admins/${carolId}`, { permissions: ['feedback'] });
+  check('one administrator cannot suspend another', (await bob.call('PATCH', `/api/admin/users/${carolId}`, { suspended: true })).status === 403);
+  check('  nor delete one', (await bob.call('DELETE', `/api/admin/users/${carolId}`)).status === 403);
+  check('  nor limit one', (await bob.call('PATCH', `/api/admin/users/${carolId}`, { monthlyTokenLimit: 1 })).status === 403);
+  check('  nor do anything to the owner', (await bob.call('PATCH', `/api/admin/users/${aliceRow.id}`, { suspended: true })).status === 403 && (await bob.call('DELETE', `/api/admin/users/${aliceRow.id}`)).status === 403);
+  check('  and the owner cannot be suspended by anyone at all', (await store.getUserByEmail('alice@example.com')).suspended_at == null);
+  const dave = await store.createUser({ id: 'u-dave', email: 'dave@example.com', name: 'Dave', passwordHash: 'x', role: 'user' });
+  check('an ordinary account is theirs to suspend', (await bob.call('PATCH', `/api/admin/users/${dave.id}`, { suspended: true })).status === 200);
+  check('  and to delete', (await bob.call('DELETE', `/api/admin/users/${dave.id}`)).status === 200);
+  check('the owner can suspend an administrator', (await alice.call('PATCH', `/api/admin/users/${carolId}`, { suspended: false })).status === 200);
+
+  // Taken away.
+  const removed = await alice.call('DELETE', `/api/admin/admins/${carolId}`);
+  const carolNow = await store.getUserByEmail('carol@example.com');
+  check('the owner can take it away, and the account stays', removed.status === 200 && carolNow?.role === 'user');
+  check('  nothing it held waits to come back with the role', carolNow?.admin_permissions == null);
+  check('  and it is an ordinary account again at once', (await carol.call('GET', '/api/admin/feedback')).status === 403);
+  check('the owner cannot be removed', (await alice.call('DELETE', `/api/admin/admins/${aliceRow.id}`)).status === 400);
+  check('  and the owner cannot be demoted by any door', (await alice.call('PATCH', `/api/admin/users/${aliceRow.id}`, { role: 'user' })).status === 400);
+  const viaPatch = await alice.call('PATCH', `/api/admin/users/${carolId}`, { role: 'admin' });
+  check('one door makes an administrator: this one would have given everything', viaPatch.status === 400 && (await store.getUserByEmail('carol@example.com')).role === 'user', `${viaPatch.status}`);
+
+  // An administrator's own limit: lifting it is the owner's, as setting it is.
+  await alice.call('PUT', `/api/admin/admins/${carolId}`, { permissions: ['users'] });
+  await alice.call('PATCH', `/api/admin/users/${carolId}`, { monthlyTokenLimit: 1000 });
+  check('an administrator cannot lift their own limit', (await carol.call('PATCH', `/api/admin/users/${carolId}`, { monthlyTokenLimit: 0 })).status === 403 && Number((await store.getUserByEmail('carol@example.com')).monthly_token_limit) === 1000);
+  await alice.call('PATCH', `/api/admin/users/${carolId}`, { monthlyTokenLimit: 0 });
+  check('  the owner may set their own', (await alice.call('PATCH', `/api/admin/users/${aliceRow.id}`, { monthlyTokenLimit: 0 })).status === 200);
+  await alice.call('DELETE', `/api/admin/admins/${carolId}`);
+
+  // The machine's pairing code, which is the machine.
+  const pairing = await import('../server/localTools.js').catch(() => null);
+  check('(the local tools module loads)', !!pairing);
+  const seenBy = async (who) => (await who.call('GET', '/api/devices')).json;
+  const ownerDevices = await seenBy(alice);
+  const otherDevices = await seenBy(carol);
+  check('an ordinary account is never given the code that pairs this machine', otherDevices?.localCode === null, JSON.stringify(otherDevices?.localCode));
+  check('  (the owner is asked for it as before)', 'localCode' in (ownerDevices || {}));
+
+  // A stdio server kept from before: asked again each time it would start.
+  {
+    const { mcpTools } = await import('../server/mcp/registry.js');
+    const hadStdio = process.env.ALLOW_MCP_STDIO;
+    process.env.ALLOW_MCP_STDIO = '1';
+    const planted = 'plant-'.concat(Date.now());
+    await store.saveMcpServer(carolId, { id: planted, name: 'Kept', config: { transport: 'stdio', place: 'local', command: process.execPath, args: ['-e', 'process.exit(0)'] }, enabled: true });
+    const seen = await mcpTools(carolId);
+    check('a stdio row kept by somebody who is not the owner does not start', seen.tools.length === 0 && /only the owner/.test(seen.servers[0]?.error || ''), JSON.stringify(seen.servers));
+    if (hadStdio === undefined) delete process.env.ALLOW_MCP_STDIO;
+    else process.env.ALLOW_MCP_STDIO = hadStdio;
+  }
+
+  // Handing it over: chosen, recorded, and the only way.
+  await alice.call('PUT', `/api/admin/admins/${bobRow.id}`, { permissions: ['feedback'] });
+  check('only the owner can hand the deployment over', (await bob.call('POST', `/api/admin/admins/${bobRow.id}/owner`)).status === 403);
+  check('  and only to another administrator', (await alice.call('POST', `/api/admin/admins/${carolId}/owner`)).status === 400);
+  check('  not to themselves', (await alice.call('POST', `/api/admin/admins/${aliceRow.id}/owner`)).status === 400);
+  const refusedLeave = await alice.call('DELETE', '/api/account', { password: 'wrong-password-for-this' });
+  check('(leaving asks for the password first, as it did)', refusedLeave.status === 400);
+  const leaving = await alice.call('DELETE', '/api/account', { password: 'an-entirely-different-password' });
+  check('the owner cannot leave without choosing who comes next', leaving.status === 400 && /Hand it to another administrator/.test(leaving.json?.error || ''), `${leaving.status} ${leaving.json?.error}`);
+  check('  and is still here', !!(await store.getUserByEmail('alice@example.com')));
+  const handed = await alice.call('POST', `/api/admin/admins/${bobRow.id}/owner`);
+  const [afterAlice, afterBob] = [await store.getUserByEmail('alice@example.com'), await store.getUserByEmail('bob@example.com')];
+  check('the owner hands it over', handed.status === 200 && afterBob.is_owner === true && afterAlice.is_owner === false, `${handed.status}`);
+  check('  the new owner holds everything', afterBob.admin_permissions == null && (await bob.call('GET', '/api/bootstrap')).json?.user?.isOwner === true);
+  check('  the old one stays an administrator, without what only the owner has', afterAlice.role === 'admin' && (await alice.call('GET', '/api/admin/users')).status === 200 && (await alice.call('DELETE', `/api/admin/admins/${carolId}`)).status === 403);
+  check('  and it is in the security record', ((await alice.call('GET', '/api/admin/activity')).json?.events || []).some((e) => e.kind === 'owner_transferred'));
+  // Back as it was, for the sections after.
+  check('handed back', (await bob.call('POST', `/api/admin/admins/${aliceRow.id}/owner`)).status === 200 && (await store.getUserByEmail('alice@example.com')).is_owner === true);
+
+  // Bob holds this for the sections after: an ordinary account again.
+  await alice.call('DELETE', `/api/admin/admins/${bobRow.id}`);
+  const later = await store.createUser({ id: 'u-later-admin', email: 'later-admin@example.com', name: 'S', passwordHash: 'x', role: 'admin' });
+  check('another administrator made later is not the owner', later.is_owner === false);
+  await store.deleteUser(later.id);
+}
+
 // ── one run per conversation ────────────────────────────────────────
 section('a conversation runs in one place at a time');
 {
@@ -1067,6 +1230,20 @@ section("a body the parser refuses is the request's fault, not the server's (COD
   const broken = await fetch(`${base}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"email": "a@b.c",' });
   const said = await broken.json().catch(() => ({}));
   check('JSON that does not parse is a 400 that says so, not a 500 that says try again', broken.status === 400 && said.error === 'That request could not be read.', `${broken.status} ${said.error}`);
+}
+
+// Last, because it takes the owner's account away from every section above.
+section('a deployment keeps an owner when its owner leaves');
+{
+  const alicesId = (await store.getUserByEmail('alice@example.com')).id;
+  const bobsId = (await store.getUserByEmail('bob@example.com')).id;
+  await store.setAdminPermissions(bobsId, ['models']);
+  const later = await store.createUser({ id: 'u-owner-later', email: 'owner-later@example.com', name: 'L', passwordHash: 'x', role: 'admin' });
+  await store.deleteUser(alicesId);
+  const owners = (await store.listUsers()).filter((u) => u.is_owner);
+  check('the longest-serving administrator becomes the owner', owners.length === 1 && owners[0].id === bobsId, owners.map((u) => u.email).join());
+  check('  holding everything, with no list', owners[0].admin_permissions == null);
+  check('  and the next one is still an ordinary administrator', (await store.getUserById(later.id)).is_owner === false);
 }
 
 server.close();

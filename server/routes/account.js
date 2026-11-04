@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isOwner, requirePermission } from '../adminRoles.js';
 import { getStore } from '../store/index.js';
 import { getPrefs } from '../settings.js';
 import { confirmIdentity, clearSession } from '../auth.js';
@@ -203,6 +204,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
   admin.get(
     '/activity',
+    requirePermission('activity'),
     wrap(async (req, res) => {
       res.json({ events: await getStore().listAuditAll(200) });
     }),
@@ -449,6 +451,13 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       if (req.user.role === 'admin') {
         const users = await store.listUsers();
         const admins = users.filter((u) => u.role === 'admin' && !u.suspended_at);
+        // The owner chooses who comes next: left to chance, somebody made an
+        // administrator to read the feedback would inherit the machine.
+        if (users.length > 1 && admins.length > 1 && isOwner(req.user)) {
+          return res.status(400).json({
+            error: 'You own this deployment. Hand it to another administrator in Settings → People before deleting your account.',
+          });
+        }
         if (users.length > 1 && admins.length <= 1) {
           return res.status(400).json({
             error: 'You are the only administrator. Make someone else an administrator in Settings → People before deleting your account.',

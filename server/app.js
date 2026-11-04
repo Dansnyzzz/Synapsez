@@ -31,6 +31,7 @@ import { summary as usageSummary, limitFor } from './usage.js';
 import { getPrefs, setPrefs, setApiKey, addApiKey, removeApiKey, providerStatus, DEFAULT_PREFS } from './settings.js';
 import { MODEL_GONE, settleAccountModel } from './modelRetirement.js';
 import { stdioPlace } from './mcp/cloud.js';
+import { forgetMcp } from './mcp/registry.js';
 import { getStore, initStore, isServerless } from './store/index.js';
 import { RUN_LEASE_STALE_MS } from './store/pg.js';
 import { workerStatus, usesInProcessTools, handleIndexPayload } from './localTools.js';
@@ -38,6 +39,7 @@ import { publish, subscribe, poll, forget as forgetScreen } from './screenHub.js
 import { keyProviderMeta, CATALOG } from './providers/catalog.js';
 import { intakeKey } from './keyIntake.js';
 import { getRecommended, setRecommended, suggestionFor, recommendedWithLabels } from './recommend.js';
+import { isOwner, permissionsOf, cleanPermissions, mayActOn, requirePermission, requireOwner } from './adminRoles.js';
 import {
   browse,
   refreshLibrary,
@@ -366,6 +368,9 @@ export function createApp() {
     username: user.username ?? null,
     name: user.name,
     role: user.role,
+    isOwner: isOwner(user),
+    // What Settings → Administration may draw. The routes check it again for themselves.
+    permissions: permissionsOf(user),
     emailVerified: !!user.email_verified_at,
     twoFactor: !!user.totp_enabled_at,
     recoveryCodesLeft: Array.isArray(user.recovery_codes) ? user.recovery_codes.length : 0,
@@ -880,14 +885,14 @@ export function createApp() {
         await setPrefs(req.user.id, { timezone: zone }).catch(() => {});
       }
 
-      const [providers, worker, usage, library, consented, recommended] = await Promise.all([
+      const [providers, worker, usage, library, consented] = await Promise.all([
         providerStatus(req.user.id),
         workerStatus(req.user, prefs),
         usageSummary(req.user.id),
         store.modelLibraryStatus(),
         store.latestConsent(req.user.id),
-        recommendedWithLabels().catch(() => ({ free: null, paid: null })),
       ]);
+      const recommended = await recommendedWithLabels(providers).catch(() => ({ free: null, freeSecond: null, paid: null }));
       const suggestion = await suggestionFor(providers).catch(() => null);
       const chose = !!((await store.getUserSetting(req.user.id, 'prefs').catch(() => null)) || {}).defaultModel;
       res.json({
@@ -1549,8 +1554,10 @@ export function createApp() {
         devices: await listDevices(req.user.id),
         // Present only when the app and an unpaired worker are the same machine,
         // which is the ordinary case for somebody who just ran `npm start`. It
-        // saves reading eight characters off a terminal and mistyping them.
-        localCode: localPairingCode(),
+        // saves reading eight characters off a terminal and mistyping them. Only
+        // for the owner: this code pairs that machine, and any other account given
+        // it could take the machine's shell.
+        localCode: isOwner(req.user) ? localPairingCode() : null,
       });
     }),
   );
@@ -2410,9 +2417,10 @@ export function createApp() {
   // ── admin ───────────────────────────────────────────────────────────
   // The router itself, and its guard, are created above mountAccountRoutes.
 
-  // The two models suggested to everyone (recommend.js), with the library to choose them from.
+  // The models suggested to everyone (recommend.js), with the library to choose them from.
   admin.get(
     '/recommended',
+    requirePermission('models'),
     wrap(async (req, res) => {
       const store = getStore();
       const [current, free, paid] = await Promise.all([
@@ -2420,7 +2428,8 @@ export function createApp() {
         store.listSharedModels({ tier: 'free', sort: 'name', limit: 400 }),
         store.listSharedModels({ tier: 'paid', sort: 'name', limit: 1000 }),
       ]);
-      const option = (m) => ({ id: m.id, label: m.label || m.model, family: m.family || null });
+      // Which router it is through: the same model is often listed by both.
+      const option = (m) => ({ id: m.id, label: m.label || m.model, family: m.family || null, provider: m.provider });
       res.json({
         current,
         options: {
@@ -2433,9 +2442,10 @@ export function createApp() {
 
   admin.put(
     '/recommended',
+    requirePermission('models'),
     wrap(async (req, res) => {
       try {
-        res.json({ current: await setRecommended({ free: req.body?.free, paid: req.body?.paid }) });
+        res.json({ current: await setRecommended({ free: req.body?.free, freeSecond: req.body?.freeSecond, paid: req.body?.paid }) });
       } catch (err) {
         res.status(err.status || 400).json({ error: translateMessage(clientError(err), languageOf(req)) });
       }
@@ -2445,6 +2455,7 @@ export function createApp() {
   // How much of each free allowance this deployment has used this period (freeTier.js).
   admin.get(
     '/free-tier',
+    requirePermission('free_tier'),
     wrap(async (req, res) => {
       res.json(await freeTierReport());
     }),
@@ -2452,14 +2463,80 @@ export function createApp() {
 
   admin.get(
     '/users',
+    requirePermission('users', 'delete_users'),
     wrap(async (req, res) => {
       res.json({ users: await getStore().listUsers() });
+    }),
+  );
+
+  /**
+   * Make an administrator, or change what one may do. The owner's alone: everyone
+   * else's powers come from here, so nobody else may reach it. What is stored is
+   * the known names out of what was sent, and at least one: an administrator who
+   * may do nothing is a person who cannot find out why the page is empty.
+   */
+  admin.put(
+    '/admins/:id',
+    requireOwner,
+    wrap(async (req, res) => {
+      const store = getStore();
+      const target = await store.getUserById(req.params.id);
+      if (!target) return res.status(404).json({ error: 'No such account.' });
+      if (isOwner(target)) return res.status(400).json({ error: 'The owner holds every permission already.' });
+      const permissions = cleanPermissions(body(req).permissions);
+      if (!permissions.length) return res.status(400).json({ error: 'Choose at least one thing this administrator may do.' });
+      await store.setAdminPermissions(target.id, permissions);
+      // An account's MCP connections are decided as they start. Its powers just changed.
+      forgetMcp(target.id);
+      await audit(req, req.user.id, 'admin_changed', { target: target.id, permissions });
+      res.json({ ok: true, permissions });
+    }),
+  );
+
+  /**
+   * Hand the deployment to another administrator. The owner's powers are not a list
+   * anybody can be given by accident, so this is the only way they move: chosen, by
+   * the owner, and said in the security record. The old owner stays an administrator
+   * with every permission, and loses what only the owner has.
+   */
+  admin.post(
+    '/admins/:id/owner',
+    requireOwner,
+    wrap(async (req, res) => {
+      const store = getStore();
+      const target = await store.getUserById(req.params.id);
+      if (!target) return res.status(404).json({ error: 'No such account.' });
+      if (target.role !== 'admin' || target.suspended_at || target.id === req.user.id) {
+        return res.status(400).json({ error: 'The deployment can only be handed to another active administrator.' });
+      }
+      await store.transferOwnership(req.user.id, target.id);
+      forgetMcp(req.user.id);
+      forgetMcp(target.id);
+      await audit(req, req.user.id, 'owner_transferred', { target: target.id });
+      res.json({ ok: true });
+    }),
+  );
+
+  /** No longer an administrator. Their account stays, as an ordinary one. */
+  admin.delete(
+    '/admins/:id',
+    requireOwner,
+    wrap(async (req, res) => {
+      const store = getStore();
+      const target = await store.getUserById(req.params.id);
+      if (!target) return res.status(404).json({ error: 'No such account.' });
+      if (isOwner(target)) return res.status(400).json({ error: 'The owner cannot be removed as an administrator.' });
+      await store.setUserRole(target.id, 'user');
+      forgetMcp(target.id);
+      await audit(req, req.user.id, 'admin_removed', { target: target.id });
+      res.json({ ok: true });
     }),
   );
 
 
   admin.patch(
     '/users/:id',
+    requirePermission('users'),
     wrap(async (req, res) => {
       // Express 5 leaves `req.body` undefined when no JSON body arrived, and
       // `'suspended' in undefined` is a TypeError, not a false — which turned a
@@ -2470,10 +2547,23 @@ export function createApp() {
       if (req.params.id === req.user.id && ('suspended' in patchBody || patchBody.role === 'user')) {
         return res.status(400).json({ error: 'You cannot suspend or demote yourself.' });
       }
+      // Who may be touched, before anything about what to change. A role is the
+      // owner's to give, here as under /admins, and the owner's own is not for anyone.
+      const target = await getStore().getUserById(req.params.id);
+      if (!target) return res.status(404).json({ error: 'No such account.' });
+      // An administrator's own limit is the owner's to lift, as theirs is to set.
+      const mayChange = req.params.id === req.user.id ? isOwner(req.user) : mayActOn(req.user, target);
+      if (!mayChange) {
+        return res.status(403).json({ error: 'Only the owner can change another administrator, and nobody can change the owner.' });
+      }
+      // One door for making an administrator, which asks what they may do. A role set
+      // here left the list empty, which reads as every permission.
+      if ('role' in patchBody) {
+        return res.status(isOwner(req.user) ? 400 : 403).json({ error: isOwner(req.user) ? 'Choose what an administrator may do under Settings → People.' : 'Only the owner of this deployment can do that.' });
+      }
       const patch = {};
       if ('name' in patchBody) patch.name = String(patchBody.name).trim();
       if ('suspended' in patchBody) patch.suspended = !!patchBody.suspended;
-      if (patchBody.role === 'admin' || patchBody.role === 'user') patch.role = patchBody.role;
       if ('monthlyTokenLimit' in patchBody) {
         const limit = Number(patchBody.monthlyTokenLimit);
         // 0 or blank means "no limit for this person".
@@ -2487,9 +2577,14 @@ export function createApp() {
 
   admin.delete(
     '/users/:id',
+    requirePermission('delete_users'),
     wrap(async (req, res) => {
       if (req.params.id === req.user.id) {
         return res.status(400).json({ error: 'You cannot delete your own account.' });
+      }
+      const target = await getStore().getUserById(req.params.id);
+      if (target && !mayActOn(req.user, target)) {
+        return res.status(403).json({ error: 'Only the owner can change another administrator, and nobody can change the owner.' });
       }
       await getStore().deleteUser(req.params.id);
       res.json({ ok: true });

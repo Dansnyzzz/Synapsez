@@ -39,6 +39,7 @@
  *   filtered      the provider's content filter blocked the output
  *   recitation    Gemini stopped because the output reproduced training data
  *   stop_sequence hit a configured stop string
+ *   reasoning_cut ran out of output length still reasoning: no answer yet
  *   unknown       the provider said something we do not have a word for
  */
 export const STOP_KINDS = [
@@ -51,6 +52,7 @@ export const STOP_KINDS = [
   'stop_sequence',
   'max_steps',
   'token_limit',
+  'reasoning_cut',
   'unknown',
 ];
 
@@ -68,7 +70,7 @@ export const isComplete = (kind) => COMPLETE.has(kind);
  * Continue button is honest. A reply blocked by a content filter must not get
  * one: pressing it would produce the same refusal.
  */
-const RESUMABLE = new Set(['max_steps', 'token_limit']);
+const RESUMABLE = new Set(['max_steps', 'token_limit', 'reasoning_cut']);
 
 /** Whether a turn that stopped this way can simply be told to carry on. */
 export const isResumable = (kind) => RESUMABLE.has(kind);

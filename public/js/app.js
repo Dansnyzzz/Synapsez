@@ -50,11 +50,13 @@ import { contextPanel } from './context-panel.js';
 import { createModelNews } from './model-news.js';
 import { createTwoFactor } from './two-factor.js';
 import { createPrivacy } from './privacy.js';
+import { watchSelects } from './picker.js';
 
 // Before anything is drawn. The language is guessed from storage and the browser
 // at module load, so the first paint is already right rather than a page of
 // English that corrects itself a moment later.
 applyI18n();
+watchSelects();
 // The header title belongs to the script (it becomes the conversation's name),
 // so it is not a data-i18n node — but before any chat opens it says "New chat".
 document.getElementById('chat-title').textContent = t('nav.newChat');
@@ -3992,6 +3994,9 @@ async function streamOnce(run, decision, answers) {
           } else if (phase === 'progress_check') {
             // The progress gate sent the model back to bring the plan up to date.
             setStatus(t('status.progressCheck'), run);
+          } else if (phase === 'continuing') {
+            // The output limit cut the reply off; the same message carries on.
+            setStatus(t('status.continuing'), run);
           }
           // A turn that stopped badly but still asked for tools — truncated
           // part-way through writing a call, most often. Drawn into the
@@ -5657,7 +5662,7 @@ function fillSettings() {
         const standing = status.own ? 'on' : status.shared ? 'shared' : 'off';
         const label = status.own ? (keys.length > 1 ? t('keys.count', { n: keys.length }) : t('keys.yours')) : status.shared ? t('keys.shared') : t('keys.notSet');
         const site = { google: 'gemini.google.com', openrouter: 'openrouter.ai', orcarouter: 'orcarouter.ai', anthropic: 'anthropic.com', openai: 'openai.com' }[key] || '';
-        const note = key === 'openrouter' ? t('keys.oneAccountOneKey') : keys.length > 1 ? t('keys.triedInOrder') : keys.length ? t('keys.addFallback') : '';
+        const note = key === 'openrouter' ? t('keys.oneAccountOneKey') : key === 'orcarouter' ? t('keys.oneWorkspace') : keys.length > 1 ? t('keys.triedInOrder') : keys.length ? t('keys.addFallback') : '';
         return `
         <section class="pcard pcard--${standing}" id="pcard-${escapeHtml(key)}" aria-labelledby="pcard-${escapeHtml(key)}-name">
           <header class="pcard__head">
@@ -5741,6 +5746,8 @@ function fillSettings() {
           refreshModelFacts();
         }
         fillSettings();
+        // A new key can be what lifts a limit: the line above the composer hears now.
+        usageAlert.refresh({ soon: true });
         if (saved.kind === 'provider') {
           const card = document.getElementById(`pcard-${saved.id}`);
           card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -5760,6 +5767,7 @@ function fillSettings() {
         state.boot.providers = await api.removeKey(provider, Number(btn.dataset.position));
         toast(t('keys.removedFrom', { provider: providerMeta[provider].label }));
         fillSettings();
+        usageAlert.refresh({ soon: true });
       } catch (err) {
         toast(err.message, 'error');
       }
@@ -5825,9 +5833,17 @@ function fillSettings() {
   renderTwoFactor();
   privacy.fillMemory();
 
-  // Administration is there for the people who run the deployment, and only them.
-  const admin = me.role === 'admin';
+  // Administration is there for the people who run the deployment, and only them;
+  // each part for those given it (server/adminRoles.js, which checks it again).
+  const perms = new Set(me.permissions || []);
+  const admin = me.role === 'admin' && perms.size > 0;
   for (const node of /** @type {NodeListOf<HTMLElement>} */ ($('settings').querySelectorAll('[data-group="admin"]'))) node.hidden = !admin;
+  $('tab-admin').hidden = !admin || !([...perms].some((p) => p !== 'feedback') || me.isOwner);
+  $('tab-feedback').hidden = !admin || !perms.has('feedback');
+  for (const node of /** @type {NodeListOf<HTMLElement>} */ ($('panel-admin').querySelectorAll('[data-needs]'))) {
+    const needs = /** @type {string} */ (node.dataset.needs).split(' ');
+    node.hidden = !needs.some((need) => (need === 'owner' ? me.isOwner : perms.has(need)));
+  }
 }
 
 /* ── skills, connectors ──────────────────────────────────────── */
@@ -6206,9 +6222,10 @@ async function loadFreeTier() {
 }
 
 /**
- * The two models suggested to everyone (server/recommend.js, owner 2026-11-02):
- * a free one — Auto, OpenRouter's free router, counts — and a paid one, chosen
- * from the library, grouped by maker.
+ * The models suggested to everyone (server/recommend.js, owner 2026-11-02 and
+ * 2026-11-04): two free ones, the first tried first — Auto, OpenRouter's free
+ * router, counts — and a paid one, chosen from the library, grouped by maker. Each
+ * says which router it is on, because both often list the same model.
  */
 async function loadRecommended() {
   const host = $('admin-recommended');
@@ -6221,7 +6238,8 @@ async function loadRecommended() {
         if (!groups.has(family)) groups.set(family, []);
         groups.get(family).push(m);
       }
-      const option = (m) => `<option value="${escapeHtml(m.id)}"${m.id === chosen ? ' selected' : ''}>${escapeHtml(m.id === 'auto' ? t('recommend.autoOption') : m.label)}</option>`;
+      const router = { openrouter: 'OpenRouter', orcarouter: 'OrcaRouter' };
+      const option = (m) => `<option value="${escapeHtml(m.id)}"${m.id === chosen ? ' selected' : ''}>${escapeHtml(m.id === 'auto' ? t('recommend.autoOption') : router[m.provider] ? `${m.label} · ${router[m.provider]}` : m.label)}</option>`;
       return [...groups]
         .map(([family, models]) => (family ? `<optgroup label="${escapeHtml(family)}">${models.map(option).join('')}</optgroup>` : models.map(option).join('')))
         .join('');
@@ -6232,6 +6250,10 @@ async function loadRecommended() {
           <select id="rec-free" class="sselect sselect--wide">${grouped(options.free, current.free)}</select>
         </div>
         <div class="rec__row">
+          <div class="rec__label"><label for="rec-free-second">${escapeHtml(t('recommend.freeSecond'))}</label><p>${escapeHtml(t('recommend.freeSecondHint'))}</p></div>
+          <select id="rec-free-second" class="sselect sselect--wide"><option value="">${escapeHtml(t('recommend.none'))}</option>${grouped(options.free, current.freeSecond)}</select>
+        </div>
+        <div class="rec__row">
           <div class="rec__label"><label for="rec-paid">${escapeHtml(t('recommend.paid'))}</label><p>${escapeHtml(t('recommend.paidHint'))}</p></div>
           <select id="rec-paid" class="sselect sselect--wide"><option value="">${escapeHtml(t('recommend.none'))}</option>${grouped(options.paid, current.paid)}</select>
         </div>
@@ -6239,7 +6261,7 @@ async function loadRecommended() {
       </div>`;
     $('rec-save').addEventListener('click', async () => {
       try {
-        await api.setRecommended({ free: /** @type {HTMLSelectElement} */ ($('rec-free')).value, paid: /** @type {HTMLSelectElement} */ ($('rec-paid')).value || null });
+        await api.setRecommended({ free: /** @type {HTMLSelectElement} */ ($('rec-free')).value, freeSecond: /** @type {HTMLSelectElement} */ ($('rec-free-second')).value || null, paid: /** @type {HTMLSelectElement} */ ($('rec-paid')).value || null });
         const boot = await api.bootstrap();
         Object.assign(state.boot, { recommended: boot.recommended, suggestion: boot.suggestion });
         toast(t('recommend.saved'), 'ok');
@@ -6252,13 +6274,115 @@ async function loadRecommended() {
   }
 }
 
+/** The permissions an owner can give, in the order the server lists them, from what it says this account holds. */
+const ADMIN_POWERS = ['users', 'delete_users', 'models', 'feedback', 'activity', 'free_tier'];
+
+/** The boxes for what an administrator may do, each saying what it means. */
+function powerBoxes(idPrefix, chosen) {
+  return `<div class="admins__powers">${ADMIN_POWERS.map(
+    (power) => `<label class="admins__power"><input type="checkbox" data-power="${power}" id="${escapeHtml(idPrefix)}-${power}"${chosen.includes(power) ? ' checked' : ''} /><span><span class="admins__power-name">${escapeHtml(t(`admins.power.${power}`))}</span><span class="admins__power-hint">${escapeHtml(t(`admins.power.${power}.hint`))}</span></span></label>`,
+  ).join('')}</div>`;
+}
+const chosenPowers = (host) => [.../** @type {NodeListOf<HTMLInputElement>} */ (host.querySelectorAll('[data-power]'))].filter((box) => box.checked).map((box) => box.dataset.power);
+
+/**
+ * Who administers this deployment, for its owner (owner, 2026-11-04): each
+ * administrator with what they may do, and a way to add one. The person is chosen
+ * from one list, which can be searched by typing or scrolled through. Nothing is
+ * given by default: an owner says what each person may do.
+ */
+function drawAdmins(users) {
+  const host = $('admin-admins');
+  const person = (u) => `${u.name || u.email}${u.username ? ` (@${u.username})` : ''} · ${u.email}`;
+  const admins = users.filter((u) => u.role === 'admin');
+  const others = users.filter((u) => u.role !== 'admin' && !u.suspended_at);
+  const heldBy = (u) => (Array.isArray(u.admin_permissions) ? u.admin_permissions : ADMIN_POWERS);
+  host.innerHTML = `<div class="admins">
+      ${admins
+        .map((u) =>
+          u.is_owner
+            ? `<div class="admins__row"><div class="admins__who"><strong>${escapeHtml(u.name || u.email)}</strong><span class="muted">${escapeHtml(u.email)}</span></div><span class="admins__tag">${escapeHtml(t('admins.owner'))}</span></div>`
+            : `<details class="admins__row admins__row--open" data-admin="${escapeHtml(u.id)}"><summary class="admins__who"><strong>${escapeHtml(u.name || u.email)}</strong><span class="muted">${escapeHtml(u.email)} · ${escapeHtml(t('admins.holds', { n: String(heldBy(u).length) }))}</span></summary>${powerBoxes(`admin-${u.id}`, heldBy(u))}<div class="admins__actions"><button class="btn btn--ghost btn--small" type="button" data-admin-owner="${escapeHtml(u.id)}">${escapeHtml(t('admins.handOver'))}</button><button class="btn btn--ghost btn--small" type="button" data-admin-remove="${escapeHtml(u.id)}">${escapeHtml(t('admins.remove'))}</button></div></details>`,
+        )
+        .join('')}
+      <div class="admins__add">
+        <h4 class="admins__title">${escapeHtml(t('admins.add'))}</h4>
+        ${
+          others.length
+            ? `<label class="admins__label" for="admin-add-person">${escapeHtml(t('admins.person'))}</label>
+               <select id="admin-add-person" class="sselect sselect--wide" data-search="always"><option value="">${escapeHtml(t('admins.choosePerson'))}</option>${others.map((u) => `<option value="${escapeHtml(u.id)}">${escapeHtml(person(u))}</option>`).join('')}</select>
+               <p class="admins__label">${escapeHtml(t('admins.mayDo'))}</p>
+               ${powerBoxes('admin-add', [])}
+               <p class="admins__note">${escapeHtml(t('admins.ownerOnly'))}</p>
+               <div class="admins__actions"><button class="btn btn--primary btn--small" type="button" id="admin-add-go" disabled>${escapeHtml(t('admins.addButton'))}</button></div>`
+            : `<p class="hint">${escapeHtml(t('admins.nobody'))}</p>`
+        }
+      </div>
+    </div>`;
+
+  const add = host.querySelector('.admins__add');
+  const go = /** @type {HTMLButtonElement | null} */ (host.querySelector('#admin-add-go'));
+  const who = /** @type {HTMLSelectElement | null} */ (host.querySelector('#admin-add-person'));
+  const ready = () => {
+    if (go && who) go.disabled = !who.value || !chosenPowers(add).length;
+  };
+  add.addEventListener('change', ready);
+  go?.addEventListener('click', async () => {
+    go.disabled = true;
+    try {
+      await api.setAdmin(who.value, chosenPowers(add));
+      toast(t('admins.added'), 'ok');
+      loadAdmin();
+    } catch (err) {
+      toast(err.message, 'error');
+      ready();
+    }
+  });
+  // A box changed is a choice made: saved at once, as everything in Settings is.
+  for (const row of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-admin]'))) {
+    row.querySelector('.admins__powers')?.addEventListener('change', async (event) => {
+      const box = /** @type {HTMLInputElement} */ (event.target);
+      const chosen = chosenPowers(row);
+      if (!chosen.length) {
+        box.checked = true;
+        toast(t('admins.keepOne'), 'error');
+        return;
+      }
+      try {
+        await api.setAdmin(/** @type {string} */ (row.dataset.admin), chosen);
+        toast(t('admins.saved'), 'ok');
+      } catch (err) {
+        box.checked = !box.checked;
+        toast(err.message, 'error');
+      }
+    });
+  }
+  // Everything only the owner has goes with this, so the page starts again as what is left.
+  for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-admin-owner]'))) {
+    armed(btn, t('admins.handOverSure'), async () => {
+      await api.handOwnership(/** @type {string} */ (btn.dataset.adminOwner));
+      location.reload();
+    });
+  }
+  for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-admin-remove]'))) {
+    armed(btn, t('action.reallyRemove'), async () => {
+      await api.removeAdmin(/** @type {string} */ (btn.dataset.adminRemove));
+      loadAdmin();
+    });
+  }
+}
+
 async function loadAdmin() {
-  privacy.loadAdminActivity();
-  loadAdminFeedback();
-  loadFreeTier();
-  loadRecommended();
+  const me = state.boot.user;
+  const perms = new Set(me.permissions || []);
+  if (perms.has('activity')) privacy.loadAdminActivity();
+  if (perms.has('feedback')) loadAdminFeedback();
+  if (perms.has('free_tier')) loadFreeTier();
+  if (perms.has('models')) loadRecommended();
+  if (!perms.has('users') && !perms.has('delete_users')) return;
   try {
     const { users } = await api.users();
+    if (me.isOwner) drawAdmins(users);
 
     $('user-list').innerHTML = `<div class="rows">${users
       .map((u) => {
@@ -6272,18 +6396,26 @@ async function loadAdmin() {
         ].filter(Boolean);
 
         const self = u.id === state.boot.user.id;
+        // What this administrator may do to that account. The server decides; this
+        // only leaves out the buttons it would refuse.
+        const touchable = !self && !u.is_owner && (u.role !== 'admin' || me.isOwner);
+        const role = u.is_owner ? t('admins.owner') : u.role === 'admin' ? t('role.admin') : null;
         return `<div class="rows__item">
           <span class="grow">${escapeHtml(u.name || u.email)}
             <span class="muted">· ${escapeHtml(u.email)} · ${tags.join(' · ')}</span>
+            ${role ? `<span class="admins__tag">${escapeHtml(role)}</span>` : ''}
           </span>
           ${
             self
               ? `<span class="muted">${escapeHtml(t('admin.you'))}</span>`
-              : `<button data-limit-user="${escapeHtml(u.id)}">${escapeHtml(t('admin.limitButton'))}</button>
+              : `${
+                  touchable && perms.has('users')
+                    ? `<button data-limit-user="${escapeHtml(u.id)}">${escapeHtml(t('admin.limitButton'))}</button>
                  <button data-suspend-user="${escapeHtml(u.id)}" data-suspended="${!!u.suspended_at}">
                    ${escapeHtml(u.suspended_at ? t('admin.unsuspend') : t('admin.suspend'))}
-                 </button>
-                 <button data-del-user="${escapeHtml(u.id)}">${escapeHtml(t('action.remove'))}</button>`
+                 </button>`
+                    : ''
+                }${touchable && perms.has('delete_users') ? `<button data-del-user="${escapeHtml(u.id)}">${escapeHtml(t('action.remove'))}</button>` : ''}`
           }
         </div>`;
       })
@@ -6366,7 +6498,7 @@ $('logout').addEventListener('click', signOut);
  * having to work out which of two numbers is the live one.
  */
 const browser = createModelBrowser({
-  // The administrators' two suggestions, marked and shown first (owner, 2026-11-02).
+  // The administrators' suggestions, marked and shown first (owner, 2026-11-02).
   recommended: () => state.boot?.recommended || null,
   onPick: async (modelId) => {
     // Repaint first: the press should feel immediate, and this is a preference

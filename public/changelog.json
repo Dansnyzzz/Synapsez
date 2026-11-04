@@ -1,6 +1,62 @@
 {
   "entries": [
     {
+      "version": "1.12.0",
+      "date": "2026-11-04",
+      "new": {
+        "vi": [
+          "Chủ sở hữu có thể thêm quản trị viên bằng cách gõ tìm hoặc cuộn chọn, chọn từng quyền cho mỗi người, và giao lại quyền sở hữu.",
+          "Trợ lý tự viết tiếp trong cùng một tin nhắn khi câu trả lời chạm giới hạn đầu ra của model.",
+          "Model gợi ý có thêm lựa chọn miễn phí thứ hai, và tự đi qua nhà cung cấp mà bạn có key.",
+          "Tra được tỷ giá tiền mã hoá, ví dụ USDT sang VND."
+        ],
+        "en": [
+          "The owner can add administrators by searching or scrolling, choose what each may do, and hand over ownership.",
+          "The assistant carries on by itself, in the same message, when a reply hits the model's output limit.",
+          "Recommended models have a second free choice, and go through whichever provider you hold a key for.",
+          "Exchange rates now cover coins, such as USDT to VND."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Trang Tổng quan của Mức sử dụng tính tổng theo từng nhà cung cấp; chi tiết từng khoá nằm ở trang nhà cung cấp.",
+          "Cảnh báo mức dùng chỉ hiện từ 80%, tính theo tổng ở Tổng quan và theo khoá đang dùng ở trang nhà cung cấp.",
+          "Các ô chọn trong Cài đặt nằm ngay dưới nút bấm và có mô tả cho từng lựa chọn.",
+          "Biểu đồ giữ chú thích, tiêu đề và nhãn trục trong khung; chú thích dài tự xuống dòng.",
+          "OrcaRouter: thêm thanh lượt miễn phí, số dư và kiểm tra key khi dán."
+        ],
+        "en": [
+          "The Usage Overview adds up per provider; each key is on the provider's own page.",
+          "Usage warnings appear from 80%, by the total on the Overview and by the key in use on a provider's page.",
+          "Choices in Settings open right under their button, and say what each option does.",
+          "Charts keep their legend, title and axis labels inside the frame; a long legend wraps.",
+          "OrcaRouter: a free-request bar, the balance, and a key check when one is pasted."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "OrcaRouter: model miễn phí hiện đúng ngữ cảnh 1M, đọc được ảnh và có giới hạn đầu ra đúng.",
+          "Suy luận bị ngắt không còn bị hiển thị như câu trả lời.",
+          "Khối code và các chữ tương tự đọc được ở chế độ sáng.",
+          "Máy tính nhận danh sách phép tính; tạo tệp không còn báo lỗi khi thiếu định dạng.",
+          "Dòng công cụ hiện tên tệp thay vì mã tệp.",
+          "Tìm kiếm không còn hiện \"0 kết quả\" khi vẫn đọc được trang, và báo rõ khi công cụ tìm kiếm không phản hồi.",
+          "Hết lượt model miễn phí không còn khoá luôn key với model trả phí.",
+          "Mã ghép máy và máy chủ MCP chạy trên máy chủ giờ chỉ dành cho chủ sở hữu."
+        ],
+        "en": [
+          "OrcaRouter: free models show their real 1M context, read pictures and have the right output limit.",
+          "Reasoning that was cut off is no longer shown as the answer.",
+          "Code blocks and similar text can be read on the light theme.",
+          "The calculator takes a list of sums; making a file no longer fails over a missing format.",
+          "Tool rows name the file rather than its id.",
+          "A search no longer says \"0 results\" over a page it read, and says when search engines did not respond.",
+          "Running out of free requests no longer locks a key out of paid models.",
+          "The code that pairs the server's machine, and MCP servers that run on it, are now the owner's alone."
+        ]
+      }
+    },
+    {
       "version": "1.11.0",
       "date": "2026-11-04",
       "new": {
@@ -178,8 +234,12 @@
         ]
       },
       "improved": {
-        "vi": ["Mục Nhà cung cấp được vẽ lại: mỗi nhà cung cấp một thẻ có logo, mô tả và trạng thái; mỗi key cho biết đã nạp tiền hay đang ở gói miễn phí."],
-        "en": ["Settings → Providers redrawn: a card per provider with its logo, what it is for and where it stands; each key says whether it has paid credit or is on the free tier."]
+        "vi": [
+          "Mục Nhà cung cấp được vẽ lại: mỗi nhà cung cấp một thẻ có logo, mô tả và trạng thái; mỗi key cho biết đã nạp tiền hay đang ở gói miễn phí."
+        ],
+        "en": [
+          "Settings → Providers redrawn: a card per provider with its logo, what it is for and where it stands; each key says whether it has paid credit or is on the free tier."
+        ]
       }
     },
     {
@@ -198,8 +258,12 @@
         ]
       },
       "improved": {
-        "vi": ["Tìm kiếm theo loại trang (tin tức, công ty, người, bài báo khoa học, PDF, GitHub…) và theo quốc gia của tài khoản; mức Thấp dùng loại tìm rẻ nhất của Exa."],
-        "en": ["Search by kind of page (news, company, people, research paper, PDF, GitHub…) and the account's country; Low uses Exa's cheapest search."]
+        "vi": [
+          "Tìm kiếm theo loại trang (tin tức, công ty, người, bài báo khoa học, PDF, GitHub…) và theo quốc gia của tài khoản; mức Thấp dùng loại tìm rẻ nhất của Exa."
+        ],
+        "en": [
+          "Search by kind of page (news, company, people, research paper, PDF, GitHub…) and the account's country; Low uses Exa's cheapest search."
+        ]
       }
     },
     {
@@ -218,8 +282,14 @@
         ]
       },
       "improved": {
-        "vi": ["code_context hỏi Exa đúng như công cụ mã của Exa (đoạn khớp với câu hỏi, từ mọi trang tài liệu), số nguồn theo mức suy luận.", "Chính sách quyền riêng tư privacy-2026-11-02: địa chỉ trang từ chối đọc trực tiếp được gửi tới Exa — bạn sẽ được hỏi đồng ý lại một lần."],
-        "en": ["code_context asks Exa as Exa's own code tool does (passages matching the question, from any documentation site), with as many sources as the reasoning level calls for.", "Privacy policy privacy-2026-11-02: the address of a page that refuses a direct read goes to Exa — you are asked to agree once more."]
+        "vi": [
+          "code_context hỏi Exa đúng như công cụ mã của Exa (đoạn khớp với câu hỏi, từ mọi trang tài liệu), số nguồn theo mức suy luận.",
+          "Chính sách quyền riêng tư privacy-2026-11-02: địa chỉ trang từ chối đọc trực tiếp được gửi tới Exa — bạn sẽ được hỏi đồng ý lại một lần."
+        ],
+        "en": [
+          "code_context asks Exa as Exa's own code tool does (passages matching the question, from any documentation site), with as many sources as the reasoning level calls for.",
+          "Privacy policy privacy-2026-11-02: the address of a page that refuses a direct read goes to Exa — you are asked to agree once more."
+        ]
       }
     },
     {
@@ -238,8 +308,12 @@
         ]
       },
       "improved": {
-        "vi": ["Chính sách quyền riêng tư privacy-2026-11-01: nêu Stack Exchange là nơi nhận câu truy vấn tìm mã, và cách ngắt từng sản phẩm Google — bạn sẽ được hỏi đồng ý lại một lần."],
-        "en": ["Privacy policy privacy-2026-11-01: names Stack Exchange as a recipient of code searches, and how each Google product is disconnected — you are asked to agree once more."]
+        "vi": [
+          "Chính sách quyền riêng tư privacy-2026-11-01: nêu Stack Exchange là nơi nhận câu truy vấn tìm mã, và cách ngắt từng sản phẩm Google — bạn sẽ được hỏi đồng ý lại một lần."
+        ],
+        "en": [
+          "Privacy policy privacy-2026-11-01: names Stack Exchange as a recipient of code searches, and how each Google product is disconnected — you are asked to agree once more."
+        ]
       }
     },
     {
@@ -256,8 +330,12 @@
         ]
       },
       "improved": {
-        "vi": ["Lệnh chép dữ liệu cũ (npm run db:copy) có --check: đọc cả hai cơ sở dữ liệu mà không ghi gì, báo Neon đã mở lại chưa và bao nhiêu tài khoản sẽ được gộp."],
-        "en": ["The old-data copy (npm run db:copy) has --check: it reads both databases without writing, and says whether Neon answers yet and how many accounts will merge."]
+        "vi": [
+          "Lệnh chép dữ liệu cũ (npm run db:copy) có --check: đọc cả hai cơ sở dữ liệu mà không ghi gì, báo Neon đã mở lại chưa và bao nhiêu tài khoản sẽ được gộp."
+        ],
+        "en": [
+          "The old-data copy (npm run db:copy) has --check: it reads both databases without writing, and says whether Neon answers yet and how many accounts will merge."
+        ]
       }
     },
     {
@@ -274,20 +352,34 @@
         ]
       },
       "improved": {
-        "vi": ["Số bước công cụ tối đa nằm giữa ô, và mũi tên tăng giảm không còn nền đen."],
-        "en": ["The maximum tool steps sit in the middle of their box, and the up/down arrows have no dark plate."]
+        "vi": [
+          "Số bước công cụ tối đa nằm giữa ô, và mũi tên tăng giảm không còn nền đen."
+        ],
+        "en": [
+          "The maximum tool steps sit in the middle of their box, and the up/down arrows have no dark plate."
+        ]
       },
       "fixed": {
-        "vi": ["Nút Xuất dữ liệu không còn bị gạch chân như một đường link.", "Cập nhật thư viện undici và zod theo cảnh báo bảo mật của GitHub."],
-        "en": ["The Export data button is no longer underlined like a link.", "undici and zod updated after GitHub's security alerts."]
+        "vi": [
+          "Nút Xuất dữ liệu không còn bị gạch chân như một đường link.",
+          "Cập nhật thư viện undici và zod theo cảnh báo bảo mật của GitHub."
+        ],
+        "en": [
+          "The Export data button is no longer underlined like a link.",
+          "undici and zod updated after GitHub's security alerts."
+        ]
       }
     },
     {
       "version": "1.1.1",
       "date": "2026-11-01",
       "new": {
-        "vi": ["Khi trợ lý hỏi bạn chọn một trong vài hướng, lựa chọn nào có bản xem trước (một bố cục, một đoạn mẫu) sẽ hiện bản đó bên cạnh danh sách khi bạn rê chuột hoặc dùng phím mũi tên tới nó."],
-        "en": ["When the assistant asks you to choose a direction, an option with a preview (a layout, a sample) shows it beside the list while you point at it or move to it with the arrow keys."]
+        "vi": [
+          "Khi trợ lý hỏi bạn chọn một trong vài hướng, lựa chọn nào có bản xem trước (một bố cục, một đoạn mẫu) sẽ hiện bản đó bên cạnh danh sách khi bạn rê chuột hoặc dùng phím mũi tên tới nó."
+        ],
+        "en": [
+          "When the assistant asks you to choose a direction, an option with a preview (a layout, a sample) shows it beside the list while you point at it or move to it with the arrow keys."
+        ]
       },
       "improved": {
         "vi": [
@@ -347,7 +439,10 @@
           "Settings is laid out as Claude's: the sections down the left with a search, grouped into Preferences, This computer and Customize; every change is saved the moment it is made, with no Save button."
         ]
       },
-      "fixed": { "vi": [], "en": [] }
+      "fixed": {
+        "vi": [],
+        "en": []
+      }
     }
   ]
 }

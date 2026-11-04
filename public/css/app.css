@@ -4,6 +4,10 @@
    ───────────────────────────────────────────────────────────── */
 
 :root {
+  /* A code block, and words on the amber notice: each theme says its own. */
+  --code-bg: #0d1216;
+  --code-ink: #dbe4ec;
+  --warn-ink: #ffd9a8;
   --bg: #0b0e11;
   --bg-elev: #11161b;
   --surface: #151b21;
@@ -128,6 +132,9 @@
    picked a theme in this app meant it.
    ───────────────────────────────────────────────────────────── */
 :root[data-theme='light'] {
+  --code-bg: #f1f4f7;
+  --code-ink: #1c2630;
+  --warn-ink: #7a4a00;
   --bg: #f7f9fb;
   --bg-elev: #ffffff;
   --surface: #ffffff;
@@ -182,6 +189,9 @@
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) {
+    --code-bg: #f1f4f7;
+    --code-ink: #1c2630;
+    --warn-ink: #7a4a00;
     --bg: #f7f9fb;
     --bg-elev: #ffffff;
     --surface: #ffffff;
@@ -300,7 +310,7 @@ textarea {
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, transform 0.06s;
 }
-.btn:hover { background: #222c35; }
+.btn:hover { background: color-mix(in srgb, var(--text) 11%, var(--surface)); }
 .btn:active { transform: translateY(1px); }
 .btn--block { width: 100%; }
 /**
@@ -565,7 +575,7 @@ textarea {
   padding: 10px 16px;
   border-bottom: 1px solid rgba(255, 180, 84, 0.35);
   background: rgba(255, 180, 84, 0.09);
-  color: #ffd9a8;
+  color: var(--warn-ink);
   font-size: 13.5px;
 }
 .banner .btn { padding: 6px 12px; font-size: 12.5px; }
@@ -1614,7 +1624,7 @@ textarea {
   border: 1px solid var(--line-soft);
   border-radius: 12px;
   overflow: hidden;
-  background: #080b0d;
+  background: var(--surface);
 }
 .screen__bar {
   display: flex;
@@ -2524,7 +2534,7 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
   margin: 0 0 14px;
   border: 1px solid var(--line);
   border-radius: 11px;
-  background: #0d1216;
+  background: var(--code-bg);
   overflow: hidden;
 }
 .codeblock__bar {
@@ -2533,7 +2543,7 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
   justify-content: space-between;
   padding: 6px 8px 6px 13px;
   border-bottom: 1px solid var(--line-soft);
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-family: var(--mono);
   font-size: 11.5px;
 }
@@ -2542,9 +2552,11 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
   padding: 13px;
   overflow-x: auto;
 }
+/* Its own ink: `.prose code` is written for code among words, on the page's ground. */
 .codeblock code {
   padding: 0;
   background: none;
+  color: var(--code-ink);
   font-family: var(--mono);
   font-size: 12.8px;
   line-height: 1.6;
@@ -2554,7 +2566,7 @@ button.stage--sent:focus-visible { outline: 2px solid var(--accent); outline-off
   border: 1px solid var(--line);
   border-radius: 6px;
   background: transparent;
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-size: 11px;
   cursor: pointer;
 }
@@ -4641,6 +4653,8 @@ ul.onb__facts { padding-left: 28px; }
 .chart__stage svg text { fill: var(--text-dim); }
 .chart__stage svg text[fill='#ffffff'] { fill: var(--text); }
 .chart__stage svg line[stroke='#3a3a38'] { stroke: var(--line); }
+/* The ring that keeps overlapping marks apart is the colour of what they sit on. */
+.chart__stage .dot, .chart__stage .slice { stroke: var(--bg-elev); }
 .chart__stage .bar,
 .chart__stage .dot,
 .chart__stage .slice,
@@ -11373,3 +11387,123 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 
 /* A suggested model, marked in the picker. */
 .tag--suggested { background: var(--accent-glow); color: var(--accent); }
+
+/* ── A choice, drawn by this app (picker.js) ────────────────────────
+   The select stays underneath with the value; this is what is seen. */
+.picker { position: relative; display: inline-block; max-width: 100%; min-width: 0; vertical-align: middle; }
+.picker__native {
+  position: absolute !important;
+  inset: 0;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  opacity: 0;
+  pointer-events: none;
+}
+.picker__btn {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.picker__btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.picker__btn.sselect { text-align: right; }
+.picker__btn.sselect--wide { text-align: left; }
+.picker__btn.mini-select { padding-right: 26px; background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' width='16' height='16' fill='none' stroke='%239aa8b5' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 8 4 4 4-4'/%3E%3C/svg%3E") no-repeat right 6px center; }
+.picker__btn:not(.sselect):not(.mini-select) {
+  padding: 10px 34px 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' width='16' height='16' fill='none' stroke='%239aa8b5' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 8 4 4 4-4'/%3E%3C/svg%3E") no-repeat right 10px center;
+  color: var(--text);
+}
+.picker__btn:not(.sselect):not(.mini-select):hover { border-color: var(--accent-dim); }
+.picker:has(> .sselect--wide),
+.field .picker,
+.form__group .picker,
+.row .picker { display: block; width: 100%; }
+.row .picker { flex: 1; }
+.spane__row .picker { max-width: 62%; }
+.spane__row .picker__btn:not(.sselect):not(.mini-select) { padding: 5px 26px 5px 8px; border-color: transparent; background-color: transparent; text-align: right; }
+.picker:has(> .taskform__pick) { flex: none; min-width: 190px; }
+.picker__menu {
+  position: fixed;
+  inset: auto;
+  z-index: 900;
+  box-sizing: border-box;
+  width: max-content;
+  margin: 0;
+  padding: 6px;
+  overflow: hidden auto;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+.picker__list { display: flex; flex-direction: column; gap: 2px; }
+.picker__find {
+  position: sticky;
+  top: -6px;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.picker__find:focus { border-color: var(--accent-dim); }
+.picker__group { margin: 8px 10px 3px; color: var(--text-faint); font-size: 11.5px; font-weight: 600; }
+.picker__opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  outline: none;
+}
+.picker__opt:hover,
+.picker__opt:focus-visible,
+.picker__opt:focus { background: var(--tint-2); }
+.picker__opt.is-selected { background: var(--tint); }
+.picker__opt[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
+.picker__words { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.picker__name { overflow-wrap: anywhere; font-size: 14px; line-height: 1.35; }
+.picker__desc { color: var(--text-faint); font-size: 12.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.picker__tick { flex: none; display: flex; color: var(--accent); }
+.picker__empty { margin: 8px 10px; color: var(--text-faint); font-size: 13px; }
+
+/* ── Administrators, for the owner (Settings → People) ───────────── */
+.admins { display: flex; flex-direction: column; gap: 10px; }
+.admins__row { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.admins__row:not(details) { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.admins__who { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+details > summary.admins__who { cursor: pointer; }
+.admins__tag { flex: none; margin-left: 6px; padding: 2px 8px; border-radius: 999px; background: var(--tint-2); color: var(--text-dim); font-size: 11.5px; }
+.admins__add { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.admins__title { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.admins__label { display: block; margin: 10px 0 6px; color: var(--text-dim); font-size: 13px; }
+.admins__powers { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin-top: 8px; }
+.admins__power { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.admins__power input { flex: none; margin-top: 3px; }
+.admins__power-name { display: block; font-size: 13.5px; }
+.admins__power-hint { display: block; color: var(--text-faint); font-size: 12px; line-height: 1.4; }
+.admins__note { margin: 10px 0 0; color: var(--text-faint); font-size: 12px; line-height: 1.45; }
+.admins__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }

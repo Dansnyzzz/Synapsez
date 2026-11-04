@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import OpenAI from 'openai';
 import { normaliseStop } from './stop.js';
+import { salvageArguments } from '../../public/js/tool-aliases.js';
 
 /**
  * What one usage block from a Chat-Completions-shaped API is worth.
@@ -21,15 +22,16 @@ import { normaliseStop } from './stop.js';
  *
  * **The real price.** OpenRouter puts the actual billed cost on `usage.cost`,
  * in dollars, on the last streamed chunk, with no request parameter needed.
- * That is not an estimate derived from a price table that may be stale or
- * absent — it is what the account was charged. Most of the library's models
- * carry `price: null`, so for them this is the difference between a real figure
- * and no figure at all.
+ * OrcaRouter puts it on `usage.cost_usd`, and only when asked by a request
+ * header (`orcaHeaders`, providers/index.js). That is not an estimate derived
+ * from a price table that may be stale or absent — it is what the account was
+ * charged. Most of the library's models carry `price: null`, so for them this is
+ * the difference between a real figure and no figure at all.
  */
 function readUsage(raw) {
   if (!raw) return null;
   const promptDetails = raw.prompt_tokens_details || {};
-  const cost = Number(raw.cost);
+  const cost = Number(raw.cost ?? raw.cost_usd);
   return {
     input: raw.prompt_tokens || 0,
     output: raw.completion_tokens || 0,
@@ -503,7 +505,7 @@ export async function* streamOpenAICompatible({
        * is the difference between a model that retries correctly and one that
        * tries the same broken call again.
        */
-      input = { __malformed: String(slot.args ?? '') };
+      input = salvageArguments(slot.name, slot.args) ?? { __malformed: String(slot.args ?? '') };
     }
     // Unique, as for calls parsed from text: `call_<name>` twice in one step gave
     // two parallel calls one id, and the second one's row and result were lost.

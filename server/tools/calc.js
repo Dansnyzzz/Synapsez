@@ -403,5 +403,61 @@ export function evaluate(source) {
   return { value, expression: src };
 }
 
+/**
+ * A result as a person should read it. Binary fractions leave dust on an answer
+ * (0.1 + 0.2 is 0.30000000000000004), and a model copies that dust into a report.
+ * Fifteen significant digits is what a double holds reliably, so nothing real goes.
+ */
+export const tidyNumber = (value) => (Number.isInteger(value) ? value : Number(value.toPrecision(15)));
+
+/**
+ * The items of `[a, b, c]`, each still as written, or null when the source is not
+ * one bracketed list and nothing else. Only the bracketed form: `1,200 * 3` is a
+ * person writing twelve hundred, and reading that as two figures would be a wrong
+ * answer rather than a refusal.
+ */
+function listItems(src) {
+  if (!src.startsWith('[') || !src.endsWith(']')) return null;
+  const items = [];
+  let depth = 0;
+  let start = 1;
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      depth -= 1;
+      // The opening bracket closed before the end: `[1, 2] * [3]` is not one list.
+      if (depth === 0 && i < src.length - 1) return null;
+    } else if (ch === ',' && depth === 1) {
+      items.push(src.slice(start, i));
+      start = i + 1;
+    }
+  }
+  items.push(src.slice(start, -1));
+  return items;
+}
+
+/** More than this in one call is not a sum, it is a spreadsheet. */
+const MAX_LIST_ITEMS = 200;
+
+/**
+ * What the `calculate` tool answers: `<expression> = <value>`.
+ *
+ * A list is worked out item by item. Models send `[99 + 2.2, 99 + 11, 99 + 55]`
+ * for a table's worth of figures all the time, and being told a list is not a
+ * number cost a step for every one of them (owner, 2026-11-04: four in a row).
+ */
+export function calculate(source) {
+  const src = String(source ?? '').trim();
+  if (!src) throw new Error('There is nothing to calculate.');
+  const items = listItems(src);
+  if (!items) {
+    const { value, expression } = evaluate(src);
+    return `${expression} = ${tidyNumber(value)}`;
+  }
+  if (items.length > MAX_LIST_ITEMS) throw new Error('That list is too long to work out in one call. Send fewer figures at a time.');
+  return `${src} = [${items.map((item) => tidyNumber(evaluate(item).value)).join(', ')}]`;
+}
+
 /** Exposed so the tool description can list what is available without drifting. */
 export const FUNCTION_NAMES = Object.keys(FUNCTIONS);

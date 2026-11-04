@@ -269,6 +269,48 @@ function textTitle(input) {
   return out;
 }
 
+/** The names a model gives a calculation's text. */
+const CALC_FIELDS = ['expression', 'expressions', 'expr', 'formula', 'math', 'calculation'];
+
+/**
+ * `calculate`, read as meant: several figures sent as a JSON list are the one
+ * expression the tool reads as a list, `[a, b, c]` (owner, 2026-11-04).
+ *
+ * @param {Record<string, any>} input
+ */
+function calculateInput(input) {
+  const named = CALC_FIELDS.find((k) => input[k] !== undefined && input[k] !== null);
+  if (!named) return input;
+  const out = { ...input };
+  const given = out[named];
+  for (const k of CALC_FIELDS) delete out[k];
+  out.expression = Array.isArray(given) ? `[${given.map((item) => String(item)).join(', ')}]` : given;
+  return out;
+}
+
+/**
+ * Arguments that are not JSON, but say plainly what was meant.
+ *
+ * `{"expression": [8-5.5, 8, (8-5.5)/2.5]}` is what a model writes when it forgets
+ * a calculation is a string. Arithmetic is not JSON, so the call arrived as text
+ * nothing could parse, and the turn went on to a red row and a retry (owner,
+ * 2026-11-04). Only for `calculate`, whose whole argument is one value that can
+ * harm nothing, and only when the text closes: an unclosed one was cut off, and
+ * is refused as that.
+ *
+ * @param {string} name  the tool
+ * @param {unknown} raw  the arguments as they arrived
+ * @returns {Record<string, any> | null} the arguments, or null to leave them refused
+ */
+export function salvageArguments(name, raw) {
+  if (name !== 'calculate') return null;
+  // Far past any sum, and short enough that this pattern cannot be made to take long.
+  const text = String(raw ?? '');
+  if (text.length > 8000) return null;
+  const m = /^\s*\{\s*"(?:expression|expressions|expr|formula)"\s*:\s*([^"\s][\s\S]*?)\s*\}\s*$/.exec(text);
+  return m ? { expression: m[1] } : null;
+}
+
 /**
  * The call as the tool will read it. Never throws, never drops a field it does
  * not recognise — the validator is the one that refuses. (One exception: a
@@ -290,6 +332,7 @@ export function canonicalInput(name, input) {
   }
   if (name === 'sandbox_run') return sandboxInput(/** @type {Record<string, any>} */ (input));
   if (name === 'place_lookup') return placeInput(/** @type {Record<string, any>} */ (input));
+  if (name === 'calculate') return calculateInput(/** @type {Record<string, any>} */ (input));
   return input;
 }
 

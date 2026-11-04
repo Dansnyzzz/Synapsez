@@ -1245,6 +1245,12 @@ because a fallback nobody can see is how somebody finds out their first key died
 
 `POST /api/providers/intake` (`server/keyIntake.js`), which every box in Settings → Providers uses:
 
+- **Administrators and the owner.** The first administrator is the deployment's owner. Under Settings →
+  People the owner adds others, from a list that can be searched or scrolled, and chooses what each may do:
+  manage people, delete people, recommended models, feedback, security activity, free allowances. Only the owner
+  makes or removes administrators, acts on another administrator, runs tools or stdio MCP servers on the machine
+  under the server, or sees the code that pairs that machine. The owner can hand the deployment to another
+  administrator, and has to before deleting their own account (`server/adminRoles.js`).
 - **Recognised by its shape.** OpenRouter `sk-or-v1-`, OrcaRouter `sk-orca-`, Anthropic `sk-ant-`, Google
   `AIza…`, OpenAI `sk-proj-`; and the connectors' tokens — GitHub `ghp_`/`github_pat_`, Notion
   `ntn_`/`secret_`, Slack `xox…`, Telegram `123456:AA…`, Supadata `sd_`, a Facebook Page `EAA…`. Pasted in
@@ -1710,9 +1716,11 @@ Language, Get help, **Give feedback**, **View changelog**, Learn more and Sign o
   account's own OpenRouter keys it shows what OpenRouter itself reports (`GET /api/v1/key`): free-model
   requests today against the day's limit (50, or 1,000 once the OpenRouter account has bought 10 USD of
   credit), spend today, this week and this month, and the key's own limit or budget with its reset. The
-  deployment's shared key is never asked — its figures are the deployment's. Google's Gemini API and
-  OrcaRouter report no allowance, so for them, and for every provider, the page shows what Synapsez
-  counted: requests by day and by model, the week hour by hour (a grid, or a table of every hour that
+  deployment's shared key is never asked — its figures are the deployment's. OrcaRouter reports a key's
+  credit (`GET /v1/dashboard/billing/subscription`) and no remaining allowance, so its free-model bar is
+  Synapsez's own count against the ceiling OrcaRouter publishes; which ceiling applies is shown only once
+  it is known, because no endpoint reports what a workspace has paid. Google's Gemini API reports nothing,
+  so for it, and for every provider, the page shows what Synapsez counted: requests by day and by model, the week hour by hour (a grid, or a table of every hour that
   scrolls in its own box), and the pace against last week (`server/usageReport.js`,
   `public/js/usage-panel.js`). The line at the top projects the tightest limit at the pace of its
   period so far — on track, or about when it runs out before it resets — and names the model most of

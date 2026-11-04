@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
-import { getApiKeys, providerStatus } from './settings.js';
+import { getApiKeys, providerStatus, keyEntries, setKeyMeta } from './settings.js';
 import { limitFor } from './usage.js';
 import { withMarkup } from './pricing.js';
+import { orcaBalance, orcaStanding } from './keyIntake.js';
+import { ORCA_FREE_SETTING } from './models.js';
 
 /**
  * Settings → Usage (owner, 2026-10-31): how much of each provider this account
@@ -20,8 +22,13 @@ import { withMarkup } from './pricing.js';
  *   - **What Synapsez counted.** Every model call is booked in `usage_events`
  *     (usage.js `record`), so requests, tokens and the cost estimate are known
  *     for every provider, per hour, for as far back as the page draws. Google's
- *     Gemini API and OrcaRouter have no endpoint that reports what is left of a
- *     key's allowance, so for them this is all there is, and the page says so.
+ *     Gemini API has no endpoint that reports what is left of a key's allowance,
+ *     so for it this is all there is, and the page says so.
+ *   - **Both, for OrcaRouter.** It reports a key's credit
+ *     (`/v1/dashboard/billing/subscription`) and nothing about its free requests:
+ *     its docs say plainly that a window's remainder cannot be read. So its free
+ *     bar is Synapsez's own count, against the ceiling OrcaRouter publishes, and
+ *     the page says whose number each one is.
  *
  * The browser draws the week, the heatmap and the pace from the hourly rows in
  * its own time zone; the server does not guess one.
@@ -109,6 +116,112 @@ async function askOpenRouterNow(key, fetchImpl) {
   }
 }
 
+/** Ask OrcaRouter what credit one key can draw on. Never throws. Shared for a few seconds, as above. */
+function askOrcaRouter(key, fetchImpl) {
+  const id = `orca:${crypto.createHash('sha256').update(key).digest('base64url')}`;
+  const hit = liveCache.get(id);
+  if (hit && hit.until > Date.now() && hit.fetchImpl === fetchImpl) return hit.answer;
+  const answer = (async () => {
+    try {
+      const res = await fetchImpl('https://api.orcarouter.ai/v1/dashboard/billing/subscription', {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(LIVE_TIMEOUT_MS),
+      });
+      if (res.status === 401 || res.status === 403) return { ok: false, reason: 'rejected' };
+      if (!res.ok) return { ok: false, reason: 'unavailable' };
+      return { ok: true, balance: orcaBalance(await res.json()) };
+    } catch {
+      return { ok: false, reason: 'unavailable' };
+    }
+  })();
+  liveCache.set(id, { until: Date.now() + LIVE_FRESH_MS, answer, fetchImpl });
+  for (const [k, v] of liveCache) if (v.until <= Date.now()) liveCache.delete(k);
+  return answer;
+}
+
+/** A free id on OrcaRouter, as `usage_events.model` stores it. */
+const isOrcaFree = (model) => /^orcarouter\/(?:.*-free|orcarouter\/free)$/.test(String(model));
+
+/**
+ * OrcaRouter's free requests today: what this account sent, and the ceiling.
+ *
+ * The ceiling depends on what the workspace has ever paid, which no endpoint
+ * reports. What can be known is used, and nothing past it is guessed:
+ *
+ *   - **upper rung**: its credit is past the rung's spend, or more requests went
+ *     through today than the lower rung allows, or either was seen before;
+ *   - **lower rung**: OrcaRouter's free tier refused this workspace for it, and
+ *     nothing since has shown otherwise. A free request that went through in a
+ *     later hour has: a top-up, or a linked GitHub account, need nothing else said;
+ *   - **not known**: `limit` stays null, the page draws no bar, and it says both
+ *     ceilings. A bar against the wrong one would warn at 40 of 800.
+ *
+ * What is proved is kept beside the key, so tomorrow does not start from nothing,
+ * and the suggestion can read it (recommend.js). Requests made elsewhere with the
+ * same workspace are not counted here, and the page says so.
+ */
+async function orcaFreeToday(userId, rows, live, now = new Date()) {
+  const store = getStore();
+  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const pack = await store.getSetting(ORCA_FREE_SETTING).catch(() => null);
+  const ladder = Array.isArray(pack?.tiers) && pack.tiers.length ? pack.tiers : [];
+  const own = pack?.models && typeof pack.models === 'object' ? pack.models : {};
+  const byModel = new Map();
+  for (const row of rows) {
+    if (new Date(row.hour).getTime() < dayStart || !isOrcaFree(row.model)) continue;
+    byModel.set(String(row.model), (byModel.get(String(row.model)) || 0) + (Number(row.calls) || 0));
+  }
+  const ownLadder = (model) => own[String(model).replace(/^orcarouter\//, '')] || null;
+  let used = 0;
+  for (const [model, calls] of byModel) if (!ownLadder(model)) used += calls;
+
+  const latest = Math.max(0, ...rows.filter((row) => isOrcaFree(row.model)).map((row) => new Date(row.hour).getTime()));
+  const entries = (await keyEntries(userId, 'orcarouter')).map((entry) => ({
+    ...entry,
+    // Hours are what is counted, so one starting after the refusal came after it.
+    lifted: entry.freeTier === 'low' && !!entry.freeTierAt && latest > new Date(entry.freeTierAt).getTime(),
+  }));
+  const rung = ladder.length > 1 ? ladder[ladder.length - 1].minPaidUsd : 20;
+  const lowest = ladder[0]?.rpd ?? Infinity;
+  const standings = live.filter((l) => l.ok).map((l) => ({ index: l.index, ...orcaStanding(l.balance, rung) }));
+  const proved = entries.some((e) => e.freeTier === 'high') || standings.some((s) => s.freeTier === 'high') || used > lowest;
+  const tier = proved ? 'high' : entries.length && entries.every((e) => e.freeTier === 'low' && !e.lifted) ? 'low' : null;
+
+  // Kept when it changed, and only then: this runs after every turn.
+  for (const entry of entries) {
+    const standing = standings.find((s) => s.index === entry.index);
+    const meta = {};
+    if (proved && entry.freeTier !== 'high') meta.freeTier = 'high';
+    else if (!proved && entry.lifted) meta.freeTier = null;
+    if (standing?.paid != null && standing.paid !== entry.paid) meta.paid = standing.paid;
+    if (Object.keys(meta).length) await setKeyMeta(userId, 'orcarouter', entry.key, meta).catch(() => {});
+  }
+
+  const rungFor = (list) => (tier === 'high' ? list[list.length - 1] : tier === 'low' ? list[0] : null);
+  const models = [...byModel]
+    .filter(([model]) => ownLadder(model))
+    .map(([model, calls]) => ({ id: model, used: calls, limit: rungFor(ownLadder(model))?.rpd ?? null }));
+  return { used, limit: ladder.length ? rungFor(ladder)?.rpd ?? null : null, tier, tiers: ladder, models };
+}
+
+/**
+ * Which OpenRouter key this account's next free request goes to: the first the
+ * router would try, in its own order, that has any of today's left. Null when none
+ * has. The Usage page warns about this one, because the others are not what the
+ * account is spending: a first key out of requests beside a second with plenty is
+ * nothing to warn anybody about (owner, 2026-11-04).
+ */
+async function openRouterKeyInUse(userId, live) {
+  const order = await getApiKeys(userId, 'openrouter', { free: true });
+  for (const { index, shared } of order) {
+    if (shared) continue;
+    const report = live.find((l) => l.index === index);
+    const free = report?.ok ? report.freeToday : null;
+    if (!free || !(free.limit > 0) || free.used < free.limit) return index;
+  }
+  return null;
+}
+
 /**
  * @param {{ id: string, monthly_token_limit?: number | null }} user
  * @param {{ fetchImpl?: typeof fetch, part?: 'all' | 'limits' }} [options]
@@ -127,6 +240,11 @@ export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}
 
   const own = openrouterKeys.filter((k) => !k.shared);
   const live = await Promise.all(own.map(async (k) => ({ index: k.index, ...(await askOpenRouter(k.key, fetchImpl)) })));
+
+  // The account's own OrcaRouter keys only, as with OpenRouter's: the deployment's figures are not this account's.
+  const orcaKeys = (await getApiKeys(user.id, 'orcarouter', { includeResting: true })).filter((k) => !k.shared);
+  const orcaLive = await Promise.all(orcaKeys.map(async (k) => ({ index: k.index, ...(await askOrcaRouter(k.key, fetchImpl)) })));
+  const orcaFree = orcaKeys.length ? await orcaFreeToday(user.id, part === 'limits' ? await store.usageByHour(user.id, 25) : hours, orcaLive) : null;
 
   return {
     generatedAt: new Date().toISOString(),
@@ -150,7 +268,9 @@ export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}
     }, /** @type {Record<string, { calls: number, cost: number }>} */ ({})),
     // The deployment's own monthly ceiling, which applies only on its shared keys.
     sharedLimit: limitFor(user),
-    live: { openrouter: live },
+    live: { openrouter: live, orcarouter: orcaLive },
+    free: orcaFree ? { orcarouter: orcaFree } : {},
+    inUse: { openrouter: own.length ? await openRouterKeyInUse(user.id, live) : null },
     // Each provider this account rides the deployment's key for — where the
     // monthly ceiling applies (checkQuota counts every call of the month, and
     // stops a turn only on a shared key).

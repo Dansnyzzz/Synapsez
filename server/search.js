@@ -349,8 +349,9 @@ async function searchDuckDuckGo(query, ask) {
   const count = ask.count;
   // `df` is DuckDuckGo's own date filter: d, w, m or y; `kl` its region.
   const form = { q: keywordQuery(query, ask), ...(ask.recency ? { df: ask.recency[0] } : {}), ...(ask.country === 'VN' ? { kl: 'vn-vi' } : {}) };
-  return pacedDuckDuckGo(async () => {
-    const res = await fetch('https://html.duckduckgo.com/html/', {
+  /** One of its two pages, as results. Throws on anything that is not results. */
+  const askPage = async (url, link, snippet) => {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -365,13 +366,12 @@ async function searchDuckDuckGo(query, ask) {
     const html = await res.text();
     // The block page is a 200 with an apology on it, which is the failure that
     // would otherwise be reported as "no results for this query".
-    if (/anomaly|unusual traffic|blocked/i.test(html) && !/result__a/.test(html)) {
+    if (/anomaly|unusual traffic|blocked/i.test(html) && !link.test(html)) {
       throw new Error('DuckDuckGo served a rate-limit page rather than results.');
     }
+    link.lastIndex = 0;
 
     const results = [];
-    const link = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
-    const snippet = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
     // Bounded by the same `count` the link loop below uses. It was unbounded,
     // and ran to exhaustion over the whole response to collect snippets that
     // were then mostly discarded — the loop below stops at `count`, so every
@@ -384,17 +384,43 @@ async function searchDuckDuckGo(query, ask) {
     }
 
     let match;
+    let at = -1;
     while ((match = link.exec(html)) && results.length < count) {
+      at += 1;
       let href = match[1];
+      // An advertisement, which is a link back into DuckDuckGo. Its snippet is skipped with it.
+      if (/duckduckgo\.com\/y\.js/.test(href)) continue;
       // Outbound links are wrapped in a redirect carrying the real URL.
       const wrapped = /[?&]uddg=([^&]+)/.exec(href);
       if (wrapped) href = decodeURIComponent(wrapped[1]);
       if (href.startsWith('//')) href = `https:${href}`;
-      results.push({ title: stripTags(match[2]), url: href, snippet: trim(snippets[results.length] || '', ask.plan.snippet), published: null });
+      results.push({ title: stripTags(match[2]), url: href, snippet: trim(snippets[at] || '', ask.plan.snippet), published: null });
     }
 
     if (!results.length) throw new Error('Nothing could be parsed out of the DuckDuckGo page.');
     return results;
+  };
+  return pacedDuckDuckGo(async () => {
+    try {
+      return await askPage(
+        'https://html.duckduckgo.com/html/',
+        /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g,
+        /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g,
+      );
+    } catch (blocked) {
+      /*
+       * Its other page, which refuses a machine less often: every search on the
+       * owner's own question came back "0 results" while this one answered with
+       * ten (2026-11-04). What it threw first is what is reported if this fails too.
+       */
+      return askPage(
+        'https://lite.duckduckgo.com/lite/',
+        /<a[^>]+href="([^"]+)"[^>]+class=['"]result-link['"][^>]*>([\s\S]*?)<\/a>/g,
+        /<td[^>]+class=['"]result-snippet['"][^>]*>([\s\S]*?)<\/td>/g,
+      ).catch(() => {
+        throw blocked;
+      });
+    }
   });
 }
 

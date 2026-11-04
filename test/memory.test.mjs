@@ -596,8 +596,94 @@ section('usage: what each provider reports, and what Synapsez counted');
     check("  the limits alone leave out the hours, and keep what the warning needs", both.hours.length === 0 && again.hours.length > 0 && both.sharedLimit === again.sharedLimit && 'openrouter' in both.sharedKey && both.sharedKey.openrouter === false, JSON.stringify(both.sharedKey));
     const refused = await usageReport(await store.getUserById(aliceId), { fetchImpl: async () => new Response('{}', { status: 401 }) });
     check('  a key OpenRouter refuses says so rather than showing numbers', refused.live.openrouter[0].ok === false && refused.live.openrouter[0].reason === 'rejected');
+    check('  and the report says which key is in use', again.inUse?.openrouter === 0, JSON.stringify(again.inUse));
   } finally {
     delete process.env.OPENROUTER_API_KEY;
+  }
+
+  // Which key: the first in the router's order with any of today's left.
+  {
+    const { addApiKey, setApiKey, rememberWorkingKey } = await import('../server/settings.js');
+    await setApiKey(bobId, 'openrouter', 'sk-or-v1-bob-first-key-000000000001');
+    await addApiKey(bobId, 'openrouter', 'sk-or-v1-bob-second-key-00000000002');
+    const day = (used1, used2) => async (url, init) => new Response(JSON.stringify({ data: { free_model_daily_requests: { used: String(init.headers.Authorization).includes('first') ? used1 : used2, limit: 50, remaining: 1 } } }), { status: 200 });
+    const bob = await store.getUserById(bobId);
+    check('the first key, while it has requests', (await usageReport(bob, { fetchImpl: day(10, 0) })).inUse.openrouter === 0);
+    check('  the second, once the first is out', (await usageReport(bob, { fetchImpl: day(51, 2) })).inUse.openrouter === 1);
+    check('  none, once every one is', (await usageReport(bob, { fetchImpl: day(50, 50) })).inUse.openrouter === null);
+    rememberWorkingKey(bobId, 'openrouter', 1);
+    check('  and it starts where the router starts', (await usageReport(bob, { fetchImpl: day(0, 0) })).inUse.openrouter === 1);
+    await setApiKey(bobId, 'openrouter', '');
+  }
+
+  /*
+   * OrcaRouter (owner, 2026-11-04). Measured with a real key the same day:
+   * `/v1/dashboard/billing/subscription` answers `hard_limit_usd: 6` — the credit
+   * left — and nothing says what was ever paid.
+   */
+  {
+    const { setApiKey, addApiKey, keyEntries, providerStatus } = await import('../server/settings.js');
+    const { ORCA_FREE_SETTING } = await import('../server/models.js');
+    await store.setSetting(ORCA_FREE_SETTING, { tiers: [{ minPaidUsd: 0, rpm: 10, rpd: 50 }, { minPaidUsd: 20, rpm: 20, rpd: 800 }], models: { 'tencent/hy4-preview-free': [{ minPaidUsd: 0, rpm: 50, rpd: 250 }, { minPaidUsd: 20, rpm: 100, rpd: 4000 }] } });
+    const carol = await store.createUser({ id: 'u-orca-usage', email: 'orca-usage@example.com', name: 'Orca', passwordHash: 'x', role: 'user' });
+    const balance = (usd) => async () => new Response(JSON.stringify({ object: 'billing_subscription', hard_limit_usd: usd }), { status: 200 });
+    let n = 0;
+    const count = (model, calls) => Promise.all(Array.from({ length: calls }, () => store.recordUsage(carol.id, { id: `ue-orca-${(n += 1)}`, model, inputTokens: 1, outputTokens: 1, costUsd: 0 })));
+
+    const none = await usageReport(carol, { fetchImpl: balance(6) });
+    check('an account with no OrcaRouter key is asked nothing and shows nothing', none.live.orcarouter.length === 0 && !none.free.orcarouter);
+
+    await setApiKey(carol.id, 'orcarouter', 'sk-orca-usage-suite-key-000001');
+    await count('orcarouter/deepseek/deepseek-v4.1-flash-free', 3);
+    await count('orcarouter/deepseek/deepseek-v4.1-flash', 2);
+    await count('orcarouter/tencent/hy4-preview-free', 1);
+    await count('openrouter/meta/llama:free', 4);
+
+    const small = await usageReport(carol, { fetchImpl: balance(6) });
+    check("the key's credit is read as OrcaRouter states it", small.live.orcarouter[0]?.ok && small.live.orcarouter[0].balance === 6, JSON.stringify(small.live.orcarouter));
+    const f = small.free.orcarouter;
+    check("today's free requests are this router's free ids only, and not its paid ones", f.used === 3, String(f?.used));
+    check('  a free id with its own ladder is counted apart', f.models.length === 1 && f.models[0].used === 1 && f.models[0].id.includes('hy4-preview'), JSON.stringify(f.models));
+    check('  $6 of credit does not say which ceiling applies, so none is claimed', f.limit === null && f.tier === null && f.tiers.length === 2, JSON.stringify([f.limit, f.tier]));
+    check('  though any credit can pay for a paid model', (await providerStatus(carol.id)).orcarouter.keys[0].paid === true);
+    const again = await usageReport(carol, { fetchImpl: balance(6), part: 'limits' });
+    check('  and the limits alone still count them', again.free.orcarouter.used === 3 && again.hours.length === 0);
+
+    const rich = await usageReport(carol, { fetchImpl: balance(25) });
+    check('credit past the rung proves the upper one', rich.free.orcarouter.tier === 'high' && rich.free.orcarouter.limit === 800 && rich.free.orcarouter.models[0].limit === 4000, JSON.stringify(rich.free.orcarouter));
+    check('  and it is remembered: credit spent since does not undo what was paid', (await usageReport(carol, { fetchImpl: balance(1) })).free.orcarouter.limit === 800 && (await keyEntries(carol.id, 'orcarouter'))[0].freeTier === 'high');
+
+    await setApiKey(carol.id, 'orcarouter', '');
+    await setApiKey(carol.id, 'orcarouter', 'sk-orca-usage-suite-key-000002');
+    await count('orcarouter/deepseek/deepseek-v4.1-flash-free', 48);
+    check('more requests today than the lower rung allows proves the upper one', (await usageReport(carol, { fetchImpl: balance(0) })).free.orcarouter.limit === 800);
+
+    await setApiKey(carol.id, 'orcarouter', '');
+    await setApiKey(carol.id, 'orcarouter', 'sk-orca-usage-suite-key-000003', { freeTier: 'low' });
+    const low = await store.createUser({ id: 'u-orca-low', email: 'orca-low@example.com', name: 'Low', passwordHash: 'x', role: 'user' });
+    await setApiKey(low.id, 'orcarouter', 'sk-orca-usage-suite-key-000004', { freeTier: 'low' });
+    await addApiKey(low.id, 'orcarouter', 'sk-orca-usage-suite-key-000005', { freeTier: 'low' });
+    await store.recordUsage(low.id, { id: 'ue-low', model: 'orcarouter/z-ai/glm-5.3-flash-free', inputTokens: 1, outputTokens: 1, costUsd: 0 });
+    const refused = await usageReport(low, { fetchImpl: balance(0) });
+    check('every key refused for the free tier reads as the lower rung', refused.free.orcarouter.tier === 'low' && refused.free.orcarouter.limit === 50, JSON.stringify(refused.free.orcarouter));
+    check('  a key OrcaRouter refuses says so', (await usageReport(low, { fetchImpl: async () => new Response('{}', { status: 401 }) })).live.orcarouter[0].reason === 'rejected');
+
+    // Refused once is not refused for ever: somebody can top up, or link GitHub.
+    const later = await store.createUser({ id: 'u-orca-later', email: 'orca-later@example.com', name: 'Later', passwordHash: 'x', role: 'user' });
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000).toISOString();
+    await setApiKey(later.id, 'orcarouter', 'sk-orca-usage-suite-key-000006', { freeTier: 'low', freeTierAt: twoHoursAgo });
+    const stillLow = await usageReport(later, { fetchImpl: balance(0) });
+    check('a refusal with nothing since stays', stillLow.free.orcarouter.tier === 'low' && (await keyEntries(later.id, 'orcarouter'))[0].freeTier === 'low');
+    await store.recordUsage(later.id, { id: 'ue-later', model: 'orcarouter/z-ai/glm-5.3-flash-free', inputTokens: 1, outputTokens: 1, costUsd: 0 });
+    const lifted = await usageReport(later, { fetchImpl: balance(0) });
+    check('  a free request that went through since lifts it', lifted.free.orcarouter.tier === null && (await keyEntries(later.id, 'orcarouter'))[0].freeTier === null, JSON.stringify(lifted.free.orcarouter.tier));
+    await setApiKey(later.id, 'orcarouter', 'sk-orca-usage-suite-key-000007', { freeTier: 'low', freeTierAt: new Date().toISOString() });
+    check('  but not one from before the refusal, within the same hour', (await usageReport(later, { fetchImpl: balance(0) })).free.orcarouter.tier === 'low');
+    process.env.ORCAROUTER_API_KEY = 'sk-orca-deployment-shared';
+    const asked = [];
+    await usageReport(low, { fetchImpl: async (url, init) => (asked.push(String(init?.headers?.Authorization)), new Response(JSON.stringify({ hard_limit_usd: 1 }), { status: 200 })) });
+    check("  and the deployment's shared key never is asked", asked.length > 0 && asked.every((h) => !h.includes('deployment-shared')), asked.join());
+    delete process.env.ORCAROUTER_API_KEY;
   }
 }
 

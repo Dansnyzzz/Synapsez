@@ -53,6 +53,19 @@ section('and a turn that said something is left alone');
   check('and an empty turn invents nothing', !promoteReasoning(silent) && silent.text === '');
 }
 
+section('reasoning that was cut off is reasoning, not a reply (owner, 2026-11-04)');
+{
+  const words = 'Let me verify these with calculate. Then answer structure: which';
+  const cut = { text: '', thinking: words, toolCalls: [] };
+  check('not when the output limit cut it', !promoteReasoning(cut, { kind: 'truncated', raw: 'length' }) && cut.text === '' && cut.thinking === words);
+  const dropped = { text: '', thinking: words, toolCalls: [] };
+  check('not when the stream ended with no finish reason', !promoteReasoning(dropped, { kind: 'end_turn', raw: null }) && dropped.text === '');
+  const filtered = { text: '', thinking: words, toolCalls: [] };
+  check('not when a filter stopped it', !promoteReasoning(filtered, { kind: 'filtered', raw: 'content_filter' }) && filtered.text === '');
+  const whole = { text: '', thinking: 'Không, tôi không thể.', toolCalls: [] };
+  check('but yes when the model finished', promoteReasoning(whole, { kind: 'end_turn', raw: 'stop' }) && whole.text === 'Không, tôi không thể.');
+}
+
 console.log(
   failures === 0 ? '\n\x1b[32mNo answer is hidden inside the reasoning block.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`,
 );

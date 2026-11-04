@@ -50,6 +50,122 @@ export function formatValue(value, format = 'number') {
   return format === 'currency' ? `$${grouped}` : grouped;
 }
 
+/**
+ * Roughly how wide text is drawn, in the same units as the drawing.
+ *
+ * The server has no fonts to measure with, and it draws for a browser it has not
+ * met. So this leans wide: a label it thinks fits has room to spare, and everything
+ * that decides whether something stays inside the picture goes through here. The
+ * owner's chart lost its fourth legend entry and half of "$100,000" past the edge
+ * (2026-11-04), which is what a fixed layout does with words it never measured.
+ */
+function textWidth(text, size) {
+  let em = 0;
+  for (const ch of String(text ?? '').normalize('NFC')) {
+    if (/[⺀-꓏가-힯豈-﫿＀-｠\u{1F000}-\u{1FAFF}]/u.test(ch)) em += 1.05;
+    else if (/[\sijl.,:;'"|!()[\]{}/\\]/.test(ch)) em += 0.34;
+    else if (/[A-ZĐ@%&#mwMW$—–…]/.test(ch)) em += 0.74;
+    else if (/[0-9]/.test(ch)) em += 0.6;
+    else em += 0.58;
+  }
+  return em * size;
+}
+
+/** Text cut to a width, with an ellipsis. A hover reads the whole of it. */
+function fitText(text, size, max) {
+  // Nothing wider than a picture takes this many characters to know it.
+  const whole = String(text ?? '').slice(0, 2000);
+  if (textWidth(whole, size) <= max) return whole;
+  const room = Math.max(0, max - textWidth('…', size));
+  let out = '';
+  let width = 0;
+  for (const ch of whole.normalize('NFC')) {
+    width += textWidth(ch, size);
+    if (width > room) break;
+    out += ch;
+  }
+  return `${out.trimEnd()}…`;
+}
+
+/** Text as lines of a width, at most `limit` of them; the last is cut if it must be. */
+function wrapLines(text, size, max, limit = 2) {
+  const words = String(text ?? '').slice(0, 2000).trim().split(/\s+/);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (textWidth(next, size) <= max || !line) line = next;
+    else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  if (lines.length <= limit) return lines.map((l) => fitText(l, size, max));
+  return [...lines.slice(0, limit - 1), fitText(lines.slice(limit - 1).join(' '), size, max)].map((l) => fitText(l, size, max));
+}
+
+const clamp = (value, low, high) => Math.min(Math.max(value, low), Math.max(low, high));
+
+/**
+ * The axis figures for a set of values, negative ones included: a bar or line
+ * chart below zero was drawn over its own labels, because the scale stopped at 0.
+ *
+ * @returns {{ ticks: number[], low: number, high: number }}
+ */
+function valueScale(values) {
+  const finite = values.map(Number).filter(Number.isFinite);
+  const least = Math.min(0, ...finite);
+  const most = Math.max(0, ...finite);
+  if (least >= 0) {
+    const ticks = axisTicks(most || 1);
+    return { ticks, low: 0, high: ticks[ticks.length - 1] || most || 1 };
+  }
+  const ticks = rangeTicks(least, most);
+  return { ticks, low: ticks[0], high: ticks[ticks.length - 1] };
+}
+
+/** How far in the plot starts, so the widest figure on the axis is not cut off at the edge. */
+const axisRoom = (ticks, format) => Math.max(52, Math.ceil(Math.max(...ticks.map((t) => textWidth(formatValue(t, format), 10)))) + 14);
+
+/**
+ * The labels under a plot, each inside the picture and none on top of the next.
+ *
+ * A long one is cut to what it has; with too many to fit, every so many is drawn
+ * and the first and last are kept. Hovering reads any of them in full.
+ *
+ * @param {string[]} labels
+ * @param {(i: number) => number} xAt  where each is centred
+ * @param {number} step  the room from one to the next
+ * @param {number} W  the width of the picture
+ * @param {number} y
+ */
+function axisLabels(labels, xAt, step, W, y) {
+  const size = 11;
+  const last = labels.length - 1;
+  const every = step >= 44 ? 1 : Math.ceil(44 / Math.max(step, 1));
+  const most = Math.max(40, step * every - 6);
+  let body = '';
+  let rightEdge = -Infinity;
+  labels.forEach((label, i) => {
+    if (i !== last && (i % every !== 0 || last - i < every)) return;
+    let text = fitText(label, size, most);
+    let width = textWidth(text, size);
+    let centre = clamp(xAt(i), width / 2 + 1, W - width / 2 - 1);
+    if (centre - width / 2 < rightEdge + 4) {
+      // Pushed in from the edge onto its neighbour: cut to the gap, or left to the hover.
+      const room = Math.min(W - 1, xAt(i) + width / 2) - (rightEdge + 4);
+      if (room < 24) return;
+      text = fitText(label, size, room);
+      width = textWidth(text, size);
+      centre = rightEdge + 4 + width / 2;
+    }
+    rightEdge = centre + width / 2;
+    body += `<text x="${centre.toFixed(1)}" y="${y}" font-size="${size}" text-anchor="middle" fill="${TEXT}">${esc(text)}</text>`;
+  });
+  return body;
+}
+
 /** Nice round steps for an axis, so the grid lands on readable numbers. */
 function axisTicks(max, count = 4) {
   if (max <= 0) return [0];
@@ -98,19 +214,42 @@ function validate({ type, data }) {
   }
 }
 
-/** The legend, present whenever more than one series shares the plot. */
-function legend(series, x, y) {
-  if (series.length < 2) return '';
-  let out = `<g class="legend" transform="translate(${x},${y})">`;
-  let cursor = 0;
-  series.forEach((s, i) => {
-    out +=
-      `<g class="legend-item" data-s="${i}" transform="translate(${cursor},0)">` +
-      `<rect width="9" height="9" rx="2" y="-8" fill="${PALETTE[i % PALETTE.length]}"/>` +
-      `<text x="14" y="0" font-size="11" fill="${TEXT}">${esc(s.name)}</text></g>`;
-    cursor += 22 + String(s.name ?? '').length * 6.2;
-  });
-  return `${out}</g>`;
+/**
+ * The title and the legend: everything above the plot, in as many lines as it
+ * takes, and where the plot may start as a result. Present whenever more than one
+ * series shares the plot, and it wraps: a row that ran past the right edge took
+ * its last entries with it.
+ *
+ * @returns {{ head: string, top: number }}
+ */
+function heading(title, series, W, x = 0) {
+  const lines = wrapLines(title, 14, W - 2, 2);
+  let head = lines.map((line, i) => `<text x="0" y="${16 + i * 17}" font-size="13" font-weight="600" fill="${TEXT_STRONG}">${esc(line)}</text>`).join('');
+  let bottom = 16 + (lines.length - 1) * 17;
+  if (series.length > 1) {
+    const room = W - x - 4;
+    let cursor = 0;
+    let row = 0;
+    let items = '';
+    series.forEach((s, i) => {
+      const name = fitText(s.name, 11, room - 16);
+      const width = 16 + textWidth(name, 11);
+      if (cursor > 0 && cursor + width > room) {
+        cursor = 0;
+        row += 1;
+      }
+      items +=
+        `<g class="legend-item" data-s="${i}" transform="translate(${cursor.toFixed(1)},${row * 17})">` +
+        `<rect width="9" height="9" rx="2" y="-8" fill="${PALETTE[i % PALETTE.length]}"/>` +
+        `<text x="14" y="0" font-size="11" fill="${TEXT}">${esc(name)}</text></g>`;
+      cursor += width + 10;
+    });
+    const y = bottom + 18;
+    head += `<g class="legend" transform="translate(${x},${y})">${items}</g>`;
+    bottom = y + row * 17;
+  }
+  // Room over the tallest mark for its value.
+  return { head, top: Math.max(46, bottom + 20) };
 }
 
 /**
@@ -122,55 +261,62 @@ const hit = (i, x, y, w, h, shape = 'col') =>
   `<rect class="hit hit--${shape}" data-i="${i}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" ` +
   `width="${Math.max(1, w).toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" fill="transparent"/>`;
 
-const frame = (w, h, title, body) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="${esc(title)}">` +
-  `<text x="0" y="14" font-size="13" font-weight="600" fill="${TEXT_STRONG}">${esc(title)}</text>` +
-  `${body}</svg>`;
+const frame = (w, h, title, head, body) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${Math.ceil(h)}" width="100%" role="img" aria-label="${esc(title)}">` +
+  `${head}${body}</svg>`;
+
+/** The height of every plot with a value axis. */
+const PLOT_HEIGHT = 268;
 
 /* ── vertical bars, grouped ─────────────────────────────────────────── */
 function barChart({ title, data, format }) {
   const W = 720;
-  const H = 360;
-  const top = 46;
-  const left = 52;
-  const bottom = H - 46;
+  const scale = valueScale(data.series.flatMap((s) => s.values));
+  const left = axisRoom(scale.ticks, format);
+  const { head, top } = heading(title, data.series, W, left);
+  const plotH = PLOT_HEIGHT;
+  const bottom = top + plotH;
+  const H = bottom + 46;
   const plotW = W - left - 16;
-  const plotH = bottom - top;
+  const yOf = (v) => bottom - ((Number(v) - scale.low) / (scale.high - scale.low || 1)) * plotH;
 
-  const max = Math.max(...data.series.flatMap((s) => s.values.map(Number)), 0) || 1;
-  const ticks = axisTicks(max);
-  const scale = (v) => (Number(v) / (ticks[ticks.length - 1] || max)) * plotH;
-
-  let body = legend(data.series, left, 32);
+  let body = '';
 
   // Grid and axis figures, recessive: they orient, they do not compete.
-  for (const t of ticks) {
-    const y = bottom - scale(t);
+  for (const t of scale.ticks) {
+    const y = yOf(t);
     body += `<line x1="${left}" y1="${y}" x2="${W - 16}" y2="${y}" stroke="${GRID}" stroke-width="1"/>`;
     body += `<text x="${left - 8}" y="${y + 4}" font-size="10" text-anchor="end" fill="${TEXT}">${esc(formatValue(t, format))}</text>`;
   }
 
   const groupW = plotW / data.labels.length;
-  const gap = 2; // the surface gap that keeps adjacent fills apart
-  const barW = Math.max(6, (groupW * 0.68) / data.series.length - gap);
+  const gap = groupW / data.series.length > 8 ? 2 : 0.5; // the surface gap that keeps adjacent fills apart
+  const barW = Math.max(1.5, (groupW * 0.68) / data.series.length - gap);
+  const zero = yOf(0);
 
-  data.labels.forEach((label, i) => {
+  data.labels.forEach((_, i) => {
     const groupX = left + groupW * i + groupW * 0.16;
     data.series.forEach((s, j) => {
       const v = Number(s.values[i]) || 0;
-      const h = Math.max(0, scale(v));
+      const y = Math.min(yOf(v), zero);
+      const h = Math.abs(yOf(v) - zero);
       const x = groupX + j * (barW + gap);
-      const y = bottom - h;
       body +=
         `<rect class="bar" data-i="${i}" data-s="${j}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" ` +
-        `rx="4" fill="${PALETTE[j % PALETTE.length]}"/>`;
-      body += `<text data-s="${j}" x="${(x + barW / 2).toFixed(1)}" y="${(y - 5).toFixed(1)}" font-size="10" text-anchor="middle" fill="${TEXT_STRONG}">${esc(formatValue(v, format))}</text>`;
+        `rx="${barW >= 8 ? 4 : 1}" fill="${PALETTE[j % PALETTE.length]}"/>`;
+      // A value is drawn only over a bar wide enough for it; a hover reads the rest.
+      const said = formatValue(v, format);
+      const width = textWidth(said, 10);
+      if (width <= barW + gap + 6) {
+        const labelY = v < 0 ? y + h + 12 : y - 5;
+        body += `<text data-s="${j}" x="${(x + barW / 2).toFixed(1)}" y="${labelY.toFixed(1)}" font-size="10" text-anchor="middle" fill="${TEXT_STRONG}">${esc(said)}</text>`;
+      }
     });
-    body += `<text x="${(left + groupW * i + groupW / 2).toFixed(1)}" y="${bottom + 16}" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(label)}</text>`;
     body += hit(i, left + groupW * i, top, groupW, plotH);
   });
+  body += axisLabels(data.labels, (i) => left + groupW * i + groupW / 2, groupW, W, bottom + 16);
 
-  return frame(W, H, title, body);
+  return frame(W, H, title, head, body);
 }
 
 /* ── horizontal bars, for long labels ───────────────────────────────── */
@@ -178,13 +324,15 @@ function hbarChart({ title, data, format }) {
   const rows = data.labels.length * data.series.length;
   const rowH = 24;
   const W = 720;
-  const top = 46;
+  const left = Math.min(220, Math.max(...data.labels.map((l) => textWidth(l, 11))) + 16);
+  const { head, top } = heading(title, data.series, W, left);
   const H = top + rows * rowH + 30;
-  const left = Math.min(220, Math.max(...data.labels.map((l) => String(l).length)) * 7 + 16);
-  const plotW = W - left - 70;
+  // As much room on the right as the widest figure needs.
+  const said = data.series.flatMap((s) => s.values.map((v) => formatValue(Number(v) || 0, format)));
+  const plotW = W - left - Math.ceil(Math.max(...said.map((t) => textWidth(t, 10)))) - 16;
 
   const max = Math.max(...data.series.flatMap((s) => s.values.map(Number)), 0) || 1;
-  let body = legend(data.series, left, 32);
+  let body = '';
 
   let row = 0;
   data.labels.forEach((label, i) => {
@@ -192,10 +340,10 @@ function hbarChart({ title, data, format }) {
       const v = Number(s.values[i]) || 0;
       const w = Math.max(0, (v / max) * plotW);
       const y = top + row * rowH;
-      body += `<rect class="bar" data-i="${i}" data-s="${j}" x="${left}" y="${y}" width="${w.toFixed(1)}" height="${rowH - 8}" rx="4" fill="${PALETTE[j % PALETTE.length]}"/>`;
+      body += `<rect class="bar" data-i="${i}" data-s="${j}" x="${left.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${rowH - 8}" rx="4" fill="${PALETTE[j % PALETTE.length]}"/>`;
       body += `<text data-s="${j}" x="${(left + w + 8).toFixed(1)}" y="${y + rowH - 13}" font-size="10" fill="${TEXT_STRONG}">${esc(formatValue(v, format))}</text>`;
       if (j === 0) {
-        body += `<text x="${left - 8}" y="${y + rowH - 13}" font-size="11" text-anchor="end" fill="${TEXT}">${esc(label)}</text>`;
+        body += `<text x="${(left - 8).toFixed(1)}" y="${y + rowH - 13}" font-size="11" text-anchor="end" fill="${TEXT}">${esc(fitText(label, 11, left - 12))}</text>`;
       }
       row += 1;
     });
@@ -203,27 +351,24 @@ function hbarChart({ title, data, format }) {
     body += hit(i, 0, first - 2, W, data.series.length * rowH, 'row');
   });
 
-  return frame(W, H, title, body);
+  return frame(W, H, title, head, body);
 }
 
 /* ── lines, for change over time ────────────────────────────────────── */
 function lineChart({ title, data, format }) {
   const W = 720;
-  const H = 360;
-  const top = 46;
-  const left = 52;
-  const bottom = H - 46;
+  const scale = valueScale(data.series.flatMap((s) => s.values));
+  const left = axisRoom(scale.ticks, format);
+  const { head, top } = heading(title, data.series, W, left);
+  const plotH = PLOT_HEIGHT;
+  const bottom = top + plotH;
+  const H = bottom + 46;
   const plotW = W - left - 16;
-  const plotH = bottom - top;
-
-  const max = Math.max(...data.series.flatMap((s) => s.values.map(Number)), 0) || 1;
-  const ticks = axisTicks(max);
-  const topTick = ticks[ticks.length - 1] || max;
   const x = (i) => left + (data.labels.length === 1 ? plotW / 2 : (plotW * i) / (data.labels.length - 1));
-  const y = (v) => bottom - (Number(v) / topTick) * plotH;
+  const y = (v) => bottom - ((Number(v) - scale.low) / (scale.high - scale.low || 1)) * plotH;
 
-  let body = legend(data.series, left, 32);
-  for (const t of ticks) {
+  let body = '';
+  for (const t of scale.ticks) {
     body += `<line x1="${left}" y1="${y(t)}" x2="${W - 16}" y2="${y(t)}" stroke="${GRID}" stroke-width="1"/>`;
     body += `<text x="${left - 8}" y="${y(t) + 4}" font-size="10" text-anchor="end" fill="${TEXT}">${esc(formatValue(t, format))}</text>`;
   }
@@ -236,32 +381,48 @@ function lineChart({ title, data, format }) {
     s.values.forEach((v, i) => {
       body += `<circle class="dot" data-i="${i}" data-s="${j}" cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="4" fill="${colour}" stroke="#1a1a19" stroke-width="2"/>`;
     });
-    // Direct-label the end of each line rather than every point.
-    const lastI = s.values.length - 1;
-    body += `<text data-s="${j}" x="${(x(lastI) - 4).toFixed(1)}" y="${(y(s.values[lastI]) - 10).toFixed(1)}" font-size="10" text-anchor="end" fill="${TEXT_STRONG}">${esc(formatValue(s.values[lastI], format))}</text>`;
   });
+
+  // Direct-label the end of each line rather than every point, each clear of the
+  // next: lines ending close together drew their figures one on top of another.
+  const lastI = data.labels.length - 1;
+  const ends = data.series
+    .map((s, j) => ({ j, value: Number(s.values[lastI]), at: y(s.values[lastI]) - 10 }))
+    .sort((a, b) => a.at - b.at);
+  ends.forEach((end, k) => {
+    end.at = Math.max(top - 2, k ? Math.max(end.at, ends[k - 1].at + 13) : end.at);
+  });
+  for (let k = ends.length - 1; k >= 0; k -= 1) {
+    const floor = k === ends.length - 1 ? bottom - 2 : ends[k + 1].at - 13;
+    ends[k].at = Math.min(ends[k].at, floor);
+  }
+  for (const end of ends) {
+    body += `<text data-s="${end.j}" x="${(x(lastI) - 4).toFixed(1)}" y="${end.at.toFixed(1)}" font-size="10" text-anchor="end" fill="${TEXT_STRONG}">${esc(formatValue(end.value, format))}</text>`;
+  }
 
   // A column per point, so hovering anywhere above a label reads that label —
   // aiming at a 4px dot is not a thing to ask of anybody.
   const step = data.labels.length > 1 ? plotW / (data.labels.length - 1) : plotW;
-  data.labels.forEach((label, i) => {
-    body += `<text x="${x(i).toFixed(1)}" y="${bottom + 16}" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(label)}</text>`;
+  data.labels.forEach((_, i) => {
     body += hit(i, x(i) - step / 2, top, step, plotH);
   });
+  body += axisLabels(data.labels, x, step, W, bottom + 16);
 
-  return frame(W, H, title, body);
+  return frame(W, H, title, head, body);
 }
 
 /* ── donut, for shares of a whole ───────────────────────────────────── */
 function pieChart({ title, data, format }) {
   const W = 720;
-  const H = 340;
+  const { head, top } = heading(title, [], W);
   const cx = 190;
-  const cy = 180;
+  const cy = top + 134;
   const rOuter = 110;
   const rInner = 66;
   const values = data.series[0].values.map((v) => Math.max(0, Number(v) || 0));
   const total = values.reduce((a, b) => a + b, 0) || 1;
+  // Tall enough for the donut and for every row of the list beside it.
+  const H = Math.max(cy + rOuter + 40, top + 14 + data.labels.length * 24 + 12);
 
   let body = '';
   let angle = -Math.PI / 2;
@@ -278,37 +439,37 @@ function pieChart({ title, data, format }) {
   });
 
   // The total in the middle: a donut's hole is the one place a headline fits.
-  body += `<text x="${cx}" y="${cy - 2}" font-size="22" font-weight="600" text-anchor="middle" fill="${TEXT_STRONG}">${esc(formatValue(total, format))}</text>`;
+  body += `<text x="${cx}" y="${cy - 2}" font-size="22" font-weight="600" text-anchor="middle" fill="${TEXT_STRONG}">${esc(fitText(formatValue(total, format), 22, rInner * 1.8))}</text>`;
   body += `<text x="${cx}" y="${cy + 18}" font-size="11" text-anchor="middle" fill="${TEXT}">Tổng</text>`;
 
   // A keyed list beside it, so identity never rests on colour alone.
   data.labels.forEach((label, i) => {
-    const y = 60 + i * 24;
+    const y = top + 14 + i * 24;
     const share = ((values[i] / total) * 100).toFixed(1);
+    const figures = `${formatValue(values[i], format)} · ${share}%`;
+    const room = 700 - 378 - textWidth(figures, 12) - 12;
     body += `<rect x="360" y="${y - 9}" width="10" height="10" rx="2" fill="${PALETTE[i % PALETTE.length]}"/>`;
-    body += `<text x="378" y="${y}" font-size="12" fill="${TEXT}">${esc(label)}</text>`;
-    body += `<text x="700" y="${y}" font-size="12" text-anchor="end" fill="${TEXT_STRONG}">${esc(formatValue(values[i], format))} · ${share}%</text>`;
+    body += `<text x="378" y="${y}" font-size="12" fill="${TEXT}">${esc(fitText(label, 12, room))}</text>`;
+    body += `<text x="700" y="${y}" font-size="12" text-anchor="end" fill="${TEXT_STRONG}">${esc(figures)}</text>`;
   });
 
-  return frame(W, H, title, body);
+  return frame(W, H, title, head, body);
 }
 
 /* ── stacked bars, for parts of a total ─────────────────────────────── */
 function stackedChart({ title, data, format }) {
   const W = 720;
-  const H = 360;
-  const top = 46;
-  const left = 52;
-  const bottom = H - 46;
+  const totals = data.labels.map((_, i) => data.series.reduce((sum, s) => sum + Math.max(0, Number(s.values[i]) || 0), 0));
+  const ticks = axisTicks(Math.max(...totals, 0) || 1);
+  const topTick = ticks[ticks.length - 1] || 1;
+  const left = axisRoom(ticks, format);
+  const { head, top } = heading(title, data.series, W, left);
+  const plotH = PLOT_HEIGHT;
+  const bottom = top + plotH;
+  const H = bottom + 46;
   const plotW = W - left - 16;
-  const plotH = bottom - top;
 
-  const totals = data.labels.map((_, i) => data.series.reduce((sum, s) => sum + (Number(s.values[i]) || 0), 0));
-  const max = Math.max(...totals, 0) || 1;
-  const ticks = axisTicks(max);
-  const topTick = ticks[ticks.length - 1] || max;
-
-  let body = legend(data.series, left, 32);
+  let body = '';
   for (const t of ticks) {
     const y = bottom - (t / topTick) * plotH;
     body += `<line x1="${left}" y1="${y}" x2="${W - 16}" y2="${y}" stroke="${GRID}" stroke-width="1"/>`;
@@ -317,23 +478,26 @@ function stackedChart({ title, data, format }) {
 
   const groupW = plotW / data.labels.length;
   const barW = Math.min(56, groupW * 0.6);
-  data.labels.forEach((label, i) => {
+  data.labels.forEach((_, i) => {
     const x = left + groupW * i + (groupW - barW) / 2;
     let cursor = bottom;
     data.series.forEach((s, j) => {
-      const v = Number(s.values[i]) || 0;
+      const v = Math.max(0, Number(s.values[i]) || 0);
       const h = (v / topTick) * plotH;
       if (h <= 0) return;
       // 2px gap between segments, so stacked fills stay separable.
       cursor -= h;
       body += `<rect class="bar" data-i="${i}" data-s="${j}" x="${x.toFixed(1)}" y="${cursor.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, h - 2).toFixed(1)}" rx="3" fill="${PALETTE[j % PALETTE.length]}"/>`;
     });
-    body += `<text x="${(x + barW / 2).toFixed(1)}" y="${(cursor - 6).toFixed(1)}" font-size="10" text-anchor="middle" fill="${TEXT_STRONG}">${esc(formatValue(totals[i], format))}</text>`;
-    body += `<text x="${(x + barW / 2).toFixed(1)}" y="${bottom + 16}" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(label)}</text>`;
+    const said = formatValue(totals[i], format);
+    if (textWidth(said, 10) <= groupW) {
+      body += `<text x="${(x + barW / 2).toFixed(1)}" y="${(cursor - 6).toFixed(1)}" font-size="10" text-anchor="middle" fill="${TEXT_STRONG}">${esc(said)}</text>`;
+    }
     body += hit(i, left + groupW * i, top, groupW, plotH);
   });
+  body += axisLabels(data.labels, (i) => left + groupW * i + groupW / 2, groupW, W, bottom + 16);
 
-  return frame(W, H, title, body);
+  return frame(W, H, title, head, body);
 }
 
 /* ── scatter, for how two measures relate ───────────────────────────── */
@@ -380,41 +544,56 @@ function rangeTicks(min, max, count = 5) {
   const raw = (max - min) / count;
   const mag = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) || mag * 10;
+  if (!Number.isFinite(step) || !(step > 0)) return [min, max];
   const start = Math.floor(min / step) * step;
+  const places = Math.min(20, Math.max(0, 2 - Math.floor(Math.log10(step))));
+  /*
+   * Each tick is `i × step`, with a ceiling. Adding the step to the last one never
+   * ends when the numbers are so large a step is lost in rounding: 1e16 plus 0.5 is
+   * 1e16, and a chart of two such points ran the process out of memory. The same
+   * wall `axisTicks` has (PERF-015).
+   */
   const ticks = [];
-  for (let v = start; v < max + step * 0.999; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
-  return ticks;
+  for (let i = 0; i <= 50; i += 1) {
+    const value = start + i * step;
+    if (value >= max + step * 0.999) break;
+    const tick = Number(value.toFixed(places));
+    if (ticks[ticks.length - 1] !== tick) ticks.push(tick);
+  }
+  return ticks.length ? ticks : [min, max];
 }
 
 function scatterChart({ title, data, format, xLabel = '', yLabel = '' }) {
   const W = 720;
-  const H = 380;
-  const top = 46;
-  const left = 60;
-  const bottom = H - 52;
-  const plotW = W - left - 20;
-  const plotH = bottom - top;
 
   const all = data.series.flatMap((s) => s.points.map(pointOf));
   const xt = rangeTicks(Math.min(...all.map((p) => p.x)), Math.max(...all.map((p) => p.x)));
   const yt = rangeTicks(Math.min(...all.map((p) => p.y)), Math.max(...all.map((p) => p.y)));
+  const left = Math.max(60, axisRoom(yt, format) + (yLabel ? 18 : 0));
+  const { head, top } = heading(title, data.series, W, left);
+  const plotH = 282;
+  const bottom = top + plotH;
+  const H = bottom + 52;
+  const plotW = W - left - 20;
   const [x0, x1] = [xt[0], xt[xt.length - 1]];
   const [y0, y1] = [yt[0], yt[yt.length - 1]];
   const sx = (v) => left + ((v - x0) / (x1 - x0 || 1)) * plotW;
   const sy = (v) => bottom - ((v - y0) / (y1 - y0 || 1)) * plotH;
 
-  let body = legend(data.series, left, 32);
+  let body = '';
   for (const t of yt) {
     body += `<line x1="${left}" y1="${sy(t).toFixed(1)}" x2="${W - 20}" y2="${sy(t).toFixed(1)}" stroke="${GRID}" stroke-width="1"/>`;
     body += `<text x="${left - 8}" y="${(sy(t) + 4).toFixed(1)}" font-size="10" text-anchor="end" fill="${TEXT}">${esc(formatValue(t, format))}</text>`;
   }
   for (const t of xt) {
+    const said = formatValue(t);
+    const half = textWidth(said, 10) / 2;
     body += `<line x1="${sx(t).toFixed(1)}" y1="${top}" x2="${sx(t).toFixed(1)}" y2="${bottom}" stroke="${GRID}" stroke-width="1"/>`;
-    body += `<text x="${sx(t).toFixed(1)}" y="${bottom + 16}" font-size="10" text-anchor="middle" fill="${TEXT}">${esc(formatValue(t))}</text>`;
+    body += `<text x="${clamp(sx(t), half + 1, W - half - 1).toFixed(1)}" y="${bottom + 16}" font-size="10" text-anchor="middle" fill="${TEXT}">${esc(said)}</text>`;
   }
-  if (xLabel) body += `<text x="${left + plotW / 2}" y="${H - 10}" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(xLabel)}</text>`;
+  if (xLabel) body += `<text x="${left + plotW / 2}" y="${H - 10}" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(fitText(xLabel, 11, plotW))}</text>`;
   if (yLabel) {
-    body += `<text x="0" y="0" transform="translate(14,${top + plotH / 2}) rotate(-90)" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(yLabel)}</text>`;
+    body += `<text x="0" y="0" transform="translate(14,${top + plotH / 2}) rotate(-90)" font-size="11" text-anchor="middle" fill="${TEXT}">${esc(fitText(yLabel, 11, plotH))}</text>`;
   }
 
   // Marks, then the targets above them: a larger invisible circle per point,
@@ -433,7 +612,7 @@ function scatterChart({ title, data, format, xLabel = '', yLabel = '' }) {
     }
   });
 
-  return frame(W, H, title, body + hits);
+  return frame(W, H, title, head, body + hits);
 }
 
 /**
@@ -483,4 +662,4 @@ export function renderChart({ type, title, data, format = 'number', xLabel = '',
 }
 
 /** Exposed for the suite that pins the arithmetic and the palette. */
-export const __testing = { formatValue, PALETTE, axisTicks, rangeTicks };
+export const __testing = { formatValue, PALETTE, axisTicks, rangeTicks, textWidth, fitText };

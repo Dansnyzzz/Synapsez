@@ -1,7 +1,7 @@
 import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { rovingKeys } from './roving.js';
-import { weekDays, rowsFor, callsByDay, heatmap, heatmapBy, shareBy, pace, busiest, usualDay, standing, knownLimits, tightest, project } from './usage-math.js';
+import { weekDays, rowsFor, callsByDay, heatmap, heatmapBy, shareBy, pace, busiest, usualDay, standing, knownLimits, overviewLimits, decisiveLimits, tightest, project } from './usage-math.js';
 
 /**
  * Settings → Usage, after Claude's (owner, 2026-10-31): a page per provider the
@@ -25,7 +25,7 @@ const ORDER = ['openrouter', 'google', 'orcarouter', 'anthropic', 'openai'];
 /** Where each provider's own figures live, for the line under a provider that reports none. */
 const CONSOLE = {
   google: 'https://aistudio.google.com/usage',
-  orcarouter: 'https://www.orcarouter.ai/keys',
+  orcarouter: 'https://www.orcarouter.ai/console',
   openrouter: 'https://openrouter.ai/settings/credits',
   anthropic: 'https://platform.claude.com/usage',
   openai: 'https://platform.openai.com/usage',
@@ -41,14 +41,18 @@ const when = (date, opts) => new Intl.DateTimeFormat(locale(), opts).format(date
 const resetAt = (date) => when(date, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 const timeOf = (date) => when(date, new Date(date).toDateString() === new Date().toDateString() ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 /** Where more of a limit can be had: credit raises the free requests to 1,000 a day; a key's own cap is set on its page. */
-export const MORE = { free: 'https://openrouter.ai/settings/credits', cap: 'https://openrouter.ai/settings/keys' };
+const MORE = { free: 'https://openrouter.ai/settings/credits', cap: 'https://openrouter.ai/settings/keys' };
+export const moreLink = (limit) => (limit.provider === 'orcarouter' ? CONSOLE.orcarouter : MORE[limit.kind]);
+
+/** The routers by name, for the sentences that say whose limit it is. */
+const ROUTER_NAMES = { openrouter: 'OpenRouter', orcarouter: 'OrcaRouter' };
 
 /**
- * An own OpenRouter key by its place and the last characters of it: "Key 1
+ * An own key by its place and the last characters of it: "Key 1
  * (…7a41)" — or "Key 1, …7a41" inside a sentence that is already in brackets.
  */
-export function keyLabel(index, providers, { inline = false } = {}) {
-  const raw = providers?.openrouter?.keys?.[index]?.hint || '';
+export function keyLabel(index, providers, { inline = false, provider = 'openrouter' } = {}) {
+  const raw = providers?.[provider]?.keys?.[index]?.hint || '';
   // The hint already reads "…7a41".
   const hint = raw ? (raw.startsWith('…') ? raw : `…${raw}`) : '';
   return t('usage.keyN', { n: String(index + 1), hint: hint ? (inline ? `, ${hint}` : ` (${hint})`) : '' });
@@ -58,13 +62,14 @@ export function keyLabel(index, providers, { inline = false } = {}) {
  * A limit by name, as a sentence uses it: "today's free requests on OpenRouter".
  * The key is named only when there are several, where it tells them apart.
  *
- * @param {{ kind: string, index?: number }} limit
+ * @param {{ kind: string, index?: number, provider?: string }} limit
  * @param {any} providers  the account's provider status, for the keys' hints
- * @param {number} keys  how many own OpenRouter keys there are
+ * @param {number} keys  how many own keys that provider has
  */
 export function limitName(limit, providers, keys) {
-  const key = keys > 1 && limit.index != null ? ` (${keyLabel(limit.index, providers, { inline: true })})` : '';
-  return t(`usage.name.${limit.kind}`, { key });
+  const provider = limit.provider || 'openrouter';
+  const key = keys > 1 && limit.index != null ? ` (${keyLabel(limit.index, providers, { inline: true, provider })})` : '';
+  return t(`usage.name.${limit.kind}`, { key, provider: ROUTER_NAMES[provider] || provider });
 }
 
 /** How much of a limit, in its own unit: requests, dollars or tokens. */
@@ -106,24 +111,59 @@ export function createUsagePanel(host, deps) {
 
   const keyName = (index) => keyLabel(index, deps.providers());
 
-  const ownKeys = () => (view.report?.live?.openrouter || []).length;
+  const ownKeys = (provider = 'openrouter') => (view.report?.live?.[provider] || []).length;
+  const routerName = (provider) => ROUTER_NAMES[provider] || provider;
+  /** A free id's name for a person: the part after the provider and the maker. */
+  const modelName = (id) => String(id).split('/').pop();
 
-  /** The bar for one limit: its name, when it resets, how much is used — amber from 80%, red at the limit. */
+  /**
+   * The bar for one limit: its name, when it resets, how much is used — amber from
+   * 80%, red at the limit. One with no key is a provider's total, or OrcaRouter's
+   * workspace; a figure Synapsez counted says so, because it is not the provider's.
+   */
   function limitBar(l) {
-    const label = l.kind === 'free' ? t('usage.freeToday', { key: keyName(l.index) }) : l.kind === 'cap' ? t('usage.keyLimit', { key: keyName(l.index) }) : t('usage.sharedMonth');
-    const sub = l.to ? t('usage.resets', { when: resetAt(l.to) }) : l.interval ? t(`usage.interval.${l.interval}`) : t('usage.noReset');
+    const provider = l.provider || 'openrouter';
+    const whose = routerName(provider);
+    const label =
+      l.kind === 'shared'
+        ? t('usage.sharedMonth')
+        : l.bucket
+          ? t('usage.freeModel', { model: modelName(l.bucket) })
+          : l.index == null
+            ? t(l.kind === 'free' ? 'usage.freeTotal' : 'usage.capTotal', { provider: whose })
+            : t(l.kind === 'free' ? 'usage.freeToday' : 'usage.keyLimit', { key: keyName(l.index) });
+    const resets = l.to ? t('usage.resets', { when: resetAt(l.to) }) : l.interval ? t(`usage.interval.${l.interval}`) : t('usage.noReset');
+    const sub = l.counted ? `${resets} · ${t('usage.countedHere')}` : resets;
     return bar({ label, sub, used: l.used, limit: l.limit, note: t('usage.ofLimit', { used: limitAmount(l, l.used), limit: limitAmount(l, l.limit) }) });
   }
 
   /** What the page says instead of a bar: a key that did not answer, a provider that reports no allowance. */
   function limitNotes(scope) {
     const out = [];
-    if (scope === 'all' || scope === 'openrouter') {
-      for (const live of view.report.live?.openrouter || []) {
-        if (!live.ok) out.push(`<p class="usage__note">${escapeHtml(t(live.reason === 'rejected' ? 'usage.keyRejected' : 'usage.keyQuiet', { key: keyName(live.index) }))}</p>`);
+    const quiet = (provider) => (view.report.live?.[provider] || []).filter((live) => !live.ok);
+    if (scope === 'all') {
+      // Which key is the provider's page's to say; here, only that one needs looking at.
+      for (const provider of ['openrouter', 'orcarouter']) {
+        const count = quiet(provider).length;
+        if (count) out.push(`<p class="usage__note">${escapeHtml(t('usage.keysQuiet', { n: String(count), provider: routerName(provider) }))}</p>`);
+      }
+    } else if (scope === 'openrouter' || scope === 'orcarouter') {
+      for (const live of quiet(scope)) {
+        const key = keyLabel(live.index, deps.providers(), { provider: scope });
+        out.push(`<p class="usage__note">${escapeHtml(t(live.reason === 'rejected' ? 'usage.keyRejected' : 'usage.keyQuiet', { key, provider: routerName(scope) }))}</p>`);
       }
     }
-    if (scope !== 'all' && scope !== 'openrouter') {
+    const orcaFree = view.report.free?.orcarouter;
+    if (orcaFree && (scope === 'all' || scope === 'orcarouter')) {
+      // No way to tell which ceiling applies yet, so both are said and neither is drawn.
+      if (!(orcaFree.limit > 0) && orcaFree.tiers?.length) {
+        const low = orcaFree.tiers[0];
+        const high = orcaFree.tiers[orcaFree.tiers.length - 1];
+        out.push(`<p class="usage__note">${escapeHtml(t('usage.orcaTierUnknown', { used: count(orcaFree.used || 0), low: count(low.rpd), high: count(high.rpd), usd: String(high.minPaidUsd) }))}</p>`);
+      }
+      if (scope === 'orcarouter') out.push(`<p class="usage__muted">${escapeHtml(t('usage.orcaNote'))} <a href="${CONSOLE.orcarouter}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a></p>`);
+    }
+    if (scope !== 'all' && scope !== 'openrouter' && scope !== 'orcarouter') {
       // No console known, no link: '#' in a new tab opened a second copy of the app (UI-010).
       const link = CONSOLE[scope] ? ` <a href="${CONSOLE[scope]}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a>` : '';
       out.push(`<p class="usage__note">${escapeHtml(t('usage.noAllowance', { provider: deps.meta()?.[scope]?.label || scope }))}${link}</p>`);
@@ -140,7 +180,7 @@ export function createUsagePanel(host, deps) {
     const worst = tightest(known);
     if (!worst) return { text: t(`usage.standing.${standing(known)}`), tone: '' };
     const now = new Date();
-    const name = limitName(worst, deps.providers(), ownKeys());
+    const name = limitName(worst, deps.providers(), ownKeys(worst.provider));
     const share = worst.used / worst.limit;
     const resets = worst.to ? t('usage.head.resets', { when: resetAt(worst.to) }) : '';
     if (share >= 1) return { text: `${t('usage.head.out', { limit: name })}${resets ? ` ${resets}` : ''}`, tone: 'out', limit: worst };
@@ -149,8 +189,8 @@ export function createUsagePanel(host, deps) {
       const pace = ahead?.runsOut ? ` ${t('usage.head.paceOut', { time: timeOf(ahead.runsOut) })}` : '';
       return { text: `${t('usage.head.close', { pct: pct(share), limit: name })}${pace}${resets ? ` ${resets}` : ''}`, tone: 'close', limit: worst };
     }
-    if (ahead?.runsOut) return { text: t('usage.head.willRunOut', { limit: name, time: timeOf(ahead.runsOut), when: worst.to ? resetAt(worst.to) : '' }), tone: 'close', limit: worst };
-    if (ahead) return { text: t('usage.head.onTrack'), tone: '' };
+    // Under 80% nothing is said to worry anybody (owner, 2026-11-04), a pace included.
+    if (ahead && !ahead.runsOut) return { text: t('usage.head.onTrack'), tone: '' };
     return { text: t('usage.standing.ok'), tone: '' };
   }
 
@@ -180,7 +220,7 @@ export function createUsagePanel(host, deps) {
   function moreOf(limit) {
     if (!limit) return '';
     if (limit.kind === 'shared') return deps.openKeys ? `<div class="usage__actions"><button type="button" class="btn btn--small" data-open-keys>${escapeHtml(t('usage.addOwnKey'))}</button></div>` : '';
-    return `<div class="usage__actions"><a class="btn btn--small" href="${MORE[limit.kind]}" target="_blank" rel="noopener">${escapeHtml(t('usage.getMore'))} ↗</a></div>`;
+    return `<div class="usage__actions"><a class="btn btn--small" href="${moreLink(limit)}" target="_blank" rel="noopener">${escapeHtml(t('usage.getMore'))} ↗</a></div>`;
   }
 
   /** The resets the page knows of, soonest first, each once. */
@@ -188,7 +228,19 @@ export function createUsagePanel(host, deps) {
     const seen = new Set();
     const list = known
       .filter((l) => l.to)
-      .map((l) => ({ at: l.to, what: l.kind === 'free' ? t('usage.resetFree') : l.kind === 'cap' ? t('usage.resetBudget', { key: keyName(l.index) }) : t('usage.resetShared') }))
+      .map((l) => ({
+        at: l.to,
+        what:
+          l.kind === 'shared'
+            ? t('usage.resetShared')
+            : l.bucket
+              ? t('usage.freeModel', { model: modelName(l.bucket) })
+              : l.kind === 'free'
+                ? t('usage.resetFree', { provider: routerName(l.provider) })
+                : l.index == null
+                  ? t('usage.resetBudgetTotal', { provider: routerName(l.provider) })
+                  : t('usage.resetBudget', { key: keyName(l.index) }),
+      }))
       .filter((r) => !seen.has(r.what) && seen.add(r.what))
       .sort((a, b) => a.at - b.at);
     if (!list.length) return `<p class="usage__strong">${escapeHtml(t('usage.noResets'))}</p><p class="usage__muted">${escapeHtml(t('usage.noResetsHint'))}</p>`;
@@ -313,9 +365,26 @@ export function createUsagePanel(host, deps) {
   /** The money: what OpenRouter says each key spent and has left, and what Synapsez estimates for the rest. */
   function credits(scope) {
     const parts = [];
-    if (scope === 'all' || scope === 'openrouter') {
-      for (const live of view.report.live?.openrouter || []) {
-        if (!live.ok) continue;
+    const lives = (view.report.live?.openrouter || []).filter((live) => live.ok);
+    const sum = (read) => {
+      const known = lives.map(read).filter((n) => n != null);
+      return known.length ? known.reduce((a, b) => a + b, 0) : null;
+    };
+    // The Overview adds a provider's keys up; each one by itself is on the provider's page.
+    if (scope === 'all' && lives.length) {
+      const capped = lives.filter((live) => live.limit);
+      parts.push(`<div class="usage__credit">
+          <p class="usage__strong">OpenRouter</p>
+          <div class="usage__spend">
+            <div><span class="usage__muted">${escapeHtml(t('usage.spentToday'))}</span><strong>${money(sum((live) => live.spend?.today))}</strong></div>
+            <div><span class="usage__muted">${escapeHtml(t('usage.spentWeek'))}</span><strong>${money(sum((live) => live.spend?.week))}</strong></div>
+            <div><span class="usage__muted">${escapeHtml(t('usage.spentMonth'))}</span><strong>${money(sum((live) => live.spend?.month))}</strong></div>
+          </div>
+          ${capped.length ? `<p>${escapeHtml(t('usage.keysLimitLine', { left: money(capped.reduce((n, live) => n + (live.limit.remaining ?? live.limit.amount), 0)), limit: money(capped.reduce((n, live) => n + live.limit.amount, 0)) }))}</p>` : ''}
+        </div>`);
+    }
+    if (scope === 'openrouter') {
+      for (const live of lives) {
         parts.push(`<div class="usage__credit">
           <p class="usage__strong">${escapeHtml(keyName(live.index))}</p>
           <div class="usage__spend">
@@ -327,7 +396,23 @@ export function createUsagePanel(host, deps) {
           ${live.neverPaid === true ? `<p class="usage__muted">${escapeHtml(t('usage.neverPaid'))}</p>` : ''}
         </div>`);
       }
+    }
+    if (scope === 'openrouter' || (scope === 'all' && lives.length)) {
       parts.push(`<div class="usage__actions"><a class="btn btn--ghost btn--small" href="https://openrouter.ai/settings/credits" target="_blank" rel="noopener">${escapeHtml(t('usage.buyCredits'))} ↗</a><span class="usage__muted">${escapeHtml(t('usage.autoTopUp'))}</span></div>`);
+    }
+    // OrcaRouter says what credit a key can draw on, and nothing else about it.
+    const orcas = (view.report.live?.orcarouter || []).filter((live) => live.ok && live.balance != null);
+    if (scope === 'orcarouter') {
+      for (const live of orcas) {
+        parts.push(`<div class="usage__credit"><p class="usage__strong">${escapeHtml(keyLabel(live.index, deps.providers(), { provider: 'orcarouter' }))}</p><p>${escapeHtml(t('usage.orcaBalance', { amount: money(live.balance) }))}</p></div>`);
+      }
+    } else if (scope === 'all' && orcas.length) {
+      // Keys of one workspace all answer with its one wallet, so it is counted once.
+      const total = [...new Set(orcas.map((live) => live.balance))].reduce((a, b) => a + b, 0);
+      parts.push(`<div class="usage__credit"><p class="usage__strong">OrcaRouter</p><p>${escapeHtml(t('usage.orcaBalance', { amount: money(total) }))}</p></div>`);
+    }
+    if (scope === 'orcarouter' || (scope === 'all' && orcas.length)) {
+      parts.push(`<div class="usage__actions"><a class="btn btn--ghost btn--small" href="${CONSOLE.orcarouter}" target="_blank" rel="noopener">${escapeHtml(t('usage.buyCreditsOrca'))} ↗</a></div>`);
     }
     // The month as the server counts it (CODE-066): the hour rows reach back fifteen
     // days, so summing them came out too low from the 16th on.
@@ -350,8 +435,10 @@ export function createUsagePanel(host, deps) {
     const tabs = scopes();
     if (!tabs.some(([id]) => id === view.scope)) view.scope = 'all';
     const rows = rowsFor(view.report.hours, view.scope);
-    const known = knownLimits(view.report, view.scope);
-    const head = headline(known);
+    // What the bars show, and what the warning goes by: on a provider's page every
+    // key has a bar and only the one in use can raise a warning.
+    const known = view.scope === 'all' ? overviewLimits(view.report) : knownLimits(view.report, view.scope);
+    const head = headline(decisiveLimits(view.report, view.scope));
     const said = insight(rows);
     const notes = limitNotes(view.scope);
     // A repaint replaces the table; whoever was scrolled along it stays where they were.

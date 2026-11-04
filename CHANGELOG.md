@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-11-04 — OrcaRouter told the truth; replies that carry on by themselves; administrators with permissions
+
+**OrcaRouter, audited against its own documentation and a real key.** `/v1/models` lists a `-free` id with
+nothing but its price, so DeepSeek V4.1 Flash (Free) read as 128K, blind, and capped at 4,096 tokens of
+output. The library now also reads `/api/pricing` and the free package, and takes the rest from the paid model
+a free id shadows: 1M, 384K, vision, reasoning. Video, image, speech and embedding models no longer reach the
+picker. A key is checked when it is pasted, cost is asked for (`X-OrcaRouter-Include-Cost`) and read from
+`usage.cost_usd`, and each of the four free-tier rejections is read for what it is. Hitting a free limit no
+longer rests the key for paid models, here or on OpenRouter. `npm run orca:probe` asks a real key.
+
+**A reply cut off by the output limit carries on by itself**, in the same message, up to three more requests.
+A failure while it does keeps what was written and offers Continue. Reasoning cut off is no longer pasted in as
+the answer. A tool call cut in half is sent again smaller.
+
+**Usage.** The Overview has one line per provider; a provider's page has each key. A warning, on that page and
+above the composer, goes by the total on the Overview and by the key in use on a provider's page, from 80%.
+
+**Administrators.** One owner, the first administrator (schema 36), who adds others from a searchable list and
+chooses what each may do, and can hand the deployment to one of them. Making administrators, acting on other
+administrators and the machine under the server stay the owner's. The security review of this round found three
+ways to that machine, all closed: `usesInProcessTools` and stdio MCP servers now ask for the owner, a stdio row kept
+by somebody else no longer starts, and `GET /devices` no longer gives any signed-in account the code that pairs
+this machine. An owner cannot delete their account without choosing who comes next. It also found a chart of very
+large numbers that ran the process out of memory (`rangeTicks`), now bounded.
+
+**Model suggestions.** Two free choices and one paid. A model both routers offer goes through whichever the
+person holds a key for; with both, free goes through OrcaRouter and paid through OpenRouter.
+
+**Everything else on the owner's list.** A choice in Settings is drawn by the app (`public/js/picker.js`), under
+its button, with what each option does. Code blocks, the amber notice and hovered buttons read on the light
+theme, and an exported chart keeps its labels there. A chart's legend, title and axis stay inside the picture
+(`server/tools/chart.js`). `calculate` takes a list; `world_facts` takes coins (USDT→VND); `create_file` works
+out a missing format; a tool row names a file rather than its id; a search counts the page read after it, says
+when no engine could look, and DuckDuckGo's lite page answers when its HTML page is blocked.
+
 ## 2026-10-25 — files that come out designed; searches drawn like Claude's; pictures full screen; no tool in a box
 
 Asked for by the owner on 2026-10-25, with eleven screenshots of Claude and of the app.

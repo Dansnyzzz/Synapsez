@@ -54,6 +54,62 @@ section('a rate is converted, and a missing one refused');
   check('an unknown currency is an error, not a zero', /No rate from USD to XYZ/.test(refused), refused);
 }
 
+/**
+ * The owner's screenshot (2026-11-04): USDT→VND refused for not being an ISO code,
+ * on a question that had a live answer one free call away.
+ */
+section('a coin has a rate too');
+{
+  const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
+  const tool = CLOUD_IMPLEMENTATIONS.world_facts;
+  const real = globalThis.fetch;
+  const asked = [];
+  const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    globalThis.fetch = async (url) => {
+      asked.push(String(url));
+      if (String(url).includes('currency=USDT')) return json({ data: { currency: 'USDT', rates: { VND: '25700.5', USD: '0.999' } } });
+      return new Response('nope', { status: 500 });
+    };
+    const said = await tool({ kind: 'exchange_rate', base: 'usdt', quote: 'vnd', amount: 2 }, {});
+    check('USDT to VND is looked up, not refused', /2 USDT = 51,401 VND/.test(said), said);
+    check('  from a public source it names', /Coinbase/.test(said) && /not what a given exchange/.test(said));
+    check('  without touching the table that has no coins', !asked.some((u) => u.includes('er-api')));
+
+    asked.length = 0;
+    globalThis.fetch = async (url) => {
+      asked.push(String(url));
+      if (String(url).includes('currency=VND')) return json({ data: { currency: 'VND', rates: { USD: '0.00004' } } });
+      if (String(url).includes('currency=BTC')) return json({ data: { currency: 'BTC', rates: { VND: '2500000000' } } });
+      return new Response('nope', { status: 500 });
+    };
+    const back = await tool({ kind: 'exchange_rate', base: 'VND', quote: 'BTC', amount: 2_500_000_000 }, {});
+    check('a coin as the quote works the other way round', /= 1 BTC/.test(back), back);
+
+    // Coinbase down: the commonest coins still answer.
+    globalThis.fetch = async (url) => (String(url).includes('coingecko') ? json({ tether: { vnd: 25685 } }) : new Response('down', { status: 503 }));
+    const fallback = await tool({ kind: 'exchange_rate', base: 'USDT', quote: 'VND' }, {});
+    check('CoinGecko answers when Coinbase does not', /1 USDT = 25,685 VND/.test(fallback) && /CoinGecko/.test(fallback), fallback);
+
+    // A currency that is really a currency still goes to the table.
+    asked.length = 0;
+    globalThis.fetch = async (url) => {
+      asked.push(String(url));
+      return json({ result: 'success', rates: { VND: 25952.1 }, time_last_update_utc: 'today' });
+    };
+    const fiat = await tool({ kind: 'exchange_rate', base: 'USD', quote: 'VND' }, {});
+    check('two real currencies still use the rate table', /mid-market reference/.test(fiat) && asked.length === 1 && asked[0].includes('er-api'), asked.join());
+
+    globalThis.fetch = async () => json({ data: { rates: {} } });
+    const nothing = await tool({ kind: 'exchange_rate', base: 'NOSUCHCOIN', quote: 'VND' }, {}).catch((err) => err.message);
+    check('something nobody quotes is an error, not a zero', /No rate from NOSUCHCOIN to VND/.test(nothing), nothing);
+    const shape = await tool({ kind: 'exchange_rate', base: 'US D!', quote: 'VND' }, {}).catch((err) => err.message);
+    check('and what cannot be a code is refused before asking anyone', /ISO codes like USD/.test(shape) && /coin symbols/.test(shape), shape);
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
 section('it runs without asking, because it changes nothing');
 {
   const tool = TOOLS_BY_NAME.world_facts;

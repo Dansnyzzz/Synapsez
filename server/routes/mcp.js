@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isOwner } from '../adminRoles.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getStore } from '../store/index.js';
@@ -203,7 +204,7 @@ export function mountMcpRoutes(api, { wrap, body }) {
             'stdio servers need either the cloud computer (the Vercel Sandbox) or ALLOW_MCP_STDIO on a machine you trust, and this deployment has neither. An http server works everywhere.',
         });
       }
-      if (place === 'local' && req.user?.role !== 'admin') {
+      if (place === 'local' && !isOwner(req.user)) {
         return res.status(403).json({
           error:
             'A stdio server runs a program on this server with access to everyone’s stored keys, so only an administrator can add one. An http server works for any account.',
@@ -277,7 +278,7 @@ export function mountMcpRoutes(api, { wrap, body }) {
        */
       const enabling = req.body?.enabled !== false;
       const runsBeside = existing.config?.place ? existing.config.place === 'local' : stdioPlace() === 'local';
-      if (enabling && existing.config?.transport !== 'http' && runsBeside && req.user?.role !== 'admin') {
+      if (enabling && existing.config?.transport !== 'http' && runsBeside && !isOwner(req.user)) {
         return res.status(403).json({
           error:
             'A stdio server runs a program on this server with access to everyone’s stored keys, so only an administrator can switch one on.',

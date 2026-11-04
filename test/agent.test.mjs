@@ -2115,6 +2115,207 @@ section('the step ceiling reaches the browser, not just the descriptor');
   check('  naming the configured ceiling', /3 steps/.test(stop?.message || ''), stop?.message);
 }
 
+/**
+ * The owner's screenshots 8 and 9 (2026-11-04): a yellow "cut off" notice asking
+ * a person to type "continue", and a reasoning trace cut off mid-word and shown
+ * as the answer. A reply that hits the output limit is carried on by itself, in
+ * the same message; reasoning stays reasoning.
+ */
+section('a reply cut off by the output limit carries on by itself');
+{
+  const contUser = await store.createUser({
+    id: 'u-cont',
+    email: 'cont@example.com',
+    name: 'Cont',
+    passwordHash: await hashPassword('a-sufficiently-long-password'),
+    role: 'admin',
+  });
+  const cut = { kind: 'truncated', raw: 'length', message: 'The reply hit this model’s maximum output length and stopped mid-answer.', detail: null };
+  const clean = { kind: 'end_turn', raw: 'stop', message: null, detail: null };
+  const part = (text, stop, extra = {}) => ({ text, stop, ...extra });
+  /** Plays the parts in order and remembers what each request was sent. */
+  const play = (parts) => {
+    const asked = [];
+    const stream = async function* fake(opts) {
+      asked.push({ messages: opts.messages, effort: opts.effort });
+      const turn = parts.shift() || part('', clean);
+      if (turn.thinking) yield { type: 'thinking', delta: turn.thinking };
+      if (turn.retry) yield { type: 'retry', reason: 'key went away' };
+      for (const delta of [].concat(turn.text || [])) if (delta) yield { type: 'text', delta };
+      yield { type: 'done', stopReason: turn.stop.raw, stop: turn.stop, toolCalls: turn.toolCalls || [], usage: { input: 100, output: 40 } };
+    };
+    return { stream, asked };
+  };
+  const runOne = async (id, parts) => {
+    const chat = await store.createChat(contUser.id, { id, title: 'Long' });
+    await store.appendMessage(contUser.id, chat.id, { id: `${id}-u`, role: 'user', text: 'Write it all.' });
+    const events = [];
+    const { stream, asked } = play(parts);
+    await runAgent({ userId: contUser.id, user: contUser, chatId: chat.id, emit: (type, payload) => events.push({ type, payload }), stream });
+    const stored = (await store.listMessages(contUser.id, chat.id)).filter((m) => m.role === 'assistant');
+    const shown = events.filter((e) => e.type === 'text').map((e) => e.payload.delta).join('');
+    const done = events.find((e) => e.type === 'done')?.payload;
+    return { events, asked, stored, shown, done };
+  };
+
+  {
+    const { asked, stored, shown, done, events } = await runOne('c-cont-1', [part('The first half of a long ans', cut), part('wer, and the rest of it.', clean)]);
+    check('it asks again without being told', asked.length === 2, `${asked.length} requests`);
+    check('  and it is one message, not two', stored.length === 1, `${stored.length} stored`);
+    check('  holding the whole answer, joined where it was cut', stored[0]?.text === 'The first half of a long answer, and the rest of it.', stored[0]?.text);
+    check('  the screen read the same words', shown === stored[0]?.text, shown);
+    check('  no notice reaches the person', !done?.stop?.message, JSON.stringify(done?.stop));
+    check('  the second request carries what was written, then asks for the next character', asked[1].messages.at(-2)?.role === 'assistant' && asked[1].messages.at(-2)?.text === 'The first half of a long ans' && asked[1].messages.at(-1)?.role === 'user' && /very next character/.test(asked[1].messages.at(-1)?.text));
+    check('  it does not spend reasoning on the rest of a sentence', asked[1].effort === 'low', asked[1].effort);
+    check('  the screen is told it is carrying on', events.some((e) => e.type === 'status' && e.payload.phase === 'continuing'));
+    const billed = await store.usageByHour(contUser.id, 2);
+    check('  both requests are counted: each is a request the limit counts', billed.reduce((n, r) => n + Number(r.calls), 0) === 2, JSON.stringify(billed.map((r) => r.calls)));
+  }
+  {
+    const { stored } = await runOne('c-cont-2', [part('Sentence one. Sentence two is what the reader sees here', cut), part(['Sentence two is what the reader', ' sees here, and then the end.'], clean)]);
+    check('words the model repeats at the seam are dropped', stored[0]?.text === 'Sentence one. Sentence two is what the reader sees here, and then the end.', stored[0]?.text);
+  }
+  {
+    const { stored } = await runOne('c-cont-3', [part('Một câu trả lời đang viết cho người d', cut), part('…ùng đọc.', clean)]);
+    check('and so is an ellipsis it opens with', stored[0]?.text === 'Một câu trả lời đang viết cho người dùng đọc.', stored[0]?.text);
+  }
+  {
+    const { asked, stored, done } = await runOne('c-cont-4', [part('a', cut), part('b', cut), part('c', cut), part('d', cut), part('never', clean)]);
+    check('it gives up after three more tries', asked.length === 4, `${asked.length} requests`);
+    check('  keeps what it has', stored[0]?.text === 'abcd', stored[0]?.text);
+    check('  and only then says so, with Continue', done?.stop?.kind === 'truncated' && done?.stop?.resumable === true, JSON.stringify(done?.stop));
+  }
+  {
+    const { events, stored } = await runOne('c-cont-5', [part('Written before. ', cut), part('half a retry', clean, { retry: true })]);
+    check('a key failing while it carries on keeps the part already written', stored[0]?.text === 'Written before. half a retry', stored[0]?.text);
+    check('  and the screen is put right', events.some((e) => e.type === 'answer_revised' && e.payload.text === 'Written before. '));
+  }
+
+  // Screenshot 9: reasoning with no answer, cut off by the limit.
+  {
+    const { asked, stored, events, done } = await runOne('c-cont-6', [part('', cut, { thinking: 'Let me verify these. Then answer structure: which' }), part('Here is the answer.', clean)]);
+    check('reasoning cut off is not shown as the answer', !events.some((e) => e.type === 'reasoning_was_reply'));
+    check('  it is asked again, with no empty turn in the request', asked.length === 2 && asked[1].messages.at(-1)?.role === 'user' && asked[1].messages.at(-2)?.role !== 'assistant', JSON.stringify(asked[1]?.messages.at(-2)?.role));
+    check('  the answer is the answer', stored[0]?.text === 'Here is the answer.', stored[0]?.text);
+    check('  and the reasoning stays reasoning', /Let me verify/.test(stored[0]?.thinking || ''), stored[0]?.thinking);
+    check('  with nothing to complain of', !done?.stop?.message);
+  }
+  {
+    const { stored, events, done } = await runOne('c-cont-7', [part('', cut, { thinking: 'still thinking 1 ' }), part('', cut, { thinking: 'still 2 ' }), part('', cut, { thinking: 'still 3 ' }), part('', cut, { thinking: 'still 4' })]);
+    check('reasoning that never reaches an answer is still not the answer', !stored[0]?.text && !events.some((e) => e.type === 'reasoning_was_reply'), JSON.stringify(stored[0]?.text));
+    check('  it is said, with Continue', done?.stop?.kind === 'reasoning_cut' && done?.stop?.resumable === true && !!done?.stop?.message, JSON.stringify(done?.stop));
+  }
+  {
+    // The stream ended with no finish reason at all: a connection that dropped looks like this.
+    const { asked, events } = await runOne('c-cont-8', [part('', { kind: 'end_turn', raw: null, message: null, detail: null }, { thinking: 'cut mid-sen' }), part('The answer.', clean)]);
+    check('a stream that simply ended mid-thought is asked again', asked.length === 2 && !events.some((e) => e.type === 'reasoning_was_reply'));
+  }
+  {
+    // What the feature was for is untouched: a whole answer on the reasoning channel.
+    const { asked, stored, events } = await runOne('c-cont-9', [part('', clean, { thinking: 'Không, tôi không thể tạo 100 câu.' })]);
+    check('an answer that really did finish on the reasoning channel is still shown', asked.length === 1 && stored[0]?.text === 'Không, tôi không thể tạo 100 câu.' && events.some((e) => e.type === 'reasoning_was_reply'), stored[0]?.text);
+  }
+
+  // What was already written and paid for outlives what goes wrong after it.
+  {
+    const chat = await store.createChat(contUser.id, { id: 'c-cont-fail', title: 'Long' });
+    await store.appendMessage(contUser.id, chat.id, { id: 'c-cont-fail-u', role: 'user', text: 'Write it all.' });
+    let requests = 0;
+    const failing = async function* fake() {
+      requests += 1;
+      if (requests === 1) {
+        yield { type: 'text', delta: 'The whole first part of a long answer.' };
+        yield { type: 'done', stopReason: 'length', stop: cut, toolCalls: [], usage: { input: 100, output: 40 } };
+        return;
+      }
+      yield { type: 'text', delta: 'half of the second par' };
+      throw Object.assign(new Error('Provider returned error'), { status: 502, upstream: true });
+    };
+    const events = [];
+    let thrown = null;
+    await runAgent({ userId: contUser.id, user: contUser, chatId: chat.id, emit: (type, payload) => events.push({ type, payload }), stream: failing }).catch((err) => {
+      thrown = err;
+    });
+    const stored = (await store.listMessages(contUser.id, chat.id)).filter((m) => m.role === 'assistant');
+    const done = events.find((e) => e.type === 'done')?.payload;
+    check('a provider failing while it carries on does not lose the reply', !thrown && stored.length === 1 && stored[0].text.startsWith('The whole first part'), `${thrown?.message} / ${JSON.stringify(stored.map((m) => m.text))}`);
+    check('  and what arrived of the next part is kept with it', /half of the second par/.test(stored[0]?.text || ''), stored[0]?.text);
+    check('  it ends as cut off, with Continue', done?.stop?.kind === 'truncated' && done?.stop?.resumable === true, JSON.stringify(done?.stop));
+    const billed = await store.usageByHour(contUser.id, 2);
+    const before = billed.reduce((n, r) => n + Number(r.calls), 0);
+    check('  the part that finished is booked once, the one that failed not at all', before >= 1, String(before));
+  }
+  {
+    // Stopped by the person while the first words of a continuation are held back.
+    const chat = await store.createChat(contUser.id, { id: 'c-cont-stop', title: 'Long' });
+    await store.appendMessage(contUser.id, chat.id, { id: 'c-cont-stop-u', role: 'user', text: 'Write it all.' });
+    const stopper = new AbortController();
+    let requests = 0;
+    const stopped = async function* fake() {
+      requests += 1;
+      if (requests === 1) {
+        yield { type: 'text', delta: 'Written first. ' };
+        yield { type: 'done', stopReason: 'length', stop: cut, toolCalls: [], usage: { input: 10, output: 5 } };
+        return;
+      }
+      yield { type: 'text', delta: 'held at the seam' };
+      stopper.abort();
+      throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+    };
+    await runAgent({ userId: contUser.id, user: contUser, chatId: chat.id, emit: () => {}, stream: stopped, signal: stopper.signal });
+    const stored = (await store.listMessages(contUser.id, chat.id)).filter((m) => m.role === 'assistant');
+    check('words held at the seam are kept when the person presses stop', stored.length === 1 && stored[0].text === 'Written first. held at the seam', JSON.stringify(stored.map((m) => m.text)));
+  }
+  {
+    // Text that repeats is not a model repeating itself.
+    const { overlapAtSeam } = await import('../server/agent.js');
+    check('a table rule at the seam is not repeated words', overlapAtSeam('| a | b |\n| --- | --- | --- | --- |', '| --- | --- | --- | --- |\n| c |') === 0);
+    check('  nor is a short repeated line', overlapAtSeam('  doThing();\n  doThing();\n', '  doThing();\n  doThing();\n') === 0);
+    check('  words the model really did start over are', overlapAtSeam('Sentence two is what the reader sees here', 'Sentence two is what the reader sees here, and then') === 41);
+    check('  in Vietnamese too', overlapAtSeam('Đây là câu trả lời đang viết dở cho người', 'câu trả lời đang viết dở cho người dùng') > 20);
+  }
+  {
+    // A reply whose last part called a tool, on Claude: its provider record holds only that part.
+    const signed = { type: 'thinking', thinking: 'plan', signature: 'sig' };
+    const chat = await store.createChat(contUser.id, { id: 'c-cont-raw', title: 'Long' });
+    await store.appendMessage(contUser.id, chat.id, { id: 'c-cont-raw-u', role: 'user', text: 'Write it all.' });
+    const parts = [
+      { text: 'First part. ', stop: cut },
+      { text: 'Second part.', stop: { kind: 'tool_use', raw: 'tool_use', message: null, detail: null }, toolCalls: [{ id: 'call-raw', name: 'update_plan', input: { steps: [{ title: 'a', status: 'pending' }, { title: 'b', status: 'pending' }] } }], raw: { anthropic: [signed, { type: 'text', text: 'Second part.' }, { type: 'tool_use', id: 'call-raw', name: 'update_plan', input: {} }] } },
+      { text: 'Done.', stop: clean },
+    ];
+    const asked = [];
+    const stream = async function* fake(opts) {
+      asked.push(opts.messages);
+      const turn = parts.shift() || { text: 'Done.', stop: clean };
+      yield { type: 'text', delta: turn.text };
+      yield { type: 'done', stopReason: turn.stop.raw, stop: turn.stop, toolCalls: turn.toolCalls || [], usage: { input: 10, output: 5 }, ...(turn.raw ? { raw: turn.raw } : {}) };
+    };
+    await runAgent({ userId: contUser.id, user: contUser, chatId: chat.id, emit: () => {}, stream });
+    const replayed = asked.at(-1).find((m) => m.role === 'assistant' && m.raw?.anthropic)?.raw?.anthropic || [];
+    check('the provider record replayed still holds the parts before it', replayed.some((b) => b.type === 'text' && b.text.startsWith('First part.')), JSON.stringify(replayed.map((b) => b.type)));
+    check('  after the signed thinking, which has to stay first', replayed[0]?.type === 'thinking' && replayed[0]?.signature === 'sig', JSON.stringify(replayed[0]));
+  }
+
+  // A tool call cut off is never run, and never drawn as a failed step.
+  {
+    const malformed = { id: 'call-cut', name: 'create_file', input: { __malformed: '{"name":"Report","format":"docx","content":"# Long' } };
+    const { asked, events, stored, done } = await runOne('c-cont-10', [part('', cut, { toolCalls: [malformed] }), part('Done, in parts.', clean)]);
+    check('a call the limit cut in half is not run', !events.some((e) => e.type === 'tool_call'), events.filter((e) => e.type === 'tool_call').length);
+    check('  the model is told to send it in smaller parts', /smaller/.test(asked[1]?.messages.at(-1)?.text || ''), asked[1]?.messages.at(-1)?.text);
+    check('  and nothing about it is stored as a call', stored.every((m) => !m.toolCalls?.length), JSON.stringify(stored.map((m) => m.toolCalls)));
+    check('  no notice', !done?.stop?.message);
+  }
+  {
+    const malformed = { id: 'call-cut-2', name: 'create_file', input: { __malformed: '{"name":"Rep' } };
+    const whole = { id: 'call-whole', name: 'update_plan', input: { steps: [{ title: 'a', status: 'pending' }, { title: 'b', status: 'pending' }] } };
+    const { events } = await runOne('c-cont-11', [part('', cut, { toolCalls: [whole, malformed] }), part('Carried on.', clean)]);
+    const ran = events.filter((e) => e.type === 'tool_call').map((e) => e.payload.name);
+    check('the whole calls beside it still run; the cut one does not', ran.join() === 'update_plan', ran.join());
+    check('  and the limit is not reported while the turn goes on', !events.some((e) => e.type === 'status' && e.payload.stop === 'truncated'));
+  }
+}
+
 // ── the token-budget exit, the same wiring ────────────────────────────
 section('the turn-token ceiling reaches the browser too');
 {
