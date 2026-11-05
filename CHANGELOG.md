@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-05 — Files seen as they look; one step at a time; themes, boards and a whale
+
+**Files are drawn for the model** (`server/office/look.js`, `server/office/draw/`). A Word, Excel or PowerPoint file becomes pictures with no LibreOffice and no system fonts: real pagination, styles through `basedOn`, table styles and their conditional parts, list numbering, floating and square-wrapped drawings, headers and footers with live fields; a worksheet with row numbers, column letters, data bars, colour scales, Excel tables, charts and `####`. Pages share a picture only while they stay legible at the size kept. Checked side by side against real Word, Excel and PowerPoint. `look_at` and `read_file` use it. Carlito, Tinos, Cousine and Arimo (OFL) are bundled for metric-compatible widths and Vietnamese.
+
+**A file just written is checked before it is called done** (`server/fileLook.js`). The next request shows the model its file; a file written in parts is shown at the end; a text file is asked to be read again. Not with personal details masked (pixels cannot be masked), and not past the turn's time limit.
+
+**One step at a time** (`server/stepOrder.js`). Reads run side by side; each thing that changes something runs alone and in order, and what comes after a failure does not start. A call that could change nothing is not run and draws no row: an identical read of an unchanged file, a change already made, a failure that would repeat. Sums fold into one card.
+
+**Themes, boards and titles** (schema 37, `server/themes.js`, `public/js/scenes.js`, `themes-panel.js`, `ranking-panel.js`). Eight original animated scenes, painted by code. Top 3 by tokens and by spending for each UTC month and year get a prize theme and a title; administrators are on no board and hold every theme. A board shows an account name and a title, never an email, and anyone can show "A member" instead. A closed board is kept as it was given out. New permission `themes`. Privacy notice `privacy-2026-11-04`, for the boards.
+
+**A whale on the writing box** (`public/js/mascot.js`, art from Nwflower/dsh-claude-style under MIT, credited in `public/assets/mascot/NOTICE.txt`).
+
+**New built-in skills**, adapted where the licence allows and rewritten where it does not (`server/skills/THIRD_PARTY_NOTICES.md`): design direction, data visualisation, palettes, design QA, HTML email, natural writing, landing pages, posters, automation; deeper deck, document and PDF craft.
+
+**Research**: `docs/research/2026-11-04-data-cloaking-cot-monitorability.md`.
+
 ## 2026-11-04 — OrcaRouter told the truth; replies that carry on by themselves; administrators with permissions
 
 **OrcaRouter, audited against its own documentation and a real key.** `/v1/models` lists a `-free` id with
