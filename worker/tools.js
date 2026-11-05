@@ -167,6 +167,42 @@ async function readPicture(abs, stat) {
   };
 }
 
+/** Word, Excel and PowerPoint: zips of XML, which read as text were a page of nonsense. */
+const OFFICE_EXTENSIONS = /\.(docx|xlsx|pptx)$/i;
+const MAX_OFFICE_BYTES = 30 * 1024 * 1024;
+/** What one result may carry: a request over 4.5MB never reaches a serverless function. */
+const MAX_SHEETS_POST = 3_500_000;
+
+/**
+ * An Office file as what it says and how it looks (owner, 2026-11-04): its text,
+ * and pictures of its pages for the model. Drawn here, so the file itself never
+ * has to leave this computer whole; where the canvas will not load it is the text
+ * alone, and says so.
+ *
+ * @returns {Promise<{ text: string, sheets?: { data: string, mime: string, name: string, label: string }[] }>}
+ */
+async function readOfficeFile(abs, stat) {
+  if (stat.size > MAX_OFFICE_BYTES) throw new Error(`${rel(abs)} is ${sizeOf(stat.size)}, too large to read.`);
+  const bytes = await fsp.readFile(abs);
+  const name = path.basename(abs);
+  const format = name.split('.').pop().toLowerCase();
+  const [{ readOfficeAsync }, { lookAtFile }] = await Promise.all([import('../server/office/index.js'), import('../server/office/look.js')]);
+  const read = await readOfficeAsync(format, bytes);
+  const look = await lookAtFile(bytes, { name, maxSheets: 4 }).catch(() => null);
+  /** @type {{ data: string, mime: string, name: string, label: string }[]} */
+  const sheets = [];
+  let room = MAX_SHEETS_POST;
+  for (const sheet of look?.sheets || []) {
+    if (sheet.data.length > room) break;
+    room -= sheet.data.length;
+    sheets.push({ data: sheet.data, mime: sheet.mime, name: `${name} (${sheet.label}).jpg`, label: sheet.label });
+  }
+  const seen = sheets.length
+    ? `It was drawn in ${sheets.length} picture${sheets.length === 1 ? '' : 's'} (${sheets.map((s) => s.label).join('; ')}), which come with this result.${(look.notes || []).length ? ` About the drawing: ${look.notes.join(' ')}` : ''}`
+    : 'It could not be drawn on this computer, so this is its text only: layout, colours and pictures are not in it.';
+  return { text: clip(`${rel(abs)} (${sizeOf(stat.size)}). ${seen}\n\n${read.text || ''}`), sheets };
+}
+
 async function readFile({ path: target, offset = 1, limit = 400 }) {
   const abs = resolveInWorkspace(target);
   const stat = await fsp.stat(abs);
@@ -175,6 +211,7 @@ async function readFile({ path: target, offset = 1, limit = 400 }) {
     const picture = await readPicture(abs, stat);
     if (picture) return picture;
   }
+  if (OFFICE_EXTENSIONS.test(abs)) return readOfficeFile(abs, stat);
   if (stat.size > 5_000_000) throw new Error(`${rel(abs)} is ${stat.size} bytes — too large to read.`);
 
   const lines = (await fsp.readFile(abs, 'utf8')).split('\n');

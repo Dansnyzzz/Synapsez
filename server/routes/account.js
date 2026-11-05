@@ -1,3 +1,4 @@
+import { holdingsOf } from '../themes.js';
 import crypto from 'node:crypto';
 import { isOwner, requirePermission } from '../adminRoles.js';
 import { getStore } from '../store/index.js';
@@ -272,7 +273,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
     wrap(async (req, res) => {
       const store = getStore();
       const userId = req.user.id;
-      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData, research, mcpServers] = await Promise.all([
+      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData, research, mcpServers, holdings] = await Promise.all([
         getPrefs(userId),
         store.listMemoryBuckets(userId),
         store.listSkills(userId),
@@ -286,6 +287,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         store.getUserSetting(userId, 'artifactStorage'),
         store.exportResearchRuns(userId),
         store.listMcpServers(userId),
+        holdingsOf(userId, store),
       ]);
 
       const stamp = new Date().toISOString().slice(0, 10);
@@ -340,7 +342,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
       let count = 0;
       try {
-        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers });
+        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers, holdings });
       } catch (err) {
         /*
          * Half a JSON file that downloads as "complete" is worse than a failed
@@ -536,7 +538,7 @@ export function argsWithoutSecrets(args) {
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [] }) {
+async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [] } }) {
   // The username, a skill's files, the feedback sent (PRV-014), the skill draft
   // kept on the account (PRV-027), what artifacts' pages saved (PRV-028), the
   // deep-research runs and the MCP servers added (PRV-029) are held too, so they
@@ -551,6 +553,9 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
       `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, files: Array.isArray(s.files) ? s.files : [] })))},` +
       `"skillDraft":${JSON.stringify(skillDraft || null)},` +
       `"artifactData":${JSON.stringify(artifactData || {})},` +
+      // The themes and titles the account holds, and since when (server/themes.js).
+      `"themes":${JSON.stringify(holdings.themes.map((t) => ({ id: t.theme_id, why: t.grant_kind, month: t.grant_month, year: t.grant_year, since: t.granted_at })))},` +
+      `"titles":${JSON.stringify(holdings.titles.map((t) => ({ id: t.title_id, since: t.earned_at })))},` +
       `"research":${JSON.stringify(research.map((r) => ({ chatId: r.chat_id, question: r.question, status: r.status, transcript: r.transcript, sources: r.sources, report: r.report, createdAt: r.created_at, completedAt: r.completed_at })))},` +
       `"mcpServers":${JSON.stringify(
         mcpServers.map((s) => ({

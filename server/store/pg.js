@@ -235,8 +235,10 @@ export function splitStatements(sql) {
  *      that turn as it ran (tool calls, results, model), for the administrators
  *  36  users.is_owner / admin_permissions — one owner, the first administrator,
  *      who says what each other administrator may do (server/adminRoles.js)
+ *  37  user_themes, user_titles, theme_badges, ranking_board, ranking_settled,
+ *      usage_lifetime — themes, the monthly and yearly boards, titles
  */
-export const SCHEMA_VERSION = 36;
+export const SCHEMA_VERSION = 37;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -2726,13 +2728,131 @@ export function createPgStore(connectionString) {
      * monthly quota only ever reads the current month.
      */
     async pruneUsageEvents(keepDays = 400) {
+      // One statement, so what leaves the table is counted exactly once: a lifetime
+      // total (titles, achievement themes) must outlast the rows it was added from.
       await q(
-        `DELETE FROM usage_events WHERE created_at < NOW() - ($1 || ' days')::interval`,
+        `WITH gone AS (
+           DELETE FROM usage_events WHERE created_at < NOW() - ($1 || ' days')::interval
+           RETURNING user_id, input_tokens, output_tokens, cost_usd
+         ), totals AS (
+           SELECT user_id, SUM(input_tokens + output_tokens)::bigint AS tokens, SUM(cost_usd) AS cost FROM gone GROUP BY user_id
+         )
+         INSERT INTO usage_lifetime (user_id, tokens, cost)
+         SELECT user_id, tokens, cost FROM totals
+         ON CONFLICT (user_id) DO UPDATE SET tokens = usage_lifetime.tokens + EXCLUDED.tokens, cost = usage_lifetime.cost + EXCLUDED.cost`,
         [String(keepDays)],
       );
     },
+
+    // ── themes, ranking, titles (server/themes.js) ──────────────────
+    /** Everyone's usage in a period, administrators left out: they are on no board. */
+    async rankingRows(from, to) {
+      const rows = await q(
+        `SELECT e.user_id AS id,
+                SUM(e.input_tokens + e.output_tokens)::bigint AS tokens,
+                COALESCE(SUM(e.cost_usd), 0) AS cost,
+                MIN(e.created_at) AS first_at
+           FROM usage_events e
+           JOIN users u ON u.id = e.user_id
+          WHERE e.created_at >= $1 AND e.created_at < $2 AND u.role <> 'admin'
+          GROUP BY e.user_id`,
+        [from.toISOString(), to.toISOString()],
+      );
+      return rows.map((r) => ({ id: r.id, tokens: Number(r.tokens || 0), cost: Number(r.cost || 0), first_at: r.first_at }));
+    },
+    /** Everything an account has used, what has been pruned included. */
+    async lifetimeUsage(userId) {
+      const rows = await q(
+        `SELECT COALESCE((SELECT tokens FROM usage_lifetime WHERE user_id = $1), 0)
+                 + COALESCE((SELECT SUM(input_tokens + output_tokens) FROM usage_events WHERE user_id = $1), 0) AS tokens,
+                COALESCE((SELECT cost FROM usage_lifetime WHERE user_id = $1), 0)
+                 + COALESCE((SELECT SUM(cost_usd) FROM usage_events WHERE user_id = $1), 0) AS cost`,
+        [userId],
+      );
+      return { tokens: Number(rows[0]?.tokens || 0), cost: Number(rows[0]?.cost || 0) };
+    },
+    async listUserThemes(userId) {
+      return q('SELECT theme_id, grant_kind, grant_month, grant_year, granted_at FROM user_themes WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+    },
+    /** The themes an administrator took back from this account, which usage must not earn again. */
+    async listRevokedThemes(userId) {
+      return q('SELECT theme_id FROM user_themes WHERE user_id = $1 AND revoked_at IS NOT NULL', [userId]);
+    },
+    /** Given again, it counts as newly received, and says the latest reason. */
+    async grantTheme(userId, themeId, grant) {
+      await q(
+        `INSERT INTO user_themes (user_id, theme_id, grant_kind, grant_month, grant_year)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id, theme_id) DO UPDATE
+           SET grant_kind = EXCLUDED.grant_kind, grant_month = EXCLUDED.grant_month, grant_year = EXCLUDED.grant_year, granted_at = NOW(), revoked_at = NULL`,
+        [userId, themeId, grant.kind, grant.month ?? null, grant.year ?? null],
+      );
+    },
+    async revokeTheme(userId, themeId) {
+      await q('UPDATE user_themes SET revoked_at = NOW() WHERE user_id = $1 AND theme_id = $2', [userId, themeId]);
+    },
+    async themeHolderCounts() {
+      return q('SELECT theme_id, COUNT(*)::int AS holders FROM user_themes WHERE revoked_at IS NULL GROUP BY theme_id');
+    },
+    async listThemeBadges() {
+      return q('SELECT theme_id, kind, month, year FROM theme_badges');
+    },
+    async setThemeBadge(themeId, badge, by) {
+      await q(
+        `INSERT INTO theme_badges (theme_id, kind, month, year, updated_by) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (theme_id) DO UPDATE
+           SET kind = EXCLUDED.kind, month = EXCLUDED.month, year = EXCLUDED.year, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+        [themeId, badge.kind, badge.month, badge.year, by],
+      );
+    },
+    async listUserTitles(userId) {
+      return q('SELECT title_id, earned_at FROM user_titles WHERE user_id = $1', [userId]);
+    },
+    async grantTitle(userId, titleId) {
+      await q('INSERT INTO user_titles (user_id, title_id) VALUES ($1, $2) ON CONFLICT (user_id, title_id) DO NOTHING', [userId, titleId]);
+    },
+    async saveBoardRow(scope, period, board, rank, userId, value) {
+      await q(
+        `INSERT INTO ranking_board (scope, period, board, rank, user_id, value) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (scope, period, board, rank) DO UPDATE SET user_id = EXCLUDED.user_id, value = EXCLUDED.value`,
+        [scope, period, board, rank, userId, value],
+      );
+    },
+    async settledBoard(scope, period) {
+      return q('SELECT board, rank, user_id, value FROM ranking_board WHERE scope = $1 AND period = $2', [scope, period]);
+    },
+    async markPeriodSettled(scope, period) {
+      await q('INSERT INTO ranking_settled (scope, period) VALUES ($1, $2) ON CONFLICT (scope, period) DO NOTHING', [scope, period]);
+    },
+    async listSettledPeriods() {
+      return q('SELECT scope, period FROM ranking_settled');
+    },
+    /** The accounts a theme can be given to. Administrators hold them all already. */
+    async listPeopleNames() {
+      return q(`SELECT id, username, name FROM users WHERE role <> 'admin' ORDER BY COALESCE(username, name, '') LIMIT 5000`);
+    },
+    async themeHolders(themeId) {
+      return q(
+        `SELECT u.id, u.username, u.name, t.granted_at
+           FROM user_themes t JOIN users u ON u.id = t.user_id
+          WHERE t.theme_id = $1 AND t.revoked_at IS NULL
+          ORDER BY t.granted_at DESC LIMIT 500`,
+        [themeId],
+      );
+    },
+    /** What a board may say about these accounts. Never an email. */
+    async boardPeople(ids) {
+      if (!ids.length) return [];
+      return q(
+        `SELECT u.id, u.username, u.name, s.value AS prefs
+           FROM users u LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
+          WHERE u.id = ANY($1)`,
+        [ids],
+      );
+    },
     async getJob(userId, id) {
-      const rows = await q('SELECT id, status, result FROM tool_jobs WHERE id = $1 AND user_id = $2', [
+      // `chat_id` too: what a job's result keeps goes when its conversation does.
+      const rows = await q('SELECT id, status, result, chat_id FROM tool_jobs WHERE id = $1 AND user_id = $2', [
         id,
         userId,
       ]);

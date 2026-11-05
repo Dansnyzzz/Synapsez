@@ -235,6 +235,26 @@ export async function keepStepShot(userId, shot, { chatId = null } = {}) {
   }
 }
 
+/**
+ * Pictures of a file a worker drew, kept like any a step read. What comes back is
+ * ids, in order; one that could not be kept is left out, because the step succeeded.
+ *
+ * @param {string} userId
+ * @param {any} sheets  from a request, so nothing about it is assumed
+ * @param {{ chatId?: string|null }} [options]
+ * @returns {Promise<{ id: string, name: string, label: string }[]>}
+ */
+export async function keepSheets(userId, sheets, { chatId = null } = {}) {
+  /** @type {{ id: string, name: string, label: string }[]} */
+  const kept = [];
+  for (const sheet of (Array.isArray(sheets) ? sheets : []).slice(0, 6)) {
+    if (typeof sheet?.data !== 'string' || typeof sheet?.name !== 'string') continue;
+    const row = await keepStepShot(userId, { data: sheet.data, mime: String(sheet.mime || 'image/jpeg'), name: sheet.name }, { chatId });
+    if (row?.id) kept.push({ id: row.id, name: row.name || sheet.name, label: String(sheet.label || '').slice(0, 80) });
+  }
+  return kept;
+}
+
 /** What a picture a step read may weigh, kept — a 1600px chart is a few hundred KB. */
 export const MAX_SEEN_BYTES = 2560 * 1024;
 
@@ -428,15 +448,17 @@ export async function loadForTranscript(userId, messages, { extractText = false,
   const store = getStore();
 
   const ids = [];
+  /** Pictures of a file the model was shown to check it: not the person's files, so not in their window. */
+  const looked = [];
   for (const message of messages) {
-    for (const file of message.attachments || []) ids.push(file.id);
+    for (const file of message.attachments || []) (message.looked ? looked : ids).push(file.id);
   }
-  if (!ids.length) return new Map();
+  if (!ids.length && !looked.length) return new Map();
 
   // Newest first: the ones just sent are the ones being asked about. Counted
   // once each — the same file sent twice is one file, and must not push a
   // different one out of the window.
-  const live = [...new Set([...ids].reverse())].slice(0, LIVE_ATTACHMENTS).reverse();
+  const live = [...new Set([...[...new Set([...ids].reverse())].slice(0, LIVE_ATTACHMENTS).reverse(), ...looked])];
 
   /**
    * The rows, once per turn rather than once per step.

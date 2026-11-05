@@ -901,6 +901,8 @@ yourself — the **Source** tab in the viewer.
 > `create_file` puts a file in the conversation. `write_file` puts one on your disk. They are
 > different requests, and the assistant is told to say plainly which one it did.
 
+**The model checks what it made.** A Word, Excel or PowerPoint file it writes is drawn and shown back to it on the next request, so a table cut in half or white words on white are seen before it says it is done; `look_at` does the same for any such file, and `read_file` for one on your computer. Drawing needs no Office and no system fonts (`server/office/look.js`), and pages share a picture only while they stay legible. With "mask personal details" on, the pictures do not go out, because pixels cannot be masked. Several things are not drawn faithfully, and each says so to the model: fonts other than the bundled stand-ins, SmartArt with no saved drawing, WordArt, and charts, which are redrawn from their saved numbers.
+
 **No PDF writer**, for the reason in the previous chapter: make it a `.docx` or `.html` and use Print →
 Save as PDF from the viewer. Also not attempted, and said plainly rather than half-done: images
 inside generated documents, charts, headers and footers, and any layout beyond what Markdown
@@ -1375,6 +1377,18 @@ Laid out as Claude's (2026-11-01): **Filter by** the plugin a skill comes with o
 - **Create with Claude** — a new conversation with the request written and the built-in
   `skill-creator` picked: the assistant asks what the skill should do, drafts it, and saves it with
   `skill_write` once you agree.
+
+---
+
+## Themes, the boards and titles
+
+**Settings → Theme**: eight animated scenes behind the whole app, painted by code on a small canvas (`public/js/scenes.js`), plus the plain look. A tile plays while the pointer is on it; the theme in use keeps still there, since it is already moving behind everything. A locked theme can be looked at and says what earns it, but does not apply. Scenes are still pictures for anyone asking for less motion, stop when the tab is hidden, and bring their own light or dark without overwriting yours.
+
+**Settings → Ranking**: the top three by tokens and by spending for each UTC month and year. When a period closes, they get its prize theme and a title. Administrators are not ranked, and hold every theme. A board shows an account name and a title; a switch shows "A member" instead. Ranking starts from 2026-11; a closed board stays as it was given out.
+
+Administrators with the `themes` permission choose each theme's badge and give or take a theme, under Settings → People. Which theme a period's prize is follows the badge: one naming that period wins, otherwise the one marked for any period.
+
+The whale on the writing box follows what the assistant is doing, or holds one state, or is off; the choice is on the Theme page. Its art comes from Nwflower/dsh-claude-style under MIT (`public/assets/mascot/NOTICE.txt`).
 
 ---
 

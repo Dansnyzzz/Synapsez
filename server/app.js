@@ -73,6 +73,7 @@ import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { usageReport } from './usageReport.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { mountFeedbackRoutes } from './routes/feedback.js';
+import { mountThemeRoutes } from './routes/themes.js';
 import { freeTierReport } from './freeTier.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -93,6 +94,7 @@ import {
 } from './devices.js';
 import { pendingAnnouncement, decideAnnouncement, markAnnouncementShown } from './modelNews.js';
 import {
+  keepSheets,
   keepStepShot,
   LIMITS as ATTACHMENT_LIMITS,
 } from './attachments.js';
@@ -745,7 +747,7 @@ export function createApp() {
   workerApi.post(
     '/jobs/:id/result',
     wrap(async (req, res) => {
-      const { output, error, shot } = req.body || {};
+      const { output, error, shot, sheets } = req.body || {};
       await getStore().completeJob(req.workerUser.id, req.params.id, {
         // A job the server already closed — cancelled, or timed out and
         // answered — keeps that record. A late result arriving after the stop
@@ -760,6 +762,9 @@ export function createApp() {
           ? { error }
           : {
               output,
+              ...(Array.isArray(sheets) && sheets.length
+                ? { pictures: await keepSheets(req.workerUser.id, sheets, { chatId: (await getStore().getJob(req.workerUser.id, req.params.id).catch(() => null))?.chat_id || null }) }
+                : {}),
               ...(shot
                 ? {
                     shot: await keepStepShot(req.workerUser.id, shot, {
@@ -1035,6 +1040,8 @@ export function createApp() {
         'connectorSearch',
         'qualityGate',
         'figureCheck',
+        'mascot',
+        'rankAnonymous',
       ];
       const patch = {};
       for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
@@ -2591,6 +2598,7 @@ export function createApp() {
     }),
   );
 
+  mountThemeRoutes({ api, admin, wrap, audit });
   api.use('/admin', admin);
   app.use('/api', api);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));

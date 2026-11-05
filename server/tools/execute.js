@@ -5,7 +5,7 @@ import { getPrefs } from '../settings.js';
 import { TOOLS_BY_NAME, returnsExternalContent, externalSource } from './definitions.js';
 import { CLOUD_IMPLEMENTATIONS } from './cloud.js';
 import { isMcpTool, callMcpTool, splitMcpName } from '../mcp/registry.js';
-import { keepStepShot } from '../attachments.js';
+import { keepSheets, keepStepShot } from '../attachments.js';
 import { see } from '../vision.js';
 import { groundedImage } from '../imageGround.js';
 import { redactSecrets } from '../redact.js';
@@ -130,7 +130,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
     // the text, the same way `file` and `widget` do for cloud tools. A `null`
     // is a picture the worker sent and the server could not keep, which
     // `readPicture` has to be able to tell from no picture at all.
-    return { isError: false, content: String(result.output ?? ''), shot: shotOf(result) };
+    return { isError: false, content: String(result.output ?? ''), shot: shotOf(result), pictures: result.pictures };
   }
 
   // Only if it is genuinely still open. The worker may have finished and be
@@ -146,7 +146,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
   // window, that is the truth and the timeout was a false alarm.
   const late = await store.getJob(userId, id).catch(() => null);
   if (late && late.status === 'done' && !late.result?.error) {
-    return { isError: false, content: String(late.result?.output ?? ''), shot: shotOf(late.result) };
+    return { isError: false, content: String(late.result?.output ?? ''), shot: shotOf(late.result), pictures: late.result?.pictures };
   }
 
   return {
@@ -176,6 +176,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
  *   origin?: string|null,
  *   whereabouts?: { lat: number, lon: number, city: string } | null,
  *   raw?: boolean,
+ *   canSee?: boolean,
  * }} ToolCallArgs
  */
 
@@ -191,6 +192,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
  *
  * @typedef {{
  *   content: string,
+ *   pictures?: any[],
  *   isError: boolean,
  *   file?: any,
  *   widget?: any,
@@ -449,7 +451,7 @@ export function redactedOutput(name, content) {
  * @param {ToolCallArgs} args
  * @returns {Promise<ToolResult>}
  */
-async function runTool({ user, name, input, chatId, signal, deviceHint, deliverable, answers, origin = null, whereabouts = null }) {
+async function runTool({ user, name, input, chatId, signal, deviceHint, deliverable, answers, origin = null, whereabouts = null, canSee = false }) {
   const userId = user.id;
 
   /**
@@ -487,7 +489,7 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
       // `deliverable` is the set of tool names this account can actually be
       // given this turn. Only `load_tools` reads it, and only so it stops
       // promising tools that will never arrive — see loadToolsTool.
-      const result = await impl(input || {}, { userId, user, chatId, signal, deliverable, answers, origin, whereabouts });
+      const result = await impl(input || {}, { userId, user, chatId, signal, deliverable, answers, origin, whereabouts, canSee });
 
       /**
        * A tool may hand back more than a sentence.
@@ -528,6 +530,8 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           schedule: result.schedule,
           // The conversations search_chats found, listed on screen as "Relevant chats".
           chats: Array.isArray(result.chats) ? result.chats : undefined,
+          // A file drawn as pictures for the model itself; see server/fileLook.js.
+          pictures: Array.isArray(result.pictures) ? result.pictures : undefined,
           // A picture of the page the cloud browser is on, kept like a worker's.
           // A picture the tool already holds — `look_at` on a file of this
           // account — is referenced, not copied. Only cloud tools, this
@@ -567,6 +571,7 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
           isError: false,
           content: String(output.text ?? ''),
           shot: output.shot ? await keepStepShot(userId, output.shot, { chatId }) : undefined,
+          pictures: output.sheets ? await keepSheets(userId, output.sheets, { chatId }) : undefined,
         };
       }
       return { isError: false, content: String(output ?? '') };

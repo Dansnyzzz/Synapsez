@@ -22,7 +22,7 @@
  */
 
 /** Everything an administrator can be given, in the order Settings lists them. */
-export const ADMIN_PERMISSIONS = Object.freeze(['users', 'delete_users', 'models', 'feedback', 'activity', 'free_tier']);
+export const ADMIN_PERMISSIONS = Object.freeze(['users', 'delete_users', 'models', 'feedback', 'activity', 'free_tier', 'themes']);
 
 const known = new Set(ADMIN_PERMISSIONS);
 

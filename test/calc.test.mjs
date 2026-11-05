@@ -153,8 +153,8 @@ section('several figures in one call');
   const { validateArguments } = await import('../server/tools/validate.js');
 
   const said = calculate('[55.00-29.30, 80.00-29.30, 40.00-29.30]');
-  check('a list is worked out item by item', said === '[55.00-29.30, 80.00-29.30, 40.00-29.30] = [25.7, 50.7, 10.7]', said);
-  check('functions inside the items keep their own commas', calculate('[round(1.234, 1), sum([1, 2]), 2]').endsWith('= [1.2, 3, 2]'), calculate('[round(1.234, 1), sum([1, 2]), 2]'));
+  check('a list is worked out item by item, a line each with its working', said === '55.00-29.30 = 25.7\n80.00-29.30 = 50.7\n40.00-29.30 = 10.7', said);
+  check('functions inside the items keep their own commas', calculate('[round(1.234, 1), sum([1, 2]), 2]') === 'round(1.234, 1) = 1.2\nsum([1, 2]) = 3\n2 = 2', calculate('[round(1.234, 1), sum([1, 2]), 2]'));
   check('  and a list inside a function is still that function', calculate('sum([1, 2, 3])') === 'sum([1, 2, 3]) = 6', calculate('sum([1, 2, 3])'));
   check('one bad item is the error, not a wrong list', /divides by zero/.test((() => { try { return calculate('[1, 1/0]'); } catch (e) { return e.message; } })()));
 
@@ -184,7 +184,7 @@ section('several figures in one call');
   const raw = '{"expression": [8-5.5, 8, 5-5.5, (8-5.5)/2.5, 5.5]}';
   const saved = salvageArguments('calculate', raw);
   check('arithmetic written straight into the JSON is read as meant', saved?.expression === '[8-5.5, 8, 5-5.5, (8-5.5)/2.5, 5.5]', JSON.stringify(saved));
-  check('  and works out', calculate(saved.expression).endsWith('= [2.5, 8, -0.5, 1, 5.5]'), calculate(saved.expression));
+  check('  and works out', calculate(saved.expression).split('\n').map((line) => line.split(' = ')[1]).join() === '2.5,8,-0.5,1,5.5', calculate(saved.expression));
   check('  one cut off before it closed is left refused', salvageArguments('calculate', '{"expression": [8-5.5, 8') === null);
   check('  and no other tool gets this reading', salvageArguments('run_command', '{"command": rm -rf /}') === null);
 

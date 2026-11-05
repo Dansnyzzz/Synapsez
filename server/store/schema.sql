@@ -1025,3 +1025,57 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS files JSONB NOT NULL DEFAULT '[]'::j
 ALTER TABLE feedback ADD COLUMN IF NOT EXISTS message_id TEXT;
 ALTER TABLE feedback ADD COLUMN IF NOT EXISTS issue TEXT;
 ALTER TABLE feedback ADD COLUMN IF NOT EXISTS answer JSONB;
+
+-- 37: themes, ranking, titles (owner, 2026-11-04; server/themes.js).
+-- `user_themes` / `user_titles`: what an account holds and since when; a
+-- theme's grant says why ("Top 11/2026"). `theme_badges`: an administrator's
+-- choice of badge, over the catalogue's. `ranking_board`: the top three of a
+-- closed period as they were given out, kept so usage being pruned or an account
+-- being deleted cannot change it; `ranking_settled` marks a period as given out.
+-- `usage_lifetime`: usage rolled up as it is pruned from `usage_events`, so a
+-- lifetime total keeps counting past the 400 days those are kept.
+CREATE TABLE IF NOT EXISTS user_themes (
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  theme_id    TEXT NOT NULL,
+  grant_kind  TEXT NOT NULL,
+  grant_month INTEGER,
+  grant_year  INTEGER,
+  granted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at  TIMESTAMPTZ,
+  PRIMARY KEY (user_id, theme_id)
+);
+CREATE INDEX IF NOT EXISTS user_themes_theme_idx ON user_themes (theme_id);
+CREATE TABLE IF NOT EXISTS user_titles (
+  user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title_id  TEXT NOT NULL,
+  earned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, title_id)
+);
+CREATE TABLE IF NOT EXISTS theme_badges (
+  theme_id   TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,
+  month      INTEGER,
+  year       INTEGER,
+  updated_by TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ranking_board (
+  scope   TEXT NOT NULL,
+  period  TEXT NOT NULL,
+  board   TEXT NOT NULL,
+  rank    INTEGER NOT NULL,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  value   DOUBLE PRECISION NOT NULL,
+  PRIMARY KEY (scope, period, board, rank)
+);
+CREATE TABLE IF NOT EXISTS ranking_settled (
+  scope      TEXT NOT NULL,
+  period     TEXT NOT NULL,
+  settled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (scope, period)
+);
+CREATE TABLE IF NOT EXISTS usage_lifetime (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  tokens  BIGINT NOT NULL DEFAULT 0,
+  cost    DOUBLE PRECISION NOT NULL DEFAULT 0
+);

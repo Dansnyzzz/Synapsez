@@ -8,6 +8,8 @@ import { openCascade, closePlus } from './plus-menu.js';
  *   you@example.com
  *   Settings            Ctrl+Shift+,
  *   Usage               Settings → Usage (2026-10-31)
+ *   Theme               the looks an account holds (2026-11-04)
+ *   Ranking             the month's and year's boards
  *   Language ›          Tiếng Việt · English
  *   Get help            the getting-started guide
  *   Give feedback       to the people who run the deployment
@@ -48,6 +50,8 @@ const ICON = {
   usage: svg('<circle cx="10" cy="10" r="7"/><path d="M10 10 7.2 6.8M10 3v1.6"/>'),
   feedback: svg('<path d="M7 7.2a3 3 0 0 1 6 0"/><rect x="6" y="7" width="8" height="9.5" rx="4"/><path d="M10 9.5v7M3 10h3M14 10h3M3.5 14.5 6 13.5M16.5 14.5 14 13.5M4 5.5l2.3 1.6M16 5.5l-2.3 1.6"/>'),
   changelog: svg('<rect x="4" y="2.5" width="12" height="15" rx="1.8"/><path d="M7.5 6.5h5M7.5 9.5h5M7.5 12.5h3"/>'),
+  theme: svg('<path d="M10 2.8a7.2 7.2 0 1 0 0 14.4c1.1 0 1.7-.7 1.7-1.5 0-1.2-1-1.3-1-2.3 0-.8.7-1.4 1.5-1.4h1.7a3 3 0 0 0 3-3C17 5.5 13.9 2.8 10 2.8Z"/><circle cx="6.6" cy="9" r=".9" fill="currentColor"/><circle cx="9" cy="6.2" r=".9" fill="currentColor"/><circle cx="12.6" cy="6.8" r=".9" fill="currentColor"/>'),
+  ranking: svg('<path d="M6 3.5h8v4a4 4 0 0 1-8 0Z"/><path d="M6 5H3.5c0 2.5 1 4 3 4.3M14 5h2.5c0 2.5-1 4-3 4.3M10 11.5V14M7 16.5h6l-.8-2.5H7.8Z"/>'),
 };
 
 /** Ctrl on Windows and Linux, ⌘ on a Mac — what the shortcuts are pressed with. */
@@ -117,6 +121,8 @@ export function openAccountMenu(anchor, deps) {
       { note: user.email },
       { id: 'settings', label: t('account.settings'), icon: ICON.settings, tag: keysOf('settings'), run: () => deps.openSettings() },
       { id: 'usage', label: t('account.usage'), icon: ICON.usage, run: () => deps.openSettings('usage') },
+      { id: 'theme', label: t('account.theme'), icon: ICON.theme, run: () => deps.openSettings('theme') },
+      { id: 'ranking', label: t('account.ranking'), icon: ICON.ranking, run: () => deps.openSettings('ranking') },
       { id: 'language', label: t('account.language'), icon: ICON.language, sub: () => languageItems(deps) },
       { id: 'help', label: t('account.help'), icon: ICON.help, run: () => deps.openGuide() },
       { id: 'feedback', label: t('account.feedback'), icon: ICON.feedback, run: () => deps.openFeedback() },

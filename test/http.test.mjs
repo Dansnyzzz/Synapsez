@@ -559,7 +559,7 @@ section('the owner decides who administers, and what each may do');
   const bobRow = await store.getUserByEmail('bob@example.com');
   const adminsMe = await alice.call('GET', '/api/bootstrap');
   check('the first administrator is the owner', adminsMe.json?.user?.isOwner === true && aliceRow.is_owner === true, JSON.stringify(adminsMe.json?.user?.isOwner));
-  check('  and holds every permission', adminsMe.json?.user?.permissions?.length === 6, JSON.stringify(adminsMe.json?.user?.permissions));
+  check('  and holds every permission', adminsMe.json?.user?.permissions?.length === 7, JSON.stringify(adminsMe.json?.user?.permissions));
   const bobMe = await bob.call('GET', '/api/bootstrap');
   check('an ordinary account is no owner and holds nothing', bobMe.json?.user?.isOwner === false && bobMe.json?.user?.permissions?.length === 0, JSON.stringify(bobMe.json?.user));
 

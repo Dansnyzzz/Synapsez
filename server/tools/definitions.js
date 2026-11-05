@@ -66,7 +66,7 @@ export const TOOLS = [
     name: 'read_file',
     scope: 'local',
     readOnly: true,
-    description: 'Read a text file from the workspace (numbered lines), or look at a picture in it — png, jpg, webp, gif, bmp.',
+    description: 'Read a text file from the workspace (numbered lines), look at a picture in it (png, jpg, webp, gif, bmp), or read a Word, Excel or PowerPoint file: its text, and pictures of how it looks.',
     parameters: {
       type: 'object',
       properties: {
@@ -1159,6 +1159,7 @@ export const TOOLS = [
       'Content that is Markdown instead becomes a styled article, so both readings of "make me a web page" work. ' +
       'Source files — js, ts, py, sql, css, sh and the rest — are stored exactly as written and shown as code.' +
       '\n\n' +
+      'What you write is shown back to you as it looks, or you are asked to read it again: check it and put right what is wrong before you answer. ' +
       'Anything long (over about 15 KB — a quiz with dozens of questions, a big page) goes in parts: the first part here, ' +
       'then update_file with `append: true` for each next part. One enormous call gets cut off and writes nothing.' +
       '\n\n' +
@@ -1235,7 +1236,7 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: true,
     description:
-      'Read back the source of a document you made earlier in this conversation, or list them all. Use it before update_file when the content is no longer in front of you.',
+      'Read back the source text of a document you made earlier in this conversation, or list them all. Use it before update_file when the content is no longer in front of you. It shows words, not looks: for layout, colours and pictures use look_at. Not needed right after a write: a write that failed changed nothing, so put that right first, and a write that worked shows you the result itself.',
     parameters: {
       type: 'object',
       properties: { file_id: { type: 'string', description: 'Omit to list every file made in this conversation.' } },
@@ -1440,14 +1441,16 @@ export const TOOLS = [
       'This is how a model that cannot see images sees: an attached image or PDF, a browser or desktop step\'s screenshot ' +
       '(the file id the step reported), an image or PDF on the web by url, or one on your cloud computer by path. Ask a question for a direct answer; ' +
       'give pages for a particular part of a long PDF. If you can see images, a picture attached to the message is already ' +
-      'in front of you — answer from it and do not call this. With no file_id or url it looks at the newest attachment.',
+      'in front of you — answer from it and do not call this. With no file_id or url it looks at the newest attachment. ' +
+      '\n\nIt also shows how a Word, Excel or PowerPoint file looks, by file_id or path: layout, colours, decoration, pictures, charts — everything its text leaves out. ' +
+      'Use it whenever somebody asks about the design of a file. If you can see, the pages come to you as pictures, several to a picture where that loses nothing; ask for particular ones with pages.',
     parameters: {
       type: 'object',
       properties: {
         file_id: { type: 'string', description: 'An attachment, a file you made, or a step screenshot.' },
         url: { type: 'string', description: 'An image or PDF on the web, instead of file_id.' },
-        path: { type: 'string', description: 'A picture or PDF on your cloud computer (where sandbox_run works), e.g. out/Figure_4.png.' },
-        pages: { type: 'array', items: { type: 'integer' }, description: 'PDF: which pages, from 1; up to 8.' },
+        path: { type: 'string', description: 'A picture, PDF or Office file on your cloud computer (where sandbox_run works), e.g. out/Figure_4.png.' },
+        pages: { type: 'array', items: { type: 'integer' }, description: 'Which PDF or document pages, slides or worksheets, from 1; up to 8.' },
         question: { type: 'string', description: 'What to find out about it.' },
       },
     },
@@ -1770,11 +1773,11 @@ export const TOOLS = [
       'constants pi, e. Functions: sum avg median min max count product geomean stdev stdevp var varp, abs sqrt cbrt pow exp ln ' +
       'log(x[, base]) floor ceil trunc round(x, places) mod sign, sin cos tan, fact comb perm, and finance in Excel order — ' +
       'fv(rate, nper, pmt[, pv]) pv(rate, nper, pmt[, fv]) pmt(rate, nper, pv) npv(rate, cf1, cf2…) irr(cf0, cf1…) effect(nominal, n). ' +
-      'A bare list `[a, b, c]` works out each item, so several figures can go in one call. Example: `round((1200 - 950) / 950 * 100, 1)` for a percentage change.',
+      '**Every figure you need for this step goes in one call, as a list**: `[a, b, c]` works out each item and answers one per line. A call per figure is a wall of steps for the person watching. Example: `[57*25744, 1467408/12, round((1200 - 950) / 950 * 100, 1)]`.',
     parameters: {
       type: 'object',
       properties: {
-        expression: { type: 'string', description: 'The arithmetic to work out, as one string, e.g. sum([36, 26, 27, 34]) / 4 or [8 - 5.5, 5 * 2]' },
+        expression: { type: 'string', description: 'The arithmetic to work out, as one string, e.g. sum([36, 26, 27, 34]) / 4, or every figure at once as a list: [8 - 5.5, 5 * 2, 17 / 4]' },
       },
       required: ['expression'],
     },

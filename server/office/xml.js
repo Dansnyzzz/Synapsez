@@ -75,6 +75,8 @@ export function parseXml(source) {
   const text = String(source ?? '');
   const root = { name: '#document', attrs: {}, children: [] };
   const stack = [root];
+  /** How many of each name are open, so a close tag nothing matches costs one look, not a walk up the stack. */
+  const openNames = new Map();
   let at = 0;
 
   while (at < text.length) {
@@ -127,10 +129,14 @@ export function parseXml(source) {
       const name = inner.slice(1).trim();
       // Unwind to the matching element rather than assuming the document is
       // well-formed: a stray close tag must not pop an ancestor.
-      for (let i = stack.length - 1; i > 0; i -= 1) {
-        if (stack[i].name === name) {
-          stack.length = i;
-          break;
+      if (openNames.get(name) > 0) {
+        for (let i = stack.length - 1; i > 0; i -= 1) {
+          const closed = stack[i].name;
+          openNames.set(closed, openNames.get(closed) - 1);
+          if (closed === name) {
+            stack.length = i;
+            break;
+          }
         }
       }
       at = close + 1;
@@ -147,7 +153,10 @@ export function parseXml(source) {
       children: [],
     };
     stack[stack.length - 1].children.push(node);
-    if (!selfClosing) stack.push(node);
+    if (!selfClosing) {
+      stack.push(node);
+      openNames.set(name, (openNames.get(name) || 0) + 1);
+    }
     at = close + 1;
   }
 
