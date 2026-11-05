@@ -1,6 +1,50 @@
 {
   "entries": [
     {
+      "version": "1.13.0",
+      "date": "2026-11-05",
+      "new": {
+        "vi": [
+          "Theme có chuyển động: 8 cảnh động cho toàn bộ giao diện, xem trước khi rê chuột, nhận theo thành tựu hoặc phần thưởng.",
+          "Bảng xếp hạng theo tháng và năm: top 3 dùng token và top 3 chi tiêu nhận theme độc quyền và danh hiệu để đeo.",
+          "Chú cá voi trên khung nhập, đổi theo việc trợ lý đang làm, hoặc chọn một trạng thái, hoặc tắt.",
+          "Model nhìn được tệp Word, Excel và PowerPoint dưới dạng ảnh: bố cục, màu sắc, hình ảnh, biểu đồ, không chỉ chữ.",
+          "Thêm kỹ năng: định hướng thiết kế, biểu đồ, bảng màu, kiểm tra thiết kế, email, viết tự nhiên, trang đích, poster, tự động hoá."
+        ],
+        "en": [
+          "Animated themes: 8 moving scenes behind the whole app, previewed on hover, earned as achievements or prizes.",
+          "Monthly and yearly boards: the top 3 by tokens and by spending get an exclusive theme and a title to wear.",
+          "A whale on the writing box that follows what the assistant is doing; or keep one state, or turn it off.",
+          "Models can see Word, Excel and PowerPoint files as pictures: layout, colours, images and charts, not just words.",
+          "New skills: design direction, charts, palettes, design QA, email, natural writing, landing pages, posters, automation."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Mọi phép tính trong một lượt gộp thành một thẻ gọn, mỗi dòng một phép tính và kết quả.",
+          "Làm xong bước nào mới qua bước kế tiếp: bước đổi dữ liệu chạy riêng, theo thứ tự.",
+          "Tệp vừa tạo được model tự xem lại toàn bộ trước khi chốt, và được xem lại sau mỗi lần sửa.",
+          "Một tệp được viết lại nhiều lần trong một lượt chỉ còn một thẻ."
+        ],
+        "en": [
+          "Every sum in a turn folds into one tidy card, a line each with its answer.",
+          "One step finishes before the next begins: anything that changes something runs alone and in order.",
+          "A file just made is looked over in full by the model before it finishes, and again after each fix.",
+          "A file rewritten several times in one turn is one card."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Viết lại tệp bị lỗi không còn kéo theo bước đọc lại tệp đó một cách vô ích.",
+          "Một lệnh đã lỗi không còn bị gửi lại y nguyên khi không có gì thay đổi."
+        ],
+        "en": [
+          "A failed rewrite no longer drags a pointless read of the same file behind it.",
+          "A call that failed is not sent again word for word when nothing has changed."
+        ]
+      }
+    },
+    {
       "version": "1.12.0",
       "date": "2026-11-04",
       "new": {

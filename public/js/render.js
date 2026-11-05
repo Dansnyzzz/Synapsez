@@ -75,6 +75,8 @@ const MODEL_NOTES = [
   // What a question's result tells the model to do next (`answerText`).
   /\n*^Carry on with what they chose\. Do not ask this again\.$/m,
   /\n*^Carry on with your own best judgement, and do not ask this again — they have already declined once\.$/m,
+  // The check after a file is written (`asked` in server/fileLook.js).
+  /\n*^\[[^\n]*Do not mention this check unless it changed something\.\]$/m,
 ];
 
 export function forDisplay(text) {
@@ -768,6 +770,8 @@ export function describeStep(name, input = {}) {
 export function stepFamily(name) {
   if (/^browser_/.test(name) || name === 'cloud_browser') return 'browser';
   if (/^desktop_/.test(name)) return 'desktop';
+  // One card for every sum, however many calls they took (owner, 2026-11-04).
+  if (name === 'calculate') return 'calc';
   if (WORK_KINDS[name]) return 'work';
   return null;
 }
@@ -1852,7 +1856,18 @@ function placeFile(body, file) {
   const card = fileCard(file);
   const existing = [...body.querySelectorAll('.filecard')].find((node) => node.dataset.file === file.id);
   if (existing) existing.replaceWith(card);
-  else body.append(card);
+  else {
+    /*
+     * Every step is a block of its own, so a file rewritten in the next step drew
+     * a second card under the first (owner, 2026-11-04, screenshot 2): two cards
+     * for one file, the first already out of date. Within a turn it stands once,
+     * at the latest write; an earlier turn keeps its card as the record it is.
+     */
+    for (let block = body.closest('.msg')?.previousElementSibling; block?.classList.contains('msg--assistant'); block = block.previousElementSibling) {
+      block.querySelector(`.filecard[data-file="${window.CSS.escape(String(file.id))}"]`)?.remove();
+    }
+    body.append(card);
+  }
 
   if (!/^image\//i.test(file.mime || '') || /svg/i.test(file.mime || '')) return;
   const src = `/api/attachments/${file.id}${file.version ? `?v=${file.version}` : ''}`;
@@ -2452,7 +2467,7 @@ export function assistantMessage() {
   function fold(run) {
     // …except one that opened itself to show a command running: that folds back
     // as it was, unless somebody has opened or closed it since.
-    if (run.family !== 'work' || (run.autoOpened && !run.touched)) run.node.open = false;
+    if ((run.family !== 'work' && run.family !== 'calc') || (run.autoOpened && !run.touched)) run.node.open = false;
   }
 
   function closeSteps() {
@@ -2486,7 +2501,8 @@ export function assistantMessage() {
     const now = run.pending > 0 ? [...run.steps].reverse().find((s) => !s.done) : null;
     // Reasoning parked in the card between two of its steps — see `settleThought`.
     const thinking = !now && !!run.thinking;
-    const only = run.family === 'work' && run.steps.length === 1 ? run.steps[0] : null;
+    const calc = run.family === 'calc';
+    const only = (run.family === 'work' || calc) && run.steps.length === 1 ? run.steps[0] : null;
     const shown = now || (thinking ? null : only);
     setTitle(
       run,
@@ -2496,9 +2512,11 @@ export function assistantMessage() {
           ? t('status.thinking')
           : run.family === 'work'
             ? workSummary(run.steps)
-            : run.family === 'desktop'
-              ? t('steps.desktop')
-              : t('steps.browser'),
+            : calc
+              ? t('step.calculate')
+              : run.family === 'desktop'
+                ? t('steps.desktop')
+                : t('steps.browser'),
     );
     run.detail.textContent = shown?.detail || '';
     run.detail.hidden = !shown?.detail;
@@ -2508,7 +2526,7 @@ export function assistantMessage() {
     if (!now && !thinking) run.clock.textContent = '';
     // A run of commands counts in its title, failures too ("ran 5 commands
     // (1 failed)"); a browsing session counts beside it.
-    const tally = run.family === 'work' ? [] : [counted(run.count, 'steps.count')];
+    const tally = run.family === 'work' ? [] : calc ? (run.sums > 1 ? [t('calc.count', { n: run.sums })] : []) : [counted(run.count, 'steps.count')];
     if (run.failures && run.family !== 'work') tally.push(t('steps.failedCount', { n: run.failures }));
     run.tally.textContent = tally.join(' · ');
     const working = run.pending > 0 || thinking;
@@ -2519,7 +2537,7 @@ export function assistantMessage() {
     const state = working ? 'pending' : allFailed ? 'failed' : 'done';
     const mark = run.node.querySelector(':scope > summary > .mark');
     if (mark && mark.dataset.state !== state) {
-      mark.outerHTML = working ? MARK_PENDING : doneMark(run.family === 'work' ? 'run_command' : run.family, allFailed);
+      mark.outerHTML = working ? MARK_PENDING : doneMark(run.family === 'work' ? 'run_command' : calc ? 'calculate' : run.family, allFailed);
       const fresh = run.node.querySelector(':scope > summary > .mark');
       if (fresh) fresh.dataset.state = state;
     }
@@ -2572,8 +2590,11 @@ export function assistantMessage() {
     for (const picture of shown) run.thumbs.append(summaryThumb(picture, 'pic-thumb pic-thumb--head'));
   }
 
+  /** A sheet of a drawn file, in the shape the gallery and the rows take. */
+  const asPicture = (p, label) => ({ id: String(p.id), name: String(p.name || ''), path: String(p.name || ''), label: String(p.label || label || p.name || ''), thumb: true });
+
   /** Every picture a run has looked at, in the order it looked. */
-  const runPictures = (run) => run.steps.filter((s) => s.picture).map((s) => s.picture);
+  const runPictures = (run) => run.steps.flatMap((s) => (s.picture ? [s.picture, ...(s.morePictures || [])] : []));
 
   /**
    * A thumbnail on a <summary> (UI-006): a press opens it, but it is out of the
@@ -2774,7 +2795,7 @@ export function assistantMessage() {
     const work = family === 'work';
     const said = work ? workStep(call.name, call.input) : { ...describeStep(call.name, call.input), path: '', kind: '', file: '' };
     const { verb, detail } = said;
-    /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean, failed: boolean, picture: null | { id: string, name: string, path: string, label: string, thumb: boolean }, row?: { fold: HTMLElement, touched: () => boolean } }} */
+    /** @type {{ verb: string, detail: string, path: string, kind: string, file: string, done: boolean, failed: boolean, picture: null | { id: string, name: string, path: string, label: string, thumb: boolean }, morePictures?: any[], row?: { fold: HTMLElement, touched: () => boolean } }} */
     const entry = { verb, detail, path: said.path, kind: said.kind, file: said.file, done: false, failed: false, picture: null };
     run.steps.push(entry);
     if (!hydrating && !run.started) run.started = Date.now();
@@ -2904,10 +2925,13 @@ export function assistantMessage() {
             thumb: !!result.shot.name,
           };
         }
+        // Every sheet of a file drawn for the model, not only the first.
+        if (entry.picture && Array.isArray(result.pictures)) entry.morePictures = result.pictures.slice(1).map((p) => asPicture(p, verb));
         paintGroupSummary(run);
         if (entry.picture) paintThumbs(run);
 
         if (work) {
+          if (entry.morePictures?.length) for (const picture of [...entry.morePictures].reverse()) foldBody.prepend(pictureBody(picture));
           if (entry.picture && head) {
             head.append(summaryThumb(entry.picture, 'pic-thumb pic-thumb--row'));
             // `file_path:` says what the call said, unless it asked something
@@ -2975,6 +2999,64 @@ export function assistantMessage() {
     };
   }
 
+  /**
+   * A sum, as a line of one card (owner, 2026-11-04): five calls in a row drew five
+   * rows with their arguments open between them. What anybody wants from them is
+   * the working and the answer, one under the other. A list comes back a line per
+   * item, and each is a row.
+   */
+  function startCalc(call) {
+    const run = groupFor('calc');
+    const asked = String((canonicalInput(call.name, call.input) || call.input || {}).expression || '').trim();
+    const entry = { verb: t('step.calculate'), detail: asked, path: '', kind: '', file: '', done: false, failed: false, picture: null };
+    run.steps.push(entry);
+    if (!hydrating && !run.started) run.started = Date.now();
+    run.count += 1;
+    run.pending += 1;
+    paintGroupSummary(run);
+    const item = el('li', 'step step--calc');
+    item.append(el('span', 'step__mark', '<span class="spinner"></span>'));
+    const pending = el('code', 'calc__expr');
+    pending.textContent = asked;
+    item.append(pending);
+    run.list.append(item);
+    return {
+      complete(result) {
+        run.pending = Math.max(0, run.pending - 1);
+        entry.done = true;
+        entry.failed = !!result.isError;
+        const said = forDisplay(result.content);
+        if (result.isError) {
+          run.failures += 1;
+          item.classList.add('step--error');
+          const why = el('span', 'calc__why');
+          why.textContent = said;
+          item.replaceChildren(el('span', 'step__mark', '✗'), pending, why);
+        } else {
+          const lines = said.split('\n').map((line) => line.trim()).filter(Boolean);
+          run.sums = (run.sums || 0) + lines.length;
+          item.replaceChildren();
+          const rows = lines.map((line) => {
+            const at = line.lastIndexOf(' = ');
+            const row = el('li', 'step step--calc');
+            const left = el('code', 'calc__expr');
+            left.textContent = at > 0 ? line.slice(0, at) : line;
+            row.append(left);
+            if (at > 0) {
+              const value = el('code', 'calc__value');
+              value.textContent = line.slice(at + 3);
+              row.append(el('span', 'calc__eq', '='), value);
+            }
+            return row;
+          });
+          item.replaceWith(...rows);
+          entry.detail = lines.length === 1 ? lines[0] : '';
+        }
+        paintGroupSummary(run);
+      },
+    };
+  }
+
   /** The card this call belongs in: the run still going, carried on from the block before, or a new one. */
   function groupFor(family) {
     if (group && group.family === family) return group;
@@ -2982,7 +3064,7 @@ export function assistantMessage() {
     if (carried) {
       group = carried;
       group.live = true;
-      if (family !== 'work') group.node.open = true;
+      if (family !== 'work' && family !== 'calc') group.node.open = true;
       lastStepRun = { group, wrap, body };
       return group;
     }
@@ -2999,7 +3081,7 @@ export function assistantMessage() {
      * 2026-10-07). A run of commands is folded, as Claude Code's are: its
      * title already says what is happening, and the rows are one click away.
      */
-    node.open = family !== 'work';
+    node.open = family !== 'work' && family !== 'calc';
     const summary = el('summary');
     summary.innerHTML = MARK_PENDING;
     const title = el('span', 'steps__title');
@@ -3374,6 +3456,7 @@ export function assistantMessage() {
       if (call.name === 'search_chats') return startRecall(call);
       if (call.name === 'update_plan') return startPlanCard(call);
       const family = stepFamily(call.name);
+      if (family === 'calc') return startCalc(call);
       if (family) return startStep(call, family);
 
       // A call that is not part of a run ends whatever run was in progress:
@@ -3424,6 +3507,28 @@ export function assistantMessage() {
           // A question's answer is read here, and nowhere beside it: the bubble this
           // used to draw said the same thing a second time (owner, 2026-11-04).
           output.textContent = forDisplay(result.content) || t('chat.noOutput');
+
+          /*
+           * The file as the model was shown it, before it could call the work done
+           * (owner, 2026-11-04): so a person can see that it looked, and what at.
+           */
+          const looked = (result.pictures || []).filter((p) => p?.id).map((p) => asPicture(p, verb));
+          if (looked.length) {
+            registerPictures(block, () => looked);
+            const strip = el('span', 'steps__thumbs');
+            const { shown, more } = stripPictures(looked);
+            if (more) {
+              const plus = el('span', 'steps__more');
+              plus.textContent = `+${more}`;
+              plus.title = t('gallery.more', { n: more });
+              strip.append(plus);
+            }
+            for (const picture of shown) strip.append(summaryThumb(picture, 'pic-thumb pic-thumb--head'));
+            const note = el('span', 'tool__looked');
+            note.textContent = t('work.looked');
+            summary.append(note, strip);
+            inner.prepend(...looked.map((picture) => pictureBody(picture)));
+          }
 
           /**
            * A document came out of this call.
@@ -3514,9 +3619,11 @@ export function assistantMessage() {
   /** A saved turn's calls, each drawn and given the result it got. */
   function hydrateCalls(message, resultsByCallId, pending) {
     for (const call of message.toolCalls || []) {
+      const result = resultsByCallId?.get(call.id);
+      // Not run (server/stepOrder.js): nothing happened, so there is no row to draw.
+      if (result?.skipped) continue;
       if (call.name === 'update_plan') api.setPlan(call.input?.steps);
       const handle = api.startTool(call);
-      const result = resultsByCallId?.get(call.id);
       /*
        * No result, and nothing still running: the server was cut off before
        * the call could answer (a long deep research past the time limit).

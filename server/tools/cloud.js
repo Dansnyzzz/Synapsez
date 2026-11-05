@@ -14,6 +14,8 @@ import { sniffPicture } from '../util/picture.js';
 import { cloudBrowser } from '../cloudBrowser/index.js';
 import { shareFile } from '../routes/share.js';
 import { see } from '../vision.js';
+import { lookableFormat } from '../office/look.js';
+import { drawAndKeep, pictureNote } from '../fileLook.js';
 import { groundedImage } from '../imageGround.js';
 import { calculate } from './calc.js';
 import { extractFromPage } from './extract.js';
@@ -26,7 +28,7 @@ import { normaliseSteps } from '../workflows.js';
 import { CONNECTOR_CALLS } from '../connectors.js';
 import { searchConnectorsTool, suggestConnectorsTool } from '../connectorDirectory.js';
 import { codeContextTool } from './codeContext.js';
-import { getPrefs, getApiKey } from '../settings.js';
+import { getPrefs, getApiKey, maskPersonalFor } from '../settings.js';
 import { sendEmail, emailBackend, senderName } from '../email.js';
 import { composeMessage, KIND_NAMES } from '../mailTemplate.js';
 import { safeFetch, readCapped } from '../util/safeFetch.js';
@@ -846,7 +848,7 @@ async function updateFileTool({ file_id: fileId, content, name, append = false, 
   };
 }
 
-async function readGeneratedFileTool({ file_id: fileId }, { userId, chatId }) {
+async function readGeneratedFileTool({ file_id: fileId }, { userId, chatId, canSee = false }) {
   const store = getStore();
 
   if (!fileId) {
@@ -859,7 +861,9 @@ async function readGeneratedFileTool({ file_id: fileId }, { userId, chatId }) {
   if (!file) throw new Error(`There is no file with the id ${fileId} on this account.`);
   if (file.origin !== 'generated') throw new Error(`${file.name} was uploaded, so it has no source to read back.`);
   if (!file.source) return `${file.name} has no stored source.`;
-  return `--- source of ${file.name} ---\n${file.source}`;
+  // The source says what it holds, not how it looks: said here, so a check does not stop at the words.
+  const looks = lookableFormat(file.name) ? `\n\n[This is its text. To see how it looks, layout, colours and pictures included, call look_at with this file_id${canSee ? ', which shows you the pages' : ''}.]` : '';
+  return `--- source of ${file.name} ---\n${file.source}${looks}`;
 }
 
 /**
@@ -2661,6 +2665,46 @@ async function chatModelSees(userId, chatId) {
 }
 
 /**
+ * A Word, Excel or PowerPoint file as it looks (owner, 2026-11-04): drawn, kept, and
+ * either put in front of a model that can see (`pictures`, `withLookedPictures`) or
+ * read by a model that can, for one that cannot. Its text alone says nothing about
+ * layout, colour or the pictures in it.
+ *
+ * @param {{ bytes: Buffer, name: string, pages: number[]|null, ask: string, source: string, userId: string, chatId?: string|null,
+ *   canSee: boolean, lookWith: typeof see, signal?: AbortSignal, drawOffice?: any }} input
+ */
+async function lookAtOffice({ bytes, name, pages, ask, source, userId, chatId = null, canSee, lookWith, signal, drawOffice }) {
+  // Pixels cannot be masked: a picture of the file would carry past the shield what its text would not.
+  if (await maskPersonalFor(userId).catch(() => true)) {
+    throw new Error(`Personal details are masked for this account, so ${name} cannot be drawn and shown to a model. Read its text instead.`);
+  }
+  let look;
+  try {
+    look = await drawAndKeep({ userId, chatId, bytes, name, pages, canSee, ...(drawOffice ? { draw: drawOffice } : {}) });
+  } catch (err) {
+    throw new Error(`${name} could not be drawn: ${String(err?.message || err).slice(0, 200)}. Read its text instead.`);
+  }
+  if (!look?.pictures.length) throw new Error(`This server could not draw ${name}. Read its text instead.`);
+  const first = look.pictures[0];
+  if (canSee) {
+    return {
+      content: `${pictureNote(name, look)}${ask ? ` Question to answer from them: ${ask}` : ''}`,
+      pictures: look.pictures,
+      shot: { id: first.id, name: first.name },
+    };
+  }
+  const rows = await Promise.all(look.pictures.map((p) => getStore().getAttachment(userId, p.id)));
+  const { text, model } = await lookWith({
+    userId,
+    chatId,
+    images: rows.filter(Boolean).map((row) => ({ mime: row.mime, data: row.data, name: row.name })),
+    question: ask || 'Describe how this document looks as well as what it says: layout, colours, pictures, anything overflowing or cut off.',
+    signal,
+  });
+  return { content: untrusted(`${source} (read by ${model})`, `${pictureNote(name, look, { told: true })}\n\n${text}`), pictures: look.pictures.map((p) => ({ ...p, toldOnly: true })), shot: { id: first.id, name: first.name } };
+}
+
+/**
  * Look at a picture or a PDF page on demand, with a model that can see.
  *
  * The tool form of `lendEyes`: for a screenshot a browser step just took, an
@@ -2679,7 +2723,7 @@ async function chatModelSees(userId, chatId) {
  */
 async function lookAtTool(
   { file_id: fileId, url, path, pages, question },
-  { userId, chatId, signal, see: lookWith = see, readCloudFile = readMachineFile, readMs = LOOK_READ_MS },
+  { userId, chatId, signal, see: lookWith = see, readCloudFile = readMachineFile, readMs = LOOK_READ_MS, canSee = false, drawOffice = undefined },
 ) {
   const ask = String(question || '').trim();
   const wantPages = Array.isArray(pages) ? pages.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 8) : null;
@@ -2691,6 +2735,7 @@ async function lookAtTool(
   if (fileId) {
     const row = await getStore().getAttachment(userId, String(fileId));
     if (!row) throw new Error(`There is no file ${fileId} in this account.`);
+    if (lookableFormat(row.name)) return lookAtOffice({ bytes: Buffer.from(row.data, 'base64'), name: row.name, pages: wantPages, ask, source: row.name, userId, chatId, canSee, lookWith, signal, drawOffice });
     if (row.kind !== 'image' && row.kind !== 'document') {
       throw new Error(`${row.name} is not a picture or a PDF — read it with read_generated_file or as text instead.`);
     }
@@ -2719,6 +2764,10 @@ async function lookAtTool(
     }
     const isPdf = bytes.subarray(0, 5).toString('latin1') === '%PDF-';
     const type = isPdf ? 'application/pdf' : sniffPicture(bytes);
+    if (!type && lookableFormat(where, bytes)) {
+      if (bytes.length > LOOK_MAX_PDF_BYTES) throw new Error(`${where} is over ${Math.round(LOOK_MAX_PDF_BYTES / 1024 / 1024)}MB, too large to look at whole.`);
+      return lookAtOffice({ bytes, name: where.split('/').pop() || where, pages: wantPages, ask, source: where, userId, chatId, canSee, lookWith, signal, drawOffice });
+    }
     if (!type) throw new Error(`${where} is not an image or a PDF — read it with sandbox_run instead.`);
     const cap = isPdf ? LOOK_MAX_PDF_BYTES : LOOK_MAX_BYTES;
     if (bytes.length > cap) throw new Error(`${where} is over ${Math.round(cap / 1024 / 1024)}MB, too large to look at whole.`);

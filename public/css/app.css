@@ -337,6 +337,8 @@ textarea {
 }
 .btn--ghost:hover { background: var(--surface); color: var(--text); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Its words are dim already: half of that again could not be read. */
+.btn--ghost:disabled { opacity: 0.72; }
 
 .icon-btn {
   display: inline-grid;
@@ -2942,6 +2944,29 @@ details.block.steps:not([data-family='work']) > .steps__list {
   font-size: 12px;
 }
 .step--error .step__mark { color: var(--danger); }
+/* A sum: the working, then its answer. The numbers line up, because they get compared. */
+.step.step--calc { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; padding: 3px 0; }
+.step.step--calc:has(> .step__mark) { grid-template-columns: 16px minmax(0, 1fr) auto; }
+.calc__expr {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  background: none;
+  overflow-wrap: anywhere;
+}
+.calc__eq { color: var(--text-faint); font-size: 12px; }
+.calc__value {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.calc__why { grid-column: 1 / -1; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+/* That the model was shown the file it wrote, on the row of the write. */
+.tool__looked { color: var(--text-faint); font-size: 11.5px; }
 .step__label {
   display: flex;
   align-items: baseline;
@@ -11507,3 +11532,120 @@ details > summary.admins__who { cursor: pointer; }
 .admins__power-hint { display: block; color: var(--text-faint); font-size: 12px; line-height: 1.4; }
 .admins__note { margin: 10px 0 0; color: var(--text-faint); font-size: 12px; line-height: 1.45; }
 .admins__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+/* ── Themes: a scene behind the app (themes-panel.js, scenes.js; owner, 2026-11-04) ───
+   The chrome in this app has no panes of its own, so over a moving picture words
+   need something under them. Panes here are plain alpha, never a blur: a blur over
+   a canvas that changes fourteen times a second is the most expensive thing a page
+   can ask for, and these alphas alone hold the contrast. */
+#scene-layer { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+#scene-layer canvas { display: block; width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
+html[data-scene] body::before, html[data-scene] .galaxy { display: none; }
+html[data-scene][data-theme='dark'] {
+  --scene-column: rgba(11, 13, 19, 0.8);
+  --scene-side: rgba(11, 13, 19, 0.74);
+  --composer-glass: rgba(14, 18, 26, 0.86);
+  --text-faint: #98a5ae;
+  --glass-solid: rgba(14, 19, 25, 0.95);
+}
+html[data-scene][data-theme='light'] {
+  --scene-column: rgba(250, 251, 253, 0.84);
+  --scene-side: rgba(250, 251, 253, 0.78);
+  --composer-glass: rgba(255, 255, 255, 0.88);
+  --text-faint: #56626d;
+  --glass-solid: rgba(255, 255, 255, 0.96);
+}
+html[data-scene] body { background: var(--bg); }
+/* The picture shows in the margins; words get a soft-edged pane as wide as the reading
+   column, and the top bar, which sits in those margins, gets one of its own. */
+html[data-scene] .main { background: linear-gradient(90deg, transparent calc(50% - 480px), var(--scene-column) calc(50% - 410px), var(--scene-column) calc(50% + 410px), transparent calc(50% + 480px)); }
+html[data-scene] .sidebar, html[data-scene] .detail, html[data-scene] .topbar { background: var(--scene-side); }
+html[data-scene] .gate { background: var(--bg); position: relative; z-index: 2; }
+@media (max-width: 900px) {
+  html[data-scene] .main { background: var(--scene-column); }
+}
+
+.themes { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 22px; align-items: start; }
+.themes__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px 12px; }
+.themes__tile { display: grid; gap: 6px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.themes__frame { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; box-shadow: 0 0 0 1px var(--line); }
+.themes__frame canvas, .themes__stage canvas { display: block; width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
+.themes__plain { position: absolute; inset: 0; background: radial-gradient(70% 90% at 15% 0, var(--accent-glow), transparent 70%), var(--bg); }
+.themes__tile:hover .themes__frame { box-shadow: 0 0 0 1px var(--accent-dim); }
+.themes__tile:focus-visible { outline: none; }
+.themes__tile:focus-visible .themes__frame { box-shadow: 0 0 0 2px var(--accent); }
+.themes__tile.is-chosen .themes__frame { box-shadow: 0 0 0 2px var(--accent); }
+.themes__tile.is-current .themes__name::after { content: ' ✓'; color: var(--accent); }
+.themes__tile.is-locked .themes__frame canvas { opacity: 0.45; filter: saturate(0.7); }
+.themes__tile.is-locked .themes__name { color: var(--text-dim); }
+.themes__lock { position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; transform: translate(-50%, -50%); color: #fff; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.7)); pointer-events: none; }
+.themes__lock svg { display: block; width: 100%; height: 100%; }
+.themes__lock--big { width: 56px; height: 56px; }
+.themes__detail { position: sticky; top: 0; display: grid; gap: 8px; min-width: 0; }
+.themes__stage { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 12px; box-shadow: 0 0 0 1px var(--line); }
+.themes__stage.is-locked canvas { opacity: 0.45; filter: saturate(0.7); }
+.themes__title { margin: 6px 0 0; font-size: 16px; }
+.themes__badge { justify-self: start; margin: 0; padding: 2px 10px; border-radius: 999px; background: var(--tint-2); color: var(--text); font-size: 12px; font-weight: 600; }
+.themes__badge[data-kind='none'] { background: var(--tint); color: var(--text-dim); font-weight: 500; }
+.themes__badge[data-kind='top_month'], .themes__badge[data-kind='top_year'] { background: var(--accent); color: var(--on-accent); }
+.themes__desc { margin: 0; color: var(--text-dim); font-size: 13.5px; line-height: 1.5; }
+.themes__standing { margin: 0; color: var(--text-faint); font-size: 12.5px; }
+.themes__sub { margin: 22px 0 2px; font-size: 14px; }
+.themes__hint { margin: 0 0 10px; color: var(--text-dim); font-size: 12.5px; }
+.themes__mascots { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+.themes__pet { display: grid; justify-items: center; gap: 2px; min-height: 44px; padding: 6px 4px; border: 1px solid var(--line); border-radius: 10px; background: none; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.themes__pet:hover { border-color: var(--accent-dim); }
+.themes__pet:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.themes__pet.is-chosen { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.themes__pet-art { display: grid; place-items: center; height: 44px; }
+.themes__pet-art img { display: block; max-height: 44px; max-width: 72px; image-rendering: pixelated; }
+.themes__credit { margin: 10px 0 0; color: var(--text-faint); font-size: 11.5px; }
+
+/* The whale stands on the box's top edge, at the right, and takes no room. */
+.mascot { position: absolute; right: 22px; bottom: calc(100% - 8px); z-index: 1; height: 58px; width: auto; image-rendering: pixelated; pointer-events: none; user-select: none; }
+@media (max-width: 420px) { .mascot { height: 42px; right: 12px; } }
+
+.ranking { display: grid; gap: 14px; min-width: 0; }
+.ranking__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.ranking__closes { margin: 0; color: var(--text-faint); font-size: 12.5px; }
+.ranking__scope { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; }
+.ranking__scope button { min-height: 32px; padding: 3px 14px; border: 0; border-radius: 7px; background: none; color: var(--text-dim); font: inherit; font-size: 13px; cursor: pointer; }
+.ranking__scope button:hover { background: var(--tint); color: var(--text); }
+.ranking__scope button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ranking__scope button[aria-checked='true'] { background: var(--tint-2); color: var(--text); font-weight: 600; }
+.ranking__boards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.ranking__board { min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+.ranking__board h4 { margin: 0 0 8px; font-size: 14px; }
+.ranking__list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ranking__row { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; }
+.ranking__row.is-me { background: var(--accent-glow); }
+.ranking__medal { font-size: 16px; text-align: center; }
+.ranking__who { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.ranking__name { overflow-wrap: anywhere; font-weight: 600; }
+.ranking__chip { padding: 1px 8px; border-radius: 999px; background: var(--tint-2); color: var(--text-dim); font-size: 11.5px; }
+.ranking__value { font-variant-numeric: tabular-nums; font-size: 13px; white-space: nowrap; }
+.ranking__empty { padding: 6px 8px; color: var(--text-dim); font-size: 13px; }
+.ranking__me { margin: 0; font-size: 13.5px; }
+.ranking__anon { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.ranking__sub { margin: 10px 0 0; font-size: 14px; }
+.ranking__titles { display: flex; flex-wrap: wrap; gap: 8px; }
+.ranking__title { min-height: 34px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.ranking__title:hover { border-color: var(--accent-dim); }
+.ranking__title:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ranking__title.is-on { border-color: var(--accent); background: var(--accent-glow); font-weight: 600; }
+.ranking__locked { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--text-dim); }
+.ranking__locked li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
+
+.adminthemes__list { display: grid; gap: 6px; }
+.adminthemes__row { padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.adminthemes__row > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; cursor: pointer; }
+.adminthemes__body { display: grid; gap: 12px; margin-top: 10px; }
+.adminthemes__badge, .adminthemes__give { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.adminthemes__badge label, .adminthemes__give label { display: grid; gap: 3px; font-size: 12.5px; color: var(--text-dim); }
+.adminthemes__holders { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.adminthemes__holders li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+
+@media (max-width: 760px) {
+  .themes { grid-template-columns: minmax(0, 1fr); }
+  .themes__detail { position: static; order: -1; }
+}

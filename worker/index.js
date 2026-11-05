@@ -471,6 +471,8 @@ async function runJob(job) {
     await post(`/api/worker/jobs/${job.id}/result`, {
       output: String((structured ? output.text : output) ?? ''),
       ...(structured && output.shot ? { shot: output.shot } : {}),
+      // Pictures of an Office file `read_file` read: see readOfficeFile.
+      ...(structured && Array.isArray(output.sheets) && output.sheets.length ? { sheets: output.sheets } : {}),
     });
     console.log(`  ✓ ${job.tool}`);
   } catch (err) {

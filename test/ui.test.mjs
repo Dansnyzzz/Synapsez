@@ -394,7 +394,7 @@ section("the account at the foot of the sidebar, and its menu");
     };
   });
   check('pressed, it opens a menu above it, headed by the email', menu.email === 'ui@test.local' && menu.above && menu.expanded === 'true', JSON.stringify(menu));
-  check('  Settings, Usage, Language, Get help, Give feedback, View changelog, Learn more and Log out — in that order', menu.rows.join() === 'settings,usage,language,help,feedback,changelog,learn,logout', menu.rows.join());
+  check('  Settings, Usage, Theme, Ranking, Language, Get help, Give feedback, View changelog, Learn more and Log out — in that order', menu.rows.join() === 'settings,usage,theme,ranking,language,help,feedback,changelog,learn,logout', menu.rows.join());
   check('  Settings names its shortcut', /^(Ctrl|⌘)\+Shift\+,$/.test(menu.settingsKeys), menu.settingsKeys);
 
   await page.hover('.plusmenu--account [data-row="learn"]');
@@ -3075,7 +3075,7 @@ section("Settings is Claude's list: sections down the left, in groups, each its 
   });
   check(
     'the sections, in Claude\'s order: Preferences, This computer, Customize — and Administration for an administrator',
-    nav.order === 'providers,general,account,privacy,usage,capabilities,memory,system,extensions,developer,skills,connectors,plugins,admin,feedback' && nav.groups === 'preferences,computer,customize,admin',
+    nav.order === 'providers,general,theme,ranking,account,privacy,usage,capabilities,memory,system,extensions,developer,skills,connectors,plugins,admin,feedback' && nav.groups === 'preferences,computer,customize,admin',
     JSON.stringify(nav),
   );
   check('  down the left, with a search above them', nav.downward && nav.search, JSON.stringify(nav));
@@ -3102,7 +3102,7 @@ section("Settings is Claude's list: sections down the left, in groups, each its 
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(200);
   const walked = await page.evaluate(() => /** @type {HTMLElement} */ (document.activeElement)?.dataset.tab);
-  check('  ↓ moves to the next section and opens it', walked === 'account' && (await page.isVisible('#panel-account')), String(walked));
+  check('  ↓ moves to the next section and opens it', walked === 'theme' && (await page.isVisible('#panel-theme')), String(walked));
 
   // The search narrows the list to sections that mention it.
   await page.fill('#settings-search', 'keyboard shortcuts');
@@ -10083,6 +10083,8 @@ section('a round button takes you back to the newest message, and shows when mor
     await page.waitForTimeout(1800);
     await pad();
     await toTop();
+    // The pointer is still where it pressed the button a moment ago, and under it the dots become the arrow.
+    await page.mouse.move(4, 4);
     await page.waitForTimeout(300);
     const working = await look();
     check('while the answer is coming, it shows moving dots instead of the arrow', working.shown && working.working && working.dots && !working.arrow, JSON.stringify(working));

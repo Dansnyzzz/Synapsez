@@ -32,6 +32,8 @@ import { memoryForTurn, withheldTools } from './memory.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
 import { withoutStrayTags } from '../public/js/model-text.js';
 import { checkAnswer, checkFigures, textsIn } from './qualityGate.js';
+import { batchSegments, createStepGuard, skippedAfterFailure } from './stepOrder.js';
+import { lookAfterWriting, maskedPicturesNote, withLookedPictures, MAX_LOOKS_PER_TURN } from './fileLook.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
@@ -1159,11 +1161,12 @@ export function repeatedRead(call, memo, counts) {
   return key ? { key } : null;
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false }) {
-  const results = await mapWithLimit(
-    toolCalls,
-    MAX_PARALLEL_TOOLS,
-    async (call) => {
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false, guard = null, canSee = true, masking = false, deadline = Infinity }) {
+  /**
+   * One call of the batch. Whether to run at all is decided first and draws
+   * nothing: a call that would change nothing is not a step anybody needs to see.
+   */
+  const runOne = async (call) => {
       // The policy's promise, enforced where the call would actually run. See
       // `policyRefusal`. A withheld tool is refused the same way: not offering
       // it is what the catalogue promises, and only Anthropic will not emit a
@@ -1177,27 +1180,24 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         return refused;
       }
       const started = Date.now();
-      emit('tool_call', { id: call.id, name: call.name, input: call.input });
+      const pointless = guard?.check(call);
+      if (pointless) return { toolCallId: call.id, name: call.name, content: pointless.content, isError: pointless.isError, skipped: true, ms: 0 };
       const seen = repeatedRead(call, memo, counts);
-      if (seen?.refused) {
-        const result = { toolCallId: call.id, name: call.name, content: seen.refused, isError: true, ms: 0 };
-        emit('tool_result', result);
-        return result;
-      }
+      if (seen?.refused) return { toolCallId: call.id, name: call.name, content: seen.refused, isError: true, skipped: true, ms: 0 };
       if (seen?.earlier) {
         // The same call already answered — or is answering, in this very batch.
         const first = await seen.earlier;
-        const result = {
+        return {
           toolCallId: call.id,
           name: call.name,
           content: `${first.content}\n\n[This exact call already ran in this turn, so its result is repeated rather than run again. Use it; do not call it a third time.]`,
           isError: first.isError,
+          skipped: true,
           ms: Date.now() - started,
           ...(first.chats?.length ? { chats: first.chats } : {}),
         };
-        emit('tool_result', result);
-        return result;
       }
+      emit('tool_call', { id: call.id, name: call.name, input: call.input });
       // A sub-agent, a research run or a page read by a model, started from a
       // conversation that holds Google data, keeps to where that may go.
       const running = withGoogleData(googleData, () => executeTool({
@@ -1218,6 +1218,8 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         origin,
         // Roughly where they are, for a search near them — see whereabouts.js.
         whereabouts,
+        // Whether the pictures of a file can go to this model itself; see fileLook.js.
+        canSee: canSee && !masking,
       }));
       // Remembered before it is awaited, so a duplicate in the same batch waits
       // for this run instead of starting a second one. A failure is not kept:
@@ -1226,13 +1228,32 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         memo.set(seen.key, running);
         running.then((r) => r?.isError && memo.get(seen.key) === running && memo.delete(seen.key)).catch(() => memo.delete(seen.key));
       }
-      const { content, isError, file, widget, shot, schedule, chats } = await running;
+      const { content: said, isError, file, widget, shot, schedule, chats, pictures: asked } = await running;
+      /*
+       * A file just written is shown to the model that wrote it, before it can
+       * call the work done (owner, 2026-11-04). Not a part of a file still being
+       * added to, and not while a later call in this batch rewrites it anyway.
+       */
+      const checks = !isError && !!file?.id && WRITES_FILES.has(call.name) && call.input?.append !== true && !rewrittenLater(call, toolCalls);
+      const look = checks ? await lookAfterWriting({ userId: user.id, chatId, file, canSee, masking, deadline, looksSoFar: guard?.looks || 0 }) : null;
+      const unsent = masking && !look && asked?.length;
+      const content = look ? `${said}\n\n${look.text}` : unsent ? `${said}\n\n${maskedPicturesNote}` : said;
+      /*
+       * Who the pictures go to. Masked, none: pixels cannot be masked, and a tool
+       * reading a file for the person shows them on screen only. A model that
+       * cannot see is lent eyes per picture, so two rather than a whole document.
+       */
+      const given = look?.pictures?.length ? look.pictures : asked;
+      const pictures = !given?.length ? given : masking ? given.map((p) => ({ ...p, toldOnly: true })) : canSee ? given : given.slice(0, 2);
       const result = {
         toolCallId: call.id,
         name: call.name,
         content,
         isError,
         ms: Date.now() - started,
+        // The pictures the model is about to be shown, kept as ids: `withLookedPictures`.
+        ...(pictures?.length ? { pictures } : {}),
+        ...(look?.looked ? { looked: true } : {}),
         // A document the assistant wrote. Stored on the result rather than
         // announced separately, so reopening the conversation rebuilds the card
         // from the transcript instead of needing a second source of truth.
@@ -1275,9 +1296,35 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         if (steps.length >= PLAN_MIN_STEPS) emit('plan', { steps });
       }
       return result;
-    },
-  );
+  };
+
+  /** @type {any[]} */
+  const results = [];
+  /** The change that failed, after which nothing else in this batch starts. */
+  let failed = null;
+  for (const segment of batchSegments(toolCalls)) {
+    if (failed) {
+      results.push(...segment.calls.map((call) => skippedAfterFailure(call, failed)));
+      continue;
+    }
+    const out = await mapWithLimit(segment.calls, MAX_PARALLEL_TOOLS, runOne);
+    segment.calls.forEach((call, i) => guard?.note(call, out[i]));
+    results.push(...out);
+    if (segment.alone && out[0]?.isError && !out[0]?.skipped) failed = segment.calls[0].name;
+  }
   return { id: newId(), role: 'tool', results };
+}
+
+const MAX_GATE_PICTURES = 6;
+
+/** The tools that write a file this app holds, shown to the model afterwards. */
+const WRITES_FILES = new Set(['create_file', 'update_file']);
+
+/** Whether a later call in the same batch rewrites the file this one wrote. */
+function rewrittenLater(call, calls) {
+  const at = calls.indexOf(call);
+  const id = call.input?.file_id;
+  return !!id && calls.slice(at + 1).some((c) => c.name === 'update_file' && c.input?.file_id === id);
 }
 
 /**
@@ -1611,6 +1658,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   // This turn's reads and its deep-research count — see `repeatedRead`.
   const turnReads = new Map();
   const turnCounts = {};
+  /** What this turn has done, for not doing it twice: see `createStepGuard`. */
+  const stepGuard = createStepGuard(messages);
   const toolArgs = () => ({
     workerOnline,
     desktopOnline: !!worker?.info?.desktop,
@@ -1763,7 +1812,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages) })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages), guard: stepGuard, canSee: entry?.vision !== false, masking, deadline })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -1823,6 +1872,13 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   /** The progress gate's note for the next request, and whether it has fired this turn. */
   let progressGate = null;
   let progressGated = false;
+  /**
+   * The pictures that go with the gate's note, when what is owed is a look at a file.
+   * @type {{ id: string, name: string, kind: string }[]}
+   */
+  let gatePictures = [];
+  /** A file written in parts is checked at the end, and that is asked once a turn. */
+  let reviewGated = false;
   /** The quality gate runs once a turn (QC-001). */
   let qualityChecked = false;
   /** What the last step showed the model, as the gate's sources besides the stored messages — see `gateSources`. */
@@ -1983,13 +2039,13 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           ? withRunNote(activeTranscript(normaliseOrder(messages)), runNote)
           : withSkillNotes(withIntentNotes(activeTranscript(normaliseOrder(messages))), picked),
       );
-      const grounded = withProjectSources(
+      const grounded = withLookedPictures(withProjectSources(
         // The progress gate sends the model back with its own note, in place of
         // the continuation note that would otherwise follow its last reply.
-        progressGate ? [...tracked, { id: 'progress-gate', role: 'user', text: progressGate }] : withContinuation(tracked),
+        progressGate ? [...tracked, { id: 'progress-gate', role: 'user', text: progressGate, ...(gatePictures.length ? { attachments: gatePictures, looked: true } : {}) }] : withContinuation(tracked),
         project?.passages,
         project?.images,
-      );
+      ));
       const loaded = await loadForTranscript(userId, grounded, {
         // Only worth parsing when the model cannot be shown the file itself —
         // or when personal details are masked, and the text is what can be.
@@ -2381,6 +2437,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     assistant.seq = stored.seq;
     // The gate's note was for that one request; it is never stored.
     progressGate = null;
+    gatePictures = [];
 
     /**
      * Never fatal, but never silent either.
@@ -2432,6 +2489,26 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * was cut off, refused or filtered) and only once per turn, so a step the
        * model deliberately left undone ends the turn on the next reply.
        */
+      /*
+       * The file check for what the write itself could not show: a file made in
+       * parts, whose last part nobody can recognise until the model stops adding.
+       * Sent back once, with the file; a file written whole was shown already.
+       */
+      if (!reviewGated && !stop.message && step + 1 < prefs.maxSteps && !signal?.aborted) {
+        const owed = stepGuard.owed().slice(0, 2);
+        if (owed.length) {
+          reviewGated = true;
+          const looks = await Promise.all(
+            owed.map((file) => lookAfterWriting({ userId, chatId, file, canSee: entry?.vision !== false, masking, deadline, looksSoFar: Math.min(stepGuard.looks, MAX_LOOKS_PER_TURN - 1) })),
+          );
+          owed.forEach((file) => stepGuard.markLooked(file.id));
+          progressGate = `[The reply above is not final yet. You wrote ${owed.map((f) => f.name).join(' and ')} in parts, so look over the finished file before ending this turn. ${looks.map((l) => l.text.replace(/^\[|\]$/g, '')).join(' ')} Then answer in full: this reply replaces nothing, so do not repeat what you already said.]`;
+          // As many as one look shows, however many files it was: pictures are paid for by the piece.
+          gatePictures = looks.flatMap((l) => l.pictures).slice(0, MAX_GATE_PICTURES).map((p) => ({ id: p.id, name: p.name, kind: 'image' }));
+          emit('status', { phase: 'progress_check' });
+          continue;
+        }
+      }
       if (!progressGated && !stop.message && step + 1 < prefs.maxSteps) {
         const behind = unfinishedThisTurn(messages);
         if (behind) {
@@ -2509,7 +2586,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // No answers on this path: a well-formed question pauses above rather than
     // reaching here, so anything named `ask_options` that gets this far is a
     // malformed call on its way to becoming a tool error.
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData });
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData, guard: stepGuard, canSee: entry?.vision !== false, masking, deadline });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {

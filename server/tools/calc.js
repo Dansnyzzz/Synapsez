@@ -456,7 +456,11 @@ export function calculate(source) {
     return `${expression} = ${tidyNumber(value)}`;
   }
   if (items.length > MAX_LIST_ITEMS) throw new Error('That list is too long to work out in one call. Send fewer figures at a time.');
-  return `${src} = [${items.map((item) => tidyNumber(evaluate(item).value)).join(', ')}]`;
+  // One per line, each with its working: what a model copies from, and what the screen lists.
+  return items.map((item) => {
+    const { value, expression } = evaluate(item);
+    return `${expression} = ${tidyNumber(value)}`;
+  }).join('\n');
 }
 
 /** Exposed so the tool description can list what is available without drifting. */

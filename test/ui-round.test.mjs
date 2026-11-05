@@ -379,6 +379,62 @@ section('a tool row names the file, never its id');
   check('(the transcript drew)', text.length > 0);
 }
 
+section('sums are one card, a call not run is no row, a rewritten file is one card');
+{
+  const mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  await store.createChat(me.id, { id: 'c-steps', title: 'One step at a time', model: 'auto' });
+  const say = (message) => store.appendMessage(me.id, 'c-steps', { createdAt: at, ...message });
+  await say({ id: 's-u', role: 'user', text: 'Work it out and write it up' });
+  // Sums over two steps, side by side and as a list, with one that fails.
+  await say({ id: 's-a1', role: 'assistant', text: '', toolCalls: [{ id: 'c1', name: 'calculate', input: { expression: '57*25744' } }, { id: 'c2', name: 'calculate', input: { expression: '1467408/12' } }] });
+  await say({ id: 's-t1', role: 'tool', results: [{ toolCallId: 'c1', name: 'calculate', content: '57*25744 = 1467408' }, { toolCallId: 'c2', name: 'calculate', content: '1467408/12 = 122284' }] });
+  await say({ id: 's-a2', role: 'assistant', text: '', toolCalls: [{ id: 'c3', name: 'calculate', input: { expression: '[1+1, 2+2]' } }, { id: 'c4', name: 'calculate', input: { expression: '1/0' } }] });
+  await say({ id: 's-t2', role: 'tool', results: [{ toolCallId: 'c3', name: 'calculate', content: '1+1 = 2\n2+2 = 4' }, { toolCallId: 'c4', name: 'calculate', content: 'That divides by zero, which has no answer.', isError: true }] });
+  // The report: a write that failed, and the read beside it that never ran.
+  await say({ id: 's-a3', role: 'assistant', text: '', toolCalls: [{ id: 'f1', name: 'update_file', input: { file_id: fileId, edits: [{ find: 'x', replace: 'y' }] } }, { id: 'f2', name: 'read_generated_file', input: { file_id: fileId } }] });
+  await say({ id: 's-t3', role: 'tool', results: [{ toolCallId: 'f1', name: 'update_file', content: 'Edit 1 did not match.', isError: true }, { toolCallId: 'f2', name: 'read_generated_file', content: 'Not run: update_file failed.', isError: true, skipped: true }] });
+  // Written twice, in two steps, the second shown to the model.
+  await say({ id: 's-a4', role: 'assistant', text: '', toolCalls: [{ id: 'f3', name: 'update_file', input: { file_id: fileId, content: 'a' } }] });
+  await say({ id: 's-t4', role: 'tool', results: [{ toolCallId: 'f3', name: 'update_file', content: 'Rewrote', file: { id: fileId, name: 'Toi uu hoa mo hinh.docx', mime, kind: 'office', bytes: 2000 } }] });
+  await say({ id: 's-a5', role: 'assistant', text: '', toolCalls: [{ id: 'f4', name: 'update_file', input: { file_id: fileId, content: 'b' } }] });
+  await say({ id: 's-t5', role: 'tool', results: [{ toolCallId: 'f4', name: 'update_file', content: 'Rewrote\n\n[a.docx has 1 page. Check all of it. Do not mention this check unless it changed something.]', looked: true, pictures: [{ id: fileId, name: 'a.docx (Page 1).jpg', label: 'Page 1' }], file: { id: fileId, name: 'Toi uu hoa mo hinh.docx', mime, kind: 'office', bytes: 3000 } }] });
+  await say({ id: 's-a6', role: 'assistant', text: 'Done.' });
+  await reload();
+  await page.click('.chat-row[data-chat="c-steps"] .chat-item');
+  await page.waitForFunction(() => document.getElementById('chat-title').textContent === 'One step at a time');
+  await page.waitForTimeout(400);
+  const seen = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('#messages details.steps[data-family="calc"]')];
+    const rows = [...document.querySelectorAll('#messages .step--calc')];
+    return {
+      cards: cards.length,
+      open: cards[0]?.open,
+      summary: cards[0]?.querySelector('summary')?.textContent.replace(/\s+/g, ' ').trim() || '',
+      rows: rows.map((r) => [r.querySelector('.calc__expr')?.textContent || '', r.querySelector('.calc__value')?.textContent || ''].join('=')),
+      error: !!document.querySelector('#messages .step--calc.step--error .calc__why'),
+      headlines: [...document.querySelectorAll('#messages .tool > summary')].map((n) => n.textContent.replace(/\s+/g, ' ').trim()),
+      fileCards: document.querySelectorAll('#messages .filecard').length,
+      looked: document.querySelectorAll('#messages .tool__looked').length,
+      thumbs: document.querySelectorAll('#messages .tool .steps__thumbs .pic-thumb').length,
+      output: [...document.querySelectorAll('#messages .tool pre')].map((n) => n.textContent).join(' '),
+    };
+  });
+  check('sums over two steps are one card', seen.cards === 1, JSON.stringify(seen.summary));
+  check('folded: nothing to scroll past', seen.open === false);
+  check('each figure is a row with its working and its answer, a list too', seen.rows.join('|') === '57*25744=1467408|1467408/12=122284|1+1=2|2+2=4|1/0=', seen.rows.join('|'));
+  check('the card counts them', /4/.test(seen.summary), seen.summary);
+  check('a sum that failed says why, in the same card', seen.error);
+  check('the failed write has its row', seen.headlines.filter((h) => /Rewrote|Viết lại|Toi uu/i.test(h)).length === 3, seen.headlines.join(' | '));
+  check('the read that never ran has none', !seen.headlines.some((h) => /read back|Đọc lại/i.test(h)), seen.headlines.join(' | '));
+  check('a file rewritten in the next step is one card', seen.fileCards === 1, String(seen.fileCards));
+  check('the row says the file was checked, and shows what was looked at', seen.looked === 1 && seen.thumbs === 1, JSON.stringify([seen.looked, seen.thumbs]));
+  check('the note to the model is not printed', !/Do not mention this check/.test(seen.output));
+  await reload();
+  await page.click('.chat-row[data-chat="c-round"] .chat-item');
+  await page.waitForFunction(() => document.getElementById('chat-title').textContent === 'A round of things');
+  await page.waitForTimeout(500);
+}
+
 section('a search says what it found');
 {
   const lines = await page.evaluate(() => [...document.querySelectorAll('#messages .web')].map((w) => ({ query: w.querySelector('.web__query')?.textContent || '', count: w.querySelector('.web__count')?.textContent || '', title: w.querySelector('.web__count')?.getAttribute('title') || '', rows: w.querySelectorAll('.webrow').length })));
@@ -592,7 +648,7 @@ section('the owner adds an administrator, who sees what they were given');
     disabled: document.getElementById('admin-add-go').disabled,
   }));
   check('the owner has the section, and is marked as the owner', form.section && form.owner === 'Owner', JSON.stringify(form));
-  check('  nothing is given by default, and it cannot be sent empty', form.powers === 6 && form.checked === 0 && form.disabled, JSON.stringify(form));
+  check('  nothing is given by default, and it cannot be sent empty', form.powers === 7 && form.checked === 0 && form.disabled, JSON.stringify(form));
 
   // Scrolled to, or typed for: one list does both.
   await page.locator('.picker:has(#admin-add-person) .picker__btn').click();

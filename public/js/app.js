@@ -36,6 +36,9 @@ import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
 import { createUsagePanel } from './usage-panel.js';
+import { createThemes } from './themes-panel.js';
+import { createRanking } from './ranking-panel.js';
+import { createMascot, MASCOT_STATES } from './mascot.js';
 import { createUsageAlert } from './usage-alert.js';
 import { createCustomize, openMenu as openPopoverMenu } from './customize.js';
 import { createSkillEditor, forgetLocalDrafts } from './skills-editor.js';
@@ -751,6 +754,8 @@ async function start() {
   renderSuggestions();
   renderTopbar();
   paintLegal();
+  mascot.setPref(state.boot.prefs.mascot);
+  themesPanel.sync();
   // A limit nearly used is said before the next message, not after it fails.
   usageAlert.refresh({ soon: true });
   if (state.boot.prefs.modelNotice) noteModelRetired(state.boot.prefs.modelNotice.from);
@@ -3941,6 +3946,10 @@ async function streamOnce(run, decision, answers) {
       signal: run.abort.signal,
       handlers: {
         status: ({ phase, name, message, seconds, model, free, stop, folding, chars }) => {
+          if (onScreen(run)) {
+            if (phase === 'thinking' || phase === 'waiting' || phase === 'compacting') mascot.show('thinking');
+            else if (phase === 'tool' || phase === 'drafting') mascot.show('typing');
+          }
           // The count arrives a moment after the phase does — the server says
           // "compacting" before it knows how much, then says how much. Both
           // land here, and the second draws the same line with the number in.
@@ -4018,6 +4027,7 @@ async function streamOnce(run, decision, answers) {
           maybeScroll(run);
         },
         text: ({ delta }) => {
+          if (onScreen(run)) mascot.show('typing');
           setStatus(null, run);
           const turn = block();
           turn.finishThinking();
@@ -4039,6 +4049,7 @@ async function streamOnce(run, decision, answers) {
           if (onScreen(run)) renderProgress(steps);
         },
         tool_call: (call) => {
+          if (onScreen(run)) mascot.show(call.name === 'run_parallel' || call.name === 'deep_research' ? 'conducting' : 'typing');
           // Deliberately not `block()`: the card belongs to the turn that asked
           // for it, even though that turn is already persisted.
           run.turn.finishThinking();
@@ -4140,10 +4151,12 @@ async function streamOnce(run, decision, answers) {
          * this conversation puts the question up again.
          */
         question_required: (payload) => {
+          if (onScreen(run)) mascot.show('notification');
           outcome = 'waiting';
           if (onScreen(run)) questionCard.show(payload);
         },
         approval_required: ({ toolCalls }) => {
+          if (onScreen(run)) mascot.show('notification');
           outcome = 'waiting';
           // A run waiting in a conversation you are not looking at must not
           // interrupt you. The pending batch is persisted server-side, so
@@ -4171,6 +4184,7 @@ async function streamOnce(run, decision, answers) {
         },
         done: ({ stop }) => {
           outcome = 'done';
+          if (onScreen(run)) mascot.finished(!stop?.message);
           clearDrafts();
           // Fold any run of steps still drawn open. (Its mark already follows its
           // steps; a step that never answered is settled when the run ends.)
@@ -4671,6 +4685,23 @@ const usageAlert = createUsageAlert($('usage-alert'), {
   new MutationObserver(() => usageAlert.hold(busy())).observe($('question'), { attributes: true, attributeFilter: ['hidden'] });
   new MutationObserver(() => usageAlert.hold(busy())).observe($('approval'), { attributes: true, attributeFilter: ['hidden'] });
 }
+/** The whale on the writing box, and the look behind the app (owner, 2026-11-04). */
+const mascot = createMascot({ host: /** @type {HTMLElement} */ ($('composer').querySelector('.composer__box')) });
+const themesPanel = createThemes({
+  page: $('themes-page'),
+  admin: $('admin-themes'),
+  toast,
+  // Off a scene, back to whatever this person chose for light and dark.
+  restoreMode: () => applyTheme(storedTheme()),
+  mascot: () => mascot.pref(),
+  setMascot: (value) => {
+    mascot.setPref(value);
+    api.savePrefs({ mascot: value }).catch((err) => toast(err.message, 'error'));
+  },
+  mascotStates: MASCOT_STATES,
+});
+const rankingPanel = createRanking({ host: $('ranking-page'), toast, savePrefs: (patch) => api.savePrefs(patch) });
+
 const usagePanel = createUsagePanel($('usage-panel'), {
   load: () => api.usageReport(),
   sessions: () => api.sessions(),
@@ -5496,6 +5527,10 @@ function selectTab(asked) {
   }
   // The providers are asked what is left only when somebody looks (2026-10-31).
   if (name === 'usage') usagePanel.load();
+  // A scene on a tile costs a moment to paint, so only while that page is open.
+  if (name === 'theme') themesPanel.load();
+  else themesPanel.leave();
+  if (name === 'ranking') rankingPanel.load();
   // Reaching an MCP server takes a moment, so it is asked when looked at.
   if (name === 'extensions') {
     loadMcp();
@@ -5512,7 +5547,10 @@ function selectTab(asked) {
   if (name === 'connectors') customize.loadConnectors().catch((err) => toast(err.message, 'error'));
   if (name === 'plugins') customize.paintPlugins();
   if (name === 'system') paintSystem();
-  if (name === 'admin') loadAdmin();
+  if (name === 'admin') {
+    loadAdmin();
+    themesPanel.loadAdmin();
+  }
   if (name === 'feedback') loadAdminFeedback();
 }
 
@@ -6275,7 +6313,7 @@ async function loadRecommended() {
 }
 
 /** The permissions an owner can give, in the order the server lists them, from what it says this account holds. */
-const ADMIN_POWERS = ['users', 'delete_users', 'models', 'feedback', 'activity', 'free_tier'];
+const ADMIN_POWERS = ['users', 'delete_users', 'models', 'feedback', 'activity', 'free_tier', 'themes'];
 
 /** The boxes for what an administrator may do, each saying what it means. */
 function powerBoxes(idPrefix, chosen) {
@@ -6961,12 +6999,15 @@ function storedTheme() {
 // Applied at import time, before the app renders, so a light-theme user never
 // sees a dark flash on the way in.
 applyTheme(storedTheme());
+themesPanel.boot();
 
 // Three faces, one lit, as Claude draws the choice; the arrows move between them as in any radio group.
 $('theme').addEventListener('click', (event) => {
   const btn = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-theme-choice]'));
   if (!btn) return;
   applyTheme(btn.dataset.themeChoice);
+  // A scene decides light or dark while it is up; this choice is for when it is not.
+  themesPanel.reassert();
   paintThemeChoice(btn.dataset.themeChoice);
 });
 $('theme').addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {

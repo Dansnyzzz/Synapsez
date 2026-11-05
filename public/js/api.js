@@ -101,6 +101,19 @@ export const api = {
   /** Agreeing to the documents as they are now — `versions` as bootstrap's `consent.current` says them. */
   agree: (versions) => request('POST', '/api/consent', versions),
 
+  /** Themes, the boards and titles (server/themes.js). */
+  themes: () => request('GET', '/api/themes'),
+  selectTheme: (id) => request('PUT', '/api/themes/selected', { id }),
+  ranking: (scope, key) => request('GET', `/api/ranking?${new URLSearchParams(clean({ scope, key }))}`),
+  titles: () => request('GET', '/api/titles'),
+  equipTitle: (id) => request('PUT', '/api/titles/equipped', { id }),
+  adminThemes: () => request('GET', '/api/admin/themes'),
+  themePeople: () => request('GET', '/api/admin/themes/people'),
+  themeHolders: (id) => request('GET', `/api/admin/themes/${encodeURIComponent(id)}/holders`),
+  setThemeBadge: (id, badge) => request('PUT', `/api/admin/themes/${encodeURIComponent(id)}`, badge),
+  giveTheme: (id, userId) => request('POST', `/api/admin/themes/${encodeURIComponent(id)}/holders`, { userId }),
+  takeTheme: (id, userId) => request('DELETE', `/api/admin/themes/${encodeURIComponent(id)}/holders/${encodeURIComponent(userId)}`),
+
   /** Settings → Usage: each provider's own figures for the account's keys, and what Synapsez counted. */
   usageReport: () => request('GET', '/api/usage/report'),
   /** The same without the hours: what the warning above the composer needs. */

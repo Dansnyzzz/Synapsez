@@ -42,3 +42,20 @@
     }
   }
 })();
+
+/**
+ * The theme this browser last wore, before first paint: only the attributes that
+ * pick its colours. Without this, a dark scene flashed the plain page on every
+ * reload, until the modules behind themes-panel.js had loaded.
+ */
+(function () {
+  try {
+    const scene = localStorage.getItem('synapsez:scene');
+    if (!scene) return;
+    document.documentElement.dataset.scene = scene;
+    const mode = localStorage.getItem('synapsez:scene-mode');
+    if (mode === 'light' || mode === 'dark') document.documentElement.dataset.theme = mode;
+  } catch (e) {
+    /* storage refused: the plain page until the app has asked the server */
+  }
+})();
