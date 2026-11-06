@@ -190,6 +190,27 @@ export async function suggestionFor(status, recommended = null) {
 }
 
 /**
+ * The free model to fall back on when `currentId` has run out or stopped answering:
+ * the first of the administrators' two this account's keys can run and that is not
+ * the one that just failed (owner, 2026-11-06). Null when neither qualifies, and then
+ * it is Auto's turn. Only ever a free one: a free model running out must not start
+ * billing anybody.
+ *
+ * @param {Record<string, any>} status  providerStatus(userId)
+ * @param {string} currentId
+ * @returns {Promise<string | null>}
+ */
+export async function freeFallbackFor(status, currentId, recommended = null) {
+  const rec = { freeSecond: null, ...(recommended || (await getRecommended())) };
+  for (const id of [rec.free, rec.freeSecond]) {
+    if (!id) continue;
+    const route = await pickRoute(id, 'free', status, new Set());
+    if (route && route !== currentId) return route;
+  }
+  return null;
+}
+
+/**
  * The three, with their names — for the picker's marks. Given an account's keys,
  * each is named through the router that account would reach it by, so what the
  * picker marks is what pressing it would run.

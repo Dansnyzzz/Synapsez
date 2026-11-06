@@ -23,6 +23,7 @@ import { mcpTools } from './mcp/registry.js';
 import { priceTurn, isFreeEntry } from './providers/catalog.js';
 import { loadForTranscript, pdfTextsOf, toParts } from './attachments.js';
 import { projectPrompt } from './projects.js';
+import { freeFallbackFor } from './recommend.js';
 import { compact, shouldCompact, measure, activeTranscript, transcriptTokens } from './compact.js';
 import { promptParts, contextBreakdown } from './contextParts.js';
 import { log, annotate } from './util/trace.js';
@@ -2404,11 +2405,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       }
       /**
        * The provider behind the model failed on every key (`upstream`,
-       * providers/index.js) before a word of the reply.
+       * providers/index.js) before a word of the reply, or every key is out of it.
        *
        * A free model's one provider having a bad hour stopped the owner's
-       * morning workflow at step 2 (2026-10-19). Auto is OpenRouter's own router
-       * across the free models, so this step goes there once instead — for this
+       * morning workflow at step 2 (2026-10-19). The second of the two free models
+       * the administrators suggest takes over (owner, 2026-11-06), and with neither,
+       * Auto, OpenRouter's own router across the free models. Once, and for this
        * turn only: the account keeps its model, and is told which one answered.
        * Not when the model already is Auto (there is nowhere further to go), and
        * only for a library model, whose account already holds the key Auto runs on.
@@ -2419,10 +2421,11 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * and incognito was a promise; a bad hour at the provider changes neither.
        */
       if (
-        err?.upstream && !switchedThisTurn && !assistant.text && isLibraryModel(entry) && !isAuto(entry.id) &&
+        (err?.upstream || err?.code === 'rate_limited') && !switchedThisTurn && !assistant.text && isLibraryModel(entry) && !isAuto(entry.id) &&
         isFreeEntry(entry) && !chat?.incognito
       ) {
-        const auto = await pickAutoModel(userId);
+        const second = await freeFallbackFor(await providerStatus(userId), entry.id).catch(() => null);
+        const auto = second && !isAuto(second) ? await resolveModelId(second) : await pickAutoModel(userId);
         if (auto && auto.id !== entry.id) {
           switchedThisTurn = true;
           const from = entry?.label || entry.id;

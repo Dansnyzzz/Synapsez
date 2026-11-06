@@ -1145,6 +1145,8 @@ export function createApp() {
           providerMeta: keyProviderMeta(providers),
           saved,
           suggestion: suggestion ? { ...suggestion, inUse: !stored.defaultModel || stored.defaultModel === suggestion.id } : null,
+          // Each is named through the router these keys now reach it by.
+          recommended: await recommendedWithLabels(providers).catch(() => null),
         });
       } catch (err) {
         res.status(err.status || 400).json({ error: translateMessage(clientError(err), language) });

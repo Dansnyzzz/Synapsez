@@ -1960,7 +1960,8 @@ section('the getting-started guide says only what is true');
   const MAX_ALL = 8 * 1024 * 1024;
   let total = 0;
   for (const lang of ['vi', 'en']) {
-    for (let step = 1; step <= 6; step += 1) {
+    // Steps 2 and 3 are done in the guide itself rather than watched (owner, 2026-11-06).
+    for (const step of [1, 4, 5, 6]) {
       const clip = new URL(`../public/onboarding/${lang}/step-${step}.webm`, import.meta.url);
       const still = new URL(`../public/onboarding/${lang}/step-${step}.jpg`, import.meta.url);
       const video = fs.existsSync(clip) ? fs.readFileSync(clip) : null;

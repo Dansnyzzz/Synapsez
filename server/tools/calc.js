@@ -421,8 +421,18 @@ function listItems(src) {
   const items = [];
   let depth = 0;
   let start = 1;
+  /** Inside a quoted label a comma or a bracket is only a word's. */
+  let quote = '';
   for (let i = 0; i < src.length; i += 1) {
     const ch = src[i];
+    if (quote) {
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (QUOTES.has(ch)) {
+      quote = CLOSING[ch] || ch;
+      continue;
+    }
     if (ch === '(' || ch === '[' || ch === '{') depth += 1;
     else if (ch === ')' || ch === ']' || ch === '}') {
       depth -= 1;
@@ -436,6 +446,34 @@ function listItems(src) {
   items.push(src.slice(start, -1));
   return items;
 }
+
+/** Quotation marks a label can arrive in, straight or curly. */
+const QUOTES = new Set(['"', "'", '“', '‘']);
+const CLOSING = { '“': '”', '‘': '’' };
+
+/**
+ * What to work out from one item, and what the item called it.
+ *
+ * A model labels its figures: `["T10 DQT: 22828*29437", 875*29689.99]`. Refusing the
+ * quote cost the whole list and a step to send it again (owner, 2026-11-06), for
+ * words that were only ever a note to itself. A label is kept in the answer, which is
+ * what it was for, and it is only ever repeated: it is not read as arithmetic. An item
+ * that is only words names the next figure.
+ *
+ * @param {string} item
+ * @returns {{ label: string, work: string }}
+ */
+function labelled(item) {
+  let text = item.trim();
+  const close = CLOSING[text[0]] || text[0];
+  if (QUOTES.has(text[0]) && text.at(-1) === close && text.length > 1) text = text.slice(1, -1).trim();
+  const colon = text.lastIndexOf(':');
+  if (colon < 0) return { label: '', work: text };
+  return { label: text.slice(0, colon).trim(), work: text.slice(colon + 1).trim() };
+}
+
+/** Whether something is words with no figure in them, which can only be a name for one. */
+const onlyWords = (text) => !/[0-9]/.test(text) && !Object.hasOwn(CONSTANTS, text.toLowerCase());
 
 /** More than this in one call is not a sum, it is a spreadsheet. */
 const MAX_LIST_ITEMS = 200;
@@ -451,16 +489,26 @@ export function calculate(source) {
   const src = String(source ?? '').trim();
   if (!src) throw new Error('There is nothing to calculate.');
   const items = listItems(src);
-  if (!items) {
-    const { value, expression } = evaluate(src);
-    return `${expression} = ${tidyNumber(value)}`;
-  }
+  /** One item, or the whole of what was asked, as a line of the answer. */
+  const line = ({ label, work }, name = label) => {
+    const { value, expression } = evaluate(work);
+    return `${name ? `${name}: ` : ''}${expression} = ${tidyNumber(value)}`;
+  };
+  if (!items) return line(labelled(src));
   if (items.length > MAX_LIST_ITEMS) throw new Error('That list is too long to work out in one call. Send fewer figures at a time.');
   // One per line, each with its working: what a model copies from, and what the screen lists.
-  return items.map((item) => {
-    const { value, expression } = evaluate(item);
-    return `${expression} = ${tidyNumber(value)}`;
-  }).join('\n');
+  const lines = [];
+  let naming = '';
+  for (const item of items) {
+    const part = labelled(item);
+    if (onlyWords(part.work) && part.work && !part.label && QUOTES.has(item.trim()[0])) {
+      naming = part.work;
+      continue;
+    }
+    lines.push(line(part, part.label || naming));
+    naming = '';
+  }
+  return lines.join('\n');
 }
 
 /** Exposed so the tool description can list what is available without drifting. */

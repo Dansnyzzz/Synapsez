@@ -20,7 +20,30 @@ const check = (l, ok, d = '') => {
   if (!ok) failures += 1;
 };
 
-const { evaluate } = await import('../server/tools/calc.js');
+const { evaluate, calculate } = await import('../server/tools/calc.js');
+
+section('a label beside a figure is not a mistake (owner, 2026-11-06)');
+{
+  // The call in the owner's screenshot, in the shape it arrived.
+  const said = calculate('["T10 DQT: 22828*29437", 875*29689.9998, 22828*(29437-18230)]');
+  check('the labelled figure is worked out', said.split('\n')[0] === 'T10 DQT: 22828*29437 = 671987836', said);
+  check('and so is the rest of the list', said.split('\n').length === 3 && said.split('\n')[1].startsWith('875*29689.9998 = '), said);
+  check('curly quotes too', calculate('[“a: 1+1”]') === 'a: 1+1 = 2');
+  check('a comma in a label is the label\'s', calculate('["a, b: 2*3", 4]').split('\n')[0] === 'a, b: 2*3 = 6');
+  check('words on their own name the next figure', calculate('["Tổng", 1+2]') === 'Tổng: 1+2 = 3');
+  check('one label with no list', calculate('"rate: 15%"') === 'rate: 15% = 0.15');
+  check('an unquoted label as well', calculate('[cost: 2*3]') === 'cost: 2*3 = 6');
+  check('a label is never read as arithmetic', calculate('["require(fs): 1+1"]') === 'require(fs): 1+1 = 2');
+  for (const bad of ['["1+1: require(\'fs\')"]', 'eval("1+1")', '[this.constructor]', '["x: process.exit()"]']) {
+    let refused = false;
+    try {
+      calculate(bad);
+    } catch {
+      refused = true;
+    }
+    check(`what is worked out is still only arithmetic: ${bad}`, refused);
+  }
+}
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 const val = (src) => evaluate(src).value;
 const err = (src) => {

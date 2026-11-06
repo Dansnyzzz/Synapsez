@@ -138,7 +138,6 @@ export function mountScene(canvas, id, { animate = false, onReady = null } = {})
   };
 }
 
-/** Whether anything would move right now, and how much has been drawn: for a test and for a person measuring. */
 /**
  * Play a scene over a picture of it while something is being looked at. What it
  * returns takes the moving copy away again.
@@ -158,6 +157,7 @@ export function playInFrame(frame, id) {
   };
 }
 
+/** Whether anything would move right now, and how much has been drawn: for a test and for a person measuring. */
 export function sceneStats() {
   if (!canHandOver) return engine().then((module) => module.stats());
   startWorker();

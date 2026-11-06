@@ -1846,7 +1846,7 @@ export const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        expression: { type: 'string', description: 'The arithmetic to work out, as one string, e.g. sum([36, 26, 27, 34]) / 4, or every figure at once as a list: [8 - 5.5, 5 * 2, 17 / 4]' },
+        expression: { type: 'string', description: 'The arithmetic to work out, as one string, e.g. sum([36, 26, 27, 34]) / 4, or every figure at once as a list: [8 - 5.5, 5 * 2, 17 / 4]. A label goes before a colon: "total: 1 + 2"' },
       },
       required: ['expression'],
     },

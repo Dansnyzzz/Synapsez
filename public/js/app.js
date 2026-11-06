@@ -215,8 +215,11 @@ const screenPanel = createScreen();
 const onboarding = createOnboarding({
   providers: () => state.boot?.providers || {},
   isFree: () => attachments.isFree(),
-  onOpenKeys: () => openSettings('providers'),
-  onPickModel: () => browser.open(state.model),
+  recommended: () => state.boot?.recommended || null,
+  suggestion: () => state.boot?.suggestion || null,
+  currentModel: () => state.model,
+  addKey: (provider, key) => takeKey(provider, key),
+  useModel: (id) => chooseModel(id),
   onTryPrompt: (text) => setComposerText(text),
   // The five levels as the menu beside Send names and describes them.
   policies: () => POLICIES.map((id) => ({ id, label: POLICY_LABEL(id), hint: POLICY_HINT(id) })),
@@ -5851,11 +5854,7 @@ function fillSettings() {
       }
       button.disabled = true;
       try {
-        const before = state.model;
-        const result = await api.intakeKey(provider, value);
-        state.boot.providers = result.providers;
-        if (result.providerMeta) state.boot.providerMeta = result.providerMeta;
-        state.boot.suggestion = result.suggestion;
+        const result = await takeKey(provider, value);
         input.value = '';
         // Step 2 of the guide says whether a key exists. It is open behind this
         // sheet, so telling somebody to paste a key they have just pasted would
@@ -5866,16 +5865,7 @@ function fillSettings() {
         if (saved.kind === 'service') toast(t('keys.wasConnector', { service: CONNECTOR_BY_ID.get(saved.id)?.name || saved.id }), 'ok', { ms: 9000 });
         else if (saved.moved) toast(t('keys.movedTo', { from: nameOf(saved.from), to: nameOf(saved.id) }), 'ok', { ms: 9000 });
         else toast(t('keys.savedFor', { provider: nameOf(saved.id) }));
-        // An account that never chose a model is on the suggestion from now on.
-        if (result.suggestion?.inUse && result.suggestion.id !== before) {
-          state.boot.prefs.defaultModel = result.suggestion.id;
-          state.model = result.suggestion.id;
-          renderTopbar();
-          refreshModelFacts();
-        }
         fillSettings();
-        // A new key can be what lifts a limit: the line above the composer hears now.
-        usageAlert.refresh({ soon: true });
         if (saved.kind === 'provider') {
           const card = document.getElementById(`pcard-${saved.id}`);
           card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -6628,7 +6618,36 @@ $('logout').addEventListener('click', signOut);
 const browser = createModelBrowser({
   // The administrators' suggestions, marked and shown first (owner, 2026-11-02).
   recommended: () => state.boot?.recommended || null,
-  onPick: async (modelId) => {
+  onPick: (modelId) => chooseModel(modelId),
+});
+
+/**
+ * A key pasted, here or in the guide, taken where it belongs: what it changes for the
+ * account, the model suggested for its keys included.
+ *
+ * @param {string} provider  the box it was pasted in @param {string} value
+ */
+async function takeKey(provider, value) {
+  const before = state.model;
+  const result = await api.intakeKey(provider, value);
+  state.boot.providers = result.providers;
+  if (result.providerMeta) state.boot.providerMeta = result.providerMeta;
+  state.boot.suggestion = result.suggestion;
+  if (result.recommended) state.boot.recommended = result.recommended;
+  // An account that never chose a model is on the suggestion from now on.
+  if (result.suggestion?.inUse && result.suggestion.id !== before) {
+    state.boot.prefs.defaultModel = result.suggestion.id;
+    state.model = result.suggestion.id;
+    renderTopbar();
+    refreshModelFacts();
+  }
+  // A new key can be what lifts a limit: the line above the composer hears now.
+  usageAlert.refresh({ soon: true });
+  return result;
+}
+
+/** The account's model, from whichever place offered it. */
+async function chooseModel(modelId) {
     // Repaint first: the press should feel immediate, and this is a preference
     // rather than something that can be refused halfway.
     const previous = state.model;
@@ -6659,8 +6678,7 @@ const browser = createModelBrowser({
       refreshModelFacts();
       toast(err.message, 'error');
     }
-  },
-});
+}
 
 /**
  * The account's model has gone, and the server has moved it to Auto.
