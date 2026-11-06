@@ -17,6 +17,15 @@ import js from '@eslint/js';
  * deliberate about not adding those.
  */
 
+/** The scenes' worker and the canvases it is handed. */
+const SCENE_GLOBALS = {
+  self: 'readonly',
+  Worker: 'readonly',
+  OffscreenCanvas: 'readonly',
+  ImageData: 'readonly',
+  HTMLCanvasElement: 'readonly',
+};
+
 const NODE_GLOBALS = {
   process: 'readonly',
   console: 'readonly',
@@ -131,7 +140,7 @@ export default [
 
   {
     files: ['public/**/*.js'],
-    languageOptions: { globals: BROWSER_GLOBALS },
+    languageOptions: { globals: { ...BROWSER_GLOBALS, ...SCENE_GLOBALS } },
   },
 
   {

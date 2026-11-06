@@ -1,27 +1,34 @@
 import { api } from './api.js';
 import { t } from './i18n.js';
+import { latestOnly } from './latest.js';
 import { escapeHtml } from './markdown.js';
-import { SCENES, mountScene } from './scenes.js';
+import { SCENES, mountScene, playInFrame, sceneStill } from './scenes.js';
 
 /**
  * Themes (owner, 2026-11-04): the scene behind the app, the page that chooses it,
  * and the part of Administration that says what each one is called and who holds it.
  *
- * Held themes are chosen with a press and saved at once. A locked one can be looked
- * at, dimmed, moving, padlocked, and says what earns it, but never applies. The theme
- * in use keeps still on its tile; every other tile plays while the pointer is on it.
+ * Held themes are chosen with a press, which shows at once; the last press of a run
+ * of them is what is saved (owner, 2026-11-06), and nothing the server says about an
+ * older one can paint over it. A locked one can be looked at, dimmed, moving,
+ * padlocked, and says what earns it, but never applies. The theme in use keeps still
+ * on its tile; every other tile plays while the pointer is on it.
  *
+ * A theme only ever changes what is behind the app. Light or dark is the person's own
+ * setting, whichever is up.
+ *
+ * A tile is a picture made ahead of time, so a page of twenty costs nothing to open.
  * The stored id is painted before the server answers, so a reload never flashes the
  * default look; the server has the last word, in case a theme was taken back since.
  *
- * @typedef {{ kind: string, month: number|null, year: number|null }} Badge
- * @typedef {{ id: string, badge: Badge, owned: boolean, grantedAt: string|null, grant: Badge|null, needs: { tokens?: number }|null }} Theme
+ * @typedef {{ kind: string, quarter: number|null, year: number|null }} Badge
+ * @typedef {{ from: string, to: string, tokens: number, places: number, left: number, used: number, state: 'soon' | 'running' | 'over' }} EventStanding
+ * @typedef {{ id: string, badge: Badge, owned: boolean, grantedAt: string|null, grant: Badge|null, needs: { tokens?: number, spend?: number, event?: EventStanding }|null }} Theme
  */
 
 const STORE_KEY = 'synapsez:scene';
-const MODE_KEY = 'synapsez:scene-mode';
 
-const LOCK = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 0 1 6 0v3H9Zm3 4a2 2 0 0 1 1 3.7V20h-2v-2.3A2 2 0 0 1 12 14Z"/></svg>';
+export const LOCK = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 0 1 6 0v3H9Zm3 4a2 2 0 0 1 1 3.7V20h-2v-2.3A2 2 0 0 1 12 14Z"/></svg>';
 
 /** A badge in words. An "any" badge reads as the kind of prize; a dated one names when. */
 export function badgeText(badge) {
@@ -29,28 +36,58 @@ export function badgeText(badge) {
   switch (badge.kind) {
     case 'exclusive_event': return t('theme.badge.event');
     case 'achievement': return t('theme.badge.achievement');
-    case 'top_month': return badge.month && badge.year ? t('theme.badge.topMonthOf', { month: badge.month, year: badge.year }) : t('theme.badge.topMonth');
+    case 'top_quarter': return badge.quarter && badge.year ? t('theme.badge.topQuarterOf', { quarter: badge.quarter, year: badge.year }) : t('theme.badge.topQuarter');
     case 'top_year': return badge.year ? t('theme.badge.topYearOf', { year: badge.year }) : t('theme.badge.topYear');
     default: return t('theme.badge.none');
   }
 }
 
 const number = (n) => Number(n || 0).toLocaleString();
+const dollars = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+
+/** How a theme is held, or how it could be. */
+export function themeStanding(theme, progress = null) {
+  if (theme.id === 'default') return t('theme.standing.default');
+  if (theme.owned) {
+    if (!theme.grantedAt) return '';
+    const when = new Date(theme.grantedAt).toLocaleDateString();
+    return theme.grant && theme.grant.kind !== theme.badge.kind ? t('theme.standing.since', { when, why: badgeText(theme.grant) }) : t('theme.standing.sinceOnly', { when });
+  }
+  const ask = theme.needs;
+  if (ask?.tokens) return `${t('theme.standing.needsTokens', { n: number(ask.tokens) })}${progress ? ` ${t('theme.standing.soFarTokens', { n: number(progress.tokens) })}` : ''}`;
+  if (ask?.spend) return `${t('theme.standing.needsSpend', { n: dollars(ask.spend) })}${progress ? ` ${t('theme.standing.soFarSpend', { n: dollars(progress.spend) })}` : ''}`;
+  if (ask?.event) {
+    const event = ask.event;
+    if (event.state === 'over') return t('theme.standing.eventOver');
+    const asks = t('theme.standing.eventAsks', { from: new Date(event.from).toLocaleDateString(), to: new Date(new Date(event.to).getTime() - 1).toLocaleDateString(), n: number(event.tokens), places: number(event.places) });
+    return event.state === 'running' ? `${asks} ${t('theme.standing.eventNow', { used: number(event.used), left: number(event.left) })}` : asks;
+  }
+  const { kind, quarter, year } = theme.badge;
+  if (kind === 'top_quarter') return quarter && year ? t('theme.standing.topQuarterOf', { quarter, year }) : t('theme.standing.topQuarter');
+  if (kind === 'top_year') return year ? t('theme.standing.topYearOf', { year }) : t('theme.standing.topYear');
+  if (kind === 'exclusive_event') return t('theme.standing.event');
+  return t('theme.standing.locked');
+}
 
 /**
- * @param {{ page: HTMLElement, admin: HTMLElement, toast: (text: string, kind?: string) => void, restoreMode: () => void,
+ * @param {{ page: HTMLElement, admin: HTMLElement, toast: (text: string, kind?: string) => void,
  *   mascot: () => string, setMascot: (value: string) => void, mascotStates: string[] }} deps
  */
-export function createThemes({ page, admin, toast, restoreMode, mascot, setMascot, mascotStates }) {
+export function createThemes({ page, admin, toast, mascot, setMascot, mascotStates }) {
   /** @type {Theme[]} */
   let themes = [];
+  /** @type {{ tokens: number, spend: number } | null} */
+  let progress = null;
   let selected = readStored();
+  /** What the server last agreed to, to go back to if a save is refused. */
+  let confirmed = selected;
   /** What the right-hand panel is showing: a press, or the theme in use. */
   let chosen = selected;
-  /** @type {Map<string, { play: Function, pause: Function, destroy: Function }>} */
-  const tiles = new Map();
+  /** What is moving on a tile under the pointer, and what takes it away. */
+  let playing = null;
   let preview = null;
   let layer = null;
+  /** The scene behind the app, and the one coming up to replace it. */
   let backdrop = null;
   let drawn = false;
 
@@ -64,60 +101,83 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
 
   function store(id) {
     try {
-      if (id === 'default') {
-        localStorage.removeItem(STORE_KEY);
-        localStorage.removeItem(MODE_KEY);
-      } else {
-        localStorage.setItem(STORE_KEY, id);
-        localStorage.setItem(MODE_KEY, SCENES[id]?.mode || 'dark');
-      }
+      if (id === 'default') localStorage.removeItem(STORE_KEY);
+      else localStorage.setItem(STORE_KEY, id);
+      // Written by an older version of this page, when a scene decided light or dark.
+      localStorage.removeItem('synapsez:scene-mode');
     } catch {
       /* private browsing refuses storage; the choice still holds this session */
     }
   }
 
-  /** Put a scene behind the app, or take it away. The person's own light or dark choice is never written over. */
+  /**
+   * Put a scene behind the app, or take it away. The new one comes up over the old
+   * when its first frame is ready, so nothing flashes; a press on another before then
+   * means this one is never painted at all.
+   */
   function apply(id) {
     const root = document.documentElement;
-    const scene = SCENES[id];
-    backdrop?.destroy();
+    backdrop?.handle.destroy();
     backdrop = null;
-    if (!scene) {
+    if (!SCENES[id]) {
       delete root.dataset.scene;
       layer?.remove();
       layer = null;
-      restoreMode();
       return;
     }
     root.dataset.scene = id;
-    root.dataset.theme = scene.mode;
     if (!layer) {
       layer = document.createElement('div');
       layer.id = 'scene-layer';
       layer.setAttribute('aria-hidden', 'true');
-      layer.append(document.createElement('canvas'));
       document.body.prepend(layer);
     }
-    backdrop = mountScene(/** @type {HTMLCanvasElement} */ (layer.firstElementChild), id, { animate: true });
+    // What is still fading in from a press a moment ago has already been destroyed; only what is showing stays under it.
+    for (const old of [...layer.children]) if (!old.classList.contains('is-in')) old.remove();
+    const canvas = document.createElement('canvas');
+    layer.append(canvas);
+    const handle = mountScene(canvas, id, {
+      animate: true,
+      onReady() {
+        canvas.classList.add('is-in');
+        for (const old of [...layer.children]) if (old !== canvas) old.remove();
+      },
+    });
+    backdrop = { handle, id };
   }
 
-  /** A press on Light or Dark while a scene is up: saved, and the scene's own look stays. */
-  function reassert() {
-    const scene = SCENES[selected];
-    if (scene) document.documentElement.dataset.theme = scene.mode;
-  }
+  /*
+   * The last press wins. Each press shows at once; this saves only what is still
+   * wanted, one at a time, so answers cannot cross and land on an older choice.
+   */
+  const saver = latestOnly((id) => api.selectTheme(id), {
+    saved(_answer, id) {
+      confirmed = id;
+    },
+    failed(err) {
+      selected = confirmed;
+      chosen = confirmed;
+      store(confirmed);
+      apply(confirmed);
+      markChoice();
+      paintPreview(themes.find((theme) => theme.id === chosen));
+      toast(err.message, 'error');
+    },
+  });
 
-  /** Ask the server what this account holds, and follow it. */
+  /** Ask the server what this account holds, and follow it, unless a choice is on its way there. */
   async function sync() {
     try {
       const answer = await api.themes();
       themes = answer.themes;
-      if (answer.selected !== selected) {
+      progress = answer.progress || null;
+      if (!saver.busy() && answer.selected !== selected) {
         selected = answer.selected;
+        confirmed = selected;
         chosen = selected;
         store(selected);
         apply(selected);
-      }
+      } else if (!saver.busy()) confirmed = answer.selected;
       if (drawn) draw();
     } catch {
       /* the look stays as it was: a page behind a failed request should not lose its colours */
@@ -128,62 +188,38 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
     const isDefault = theme.id === 'default';
     const name = t(`theme.${theme.id}.name`);
     return `<button class="themes__tile${theme.owned ? '' : ' is-locked'}${theme.id === selected ? ' is-current' : ''}${theme.id === chosen ? ' is-chosen' : ''}" type="button" data-theme-id="${escapeHtml(theme.id)}" aria-pressed="${theme.id === selected}" aria-label="${escapeHtml(theme.owned ? name : t('theme.lockedName', { name }))}">
-      <span class="themes__frame">${isDefault ? '<span class="themes__plain" aria-hidden="true"></span>' : '<canvas aria-hidden="true"></canvas>'}${theme.owned ? '' : `<span class="themes__lock">${LOCK}</span>`}</span>
+      <span class="themes__frame">${isDefault ? '<span class="themes__plain" aria-hidden="true"></span>' : `<img class="themes__still" src="${sceneStill(theme.id)}" alt="" loading="lazy" decoding="async" />`}${theme.owned ? '' : `<span class="themes__lock">${LOCK}</span>`}</span>
       <span class="themes__name">${escapeHtml(name)}</span>
     </button>`;
-  }
-
-  /** How this theme is held, or how it could be. */
-  function standing(theme) {
-    if (theme.id === 'default') return t('theme.standing.default');
-    if (theme.owned) {
-      if (!theme.grantedAt) return t('theme.standing.admin');
-      const when = new Date(theme.grantedAt).toLocaleDateString();
-      return theme.grant && theme.grant.kind !== theme.badge.kind ? t('theme.standing.since', { when, why: badgeText(theme.grant) }) : t('theme.standing.sinceOnly', { when });
-    }
-    if (theme.needs?.tokens) return t('theme.standing.needsTokens', { n: number(theme.needs.tokens) });
-    if (theme.badge.kind === 'top_month') return t('theme.standing.topMonth');
-    if (theme.badge.kind === 'top_year') return t('theme.standing.topYear');
-    if (theme.badge.kind === 'exclusive_event') return t('theme.standing.event');
-    return t('theme.standing.locked');
   }
 
   function paintPreview(theme) {
     const host = page.querySelector('.themes__detail');
     if (!host || !theme) return;
-    preview?.destroy();
+    preview?.();
     preview = null;
     const isDefault = theme.id === 'default';
-    host.innerHTML = `<div class="themes__stage${theme.owned ? '' : ' is-locked'}">${isDefault ? '<span class="themes__plain" aria-hidden="true"></span>' : '<canvas aria-hidden="true"></canvas>'}${theme.owned ? '' : `<span class="themes__lock themes__lock--big">${LOCK}</span>`}</div>
+    const said = themeStanding(theme, progress);
+    host.innerHTML = `<div class="themes__stage${theme.owned ? '' : ' is-locked'}">${isDefault ? '<span class="themes__plain" aria-hidden="true"></span>' : `<img class="themes__still" src="${sceneStill(theme.id)}" alt="" decoding="async" />`}${theme.owned ? '' : `<span class="themes__lock themes__lock--big">${LOCK}</span>`}</div>
       <h4 class="themes__title">${escapeHtml(t(`theme.${theme.id}.name`))}</h4>
       <p class="themes__badge" data-kind="${escapeHtml(theme.badge.kind)}">${escapeHtml(badgeText(theme.badge))}</p>
       <p class="themes__desc">${escapeHtml(t(`theme.${theme.id}.desc`))}</p>
-      <p class="themes__standing">${escapeHtml(standing(theme))}</p>`;
-    const canvas = host.querySelector('canvas');
-    if (canvas) preview = mountScene(canvas, theme.id, { animate: true });
+      ${said ? `<p class="themes__standing">${escapeHtml(said)}</p>` : ''}`;
+    const stage = host.querySelector('.themes__stage');
+    if (!isDefault && stage) preview = playInFrame(/** @type {HTMLElement} */ (stage), theme.id);
   }
 
-  function destroyTiles() {
-    for (const tile of tiles.values()) tile.destroy();
-    tiles.clear();
+  function stopTile() {
+    playing?.stop();
+    playing = null;
   }
 
   function draw() {
     drawn = true;
-    destroyTiles();
+    stopTile();
     const grid = page.querySelector('.themes__grid');
     if (!grid) return;
     grid.innerHTML = themes.map(tileHtml).join('');
-    // One at a time: painting a scene for the first time is a moment's work, and a list of them should not hold the page.
-    const queue = themes.filter((theme) => theme.id !== 'default');
-    const next = () => {
-      const theme = queue.shift();
-      if (!theme) return;
-      const canvas = /** @type {HTMLCanvasElement|null} */ (grid.querySelector(`[data-theme-id="${window.CSS.escape(theme.id)}"] canvas`));
-      if (canvas && grid.isConnected) tiles.set(theme.id, mountScene(canvas, theme.id));
-      setTimeout(next, 0);
-    };
-    next();
     paintPreview(themes.find((theme) => theme.id === chosen) || themes[0]);
   }
 
@@ -196,30 +232,33 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
     }
   }
 
-  /** The theme a press landed on: looked at either way, worn if it is held. */
-  async function choose(id) {
-    const theme = themes.find((row) => row.id === id);
-    if (!theme) return;
-    chosen = id;
-    paintPreview(theme);
-    if (!theme.owned || id === selected) {
-      markChoice();
-      return;
-    }
-    const before = selected;
+  /** Wear a theme this account holds, from here or from anywhere else that offers it. */
+  function wear(id) {
+    if (id === selected) return;
     selected = id;
-    tiles.get(id)?.pause();
+    if (playing?.id === id) stopTile();
     store(id);
     apply(id);
     markChoice();
-    try {
-      await api.selectTheme(id);
-    } catch (err) {
-      selected = before;
-      store(before);
-      apply(before);
-      markChoice();
-      toast(err.message, 'error');
+    void saver.push(id);
+  }
+
+  /** The theme a press landed on: looked at either way, worn if it is held. */
+  function choose(id) {
+    const theme = themes.find((row) => row.id === id);
+    if (!theme) return;
+    chosen = id;
+    markChoice();
+    paintPreview(theme);
+    if (theme.owned) wear(id);
+  }
+
+  function markMascots() {
+    const current = mascot();
+    for (const pet of /** @type {NodeListOf<HTMLElement>} */ (page.querySelectorAll('[data-mascot]'))) {
+      const on = pet.dataset.mascot === current;
+      pet.classList.toggle('is-chosen', on);
+      pet.setAttribute('aria-checked', String(on));
     }
   }
 
@@ -245,7 +284,6 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
           <h4 class="themes__sub">${escapeHtml(t('mascot.title'))}</h4>
           <p class="themes__hint">${escapeHtml(t('mascot.hint'))}</p>
           <div class="themes__mascots" role="radiogroup" aria-label="${escapeHtml(t('mascot.title'))}"></div>
-          <p class="themes__credit">${escapeHtml(t('mascot.credit'))}</p>
         </div>
         <aside class="themes__detail" aria-live="polite"></aside>
       </div>`;
@@ -253,11 +291,15 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
       const tile = /** @type {HTMLElement|null} */ (/** @type {HTMLElement} */ (event.target).closest?.('.themes__tile'));
       if (!tile || tile.contains(/** @type {Node} */ (event.relatedTarget))) return;
       const id = tile.dataset.themeId;
+      if (!go) {
+        if (playing?.id === id) stopTile();
+        return;
+      }
       // The theme in use stays still on its tile: it is already moving behind everything.
-      if (go && id === selected) return;
-      const handle = tiles.get(id);
-      if (go) handle?.play();
-      else handle?.pause();
+      if (id === selected || id === 'default' || playing?.id === id) return;
+      stopTile();
+      const frame = /** @type {HTMLElement} */ (tile.querySelector('.themes__frame'));
+      playing = { id, stop: playInFrame(frame, id) };
     };
     page.addEventListener('mouseover', (event) => play(event, true));
     page.addEventListener('mouseout', (event) => play(event, false));
@@ -273,7 +315,7 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
       const pet = /** @type {HTMLElement|null} */ (target.closest('[data-mascot]'));
       if (pet) {
         setMascot(pet.dataset.mascot);
-        paintMascots();
+        markMascots();
       }
     });
     page.addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
@@ -285,8 +327,8 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
       const all = /** @type {HTMLElement[]} */ ([...page.querySelectorAll('[data-mascot]')]);
       const next = all[(all.indexOf(/** @type {HTMLElement} */ (pet)) + step + all.length) % all.length];
       setMascot(next.dataset.mascot);
-      paintMascots();
-      /** @type {HTMLElement|null} */ (page.querySelector(`[data-mascot="${next.dataset.mascot}"]`))?.focus();
+      markMascots();
+      next.focus();
     });
   }
 
@@ -296,41 +338,47 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
     paintMascots();
     const grid = page.querySelector('.themes__grid');
     if (!themes.length && grid) grid.innerHTML = `<p class="hint">${escapeHtml(t('theme.loading'))}</p>`;
+    // The page as last known, at once; what the server says follows.
+    if (themes.length) draw();
     try {
       const answer = await api.themes();
       themes = answer.themes;
-      if (answer.selected !== selected) {
-        selected = answer.selected;
-        store(selected);
-        apply(selected);
+      progress = answer.progress || null;
+      if (!saver.busy()) {
+        if (answer.selected !== selected) {
+          selected = answer.selected;
+          store(selected);
+          apply(selected);
+          chosen = selected;
+        }
+        confirmed = answer.selected;
       }
-      chosen = selected;
       draw();
     } catch (err) {
-      if (grid) grid.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
+      if (grid && !themes.length) grid.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
     }
   }
 
   /** Leaving the page: nothing on it should keep drawing. */
   function leave() {
-    preview?.destroy();
+    preview?.();
     preview = null;
-    destroyTiles();
+    stopTile();
     drawn = false;
   }
 
-  const KINDS = ['none', 'exclusive_event', 'achievement', 'top_month', 'top_year'];
+  const KINDS = ['none', 'exclusive_event', 'achievement', 'top_quarter', 'top_year'];
 
   function adminRow(row, people, years) {
     const { id, badge } = row;
-    const dated = badge.kind === 'top_month' || badge.kind === 'top_year';
-    const monthOptions = ['', ...Array.from({ length: 12 }, (_, i) => String(i + 1))];
+    const dated = badge.kind === 'top_quarter' || badge.kind === 'top_year';
+    const quarterOptions = ['', '1', '2', '3', '4'];
     return `<details class="adminthemes__row" data-theme-row="${escapeHtml(id)}">
       <summary><strong>${escapeHtml(t(`theme.${id}.name`))}</strong><span class="muted">${escapeHtml(badgeText(badge))}${row.holders == null ? '' : ` · ${escapeHtml(t('theme.admin.holders', { n: row.holders }))}`}</span></summary>
       <div class="adminthemes__body">
         <div class="adminthemes__badge">
           <label><span>${escapeHtml(t('theme.admin.badge'))}</span><select class="sselect" data-badge-kind${id === 'default' ? ' disabled' : ''}>${KINDS.map((kind) => `<option value="${kind}"${kind === badge.kind ? ' selected' : ''}>${escapeHtml(t(`theme.admin.kind.${kind}`))}</option>`).join('')}</select></label>
-          <label data-dated="month"${badge.kind === 'top_month' ? '' : ' hidden'}><span>${escapeHtml(t('theme.admin.month'))}</span><select class="sselect" data-badge-month>${monthOptions.map((m) => `<option value="${m}"${String(badge.month ?? '') === m ? ' selected' : ''}>${escapeHtml(m || t('theme.admin.any'))}</option>`).join('')}</select></label>
+          <label data-dated="quarter"${badge.kind === 'top_quarter' ? '' : ' hidden'}><span>${escapeHtml(t('theme.admin.quarter'))}</span><select class="sselect" data-badge-quarter>${quarterOptions.map((q) => `<option value="${q}"${String(badge.quarter ?? '') === q ? ' selected' : ''}>${escapeHtml(q ? `Q${q}` : t('theme.admin.any'))}</option>`).join('')}</select></label>
           <label data-dated="year"${dated ? '' : ' hidden'}><span>${escapeHtml(t('theme.admin.year'))}</span><select class="sselect" data-badge-year><option value="">${escapeHtml(t('theme.admin.any'))}</option>${years.map((y) => `<option value="${y}"${badge.year === y ? ' selected' : ''}>${y}</option>`).join('')}</select></label>
         </div>
         ${id === 'default' ? `<p class="hint">${escapeHtml(t('theme.admin.defaultNote'))}</p>` : `
@@ -381,14 +429,14 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
       return;
     }
     const kind = /** @type {HTMLSelectElement} */ (row.querySelector('[data-badge-kind]')).value;
-    const monthBox = /** @type {HTMLElement} */ (row.querySelector('[data-dated="month"]'));
+    const quarterBox = /** @type {HTMLElement} */ (row.querySelector('[data-dated="quarter"]'));
     const yearBox = /** @type {HTMLElement} */ (row.querySelector('[data-dated="year"]'));
-    monthBox.hidden = kind !== 'top_month';
-    yearBox.hidden = kind !== 'top_month' && kind !== 'top_year';
+    quarterBox.hidden = kind !== 'top_quarter';
+    yearBox.hidden = kind !== 'top_quarter' && kind !== 'top_year';
     try {
-      const month = /** @type {HTMLSelectElement} */ (row.querySelector('[data-badge-month]')).value;
+      const quarter = /** @type {HTMLSelectElement} */ (row.querySelector('[data-badge-quarter]')).value;
       const year = /** @type {HTMLSelectElement} */ (row.querySelector('[data-badge-year]')).value;
-      const { badge } = await api.setThemeBadge(row.dataset.themeRow, { kind, month: kind === 'top_month' ? month : null, year: kind === 'top_month' || kind === 'top_year' ? year : null });
+      const { badge } = await api.setThemeBadge(row.dataset.themeRow, { kind, quarter: kind === 'top_quarter' ? quarter : null, year: kind === 'top_quarter' || kind === 'top_year' ? year : null });
       const label = row.querySelector('summary .muted');
       if (label) label.textContent = label.textContent.replace(/^[^·]*/, `${badgeText(badge)} `);
       toast(t('theme.admin.saved'));
@@ -420,16 +468,40 @@ export function createThemes({ page, admin, toast, restoreMode, mascot, setMasco
   return {
     /** The look stored in this browser, painted before anything asks the server. */
     boot() {
-      if (selected !== 'default') apply(selected);
+      if (selected !== 'default' && !layer) apply(selected);
+    },
+    /** Signed out: nothing of a theme shows on the sign-in page, and nothing is drawn under it. */
+    sleep() {
+      backdrop?.handle.destroy();
+      backdrop = null;
+      layer?.remove();
+      layer = null;
+      delete document.documentElement.dataset.scene;
     },
     sync,
     load,
     leave,
     loadAdmin,
-    reassert,
+    wear,
+    /** What the `/theme` box offers: the list as the server last said, asked again. */
+    async list() {
+      const answer = await api.themes();
+      themes = answer.themes;
+      progress = answer.progress || null;
+      if (!saver.busy() && answer.selected !== selected) {
+        selected = answer.selected;
+        confirmed = selected;
+        chosen = selected;
+        store(selected);
+        apply(selected);
+      }
+      return { themes, selected, progress };
+    },
+    selected: () => selected,
     /** Signing out: the next person at this browser starts from the plain look. */
     reset() {
       selected = 'default';
+      confirmed = 'default';
       chosen = 'default';
       themes = [];
       store('default');

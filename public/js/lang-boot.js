@@ -44,17 +44,15 @@
 })();
 
 /**
- * The theme this browser last wore, before first paint: only the attributes that
- * pick its colours. Without this, a dark scene flashed the plain page on every
- * reload, until the modules behind themes-panel.js had loaded.
+ * The theme this browser last wore, before first paint: only the attribute that gives
+ * the app its panes. Without this, a scene flashed the plain page on every reload,
+ * until the modules behind themes-panel.js had loaded. Light or dark is the person's
+ * own setting, whichever scene is up (owner, 2026-11-06).
  */
 (function () {
   try {
     const scene = localStorage.getItem('synapsez:scene');
-    if (!scene) return;
-    document.documentElement.dataset.scene = scene;
-    const mode = localStorage.getItem('synapsez:scene-mode');
-    if (mode === 'light' || mode === 'dark') document.documentElement.dataset.theme = mode;
+    if (scene) document.documentElement.dataset.scene = scene;
   } catch (e) {
     /* storage refused: the plain page until the app has asked the server */
   }

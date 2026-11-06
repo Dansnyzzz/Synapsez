@@ -37,6 +37,8 @@ import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
 import { createUsagePanel } from './usage-panel.js';
 import { createThemes } from './themes-panel.js';
+import { createThemePicker } from './theme-picker.js';
+import { latestOnly } from './latest.js';
 import { createRanking } from './ranking-panel.js';
 import { createMascot, MASCOT_STATES } from './mascot.js';
 import { createUsageAlert } from './usage-alert.js';
@@ -527,6 +529,7 @@ function setRevealed(input, revealed) {
 function showGate() {
   $('gate').hidden = false;
   $('app').hidden = true;
+  themesPanel.sleep();
 
   // With no users yet, creating the first account is the obvious default — but
   // it is only a default. Signing in stays one click away, because this screen
@@ -756,6 +759,8 @@ async function start() {
   renderTopbar();
   paintLegal();
   mascot.setPref(state.boot.prefs.mascot);
+  // Signed in, so the scene may come up: nothing is drawn behind the sign-in page.
+  themesPanel.boot();
   themesPanel.sync();
   // A limit nearly used is said before the next message, not after it fails.
   usageAlert.refresh({ soon: true });
@@ -4710,6 +4715,8 @@ function openShortcuts() {
 async function signOut() {
   await api.logout();
   forgetLocalDrafts();
+  // The next person at this browser starts from the plain look.
+  themesPanel.reset();
   location.reload();
 }
 
@@ -4736,20 +4743,30 @@ const usageAlert = createUsageAlert($('usage-alert'), {
 }
 /** The whale on the writing box, and the look behind the app (owner, 2026-11-04). */
 const mascot = createMascot({ host: /** @type {HTMLElement} */ ($('composer').querySelector('.composer__box')) });
+/** A press on a whale saves only the last of a run of presses. */
+const mascotSaver = latestOnly((value) => api.savePrefs({ mascot: value }), { failed: (err) => toast(err.message, 'error') });
+
 const themesPanel = createThemes({
   page: $('themes-page'),
   admin: $('admin-themes'),
   toast,
   // Off a scene, back to whatever this person chose for light and dark.
-  restoreMode: () => applyTheme(storedTheme()),
   mascot: () => mascot.pref(),
   setMascot: (value) => {
     mascot.setPref(value);
-    api.savePrefs({ mascot: value }).catch((err) => toast(err.message, 'error'));
+    void mascotSaver.push(value);
   },
   mascotStates: MASCOT_STATES,
 });
 const rankingPanel = createRanking({ host: $('ranking-page'), toast, savePrefs: (patch) => api.savePrefs(patch) });
+
+createThemePicker({
+  input: /** @type {HTMLTextAreaElement} */ ($('input')),
+  host: $('theme-picker'),
+  themes: themesPanel,
+  toast,
+  clear: () => setComposerText(''),
+});
 
 const usagePanel = createUsagePanel($('usage-panel'), {
   load: () => api.usageReport(),
@@ -5455,16 +5472,31 @@ function effortRow() {
       t(`effort.hint.${current}`) + (state.modelReasons === false ? ` ${t('effort.noReasoning')}` : '');
   };
 
-  const choose = async (value, label, focus = false) => {
-    if (state.boot.prefs.effort === value) return;
-    try {
-      state.boot.prefs = await api.savePrefs({ effort: value });
+  /*
+   * The dial moves on the press, and only the last of a run of presses is saved
+   * (owner, 2026-11-06): it used to wait for each answer, so three quick presses
+   * walked through all three, one after another, long after the hand had moved on.
+   */
+  const saver = latestOnly((value) => api.savePrefs({ effort: value }), {
+    saved: (prefs, value) => {
+      saved = value;
+      state.boot.prefs = { ...prefs, effort: value };
       paint();
-      if (focus) /** @type {HTMLElement | undefined} */ (dots.children[EFFORT_IDS.indexOf(value)])?.focus();
-      toast(t('effort.set', { level: label }));
-    } catch (err) {
+      toast(t('effort.set', { level: effortLabel(value) }));
+    },
+    failed: (err) => {
+      state.boot.prefs = { ...state.boot.prefs, effort: saved };
+      paint();
       toast(err.message, 'error');
-    }
+    },
+  });
+  let saved = state.boot.prefs.effort;
+  const choose = (value, focus = false) => {
+    if (state.boot.prefs.effort === value) return;
+    state.boot.prefs = { ...state.boot.prefs, effort: value };
+    paint();
+    if (focus) /** @type {HTMLElement | undefined} */ (dots.children[EFFORT_IDS.indexOf(value)])?.focus();
+    void saver.push(value);
   };
 
   for (const [value, label] of efforts()) {
@@ -5476,7 +5508,7 @@ function effortRow() {
     dot.title = label;
     dot.addEventListener('click', (event) => {
       event.stopPropagation();
-      choose(value, label);
+      choose(value);
     });
     dots.append(dot);
   }
@@ -5489,8 +5521,7 @@ function effortRow() {
     event.stopPropagation();
     const at = Math.max(0, EFFORT_IDS.indexOf(state.boot.prefs.effort));
     const next = jump ?? Math.max(0, Math.min(EFFORT_IDS.length - 1, at + step));
-    const [value, label] = efforts()[next];
-    choose(value, label, true);
+    choose(efforts()[next][0], true);
   });
 
   top.append(name, dots);
@@ -5583,6 +5614,7 @@ function selectTab(asked) {
   if (name === 'theme') themesPanel.load();
   else themesPanel.leave();
   if (name === 'ranking') rankingPanel.load();
+  else rankingPanel.leave();
   // Reaching an MCP server takes a moment, so it is asked when looked at.
   if (name === 'extensions') {
     loadMcp();
@@ -7069,15 +7101,12 @@ function storedTheme() {
 // Applied at import time, before the app renders, so a light-theme user never
 // sees a dark flash on the way in.
 applyTheme(storedTheme());
-themesPanel.boot();
 
 // Three faces, one lit, as Claude draws the choice; the arrows move between them as in any radio group.
 $('theme').addEventListener('click', (event) => {
   const btn = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-theme-choice]'));
   if (!btn) return;
   applyTheme(btn.dataset.themeChoice);
-  // A scene decides light or dark while it is up; this choice is for when it is not.
-  themesPanel.reassert();
   paintThemeChoice(btn.dataset.themeChoice);
 });
 $('theme').addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
