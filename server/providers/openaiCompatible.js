@@ -489,6 +489,11 @@ export async function* streamOpenAICompatible({
     }
   }
 
+  // The SDK ends its iterator quietly on an abort, which everything above would read
+  // as the model having finished: half a reply stored as a whole one, unmarked, and
+  // reasoning with no words promoted to an answer.
+  if (signal?.aborted && stopReason == null) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+
   const toolCalls = [...pending.values()].map((slot, i) => {
     let input = {};
     try {

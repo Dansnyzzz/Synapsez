@@ -3765,7 +3765,7 @@ const MAX_RESUMES = 25;
  * it is not answering a question, it is catching up — and everything below, the
  * resume loop included, behaves exactly as it does for a turn started here.
  */
-async function stream(decision, answers, { rejoin = null, chatId: target = null } = {}) {
+async function stream(decision, answers, { rejoin = null, chatId: target = null, handoff = false } = {}) {
   // Named by the caller where it can have changed since the caller began.
   const chatId = target || state.chatId;
   if (!chatId) return;
@@ -3817,7 +3817,7 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     for (let resume = 0; resume <= MAX_RESUMES; resume += 1) {
       // A decision and an answer both belong to the batch that was paused, so
       // neither is resent on a reconnect — the server already has them.
-      const outcome = await streamOnce(run, resume === 0 ? decision : undefined, resume === 0 ? answers : undefined);
+      const outcome = await streamOnce(run, resume === 0 ? decision : undefined, resume === 0 ? answers : undefined, resume === 0 && handoff);
       ended = outcome;
 
       // A clean finish, a question for the user, or a deliberate stop.
@@ -3855,8 +3855,20 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     usageAlert.refresh({ soon: true });
     setStatus(null, run);
     if (onScreen(run)) setRunning(false);
-    // Drop the trailing empty block created by the last `message` event.
-    if (run.turn && !run.turn.node.querySelector('.prose, .block, .plan')) run.turn.node.remove();
+    /*
+     * A turn stopped gets no `done`, so everything `done` would have settled is
+     * settled here: the reasoning card stops saying it is thinking, the steps fold,
+     * the whale goes back to resting (owner, 2026-11-06).
+     */
+    run.turn?.finishThinking();
+    if (run.abort.signal.aborted) {
+      run.turn?.setRoute(run.route);
+      run.turn?.finish(new Date());
+      if (onScreen(run)) mascot.show('idle');
+    }
+    // Drop the trailing empty block created by the last `message` event. Reasoning
+    // is something it said: a turn stopped mid-thought keeps what it had thought.
+    if (run.turn && !run.turn.node.querySelector('.prose, .block, .plan, .think')) run.turn.node.remove();
     run.turn = null;
     /*
      * A call that started and never answered — the turn failed, was stopped,
@@ -3906,6 +3918,10 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     if (run.queue.length) {
       leftover.set(chatId, run.queue);
       await flushLeftover(chatId);
+    } else if (run.handoff) {
+      // The model was changed while it was writing: the new one carries on. Whatever
+      // the person typed meanwhile went first, above, and the new model answers that.
+      void stream(undefined, undefined, { chatId, handoff: true });
     }
   }
 }
@@ -3914,7 +3930,7 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
  * One request against the agent endpoint.
  * @returns 'done' · 'waiting' (approval needed) · 'cut' (connection dropped mid-run)
  */
-async function streamOnce(run, decision, answers) {
+async function streamOnce(run, decision, answers, handoff = false) {
   let outcome = 'cut';
   // Every handler below is scoped to `run`, not to whatever is on screen: this
   // stream keeps arriving after the person has navigated to another
@@ -3933,9 +3949,11 @@ async function streamOnce(run, decision, answers) {
     drafts.clear();
   };
 
-  await runAgent({
+  try {
+    await runAgent({
       chatId: run.chatId,
       model: state.model,
+      handoff: handoff || undefined,
       decision,
       // The calls the prompt named. Only sent with a decision, because only a
       // decision is about a specific batch. See `approvalFor`.
@@ -4219,8 +4237,10 @@ async function streamOnce(run, decision, answers) {
         },
       },
     });
-
-  clearDrafts();
+  } finally {
+    // However this ended: a stop arrives here as a thrown abort, and a draft left behind is a spinner for a call that will never run.
+    clearDrafts();
+  }
   return run.abort.signal.aborted ? 'done' : outcome;
 }
 
@@ -4292,18 +4312,34 @@ function nextBlock(run) {
  * answering into a page nobody is watching. So the server is told outright, and
  * it takes the run's lease away.
  *
- * Told after the abort rather than before it, so the button feels instant; and
- * the failure is swallowed, because a stop that reports an error while having
- * visibly stopped is worse than one that quietly did the belt-and-braces half.
+ * Told first, so the lease has gone by the time the socket closes and the server
+ * reads the close as a stop rather than as somebody leaving; the abort is in the
+ * same tick, so the button still feels instant. The failure is swallowed, because a
+ * stop that reports an error while having visibly stopped is worse than one that
+ * quietly did the belt-and-braces half.
  */
+function stopRun(run) {
+  api.stopChat(run.chatId).catch(() => {});
+  run.abort.abort();
+}
+
 $('stop').addEventListener('click', () => {
   // The conversation on screen, not "the run": stop is a button in front of one
   // transcript, and with work possible in several at once it must never reach
   // into a conversation the person is not looking at.
   const run = runHere();
-  if (!run) return;
-  run.abort.abort();
-  api.stopChat(run.chatId).catch(() => {});
+  if (run) stopRun(run);
+  /*
+   * On screen as running, and this tab has no hold of it yet: reopened mid-turn and
+   * still asking whether another tab is narrating it, or a turn the cloud is
+   * finishing. The button used to do nothing here. It is the server's lease either way.
+   */
+  else if (state.chatId && runningHere) {
+    api.stopChat(state.chatId).catch(() => {});
+    setRunning(false);
+    setStatus(null);
+    mascot.show('idle');
+  } else return;
   toast(t('composer.stopped'));
 });
 
@@ -6565,10 +6601,21 @@ const browser = createModelBrowser({
     state.model = modelId;
     renderTopbar();
     refreshModelFacts();
+    /*
+     * Changed while the last one is writing (owner, 2026-11-06): it stops being paid
+     * for now, and the new one carries on from where it stopped once that is safely
+     * written. See `stream`. A run this tab only watches is another tab's to hand over.
+     */
+    const writing = previous !== modelId ? runHere() : null;
+    const handing = !!writing && !writing.following;
+    if (handing) {
+      writing.handoff = true;
+      stopRun(writing);
+    }
 
     try {
       state.boot.prefs = await api.savePrefs({ defaultModel: modelId });
-      toast(t('model.switched', { model: modelId.split('/').pop() }));
+      toast(t(handing ? 'model.handoff' : 'model.switched', { model: modelId.split('/').pop() }));
     } catch (err) {
       // Put it back rather than leaving the chip claiming something that was
       // never stored — that is exactly the disagreement this change removes.

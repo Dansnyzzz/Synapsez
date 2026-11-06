@@ -1089,3 +1089,38 @@ CREATE TABLE IF NOT EXISTS usage_lifetime (
   tokens  BIGINT NOT NULL DEFAULT 0,
   cost    DOUBLE PRECISION NOT NULL DEFAULT 0
 );
+
+-- 39 (owner, 2026-11-06).
+-- `run_stop_at`: a stop was pressed and the run has yet to finish writing what it
+-- had, so the next request waits for it (server/liveRuns.js). Nullable: nothing is
+-- being stopped on any existing row.
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS run_stop_at TIMESTAMPTZ;
+-- The boards run by quarter. A badge or a grant that named a month now names the
+-- quarter it was in; both statements find nothing the second time they are run.
+ALTER TABLE theme_badges ADD COLUMN IF NOT EXISTS quarter INTEGER;
+ALTER TABLE user_themes ADD COLUMN IF NOT EXISTS grant_quarter INTEGER;
+UPDATE theme_badges SET quarter = (month + 2) / 3, month = NULL, kind = 'top_quarter' WHERE kind = 'top_month';
+UPDATE user_themes SET grant_quarter = (grant_month + 2) / 3, grant_month = NULL, grant_kind = 'top_quarter' WHERE grant_kind = 'top_month';
+-- An event's places: one a person, numbered, so a limit holds however many people
+-- reach it in the same moment (the primary key refuses the second claim on a place).
+CREATE TABLE IF NOT EXISTS event_claims (
+  event      TEXT NOT NULL,
+  slot       INTEGER NOT NULL,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (event, slot),
+  UNIQUE (event, user_id)
+);
+-- What each provider answered this account, by the hour and by status: the only
+-- record of a failed call, since `usage_events` books what was spent. Google's own
+-- Usage page draws errors by status, and no API reports them.
+CREATE TABLE IF NOT EXISTS provider_outcomes (
+  user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  hour     TIMESTAMPTZ NOT NULL,
+  provider TEXT NOT NULL,
+  model    TEXT NOT NULL,
+  status   INTEGER NOT NULL,
+  calls    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, hour, provider, model, status)
+);
+CREATE INDEX IF NOT EXISTS provider_outcomes_hour_idx ON provider_outcomes (hour);

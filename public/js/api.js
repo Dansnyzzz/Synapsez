@@ -447,7 +447,7 @@ export async function localDeviceId() {
   return localDevice;
 }
 
-export async function runAgent({ chatId, model, decision, decisionFor, answers, runId, signal, handlers }) {
+export async function runAgent({ chatId, model, handoff, decision, decisionFor, answers, runId, signal, handlers }) {
   const deviceHint = await localDeviceId().catch(() => null);
 
   const res = await fetch(`/api/chats/${chatId}/run`, {
@@ -456,7 +456,7 @@ export async function runAgent({ chatId, model, decision, decisionFor, answers, 
     // `runId` stays the same across every reconnect of one run, so resuming a
     // turn the host cut short re-enters its own lock instead of being refused by
     // it. A different tab generates a different id and is still kept out.
-    body: JSON.stringify({ model, decision, decisionFor, answers, runId, deviceHint }),
+    body: JSON.stringify({ model, handoff, decision, decisionFor, answers, runId, deviceHint }),
     signal,
   });
 

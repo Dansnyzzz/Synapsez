@@ -592,13 +592,41 @@ export const CONTINUE_NOTE =
   'Carry on with the same task from where it stopped. Look at the steps and results above to see what is already done; ' +
   'do not repeat anything that sent, posted or changed something; finish what remains and then answer.)';
 
-function withContinuation(messages) {
+/**
+ * The person changed the model while the last one was writing (owner, 2026-11-06).
+ * The last one was stopped where it stood and this one carries on, so what reads as
+ * one reply on the screen reads as one reply to it too.
+ */
+export const HANDOFF_NOTE =
+  '(The user changed the model while the reply above was being written, so it stops part-way, and you are the new model. ' +
+  'Carry on from the exact point where it stopped, as one continuous reply: do not start over, do not repeat what is already written, and do not mention the change. ' +
+  'Look at the steps and results above to see what is already done; do not repeat anything that sent, posted or changed something.)';
+
+function withContinuation(messages, handoff = false) {
   const last = messages[messages.length - 1];
   if (!last || last.role !== 'assistant') return messages;
-  return [...messages, { id: 'continue-note', role: 'user', text: CONTINUE_NOTE }];
+  return [...messages, { id: 'continue-note', role: 'user', text: handoff ? HANDOFF_NOTE : CONTINUE_NOTE }];
 }
 
+/**
+ * A reply stopped while it was still reasoning, with no word of it written. It is
+ * kept for the person to read; to a provider it would be an empty turn, which some
+ * refuse outright.
+ */
+const withoutBareThoughts = (messages) => messages.filter((m) => !(m.role === 'assistant' && m.stopped && !String(m.text || '').trim() && !m.toolCalls?.length));
+
 const newId = () => crypto.randomUUID();
+
+/**
+ * About what a request cut short spent: what it was sent, and what had come back,
+ * at the usual four characters a token.
+ *
+ * @param {{ text?: string, thinking?: string }} assistant @param {number} input
+ */
+export const stoppedUsage = (assistant, input) => ({
+  input: Math.max(0, Math.round(input) || 0),
+  output: Math.ceil((String(assistant.text || '').length + String(assistant.thinking || '').length) / 4),
+});
 
 /**
  * How long the provider may say nothing before the interface says so.
@@ -1476,7 +1504,7 @@ const TURN_BUDGET_MS = 270_000;
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion }) {
+export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).
   const deadline = Date.now() + TURN_BUDGET_MS;
@@ -1793,6 +1821,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * than presenting a guess with the confidence of a receipt.
    */
   const totals = { input: 0, output: 0, cost: 0, cacheRead: 0, estimated: false };
+  /** About what the request being made was sent, for a reply stopped before its figures came. */
+  let stepInput = 0;
 
   // ── Resume: the previous run ended with tool calls still outstanding ──
   // Either it stopped for approval, or the connection was cut mid-run.
@@ -2024,7 +2054,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       const offered = buildTools();
       const parts = promptParts({ system, skills, memory, project: project?.briefing, tools: offered, deferred: deferredTools(offered) });
       const info = measure(messages, entry);
-      emit('context', { ...info, breakdown: contextBreakdown(info, parts, transcriptTokens(messages)) });
+      const breakdown = contextBreakdown(info, parts, transcriptTokens(messages));
+      stepInput = Number(breakdown?.used ?? info.used) || 0;
+      emit('context', { ...info, breakdown });
       const written = JSON.stringify(parts);
       if (written !== partsWritten) {
         partsWritten = written;
@@ -2096,12 +2128,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
       const tracked = withProgressNotes(
         unattended
           ? withRunNote(activeTranscript(normaliseOrder(messages)), runNote)
-          : withSkillNotes(withIntentNotes(activeTranscript(normaliseOrder(messages))), picked),
+          : withSkillNotes(withIntentNotes(withoutBareThoughts(activeTranscript(normaliseOrder(messages)))), picked),
       );
       const grounded = withLookedPictures(withProjectSources(
         // The progress gate sends the model back with its own note, in place of
         // the continuation note that would otherwise follow its last reply.
-        progressGate ? [...tracked, { id: 'progress-gate', role: 'user', text: progressGate, ...(gatePictures.length ? { attachments: gatePictures, looked: true } : {}) }] : withContinuation(tracked),
+        progressGate ? [...tracked, { id: 'progress-gate', role: 'user', text: progressGate, ...(gatePictures.length ? { attachments: gatePictures, looked: true } : {}) }] : withContinuation(tracked, handoff),
         project?.passages,
         project?.images,
       ));
@@ -2305,13 +2337,25 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
          * `app.js` puts the reason on the signal when the heartbeat loses the
          * lease.
          */
-        if (assistant.text.trim() && signal?.reason !== 'superseded') {
+        if ((assistant.text.trim() || assistant.thinking.trim()) && signal?.reason !== 'superseded') {
           assistant.model = entry.id;
           assistant.toolCalls = [];
           assistant.stopped = true;
           assistant.text = withoutStrayTags(assistant.text);
           await store.appendMessage(userId, chatId, assistant).catch((e) =>
             log.error('stopped reply not saved', e, { chatId }));
+        }
+        /*
+         * The provider's bill for a stream cut short never arrives: its figures come
+         * at the end. Words already read were still generated, so an estimate goes on
+         * the books rather than nothing (owner, 2026-11-06). Nothing having come back
+         * books nothing: what a provider charges for a request it never answered
+         * cannot be known from here, and zero is the likelier truth.
+         */
+        if (started) {
+          const usage = stoppedUsage(assistant, stepInput);
+          await recordUsage(userId, { chatId, model: entry.id, usage, costUsd: priceTurn(entry, usage)?.usd || 0, role: 'turn' }).catch((e) =>
+            log.error('usage not recorded', e, { role: 'turn', model: entry.id }));
         }
         emit('done', { stopReason: 'aborted' });
         return;

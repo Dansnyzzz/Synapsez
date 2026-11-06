@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { runAgent } from './agent.js';
 import { log } from './util/trace.js';
+import { watchLease } from './liveRuns.js';
 
 /**
  * Finishing a conversation's turn that the server was cut off in the middle of.
@@ -64,18 +65,11 @@ export async function resumeCutOffTurns({ budgetMs = 240_000, limit = 2, run = r
       continue;
     }
 
-    // The same renewal the browser-driven run does, so a browser opening the
-    // conversation meanwhile sees it running and joins rather than racing it.
+    // The same watch the browser-driven run keeps, so a browser opening the
+    // conversation meanwhile sees it running and joins rather than racing it, and
+    // a stop pressed on it ends it within seconds rather than at the next renewal.
     const controller = new AbortController();
-    const beat = setInterval(() => {
-      store
-        .touchChatRun(row.user_id, row.id, runId, seq)
-        .then((held) => {
-          if (held === false) controller.abort('superseded');
-        })
-        .catch(() => {});
-    }, 15_000);
-    beat.unref?.();
+    const lease = watchLease({ store, userId: row.user_id, chatId: row.id, runId, seq, controller });
 
     let outcome = 'done';
     try {
@@ -101,8 +95,9 @@ export async function resumeCutOffTurns({ budgetMs = 240_000, limit = 2, run = r
       outcome = `error: ${String(err?.message || err).slice(0, 160)}`;
       log.error('resuming a cut-off turn failed', err, { chatId: row.id });
     } finally {
-      clearInterval(beat);
+      lease.stop();
       await store.releaseChatRun(row.user_id, row.id, runId, seq).catch(() => {});
+      await store.clearRunStop(row.user_id, row.id).catch(() => {});
     }
     resumed.push({ chatId: row.id, status: outcome, attempt: attempts + 1 });
   }

@@ -237,8 +237,13 @@ export function splitStatements(sql) {
  *      who says what each other administrator may do (server/adminRoles.js)
  *  37  user_themes, user_titles, theme_badges, ranking_board, ranking_settled,
  *      usage_lifetime — themes, the monthly and yearly boards, titles
+ *  38  attachments.derived_from, shared_models.hears / watches
+ *  39  chats.run_stop_at — a stopped run has yet to finish writing; theme_badges
+ *      .quarter, user_themes.grant_quarter — the boards run by quarter, and a
+ *      month's prize becomes its quarter's; event_claims — an event's limited
+ *      places; provider_outcomes — what each provider answered, by status
  */
-export const SCHEMA_VERSION = 38;
+export const SCHEMA_VERSION = 39;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1614,7 +1619,7 @@ export function createPgStore(connectionString) {
     async claimChatRun(userId, chatId, runId, staleMs = RUN_LEASE_STALE_MS) {
       const rows = await q(
         `UPDATE chats
-            SET run_lock_at = NOW(), run_lock_by = $3, run_lock_seq = run_lock_seq + 1
+            SET run_lock_at = NOW(), run_lock_by = $3, run_lock_seq = run_lock_seq + 1, run_stop_at = NULL
           WHERE id = $1 AND user_id = $2
             AND (run_lock_at IS NULL
                  OR run_lock_at <= NOW() - ($4 || ' milliseconds')::interval
@@ -1663,15 +1668,30 @@ export function createPgStore(connectionString) {
      * point: the person pressing stop is not the process holding the lease, and
      * on a serverless deployment may not even be talking to the same instance.
      * Clearing the lock is the message.
+     *
+     * `run_stop_at` says that run has yet to finish writing what it had. Only for
+     * a lease somebody is still renewing: one that died has nobody coming to clear
+     * the mark, and the next request would wait out the whole of `STOP_SETTLE_MS`.
      */
     async stopChatRun(userId, chatId) {
       const rows = await q(
-        `UPDATE chats SET run_lock_at = NULL, run_lock_by = NULL
+        `UPDATE chats
+            SET run_stop_at = CASE WHEN run_lock_at > NOW() - INTERVAL '40 seconds' THEN NOW() ELSE NULL END,
+                run_lock_at = NULL, run_lock_by = NULL
           WHERE id = $1 AND user_id = $2 AND run_lock_by IS NOT NULL
       RETURNING id`,
         [chatId, userId],
       );
       return rows.length > 0;
+    },
+    /** Who holds a conversation's lease, and whether a stop is being finished with. Read every couple of seconds by a running turn. */
+    async chatRunHolder(userId, chatId) {
+      const rows = await q('SELECT run_lock_by, run_lock_seq, run_stop_at FROM chats WHERE id = $1 AND user_id = $2', [chatId, userId]);
+      return rows[0] ?? null;
+    },
+    /** The stopped run has written what it had; whatever was waiting may go. */
+    async clearRunStop(userId, chatId) {
+      await q('UPDATE chats SET run_stop_at = NULL WHERE id = $1 AND user_id = $2 AND run_stop_at IS NOT NULL', [chatId, userId]);
     },
     /**
      * Only the holder may release, so a late finisher cannot free someone else's
