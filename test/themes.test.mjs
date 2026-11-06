@@ -37,15 +37,16 @@ const { ranking, listThemes, selectTheme, listTitles, equipTitle, settleClosed, 
 
 section('periods');
 {
-  check('a month runs from its first to the next', periodRange('month', '2026-11')?.to.toISOString() === '2026-12-01T00:00:00.000Z');
+  check('a quarter runs from its first month to the next quarter', periodRange('quarter', '2027-Q1')?.from.toISOString() === '2027-01-01T00:00:00.000Z' && periodRange('quarter', '2027-Q1')?.to.toISOString() === '2027-04-01T00:00:00.000Z');
+  check('the last quarter crosses into the next year', periodRange('quarter', '2027-Q4')?.to.toISOString() === '2028-01-01T00:00:00.000Z');
   check('a year crosses into the next', periodRange('year', '2026')?.to.toISOString() === '2027-01-01T00:00:00.000Z');
-  check('nonsense is no period', periodRange('month', '2026-13') === null && periodRange('month', "x' OR 1=1") === null && periodRange('week', '2026') === null);
-  check('nothing has closed while ranking is in its first month', closedPeriods(new Date('2026-11-20T00:00:00Z')).length === 0);
-  check('a month closes when the next begins', closedPeriods(new Date('2026-12-01T00:00:00Z')).map((p) => p.key).join() === '2026-11');
+  check('nothing before ranking began counts, in the quarter or the year it began in', periodRange('quarter', '2026-Q4')?.from.toISOString() === '2026-11-01T00:00:00.000Z' && periodRange('year', '2026')?.from.toISOString() === '2026-11-01T00:00:00.000Z');
+  check('nonsense is no period', periodRange('quarter', '2026-Q5') === null && periodRange('quarter', "x' OR 1=1") === null && periodRange('month', '2026-11') === null);
+  check('nothing has closed while ranking is in its first quarter', closedPeriods(new Date('2026-12-20T00:00:00Z')).length === 0);
   const later = closedPeriods(new Date('2027-01-02T00:00:00Z')).map((p) => `${p.scope}:${p.key}`).join();
-  check('and a year when the next year does', later === 'month:2026-11,month:2026-12,year:2026', later);
-  check('the picker starts at the current period', periodKeys('month', new Date('2027-01-02T00:00:00Z')).join() === '2027-01,2026-12,2026-11');
-  check('and it never lists a time before ranking began', !periodKeys('month', new Date('2026-11-20T00:00:00Z')).includes('2026-10'));
+  check('a quarter closes when the next begins, and a year when the next year does', later === 'quarter:2026-Q4,year:2026', later);
+  check('the picker starts at the current period', periodKeys('quarter', new Date('2027-04-02T00:00:00Z')).join() === '2027-Q2,2027-Q1,2026-Q4');
+  check('and it never lists a time before ranking began', !periodKeys('quarter', new Date('2026-11-20T00:00:00Z')).includes('2026-Q3'));
 }
 
 section('a board');
@@ -64,27 +65,49 @@ section('a board');
 section('a badge an administrator sets');
 {
   check('kinds outside the list are refused', (() => { try { cleanBadge({ kind: 'gold' }); return false; } catch { return true; } })());
-  check('only the top kinds carry a date', cleanBadge({ kind: 'achievement', month: 3, year: 2026 }).year === null);
-  check('a named month needs its year', (() => { try { cleanBadge({ kind: 'top_month', month: 1 }); return false; } catch (e) { return /year/.test(e.message); } })());
-  check('month 13 is no month', (() => { try { cleanBadge({ kind: 'top_month', month: 13, year: 2026 }); return false; } catch { return true; } })());
-  const any = cleanBadge({ kind: 'top_month', month: '', year: '' });
-  check('blank means any', any.month === null && any.year === null);
-  check('a named one is kept', cleanBadge({ kind: 'top_month', month: '1', year: '2026' }).month === 1);
+  check('only the top kinds carry a date', cleanBadge({ kind: 'achievement', quarter: 3, year: 2026 }).year === null);
+  check('a month is no longer a kind', (() => { try { cleanBadge({ kind: 'top_month', year: 2026 }); return false; } catch { return true; } })());
+  check('a named quarter needs its year', (() => { try { cleanBadge({ kind: 'top_quarter', quarter: 1 }); return false; } catch (e) { return /year/.test(e.message); } })());
+  check('quarter 5 is no quarter', (() => { try { cleanBadge({ kind: 'top_quarter', quarter: 5, year: 2026 }); return false; } catch { return true; } })());
+  const any = cleanBadge({ kind: 'top_quarter', quarter: '', year: '' });
+  check('blank means any', any.quarter === null && any.year === null);
+  check('a named one is kept', cleanBadge({ kind: 'top_quarter', quarter: '1', year: '2026' }).quarter === 1);
   const badges = new Map([
-    ['sakura-crossing', { kind: 'top_month', month: null, year: null }],
-    ['aurora-peak', { kind: 'top_month', month: 11, year: 2026 }],
-    ['rose-street', { kind: 'top_year', month: null, year: null }],
+    ['sakura-crossing', { kind: 'top_quarter', quarter: null, year: null }],
+    ['aurora-peak', { kind: 'top_quarter', quarter: 4, year: 2026 }],
+    ['rose-street', { kind: 'top_year', quarter: null, year: null }],
   ]);
-  check('a theme naming the month takes it over', rewardThemes(badges, 'month', '2026-11').join() === 'aurora-peak');
-  check('any other month goes to the standing prize', rewardThemes(badges, 'month', '2026-12').join() === 'sakura-crossing');
+  check('a theme naming the quarter takes it over', rewardThemes(badges, 'quarter', '2026-Q4').join() === 'aurora-peak');
+  check('any other quarter goes to the standing prize', rewardThemes(badges, 'quarter', '2027-Q1').join() === 'sakura-crossing');
   check('a year goes to the year’s', rewardThemes(badges, 'year', '2026').join() === 'rose-street');
+}
+
+section('every quarter and year to the end of 2027 has its own theme, and every title its own');
+{
+  const prizes = await themes.themeBadges({ listThemeBadges: async () => [] });
+  for (const key of ['2026-Q4', '2027-Q1', '2027-Q2', '2027-Q3', '2027-Q4']) {
+    const won = rewardThemes(prizes, 'quarter', key);
+    check(`${key} has one theme of its own`, won.length === 1 && !['sakura-crossing'].includes(won[0]), won.join());
+  }
+  for (const key of ['2026', '2027']) {
+    const won = rewardThemes(prizes, 'year', key);
+    check(`${key} has one theme of its own`, won.length === 1 && won[0] !== 'rose-street', won.join());
+  }
+  check('after that the standing prizes carry on', rewardThemes(prizes, 'quarter', '2028-Q1').join() === 'sakura-crossing' && rewardThemes(prizes, 'year', '2028').join() === 'rose-street');
+  const won = ['2026-Q4', '2027-Q1', '2027-Q2', '2027-Q3', '2027-Q4'].flatMap((key) => rewardThemes(prizes, 'quarter', key));
+  check('no two quarters share one', new Set(won).size === won.length);
+  const earned = themes.THEMES.filter((t) => t.tokens || t.spend);
+  for (const title of themes.TITLES.filter((t) => t.tokens || t.spend)) {
+    check(`a title earned at ${title.tokens || `$${title.spend}`} has a theme earned at the same mark`, earned.some((t) => (title.tokens && t.tokens === title.tokens) || (title.spend && t.spend === title.spend)));
+  }
 }
 
 section('a title says what it is');
 {
-  const award = titleInfo('top:tokens:month:2026-11:1');
-  check('an award is read from its id', award?.board === 'tokens' && award?.scope === 'month' && award?.key === '2026-11' && award?.rank === 1);
-  check('rank 4 was never awarded', titleInfo('top:tokens:month:2026-11:4') === null);
+  const award = titleInfo('top:tokens:quarter:2026-Q4:1');
+  check('an award is read from its id', award?.board === 'tokens' && award?.scope === 'quarter' && award?.key === '2026-Q4' && award?.rank === 1);
+  check('rank 4 was never awarded', titleInfo('top:tokens:quarter:2026-Q4:4') === null);
+  check('nor a month, now', titleInfo('top:tokens:month:2026-11:1') === null);
   check('nor is anything else a title', titleInfo('<img src=x>') === null && titleInfo(null) === null);
   check('a catalogue title', titleInfo('tokens-1m')?.kind === 'catalog');
 }
@@ -118,27 +141,27 @@ await spend(carol, 500, 3);
 await spend(dave, 100, 0);
 
 const NOW = new Date();
-const thisMonth = themes.periodKey('month', NOW);
-const nextMonth = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth() + 1, 2));
+const thisQuarter = themes.periodKey('quarter', NOW);
+const nextQuarter = new Date(Date.UTC(NOW.getUTCFullYear(), (Math.floor(NOW.getUTCMonth() / 3) + 1) * 3, 2));
 
-section('this month’s boards');
+section('this quarter’s boards');
 {
   const board = await ranking(alice);
-  check('tokens, highest first', board.tokens.map((r) => r.name).join() === 'bob,alice,carol', JSON.stringify(board.tokens));
+  check('tokens, highest first', board.tokens.map((r) => r.name).join() === 'bob,alice,carol,dave', JSON.stringify(board.tokens));
   check('spending, highest first', board.spend.map((r) => r.name).join() === 'carol,alice,bob', JSON.stringify(board.spend));
-  check('at most three', board.tokens.length === 3);
+  check('everyone up to ten is shown', board.tokens.length === 4 && board.spend.length === 3, JSON.stringify(board.tokens.map((r) => r.name)));
   check('an administrator is on neither board', !JSON.stringify(board).includes('owner'));
   check('no email is in it', !JSON.stringify(board).includes('@'));
   check('my own row is marked', board.tokens.find((r) => r.name === 'alice')?.isMe === true);
   check('my own place is said', board.me.tokens.rank === 2 && board.me.spend.rank === 2 && board.me.excluded === false);
-  check('it is the current period, still open', board.key === thisMonth && board.settled === false && !!board.closes);
+  check('it is the current period, still open', board.key === thisQuarter && board.settled === false && !!board.closes);
   const low = await ranking(dave);
-  check('someone off the top three still learns their place', low.me.tokens.rank === 4 && !low.tokens.some((r) => r.isMe));
+  check('someone off the top three is on the board, and learns their place', low.me.tokens.rank === 4 && low.tokens.some((r) => r.isMe && r.rank === 4));
   check('and someone with no spending has none', low.me.spend.rank === null);
   const admin = await ranking(owner);
   check('an administrator is told they are not ranked', admin.me.excluded === true && admin.me.tokens.rank === null);
-  check('a period that does not exist is refused', await refused(ranking(alice, { key: '1999-01' }), 400));
-  check('a scope that does not exist is refused', await refused(ranking(alice, { scope: 'week' }), 400));
+  check('a period that does not exist is refused', await refused(ranking(alice, { key: '1999-Q1' }), 400));
+  check('a scope that does not exist is refused', await refused(ranking(alice, { scope: 'month' }), 400));
   const year = await ranking(alice, { scope: 'year' });
   check('the year’s board counts the same usage', year.tokens[0].name === 'bob');
   await setPrefs(bob.id, { rankAnonymous: true });
@@ -157,6 +180,7 @@ section('holding themes');
   check('it is the one in use', page.selected === 'default');
   check('locked themes follow', page.themes[0].id === 'default' && page.themes.length === themes.THEMES.length);
   check('a locked achievement says what earns it', page.themes.find((t) => t.id === 'cloud-drift')?.needs?.tokens === 100_000);
+  check('one earned by spending says that', page.themes.find((t) => t.id === 'rainy-cafe')?.needs?.spend === 10);
   check('a prize has no such number', page.themes.find((t) => t.id === 'sakura-crossing')?.needs === null);
   check('the catalogue’s badges show', page.themes.find((t) => t.id === 'rose-street')?.badge.kind === 'top_year');
   check('a theme one does not hold cannot be put on', await refused(selectTheme(alice, 'lagoon'), 403));
@@ -183,9 +207,9 @@ section('holding themes');
   check('a theme given by hand is held, and carries its badge', gift.id === 'aurora-peak' && gift.grant.kind === 'exclusive_event');
   check('the list says how many hold it', (await adminThemes()).themes.find((t) => t.id === 'aurora-peak')?.holders === 1);
   check('the default stays without a badge', await refused(setThemeBadge('default', { kind: 'achievement' }, owner.id), 400));
-  await setThemeBadge('lagoon', { kind: 'top_month', month: 1, year: 2026 }, owner.id);
-  check('an administrator’s badge is what everyone sees', (await listThemes(alice)).themes.find((t) => t.id === 'lagoon')?.badge.month === 1);
-  await store.setThemeBadge('lagoon', { kind: 'achievement', month: null, year: null }, owner.id);
+  await setThemeBadge('lagoon', { kind: 'top_quarter', quarter: 1, year: 2026 }, owner.id);
+  check('an administrator’s badge is what everyone sees', (await listThemes(alice)).themes.find((t) => t.id === 'lagoon')?.badge.quarter === 1);
+  await store.setThemeBadge('lagoon', { kind: 'achievement', quarter: null, year: null }, owner.id);
 }
 
 section('titles');
@@ -194,6 +218,9 @@ section('titles');
   check('everyone has something to wear', page.titles.some((t) => t.id === 'newcomer' && t.owned));
   check('one earned by usage comes in', !page.titles.find((t) => t.id === 'spend-10')?.owned);
   check('a locked one says what earns it', page.titles.find((t) => t.id === 'tokens-1m')?.needs?.tokens === 1_000_000);
+  check('each of the top three places can be looked at', [1, 2, 3].every((rank) => page.titles.find((t) => t.id === `rank-${rank}`)?.needs?.rank === rank));
+  check('and how far along you are is said', page.progress?.tokens > 0);
+  check('but a place is not a title anyone can wear', await refused(equipTitle(alice, 'rank-1'), 400));
   check('one not held cannot be worn', await refused(equipTitle(alice, 'tokens-1b'), 403));
   check('nor one that does not exist', await refused(equipTitle(alice, 'emperor'), 400));
   await equipTitle(alice, 'newcomer');
@@ -203,29 +230,33 @@ section('titles');
   await equipTitle(alice, 'newcomer');
 }
 
-section('a month closes');
+section('a quarter closes');
 {
   __testing.reset();
-  await settleClosed({ now: nextMonth });
+  await settleClosed({ now: nextQuarter });
   const after = (await store.listSettledPeriods()).map((p) => `${p.scope}:${p.period}`);
-  check('the month is marked', after.includes(`month:${thisMonth}`), after.join());
+  check('the quarter is marked', after.includes(`quarter:${thisQuarter}`), after.join());
+  const prize = rewardThemes(await themes.themeBadges(store), 'quarter', thisQuarter)[0];
   const held = async (user) => (await store.listUserThemes(user.id)).map((t) => t.theme_id);
-  check('the top three of a board get the month’s prize', (await held(bob)).includes('sakura-crossing') && (await held(alice)).includes('sakura-crossing') && (await held(carol)).includes('sakura-crossing'));
-  check('fourth place does not', !(await held(dave)).includes('sakura-crossing'));
-  check('an administrator does not', !(await held(owner)).includes('sakura-crossing'));
+  check('the top three of a board get the quarter’s prize', (await held(bob)).includes(prize) && (await held(alice)).includes(prize) && (await held(carol)).includes(prize), prize);
+  check('fourth place does not', !(await held(dave)).includes(prize));
+  check('an administrator does not', !(await held(owner)).includes(prize));
   const titles = (await store.listUserTitles(alice.id)).map((t) => t.title_id);
-  check('and first place wears it', titles.includes(`top:tokens:month:${thisMonth}:1`), titles.join());
+  check('and first place wears it', titles.includes(`top:tokens:quarter:${thisQuarter}:1`), titles.join());
   const seconds = (await store.listUserTitles(bob.id)).map((t) => t.title_id);
-  check('as second place wears its own', seconds.includes(`top:tokens:month:${thisMonth}:2`), seconds.join());
-  const grant = (await listThemes(bob)).themes.find((t) => t.id === 'sakura-crossing');
-  check('it says which month it was for', grant?.grant?.kind === 'top_month' && grant?.grant?.month === NOW.getUTCMonth() + 1 && grant?.grant?.year === NOW.getUTCFullYear(), JSON.stringify(grant?.grant));
-  await settlePeriod('month', thisMonth);
-  check('settling twice changes nothing', (await store.settledBoard('month', thisMonth)).length === 6);
+  check('as second place wears its own', seconds.includes(`top:tokens:quarter:${thisQuarter}:2`), seconds.join());
+  const fourth = (await store.listUserTitles(dave.id)).map((t) => t.title_id);
+  check('fourth place wears nothing for it', !fourth.some((id) => id.startsWith('top:')), fourth.join());
+  const grant = (await listThemes(bob)).themes.find((t) => t.id === prize);
+  check('it says which quarter it was for', grant?.grant?.kind === 'top_quarter' && grant?.grant?.quarter === Math.floor(NOW.getUTCMonth() / 3) + 1 && grant?.grant?.year === NOW.getUTCFullYear(), JSON.stringify(grant?.grant));
+  await settlePeriod('quarter', thisQuarter);
+  const kept = await store.settledBoard('quarter', thisQuarter);
+  check('settling twice changes nothing, and the board keeps everyone it showed', kept.length === 7, String(kept.length));
   await spend(dave, 99_999_999, 999);
-  const closed = await ranking(alice, { key: thisMonth, now: nextMonth });
-  check('a closed board does not move, whatever comes in late', closed.settled === true && closed.tokens[0].name === 'alice' && !closed.tokens.some((r) => r.name === 'dave'), JSON.stringify(closed.tokens));
+  const closed = await ranking(alice, { key: thisQuarter, now: nextQuarter });
+  check('a closed board does not move, whatever comes in late', closed.settled === true && closed.tokens[0].name === 'alice' && closed.tokens.find((r) => r.name === 'dave')?.rank === 4, JSON.stringify(closed.tokens));
   await store.deleteUser(bob.id);
-  const gone = await ranking(alice, { key: thisMonth, now: nextMonth });
+  const gone = await ranking(alice, { key: thisQuarter, now: nextQuarter });
   check('an account deleted leaves the board and takes its name', !gone.tokens.some((r) => r.name === 'bob') && !gone.spend.some((r) => r.name === 'bob'));
   check('and the others keep their rank', gone.tokens.find((r) => r.name === 'carol')?.rank === 3);
 }
@@ -263,9 +294,9 @@ section('one period that cannot be settled does not take the pages with it');
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-  await settleClosed({ store: broken, now: nextMonth });
+  await settleClosed({ store: broken, now: nextQuarter });
   check('the failure is swallowed, and logged', tries === 1);
-  await settleClosed({ store: broken, now: nextMonth });
+  await settleClosed({ store: broken, now: nextQuarter });
   check('and the next read does not pay for it again', tries === 1, String(tries));
   __testing.reset();
 }
@@ -278,6 +309,60 @@ section('a lifetime outlasts the rows it was added from');
   check('pruning does not take usage off the total', before.tokens > 0 && after.tokens === before.tokens && after.cost === before.cost, `${before.tokens} → ${after.tokens}`);
   await store.pruneUsageEvents(-1);
   check('nor does it count twice', (await store.lifetimeUsage(dave.id)).tokens === before.tokens);
+}
+
+section('the fireworks: a week, a number of tokens, a hundred places');
+{
+  const { NEW_YEAR_EVENT: event } = themes;
+  const during = new Date('2027-01-03T12:00:00+07:00');
+  const before = new Date('2026-12-31T23:00:00+07:00');
+  const after = new Date('2027-01-08T00:00:01+07:00');
+  const zoe = await make('zoe');
+  const stranger = await make('stranger');
+  // What was used in the week, as the database would add it up; today is not in 2027.
+  const week = new Map();
+  const counted = new Proxy(store, {
+    get(target, prop) {
+      if (prop === 'usageTokensBetween') return async (id) => week.get(id) || 0;
+      const value = target[prop];
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const at = (when) => ({ now: when, store: counted });
+  const row = async (user, when) => (await listThemes(user, at(when))).themes.find((t) => t.id === 'new-year-fireworks');
+  const inWeek = async (user, tokens) => week.set(user.id, (week.get(user.id) || 0) + tokens);
+  check('what a week adds up to is read from the usage in it', (await store.usageTokensBetween(dave.id, new Date(Date.now() - 60_000 * 60 * 24 * 365), new Date(Date.now() + 60_000))) > 0 && (await store.usageTokensBetween(dave.id, new Date('2020-01-01'), new Date('2020-02-01'))) === 0);
+  check('nothing is owed before it starts', !(await row(zoe, before)).owned && (await row(zoe, before)).needs?.event?.state === 'soon');
+  const asked = (await row(zoe, during)).needs?.event;
+  check('it says what it asks, and how many places are left', asked?.tokens === event.tokens && asked?.left === event.places && asked?.state === 'running', JSON.stringify(asked));
+  check('usage before the week does not count', asked?.used === 0);
+  await inWeek(zoe, event.tokens - 1);
+  check('one token short is not enough', !(await row(zoe, during)).owned && (await row(zoe, during)).needs?.event?.used === event.tokens - 1);
+  await inWeek(zoe, 1);
+  const won = await row(zoe, during);
+  check('reaching it earns the theme', won.owned === true && won.grant?.kind === 'exclusive_event');
+  check('and takes one place', (await row(stranger, during)).needs?.event?.left === event.places - 1);
+  check('looking again takes no second place', (await listThemes(zoe, at(during))) && (await store.eventPlacesTaken(event.id)) === 1);
+  await inWeek(stranger, event.tokens);
+  check('after the week nothing more is given', !(await row(stranger, after)).owned && (await row(stranger, after)).needs?.event?.state === 'over');
+  const admin = await listThemes(owner, at(during));
+  check('an administrator holds it and takes no place', admin.themes.find((t) => t.id === 'new-year-fireworks')?.owned && (await store.eventPlacesTaken(event.id)) === 1);
+  await takeTheme('new-year-fireworks', zoe.id);
+  check('one an administrator took back is not earned again', !(await row(zoe, during)).owned);
+
+  const racing = await Promise.all(Array.from({ length: 30 }, (_, i) => make(`racer${i}`)));
+  const places = await Promise.all(racing.map((user) => store.claimEventPlace('race', user.id, 5)));
+  check('thirty arriving at once for five places: five get one', places.filter((p) => p !== null).length === 5, JSON.stringify(places));
+  check('each a different place', new Set(places.filter((p) => p !== null)).size === 5);
+  check('and one person asking twice holds the one', (await store.claimEventPlace('solo', zoe.id, 5)) === (await store.claimEventPlace('solo', zoe.id, 5)));
+}
+
+section('two preferences saved at the same moment both land');
+{
+  const fay = await make('fay');
+  await Promise.all([setPrefs(fay.id, { effort: 'low' }), setPrefs(fay.id, { mascot: 'happy' }), setPrefs(fay.id, { rankAnonymous: true })]);
+  const prefs = await getPrefs(fay.id);
+  check('none of them undid another', prefs.effort === 'low' && prefs.mascot === 'happy' && prefs.rankAnonymous === true, JSON.stringify([prefs.effort, prefs.mascot, prefs.rankAnonymous]));
 }
 
 section('over HTTP');

@@ -4718,6 +4718,8 @@ const usageAlert = createUsageAlert($('usage-alert'), {
   load: () => api.usageLimits(),
   providers: () => state.boot?.providers || {},
   openUsage: () => openSettings('usage'),
+  // The warning above the box is about the model that will answer the next message.
+  modelProvider: () => (state.model === 'auto' ? 'openrouter' : String(state.model || '').split('/')[0] || null),
   openKeys: () => openSettings('providers'),
   user: () => state.boot?.user?.id,
   changed: (until) => {
@@ -6616,6 +6618,7 @@ const browser = createModelBrowser({
     try {
       state.boot.prefs = await api.savePrefs({ defaultModel: modelId });
       toast(t(handing ? 'model.handoff' : 'model.switched', { model: modelId.split('/').pop() }));
+      usageAlert.refresh({ soon: true });
     } catch (err) {
       // Put it back rather than leaving the chip claiming something that was
       // never stored — that is exactly the disagreement this change removes.

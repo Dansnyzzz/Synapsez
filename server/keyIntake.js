@@ -80,6 +80,20 @@ const accountHash = (id) => crypto.createHash('sha256').update(String(id)).diges
 export const orcaBalance = (body) => (typeof body?.hard_limit_usd === 'number' && Number.isFinite(body.hard_limit_usd) ? body.hard_limit_usd : null);
 
 /**
+ * The workspace's wallet, and what this key may spend of it, as a number or null.
+ * Live, 2026-11-07: `GET /v1/tools/balance` answered a wallet of 20 and 5.83
+ * spendable, where the billing summary above says 6, a key's own ceiling. The wallet
+ * is what proves a top-up; reading the ceiling as the balance left an owner with $20
+ * told nobody could say how much had been paid.
+ *
+ * @param {any} body  `GET /v1/tools/balance`
+ */
+export const orcaWallet = (body) => {
+  const number = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+  return { wallet: number(body?.data?.wallet_usd), spendable: number(body?.data?.spendable_usd) };
+};
+
+/**
  * What a balance proves. Any credit can pay for a paid model. Whether the
  * workspace has reached the free tier's upper rung is lifetime spend, unreadable,
  * except that a balance past the rung cannot have been paid for with less. No
@@ -117,6 +131,12 @@ export async function inspectKey(provider, key, { fetchImpl = fetch } = {}) {
       return { ok: true, account: owner ? accountHash(owner) : null, paid: typeof data.is_free_tier === 'boolean' ? !data.is_free_tier : null };
     }
     if (provider === 'orcarouter') {
+      // The wallet where it can be read: a key's own ceiling proves nothing about what was paid.
+      const wallet = await get('https://api.orcarouter.ai/v1/tools/balance', { Authorization: `Bearer ${key}` }).catch(() => null);
+      if (wallet?.ok) {
+        const { wallet: held } = orcaWallet(await wallet.clone().json().catch(() => null));
+        if (held !== null) return { ok: true, ...orcaStanding(held) };
+      }
       const res = await get('https://api.orcarouter.ai/v1/dashboard/billing/subscription', { Authorization: `Bearer ${key}` });
       if (res.status === 401 || res.status === 403) return { ok: false };
       if (!res.ok) return { ok: null };

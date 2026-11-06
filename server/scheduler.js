@@ -723,6 +723,7 @@ export async function sweep() {
     // One row per model call per role, never removed — and `checkQuota` sums a
     // whole month of them before every single turn.
     store.pruneUsageEvents(),
+    store.pruneOutcomes(),
     // A task whose invocation was killed mid-run is stopped for a person rather
     // than left to re-claim itself every hour for ever.
     store.reapStalledTasks(),

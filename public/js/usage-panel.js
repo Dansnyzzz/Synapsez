@@ -2,6 +2,7 @@ import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { rovingKeys } from './roving.js';
 import { weekDays, rowsFor, callsByDay, heatmap, heatmapBy, shareBy, pace, busiest, usualDay, standing, knownLimits, overviewLimits, decisiveLimits, tightest, project } from './usage-math.js';
+import { geminiDetail, orcaDetail } from './usage-detail.js';
 
 /**
  * Settings → Usage, after Claude's (owner, 2026-10-31): a page per provider the
@@ -23,7 +24,7 @@ const LIVE_EVERY_MS = 60_000;
 
 const ORDER = ['openrouter', 'google', 'orcarouter', 'anthropic', 'openai'];
 /** Where each provider's own figures live, for the line under a provider that reports none. */
-const CONSOLE = {
+export const CONSOLE = {
   google: 'https://aistudio.google.com/usage',
   orcarouter: 'https://www.orcarouter.ai/console',
   openrouter: 'https://openrouter.ai/settings/credits',
@@ -33,6 +34,7 @@ const CONSOLE = {
 const LIMITS_DOC = 'https://openrouter.ai/docs/api-reference/limits';
 
 const locale = () => (currentLanguage() === 'vi' ? 'vi-VN' : 'en-US');
+const firstOf = (limit) => limit.provider || limit.providers?.[0];
 const firstDay = () => (currentLanguage() === 'vi' ? 1 : 0);
 const pct = (n) => `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%`;
 const money = (n) => (n == null ? '—' : new Intl.NumberFormat(locale(), { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: n < 1 && n > 0 ? 4 : 2 }).format(n));
@@ -42,10 +44,10 @@ const resetAt = (date) => when(date, { weekday: 'short', day: 'numeric', month: 
 const timeOf = (date) => when(date, new Date(date).toDateString() === new Date().toDateString() ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 /** Where more of a limit can be had: credit raises the free requests to 1,000 a day; a key's own cap is set on its page. */
 const MORE = { free: 'https://openrouter.ai/settings/credits', cap: 'https://openrouter.ai/settings/keys' };
-export const moreLink = (limit) => (limit.provider === 'orcarouter' ? CONSOLE.orcarouter : MORE[limit.kind]);
+export const moreLink = (limit) => (firstOf(limit) === 'orcarouter' ? CONSOLE.orcarouter : firstOf(limit) === 'google' ? CONSOLE.google : MORE[limit.kind]);
 
 /** The routers by name, for the sentences that say whose limit it is. */
-const ROUTER_NAMES = { openrouter: 'OpenRouter', orcarouter: 'OrcaRouter' };
+const ROUTER_NAMES = { openrouter: 'OpenRouter', orcarouter: 'OrcaRouter', google: 'Google Gemini' };
 
 /**
  * An own key by its place and the last characters of it: "Key 1
@@ -67,6 +69,8 @@ export function keyLabel(index, providers, { inline = false, provider = 'openrou
  * @param {number} keys  how many own keys that provider has
  */
 export function limitName(limit, providers, keys) {
+  // Every provider's together: it has no one name to give.
+  if (limit.providers) return t(limit.kind === 'free' ? 'usage.name.freeAll' : 'usage.name.capAll');
   const provider = limit.provider || 'openrouter';
   const key = keys > 1 && limit.index != null ? ` (${keyLabel(limit.index, providers, { inline: true, provider })})` : '';
   return t(`usage.name.${limit.kind}`, { key, provider: ROUTER_NAMES[provider] || provider });
@@ -92,6 +96,9 @@ const segmented = (name, options, current) =>
   `<div class="usage__seg" role="tablist">${options
     .map(([id, label]) => `<button type="button" role="tab" data-${name}="${id}" aria-selected="${id === current}" tabindex="${id === current ? 0 : -1}">${escapeHtml(label)}</button>`)
     .join('')}</div>`;
+
+/** How the provider detail pages say a number, in this page's own words. */
+const helpers = { count, money, pct, when, modelShort: (id) => String(id).replace(/^[^/]+\//, '') };
 
 /** @param {HTMLElement} host @param {Deps} deps */
 export function createUsagePanel(host, deps) {
@@ -127,11 +134,13 @@ export function createUsagePanel(host, deps) {
     const label =
       l.kind === 'shared'
         ? t('usage.sharedMonth')
-        : l.bucket
-          ? t('usage.freeModel', { model: modelName(l.bucket) })
-          : l.index == null
-            ? t(l.kind === 'free' ? 'usage.freeTotal' : 'usage.capTotal', { provider: whose })
-            : t(l.kind === 'free' ? 'usage.freeToday' : 'usage.keyLimit', { key: keyName(l.index) });
+        : l.providers
+          ? t(l.kind === 'free' ? 'usage.freeAll' : 'usage.capAll')
+          : l.bucket
+            ? t('usage.freeModel', { model: modelName(l.bucket) })
+            : l.index == null
+              ? t(l.kind === 'free' ? 'usage.freeTotal' : 'usage.capTotal', { provider: whose })
+              : t(l.kind === 'free' ? 'usage.freeToday' : 'usage.keyLimit', { key: keyLabel(l.index, deps.providers(), { provider }) });
     const resets = l.to ? t('usage.resets', { when: resetAt(l.to) }) : l.interval ? t(`usage.interval.${l.interval}`) : t('usage.noReset');
     const sub = l.counted ? `${resets} · ${t('usage.countedHere')}` : resets;
     return bar({ label, sub, used: l.used, limit: l.limit, note: t('usage.ofLimit', { used: limitAmount(l, l.used), limit: limitAmount(l, l.limit) }) });
@@ -153,6 +162,11 @@ export function createUsagePanel(host, deps) {
         out.push(`<p class="usage__note">${escapeHtml(t(live.reason === 'rejected' ? 'usage.keyRejected' : 'usage.keyQuiet', { key, provider: routerName(scope) }))}</p>`);
       }
     }
+    // Google says what its ceiling is only when it refuses for it, so until then there is a count and no bar.
+    const geminiFree = view.report.free?.google;
+    if (geminiFree && !(geminiFree.limit > 0) && (scope === 'all' || scope === 'google')) {
+      out.push(`<p class="usage__note">${escapeHtml(t('usage.geminiNoLimit', { used: count(geminiFree.used || 0) }))}</p>`);
+    }
     const orcaFree = view.report.free?.orcarouter;
     if (orcaFree && (scope === 'all' || scope === 'orcarouter')) {
       // No way to tell which ceiling applies yet, so both are said and neither is drawn.
@@ -163,7 +177,7 @@ export function createUsagePanel(host, deps) {
       }
       if (scope === 'orcarouter') out.push(`<p class="usage__muted">${escapeHtml(t('usage.orcaNote'))} <a href="${CONSOLE.orcarouter}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a></p>`);
     }
-    if (scope !== 'all' && scope !== 'openrouter' && scope !== 'orcarouter') {
+    if (scope !== 'all' && scope !== 'openrouter' && scope !== 'orcarouter' && scope !== 'google') {
       // No console known, no link: '#' in a new tab opened a second copy of the app (UI-010).
       const link = CONSOLE[scope] ? ` <a href="${CONSOLE[scope]}" target="_blank" rel="noopener">${escapeHtml(t('usage.openConsole'))} ↗</a>` : '';
       out.push(`<p class="usage__note">${escapeHtml(t('usage.noAllowance', { provider: deps.meta()?.[scope]?.label || scope }))}${link}</p>`);
@@ -247,7 +261,24 @@ export function createUsagePanel(host, deps) {
     return `<ul class="usage__resets">${list.map((r) => `<li><span>${escapeHtml(r.what)}</span><span class="usage__muted">${escapeHtml(when(r.at, { weekday: 'long', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }))}</span></li>`).join('')}</ul>`;
   }
 
-  /** "By model": this week's requests by day, then each model's — or each provider's — share. */
+  /**
+   * One day's requests by provider, or by model on a provider's page: the day pointed
+   * at, and otherwise today (owner, 2026-11-06).
+   *
+   * @param {string} scope @param {any[]} rows @param {Date} day
+   */
+  function dayShare(scope, rows, day) {
+    const share = shareBy(rows, [day], scope === 'all' ? 'provider' : 'model');
+    const name = (n) => (scope === 'all' ? deps.meta()?.[n]?.label || n : String(n).replace(/^[^/]+\//, ''));
+    const said = when(day, { weekday: 'long', day: 'numeric', month: 'numeric' });
+    const lines = share
+      .slice(0, 8)
+      .map((s) => `<div class="usage__limit"><div class="usage__limit-text"><span class="usage__limit-label" title="${escapeHtml(s.name)}">${escapeHtml(name(s.name))}</span><span class="usage__limit-sub">${escapeHtml(t('usage.requests', { n: count(s.calls) }))}</span></div><div class="usage__bar"><span style="width:${pct(s.share)}"></span></div><span class="usage__pct">${pct(s.share)}</span></div>`)
+      .join('');
+    return `<p class="usage__dayname">${escapeHtml(said)}</p>${lines || `<p class="usage__muted">${escapeHtml(t('usage.nothingThisDay'))}</p>`}`;
+  }
+
+  /** "By model": this week's requests by day, then what one day's were made of. */
   function byModel(scope, rows) {
     const days = weekDays(new Date(), firstDay());
     const perDay = callsByDay(rows, days);
@@ -257,18 +288,27 @@ export function createUsagePanel(host, deps) {
       .map((d, i) => {
         const h = perDay[i] ? Math.max(4, Math.round((perDay[i] / most) * 100)) : 3;
         const label = when(d, { weekday: 'short' });
-        return `<div class="usage__day${d.toDateString() === today ? ' is-today' : ''}"><div class="usage__col" style="height:${h}%" title="${escapeHtml(`${label}: ${count(perDay[i])}`)}"></div><span>${escapeHtml(label)}</span></div>`;
+        const isToday = d.toDateString() === today;
+        return `<button type="button" class="usage__day${isToday ? ' is-today is-at' : ''}" data-week-day="${i}" aria-pressed="${isToday}" aria-label="${escapeHtml(`${when(d, { weekday: 'long' })}: ${t('usage.requests', { n: count(perDay[i]) })}`)}"><span class="usage__col" style="height:${h}%"></span><span>${escapeHtml(label)}</span></button>`;
       })
       .join('');
-    const share = shareBy(rows, days, scope === 'all' ? 'provider' : 'model');
-    const name = (n) => (scope === 'all' ? deps.meta()?.[n]?.label || n : String(n).replace(/^[^/]+\//, ''));
-    const lines = share.length
-      ? share
-          .slice(0, 8)
-          .map((s) => `<div class="usage__limit"><div class="usage__limit-text"><span class="usage__limit-label" title="${escapeHtml(s.name)}">${escapeHtml(name(s.name))}</span><span class="usage__limit-sub">${escapeHtml(t('usage.requests', { n: count(s.calls) }))}</span></div><div class="usage__bar"><span style="width:${pct(s.share)}"></span></div><span class="usage__pct">${pct(s.share)}</span></div>`)
-          .join('')
-      : `<p class="usage__muted">${escapeHtml(t('usage.nothingThisWeek'))}</p>`;
-    return `<p class="usage__muted">${escapeHtml(t('usage.shareThisWeek'))}</p><div class="usage__days">${columns}</div>${lines}`;
+    const pick = days.find((d) => d.toDateString() === today) || days[0];
+    return `<p class="usage__muted">${escapeHtml(t('usage.shareThisWeek'))}</p><div class="usage__days" role="group" aria-label="${escapeHtml(t('usage.shareThisWeek'))}">${columns}</div><div class="usage__dayshare" aria-live="polite">${dayShare(scope, rows, pick)}</div>`;
+  }
+
+  /** The day pointed at, or today once nothing is. Only the lines change, so the page does not jump. */
+  function showDay(index) {
+    const box = /** @type {HTMLElement | null} */ (host.querySelector('.usage__dayshare'));
+    if (!box || !view.report) return;
+    const days = weekDays(new Date(), firstDay());
+    const today = days.findIndex((d) => d.toDateString() === new Date().toDateString());
+    const at = index == null ? (today < 0 ? 0 : today) : index;
+    for (const button of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('.usage__day'))) {
+      const on = Number(button.dataset.weekDay) === at;
+      button.classList.toggle('is-at', on);
+      button.setAttribute('aria-pressed', String(on));
+    }
+    box.innerHTML = dayShare(view.scope, rowsFor(view.report.hours, view.scope), days[at]);
   }
 
   /** "By device": every sign-in of this password still able to sign in, each signed out on its own. */
@@ -438,6 +478,8 @@ export function createUsagePanel(host, deps) {
     // What the bars show, and what the warning goes by: on a provider's page every
     // key has a bar and only the one in use can raise a warning.
     const known = view.scope === 'all' ? overviewLimits(view.report) : knownLimits(view.report, view.scope);
+    // When each comes back is still each provider's own: their days do not turn over together.
+    const coming = knownLimits(view.report, view.scope);
     const head = headline(decisiveLimits(view.report, view.scope));
     const said = insight(rows);
     const notes = limitNotes(view.scope);
@@ -452,7 +494,8 @@ export function createUsagePanel(host, deps) {
         ${head.tone ? moreOf(head.limit) : ''}
       </div>
       <div class="usage__limits">${known.map(limitBar).join('')}${notes}${known.length || notes ? '' : `<p class="usage__muted">${escapeHtml(t('usage.noLimitsKnown'))}</p>`}</div>
-      <section><h4>${escapeHtml(t('usage.resetsTitle'))}</h4>${resets(known)}</section>
+      ${view.scope === 'google' ? geminiDetail(view.report, helpers) : view.scope === 'orcarouter' ? orcaDetail(view.report, helpers) : ''}
+      <section><h4>${escapeHtml(t('usage.resetsTitle'))}</h4>${resets(coming)}</section>
       <section><h4>${escapeHtml(t('usage.whereTitle'))}</h4>${segmented('where', [['model', t(view.scope === 'all' ? 'usage.byProvider' : 'usage.byModel')], ['device', t('usage.byDevice')]], view.where)}<div class="usage__where">${view.where === 'device' ? byDevice() : byModel(view.scope, rows)}</div></section>
       <section><h4>${escapeHtml(t('usage.weekTitle'))}</h4>${segmented('week', [['grid', t('usage.thisWeek')], ['pace', t('usage.pace')]], view.week)}<div class="usage__week">${view.week === 'pace' ? paceChart(rows) : thisWeek(rows)}</div></section>
       <section><h4>${escapeHtml(t('usage.creditsTitle'))}</h4>${credits(view.scope)}</section>
@@ -497,12 +540,17 @@ export function createUsagePanel(host, deps) {
   }
 
   host.addEventListener('pointerover', (event) => {
-    const cell = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('.usage__cell[data-d]'));
+    const target = /** @type {HTMLElement} */ (event.target);
+    const cell = /** @type {HTMLElement | null} */ (target.closest('.usage__cell[data-d]'));
     if (cell) showTip(Number(cell.dataset.d), Number(cell.dataset.h));
+    const day = /** @type {HTMLElement | null} */ (target.closest('.usage__day'));
+    if (day) showDay(Number(day.dataset.weekDay));
   });
   host.addEventListener('pointerout', (event) => {
     const into = /** @type {HTMLElement | null} */ (event.relatedTarget);
-    if (/** @type {HTMLElement} */ (event.target).closest('.usage__heat') && !into?.closest?.('.usage__heat')) hideTip();
+    const target = /** @type {HTMLElement} */ (event.target);
+    if (target.closest('.usage__heat') && !into?.closest?.('.usage__heat')) hideTip();
+    if (target.closest('.usage__days') && !into?.closest?.('.usage__days')) showDay(null);
   });
   // The arrows walk the grid; the line follows.
   host.addEventListener('keydown', (event) => {
@@ -517,10 +565,15 @@ export function createUsagePanel(host, deps) {
     showTip(Math.min(cells.days.length - 1, Math.max(0, from.d + step[0])), Math.min(23, Math.max(0, from.h + step[1])));
   });
   host.addEventListener('focusin', (event) => {
-    if (cells && /** @type {HTMLElement} */ (event.target).classList?.contains('usage__heat')) showTip(cells.at?.d ?? 0, cells.at?.h ?? 0);
+    const target = /** @type {HTMLElement} */ (event.target);
+    if (cells && target.classList?.contains('usage__heat')) showTip(cells.at?.d ?? 0, cells.at?.h ?? 0);
+    const day = /** @type {HTMLElement | null} */ (target.closest?.('.usage__day'));
+    if (day) showDay(Number(day.dataset.weekDay));
   });
   host.addEventListener('focusout', (event) => {
-    if (/** @type {HTMLElement} */ (event.target).classList?.contains('usage__heat')) hideTip();
+    const target = /** @type {HTMLElement} */ (event.target);
+    if (target.classList?.contains('usage__heat')) hideTip();
+    if (target.closest?.('.usage__day') && !/** @type {HTMLElement | null} */ (event.relatedTarget)?.closest?.('.usage__day')) showDay(null);
   });
 
   let loading = null;

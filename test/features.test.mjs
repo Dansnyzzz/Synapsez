@@ -1658,7 +1658,7 @@ section('Settings → Usage: the week, the busiest hour and the pace, in the rea
   });
   const owners = two(51, 2);
   const totals = m.overviewLimits(owners, utc);
-  check('the Overview has one line for the provider, not one per key', totals.length === 1 && totals[0].kind === 'free' && totals[0].provider === 'openrouter' && totals[0].index === undefined, JSON.stringify(totals.map((l) => l.id)));
+  check('the Overview has one line, not one per key', totals.length === 1 && totals[0].kind === 'free' && totals[0].providers.join() === 'openrouter' && totals[0].index === undefined, JSON.stringify(totals));
   check('  of the total: 51 of 50 and 2 of 50 is 52 of 100', totals[0].used === 52 && totals[0].limit === 100, `${totals[0].used}/${totals[0].limit}`);
   check('  and no warning, on the Overview or above the composer', m.alertFor(m.decisiveLimits(owners, 'all', utc)) === null);
   check("  nor on the provider's page, where key 2 is in use", m.alertFor(m.decisiveLimits(owners, 'openrouter', utc)) === null && m.decisiveLimits(owners, 'openrouter', utc).every((l) => l.index === 1));
@@ -1672,9 +1672,17 @@ section('Settings → Usage: the week, the busiest hour and the pace, in the rea
 
   const orca = { live: { openrouter: [{ index: 0, ok: true, freeToday: { used: 45, limit: 50 } }], orcarouter: [{ index: 0, ok: true, balance: 6 }] }, free: { orcarouter: { used: 700, limit: 800, tier: 'high', tiers: [], models: [{ id: 'orcarouter/tencent/hy4-preview-free', used: 3, limit: 4000 }] } }, inUse: { openrouter: 0 } };
   const mixed = m.overviewLimits(orca, utc);
-  check('two providers are not added together', mixed.some((l) => l.provider === 'openrouter' && l.limit === 50) && mixed.some((l) => l.provider === 'orcarouter' && l.limit === 800 && !l.bucket), JSON.stringify(mixed.map((l) => [l.id, l.used, l.limit])));
-  check('  and neither is a free id with a ladder of its own', mixed.some((l) => l.bucket && l.limit === 4000));
-  check('  a provider near its limit warns, whatever the other has left', m.alertFor(mixed)?.limit.provider === 'openrouter');
+  check('every provider\'s free requests are one line on the Overview (owner, 2026-11-06)', mixed.filter((l) => l.kind === 'free' && !l.bucket).length === 1 && mixed.find((l) => l.id === 'total:free')?.used === 745 && mixed.find((l) => l.id === 'total:free')?.limit === 850, JSON.stringify(mixed));
+  check('  and it says whose they are', mixed.find((l) => l.id === 'total:free')?.providers.join() === 'openrouter,orcarouter');
+  check('  but not a free id with a ladder of its own', mixed.some((l) => l.bucket && l.limit === 4000));
+  check('  the warning above the composer goes by the provider in use, not the total', m.alertFor(m.decisiveLimits(orca, 'openrouter', utc))?.limit.provider === 'openrouter' && m.alertFor(m.decisiveLimits(orca, 'orcarouter', utc))?.limit.provider === 'orcarouter');
+  const caps = { live: { openrouter: [{ index: 0, ok: true, limit: { amount: 100, remaining: 99.5 } }], orcarouter: [{ index: 0, ok: true, balance: 20, spendable: 5.83, spent: 0.17 }] }, free: {} };
+  const spending = m.overviewLimits(caps, utc).find((l) => l.kind === 'cap');
+  check('every spending limit is one line too', spending?.id === 'total:cap' && spending.used === 0.67 && spending.limit === 106, JSON.stringify(spending));
+  check('  one with no reset in it does not hide one with', m.overviewLimits(caps, utc).length === 1);
+  const google = { live: {}, free: { google: { used: 12, limit: 250, from: '2026-10-31T07:00:00.000Z', to: '2026-11-01T07:00:00.000Z' } } };
+  check('Gemini joins once its ceiling is known, resetting at midnight Pacific', m.knownLimits(google, 'google', utc)[0]?.to.toISOString() === '2026-11-01T07:00:00.000Z' && m.overviewLimits(google, utc)[0]?.limit === 250);
+  check('  and until then there is no bar', m.knownLimits({ free: { google: { used: 12, limit: null, from: '2026-10-31T07:00:00.000Z', to: '2026-11-01T07:00:00.000Z' } } }, 'google', utc).length === 0);
   check("OrcaRouter's limit is one for the workspace, and says it was counted here", m.knownLimits(orca, 'orcarouter', utc).find((l) => !l.bucket)?.counted === true && m.knownLimits(orca, 'orcarouter', utc).every((l) => l.index === undefined));
   check('  and it resets at 00:00 UTC, as its docs say', m.knownLimits(orca, 'orcarouter', utc)[0].to.toISOString() === '2026-11-01T00:00:00.000Z');
   check('  with no ceiling known, no limit is invented', m.knownLimits({ free: { orcarouter: { used: 700, limit: null, tiers: [{ minPaidUsd: 0, rpd: 50 }] } } }, 'orcarouter', utc).length === 0);

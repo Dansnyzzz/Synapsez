@@ -9,10 +9,12 @@ import { moreLink, limitName } from './usage-panel.js';
  * your weekly limit · resets Sun, Nov 1 at 12:00 PM · Get more usage · View
  * usage" (owner, 2026-10-31).
  *
- * From 80% of what the Usage page's Overview goes by (usage-math.js
- * `decisiveLimits` and `alertFor`: the same two functions, so the two cannot
- * disagree), again at 90%, and at the limit: each provider's total, so one key out
- * of requests beside others with plenty says nothing (owner, 2026-11-04). Closing it holds for the rest of that
+ * From 80% of what the provider of the model in use goes by (usage-math.js
+ * `decisiveLimits` and `alertFor`, the same two functions that provider's Usage page
+ * reads), again at 90%, and at the limit: the key in use, so one key out of requests
+ * beside others with plenty says nothing (owner, 2026-11-04), and not the Overview's
+ * total, which can have plenty left on a provider this model cannot use (owner,
+ * 2026-11-06). Closing it holds for the rest of that
  * limit's period, whatever level it reaches (UX-021, owner 2026-11-02): it came
  * back at the next send before. Remembered per account (PRV-019), so on a
  * shared browser one person's close is not another's.
@@ -26,7 +28,7 @@ import { moreLink, limitName } from './usage-panel.js';
  * the Usage page (server/usageReport.js), so it costs next to nothing.
  *
  * @typedef {{ load: () => Promise<any>, providers: () => any, openUsage: () => void, openKeys: () => void,
- *   user: () => string | undefined, changed?: (freeOutUntil: Date | null) => void }} Deps
+ *   user: () => string | undefined, changed?: (freeOutUntil: Date | null) => void, modelProvider?: () => string | null }} Deps
  */
 
 /** Before closes were kept per account; whose it was cannot be told, so it is dropped. */
@@ -71,7 +73,7 @@ export function createUsageAlert(host, deps) {
     const wasOut = !!freeOutUntil;
     freeOutUntil = free.length && free.every((l) => l.used >= l.limit) ? free.map((l) => l.to).filter(Boolean).sort((a, b) => a.getTime() - b.getTime())[0] || null : null;
     if (wasOut !== !!freeOutUntil) deps.changed?.(freeOutUntil);
-    const alert = alertFor(decisiveLimits(report, 'all'));
+    const alert = alertFor(decisiveLimits(report, deps.modelProvider?.() || 'all'));
     // The limit and its period, not its level: a close lasts until the period ends (UX-021).
     const id = alert ? `${alert.limit.id}|${alert.limit.to ? alert.limit.to.toISOString() : ''}` : '';
     if (!alert || id === remembered() || held) {

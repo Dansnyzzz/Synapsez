@@ -439,7 +439,7 @@ async function searchDuckDuckGo(query, ask) {
  * to the real page, because "vertexaisearch.cloud.google.com/grounding-api-
  * redirect/…" tells the reader nothing about where a claim came from.
  */
-const GROUNDING_MODEL = process.env.GOOGLE_SEARCH_MODEL || 'gemini-2.5-flash';
+const GROUNDING_MODEL = process.env.GOOGLE_SEARCH_MODEL || 'gemini-flash-latest';
 
 /** @param {{ count: number, plan: any, recency: string|null, sites: string[], userId?: string|null }} ask */
 async function searchGoogle(query, ask) {

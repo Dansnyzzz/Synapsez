@@ -193,7 +193,9 @@ export function periodOf(interval, now) {
  *     reports them; or OrcaRouter's, as Synapsez counted them (`counted`), one
  *     for the workspace and not per key — OrcaRouter counts by workspace, and a
  *     free id with a ladder of its own has a `bucket` of its own.
- *   - `cap`: an own OpenRouter key's spending limit or budget, in dollars.
+ *     Gemini's the same (`counted`), once a refusal has said what its ceiling is.
+ *   - `cap`: an own OpenRouter key's spending limit or budget, in dollars; or what an
+ *     OrcaRouter key has spent beside what it may still spend.
  *   - `shared`: the deployment's monthly token allowance, which applies while
  *     the account rides one of its shared keys (server/usage.js checkQuota).
  *
@@ -234,6 +236,14 @@ export function knownLimits(report, scope = 'all', now = new Date()) {
   for (const model of orcaFree?.models || []) {
     if (model.limit > 0) out.push({ id: `free:${model.id}`, kind: 'free', provider: 'orcarouter', bucket: model.id, counted: true, used: model.used || 0, limit: model.limit, unit: 'requests', ...periodOf('daily', now) });
   }
+  for (const live of scope === 'all' || scope === 'orcarouter' ? report.live?.orcarouter || [] : []) {
+    if (!live.ok || live.spent == null || live.spendable == null || !(live.spent + live.spendable > 0)) continue;
+    out.push({ id: `cap:orcarouter:${live.index}`, kind: 'cap', provider: 'orcarouter', index: live.index, used: live.spent, limit: live.spent + live.spendable, unit: 'usd', interval: null, from: null, to: null });
+  }
+  const geminiFree = scope === 'all' || scope === 'google' ? report.free?.google : null;
+  if (geminiFree?.limit > 0) {
+    out.push({ id: 'free:google', kind: 'free', provider: 'google', counted: true, used: geminiFree.used || 0, limit: geminiFree.limit, unit: 'requests', from: new Date(geminiFree.from), to: new Date(geminiFree.to) });
+  }
   const shared = report.sharedKey || {};
   const onShared = scope === 'all' ? Object.values(shared).some(Boolean) : !!shared[scope];
   if (onShared && report.sharedLimit > 0) {
@@ -244,13 +254,14 @@ export function knownLimits(report, scope = 'all', now = new Date()) {
 }
 
 /**
- * The Overview's limits: one for each provider and kind, however many keys make
- * it up (owner, 2026-11-04). The keys are on the provider's own page.
+ * The Overview's limits: all the free requests as one, all the spending limits as
+ * one, whichever provider and key each is on (owner, 2026-11-06). Each provider and
+ * key has its own on its own page.
  *
  * What a key has used past its limit is not counted: 51 of 50 on one key and 2 of
- * 50 on the next is 52 of 100, because what is left of the total is 48. Two
- * providers are never added together: running out on one is not made to look fine
- * by a whole allowance on the other, which a free model there cannot use.
+ * 50 on the next is 52 of 100, because what is left of the total is 48. A free id on
+ * a ladder of its own stays apart: a few thousand requests on one model would make
+ * the total say nothing about all the others.
  */
 export function overviewLimits(report, now = new Date()) {
   const groups = new Map();
@@ -259,14 +270,15 @@ export function overviewLimits(report, now = new Date()) {
       groups.set(limit.id, limit);
       continue;
     }
-    const id = `total:${limit.kind}:${limit.provider}`;
+    const id = `total:${limit.kind}`;
     const used = Math.min(limit.used, limit.limit);
     const total = groups.get(id);
     if (!total) {
-      const { index: _index, ...rest } = limit;
-      groups.set(id, { ...rest, id, used });
+      const { index: _index, provider, ...rest } = limit;
+      groups.set(id, { ...rest, id, used, providers: [provider] });
       continue;
     }
+    if (!total.providers.includes(limit.provider)) total.providers.push(limit.provider);
     total.used += used;
     total.limit += limit.limit;
     // Soonest first, and "does not reset" only if none of them does.
@@ -279,10 +291,11 @@ export function overviewLimits(report, now = new Date()) {
 
 /**
  * The limits a warning goes by, on each page (owner, 2026-11-04): on the Overview,
- * each provider's total; on a provider's page, the key being used now (the server
- * says which: `report.inUse`). A first key out of requests with the system already
- * on the second is no reason to say anything, and neither that page nor the line
- * above the composer may disagree about it: both read this.
+ * the total; on a provider's page, the key being used now (the server says which:
+ * `report.inUse`). A first key out of requests with the system already on the second
+ * is no reason to say anything. The line above the composer asks as the provider of
+ * the model in use (owner, 2026-11-06): the total can be nowhere near its end with
+ * the next message about to be refused.
  *
  * @param {any} report
  * @param {string} [scope]  a provider, or 'all'

@@ -20,6 +20,7 @@ import crypto from 'node:crypto';
 import { createShield } from '../deidentify.js';
 import { stealthRefusal, isStealthModel } from '../dataRoute.js';
 import { signingRoot } from '../secrets.js';
+import { learnGeminiQuota, noteOutcome } from '../providerOutcomes.js';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 const ORCAROUTER_BASE = 'https://api.orcarouter.ai/v1';
@@ -590,6 +591,10 @@ async function* streamAny(opts) {
         // in should not decide that, so it is settled here rather than left to
         // whether `classify` recognises the message.
         if (signal?.aborted) throw failure;
+
+        // What the provider said, for the Usage page; and Google's refusal is also the one place its daily ceiling is ever stated.
+        noteOutcome(userId, entry, failure);
+        if (provider === 'google' && !shared) void learnGeminiQuota(userId, key, failure);
 
         /**
          * Refused for asking too much room, which the provider has just
