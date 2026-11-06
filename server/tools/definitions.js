@@ -1201,8 +1201,9 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: false,
     description:
-      'Change a document you made earlier, keeping the same file and the same place in the conversation. ' +
-      'For a fix to part of it (a header, a style, a few questions) pass edits — [{find, replace}], each find copied exactly and unique — and only those parts travel. ' +
+      'Change a file: one you made, or one the user attached. A file they attached is changed in place when they ask for a change to it, not answered with a new file. ' +
+      'A workbook they attached takes `cells`, a Word file, a deck or a text file takes `edits`: only what is named changes, and comments, hidden sheets, formatting, pictures and everything else stay exactly as they were. The file keeps its name, and what they sent is kept as its first version. Read it first with read_generated_file. ' +
+      'For a fix to part of a file you made (a header, a style, a few questions) pass edits — [{find, replace}], each find copied exactly and unique — and only those parts travel. ' +
       'For a rewrite pass the complete new content; read the current source back with read_generated_file first if you no longer have it. ' +
       'Use this rather than create_file when the user asks to change something: a second copy of a quotation with one number different is how the wrong one gets sent. ' +
       'With `append: true` the content is added to the end instead — the way to write anything long (a quiz with a hundred questions, a big page): ' +
@@ -1210,7 +1211,23 @@ export const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        file_id: { type: 'string', description: 'The id create_file returned.' },
+        file_id: { type: 'string', description: 'The id create_file returned, or an attached file\'s id.' },
+        cells: {
+          type: 'array',
+          description: 'A workbook\'s cells to change, by address, up to 2000. Long words wrap and the row grows to show them. Formulas work themselves out again when it is opened in Excel.',
+          items: {
+            type: 'object',
+            properties: {
+              sheet: { type: 'string', description: 'The sheet\'s name, or its number from 1. Needed when there are several.' },
+              cell: { type: 'string', description: 'e.g. K18' },
+              value: { description: 'What it holds: words, a number, true or false; null empties it.' },
+              formula: { type: 'string', description: 'A formula instead of a value, e.g. =SUM(A1:A9).' },
+              style_from: { type: 'string', description: 'Another cell on that sheet whose look this one takes, e.g. K17. Left out, it keeps its own.' },
+              row_height: { type: 'number', description: 'Set the row\'s height in points. Rarely needed.' },
+            },
+            required: ['cell'],
+          },
+        },
         content: {
           type: 'string',
           description: 'The complete new content, in the same language as the original — or, with append, the next part.',
@@ -1220,11 +1237,17 @@ export const TOOLS = [
         append: { type: 'boolean', description: 'Add content to the end rather than replacing it. Default false.' },
         edits: {
           type: 'array',
-          description: 'Targeted changes instead of content: each find must appear once in the source.',
+          description: 'Targeted changes instead of content: each find must appear once in the file, or say all.',
           items: {
             type: 'object',
-            properties: { find: { type: 'string' }, replace: { type: 'string' } },
-            required: ['find', 'replace'],
+            properties: {
+              find: { type: 'string' },
+              replace: { type: 'string' },
+              all: { type: 'boolean', description: 'Every place it appears, in an attached Word file or deck.' },
+              slide: { type: 'integer', description: 'A deck: only on this slide.' },
+              add_after: { type: 'string', description: 'An attached Word file or deck: a new paragraph after the one holding find, looking like it, instead of replacing.' },
+            },
+            required: ['find'],
           },
         },
       },
@@ -1236,10 +1259,18 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: true,
     description:
-      'Read back the source text of a document you made earlier in this conversation, or list them all. Use it before update_file when the content is no longer in front of you. It shows words, not looks: for layout, colours and pictures use look_at. Not needed right after a write: a write that failed changed nothing, so put that right first, and a write that worked shows you the result itself.',
+      'Read a file in this conversation by its id: the source of one you made, or what is in one the user attached, as it now stands. Use it before update_file when the content is no longer in front of you. ' +
+      'A workbook: with only the id it lists every sheet, hidden ones too; sheet and range read cells by address with their formulas and comments; find looks through all the sheets. ' +
+      'It shows words, not looks: for layout, colours and pictures use look_at. Not needed right after a write: a write that failed changed nothing, so put that right first, and a write that worked shows you the result itself.',
     parameters: {
       type: 'object',
-      properties: { file_id: { type: 'string', description: 'Omit to list every file made in this conversation.' } },
+      properties: {
+        file_id: { type: 'string', description: 'Omit to list every file made in this conversation.' },
+        sheet: { type: 'string', description: 'A workbook: which sheet, by name or number from 1.' },
+        range: { type: 'string', description: 'A workbook: which cells, e.g. A1:K40. Left out, the whole sheet, as far as fits.' },
+        find: { type: 'string', description: 'A workbook: words to look for in every cell, formula and comment of every sheet.' },
+        slide: { type: 'integer', description: 'A deck: which slide.' },
+      },
     },
   },
   {
@@ -1348,18 +1379,26 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: true,
     description:
-      'Look up the exact current time and date, the weather for a place, or an exchange rate, live — never from memory.',
+      'Look up facts about the world live, never from memory: the time now, a clock time in another zone, the weather and forecast, air quality, sunrise and sunset, the moon, an exchange rate (coins too), public holidays, a country\'s facts, recent earthquakes, where a place is and how high. ' +
+      '**Everything you need for this step goes in one call**, in `requests`: a call per fact is a wall of steps for the person watching.',
     parameters: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['time', 'weather', 'exchange_rate'] },
-        location: { type: 'string', description: 'weather: city in English' },
+        requests: { type: 'array', items: { type: 'object' }, description: 'Several at once, up to 12, each with the fields below.' },
+        kind: { type: 'string', enum: ['time', 'convert_time', 'weather', 'forecast', 'air_quality', 'sun', 'moon', 'exchange_rate', 'holidays', 'country', 'earthquakes', 'place'] },
+        location: { type: 'string', description: 'A city in English; convert_time: the place it is from.' },
         timezone: { type: 'string', description: 'time: IANA zone; omit for the user\'s' },
+        to: { type: 'string', description: 'convert_time: the place or zone to read it in.' },
+        at: { type: 'string', description: 'convert_time: the clock time, HH:MM or YYYY-MM-DD HH:MM; left out, now.' },
+        days: { type: 'integer', description: 'forecast: how many, up to 16.' },
+        date: { type: 'string', description: 'sun, moon: YYYY-MM-DD; today if omitted.' },
+        country: { type: 'string', description: 'holidays, country: a name or a two-letter code.' },
+        year: { type: 'integer', description: 'holidays: which year; this one if omitted.' },
+        period: { type: 'string', enum: ['day', 'week', 'month'], description: 'earthquakes: over what time.' },
         base: { type: 'string', description: 'ISO code or coin symbol, e.g. USD, USDT, BTC' },
         quote: { type: 'string', description: 'ISO code or coin symbol, e.g. VND' },
         amount: { type: 'number' },
       },
-      required: ['kind'],
     },
   },
   {
@@ -1478,10 +1517,13 @@ export const TOOLS = [
     readOnly: false,
     needsHost: 'sandbox',
     description:
-      'Run bash on this account\'s own Linux computer in the cloud — Python, Node, git, pip, npm, full internet, root with as_root. ' +
-      'Use it to compute, analyse data, call APIs, download, convert or generate files (a PDF, a chart image, a zip), or build and test code. ' +
-      'It keeps its files and installed software between conversations. Write files with `files`, run with `command`, ' +
-      'and hand one file to the user with `download`. Relative paths are in its working folder; what the cloud browser downloads is in downloads/. ' +
+      'Run bash on this account\'s own Linux computer in the cloud — full internet, root with as_root. ' +
+      'Use it to compute, analyse data, call APIs, download, convert or generate files, or build and test code. ' +
+      'Already installed, so do not install them: Python 3.11 (numpy pandas scipy scikit-learn statsmodels sympy matplotlib seaborn plotly openpyxl xlsxwriter python-docx python-pptx fpdf2 reportlab pypdf pdfplumber pillow opencv pydub requests httpx beautifulsoup4 lxml pyyaml markdown jinja2 tabulate tqdm playwright with Chromium), ' +
+      'Node, git, ffmpeg, LibreOffice (soffice), poppler (pdftotext, pdftoppm), zip, sqlite3, tmux, jq, ripgrep, Noto and DejaVu fonts, the claude, codex and amp agents (they need the user\'s own key). ' +
+      'Anything else: pip install or npm i -g; it is remembered for this account. Too big for its memory (it says how much it has)? Do it in smaller pieces or another tool, or tell the user. ' +
+      'It keeps its files between conversations. Write files with `files`, run with `command`, hand a file of any kind and size to the user with `download`, which takes it off the computer once it is in the conversation. ' +
+      'Delete your own scratch files when you finish. Relative paths are in its working folder; what the cloud browser downloads is in downloads/. ' +
       '`python` runs in this conversation\'s live Python session, like a notebook: variables, imports and loaded data stay in memory between calls, ' +
       'so load a file once and keep working on it. ' +
       'This is not the user\'s own computer — use run_command for that.',
@@ -1508,6 +1550,32 @@ export const TOOLS = [
           },
         },
         download: { type: 'string', description: 'A file the command made to give the user, e.g. "out/report.pdf".' },
+        keep: { type: 'boolean', description: 'Leave the downloaded file on the computer too, because more work on it follows.' },
+        replaces: { type: 'string', description: 'With download: the id of the file this is a new version of, an attached one too. It keeps its name and place, and the earlier version is kept. Use it when asked to change a file and a program had to do it.' },
+        bring: { type: 'array', items: { type: 'string' }, description: 'Ids of files in this conversation to put on the computer, as incoming/<name>, before the command runs.' },
+        expose_port: { type: 'integer', description: 'A port something is listening on, to get a public address the user can open, while the computer is awake.' },
+        terminal: {
+          type: 'object',
+          description: 'A terminal that stays open between calls, for what expects typing: a REPL, an installer that asks questions, vim. Answers with its screen.',
+          properties: {
+            action: { type: 'string', enum: ['start', 'send', 'keys', 'read', 'list', 'stop'] },
+            name: { type: 'string', description: 'Which terminal. Default main.' },
+            text: { type: 'string', description: 'start, send: a line to type, Enter included.' },
+            keys: { type: 'array', items: { type: 'string' }, description: 'keys: special keys such as C-c, Up, Tab, Escape.' },
+            wait_seconds: { type: 'integer', description: 'How long to let it answer before reading the screen. Default 1, at most 30.' },
+          },
+          required: ['action'],
+        },
+        checkpoint: {
+          type: 'object',
+          description: 'Save the whole computer before something risky, and go back to it. The last three are kept.',
+          properties: {
+            action: { type: 'string', enum: ['save', 'list', 'restore'] },
+            id: { type: 'string', description: 'restore: which one.' },
+            note: { type: 'string', description: 'save: what it is, in a few words.' },
+          },
+          required: ['action'],
+        },
         timeout_seconds: { type: 'integer', description: 'How long the command may run. Default 120, at most 300.' },
       },
     },
@@ -1617,12 +1685,12 @@ export const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
+        requests: { type: 'array', items: { type: 'object' }, description: 'Crypto and stocks together, up to 6, each with the fields below. Everything for this step goes in one call.' },
         kind: { type: 'string', enum: ['crypto', 'stock'] },
         symbols: { type: 'array', items: { type: 'string' }, description: 'Up to 12, e.g. ["BTC","ETH"] or ["FPT","VNINDEX","gold"].' },
         vs: { type: 'string', description: 'crypto: a second currency besides USD; defaults to VND.' },
         market: { type: 'string', description: 'stock: "vn" to read bare three-letter codes as HOSE listings.' },
       },
-      required: ['kind', 'symbols'],
     },
   },
   {
@@ -1750,14 +1818,15 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: true,
     description:
-      'Look something up in Wikipedia. Summary and link of the article — people, places, events, concepts; Vietnamese articles for a Vietnamese query.',
+      'Look something up in a reference, with the link: Wikipedia (default) for what something is, Wikidata for exact facts about a person, place or company, Wiktionary for a word, Open Library for a book, Crossref or arXiv for a paper. Vietnamese articles for a Vietnamese query. Several at once go in one call, in queries.',
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string' },
-        lang: { type: 'string', description: 'Wikipedia language code, e.g. vi, en. Guessed from the query if omitted.' },
+        queries: { type: 'array', items: { type: 'string' }, description: 'Several at once, up to 8.' },
+        source: { type: 'string', enum: ['wikipedia', 'wikidata', 'wiktionary', 'openlibrary', 'crossref', 'arxiv'] },
+        lang: { type: 'string', description: 'Language code, e.g. vi, en. Guessed from the query if omitted.' },
       },
-      required: ['query'],
     },
   },
   {
@@ -1914,9 +1983,9 @@ export const TOOLS = [
       type: 'object',
       properties: {
         query: { type: 'string', description: 'What the note would be about, e.g. "invoice layout".' },
+        queries: { type: 'array', items: { type: 'string' }, description: 'Several subjects at once, in one call.' },
         limit: { type: 'integer', description: 'How many notes to return. Default 8, max 20.' },
       },
-      required: ['query'],
     },
   },
   {
@@ -1930,6 +1999,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         query: { type: 'string', description: 'A few distinctive words that would appear in what was said. Omit to list recent conversations.' },
+        queries: { type: 'array', items: { type: 'string' }, description: 'Several searches at once, in one call: a search per call is a wall of steps for the person watching.' },
         limit: { type: 'integer', description: 'How many conversations to return. Default 5, max 10.' },
       },
     },
@@ -3076,7 +3146,16 @@ export function assessRisk(name, rawInput = {}) {
   // Windows', so the protected-path list does not apply here — but the signed-in
   // browser and the login scripts on it do (`sandboxTouchesPrivate`).
   if (name === 'sandbox_run') {
-    return looksDestructive(String(input?.command || '')) || pythonLooksRisky(input?.python) || sandboxTouchesPrivate(input) || filesLookRisky(input)
+    return looksDestructive(String(input?.command || '')) ||
+      looksDestructive(String(input?.terminal?.text || '')) ||
+      pythonLooksRisky(input?.python) ||
+      // Python typed at a REPL, or handed to `python3 -c`, sends what it sends all the same.
+      pythonLooksRisky(input?.terminal?.text) ||
+      (/\bpython[\d.]*\b/.test(String(input?.command || '')) && pythonLooksRisky(input?.command)) ||
+      sandboxTouchesPrivate(input) ||
+      filesLookRisky(input) ||
+      !!input?.expose_port ||
+      input?.checkpoint?.action === 'restore'
       ? 'sensitive'
       : 'ordinary';
   }
@@ -3194,8 +3273,14 @@ export function riskReason(name, rawInput = {}) {
   }
   if (name === 'slack_post') return `Posts to ${input?.channel || 'a Slack channel'}, where other people will read it.`;
   if (name === 'publish_file') return 'Makes this file public: anyone with the link can open it without signing in.';
-  if (name === 'sandbox_run' && looksDestructive(String(input?.command || ''))) {
+  if (name === 'sandbox_run' && (looksDestructive(String(input?.command || '')) || looksDestructive(String(input?.terminal?.text || '')))) {
     return 'This command on the cloud computer looks like it sends data out or destroys something.';
+  }
+  if (name === 'sandbox_run' && input?.expose_port) {
+    return `Gives port ${input.expose_port} of the cloud computer a public address: anyone who has it can reach what is listening there.`;
+  }
+  if (name === 'sandbox_run' && input?.checkpoint?.action === 'restore') {
+    return 'Puts the cloud computer back to a saved checkpoint: everything since then on it is gone.';
   }
   if (name === 'sandbox_run' && pythonLooksRisky(input?.python)) {
     return 'This Python on the cloud computer looks like it sends data out, or runs a command that destroys something.';
@@ -3323,6 +3408,7 @@ export function sandboxTouchesPrivate(input = {}) {
     String(input?.command || ''),
     String(input?.python || ''),
     String(input?.download || ''),
+    String(input?.terminal?.text || ''),
     ...(Array.isArray(input?.files) ? input.files.map((f) => String(f?.path || '')) : []),
   ];
   return named.some((text) => SANDBOX_PRIVATE.test(text));

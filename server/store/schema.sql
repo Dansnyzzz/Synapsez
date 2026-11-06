@@ -219,6 +219,13 @@ CREATE INDEX IF NOT EXISTS attachments_chat_idx ON attachments (chat_id);
 -- can open it, download it, and ask about it again three turns later.
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'upload';
 
+-- The file somebody sent that this one is the changed copy of (owner, 2026-11-05).
+-- What they sent stays as they sent it, in the message that carries it. The changes
+-- go on one copy, however many calls they take, and the first of that copy's
+-- versions is the original. Named by id alone: deleting the original keeps the work.
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS derived_from TEXT;
+CREATE INDEX IF NOT EXISTS attachments_derived_idx ON attachments (derived_from) WHERE derived_from IS NOT NULL;
+
 -- What a generated file was written from — the Markdown, not the .docx.
 --
 -- Kept because "change the last row of the table" has to start from the words.
@@ -437,6 +444,9 @@ CREATE INDEX IF NOT EXISTS shared_models_family_idx ON shared_models (family, is
 -- the picker can say, the composer can warn, and the request can leave the image
 -- out and explain itself instead of failing.
 ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS vision BOOLEAN NOT NULL DEFAULT FALSE;
+-- Whether it reads sound and video (owner, 2026-11-05). What the provider's own list says.
+ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS hears BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS watches BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- The most output tokens this model will actually produce.
 --

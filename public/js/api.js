@@ -345,8 +345,13 @@ export const api = {
    */
   stopChat: (id) => request('POST', `/api/chats/${id}/stop`),
   uploadAttachment: (file) => request('POST', '/api/attachments', file),
+  startDirectUpload: (file) => request('POST', '/api/attachments/direct', file),
+  finishDirectUpload: (file) => request('POST', '/api/attachments/direct/finish', file),
   /** A file as something the viewer can draw: a document, sheets, slides, text. */
   filePreview: (id) => request('GET', `/api/attachments/${id}/preview`),
+  renderOffice: (id) => request('POST', `/api/attachments/${id}/render`, {}),
+  privacyOverview: () => request('GET', '/api/privacy/overview'),
+  workbook: (id, { sheet = 1, from = 0, rev = null } = {}) => request('GET', `/api/attachments/${id}/workbook?sheet=${sheet}&from=${from}${rev != null ? `&rev=${rev}` : ''}`),
   /** A copy in the account's own Google Drive; answers with its link. */
   saveToDrive: (id) => request('POST', `/api/attachments/${id}/drive`),
   artifactStorageGet: (id, key) => request('GET', '/api/attachments/' + id + '/storage' + (key == null ? '' : '?key=' + encodeURIComponent(key))),

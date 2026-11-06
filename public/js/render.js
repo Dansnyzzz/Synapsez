@@ -66,10 +66,10 @@ const ms = tookText;
  * says something similar is left alone.
  */
 const MODEL_NOTES = [
-  /\n*^\((?:This account's own cloud computer: it keeps its files and installs between conversations|A stand-in cloud computer for this account: its usual one is unavailable right now)[^\n]* — about (?:ten|fifteen) idle minutes\.\)$/m,
+  /\n*^\((?:This account's own cloud computer: it keeps its files and installs between conversations|A stand-in cloud computer for this account: its usual one is unavailable right now)[^\n]*(?: — about (?:ten|fifteen) idle minutes\.|running programs included\.)\)$/m,
   /^\[Python: (?:the same live session|a new session) — [^\n]*\]\n?/m,
   /\n*^Showed the user (?:the figure|\d+ figures) in the conversation: [^\n]*\(id [^\n)]*\)\.$/m,
-  /\n*^Handed [^\n]* to the user — it is in the conversation to open and download\. Its id is [^\n]*; publish_file with that id makes a link to share\.$/m,
+  /\n*^Handed [^\n]* to the user — it is in the conversation to open and download\. Its id is [^\n]*; publish_file with that id makes a link to share\.[^\n]*$/m,
   /\n*^\[Read by [^\n]* — look_at with that file_id and a question looks again\.\]$/m,
   /\n*^\[Screenshot of this step: file [^\n]* — look_at with that file_id reads what is on screen\.\]$/m,
   // What a question's result tells the model to do next (`answerText`).
@@ -520,10 +520,10 @@ const STEP_DETAILS = {
   show_widget: (i) => clip(i.title),
   chart: (i) => `${clip(i.title)}${i.type ? ` (${i.type})` : ''}`,
   calculate: (i) => clip(i.expression, 64),
-  world_facts: (i) => clip([i.kind, i.location || i.timezone || (i.base && `${i.base}→${i.quote || ''}`)].filter(Boolean).join(' · '), 64),
+  world_facts: (i) => clip((Array.isArray(i.requests) ? i.requests : [i]).map(factAsked).join(', '), 96),
   date_calc: (i) => clip([i.op, i.date, i.to, i.time].filter(Boolean).join(' · '), 64),
   convert_units: (i) => clip(`${i.value} ${i.from} → ${i.to}`, 64),
-  market_data: (i) => clip([].concat(i.symbols || []).join(', '), 64),
+  market_data: (i) => clip((Array.isArray(i.requests) ? i.requests : [i]).flatMap((r) => [].concat(r?.symbols || [])).join(', '), 96),
   // Read the way the tool reads it, so `query`/`location` and a nearby search are labelled too.
   place_lookup: (raw) => {
     const i = canonicalInput('place_lookup', raw) || raw;
@@ -534,7 +534,8 @@ const STEP_DETAILS = {
   analyze_data: (i) => clip([i.op, i.group_by, i.column].filter(Boolean).join(' · '), 64),
   make_qr: (i) => clip(i.text, 64),
   http_request: (i) => clip(`${String(i.method || 'GET').toUpperCase()} ${i.url || ''}`, 64),
-  encyclopedia: (i) => clip(i.query, 64),
+  encyclopedia: (i) => clip(i.query || [].concat(i.queries || []).join(', '), 96),
+  memory_search: (i) => clip(i.query || [].concat(i.queries || []).join(', '), 96),
   image_search: (i) => clip(i.query, 64),
   sports: (i) => clip(i.team || i.league || i.player || i.date || i.op, 64),
   show_card: (i) => clip(i.card?.title || i.type, 64),
@@ -730,6 +731,9 @@ function browserDetail(i) {
   }
 }
 
+/** One fact asked for, in a few words. */
+const factAsked = (i) => [i?.kind, i?.location || i?.country || i?.timezone || (i?.base && `${i.base}→${i.quote || ''}`)].filter(Boolean).join(' · ');
+
 export function describeStep(name, input = {}) {
   /*
    * A cloud-browser row says what it did — "Click #2", "Scroll down" — rather
@@ -760,6 +764,26 @@ export function describeStep(name, input = {}) {
   }
 }
 
+/** The tools that look one thing up, by the card they share when they come in a row. */
+const LOOKUPS = {
+  calculate: 'calc',
+  world_facts: 'facts',
+  market_data: 'market',
+  encyclopedia: 'encyclopedia',
+  search_chats: 'chats',
+  memory_search: 'memory',
+};
+const LOOKUP_TITLES = {
+  calc: 'step.calculate',
+  facts: 'step.world_facts',
+  market: 'step.market_data',
+  encyclopedia: 'step.encyclopedia',
+  chats: 'recall.title',
+  memory: 'step.memory_search',
+};
+/** The tool whose picture heads a family's card. */
+const LOOKUP_ICONS = { calc: 'calculate', facts: 'world_facts', market: 'market_data', encyclopedia: 'encyclopedia', chats: 'search_chats', memory: 'memory_search' };
+
 /**
  * Which run of steps this call belongs to, or null for "on its own".
  *
@@ -770,8 +794,8 @@ export function describeStep(name, input = {}) {
 export function stepFamily(name) {
   if (/^browser_/.test(name) || name === 'cloud_browser') return 'browser';
   if (/^desktop_/.test(name)) return 'desktop';
-  // One card for every sum, however many calls they took (owner, 2026-11-04).
-  if (name === 'calculate') return 'calc';
+  // One card for each kind of lookup in a row, however many calls they took (owner, 2026-11-05).
+  if (LOOKUPS[name]) return LOOKUPS[name];
   if (WORK_KINDS[name]) return 'work';
   return null;
 }
@@ -891,7 +915,9 @@ export function workStep(name, raw = {}) {
   let file = '';
   if (kind === 'run') {
     if (name === 'sandbox_run' && !firstLine(input.command) && firstLine(input.python)) verb = t('step.sandbox_python');
-    detail = clip(firstLine(input.command) || firstLine(input.python) || said.detail, 200);
+    // On the cloud computer a title says what it is doing, and the code behind it is one
+    // click away (owner, 2026-11-05, screenshot 16: the line beside it only confused people).
+    detail = own && name === 'sandbox_run' ? '' : clip(firstLine(input.command) || firstLine(input.python) || said.detail, 200);
   } else if (ON_A_FILE.has(kind)) {
     path = typeof input.path === 'string' ? input.path.trim() : '';
     file = baseName(path);
@@ -2127,6 +2153,51 @@ let lastWebCard = null;
 let lastStepRun = null;
 
 /**
+ * The shield under a reply, and what it opens: which provider it went to, what that
+ * provider says it does with it, and how many of each kind of detail were hidden.
+ * Made of counts and labels (dataRoute.js); nothing of the person's is in it.
+ */
+function routeButton(route, wrap) {
+  const label = t('route.label');
+  const button = el('button', `msg__action route-btn${route.warn ? ' is-warn' : ''}`);
+  button.type = 'button';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-expanded', 'false');
+  button.innerHTML =
+    '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M10 2.6 4 4.8v4.7c0 3.7 2.5 6.5 6 7.9 3.5-1.4 6-4.2 6-7.9V4.8Z" /></svg>';
+  button.addEventListener('click', () => {
+    const open = wrap.querySelector(':scope > .route-note');
+    if (open) {
+      open.remove();
+      button.setAttribute('aria-expanded', 'false');
+      return;
+    }
+    const note = el('div', 'route-note');
+    const line = (words, className = '') => {
+      const p = el('p', className);
+      p.textContent = words;
+      note.append(p);
+    };
+    const provider = t(`cloak.provider.${route.provider}`);
+    line(t('route.via', { model: route.model, provider: provider.startsWith('cloak.') ? route.provider : provider }), 'route-note__head');
+    line(t(`route.tier.${route.tier}`), route.warn ? 'route-note__warn' : '');
+    const kinds = Object.entries(route.masked || {});
+    if (kinds.length) line(t('route.hidden', { list: kinds.map(([kind, n]) => `${t(`route.kind.${kind}`)} ×${n}`).join(', ') }));
+    else line(t(route.masked ? 'route.hiddenNone' : 'route.notHidden'));
+    const more = el('button', 'route-note__more');
+    more.type = 'button';
+    more.dataset.openSettings = 'cloak';
+    more.textContent = t('route.more');
+    note.append(more);
+    button.closest('.msg__actions').after(note);
+    button.setAttribute('aria-expanded', 'true');
+  });
+  return button;
+}
+
+/**
  * An assistant turn. Reasoning, tool calls and prose all land in one block so
  * the transcript reads as a single continuous action rather than a pile of
  * disconnected cards.
@@ -2143,6 +2214,8 @@ export function assistantMessage() {
 
   let thinkingBlock = null;
   let thinkingBody = null;
+  /** Where this reply went (dataRoute.js), once the server has said. */
+  let turnRoute = null;
   /** Settled since its last delta, so `finishThinking` has nothing to do. */
   let thinkingDone = false;
   /** The row inside a carried run of steps that holds this block's reasoning, while it is there. */
@@ -2302,62 +2375,6 @@ export function assistantMessage() {
   }
 
   /**
-   * Earlier conversations, found by `search_chats` — Claude's "Relevant chats ·
-   * 2 results" (owner, 2026-10-25, screenshot 2): a row per conversation, in a
-   * box, each one opening it (`data-open-chat`, served in app.js). A result
-   * saved before the rows carried ids still lists its titles, read off the
-   * words, as rows that do not open.
-   */
-  function startRecall(call) {
-    leaveRun();
-    closeGroup();
-    const node = el('details', 'block recall');
-    node.open = true;
-    node.dataset.toolName = call.name;
-    const summary = el('summary', 'recall__head');
-    const mark = el('span', 'recall__mark', MARK_PENDING);
-    const title = el('span', 'recall__title');
-    title.textContent = t('recall.title');
-    const count = el('span', 'recall__count');
-    summary.append(mark, title, count);
-    const list = el('div', 'recall__list');
-    list.hidden = true;
-    node.append(summary, list);
-    body.append(node);
-    return {
-      complete(result) {
-        node.classList.toggle('tool--error', !!result.isError);
-        mark.innerHTML = result.isError ? '<span class="mark">✗</span>' : `<span class="mark mark--icon">${ICONS.chat}</span>`;
-        const found = result.isError ? [] : Array.isArray(result.chats) ? result.chats : chatsFromWords(result.content);
-        count.textContent = result.isError ? '' : t(found.length === 1 ? 'web.result' : 'web.results', { n: found.length });
-        list.replaceChildren(
-          ...found.map((chat) => {
-            const row = el(chat.id ? 'button' : 'div', 'recall__row');
-            if (chat.id) {
-              /** @type {HTMLButtonElement} */ (row).type = 'button';
-              row.dataset.openChat = chat.id;
-            }
-            row.innerHTML = ICONS.chat;
-            const name = el('span', 'recall__name');
-            name.textContent = chat.title || t('chat.untitled');
-            row.append(name);
-            if (chat.updated) row.title = `${chat.title}\n${String(chat.updated).slice(0, 10)}`;
-            return row;
-          }),
-        );
-        list.hidden = !found.length;
-        // Nothing found, or refused: what it said, in a line, rather than an empty box.
-        node.querySelector('.recall__note')?.remove();
-        if (!found.length) {
-          const note = el('p', 'recall__note');
-          note.textContent = forDisplay(result.content).split('\n')[0];
-          node.append(note);
-        }
-      },
-    };
-  }
-
-  /**
    * The plan as it stood before this update — the last plan card above it,
    * in this message first and then anywhere in the conversation.
    */
@@ -2465,9 +2482,15 @@ export function assistantMessage() {
    * what they were reading.
    */
   function fold(run) {
+    // A lookup folds by itself unless somebody has opened or closed it. One search of
+    // conversations alone stays open on what it found, as that card always has.
+    if (LOOKUP_TITLES[run.family]) {
+      if (!run.touched && !(run.family === 'chats' && run.steps.length === 1)) run.node.open = false;
+      return;
+    }
     // …except one that opened itself to show a command running: that folds back
     // as it was, unless somebody has opened or closed it since.
-    if ((run.family !== 'work' && run.family !== 'calc') || (run.autoOpened && !run.touched)) run.node.open = false;
+    if (run.family !== 'work' || (run.autoOpened && !run.touched)) run.node.open = false;
   }
 
   function closeSteps() {
@@ -2501,8 +2524,8 @@ export function assistantMessage() {
     const now = run.pending > 0 ? [...run.steps].reverse().find((s) => !s.done) : null;
     // Reasoning parked in the card between two of its steps — see `settleThought`.
     const thinking = !now && !!run.thinking;
-    const calc = run.family === 'calc';
-    const only = (run.family === 'work' || calc) && run.steps.length === 1 ? run.steps[0] : null;
+    const lookup = !!LOOKUP_TITLES[run.family];
+    const only = (run.family === 'work' || lookup) && run.steps.length === 1 ? run.steps[0] : null;
     const shown = now || (thinking ? null : only);
     setTitle(
       run,
@@ -2512,8 +2535,8 @@ export function assistantMessage() {
           ? t('status.thinking')
           : run.family === 'work'
             ? workSummary(run.steps)
-            : calc
-              ? t('step.calculate')
+            : lookup
+              ? t(LOOKUP_TITLES[run.family])
               : run.family === 'desktop'
                 ? t('steps.desktop')
                 : t('steps.browser'),
@@ -2526,7 +2549,7 @@ export function assistantMessage() {
     if (!now && !thinking) run.clock.textContent = '';
     // A run of commands counts in its title, failures too ("ran 5 commands
     // (1 failed)"); a browsing session counts beside it.
-    const tally = run.family === 'work' ? [] : calc ? (run.sums > 1 ? [t('calc.count', { n: run.sums })] : []) : [counted(run.count, 'steps.count')];
+    const tally = run.family === 'work' ? [] : lookup ? lookupTally(run) : [counted(run.count, 'steps.count')];
     if (run.failures && run.family !== 'work') tally.push(t('steps.failedCount', { n: run.failures }));
     run.tally.textContent = tally.join(' · ');
     const working = run.pending > 0 || thinking;
@@ -2537,12 +2560,21 @@ export function assistantMessage() {
     const state = working ? 'pending' : allFailed ? 'failed' : 'done';
     const mark = run.node.querySelector(':scope > summary > .mark');
     if (mark && mark.dataset.state !== state) {
-      mark.outerHTML = working ? MARK_PENDING : doneMark(run.family === 'work' ? 'run_command' : calc ? 'calculate' : run.family, allFailed);
+      mark.outerHTML = working ? MARK_PENDING : doneMark(run.family === 'work' ? 'run_command' : LOOKUP_ICONS[run.family] || run.family, allFailed);
       const fresh = run.node.querySelector(':scope > summary > .mark');
       if (fresh) fresh.dataset.state = state;
     }
     run.node.classList.toggle('steps--error', allFailed);
     run.node.classList.toggle('steps--partial', !allFailed && run.failures > 0);
+  }
+
+  /** What is counted beside a lookup card's title: results, sums, or how many it looked up. */
+  function lookupTally(run) {
+    if (run.pending > 0 && !run.steps.some((s) => s.done)) return [];
+    if (run.family === 'chats') return run.steps.some((s) => s.done && !s.failed) ? [t(run.found === 1 ? 'web.result' : 'web.results', { n: run.found || 0 })] : [];
+    if (run.family === 'calc') return run.sums > 1 ? [t('calc.count', { n: run.sums })] : [];
+    if (run.count > 1) return [t('lookup.count', { n: run.count })];
+    return run.lastMs != null ? [ms(run.lastMs)] : [];
   }
 
   /**
@@ -2886,10 +2918,22 @@ export function assistantMessage() {
     run.list.append(item);
     settleSingle(run);
 
+    /** What the command has printed so far, its last lines. */
+    let live = null;
     return {
+      progress(text) {
+        if (!foldBody || !running?.isConnected) return;
+        if (!live) {
+          live = el('pre', 'step__output step__live');
+          live.setAttribute('aria-live', 'off');
+          running.before(live);
+        }
+        live.textContent = String(text).split('\n').slice(-12).join('\n');
+      },
       complete(result) {
         if (ticking) clearInterval(ticking);
         running?.remove();
+        live?.remove();
         item.classList.toggle('step--error', !!result.isError);
         mark.innerHTML = '';
         // A row that went well needs no tick: its words say what was done, as
@@ -3000,24 +3044,37 @@ export function assistantMessage() {
   }
 
   /**
-   * A sum, as a line of one card (owner, 2026-11-04): five calls in a row drew five
-   * rows with their arguments open between them. What anybody wants from them is
-   * the working and the answer, one under the other. A list comes back a line per
-   * item, and each is a row.
+   * Quick lookups, as lines of one card (owner, 2026-11-05, screenshots 13-15): a sum,
+   * a fact about the world, a price, a reference, earlier conversations, saved notes.
+   * Ten in a row drew ten rows with their arguments between them, broken in two by
+   * every line of reasoning. In a row they are one card now, and a line of reasoning
+   * between two of them goes inside it rather than ending it. It stands open while
+   * they run, so you can watch, and folds when they are done. On its own a lookup is
+   * still just its own line.
+   *
+   * What each found is its own row: a sum's working and answer, a fact as it was said,
+   * a conversation you can press.
    */
-  function startCalc(call) {
-    const run = groupFor('calc');
-    const asked = String((canonicalInput(call.name, call.input) || call.input || {}).expression || '').trim();
-    const entry = { verb: t('step.calculate'), detail: asked, path: '', kind: '', file: '', done: false, failed: false, picture: null };
+  function startLookup(call, family) {
+    const run = groupFor(family);
+    clearTimeout(run.closeTimer);
+    const input = canonicalInput(call.name, call.input) || call.input || {};
+    const said = describeStep(call.name, input);
+    const calc = family === 'calc';
+    const chats = family === 'chats';
+    const asked = calc ? String(input.expression || '').trim() : said.detail;
+    // The card says what kind of thing this is; a search of conversations says it in its own words.
+    const entry = { verb: chats ? t(LOOKUP_TITLES.chats) : said.verb, detail: chats ? '' : asked, path: '', kind: '', file: '', done: false, failed: false, picture: null };
     run.steps.push(entry);
     if (!hydrating && !run.started) run.started = Date.now();
     run.count += 1;
     run.pending += 1;
+    if (!hydrating && !run.touched) run.node.open = true;
     paintGroupSummary(run);
-    const item = el('li', 'step step--calc');
+    const item = el('li', calc ? 'step step--calc' : 'step step--lookup');
     item.append(el('span', 'step__mark', '<span class="spinner"></span>'));
-    const pending = el('code', 'calc__expr');
-    pending.textContent = asked;
+    const pending = el(calc ? 'code' : 'span', calc ? 'calc__expr' : 'lookup__asked');
+    pending.textContent = chats ? String(input.query || (Array.isArray(input.queries) ? input.queries.join(', ') : '')) : asked;
     item.append(pending);
     run.list.append(item);
     return {
@@ -3025,15 +3082,16 @@ export function assistantMessage() {
         run.pending = Math.max(0, run.pending - 1);
         entry.done = true;
         entry.failed = !!result.isError;
-        const said = forDisplay(result.content);
+        run.lastMs = result.ms;
+        const said2 = forDisplay(result.content);
         if (result.isError) {
           run.failures += 1;
           item.classList.add('step--error');
-          const why = el('span', 'calc__why');
-          why.textContent = said;
+          const why = el('span', calc ? 'calc__why' : 'lookup__why');
+          why.textContent = said2;
           item.replaceChildren(el('span', 'step__mark', '✗'), pending, why);
-        } else {
-          const lines = said.split('\n').map((line) => line.trim()).filter(Boolean);
+        } else if (calc) {
+          const lines = said2.split('\n').map((line) => line.trim()).filter(Boolean);
           run.sums = (run.sums || 0) + lines.length;
           item.replaceChildren();
           const rows = lines.map((line) => {
@@ -3051,10 +3109,57 @@ export function assistantMessage() {
           });
           item.replaceWith(...rows);
           entry.detail = lines.length === 1 ? lines[0] : '';
+        } else if (chats) {
+          const found = Array.isArray(result.chats) ? result.chats : chatsFromWords(result.content);
+          run.found = (run.found || 0) + found.length;
+          item.querySelector('.step__mark')?.remove();
+          if (found.length) {
+            const list = el('div', 'recall__list');
+            list.append(
+              ...found.map((chat) => {
+                const row = el(chat.id ? 'button' : 'div', 'recall__row');
+                if (chat.id) {
+                  /** @type {HTMLButtonElement} */ (row).type = 'button';
+                  row.dataset.openChat = chat.id;
+                }
+                row.innerHTML = ICONS.chat;
+                const name = el('span', 'recall__name');
+                name.textContent = chat.title || t('chat.untitled');
+                row.append(name);
+                if (chat.updated) row.title = `${chat.title}\n${String(chat.updated).slice(0, 10)}`;
+                return row;
+              }),
+            );
+            item.append(list);
+          } else {
+            // Nothing found: what it said, in a line, rather than an empty box.
+            const note = el('p', 'recall__note');
+            note.textContent = said2.split('\n')[0];
+            item.append(note);
+          }
+        } else {
+          item.querySelector('.step__mark')?.remove();
+          const out = el('div', 'lookup__out');
+          out.textContent = said2 || t('chat.noOutput');
+          item.append(out);
         }
         paintGroupSummary(run);
+        settleLookup(run);
       },
     };
+  }
+
+  /** Folded a moment after the last of them is done, unless the next one has started by then. */
+  function settleLookup(run) {
+    clearTimeout(run.closeTimer);
+    if (run.pending > 0) return;
+    if (hydrating) {
+      fold(run);
+      return;
+    }
+    run.closeTimer = setTimeout(() => {
+      if (run.pending === 0 && !run.thinking) fold(run);
+    }, 700);
   }
 
   /** The card this call belongs in: the run still going, carried on from the block before, or a new one. */
@@ -3064,7 +3169,7 @@ export function assistantMessage() {
     if (carried) {
       group = carried;
       group.live = true;
-      if (family !== 'work' && family !== 'calc') group.node.open = true;
+      if (family !== 'work' && !group.touched) group.node.open = true;
       lastStepRun = { group, wrap, body };
       return group;
     }
@@ -3081,7 +3186,12 @@ export function assistantMessage() {
      * 2026-10-07). A run of commands is folded, as Claude Code's are: its
      * title already says what is happening, and the rows are one click away.
      */
-    node.open = family !== 'work' && family !== 'calc';
+    node.open = family !== 'work';
+    // A search of conversations keeps its own look, the box its rows go in.
+    if (family === 'chats') {
+      node.classList.add('recall');
+      node.dataset.toolName = 'search_chats';
+    }
     const summary = el('summary');
     summary.innerHTML = MARK_PENDING;
     const title = el('span', 'steps__title');
@@ -3091,6 +3201,10 @@ export function assistantMessage() {
     // Twice a second is no pace to announce at (UI-003); see the row's running line.
     clock.setAttribute('aria-live', 'off');
     const tally = el('span', 'steps__tally');
+    if (family === 'chats') {
+      title.classList.add('recall__title');
+      tally.classList.add('recall__count');
+    }
     // The pictures the run looked at, on its folded header — see paintThumbs.
     const thumbs = el('span', 'steps__thumbs');
     thumbs.hidden = true;
@@ -3149,6 +3263,17 @@ export function assistantMessage() {
     wrap.append(actions);
   }
 
+  /** The shield, when a reply ends: a row of its own for a turn that only ran tools. */
+  function paintRoute() {
+    if (!turnRoute) return;
+    let row = wrap.querySelector(':scope > .msg__actions');
+    if (!row) {
+      row = el('div', 'msg__actions');
+      wrap.append(row);
+    }
+    if (!row.querySelector('.route-btn')) row.append(routeButton(turnRoute, wrap));
+  }
+
   /** Folded, the window shows the newest lines — the ones just finished. */
   const keepTailInView = () => {
     if (!thinkingBody || thinkingBlock?.classList.contains('is-open')) return;
@@ -3179,7 +3304,7 @@ export function assistantMessage() {
      * transcript already says, in words, what is running. A card still working
      * is the one without a tick.
      */
-    appendThinking(delta) {
+    appendThinking(delta, kind = turnRoute?.thinking) {
       if (!thinkingBlock) {
         thinkingBlock = el('div', 'think is-live');
         const head = el(
@@ -3217,6 +3342,13 @@ export function assistantMessage() {
           body.append(thinkingBlock);
         }
       }
+      // Whose words these are, said where they are read: a provider's summary is not the
+      // model's reasoning, and neither is an explanation to rely on.
+      if (kind && !thinkingBody.querySelector('.think__note')) {
+        const note = el('p', 'think__note');
+        note.textContent = t(kind === 'summary' ? 'think.summary' : 'think.modelText');
+        thinkingBody.append(note);
+      }
       thinkingDone = false;
       if (parkedIn && thoughtHost && !parkedIn.thinking) {
         parkedIn.thinking = true;
@@ -3234,6 +3366,11 @@ export function assistantMessage() {
         text.normalize();
       }
       keepTailInView();
+    },
+
+    /** Where this reply went: what the shield under it opens, when it ends. */
+    setRoute(route) {
+      turnRoute = route || turnRoute;
     },
 
     finishThinking() {
@@ -3453,10 +3590,9 @@ export function assistantMessage() {
     /** Start a collapsed card for a tool call; returns a handle to complete it. */
     startTool(call) {
       if (WEB_TOOLS.has(call.name)) return startWeb(call);
-      if (call.name === 'search_chats') return startRecall(call);
       if (call.name === 'update_plan') return startPlanCard(call);
       const family = stepFamily(call.name);
-      if (family === 'calc') return startCalc(call);
+      if (LOOKUP_TITLES[family]) return startLookup(call, family);
       if (family) return startStep(call, family);
 
       // A call that is not part of a run ends whatever run was in progress:
@@ -3568,8 +3704,9 @@ export function assistantMessage() {
      *   is waiting for one rather than lost.
      */
     hydrate(message, resultsByCallId, { pending = false, endsTurn = false } = {}) {
+      if (message.route) turnRoute = message.route;
       if (message.thinking) {
-        api.appendThinking(message.thinking);
+        api.appendThinking(message.thinking, message.route?.thinking);
         api.finishThinking();
       }
       hydrating = true;
@@ -3598,6 +3735,7 @@ export function assistantMessage() {
       // The last tokens of a reply may still be owed a frame. A turn that ends
       // must show all of what it said, not all but the final sentence.
       if (paintQueued) api.flushText();
+      if (at) paintRoute();
       const row = wrap.querySelector(':scope > .msg__actions');
       const when = row && !row.querySelector('.msg__time') ? timeStamp(at) : null;
       if (when) row.prepend(when);

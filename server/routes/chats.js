@@ -167,13 +167,15 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       if (!question && last?.role === 'assistant' && last.toolCalls?.length) {
         const prefs = await getPrefs(req.user.id);
         const gated = pendingApproval(last.toolCalls, prefs.toolPolicy);
-        if (gated.length) {
+        // What the independent check stopped still waits for an answer after a reload.
+        const held = last.held || {};
+        if (gated.length || Object.keys(held).length) {
           pending = last.toolCalls.map((c) => ({
             id: c.id,
             name: c.name,
             input: c.input,
-            needsApproval: gated.some((p) => p.id === c.id),
-            reason: translateMessage(riskReason(c.name, c.input), languageOf(req)),
+            needsApproval: gated.some((p) => p.id === c.id) || c.id in held,
+            reason: translateMessage(held[c.id] ?? riskReason(c.name, c.input), languageOf(req)),
           }));
         }
       }

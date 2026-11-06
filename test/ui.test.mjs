@@ -873,8 +873,8 @@ section('attaching photos and files');
   check('there is a + button', composer.hasButton);
   check('on the left of the text box', composer.buttonFirst);
   check('it takes several files', composer.multiple === true);
-  check('images among them', /image\//.test(composer.accept), composer.accept.slice(0, 40));
-  check('and PDFs', /application\/pdf/.test(composer.accept));
+  // Any kind (owner, 2026-11-05): what the model cannot read directly it is told how to open.
+  check('of any kind', !composer.accept, String(composer.accept));
   check('the preview strip is above the box, not inside it', composer.stripAboveBox);
   check('and hidden until something is attached', composer.stripHidden === true);
 
@@ -4697,20 +4697,22 @@ section('the file viewer');
   );
 
   (await page.$$('.msg__files .stage'))[1].click();
-  await page.waitForTimeout(900);
+  await page.waitForSelector('#viewer-body .xlv__cell', { timeout: 15000 }).catch(() => {});
   const sheet = await page.evaluate(() => {
-    const cells = [...document.querySelectorAll('#viewer-body .grid td')].map((td) => td.textContent);
+    const cells = [...document.querySelectorAll('#viewer-body .xlv__cell')];
+    const said = cells.map((cell) => cell.textContent);
+    const amount = cells.find((cell) => cell.textContent === '1,250,000');
     return {
-      grid: !!document.querySelector('#viewer-body .grid'),
-      columns: [...document.querySelectorAll('#viewer-body .grid thead th')].map((th) => th.textContent),
-      cells,
-      numberAligned: !!document.querySelector('#viewer-body .grid td.is-number'),
+      grid: !!document.querySelector('#viewer-body .xlv__sheet'),
+      columns: [...document.querySelectorAll('#viewer-body .xlv__col')].slice(0, 2).map((th) => th.textContent),
+      cells: said,
+      numberAligned: !!amount && (getComputedStyle(amount).textAlign === 'right' || getComputedStyle(amount).justifyContent === 'flex-end'),
       action: document.getElementById('viewer-do').textContent.trim(),
     };
   });
   check('a spreadsheet is drawn as a grid', sheet.grid);
   check('with column letters', sheet.columns.join('') === 'AB', sheet.columns.join(''));
-  check('the values in it', sheet.cells.includes('Vận chuyển') && sheet.cells.includes('1250000'), sheet.cells.join('|'));
+  check('the values in it', sheet.cells.includes('Vận chuyển') && sheet.cells.includes('1,250,000'), sheet.cells.join('|'));
   check('numbers set apart from text', sheet.numberAligned);
 
   /**
@@ -5442,7 +5444,8 @@ section('commands and files are one card, titled by what is happening now');
   check('  gone when it finishes, and what it printed has no box around it', out.runningGone === true && out.outputBorder === '0px', `${out.runningGone} ${out.outputBorder}`);
   check('  and the card folds back once the run is over', out.foldedAfter === true);
   check("  titled in the model's own words while it runs", out.running.title === 'Loading the survey data' && out.running.pending, JSON.stringify(out.running));
-  check('  with the code it is running beside them — its first line that says something, and a mark that more follows', out.running.detail === 'import pandas as pd …', out.running.detail);
+  // The title alone (owner, 2026-11-05): the code behind it is one click away, in the row's output.
+  check('  and the title alone: the code behind it is not beside it', out.running.detail === '', out.running.detail);
   check('  and a clock that moves', out.clockAfterASecond === '1s', out.clockAfterASecond);
   check('one step done: the title is that step, ticked, and the clock gone', out.oneDone.title === 'Loading the survey data' && !out.oneDone.pending && out.oneDone.clock === '', JSON.stringify(out.oneDone));
   check('reading a file: "Read" and the whole file, as Claude says it', /^(Read|Đọc)$/.test(out.reading.title) && out.reading.detail === 'bibliometrics_analysis_final_v2.py', JSON.stringify(out.reading));
@@ -5499,11 +5502,10 @@ section('a run of commands: one line per step, the whole title, nothing said twi
     r.firstLineBack = getComputedStyle(fold.querySelector('summary')).display !== 'none';
     r.firstFolded = !fold.open;
 
-    // The title keeps its width beside a long command; the command is cut instead.
+    // The title alone (owner, 2026-11-05): the command is in the row's own output, not beside it.
     const verb = /** @type {HTMLElement} */ (fold.querySelector('.step__verb'));
     r.titleWhole = verb.scrollWidth <= verb.clientWidth + 1;
-    const detail = /** @type {HTMLElement} */ (fold.querySelector('.step__detail'));
-    r.commandCut = detail.scrollWidth > detail.clientWidth;
+    r.noCommand = !fold.querySelector('.step__detail')?.textContent;
 
     // A row's grey reaches the row's edge: nothing under its line inside the box.
     const li = /** @type {HTMLElement} */ (card.querySelector('.steps__list > li'));
@@ -5517,7 +5519,7 @@ section('a run of commands: one line per step, the whole title, nothing said twi
   check('  what it printed, without the command a second time or the note to the model', out.output === 'exit 0 · 0.4s\nstdout:\nm5-touring-alpine-white', out.output);
   check('  and no tool name pops up on hover', out.tooltips.length === 0, out.tooltips.join(', '));
   check('a second step brings the rows back, the first folded to its line', !out.twoSingle && out.firstLineBack && out.firstFolded, JSON.stringify(out));
-  check("  whose title is whole beside a long command, which is cut instead", out.titleWhole && out.commandCut, JSON.stringify(out));
+  check('  whose title is whole, with no command beside it', out.titleWhole && out.noCommand, JSON.stringify(out));
   check('  and whose grey on hover reaches its edge — no band under it', out.rowGap === 0 && out.liMargin === '0px', `${out.rowGap}px · ${out.liMargin}`);
 }
 

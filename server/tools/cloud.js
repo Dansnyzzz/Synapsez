@@ -35,7 +35,9 @@ import { safeFetch, readCapped } from '../util/safeFetch.js';
 import { searchDocs, listSources, forgetSource } from '../rag.js';
 import { SPREADSHEET_FORMATS, createDocument, extensionOf, readOfficeAsync } from '../office/index.js';
 import { extractPdfText } from '../pdf.js';
-import { saveGenerated, liveRevision } from '../attachments.js';
+import { saveGenerated, saveChangedFile, liveRevision } from '../attachments.js';
+import { officeJob } from '../office/job.js';
+import { airQuality, countryFacts, earthquakes, elevation, moonPhase, publicHolidays, sunTimes, timeBetween } from './facts.js';
 import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
 import { search, formatResults, searchPlan, readThroughExa, countryOf } from '../search.js';
@@ -741,12 +743,16 @@ async function createFileTool({ name, format, content, title, filename, file_nam
     chatId,
   });
 
+  const theirs = chatId ? await getStore().recentOfficeUploads(userId, chatId).catch(() => []) : [];
   return {
     content:
       (format ? '' : `No format was given, so this is a ${built.format}. `) +
       `Created ${saved.name} (${humanSize(saved.bytes)}). It is in the conversation now — the user can open it ` +
       'in the viewer and download it, so do not paste its contents into your reply. ' +
-      `Its id is ${saved.id}; pass that to update_file to change this same file rather than making a second one.`,
+      `Its id is ${saved.id}; pass that to update_file to change this same file rather than making a second one.` +
+      (theirs.length
+        ? `\n[The user attached ${theirs.map((f) => `${f.name} (id ${f.id})`).join(', ')} in this conversation. If what they asked was a change to that file, this new file is not what they asked for: make the change there with update_file, and say so.]`
+        : ''),
     file: { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes, format: built.format },
   };
 }
@@ -775,12 +781,67 @@ export function applyEdits(source, edits) {
   return text;
 }
 
-async function updateFileTool({ file_id: fileId, content, name, append = false, edits, theme }, { userId }) {
+/** The kinds of Office file whose XML can be changed where it stands. */
+const CELL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
+const WORD_FORMATS = new Set(['docx', 'docm', 'dotx', 'dotm']);
+const SLIDE_FORMATS = new Set(['pptx', 'pptm', 'potx', 'potm']);
+
+/**
+ * Change a file where it stands (owner, 2026-11-05): the cells or words named, and
+ * nothing else in it. See server/office/edit.js. What this answers says what changed
+ * and that the rest was checked, because that is what a person would ask.
+ *
+ * @param {any} file  the row as it stands
+ * @param {{ cells?: any[], edits?: any[], name?: string }} change
+ * @param {{ userId: string, chatId?: string|null }} context
+ */
+async function changeInPlace(file, { cells, edits, name }, { userId, chatId }) {
+  const format = extensionOf(file.name);
+  const bytes = Buffer.from(file.data, 'base64');
+  let buffer;
+  let said;
+  /** @type {number[]|null} */
+  let lookAt = null;
+  if (CELL_FORMATS.has(format)) {
+    if (!Array.isArray(cells) || !cells.length) throw new Error(`${file.name} is a workbook: say which cells to change, in \`cells\`. read_generated_file with this id lists its sheets and reads them by address.`);
+    const done = await officeJob('editWorkbook', bytes, [cells]);
+    buffer = done.buffer;
+    lookAt = done.sheetNumbers;
+    const list = done.changed.map((c) => `"${c.sheet}": ${c.cells.slice(0, 40).join(', ')}${c.cells.length > 40 ? ` and ${c.cells.length - 40} more` : ''}`);
+    said = `Changed ${cells.length} cell${cells.length === 1 ? '' : 's'} in ${file.name}, on ${list.join('; ')}. Read back and checked: no other cell, and nothing else in the file, is any different.${done.notes.length ? ` ${[...new Set(done.notes)].join(' ')}` : ''}`;
+  } else if (WORD_FORMATS.has(format) || SLIDE_FORMATS.has(format)) {
+    if (!Array.isArray(edits) || !edits.length) throw new Error(`Say what to change in ${file.name}, in \`edits\`.`);
+    const done = await officeJob('editDocument', bytes, [WORD_FORMATS.has(format) ? 'docx' : 'pptx', edits]);
+    buffer = done.buffer;
+    said = `Made ${done.changed} change${done.changed === 1 ? '' : 's'} in ${file.name}, each keeping the look of the words around it. Read back and checked: every other part of the file is as it was.`;
+  } else if (file.kind === 'text') {
+    if (!Array.isArray(edits) || !edits.length) throw new Error(`Say what to change in ${file.name}, in \`edits\`.`);
+    buffer = Buffer.from(applyEdits(bytes.toString('utf8'), edits), 'utf8');
+    said = `Made ${edits.length} change${edits.length === 1 ? '' : 's'} in ${file.name}.`;
+  } else {
+    throw new Error(`${file.name} cannot be changed this way. A program can: sandbox_run with bring and this id puts it on the cloud computer, and download with replaces and this id gives it back as the same file.`);
+  }
+  const saved = await saveChangedFile(userId, file, buffer, { chatId, name: name || null });
+  const wasTheirs = file.origin !== 'generated';
+  return {
+    content: `${said} Same name${wasTheirs ? '; what the user sent is kept as the first version' : ''}. Its id is ${saved.id}: use that for further changes.`,
+    file: { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes, format, version: Date.now(), ...(lookAt ? { lookAt } : {}) },
+  };
+}
+
+async function updateFileTool({ file_id: fileId, content, name, append = false, edits, cells, theme }, { userId, chatId }) {
   const store = getStore();
-  const existing = await store.getAttachment(userId, fileId);
-  if (!existing) throw new Error(`There is no file with the id ${fileId} on this account.`);
-  if (existing.origin !== 'generated') {
-    throw new Error(`${existing.name} was uploaded by the user, not written by you, so it cannot be rewritten.`);
+  const named = await store.getAttachment(userId, fileId);
+  if (!named) throw new Error(`There is no file with the id ${fileId} on this account.`);
+  // Named by what they sent or by the copy: the changes so far are on the copy.
+  const existing = named.origin === 'generated' ? named : (await store.findDerivedFile(userId, fileId)) || named;
+  if (!existing.data) throw new Error(`${existing.name} is on the cloud computer at ${existing.source}: change it there with sandbox_run.`);
+  // A file with no Markdown behind it, or one where cells are named, is changed where it stands.
+  if ((Array.isArray(cells) && cells.length) || (Array.isArray(edits) && edits.length && typeof existing.source !== 'string')) {
+    return changeInPlace(existing, { cells, edits, name }, { userId, chatId });
+  }
+  if (named.origin !== 'generated' || existing.derived_from) {
+    throw new Error(`${existing.name} was uploaded by the user, not written by you, so it cannot be rewritten whole, which would lose what is in it. Change it where it stands: \`cells\` for a workbook, \`edits\` for anything else.`);
   }
   /**
    * Changing part of a file without sending the rest of it.
@@ -848,7 +909,7 @@ async function updateFileTool({ file_id: fileId, content, name, append = false, 
   };
 }
 
-async function readGeneratedFileTool({ file_id: fileId }, { userId, chatId, canSee = false }) {
+async function readGeneratedFileTool({ file_id: fileId, sheet, range, find, slide }, { userId, chatId, canSee = false }) {
   const store = getStore();
 
   if (!fileId) {
@@ -857,9 +918,25 @@ async function readGeneratedFileTool({ file_id: fileId }, { userId, chatId, canS
     return files.map((file) => `- ${file.name} (${humanSize(file.bytes)}) — id ${file.id}`).join('\n');
   }
 
-  const file = await store.getAttachment(userId, fileId);
-  if (!file) throw new Error(`There is no file with the id ${fileId} on this account.`);
-  if (file.origin !== 'generated') throw new Error(`${file.name} was uploaded, so it has no source to read back.`);
+  const named = await store.getAttachment(userId, fileId);
+  if (!named) throw new Error(`There is no file with the id ${fileId} on this account.`);
+  // Their file as it now stands: with the changes made so far, if any have been.
+  const file = named.origin === 'generated' ? named : (await store.findDerivedFile(userId, fileId)) || named;
+  const format = extensionOf(file.name);
+  const fromAPerson = file.origin !== 'generated' || !file.source;
+  if (file.data && CELL_FORMATS.has(format) && (fromAPerson || sheet != null || find != null)) {
+    const read = await officeJob('readWorkbookCells', Buffer.from(file.data, 'base64'), [{ sheet, range, find }]);
+    return untrusted(file.name, read);
+  }
+  if (file.data && fromAPerson && (WORD_FORMATS.has(format) || SLIDE_FORMATS.has(format))) {
+    const read = await officeJob('readDocumentWords', Buffer.from(file.data, 'base64'), [WORD_FORMATS.has(format) ? 'docx' : 'pptx', { slide }]);
+    return untrusted(file.name, read);
+  }
+  if (file.data && fromAPerson && file.kind === 'text') {
+    const text = Buffer.from(file.data, 'base64').toString('utf8');
+    return untrusted(file.name, text.length > 100_000 ? `${text.slice(0, 100_000)}\n\n[cut here: it goes on]` : text);
+  }
+  if (file.origin !== 'generated') throw new Error(`${file.name} was uploaded, so it has no source to read back. For how it looks, use look_at.`);
   if (!file.source) return `${file.name} has no stored source.`;
   // The source says what it holds, not how it looks: said here, so a check does not stop at the words.
   const looks = lookableFormat(file.name) ? `\n\n[This is its text. To see how it looks, layout, colours and pictures included, call look_at with this file_id${canSee ? ', which shows you the pages' : ''}.]` : '';
@@ -1342,16 +1419,30 @@ async function getJson(url) {
  * the questions people ask expecting an exact answer, and each is one call to
  * a free service with no key, so there is nothing to configure.
  *
- * @param {{ kind?: string, location?: string, timezone?: string, base?: string, quote?: string, amount?: number }} input
+ * @param {{ kind?: string, location?: string, timezone?: string, base?: string, quote?: string, amount?: number, requests?: object[], days?: number, date?: string, country?: string, year?: number, to?: string, at?: string, period?: string }} input
  * @param {{ userId?: string }} [context]
  */
-async function worldFactsTool({ kind, location, timezone, base, quote, amount }, { userId } = {}) {
+async function worldFactsTool(input, context = {}) {
+  // Several at once are one call and one row (owner, 2026-11-05).
+  if (Array.isArray(input?.requests) && input.requests.length) {
+    return answerEach(input.requests, (request) => worldFactsTool(request, context));
+  }
+  const { kind, location, timezone, base, quote, amount, days, date, country, year, to, at, period } = input || {};
+  const { userId } = context;
   if (kind === 'time') {
     const zone = validZone(timezone) ? timezone : (await getPrefs(userId).catch(() => null))?.timezone;
     return describeTime(new Date(), zone);
   }
+  if (kind === 'convert_time') return timeBetween({ location, timezone, to, at }, getJson);
+  if (kind === 'air_quality') return airQuality(location, getJson);
+  if (kind === 'sun') return sunTimes(location, date, getJson);
+  if (kind === 'moon') return moonPhase(/^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? new Date(`${date}T12:00:00Z`) : new Date());
+  if (kind === 'holidays') return publicHolidays(country || location, year, getJson);
+  if (kind === 'country') return countryFacts(country || location, getJson);
+  if (kind === 'earthquakes') return earthquakes(period, getJson);
+  if (kind === 'place') return elevation(location, getJson);
 
-  if (kind === 'weather') {
+  if (kind === 'weather' || kind === 'forecast') {
     const name = String(location || '').trim();
     if (!name) throw new Error('Say which place — a city name, e.g. "Hanoi" or "Ho Chi Minh City".');
     const geo = await getJson(
@@ -1360,7 +1451,7 @@ async function worldFactsTool({ kind, location, timezone, base, quote, amount },
     const hit = geo?.results?.[0];
     if (!hit) throw new Error(`No place called "${name}" was found. Try the city's English name, e.g. "Ho Chi Minh City".`);
     const forecast = await getJson(
-      'https://api.open-meteo.com/v1/forecast?timezone=auto&forecast_days=3' +
+      `https://api.open-meteo.com/v1/forecast?timezone=auto&forecast_days=${kind === 'forecast' ? Math.min(16, Math.max(1, Number(days) || 7)) : 3}` +
         `&latitude=${hit.latitude}&longitude=${hit.longitude}` +
         '&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,precipitation' +
         '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
@@ -1387,7 +1478,38 @@ async function worldFactsTool({ kind, location, timezone, base, quote, amount },
     return describeRate(data, from, to, units);
   }
 
-  throw new Error('kind is one of: time, weather, exchange_rate.');
+  throw new Error('kind is one of: time, convert_time, weather, forecast, air_quality, sun, moon, exchange_rate, holidays, country, earthquakes, place.');
+}
+
+/** How many one call may ask at once: enough for a table, not enough to be a flood on free services. */
+const MAX_AT_ONCE = 12;
+
+/**
+ * Several questions to one tool, in one call, answered in order. One that fails says
+ * so in its place and leaves the rest; the call fails only if all of them do.
+ *
+ * @template T
+ * @param {T[]} list
+ * @param {(item: T) => Promise<any>} ask
+ */
+export async function answerEach(list, ask) {
+  const asked = list.slice(0, MAX_AT_ONCE);
+  const answers = await Promise.all(
+    asked.map((item) =>
+      Promise.resolve()
+        .then(() => ask(item))
+        .then(
+          (answer) => ({ ok: true, text: typeof answer === 'string' ? answer : String(answer?.content ?? ''), chats: answer?.chats }),
+          (err) => ({ ok: false, text: String(err?.message || err), chats: undefined }),
+        ),
+    ),
+  );
+  if (answers.every((a) => !a.ok)) throw new Error(answers[0].text);
+  const dropped = list.length - asked.length;
+  const content = `${answers.map((a) => (a.ok ? a.text : `Could not find that: ${a.text}`)).join('\n\n')}${dropped > 0 ? `\n\n(${dropped} more were not asked: ${MAX_AT_ONCE} at most in one call.)` : ''}`;
+  const chats = new Map();
+  for (const a of answers) for (const chat of a.chats || []) if (!chats.has(chat.id)) chats.set(chat.id, chat);
+  return chats.size ? { content, chats: [...chats.values()] } : content;
 }
 
 async function calculateTool({ expression }) {
@@ -1549,7 +1671,8 @@ async function memoryDelete({ key: rawKey }, { userId, chatId }) {
  * how one of the named ones is found by what it is about. Cheap on purpose —
  * notes are short and the words somebody asks with are nearly always in them.
  */
-async function memorySearch({ query, limit }, { userId, chatId }) {
+async function memorySearch({ query, queries = null, limit }, { userId, chatId }) {
+  if (Array.isArray(queries) && queries.length) return answerEach(queries, (one) => memorySearch({ query: one, limit }, { userId, chatId }));
   await memoryAllowed(userId, chatId);
   const wanted = String(query ?? '').trim();
   if (!wanted) throw new Error('Say what to look for.');
@@ -1641,7 +1764,8 @@ const connectorSearch = (tool) => async (input, context) => {
  * envelope as anything else read from outside this turn: an instruction found in
  * an old conversation is a quote, not an order.
  */
-async function searchChatsTool({ query, limit }, { userId, chatId }) {
+async function searchChatsTool({ query, queries = null, limit }, { userId, chatId }) {
+  if (Array.isArray(queries) && queries.length) return answerEach(queries, (one) => searchChatsTool({ query: one, limit }, { userId, chatId }));
   const prefs = await getPrefs(userId).catch(() => ({}));
   if (prefs.chatSearch === false) {
     throw new Error('Searching earlier conversations is switched off for this account (Settings → Memory). Say so if it matters.');

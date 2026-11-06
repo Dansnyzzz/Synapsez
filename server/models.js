@@ -6,6 +6,7 @@ import { lastLocalHour } from './util/zone.js';
 import { markedPrice } from './pricing.js';
 import { AUTO_ROUTER } from './autoPick.js';
 import { canonicalModel } from './modelRoutes.js';
+import { isStealthModel } from './dataRoute.js';
 
 const OPENROUTER_MODELS = 'https://openrouter.ai/api/v1/models';
 const ORCAROUTER_MODELS = 'https://api.orcarouter.ai/v1/models';
@@ -285,6 +286,12 @@ export function expiryOf(entry) {
   return Number.isFinite(when) ? new Date(when).toISOString() : null;
 }
 
+/** Whether the provider's own list says this model takes this kind of input. */
+const takes = (entry, kind) => {
+  const inputs = entry.architecture?.input_modalities;
+  return Array.isArray(inputs) && inputs.includes(kind);
+};
+
 function normalise(entry, provider = 'openrouter') {
   let priceIn = perMillion(entry.pricing?.prompt);
   let priceOut = perMillion(entry.pricing?.completion);
@@ -315,6 +322,8 @@ function normalise(entry, provider = 'openrouter') {
     priceOut,
     isFree,
     vision: acceptsImages(entry),
+    hears: takes(entry, 'audio'),
+    watches: takes(entry, 'video'),
     reasoning: reasonsFor(entry),
     // `created` is a unix timestamp of when the model was published.
     releasedAt: entry.created ? new Date(entry.created * 1000).toISOString() : null,
@@ -586,6 +595,9 @@ export async function browse(filters) {
       price: m.price_in == null ? null : markedPrice({ in: Number(m.price_in), out: Number(m.price_out) }),
       isFree: m.is_free,
       vision: !!m.vision,
+      hears: !!m.hears,
+      watches: !!m.watches,
+      stealth: isStealthModel({ model: m.model }),
       releasedAt: m.released_at,
       // Shown as "Going away <date>" in the picker, the way OpenRouter does.
       expiresAt: m.expires_at ? new Date(m.expires_at).toISOString() : null,

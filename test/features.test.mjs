@@ -429,7 +429,7 @@ section('page views and speed: on Vercel only, the path only, never against the 
   check('the scripts they add come from this origin, which `script-src \'self\'` allows', analyticsSrc.includes('return "/_vercel/insights/script.js"') && speedSrc.includes('return "/_vercel/speed-insights/script.js"'));
   const csp = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value;
   // The one addition is the cloud browser's socket to the account's own machine, on E2B or Vercel — nothing for these.
-  check('  and the policy was not widened for them', /script-src 'self';/.test(csp) && /connect-src 'self'(?: wss:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.vercel\.run)?;/.test(csp));
+  check('  and the policy was not widened for them', /script-src 'self';/.test(csp) && /connect-src 'self'(?: https:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.vercel\.run)?;/.test(csp));
   const appSrc = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   check('the app starts it from the session, and says so only where it measures', /startInsights\(session\.insights\)/.test(appSrc) && /insightsNote\.hidden = !session\.insights/.test(appSrc) && /id="insights-note" data-i18n="memory\.insights" hidden/.test(html));

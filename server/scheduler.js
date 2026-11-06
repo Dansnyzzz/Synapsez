@@ -8,6 +8,7 @@ import { clientError } from './util/clientError.js';
 // An unattended run needs it more, not less. See `runTask`.
 import { isComplete } from './providers/stop.js';
 import { validZone, partsIn, instantOf } from './util/zone.js';
+import { expireMachineUploads } from './sandbox.js';
 import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public/js/schedule-grammar.js';
 
 /**
@@ -710,6 +711,8 @@ export async function sweep() {
     // Every path that binds a file to a conversation creates the conversation
     // first, so a label pointing at nothing can only mean it was deleted.
     store.pruneUnreachableFiles(),
+    // What was sent straight to a machine, a month on: the promise in the privacy notice.
+    expireMachineUploads(store),
     store.pruneFinishedJobs(),
     // Both write a few kilobytes per run and nothing was removing either. The
     // list above exists because three of its four pruners had been written and

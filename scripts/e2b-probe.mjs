@@ -10,7 +10,10 @@
  * killed at the end whatever happens. It spends about two cents of the credit.
  *
  *   npm run e2b:probe              the platform checks
+ *   npm run e2b:probe -- --base    and everything a machine is meant to come with, used for real
  *   npm run e2b:probe -- --browser and Chromium as the cloud browser starts it (about two minutes more)
+ *   node scripts/e2b-probe.mjs --render <file> <folder>   LibreOffice's drawing of a file, as pictures, nothing else
+ *   node scripts/e2b-probe.mjs --upload-cors   whether a browser on another site may put a file on a machine directly
  *
  * Reads E2B_API_KEY (and E2B_TEMPLATE) from the environment or .env, and
  * never prints it.
@@ -34,6 +37,72 @@ if (!process.env.E2B_API_KEY) {
   process.exit(1);
 }
 
+// Whether a page on this app's own address can reach a signed upload link. Only a real browser can say:
+// the question is what the machine answers to a cross-site request, preflight included.
+if (process.argv.includes('--upload-cors')) {
+  const http = await import('node:http');
+  const { chromium } = await import('playwright-core');
+  const { e2bScratch } = await import('../server/e2b.js');
+  const machine = await e2bScratch({ ms: 180_000, internet: false, role: 'probe' });
+  const site = http.createServer((_req, res) => res.end('<!doctype html><title>probe</title>')).listen(0, '127.0.0.1');
+  await new Promise((r) => site.once('listening', r));
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const place = 'uploads/ab12cd34/Báo cáo (1).bin';
+    const url = await machine.uploadUrl(place);
+    console.log('  signed link host:', new URL(url).host, '· params:', [...new URL(url).searchParams.keys()].join(', '));
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${site.address().port}/`);
+    const size = 6 * 1024 * 1024;
+    const started = Date.now();
+    const result = await page.evaluate(
+      async ([target, bytes]) => {
+        const form = new FormData();
+        form.append('file', new Blob([new Uint8Array(bytes).fill(65)], { type: 'application/octet-stream' }), 'probe-upload.bin');
+        try {
+          const res = await fetch(target, { method: 'POST', body: form });
+          return { status: res.status, body: (await res.text()).slice(0, 300) };
+        } catch (err) {
+          return { error: String(err) };
+        }
+      },
+      [url, size],
+    );
+    console.log(`  cross-site POST of ${size} bytes in ${Date.now() - started} ms:`, JSON.stringify(result));
+    console.log('  size on the machine:', await machine.fileSize(place).catch((err) => `unknown: ${err.message}`));
+  } finally {
+    await browser.close();
+    site.close();
+    await machine.box?.kill().catch(() => {});
+  }
+  process.exit(0);
+}
+
+// A look at what LibreOffice makes of one file, to compare with real Office and our own drawing.
+const renderAt = process.argv.indexOf('--render');
+if (renderAt >= 0) {
+  const file = process.argv[renderAt + 1];
+  const folder = process.argv[renderAt + 2];
+  const { e2bScratch } = await import('../server/e2b.js');
+  const machine = await e2bScratch({ ms: 120_000, internet: false, role: 'probe' });
+  try {
+    await machine.writeFiles([{ path: `/tmp/in/${path.basename(file)}`, content: fs.readFileSync(file) }]);
+    const began = Date.now();
+    const done = await machine.runCommand({
+      cmd: 'bash',
+      args: ['--noprofile', '--norc', '-c', `export PATH=/usr/bin:/bin:/usr/local/bin; cd /tmp/in && HOME=/tmp/in soffice --headless --norestore --convert-to pdf --outdir /tmp/out '${path.basename(file)}' >/dev/null 2>&1; cd /tmp/out && pdftoppm -r 80 -png *.pdf page; ls`],
+      timeoutMs: 100_000,
+    });
+    const names = String(await done.stdout()).trim().split('\n').filter((n) => n.endsWith('.png'));
+    fs.mkdirSync(folder, { recursive: true });
+    for (const name of names) fs.writeFileSync(path.join(folder, `lo-${name}`), await machine.readFileToBuffer({ path: `/tmp/out/${name}` }));
+    console.log(`  LibreOffice: ${names.length} page(s) in ${((Date.now() - began) / 1000).toFixed(1)}s`);
+  } finally {
+    await machine.delete().catch(() => {});
+  }
+  process.exit(0);
+}
+
 let failures = 0;
 const section = (n) => console.log(`\n\x1b[1m${n}\x1b[0m`);
 const check = (label, pass, detail = '') => {
@@ -46,7 +115,9 @@ const { Sandbox } = await import('e2b');
 const { e2bScratch, __testing } = await import('../server/e2b.js');
 const { shellFor, ROOT_NODE_DIR, ROOT_BROWSER_PORT } = await import('../server/sandbox.js');
 const { startScript } = await import('../server/cloudBrowser/index.js');
-const template = String(process.env.E2B_TEMPLATE || '').trim() || 'base';
+const { TEMPLATE_NAME } = await import('../server/e2b.js');
+const { TIDY_SCRIPT, terminalScript, packagesIn } = await import('../server/machineCare.js');
+const template = String(process.env.E2B_TEMPLATE || '').trim() || TEMPLATE_NAME;
 const machines = [];
 const started = Date.now();
 
@@ -187,6 +258,136 @@ try {
   check('its files and its running programs are there after a pause', /kept\s+running/.test(after.stdout), after.stdout.trim().replace(/\n/g, ' '));
   const stayed = await back.commands.run("/usr/bin/stat -c '%a %U' /usr/local/bin; /usr/bin/sudo -n /usr/bin/id -u 2>/dev/null || echo no-sudo", { user: 'user' });
   check('  and it comes back closed (SBX-011)', stayed.stdout.trim().replace(/\n/g, ' ') === '755 root no-sudo', stayed.stdout.trim().replace(/\n/g, ' '));
+
+  if (process.argv.includes('--base')) {
+    await machine.box?.setTimeout?.(10 * 60_000);
+    /** @param {string} line @param {{ root?: boolean, timeoutMs?: number, onOutput?: (text: string) => void }} [options] */
+    const run = async (line, { root: asRoot = false, timeoutMs = 90_000, onOutput } = {}) => {
+      const done = await machine.runCommand({ ...shellFor(line, {}, asRoot ? { root: true } : { userBin: true }), sudo: asRoot, timeoutMs, ...(onOutput ? { onOutput } : {}) });
+      return { code: done.exitCode, out: String(await done.stdout()).trim(), err: String(await done.stderr()).trim() };
+    };
+    section('how big it is');
+    const free = await run("free -m | awk 'NR==2 { print $2 \" MiB memory, \" $7 \" available\" }'; df -m ~ | awk 'NR==2 { print $2 \" MiB disk, \" $4 \" free\" }'; nproc");
+    console.log(`    ${free.out.replace(/\n/g, ' · ')}`);
+    check('at least two gibibytes, where Chromium starts', Number(info.memoryMB) >= 2048, `${info.memoryMB} MiB`);
+
+    section('every tool, with nothing installed first');
+    const tools = {
+      ffmpeg: 'ffmpeg -version | head -1',
+      ffprobe: 'ffprobe -version | head -1',
+      zip: 'zip -v | sed -n 2p',
+      unzip: 'unzip -v | head -1',
+      sqlite3: 'sqlite3 --version',
+      soffice: 'soffice --version',
+      pdftoppm: 'pdftoppm -v 2>&1 | head -1',
+      tmux: 'tmux -V',
+      jq: 'jq --version',
+      ripgrep: 'rg --version | head -1',
+      git: 'git --version',
+      node: 'node -v',
+      python: 'python3 --version',
+      'claude (coding agent)': 'claude --version',
+      'codex (coding agent)': 'codex --version',
+      'amp (coding agent)': 'amp --version',
+    };
+    for (const [name, line] of Object.entries(tools)) {
+      const got = await run(line);
+      check(name, got.code === 0 && !!got.out, got.out.slice(0, 80) || got.err.slice(0, 160));
+    }
+    const libs = ['numpy', 'pandas', 'scipy', 'sklearn', 'statsmodels', 'sympy', 'matplotlib', 'seaborn', 'plotly', 'openpyxl', 'xlsxwriter', 'docx', 'pptx', 'fpdf', 'reportlab', 'pypdf', 'pdfplumber', 'PIL', 'cv2', 'pydub', 'requests', 'httpx', 'certifi', 'bs4', 'lxml', 'yaml', 'markdown', 'jinja2', 'tabulate', 'tqdm', 'playwright'];
+    const imported = await run(`python3 - <<'PY'\nimport importlib\nbad = []\nfor name in ${JSON.stringify(libs)}:\n    try:\n        importlib.import_module(name)\n    except Exception as e:\n        bad.append(f"{name}: {e}")\nprint('; '.join(bad) or 'all imported')\nPY`);
+    check(`${libs.length} Python libraries import`, imported.out === 'all imported', imported.out.slice(0, 300) || imported.err.slice(0, 300));
+
+    section('pip, the bug that cost an afternoon');
+    const which = await run('command -v python3; command -v pip; pip --version');
+    check('pip belongs to the python3 a command finds', /\/usr\/bin\/python3/.test(which.out) && /\/usr\/bin\/pip/.test(which.out) && /python 3/i.test(which.out), which.out.replace(/\n/g, ' · '));
+    const asUser = await run('pip install -q cowsay 2>&1 | tail -2; python3 -c "import cowsay; print(cowsay.__file__)"');
+    check('installed as the account, it imports', asUser.code === 0 && /cowsay/.test(asUser.out), asUser.out.slice(-200));
+    const asRootPip = await run('pip install -q pyfiglet 2>&1 | tail -2; echo done', { root: true });
+    const seen = await run('python3 -c "import pyfiglet; print(pyfiglet.__file__)"');
+    check('installed as root, the account imports it', seen.code === 0 && /pyfiglet/.test(seen.out), `${asRootPip.out.slice(-80)} → ${seen.out || seen.err.slice(-160)}`);
+    check('and either is remembered for a new machine', packagesIn('pip install -q cowsay && apt-get install -y sl').pip[0] === 'cowsay');
+
+    section('files, for real');
+    await machine.writeFiles([{ path: 'probe-vi.py', content: Buffer.from(`from fpdf import FPDF
+pdf = FPDF()
+pdf.add_page()
+pdf.add_font("DejaVu", "", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+pdf.set_font("DejaVu", "", 14)
+pdf.multi_cell(0, 8, "Tiếng Việt có dấu: phở bò, bún chả, chữ ký, hoá đơn")
+pdf.output("probe-vi.pdf")
+from docx import Document
+d = Document()
+d.add_heading("Báo cáo tiếng Việt", 1)
+d.add_paragraph("Doanh thu tăng 12%")
+d.save("probe.docx")
+from pptx import Presentation
+p = Presentation()
+s = p.slides.add_slide(p.slide_layouts[0])
+s.shapes.title.text = "Trang trình bày"
+p.save("probe.pptx")
+`) }]);
+    const madeFiles = await run('python3 probe-vi.py && pdftotext probe-vi.pdf - | head -2');
+    check('a Vietnamese PDF keeps its accents', /Tiếng Việt có dấu/.test(madeFiles.out), madeFiles.out.slice(0, 120) || madeFiles.err.slice(-200));
+    for (const file of ['probe.docx', 'probe.pptx']) {
+      const began = Date.now();
+      const converted = await run(`soffice --headless --convert-to pdf ${file} >/dev/null 2>&1; pdftoppm -r 60 -jpeg ${file.replace(/\.\w+$/, '.pdf')} page && ls page* | wc -l; rm -f page*`, { timeoutMs: 120_000 });
+      check(`LibreOffice draws ${file}`, converted.code === 0 && Number(converted.out) >= 1, `${converted.out} page(s), ${((Date.now() - began) / 1000).toFixed(1)}s`);
+    }
+    const media = await run('ffmpeg -loglevel error -f lavfi -i sine=frequency=440:duration=1 -y probe.mp3 && ffprobe -v error -show_entries format=duration -of csv=p=0 probe.mp3 && zip -q probe.zip probe.mp3 probe.docx && unzip -l probe.zip | tail -1 && sqlite3 :memory: "select 40+2"');
+    check('ffmpeg, zip and sqlite3 do their work', media.code === 0 && /42$/.test(media.out), media.out.replace(/\n/g, ' · '));
+    const clone = await run('git clone -q --depth 1 https://github.com/octocat/Hello-World.git probe-clone && ls probe-clone && rm -rf probe-clone', { timeoutMs: 60_000 });
+    check('git clone over the internet', clone.code === 0 && /README/.test(clone.out), clone.err.slice(-120));
+
+    section('a browser from Python, on the same machine');
+    await machine.writeFiles([{ path: 'probe-pw.py', content: Buffer.from(`from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    page = b.new_page()
+    page.set_content("<title>Tiếng Việt</title><h1>ok</h1>")
+    print(page.title())
+    page.screenshot(path="probe-pw.png")
+    b.close()
+`) }]);
+    const pw = await run('python3 probe-pw.py 2>&1 | tail -3 && ls -la probe-pw.png | wc -l', { timeoutMs: 120_000 });
+    check('Playwright with its Chromium runs and takes a picture', /Tiếng Việt/.test(pw.out), pw.out.slice(-240));
+
+    section('what lasts between calls');
+    const out = [];
+    await run(terminalScript({ action: 'start', name: 'probe', text: 'python3', wait_seconds: 1 }));
+    await run(terminalScript({ action: 'send', name: 'probe', text: 'x = 6 * 7', wait_seconds: 1 }));
+    const screen = await run(terminalScript({ action: 'send', name: 'probe', text: 'print(x)', wait_seconds: 1 }));
+    check('a terminal keeps its program between calls', /\b42\b/.test(screen.out), screen.out.slice(-160) || screen.err.slice(-160));
+    await run(terminalScript({ action: 'stop', name: 'probe' }));
+    const streamed = await run('for i in 1 2 3; do echo line$i; sleep 1; done', { onOutput: (text) => out.push(text) });
+    check('what a command prints arrives as it prints', out.length >= 3 && streamed.out.includes('line3'), `${out.length} pieces`);
+
+    section('reaching it from outside');
+    await machine.writeFiles([{ path: 'probe-link.txt', content: Buffer.from('from the machine') }]);
+    const link = await machine.downloadUrl('probe-link.txt');
+    const fetched = await fetch(link).then(async (r) => ({ status: r.status, text: await r.text() })).catch((e) => ({ status: 0, text: String(e) }));
+    check('a signed link hands over a file, past this server', fetched.status === 200 && fetched.text === 'from the machine', `${fetched.status} ${fetched.text.slice(0, 80)}`);
+    await machine.runCommand({ ...shellFor('cd ~ && exec python3 -m http.server 18080', {}, { userBin: true }), detached: true });
+    await new Promise((r) => setTimeout(r, 2500));
+    const served = await fetch(machine.domain(18080)).then((r) => r.status).catch((e) => String(e));
+    check('a port it opens has a public address', served === 200, String(served));
+
+    section('a checkpoint');
+    await machine.writeFiles([{ path: 'probe-check.txt', content: Buffer.from('before') }]);
+    const snapshot = await machine.box.createSnapshot();
+    check('saved', !!snapshot?.snapshotId, snapshot?.snapshotId);
+    const fromIt = await Sandbox.create(snapshot.snapshotId, { apiKey: process.env.E2B_API_KEY, timeoutMs: 120_000, metadata: { app: 'synapsez', role: 'probe' } });
+    machines.push({ delete: () => fromIt.kill() });
+    const kept = await fromIt.commands.run('cat /home/user/probe-check.txt', { user: 'user' });
+    check('a machine made from it finds the file', kept.stdout.trim() === 'before', kept.stdout.trim());
+    await Sandbox.deleteSnapshot(snapshot.snapshotId, { apiKey: process.env.E2B_API_KEY }).catch(() => {});
+
+    section('room behind the memory');
+    const swap = await run('fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; free -m | tail -1', { root: true });
+    console.log(`    swap: ${swap.out || swap.err.slice(-160)}`);
+    const tidied = await run(TIDY_SCRIPT, { timeoutMs: 30_000 });
+    check('tidying says how full the disk is', /^\d+%$/.test(tidied.out), tidied.out);
+  }
 
   if (process.argv.includes('--browser')) {
     section('Chromium, the way the cloud browser starts it');

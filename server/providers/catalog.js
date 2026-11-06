@@ -180,6 +180,9 @@ export const CATALOG = [
     provider: 'google',
     model: 'gemini-pro-latest',
     label: 'Gemini Pro (latest)',
+    // ai.google.dev: sound and video go inline, the same as a picture.
+    hears: true,
+    watches: true,
     context: 1_048_576,
     maxOutput: 64_000,
     price: null,
@@ -190,6 +193,8 @@ export const CATALOG = [
     provider: 'google',
     model: 'gemini-flash-latest',
     label: 'Gemini Flash (latest)',
+    hears: true,
+    watches: true,
     context: 1_048_576,
     maxOutput: 64_000,
     price: null,
@@ -200,6 +205,8 @@ export const CATALOG = [
     provider: 'google',
     model: 'gemini-flash-lite-latest',
     label: 'Gemini Flash-Lite (latest)',
+    hears: true,
+    watches: true,
     context: 1_048_576,
     maxOutput: 64_000,
     price: null,
@@ -343,6 +350,8 @@ export function resolveModel(id, sharedRow = null) {
       // Roughly half the catalogue cannot be shown a picture, and sending one
       // anyway does not degrade the answer — the provider rejects the request.
       vision: !!sharedRow.vision,
+      hears: !!sharedRow.hears,
+      watches: !!sharedRow.watches,
       // True, false, or null for "the source did not say" — see `reasonsFor`.
       reasoning: sharedRow.reasoning == null ? null : !!sharedRow.reasoning,
       tags: [...(sharedRow.is_free ? ['free'] : []), ...(sharedRow.reasoning ? ['reasoning'] : [])],

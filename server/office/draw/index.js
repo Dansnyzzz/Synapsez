@@ -183,6 +183,107 @@ async function layout(format, zip, tools, pages) {
   return layoutXlsx(zip, tools, { pages });
 }
 
+/** What every drawing needs, from bytes: the file opened and the tools to measure with. */
+function opened(bytes, canvasApi, timeoutMs, kerning) {
+  const fonts = new Fonts(canvasApi);
+  if (!fonts.usable()) return null;
+  const budget = new Budget(timeoutMs);
+  const notes = new Set();
+  const note = (text) => notes.add(text);
+  let zip;
+  try {
+    zip = countedZip(openZip(bytes), budget);
+  } catch (err) {
+    if (err?.code === 'encrypted') throw refused('That file is password-protected, so it cannot be drawn.');
+    throw refused(`That file could not be opened: ${err?.message || err}`);
+  }
+  return { zip, notes, tools: { fonts, measure: new Measurer(canvasApi, kerning), budget, note, canvasApi } };
+}
+
+/** A surface on a canvas of its own, its pictures decoded, ready to encode. */
+async function paintSurface(surface, zip, tools, canvasApi, kerning, edge) {
+  const scale = Math.min(edge / Math.max(surface.width, surface.height), 4);
+  const canvas = canvasApi.createCanvas(Math.max(1, Math.round(surface.width * scale)), Math.max(1, Math.round(surface.height * scale)));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.scale(scale, scale);
+  const pool = new PicturePool(canvasApi, zip, tools.note);
+  const pictures = await pool.ensure(new Set(surface.pictures));
+  replay(ctx, surface.ops, { pictures, scale, kerning });
+  return canvas;
+}
+
+/**
+ * One page or slide, by itself and nothing round it: what a viewer shows.
+ *
+ * @param {Buffer} bytes
+ * @param {{ name?: string, page?: number, edge?: number, timeoutMs?: number }} options
+ * @param {any} canvasApi
+ * @param {{ lookableFormat: Function }} plan
+ */
+export async function drawPage(bytes, { name = '', page = 1, edge = 1600, timeoutMs = 45_000 } = {}, canvasApi, { lookableFormat }) {
+  const format = lookableFormat(name, bytes);
+  if (!format || format === 'xlsx') throw refused('That is not a Word or PowerPoint file this can draw.');
+  const kerning = format === 'pptx' ? 'normal' : 'none';
+  const ready = opened(bytes, canvasApi, timeoutMs, kerning);
+  if (!ready) return null;
+  const wanted = Math.max(1, Math.floor(Number(page) || 1));
+  try {
+    const doc = await layout(format, ready.zip, ready.tools, [wanted]);
+    const surface = doc.pages.find((s) => s.number === wanted);
+    if (!surface) return { total: doc.total, missing: true };
+    const canvas = await paintSurface(surface, ready.zip, ready.tools, canvasApi, kerning, edge);
+    let jpeg = await canvas.encode('jpeg', QUALITY);
+    for (const quality of [72, 62]) {
+      if (jpeg.length <= MAX_JPEG_BYTES) break;
+      jpeg = await canvas.encode('jpeg', quality);
+    }
+    return { mime: 'image/jpeg', data: Buffer.from(jpeg).toString('base64'), width: canvas.width, height: canvas.height, total: doc.total, notes: [...ready.notes] };
+  } catch (err) {
+    if (err?.code === 'office_unreadable') throw err;
+    throw refused(`That file could not be drawn: ${err?.message || err}`);
+  }
+}
+
+/**
+ * @param {Buffer} bytes
+ * @param {{ sheet?: number, from?: number, timeoutMs?: number }} options
+ * @param {any} canvasApi
+ */
+export async function drawWorkbookModel(bytes, { sheet = 1, from = 0, timeoutMs = 45_000 } = {}, canvasApi) {
+  const ready = opened(bytes, canvasApi, timeoutMs, 'none');
+  if (!ready) return null;
+  try {
+    const { workbookModel } = await import('./xlsx.js');
+    const model = await workbookModel(ready.zip, ready.tools, { sheet, from });
+    return { ...model, notes: [...ready.notes] };
+  } catch (err) {
+    if (err?.code === 'office_unreadable') throw err;
+    throw refused(`That file could not be read: ${err?.message || err}`);
+  }
+}
+
+/**
+ * @param {Buffer} bytes
+ * @param {{ sheet?: number, index?: number, edge?: number, timeoutMs?: number }} options
+ * @param {any} canvasApi
+ */
+export async function drawDrawing(bytes, { sheet = 1, index = 0, edge = 1600, timeoutMs = 45_000 } = {}, canvasApi) {
+  const ready = opened(bytes, canvasApi, timeoutMs, 'none');
+  if (!ready) return null;
+  try {
+    const { drawingSurface } = await import('./xlsx.js');
+    const drawn = await drawingSurface(ready.zip, ready.tools, { sheet, index });
+    if (!drawn) return { missing: true };
+    const canvas = await paintSurface(drawn.surface, ready.zip, ready.tools, canvasApi, 'none', edge);
+    return { mime: 'image/png', data: Buffer.from(await canvas.encode('png')).toString('base64'), width: canvas.width, height: canvas.height };
+  } catch (err) {
+    if (err?.code === 'office_unreadable') throw err;
+    throw refused(`That file could not be drawn: ${err?.message || err}`);
+  }
+}
+
 /**
  * @param {Buffer} bytes
  * @param {{ name?: string, pages?: number[]|null, maxSheets?: number, timeoutMs?: number }} options

@@ -238,7 +238,7 @@ export function splitStatements(sql) {
  *  37  user_themes, user_titles, theme_badges, ranking_board, ranking_settled,
  *      usage_lifetime — themes, the monthly and yearly boards, titles
  */
-export const SCHEMA_VERSION = 37;
+export const SCHEMA_VERSION = 38;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1922,6 +1922,17 @@ export function createPgStore(connectionString) {
       );
     },
 
+    /** Calls the independent check stopped, and why (actionMonitor.js). */
+    async holdToolCalls(userId, chatId, messageId, held) {
+      await q(
+        `UPDATE messages m
+            SET content = jsonb_set(m.content, '{held}', $4::jsonb, true)
+           FROM chats c
+          WHERE m.id = $3 AND m.chat_id = $2 AND c.id = m.chat_id AND c.user_id = $1`,
+        [userId, chatId, messageId, toJson(held)],
+      );
+    },
+
     async editUserMessage(userId, chatId, messageId, text) {
       const rows = await q(
         `SELECT m.seq, m.content, m.role
@@ -1980,8 +1991,8 @@ export function createPgStore(connectionString) {
     // ── attachments ─────────────────────────────────────────────────
     async createAttachment(userId, file) {
       const rows = await q(
-        `INSERT INTO attachments (id, user_id, name, mime, kind, bytes, data, origin, source, chat_id, thumb)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO attachments (id, user_id, name, mime, kind, bytes, data, origin, source, chat_id, thumb, derived_from)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING id, name, mime, kind, bytes, origin, created_at`,
         [
           file.id,
@@ -1995,6 +2006,7 @@ export function createPgStore(connectionString) {
           file.source ?? null,
           file.chatId ?? null,
           file.thumb ?? null,
+          file.derivedFrom ?? null,
         ],
       );
       return rows[0];
@@ -2020,7 +2032,7 @@ export function createPgStore(connectionString) {
     },
     async getAttachment(userId, id) {
       const rows = await q(
-        `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, created_at
+        `SELECT id, name, mime, kind, bytes, data, origin, source, chat_id, derived_from, created_at
            FROM attachments WHERE id = $1 AND user_id = $2`,
         [id, userId],
       );
@@ -2163,7 +2175,7 @@ export function createPgStore(connectionString) {
     async listGeneratedFiles(userId, chatId) {
       return q(
         `SELECT id, name, mime, kind, bytes, origin, created_at FROM attachments
-          WHERE user_id = $1 AND chat_id = $2 AND origin = 'generated'
+          WHERE user_id = $1 AND chat_id = $2 AND (origin = 'generated' OR (origin = 'google_drive' AND derived_from IS NOT NULL))
        ORDER BY created_at DESC`,
         [userId, chatId],
       );
@@ -2243,7 +2255,8 @@ export function createPgStore(connectionString) {
       // What the person sent is an upload or a file picked from their Drive (PRV-015): both are
       // theirs to see and delete here; only uploads go out with a shared conversation.
       const origins = upload ? ['upload', 'google_drive'] : ['generated'];
-      const where = `a.user_id = $1 AND a.origin = ANY($2::text[])
+      // A big file sent straight to the machine is the person's too; its row says where it is.
+      const where = `a.user_id = $1 AND (a.origin = ANY($2::text[]) ${upload ? "OR (a.origin = 'machine' AND a.source LIKE 'uploads/%')" : ''})
         AND NOT COALESCE(c.incognito, FALSE)
         AND ${shared ? isShared : `NOT COALESCE(${isShared}, FALSE)`}
         AND ($3::text IS NULL OR a.name ILIKE $3 ESCAPE '\\')`;
@@ -2317,8 +2330,13 @@ export function createPgStore(connectionString) {
     },
     /** Throw away a file this account sent — uploaded, or picked from Drive. A made file goes by deleteGeneratedFile. */
     async deleteUpload(userId, id) {
-      const rows = await q(`DELETE FROM attachments WHERE id = $1 AND user_id = $2 AND origin IN ('upload', 'google_drive') RETURNING id`, [id, userId]);
-      return rows.length > 0;
+      return !!(await this.takeUpload(userId, id));
+    },
+    /** The same, saying what the row pointed at: a big file's bytes are on the machine, not here. */
+    async takeUpload(userId, id) {
+      const rows = await q(`DELETE FROM attachments WHERE id = $1 AND user_id = $2 AND (origin IN ('upload', 'google_drive') OR (origin = 'machine' AND source LIKE 'uploads/%')) RETURNING id, origin, source`, [id, userId]);
+      if (rows[0]) await q(`DELETE FROM attachments WHERE user_id = $1 AND derived_from = $2 AND origin = 'rendered'`, [userId, id]);
+      return rows[0] || null;
     },
     /** Feedback this account sent, deleted by its sender. */
     async deleteOwnFeedback(userId, id) {
@@ -2333,6 +2351,25 @@ export function createPgStore(connectionString) {
       );
       return rows.length > 0;
     },
+    /** The copy of somebody's file that holds the changes made to it, if any has been made. */
+    async findDerivedFile(userId, id) {
+      const rows = await q("SELECT * FROM attachments WHERE user_id = $1 AND derived_from = $2 AND origin <> 'rendered' ORDER BY created_at DESC LIMIT 1", [userId, id]);
+      return rows[0] || null;
+    },
+    /** LibreOffice's drawing of exactly these bytes of a file, if one has been made. */
+    async findRenderedFile(userId, id, stamp) {
+      const rows = await q(`SELECT id, name, bytes FROM attachments WHERE user_id = $1 AND derived_from = $2 AND origin = 'rendered' AND source = $3 LIMIT 1`, [userId, id, stamp]);
+      return rows[0] || null;
+    },
+    /** The Office files somebody has sent in this conversation, newest first. */
+    async recentOfficeUploads(userId, chatId, limit = 3) {
+      return q(
+        `SELECT id, name, kind, created_at FROM attachments
+          WHERE user_id = $1 AND chat_id = $2 AND origin = 'upload' AND kind = 'office'
+          ORDER BY created_at DESC LIMIT $3`,
+        [userId, chatId, limit],
+      );
+    },
     /** Replace a generated file's bytes in place, keeping its id and its link. */
     /**
      * Rewrite a file the assistant made, keeping its id — and keeping what it
@@ -2345,7 +2382,8 @@ export function createPgStore(connectionString) {
      */
     async replaceAttachment(userId, id, { data, bytes, source, name, mime }) {
       const current = (await q('SELECT * FROM attachments WHERE id = $1 AND user_id = $2', [id, userId]))[0];
-      if (!current || current.origin !== 'generated') return null;
+      // A copy of a Drive file keeps that origin (attachments.js `saveChangedFile`) and is changed the same way.
+      if (!current || (current.origin !== 'generated' && !(current.origin === 'google_drive' && current.derived_from))) return null;
 
       // Enforced here because all four rewrite paths reach this and only the
       // upload path checked. See MAX_ATTACHMENT_BYTES.
@@ -2383,7 +2421,7 @@ export function createPgStore(connectionString) {
         `UPDATE attachments
             SET data = $3, bytes = $4, source = $5,
                 name = COALESCE($6, name), mime = COALESCE($7, mime), created_at = NOW()
-          WHERE id = $1 AND user_id = $2 AND origin = 'generated'
+          WHERE id = $1 AND user_id = $2 AND (origin = 'generated' OR (origin = 'google_drive' AND derived_from IS NOT NULL))
       RETURNING id, name, mime, kind, bytes, origin, created_at`,
         [id, userId, data, bytes, source ?? null, name ?? null, mime ?? null],
       );
@@ -2452,7 +2490,7 @@ export function createPgStore(connectionString) {
       // `google_drive` is an upload picked from Drive (googleData.js).
       await q(
         `DELETE FROM attachments a
-          WHERE a.chat_id IS NULL AND a.origin IN ('upload', 'google_drive')
+          WHERE a.chat_id IS NULL AND (a.origin IN ('upload', 'google_drive') OR (a.origin = 'machine' AND a.source LIKE 'uploads/%'))
             AND a.created_at < NOW() - ($1 || ' hours')::interval
             AND NOT EXISTS (SELECT 1 FROM project_files p WHERE p.attachment_id = a.id)`,
         [String(olderThanHours)],
@@ -2516,8 +2554,26 @@ export function createPgStore(connectionString) {
         databaseBytes: n(row.database_bytes),
       };
     },
+    /** Files sent straight to a machine, a month on: `expireMachineUploads` takes the row and the bytes together. */
+    async expiredMachineUploads(days = 30, limit = 20) {
+      return q(
+        `SELECT id, user_id, source FROM attachments
+          WHERE origin = 'machine' AND source LIKE 'uploads/%' AND created_at < NOW() - ($1 || ' days')::interval
+       ORDER BY created_at LIMIT $2`,
+        [String(days), limit],
+      );
+    },
+
     /** Delete what `storageReport` calls detached and unsent. Returns how many of each went. */
     async pruneUnreachableFiles() {
+      // LibreOffice's drawing is a copy of a file, made again in a moment: not kept past a
+      // month, or past the file it was drawn from.
+      await q(
+        `DELETE FROM attachments a
+          WHERE a.origin = 'rendered'
+            AND (a.created_at < NOW() - INTERVAL '30 days'
+                 OR NOT EXISTS (SELECT 1 FROM attachments o WHERE o.id = a.derived_from AND o.user_id = a.user_id))`,
+      );
       const detached = await q(
         `DELETE FROM attachments a
           WHERE a.chat_id IS NOT NULL
@@ -3945,12 +4001,12 @@ export function createPgStore(connectionString) {
           `INSERT INTO shared_models
              (id, provider, model, family, label, description, context,
               price_in, price_out, is_free, released_at, added_by, vision,
-              max_output, expires_at, reasoning, refreshed_at)
+              max_output, expires_at, reasoning, hears, watches, refreshed_at)
            SELECT *, NOW() FROM unnest(
              $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
              $7::bigint[], $8::double precision[], $9::double precision[],
              $10::boolean[], $11::timestamptz[], $12::text[], $13::boolean[], $14::int[],
-             $15::timestamptz[], $16::boolean[]
+             $15::timestamptz[], $16::boolean[], $17::boolean[], $18::boolean[]
            )
            ON CONFLICT (id) DO UPDATE SET
              provider    = EXCLUDED.provider,
@@ -3967,6 +4023,8 @@ export function createPgStore(connectionString) {
              max_output  = EXCLUDED.max_output,
              expires_at  = EXCLUDED.expires_at,
              reasoning   = EXCLUDED.reasoning,
+             hears       = EXCLUDED.hears,
+             watches     = EXCLUDED.watches,
              refreshed_at = NOW()`,
           [
             slice.map((m) => m.id),
@@ -3986,6 +4044,8 @@ export function createPgStore(connectionString) {
             slice.map((m) => m.expiresAt ?? null),
             // Null is a real answer — the source did not say — and is kept.
             slice.map((m) => (m.reasoning == null ? null : !!m.reasoning)),
+            slice.map((m) => !!m.hears),
+            slice.map((m) => !!m.watches),
           ],
         );
       }

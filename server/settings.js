@@ -112,6 +112,12 @@ export const DEFAULT_PREFS = {
    */
   maskPersonal: false,
   /**
+   * A smaller model looks at an action nobody was going to be asked about, and the person
+   * is asked when it does not follow from what they asked (actionMonitor.js). Off by
+   * default: it spends the account's own allowance.
+   */
+  actionMonitor: false,
+  /**
    * The composer's + menu (owner, 2026-10-14).
    *
    * `pluginsOff`: families of built-in tools switched off — their tools are not
@@ -339,7 +345,7 @@ export async function setPrefs(userId, patch) {
     throw new Error(`"${patch.language}" is not a language this interface has. Use one of: ${[...LANGUAGES].join(', ')}.`);
   }
   if ('onboarded' in patch) next.onboarded = !!patch.onboarded;
-  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'connectorSearch', 'qualityGate', 'figureCheck', 'rankAnonymous']) if (flag in patch) next[flag] = !!patch[flag];
+  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'actionMonitor', 'connectorSearch', 'qualityGate', 'figureCheck', 'rankAnonymous']) if (flag in patch) next[flag] = !!patch[flag];
   if ('mascot' in patch && !MASCOTS.includes(patch.mascot)) throw new Error(`The mascot is one of: ${MASCOTS.join(', ')}.`);
   if ('retentionDays' in patch) {
     const days = Number(patch.retentionDays);

@@ -2,6 +2,8 @@ import { getStore } from '../store/index.js';
 import { executeTool } from '../tools/execute.js';
 import { previewOf, mediaOf, liveRevision } from '../attachments.js';
 import { clientError } from '../util/clientError.js';
+import { officeView } from '../office/look.js';
+import { canRenderOffice, renderWithOffice } from '../officeRender.js';
 
 /**
  * The workspace routes, lifted out of server/app.js.
@@ -168,6 +170,8 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
         bytes: file.bytes,
         origin: file.origin || 'upload',
         createdAt: file.created_at,
+        // A rewrite stamps the row, and what is cached of a file is cached by this.
+        version: new Date(file.created_at).getTime() || file.bytes,
         // Only for something the assistant wrote: the Markdown it was built
         // from, so the viewer can show and edit the source rather than a
         // rendering of it.
@@ -180,6 +184,102 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
         // A corrupt or password-protected document is an answer, not a 500 —
         // the viewer says what happened and still offers the download.
         res.json({ file: meta, preview: { kind: 'unreadable', message: clientError(err) } });
+      }
+    }),
+  );
+
+  /** The bytes a viewer's request is about: the live file, or a saved version of it. */
+  const viewedFile = async (req) => {
+    const store = getStore();
+    const revision = Number(req.query.rev);
+    if (Number.isInteger(revision) && revision > 0) {
+      const past = await store.getAttachmentVersion(req.user.id, req.params.id, revision);
+      if (past) return past;
+    }
+    return store.getAttachment(req.user.id, req.params.id);
+  };
+  // What is asked of one file does not change without its version changing, which the address says.
+  const cached = (res) => res.setHeader('Cache-Control', 'private, max-age=86400');
+  const sendImage = (res, drawn) => {
+    res.setHeader('Content-Type', drawn.mime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    cached(res);
+    res.send(Buffer.from(drawn.data, 'base64'));
+  };
+  const viewFailed = (res, err) => {
+    res.status(err?.code === 'office_unreadable' ? 422 : 500).json({ error: clientError(err) });
+  };
+
+  /**
+   * A worksheet as the viewer draws it: its cells, sizes and looks, and what stands
+   * over them. See `workbookModel`. A server that cannot measure (no canvas) says so,
+   * and the viewer falls back to the plain table it has always drawn.
+   */
+  api.get(
+    '/attachments/:id/workbook',
+    wrap(async (req, res) => {
+      const file = await viewedFile(req);
+      if (!file?.data) return res.status(404).json({ error: 'Not found' });
+      try {
+        const model = await officeView('workbook', Buffer.from(file.data, 'base64'), { sheet: Number(req.query.sheet) || 1, from: Number(req.query.from) || 0 });
+        if (!model) return res.status(503).json({ error: 'Not available' });
+        res.setHeader('Cache-Control', 'private, max-age=60');
+        res.json(model);
+      } catch (err) {
+        viewFailed(res, err);
+      }
+    }),
+  );
+
+  /** One chart, picture or shape off a worksheet. */
+  api.get(
+    '/attachments/:id/drawing/:sheet/:index',
+    wrap(async (req, res) => {
+      const file = await viewedFile(req);
+      if (!file?.data) return res.status(404).json({ error: 'Not found' });
+      try {
+        const drawn = await officeView('drawing', Buffer.from(file.data, 'base64'), { sheet: Number(req.params.sheet) || 1, index: Number(req.params.index) || 0, edge: 1600 });
+        if (!drawn || drawn.missing) return res.status(404).json({ error: 'Not found' });
+        sendImage(res, drawn);
+      } catch (err) {
+        viewFailed(res, err);
+      }
+    }),
+  );
+
+  /**
+   * The file as LibreOffice draws it: see server/officeRender.js. Asked for, not done
+   * for every file opened: it takes seconds and a little of the shared credit, and
+   * what comes back is kept, so asking again costs nothing.
+   */
+  api.post(
+    '/attachments/:id/render',
+    wrap(async (req, res) => {
+      const file = await getStore().getAttachment(req.user.id, req.params.id);
+      if (!file?.data) return res.status(404).json({ error: 'Not found' });
+      if (!canRenderOffice()) return res.status(503).json({ error: clientError(new Error('LibreOffice is not available right now. The ordinary preview still works.')) });
+      try {
+        const kept = await renderWithOffice(req.user.id, file);
+        res.json({ id: kept.id, name: kept.name, bytes: kept.bytes });
+      } catch (err) {
+        res.status(503).json({ error: clientError(err) });
+      }
+    }),
+  );
+
+  /** One slide of a deck, or page of a document, as it looks. */
+  api.get(
+    '/attachments/:id/page/:n',
+    wrap(async (req, res) => {
+      const file = await viewedFile(req);
+      if (!file?.data) return res.status(404).json({ error: 'Not found' });
+      try {
+        const drawn = await officeView('page', Buffer.from(file.data, 'base64'), { name: file.name, page: Number(req.params.n) || 1, edge: 1600 });
+        if (!drawn || drawn.missing) return res.status(drawn ? 404 : 503).json({ error: 'Not found' });
+        sendImage(res, drawn);
+      } catch (err) {
+        viewFailed(res, err);
       }
     }),
   );

@@ -435,6 +435,103 @@ section('sums are one card, a call not run is no row, a rewritten file is one ca
   await page.waitForTimeout(500);
 }
 
+section('lookups in a row are one card, whatever comes between them (owner, 2026-11-05)');
+{
+  await store.createChat(me.id, { id: 'c-looks', title: 'Lookups', model: 'auto' });
+  const say = (message) => store.appendMessage(me.id, 'c-looks', { createdAt: at, ...message });
+  const found = (id, title) => ({ id, title, updated: '2026-11-01T00:00:00Z' });
+  await say({ id: 'l-u', role: 'user', text: 'Look it all up' });
+  await say({ id: 'l-a1', role: 'assistant', text: '', toolCalls: [{ id: 'k1', name: 'search_chats', input: { query: 'giá' } }] });
+  await say({ id: 'l-t1', role: 'tool', results: [{ toolCallId: 'k1', name: 'search_chats', content: 'found', chats: [found('x1', 'Giá gói'), found('x2', 'Bảng giá')] }] });
+  await say({ id: 'l-a2', role: 'assistant', text: '', thinking: 'Better search once more.', toolCalls: [{ id: 'k2', name: 'search_chats', input: { query: 'phí' } }] });
+  await say({ id: 'l-t2', role: 'tool', results: [{ toolCallId: 'k2', name: 'search_chats', content: 'found', chats: [found('x3', 'Phí giao dịch')] }] });
+  await say({ id: 'l-a3', role: 'assistant', text: '', toolCalls: [{ id: 'k3', name: 'world_facts', input: { kind: 'exchange_rate', base: 'USD', quote: 'VND' } }] });
+  await say({ id: 'l-t3', role: 'tool', results: [{ toolCallId: 'k3', name: 'world_facts', content: '1 USD = 26,000 VND', ms: 33 }] });
+  await say({ id: 'l-a4', role: 'assistant', text: '', thinking: 'And the coin too.', toolCalls: [{ id: 'k4', name: 'world_facts', input: { requests: [{ kind: 'exchange_rate', base: 'USDT', quote: 'VND' }, { kind: 'moon' }] } }] });
+  await say({ id: 'l-t4', role: 'tool', results: [{ toolCallId: 'k4', name: 'world_facts', content: '1 USDT = 26,100 VND\n\nThe moon: full.', ms: 12 }] });
+  await say({ id: 'l-a5', role: 'assistant', text: '', toolCalls: [{ id: 'k5', name: 'market_data', input: { kind: 'crypto', symbols: ['BTC'] } }] });
+  await say({ id: 'l-t5', role: 'tool', results: [{ toolCallId: 'k5', name: 'market_data', content: 'BTC 100,000 USD', ms: 40 }] });
+  await say({ id: 'l-a6', role: 'assistant', text: '', toolCalls: [{ id: 'k6', name: 'sandbox_run', input: { title: 'Kiểm tra môi trường sandbox', command: 'uname -a && python3 --version' } }] });
+  await say({ id: 'l-t6', role: 'tool', results: [{ toolCallId: 'k6', name: 'sandbox_run', content: 'exit 0', ms: 900 }] });
+  await say({ id: 'l-a7', role: 'assistant', text: 'Done.' });
+  await reload();
+  await page.click('.chat-row[data-chat="c-looks"] .chat-item');
+  await page.waitForFunction(() => document.getElementById('chat-title').textContent === 'Lookups');
+  await page.waitForTimeout(400);
+  const look = await page.evaluate(() => {
+    const family = (name) => [...document.querySelectorAll(`#messages details.steps[data-family="${name}"]`)];
+    const line = (node) => node?.querySelector('summary')?.textContent.replace(/\s+/g, ' ').trim() || '';
+    const chats = family('chats');
+    const facts = family('facts');
+    const market = family('market');
+    const work = family('work');
+    return {
+      chats: chats.length,
+      chatsOpen: chats[0]?.open,
+      chatsLine: line(chats[0]),
+      chatRows: [...(chats[0]?.querySelectorAll('.recall__row') || [])].map((r) => r.textContent.trim()),
+      thoughtInside: !!chats[0]?.querySelector('.step--thought .think'),
+      thoughtsOutside: document.querySelectorAll('#messages .msg__body > .think').length,
+      facts: facts.length,
+      factsOpen: facts[0]?.open,
+      factsLine: line(facts[0]),
+      factsSaid: facts[0]?.textContent || '',
+      factsIcon: facts[0]?.querySelector('summary .mark svg')?.innerHTML || '',
+      market: market.length,
+      marketLine: line(market[0]),
+      marketIcon: market[0]?.querySelector('summary .mark svg')?.innerHTML || '',
+      workLine: line(work[0]),
+      workCode: work[0]?.querySelector('.step__code, pre')?.textContent || '',
+      workRows: work[0] ? [...work[0].querySelectorAll('.step__label')].map((n) => n.textContent.replace(/\s+/g, ' ').trim()) : [],
+    };
+  });
+  check('searches either side of a line of reasoning are one card', look.chats === 1, JSON.stringify(look.chatsLine));
+  check('  with the reasoning inside it', look.thoughtInside);
+  check('  every conversation found, one list', look.chatRows.join() === 'Giá gói,Bảng giá,Phí giao dịch', look.chatRows.join());
+  check('  counted', /3/.test(look.chatsLine), look.chatsLine);
+  check('  and folded once they are done', look.chatsOpen === false);
+  check('facts the same', look.facts === 1 && look.factsOpen === false, look.factsLine);
+  check('  saying how many', /2/.test(look.factsLine), look.factsLine);
+  check('  and what each found', /26,000/.test(look.factsSaid) && /26,100/.test(look.factsSaid));
+  check('a fact is not drawn with the web\'s globe', look.factsIcon && !look.factsIcon.includes('M3.5 12h17'), look.factsIcon.slice(0, 80));
+  check('  nor is a price', look.marketIcon && !look.marketIcon.includes('M3.5 12h17'), look.marketIcon.slice(0, 80));
+  check('one on its own stays a line of its own', look.market === 1 && /BTC/.test(look.marketLine) && /40/.test(look.marketLine), look.marketLine);
+  check('a titled command says its title and nothing else', /Kiểm tra môi trường sandbox/.test(look.workLine) && !/uname/.test(look.workLine), look.workLine);
+  check('  with what it ran one click away', /uname -a/.test(look.workCode), look.workCode.slice(0, 100));
+
+  // Watched as it happens: open while it runs, folded after, open again for the next one.
+  const live = await page.evaluate(async () => {
+    const { assistantMessage } = await import(document.querySelector('script[src*="/js/app.js"]')?.src.replace('app.js', 'render.js') || '/js/render.js');
+    const turn = assistantMessage();
+    document.getElementById('messages').append(turn.node);
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const card = () => turn.node.querySelector('details.steps[data-family="facts"]');
+    const one = turn.startTool({ id: 'p1', name: 'world_facts', input: { kind: 'moon' } });
+    const running = card().open;
+    one.complete({ content: 'full', ms: 5 });
+    await wait(1000);
+    const after = card().open;
+    const two = turn.startTool({ id: 'p2', name: 'world_facts', input: { kind: 'sun', location: 'Hanoi' } });
+    const again = card().open;
+    const cards = turn.node.querySelectorAll('details.steps[data-family="facts"]').length;
+    card().querySelector('summary').click();
+    two.complete({ content: 'sunrise', ms: 5 });
+    await wait(1000);
+    const touched = card().open;
+    turn.node.remove();
+    return { running, after, again, cards, touched };
+  });
+  check('open while it runs', live.running === true, JSON.stringify(live));
+  check('  folded when it is done', live.after === false);
+  check('  open again for the next, in the same card', live.again === true && live.cards === 1);
+  check('  and not taken away from somebody who pressed it', live.touched === false, JSON.stringify(live));
+
+  await reload();
+  await page.click('.chat-row[data-chat="c-round"] .chat-item');
+  await page.waitForFunction(() => document.getElementById('chat-title').textContent === 'A round of things');
+  await page.waitForTimeout(500);
+}
+
 section('a search says what it found');
 {
   const lines = await page.evaluate(() => [...document.querySelectorAll('#messages .web')].map((w) => ({ query: w.querySelector('.web__query')?.textContent || '', count: w.querySelector('.web__count')?.textContent || '', title: w.querySelector('.web__count')?.getAttribute('title') || '', rows: w.querySelectorAll('.webrow').length })));

@@ -802,7 +802,7 @@ section('what an upload is allowed to be');
   check('and a .pptx', classify('deck.pptx', 'application/octet-stream') === 'office');
   check('a macro-enabled one too', classify('a.docm', '') === 'office');
   check('a .pdf is still a document', classify('a.pdf', 'application/pdf') === 'document');
-  check('a .doc is refused — it is a different format entirely', classify('old.doc', 'application/msword') === null);
+  check('a .doc is kept as a file, not read as one here — it is a different format entirely', classify('old.doc', 'application/msword') === 'binary');
   check('and recognised as legacy, so the message can say so', office.isLegacyOffice('old.doc', ''));
 }
 
@@ -812,7 +812,7 @@ section('Excel in every form a person sends it');
   check('an old .xls is a workbook now, not a refusal', classify('so-sach.xls', 'application/vnd.ms-excel') === 'office' && !office.isLegacyOffice('so-sach.xls', ''));
   check('  and so are .xlsb, .ods and a template', ['a.xlsb', 'a.ods', 'a.xltx'].every((name) => classify(name, '') === 'office'));
   check('  while a .csv Windows labels as Excel stays text', classify('bang.csv', 'application/vnd.ms-excel') === 'text');
-  check('  and a .doc is still refused', classify('old.doc', 'application/msword') === null);
+  check('  and a .doc is still not read here', classify('old.doc', 'application/msword') === 'binary');
 
   // Fixtures written by SheetJS, the way Excel, LibreOffice and exporters do.
   const XLSX = await import('xlsx');

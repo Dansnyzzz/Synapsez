@@ -90,6 +90,9 @@ const BROWSER_GLOBALS = {
   Element: 'readonly',
   crypto: 'readonly',
   FileReader: 'readonly',
+  XMLHttpRequest: 'readonly',
+  FormData: 'readonly',
+  Node: 'readonly',
   File: 'readonly',
   Event: 'readonly',
   PointerEvent: 'readonly',
@@ -135,7 +138,7 @@ export default [
     // The worker runs in Node, but parts of it are serialised into a browser
     // page by `page.evaluate` and reference the DOM from there. So do the
     // tests, and the script that records the getting-started guide's clips.
-    files: ['worker/**/*.js', 'test/**/*.mjs', 'scripts/record-onboarding.mjs'],
+    files: ['worker/**/*.js', 'test/**/*.mjs', 'scripts/record-onboarding.mjs', 'scripts/e2b-probe.mjs'],
     languageOptions: { globals: { ...NODE_GLOBALS, ...BROWSER_GLOBALS } },
   },
 ];

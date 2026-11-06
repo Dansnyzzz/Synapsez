@@ -241,6 +241,9 @@ export function createModelBrowser({ onPick, recommended = () => null }) {
     // The one capability that fails loudly rather than quietly: send a picture
     // to a model without it and the provider rejects the whole request.
     if (model.vision !== false) tags.push(`<span class="tag tag--vision">${escapeHtml(t('models.seesImages'))}</span>`);
+    if (model.hears) tags.push(`<span class="tag tag--vision">${escapeHtml(t('models.hearsAudio'))}</span>`);
+    if (model.watches) tags.push(`<span class="tag tag--vision">${escapeHtml(t('models.watchesVideo'))}</span>`);
+    if (model.stealth) tags.push(`<span class="tag tag--warn">${escapeHtml(t('models.stealth'))}</span>`);
     if (isBuiltin) tags.push(`<span class="tag">${escapeHtml(t('models.tagBuiltIn'))}</span>`);
     // The provider has announced an end date — OpenRouter's "Going away". Said
     // before it happens, so nobody builds a daily job on a model with a week left.

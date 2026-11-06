@@ -108,11 +108,11 @@ section('classification');
   check('an unlabelled .ts falls back to its name', classify('main.ts', 'application/octet-stream') === 'text');
   check('an unlabelled .pdf does too', classify('bill.pdf', '') === 'document');
 
-  // Refused by name rather than accepted and ignored, which is the failure that
-  // wastes somebody's afternoon.
-  check('an executable is refused', classify('setup.exe', 'application/octet-stream') === null);
-  check('a zip is refused', classify('bundle.zip', 'application/zip') === null);
-  check('a video is refused', classify('clip.mp4', 'video/mp4') === null);
+  // Whatever a program can make, a person can be handed (owner, 2026-11-05). Kept,
+  // downloaded, put on the cloud computer: never drawn, and never run.
+  check('an executable is kept as a file', classify('setup.exe', 'application/octet-stream') === 'binary');
+  check('a zip is kept as a file', classify('bundle.zip', 'application/zip') === 'binary');
+  check('a video is a video', classify('clip.mp4', 'video/mp4') === 'video');
 }
 
 section('uploading');
@@ -148,8 +148,9 @@ let textId;
     mime: 'application/octet-stream',
     data: b64('MZ'),
   });
-  check('an unreadable kind is refused', exe.status === 400, `got ${exe.status}`);
-  check('with a reason naming the file', /setup\.exe/.test(exe.json?.error || ''), exe.json?.error);
+  check('a kind nothing here can read is still taken', exe.status === 201, `got ${exe.status}`);
+  const served = await alice.call('GET', `/api/attachments/${exe.json?.attachment?.id}`);
+  check('  and only ever comes back as a download', /attachment/.test(served.headers.get('content-disposition') || '') && served.headers.get('content-type') === 'application/octet-stream', `${served.headers.get('content-disposition')} ${served.headers.get('content-type')}`);
 
   const huge = await alice.call('POST', '/api/attachments', {
     name: 'big.png',

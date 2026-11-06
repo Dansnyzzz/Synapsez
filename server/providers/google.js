@@ -105,7 +105,7 @@ function attachmentParts(parts) {
   const out = [];
   for (const part of parts) {
     if (part.type === 'text') out.push({ text: part.text });
-    else if (part.type === 'image') out.push({ inlineData: { mimeType: part.mime, data: part.data } });
+    else if (part.type === 'image' || part.type === 'audio' || part.type === 'video') out.push({ inlineData: { mimeType: part.mime, data: part.data } });
     else if (part.type === 'document') {
       out.push({ inlineData: { mimeType: 'application/pdf', data: part.data } });
     }

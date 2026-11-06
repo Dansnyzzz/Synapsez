@@ -382,6 +382,27 @@ export async function lookAtFileHere(bytes, options = {}) {
   return drawLook(bytes, options, canvasApi, { lookableFormat, sheetPlan, strip: STRIP, caption: CAPTION });
 }
 
+/**
+ * What a viewer asks for, on whatever thread calls it: see `officeView`.
+ *
+ * @param {'page'|'workbook'|'drawing'} job
+ * @param {Buffer} bytes
+ * @param {any} options
+ * @returns {Promise<any>} null when the canvas cannot load on this platform
+ */
+export async function officeViewHere(job, bytes, options = {}) {
+  let canvasApi;
+  try {
+    canvasApi = await import('@napi-rs/canvas');
+  } catch {
+    return null;
+  }
+  const { drawPage, drawWorkbookModel, drawDrawing } = await import('./draw/index.js');
+  if (job === 'page') return drawPage(bytes, options, canvasApi, { lookableFormat });
+  if (job === 'workbook') return drawWorkbookModel(bytes, options, canvasApi);
+  return drawDrawing(bytes, options, canvasApi);
+}
+
 /* ── on a worker ────────────────────────────────────────────────────── */
 
 const LOOK_MS = 45_000;
@@ -425,11 +446,30 @@ export async function lookAtFile(file, { name = '', pages = null, maxSheets = 6,
 }
 
 /**
+ * One page or slide as a picture, a worksheet's cells, or one chart or picture off a
+ * sheet, for the viewer. On a worker for the reason a look is.
+ *
+ * @param {'page'|'workbook'|'drawing'} job
+ * @param {Buffer} bytes
+ * @param {any} [options]
+ */
+export async function officeView(job, bytes, options = {}) {
+  const timeoutMs = LOOK_MS;
+  const here = () => officeViewHere(job, bytes, { ...options, timeoutMs });
+  const out = await onWorker(new URL('./look.worker.mjs', import.meta.url), { job, bytes: Uint8Array.from(bytes), options: { ...options, timeoutMs } }, {
+    timeoutMs,
+    here,
+    late: `That file took longer than ${Math.round(timeoutMs / 1000)}s to read, so it was stopped.`,
+  });
+  return out ?? here();
+}
+
+/**
  * @param {URL} workerUrl
  * @param {any} workerData
  * @param {{ timeoutMs: number, here: () => Promise<any>, late: string }} job
  */
-function onWorker(workerUrl, workerData, { timeoutMs, here, late }) {
+export function onWorker(workerUrl, workerData, { timeoutMs, here, late }) {
   let worker;
   try {
     worker = new Worker(workerUrl, { workerData, resourceLimits: { maxOldGenerationSizeMb: LOOK_HEAP_MB } });

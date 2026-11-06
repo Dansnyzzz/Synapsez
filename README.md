@@ -625,6 +625,29 @@ Set `BROWSER_SHOW=true` to put it back on screen, `BROWSER_MUTE=true` for silenc
 
 ---
 
+## The cloud computer
+
+Each account has its own E2B machine, paused when idle and resumed as it was, memory and running
+processes included. It is made from a template with what a person would otherwise have to install:
+LibreOffice, ffmpeg, poppler, tmux, sqlite, ripgrep, jq, Noto and Office-metric fonts; numpy, pandas,
+scipy, scikit-learn, matplotlib, plotly, openpyxl, python-docx, python-pptx, reportlab, pdfplumber,
+opencv, Playwright with Chromium; and the `claude`, `codex` and `amp` command-line agents. What is
+not there, the model can install, and what an account installs is put back on a new machine.
+
+- **Older machines move themselves.** Memory is fixed when a machine is made, so one from an older
+  template gets its home copied to a new machine, as the account and all or nothing (`moveMachine`).
+- **It tidies up.** Caches and leftovers go every few minutes while the machine is awake, a file handed
+  to the chat leaves the machine, and the model is told when the disk passes 80%.
+- **What sandbox_run does beyond a command**: `terminal` keeps a REPL or an installer open between calls,
+  `expose_port` gives a public address, `checkpoint` saves and restores (three at most), output streams
+  to the row while it runs, and an exit code is explained. A file it was asked to deliver and could not
+  find keeps the command's output rather than losing it.
+- **Fair shares.** The month's credit is split evenly among the accounts active today, with a floor, so
+  one person's long job does not spend everybody's (`e2bAccountAllowance`, `server/freeTier.js`).
+
+Limits that are the machine's, not a choice: 2 GiB of memory plus a 1 GiB swap file, 10 GiB of disk. What
+does not fit is what the model should say so about, or do with a tool outside the machine.
+
 ## Desktop control
 
 The browser sandbox is contained. This is not: the `desktop_*` tools drive **real applications on
@@ -791,9 +814,22 @@ Attach with the `+` beside the composer, by pasting a screenshot straight into t
 dropping files anywhere on the window. Previews appear above the composer; each can be removed before
 you send, and a file with no caption is a perfectly good message — *"what is this?"* is implied.
 
-Four kinds, because four is what the model layer can genuinely do something with. Pretending
-otherwise produces the worst failure available: a file that uploads, appears in the bubble, and is
-never actually looked at.
+A conversation takes any file. What happens to it depends on what the model can do, and the model is
+always told, because the worst failure available is a file that uploads, appears in the bubble, and
+is never actually looked at. The table below is what a model reads directly; anything else (a zip,
+a database, an unusual format) reaches it as a note saying the file is there and how to open it on
+the cloud computer, with a zip's contents listed.
+
+**Sound and video** go directly to a model whose provider lists them as input, which the picker marks
+("hears audio", "watches video"), if the format is one the wire carries: wav, mp3, aiff, aac, ogg, opus,
+flac, m4a for sound, mp4, mov, mpeg, webm for video. Otherwise the composer says so before the send, and
+the file can be opened on the machine with ffmpeg. They never go while personal details are hidden:
+nothing can hide what is said in them.
+
+**Big files** go straight from the browser to the account's own machine on a link signed for one path,
+because the host stops a request at 4.5 MB and the database row at 5. Up to 2 GB; deleted after 30 days
+(`expireMachineUploads`) or with its row, and the whole machine goes with the account. Without E2B the
+limit is the row's.
 
 | | | |
 |---|---|---|
@@ -909,6 +945,15 @@ inside generated documents, charts, headers and footers, and any layout beyond w
 expresses.
 
 ---
+
+### Changing a file you attached
+
+Asked to change a file you sent, the model changes that file rather than making another
+(`server/office/edit.js`, `update_file` with `cells` or `edits`). The change is made in the file's own XML:
+comments, formats, hidden sheets and everything else stay, only the named cells or words differ, and a
+check at the end refuses to deliver the file if anything else moved. A cell inside a merge says which
+cell shows it. The original is kept as version 1. If it is unclear whether you wanted the same file or
+a new one, the model asks.
 
 ## The workspace, from the interface
 
@@ -1934,7 +1979,7 @@ assuming a fresh one, and that the serverless-only branches behave.
 | `RESEARCH_REPUTABLE_DOMAINS` | Comma-separated sites deep research counts as reputable, on top of its built-in list. |
 | `SANDBOX_DISABLED` | `1` hides the cloud sandbox. On Vercel it is offered automatically; elsewhere it needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`. |
 | `E2B_API_KEY` | Runs each account's cloud computer on E2B first (`server/e2b.js`), with the Vercel Sandbox standing in when E2B cannot: no key, this month's share of the credit spent, all twenty E2B machines running, or E2B not answering. An E2B machine pauses after ten idle minutes, keeping its memory and disk, and is not billed while paused. Every command is sent as root and drops to the account with `setpriv`; none reads a login file, the account's or root's. When the app first meets a machine it closes what E2B leaves open: `/usr/local` becomes root's alone and the account loses its `sudo`, so root is only `as_root`, which asks first. Use a Hobby key with no card on the team, so a spent credit is a refusal and never a bill. |
-| `E2B_TEMPLATE` | The E2B template machines are made from. Default `base` (512 MiB: Chromium does not start there, so the cloud browser needs the template); `npm run e2b:template` builds `synapsez-computer`: 2 vCPU and 2 GiB (or `E2B_TEMPLATE_CPUS` / `E2B_TEMPLATE_MEMORY_MB`), fonts for Vietnamese pages, pandas, matplotlib, openpyxl, python-docx, python-pptx, fpdf2 and the like for `/usr/bin/python3`, and the cloud browser's packages in npm's cache. Set this to that name afterwards. The template also copies the image's node into `/opt/synz-node`, which only root can change, and the cloud browser's helper runs as root, its sign-ins closed to the account's commands. `npm run e2b:probe` checks a machine on E2B itself — who commands run as, what is closed, time limits, background programs, a pause and resume — for about two cents. |
+| `E2B_TEMPLATE` | The E2B template machines are made from. Leave it unset: the default is `synapsez-computer`, built by `npm run e2b:template` (2 vCPU and 2 GiB, or `E2B_TEMPLATE_CPUS` / `E2B_TEMPLATE_MEMORY_MB`). A machine's memory is fixed when it is made, so this decides everything the cloud browser can do. If the template is not found, machines fall back to `base` for ten minutes and say so. Set this only to use a template of your own. |
 | `E2B_CREDIT_MILLS` / `E2B_CREDIT_EXPIRES` / `E2B_CREDIT_LASTING_MILLS` | The E2B credit, in thousandths of a dollar: the part that lapses (default `100000`), the day it lapses (default `2027-12-01`), and the part that never does (default `5000`). A month may spend what was left of the lapsing part when it began, divided by the months left before it lapses, so a quiet month passes its share on and none of it lapses unused; then the lasting part. Each is taken at 97%. The use and this month's ceiling are in Settings → People → Free allowances. |
 | `E2B_ACCOUNT_SHARE` | The most of the month's E2B credit one account's machine may use (a fraction, default `0.34`). Past it, that account's cloud computer runs on the Vercel stand-in, so one busy account cannot spend the month for everybody. |
 | `CLOUD_ACTIONS_PER_DAY` / `CLOUD_ACTIONS_TOTAL_PER_DAY` | Cloud browser and sandbox actions a day, per account (default `60`) and in all (default `400`) — sized to Hobby's CPU allowance. Raise them on a paid plan. |
@@ -2252,6 +2297,42 @@ someone already halfway through a task. The transcript is re-ordered before it r
 mid-run message never splits a tool call from its result, which every provider rejects.
 
 ---
+
+## How your data travels
+
+Settings → Privacy → *How your data travels* says all of this to the person using it, and each reply has
+a shield under it that says which of it applied to that reply: the model and provider, what that
+provider says it does with the words, and how many of each kind of detail were hidden, never which
+(`server/dataRoute.js`; the route is kept with the message).
+
+**Data cloaking** is used for eight different things, and most cannot be done here. What can:
+
+- **Hiding personal details** (`server/deidentify.js`, off by default). Values are swapped for placeholders
+  keyed to the account before anything leaves, and put back in the stream and in tool arguments. The
+  map lives in memory for one call. What it catches is measured against a labelled corpus with hard cases
+  left in, `test/deidentify-corpus.test.mjs`, and the Settings page shows those figures (`MEASURED`); the
+  suite fails if they stop being true. It is not a guarantee, and the page says what it misses.
+- **Zero retention** on OpenRouter with Strict provider privacy. No other provider has a per-request switch.
+- **Stealth models** (`stealth/…`, OpenRouter's `…-alpha`): nothing says what their makers keep, so they are
+  marked in the picker and on each reply, and refused under Strict and for data from a Google account.
+
+The provider table, with its sources and the day it was read, is `PROVIDER_POLICIES`.
+
+**Chain-of-thought monitoring.** What a provider returns as reasoning is usually a summary it wrote, and
+models leave out what moved them, so each block says whose words it is and it is never presented as an
+explanation. Nothing here trains a model, or feeds a check's result back to one.
+
+**The independent check** (`server/actionMonitor.js`, off by default). Before an action that would run
+unasked, a smaller model compares it with what the person asked. It runs for anything sensitive, and for
+ordinary actions once the turn has read something from outside. Only an exact allow lets it through:
+an ask, a failure, a timeout, silence or an allow quoted in reasoning all stop for the person. It goes
+through `streamCompletion`, under the same masking and Google rules, on the account's own key, and it can
+be talked round the same way the assistant can: one more fence, and it says so.
+
+Not done, and why: reading a provider's raw reasoning or its signed blocks, inventing a summary for a
+model that returned none, sealed hardware (this hosting has none), image cloaking (it has been shown
+removable and makes a model misread), checking every step (it doubles the cost for narrow evidence).
+The research behind this is `docs/research/2026-11-04-data-cloaking-cot-monitorability.md`.
 
 ## Security
 

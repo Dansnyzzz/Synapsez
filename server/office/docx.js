@@ -377,6 +377,8 @@ export function readDocx(buffer) {
   const media = [];
   const context = { rels, zip, media, base: documentPath };
   let openList = null;
+  /** The paragraph before this one was a line of code, so this one may carry that block on. */
+  let inCode = false;
 
   const closeList = () => {
     if (openList) blocks.push(openList);
@@ -396,6 +398,11 @@ export function readDocx(buffer) {
       for (const picture of imagesIn(child, context)) {
         blocks.push({ type: 'image', index: picture.index, alt: picture.alt });
       }
+
+      // Word has no code block: this project's writer, and everybody else's, makes one a
+      // paragraph a line. Read back a paragraph at a time it drew a box per line.
+      const wasCode = inCode;
+      inCode = false;
 
       if (style.numId) {
         const levels = numbering.get(style.numId);
@@ -422,6 +429,11 @@ export function readDocx(buffer) {
        */
       const empty = !runs.some((run) => run.text.trim());
       if (empty) {
+        if (style.code && wasCode) {
+          blocks[blocks.length - 1].text += '\n';
+          inCode = true;
+          continue;
+        }
         if (hasPageBreak(child)) blocks.push({ type: 'pagebreak' });
         else if (hasRule(child)) blocks.push({ type: 'divider' });
         continue;
@@ -433,12 +445,18 @@ export function readDocx(buffer) {
 
       if (style.level) blocks.push({ type: 'heading', level: style.level, runs });
       else if (style.quote) blocks.push({ type: 'quote', runs });
-      else if (style.code) blocks.push({ type: 'code', text: runs.map((r) => r.text).join('') });
+      else if (style.code) {
+        const line = runs.map((r) => r.text).join('');
+        if (wasCode) blocks[blocks.length - 1].text += `\n${line}`;
+        else blocks.push({ type: 'code', text: line });
+        inCode = true;
+      }
       else blocks.push({ type: 'paragraph', runs });
       continue;
     }
 
     if (name === 'tbl') {
+      inCode = false;
       closeList();
       const table = readTable(child, rels);
       if (table) blocks.push(table);

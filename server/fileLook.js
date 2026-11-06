@@ -102,7 +102,7 @@ export function pictureNote(name, { pictures, labels, notes, skipped, unit, tota
  *
  * Never fails the write: whatever goes wrong here, the file exists.
  *
- * @param {{ userId: string, chatId?: string|null, file: { id: string, name: string, format?: string },
+ * @param {{ userId: string, chatId?: string|null, file: { id: string, name: string, format?: string, lookAt?: number[] },
  *   canSee?: boolean, masking?: boolean, deadline?: number, looksSoFar?: number,
  *   draw?: typeof lookAtFile, keep?: typeof keepStepShot, store?: any }} input
  * @returns {Promise<{ text: string, pictures: { id: string, name: string, label: string }[], looked: boolean }>}
@@ -129,6 +129,7 @@ export async function lookAfterWriting({ userId, chatId = null, file, canSee = t
       bytes: Buffer.from(row.data, 'base64'),
       name: file.name,
       canSee,
+      pages: Array.isArray(file.lookAt) && file.lookAt.length ? file.lookAt : null,
       timeoutMs: Math.min(DRAW_MS, left - LEAVE_MS / 2),
       draw,
       keep,

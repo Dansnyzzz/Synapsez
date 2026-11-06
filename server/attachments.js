@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { MAX_ATTACHMENT_BYTES } from './store/pg.js';
 import { extractPdfText, TEXT_MS } from './pdf.js';
-import { isLegacyOffice, officeFormat, readOffice, readOfficeAsync } from './office/index.js';
+import { officeFormat, readOffice, readOfficeAsync } from './office/index.js';
+import { openZip } from './office/zip.js';
 import { log } from './util/trace.js';
 import { groundedImage } from './imageGround.js';
 import { DRIVE_ORIGIN } from './googleData.js';
@@ -48,6 +49,17 @@ const TEXT_EXTENSION =
 
 const IMAGE_MIME = /^image\/(png|jpeg|jpg|webp|gif)$/i;
 
+const AUDIO_EXTENSION = /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|aiff?|wma|weba)$/i;
+const VIDEO_EXTENSION = /\.(mp4|m4v|mov|webm|mpe?g|mkv|avi|wmv|3gp)$/i;
+
+/**
+ * What kind of file this is, which says what can be done with it.
+ *
+ * Everything is one kind or another (owner, 2026-11-05): whatever a program can make,
+ * a person can be handed, and a zip is as good an answer as a chart. `binary` is
+ * what cannot be read here but can be kept, downloaded and put on the cloud computer.
+ * It is always served as a download, never drawn inline: see the attachment route.
+ */
 export function classify(name, mime) {
   const type = String(mime || '').toLowerCase();
   const filename = String(name || '');
@@ -55,38 +67,60 @@ export function classify(name, mime) {
   if (IMAGE_MIME.test(type)) return 'image';
   if (type === 'application/pdf' || /\.pdf$/i.test(filename)) return 'document';
   if (officeFormat(filename, type)) return 'office';
-  if (TEXT_MIME.test(type) || TEXT_EXTENSION.test(filename)) return 'text';
+  // Before sound and video: a browser calls TypeScript's .ts "video/mp2t".
+  if (TEXT_EXTENSION.test(filename)) return 'text';
+  if (type.startsWith('audio/') || AUDIO_EXTENSION.test(filename)) return 'audio';
+  if (type.startsWith('video/') || VIDEO_EXTENSION.test(filename)) return 'video';
+  if (TEXT_MIME.test(type)) return 'text';
+  return 'binary';
+}
 
-  // A bare `application/octet-stream` from a browser that could not guess — fall
-  // back to the extension, which is usually right and always better than a
-  // refusal the person cannot act on.
-  if (!type || type === 'application/octet-stream') {
-    if (TEXT_EXTENSION.test(filename)) return 'text';
-  }
-  return null;
+const MIME_BY_EXTENSION = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  csv: 'text/csv',
+  json: 'application/json',
+  html: 'text/html',
+  md: 'text/markdown',
+  txt: 'text/plain',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+  '7z': 'application/x-7z-compressed',
+  rar: 'application/vnd.rar',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  opus: 'audio/opus',
+  flac: 'audio/flac',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mpeg: 'video/mpeg',
+  mpg: 'video/mpeg',
+  mkv: 'video/x-matroska',
+  avi: 'video/x-msvideo',
+};
+
+/** The type of a file known by its name alone: one a program on the cloud computer made. */
+export function mimeFor(name) {
+  const extension = String(name || '').split('.').pop().toLowerCase();
+  return MIME_BY_EXTENSION[extension] || 'application/octet-stream';
 }
 
 const humanSize = (bytes) =>
   bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
-
-/**
- * Why this particular file cannot be taken.
- *
- * A .doc gets its own sentence because the fix is one menu item away and
- * "unsupported file type" does not tell anybody that.
- */
-function refusal(filename, mime) {
-  if (isLegacyOffice(filename, mime)) {
-    return (
-      `${filename} is in the old Office format, which cannot be read. ` +
-      'Open it and use Save As to make a .docx, .xlsx or .pptx, then send that.'
-    );
-  }
-  return (
-    `${filename} is not a kind of file the assistant can read. ` +
-    'Images, PDFs, Word, Excel, PowerPoint, and text or code files work.'
-  );
-}
 
 /**
  * The little picture a shelf or a message draws, if the browser sent a usable one.
@@ -136,12 +170,12 @@ export async function saveUpload(userId, { name, mime, data, thumb = null, origi
   }
 
   const kind = classify(filename, mime);
-  if (!kind) throw new Error(refusal(filename, mime));
 
   return getStore().createAttachment(userId, {
     id: crypto.randomUUID(),
     name: filename,
-    mime: String(mime || '').slice(0, 120) || 'application/octet-stream',
+    // A browser that could not say what it is: its name usually does.
+    mime: (String(mime || '').slice(0, 120) || 'application/octet-stream') === 'application/octet-stream' ? mimeFor(filename) : String(mime).slice(0, 120),
     kind,
     bytes,
     data: base64,
@@ -161,7 +195,7 @@ export async function saveUpload(userId, { name, mime, data, thumb = null, origi
  *
  * `thumb` is a picture's small copy, for one kept to show in a run's strip.
  */
-export async function saveGenerated(userId, { name, mime, kind, data, source, chatId, origin = 'generated', thumb = null }) {
+export async function saveGenerated(userId, { name, mime, kind = null, data, source = null, chatId = null, origin = 'generated', thumb = null }) {
   const base64 = String(data || '');
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
   const bytes = Math.floor((base64.length * 3) / 4) - padding;
@@ -174,13 +208,87 @@ export async function saveGenerated(userId, { name, mime, kind, data, source, ch
     id: crypto.randomUUID(),
     name: String(name).slice(0, 200),
     mime: String(mime || 'application/octet-stream').slice(0, 120),
-    kind: kind || classify(name, mime) || 'text',
+    kind: kind || classify(name, mime),
     bytes,
     data: base64,
     origin,
     source: source == null ? null : String(source).slice(0, 400_000),
     chatId: chatId || null,
     thumb: cleanThumb(thumb),
+  });
+}
+
+/**
+ * A change to a file, kept as a new version of it.
+ *
+ * Something the assistant made is simply rewritten, its last copy filed as a version.
+ * What a person sent stays as they sent it: the first change makes a copy under the
+ * same name, whose first version is the original, and every change after that goes
+ * on the copy, whichever id is named. So "put it back" is always there, and the file
+ * in their message is never quietly different from what they attached.
+ *
+ * @param {string} userId
+ * @param {any} file  the row as it stands: the person's, or the copy
+ * @param {Buffer} buffer  the new bytes
+ * @param {{ chatId?: string|null, name?: string|null, source?: string|null }} [options]
+ * @returns {Promise<any>} the row that now holds them
+ */
+export async function saveChangedFile(userId, file, buffer, { chatId = null, name = null, source = null } = {}) {
+  const store = getStore();
+  if (buffer.length > MAX_BYTES) throw new Error(`That file would come to ${humanSize(buffer.length)}, over the ${humanSize(MAX_BYTES)} limit.`);
+  let target = file;
+  // A copy of a Drive file is what it was copied from, as far as anything holding Google's
+  // rules is concerned: it may not go where the original may not (googleData.js).
+  const isCopy = file.origin === 'generated' || (file.origin === DRIVE_ORIGIN && file.derived_from);
+  if (!isCopy) {
+    target =
+      (await store.findDerivedFile(userId, file.id)) ||
+      (await store.createAttachment(userId, {
+        id: crypto.randomUUID(),
+        name: file.name,
+        mime: file.mime,
+        kind: file.kind,
+        bytes: Number(file.bytes),
+        data: file.data,
+        origin: file.origin === DRIVE_ORIGIN ? DRIVE_ORIGIN : 'generated',
+        source: null,
+        chatId: chatId || file.chat_id || null,
+        thumb: null,
+        derivedFrom: file.id,
+      }));
+  }
+  const saved = await store.replaceAttachment(userId, target.id, {
+    data: buffer.toString('base64'),
+    bytes: buffer.length,
+    source,
+    name: name || file.name,
+    mime: file.mime,
+  });
+  if (!saved) throw new Error('That file could not be updated.');
+  return saved;
+}
+
+/**
+ * A file too large to keep in the conversation, which stays on the cloud computer:
+ * a row that says where it is, with no bytes. Always `binary`, whatever it is, so
+ * nothing that reads a file's bytes tries to; `origin` is what the download route
+ * goes by. The path is the account's own, and only ever goes back to its own machine.
+ *
+ * @param {string} userId
+ * @param {{ name: string, mime: string, bytes: number, path: string, chatId?: string|null }} file
+ */
+export async function saveMachineFile(userId, { name, mime, bytes, path, chatId = null }) {
+  return getStore().createAttachment(userId, {
+    id: crypto.randomUUID(),
+    name: String(name).slice(0, 200),
+    mime: String(mime || 'application/octet-stream').slice(0, 120),
+    kind: 'binary',
+    bytes,
+    data: '',
+    origin: 'machine',
+    source: String(path).slice(0, 1000),
+    chatId,
+    thumb: null,
   });
 }
 
@@ -618,7 +726,14 @@ function sightText(name, what, reading) {
   );
 }
 
-export function toParts(message, loaded, { vision = true, documents = true, seen = null } = {}) {
+/**
+ * What a provider's wire carries (openrouter.ai/docs/guides/overview/multimodal), by file
+ * ending: the format it names a sound by, and the type it names a video by.
+ */
+const AUDIO_ON_THE_WIRE = { wav: 'wav', mp3: 'mp3', aiff: 'aiff', aif: 'aiff', aac: 'aac', ogg: 'ogg', oga: 'ogg', opus: 'ogg', flac: 'flac', m4a: 'm4a' };
+const VIDEO_ON_THE_WIRE = { mp4: 'video/mp4', m4v: 'video/mp4', mpeg: 'video/mpeg', mpg: 'video/mpeg', mov: 'video/quicktime', webm: 'video/webm' };
+
+export function toParts(message, loaded, { vision = true, documents = true, seen = null, hears = false, watches = false } = {}) {
   const parts = [];
 
   for (const file of message.attachments || []) {
@@ -764,11 +879,65 @@ export function toParts(message, loaded, { vision = true, documents = true, seen
       continue;
     }
 
+    // The model reads sound or video itself, when its provider says it does and the
+    // wire carries this kind. A format it would refuse goes to the machine instead,
+    // rather than failing the whole request.
+    const ending = String(full.name || '').split('.').pop().toLowerCase();
+    const heard = full.data && full.kind === 'audio' && hears ? AUDIO_ON_THE_WIRE[ending] : null;
+    if (heard) {
+      parts.push({ type: 'audio', name: full.name, mime: full.mime, data: full.data, format: heard });
+      continue;
+    }
+    const watched = full.data && full.kind === 'video' && watches ? VIDEO_ON_THE_WIRE[ending] : null;
+    if (watched) {
+      parts.push({ type: 'video', name: full.name, mime: watched, data: full.data });
+      continue;
+    }
+    if (full.kind === 'binary' || full.kind === 'audio' || full.kind === 'video') {
+      parts.push({ type: 'text', text: unreadFileNote(full) });
+      continue;
+    }
+
     parts.push({ type: full.kind, name: full.name, mime: full.mime, data: full.data });
   }
 
   return parts;
 }
+
+/**
+ * A file sent to a model that cannot take it as it is. Not "I cannot read that":
+ * with a cloud computer there is nearly always a way, and the model has to know it
+ * can ask for one. A zip gets its list, which costs nothing and answers most questions.
+ *
+ * @param {{ id: string, name: string, mime?: string, kind: string, bytes?: number, origin?: string, source?: string|null, data?: string }} file
+ */
+function unreadFileNote(file) {
+  const size = humanSize(Number(file.bytes) || 0);
+  if (file.origin === 'machine') {
+    return `[The file "${file.name}" (${size}) is on the cloud computer at ${file.source}. sandbox_run can open it there.]`;
+  }
+  const what = file.kind === 'audio' ? 'a sound file' : file.kind === 'video' ? 'a video' : 'a file';
+  const listed = zipListing(file);
+  return (
+    `[The user attached "${file.name}", ${what} of ${size} (id ${file.id}), which this model cannot read directly. ` +
+    'sandbox_run with bring and that id puts it on the cloud computer as incoming/<name>, where ffmpeg, unzip, soffice, Python and the like can open it. ' +
+    (file.kind === 'binary' ? '' : 'Or suggest a model marked as reading this kind of file. ') +
+    `${listed ? `It holds:\n${listed}` : ''}]`
+  );
+}
+
+/** What a zip holds, one line each, or nothing for anything else. @param {{ name?: string, data?: string }} file */
+function zipListing(file) {
+  if (!/\.zip$/i.test(String(file.name)) || !file.data) return '';
+  try {
+    const zip = openZip(Buffer.from(file.data, 'base64'));
+    const names = [...zip.names].filter((name) => !name.endsWith('/'));
+    return `${names.slice(0, ZIP_LIST_MAX).join('\n')}${names.length > ZIP_LIST_MAX ? `\n… and ${names.length - ZIP_LIST_MAX} more` : ''}`;
+  } catch {
+    return '';
+  }
+}
+const ZIP_LIST_MAX = 60;
 
 /**
  * Everything needed to show one file: its text, and the structured preview.
@@ -789,6 +958,15 @@ export async function previewOf(row) {
     });
     remember(row.id, { text: read.text, format, meta: read.meta });
     if (read.media?.length) rememberMedia(row.id, read.media);
+    // How wide a slide is against how tall, so its place is the right shape before its picture arrives.
+    if (format === 'pptx') {
+      try {
+        const size = /<(?:\w+:)?sldSz\b[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"/.exec(openZip(Buffer.from(row.data, 'base64')).text('ppt/presentation.xml'));
+        if (size) return { kind: read.preview.kind, format, text: read.text, ...read.preview, slideWidth: Number(size[1]), slideHeight: Number(size[2]) };
+      } catch {
+        /* A wide slide is a fair guess until the picture arrives. */
+      }
+    }
     /**
      * The text goes with it.
      *
@@ -813,6 +991,13 @@ export async function previewOf(row) {
     return { kind: 'text', format: row.name.split('.').pop().toLowerCase(), text: Buffer.from(row.data, 'base64').toString('utf8') };
   }
 
+  if (row.kind === 'audio' || row.kind === 'video') return { kind: row.kind, format: row.name.split('.').pop().toLowerCase() };
+
+  if (row.kind === 'binary') {
+    const listed = zipListing(row);
+    return { kind: 'binary', format: row.name.split('.').pop().toLowerCase(), onMachine: row.origin === 'machine', ...(listed ? { text: listed } : {}) };
+  }
+
   return { kind: 'image', format: row.mime.split('/').pop() };
 }
 
@@ -830,4 +1015,18 @@ export function liveRevision(past) {
   return newest + 1;
 }
 
+/** The most one file may be on its way straight to the machine: a fifth of the disk an account has. */
+export const MAX_DIRECT_BYTES = 2 * 1024 * 1024 * 1024;
+
 export const LIMITS = { maxBytes: MAX_BYTES, maxPerMessage: MAX_PER_MESSAGE };
+
+/** A file's name as a path on the machine can hold it: one piece, nothing that climbs out. */
+export function machineFileName(name) {
+  const clean = String(name || '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\\/\u0000-\u001f]+/g, '-')
+    .replace(/^\.+/, '')
+    .trim()
+    .slice(0, 180);
+  return clean || 'file';
+}

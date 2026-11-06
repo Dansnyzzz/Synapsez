@@ -22,10 +22,20 @@
  *     root with it, the sign-ins out of reach;
  *   - the cloud browser's own packages, fetched once into root's npm cache and
  *     the account's (the root start falls back to the account's), so a first
- *     start unpacks rather than downloads.
+ *     start unpacks rather than downloads;
+ *   - everything a person new to all this would otherwise be told to install
+ *     (owner, 2026-11-05): ffmpeg, zip, sqlite3, LibreOffice with a first start
+ *     already done, poppler, tmux; Playwright with its Chromium; the coding agents.
+ *     On disk they cost nothing while they are not running, and a machine pays by
+ *     the second for what it spends installing. Past the disk what is left is a
+ *     person's own; past the memory the model says so or uses a tool instead;
+ *   - one `pip` (the owner's "pip path bug"). The image has two Pythons, and on the
+ *     PATH a command gets, `python3` is /usr/bin's while `pip` was /usr/local/bin's:
+ *     pip said a package was installed and Python could not import it.
  *
- * Run it once, then set E2B_TEMPLATE to the name it prints — on Vercel as well
- * as in .env. Running it again rebuilds the same name.
+ * Run it after changing this file, and raise BASE_VERSION in server/e2b.js: machines
+ * made from an older build move to the new one, keeping their files. The name is in
+ * server/e2b.js too, so nothing has to be set anywhere; E2B_TEMPLATE overrides it.
  *
  *   npm run e2b:template
  *
@@ -51,10 +61,28 @@ if (!process.env.E2B_API_KEY) {
   process.exit(1);
 }
 
-const NAME = 'synapsez-computer';
-const cpuCount = Math.max(1, Number(process.env.E2B_TEMPLATE_CPUS) || 2);
-const memoryMB = Math.max(512, Number(process.env.E2B_TEMPLATE_MEMORY_MB) || 2048);
-const PYTHON = ['numpy', 'pandas', 'matplotlib', 'openpyxl', 'python-docx', 'python-pptx', 'fpdf2', 'pillow', 'requests', 'beautifulsoup4', 'lxml'];
+const { TEMPLATE_NAME: NAME, TEMPLATE_SIZE, ONE_PIP } = await import('../server/e2b.js');
+const cpuCount = Math.max(1, Number(process.env.E2B_TEMPLATE_CPUS) || TEMPLATE_SIZE.cpu);
+const memoryMB = Math.max(512, Number(process.env.E2B_TEMPLATE_MEMORY_MB) || TEMPLATE_SIZE.memMb);
+const PYTHON = [
+  // Numbers and charts.
+  'numpy', 'pandas', 'scipy', 'scikit-learn', 'statsmodels', 'sympy', 'matplotlib', 'seaborn', 'plotly',
+  // Office and PDF.
+  'openpyxl', 'xlsxwriter', 'python-docx', 'python-pptx', 'fpdf2', 'reportlab', 'pypdf', 'pdfplumber',
+  // Pictures and sound.
+  'pillow', 'opencv-python-headless', 'pydub',
+  // The web and text.
+  'requests', 'httpx', 'certifi', 'beautifulsoup4', 'lxml', 'pyyaml', 'markdown', 'jinja2', 'tabulate', 'tqdm', 'playwright',
+];
+const SYSTEM = [
+  'fonts-noto-core', 'fonts-dejavu-core', 'fonts-liberation', 'fonts-crosextra-carlito', 'fonts-crosextra-caladea',
+  'ffmpeg', 'zip', 'unzip', 'sqlite3', 'poppler-utils', 'tmux', 'jq', 'ripgrep',
+  'libreoffice-core', 'libreoffice-writer', 'libreoffice-calc', 'libreoffice-impress',
+];
+/** Coding agents, for somebody with their own key. They do nothing until started, and need that key to start. */
+const AGENTS = ['@anthropic-ai/claude-code', '@openai/codex', '@sourcegraph/amp'];
+/** One folder for everybody: a browser fetched into one account's cache is not there for the next. */
+const BROWSERS = '/opt/ms-playwright';
 
 const { DEPS } = await import('../server/cloudBrowser/index.js');
 const { ROOT_NODE_DIR } = await import('../server/sandbox.js');
@@ -76,20 +104,26 @@ const rootNode = [
 const { Template, defaultBuildLogger } = await import('e2b');
 const template = Template()
   .fromBaseImage()
-  .aptInstall(['fonts-noto-core', 'fonts-dejavu-core'], { noInstallRecommends: true })
+  .aptInstall(SYSTEM, { noInstallRecommends: true })
   .runCmd(
     [
       '/usr/bin/python3 -m pip --version >/dev/null 2>&1 || (apt-get update -q && apt-get install -y -q --no-install-recommends python3-pip)',
       // Debian marks its Python as managed by apt (PEP 668); pip older than that has no such flag.
       `/usr/bin/python3 -m pip install -q --no-cache-dir --break-system-packages ${PYTHON.join(' ')} || /usr/bin/python3 -m pip install -q --no-cache-dir ${PYTHON.join(' ')}`,
+      ONE_PIP,
+      // For every command: /etc/profile reads this folder, and is what a command's shell reads (shellFor).
+      `printf 'export PLAYWRIGHT_BROWSERS_PATH=${BROWSERS}\\n' > /etc/profile.d/synz-browsers.sh && chmod 644 /etc/profile.d/synz-browsers.sh`,
+      `PLAYWRIGHT_BROWSERS_PATH=${BROWSERS} /usr/bin/python3 -m playwright install --with-deps chromium && chmod -R a+rX ${BROWSERS}`,
       rootNode,
+      `npm install -g --no-audit --no-fund --loglevel=error ${AGENTS.join(' ')}`,
     ],
     { user: 'root' },
   )
   .runCmd(`PATH=${ROOT_NODE_DIR}/bin:/usr/bin:/bin && ${warm('/tmp/synz-warm-root')}`, { user: 'root' })
-  .runCmd(warm('/tmp/synz-warm-user'), { user: 'user' });
+  .runCmd(warm('/tmp/synz-warm-user'), { user: 'user' })
+  // Its first start writes a profile and a font cache, about ten seconds that every conversion would otherwise wait.
+  .runCmd("cd /tmp && echo warm > synz-warm.txt && soffice --headless --convert-to pdf synz-warm.txt >/dev/null 2>&1; rm -f synz-warm.txt synz-warm.pdf; true", { user: 'user' });
 
 console.log(`\n  Building ${NAME} (${cpuCount} vCPU, ${memoryMB} MiB) from E2B's base…\n`);
 const built = await Template.build(template, NAME, { apiKey: process.env.E2B_API_KEY, cpuCount, memoryMB, onBuildLogs: defaultBuildLogger() });
 console.log(`\n  Built ${built.name} (template ${built.templateId}).`);
-console.log(`  Now set E2B_TEMPLATE=${NAME} in .env and in the Vercel project's environment variables, then redeploy.\n`);

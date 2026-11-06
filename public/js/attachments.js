@@ -27,6 +27,19 @@ const $ = (id) => document.getElementById(id);
 const isImage = (type) => /^image\//i.test(type || '');
 
 /**
+ * Past this a file does not go through this app at all: the host stops a request at 4.5 MB,
+ * and base64 makes three megabytes into four. It goes to the account's machine directly.
+ */
+const DIRECT_ABOVE = 3 * 1024 * 1024;
+
+/** Whether a picked file is sound or video, by its type or, when a browser gives none, its ending. */
+function mediaKind({ mime, name }) {
+  if (/^audio\//i.test(mime || '') || /\.(mp3|wav|m4a|aac|flac|ogg|oga|opus|aiff?|wma|amr)$/i.test(name || '')) return 'audio';
+  if (/^video\//i.test(mime || '') || /\.(mp4|m4v|mov|mkv|webm|avi|mpe?g|wmv|3gp)$/i.test(name || '')) return 'video';
+  return null;
+}
+
+/**
  * @param {object} deps
  * @param {any} deps.state                    the app's shared state object
  * @param {() => void} deps.refreshSendState  re-enable or grey out the send button
@@ -54,6 +67,8 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
    * warning must never be the thing that appears wrongly.
    */
   let modelSeesImages = true;
+  let modelHears = false;
+  let modelWatches = false;
 
   /**
    * Whether the chosen model is a free one.
@@ -135,6 +150,7 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       <div class="stage ${pasted ? 'stage--pasted' : file.isImage || file.thumb ? 'stage--media' : 'stage--file'}${state}${movable ? ' stage--movable' : ''}" data-index="${i}" title="${escapeHtml(movable ? `${say} — ${t('attachment.moveHint')}` : say)}">
         ${face}
         ${file.failed ? `<span class="stage__err">${escapeHtml(file.failed)}</span>` : ''}
+        ${!file.id && !file.failed && file.percent != null ? `<span class="stage__percent">${file.percent}%</span>` : ''}
         ${!file.id && !file.failed ? `<span class="stage__spin" aria-label="${escapeHtml(t('attachment.uploading'))}"></span>` : ''}
         <button class="stage__remove" data-drop="${i}" type="button" aria-label="${escapeHtml(
           t('attachment.remove', { name: file.name }),
@@ -184,6 +200,7 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
    * way up is deleted when it lands — see `upload`.
    */
   function forgetPaste(entry) {
+    entry?.stopUpload?.();
     if (entry?.pastedText == null) return;
     entry.discarded = true;
     if (entry.id) api.deleteUpload(entry.id).catch(() => {});
@@ -360,6 +377,36 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
    */
   const uploads = new WeakMap();
 
+  /** What can be made smaller still takes that way, up to where a browser can read it at all. */
+  const goesDirect = (file) => {
+    const limits = state.boot?.attachments;
+    return !!limits?.direct && file.size > DIRECT_ABOVE && (!shrinkable(file) || file.size > MAX_SHRINKABLE_BYTES);
+  };
+
+  /** The file to the machine with its progress on the tile, then its row. Pressing x stops it. */
+  async function sendToMachine(entry, file) {
+    const { url, path } = await api.startDirectUpload({ name: file.name, mime: file.type, bytes: file.size });
+    await new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      const form = new FormData();
+      form.append('file', file, file.name);
+      entry.stopUpload = () => request.abort();
+      request.upload.addEventListener('progress', ({ loaded, total }) => {
+        const percent = Math.floor((loaded / (total || 1)) * 100);
+        if (percent === entry.percent) return;
+        entry.percent = percent;
+        renderStaged();
+      });
+      request.addEventListener('load', () => (request.status < 300 ? resolve(undefined) : reject(new Error(t('attachment.directFailed')))));
+      request.addEventListener('error', () => reject(new Error(t('attachment.directFailed'))));
+      request.addEventListener('abort', () => reject(new Error(t('attachment.directFailed'))));
+      request.open('POST', url);
+      request.send(form);
+    });
+    const { attachment } = await api.finishDirectUpload({ path, mime: file.type });
+    return attachment;
+  }
+
   /** Upload one staged file, shrinking it first where that is honest. */
   async function upload(entry, file) {
     if (!uploads.has(entry)) uploads.set(entry, newestOnly());
@@ -367,24 +414,31 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     renderStaged();
     refreshSendState();
     try {
-      /**
-       * Shrunk first, where shrinking is honest.
-       *
-       * A photo off a phone is eight megapixels that no model reads at that
-       * resolution, and an oversized PDF can be sent as the text inside it —
-       * which is what most of the library would have been given anyway. What
-       * this replaces is a request the host refused at the edge, with a
-       * plain-text error that never mentioned the file. See shrink.js.
-       */
-      // The small picture is drawn alongside the upload and kept with the file,
-      // so the sent message shows the same tile without fetching the whole file.
-      const [ready, drawn] = await preparedWithThumb(file, entry.isImage || entry.isPdf ? thumbnailFor : null);
-      if (!current()) return;
-      if (drawn.thumb && entry.isPdf && staged.includes(entry)) {
-        entry.thumb = drawn.thumb;
-        renderStaged();
+      let ready = { name: file.name };
+      let attachment;
+      if (goesDirect(file)) {
+        attachment = await sendToMachine(entry, file);
+      } else {
+        /**
+         * Shrunk first, where shrinking is honest.
+         *
+         * A photo off a phone is eight megapixels that no model reads at that
+         * resolution, and an oversized PDF can be sent as the text inside it —
+         * which is what most of the library would have been given anyway. What
+         * this replaces is a request the host refused at the edge, with a
+         * plain-text error that never mentioned the file. See shrink.js.
+         */
+        // The small picture is drawn alongside the upload and kept with the file,
+        // so the sent message shows the same tile without fetching the whole file.
+        const [prepared, drawn] = await preparedWithThumb(file, entry.isImage || entry.isPdf ? thumbnailFor : null);
+        if (!current()) return;
+        if (drawn.thumb && entry.isPdf && staged.includes(entry)) {
+          entry.thumb = drawn.thumb;
+          renderStaged();
+        }
+        ready = prepared;
+        ({ attachment } = await api.uploadAttachment({ ...prepared, thumb: drawn.thumb || undefined }));
       }
-      const { attachment } = await api.uploadAttachment({ ...ready, thumb: drawn.thumb || undefined });
       if (entry.discarded) {
         api.deleteUpload(attachment.id).catch(() => {});
         return;
@@ -419,7 +473,7 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       // fits; refusing it on its raw size here meant that path was never
       // reached. Those get a much higher ceiling, which
       // is about what the browser can read without struggling, not about the upload.
-      const ceiling = shrinkable(file) ? MAX_SHRINKABLE_BYTES : limits.maxBytes;
+      const ceiling = Math.max(shrinkable(file) ? MAX_SHRINKABLE_BYTES : limits.maxBytes, limits.direct ? limits.directMaxBytes : 0);
       if (file.size > ceiling) {
         toast(
           t('attachment.tooBig', { name: file.name, size: humanSize(file.size), limit: humanSize(ceiling) }),
@@ -468,6 +522,8 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     if (state.model === 'auto') {
       modelIsFree = true;
       modelSeesImages = true;
+      modelHears = false;
+      modelWatches = false;
       // The router picks per request, so whether this turn reasons is unknown.
       state.modelReasons = null;
       renderVisionWarning();
@@ -477,6 +533,8 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
     try {
       const { model } = await api.resolveModel(state.model);
       modelSeesImages = model.vision !== false;
+      modelHears = model.hears === true;
+      modelWatches = model.watches === true;
       modelIsFree = !!model.isFree;
       // true / false / null (unknown) — the effort dial says so when it is false.
       state.modelReasons = model.reasoning ?? null;
@@ -484,6 +542,8 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
       // `true` until told otherwise: the vision warning must never be the thing
       // that appears wrongly. A missing free badge is the harmless direction.
       modelSeesImages = true;
+      modelHears = false;
+      modelWatches = false;
       modelIsFree = false;
       state.modelReasons = null;
     }
@@ -502,13 +562,23 @@ export function createAttachments({ state, refreshSendState, renderTopbar, onboa
    */
   function renderVisionWarning() {
     const images = staged.filter((f) => f.isImage).length;
-    const show = images > 0 && !modelSeesImages;
-
-    $('vision-warning').hidden = !show;
-    if (!show) return;
-
+    const blind = images > 0 && !modelSeesImages;
     const name = String(state.model || '').split('/').pop();
-    $('vision-warning-text').textContent = t(images === 1 ? 'vision.blind.one' : 'vision.blind.many', { model: name });
+
+    // Sound and video do not fail a request: the model is told the file is there. What the
+    // person should know first is that this model will not listen to it or watch it.
+    const masked = state.boot?.prefs?.maskPersonal === true;
+    const media = staged.find((f) => {
+      const kind = mediaKind(f);
+      return kind && (masked || (kind === 'audio' ? !modelHears : !modelWatches));
+    });
+
+    $('vision-warning').hidden = !blind && !media;
+    if (blind) {
+      $('vision-warning-text').textContent = t(images === 1 ? 'vision.blind.one' : 'vision.blind.many', { model: name });
+    } else if (media) {
+      $('vision-warning-text').textContent = t(masked ? 'composer.mediaMasked' : 'composer.mediaUnread', { model: name, name: media.name });
+    }
   }
 
   $('vision-switch').addEventListener('click', () => openModelBrowser(state.model));

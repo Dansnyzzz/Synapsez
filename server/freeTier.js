@@ -204,6 +204,14 @@ export async function refund(service, amount, now = new Date()) {
  * machine awake about ten hours a day — the month gone in under a week, for
  * everybody. Past its share an account's work goes to the Vercel stand-in.
  * E2B_ACCOUNT_SHARE, a fraction of the month (default 0.34).
+ *
+ * That is the ceiling over a month. Over a day the credit is split evenly among
+ * whoever is using it (owner, 2026-11-05: "each user shares the free resources
+ * evenly"): what is left of the month, by the days left in it, is today's, and each
+ * account that has used a machine today, and this one, gets an equal part. Nobody
+ * using it leaves more for tomorrow; more people using it means less each, down to
+ * `E2B_ACCOUNT_DAY_FLOOR` thousandths of a dollar, which is a few minutes of machine
+ * and what makes it worth starting one at all.
  */
 export const e2bAccountShare = (env = process.env) => {
   const n = Number(env.E2B_ACCOUNT_SHARE);
@@ -215,14 +223,51 @@ const accountBucketOf = (userId, now) => {
   return { bucket: `${bucket}:user:${userId}`, ends };
 };
 
-/** What is left of this account's share of E2B's month; unbounded with the ceilings off or the count unreadable. */
+const dayKeyOf = (now) => now.toISOString().slice(0, 10);
+const dayBuckets = (userId, now) => {
+  const day = dayKeyOf(now);
+  return {
+    mine: `free:e2b:day:${day}:user:${userId}`,
+    total: `free:e2b:day:${day}`,
+    people: `free:e2b:day:${day}:people`,
+    // A day after it ends: a row a day old costs nothing, and a clock a little off costs nothing either.
+    ends: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 2)),
+  };
+};
+/** Days left in this month, today counted. */
+const daysLeftIn = (now) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate() - now.getUTCDate() + 1;
+
+/**
+ * What this account may spend today, all else being equal: see above. Exported so
+ * the suite can hold it to the numbers.
+ *
+ * @param {{ monthLeft: number, spentToday: number, people: number, usedToday: number, daysLeft: number, floor: number }} day
+ */
+export function e2bDayShare({ monthLeft, spentToday, people, usedToday, daysLeft, floor }) {
+  const pot = Math.max(0, monthLeft + spentToday) / Math.max(1, daysLeft);
+  const sharing = Math.max(1, people + (usedToday > 0 ? 0 : 1));
+  return Math.max(0, Math.max(floor, Math.floor(pot / sharing)) - usedToday);
+}
+
+/** What is left of this account's share of E2B, of the month and of today; unbounded with the ceilings off or the count unreadable. */
 export async function e2bAccountAllowance(userId, now = new Date()) {
   if (!userId || !freeTierOnly()) return { left: Infinity };
-  const { limit } = await allowance('e2b', now);
+  const { limit, left: monthLeft } = await allowance('e2b', now);
   if (!Number.isFinite(limit)) return { left: Infinity };
   try {
-    const used = await getStore().readCounter(accountBucketOf(userId, now).bucket);
-    return { left: Math.max(0, Math.floor(limit * e2bAccountShare()) - used) };
+    const store = getStore();
+    const used = await store.readCounter(accountBucketOf(userId, now).bucket);
+    const ofMonth = Math.max(0, Math.floor(limit * e2bAccountShare()) - used);
+    const { mine, total, people } = dayBuckets(userId, now);
+    const ofDay = e2bDayShare({
+      monthLeft,
+      spentToday: await store.readCounter(total),
+      people: await store.readCounter(people),
+      usedToday: await store.readCounter(mine),
+      daysLeft: daysLeftIn(now),
+      floor: num('E2B_ACCOUNT_DAY_FLOOR', 15),
+    });
+    return { left: Math.min(ofMonth, ofDay) };
   } catch {
     return { left: Infinity };
   }
@@ -233,7 +278,15 @@ export async function e2bAccountSpend(userId, amount, now = new Date()) {
   if (!userId || !Number(amount)) return;
   try {
     const { bucket, ends } = accountBucketOf(userId, now);
-    await getStore().addToCounter(bucket, amount, ends);
+    const store = getStore();
+    await store.addToCounter(bucket, amount, ends);
+    const day = dayBuckets(userId, now);
+    const mine = await store.addToCounter(day.mine, amount, day.ends);
+    await store.addToCounter(day.total, amount, day.ends);
+    // Their first of the day: one more person to share it among.
+    if (amount > 0 && mine === Math.round(amount)) await store.addToCounter(day.people, 1, day.ends);
+    // A start that failed and was given back was nobody's first of the day after all.
+    if (amount < 0 && mine <= 0) await store.addToCounter(day.people, -1, day.ends);
   } catch (err) {
     if (!/not ready yet/.test(String(err?.message))) log.warn('free tier: account share not counted', { error: String(err?.message || err).slice(0, 160) });
   }

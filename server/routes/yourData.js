@@ -1,4 +1,5 @@
 import { getStore } from '../store/index.js';
+import { removeFromMachine } from '../sandbox.js';
 import { chatSharePath } from './chatShare.js';
 import { sharePath } from './share.js';
 
@@ -94,8 +95,10 @@ export function mountYourDataRoutes(api, { wrap }) {
   api.delete(
     '/data/uploads/:id',
     wrap(async (req, res) => {
-      const removed = await getStore().deleteUpload(req.user.id, String(req.params.id));
+      const removed = await getStore().takeUpload(req.user.id, String(req.params.id));
       if (!removed) return res.status(404).json({ error: 'Not found' });
+      // Its bytes are on the machine, not here. If the machine cannot be reached the tidy takes them within the month.
+      if (removed.origin === 'machine') await removeFromMachine(req.user.id, removed.source).catch(() => {});
       res.json({ ok: true });
     }),
   );
