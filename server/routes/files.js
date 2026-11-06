@@ -2,12 +2,14 @@ import { getStore } from '../store/index.js';
 import { saveToDrive } from '../tools/google.js';
 import { googleGrants } from '../google.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
-import { saveUpload } from '../attachments.js';
+import crypto from 'node:crypto';
+import { limit as rateLimit } from '../ratelimit.js';
+import { saveUpload, saveMachineFile, machineFileName, MAX_DIRECT_BYTES } from '../attachments.js';
 import { faviconFor, cleanHost } from '../favicon.js';
 import { proxiedImage, mapTile } from '../imageProxy.js';
 import { createDocument, extensionOf, RUNNABLE } from '../office/index.js';
 import { clientError } from '../util/clientError.js';
-import { machineForUser } from '../sandbox.js';
+import { machineForUser, chargeCloud } from '../sandbox.js';
 import {
   withStorageShim,
   listArtifactStorage,
@@ -42,6 +44,64 @@ export function mountFileRoutes(api, { wrap, body }) {
         res.status(201).json({ attachment: saved });
       } catch (err) {
         res.status(400).json({ error: clientError(err) });
+      }
+    }),
+  );
+
+  /**
+   * A file too big for this host's requests goes straight from the browser to the account's
+   * own machine (owner, 2026-11-05: "chấp nhận mọi loại files"). The host stops a request at
+   * 4.5 MB and the database row at 5, so this is the only way a video or an archive arrives.
+   * Measured against a real machine: six megabytes from a page on another site in 3.5 s.
+   *
+   * The link is signed for that one path, for that account's user on that machine, for a
+   * quarter of an hour, and only ever handed to the person who asked. Nothing is recorded
+   * until the machine says the file is there, so a file that never arrived is no row at all.
+   */
+  const UPLOAD_PATH = /^uploads\/[0-9a-f]{8}\/([^/\\]{1,200})$/;
+  const directFailed = (res, err) => res.status(err?.status || 503).json({ error: clientError(err) });
+  /** A machine pauses in four minutes, and a big file takes longer than that: one megabyte a second is allowed for. */
+  const roomFor = async (machine, bytes) => {
+    const ms = Math.min(30 * 60_000, Math.max(5 * 60_000, (Number(bytes) || 0) / 1000));
+    await machine.extendTimeout?.(ms);
+  };
+
+  api.post(
+    '/attachments/direct',
+    rateLimit('machine-file', (req) => req.user?.id),
+    wrap(async (req, res) => {
+      const bytes = Number(req.body?.bytes);
+      if (!Number.isFinite(bytes) || bytes <= 0) return res.status(400).json({ error: 'Say how big the file is.' });
+      if (bytes > MAX_DIRECT_BYTES) return res.status(400).json({ error: 'That file is over the 2 GB limit for one file.' });
+      try {
+        await chargeCloud(req.user.id);
+        const machine = await machineForUser(req.user.id);
+        if (typeof machine.uploadUrl !== 'function') return res.status(503).json({ error: 'This cloud computer cannot take a file sent straight to it.' });
+        await roomFor(machine, bytes);
+        const path = `uploads/${crypto.randomBytes(4).toString('hex')}/${machineFileName(req.body?.name)}`;
+        res.status(201).json({ url: await machine.uploadUrl(path), path });
+      } catch (err) {
+        directFailed(res, err);
+      }
+    }),
+  );
+
+  api.post(
+    '/attachments/direct/finish',
+    rateLimit('machine-file', (req) => req.user?.id),
+    wrap(async (req, res) => {
+      const path = String(req.body?.path || '');
+      const named = UPLOAD_PATH.exec(path);
+      if (!named) return res.status(400).json({ error: 'That is not where an upload goes.' });
+      try {
+        const machine = await machineForUser(req.user.id);
+        const bytes = await machine.fileSize(path);
+        if (!bytes) return res.status(400).json({ error: 'That file did not reach the cloud computer. Try sending it again.' });
+        if (bytes > MAX_DIRECT_BYTES) return res.status(400).json({ error: 'That file is over the 2 GB limit for one file.' });
+        const attachment = await saveMachineFile(req.user.id, { name: named[1], mime: req.body?.mime, bytes, path });
+        res.status(201).json({ attachment });
+      } catch (err) {
+        directFailed(res, err);
       }
     }),
   );
@@ -197,6 +257,7 @@ export function mountFileRoutes(api, { wrap, body }) {
           if (size === null || !machine.downloadUrl) {
             return res.status(410).json({ error: translateMessage('That file is no longer on the cloud computer.', languageOf(req)) });
           }
+          await roomFor(machine, size);
           res.setHeader('Cache-Control', 'no-store');
           return res.redirect(302, await machine.downloadUrl(file.source));
         } catch (err) {

@@ -31,7 +31,8 @@ export const CONTENT_SECURITY_POLICY = [
   "frame-src 'self' https://www.youtube-nocookie.com",
   // The cloud browser's live screen and a person's gestures, over one socket
   // straight to the account's machine — never through this app's server.
-  "connect-src 'self' wss://*.e2b.app wss://*.vercel.run",
+  // And a big file's way straight to the account's machine, on a link signed for one path (routes/files.js).
+  "connect-src 'self' https://*.e2b.app wss://*.e2b.app wss://*.vercel.run",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

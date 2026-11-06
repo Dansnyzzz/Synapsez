@@ -873,8 +873,8 @@ section('attaching photos and files');
   check('there is a + button', composer.hasButton);
   check('on the left of the text box', composer.buttonFirst);
   check('it takes several files', composer.multiple === true);
-  check('images among them', /image\//.test(composer.accept), composer.accept.slice(0, 40));
-  check('and PDFs', /application\/pdf/.test(composer.accept));
+  // Any kind (owner, 2026-11-05): what the model cannot read directly it is told how to open.
+  check('of any kind', !composer.accept, String(composer.accept));
   check('the preview strip is above the box, not inside it', composer.stripAboveBox);
   check('and hidden until something is attached', composer.stripHidden === true);
 

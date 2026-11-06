@@ -110,6 +110,23 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'Name cannot be empty.': 'Tên không được để trống.',
   'Not found': 'Không tìm thấy',
   'Not available': 'Không có sẵn',
+  'the template is not there': 'không tìm thấy mẫu máy',
+  'This sends one of your personal details — hidden from the model as a placeholder — out of this app. Check where it is going before it runs.':
+    'Thao tác này gửi một thông tin cá nhân của bạn (đang được che khỏi mô hình bằng mã giữ chỗ) ra khỏi ứng dụng. Hãy kiểm tra nơi nhận trước khi chạy.',
+  'A file from Google Drive stays off the cloud computer, so LibreOffice cannot draw it. The ordinary preview still works.':
+    'Tệp từ Google Drive không được đưa lên máy tính đám mây, nên LibreOffice không vẽ được. Bản xem trước thông thường vẫn dùng được.',
+  'That file unpacks to more than can be changed here.': 'Tệp này giải nén ra quá lớn để sửa ở đây.',
+  'A formula that reaches out to the internet or another program cannot be added here.': 'Không thể thêm công thức gọi ra Internet hoặc chương trình khác ở đây.',
+  'Say how big the file is.': 'Hãy cho biết dung lượng tệp.',
+  'That file is over the 2 GB limit for one file.': 'Tệp này vượt giới hạn 2 GB cho mỗi tệp.',
+  'This cloud computer cannot take a file sent straight to it.': 'Máy tính đám mây này không nhận được tệp gửi thẳng.',
+  'That is not where an upload goes.': 'Đó không phải nơi nhận tệp tải lên.',
+  'That file did not reach the cloud computer. Try sending it again.': 'Tệp chưa tới được máy tính đám mây. Hãy thử gửi lại.',
+  '{0} is an unannounced preview and nothing says what it keeps, so it was not sent this. Provider privacy is Strict, or the conversation holds data from your Google account. Pick another model.':
+    '{0} là bản xem trước giấu tên và không có gì cho biết nó lưu những gì, nên nội dung này không được gửi tới đó. Quyền riêng tư nhà cung cấp đang ở mức Nghiêm ngặt, hoặc cuộc trò chuyện có dữ liệu từ tài khoản Google của bạn. Hãy chọn model khác.',
+  'The independent check could not finish, so this is being asked rather than assumed safe.':
+    'Bước kiểm tra độc lập không hoàn tất được, nên hành động này được hỏi bạn thay vì mặc định là an toàn.',
+  'An independent check questioned this: {0}': 'Một bước kiểm tra độc lập thấy đáng ngờ: {0}',
   'Admins only.': 'Chỉ dành cho quản trị viên.',
   'CRON_SECRET is not configured.': 'Chưa cấu hình CRON_SECRET.',
   'Which file?': 'Tệp nào?',

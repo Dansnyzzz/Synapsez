@@ -313,6 +313,176 @@ section('any other file');
   check('sound can be played from here, and carries a policy that runs nothing', /inline/.test(played.headers()['content-disposition'] || '') && /default-src 'none'/.test(played.headers()['content-security-policy'] || ''), played.headers()['content-disposition']);
 }
 
+section('a reply says where it went');
+{
+  await store.createChat(me.id, { id: 'c-route', title: 'Route', model: 'auto' });
+  await store.appendMessage(me.id, 'c-route', { id: 'ru1', role: 'user', text: 'Hi' });
+  await store.appendMessage(me.id, 'c-route', {
+    id: 'ra1',
+    role: 'assistant',
+    text: 'Answer.',
+    thinking: 'Some reasoning here.',
+    route: { provider: 'openrouter', model: 'Crouton Alpha', tier: 'stealth', warn: true, strict: false, masked: { EMAIL: 2, PHONE: 1 }, thinking: 'summary' },
+  });
+  await store.appendMessage(me.id, 'c-route', { id: 'ru2', role: 'user', text: 'Again' });
+  await store.appendMessage(me.id, 'c-route', {
+    id: 'ra2',
+    role: 'assistant',
+    text: 'Answer two.',
+    thinking: 'More of it.',
+    route: { provider: 'anthropic', model: 'Haiku', tier: 'no_training', warn: false, strict: false, masked: null, thinking: 'model_text' },
+  });
+  await page.evaluate(() => document.getElementById('viewer-close')?.click());
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await page.waitForTimeout(600);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.click('.chat-row[data-chat="c-route"] .chat-item');
+  await page.waitForTimeout(600);
+
+  const shields = await page.$$('#messages .route-btn');
+  check('every reply has its shield after a reload', shields.length === 2, String(shields.length));
+  await store.createChat(me.id, { id: 'c-steps', title: 'Steps', model: 'auto' });
+  const stepRoute = { provider: 'anthropic', model: 'Haiku', tier: 'no_training', warn: false, strict: false, masked: null, thinking: 'summary' };
+  await store.appendMessage(me.id, 'c-steps', { id: 'su1', role: 'user', text: 'Do it' });
+  await store.appendMessage(me.id, 'c-steps', { id: 'sa1', role: 'assistant', text: 'Working on it.', route: stepRoute, toolCalls: [{ id: 'sc1', name: 'calculate', input: { expression: '1+1' } }] });
+  await store.appendMessage(me.id, 'c-steps', { id: 'st1', role: 'tool', results: [{ toolCallId: 'sc1', name: 'calculate', content: '2' }] });
+  await store.appendMessage(me.id, 'c-steps', { id: 'sa2', role: 'assistant', text: 'Done.', route: stepRoute });
+  await store.createChat(me.id, { id: 'c-tools', title: 'Tools', model: 'auto' });
+  await store.appendMessage(me.id, 'c-tools', { id: 'tu1', role: 'user', text: 'Run it' });
+  await store.appendMessage(me.id, 'c-tools', { id: 'ta1', role: 'assistant', text: '', route: stepRoute });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await page.waitForTimeout(600);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.click('.chat-row[data-chat="c-steps"] .chat-item');
+  await page.waitForTimeout(500);
+  check('a turn of several steps has one shield, at its end', (await page.$$('#messages .route-btn')).length === 1, String((await page.$$('#messages .route-btn')).length));
+  await page.click('.chat-row[data-chat="c-tools"] .chat-item');
+  await page.waitForTimeout(500);
+  check('a turn with no words at the end still has one', (await page.$$('#messages .route-btn')).length === 1, String((await page.$$('#messages .route-btn')).length));
+  await page.click('.chat-row[data-chat="c-route"] .chat-item');
+  await page.waitForTimeout(500);
+  shields.length = 0;
+  shields.push(...(await page.$$('#messages .route-btn')));
+  const first = await page.evaluate(() => {
+    const button = document.querySelector('#messages .route-btn');
+    return { warn: button.classList.contains('is-warn'), label: button.getAttribute('aria-label'), expanded: button.getAttribute('aria-expanded') };
+  });
+  check('a stealth model\'s is marked', first.warn === true);
+  check('it has a name a screen reader can say', /went/.test(first.label || ''), first.label);
+  await shields[0].focus();
+  await page.keyboard.press('Enter');
+  const note = await page.evaluate(() => document.querySelector('#messages .route-note')?.innerText || '');
+  check('the keyboard opens it', /Crouton Alpha/.test(note), note);
+  check('it says the model and the provider', /Crouton Alpha, through OpenRouter/.test(note), note);
+  check('what that means for this model', /unannounced model/i.test(note), note);
+  check('and how many of what was hidden, never which', /email ×2/.test(note) && /phone number ×1/.test(note), note);
+  await shields[1].click();
+  const second = await page.evaluate(() => [...document.querySelectorAll('#messages .route-note')].pop()?.innerText || '');
+  check('with hiding off, it says the words went as written', /Hiding is off/.test(second), second);
+
+  const think = await page.evaluate(() => [...document.querySelectorAll('#messages .think__note')].map((n) => n.textContent));
+  check('reasoning says whose words it is', /summary the provider wrote/.test(think[0] || '') && /as the model sent it/.test(think[1] || ''), think.join(' | '));
+  const hiddenFolded = await page.evaluate(() => {
+    const note = document.querySelector('#messages .think__note');
+    return getComputedStyle(note).display;
+  });
+  check('and stays out of the way until it is opened', hiddenFolded === 'none', hiddenFolded);
+
+  await page.evaluate(() => document.querySelector('#messages .route-note__more').click());
+  await page.waitForSelector('#panel-cloak.is-active .cloak__section', { timeout: 8000 });
+  const page2 = await page.evaluate(() => {
+    const panel = document.getElementById('panel-cloak');
+    return {
+      text: panel.innerText,
+      tables: panel.querySelectorAll('.cloak__table table').length,
+      links: [...panel.querySelectorAll('a')].map((a) => ({ href: a.href, rel: a.rel })),
+      sideways: document.querySelector('.settings__body').scrollWidth - document.querySelector('.settings__body').clientWidth,
+      lit: document.querySelector('.tab.is-active')?.dataset.tab,
+    };
+  });
+  check('the shield leads to the page that explains it', /How your data travels/.test(page2.text), page2.text.slice(0, 80));
+  check('its section stays lit in the list', page2.lit === 'privacy', page2.lit);
+  check('three tables: the meanings, the measured figures, the providers', page2.tables === 3, String(page2.tables));
+  check('the eight meanings', /Confidential computing/.test(page2.text) && /Image cloaking/.test(page2.text) && /Search-engine cloaking/.test(page2.text) && /Data poisoning/.test(page2.text));
+  check('a placeholder shows as words, not as markup', /<EMAIL_3f9a1c2b>/.test(page2.text));
+  check('the figures are percentages, none of them promising everything overall', /70%/.test(page2.text) && /What it does not catch/.test(page2.text));
+  check('chain-of-thought monitoring, with where it was read', /Chain-of-thought monitoring/.test(page2.text) && page2.links.some((l) => /arxiv\.org\/abs\/2503\.11926/.test(l.href)));
+  check('the providers, each with its source', ['privacy.claude.com', 'developers.openai.com', 'aistudio.google.com', 'openrouter.ai', 'orcarouter.ai'].every((p) => page2.links.some((l) => l.href.includes(p))));
+  check('links do not hand the page over', page2.links.every((l) => /noopener/.test(l.rel)));
+  check('nothing makes the page scroll sideways', page2.sideways <= 1, String(page2.sideways));
+
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.waitForTimeout(200);
+  const phone = await page.evaluate(() => {
+    const body = document.querySelector('.settings__body');
+    return { sideways: body.scrollWidth - body.clientWidth, table: [...document.querySelectorAll('.cloak__table')].every((t) => getComputedStyle(t).overflowX === 'auto') };
+  });
+  check('on a phone a table scrolls in its own box, not the page', phone.sideways <= 1 && phone.table, JSON.stringify(phone));
+  await page.setViewportSize({ width: 1400, height: 900 });
+
+  await page.evaluate(() => document.querySelector('#panel-cloak .data__back').click());
+  await page.waitForTimeout(150);
+  const back = await page.evaluate(() => ({
+    privacy: document.getElementById('panel-privacy').classList.contains('is-active'),
+    row: !!document.querySelector('#panel-privacy [data-goto="cloak"]'),
+    monitor: document.getElementById('action-monitor')?.checked,
+  }));
+  check('back goes to Privacy, which leads here too', back.privacy && back.row, JSON.stringify(back));
+  check('and the independent check is off until somebody turns it on', back.monitor === false);
+  await page.click('label[for="action-monitor"]');
+  await page.waitForTimeout(500);
+  const saved = await store.getUserSetting(me.id, 'prefs');
+  check('turning it on is kept', saved.actionMonitor === true, JSON.stringify(saved.actionMonitor));
+  await page.evaluate(() => document.querySelector('dialog[open]')?.close());
+}
+
+section('the composer takes any file, and says what the model will do with sound');
+{
+  const accept = await page.evaluate(() => document.getElementById('file-input').getAttribute('accept'));
+  check('the picker refuses nothing', accept === null, String(accept));
+  await page.setInputFiles('#file-input', { name: 'voice.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('sound') });
+  await page.waitForTimeout(700);
+  const warning = await page.evaluate(() => ({ hidden: document.getElementById('vision-warning').hidden, text: document.getElementById('vision-warning-text').textContent }));
+  check('a model that cannot hear says so before the send', !warning.hidden && /cannot hear or watch voice\.mp3/.test(warning.text), JSON.stringify(warning));
+  await page.setInputFiles('#file-input', { name: 'pack.zip', mimeType: 'application/zip', buffer: Buffer.from('PK') });
+  await page.waitForTimeout(500);
+  const tiles = await page.evaluate(() => document.querySelector('#composer, .composer')?.innerText || '');
+  check('a zip goes in beside it', /pack\.zip/.test(tiles), tiles.slice(0, 120));
+}
+
+section('a file too big for this host goes straight to the machine');
+{
+  // The machine is played here, down to a page on another address accepting the bytes.
+  let received = 0;
+  await page.route('**/api/attachments/direct', (route) =>
+    route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ url: 'https://49983-sbx.e2b.app/files?path=x', path: 'uploads/ab12cd34/big.zip' }) }),
+  );
+  await page.route('https://49983-sbx.e2b.app/**', async (route) => {
+    received = Number(route.request().headers()['content-length'] || 0) || (route.request().postDataBuffer()?.length ?? 0);
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '[]' });
+  });
+  await page.route('**/api/attachments/direct/finish', (route) =>
+    route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ attachment: { id: 'direct-1', name: 'big.zip', kind: 'binary', bytes: 4_000_000 } }) }),
+  );
+  await page.route('**/api/bootstrap*', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.attachments = { ...body.attachments, direct: true, directMaxBytes: 2 * 1024 ** 3 };
+    await route.fulfill({ response, json: body });
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await page.waitForTimeout(600);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.setInputFiles('#file-input', { name: 'big.zip', mimeType: 'application/zip', buffer: Buffer.alloc(4_000_000, 65) });
+  await page.waitForTimeout(1200);
+  const tile = await page.evaluate(() => ({ text: document.getElementById('attachments')?.innerText || '', failed: !!document.querySelector('#attachments .is-failed') }));
+  check('it arrives without passing through this app', received > 3_000_000, String(received));
+  check('and sits in the message like any other file', /big\.zip/.test(tile.text) && !tile.failed, JSON.stringify(tile));
+}
+
 await browser.close();
 server.close();
 realLog(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll file viewer checks passed.\x1b[0m\n');

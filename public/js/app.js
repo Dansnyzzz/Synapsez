@@ -45,6 +45,7 @@ import { createSkillEditor, forgetLocalDrafts } from './skills-editor.js';
 import { serversInConfig } from './mcp-config.js';
 import { paintConnectorButton } from './cards.js';
 import { createYourData } from './your-data.js';
+import { createCloakPage } from './cloak.js';
 import { createFeedback, renderFeedbackList, transcriptLines, answerLines } from './feedback.js';
 import { createAnswerFeedback } from './answer-feedback.js';
 import { CONNECTOR_BY_ID } from './connector-catalog.js';
@@ -4023,7 +4024,7 @@ async function streamOnce(run, decision, answers) {
            * cleared it when reasoning began to arrive.
            */
           setStatus(null, run);
-          block().appendThinking(delta);
+          block().appendThinking(delta, run.route?.thinking);
           maybeScroll(run);
         },
         text: ({ delta }) => {
@@ -4083,6 +4084,11 @@ async function streamOnce(run, decision, answers) {
             screenPanel.wake('cloud');
           }
           maybeScroll(run);
+        },
+        // Which provider this step went to and how many details were hidden. The last
+        // step's is what the shield says when the reply ends.
+        data_route: (route) => {
+          run.route = route;
         },
         // What a running command prints, as it prints it.
         tool_progress: ({ id, text }) => {
@@ -4193,6 +4199,7 @@ async function streamOnce(run, decision, answers) {
           // Fold any run of steps still drawn open. (Its mark already follows its
           // steps; a step that never answered is settled when the run ends.)
           // Stamped with now: this is the moment the answer finished.
+          run.turn?.setRoute(run.route);
           run.turn?.finish(new Date());
           /**
            * Say when the reply is not actually an answer.
@@ -4741,6 +4748,7 @@ const answerFeedback = createAnswerFeedback({
 const changelog = createChangelog();
 
 /* Privacy → Your data → Manage: what this account holds, kind by kind (owner, 2026-11-01). */
+const cloakPage = createCloakPage({ state });
 const yourData = createYourData({
   selectTab: (tab) => selectTab(tab),
   openChat: (id) => {
@@ -5486,7 +5494,7 @@ const settingsTabs = () =>
 const SETTINGS_MOVED = { languages: 'general', behaviour: 'capabilities', mcp: 'extensions' };
 
 /** A page inside a section — Privacy's Manage lists — keeps its section lit in the list. */
-const SECTION_OF = { data: 'privacy', extadvanced: 'extensions', skillupload: 'skills', connector: 'connectors' };
+const SECTION_OF = { data: 'privacy', cloak: 'privacy', extadvanced: 'extensions', skillupload: 'skills', connector: 'connectors' };
 
 function selectTab(asked) {
   const name = SETTINGS_MOVED[asked] || asked;
@@ -5525,6 +5533,8 @@ function selectTab(asked) {
   if (name === 'memory') privacy.loadMemory();
   // What is shared now, beside each Manage.
   if (name === 'privacy') yourData.paintCounts();
+  // A request, and the same words for everybody until a release changes them.
+  if (name === 'cloak') cloakPage.load();
   if (name === 'account') {
     privacy.loadActivity();
     loadSessionTable();
@@ -5623,6 +5633,12 @@ $('settings-search').addEventListener('keydown', (/** @type {KeyboardEvent} */ e
     selectTab(first.dataset.tab);
     first.focus();
   }
+});
+
+// From a reply's shield to the page that explains it.
+document.addEventListener('click', (event) => {
+  const asked = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest?.('[data-open-settings]'));
+  if (asked) openSettings(asked.dataset.openSettings);
 });
 
 // A link inside one section to another ("Skills have moved to Customize").

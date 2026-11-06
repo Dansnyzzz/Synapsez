@@ -51,6 +51,7 @@ export function createPrivacy({ state, armed, onImported, savePrefs = api.savePr
     /** @type {HTMLSelectElement} */ ($('retention')).value = String(prefs.retentionDays || 0);
     /** @type {HTMLSelectElement} */ ($('provider-privacy')).value = prefs.providerPrivacy === 'strict' ? 'strict' : 'standard';
     /** @type {HTMLInputElement} */ ($('mask-personal')).checked = prefs.maskPersonal === true;
+    /** @type {HTMLInputElement} */ ($('action-monitor')).checked = prefs.actionMonitor === true;
     // Two-factor accounts are asked for a code to leave; others are not.
     $('leave-code').hidden = !state.boot?.user?.twoFactor;
   }
@@ -69,6 +70,7 @@ export function createPrivacy({ state, armed, onImported, savePrefs = api.savePr
     retention: { status: 'memory-status', patch: () => ({ retentionDays: Number(/** @type {HTMLSelectElement} */ ($('retention')).value) || 0 }) },
     'provider-privacy': { status: 'memory-status', patch: () => ({ providerPrivacy: /** @type {HTMLSelectElement} */ ($('provider-privacy')).value }) },
     'mask-personal': { status: 'memory-status', patch: () => ({ maskPersonal: checked('mask-personal') }) },
+    'action-monitor': { status: 'memory-status', patch: () => ({ actionMonitor: checked('action-monitor') }) },
   };
   for (const [id, { status, patch }] of Object.entries(SAVED_ON_CHANGE)) {
     $(id).addEventListener('change', async () => {

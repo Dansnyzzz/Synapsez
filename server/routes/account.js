@@ -7,6 +7,9 @@ import { confirmIdentity, clearSession } from '../auth.js';
 import { limit as rateLimit } from '../ratelimit.js';
 import { redactSecrets } from '../redact.js';
 import { audit } from '../audit.js';
+import { policyTable } from '../dataRoute.js';
+import { forgetMachine } from '../sandbox.js';
+import { MEASURED } from '../deidentifyQuality.js';
 import { log } from '../util/trace.js';
 import { MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage, stampNote } from '../memory.js';
 import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.js';
@@ -196,6 +199,15 @@ export function mountAccountRoutes(api, admin, { wrap }) {
   );
 
   // ── the security record ─────────────────────────────────────────────
+  // What the Settings page says about masking and providers: the same to everybody, and held to the facts by tests.
+  api.get(
+    '/privacy/overview',
+    wrap(async (_req, res) => {
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.json({ ...policyTable(), masking: MEASURED });
+    }),
+  );
+
   api.get(
     '/account/activity',
     wrap(async (req, res) => {
@@ -467,6 +479,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         }
       }
       log.info('account deleted by its owner');
+      await forgetMachine(req.user.id);
       await store.deleteUser(req.user.id);
       clearSession(res);
       res.json({ ok: true });

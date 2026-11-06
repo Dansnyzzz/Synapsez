@@ -31,11 +31,13 @@ const quoted = (word) => `'${String(word).replace(/'/g, `'\\''`)}'`;
  * The file as a PDF, made if it has not been.
  *
  * @param {string} userId
- * @param {{ id: string, name: string, data: string }} file
+ * @param {{ id: string, name: string, data: string, origin?: string, chat_id?: string|null }} file
  * @param {{ machineFor?: () => Promise<any> }} [options]  `machineFor`: a suite's stand-in
  * @returns {Promise<{ id: string, name: string, bytes: number }>} the kept PDF
  */
 export async function renderWithOffice(userId, file, { machineFor = () => e2bScratch({ ms: RENDER_MACHINE_MS, userId, internet: false, role: 'office-render' }) } = {}) {
+  // What is read from a Google account stays off the cloud computer (sandbox.js `bringFiles`).
+  if (file.origin === 'google_drive') throw new Error('A file from Google Drive stays off the cloud computer, so LibreOffice cannot draw it. The ordinary preview still works.');
   const store = getStore();
   const stamp = crypto.createHash('sha256').update(String(file.data)).digest('hex');
   const kept = await store.findRenderedFile(userId, file.id, stamp);
@@ -73,7 +75,8 @@ export async function renderWithOffice(userId, file, { machineFor = () => e2bScr
       data: pdf.toString('base64'),
       origin: 'rendered',
       source: stamp,
-      chatId: null,
+      // Its conversation's: it goes when the conversation does, retention and incognito included.
+      chatId: file.chat_id || null,
       thumb: null,
       derivedFrom: file.id,
     });

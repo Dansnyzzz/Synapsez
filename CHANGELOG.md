@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-06 — A machine with everything on it; files changed in place; where your words go
+
+**The cloud computer comes ready** (`scripts/e2b-template.mjs`, `server/e2b.js`, `server/machineCare.js`). Production ran on E2B's bare template with 512 MiB because `E2B_TEMPLATE` was never set, which is why the browser died. The template is named in code now, older machines move themselves across, packages an account adds come back, leftovers are tidied, credit is shared evenly among whoever is using it today.
+
+**sandbox_run** gained a terminal that survives between calls, public ports, checkpoints, live output and a plain reading of exit codes. A missing file no longer loses the command's output.
+
+**Any file** in a conversation. Sound and video go to models that say they read them. Files over 3 MB go straight from the browser to the account's machine, up to 2 GB.
+
+**Files changed in place** (`server/office/edit.js`). Asked to change an attached Word or Excel file, the model changes that file at the XML level and a check refuses anything else that moved.
+
+**Lookups** (`server/tools/facts.js`, `references.js`). World facts and the encyclopedia answer far more and take several questions in one call; consecutive calls share one card.
+
+**Viewer.** Excel opens as a grid from the file itself, with charts under their real sheet names; slides are drawn; LibreOffice is one press away. An ASCII diagram in a Word file stays one block.
+
+**Data cloaking and chain-of-thought monitoring** (`server/dataRoute.js`, `server/actionMonitor.js`, `public/js/cloak.js`). A shield under each reply says where it went; a Settings page explains all of it with sources; the mask catches eleven kinds, measured on a labelled corpus whose figures the page shows; stealth models are marked and refused under Strict; reasoning is labelled as whose words it is; an optional independent check stops an action that does not follow from the request. Notice version `privacy-2026-11-06`.
+
 ## 2026-11-05 — Files seen as they look; one step at a time; themes, boards and a whale
 
 **Files are drawn for the model** (`server/office/look.js`, `server/office/draw/`). A Word, Excel or PowerPoint file becomes pictures with no LibreOffice and no system fonts: real pagination, styles through `basedOn`, table styles and their conditional parts, list numbering, floating and square-wrapped drawings, headers and footers with live fields; a worksheet with row numbers, column letters, data bars, colour scales, Excel tables, charts and `####`. Pages share a picture only while they stay legible at the size kept. Checked side by side against real Word, Excel and PowerPoint. `look_at` and `read_file` use it. Carlito, Tinos, Cousine and Arimo (OFL) are bundled for metric-compatible widths and Vietnamese.

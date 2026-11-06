@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { LIMITS as FILE_LIMITS, classify, mimeFor, saveChangedFile, saveGenerated, saveMachineFile } from './attachments.js';
 import { getStore } from './store/index.js';
 import { exhaust } from './freeTier.js';
-import { e2bConfigured, e2bMachineFor, e2bScratch, e2bUnavailable } from './e2b.js';
+import { e2bConfigured, e2bExistingMachine, e2bForgetAccount, e2bMachineFor, e2bScratch, e2bUnavailable } from './e2b.js';
 import { rememberPackages, restorePackages, terminalScript, tidyIfDue } from './machineCare.js';
 import { log } from './util/trace.js';
 
@@ -361,6 +361,31 @@ export async function portAddress(machine, port, { signal } = {}) {
   }
 }
 
+/** One file off the account's machine, as the account: the path goes as a value, never as a command. */
+export async function removeFromMachine(userId, file) {
+  const machine = await machineForUser(userId);
+  await machine.runCommand({ ...shellFor('rm -f -- "$SYNZ_FILE"', { SYNZ_FILE: file }, { userBin: true }), timeoutMs: 10_000 });
+}
+
+/**
+ * What was sent straight to a machine, a month on: the row and the bytes together, a few
+ * each sweep. A machine that no longer exists is not made again to find nothing on it.
+ */
+export async function expireMachineUploads(store, { days = 30, limit = 20 } = {}) {
+  for (const row of await store.expiredMachineUploads(days, limit)) {
+    if (e2bConfigured()) {
+      const machine = await e2bExistingMachine(row.user_id).catch(() => null);
+      await machine?.runCommand({ ...shellFor('rm -f -- "$SYNZ_FILE"', { SYNZ_FILE: row.source }, { userBin: true }), timeoutMs: 10_000 }).catch(() => {});
+    }
+    await store.takeUpload(row.user_id, row.id);
+  }
+}
+
+/** Whatever this account has on a machine, before the account goes. */
+export async function forgetMachine(userId) {
+  if (e2bConfigured()) await e2bForgetAccount(userId).catch(() => {});
+}
+
 /**
  * The account's machine, started or resumed, with the browser port open.
  *
@@ -647,7 +672,7 @@ export function pythonReport(cell, ran = true) {
  *
  * A stand-in (Vercel, while E2B cannot) says so: what was saved on the usual
  * computer is not on this one, and what is made here may not be there later.
- * An E2B computer pauses after ten idle minutes, a Vercel one rests after
+ * An E2B computer pauses after four idle minutes, a Vercel one rests after
  * fifteen.
  *
  * @param {string} home  the session's working folder, when the SDK says
@@ -795,7 +820,7 @@ export async function runInSandbox(input, { userId, chatId, signal, onProgress }
   const seconds = Math.min(300, Math.max(5, Number(input?.timeout_seconds) || COMMAND_MS / 1000));
   // Python alone goes straight to the machine's helper; the control API — a
   // shared, rate-limited thing — is only asked for what needs it.
-  const machine = writes.length || command || download || bring.length || port || terminal || checkpoint ? await machineForUser(String(userId), { signal }) : null;
+  let machine = writes.length || command || download || bring.length || port || terminal || checkpoint ? await machineForUser(String(userId), { signal }) : null;
 
   const report = [];
   if (machine?.moved) {
@@ -807,7 +832,11 @@ export async function runInSandbox(input, { userId, chatId, signal, onProgress }
     await machine.writeFiles(writes, { signal });
     report.push(`Wrote ${writes.map((w) => w.path).join(', ')}.`);
   }
-  if (checkpoint) report.push(await useCheckpoint(machine, checkpoint));
+  if (checkpoint) {
+    report.push(await useCheckpoint(machine, checkpoint));
+    // A restore is another machine: whatever comes next in this call runs on that one.
+    if (checkpoint.action === 'restore') machine = await machineForUser(String(userId), { signal });
+  }
 
   if (command) {
     const started = Date.now();
@@ -834,7 +863,7 @@ export async function runInSandbox(input, { userId, chatId, signal, onProgress }
       ...(meaning ? [meaning] : []),
     );
     // What a person added stays theirs: a new machine starts with it.
-    if (done.exitCode === 0) await rememberPackages(String(userId), command).catch(() => {});
+    if (done.exitCode === 0) await rememberPackages(String(userId), command, { asRoot }).catch(() => {});
   }
 
   if (terminalLine) {

@@ -104,6 +104,10 @@ function fakeSdk() {
       state.calls.push({ kind: 'downloadUrl', path, opts });
       return `https://files.example/${this.sandboxId}${path}`;
     }
+    async uploadUrl(path, opts) {
+      state.calls.push({ kind: 'uploadUrl', path, opts });
+      return `https://files.example/up/${this.sandboxId}${path}`;
+    }
     async createSnapshot() {
       return { snapshotId: `snap${state.next++}` };
     }
@@ -113,6 +117,10 @@ function fakeSdk() {
     async kill() {
       state.boxes.delete(this.sandboxId);
       state.calls.push({ kind: 'kill', id: this.sandboxId });
+    }
+    static async kill(id) {
+      state.boxes.delete(id);
+      state.calls.push({ kind: 'kill', id });
     }
     static async create(template, opts) {
       state.calls.push({ kind: 'create', template, opts });
@@ -616,6 +624,155 @@ section('a machine made from an older build moves, files and all (owner, 2026-11
   e2b.__testing.useSdk(null);
 }
 
+section('a big file goes straight to the machine, on a link for one path (owner, 2026-11-05)');
+{
+  process.env.SESSION_SECRET ||= 'test-session-secret-for-the-e2b-suite';
+  const { createApp } = await import('../server/app.js');
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  const server = (await createApp()).listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  let cookie = '';
+  const call = async (method, url, body, signedIn = true) => {
+    const res = await fetch(`${base}${url}`, {
+      method,
+      headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie && signedIn ? { Cookie: cookie } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const set = res.headers.get('set-cookie');
+    if (set) cookie = set.split(';')[0];
+    return { status: res.status, json: await res.json().catch(() => null) };
+  };
+  const made = await call('POST', '/api/register', { email: 'direct@example.com', password: 'a-long-enough-password', name: 'Direct' });
+  check('an account to try it with', made.status < 300, JSON.stringify(made.json).slice(0, 160));
+
+  check('nobody signed out gets a link', (await call('POST', '/api/attachments/direct', { name: 'a.zip', bytes: 10 }, false)).status === 401);
+  check('it has to say how big', (await call('POST', '/api/attachments/direct', { name: 'a.zip' })).status === 400);
+  check('and past the limit it is refused before a machine is woken', (await call('POST', '/api/attachments/direct', { name: 'a.zip', bytes: 3 * 1024 ** 3 })).status === 400);
+
+  const started = await call('POST', '/api/attachments/direct', { name: 'Báo cáo (1).zip', mime: 'application/zip', bytes: 123 });
+  check('a link comes back', started.status === 201 && /^https:\/\/files\.example\/up\//.test(started.json?.url || ''), JSON.stringify(started.json));
+  check('  for a place only this upload uses, under its own name', /^uploads\/[0-9a-f]{8}\/Báo cáo \(1\)\.zip$/.test(started.json?.path || ''), started.json?.path);
+  const signed = state.calls.find((c) => c.kind === 'uploadUrl');
+  check('  signed for that one path, for the account, for a short while', signed?.path.endsWith(started.json.path) && signed?.opts?.user === 'user' && signed?.opts?.useSignatureExpiration <= 3600, JSON.stringify(signed?.opts));
+
+  const sly = await call('POST', '/api/attachments/direct', { name: '../../../etc/passwd', bytes: 1 });
+  check('a name cannot climb out', /^uploads\/[0-9a-f]{8}\/[^/]+$/.test(sly.json?.path || '') && !sly.json.path.split('/').includes('..'), sly.json?.path);
+
+  check('finishing somewhere else is refused', (await call('POST', '/api/attachments/direct/finish', { path: '../../etc/passwd' })).status === 400);
+  check('  or anywhere but an upload folder', (await call('POST', '/api/attachments/direct/finish', { path: '.ssh/authorized_keys' })).status === 400);
+  const early = await call('POST', '/api/attachments/direct/finish', { path: started.json.path, mime: 'application/zip' });
+  check('a file that never arrived makes no row', early.status === 400 && /did not reach/.test(early.json?.error || ''), JSON.stringify(early.json));
+
+  state.files[signed.path] = 'PK';
+  state.sizes = { [signed.path]: 123_456_789 };
+  const done = await call('POST', '/api/attachments/direct/finish', { path: started.json.path, mime: 'application/zip' });
+  check('once it is there, it is a file like any other', done.status === 201 && done.json?.attachment?.name === 'Báo cáo (1).zip', JSON.stringify(done.json));
+  const row = await store.getAttachment((await store.getUserByEmail('direct@example.com')).id, done.json.attachment.id);
+  check('  its size is what the machine says, not what the browser said', Number(row?.bytes) === 123_456_789, String(row?.bytes));
+  check('  and its bytes stay on the machine', row?.origin === 'machine' && !row?.data && row?.source === started.json.path, JSON.stringify({ origin: row?.origin, source: row?.source }));
+
+  const me = await store.getUserByEmail('direct@example.com');
+  const shelf = await store.listDataFiles(me.id, { origin: 'upload' });
+  check('it is listed with what the person sent', JSON.stringify(shelf).includes(done.json.attachment.id));
+  const before = state.calls.length;
+  const gone = await call('DELETE', `/api/data/uploads/${done.json.attachment.id}`);
+  const removal = state.calls.slice(before).find((c) => c.kind === 'run' && /rm -f/.test(c.cmd));
+  check('deleting it takes the row', gone.status === 200 && !(await store.getAttachment(me.id, done.json.attachment.id)));
+  check('  and the bytes on the machine, with the path as a value and not as a command', !!removal && !removal.cmd.includes('Báo cáo') && removal.opts?.envs?.SYNZ_FILE === started.json.path, JSON.stringify({ cmd: removal?.cmd?.slice(0, 120), envs: removal?.opts?.envs }));
+  await store.createAttachment(me.id, { id: 'made-on-machine', name: 'report.zip', mime: 'application/zip', kind: 'binary', bytes: 9, data: '', origin: 'machine', source: 'out/report.zip', chatId: null, thumb: null });
+  check('something a command made is not this route\'s to delete', (await call('DELETE', '/api/data/uploads/made-on-machine')).status === 404);
+
+  const boot = await call('GET', '/api/bootstrap');
+  check('the browser is told it can', boot.json?.attachments?.direct === true && boot.json?.attachments?.directMaxBytes > boot.json?.attachments?.maxBytes);
+  server.close();
+  e2b.__testing.useSdk(null);
+}
+
+section('a long command does not pause under itself');
+{
+  await resetCounters();
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-long');
+  state.calls.length = 0;
+  await machine.runCommand({ ...shellFor('sleep 1', {}, { userBin: true }), timeoutMs: 10_000 });
+  check('a short one leaves the machine as it was', !state.calls.some((c) => c.kind === 'setTimeout'));
+  await machine.runCommand({ ...shellFor('sleep 280', {}, { userBin: true }), timeoutMs: 300_000 });
+  check('one longer than a machine stays awake keeps it awake', state.calls.some((c) => c.kind === 'setTimeout' && c.ms >= 300_000), JSON.stringify(state.calls.filter((c) => c.kind === 'setTimeout')));
+  e2b.__testing.useSdk(null);
+}
+
+section('a machine goes with its account');
+{
+  await resetCounters();
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-gone');
+  const saved = await machine.saveCheckpoint('a note');
+  state.calls.length = 0;
+  await e2b.e2bForgetAccount('u-e2b');
+  check('the machine is deleted, which pausing would never do', state.calls.some((c) => c.kind === 'kill' && c.id === machine.sandboxId));
+  check('and its checkpoints', state.calls.some((c) => c.kind === 'deleteSnapshot' && c.id === saved.id), JSON.stringify(state.calls));
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  check('asking after a machine that is not there makes none', (await e2b.e2bExistingMachine('u-e2b')) === null);
+  e2b.__testing.useSdk(null);
+}
+
+section('a machine that cannot get the template stays where it is');
+{
+  await resetCounters();
+  e2b.__testing.forgetMissingTemplate();
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  const old = await sdk.Sandbox.create('base', { metadata: { app: 'synapsez', machine: 'synz-stay' } });
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old.sandboxId, cpu: 2, memMb: 512, closed: true, checkpoints: [{ id: 'snap-kept', at: Date.now() }] });
+  state.files[`/tmp/synz-move-${old.sandboxId}.tgz`] = 'packed';
+  const realCreate = sdk.Sandbox.create;
+  sdk.Sandbox.create = async function create(template, opts) {
+    if (template !== 'base') throw Object.assign(new Error('404: template not found'), { name: 'NotFoundError', statusCode: 404 });
+    return realCreate.call(this, template, opts);
+  };
+  const stayed = await e2b.e2bMachineFor('u-e2b', 'synz-stay');
+  check('moving to the same small machine is not a move', stayed.sandboxId === old.sandboxId, stayed.sandboxId);
+  sdk.Sandbox.create = realCreate;
+  e2b.__testing.forgetMissingTemplate();
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old.sandboxId, cpu: 2, memMb: 512, closed: true, checkpoints: [{ id: 'snap-kept', at: Date.now() }] });
+  const moved = await e2b.e2bMachineFor('u-e2b', 'synz-stay');
+  const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
+  check('a real move keeps its checkpoints', moved.sandboxId !== old.sandboxId && record.checkpoints?.[0]?.id === 'snap-kept', JSON.stringify(record.checkpoints));
+  e2b.__testing.useSdk(null);
+}
+
+section('a month on, a file sent straight to the machine goes, row and bytes');
+{
+  await resetCounters();
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  await e2b.e2bMachineFor('u-e2b', 'synz-month');
+  const row = async (id, source, days) => {
+    await store.createAttachment('u-e2b', { id, name: 'a.zip', mime: 'application/zip', kind: 'binary', bytes: 9, data: '', origin: 'machine', source, chatId: null, thumb: null });
+    await memory.query(`UPDATE attachments SET created_at = NOW() - INTERVAL '${days} days' WHERE id = '${id}'`);
+  };
+  await row('up-old', 'uploads/aaaaaaaa/a.zip', 31);
+  await row('up-new', 'uploads/bbbbbbbb/b.zip', 3);
+  await row('out-old', 'out/report.zip', 31);
+  state.calls.length = 0;
+  const { expireMachineUploads } = await import('../server/sandbox.js');
+  await expireMachineUploads(store);
+  const removed = state.calls.filter((c) => c.kind === 'run' && /rm -f/.test(c.cmd)).map((c) => c.opts?.envs?.SYNZ_FILE);
+  check('the old one is off the machine', removed.join() === 'uploads/aaaaaaaa/a.zip', removed.join());
+  check('  and its row gone', !(await store.getAttachment('u-e2b', 'up-old')));
+  check('a recent one stays', !!(await store.getAttachment('u-e2b', 'up-new')));
+  check('and so does something a command made', !!(await store.getAttachment('u-e2b', 'out-old')));
+  e2b.__testing.useSdk(null);
+}
+
 section('a checkpoint');
 {
   await resetCounters();
@@ -656,9 +813,11 @@ section('the credit, split evenly among whoever is using it (owner, 2026-11-05)'
   await tiers.e2bAccountSpend('u-e2b', 10, now);
   const other = await tiers.e2bAccountAllowance('u-share', now);
   check('a second account counts the first, and then itself', other.left <= Math.ceil(alone.left / 2) + 1 && other.left > 0, `${alone.left} → ${other.left}`);
+  const peopleToday = () => store.readCounter(`free:e2b:day:${now.toISOString().slice(0, 10)}:people`);
   await tiers.e2bAccountSpend('u-e2b', -10, now);
-  const people = await store.readCounter(`free:e2b:day:${now.toISOString().slice(0, 10)}:people`);
-  check('giving back does not count somebody twice', people === 1, String(people));
+  check('a start given back was nobody\'s first of the day', (await peopleToday()) === 0, String(await peopleToday()));
+  await tiers.e2bAccountSpend('u-e2b', 10, now);
+  check('giving back does not count somebody twice', (await peopleToday()) === 1, String(await peopleToday()));
 }
 
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll E2B checks passed.\x1b[0m\n');

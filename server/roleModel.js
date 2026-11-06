@@ -34,7 +34,7 @@ import { mayReceiveGoogleData, googleDataInScope } from './googleData.js';
  * role of the research debate — keeps the conversation's model, because each of
  * them is answering rather than transcribing.
  */
-const CHEAP_ROLES = new Set(['compaction', 'web_extract', 'research.plan']);
+const CHEAP_ROLES = new Set(['compaction', 'web_extract', 'research.plan', 'action_monitor']);
 
 /**
  * The cheap tier, in order of preference.

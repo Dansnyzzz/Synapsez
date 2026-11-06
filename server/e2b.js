@@ -13,7 +13,7 @@ import { log } from './util/trace.js';
  * E2B sandbox exactly those, so `sandbox_run`, the Python session, the cloud
  * browser and the MCP bridge run on it unchanged.
  *
- * **Paused, not stopped.** A machine idle for ten minutes pauses — memory and
+ * **Paused, not stopped.** A machine idle for four minutes pauses — memory and
  * disk both kept, kept for as long as anyone likes, and not billed — so the
  * next call finds the Python session's variables and the browser's open pages
  * where they were, which a Vercel machine resting cannot do.
@@ -48,6 +48,8 @@ const ACCOUNT = 'user';
  * second, so waiting longer buys little (E2B: about 4 s a GiB to pause, 1 s to resume).
  */
 const IDLE_MS = 4 * 60 * 1000;
+/** How much past a long command's own limit a machine is kept awake, to hand back what it printed. */
+const AWAKE_MARGIN_MS = 30_000;
 /** A machine for one MCP check (mcp/cloud.js), deleted after — never paused. */
 const SCRATCH_MS = 6 * 60 * 1000;
 /** How long a detached start is watched for an early exit; the program itself runs on. */
@@ -402,6 +404,15 @@ async function closeMachine(box, record = null) {
  * @param {{ userId?: string, record?: any }} [owner]  the account and its record; none for a scratch machine
  */
 function machine(box, { userId, record } = {}) {
+  /** Awake for `ms` from now, paid for first. Only ever longer: a browser session may have asked for more. */
+  const stayAwake = async (ms) => {
+    if (record) {
+      if (Number(record.paidUntil) >= Date.now() + ms) return;
+      await payUntil(record, Date.now() + ms, userId);
+      await getStore().setUserSetting(userId, SETTING, record);
+    }
+    await box.setTimeout(ms);
+  };
   withoutLoginShell(box);
   return {
     provider: 'e2b',
@@ -428,6 +439,8 @@ function machine(box, { userId, record } = {}) {
         };
       }
       const limitMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : 120_000;
+      // A machine pauses sooner than the longest command runs, and nothing is idle about one running.
+      if (record && limitMs + AWAKE_MARGIN_MS > IDLE_MS) await stayAwake(limitMs + AWAKE_MARGIN_MS);
       /*
        * Watched as it comes (SBX-005): the SDK keeps all of stdout in one
        * string, so `cat /dev/urandom | base64` grew it in this server's memory
@@ -529,6 +542,11 @@ function machine(box, { userId, record } = {}) {
       return box.downloadUrl(onMachine(file), { useSignatureExpiration: seconds, user: ACCOUNT });
     },
 
+    /** Where a browser may put one file for a while, signed for that path and this account alone. */
+    async uploadUrl(file, seconds = 900) {
+      return box.uploadUrl(onMachine(file), { useSignatureExpiration: seconds, user: ACCOUNT });
+    },
+
     /**
      * Keep the machine as it is now, memory and all, to come back to. The oldest of
      * more than a few goes, so a person cannot fill a store nobody sees.
@@ -578,11 +596,7 @@ function machine(box, { userId, record } = {}) {
 
     /** Awake for `ms` from now, paid for first. @param {number} ms */
     async extendTimeout(ms) {
-      if (record) {
-        await payUntil(record, Date.now() + ms, userId);
-        await getStore().setUserSetting(userId, SETTING, record);
-      }
-      await box.setTimeout(ms);
+      await stayAwake(ms);
     },
 
     currentSession() {
@@ -689,7 +703,7 @@ const shouldMove = (record, now = Date.now()) =>
  */
 async function moveMachine(Sandbox, userId, name, record, old) {
   /** @type {any} */
-  const next = { ...ASSUMED, id: '', paidUntil: record.paidUntil };
+  const next = { ...ASSUMED, id: '', paidUntil: record.paidUntil, checkpoints: record.checkpoints };
   let receipt = null;
   /** @type {any} */
   let box = null;
@@ -705,8 +719,11 @@ async function moveMachine(Sandbox, userId, name, record, old) {
     if (!size || size > MOVE_MAX_BYTES) throw new Error(`the home folder packs to ${size} bytes`);
 
     receipt = await payUntil(next, Date.now() + IDLE_MS, userId);
-    ({ box } = await makeBox(Sandbox, name));
-    next.base = BASE_VERSION;
+    const made = await makeBox(Sandbox, name);
+    box = made.box;
+    // The template not being there is no reason to move: the new machine would be no bigger.
+    if (!made.base) throw new Error('the template is not there');
+    next.base = made.base;
     next.id = box.sandboxId;
     const info = await box.getInfo().catch(() => null);
     if (Number(info?.cpuCount) > 0) next.cpu = Number(info.cpuCount);
@@ -812,6 +829,25 @@ const starting = new Map();
 export async function e2bMachineFor(userId, name) {
   if (!starting.has(userId)) starting.set(userId, open(userId, name).finally(() => starting.delete(userId)));
   return starting.get(userId);
+}
+
+/** The account's machine if it has one, resumed. Never makes one: for what is only tidying up. */
+export async function e2bExistingMachine(userId) {
+  const known = await readRecord(userId);
+  if (!known?.id) return null;
+  const { Sandbox } = await loadSdk();
+  return resume(Sandbox, userId, known);
+}
+
+/** An account's machine and its checkpoints, gone with the account: E2B keeps a paused one for ever. */
+export async function e2bForgetAccount(userId) {
+  const known = await readRecord(userId);
+  if (!known) return;
+  const { Sandbox } = await loadSdk();
+  if (known.id) await Sandbox.kill(known.id, connection()).catch((err) => log.warn('cloud computer: not deleted with its account', { error: String(err?.message || err).slice(0, 160) }));
+  for (const checkpoint of Array.isArray(known.checkpoints) ? known.checkpoints : []) {
+    await Sandbox.deleteSnapshot(checkpoint.id, connection()).catch(() => {});
+  }
 }
 
 /**

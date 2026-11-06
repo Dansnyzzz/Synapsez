@@ -133,6 +133,8 @@ section('LibreOffice, asked for once per file');
       },
     };
   };
+  const refused = await renderWithOffice('u-view', { ...row, origin: 'google_drive' }, { machineFor: fake() }).then(() => '', (err) => err.message);
+  check('a file from Drive stays off the machine', /stays off the cloud computer/.test(refused), refused);
   const first = await renderWithOffice('u-view', row, { machineFor: fake() });
   check('a machine makes it, once, and is gone after', made === 1 && deleted === 1 && first.id, JSON.stringify(first));
   check('  from a fixed name, whatever the file was called', calls[0] === '/tmp/in/document.pptx', calls[0]);

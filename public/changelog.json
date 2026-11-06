@@ -1,6 +1,58 @@
 {
   "entries": [
     {
+      "version": "1.14.0",
+      "date": "2026-11-06",
+      "new": {
+        "vi": [
+          "Máy tính đám mây có sẵn mọi thứ: LibreOffice, ffmpeg, Python đầy đủ, trình duyệt và các coding agent, không phải cài gì.",
+          "Nhờ sửa tệp bạn gửi, trợ lý sửa ngay trên tệp đó, giữ nguyên định dạng và ghi chú, chỉ đổi đúng chỗ bạn nói.",
+          "Trang “Dữ liệu của bạn đi đâu”: Data Cloaking và giám sát chuỗi suy nghĩ, có nguồn và số đo. Mỗi câu trả lời có biểu tượng khiên cho biết nó đi đường nào.",
+          "Gửi được mọi loại tệp, tệp lớn tới 2 GB đi thẳng lên máy của bạn. Model đọc được âm thanh, video được đánh dấu.",
+          "Tùy chọn kiểm tra độc lập trước hành động: khi có gì không khớp với yêu cầu của bạn, trợ lý dừng lại hỏi."
+        ],
+        "en": [
+          "The cloud computer comes with everything: LibreOffice, ffmpeg, a full Python stack, a browser and coding agents, nothing to install.",
+          "Asked to change a file you sent, the assistant changes that file, keeping its formats and comments, and only what you named.",
+          "A “How your data travels” page: data cloaking and chain-of-thought monitoring, with sources and figures. Each reply has a shield saying where it went.",
+          "Send any kind of file; big ones, up to 2 GB, go straight to your machine. Models that read sound and video are marked.",
+          "An optional independent check before actions: when something does not match what you asked, the assistant stops and asks."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Excel mở như bảng tính thật, biểu đồ ghi đúng tên trang tính; PowerPoint hiện đúng bố cục; xem bằng LibreOffice chỉ một lần bấm.",
+          "Tra cứu thực tế và bách khoa trả lời được nhiều hơn hẳn, hỏi nhiều thứ trong một lần; các lần tra liên tiếp gộp vào một thẻ.",
+          "Hàng lệnh trên máy đám mây chỉ hiện tiêu đề; chạy là thấy kết quả ngay; mã thoát được giải thích.",
+          "Che thông tin cá nhân bắt thêm địa chỉ, ngày sinh, biển số, IP, khoá, mật khẩu và tên Việt đầy đủ.",
+          "Phần suy luận ghi rõ là tóm tắt của nhà cung cấp hay văn bản do model gửi về."
+        ],
+        "en": [
+          "Excel opens as a real grid, with charts under their real sheet names; PowerPoint keeps its layout; LibreOffice is one press away.",
+          "World facts and the encyclopedia answer far more, several questions in one call; consecutive lookups share one card.",
+          "Cloud computer rows show their title alone; output appears as it runs; exit codes are explained.",
+          "Hiding personal details also catches addresses, birth dates, number plates, IP addresses, keys, passwords and Vietnamese full names.",
+          "Reasoning says whether it is a summary from the provider or text the model sent."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Trình duyệt đám mây không khởi động được do máy chỉ có 512 MiB.",
+          "Lệnh chạy xong nhưng thiếu tệp cần giao thì mất luôn kết quả đã in ra.",
+          "Sơ đồ ASCII trong tệp Word bị tách thành từng ô riêng.",
+          "pip cài vào một Python, chương trình chạy bằng Python khác.",
+          "Không tải được tệp zip."
+        ],
+        "en": [
+          "The cloud browser would not start because machines had only 512 MiB.",
+          "A command that finished but missed a file to deliver lost what it had printed.",
+          "An ASCII diagram in a Word file was split into separate boxes.",
+          "pip installed into one Python while programs ran on another.",
+          "Zip files could not be uploaded."
+        ]
+      }
+    },
+    {
       "version": "1.13.0",
       "date": "2026-11-05",
       "new": {

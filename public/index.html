@@ -664,7 +664,6 @@
                 type="file"
                 id="file-input"
                 multiple
-                accept="image/*,text/*,application/pdf,application/json,.md,.csv,.log,.yml,.yaml,.ts,.tsx,.js,.jsx,.py,.sql,.xml,.html,.css,.docx,.xlsx,.pptx,.docm,.xlsm,.pptm,.xls,.xlsb,.xltx,.xltm,.ods,.tsv"
                 hidden data-i18n-title="composer.attachInput" aria-label="Attach files" />
               <!-- Drawn rather than typed. As the character "+" this sat
                    visibly high in its circle: a text glyph is centred on the
@@ -1612,6 +1611,15 @@
               <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 5 5-5 5" /></svg>
             </a>
 
+            <!-- Data cloaking and chain-of-thought monitoring, all of it in one place (owner, 2026-11-05). -->
+            <button class="srow srow--link srow--page" type="button" data-goto="cloak">
+              <span class="srow__text">
+                <span class="srow__label" data-i18n="cloak.row">How your data travels</span>
+                <span class="srow__desc" data-i18n="cloak.rowHint">Data cloaking and chain-of-thought monitoring: what each means, what happens here and what does not.</span>
+              </span>
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 5 5-5 5" /></svg>
+            </button>
+
             <h3 class="settings__title" data-i18n="settings.preferences">Preferences</h3>
             <!-- Stacked, so each choice is read whole: what Standard allows is said
                  in the choice itself, not left to the paragraph (PRV-004). -->
@@ -1633,15 +1641,17 @@
               <div class="srow__text">
                 <label class="srow__label" for="mask-personal" data-i18n="memory.maskPersonal">Hide personal details from the model's provider</label>
                 <p class="srow__desc" data-i18n="memory.maskPersonalHint">
-                  Email addresses, phone numbers, ID and bank-account numbers, card numbers, and a name written after
-                  "my name is" are replaced with placeholders before anything is sent, and put back in the reply and
-                  before any tool runs. A PDF goes as its text while this is on. Pictures and scanned pages go as they
-                  are, and a name in the middle of a sentence, an address, or anything identifying by context is not
-                  caught. The model works with the placeholders, so answers about those details can
-                  be less precise.
+                  Email addresses, phone numbers, ID, tax, insurance and bank-account numbers, card numbers, addresses, birth dates, number plates, IP addresses, keys and passwords, and names written after a label or a title, or a Vietnamese full name of three words or more, are replaced with placeholders before anything is sent, and put back in the reply and before any tool runs. A PDF goes as its text while this is on, and sound and video do not go at all. Pictures and scanned pages go as they are, and a name of one or two words, a foreign name with no title, or anything identifying by context is not caught. The model works with the placeholders, so answers about those details can be less precise.
                 </p>
               </div>
               <div class="srow__control"><input type="checkbox" class="switch" id="mask-personal" /></div>
+            </div>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="action-monitor" data-i18n="memory.actionMonitor">Check actions independently before they run</label>
+                <p class="srow__desc" data-i18n="memory.actionMonitorHint">A smaller model compares what you asked with what is about to happen, and you are asked when they do not match or it cannot tell. Uses your key: a few hundred tokens per action it checks. One more fence, not a guarantee.</p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="action-monitor" /></div>
             </div>
             <div class="srow">
               <div class="srow__text">
@@ -1725,6 +1735,14 @@
               <span data-i18n="settings.tab.privacy">Privacy</span>
             </button>
             <div id="data-page"></div>
+          </section>
+
+          <section class="panel" data-panel="cloak" id="panel-cloak" role="tabpanel" aria-labelledby="tab-privacy">
+            <button class="data__back" type="button" data-goto="privacy">
+              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 5-5 5 5 5" /></svg>
+              <span data-i18n="settings.tab.privacy">Privacy</span>
+            </button>
+            <div id="cloak-page"></div>
           </section>
 
           <!-- Usage, after Claude's (owner, 2026-10-31): each provider with a key,

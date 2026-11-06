@@ -11743,3 +11743,63 @@ html[data-scene] .gate { background: var(--bg); position: relative; z-index: 2; 
   .themes { grid-template-columns: minmax(0, 1fr); }
   .themes__detail { position: static; order: -1; }
 }
+
+/* A reply's shield, and the page that explains it (owner, 2026-11-05). */
+.route-btn.is-warn { color: var(--warn-ink); }
+.route-note {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  max-width: 560px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.route-note p { margin: 0 0 4px; }
+.route-note__head { color: var(--text); font-weight: 500; }
+.route-note__warn { color: var(--warn-ink); }
+.route-note__more {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.think__note { margin: 8px 0 0; font-size: 12px; font-style: italic; color: var(--text-dim); }
+.think:not(.is-open) .think__note { display: none; }
+.tag--warn { color: var(--warn-ink); border-color: currentColor; }
+.srow--page {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding-inline: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.srow--page .srow__desc { display: block; }
+.cloak__section { margin-top: 24px; }
+.cloak__title { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+.cloak__sub { margin: 16px 0 6px; font-size: 13px; font-weight: 600; }
+.cloak__section p { margin: 0 0 10px; font-size: 13px; line-height: 1.6; color: var(--text-dim); }
+.cloak__section p.cloak__note { font-size: 12px; }
+.cloak__list { margin: 0 0 10px; padding-left: 20px; font-size: 13px; line-height: 1.6; color: var(--text-dim); }
+.cloak__list li { margin-bottom: 6px; overflow-wrap: anywhere; }
+.cloak__link { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.cloak__now { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 13px; border-bottom: 1px solid var(--line); }
+.cloak__state { color: var(--text-dim); }
+.cloak__state.is-on { color: var(--text); font-weight: 600; }
+.cloak__table { overflow-x: auto; margin-bottom: 10px; }
+.cloak__table table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 13px; line-height: 1.5; }
+.cloak__table th { text-align: left; font-weight: 600; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.cloak__table td { vertical-align: top; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); color: var(--text-dim); }
+.cloak__table td:first-child { color: var(--text); }

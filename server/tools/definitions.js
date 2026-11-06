@@ -3149,6 +3149,9 @@ export function assessRisk(name, rawInput = {}) {
     return looksDestructive(String(input?.command || '')) ||
       looksDestructive(String(input?.terminal?.text || '')) ||
       pythonLooksRisky(input?.python) ||
+      // Python typed at a REPL, or handed to `python3 -c`, sends what it sends all the same.
+      pythonLooksRisky(input?.terminal?.text) ||
+      (/\bpython[\d.]*\b/.test(String(input?.command || '')) && pythonLooksRisky(input?.command)) ||
       sandboxTouchesPrivate(input) ||
       filesLookRisky(input) ||
       !!input?.expose_port ||

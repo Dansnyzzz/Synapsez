@@ -170,6 +170,8 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
         bytes: file.bytes,
         origin: file.origin || 'upload',
         createdAt: file.created_at,
+        // A rewrite stamps the row, and what is cached of a file is cached by this.
+        version: new Date(file.created_at).getTime() || file.bytes,
         // Only for something the assistant wrote: the Markdown it was built
         // from, so the viewer can show and edit the source rather than a
         // rendering of it.

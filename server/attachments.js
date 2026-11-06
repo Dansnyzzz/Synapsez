@@ -67,9 +67,11 @@ export function classify(name, mime) {
   if (IMAGE_MIME.test(type)) return 'image';
   if (type === 'application/pdf' || /\.pdf$/i.test(filename)) return 'document';
   if (officeFormat(filename, type)) return 'office';
+  // Before sound and video: a browser calls TypeScript's .ts "video/mp2t".
+  if (TEXT_EXTENSION.test(filename)) return 'text';
   if (type.startsWith('audio/') || AUDIO_EXTENSION.test(filename)) return 'audio';
   if (type.startsWith('video/') || VIDEO_EXTENSION.test(filename)) return 'video';
-  if (TEXT_MIME.test(type) || TEXT_EXTENSION.test(filename)) return 'text';
+  if (TEXT_MIME.test(type)) return 'text';
   return 'binary';
 }
 
@@ -206,7 +208,7 @@ export async function saveGenerated(userId, { name, mime, kind = null, data, sou
     id: crypto.randomUUID(),
     name: String(name).slice(0, 200),
     mime: String(mime || 'application/octet-stream').slice(0, 120),
-    kind: kind || classify(name, mime) || 'text',
+    kind: kind || classify(name, mime),
     bytes,
     data: base64,
     origin,
@@ -235,7 +237,10 @@ export async function saveChangedFile(userId, file, buffer, { chatId = null, nam
   const store = getStore();
   if (buffer.length > MAX_BYTES) throw new Error(`That file would come to ${humanSize(buffer.length)}, over the ${humanSize(MAX_BYTES)} limit.`);
   let target = file;
-  if (file.origin !== 'generated') {
+  // A copy of a Drive file is what it was copied from, as far as anything holding Google's
+  // rules is concerned: it may not go where the original may not (googleData.js).
+  const isCopy = file.origin === 'generated' || (file.origin === DRIVE_ORIGIN && file.derived_from);
+  if (!isCopy) {
     target =
       (await store.findDerivedFile(userId, file.id)) ||
       (await store.createAttachment(userId, {
@@ -245,7 +250,7 @@ export async function saveChangedFile(userId, file, buffer, { chatId = null, nam
         kind: file.kind,
         bytes: Number(file.bytes),
         data: file.data,
-        origin: 'generated',
+        origin: file.origin === DRIVE_ORIGIN ? DRIVE_ORIGIN : 'generated',
         source: null,
         chatId: chatId || file.chat_id || null,
         thumb: null,
@@ -721,7 +726,14 @@ function sightText(name, what, reading) {
   );
 }
 
-export function toParts(message, loaded, { vision = true, documents = true, seen = null } = {}) {
+/**
+ * What a provider's wire carries (openrouter.ai/docs/guides/overview/multimodal), by file
+ * ending: the format it names a sound by, and the type it names a video by.
+ */
+const AUDIO_ON_THE_WIRE = { wav: 'wav', mp3: 'mp3', aiff: 'aiff', aif: 'aiff', aac: 'aac', ogg: 'ogg', oga: 'ogg', opus: 'ogg', flac: 'flac', m4a: 'm4a' };
+const VIDEO_ON_THE_WIRE = { mp4: 'video/mp4', m4v: 'video/mp4', mpeg: 'video/mpeg', mpg: 'video/mpeg', mov: 'video/quicktime', webm: 'video/webm' };
+
+export function toParts(message, loaded, { vision = true, documents = true, seen = null, hears = false, watches = false } = {}) {
   const parts = [];
 
   for (const file of message.attachments || []) {
@@ -867,6 +879,20 @@ export function toParts(message, loaded, { vision = true, documents = true, seen
       continue;
     }
 
+    // The model reads sound or video itself, when its provider says it does and the
+    // wire carries this kind. A format it would refuse goes to the machine instead,
+    // rather than failing the whole request.
+    const ending = String(full.name || '').split('.').pop().toLowerCase();
+    const heard = full.data && full.kind === 'audio' && hears ? AUDIO_ON_THE_WIRE[ending] : null;
+    if (heard) {
+      parts.push({ type: 'audio', name: full.name, mime: full.mime, data: full.data, format: heard });
+      continue;
+    }
+    const watched = full.data && full.kind === 'video' && watches ? VIDEO_ON_THE_WIRE[ending] : null;
+    if (watched) {
+      parts.push({ type: 'video', name: full.name, mime: watched, data: full.data });
+      continue;
+    }
     if (full.kind === 'binary' || full.kind === 'audio' || full.kind === 'video') {
       parts.push({ type: 'text', text: unreadFileNote(full) });
       continue;
@@ -989,4 +1015,18 @@ export function liveRevision(past) {
   return newest + 1;
 }
 
+/** The most one file may be on its way straight to the machine: a fifth of the disk an account has. */
+export const MAX_DIRECT_BYTES = 2 * 1024 * 1024 * 1024;
+
 export const LIMITS = { maxBytes: MAX_BYTES, maxPerMessage: MAX_PER_MESSAGE };
+
+/** A file's name as a path on the machine can hold it: one piece, nothing that climbs out. */
+export function machineFileName(name) {
+  const clean = String(name || '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\\/\u0000-\u001f]+/g, '-')
+    .replace(/^\.+/, '')
+    .trim()
+    .slice(0, 180);
+  return clean || 'file';
+}

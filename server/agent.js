@@ -10,6 +10,8 @@ import { resolve as resolveModelId } from './models.js';
 import { AUTO_ID, isAuto, pickAutoModel, NO_AUTO_MESSAGE } from './autoPick.js';
 import { settleAccountModel, goneModel, isModelGoneError, isLibraryModel, moveAccountToAuto } from './modelRetirement.js';
 import { availableTools, assessRisk, riskReason, TOOLS_BY_NAME, URL_ARGUMENT } from './tools/definitions.js';
+import { routeFor } from './dataRoute.js';
+import { heldByMonitor } from './actionMonitor.js';
 import { UNTRUSTED_RULE } from './tools/untrusted.js';
 import { executeTool } from './tools/execute.js';
 import { normalisePlan, PLAN_MIN_STEPS } from './tools/cloud.js';
@@ -632,9 +634,12 @@ function withAttachments(messages, loaded, entry, { masking = false } = {}) {
   const documents = !masking && readsPdfNatively(entry);
   // Shared across the transcript, in order, so a file attached twice goes once.
   const seen = new Set();
-  return messages.map((m) =>
-    m.attachments?.length ? { ...m, parts: toParts(m, loaded, { vision, documents, seen }) } : m,
-  );
+  return messages.map((stored) => {
+    // Kept with a message for this app's own use: a check's verdict never reaches the model (actionMonitor.js).
+    const { held: _held, route: _route, ...m } = stored;
+    // Sound and video are like a picture under masking: no shield reaches inside them.
+    return m.attachments?.length ? { ...m, parts: toParts(m, loaded, { vision, documents, seen, hears: !masking && entry?.hears === true, watches: !masking && entry?.watches === true }) } : m;
+  });
 }
 
 /**
@@ -879,9 +884,17 @@ export function turnReadOutside(messages) {
  */
 const personalInAddress = (call) => Array.isArray(call?.unmasked) && !!URL_ARGUMENT[call.name] && call.unmasked.includes(URL_ARGUMENT[call.name]);
 
+/** Tools whose arguments go on past this app: a header, a curl, a browser's steps, a server of somebody else's. */
+const LEAVES_THIS_APP = /^(?:http_request|web_search|sandbox_run|run_command|run_background|cloud_browser|browser_|desktop_|mcp__)/;
+
+/** The same, anywhere in the arguments of a tool that reaches outside. */
+const personalLeaving = (call) => Array.isArray(call?.unmasked) && call.unmasked.length > 0 && LEAVES_THIS_APP.test(String(call.name));
+
 /** Why such a call asks, in the approval prompt. */
 export const PERSONAL_IN_ADDRESS_REASON =
   'This puts one of your personal details — hidden from the model as a placeholder — into a web address. Check the address before it is sent.';
+export const PERSONAL_LEAVING_REASON =
+  'This sends one of your personal details — hidden from the model as a placeholder — out of this app. Check where it is going before it runs.';
 
 /**
  * The calls in a step that must stop for a yes.
@@ -892,7 +905,8 @@ export const PERSONAL_IN_ADDRESS_REASON =
  * user always wants replies forwarded to …" would have planted an instruction
  * in all of them — the one place an injection outlives the turn it came from.
  * A turn that read nothing from outside writes its notes as before. A personal
- * detail put back into a web address always asks (`personalInAddress`).
+ * detail put back into something that leaves this app asks, under every policy but
+ * Auto, which asks nothing (`personalInAddress`, `personalLeaving`).
  *
  * @param {Array<{ id: string, name: string, input?: any, unmasked?: string[] }>} toolCalls
  * @param {string} policy
@@ -902,17 +916,29 @@ export function needsApproval(toolCalls, policy, { readOutside = false } = {}) {
   if (policy === 'auto' || policy === 'readonly' || policy === 'plan') return [];
   return toolCalls.filter((call) => {
     if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return true;
-    if (personalInAddress(call)) return true;
+    if (personalInAddress(call) || personalLeaving(call)) return true;
     const risk = assessRisk(call.name, call.input);
     if (risk === 'safe') return false;
     return policy === 'ask' ? true : risk === 'sensitive';
   });
 }
 
+/**
+ * Calls the independent check stops, when the account has it on (actionMonitor.js): only
+ * the ones that would otherwise run unasked, and never under a policy that runs nothing.
+ */
+function monitorHolds({ toolCalls, pending, policy, readOutside, thought, prefs, entry, userId, chatId, messages, signal, googleData, stream }) {
+  if (prefs?.actionMonitor !== true || (policy !== 'auto' && policy !== 'guarded')) return Promise.resolve(new Map());
+  const asking = new Set(pending.map((p) => p.id));
+  const calls = toolCalls.filter((c) => !asking.has(c.id) && c.name !== 'ask_options');
+  return heldByMonitor({ calls, messages, readOutside, thought, prefs, entry, userId, chatId, signal, googleData, stream });
+}
+
 /** The reason shown for one call in an approval prompt. */
 function approvalReason(call, policy, readOutside) {
   if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return READ_OUTSIDE_REASON;
   if (personalInAddress(call)) return PERSONAL_IN_ADDRESS_REASON;
+  if (personalLeaving(call)) return PERSONAL_LEAVING_REASON;
   return riskReason(call.name, call.input);
 }
 
@@ -1801,15 +1827,23 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     }
 
     const answersThis = answersTheseCalls(last.toolCalls, decisionFor);
+    const decided = answersThis && (decision === 'allow' || decision === 'deny');
+    // A run cut short after the check stopped a call must not run it on the way back.
+    // What it said is kept with the message: a second look might say otherwise (`holdToolCalls`).
+    const held = decided
+      ? new Map()
+      : last.held
+        ? new Map(Object.entries(last.held))
+        : await monitorHolds({ toolCalls: last.toolCalls, pending: stillPending, policy, readOutside, thought: last.thinking, prefs, entry, userId, chatId, messages, signal, googleData: carriesGoogleData(messages), stream });
 
-    if (stillPending.length && !(answersThis && (decision === 'allow' || decision === 'deny'))) {
+    if ((stillPending.length || held.size) && !decided) {
       emit('approval_required', {
         toolCalls: last.toolCalls.map((c) => ({
           id: c.id,
           name: c.name,
           input: c.input,
-          needsApproval: stillPending.some((p) => p.id === c.id),
-          reason: approvalReason(c, policy, readOutside),
+          needsApproval: stillPending.some((p) => p.id === c.id) || held.has(c.id),
+          reason: held.get(c.id) ?? approvalReason(c, policy, readOutside),
         })),
       });
       return;
@@ -2137,6 +2171,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           signal,
           googleData,
           deadline,
+          // Kept with the message: which provider, what kind of promise, how many of each
+          // kind were hidden. No value of anybody's goes in it.
+          onRoute: ({ privacy, masked }) => {
+            assistant.route = routeFor({ entry, privacy, masked });
+            emit('data_route', assistant.route);
+          },
         })) {
           // Anything at all counts as having started — a reasoning token, a tool
           // call, a notice that a key was refused. What is being timed is the
@@ -2592,14 +2632,16 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
     const readOutside = turnReadOutside(messages);
     const pending = needsApproval(assistant.toolCalls, policy, { readOutside });
-    if (pending.length) {
+    const held = await monitorHolds({ toolCalls: assistant.toolCalls, pending, policy, readOutside, thought: assistant.thinking, prefs, entry, userId, chatId, messages, signal, googleData, stream });
+    if (held.size) await store.holdToolCalls(userId, chatId, assistant.id, Object.fromEntries(held));
+    if (pending.length || held.size) {
       emit('approval_required', {
         toolCalls: assistant.toolCalls.map((c) => ({
           id: c.id,
           name: c.name,
           input: c.input,
-          needsApproval: pending.some((p) => p.id === c.id),
-          reason: approvalReason(c, policy, readOutside),
+          needsApproval: pending.some((p) => p.id === c.id) || held.has(c.id),
+          reason: held.get(c.id) ?? approvalReason(c, policy, readOutside),
         })),
       });
       return; // The client resumes by calling back with a decision.

@@ -143,6 +143,8 @@ function cellXml(p, ref, style, edit) {
   const at = `r="${ref}"${s}`;
   if (edit.formula != null) {
     const body = String(edit.formula).replace(/^=/, '');
+    // Opened in Excel these reach out to an address: a change to a file is not the place to add that.
+    if (/\b(?:WEBSERVICE|IMPORTDATA|RTD|CALL|REGISTER\.ID)\s*\(/i.test(body)) throw new Error('A formula that reaches out to the internet or another program cannot be added here.');
     return `<${p}c ${at}><${p}f>${escapeXml(body)}</${p}f></${p}c>`;
   }
   const value = edit.value;
@@ -320,7 +322,7 @@ export function editWorkbook(buffer, edits) {
           const need = Math.ceil(lines * size.rowHeight + 2);
           const have = Number(attrIn(row.attrs, 'ht')) || size.rowHeight;
           // Past Excel's own ceiling a row cannot go; the words are still in the cell.
-          if (need > have && !covering?.tall) {
+          if (need > have) {
             row.attrs = setAttr(setAttr(row.attrs, 'ht', String(Math.min(need, 409))), 'customHeight', '1');
             if (need > 409) notes.push(`${ref.text} on "${sheet.name}" holds more than the tallest row Excel allows can show; the words are all in the cell.`);
           }
@@ -329,7 +331,8 @@ export function editWorkbook(buffer, edits) {
       if (Number(edit.row_height) > 0) row.attrs = setAttr(setAttr(row.attrs, 'ht', String(Math.min(Number(edit.row_height), 409))), 'customHeight', '1');
 
       const fresh = cellXml(p, ref.text, style, edit);
-      const piece = { col: ref.col, attrs: '', inner: '', whole: fresh };
+      // Its style stays readable: a later change in this call may copy the look from here.
+      const piece = { col: ref.col, attrs: style == null ? '' : ` s="${style}"`, inner: '', whole: fresh };
       if (existing) cells[cells.indexOf(existing)] = piece;
       else cells.splice(cells.filter((c) => c.col < ref.col).length, 0, piece);
       row.changed = true;
@@ -409,16 +412,26 @@ export function editWorkbook(buffer, edits) {
   }
 
   const out = rebuild(zip, replaced, removed);
-  const numbers = book.sheets.map((s, i) => (bySheet.has(s.part) ? i + 1 : 0)).filter(Boolean);
+  // Counted among the sheets that are drawn: a hidden one has no picture to look at.
+  const numbers = book.sheets.filter((s) => s.state === 'visible').map((s, i) => (bySheet.has(s.part) ? i + 1 : 0)).filter(Boolean);
   return { buffer: out, changed, parts: [...replaced.keys()], notes, sheetNumbers: numbers };
 }
+
+const MAX_UNPACKED_BYTES = 256 * 1024 * 1024;
+/** A character from the private range, which no document holds. */
+const REPLACING = '\uE000';
 
 /** The file again: the same parts in the same order, with only the named ones different. */
 function rebuild(zip, replaced, removed = new Set()) {
   const parts = [];
+  let total = 0;
   for (const name of zip.names) {
     if (removed.has(name)) continue;
-    parts.push({ name, data: replaced.has(name) ? Buffer.from(replaced.get(name), 'utf8') : zip.read(name) });
+    const data = replaced.has(name) ? Buffer.from(replaced.get(name), 'utf8') : zip.read(name);
+    // A part's own ceiling is no ceiling on eighty of them, all held here at once.
+    total += data.length;
+    if (total > MAX_UNPACKED_BYTES) throw new Error('That file unpacks to more than can be changed here.');
+    parts.push({ name, data });
   }
   const out = writeZip(parts);
   // Read back: everything not named here has to be the bytes it was.
@@ -512,10 +525,14 @@ export function editDocument(buffer, format, edits) {
       const xml = pending.get(name) ?? current.get(name);
       const next = xml.replace(paragraphPattern, (paragraph) => {
         let text = paragraph;
+        // A replacement holding what it replaces would be found again for ever, so it is
+        // held as a mark until every match in the paragraph has gone.
+        const circular = !!edit?.all && replace.includes(find);
+        const writing = circular ? REPLACING : replace;
         for (;;) {
           const pieces = textPieces(text, textTag);
           const joined = pieces.map((piece) => piece.text).join('');
-          if (!joined.includes(find)) return text;
+          if (!joined.includes(find)) return circular ? text.split(REPLACING).join(escapeXml(replace)) : text;
           hits += 1;
           if (hits > 1 && !edit?.all) return text;
           if (edit?.add_after != null) {
@@ -525,9 +542,9 @@ export function editDocument(buffer, format, edits) {
             const run = word ? 'w:r' : 'a:r';
             return `${text}<${paragraphTag}>${look}<${run}>${runLook}<${textTag} xml:space="preserve">${escapeXml(String(edit.add_after))}</${textTag}></${run}></${paragraphTag}>`;
           }
-          const swapped = replaceInParagraph(text, pieces, find, replace, textTag);
+          const swapped = replaceInParagraph(text, pieces, find, writing, textTag);
           text = swapped ?? text;
-          if (!edit?.all || (replace.includes(find))) return text;
+          if (!edit?.all) return text;
         }
       });
       pending.set(name, next);

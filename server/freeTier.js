@@ -285,6 +285,8 @@ export async function e2bAccountSpend(userId, amount, now = new Date()) {
     await store.addToCounter(day.total, amount, day.ends);
     // Their first of the day: one more person to share it among.
     if (amount > 0 && mine === Math.round(amount)) await store.addToCounter(day.people, 1, day.ends);
+    // A start that failed and was given back was nobody's first of the day after all.
+    if (amount < 0 && mine <= 0) await store.addToCounter(day.people, -1, day.ends);
   } catch (err) {
     if (!/not ready yet/.test(String(err?.message))) log.warn('free tier: account share not counted', { error: String(err?.message || err).slice(0, 160) });
   }

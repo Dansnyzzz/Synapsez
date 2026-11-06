@@ -18,6 +18,7 @@ import { resolveModel, PROVIDERS, isFreeEntry } from './catalog.js';
 import { startChatSpan } from '../util/genaiSpan.js';
 import crypto from 'node:crypto';
 import { createShield } from '../deidentify.js';
+import { stealthRefusal, isStealthModel } from '../dataRoute.js';
 import { signingRoot } from '../secrets.js';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
@@ -429,7 +430,7 @@ const ROUNDS = 3;
  *       · {type:'done', stopReason, toolCalls, usage, raw?}
  */
 async function* streamAny(opts) {
-  const { streamOne: injected, sleep, googleData: _googleData, deadline: _deadline, ...rest } = opts;
+  const { streamOne: injected, sleep, googleData: _googleData, deadline: _deadline, onRoute, ...rest } = opts;
   const entry = opts.entry;
   const provider = entry.provider;
   const label = PROVIDERS[provider]?.label || provider;
@@ -442,6 +443,9 @@ async function* streamAny(opts) {
   let maxTokens = opts.maxTokens ?? outputBudget(entry, estimatePromptTokens(opts));
   // Only OpenRouter takes a per-request data policy; see `providerPrivacy`.
   const privacy = provider === 'openrouter' ? (opts.privacy ?? (await providerPrivacyFor(userId))) : 'standard';
+  // The account's own word, whichever provider serves it: only OpenRouter has a switch to send.
+  const refusal = isStealthModel(entry) ? stealthRefusal(entry, opts.privacy ?? (await providerPrivacyFor(userId))) : null;
+  if (refusal) throw new Error(refusal);
   /**
    * Personal data masked on the way out and restored on the way back (PRV-003),
    * when the account asked for it. Here because this is the one door to every
@@ -452,6 +456,8 @@ async function* streamAny(opts) {
     ? createShield({ key: crypto.createHmac('sha256', signingRoot() || 'synapsez-local').update(`deidentify:${userId || ''}`).digest() })
     : null;
   const outgoing = shield ? shield.protect(rest) : rest;
+  // For the reply's shield: how many of each kind were hidden, never which (dataRoute.js).
+  onRoute?.({ privacy, masked: shield ? shield.counts() : null });
   let shrunk = false;
   /**
    * Keys whose provider kept failing on this request, and the last such failure.

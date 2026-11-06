@@ -69,6 +69,12 @@ function attachmentParts(parts) {
     if (part.type === 'text') out.push({ type: 'text', text: part.text });
     else if (part.type === 'image') {
       out.push({ type: 'image_url', image_url: { url: `data:${part.mime};base64,${part.data}` } });
+    } else if (part.type === 'audio') {
+      // openrouter.ai/docs/guides/overview/multimodal/audio: base64 only, with its format named.
+      out.push({ type: 'input_audio', input_audio: { data: part.data, format: part.format } });
+    } else if (part.type === 'video') {
+      // openrouter.ai/docs/guides/overview/multimodal/videos: a data URL is what a private file can be.
+      out.push({ type: 'video_url', video_url: { url: `data:${part.mime};base64,${part.data}` } });
     } else if (part.type === 'document') {
       out.push({
         type: 'text',

@@ -378,7 +378,8 @@ async function stockQuotes(symbols, market) {
 
 async function marketDataTool({ kind, symbols, vs, market, requests }) {
   if (Array.isArray(requests) && requests.length) {
-    return (await Promise.all(requests.slice(0, 6).map((request) => marketDataTool(request).catch((err) => `Could not find that: ${err?.message || err}`)))).join('\n\n');
+    const answers = await Promise.all(requests.slice(0, 6).map((request) => marketDataTool(request).catch((err) => `Could not find that: ${err?.message || err}`)));
+    return `${answers.join('\n\n')}${requests.length > 6 ? `\n\n(${requests.length - 6} more were not asked: 6 at most in one call.)` : ''}`;
   }
   const list = (Array.isArray(symbols) ? symbols : String(symbols || '').split(/[,;]/))
     .map((s) => String(s).trim())
@@ -1685,7 +1686,7 @@ async function encyclopediaTool({ query, queries = null, lang, source }) {
   if (Array.isArray(queries) && queries.length) {
     const asked = queries.slice(0, 8);
     const answers = await Promise.all(asked.map((one) => encyclopediaTool({ query: one, lang, source }).catch((err) => `Could not find that: ${err?.message || err}`)));
-    return answers.join('\n\n');
+    return `${answers.join('\n\n')}${queries.length > 8 ? `\n\n(${queries.length - 8} more were not asked: 8 at most in one call.)` : ''}`;
   }
   const q = String(query || '').trim();
   if (!q) throw new Error('Say what to look up.');

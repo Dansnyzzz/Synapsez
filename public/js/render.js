@@ -915,10 +915,9 @@ export function workStep(name, raw = {}) {
   let file = '';
   if (kind === 'run') {
     if (name === 'sandbox_run' && !firstLine(input.command) && firstLine(input.python)) verb = t('step.sandbox_python');
-    // A title says what it is doing, and the code behind it is one click away (owner,
-    // 2026-11-05, screenshot 16: the line beside it only confused people). On the cloud
-    // computer there is no line beside it at all.
-    detail = own ? '' : clip(firstLine(input.command) || firstLine(input.python) || said.detail, 200);
+    // On the cloud computer a title says what it is doing, and the code behind it is one
+    // click away (owner, 2026-11-05, screenshot 16: the line beside it only confused people).
+    detail = own && name === 'sandbox_run' ? '' : clip(firstLine(input.command) || firstLine(input.python) || said.detail, 200);
   } else if (ON_A_FILE.has(kind)) {
     path = typeof input.path === 'string' ? input.path.trim() : '';
     file = baseName(path);
@@ -2154,6 +2153,51 @@ let lastWebCard = null;
 let lastStepRun = null;
 
 /**
+ * The shield under a reply, and what it opens: which provider it went to, what that
+ * provider says it does with it, and how many of each kind of detail were hidden.
+ * Made of counts and labels (dataRoute.js); nothing of the person's is in it.
+ */
+function routeButton(route, wrap) {
+  const label = t('route.label');
+  const button = el('button', `msg__action route-btn${route.warn ? ' is-warn' : ''}`);
+  button.type = 'button';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-expanded', 'false');
+  button.innerHTML =
+    '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M10 2.6 4 4.8v4.7c0 3.7 2.5 6.5 6 7.9 3.5-1.4 6-4.2 6-7.9V4.8Z" /></svg>';
+  button.addEventListener('click', () => {
+    const open = wrap.querySelector(':scope > .route-note');
+    if (open) {
+      open.remove();
+      button.setAttribute('aria-expanded', 'false');
+      return;
+    }
+    const note = el('div', 'route-note');
+    const line = (words, className = '') => {
+      const p = el('p', className);
+      p.textContent = words;
+      note.append(p);
+    };
+    const provider = t(`cloak.provider.${route.provider}`);
+    line(t('route.via', { model: route.model, provider: provider.startsWith('cloak.') ? route.provider : provider }), 'route-note__head');
+    line(t(`route.tier.${route.tier}`), route.warn ? 'route-note__warn' : '');
+    const kinds = Object.entries(route.masked || {});
+    if (kinds.length) line(t('route.hidden', { list: kinds.map(([kind, n]) => `${t(`route.kind.${kind}`)} ×${n}`).join(', ') }));
+    else line(t(route.masked ? 'route.hiddenNone' : 'route.notHidden'));
+    const more = el('button', 'route-note__more');
+    more.type = 'button';
+    more.dataset.openSettings = 'cloak';
+    more.textContent = t('route.more');
+    note.append(more);
+    button.closest('.msg__actions').after(note);
+    button.setAttribute('aria-expanded', 'true');
+  });
+  return button;
+}
+
+/**
  * An assistant turn. Reasoning, tool calls and prose all land in one block so
  * the transcript reads as a single continuous action rather than a pile of
  * disconnected cards.
@@ -2170,6 +2214,8 @@ export function assistantMessage() {
 
   let thinkingBlock = null;
   let thinkingBody = null;
+  /** Where this reply went (dataRoute.js), once the server has said. */
+  let turnRoute = null;
   /** Settled since its last delta, so `finishThinking` has nothing to do. */
   let thinkingDone = false;
   /** The row inside a carried run of steps that holds this block's reasoning, while it is there. */
@@ -3217,6 +3263,17 @@ export function assistantMessage() {
     wrap.append(actions);
   }
 
+  /** The shield, when a reply ends: a row of its own for a turn that only ran tools. */
+  function paintRoute() {
+    if (!turnRoute) return;
+    let row = wrap.querySelector(':scope > .msg__actions');
+    if (!row) {
+      row = el('div', 'msg__actions');
+      wrap.append(row);
+    }
+    if (!row.querySelector('.route-btn')) row.append(routeButton(turnRoute, wrap));
+  }
+
   /** Folded, the window shows the newest lines — the ones just finished. */
   const keepTailInView = () => {
     if (!thinkingBody || thinkingBlock?.classList.contains('is-open')) return;
@@ -3247,7 +3304,7 @@ export function assistantMessage() {
      * transcript already says, in words, what is running. A card still working
      * is the one without a tick.
      */
-    appendThinking(delta) {
+    appendThinking(delta, kind = turnRoute?.thinking) {
       if (!thinkingBlock) {
         thinkingBlock = el('div', 'think is-live');
         const head = el(
@@ -3285,6 +3342,13 @@ export function assistantMessage() {
           body.append(thinkingBlock);
         }
       }
+      // Whose words these are, said where they are read: a provider's summary is not the
+      // model's reasoning, and neither is an explanation to rely on.
+      if (kind && !thinkingBody.querySelector('.think__note')) {
+        const note = el('p', 'think__note');
+        note.textContent = t(kind === 'summary' ? 'think.summary' : 'think.modelText');
+        thinkingBody.append(note);
+      }
       thinkingDone = false;
       if (parkedIn && thoughtHost && !parkedIn.thinking) {
         parkedIn.thinking = true;
@@ -3302,6 +3366,11 @@ export function assistantMessage() {
         text.normalize();
       }
       keepTailInView();
+    },
+
+    /** Where this reply went: what the shield under it opens, when it ends. */
+    setRoute(route) {
+      turnRoute = route || turnRoute;
     },
 
     finishThinking() {
@@ -3635,8 +3704,9 @@ export function assistantMessage() {
      *   is waiting for one rather than lost.
      */
     hydrate(message, resultsByCallId, { pending = false, endsTurn = false } = {}) {
+      if (message.route) turnRoute = message.route;
       if (message.thinking) {
-        api.appendThinking(message.thinking);
+        api.appendThinking(message.thinking, message.route?.thinking);
         api.finishThinking();
       }
       hydrating = true;
@@ -3665,6 +3735,7 @@ export function assistantMessage() {
       // The last tokens of a reply may still be owed a frame. A turn that ends
       // must show all of what it said, not all but the final sentence.
       if (paintQueued) api.flushText();
+      if (at) paintRoute();
       const row = wrap.querySelector(':scope > .msg__actions');
       const when = row && !row.querySelector('.msg__time') ? timeStamp(at) : null;
       if (when) row.prepend(when);

@@ -13,6 +13,7 @@
  *   npm run e2b:probe -- --base    and everything a machine is meant to come with, used for real
  *   npm run e2b:probe -- --browser and Chromium as the cloud browser starts it (about two minutes more)
  *   node scripts/e2b-probe.mjs --render <file> <folder>   LibreOffice's drawing of a file, as pictures, nothing else
+ *   node scripts/e2b-probe.mjs --upload-cors   whether a browser on another site may put a file on a machine directly
  *
  * Reads E2B_API_KEY (and E2B_TEMPLATE) from the environment or .env, and
  * never prints it.
@@ -34,6 +35,47 @@ if (fs.existsSync(envFile)) {
 if (!process.env.E2B_API_KEY) {
   console.log('\n  E2B_API_KEY is not set. Put it in .env (E2B_API_KEY=e2b_…) or the environment, then run this again.\n');
   process.exit(1);
+}
+
+// Whether a page on this app's own address can reach a signed upload link. Only a real browser can say:
+// the question is what the machine answers to a cross-site request, preflight included.
+if (process.argv.includes('--upload-cors')) {
+  const http = await import('node:http');
+  const { chromium } = await import('playwright-core');
+  const { e2bScratch } = await import('../server/e2b.js');
+  const machine = await e2bScratch({ ms: 180_000, internet: false, role: 'probe' });
+  const site = http.createServer((_req, res) => res.end('<!doctype html><title>probe</title>')).listen(0, '127.0.0.1');
+  await new Promise((r) => site.once('listening', r));
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const place = 'uploads/ab12cd34/Báo cáo (1).bin';
+    const url = await machine.uploadUrl(place);
+    console.log('  signed link host:', new URL(url).host, '· params:', [...new URL(url).searchParams.keys()].join(', '));
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${site.address().port}/`);
+    const size = 6 * 1024 * 1024;
+    const started = Date.now();
+    const result = await page.evaluate(
+      async ([target, bytes]) => {
+        const form = new FormData();
+        form.append('file', new Blob([new Uint8Array(bytes).fill(65)], { type: 'application/octet-stream' }), 'probe-upload.bin');
+        try {
+          const res = await fetch(target, { method: 'POST', body: form });
+          return { status: res.status, body: (await res.text()).slice(0, 300) };
+        } catch (err) {
+          return { error: String(err) };
+        }
+      },
+      [url, size],
+    );
+    console.log(`  cross-site POST of ${size} bytes in ${Date.now() - started} ms:`, JSON.stringify(result));
+    console.log('  size on the machine:', await machine.fileSize(place).catch((err) => `unknown: ${err.message}`));
+  } finally {
+    await browser.close();
+    site.close();
+    await machine.box?.kill().catch(() => {});
+  }
+  process.exit(0);
 }
 
 // A look at what LibreOffice makes of one file, to compare with real Office and our own drawing.

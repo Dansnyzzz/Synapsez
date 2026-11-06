@@ -35,6 +35,8 @@ export const LIMITS = {
   // An import arrives in batches of up to fifty conversations, so a large
   // Claude or ChatGPT archive is a few hundred requests — not unlimited.
   import: { limit: 400, windowMs: 60 * 60_000 },
+  // Each of these wakes a machine on the deployment's one key. A person sends a few files an hour.
+  'machine-file': { limit: 120, windowMs: 60 * 60_000 },
   // Deleting the account checks a password: the same guessing ceiling as signing in.
   'delete-account': { limit: 10, windowMs: 15 * 60_000 },
   // The + menu's Drive picker: a search per pause in typing, and each pick a

@@ -427,7 +427,7 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
         : `<p class="viewer__empty">${escapeHtml(t('viewer.noText'))}</p>`;
     }
 
-    if (rendered && tab === 'preview') {
+    if (rendered && tab === 'preview' && showingRevision === null) {
       return `${renderedBar()}<iframe class="viewer__frame" src="/api/attachments/${encodeURIComponent(rendered.id)}" title="${escapeHtml(rendered.name)}"></iframe>`;
     }
 

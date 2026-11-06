@@ -444,6 +444,9 @@ CREATE INDEX IF NOT EXISTS shared_models_family_idx ON shared_models (family, is
 -- the picker can say, the composer can warn, and the request can leave the image
 -- out and explain itself instead of failing.
 ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS vision BOOLEAN NOT NULL DEFAULT FALSE;
+-- Whether it reads sound and video (owner, 2026-11-05). What the provider's own list says.
+ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS hears BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS watches BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- The most output tokens this model will actually produce.
 --

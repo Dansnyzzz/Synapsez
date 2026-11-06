@@ -32,8 +32,9 @@ const NPM_INSTALL = /^(?:sudo\s+)?npm\s+(?:install|i|add)\s+(.+)$/;
  */
 export function packagesIn(command) {
   const found = { pip: /** @type {string[]} */ ([]), apt: /** @type {string[]} */ ([]), npm: /** @type {string[]} */ ([]) };
-  for (const raw of String(command || '').split(/&&|\|\||;|\n/)) {
-    const part = raw.trim().replace(/^!/, '');
+  // Cut at a pipe and at a redirect too: what follows them is another program, or a file.
+  for (const raw of String(command || '').split(/&&|\|\||;|\n|\|/)) {
+    const part = raw.trim().replace(/^!/, '').replace(/\s*\d?[<>].*$/, '');
     const words = (text) => text.trim().split(/\s+/).filter(Boolean);
     let match = PIP_INSTALL.exec(part);
     if (match) {
@@ -67,11 +68,16 @@ async function readPackages(userId) {
  * Remember what a command that worked installed. A person's own set of tools is
  * theirs; a new machine, when one has to be made, starts with them.
  *
+ * System packages only from a command that ran as root, the one way they really install:
+ * they go back as root on the next machine, and `apt-get install x; true` exits 0 without it.
+ *
  * @param {string} userId
  * @param {string} command
+ * @param {{ asRoot?: boolean }} [options]
  */
-export async function rememberPackages(userId, command) {
+export async function rememberPackages(userId, command, { asRoot = false } = {}) {
   const found = packagesIn(command);
+  if (!asRoot) found.apt = [];
   if (!found.pip.length && !found.apt.length && !found.npm.length) return;
   const known = await readPackages(userId);
   let changed = false;
@@ -99,15 +105,16 @@ export async function rememberPackages(userId, command) {
 export async function restorePackages(userId, machine, shellFor) {
   const { pip, apt, npm } = await readPackages(userId);
   const steps = [];
-  if (pip.length) steps.push(`/usr/bin/python3 -m pip install --user --break-system-packages -q ${pip.join(' ')}`);
-  if (npm.length) steps.push(`npm install -g --no-audit --no-fund --loglevel=error ${npm.join(' ')}`);
+  // One at a time: a name that no longer exists must not take the others with it.
+  for (const name of pip) steps.push(`/usr/bin/python3 -m pip install --user --break-system-packages -q ${name}`);
+  for (const name of npm) steps.push(`npm install -g --no-audit --no-fund --loglevel=error ${name}`);
   try {
     if (steps.length) {
       await machine.runCommand({ ...shellFor(`(${steps.join('; ')}) > /tmp/synz-restore.log 2>&1`, {}, { userBin: true }), detached: true });
     }
     if (apt.length) {
       await machine.runCommand({
-        ...shellFor(`(apt-get update -q && apt-get install -y -q --no-install-recommends ${apt.join(' ')}) > /tmp/synz-restore-root.log 2>&1`, {}, { root: true }),
+        ...shellFor(`(apt-get update -q; ${apt.map((name) => `apt-get install -y -q --no-install-recommends ${name}`).join('; ')}) > /tmp/synz-restore-root.log 2>&1`, {}, { root: true }),
         sudo: true,
         detached: true,
       });
@@ -131,6 +138,8 @@ export const TIDY_SCRIPT = [
   "find . -type d \\( -name __pycache__ -o -name .ipynb_checkpoints -o -name .pytest_cache \\) -not -path './.local/*' -prune -exec rm -rf {} + 2>/dev/null",
   "find . -maxdepth 3 -type f \\( -name 'core' -o -name 'core.[0-9]*' \\) -delete 2>/dev/null",
   "find /tmp -mindepth 1 -maxdepth 1 -user \"$(id -un)\" -mmin +20 ! -name 'synz*' ! -name '.*' -exec rm -rf {} + 2>/dev/null",
+  // What was sent straight here and left a month. Its row says the file is gone, in those words.
+  'find uploads -type f -mtime +30 -delete 2>/dev/null; find uploads -mindepth 1 -type d -empty -delete 2>/dev/null',
   "df -P \"$HOME\" 2>/dev/null | awk 'NR==2 { print $5 }'",
 ].join('\n');
 
