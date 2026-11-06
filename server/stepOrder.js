@@ -126,7 +126,12 @@ export function createStepGuard(messages = []) {
   /** A background process started in this turn and not stopped. */
   let background = false;
 
-  const fileIdOf = (call) => (call.name === 'update_file' || READS_A_KEPT_FILE.has(call.name) ? String(call.input?.file_id || '') : '');
+  /** A person's file by the id of the copy its changes are on: the first change to it makes one. */
+  const copies = new Map();
+  const fileIdOf = (call) => {
+    const asked = call.name === 'update_file' || READS_A_KEPT_FILE.has(call.name) ? String(call.input?.file_id || '') : '';
+    return copies.get(asked) || asked;
+  };
   const versionOf = (id) => (id ? files.get(id)?.version ?? 0 : 0);
   const keyOf = (call) => {
     const args = stringify(call.input);
@@ -200,6 +205,8 @@ export function createStepGuard(messages = []) {
       return;
     }
     if (WRITES_A_FILE.has(call.name) && id) {
+      const asked = String(call.input?.file_id || '');
+      if (asked && asked !== id) copies.set(asked, id);
       const known = files.get(id);
       const version = (known?.version || 0) + 1;
       files.set(id, {

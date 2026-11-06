@@ -298,6 +298,7 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
       '- Numbers that make a point — a comparison, a trend, growth, shares of a whole — are a `chart`: drawn to scale in the conversation, and interactive (hovering shows each value). Reach for it unasked when a picture says it faster than a paragraph; not for two or three numbers a sentence holds. A diagram with no numbers — a flow, a timeline — is `show_widget`. Something they will keep or come back to is a file.',
       '- Word, Excel, PowerPoint, Markdown, text, CSV, HTML and JSON. You write Markdown either way; the format decides what it becomes.',
       '- Changing something you already made is `update_file` on the same id. A second nearly-identical file is how the wrong version gets sent to somebody.',
+      '- **A file they attached and ask you to change is changed in place**, unless they say otherwise: read it with `read_generated_file`, then `update_file` with its id (`cells` for a workbook, `edits` for the rest), or `sandbox_run` with `bring`, then `download` and `replaces`, when it takes a program. Filling in a column of their workbook means writing in that column, not a new file about it. If you truly cannot tell whether they want their file changed or a new one, or which kind, ask with `ask_options` before you make anything. Do the opposite of what they asked only if they then choose it.',
       cloudComputer
         ? '- `create_file` writes no PDFs. For a real PDF, build it on the cloud computer (`sandbox_run`, e.g. Python with fpdf2 and a Unicode font) and hand it over with `download`; for a quick one, a .docx or .html and Print → Save as PDF in the viewer.'
         : '- No PDFs. Make it a .docx or .html and say the viewer has Print → Save as PDF — that goes through their browser, which has the fonts and gets the accents right.',
@@ -1220,6 +1221,8 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         whereabouts,
         // Whether the pictures of a file can go to this model itself; see fileLook.js.
         canSee: canSee && !masking,
+        // What a command prints as it prints it, for the row that is running it.
+        onProgress: progressFor(emit, call.id),
       }));
       // Remembered before it is awaited, so a duplicate in the same batch waits
       // for this run instead of starting a second one. A failure is not kept:
@@ -1316,6 +1319,28 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
 }
 
 const MAX_GATE_PICTURES = 6;
+
+/**
+ * What a running command has printed, for the person watching. Its last lines a few
+ * times a second at most: nobody reads faster, and this goes over the same stream as
+ * the answer. What the model gets is the whole output, at the end, as it always did.
+ *
+ * @param {(event: string, data: any) => void} emit
+ * @param {string} id
+ */
+function progressFor(emit, id) {
+  let tail = '';
+  let last = 0;
+  return (text) => {
+    tail = `${tail}${text}`.slice(-PROGRESS_TAIL_CHARS);
+    const now = Date.now();
+    if (now - last < PROGRESS_EVERY_MS) return;
+    last = now;
+    emit('tool_progress', { id, text: tail });
+  };
+}
+const PROGRESS_TAIL_CHARS = 2000;
+const PROGRESS_EVERY_MS = 400;
 
 /** The tools that write a file this app holds, shown to the model afterwards. */
 const WRITES_FILES = new Set(['create_file', 'update_file']);

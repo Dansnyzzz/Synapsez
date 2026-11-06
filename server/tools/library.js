@@ -23,6 +23,8 @@ import { solarToLunar, lunarToSolar, yearName, dayName } from './lunar.js';
  * a reason not to read it.
  */
 
+import { REFERENCE_SOURCES } from './references.js';
+
 const UA = 'Synapsez/1.0 (+https://synapsez.vercel.app)';
 
 /**
@@ -374,7 +376,10 @@ async function stockQuotes(symbols, market) {
   return `Market quotes:\n${lines.join('\n')}\nSource: Yahoo Finance (may be delayed; not for trading decisions).`;
 }
 
-async function marketDataTool({ kind, symbols, vs, market }) {
+async function marketDataTool({ kind, symbols, vs, market, requests }) {
+  if (Array.isArray(requests) && requests.length) {
+    return (await Promise.all(requests.slice(0, 6).map((request) => marketDataTool(request).catch((err) => `Could not find that: ${err?.message || err}`)))).join('\n\n');
+  }
   const list = (Array.isArray(symbols) ? symbols : String(symbols || '').split(/[,;]/))
     .map((s) => String(s).trim())
     .filter(Boolean)
@@ -1676,17 +1681,23 @@ async function httpRequestTool({ method = 'GET', url, headers, body, json }) {
 
 /* ── encyclopedia ──────────────────────────────────────────────── */
 
-async function encyclopediaTool({ query, lang }) {
+async function encyclopediaTool({ query, queries = null, lang, source }) {
+  if (Array.isArray(queries) && queries.length) {
+    const asked = queries.slice(0, 8);
+    const answers = await Promise.all(asked.map((one) => encyclopediaTool({ query: one, lang, source }).catch((err) => `Could not find that: ${err?.message || err}`)));
+    return answers.join('\n\n');
+  }
   const q = String(query || '').trim();
   if (!q) throw new Error('Say what to look up.');
-  const language = /^[a-z]{2,3}$/.test(String(lang || '')) ? lang : /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(q) ? 'vi' : 'en';
-  const host = `https://${language}.wikipedia.org`;
-  const found = await getJson(`${host}/w/rest.php/v1/search/title?limit=1&q=${encodeURIComponent(q)}`);
-  const page = found?.pages?.[0];
-  if (!page) throw new Error(`Wikipedia (${language}) has no article matching "${q}".`);
-  const summary = await getJson(`${host}/api/rest_v1/page/summary/${encodeURIComponent(page.key)}`);
-  const link = summary?.content_urls?.desktop?.page || `${host}/wiki/${encodeURIComponent(page.key)}`;
-  return untrusted(link, `${summary.title}${summary.description ? ` — ${summary.description}` : ''}\n\n${summary.extract || '(no summary)'}\n\nSource: ${link}`);
+  const read = REFERENCE_SOURCES[String(source || 'wikipedia').toLowerCase()];
+  if (!read) throw new Error(`There is no reference called ${source}: wikipedia, wikidata, wiktionary, openlibrary, crossref or arxiv.`);
+  const getText = async (url) => {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { 'User-Agent': UA } });
+    if (!res.ok) throw new Error(`${new URL(url).host} returned HTTP ${res.status}.`);
+    return res.text();
+  };
+  const { link, text } = await read(q, lang, { getJson, getText });
+  return untrusted(link || String(source || 'wikipedia'), text);
 }
 
 export const LIBRARY_IMPLEMENTATIONS = {

@@ -238,7 +238,7 @@ export function splitStatements(sql) {
  *  37  user_themes, user_titles, theme_badges, ranking_board, ranking_settled,
  *      usage_lifetime — themes, the monthly and yearly boards, titles
  */
-export const SCHEMA_VERSION = 37;
+export const SCHEMA_VERSION = 38;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1980,8 +1980,8 @@ export function createPgStore(connectionString) {
     // ── attachments ─────────────────────────────────────────────────
     async createAttachment(userId, file) {
       const rows = await q(
-        `INSERT INTO attachments (id, user_id, name, mime, kind, bytes, data, origin, source, chat_id, thumb)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO attachments (id, user_id, name, mime, kind, bytes, data, origin, source, chat_id, thumb, derived_from)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING id, name, mime, kind, bytes, origin, created_at`,
         [
           file.id,
@@ -1995,6 +1995,7 @@ export function createPgStore(connectionString) {
           file.source ?? null,
           file.chatId ?? null,
           file.thumb ?? null,
+          file.derivedFrom ?? null,
         ],
       );
       return rows[0];
@@ -2332,6 +2333,25 @@ export function createPgStore(connectionString) {
         [String(id), userId],
       );
       return rows.length > 0;
+    },
+    /** The copy of somebody's file that holds the changes made to it, if any has been made. */
+    async findDerivedFile(userId, id) {
+      const rows = await q('SELECT * FROM attachments WHERE user_id = $1 AND derived_from = $2 ORDER BY created_at DESC LIMIT 1', [userId, id]);
+      return rows[0] || null;
+    },
+    /** LibreOffice's drawing of exactly these bytes of a file, if one has been made. */
+    async findRenderedFile(userId, id, stamp) {
+      const rows = await q(`SELECT id, name, bytes FROM attachments WHERE user_id = $1 AND derived_from = $2 AND origin = 'rendered' AND source = $3 LIMIT 1`, [userId, id, stamp]);
+      return rows[0] || null;
+    },
+    /** The Office files somebody has sent in this conversation, newest first. */
+    async recentOfficeUploads(userId, chatId, limit = 3) {
+      return q(
+        `SELECT id, name, kind, created_at FROM attachments
+          WHERE user_id = $1 AND chat_id = $2 AND origin = 'upload' AND kind = 'office'
+          ORDER BY created_at DESC LIMIT $3`,
+        [userId, chatId, limit],
+      );
     },
     /** Replace a generated file's bytes in place, keeping its id and its link. */
     /**

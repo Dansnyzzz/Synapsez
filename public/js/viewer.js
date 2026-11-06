@@ -5,6 +5,7 @@ import { MONO, TABLE, CELL, HEAD, writeRich } from './clipboard.js';
 import { openMenu } from './menu.js';
 import { toast } from './render.js';
 import { humanSize } from './format.js';
+import { mountWorkbook } from './workbook-view.js';
 
 /**
  * Paper, and nothing else: what a printed or saved document looks like. Kept
@@ -202,13 +203,20 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
     return ok;
   }
 
-  const doNode = $('viewer-do');
+  const doNode = /** @type {HTMLButtonElement} */ ($('viewer-do'));
   const moreNode = $('viewer-more');
 
   /** What is open: `{ file, preview }` from the server, plus which tab is showing. */
   let current = null;
   let tab = 'preview';
   let sheetIndex = 0;
+  /** The workbook on screen, while one is. */
+  let workbookView = null;
+  /** This server cannot draw these, so they are shown as words. */
+  let plainSheets = false;
+  let plainSlides = false;
+  /** LibreOffice's drawing of the open file, while that is what is on screen. */
+  let rendered = null;
   /** Version list for the open file, and which revision is on screen. */
   let history = null;
   let showingRevision = null;
@@ -250,6 +258,44 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
         ? `<p class="viewer__note">${escapeHtml(t('viewer.sheetTruncated'))}</p>`
         : '')
     );
+  }
+
+  /**
+   * LibreOffice's drawing of the file, one press away (owner, 2026-11-05). Not done for
+   * every file opened: our own takes a tenth of a second and has matched PowerPoint on
+   * what they were compared on, where LibreOffice takes ten seconds and a little of the
+   * shared credit. It is here for what our drawing cannot do, and is kept once made.
+   */
+  const renderedBar = () =>
+    showingRevision !== null
+      ? ''
+      : rendered
+        ? `<div class="viewer__alt"><span class="viewer__alt-note">${escapeHtml(t('viewer.lo.showing'))}</span><button type="button" data-office-back>${escapeHtml(t('viewer.lo.back'))}</button></div>`
+        : `<div class="viewer__alt"><button type="button" data-office-render>${escapeHtml(t('viewer.lo.ask'))}</button></div>`;
+
+  /**
+   * A deck as it looks: each slide as a picture, its pictures, colours and layout
+   * included, loaded as it comes near the screen. What is on it in words stays under
+   * it for whoever cannot see the picture, and for the speaker's notes; a slide this
+   * server could not draw shows those words instead (`data-slide`, below).
+   */
+  function renderSlidePictures(slides, preview) {
+    const ratio = preview.slideWidth && preview.slideHeight ? `${preview.slideWidth} / ${preview.slideHeight}` : '16 / 9';
+    const revision = showingRevision !== null ? `&rev=${encodeURIComponent(showingRevision)}` : '';
+    return `${renderedBar()}<div class="slides slides--drawn">${slides
+      .map((slide) => {
+        const words = [slide.title, ...(slide.bullets || []).map((b) => b.text)].filter(Boolean).join('. ');
+        return (
+          `<article class="slide slide--drawn" data-slide="${slide.index}"><div class="slide__no">${slide.index}</div>` +
+          `<img class="slide__picture" loading="lazy" style="aspect-ratio: ${ratio}" alt="${escapeHtml(words)}" ` +
+          `src="/api/attachments/${encodeURIComponent(current.file.id)}/page/${slide.index}?v=${encodeURIComponent(current.file.version || '')}${revision}">` +
+          (slide.notes
+            ? `<div class="slide__notes"><span>${escapeHtml(t('viewer.notes'))}</span>${escapeHtml(slide.notes).replace(/\n/g, '<br>')}</div>`
+            : '') +
+          '</article>'
+        );
+      })
+      .join('')}</div>`;
   }
 
   function renderSlides(slides) {
@@ -381,6 +427,10 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
         : `<p class="viewer__empty">${escapeHtml(t('viewer.noText'))}</p>`;
     }
 
+    if (rendered && tab === 'preview') {
+      return `${renderedBar()}<iframe class="viewer__frame" src="/api/attachments/${encodeURIComponent(rendered.id)}" title="${escapeHtml(rendered.name)}"></iframe>`;
+    }
+
     switch (preview.kind) {
       case 'document':
         /**
@@ -400,11 +450,22 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
          * promise nothing checked, which is the kind of coupling a refactor
          * breaks silently.
          */
-        return `<div class="doc">${preview.html}</div>`;
+        return `${renderedBar()}<div class="doc">${preview.html}</div>`;
       case 'sheets':
+        // The workbook as it looks; `afterDraw` mounts it. Falls back to this table.
+        if (preview.format === 'xlsx' && !plainSheets) return '<div class="xlv-host" id="xlv-host"></div>';
         return renderSheets(preview.sheets || []);
       case 'slides':
-        return renderSlides(preview.slides || []);
+        return plainSlides || !(preview.slides || []).length ? renderSlides(preview.slides || []) : renderSlidePictures(preview.slides, preview);
+      case 'audio':
+        return `<div class="viewer__media"><audio controls preload="metadata" src="${bytesUrl()}" aria-label="${escapeHtml(file.name)}"></audio></div>`;
+      case 'video':
+        return `<div class="viewer__media"><video controls preload="metadata" src="${bytesUrl()}" aria-label="${escapeHtml(file.name)}"></video></div>`;
+      case 'binary':
+        return (
+          `<p class="viewer__empty">${escapeHtml(preview.onMachine ? t('viewer.onMachine') : t('viewer.noPreview'))}</p>` +
+          (preview.text ? `<pre class="viewer__code">${escapeHtml(preview.text)}</pre>` : '')
+        );
       case 'pdf':
         // `title` rather than a label: the frame is the document, and a screen
         // reader announcing "iframe" and nothing else is no use.
@@ -473,7 +534,8 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
   function renderSheetTabs() {
     const strip = $('viewer-sheets');
     const sheets = current?.preview?.kind === 'sheets' ? current.preview.sheets || [] : [];
-    strip.hidden = sheets.length < 2 || tab !== 'preview';
+    // The workbook view has its own, along its bottom.
+    strip.hidden = sheets.length < 2 || tab !== 'preview' || !!$('xlv-host');
     if (strip.hidden) return;
 
     strip.innerHTML = sheets
@@ -534,9 +596,41 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
     renderAction();
     renderTabs();
     renderVersions();
+    workbookView?.destroy();
+    workbookView = null;
     bodyNode.innerHTML = renderPreview();
     renderSheetTabs();
     bodyNode.scrollTop = 0;
+    afterDraw();
+  }
+
+  /** What cannot be drawn from a string of markup: the workbook, and a slide with no picture. */
+  function afterDraw() {
+    const host = $('xlv-host');
+    if (host) {
+      workbookView = mountWorkbook(host, {
+        fileId: current.file.id,
+        revision: showingRevision,
+        version: current.file.version || current.file.bytes || '',
+        // This server cannot read it that way: the plain table, which it can.
+        onUnavailable: () => {
+          plainSheets = true;
+          draw();
+        },
+      });
+    }
+    // One slide this server cannot draw says this server cannot draw any.
+    for (const picture of bodyNode.querySelectorAll('.slide__picture')) {
+      picture.addEventListener(
+        'error',
+        () => {
+          if (plainSlides) return;
+          plainSlides = true;
+          draw();
+        },
+        { once: true },
+      );
+    }
   }
 
   /* ── what the one button does ─────────────────────────────────── */
@@ -951,6 +1045,30 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
    * quietly does nothing.
    */
   bodyNode.addEventListener('click', async (event) => {
+    if (!current) return;
+    if (event.target.closest('[data-office-back]')) {
+      rendered = null;
+      draw();
+      return;
+    }
+    const asked = event.target.closest('[data-office-render]');
+    if (!asked) return;
+    const file = current.file;
+    asked.disabled = true;
+    asked.textContent = t('viewer.lo.working');
+    try {
+      const made = await api.renderOffice(file.id);
+      if (current?.file?.id !== file.id) return;
+      rendered = made;
+      draw();
+    } catch (err) {
+      toast(err.message, 'error');
+      asked.disabled = false;
+      asked.textContent = t('viewer.lo.ask');
+    }
+  });
+
+  bodyNode.addEventListener('click', async (event) => {
     if (!event.target.closest('#viewer-save') || !current) return;
 
     const box = document.getElementById('viewer-editor');
@@ -1028,6 +1146,9 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
   async function load(id, { keepTab = false } = {}) {
     if (!keepTab) tab = 'preview';
     sheetIndex = 0;
+    plainSheets = false;
+    plainSlides = false;
+    rendered = null;
     showingRevision = null;
 
     current = await api.filePreview(id);

@@ -32,6 +32,9 @@ export const ICONS = {
   plug: svg('<path d="M9 3.5v4M15 3.5v4M7 7.5h10v3a5 5 0 0 1-10 0zM12 15.5v5"/>'),
   list: svg('<path d="M9.5 6.5H20M9.5 12H20M9.5 17.5H20M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/>'),
   spark: svg('<path d="M12 4l1.8 4.9L18.5 10.5l-4.7 1.7L12 17l-1.8-4.8L5.5 10.5l4.7-1.6z"/>'),
+  compass: svg('<circle cx="12" cy="12" r="8.5"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'),
+  trend: svg('<path d="M4 16.5l5-5 3.5 3.5L20 7.5M15 7.5h5v5"/>'),
+  book: svg('<path d="M12 6.5C10.5 5 8 4.5 4 4.5v14c4 0 6.5.5 8 2 1.5-1.5 4-2 8-2v-14c-4 0-6.5.5-8 2zM12 6.5v14"/>'),
 };
 
 /**
@@ -40,6 +43,10 @@ export const ICONS = {
  */
 const RULES = [
   [/^mcp__|connector/, 'plug'],
+  // Looked up, not browsed: not the globe the web's tools have (owner, 2026-11-05).
+  [/^world_facts$/, 'compass'],
+  [/^market_data$/, 'trend'],
+  [/^encyclopedia$/, 'book'],
   [/chats?\b|chats_|conversation/, 'chat'],
   [/image|photo|picture|look_at|qr|screenshot/, 'image'],
   [/place|map|route|direction/, 'pin'],

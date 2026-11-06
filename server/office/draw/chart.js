@@ -148,7 +148,7 @@ export function drawChart(surface, part, box, env) {
   const cats = series.find((s) => s.categories.length)?.categories || [];
   const legendEntries = round
     ? cats.map((name, i) => ({ name: String(name ?? ''), color: series[0]?.points.get(i) || `#${env.theme?.colors?.[`accent${(i % 6) + 1}`] || '4472C4'}` }))
-    : series.map((s) => ({ name: s.name || 'Series', color: s.color }));
+    : series.map((s, i) => ({ name: s.name || `Series${i + 1}`, color: s.color }));
 
   let left = box.x + base * 0.5;
   let right = box.x + box.w - base * 0.5;

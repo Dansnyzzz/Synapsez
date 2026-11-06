@@ -7,6 +7,7 @@ import { faviconFor, cleanHost } from '../favicon.js';
 import { proxiedImage, mapTile } from '../imageProxy.js';
 import { createDocument, extensionOf, RUNNABLE } from '../office/index.js';
 import { clientError } from '../util/clientError.js';
+import { machineForUser } from '../sandbox.js';
 import {
   withStorageShim,
   listArtifactStorage,
@@ -66,7 +67,8 @@ export function mountFileRoutes(api, { wrap, body }) {
    */
   // Every raster format a browser draws: none of them can carry a script. SVG
   // can, and stays a download — the Files shelf draws one from a blob in an <img>.
-  const INLINE_SAFE = /^(image\/(png|jpe?g|webp|gif|avif|bmp|x-icon|vnd\.microsoft\.icon)|application\/pdf)$/i;
+  // Sound and video the same: a player plays them, and they run nothing.
+  const INLINE_SAFE = /^(image\/(png|jpe?g|webp|gif|avif|bmp|x-icon|vnd\.microsoft\.icon)|application\/pdf|audio\/(mpeg|mp4|wav|x-wav|aac|ogg|opus|flac|webm)|video\/(mp4|webm|quicktime|mpeg|ogg))$/i;
 
   /**
    * A filename for the `Content-Disposition` header.
@@ -181,6 +183,26 @@ export function mountFileRoutes(api, { wrap, body }) {
     wrap(async (req, res) => {
       const file = await getStore().getAttachment(req.user.id, req.params.id);
       if (!file) return res.status(404).json({ error: 'Not found' });
+
+      /*
+       * Too large to keep here, so it stayed on the account's own cloud computer:
+       * the machine is woken and the browser sent straight to it, past this server's
+       * size limit. Whose machine is settled by whose row this is, above, and the
+       * address is signed and good for minutes.
+       */
+      if (file.origin === 'machine') {
+        try {
+          const machine = await machineForUser(req.user.id);
+          const size = machine.fileSize ? await machine.fileSize(file.source) : null;
+          if (size === null || !machine.downloadUrl) {
+            return res.status(410).json({ error: translateMessage('That file is no longer on the cloud computer.', languageOf(req)) });
+          }
+          res.setHeader('Cache-Control', 'no-store');
+          return res.redirect(302, await machine.downloadUrl(file.source));
+        } catch (err) {
+          return res.status(503).json({ error: translateMessage(clientError(err), languageOf(req)) });
+        }
+      }
 
       const wantsDownload = req.query.download === '1' || req.query.download === 'true';
       const inline = !wantsDownload && INLINE_SAFE.test(file.mime);

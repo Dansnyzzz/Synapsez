@@ -109,6 +109,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'No such job.': 'Không có tác vụ này.',
   'Name cannot be empty.': 'Tên không được để trống.',
   'Not found': 'Không tìm thấy',
+  'Not available': 'Không có sẵn',
   'Admins only.': 'Chỉ dành cho quản trị viên.',
   'CRON_SECRET is not configured.': 'Chưa cấu hình CRON_SECRET.',
   'Which file?': 'Tệp nào?',
@@ -1208,4 +1209,150 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "dân tộc",
   "sexuality":
     "xu hướng tính dục",
+  "That file would come to {0}, over the {1} limit.":
+    "Tệp đó sẽ thành {0}, vượt giới hạn {1}.",
+  "This cloud computer has {0} MiB of memory, too little to start a browser. Use web_fetch to read a page, and tell the user the browser is not available on this computer.":
+    "Máy cloud này chỉ có {0} MiB bộ nhớ, quá ít để khởi động trình duyệt. Hãy dùng web_fetch để đọc trang và báo cho người dùng rằng trình duyệt không dùng được trên máy này.",
+  "The browser could not start on the cloud computer, so no page opened. Trying the same again will not help: use web_fetch for a page, or playwright in sandbox_run, and tell the user the browser is not available right now.":
+    "Trình duyệt không khởi động được trên máy cloud nên chưa mở được trang nào. Thử lại y hệt cũng không giúp gì: hãy dùng web_fetch để đọc trang, hoặc playwright trong sandbox_run, và báo cho người dùng rằng lúc này trình duyệt không dùng được.",
+  "This machine is nobody's, so it keeps no checkpoints.":
+    "Máy này không thuộc tài khoản nào nên không lưu điểm khôi phục.",
+  "There is no checkpoint {0} on this computer.":
+    "Máy này không có điểm khôi phục {0}.",
+  "packing ended with {0}":
+    "đóng gói kết thúc với mã {0}",
+  "the home folder packs to {0} bytes":
+    "thư mục home đóng gói được {0} byte",
+  "unpacking ended with {0}":
+    "giải nén kết thúc với mã {0}",
+  "A terminal's name is letters, digits, - and _.":
+    "Tên terminal chỉ gồm chữ, số, - và _.",
+  "Say what to type, in `text`.":
+    "Hãy cho biết cần gõ gì, trong `text`.",
+  "`keys` names special keys, such as C-c, Enter, Up, Tab or Escape.":
+    "`keys` là tên các phím đặc biệt như C-c, Enter, Up, Tab hoặc Escape.",
+  "A terminal's action is start, send, keys, read, list or stop.":
+    "Hành động của terminal là start, send, keys, read, list hoặc stop.",
+  "That workbook has no workbook part, so it may be corrupt.":
+    "Tệp Excel đó thiếu phần workbook nên có thể đã hỏng.",
+  "There is no sheet called \"{0}\". The sheets are: {1}.":
+    "Không có sheet nào tên \"{0}\". Các sheet là: {1}.",
+  "That worksheet has no sheetData, so it may be corrupt.":
+    "Sheet đó thiếu sheetData nên có thể đã hỏng.",
+  "Say which cells to change, in `cells`.":
+    "Hãy cho biết cần sửa ô nào, trong `cells`.",
+  "Change at most {0} cells in one call.":
+    "Mỗi lần chỉ sửa tối đa {0} ô.",
+  "No sheet in that workbook could be found.":
+    "Không tìm thấy sheet nào trong tệp Excel đó.",
+  "Cell {0} ({1}) does not say which sheet. The sheets are: {2}.":
+    "Ô thứ {0} ({1}) chưa nói thuộc sheet nào. Các sheet là: {2}.",
+  "\"{0}\" is not a cell address like K18.":
+    "\"{0}\" không phải địa chỉ ô, ví dụ K18.",
+  "{0} would hold {1} characters; a cell holds {2}.":
+    "{0} sẽ chứa {1} ký tự, trong khi một ô chỉ chứa được {2}.",
+  "{0} on \"{1}\" is inside the merged cells {2}; only {3} shows anything there. Change that one.":
+    "{0} ở \"{1}\" nằm trong vùng gộp ô {2}; chỉ {3} mới hiện nội dung ở đó. Hãy sửa ô đó.",
+  "{0} on \"{1}\" starts a formula other cells share, so it cannot be changed on its own. Do this one with sandbox_run and openpyxl.":
+    "{0} ở \"{1}\" là ô bắt đầu của công thức dùng chung với các ô khác nên không sửa riêng được. Hãy dùng sandbox_run và openpyxl cho ô này.",
+  "\"{0}\" is not a cell address like K17.":
+    "\"{0}\" không phải địa chỉ ô, ví dụ K17.",
+  "Changing \"{0}\" would also have changed {1}, so nothing was saved.":
+    "Sửa \"{0}\" sẽ làm thay đổi cả {1} nên chưa có gì được lưu.",
+  "Changing \"{0}\" would have lost {1}, so nothing was saved.":
+    "Sửa \"{0}\" sẽ làm mất {1} nên chưa có gì được lưu.",
+  "That workbook has no list of sheets, so it may be corrupt.":
+    "Tệp Excel đó thiếu danh sách sheet nên có thể đã hỏng.",
+  "Rebuilding the file would have changed {0}, so nothing was saved.":
+    "Dựng lại tệp sẽ làm thay đổi {0} nên chưa có gì được lưu.",
+  "Say what to change, in `edits`.":
+    "Hãy cho biết cần sửa gì, trong `edits`.",
+  "Make at most {0} changes in one call.":
+    "Mỗi lần chỉ sửa tối đa {0} chỗ.",
+  "That file has no {0} part, so it may be corrupt.":
+    "Tệp đó thiếu phần {0} nên có thể đã hỏng.",
+  "Change {0} has nothing to find.":
+    "Thay đổi thứ {0} chưa có nội dung cần tìm.",
+  "There is no slide {0}.":
+    "Không có trang chiếu {0}.",
+  "Change {0} did not match: \"{1}\" is not in the file. Read it with read_generated_file and copy the words exactly.":
+    "Thay đổi thứ {0} không khớp: \"{1}\" không có trong tệp. Hãy đọc tệp bằng read_generated_file và chép đúng nguyên văn.",
+  "Change {0} matches {1} places: \"{2}\". Include more of the words around it, or say `all`.":
+    "Thay đổi thứ {0} khớp {1} chỗ: \"{2}\". Hãy lấy thêm chữ xung quanh, hoặc dùng `all`.",
+  "\"{0}\" is not a range like A1:K40.":
+    "\"{0}\" không phải một vùng ô, ví dụ A1:K40.",
+  "No such job: {0}":
+    "Không có công việc: {0}",
+  "Bring at most {0} files per call.":
+    "Mỗi lần chỉ đưa tối đa {0} tệp lên máy.",
+  "expose_port is a port from 1024 to 65535.":
+    "expose_port phải là cổng từ 1024 đến 65535.",
+  "{0} came from Google Drive, which stays off the cloud computer. Read it with read_file or look_at instead.":
+    "{0} đến từ Google Drive nên không được đưa lên máy cloud. Hãy đọc bằng read_file hoặc look_at.",
+  "{0} is on the cloud computer already, at {1}.":
+    "{0} đã có trên máy cloud, ở {1}.",
+  "This computer cannot keep checkpoints.":
+    "Máy này không lưu được điểm khôi phục.",
+  "A checkpoint's action is save, list or restore.":
+    "Hành động của điểm khôi phục là save, list hoặc restore.",
+  "{0} is a workbook: say which cells to change, in `cells`. read_generated_file with this id lists its sheets and reads them by address.":
+    "{0} là tệp Excel: hãy cho biết cần sửa ô nào, trong `cells`. read_generated_file với id này liệt kê các sheet và đọc theo địa chỉ ô.",
+  "Say what to change in {0}, in `edits`.":
+    "Hãy cho biết cần sửa gì trong {0}, trong `edits`.",
+  "{0} cannot be changed this way. A program can: sandbox_run with bring and this id puts it on the cloud computer, and download with replaces and this id gives it back as the same file.":
+    "Không sửa {0} theo cách này được. Một chương trình thì làm được: sandbox_run với bring và id này đưa tệp lên máy cloud, còn download với replaces và id này trả lại đúng tệp đó.",
+  "{0} is on the cloud computer at {1}: change it there with sandbox_run.":
+    "{0} đang ở trên máy cloud tại {1}: hãy sửa ở đó bằng sandbox_run.",
+  "{0} was uploaded by the user, not written by you, so it cannot be rewritten whole, which would lose what is in it. Change it where it stands: `cells` for a workbook, `edits` for anything else.":
+    "{0} là tệp người dùng gửi, không phải bạn viết, nên không thể viết lại toàn bộ vì sẽ mất nội dung bên trong. Hãy sửa ngay trên tệp: `cells` cho tệp Excel, `edits` cho các loại khác.",
+  "{0} was uploaded, so it has no source to read back. For how it looks, use look_at.":
+    "{0} là tệp tải lên nên không có nguồn để đọc lại. Muốn xem hình thức của tệp, hãy dùng look_at.",
+  "Gives port {0} of the cloud computer a public address: anyone who has it can reach what is listening there.":
+    "Cấp địa chỉ công khai cho cổng {0} của máy cloud: ai có địa chỉ đó đều truy cập được thứ đang chạy ở cổng này.",
+  "Puts the cloud computer back to a saved checkpoint: everything since then on it is gone.":
+    "Đưa máy cloud về điểm khôi phục đã lưu: mọi thứ phát sinh sau đó trên máy sẽ mất.",
+  "That file is no longer on the cloud computer.":
+    "Tệp đó không còn trên máy cloud.",
+  "No air quality reading for {0}.":
+    "Không có số đo chất lượng không khí cho {0}.",
+  "No sunrise time for {0}.":
+    "Không có giờ mặt trời mọc cho {0}.",
+  "No public holidays are listed for {0} in {1}.":
+    "Không có danh sách ngày lễ của {0} năm {1}.",
+  "Say which country, e.g. Vietnam or VN.":
+    "Hãy cho biết quốc gia nào, ví dụ Vietnam hoặc VN.",
+  "No country called \"{0}\" was found. Try its English name.":
+    "Không tìm thấy quốc gia \"{0}\". Hãy thử tên tiếng Anh.",
+  "Say which place or time zone.":
+    "Hãy cho biết địa điểm hoặc múi giờ.",
+  "Say the clock time as HH:MM, or YYYY-MM-DD HH:MM.":
+    "Hãy ghi giờ theo dạng HH:MM, hoặc YYYY-MM-DD HH:MM.",
+  "kind is one of: time, convert_time, weather, forecast, air_quality, sun, moon, exchange_rate, holidays, country, earthquakes, place.":
+    "kind là một trong: time, convert_time, weather, forecast, air_quality, sun, moon, exchange_rate, holidays, country, earthquakes, place.",
+  "Wikidata has nothing matching \"{0}\".":
+    "Wikidata không có mục nào khớp \"{0}\".",
+  "Wiktionary has no entry for \"{0}\".":
+    "Wiktionary không có mục từ \"{0}\".",
+  "Open Library has no book matching \"{0}\".":
+    "Open Library không có sách nào khớp \"{0}\".",
+  "Crossref has no paper matching \"{0}\".":
+    "Crossref không có bài báo nào khớp \"{0}\".",
+  "arXiv has no paper matching \"{0}\".":
+    "arXiv không có bài báo nào khớp \"{0}\".",
+  "There is no reference called {0}: wikipedia, wikidata, wiktionary, openlibrary, crossref or arxiv.":
+    "Không có nguồn tra cứu tên {0}: chỉ có wikipedia, wikidata, wiktionary, openlibrary, crossref hoặc arxiv.",
+  "This account has used today's LibreOffice drawings. The ordinary preview still works.":
+    "Tài khoản này đã dùng hết lượt dựng bằng LibreOffice hôm nay. Bản xem thường vẫn dùng được.",
+  "LibreOffice is not available right now. The ordinary preview still works.":
+    "Lúc này LibreOffice chưa dùng được. Bản xem thường vẫn dùng được.",
+  "LibreOffice could not draw that file. The ordinary preview still works.":
+    "LibreOffice không dựng được tệp đó. Bản xem thường vẫn dùng được.",
+  "LibreOffice's drawing of that file is too large to keep. The ordinary preview still works.":
+    "Bản dựng của LibreOffice quá lớn để lưu. Bản xem thường vẫn dùng được.",
+  "That workbook has no sheet to show.":
+    "Tệp Excel đó không có sheet nào để hiện.",
+  "That is not a Word or PowerPoint file this can draw.":
+    "Đây không phải tệp Word hay PowerPoint có thể vẽ được.",
+  "That file could not be read: {0}":
+    "Không đọc được tệp đó: {0}",
 };

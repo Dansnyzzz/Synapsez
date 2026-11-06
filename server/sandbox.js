@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
-import { classify, saveGenerated } from './attachments.js';
+import { LIMITS as FILE_LIMITS, classify, mimeFor, saveChangedFile, saveGenerated, saveMachineFile } from './attachments.js';
 import { getStore } from './store/index.js';
 import { exhaust } from './freeTier.js';
 import { e2bConfigured, e2bMachineFor, e2bScratch, e2bUnavailable } from './e2b.js';
+import { rememberPackages, restorePackages, terminalScript, tidyIfDue } from './machineCare.js';
 import { log } from './util/trace.js';
 
 /**
@@ -42,7 +43,7 @@ const COMMAND_MS = 120_000;
 const MAX_OUTPUT_CHARS = 16_000;
 const MAX_FILES_IN = 20;
 const MAX_FILE_IN_BYTES = 2 * 1024 * 1024;
-const DOWNLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_BRING = 6;
 const SNAPSHOT_DAYS = 30;
 /** The port the cloud browser listens on — see server/cloudBrowser. */
 export const BROWSER_PORT = 3000;
@@ -79,9 +80,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 class LimitError extends Error {}
 const hours = (ms) => Math.max(1, Math.ceil(ms / 3_600_000));
 export function cloudBudgets(env = process.env) {
+  // On E2B every second is paid for from the account's own share of the credit
+  // (freeTier.js `e2bAccountAllowance`), so these only stop something running away.
+  const e2b = e2bConfigured(env);
   return {
-    perAccount: Math.max(1, Number(env.CLOUD_ACTIONS_PER_DAY) || 60),
-    total: Math.max(1, Number(env.CLOUD_ACTIONS_TOTAL_PER_DAY) || 400),
+    perAccount: Math.max(1, Number(env.CLOUD_ACTIONS_PER_DAY) || (e2b ? 400 : 60)),
+    total: Math.max(1, Number(env.CLOUD_ACTIONS_TOTAL_PER_DAY) || (e2b ? 4000 : 400)),
   };
 }
 
@@ -253,23 +257,6 @@ const clipOutput = (text) => {
   return `${s.slice(0, half)}\n… [${s.length - MAX_OUTPUT_CHARS} characters cut] …\n${s.slice(-half)}`;
 };
 
-const MIME = {
-  pdf: 'application/pdf',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  gif: 'image/gif',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  csv: 'text/csv',
-  json: 'application/json',
-  html: 'text/html',
-  md: 'text/markdown',
-  txt: 'text/plain',
-};
-
 /** Loaded on first use: most requests never start a machine. */
 let sdk = null;
 async function loadSdk() {
@@ -386,7 +373,14 @@ export async function machineForUser(userId, { signal } = {}) {
     if (!e2bReady()) declined = e2bAsideFor;
     else {
       try {
-        return await e2bMachineFor(userId, sandboxName(userId));
+        const machine = await e2bMachineFor(userId, sandboxName(userId));
+        // A machine just made has none of what this account installs. Once: the
+        // flag is on the object every caller of this start shares.
+        if (machine.fresh) {
+          machine.fresh = false;
+          await restorePackages(userId, machine, shellFor);
+        }
+        return machine;
       } catch (err) {
         declined = await setE2bAside(err);
       }
@@ -657,16 +651,19 @@ export function pythonReport(cell, ran = true) {
  * fifteen.
  *
  * @param {string} home  the session's working folder, when the SDK says
- * @param {{ standIn?: boolean, provider?: string }} [machine]
+ * @param {{ standIn?: boolean, provider?: string, memMb?: number, cpu?: number }} [machine]
  */
-export function machineNote(home, { standIn = false, provider = '' } = {}) {
+export function machineNote(home, { standIn = false, provider = '', memMb = 0, cpu = 0 } = {}) {
   const opening = standIn
     ? "(A stand-in cloud computer for this account: its usual one is unavailable right now, so what was saved or installed there is not here, and what is made here may not be there later"
     : "(This account's own cloud computer: it keeps its files and installs between conversations";
+  const size = memMb ? `${cpu ? `${cpu} vCPU, ` : ''}${memMb >= 1024 ? `${Math.round(memMb / 102.4) / 10} GiB` : `${memMb} MiB`} of memory. ` : '';
   return (
-    `${opening}${home ? `; working folder ${home}` : ''}. ` +
+    `${opening}${home ? `; working folder ${home}` : ''}. ${size}` +
     'Full internet access; as_root: true for system packages. ' +
-    `The Python session keeps its variables while the computer is awake — about ${provider === 'e2b' ? 'ten' : 'fifteen'} idle minutes.)`
+    (provider === 'e2b'
+      ? 'After about four idle minutes it pauses and comes back as it was, the Python session and running programs included.)'
+      : 'The Python session keeps its variables while the computer is awake — about fifteen idle minutes.)')
   );
 }
 
@@ -681,9 +678,84 @@ export function figuresNote(pictures) {
   return `Showed the user ${pictures.length === 1 ? 'the figure' : `${pictures.length} figures`} in the conversation: ${pictures.map((p) => `${p.name} (id ${p.id})`).join(', ')}.`;
 }
 
-/** @param {string} name @param {string} id */
-export function handedNote(name, id) {
-  return `Handed ${name} to the user — it is in the conversation to open and download. Its id is ${id}; publish_file with that id makes a link to share.`;
+/** @param {string} name @param {string} id @param {{ removed?: boolean, atPath?: string }} [options] */
+export function handedNote(name, id, { removed = false, atPath = '' } = {}) {
+  return (
+    `Handed ${name} to the user — it is in the conversation to open and download. Its id is ${id}; publish_file with that id makes a link to share.` +
+    (removed ? " It has been taken off the cloud computer, being in the conversation now: `bring` puts it back if it is needed." : '') +
+    (atPath ? ` It stays on the cloud computer at ${atPath}, being too large to keep in the conversation: its link works as long as it stays there.` : '')
+  );
+}
+
+/** An exit code that says more than a number, in words the model can act on. */
+export function exitMeaning(code, memMb = 0) {
+  if (code === 137) return `(exit 137: the command was killed, most often for running out of memory${memMb ? ` — this computer has ${memMb} MiB` : ''}. Work in smaller pieces, or say so.)`;
+  if (code === 124) return '(exit 124: it ran past its time limit. timeout_seconds goes up to 300; start anything longer in the background.)';
+  return '';
+}
+
+/**
+ * Hand one file on the machine to the person.
+ *
+ * Any kind of file: a zip is as good an answer as a chart. Past what the conversation
+ * can hold it stays on the machine and the person gets a link to it instead. Once
+ * something is in the conversation it comes off the machine unless `keep` says not
+ * to, so a disk does not fill with copies of what has already been handed over.
+ *
+ * Whatever goes wrong is said beside what the command printed. It used to be thrown,
+ * and the whole answer was the one sentence about the file: the command had run, and
+ * what it said about why it made no file was gone (owner, 2026-11-05, screenshot 5).
+ *
+ * @param {any} machine
+ * @param {{ path: string, keep?: boolean, replaces?: string|null, userId: string, chatId?: string|null, signal?: AbortSignal }} request
+ * @returns {Promise<{ file?: any, note: string, failed?: boolean }>}
+ */
+async function handOver(machine, { path, keep = false, replaces = null, userId, chatId, signal }) {
+  const name = path.split('/').pop();
+  const mime = mimeFor(name);
+  const size = machine.fileSize ? await machine.fileSize(path, { signal }) : undefined;
+  if (size === null) return { failed: true, note: await missingFileNote(machine, path, signal) };
+  if (size !== undefined && size > FILE_LIMITS.maxBytes) {
+    if (!machine.downloadUrl) return { failed: true, note: `${path} is ${Math.round(size / 1024 / 1024)} MB, too large to keep in the conversation, and this computer cannot give a link to it. Make it smaller or split it.` };
+    const saved = await saveMachineFile(userId, { name, mime, bytes: size, path, chatId });
+    return { file: { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes }, note: handedNote(name, saved.id, { atPath: path }) };
+  }
+  const buffer = await machine.readFileToBuffer({ path, signal });
+  if (!buffer) return { failed: true, note: await missingFileNote(machine, path, signal) };
+  if (buffer.length > FILE_LIMITS.maxBytes) return { failed: true, note: `${path} is ${Math.round(buffer.length / 1024 / 1024)} MB, too large to keep in the conversation, and this computer cannot give a link to it. Make it smaller or split it.` };
+  let saved;
+  if (replaces) {
+    const earlier = await getStore().getAttachment(userId, replaces);
+    if (!earlier) return { failed: true, note: `${name} was not handed over: there is no file with the id ${replaces} on this account.` };
+    const copy = earlier.origin === 'generated' ? earlier : (await getStore().findDerivedFile(userId, replaces)) || earlier;
+    saved = await saveChangedFile(userId, copy, buffer, { chatId, name: copy.name });
+  } else {
+    saved = await saveGenerated(userId, {
+      name,
+      mime,
+      kind: classify(name, mime),
+      data: buffer.toString('base64'),
+      // Made by a program, not written from words, so there is no source to revise.
+      source: null,
+      chatId,
+    });
+  }
+  let removed = false;
+  if (!keep) {
+    const gone = await machine.runCommand({ ...shellFor('rm -f -- "$SYNZ_FILE"', { SYNZ_FILE: path }, { userBin: true }), timeoutMs: 10_000, signal }).catch(() => null);
+    removed = gone?.exitCode === 0;
+  }
+  return { file: { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes }, note: handedNote(name, saved.id, { removed }) };
+}
+
+/** The file was not made, and what is in the folder it was expected in, which is usually why. */
+async function missingFileNote(machine, path, signal) {
+  const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.';
+  const listing = await machine
+    .runCommand({ ...shellFor('ls -la -- "$SYNZ_DIR" 2>&1 | head -40', { SYNZ_DIR: folder }, { userBin: true }), timeoutMs: 10_000, signal })
+    .then((done) => done.stdout())
+    .catch(() => '');
+  return `${path} was not handed over: it does not exist on the computer, so the command above did not make it there.${listing ? `\nIn ${folder}:\n${String(listing).trim()}` : ''}`;
 }
 
 /**
@@ -691,19 +763,27 @@ export function handedNote(name, id) {
  * — plus, when asked, one file it made, saved into the conversation. Python for
  * the conversation's live session runs after the command, in the same folder.
  *
- * @param {{ command?: string, python?: string, python_reset?: boolean, files?: {path: string, content: string}[], download?: string, timeout_seconds?: number, as_root?: boolean }} input
- * @param {{ userId?: string, chatId?: string, signal?: AbortSignal }} [context]
+ * @param {{ command?: string, python?: string, python_reset?: boolean, files?: {path: string, content: string}[], download?: string, keep?: boolean, replaces?: string, bring?: string[], expose_port?: number, terminal?: any, checkpoint?: any, timeout_seconds?: number, as_root?: boolean }} input
+ * @param {{ userId?: string, chatId?: string, signal?: AbortSignal, onProgress?: (text: string) => void }} [context]
  */
-export async function runInSandbox(input, { userId, chatId, signal } = {}) {
+export async function runInSandbox(input, { userId, chatId, signal, onProgress } = {}) {
   const command = String(input?.command || '').trim();
   const python = typeof input?.python === 'string' ? input.python : '';
   const resetPython = input?.python_reset === true;
   const files = Array.isArray(input?.files) ? input.files : [];
   const download = input?.download ? workPath(input.download) : null;
-  if (!command && !python.trim() && !resetPython && !files.length && !download) {
+  const bring = Array.isArray(input?.bring) ? input.bring.map(String).filter(Boolean) : [];
+  const port = Number(input?.expose_port) || 0;
+  const terminal = input?.terminal && typeof input.terminal === 'object' ? input.terminal : null;
+  const checkpoint = input?.checkpoint && typeof input.checkpoint === 'object' ? input.checkpoint : null;
+  if (!command && !python.trim() && !resetPython && !files.length && !download && !bring.length && !port && !terminal && !checkpoint) {
     throw new Error('Give a `command` to run, `python` for the live session, `files` to write, or a file to `download`.');
   }
   if (files.length > MAX_FILES_IN) throw new Error(`Write at most ${MAX_FILES_IN} files per call.`);
+  if (bring.length > MAX_BRING) throw new Error(`Bring at most ${MAX_BRING} files per call.`);
+  if (port && !(Number.isInteger(port) && port >= 1024 && port <= 65535)) throw new Error('expose_port is a port from 1024 to 65535.');
+  // Before anything starts, so a mistyped action costs no machine.
+  const terminalLine = terminal ? terminalScript(terminal) : null;
 
   const writes = files.map((f) => {
     const content = Buffer.from(String(f?.content ?? ''), 'utf8');
@@ -715,13 +795,19 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   const seconds = Math.min(300, Math.max(5, Number(input?.timeout_seconds) || COMMAND_MS / 1000));
   // Python alone goes straight to the machine's helper; the control API — a
   // shared, rate-limited thing — is only asked for what needs it.
-  const machine = writes.length || command || download ? await machineForUser(String(userId), { signal }) : null;
+  const machine = writes.length || command || download || bring.length || port || terminal || checkpoint ? await machineForUser(String(userId), { signal }) : null;
 
   const report = [];
+  if (machine?.moved) {
+    machine.moved = false;
+    report.push("This account's cloud computer has just moved to a bigger one: its files came along, and what it had installed is being put back in the background.");
+  }
+  if (bring.length) report.push(await bringFiles(machine, bring, { userId: String(userId), signal }));
   if (writes.length) {
     await machine.writeFiles(writes, { signal });
     report.push(`Wrote ${writes.map((w) => w.path).join(', ')}.`);
   }
+  if (checkpoint) report.push(await useCheckpoint(machine, checkpoint));
 
   if (command) {
     const started = Date.now();
@@ -736,13 +822,29 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
       sudo: asRoot,
       timeoutMs: seconds * 1000,
       signal,
+      ...(onProgress ? { onOutput: onProgress } : {}),
     });
     const [out, err] = await Promise.all([done.stdout(), done.stderr()]);
+    const meaning = exitMeaning(done.exitCode, machine.memMb);
     report.push(
       `$ ${command.length > 300 ? `${command.slice(0, 300)}…` : command}`,
       `exit ${done.exitCode} · ${((Date.now() - started) / 1000).toFixed(1)}s`,
       out ? `stdout:\n${clipOutput(out)}` : 'stdout: (empty)',
       ...(err ? [`stderr:\n${clipOutput(err)}`] : []),
+      ...(meaning ? [meaning] : []),
+    );
+    // What a person added stays theirs: a new machine starts with it.
+    if (done.exitCode === 0) await rememberPackages(String(userId), command).catch(() => {});
+  }
+
+  if (terminalLine) {
+    const done = await machine.runCommand({ ...shellFor(terminalLine, {}, { userBin: true }), timeoutMs: 60_000, signal });
+    const [out, err] = await Promise.all([done.stdout(), done.stderr()]);
+    const shown = String(out || '').trim();
+    report.push(
+      done.exitCode === 0
+        ? `Terminal "${terminal.name || 'main'}":\n${shown ? clipOutput(shown) : '(nothing on its screen yet)'}`
+        : `Terminal "${terminal.name || 'main'}" did not answer (exit ${done.exitCode}): ${clipOutput(String(err || out || 'it is not open; start it first.'))}`,
     );
   }
 
@@ -765,27 +867,23 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   }
 
   let file = null;
+  let handOverFailed = false;
   if (download) {
-    const buffer = await machine.readFileToBuffer({ path: download }, { signal });
-    if (!buffer) throw new Error(`${download} does not exist in the machine — check the path with \`ls\`.`);
-    if (buffer.length > DOWNLOAD_BYTES) throw new Error(`${download} is over 10MB, too large to hand over.`);
-    const name = download.split('/').pop();
-    const ext = (name.split('.').pop() || '').toLowerCase();
-    const mime = MIME[ext] || 'application/octet-stream';
-    if (!classify(name, mime)) {
-      throw new Error(`${name} is not a kind of file the conversation can show (PDF, image, Office, text, CSV, JSON). Convert it first.`);
-    }
-    const saved = await saveGenerated(userId, {
-      name,
-      mime,
-      kind: classify(name, mime),
-      data: buffer.toString('base64'),
-      // Made by a program, not written from words, so there is no source to revise.
-      source: null,
-      chatId,
-    });
-    file = { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes };
-    report.push(handedNote(name, saved.id));
+    const handed = await handOver(machine, { path: download, keep: input?.keep === true, replaces: input?.replaces ? String(input.replaces) : null, userId: String(userId), chatId, signal });
+    report.push(handed.note);
+    file = handed.file || null;
+    handOverFailed = !!handed.failed;
+  }
+
+  if (port) {
+    const address = await portAddress(machine, port, { signal });
+    report.push(`Port ${port} is reachable at ${address} by anyone with that address, while something is listening on it and the computer is awake. Give the person the address.`);
+  }
+
+  // The machine is awake anyway, so this costs next to nothing.
+  if (machine) {
+    const disk = await tidyIfDue(String(userId), machine, shellFor, { signal });
+    if (disk) report.push(disk);
   }
 
   let home = '';
@@ -794,9 +892,58 @@ export async function runInSandbox(input, { userId, chatId, signal } = {}) {
   } catch {
     /* an older SDK without sessions; the note just omits the folder */
   }
-  report.push(machineNote(home, { standIn: !!machine?.standIn, provider: machine?.provider || '' }));
+  report.push(machineNote(home, { standIn: !!machine?.standIn, provider: machine?.provider || '', memMb: machine?.memMb || 0, cpu: machine?.cpu || 0 }));
   const shown = file || pictures[0] || null;
-  return { content: report.join('\n'), ...(shown ? { file: shown } : {}) };
+  return { content: report.join('\n'), ...(shown ? { file: shown } : {}), ...(handOverFailed ? { isError: true } : {}) };
+}
+
+/**
+ * Files from the conversation, onto the machine, each under its own name: how a
+ * program there gets at something the person attached. A file from the person's
+ * Google Drive stays out (googleData.js): E2B is not somewhere Google's terms let
+ * it go for work the person did not specifically ask to have done there.
+ *
+ * @param {any} machine
+ * @param {string[]} ids
+ * @param {{ userId: string, signal?: AbortSignal }} context
+ */
+async function bringFiles(machine, ids, { userId, signal }) {
+  const store = getStore();
+  const writes = [];
+  for (const id of ids) {
+    const row = await store.getAttachment(userId, id);
+    if (!row) throw new Error(`There is no file with the id ${id} on this account.`);
+    if (row.origin === 'google_drive') throw new Error(`${row.name} came from Google Drive, which stays off the cloud computer. Read it with read_file or look_at instead.`);
+    if (!row.data) throw new Error(`${row.name} is on the cloud computer already, at ${row.source || 'its own path'}.`);
+    writes.push({ path: workPath(`incoming/${String(row.name).replace(/[/\\]/g, '_')}`), content: Buffer.from(row.data, 'base64') });
+  }
+  await machine.writeFiles(writes, { signal });
+  return `Put ${writes.map((w) => w.path).join(', ')} on the cloud computer.`;
+}
+
+/**
+ * Save the machine as it is, list what was saved, or go back to it.
+ *
+ * @param {any} machine
+ * @param {{ action?: string, id?: string, note?: string }} checkpoint
+ */
+async function useCheckpoint(machine, checkpoint) {
+  if (!machine.saveCheckpoint) throw new Error('This computer cannot keep checkpoints.');
+  const action = String(checkpoint.action || 'list');
+  const when = (c) => new Date(c.at).toISOString().slice(0, 16).replace('T', ' ');
+  if (action === 'save') {
+    const made = await machine.saveCheckpoint(checkpoint.note);
+    return `Saved a checkpoint of the computer, memory and disk: ${made.id}. checkpoint: {action: "restore", id} goes back to it.`;
+  }
+  if (action === 'restore') {
+    const back = await machine.restoreCheckpoint(String(checkpoint.id || ''));
+    return `The computer is back as it was at ${when(back)}: what changed since is gone. Other programs running then are running again.`;
+  }
+  if (action === 'list') {
+    const kept = machine.listCheckpoints();
+    return kept.length ? `Checkpoints kept:\n${kept.map((c) => `- ${c.id} (${when(c)})${c.note ? `: ${c.note}` : ''}`).join('\n')}` : 'No checkpoint has been saved.';
+  }
+  throw new Error('A checkpoint\'s action is save, list or restore.');
 }
 
 export const __testing = {

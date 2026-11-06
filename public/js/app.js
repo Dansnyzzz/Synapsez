@@ -4084,6 +4084,10 @@ async function streamOnce(run, decision, answers) {
           }
           maybeScroll(run);
         },
+        // What a running command prints, as it prints it.
+        tool_progress: ({ id, text }) => {
+          run.toolHandles.get(id)?.progress?.(text);
+        },
         tool_result: (result) => {
           run.toolHandles.get(result.toolCallId)?.complete(result);
           run.toolHandles.delete(result.toolCallId);

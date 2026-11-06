@@ -100,6 +100,16 @@ function fakeSdk() {
     async pause() {
       state.calls.push({ kind: 'pause', id: this.sandboxId });
     }
+    async downloadUrl(path, opts) {
+      state.calls.push({ kind: 'downloadUrl', path, opts });
+      return `https://files.example/${this.sandboxId}${path}`;
+    }
+    async createSnapshot() {
+      return { snapshotId: `snap${state.next++}` };
+    }
+    static async deleteSnapshot(id) {
+      state.calls.push({ kind: 'deleteSnapshot', id });
+    }
     async kill() {
       state.boxes.delete(this.sandboxId);
       state.calls.push({ kind: 'kill', id: this.sandboxId });
@@ -232,7 +242,7 @@ section("one machine per account, found again — and paid for before it runs");
   e2b.__testing.useSdk(sdk);
   const first = await e2b.e2bMachineFor('u-e2b', 'synz-a');
   const create = state.calls.find((c) => c.kind === 'create');
-  check('made from the template, named for the account, pausing when idle', create.template === 'base' && create.opts.metadata.machine === 'synz-a' && create.opts.lifecycle?.onTimeout === 'pause' && create.opts.timeoutMs === 600_000, JSON.stringify(create.opts));
+  check('made from the template, named for the account, pausing when idle', create.template === e2b.TEMPLATE_NAME && create.opts.metadata.machine === 'synz-a' && create.opts.lifecycle?.onTimeout === 'pause' && create.opts.timeoutMs === 240_000, JSON.stringify(create.opts));
   check("  its ports open to the person's browser, which cannot send E2B's traffic token (owner, 2026-11-02)", create.opts.network?.allowPublicTraffic === true);  const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
   check('  and written down with its size', record?.id === first.sandboxId && record.cpu === 2 && record.memMb === 1024, JSON.stringify(record));
   const paid = await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`);
@@ -528,6 +538,127 @@ section('a command starts without a login shell, whoever it runs as (SBX-008)');
   check('every machine the app makes goes through it', reached[0]?.process?.args?.[0] === '--noprofile', JSON.stringify(reached[0]?.process?.args));
   sdk.Sandbox.create = before;
   e2b.__testing.useSdk(null);
+}
+
+section('a machine comes from the template, with nothing to set (owner, 2026-11-05)');
+{
+  await resetCounters();
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  e2b.__testing.forgetMissingTemplate();
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-b');
+  check('from the template by its own name, with no setting at all', state.calls.find((c) => c.kind === 'create').template === e2b.TEMPLATE_NAME);
+  check('  said to be new, so the account\'s packages come back', machine.fresh === true);
+  check('  and it knows its size, so what will not fit can be said at once', machine.memMb === 1024 && machine.cpu === 2);
+  const saved = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
+  check('  and which build it is from', saved.base === e2b.BASE_VERSION, JSON.stringify(saved));
+
+  // E2B does not know the template: base rather than nothing, and asked again later.
+  const missing = fakeSdk();
+  e2b.__testing.useSdk(missing.sdk);
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  const before = missing.sdk.Sandbox.create;
+  missing.sdk.Sandbox.create = async (template, opts) => {
+    if (template !== 'base') throw named('NotFoundError', `template ${template} not found`, { statusCode: 404 });
+    return before.call(missing.sdk.Sandbox, template, opts);
+  };
+  const fallback = await e2b.e2bMachineFor('u-e2b', 'synz-c');
+  check('a template E2B does not have is no reason to go without a machine', !!fallback.sandboxId);
+  const noted = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
+  check('  and that machine is written down as base', noted.base === 0, JSON.stringify(noted));
+  missing.sdk.Sandbox.create = before;
+  e2b.__testing.forgetMissingTemplate();
+  e2b.__testing.useSdk(null);
+}
+
+section('a machine made from an older build moves, files and all (owner, 2026-11-05: 473 MiB for ever)');
+{
+  await resetCounters();
+  e2b.__testing.forgetMissingTemplate();
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  const old = await sdk.Sandbox.create('base', { metadata: { app: 'synapsez', machine: 'synz-d' } });
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old.sandboxId, cpu: 2, memMb: 512, closed: true });
+  state.files[`/tmp/synz-move-${old.sandboxId}.tgz`] = 'packed';
+  state.calls.length = 0;
+  const moved = await e2b.e2bMachineFor('u-e2b', 'synz-d');
+  check('it is on a new machine', moved.sandboxId !== old.sandboxId, moved.sandboxId);
+  check('  made from the current template', state.calls.find((c) => c.kind === 'create')?.template === e2b.TEMPLATE_NAME);
+  const lines = state.calls.filter((c) => c.kind === 'run').map((c) => String(c.cmd));
+  const packing = lines.find((line) => line.includes('tar czf'));
+  check('  its home packed by the account, not by root', /setpriv/.test(packing || ''), packing);
+  const unpacking = lines.find((line) => line.includes('tar xzf'));
+  check('  and unpacked by the account', /setpriv/.test(unpacking || ''), unpacking);
+  check('  fetched through a signed address, not through this server', state.calls.some((c) => c.kind === 'downloadUrl' && c.opts?.useSignatureExpiration > 0));
+  check('  the old one is gone', !state.boxes.has(old.sandboxId));
+  const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
+  check('  and the record says so, with the size it really is', record.id === moved.sandboxId && record.base === e2b.BASE_VERSION && record.memMb === 1024, JSON.stringify(record));
+  check('  and the model and the package list are told', moved.moved === true && moved.fresh === true);
+
+  // Going wrong half way changes nothing.
+  const { state: state2, sdk: sdk2 } = fakeSdk();
+  e2b.__testing.useSdk(sdk2);
+  const old2 = await sdk2.Sandbox.create('base', { metadata: { app: 'synapsez', machine: 'synz-e' } });
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old2.sandboxId, cpu: 2, memMb: 512, closed: true });
+  state2.files[`/tmp/synz-move-${old2.sandboxId}.tgz`] = 'packed';
+  state2.onRun = (cmd) => (String(cmd).includes('tar xzf') ? { exitCode: 2, stdout: '', stderr: 'broken' } : { exitCode: 0, stdout: 'ok', stderr: '' });
+  const paidBefore = await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`);
+  const stayed = await e2b.e2bMachineFor('u-e2b', 'synz-e');
+  check('a move that fails half way leaves the old machine in use', stayed.sandboxId === old2.sandboxId && state2.boxes.has(old2.sandboxId));
+  check('  and the half-made one gone', state2.boxes.size === 1, String(state2.boxes.size));
+  const paidAfter = await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`);
+  check('  and what it was paid for given back', paidAfter - paidBefore <= 20, `${paidBefore} → ${paidAfter}`);
+  state2.calls.length = 0;
+  await e2b.e2bMachineFor('u-e2b', 'synz-e');
+  check('  and it is not tried again on the next call', !state2.calls.some((c) => c.kind === 'create'));
+  e2b.__testing.useSdk(null);
+}
+
+section('a checkpoint');
+{
+  await resetCounters();
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-f');
+  const first = await machine.saveCheckpoint('before the upgrade');
+  check('saved, with what it is', !!first.id && first.note === 'before the upgrade');
+  await machine.saveCheckpoint('b');
+  await machine.saveCheckpoint('c');
+  await machine.saveCheckpoint('d');
+  check('three are kept, and the oldest goes from E2B too', machine.listCheckpoints().length === 3 && state.calls.some((c) => c.kind === 'deleteSnapshot' && c.id === first.id));
+  await machine.restoreCheckpoint(machine.listCheckpoints()[0].id).catch((err) => check('restore ran', false, err.message));
+  const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
+  check('going back makes a machine from it, and the account is on that one', record.id !== machine.sandboxId && state.boxes.has(record.id) && !state.boxes.has(machine.sandboxId), JSON.stringify(record));
+  check('one that is not there is refused by name', await machine.restoreCheckpoint('nope').then(() => false, (err) => /no checkpoint nope/.test(err.message)));
+  e2b.__testing.useSdk(null);
+}
+
+section('the credit, split evenly among whoever is using it (owner, 2026-11-05)');
+{
+  const share = (over) => tiers.e2bDayShare({ monthLeft: 3000, spentToday: 0, people: 0, usedToday: 0, daysLeft: 30, floor: 15, ...over });
+  check("alone, an account gets all of today's part of what is left", share({}) === 100, String(share({})));
+  check('with one other, half', share({ people: 1 }) === 50, String(share({ people: 1 })));
+  check('counting itself once it has started', share({ people: 2, usedToday: 10 }) === 40, String(share({ people: 2, usedToday: 10 })));
+  check('what was spent today is still part of today', share({ monthLeft: 2900, spentToday: 100, people: 2, usedToday: 50 }) === 0, String(share({ monthLeft: 2900, spentToday: 100, people: 2, usedToday: 50 })));
+  check('a quiet start leaves more for later days', share({ monthLeft: 3000, daysLeft: 10 }) === 300);
+  check('never below a few minutes of machine, however many are using it', share({ people: 1000 }) === 15);
+  check('and past that, nothing', share({ people: 1000, usedToday: 15 }) === 0);
+
+  await resetCounters();
+  await memory.query("DELETE FROM rate_limits WHERE bucket LIKE 'free:e2b:%'");
+  const now = new Date();
+  await store.createUser({ id: 'u-share', email: 'share@example.com', passwordHash: 'x', name: 'S', role: 'user' });
+  const alone = await tiers.e2bAccountAllowance('u-e2b', now);
+  await tiers.spend('e2b', 10, now);
+  await tiers.e2bAccountSpend('u-e2b', 10, now);
+  const other = await tiers.e2bAccountAllowance('u-share', now);
+  check('a second account counts the first, and then itself', other.left <= Math.ceil(alone.left / 2) + 1 && other.left > 0, `${alone.left} → ${other.left}`);
+  await tiers.e2bAccountSpend('u-e2b', -10, now);
+  const people = await store.readCounter(`free:e2b:day:${now.toISOString().slice(0, 10)}:people`);
+  check('giving back does not count somebody twice', people === 1, String(people));
 }
 
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll E2B checks passed.\x1b[0m\n');

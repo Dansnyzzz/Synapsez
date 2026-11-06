@@ -107,8 +107,10 @@ export async function addSource(userId, projectId, { name, mime, data, thumb }) 
   const base64 = String(data || '');
   if (!base64) throw new Error(`${filename} is empty.`);
 
+  // A conversation takes any file now. A shelf is what answers quote from, so what cannot
+  // be read in words or looked at still has no place on it.
   const kind = classify(filename, mime);
-  if (!kind) {
+  if (!kind || kind === 'binary' || kind === 'audio' || kind === 'video') {
     throw new Error(
       isLegacyOffice(filename, mime)
         ? `${filename} is in the old Office format, which cannot be read. Save it as .docx, .xlsx or .pptx and add that.`

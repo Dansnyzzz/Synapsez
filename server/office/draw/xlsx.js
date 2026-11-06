@@ -254,6 +254,21 @@ class Book {
     return { text: parts.map((p) => p.text).join(''), runs: parts };
   }
 
+  /**
+   * How wide a digit is in the book's own font, in pixels: what a column's width is
+   * counted in. Seven for Calibri 11, which is why it looks like a constant, and eight
+   * for Aptos Narrow 12, Office's default now. Counted as seven there, every column came
+   * out too narrow and a number that fits in Excel read ####.
+   */
+  digitWidth() {
+    if (!this.digit) {
+      const font = this.fonts[0];
+      const pick = this.tools.fonts.pick(font.name, false, false);
+      this.digit = Math.max(5, Math.round(this.tools.measure.unit(pick, '0') * pick.scale * font.size * (96 / 72))) || 7;
+    }
+    return this.digit;
+  }
+
   /** A number in its format, as words. A format the library cannot read shows the plain number. */
   format(value, numFmt) {
     const code = this.numFmts.get(numFmt) ?? numFmt;
@@ -281,7 +296,7 @@ function formatColor(book, numFmt, value) {
 }
 
 /** Column widths in points, from the character counts a file stores them in. */
-const widthToPoints = (chars) => Math.trunc(((256 * chars + Math.trunc(128 / 7)) / 256) * 7) * 0.75;
+const widthToPoints = (chars, digit = 7) => Math.trunc(((256 * chars + Math.trunc(128 / digit)) / 256) * digit) * 0.75;
 
 class Sheet {
   constructor(book, part, name, number) {
@@ -296,15 +311,17 @@ class Sheet {
     this.defaultRow = Number(attr(format, 'defaultRowHeight')) || 15;
     this.fixedDefault = ['1', 'true'].includes(String(attr(format, 'customHeight')));
     const baseCols = Number(attr(format, 'baseColWidth')) || 8;
+    const digit = book.digitWidth();
     this.defaultCol = attr(format, 'defaultColWidth') !== undefined
-      ? widthToPoints(Number(attr(format, 'defaultColWidth')))
-      : Math.ceil((baseCols * 7 + 5) / 8) * 8 * 0.75;
+      ? widthToPoints(Number(attr(format, 'defaultColWidth')), digit)
+      : Math.ceil((baseCols * digit + 5) / 8) * 8 * 0.75;
     const view = element(element(root, 'sheetViews'), 'sheetView');
     this.showGrid = !['0', 'false'].includes(String(attr(view, 'showGridLines')));
     this.showHeaders = !['0', 'false'].includes(String(attr(view, 'showRowColHeaders')));
     const pane = element(view, 'pane');
     const frozen = ['frozen', 'frozenSplit'].includes(String(attr(pane, 'state')));
     this.frozenRows = frozen ? Number(attr(pane, 'ySplit')) || 0 : 0;
+    this.frozenCols = frozen ? Number(attr(pane, 'xSplit')) || 0 : 0;
 
     /** @type {Map<number, { hidden: boolean, width: number|null, style: number|null }>} */
     this.colInfo = new Map();
@@ -314,7 +331,7 @@ class Sheet {
       for (let c = lo - 1; c < hi && c < LIMITS.columns; c += 1) {
         this.colInfo.set(c, {
           hidden: ['1', 'true'].includes(String(attr(col, 'hidden'))),
-          width: attr(col, 'width') !== undefined ? widthToPoints(Number(attr(col, 'width'))) : null,
+          width: attr(col, 'width') !== undefined ? widthToPoints(Number(attr(col, 'width')), digit) : null,
           style: attr(col, 'style') !== undefined ? Number(attr(col, 'style')) : null,
         });
       }
@@ -338,6 +355,8 @@ class Sheet {
     let count = 0;
     let unsaved = false;
     this.cut = 0;
+    /** The first cell of each shared formula: the rest say only which one they share. */
+    this.sharedFormulas = new Map();
     let at = -1;
     for (const rowNode of elements(element(this.root, 'sheetData'), 'row')) {
       book.tools.budget.check();
@@ -360,6 +379,16 @@ class Sheet {
         col = ref ? ref.col : col + 1;
         if (col >= LIMITS.columns) continue;
         const cell = this.readCell(c, col);
+        const formula = element(c, 'f');
+        if (formula) {
+          const said = textOf(formula);
+          const si = attr(formula, 'si');
+          if (attr(formula, 't') === 'shared' && si !== undefined) {
+            if (said) this.sharedFormulas.set(String(si), { text: said, row: at, col });
+            cell.formula = said || null;
+            cell.sharedAs = String(si);
+          } else cell.formula = said;
+        }
         if (cell.unsaved) unsaved = true;
         cells.set(col, cell);
         const xf = book.xfs[cell.s] || book.xfs[0];
@@ -999,14 +1028,9 @@ function paintRotated(surface, sheet, item, override) {
   surface.restore();
 }
 
-/** Pictures, charts and shapes over the cells, each placed by the cells it is anchored to. */
-function paintDrawings(surface, sheet, range) {
-  const { book, colX, rowY } = sheet;
-  const tools = book.tools;
-  const x0 = colX[range.c0];
-  const x1 = colX[range.c1 + 1];
-  const y0 = rowY[range.r0];
-  const y1 = rowY[range.r1 + 1];
+/** Where a drawing falls on its sheet, in points. */
+function drawingBox(sheet, drawing) {
+  const { colX, rowY } = sheet;
   const at = (cell, node) => {
     const col = Math.min(cell.col, sheet.maxCol + 1);
     const row = Math.min(cell.row, sheet.maxRow + 1);
@@ -1015,18 +1039,27 @@ function paintDrawings(surface, sheet, range) {
       y: (rowY[row] ?? rowY[rowY.length - 1]) + emu(textOf(element(node, 'rowOff'))),
     };
   };
-  for (const drawing of sheet.drawings) {
+  if (drawing.kind === 'twoCellAnchor') {
+    const a = at(drawing.fromCell, drawing.from);
+    const b = at(drawing.toCell, drawing.to);
+    return { x: a.x, y: a.y, w: Math.max(1, b.x - a.x), h: Math.max(1, b.y - a.y), rot: 0 };
+  }
+  const a = drawing.kind === 'oneCellAnchor' ? at(drawing.fromCell, drawing.from) : { x: emu(attr(drawing.pos, 'x')), y: emu(attr(drawing.pos, 'y')) };
+  return { x: a.x, y: a.y, w: emu(attr(drawing.ext, 'cx')), h: emu(attr(drawing.ext, 'cy')), rot: 0 };
+}
+
+/** Pictures, charts and shapes over the cells, each placed by the cells it is anchored to. */
+function paintDrawings(surface, sheet, range, only = null) {
+  const { book, colX, rowY } = sheet;
+  const tools = book.tools;
+  const x0 = colX[range.c0];
+  const x1 = colX[range.c1 + 1];
+  const y0 = rowY[range.r0];
+  const y1 = rowY[range.r1 + 1];
+  for (const drawing of only ? [only] : sheet.drawings) {
     tools.budget.check();
-    let box;
-    if (drawing.kind === 'twoCellAnchor') {
-      const a = at(drawing.fromCell, drawing.from);
-      const b = at(drawing.toCell, drawing.to);
-      box = { x: a.x, y: a.y, w: Math.max(1, b.x - a.x), h: Math.max(1, b.y - a.y), rot: 0 };
-    } else {
-      const a = drawing.kind === 'oneCellAnchor' ? at(drawing.fromCell, drawing.from) : { x: emu(attr(drawing.pos, 'x')), y: emu(attr(drawing.pos, 'y')) };
-      box = { x: a.x, y: a.y, w: emu(attr(drawing.ext, 'cx')), h: emu(attr(drawing.ext, 'cy')), rot: 0 };
-    }
-    if (box.x > x1 || box.x + box.w < x0 || box.y > y1 || box.y + box.h < y0) continue;
+    const box = drawingBox(sheet, drawing);
+    if (!only && (box.x > x1 || box.x + box.w < x0 || box.y > y1 || box.y + box.h < y0)) continue;
     const env = {
       zip: book.zip,
       theme: book.theme,
@@ -1188,6 +1221,282 @@ export async function layoutXlsx(zip, tools, { pages = null } = {}) {
     });
   }
   return { unit: 'sheet', total, pages: out, kerning: 'none' };
+}
+
+/* ── the workbook for a viewer: cells rather than a picture of them ─── */
+
+/** How many rows go in one answer, and how many cells at most, so an answer stays small. */
+const MODEL_ROWS = 500;
+const MODEL_CELLS = 30_000;
+
+/** Which sheets the file has, in order. */
+function listSheets(book, zip) {
+  const out = [];
+  for (const entry of elements(element(book.root, 'sheets'), 'sheet')) {
+    const rel = book.rels.get(String(relationshipId(entry)));
+    const part = rel ? resolveTarget(book.main, rel.target) : null;
+    if (!part || !zip.has(part)) continue;
+    out.push({ name: String(attr(entry, 'name') || ''), part, hidden: !!attr(entry, 'state') && attr(entry, 'state') !== 'visible' });
+  }
+  return out;
+}
+
+/** A formula shared from another cell, as it reads from this one. */
+function shiftFormula(text, rows, cols) {
+  return String(text).replace(/(?<![A-Za-z0-9_.])(\$?)([A-Z]{1,3})(\$?)(\d{1,7})(?![\d(A-Za-z_])/g, (whole, colLock, letters, rowLock, row) => {
+    const column = [...letters].reduce((sum, ch) => sum * 26 + ch.charCodeAt(0) - 64, 0) - 1 + (colLock ? 0 : cols);
+    const line = Number(row) + (rowLock ? 0 : rows);
+    return column < 0 || line < 1 ? whole : `${colLock}${columnLetters(column)}${rowLock}${line}`;
+  });
+}
+
+/** Words a font name can be, and a colour: all a cell's look is, handed to a browser. */
+const safeFont = (name) => String(name || '').replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 60);
+const safeHex = (value) => (/^[0-9A-Fa-f]{6}$/.test(String(value || '')) ? String(value).toUpperCase() : null);
+
+/** What a chart says it is called, without drawing it. */
+function chartTitle(zip, part) {
+  try {
+    const root = parseXml(zip.text(part));
+    const chart = element(root, 'chart');
+    const title = element(chart, 'title');
+    if (!title) return '';
+    const rich = element(element(title, 'tx'), 'rich');
+    if (rich) return elements(rich, 'p').map((p) => elements(p, 'r').map((r) => textOf(element(r, 't'))).join('')).join(' ').trim();
+    return textOf(element(element(element(title, 'tx'), 'strRef'), 'strCache')).trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * A worksheet as a viewer draws it, the way Claude's does (owner, 2026-11-05): every
+ * cell with its words as Excel shows them, its look, its formula; the sizes of the
+ * rows and columns; what is merged and frozen; what stands over the cells. Rows come
+ * a window at a time, since a sheet can be far larger than an answer can be.
+ *
+ * @param {any} zip
+ * @param {any} tools
+ * @param {{ sheet?: number, from?: number }} [ask]  a sheet's number among those shown, from 1; a row, from 0
+ */
+export async function workbookModel(zip, tools, { sheet: number = 1, from = 0 } = {}) {
+  let ssf = null;
+  try {
+    const XLSX = await import('xlsx');
+    ssf = XLSX.SSF || XLSX.default?.SSF || null;
+  } catch {
+    tools.note('Number formats could not be applied here, so numbers appear unformatted.');
+  }
+  const book = new Book(zip, tools, ssf);
+  const all = listSheets(book, zip);
+  const visible = all.filter((s) => !s.hidden);
+  if (!visible.length) throw refused('That workbook has no sheet to show.');
+  const index = Math.min(Math.max(1, Math.floor(Number(number) || 1)), visible.length) - 1;
+  const sheet = new Sheet(book, visible[index].part, visible[index].name, index + 1);
+
+  const charts = [];
+  for (const [i, entry] of visible.entries()) {
+    const rels = readRelationships(zip, relsPathFor(entry.part));
+    const drawingRel = [...rels.values()].find((rel) => isRel(rel.type, 'drawing'));
+    if (!drawingRel) continue;
+    const part = resolveTarget(entry.part, drawingRel.target);
+    if (!zip.has(part)) continue;
+    const root = parseXml(zip.text(part));
+    const inner = readRelationships(zip, relsPathFor(part));
+    let at = -1;
+    for (const anchor of elements(root)) {
+      if (!['twoCellAnchor', 'oneCellAnchor', 'absoluteAnchor'].includes(localName(anchor.name))) continue;
+      const kept = elements(anchor).some((child) => ['pic', 'sp', 'grpSp', 'graphicFrame', 'cxnSp', 'AlternateContent'].includes(localName(child.name)));
+      if (!kept) continue;
+      at += 1;
+      const frame = elements(anchor).find((child) => localName(child.name) === 'graphicFrame');
+      const chart = frame ? element(element(element(frame, 'graphic'), 'graphicData'), 'chart') : null;
+      const rel = chart ? inner.get(String(relationshipId(chart))) : null;
+      if (rel) charts.push({ sheet: i + 1, sheetName: entry.name, drawing: at, title: chartTitle(zip, resolveTarget(part, rel.target)) });
+    }
+  }
+
+  // Each look once, however many cells share it: most of a sheet is a few.
+  const styles = [];
+  const styleIds = new Map();
+  const styleId = (look) => {
+    const key = JSON.stringify(look);
+    if (!styleIds.has(key)) {
+      styleIds.set(key, styles.length);
+      styles.push(look);
+    }
+    return styleIds.get(key);
+  };
+  const edge = (side) => (side ? [BORDER_WIDTH[side.style] ?? 0.75, side.style, safeHex(side.color) || '000000'] : undefined);
+  const look = (xf, font, fill, borders, table, cond, cell) => {
+    const paint = cond?.fill || book.fills[xf.fill] || table?.fill || null;
+    const a = xf.align || {};
+    return {
+      f: safeFont(font.name),
+      s: font.size,
+      ...(font.bold || cond?.bold || table?.bold ? { b: 1 } : {}),
+      ...(font.italic ? { i: 1 } : {}),
+      ...(font.underline ? { u: 1 } : {}),
+      ...(font.strike ? { x: 1 } : {}),
+      ...(safeHex(cond?.ink || table?.ink || cell?.color || font.color) ? { c: safeHex(cond?.ink || table?.ink || cell?.color || font.color) } : {}),
+      ...(typeof paint === 'string' && safeHex(paint) ? { g: safeHex(paint) } : {}),
+      ...(paint && typeof paint === 'object' ? { g: safeHex(paint.stops?.[0]?.[1]) || undefined, g2: safeHex(paint.stops?.at(-1)?.[1]) || undefined, gd: Number(paint.degree) || 0 } : {}),
+      ...(a.h ? { h: String(a.h) } : {}),
+      ...(a.v ? { v: String(a.v) } : {}),
+      ...(a.wrap ? { w: 1 } : {}),
+      ...(a.indent ? { n: a.indent } : {}),
+      ...(a.rotation ? { r: a.rotation } : {}),
+      ...(borders.top ? { bt: edge(borders.top) } : {}),
+      ...(borders.bottom ? { bb: edge(borders.bottom) } : {}),
+      ...(borders.left ? { bl: edge(borders.left) } : {}),
+      ...(borders.right ? { br: edge(borders.right) } : {}),
+    };
+  };
+  const inked = (s) => s !== 0 && (book.fills[(book.xfs[s] || book.xfs[0]).fill] || Object.keys(book.borders[(book.xfs[s] || book.xfs[0]).border] || {}).length);
+  const lookOfStyle = (s) => {
+    const xf = book.xfs[s] || book.xfs[0];
+    return styleId(look(xf, book.fonts[xf.font] || book.fonts[0], null, book.borders[xf.border] || {}, null, null, null));
+  };
+
+  const start = Math.max(0, Math.floor(Number(from) || 0));
+  const end = Math.min(sheet.maxRow, start + MODEL_ROWS - 1);
+  const cells = [];
+  let reached = end;
+  for (let r = start; r <= end; r += 1) {
+    tools.budget.check();
+    const row = sheet.rows.get(r);
+    if (!row) continue;
+    if (cells.length >= MODEL_CELLS) {
+      reached = r - 1;
+      break;
+    }
+    for (const [c, cell] of row) {
+      if (sheet.covered.has(`${r},${c}`)) continue;
+      const key = `${r},${c}`;
+      const xf = book.xfs[cell.s] || book.xfs[0];
+      const font = book.fonts[xf.font] || book.fonts[0];
+      const table = sheet.tableCells.get(key);
+      const cond = sheet.cond.get(key);
+      const borders = book.borders[xf.border] || {};
+      const painted = cond?.fill || book.fills[xf.fill] || table?.fill || cond?.bar || Object.keys(borders).length || table?.rule;
+      if (!cell.text && !painted && !cell.formula) continue;
+      const merge = sheet.merges.get(key);
+      const width = merge ? sheet.colX[Math.min(merge.c1, sheet.maxCol) + 1] - sheet.colX[c] : sheet.colX[c + 1] - sheet.colX[c];
+      let text = cell.text;
+      // A number too wide for its cell reads as Excel reads it: fewer digits if it may, else ####.
+      if (cell.kind === 'number' && !xf.align?.rotation && text) {
+        const override = { ink: null, bold: !!(cond?.bold || table?.bold) };
+        const widest = (list) => Math.max(...list.map((line) => line.width), 0);
+        const room = width - PAD * 2 - (xf.align?.indent || 0) * INDENT;
+        if (widest(sheet.setCell(cell, xf, font, width, override)) > room + 0.5 && !xf.align?.shrink) {
+          const general = (book.numFmts.get(xf.numFmt) ?? xf.numFmt) === 0;
+          let fitted = null;
+          if (general) {
+            for (let digits = 10; digits >= 1 && fitted === null; digits -= 1) {
+              const shorter = String(Number(cell.value.toPrecision(digits)));
+              if (widest(sheet.setCell({ ...cell, text: shorter, runs: null }, xf, font, width, override)) <= room + 0.5) fitted = shorter;
+            }
+          }
+          if (fitted === null) {
+            const each = Math.max(1, widest(sheet.setCell({ ...cell, text: '#', runs: null }, xf, font, width, override)));
+            fitted = '#'.repeat(Math.max(1, Math.floor(room / each)));
+          }
+          text = fitted;
+        }
+      }
+      let formula = cell.formula || null;
+      if (!formula && cell.sharedAs != null) {
+        const head = sheet.sharedFormulas.get(cell.sharedAs);
+        if (head) formula = shiftFormula(head.text, r - head.row, c - head.col);
+      }
+      const shown = [r, c, text, styleId(look(xf, font, null, borders, table, cond, cell))];
+      const extra = {};
+      if (formula) extra.f = formula;
+      if (cell.kind) extra.k = cell.kind === 'number' ? 'n' : cell.kind === 'text' ? 't' : cell.kind === 'bool' ? 'b' : cell.kind === 'error' ? 'e' : '';
+      if (cell.kind === 'number') extra.v = cell.value;
+      if (cond?.bar) extra.bar = [Number(cond.bar.ratio) || 0, safeHex(cond.bar.color) || '638EC6'];
+      if (table?.rule) extra.rule = safeHex(table.rule);
+      if (cell.runs) {
+        extra.runs = cell.runs.map((run) => ({
+          t: run.text,
+          ...(run.font?.bold ? { b: 1 } : {}),
+          ...(run.font?.italic ? { i: 1 } : {}),
+          ...(run.font?.underline ? { u: 1 } : {}),
+          ...(run.font?.strike ? { x: 1 } : {}),
+          ...(safeHex(run.font?.color) ? { c: safeHex(run.font.color) } : {}),
+          ...(run.font?.size ? { s: run.font.size } : {}),
+        }));
+      }
+      shown.push(extra);
+      cells.push(shown);
+    }
+  }
+
+  const merges = [];
+  for (const m of sheet.merges.values()) {
+    if (m.r1 < start || m.r0 > reached) continue;
+    merges.push([m.r0, m.c0, Math.min(m.r1, sheet.maxRow), Math.min(m.c1, sheet.maxCol)]);
+  }
+  const rowStyles = {};
+  for (const [r, info] of sheet.rowInfo) if (r >= start && r <= reached && info.style != null && inked(info.style)) rowStyles[r] = lookOfStyle(info.style);
+  const colStyles = {};
+  for (const [c, info] of sheet.colInfo) if (c <= sheet.maxCol && info.style != null && inked(info.style)) colStyles[c] = lookOfStyle(info.style);
+  const drawings = sheet.drawings.map((drawing, i) => {
+    const box = drawingBox(sheet, drawing);
+    const frame = localName(drawing.inner.name) === 'graphicFrame';
+    return { i, x: box.x, y: box.y, w: box.w, h: box.h, kind: frame ? 'chart' : localName(drawing.inner.name) === 'pic' ? 'picture' : 'shape' };
+  });
+  return {
+    sheets: visible.map((s, i) => ({ n: i + 1, name: s.name })),
+    hiddenSheets: all.length - visible.length,
+    charts,
+    sheet: {
+      number: index + 1,
+      name: sheet.name,
+      colX: sheet.colX.map((x) => Math.round(x * 100) / 100),
+      rowY: sheet.rowY.map((y) => Math.round(y * 100) / 100),
+      frozenRows: sheet.frozenRows,
+      frozenCols: sheet.frozenCols,
+      showGrid: sheet.showGrid,
+      showHeaders: sheet.showHeaders,
+      from: start,
+      to: reached,
+      lastRow: sheet.maxRow,
+      cut: sheet.cut || 0,
+      styles,
+      cells,
+      merges,
+      rowStyles,
+      colStyles,
+      drawings,
+    },
+  };
+}
+
+/**
+ * One thing that stands over a sheet's cells, drawn on its own: a chart, a picture, a
+ * shape. So each goes where it belongs over the grid, and a chart can have a tab.
+ *
+ * @param {any} zip
+ * @param {any} tools
+ * @param {{ sheet?: number, index?: number }} ask
+ * @returns {Promise<{ surface: any, label: string } | null>}
+ */
+export async function drawingSurface(zip, tools, { sheet: number = 1, index = 0 } = {}) {
+  const book = new Book(zip, tools, null);
+  const visible = listSheets(book, zip).filter((s) => !s.hidden);
+  const entry = visible[Math.floor(Number(number) || 1) - 1];
+  if (!entry) return null;
+  const sheet = new Sheet(book, entry.part, entry.name, Number(number) || 1);
+  const drawing = sheet.drawings[Math.floor(Number(index) || 0)];
+  if (!drawing) return null;
+  const box = drawingBox(sheet, drawing);
+  const surface = new Surface(Math.max(4, box.w), Math.max(4, box.h));
+  surface.save();
+  surface.transform(1, 0, 0, 1, -box.x, -box.y);
+  paintDrawings(surface, sheet, { r0: 0, r1: sheet.maxRow, c0: 0, c1: sheet.maxCol }, drawing);
+  surface.restore();
+  return { surface, label: entry.name };
 }
 
 /** The letters along the top and the numbers down the side, which are not the sheet's own words. */

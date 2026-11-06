@@ -86,7 +86,9 @@ const { buildSystemPrompt, promptVersion } = await import('../../server/agent.js
 // 101239f2dd8e: two every-turn lines said in fewer words (TOK-003) — that
 // connections are re-read before each step, and skill-creator's entry in the
 // skills index. No case rests on either.
-const PROMPT_STAMP = '101239f2dd8e';
+// 66bab8a338c2: a file somebody attached and asks to change is changed in place, or
+// asked about (owner, 2026-11-05). No case rests on the old wording.
+const PROMPT_STAMP = '66bab8a338c2';
 
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;

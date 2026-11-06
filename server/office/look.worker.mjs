@@ -7,9 +7,10 @@
  * a worker, sends the caller back to drawing on its own thread.
  */
 import { parentPort, workerData } from 'node:worker_threads';
-import { lookAtFileHere } from './look.js';
+import { lookAtFileHere, officeViewHere } from './look.js';
 
-const out = await lookAtFileHere(Buffer.from(workerData.bytes), workerData.options || {}).then(
+const bytes = Buffer.from(workerData.bytes);
+const out = await (workerData.job ? officeViewHere(workerData.job, bytes, workerData.options || {}) : lookAtFileHere(bytes, workerData.options || {})).then(
   (result) => ({ ok: true, result }),
   (err) => ({ ok: false, message: String(err?.message || err), code: err?.code || 'office_unreadable' }),
 );

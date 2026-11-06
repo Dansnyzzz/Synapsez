@@ -40,8 +40,14 @@ import { log } from './util/trace.js';
 const SETTING = 'e2bMachine';
 const HOME = '/home/user';
 const ACCOUNT = 'user';
-/** Awake this long after the last thing asked of it, then paused. */
-const IDLE_MS = 10 * 60 * 1000;
+/**
+ * Awake this long after the last thing asked of it, then paused.
+ *
+ * Paid for whether it is used or not, so this is most of what a short command
+ * costs, and the credit is shared. Pausing keeps everything and coming back takes a
+ * second, so waiting longer buys little (E2B: about 4 s a GiB to pause, 1 s to resume).
+ */
+const IDLE_MS = 4 * 60 * 1000;
 /** A machine for one MCP check (mcp/cloud.js), deleted after — never paused. */
 const SCRATCH_MS = 6 * 60 * 1000;
 /** How long a detached start is watched for an early exit; the program itself runs on. */
@@ -52,8 +58,10 @@ const WATCH_MS = 10 * 60 * 1000;
  */
 const VCPU_MILLS = 0.014;
 const GIB_MILLS = 0.0045;
+const TEMPLATE_SIZE_CPU = 2;
+const TEMPLATE_SIZE_MEM = 2048;
 /** What a machine is assumed to be until it says — the larger guess, so a first start never pays too little. */
-const ASSUMED = { cpu: 2, memMb: 2048 };
+const ASSUMED = { cpu: TEMPLATE_SIZE_CPU, memMb: TEMPLATE_SIZE_MEM };
 /**
  * A machine's ports open to the person's browser (owner's choice, 2026-11-02).
  * E2B makes them private by default — a request without the
@@ -91,8 +99,51 @@ export function e2bConfigured(env = process.env) {
   return !!String(env.E2B_API_KEY || '').trim();
 }
 
-/** The template machines are made from: the owner's own (npm run e2b:template), or E2B's base. */
-const template = () => String(process.env.E2B_TEMPLATE || '').trim() || 'base';
+/**
+ * The template machines are made from (npm run e2b:template).
+ *
+ * Named here rather than left to an environment variable. It was asked for in
+ * E2B_TEMPLATE, and a deployment without it made machines from E2B's `base`, 512
+ * MiB, where Chromium cannot start: every cloud browser call failed, for everybody,
+ * for as long as nobody set a setting (owner's screenshots, 2026-11-05).
+ */
+export const TEMPLATE_NAME = 'synapsez-computer';
+/**
+ * The size that template is built at. Two gibibytes is what Chromium and a pandas
+ * frame together fit in; there is swap on the disk behind it (`CLOSE_MACHINE`).
+ */
+export const TEMPLATE_SIZE = { cpu: TEMPLATE_SIZE_CPU, memMb: TEMPLATE_SIZE_MEM };
+/** Raise it when the template changes: machines made from an older build move to the new one, keeping their files. */
+export const BASE_VERSION = 2;
+/** After E2B says the template is not there, how long before asking again: `base` works meanwhile. */
+const TEMPLATE_RECHECK_MS = 10 * 60_000;
+/** Moving to a newer machine: how long each half may take, the most it carries, how long before another try. */
+const MOVE_STEP_MS = 120_000;
+const MOVE_MAX_BYTES = 3 * 1024 * 1024 * 1024;
+const MOVE_RETRY_MS = 60 * 60_000;
+/** A few, each a whole machine's memory and disk on E2B's side. */
+const MAX_CHECKPOINTS = 3;
+let templateMissingAt = 0;
+const template = () => {
+  const named = String(process.env.E2B_TEMPLATE || '').trim() || TEMPLATE_NAME;
+  return named !== 'base' && Date.now() - templateMissingAt < TEMPLATE_RECHECK_MS ? 'base' : named;
+};
+/**
+ * One pip, the one for the Python a command finds first (owner, 2026-11-05).
+ *
+ * On the PATH a command gets, `python3` is /usr/bin's and `pip` was /usr/local/bin's,
+ * which belongs to the image's other Python: pip reported a package installed under
+ * /usr/local/lib/python3.11/site-packages, which /usr/bin/python3 never reads, so
+ * `requests` said "No module named 'certifi'" with certifi right there in `pip list`.
+ * Nothing the account can write: /usr/bin is root's.
+ */
+export const ONE_PIP = [
+  "/usr/bin/printf '#!/bin/sh\\nexec /usr/bin/python3 -m pip \"$@\"\\n' > /usr/bin/pip",
+  '/usr/bin/cp /usr/bin/pip /usr/bin/pip3',
+  '/usr/bin/chmod 755 /usr/bin/pip /usr/bin/pip3',
+  "/usr/bin/printf '[global]\\nbreak-system-packages = true\\nno-cache-dir = true\\n' > /etc/pip.conf",
+  '/usr/bin/chmod 644 /etc/pip.conf',
+].join(' && ');
 const connection = () => ({ apiKey: process.env.E2B_API_KEY });
 
 /**
@@ -303,6 +354,12 @@ export function withoutLoginShell(box) {
  * Holds through a pause and a resume (live, 2026-11-03). Takes about two seconds.
  * A program left in /usr/local before this is not found out: this closes the door
  * on what comes next.
+ *
+ * Two things are opened here too, both root's to do and neither anything the account
+ * could turn against root. One pip (`ONE_PIP`), for a machine from `base`, whose
+ * /usr/bin Python may have none, in which case nothing changes. And two gibibytes of
+ * swap on the disk (live, 2026-11-06), so a job that goes just past the memory slows
+ * down rather than being killed. Neither may stop the rest being closed.
  */
 const CLOSE_MACHINE = [
   '/usr/bin/chown -hR root:root /usr/local',
@@ -314,6 +371,8 @@ const CLOSE_MACHINE = [
   '/usr/bin/mkdir -p /usr/local/etc',
   // For npm to read: ${HOME} is npm's own, and is the home of whoever runs it.
   "/usr/bin/printf '%s\\n' 'prefix=${HOME}/.local' > /usr/local/etc/npmrc",
+  `{ /usr/bin/python3 -m pip --version >/dev/null 2>&1 && ${ONE_PIP}; true; }`,
+  '{ [ -e /swapfile ] || { /usr/bin/fallocate -l 2G /swapfile && /usr/bin/chmod 600 /swapfile && /usr/sbin/mkswap /swapfile >/dev/null; }; /usr/sbin/swapon /swapfile 2>/dev/null; true; }',
 ].join(' && ');
 
 /**
@@ -347,9 +406,12 @@ function machine(box, { userId, record } = {}) {
   return {
     provider: 'e2b',
     sandboxId: box.sandboxId,
+    /** Its memory, so what will not fit is said at once rather than after a long wait. */
+    memMb: Number(record?.memMb) || 0,
+    cpu: Number(record?.cpu) || 0,
 
-    /** @param {{ cmd: string, args?: string[], env?: Record<string, string>, sudo?: boolean, detached?: boolean, timeoutMs?: number, signal?: AbortSignal }} command */
-    async runCommand({ cmd, args = [], env = {}, sudo = false, detached = false, timeoutMs, signal } = /** @type {any} */ ({})) {
+    /** @param {{ cmd: string, args?: string[], env?: Record<string, string>, sudo?: boolean, detached?: boolean, timeoutMs?: number, signal?: AbortSignal, onOutput?: (text: string) => void }} command */
+    async runCommand({ cmd, args = [], env = {}, sudo = false, detached = false, timeoutMs, signal, onOutput } = /** @type {any} */ ({})) {
       const base = { user: 'root', cwd: HOME, envs: env, signal };
       if (detached) {
         const handle = await box.commands.run(commandLine({ cmd, args, sudo }), { ...base, background: true, timeoutMs: WATCH_MS });
@@ -377,6 +439,7 @@ function machine(box, { userId, record } = {}) {
       /** @type {any} */
       let handle = null;
       const watch = (data) => {
+        onOutput?.(String(data ?? ''));
         seen += Buffer.byteLength(String(data ?? ''));
         if (seen > OUTPUT_CAP_BYTES && !flooded) {
           flooded = true;
@@ -439,6 +502,72 @@ function machine(box, { userId, record } = {}) {
       }
     },
 
+    /**
+     * A file's size, or null when there is none: asked before reading, so a file
+     * too large to bring here can be handed over by link instead.
+     *
+     * @param {string} file
+     * @param {{ signal?: AbortSignal }} [options]
+     */
+    async fileSize(file, { signal } = {}) {
+      try {
+        return Number((await box.files.getInfo(onMachine(file), { signal }))?.size) || 0;
+      } catch (err) {
+        if (notFound(err)) return null;
+        throw err;
+      }
+    },
+
+    /**
+     * A signed address a file can be fetched from directly, from the machine, past
+     * this server's size limits. Good while the machine is awake.
+     *
+     * @param {string} file
+     * @param {number} [seconds]
+     */
+    async downloadUrl(file, seconds = 600) {
+      return box.downloadUrl(onMachine(file), { useSignatureExpiration: seconds, user: ACCOUNT });
+    },
+
+    /**
+     * Keep the machine as it is now, memory and all, to come back to. The oldest of
+     * more than a few goes, so a person cannot fill a store nobody sees.
+     *
+     * @param {string} note
+     */
+    async saveCheckpoint(note) {
+      if (!record) throw new Error('This machine is nobody\'s, so it keeps no checkpoints.');
+      const made = await box.createSnapshot();
+      const entry = { id: made.snapshotId, note: String(note || '').slice(0, 120), at: Date.now() };
+      const kept = [...(Array.isArray(record.checkpoints) ? record.checkpoints : []), entry];
+      const { Sandbox } = await loadSdk();
+      while (kept.length > MAX_CHECKPOINTS) await Sandbox.deleteSnapshot(kept.shift().id, connection()).catch(() => {});
+      record.checkpoints = kept;
+      await getStore().setUserSetting(userId, SETTING, record);
+      return entry;
+    },
+
+    listCheckpoints() {
+      return Array.isArray(record?.checkpoints) ? record.checkpoints : [];
+    },
+
+    /**
+     * Back to a checkpoint: a new machine from it, under this one's name, and this
+     * one gone. Paid for like any start.
+     *
+     * @param {string} id
+     */
+    async restoreCheckpoint(id) {
+      const wanted = this.listCheckpoints().find((c) => c.id === id);
+      if (!wanted) throw new Error(`There is no checkpoint ${id} on this computer.`);
+      const { Sandbox } = await loadSdk();
+      const next = await Sandbox.create(id, { ...connection(), timeoutMs: IDLE_MS, metadata: box.metadata || { app: 'synapsez', machine: record.name }, lifecycle: { onTimeout: 'pause', autoResume: false }, network: NETWORK });
+      await box.kill().catch(() => {});
+      record.id = next.sandboxId;
+      await getStore().setUserSetting(userId, SETTING, record);
+      return wanted;
+    },
+
     /** @param {number} port */
     domain(port) {
       return `https://${box.getHost(port)}`;
@@ -467,6 +596,9 @@ function machine(box, { userId, record } = {}) {
     async delete() {
       await box.kill();
     },
+
+    /** The SDK's own sandbox, for moving what is on it to a newer machine. */
+    box,
   };
 }
 
@@ -499,31 +631,143 @@ async function resume(Sandbox, userId, record) {
   return machine(box, { userId, record });
 }
 
-async function open(userId, name) {
-  const { Sandbox } = await loadSdk();
-  const known = await readRecord(userId);
-  if (known) {
-    const resumed = await resume(Sandbox, userId, known);
-    if (resumed) return resumed;
-  }
-  // No record, or one for a machine that is gone: one made by another instance may be there under the name.
-  const [existing] = await byName(Sandbox, name);
-  if (existing) {
-    const resumed = await resume(Sandbox, userId, { ...ASSUMED, ...(known?.id === existing.sandboxId ? known : {}), id: existing.sandboxId, paidUntil: known?.paidUntil });
-    if (resumed) return resumed;
-  }
-
-  const record = { ...ASSUMED, id: '', paidUntil: known?.paidUntil };
-  const receipt = await payUntil(record, Date.now() + IDLE_MS, userId);
-  let box;
+/**
+ * A new machine from the template. E2B not knowing the template is no reason to go
+ * without a machine: `base` works for everything but what needs more room, and it
+ * is asked for again a few minutes later.
+ *
+ * @param {any} Sandbox
+ * @param {string} name
+ * @returns {Promise<{ box: any, base: number }>}
+ */
+async function makeBox(Sandbox, name) {
+  const from = template();
   try {
-    box = await Sandbox.create(template(), {
+    const box = await Sandbox.create(from, {
       ...connection(),
       timeoutMs: IDLE_MS,
       metadata: { app: 'synapsez', machine: name },
       lifecycle: { onTimeout: 'pause', autoResume: false },
       network: NETWORK,
     });
+    return { box, base: from === 'base' ? 0 : BASE_VERSION };
+  } catch (err) {
+    if (from === 'base' || !(notFound(err) || /template[^\n]*not found|not found[^\n]*template/i.test(String(err?.message)))) throw err;
+    templateMissingAt = Date.now();
+    log.warn('e2b: the template is not there, so this machine is from base', { template: from });
+    return makeBox(Sandbox, name);
+  }
+}
+
+/** Whether this machine is from an older template than the one machines are made from now. */
+const shouldMove = (record, now = Date.now()) =>
+  (Number(record?.base) || 0) < BASE_VERSION && template() !== 'base' && now - (Number(record?.moveTriedAt) || 0) > MOVE_RETRY_MS;
+
+/**
+ * Move an account to a machine made from the current template, files and all.
+ *
+ * A machine's memory is fixed when it is made, and one made from E2B's `base` has
+ * 512 MiB for as long as it exists, however it is resumed: the owner's own stayed at
+ * 473 MiB, where Chromium cannot start. So making a better template helps nobody who
+ * already has a machine until they are brought across.
+ *
+ * What moves is the account's home, packed and unpacked as the account: nothing of
+ * root's is involved, so nothing in it gets to do anything with root's hands. System
+ * packages it installed come back from the list kept for that (machineCare.js). The
+ * browser's sign-ins, which are root's, do not move; there are none on a machine too
+ * small to have started a browser.
+ *
+ * All or nothing: anything going wrong leaves the old machine exactly as it was,
+ * still in use, and it is tried again later.
+ *
+ * @param {any} Sandbox
+ * @param {string} userId
+ * @param {string} name
+ * @param {any} record
+ * @param {any} old  the machine as `machine()` makes it
+ * @returns {Promise<any|null>} the new machine, or null when it stayed where it was
+ */
+async function moveMachine(Sandbox, userId, name, record, old) {
+  /** @type {any} */
+  const next = { ...ASSUMED, id: '', paidUntil: record.paidUntil };
+  let receipt = null;
+  /** @type {any} */
+  let box = null;
+  const file = `/tmp/synz-move-${old.sandboxId}.tgz`;
+  try {
+    const packed = await old.runCommand({
+      cmd: 'bash',
+      args: ['--noprofile', '--norc', '-c', `umask 077; tar czf ${file} --warning=no-file-changed --exclude=./.cache --exclude=./.npm -C ${HOME} . ; [ $? -le 1 ]`],
+      timeoutMs: MOVE_STEP_MS,
+    });
+    if (packed.exitCode !== 0) throw new Error(`packing ended with ${packed.exitCode}`);
+    const size = await old.fileSize(file);
+    if (!size || size > MOVE_MAX_BYTES) throw new Error(`the home folder packs to ${size} bytes`);
+
+    receipt = await payUntil(next, Date.now() + IDLE_MS, userId);
+    ({ box } = await makeBox(Sandbox, name));
+    next.base = BASE_VERSION;
+    next.id = box.sandboxId;
+    const info = await box.getInfo().catch(() => null);
+    if (Number(info?.cpuCount) > 0) next.cpu = Number(info.cpuCount);
+    if (Number(info?.memoryMB) > 0) next.memMb = Number(info.memoryMB);
+    await closeMachine(box, next);
+    const arrived = machine(box, { userId, record: next });
+    const unpacked = await arrived.runCommand({
+      cmd: 'bash',
+      args: ['--noprofile', '--norc', '-c', `curl -fsS --max-time ${Math.floor(MOVE_STEP_MS / 1000) - 5} "$SYNZ_FROM" | tar xzf - -C ${HOME}`],
+      env: { SYNZ_FROM: await old.downloadUrl(file) },
+      timeoutMs: MOVE_STEP_MS,
+    });
+    if (unpacked.exitCode !== 0) throw new Error(`unpacking ended with ${unpacked.exitCode}`);
+
+    await getStore().setUserSetting(userId, SETTING, next);
+    await old.box.kill().catch(() => {});
+    log.info('cloud computer: moved to the current template', { bytes: size, memMb: next.memMb });
+    arrived.fresh = true;
+    arrived.moved = true;
+    return arrived;
+  } catch (err) {
+    log.warn('cloud computer: not moved, staying on the old machine', { error: String(err?.message || err).slice(0, 200) });
+    if (box) await box.kill().catch(() => {});
+    await giveBack(next, receipt);
+    record.moveTriedAt = Date.now();
+    await getStore().setUserSetting(userId, SETTING, record).catch(() => {});
+    old.runCommand({ cmd: 'rm', args: ['-f', file], timeoutMs: 10_000 }).catch(() => {});
+    return null;
+  }
+}
+
+async function open(userId, name) {
+  const { Sandbox } = await loadSdk();
+  const known = await readRecord(userId);
+  if (known) {
+    const resumed = await resume(Sandbox, userId, known);
+    if (resumed) {
+      if (!shouldMove(known)) return resumed;
+      return (await moveMachine(Sandbox, userId, name, known, resumed)) || resumed;
+    }
+  }
+  // No record, or one for a machine that is gone: one made by another instance may be there under the name.
+  const [existing] = await byName(Sandbox, name);
+  if (existing) {
+    const found = { ...ASSUMED, ...(known?.id === existing.sandboxId ? known : {}), id: existing.sandboxId, paidUntil: known?.paidUntil };
+    const resumed = await resume(Sandbox, userId, found);
+    if (resumed) {
+      if (!shouldMove(found)) return resumed;
+      return (await moveMachine(Sandbox, userId, name, found, resumed)) || resumed;
+    }
+  }
+
+  /** @type {any} */
+  const record = { ...ASSUMED, id: '', paidUntil: known?.paidUntil };
+  const receipt = await payUntil(record, Date.now() + IDLE_MS, userId);
+  /** @type {any} */
+  let box;
+  try {
+    const made = await makeBox(Sandbox, name);
+    box = made.box;
+    record.base = made.base;
   } catch (err) {
     await giveBack(record, receipt);
     throw err;
@@ -548,7 +792,10 @@ async function open(userId, name) {
   }
   await closeMachine(box, record);
   await getStore().setUserSetting(userId, SETTING, record);
-  return machine(box, { userId, record });
+  const made = machine(box, { userId, record });
+  // A machine with nothing of this account's on it yet: see sandbox.js `machineForUser`.
+  made.fresh = true;
+  return made;
 }
 
 /** Starts in progress on this instance, by account, so parallel calls share one. */
@@ -567,11 +814,26 @@ export async function e2bMachineFor(userId, name) {
   return starting.get(userId);
 }
 
-/** A machine for one job and nobody's, killed when its time is up — paid for whole, first. */
-export async function e2bScratch() {
+/**
+ * A machine for one job and nobody's, killed when its time is up — paid for whole, first.
+ *
+ * @param {{ ms?: number, userId?: string, internet?: boolean, role?: string }} [options]
+ *   `userId`: whose share pays for it, for a job somebody asked for.
+ *   `internet: false`: for a stranger's file, which then has nowhere to call.
+ */
+export async function e2bScratch({ ms = SCRATCH_MS, userId, internet = true, role = 'mcp-check' } = {}) {
   const { Sandbox } = await loadSdk();
-  await payUntil({ ...ASSUMED }, Date.now() + SCRATCH_MS);
-  const box = await Sandbox.create(template(), { ...connection(), timeoutMs: SCRATCH_MS, metadata: { app: 'synapsez', role: 'mcp-check' }, network: NETWORK });
+  await payUntil({ ...ASSUMED }, Date.now() + ms, userId);
+  const options = { ...connection(), timeoutMs: ms, metadata: { app: 'synapsez', role }, network: NETWORK, ...(internet ? {} : { allowInternetAccess: false }) };
+  /** @type {any} */
+  let box;
+  try {
+    box = await Sandbox.create(template(), options);
+  } catch (err) {
+    if (template() === 'base' || !(notFound(err) || /template[^\n]*not found|not found[^\n]*template/i.test(String(err?.message)))) throw err;
+    templateMissingAt = Date.now();
+    box = await Sandbox.create('base', options);
+  }
   await closeMachine(box);
   return machine(box);
 }
@@ -579,6 +841,10 @@ export async function e2bScratch() {
 export const __testing = {
   SETTING,
   CLOSE_MACHINE,
+  /** E2B asked about the template again on the next start. */
+  forgetMissingTemplate() {
+    templateMissingAt = 0;
+  },
   /** A stand-in for the `e2b` SDK, so the suites can drive a machine without one. */
   useSdk(fake) {
     sdk = fake;

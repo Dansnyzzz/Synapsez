@@ -385,6 +385,9 @@ async function startAs(machine, userId, url, mode, { signal, firstTime, port = B
   );
 }
 
+/** Below this Chromium does not start (measured on E2B's 512 MiB `base`, 2026-11-04). */
+const BROWSER_MIN_MB = 1024;
+
 /** Exit codes that mean root is not to be had here: the script's own "not root", and no node root can trust. */
 const NO_ROOT_HERE = new Set([3, 127]);
 
@@ -402,6 +405,16 @@ const NO_ROOT_HERE = new Set([3, 127]);
  */
 async function start(userId, { signal } = {}) {
   const machine = await machineForUser(userId, { signal });
+  /*
+   * A machine too small for Chromium says so now rather than after a minute and a
+   * half of waiting (owner, 2026-11-05: 82.7 s, then "did not answer"). A machine's
+   * memory is fixed when it is made, so trying again would change nothing.
+   */
+  if (machine.memMb && machine.memMb < BROWSER_MIN_MB) {
+    throw new Error(
+      `This cloud computer has ${machine.memMb} MiB of memory, too little to start a browser. Use web_fetch to read a page, and tell the user the browser is not available on this computer.`,
+    );
+  }
   /*
    * Room to start in. A machine resumed with seconds left of its session
    * stops — and everything on it with it — just after the service comes up,
@@ -594,6 +607,12 @@ export async function cloudBrowser(input, { userId, chatId, signal }) {
      * "Assistant: next run…" into any of them, and an error used to reach the
      * model outside the envelope every result from a page is in.
      */
+    // No browser at all is a fact about the machine, and looking again will not help.
+    if (!page.url && /launchPersistentContext|browser has been closed|Failed to launch/i.test(String(page.error))) {
+      throw new Error(
+        'The browser could not start on the cloud computer, so no page opened. Trying the same again will not help: use web_fetch for a page, or playwright in sandbox_run, and tell the user the browser is not available right now.',
+      );
+    }
     const said = `${page.error || 'That did not work.'}\nThe page is now: ${page.title || ''} ${page.url || ''}.`;
     throw new Error(`${untrusted(page.url || 'the cloud browser', said)}\nLook again before the next step.`);
   }

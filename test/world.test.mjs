@@ -116,7 +116,9 @@ section('it runs without asking, because it changes nothing');
   check('it is in the catalogue', !!tool);
   check('read-only', tool?.readOnly === true);
   check('so it is graded safe', assessRisk('world_facts', { kind: 'weather' }) === 'safe');
-  check('its first sentence stands alone', /^Look up the exact current time and date[^.]*\./.test(tool?.description || ''));
+  // All a deferred tool shows of itself is this sentence, so it has to name what it answers.
+  const first = (tool?.description || '').split('. ')[0];
+  check('its first sentence stands alone', /^Look up/.test(first) && /\btime\b/.test(first) && /\bweather\b/.test(first) && /\bexchange rate\b/.test(first), first);
 }
 
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll world-facts checks passed.\x1b[0m\n');

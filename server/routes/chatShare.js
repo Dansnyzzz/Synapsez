@@ -444,7 +444,8 @@ export function mountPublicChatShare(app, { wrap }) {
       }
       // As it stood when the link was made, like the messages (PRV-011).
       const file = await store.getAttachmentAt(scope.chat.user_id, req.params.id, scope.chat.shared_at);
-      if (!file) return res.status(404).json({ error: 'Not found' });
+      // One on the owner's cloud computer is not a visitor's to wake.
+      if (!file?.data) return res.status(404).json({ error: 'Not found' });
       const inline = req.query.download !== '1' && INLINE_SAFE.test(file.mime);
       res.setHeader('Content-Type', inline ? file.mime : 'application/octet-stream');
       res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${asciiFilename(file.name)}"; filename*=UTF-8''${encodeURIComponent(file.name)}`);

@@ -219,6 +219,13 @@ CREATE INDEX IF NOT EXISTS attachments_chat_idx ON attachments (chat_id);
 -- can open it, download it, and ask about it again three turns later.
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'upload';
 
+-- The file somebody sent that this one is the changed copy of (owner, 2026-11-05).
+-- What they sent stays as they sent it, in the message that carries it. The changes
+-- go on one copy, however many calls they take, and the first of that copy's
+-- versions is the original. Named by id alone: deleting the original keeps the work.
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS derived_from TEXT;
+CREATE INDEX IF NOT EXISTS attachments_derived_idx ON attachments (derived_from) WHERE derived_from IS NOT NULL;
+
 -- What a generated file was written from — the Markdown, not the .docx.
 --
 -- Kept because "change the last row of the table" has to start from the words.

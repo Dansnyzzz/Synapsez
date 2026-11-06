@@ -2600,6 +2600,16 @@ export function createApp() {
 
   mountThemeRoutes({ api, admin, wrap, audit });
   api.use('/admin', admin);
+  /*
+   * The bundled fonts a workbook is drawn with, for a browser with no Calibri. Named
+   * from a fixed list, never a path, and open to anybody: they are freely licensed.
+   */
+  app.get('/api/office-fonts/:name', (req, res) => {
+    if (!['Carlito-Regular.ttf', 'Carlito-Bold.ttf', 'Carlito-Italic.ttf'].includes(req.params.name)) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.type('font/ttf');
+    res.sendFile(fileURLToPath(new URL(`./assets/fonts/${req.params.name}`, import.meta.url)));
+  });
   app.use('/api', api);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
