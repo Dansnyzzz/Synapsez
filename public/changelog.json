@@ -1,6 +1,60 @@
 {
   "entries": [
     {
+      "version": "1.15.0",
+      "date": "2026-11-07",
+      "new": {
+        "vi": [
+          "12 theme mới: mỗi quý tới hết 2027 và mỗi năm 2026, 2027 có theme riêng, thêm theme cho 1 tỷ token và các mốc chi tiêu.",
+          "Theme “Pháo hoa năm mới”: dành cho 100 người đầu tiên dùng đủ 500.000 token trong tuần 1 đến 7/1/2027.",
+          "Gõ /theme trong ô nhập để đổi theme ngay: rê chuột để xem chuyển động, Enter để dùng, Esc để đóng.",
+          "Mỗi danh hiệu có một linh vật chuyển động riêng, danh hiệu càng khó linh vật càng nhiều hiệu ứng. Danh hiệu chưa có vẫn bấm xem được, kèm điều kiện đạt.",
+          "Trang Mức sử dụng có thêm Google Gemini và OrcaRouter: đỉnh RPM/TPM, lỗi theo mã, tỉ lệ thành công, ví và số liệu 30 ngày."
+        ],
+        "en": [
+          "12 new themes: one for each quarter to the end of 2027 and for each of 2026 and 2027, plus a billion tokens and the spending marks.",
+          "“New Year Fireworks”: for the first 100 people to use 500,000 tokens between 1 and 7 January 2027.",
+          "Type /theme in the box to change theme on the spot: hover to see it move, Enter to use it, Esc to close.",
+          "Every title has a moving creature of its own, more elaborate the harder it is to earn. A title you do not hold can still be pressed to see it and what earns it.",
+          "The Usage page gains Google Gemini and OrcaRouter: busiest minute against the limits, errors by status, success rate, wallet and the last 30 days."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Bảng xếp hạng theo quý thay vì theo tháng, hiện top 10, ba hạng đầu mỗi người một màu và nhận thưởng.",
+          "Tổng quan Mức sử dụng gộp lượt miễn phí của mọi nhà cung cấp thành một dòng, hạn mức chi cũng vậy. Rê chuột vào cột ngày để xem ngày đó.",
+          "Hướng dẫn đầu vào: chọn nhà cung cấp, làm từng bước tới khi dán được nhiều key ngay trong hướng dẫn, rồi chọn trong các model gợi ý.",
+          "Sáng hay tối giờ chỉ theo cài đặt Giao diện của bạn, theme nào cũng vậy.",
+          "Cá voi to hơn, và theme được vẽ ở luồng riêng nên không còn làm đứng trang."
+        ],
+        "en": [
+          "Boards run by quarter rather than by month and show the top ten; the first three each wear their own colour and win the prize.",
+          "The Usage overview adds every provider’s free requests into one line, and spending limits into another. Hover a day’s column to see that day.",
+          "The getting-started guide: choose a provider, follow it step by step to pasting as many keys as you have, right in the guide, then choose among the suggested models.",
+          "Light or dark now follows only your Appearance setting, whichever theme is up.",
+          "A bigger whale, and themes are painted on their own thread, so they no longer hold up the page."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Bấm dừng: provider bị ngắt ngay, phần đã trả lời được giữ, kể cả khi model mới chỉ đang suy nghĩ, và không còn gì quay mãi.",
+          "Đổi model giữa lúc đang trả lời: model cũ dừng, model mới viết tiếp từ chỗ dở. Dừng rồi gửi tiếp: câu trả lời cũ luôn nằm trước câu hỏi mới.",
+          "Lượt bị dừng nay vẫn được tính vào mức sử dụng.",
+          "Chọn theme, danh hiệu hay mức suy luận liên tục: bấm lần cuối là thắng, không nhảy lung tung.",
+          "Tìm kiếm không còn gọi một model Gemini đã bị khoá, nguyên nhân của hàng loạt lỗi 404. Số dư OrcaRouter đọc đúng ví.",
+          "Trang đăng nhập che kín, không còn lộ theme ở dưới. Lỗi calculate khi có nhãn trong danh sách phép tính."
+        ],
+        "en": [
+          "Stop cuts the provider off at once and keeps what was said, even if the model was only thinking, and nothing goes on spinning.",
+          "Changing model mid-reply stops the old one and the new one carries on. Stop then send: the old reply always comes before the new question.",
+          "A stopped turn now counts towards your usage.",
+          "Pressing a theme, a title or the effort dial repeatedly: the last press wins, with no jumping about.",
+          "Search no longer calls a Gemini model closed to new users, the cause of a run of 404s. OrcaRouter’s balance reads the real wallet.",
+          "The sign-in page covers the whole window, with no theme showing under it. Calculate no longer fails on a label in a list of figures."
+        ]
+      }
+    },
+    {
       "version": "1.14.0",
       "date": "2026-11-06",
       "new": {

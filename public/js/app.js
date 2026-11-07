@@ -4866,6 +4866,9 @@ document.addEventListener('keydown', (event) => {
 
 // Whatever was connected or added in there shows in the side panel's Context.
 $('settings').addEventListener('close', () => {
+  // Nothing on a page nobody can see should keep drawing.
+  themesPanel.leave();
+  rankingPanel.leave();
   rail.forgetAccount();
   renderRail();
   // A Connect pressed on a suggestion card leads in here; leaving says whether it took.

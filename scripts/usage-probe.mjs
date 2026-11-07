@@ -9,6 +9,9 @@
  *   node scripts/usage-probe.mjs                 OrcaRouter's read endpoints
  *   node scripts/usage-probe.mjs --gemini        Gemini's model list and headers
  *   node scripts/usage-probe.mjs --gemini-call gemini-2.5-flash gemini-flash-latest
+ *   node scripts/usage-probe.mjs --orca-abort [model]   spends one request: stops a stream
+ *        part-way, then asks OrcaRouter what it settled for it, to see whether a stop
+ *        stops the bill. Its docs do not say. Free model by default.
  *
  * Reads ORCAROUTER_API_KEY and GEMINI_API_KEY from the environment or .env.
  */
@@ -74,6 +77,54 @@ if (!key) {
   process.exit(0);
 }
 const auth = { Authorization: `Bearer ${key}` };
+
+if (args[0] === '--orca-abort') {
+  const model = args[1] || 'deepseek/deepseek-v4.1-flash-free';
+  const abort = new AbortController();
+  const res = await fetch('https://api.orcarouter.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { ...auth, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, stream: true, max_tokens: 2000, messages: [{ role: 'user', content: 'Write a long essay, at least 1500 words, on the history of the bicycle. Do not think for long.' }] }),
+    signal: abort.signal,
+  });
+  const id = res.headers.get('x-orca-request-id');
+  console.log('HTTP', res.status, 'request', id);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let chars = 0;
+  let chunks = 0;
+  const started = Date.now();
+  try {
+    while (chunks < 60 && Date.now() - started < 60_000) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      for (const line of decoder.decode(value).split('\n')) {
+        if (!line.startsWith('data: ') || line.includes('[DONE]')) continue;
+        try {
+          const delta = JSON.parse(line.slice(6)).choices?.[0]?.delta || {};
+          const said = (delta.content || '') + (delta.reasoning_content || delta.reasoning || '');
+          if (said) {
+            chars += said.length;
+            chunks += 1;
+          }
+        } catch {
+          /* a frame cut across two reads: only the count suffers */
+        }
+      }
+    }
+  } finally {
+    abort.abort();
+  }
+  console.log(`stopped after ${chunks} chunks, ${chars} characters, about ${Math.round(chars / 4)} tokens read, at ${Date.now() - started} ms`);
+  for (let i = 0; i < 12; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const settled = await ask(`https://api.orcarouter.ai/v1/generation?id=${encodeURIComponent(id)}`, auth);
+    console.log(`+${(i + 1) * 5}s: HTTP ${settled.status}`, short(settled.text, 500));
+    if (settled.status === 200) break;
+  }
+  process.exit(0);
+}
+
 for (const url of ['/v1/dashboard/billing/subscription', '/v1/dashboard/billing/usage', '/v1/tools/balance', '/metrics/workspace']) {
   const answer = await ask(`https://api.orcarouter.ai${url}`, auth);
   console.log(`\nGET ${url}: HTTP ${answer.status}`, JSON.stringify(answer.headers));

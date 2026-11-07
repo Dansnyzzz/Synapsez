@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-11-07 — A stop that stops; themes for every quarter; one line for all your free requests
+
+**Stop** (`server/liveRuns.js`, `public/js/app.js`). The OpenAI SDK ends its stream quietly on an abort, so a stopped reply on OpenRouter or OrcaRouter read as a finished one, and a turn stopped while reasoning vanished. A stop now reads as a stop: what was said or thought is kept and marked, and an estimate of what it spent goes on the books. `/stop` aborts on the same instance at once; on another, a run reads its lease every two seconds rather than fifteen. The next request waits until the stopped run has written what it had (`chats.run_stop_at`), so nothing lands out of order. Measured on OrcaRouter with its free DeepSeek model: stopped after about 130 tokens read of a possible 2,000, it settled 148 (`scripts/usage-probe.mjs --orca-abort`).
+
+**Changing model while it writes** stops the old one and the new one carries on, told so by a note that is not stored.
+
+**The second free model really is a fallback.** It was only used to choose a suggestion. When the first runs out or stops answering, it now takes that turn (`server/recommend.js` `freeFallbackFor`), then Auto.
+
+**Usage** (`public/js/usage-math.js`, `usage-detail.js`, `server/usageReport.js`, `server/providerOutcomes.js`). The Overview adds every provider's free requests into one line and spending limits into another; the warning above the composer goes by the provider of the model in use, since a total can have plenty left on a provider this model cannot use. OrcaRouter's wallet is read from `/v1/tools/balance`, not from a key's ceiling, and its workspace from `/metrics/workspace`. Google has no usage API: its page is what Synapsez counted, failures now kept by status (`provider_outcomes`), and a daily ceiling is learned from a 429 where one says it. The grounding model that answered every search with 404 is replaced.
+
+**Themes** (schema 39, `public/js/scenes/`, `scene-worker.js`, `theme-picker.js`). Each scene is its own module and runs in a worker, so choosing one never waits for it to be painted; a tile is a picture made ahead of time (`npm run scenes:stills`). Twelve new scenes. A theme no longer decides light or dark. `/theme` in the box. The last press wins, on themes, titles, the whale and the effort dial (`latest.js`), and two preferences saved together both land.
+
+**Boards** run by quarter, show ten and reward three. Every title has a creature (`public/js/scenes/pets.js`) and a panel beside the list saying what earns it. The fireworks go to the first 100 who use 500,000 tokens from 1 to 7 January 2027 (`event_claims`).
+
+**The guide** gets a key and picks a model in place (`public/js/onboarding-keys.js`).
+
+**Calculate** takes a label beside a figure instead of refusing the whole list.
+
 ## 2026-11-06 — A machine with everything on it; files changed in place; where your words go
 
 **The cloud computer comes ready** (`scripts/e2b-template.mjs`, `server/e2b.js`, `server/machineCare.js`). Production ran on E2B's bare template with 512 MiB because `E2B_TEMPLATE` was never set, which is why the browser died. The template is named in code now, older machines move themselves across, packages an account adds come back, leftovers are tidied, credit is shared evenly among whoever is using it today.
