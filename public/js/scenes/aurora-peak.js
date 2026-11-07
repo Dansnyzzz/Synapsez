@@ -1,4 +1,4 @@
-import { W, H, clamp, wave, seeded, ramp, Art, noise1, noise2, fbm1, fbm2, ridged, starField, drawStars, ridge, fir } from './art.js';
+import { W, H, clamp, mix, smooth, wave, seeded, ramp, newCanvas, Art, noise1, noise2, fbm1, ridged, starField, drawStars, ridge, fir } from './art.js';
 
 /** Curtains of light over snow: one of the few things in the sky that moves by itself. */
 const auroraPeak = {
@@ -9,9 +9,7 @@ const auroraPeak = {
     sky.shade(SKY, (x, y) => clamp((y / H) * 0.98 - 0.03), 1);
     // A strip for each colour of curtain: bright at its foot, gone at its top.
     const curtain = (stops) => {
-      const c = document.createElement('canvas');
-      c.width = 1;
-      c.height = 150;
+      const c = newCanvas(1, 150);
       const g = c.getContext('2d');
       const grad = g.createLinearGradient(0, 0, 0, 150);
       for (const [at, color] of stops) grad.addColorStop(at, color);
@@ -25,15 +23,34 @@ const auroraPeak = {
     const noiseA = noise1(6602, 256);
     const peak = (x, shift, scale) => ridged(noiseA, (x + shift) / scale, 5);
     const rock = noise2(6603, 64);
-    /** A mountain: snow down from its top, faces picked out by which way the rock leans. */
+    /** Rock as sharp ridges running down a slope: creased noise, sheared so the creases fall away from the top. */
+    const relief = (x, y) => {
+      let sum = 0;
+      let amp = 0.6;
+      let f = 1;
+      for (let i = 0; i < 4; i += 1) {
+        sum += (1 - Math.abs(rock(((x + y * 0.55) / 15) * f + i * 9, (y / 22) * f + i * 5) * 2 - 1)) * amp;
+        amp *= 0.5;
+        f *= 2;
+      }
+      return sum;
+    };
+    /**
+     * A mountain lit from the left: each pixel by which way its creased rock faces, and
+     * snow lying where it is high and where the rock stands proud, with the dark rock
+     * showing through lower down. The blotches this used to be were noise read as colour.
+     */
     const massif = (art, height, colours, snowDepth, base) => {
       for (let x = 0; x < W; x += 1) {
         const top = Math.round(height(x));
-        const slope = height(x + 5) - height(x - 5);
+        const slope = height(x + 4) - height(x - 4);
         for (let y = Math.max(0, top); y < 150; y += 1) {
-          const face = fbm2(rock, (x + y * 0.7) / 11, (y - x * 0.7) / 11, 3) - 0.5;
-          const snow = clamp(1.1 - (y - top) / snowDepth + face * 1.6);
-          art.tone(x, y, colours, clamp(base + snow * 0.66 - slope * 0.022 + face * 0.42), 0.8);
+          const here = relief(x, y);
+          const lit = (relief(x + 1.5, y) - relief(x - 1.5, y)) * 2.6 - slope * 0.012;
+          const snow = smooth(clamp(1.25 - (y - top) / snowDepth + (here - 0.72) * 1.5));
+          const stone = base + 0.12 + lit * 0.45;
+          const white = 0.62 + base + lit * 0.5;
+          art.tone(x, y, colours, clamp(mix(stone, white, snow)), 0.5);
         }
       }
     };
