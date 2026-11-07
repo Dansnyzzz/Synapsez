@@ -23,7 +23,8 @@ export function noteOutcome(userId, entry, failure) {
   if (!userId || !entry?.provider || !entry.id) return;
   const status = Number(failure?.status) || 0;
   getStore()
-    .recordOutcome(userId, { provider: entry.provider, model: entry.id, status })
+    // A model's name can come from the request, so it is not trusted to be short.
+    .recordOutcome(userId, { provider: entry.provider, model: String(entry.id).slice(0, 120), status })
     .catch((err) => log.error('provider outcome not recorded', err, { provider: entry.provider }));
 }
 
@@ -44,7 +45,8 @@ export function readGeminiQuota(failure) {
   let freeTier = false;
   for (const match of text.matchAll(/"quotaId"\s*:\s*"([^"]+)"[^{}]*?(?:\{[^{}]*\}[^{}]*?)?"quotaValue"\s*:\s*"(\d+)"/g)) {
     if (/FreeTier/i.test(match[1])) freeTier = true;
-    if (/PerDay/i.test(match[1])) perDay = Number(match[2]);
+    // Requests only: a day's ceiling on tokens is another figure, and not what the bar counts.
+    if (/Requests?PerDay/i.test(match[1])) perDay = Number(match[2]);
   }
   return perDay === null && !freeTier ? null : { perDay, freeTier };
 }
@@ -70,15 +72,17 @@ export async function learnGeminiQuota(userId, key, failure) {
  */
 export function pacificDay(now = new Date()) {
   const read = (date) => {
-    const parts = Object.fromEntries(
+    const parts = /** @type {{ year: number, month: number, day: number, hour: number, minute: number, second: number }} */ (/** @type {unknown} */ (Object.fromEntries(
       new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })
         .formatToParts(date)
         .map((part) => [part.type, Number(part.value)]),
-    );
+    )));
     return { ...parts, offset: Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - Math.floor(date.getTime() / 1000) * 1000 };
   };
   const here = read(now);
-  const from = new Date(Date.UTC(here.year, here.month - 1, here.day) - here.offset);
+  const midnight = Date.UTC(here.year, here.month - 1, here.day);
+  // Midnight's own offset: on a day the clocks change, it is not the one in force now.
+  const from = new Date(midnight - read(new Date(midnight - here.offset)).offset);
   // The next day's offset, read a day on: a day the clocks change is 23 or 25 hours long.
   const later = read(new Date(from.getTime() + 26 * 3_600_000));
   return { from, to: new Date(Date.UTC(here.year, here.month - 1, here.day + 1) - later.offset) };

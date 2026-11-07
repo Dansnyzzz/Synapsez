@@ -202,8 +202,14 @@ function askOrcaRouter(key, fetchImpl, { metrics = false } = {}) {
  */
 async function geminiFreeToday(userId, rows, now = new Date()) {
   const { from, to } = pacificDay(now);
-  let used = 0;
-  for (const row of rows) if (new Date(row.hour) >= from && String(row.model).startsWith('google/')) used += Number(row.calls) || 0;
+  // Google counts each model on its own, so the bar is the busiest one's; added up, two
+  // models under their ceilings would read as one over it.
+  const perModel = new Map();
+  for (const row of rows) {
+    if (new Date(row.hour) < from || !String(row.model).startsWith('google/')) continue;
+    perModel.set(row.model, (perModel.get(row.model) || 0) + (Number(row.calls) || 0));
+  }
+  const used = Math.max(0, ...perModel.values());
   const entries = await keyEntries(userId, 'google');
   const limit = Math.max(0, ...entries.map((entry) => Number(entry.freePerDay) || 0));
   return { used, limit: limit || null, from: from.toISOString(), to: to.toISOString() };
@@ -292,6 +298,19 @@ async function openRouterKeyInUse(userId, live) {
   return null;
 }
 
+/** The same for OrcaRouter: the first key with money behind it, or that has not said. */
+async function orcaKeyInUse(userId, live) {
+  const order = await getApiKeys(userId, 'orcarouter');
+  for (const { index, shared } of order) {
+    if (shared) continue;
+    const report = live.find((l) => l.index === index);
+    // What it may spend if it says, what it holds if not; a key that says neither has not said it is empty.
+    const left = report?.spendable ?? report?.balance;
+    if (!report?.ok || left == null || left > 0) return index;
+  }
+  return null;
+}
+
 /**
  * @param {{ id: string, monthly_token_limit?: number | null }} user
  * @param {{ fetchImpl?: typeof fetch, part?: 'all' | 'limits' }} [options]
@@ -345,7 +364,10 @@ export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}
     free: { ...(orcaFree ? { orcarouter: orcaFree } : {}), ...(geminiFree ? { google: geminiFree } : {}) },
     // Four weeks of what each provider without a usage API was asked and how it answered.
     detail: { google: googleDetail, orcarouter: orcaDetail },
-    inUse: { openrouter: own.length ? await openRouterKeyInUse(user.id, live) : null },
+    inUse: {
+      openrouter: own.length ? await openRouterKeyInUse(user.id, live) : null,
+      orcarouter: orcaLive.length ? await orcaKeyInUse(user.id, orcaLive) : null,
+    },
     // Each provider this account rides the deployment's key for — where the
     // monthly ceiling applies (checkQuota counts every call of the month, and
     // stops a turn only on a shared key).

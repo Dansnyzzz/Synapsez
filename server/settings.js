@@ -659,9 +659,13 @@ export async function setKeyMeta(userId, provider, key, meta) {
   const list = keyList(keys, provider);
   const index = list.findIndex((entry) => decryptSecret(entry.cipher) === key);
   if (index < 0) return;
-  list[index] = { ...list[index], ...keyMeta(meta) };
-  keys[provider] = list;
-  await getStore().setUserSetting(userId, KEYS_KEY, keys);
+  const merged = { ...list[index], ...keyMeta(meta) };
+  // Called on every refusal it might learn from: nothing new, nothing written. Writing
+  // back a list read a moment ago is how a key just removed would come back.
+  if (JSON.stringify(merged) === JSON.stringify(list[index])) return;
+  list[index] = merged;
+  // This provider's list only, so a change to another's is not undone.
+  await getStore().mergeUserSetting(userId, KEYS_KEY, { [provider]: list });
 }
 
 /** Replace whatever is stored with this single key, or clear it. */

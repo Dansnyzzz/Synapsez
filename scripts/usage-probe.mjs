@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { redactSecrets } from '../server/redact.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const envFile = path.resolve(here, '../.env');
@@ -31,7 +32,11 @@ if (fs.existsSync(envFile)) {
 }
 
 const args = process.argv.slice(2);
-const short = (text, n = 1500) => (text.length > n ? `${text.slice(0, n)}… (${text.length} chars)` : text);
+/** A provider's words, shortened, and without a key if it repeated one. */
+const short = (raw, n = 1500) => {
+  const text = redactSecrets(String(raw)).text;
+  return text.length > n ? `${text.slice(0, n)}… (${text.length} chars)` : text;
+};
 const headersOf = (res) => Object.fromEntries([...res.headers.entries()].filter(([name]) => /rate|limit|quota|retry|orca|goog|usage/i.test(name) && !/key/i.test(name)));
 
 async function ask(url, headers = {}, init = {}) {
