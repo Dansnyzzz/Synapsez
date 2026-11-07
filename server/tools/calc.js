@@ -469,8 +469,26 @@ function labelled(item) {
   if (QUOTES.has(text[0]) && text.at(-1) === close && text.length > 1) text = text.slice(1, -1).trim();
   const colon = text.lastIndexOf(':');
   if (colon < 0) return { label: '', work: text };
-  return { label: text.slice(0, colon).trim(), work: text.slice(colon + 1).trim() };
+  const before = text.slice(0, colon).trim();
+  // "3:4" and "12:30" are a ratio and a time, not a label and a sum: answering "4" to
+  // either would be a wrong figure where a refusal is the honest answer.
+  if (!/\p{L}/u.test(before) || isArithmetic(before)) return { label: '', work: text };
+  return { label: before, work: text.slice(colon + 1).trim() };
 }
+
+/** Whether a piece of text works out by itself, which a name for a figure does not. */
+function isArithmetic(text) {
+  try {
+    evaluate(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const MAX_LABEL = 120;
+/** A label is repeated to the model: one short line, and nothing that reads as markup. */
+const shownLabel = (text) => text.replace(/[\r\n<>]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_LABEL);
 
 /** Whether something is words with no figure in them, which can only be a name for one. */
 const onlyWords = (text) => !/[0-9]/.test(text) && !Object.hasOwn(CONSTANTS, text.toLowerCase());
@@ -492,7 +510,8 @@ export function calculate(source) {
   /** One item, or the whole of what was asked, as a line of the answer. */
   const line = ({ label, work }, name = label) => {
     const { value, expression } = evaluate(work);
-    return `${name ? `${name}: ` : ''}${expression} = ${tidyNumber(value)}`;
+    const shown = shownLabel(name);
+    return `${shown ? `${shown}: ` : ''}${expression} = ${tidyNumber(value)}`;
   };
   if (!items) return line(labelled(src));
   if (items.length > MAX_LIST_ITEMS) throw new Error('That list is too long to work out in one call. Send fewer figures at a time.');
@@ -508,6 +527,8 @@ export function calculate(source) {
     lines.push(line(part, part.label || naming));
     naming = '';
   }
+  // Words and no figure: nothing was worked out, and an empty answer would read as a result.
+  if (!lines.length) throw new Error('There is nothing to calculate.');
   return lines.join('\n');
 }
 
