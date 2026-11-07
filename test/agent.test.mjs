@@ -2794,6 +2794,36 @@ section('a model that has gone is replaced by Auto, at the start of a turn or in
   check('  once: when Auto fails as well, the turn says so rather than going round', twice.entries.length === 2 && /could not reach this model/.test(twice.thrown), `${JSON.stringify(twice.entries)} ${twice.thrown}`);
   const plainFail = await turn('c-not-upstream', [{ throws: '400 Bad request: tool schema invalid' }]);
   check('  and any other failure is not moved', plainFail.entries.length === 1 && /Bad request/.test(plainFail.thrown), plainFail.thrown);
+
+  // The second free model the guide chose comes before Auto (owner, 2026-11-06).
+  const recommend = await import('../server/recommend.js');
+  const pairBefore = await recommend.getRecommended();
+  await store.upsertModels([
+    {
+      id: 'openrouter/lab/second:free', provider: 'openrouter', model: 'lab/second:free', family: 'lab', label: 'Second',
+      description: null, context: 64_000, maxOutput: 8192, priceIn: 0, priceOut: 0, isFree: true, vision: false,
+      releasedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  await recommend.setRecommended({ free: 'openrouter/lab/live', freeSecond: 'openrouter/lab/second:free' });
+  const toSecond = await turn('c-upstream-second', [{ upstream: down }, { text: 'Answered by the second.' }]);
+  check('with a second free model chosen, the turn goes there and not to Auto', toSecond.entries[0] === 'openrouter/lab/live' && toSecond.entries[1] === 'openrouter/lab/second:free' && toSecond.reply === 'Answered by the second.', JSON.stringify(toSecond.entries));
+  check('  and it still says which answered', toSecond.events.some((e) => e.type === 'status' && /is not answering right now/.test(e.payload?.message || '')));
+  const thenAuto = await turn('c-upstream-third', [{ upstream: down }, { upstream: down }, { text: 'Answered by Auto.' }]);
+  check('when the second fails as well, Auto, and no further', thenAuto.entries.join() === `openrouter/lab/live,openrouter/lab/second:free,${AUTO_ROUTER.id}` && thenAuto.reply === 'Answered by Auto.', JSON.stringify(thenAuto.entries));
+  const roundAgain = await turn('c-upstream-fourth', [{ upstream: down }, { upstream: down }, { upstream: down }, { text: 'never' }]);
+  check('  and when that fails too, the turn says so rather than going round', roundAgain.entries.length === 3 && /could not reach this model/.test(roundAgain.thrown), JSON.stringify(roundAgain.entries));
+  // Its price changed since it was chosen.
+  await store.upsertModels([
+    {
+      id: 'openrouter/lab/second:free', provider: 'openrouter', model: 'lab/second:free', family: 'lab', label: 'Second',
+      description: null, context: 64_000, maxOutput: 8192, priceIn: 3, priceOut: 15, isFree: false, vision: false,
+      releasedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  const notBilled = await turn('c-upstream-priced', [{ upstream: down }, { text: 'Answered by Auto.' }]);
+  check('a second model that has stopped being free is passed over: nobody starts paying', notBilled.entries[1] === AUTO_ROUTER.id, JSON.stringify(notBilled.entries));
+  await recommend.setRecommended(pairBefore);
   /*
    * PRV-022: Auto is OpenRouter's free endpoints, which may keep or train on
    * what they are sent. An incognito conversation, or one on a paid model the

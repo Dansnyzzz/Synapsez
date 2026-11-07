@@ -71,7 +71,6 @@ const { initStore } = await import('../server/store/index.js');
 await initStore();
 const { createApp } = await import('../server/app.js');
 const { executeTool } = await import('../server/tools/execute.js');
-const { DEFAULT_PREFS } = await import('../server/settings.js');
 const { LEGAL } = await import('../server/legal.js');
 const server = (await createApp()).listen(0, '127.0.0.1');
 await new Promise((r) => server.once('listening', r));
@@ -604,13 +603,11 @@ try {
       chart: await upload('figure-1.png', 'image/png', await chart(lang)),
       shots: [(await upload('shop-1.jpg', 'image/jpeg', await shopShot(lang, false))).id, (await upload('shop-2.jpg', 'image/jpeg', await shopShot(lang, true))).id],
     };
-    for (const step of [1, 2, 3, 4, 5, 6]) {
+    // Steps 2 and 3 are done in the guide itself, so they have no clip (owner, 2026-11-06).
+    for (const step of [1, 4, 5, 6]) {
       if (onlyStep && step !== onlyStep) continue;
-      // Step 2 starts from an account with no key; the rest from one with a key.
-      await call('PUT', '/api/providers/openrouter/key', { apiKey: step === 2 ? '' : 'demo-key-not-real-0000' });
-      // Step 3 starts on the model a new account is given and moves to Auto;
-      // the others are on Auto already, as somebody who followed step 3 is.
-      await call('PUT', '/api/prefs', { defaultModel: step === 3 ? DEFAULT_PREFS.defaultModel : 'auto' });
+      await call('PUT', '/api/providers/openrouter/key', { apiKey: 'demo-key-not-real-0000' });
+      await call('PUT', '/api/prefs', { defaultModel: 'auto' });
       // A new model's announcement is somebody else's moment, and which one is
       // due depends on the model in use: answered "not now" until none is.
       for (let i = 0; i < 5; i += 1) {

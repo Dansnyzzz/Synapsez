@@ -237,8 +237,13 @@ export function splitStatements(sql) {
  *      who says what each other administrator may do (server/adminRoles.js)
  *  37  user_themes, user_titles, theme_badges, ranking_board, ranking_settled,
  *      usage_lifetime — themes, the monthly and yearly boards, titles
+ *  38  attachments.derived_from, shared_models.hears / watches
+ *  39  chats.run_stop_at — a stopped run has yet to finish writing; theme_badges
+ *      .quarter, user_themes.grant_quarter — the boards run by quarter, and a
+ *      month's prize becomes its quarter's; event_claims — an event's limited
+ *      places; provider_outcomes — what each provider answered, by status
  */
-export const SCHEMA_VERSION = 38;
+export const SCHEMA_VERSION = 39;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -761,6 +766,68 @@ export function createPgStore(connectionString) {
           GROUP BY 1, 2 ORDER BY 1`,
         [userId, Math.min(Math.max(Math.floor(Number(hours) || 360), 1), 24 * 60)],
       );
+    },
+    /** One failed call to a provider, counted by the hour. See server/providerOutcomes.js. */
+    async recordOutcome(userId, { provider, model, status }) {
+      await q(
+        `INSERT INTO provider_outcomes (user_id, hour, provider, model, status, calls)
+         VALUES ($1, date_trunc('hour', NOW()), $2, $3, $4, 1)
+         ON CONFLICT (user_id, hour, provider, model, status)
+         DO UPDATE SET calls = provider_outcomes.calls + 1`,
+        [userId, provider, model, status],
+      );
+    },
+    /** The Usage page draws four weeks. */
+    async pruneOutcomes(keepDays = 45) {
+      await q(`DELETE FROM provider_outcomes WHERE hour < NOW() - ($1 || ' days')::interval`, [String(keepDays)]);
+    },
+    /**
+     * One provider's last weeks for this account: each model's requests, tokens and
+     * busiest minute, each day's requests, each day's failures by status. The figures
+     * a provider's own console draws, for the provider that has no API for them.
+     */
+    async providerDetail(userId, provider, days = 28) {
+      const since = new Date(Date.now() - days * 86_400_000).toISOString();
+      const params = [userId, `${provider}/%`, since];
+      const [models, peaks, daily, errors] = await Promise.all([
+        q(
+          `SELECT model, COUNT(*)::int AS calls, COALESCE(SUM(input_tokens), 0)::bigint AS input,
+                  COALESCE(SUM(output_tokens), 0)::bigint AS output, COALESCE(SUM(cost_usd), 0) AS cost
+             FROM usage_events WHERE user_id = $1 AND model LIKE $2 AND created_at >= $3 GROUP BY model`,
+          params,
+        ),
+        q(
+          `SELECT model, MAX(calls)::int AS peak_rpm, MAX(tokens)::bigint AS peak_tpm
+             FROM (SELECT model, date_trunc('minute', created_at) AS minute, COUNT(*) AS calls, SUM(input_tokens) AS tokens
+                     FROM usage_events WHERE user_id = $1 AND model LIKE $2 AND created_at >= $3 GROUP BY 1, 2) busiest
+            GROUP BY model`,
+          params,
+        ),
+        q(
+          `SELECT date_trunc('day', created_at) AS day, COUNT(*)::int AS calls, COALESCE(SUM(cost_usd), 0) AS cost
+             FROM usage_events WHERE user_id = $1 AND model LIKE $2 AND created_at >= $3 GROUP BY 1 ORDER BY 1`,
+          params,
+        ),
+        q(
+          `SELECT date_trunc('day', hour) AS day, status, SUM(calls)::int AS calls
+             FROM provider_outcomes WHERE user_id = $1 AND provider = $2 AND hour >= $3 GROUP BY 1, 2 ORDER BY 1`,
+          [userId, provider, since],
+        ),
+      ]);
+      const peak = new Map(peaks.map((row) => [row.model, row]));
+      return {
+        models: models.map((row) => ({
+          model: row.model,
+          calls: Number(row.calls) || 0,
+          input: Number(row.input) || 0,
+          output: Number(row.output) || 0,
+          cost: Number(row.cost) || 0,
+          peakRpm: Number(peak.get(row.model)?.peak_rpm) || 0,
+          peakTpm: Number(peak.get(row.model)?.peak_tpm) || 0,
+        })),
+        daily: daily.map((row) => ({ day: new Date(row.day).toISOString(), calls: Number(row.calls) || 0, cost: Number(row.cost) || 0 })),
+        errors: errors.map((row) => ({ day: new Date(row.day).toISOString(), status: Number(row.status) || 0, calls: Number(row.calls) || 0 })),
+      };
     },
     async usageByModel(userId, days = 30) {
       return q(
@@ -1614,7 +1681,7 @@ export function createPgStore(connectionString) {
     async claimChatRun(userId, chatId, runId, staleMs = RUN_LEASE_STALE_MS) {
       const rows = await q(
         `UPDATE chats
-            SET run_lock_at = NOW(), run_lock_by = $3, run_lock_seq = run_lock_seq + 1
+            SET run_lock_at = NOW(), run_lock_by = $3, run_lock_seq = run_lock_seq + 1, run_stop_at = NULL
           WHERE id = $1 AND user_id = $2
             AND (run_lock_at IS NULL
                  OR run_lock_at <= NOW() - ($4 || ' milliseconds')::interval
@@ -1635,9 +1702,9 @@ export function createPgStore(connectionString) {
      *   close can arrive late or not at all, and the model keeps answering into
      *   a page nobody is reading.
      *
-     *   So `stopChatRun` takes the lease away, and this reports the theft. The
-     *   run finds out on its next heartbeat and stops for a fact rather than by
-     *   inference.
+     *   So `stopChatRun` takes the lease away. A run reads who holds it every two
+     *   seconds (`watchLease` in liveRuns.js, by `chatRunHolder`) and stops for a
+     *   fact rather than by inference; this only keeps the lease from expiring.
      */
     /**
      * @param seq  which holding of the lease is asking. Omit only from a caller
@@ -1663,15 +1730,30 @@ export function createPgStore(connectionString) {
      * point: the person pressing stop is not the process holding the lease, and
      * on a serverless deployment may not even be talking to the same instance.
      * Clearing the lock is the message.
+     *
+     * `run_stop_at` says that run has yet to finish writing what it had. Only for
+     * a lease somebody is still renewing: one that died has nobody coming to clear
+     * the mark, and the next request would wait out the whole of `STOP_SETTLE_MS`.
      */
     async stopChatRun(userId, chatId) {
       const rows = await q(
-        `UPDATE chats SET run_lock_at = NULL, run_lock_by = NULL
+        `UPDATE chats
+            SET run_stop_at = CASE WHEN run_lock_at > NOW() - INTERVAL '40 seconds' THEN NOW() ELSE NULL END,
+                run_lock_at = NULL, run_lock_by = NULL
           WHERE id = $1 AND user_id = $2 AND run_lock_by IS NOT NULL
       RETURNING id`,
         [chatId, userId],
       );
       return rows.length > 0;
+    },
+    /** Who holds a conversation's lease, and whether a stop is being finished with. Read every couple of seconds by a running turn. */
+    async chatRunHolder(userId, chatId) {
+      const rows = await q('SELECT run_lock_by, run_lock_seq, run_stop_at FROM chats WHERE id = $1 AND user_id = $2', [chatId, userId]);
+      return rows[0] ?? null;
+    },
+    /** The stopped run has written what it had; whatever was waiting may go. */
+    async clearRunStop(userId, chatId) {
+      await q('UPDATE chats SET run_stop_at = NULL WHERE id = $1 AND user_id = $2 AND run_stop_at IS NOT NULL', [chatId, userId]);
     },
     /**
      * Only the holder may release, so a late finisher cannot free someone else's
@@ -2828,7 +2910,7 @@ export function createPgStore(connectionString) {
       return { tokens: Number(rows[0]?.tokens || 0), cost: Number(rows[0]?.cost || 0) };
     },
     async listUserThemes(userId) {
-      return q('SELECT theme_id, grant_kind, grant_month, grant_year, granted_at FROM user_themes WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+      return q('SELECT theme_id, grant_kind, grant_quarter, grant_year, granted_at FROM user_themes WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
     },
     /** The themes an administrator took back from this account, which usage must not earn again. */
     async listRevokedThemes(userId) {
@@ -2837,12 +2919,73 @@ export function createPgStore(connectionString) {
     /** Given again, it counts as newly received, and says the latest reason. */
     async grantTheme(userId, themeId, grant) {
       await q(
-        `INSERT INTO user_themes (user_id, theme_id, grant_kind, grant_month, grant_year)
+        `INSERT INTO user_themes (user_id, theme_id, grant_kind, grant_quarter, grant_year)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (user_id, theme_id) DO UPDATE
-           SET grant_kind = EXCLUDED.grant_kind, grant_month = EXCLUDED.grant_month, grant_year = EXCLUDED.grant_year, granted_at = NOW(), revoked_at = NULL`,
-        [userId, themeId, grant.kind, grant.month ?? null, grant.year ?? null],
+           SET grant_kind = EXCLUDED.grant_kind, grant_quarter = EXCLUDED.grant_quarter, grant_year = EXCLUDED.grant_year, granted_at = NOW(), revoked_at = NULL`,
+        [userId, themeId, grant.kind, grant.quarter ?? null, grant.year ?? null],
       );
+    },
+    /** What an account used between two moments, for an event that asks for it. */
+    async usageTokensBetween(userId, from, to) {
+      const rows = await q(
+        `SELECT COALESCE(SUM(input_tokens + output_tokens), 0)::bigint AS tokens
+           FROM usage_events WHERE user_id = $1 AND created_at >= $2 AND created_at < $3`,
+        [userId, from.toISOString(), to.toISOString()],
+      );
+      return Number(rows[0]?.tokens || 0);
+    },
+    /**
+     * Take the next of an event's places, or say there is none.
+     *
+     * One statement, numbered, so a limit holds however many people arrive in the
+     * same moment: two reading the same highest number both ask for the next one,
+     * and the primary key gives it to one. The other reads again and asks for the
+     * one after. Every failed try means someone else got a place, so trying as many
+     * times as there are places means nobody within the limit is turned away by the
+     * race. One person's second try finds what they already hold.
+     *
+     * @returns {Promise<number|null>} their place, or null when none is left
+     */
+    async claimEventPlace(event, userId, places) {
+      for (let attempt = 0; attempt <= places; attempt += 1) {
+        const claimed = await q(
+          `INSERT INTO event_claims (event, slot, user_id)
+           SELECT $1, COALESCE(MAX(slot), 0) + 1, $2 FROM event_claims WHERE event = $1
+           HAVING COALESCE(MAX(slot), 0) + 1 <= $3
+           ON CONFLICT DO NOTHING
+           RETURNING slot`,
+          [event, userId, places],
+        );
+        if (claimed.length) return Number(claimed[0].slot);
+        const held = await q('SELECT slot FROM event_claims WHERE event = $1 AND user_id = $2', [event, userId]);
+        if (held.length) return Number(held[0].slot);
+        const taken = await this.eventPlacesTaken(event);
+        if (taken >= places) return null;
+      }
+      return null;
+    },
+    /** The place this person holds in an event, or null. */
+    async eventPlaceOf(event, userId) {
+      const rows = await q('SELECT slot FROM event_claims WHERE event = $1 AND user_id = $2', [event, userId]);
+      return rows.length ? Number(rows[0].slot) : null;
+    },
+    /** Every event place this person holds, for their export. */
+    async exportEventPlaces(userId) {
+      return q('SELECT event, slot, claimed_at FROM event_claims WHERE user_id = $1 ORDER BY claimed_at', [userId]);
+    },
+    /** What providers answered this person, for their export: counts, and nothing that was said. */
+    async exportOutcomes(userId) {
+      return q('SELECT hour, provider, model, status, calls FROM provider_outcomes WHERE user_id = $1 ORDER BY hour', [userId]);
+    },
+    /**
+     * How many of an event's places have gone, by the highest number given. A deleted
+     * account's place comes back only if it was the last one given; the limit holds
+     * either way, since its theme went with it.
+     */
+    async eventPlacesTaken(event) {
+      const rows = await q('SELECT COALESCE(MAX(slot), 0)::int AS taken FROM event_claims WHERE event = $1', [event]);
+      return Number(rows[0]?.taken || 0);
     },
     async revokeTheme(userId, themeId) {
       await q('UPDATE user_themes SET revoked_at = NOW() WHERE user_id = $1 AND theme_id = $2', [userId, themeId]);
@@ -2851,14 +2994,14 @@ export function createPgStore(connectionString) {
       return q('SELECT theme_id, COUNT(*)::int AS holders FROM user_themes WHERE revoked_at IS NULL GROUP BY theme_id');
     },
     async listThemeBadges() {
-      return q('SELECT theme_id, kind, month, year FROM theme_badges');
+      return q('SELECT theme_id, kind, quarter, year FROM theme_badges');
     },
     async setThemeBadge(themeId, badge, by) {
       await q(
-        `INSERT INTO theme_badges (theme_id, kind, month, year, updated_by) VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO theme_badges (theme_id, kind, quarter, year, updated_by) VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (theme_id) DO UPDATE
-           SET kind = EXCLUDED.kind, month = EXCLUDED.month, year = EXCLUDED.year, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
-        [themeId, badge.kind, badge.month, badge.year, by],
+           SET kind = EXCLUDED.kind, quarter = EXCLUDED.quarter, year = EXCLUDED.year, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+        [themeId, badge.kind, badge.quarter, badge.year, by],
       );
     },
     async listUserTitles(userId) {
@@ -2900,7 +3043,7 @@ export function createPgStore(connectionString) {
     async boardPeople(ids) {
       if (!ids.length) return [];
       return q(
-        `SELECT u.id, u.username, u.name, s.value AS prefs
+        `SELECT u.id, u.username, u.name, u.email, s.value AS prefs
            FROM users u LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
           WHERE u.id = ANY($1)`,
         [ids],

@@ -7,6 +7,7 @@ import { deriveTitle, needsApproval as pendingApproval } from '../agent.js';
 import { normaliseQuestions, askLayout } from '../tools/askOptions.js';
 import { compact as compactChat, measure as measureContext, transcriptTokens } from '../compact.js';
 import { contextBreakdown } from '../contextParts.js';
+import { settledAfterStop } from '../liveRuns.js';
 
 /** The share of the window a conversation must use before it can be folded by hand. */
 export const MIN_MANUAL_COMPACT = 0.25;
@@ -340,6 +341,9 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       if (!text && !files.length) {
         return res.status(400).json({ error: 'Type something, or attach a file.' });
       }
+
+      // A stop a moment ago: the reply it cut short goes in the transcript ahead of this.
+      await settledAfterStop(store, req.user.id, chatId);
 
       // Written from "Describe it to the assistant" on the Workflows or the
       // Scheduled shelf — which of the two it is for. See `INTENT_NOTES`.

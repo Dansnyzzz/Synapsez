@@ -10,7 +10,7 @@
  * …"), held to these by test/features: change a page, change its version here.
  */
 export const LEGAL = Object.freeze({
-  notice: 'privacy-2026-11-06',
+  notice: 'privacy-2026-11-07',
   terms: 'terms-2026-11-03',
   usage: 'usage-2026-10-26',
 });

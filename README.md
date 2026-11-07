@@ -1427,9 +1427,9 @@ Laid out as Claude's (2026-11-01): **Filter by** the plugin a skill comes with o
 
 ## Themes, the boards and titles
 
-**Settings → Theme**: eight animated scenes behind the whole app, painted by code on a small canvas (`public/js/scenes.js`), plus the plain look. A tile plays while the pointer is on it; the theme in use keeps still there, since it is already moving behind everything. A locked theme can be looked at and says what earns it, but does not apply. Scenes are still pictures for anyone asking for less motion, stop when the tab is hidden, and bring their own light or dark without overwriting yours.
+**Settings → Theme**: twenty animated scenes behind the whole app, painted by code in a worker (`public/js/scenes/`), plus the plain look. A tile is a picture made ahead of time (`npm run scenes:stills`) and plays while the pointer is on it; the theme in use keeps still there, since it is already moving behind everything. A locked theme can be looked at and says what earns it, but does not apply. Scenes are still pictures for anyone asking for less motion, stop when the tab is hidden, and never change your light or dark. `/theme` in the writing box offers the same row without opening Settings.
 
-**Settings → Ranking**: the top three by tokens and by spending for each UTC month and year. When a period closes, they get its prize theme and a title. Administrators are not ranked, and hold every theme. A board shows an account name and a title; a switch shows "A member" instead. Ranking starts from 2026-11; a closed board stays as it was given out.
+**Settings → Ranking**: the top ten by tokens and by spending for each UTC quarter and year. When a period closes, the first three get its prize theme and a title. Administrators are not ranked, and hold every theme. A board shows an account name and a title; a switch shows "A member" instead. Usage counts from 2026-11-01; a closed board stays as it was given out. Each title has a creature of its own, shown with what earns it beside the list.
 
 Administrators with the `themes` permission choose each theme's badge and give or take a theme, under Settings → People. Which theme a period's prize is follows the badge: one naming that period wins, otherwise the one marked for any period.
 

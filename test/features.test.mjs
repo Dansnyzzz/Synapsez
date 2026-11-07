@@ -1658,7 +1658,7 @@ section('Settings → Usage: the week, the busiest hour and the pace, in the rea
   });
   const owners = two(51, 2);
   const totals = m.overviewLimits(owners, utc);
-  check('the Overview has one line for the provider, not one per key', totals.length === 1 && totals[0].kind === 'free' && totals[0].provider === 'openrouter' && totals[0].index === undefined, JSON.stringify(totals.map((l) => l.id)));
+  check('the Overview has one line, not one per key', totals.length === 1 && totals[0].kind === 'free' && totals[0].providers.join() === 'openrouter' && totals[0].index === undefined, JSON.stringify(totals));
   check('  of the total: 51 of 50 and 2 of 50 is 52 of 100', totals[0].used === 52 && totals[0].limit === 100, `${totals[0].used}/${totals[0].limit}`);
   check('  and no warning, on the Overview or above the composer', m.alertFor(m.decisiveLimits(owners, 'all', utc)) === null);
   check("  nor on the provider's page, where key 2 is in use", m.alertFor(m.decisiveLimits(owners, 'openrouter', utc)) === null && m.decisiveLimits(owners, 'openrouter', utc).every((l) => l.index === 1));
@@ -1672,9 +1672,17 @@ section('Settings → Usage: the week, the busiest hour and the pace, in the rea
 
   const orca = { live: { openrouter: [{ index: 0, ok: true, freeToday: { used: 45, limit: 50 } }], orcarouter: [{ index: 0, ok: true, balance: 6 }] }, free: { orcarouter: { used: 700, limit: 800, tier: 'high', tiers: [], models: [{ id: 'orcarouter/tencent/hy4-preview-free', used: 3, limit: 4000 }] } }, inUse: { openrouter: 0 } };
   const mixed = m.overviewLimits(orca, utc);
-  check('two providers are not added together', mixed.some((l) => l.provider === 'openrouter' && l.limit === 50) && mixed.some((l) => l.provider === 'orcarouter' && l.limit === 800 && !l.bucket), JSON.stringify(mixed.map((l) => [l.id, l.used, l.limit])));
-  check('  and neither is a free id with a ladder of its own', mixed.some((l) => l.bucket && l.limit === 4000));
-  check('  a provider near its limit warns, whatever the other has left', m.alertFor(mixed)?.limit.provider === 'openrouter');
+  check('every provider\'s free requests are one line on the Overview (owner, 2026-11-06)', mixed.filter((l) => l.kind === 'free' && !l.bucket).length === 1 && mixed.find((l) => l.id === 'total:free')?.used === 745 && mixed.find((l) => l.id === 'total:free')?.limit === 850, JSON.stringify(mixed));
+  check('  and it says whose they are', mixed.find((l) => l.id === 'total:free')?.providers.join() === 'openrouter,orcarouter');
+  check('  but not a free id with a ladder of its own', mixed.some((l) => l.bucket && l.limit === 4000));
+  check('  the warning above the composer goes by the provider in use, not the total', m.alertFor(m.decisiveLimits(orca, 'openrouter', utc))?.limit.provider === 'openrouter' && m.alertFor(m.decisiveLimits(orca, 'orcarouter', utc))?.limit.provider === 'orcarouter');
+  const caps = { live: { openrouter: [{ index: 0, ok: true, limit: { amount: 100, remaining: 99.5 } }], orcarouter: [{ index: 0, ok: true, balance: 20, spendable: 5.83, spent: 0.17 }] }, free: {} };
+  const spending = m.overviewLimits(caps, utc).find((l) => l.kind === 'cap');
+  check('every spending limit is one line too', spending?.id === 'total:cap' && spending.used === 0.67 && spending.limit === 106, JSON.stringify(spending));
+  check('  one with no reset in it does not hide one with', m.overviewLimits(caps, utc).length === 1);
+  const google = { live: {}, free: { google: { used: 12, limit: 250, from: '2026-10-31T07:00:00.000Z', to: '2026-11-01T07:00:00.000Z' } } };
+  check('Gemini joins once its ceiling is known, resetting at midnight Pacific', m.knownLimits(google, 'google', utc)[0]?.to.toISOString() === '2026-11-01T07:00:00.000Z' && m.overviewLimits(google, utc)[0]?.limit === 250);
+  check('  and until then there is no bar', m.knownLimits({ free: { google: { used: 12, limit: null, from: '2026-10-31T07:00:00.000Z', to: '2026-11-01T07:00:00.000Z' } } }, 'google', utc).length === 0);
   check("OrcaRouter's limit is one for the workspace, and says it was counted here", m.knownLimits(orca, 'orcarouter', utc).find((l) => !l.bucket)?.counted === true && m.knownLimits(orca, 'orcarouter', utc).every((l) => l.index === undefined));
   check('  and it resets at 00:00 UTC, as its docs say', m.knownLimits(orca, 'orcarouter', utc)[0].to.toISOString() === '2026-11-01T00:00:00.000Z');
   check('  with no ceiling known, no limit is invented', m.knownLimits({ free: { orcarouter: { used: 700, limit: null, tiers: [{ minPaidUsd: 0, rpd: 50 }] } } }, 'orcarouter', utc).length === 0);
@@ -1952,7 +1960,8 @@ section('the getting-started guide says only what is true');
   const MAX_ALL = 8 * 1024 * 1024;
   let total = 0;
   for (const lang of ['vi', 'en']) {
-    for (let step = 1; step <= 6; step += 1) {
+    // Steps 2 and 3 are done in the guide itself rather than watched (owner, 2026-11-06).
+    for (const step of [1, 4, 5, 6]) {
       const clip = new URL(`../public/onboarding/${lang}/step-${step}.webm`, import.meta.url);
       const still = new URL(`../public/onboarding/${lang}/step-${step}.jpg`, import.meta.url);
       const video = fs.existsSync(clip) ? fs.readFileSync(clip) : null;
@@ -2301,6 +2310,15 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   check('  proof of the upper rung outweighs an empty balance', (await rec.suggestionFor(held({ orcarouter: [{ paid: false, freeTier: 'high' }] })))?.id === 'orcarouter/lab/free-only-here-free');
   check('  nothing known yet gets the benefit of the doubt', (await rec.suggestionFor(held({ orcarouter: [{ paid: null, freeTier: null }] })))?.id === 'orcarouter/lab/free-only-here-free');
   check('  neither choice runnable: no suggestion', (await rec.suggestionFor(held({ google: [{ paid: null }] }))) === null);
+
+  // The guide's second free model is the one a turn moves to when the first stops answering (owner, 2026-11-06).
+  const pair = { free: 'orcarouter/lab/free-only-here-free', freeSecond: 'openrouter/nvidia/nemotron:free' };
+  const bothHeld = held({ orcarouter: [{ paid: null, freeTier: null }], openrouter: [{ paid: false }] });
+  check('when the first free model fails, the turn moves to the second', (await rec.freeFallbackFor(bothHeld, pair.free, pair)) === pair.freeSecond);
+  check('  when it was on the second, to the first', (await rec.freeFallbackFor(bothHeld, pair.freeSecond, pair)) === pair.free);
+  check('  on anything else, the first choice', (await rec.freeFallbackFor(bothHeld, 'openrouter/lab/other:free', pair)) === pair.free);
+  check('  with no key for the other one, nothing to move to', (await rec.freeFallbackFor(held({ orcarouter: [{ paid: null, freeTier: null }] }), pair.free, pair)) === null);
+  check('  with no second named, nothing to move to', (await rec.freeFallbackFor(bothHeld, pair.free, { free: pair.free })) === null);
 
   await rec.setRecommended({ free: 'auto', paid: 'orcarouter/anthropic/claude-best' });
   const payingBoth = held({ openrouter: [{ paid: true }], orcarouter: [{ paid: true }] });
@@ -2662,6 +2680,49 @@ section('your data: the lists and deletions behind Privacy → Manage (owner, 20
   } finally {
     server.close();
   }
+}
+
+section('the last press wins');
+{
+  const { latestOnly } = await import('../public/js/latest.js');
+  /** A save that waits to be told how it ends. */
+  const saves = [];
+  const said = [];
+  const saver = latestOnly((value) => new Promise((resolve, reject) => saves.push({ value, resolve, reject })), {
+    landed: (_answer, value) => said.push(`landed ${value}`),
+    saved: (_answer, value) => said.push(`saved ${value}`),
+    failed: (_err, value) => said.push(`failed ${value}`),
+  });
+  const before = saver.asked();
+  void saver.push('a');
+  void saver.push('b');
+  void saver.push('c');
+  check('one save at a time', saves.length === 1 && saves[0].value === 'a');
+  check('a read begun before a press is not believed', saver.sure(before) === false);
+  saves[0].resolve('ok');
+  await new Promise((r) => setTimeout(r));
+  check('what is in between is never sent', saves.length === 2 && saves[1].value === 'c');
+  check('a save that landed is heard, though it is no longer the newest', said.join() === 'landed a', said.join());
+  saves[1].reject(new Error('no'));
+  await new Promise((r) => setTimeout(r));
+  check('the newest failing is reported', said.join() === 'landed a,failed c', said.join());
+  check('a read begun before the press is still not believed', saver.sure(before) === false);
+  check('a read begun now is', saver.sure(saver.asked()) === true);
+}
+
+section('what Google counts');
+{
+  const { pacificDay, readGeminiQuota } = await import('../server/providerOutcomes.js');
+  const at = (when) => {
+    const { from, to } = pacificDay(new Date(when));
+    return [from.toISOString(), to.toISOString()].join();
+  };
+  check('an ordinary winter day', at('2027-01-10T20:00:00Z') === '2027-01-10T08:00:00.000Z,2027-01-11T08:00:00.000Z', at('2027-01-10T20:00:00Z'));
+  check('the day the clocks go on: 23 hours', at('2027-03-14T20:00:00Z') === '2027-03-14T08:00:00.000Z,2027-03-15T07:00:00.000Z', at('2027-03-14T20:00:00Z'));
+  check('the day they go back: 25 hours', at('2026-11-01T20:00:00Z') === '2026-11-01T07:00:00.000Z,2026-11-02T08:00:00.000Z', at('2026-11-01T20:00:00Z'));
+  const refusal = (quotaId) => ({ status: 429, message: JSON.stringify({ violations: [{ quotaId, quotaValue: '250' }] }) });
+  check('a daily ceiling on requests is read', readGeminiQuota(refusal('GenerateRequestsPerDayPerProjectPerModel-FreeTier'))?.perDay === 250);
+  check('one on tokens is not taken for it', readGeminiQuota(refusal('GenerateContentInputTokensPerDay-FreeTier'))?.perDay === null);
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);

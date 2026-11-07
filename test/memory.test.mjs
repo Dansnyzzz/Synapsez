@@ -649,6 +649,22 @@ section('usage: what each provider reports, and what Synapsez counted');
     const again = await usageReport(carol, { fetchImpl: balance(6), part: 'limits' });
     check('  and the limits alone still count them', again.free.orcarouter.used === 3 && again.hours.length === 0);
 
+    // One key drained beside one with money in it is not "out of credit".
+    await addApiKey(carol.id, 'orcarouter', 'sk-orca-usage-suite-key-000002');
+    const perKey = async (_url, init) => new Response(JSON.stringify({ object: 'billing_subscription', hard_limit_usd: String(init.headers.Authorization).endsWith('000001') ? 0 : 6 }), { status: 200 });
+    const mixed = await usageReport(carol, { fetchImpl: perKey });
+    check('a drained key beside a funded one: the funded one is in use', mixed.inUse.orcarouter === 1, JSON.stringify({ inUse: mixed.inUse, live: mixed.live.orcarouter.map((l) => [l.index, l.ok, l.spendable, l.balance]) }));
+    const drained = async () => new Response(JSON.stringify({ object: 'billing_subscription', hard_limit_usd: 0 }), { status: 200 });
+    check('  and none, once every one is drained', (await usageReport(carol, { fetchImpl: drained })).inUse.orcarouter === null);
+    await setApiKey(carol.id, 'orcarouter', 'sk-orca-usage-suite-key-000001');
+
+    // Google counts each model on its own.
+    await setApiKey(carol.id, 'google', 'AIza-usage-suite-key-000001');
+    await count('google/gemini-flash', 3);
+    await count('google/gemini-pro', 2);
+    check("Gemini's day is its busiest model's, not the models added up", (await usageReport(carol, { fetchImpl: balance(6) })).free.google?.used === 3, JSON.stringify((await usageReport(carol, { fetchImpl: balance(6) })).free.google));
+    await setApiKey(carol.id, 'google', '');
+
     const rich = await usageReport(carol, { fetchImpl: balance(25) });
     check('credit past the rung proves the upper one', rich.free.orcarouter.tier === 'high' && rich.free.orcarouter.limit === 800 && rich.free.orcarouter.models[0].limit === 4000, JSON.stringify(rich.free.orcarouter));
     check('  and it is remembered: credit spent since does not undo what was paid', (await usageReport(carol, { fetchImpl: balance(1) })).free.orcarouter.limit === 800 && (await keyEntries(carol.id, 'orcarouter'))[0].freeTier === 'high');
@@ -821,6 +837,7 @@ section('export is the whole account, streamed, without secrets');
   const res = await alice.call('GET', '/api/account/export');
   check('it downloads as a file', res.status === 200 && /attachment; filename="synapsez-export-/.test(res.headers.get('content-disposition') || ''));
   check('it is one valid JSON document', !!res.body && res.body.format === 'synapsez-export', res.text.slice(0, 120));
+  check('it says how providers answered and which event places are held, as the notice promises', Array.isArray(res.body?.eventPlaces) && Array.isArray(res.body?.providerAnswers));
   check('with the conversations', res.body.chats.some((c) => c.messages.some((m) => /zebra budget/.test(m.text || ''))));
   check('  but never an incognito one', !res.text.includes('zebra merger'));
   check('with the notes', res.body.memory.some((n) => n.key === 'language'));

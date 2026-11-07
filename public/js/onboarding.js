@@ -1,5 +1,6 @@
 import { t, applyI18n, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
+import { createKeyGuide } from './onboarding-keys.js';
 
 /**
  * The six-step guide a new account is shown once (rebuilt 2026-10-20).
@@ -9,8 +10,10 @@ import { escapeHtml } from './markdown.js';
  * the order they come up:
  *
  *   1. what this is, so the rest has somewhere to land
- *   2. an API key, without which nothing answers at all
- *   3. the model and what "free" really allows, because that is where people stall
+ *   2. an API key, without which nothing answers at all: which provider, then every
+ *      step from its page to the key pasted here (onboarding-keys.js)
+ *   3. the model suggested for those keys and what "free" really allows, because that
+ *      is where people stall
  *   4. the cloud computer, which is where real work runs
  *   5. the five levels of freedom, because the first approval prompt is otherwise a fright
  *   6. one real task, because reading about it teaches nobody
@@ -21,7 +24,9 @@ import { escapeHtml } from './markdown.js';
  * had left the interface, and said a suggestion ran when it is only put in the
  * box. The facts it states are pinned to the code in test/features.
  *
- * Each step has a short clip recorded from the app itself — an illustration,
+ * Steps 2 and 3 are done here rather than shown: their clip used to be somebody typing
+ * a key one character at a time and a list of every model (owner, 2026-11-06). The
+ * others have a short clip recorded from the app itself — an illustration,
  * never the only place something is said. Only the current step's clip plays,
  * it can always be paused (WCAG 2.2.2), and with reduced motion it waits to be
  * asked.
@@ -42,17 +47,20 @@ const PAUSE_ICON =
 
 /**
  * @param {{
- *   providers: () => Record<string, { configured?: boolean }>,
+ *   providers: () => Record<string, { configured?: boolean, keys?: any[] }>,
  *   isFree: () => boolean,
  *   policies?: () => { id: string, label: string, hint: string }[],
  *   defaultPolicy?: string,
- *   onOpenKeys: () => void,
- *   onPickModel: () => void,
+ *   recommended: () => any,
+ *   suggestion: () => any,
+ *   currentModel: () => string,
+ *   addKey: (provider: string, key: string) => Promise<any>,
+ *   useModel: (id: string) => Promise<any> | void,
  *   onTryPrompt: (text: string) => void,
  *   onFinish: () => void,
  * }} deps
  */
-export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryPrompt, onFinish, isFree, policies = () => [], defaultPolicy = 'guarded' }) {
+export function createOnboarding({ providers, addKey, useModel, recommended, suggestion, currentModel, onTryPrompt, onFinish, isFree, policies = () => [], defaultPolicy = 'guarded' }) {
   const dialog = /** @type {HTMLDialogElement} */ (document.getElementById('onboarding'));
   const stepLabel = document.getElementById('onb-step');
   const steps = document.getElementById('onb-steps');
@@ -73,6 +81,8 @@ export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryProm
 
   /** Does this account already have a key anywhere? Step 2 turns on this. */
   const hasKey = () => Object.values(providers() || {}).some((p) => p?.configured);
+
+  const keyGuide = createKeyGuide({ providers, recommended, addKey, onSaved: () => render() });
 
   const li = (key) => `<li>${escapeHtml(t(key))}</li>`;
   const p = (key, className = '') => `<p${className ? ` class="${className}"` : ''}>${escapeHtml(t(key))}</p>`;
@@ -95,6 +105,12 @@ export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryProm
 
   /** This step's clip, in the interface's language; its still frame shows at once. */
   function paintMedia() {
+    // Done here rather than watched, so there is nothing to show above them.
+    if (step === 2 || step === 3) {
+      video.pause();
+      media.hidden = true;
+      return;
+    }
     const lang = currentLanguage() === 'vi' ? 'vi' : 'en';
     const clip = `/onboarding/${lang}/step-${step}`;
     media.hidden = broken.has(clip);
@@ -118,6 +134,32 @@ export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryProm
     // announce "Pause, pressed" for a clip that is playing (UI-007).
   }
 
+  /**
+   * The models suggested for this account, and nothing else to choose between
+   * (owner, 2026-11-06). Two free ones for everybody: the first is used, the second
+   * takes over when it runs out or stops answering. Somebody whose key has paid for
+   * credit is also offered the best paid one; pressing it is their decision.
+   */
+  function modelCards() {
+    if (!hasKey()) return `<div class="onb__tip"><p>${escapeHtml(t('onb.3.needKey'))}</p><button class="btn btn--primary btn--small" type="button" data-to-keys>${escapeHtml(t('onb.3.toKeys'))}</button></div>`;
+    const rec = recommended() || {};
+    const funded = !!suggestion()?.funded;
+    const current = currentModel();
+    const card = (model, kind) => {
+      if (!model) return '';
+      const on = current === model.id;
+      return `<li class="onb__model${on ? ' is-on' : ''}" data-kind="${kind}">
+          <div class="onb__model-text">
+            <span class="onb__model-role">${escapeHtml(t(`onb.3.role.${kind}`))}</span>
+            <strong>${escapeHtml(model.id === 'auto' ? t('models.autoName') : model.label)}</strong>
+            <span class="onb__model-why">${escapeHtml(t(`onb.3.why.${kind}`))}</span>
+          </div>
+          ${on ? `<span class="onb__badge">${escapeHtml(t('onb.3.inUse'))}</span>` : `<button class="btn btn--small${kind === 'paid' ? ' btn--ghost' : ''}" type="button" data-use-model="${escapeHtml(model.id)}">${escapeHtml(t('onb.3.use'))}</button>`}
+        </li>`;
+    };
+    return `<ul class="onb__models">${card(rec.free, 'first')}${card(rec.freeSecond, 'second')}${funded ? card(rec.paid, 'paid') : ''}</ul>`;
+  }
+
   function render() {
     stepLabel.textContent = t('onb.step', { n: step, total: TOTAL });
     back.hidden = step === 1;
@@ -134,25 +176,26 @@ export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryProm
       body.innerHTML = `
         <h3 class="onb__title">${escapeHtml(t('onb.2.title'))}</h3>
         ${p('onb.2.body')}
-        ${p('onb.2.recommend', 'onb__tip')}
-        ${p('onb.2.many')}
+        <div id="onb-key-guide"></div>
         <p class="onb__state ${ready ? 'is-done' : 'is-todo'}">${escapeHtml(t(ready ? 'onb.2.done' : 'onb.2.pending'))}</p>
-        ${ready ? '' : `<button class="btn btn--primary" id="onb-keys" type="button">${escapeHtml(t('onb.2.open'))}</button>`}
+        ${p('onb.2.many', 'hint')}
         ${p('onb.2.safety', 'hint')}`;
-      body.querySelector('#onb-keys')?.addEventListener('click', () => {
-        // Leaves the guide open behind the sheet: pasting a key is a detour, and
-        // coming back to step 3 is the point.
-        onOpenKeys();
-      });
+      keyGuide.mount(/** @type {HTMLElement} */ (body.querySelector('#onb-key-guide')));
     } else if (step === 3) {
       const free = isFree();
       body.innerHTML = `
         <h3 class="onb__title">${escapeHtml(t('onb.3.title'))}</h3>
+        ${modelCards()}
         <p class="onb__state ${free ? 'is-free' : 'is-done'}">${escapeHtml(t(free ? 'onb.3.free' : 'onb.3.paid'))}</p>
         <ul class="onb__tip onb__facts">${li('onb.3.limits')}${li('onb.3.keys')}${li('onb.3.fallback')}${li('onb.3.gemini')}</ul>
-        <button class="btn btn--ghost" id="onb-model" type="button">${escapeHtml(t('onb.3.change'))}</button>
         ${p('onb.3.note', 'hint')}`;
-      body.querySelector('#onb-model')?.addEventListener('click', () => onPickModel());
+      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-use-model]'))) {
+        button.addEventListener('click', async () => {
+          await useModel(button.dataset.useModel);
+          render();
+        });
+      }
+      body.querySelector('[data-to-keys]')?.addEventListener('click', () => go(2));
     } else if (step === 4) {
       body.innerHTML = `
         <h3 class="onb__title">${escapeHtml(t('onb.4.title'))}</h3>
@@ -203,10 +246,12 @@ export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryProm
 
   function go(to) {
     step = Math.min(Math.max(1, to), TOTAL);
+    keyGuide.leave();
     render();
   }
 
   function finish() {
+    keyGuide.leave();
     video.pause();
     if (dialog.open) dialog.close();
     onFinish();
@@ -275,9 +320,10 @@ export function createOnboarding({ providers, onOpenKeys, onPickModel, onTryProm
       dialog.showModal();
       paintMedia();
     },
-    /** Repaint while open, so pasting a key updates step 2 behind the sheet. */
+    /** Repaint while open, so a key saved anywhere updates the step behind the sheet. */
     refresh() {
-      if (dialog.open) render();
+      // Not while somebody is typing or pasting into the step's own box.
+      if (dialog.open && !document.activeElement?.closest?.('textarea, input')) render();
     },
     isOpen: () => dialog.open,
   };

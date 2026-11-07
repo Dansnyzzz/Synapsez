@@ -389,8 +389,12 @@ export async function setPrefs(userId, patch) {
     }
   }
 
-  await getStore().setUserSetting(userId, PREFS_KEY, next);
-  return next;
+  // Only what this call changed, merged in the database: two saves crossing on their
+  // way, each of a different preference, both land. They each read the whole object
+  // and wrote it back, so the later one undid the earlier.
+  const changed = Object.fromEntries(Object.keys(patch).map((key) => [key, next[key] === undefined ? null : next[key]]));
+  const stored = await getStore().mergeUserSetting(userId, PREFS_KEY, changed);
+  return { ...DEFAULT_PREFS, ...next, ...stored };
 }
 
 async function storedKeys(userId) {
@@ -630,6 +634,7 @@ const keyMeta = (meta = {}) => ({
   ...(typeof meta.checkedAt === 'string' ? { checkedAt: meta.checkedAt } : {}),
   ...(meta.freeTier === 'low' || meta.freeTier === 'high' || meta.freeTier === null ? { freeTier: meta.freeTier } : {}),
   ...(typeof meta.freeTierAt === 'string' ? { freeTierAt: meta.freeTierAt } : {}),
+  ...(Number.isInteger(meta.freePerDay) && meta.freePerDay > 0 ? { freePerDay: meta.freePerDay } : {}),
 });
 
 /** This account's own keys for a provider, readable — for the checks keyIntake.js makes, never for the browser. */
@@ -641,6 +646,7 @@ export async function keyEntries(userId, provider) {
     paid: typeof entry.paid === 'boolean' ? entry.paid : null,
     freeTier: entry.freeTier === 'low' || entry.freeTier === 'high' ? entry.freeTier : null,
     freeTierAt: typeof entry.freeTierAt === 'string' ? entry.freeTierAt : null,
+    freePerDay: Number.isInteger(entry.freePerDay) ? entry.freePerDay : null,
   }));
 }
 
@@ -653,9 +659,13 @@ export async function setKeyMeta(userId, provider, key, meta) {
   const list = keyList(keys, provider);
   const index = list.findIndex((entry) => decryptSecret(entry.cipher) === key);
   if (index < 0) return;
-  list[index] = { ...list[index], ...keyMeta(meta) };
-  keys[provider] = list;
-  await getStore().setUserSetting(userId, KEYS_KEY, keys);
+  const merged = { ...list[index], ...keyMeta(meta) };
+  // Called on every refusal it might learn from: nothing new, nothing written. Writing
+  // back a list read a moment ago is how a key just removed would come back.
+  if (JSON.stringify(merged) === JSON.stringify(list[index])) return;
+  list[index] = merged;
+  // This provider's list only, so a change to another's is not undone.
+  await getStore().mergeUserSetting(userId, KEYS_KEY, { [provider]: list });
 }
 
 /** Replace whatever is stored with this single key, or clear it. */

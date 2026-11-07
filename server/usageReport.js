@@ -3,8 +3,9 @@ import { getStore } from './store/index.js';
 import { getApiKeys, providerStatus, keyEntries, setKeyMeta } from './settings.js';
 import { limitFor } from './usage.js';
 import { withMarkup } from './pricing.js';
-import { orcaBalance, orcaStanding } from './keyIntake.js';
+import { orcaBalance, orcaStanding, orcaWallet } from './keyIntake.js';
 import { ORCA_FREE_SETTING } from './models.js';
+import { pacificDay } from './providerOutcomes.js';
 
 /**
  * Settings → Usage (owner, 2026-10-31): how much of each provider this account
@@ -24,11 +25,13 @@ import { ORCA_FREE_SETTING } from './models.js';
  *     for every provider, per hour, for as far back as the page draws. Google's
  *     Gemini API has no endpoint that reports what is left of a key's allowance,
  *     so for it this is all there is, and the page says so.
- *   - **Both, for OrcaRouter.** It reports a key's credit
- *     (`/v1/dashboard/billing/subscription`) and nothing about its free requests:
- *     its docs say plainly that a window's remainder cannot be read. So its free
- *     bar is Synapsez's own count, against the ceiling OrcaRouter publishes, and
- *     the page says whose number each one is.
+ *   - **Both, for OrcaRouter.** It reports the workspace's wallet and what a key may
+ *     spend of it (`/v1/tools/balance`), what has been spent
+ *     (`/v1/dashboard/billing/usage`), the workspace's last thirty days
+ *     (`/metrics/workspace`, for a key whose owner is an administrator of it), and
+ *     nothing about its free requests: its docs say plainly that a window's
+ *     remainder cannot be read. So its free bar is Synapsez's own count, against the
+ *     ceiling OrcaRouter publishes, and the page says whose number each one is.
  *
  * The browser draws the week, the heatmap and the pace from the hourly rows in
  * its own time zone; the server does not guess one.
@@ -116,20 +119,73 @@ async function askOpenRouterNow(key, fetchImpl) {
   }
 }
 
-/** Ask OrcaRouter what credit one key can draw on. Never throws. Shared for a few seconds, as above. */
-function askOrcaRouter(key, fetchImpl) {
-  const id = `orca:${crypto.createHash('sha256').update(key).digest('base64url')}`;
+/**
+ * OrcaRouter's workspace figures, from its OpenMetrics document. Its spend is in
+ * quota units, 500,000 to the dollar (docs: operations/observability); every series
+ * is a rolling thirty days. Anything not understood is left out rather than guessed.
+ *
+ * @param {string} text
+ */
+export function readOrcaMetrics(text) {
+  const models = new Map();
+  const whole = {};
+  const NAMES = { tokens: 'tokens', spend_quota: 'spend', requests: 'requests', avg_cost_quota: 'avgCost', latency_p50_ms: 'p50', latency_p95_ms: 'p95', error_rate: 'errorRate' };
+  for (const line of String(text || '').split('\n')) {
+    const match = /^orca_workspace_([a-z0-9_]+)\{([^}]*)\}\s+(-?[0-9.eE+-]+)\s*$/.exec(line.trim());
+    if (!match) continue;
+    const value = Number(match[3]);
+    if (!Number.isFinite(value)) continue;
+    const model = /model="([^"]*)"/.exec(match[2])?.[1];
+    if (match[1].startsWith('model_') && model) {
+      const name = NAMES[match[1].slice('model_'.length)];
+      if (!name) continue;
+      const row = models.get(model) || { model };
+      row[name] = name === 'spend' || name === 'avgCost' ? value / 500_000 : value;
+      models.set(model, row);
+    } else if (match[1] === 'requests_total_window') whole.requests = value;
+    else if (match[1] === 'avg_latency_ms') whole.avgLatencyMs = value;
+    else if (match[1] === 'latency_p99_ms') whole.p99Ms = value;
+    else if (match[1] === 'error_rate') whole.errorRate = value;
+  }
+  if (!models.size && whole.requests === undefined) return null;
+  const rows = [...models.values()].sort((a, b) => (b.requests || 0) - (a.requests || 0));
+  const sum = (name) => rows.reduce((n, row) => n + (row[name] || 0), 0);
+  return { ...whole, tokens: sum('tokens'), spend: sum('spend'), models: rows };
+}
+
+/** Ask OrcaRouter about one key. Never throws. Shared for a few seconds, as above. */
+function askOrcaRouter(key, fetchImpl, { metrics = false } = {}) {
+  const id = `orca:${metrics ? 'all:' : ''}${crypto.createHash('sha256').update(key).digest('base64url')}`;
   const hit = liveCache.get(id);
   if (hit && hit.until > Date.now() && hit.fetchImpl === fetchImpl) return hit.answer;
+  const read = async (path) => {
+    const res = await fetchImpl(`https://api.orcarouter.ai${path}`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(LIVE_TIMEOUT_MS) });
+    return res;
+  };
+  const json = async (res) => (res?.ok ? res.json().catch(() => null) : null);
   const answer = (async () => {
     try {
-      const res = await fetchImpl('https://api.orcarouter.ai/v1/dashboard/billing/subscription', {
-        headers: { Authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(LIVE_TIMEOUT_MS),
-      });
-      if (res.status === 401 || res.status === 403) return { ok: false, reason: 'rejected' };
-      if (!res.ok) return { ok: false, reason: 'unavailable' };
-      return { ok: true, balance: orcaBalance(await res.json()) };
+      const [summary, wallet, spent, workspace] = await Promise.all([
+        read('/v1/dashboard/billing/subscription'),
+        read('/v1/tools/balance').catch(() => null),
+        read('/v1/dashboard/billing/usage').catch(() => null),
+        metrics ? read('/metrics/workspace').catch(() => null) : null,
+      ]);
+      if (summary.status === 401 || summary.status === 403) return { ok: false, reason: 'rejected' };
+      if (!summary.ok) return { ok: false, reason: 'unavailable' };
+      const ceiling = orcaBalance(await summary.json().catch(() => null));
+      const held = orcaWallet(await json(wallet));
+      const used = await json(spent);
+      return {
+        ok: true,
+        balance: held.wallet ?? ceiling,
+        spendable: held.spendable,
+        // In cents, as OpenAI's summary is: 16.9 beside a metric worth $0.169 (live, 2026-11-07).
+        spent: typeof used?.total_usage === 'number' && Number.isFinite(used.total_usage) ? used.total_usage / 100 : null,
+        metrics: workspace?.ok ? readOrcaMetrics(await workspace.text().catch(() => '')) : null,
+        // A key whose owner is not an administrator of the workspace may not read them, and the page says so.
+        metricsRefused: workspace?.status === 403,
+      };
     } catch {
       return { ok: false, reason: 'unavailable' };
     }
@@ -137,6 +193,26 @@ function askOrcaRouter(key, fetchImpl) {
   liveCache.set(id, { until: Date.now() + LIVE_FRESH_MS, answer, fetchImpl });
   for (const [k, v] of liveCache) if (v.until <= Date.now()) liveCache.delete(k);
   return answer;
+}
+
+/**
+ * Gemini's free requests today: what this account sent since midnight Pacific, when
+ * Google's day turns over, and the ceiling, if a refusal has ever said what it is
+ * (providerOutcomes.js). No API tells a key its allowance, and nothing is assumed.
+ */
+async function geminiFreeToday(userId, rows, now = new Date()) {
+  const { from, to } = pacificDay(now);
+  // Google counts each model on its own, so the bar is the busiest one's; added up, two
+  // models under their ceilings would read as one over it.
+  const perModel = new Map();
+  for (const row of rows) {
+    if (new Date(row.hour) < from || !String(row.model).startsWith('google/')) continue;
+    perModel.set(row.model, (perModel.get(row.model) || 0) + (Number(row.calls) || 0));
+  }
+  const used = Math.max(0, ...perModel.values());
+  const entries = await keyEntries(userId, 'google');
+  const limit = Math.max(0, ...entries.map((entry) => Number(entry.freePerDay) || 0));
+  return { used, limit: limit || null, from: from.toISOString(), to: to.toISOString() };
 }
 
 /** A free id on OrcaRouter, as `usage_events.model` stores it. */
@@ -222,6 +298,19 @@ async function openRouterKeyInUse(userId, live) {
   return null;
 }
 
+/** The same for OrcaRouter: the first key with money behind it, or that has not said. */
+async function orcaKeyInUse(userId, live) {
+  const order = await getApiKeys(userId, 'orcarouter');
+  for (const { index, shared } of order) {
+    if (shared) continue;
+    const report = live.find((l) => l.index === index);
+    // What it may spend if it says, what it holds if not; a key that says neither has not said it is empty.
+    const left = report?.spendable ?? report?.balance;
+    if (!report?.ok || left == null || left > 0) return index;
+  }
+  return null;
+}
+
 /**
  * @param {{ id: string, monthly_token_limit?: number | null }} user
  * @param {{ fetchImpl?: typeof fetch, part?: 'all' | 'limits' }} [options]
@@ -243,8 +332,11 @@ export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}
 
   // The account's own OrcaRouter keys only, as with OpenRouter's: the deployment's figures are not this account's.
   const orcaKeys = (await getApiKeys(user.id, 'orcarouter', { includeResting: true })).filter((k) => !k.shared);
-  const orcaLive = await Promise.all(orcaKeys.map(async (k) => ({ index: k.index, ...(await askOrcaRouter(k.key, fetchImpl)) })));
-  const orcaFree = orcaKeys.length ? await orcaFreeToday(user.id, part === 'limits' ? await store.usageByHour(user.id, 25) : hours, orcaLive) : null;
+  const orcaLive = await Promise.all(orcaKeys.map(async (k) => ({ index: k.index, ...(await askOrcaRouter(k.key, fetchImpl, { metrics: part !== 'limits' })) })));
+  const hoursToday = part === 'limits' && (orcaKeys.length || status.google?.own) ? await store.usageByHour(user.id, 25) : hours;
+  const orcaFree = orcaKeys.length ? await orcaFreeToday(user.id, hoursToday, orcaLive) : null;
+  const geminiFree = status.google?.own ? await geminiFreeToday(user.id, hoursToday) : null;
+  const [googleDetail, orcaDetail] = part === 'limits' ? [null, null] : await Promise.all([store.providerDetail(user.id, 'google'), store.providerDetail(user.id, 'orcarouter')]);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -269,8 +361,13 @@ export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}
     // The deployment's own monthly ceiling, which applies only on its shared keys.
     sharedLimit: limitFor(user),
     live: { openrouter: live, orcarouter: orcaLive },
-    free: orcaFree ? { orcarouter: orcaFree } : {},
-    inUse: { openrouter: own.length ? await openRouterKeyInUse(user.id, live) : null },
+    free: { ...(orcaFree ? { orcarouter: orcaFree } : {}), ...(geminiFree ? { google: geminiFree } : {}) },
+    // Four weeks of what each provider without a usage API was asked and how it answered.
+    detail: { google: googleDetail, orcarouter: orcaDetail },
+    inUse: {
+      openrouter: own.length ? await openRouterKeyInUse(user.id, live) : null,
+      orcarouter: orcaLive.length ? await orcaKeyInUse(user.id, orcaLive) : null,
+    },
     // Each provider this account rides the deployment's key for — where the
     // monthly ceiling applies (checkQuota counts every call of the month, and
     // stops a turn only on a shared key).

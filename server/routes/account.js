@@ -551,7 +551,7 @@ export function argsWithoutSecrets(args) {
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [] } }) {
+async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [], places: [], answers: [] } }) {
   // The username, a skill's files, the feedback sent (PRV-014), the skill draft
   // kept on the account (PRV-027), what artifacts' pages saved (PRV-028), the
   // deep-research runs and the MCP servers added (PRV-029) are held too, so they
@@ -567,8 +567,11 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
       `"skillDraft":${JSON.stringify(skillDraft || null)},` +
       `"artifactData":${JSON.stringify(artifactData || {})},` +
       // The themes and titles the account holds, and since when (server/themes.js).
-      `"themes":${JSON.stringify(holdings.themes.map((t) => ({ id: t.theme_id, why: t.grant_kind, month: t.grant_month, year: t.grant_year, since: t.granted_at })))},` +
+      `"themes":${JSON.stringify(holdings.themes.map((t) => ({ id: t.theme_id, why: t.grant_kind, quarter: t.grant_quarter, year: t.grant_year, since: t.granted_at })))},` +
       `"titles":${JSON.stringify(holdings.titles.map((t) => ({ id: t.title_id, since: t.earned_at })))},` +
+      // Places taken in an event, and how providers answered, by the hour: counts, no content.
+      `"eventPlaces":${JSON.stringify(holdings.places)},` +
+      `"providerAnswers":${JSON.stringify(holdings.answers)},` +
       `"research":${JSON.stringify(research.map((r) => ({ chatId: r.chat_id, question: r.question, status: r.status, transcript: r.transcript, sources: r.sources, report: r.report, createdAt: r.created_at, completedAt: r.completed_at })))},` +
       `"mcpServers":${JSON.stringify(
         mcpServers.map((s) => ({

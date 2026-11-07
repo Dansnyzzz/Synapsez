@@ -66,6 +66,7 @@ import {
 } from './scheduler.js';
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
+import { abortHere, holdRun, settledAfterStop, watchLease } from './liveRuns.js';
 import { redactSecrets } from './redact.js';
 import { clientError, fromTheDatabase, SERVER_TROUBLE } from './util/clientError.js';
 import { audit, networkOf, agentOf } from './audit.js';
@@ -74,6 +75,7 @@ import { usageReport } from './usageReport.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { mountFeedbackRoutes } from './routes/feedback.js';
 import { mountThemeRoutes } from './routes/themes.js';
+import { afterTurn } from './themes.js';
 import { freeTierReport } from './freeTier.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -1144,6 +1146,8 @@ export function createApp() {
           providerMeta: keyProviderMeta(providers),
           saved,
           suggestion: suggestion ? { ...suggestion, inUse: !stored.defaultModel || stored.defaultModel === suggestion.id } : null,
+          // Each is named through the router these keys now reach it by.
+          recommended: await recommendedWithLabels(providers).catch(() => null),
         });
       } catch (err) {
         res.status(err.status || 400).json({ error: translateMessage(clientError(err), language) });
@@ -2177,16 +2181,16 @@ export function createApp() {
   /**
    * Stop whatever is running in this conversation.
    *
-   * The browser already aborts its own fetch, which closes the socket and ends
-   * the run through `res.on('close')`. This exists because that path is not
-   * guaranteed: a proxy that buffers, or a host that holds the connection open
-   * after the client has gone, can delay the close indefinitely — and a stop
-   * that only *usually* stops is not a stop. It is also the only way to end a
-   * run started by a tab that has since been closed.
+   * The browser aborts its own fetch as well, but a closed socket alone ends nothing:
+   * `res.on('close')` only looks at the lease at once, because closing a laptop must
+   * not end the work. This takes the lease away, which is what ends a run, on this
+   * instance at once and on any other within two seconds (liveRuns.js). It is also the
+   * only way to end a run started by a tab that has since been closed.
    *
-   * Clearing the lease is the signal. The invocation doing the work finds out on
-   * its next heartbeat (15s at the outside) and aborts; a second press is
-   * harmless, and so is pressing it when nothing is running.
+   * The lease is taken first, so the run knows why it is being aborted: on this
+   * instance that abort closes the provider's socket before this answers; on
+   * another, the run reads its lease within `STOP_WATCH_MS` (server/liveRuns.js). A
+   * second press is harmless, and so is pressing it when nothing is running.
    */
   api.post(
     '/chats/:id/stop',
@@ -2195,7 +2199,9 @@ export function createApp() {
       if (!(await store.getChat(req.user.id, req.params.id))) {
         return res.status(404).json({ error: 'Chat not found' });
       }
-      res.json({ stopped: await store.stopChatRun(req.user.id, req.params.id) });
+      const stopped = await store.stopChatRun(req.user.id, req.params.id);
+      abortHere(req.user.id, req.params.id);
+      res.json({ stopped });
     }),
   );
 
@@ -2211,6 +2217,9 @@ export function createApp() {
       if (!(await store.getChat(req.user.id, chatId))) {
         return res.status(404).json({ error: 'Chat not found' });
       }
+
+      // A stop a moment ago: what that run had goes in the transcript before this reads it.
+      await settledAfterStop(store, req.user.id, chatId);
 
       /**
        * One agent loop per conversation at a time.
@@ -2278,28 +2287,15 @@ export function createApp() {
        *     Abort, and discard the partial text, which is what 'superseded'
        *     means to the loop.
        *
-       * The grace window exists because the browser aborts its own fetch
-       * *before* it calls `/stop` — deliberately, so the button feels instant —
-       * so at the moment this fires the lease is usually still held by a run
-       * that is about to be stopped a few milliseconds later.
+       * Ours still, under this sequence: nobody has stopped it and nobody has taken
+       * it over, so it carries on into a socket nobody is reading; the transcript is
+       * the output that matters. A stop arriving after the close is the watch's to
+       * notice, in a couple of seconds at most.
        */
-      const GRACE_AFTER_CLOSE_MS = 2_000;
       const controller = new AbortController();
+      const letGo = holdRun(req.user.id, chatId, controller);
       res.on('close', () => {
-        if (res.writableEnded) return;
-        setTimeout(async () => {
-          if (controller.signal.aborted) return;
-          const chat = await store.getChat(req.user.id, chatId).catch(() => null);
-          if (!chat) return controller.abort('stopped');
-          // Ours still, under this sequence: nobody has stopped it and nobody
-          // has taken it over. Carry on into a socket nobody is reading; the
-          // transcript is the output that matters.
-          if (chat.run_lock_by === runId && Number(chat.run_lock_seq) === runSeq) {
-            log.info('client left, run continues', { runId });
-            return;
-          }
-          controller.abort(chat.run_lock_by ? 'superseded' : 'stopped');
-        }, GRACE_AFTER_CLOSE_MS).unref?.();
+        if (!res.writableEnded) void lease.check();
       });
 
       // The stream's sentences — errors, status lines, a retry's reason — in
@@ -2328,42 +2324,15 @@ export function createApp() {
        * Idle SSE connections get culled by proxies. The same tick renews the run
        * lease, so a genuinely long turn keeps its claim while a dead one lets go.
        *
-       * It is also how a stop becomes certain rather than likely. Aborting the
+       * The watch is how a stop becomes certain rather than likely. Aborting the
        * browser's fetch closes the socket, and `res.on('close')` above catches
        * that — most of the time. Behind a buffering proxy, or on a host that
        * keeps the connection open after the client has gone, it can arrive late
        * or never, and the loop carries on spending money on an answer nobody
-       * will read. `/stop` takes the lease away instead; this notices within one
-       * tick and aborts for a fact.
+       * will read. `/stop` takes the lease away instead, and this notices within
+       * `STOP_WATCH_MS`. See server/liveRuns.js.
        */
-      const ping = setInterval(() => {
-        emit('ping', { t: Date.now() });
-        store
-          .touchChatRun(req.user.id, chatId, runId, runSeq)
-          .then(async (held) => {
-            if (held !== false) return;
-            /**
-             * Losing the lease means one of two very different things, and the
-             * loop has to know which.
-             *
-             * The stop route clears `run_lock_by`: a person pressed stop, nobody
-             * else is writing to this conversation, and keeping the half of the
-             * reply they already read is right (CODE-016). A reconnection
-             * *claims* the lease instead — `run_lock_by` stays set, to another
-             * run or to this run id with a newer sequence — and that invocation
-             * is already streaming its own reply. Keeping this one's partial text
-             * then would put a stale fragment into the transcript alongside the
-             * live answer.
-             *
-             * That regression was mine: CODE-016 persisted on every abort, and
-             * supersession arrives as an abort. The reason travels on the signal
-             * so the loop can tell them apart.
-             */
-            const chat = await store.getChat(req.user.id, chatId).catch(() => null);
-            controller.abort(chat?.run_lock_by ? 'superseded' : 'stopped');
-          })
-          .catch(() => {});
-      }, 15_000);
+      const lease = watchLease({ store, userId: req.user.id, chatId, runId, seq: runSeq, controller, onRenew: () => emit('ping', { t: Date.now() }) });
 
       // Whose turn this is, and which one, on every line the loop emits from
       // here down — including the ones written from inside a tool call.
@@ -2393,6 +2362,8 @@ export function createApp() {
            * user's mouth.
            */
           answers: req.body?.answers,
+          // The model was changed while it was writing: the new one carries on. See `withContinuation`.
+          handoff: req.body?.handoff === true,
           // The address the person is actually using, for any link a tool hands
           // back. The deployment's own idea of its domain can be an old one that
           // no longer answers — a published file's link was built from it and
@@ -2416,12 +2387,16 @@ export function createApp() {
         emit('done', { stopReason: 'error' });
       } finally {
         log.info('turn ended', { ms: since(started) });
-        clearInterval(ping);
+        lease.stop();
+        letGo();
         // Released whatever happened, including an abort — holding the lock
         // after the loop has stopped would lock the user out of their own chat.
         // With the sequence, so a superseded invocation finishing late cannot
         // release the lease the reconnection that replaced it now holds.
         await store.releaseChatRun(req.user.id, chatId, runId, runSeq).catch(() => {});
+        // Whatever this run had is written, so whatever was waiting on it may go.
+        if (controller.signal.reason !== 'superseded') await store.clearRunStop(req.user.id, chatId).catch(() => {});
+        await afterTurn(req.user).catch((err) => log.error('event not looked at after a turn', err));
         if (!res.writableEnded) res.end();
       }
     }),

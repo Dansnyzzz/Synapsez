@@ -184,7 +184,32 @@ export async function suggestionFor(status, recommended = null) {
     const id = await pickRoute(choice.id, choice.kind, status, paying);
     if (!id) continue;
     const about = await freeness(id);
-    if (about.known) return { id, kind: choice.kind, label: about.label, funded };
+    // Chosen as free when an administrator chose it; the library may know better now.
+    if (about.known && about.free === (choice.kind === 'free')) return { id, kind: choice.kind, label: about.label, funded };
+  }
+  return null;
+}
+
+/**
+ * The free model to fall back on when `currentId` has run out or stopped answering:
+ * the first of the administrators' two this account's keys can run and that is not
+ * the one that just failed (owner, 2026-11-06). Null when neither qualifies, and then
+ * it is Auto's turn. Only ever a free one: a free model running out must not start
+ * billing anybody.
+ *
+ * @param {Record<string, any>} status  providerStatus(userId)
+ * @param {string} currentId
+ * @returns {Promise<string | null>}
+ */
+export async function freeFallbackFor(status, currentId, recommended = null) {
+  const rec = { freeSecond: null, ...(recommended || (await getRecommended())) };
+  for (const id of [rec.free, rec.freeSecond]) {
+    if (!id) continue;
+    const route = await pickRoute(id, 'free', status, new Set());
+    if (!route || route === currentId) continue;
+    // Free when an administrator chose it, and prices change: looked at again here.
+    const about = await freeness(route);
+    if (about.known && about.free) return route;
   }
   return null;
 }

@@ -153,8 +153,9 @@ section('Usage: the Overview adds up, and warns only about what is being spent')
   const overview = await read();
   check('the Overview has a tab per provider', overview.tabs.join() === 'Overview,OpenRouter,OrcaRouter', overview.tabs.join());
   check('its lines are totals, with no key named', overview.bars.length >= 2 && overview.bars.every((b) => !/Key \d/.test(b)), overview.bars.join(' | '));
-  check('  52 of 100 across the two keys', overview.bars.some((b) => /OpenRouter/.test(b) && /52 of 100/.test(b)), overview.bars.join(' | '));
-  check('  OrcaRouter by itself, and it says who counted', overview.bars.some((b) => /OrcaRouter/.test(b) && /120 of 800/.test(b) && /counted by Synapsez/.test(b)), overview.bars.join(' | '));
+  // Every provider's on one line (owner, 2026-11-06): 52 of 100 on the two keys, 120 of 800 on OrcaRouter.
+  check('  free requests are one line, every provider together', overview.bars.filter((b) => /Free model requests/.test(b)).length === 1 && overview.bars.some((b) => /172 of 900/.test(b)), overview.bars.join(' | '));
+  check('  and spending limits one line too', overview.bars.filter((b) => /Spending limit/.test(b)).length === 1, overview.bars.join(' | '));
   check('no warning at the top: the screenshot said "used all your free requests"', !/is-(out|close)/.test(overview.headTone) && !/used all/.test(overview.head), overview.head);
   check('  and none above the composer', overview.banner === false, overview.said);
   check('the money is one line for the provider too', /OrcaRouter.*Balance OrcaRouter reports: \$6\.00/.test(overview.money) && !/Key 1.*Spent/.test(overview.money));
@@ -173,20 +174,22 @@ section('Usage: the Overview adds up, and warns only about what is being spent')
   const nearKey = await read();
   check("the key in use at 90% warns on the provider's page", /is-close/.test(nearKey.headTone) && /Key 2/.test(nearKey.head), nearKey.head);
   check('  naming that key', /…cd27/.test(nearKey.head), nearKey.head);
-  check('  while the total, at 45%, raises nothing above the composer', nearKey.banner === false, nearKey.said);
+  // The warning above the box goes by the provider of the model in use (owner, 2026-11-06), here OpenRouter's.
+  check('  and above the composer, which goes by the provider of the model in use', nearKey.banner === true && /Key 2/.test(nearKey.said), nearKey.said);
 
-  // The total past 80%: both say so, in the same figures.
-  answer = report(50, 35, 1);
+  // The total past 80%: the Overview says so, in that figure.
+  const orcaUsed = (used) => ({ orcarouter: { used, limit: 800, tier: 'high', tiers: [{ minPaidUsd: 0, rpm: 10, rpd: 50 }, { minPaidUsd: 20, rpm: 20, rpd: 800 }], models: [] } });
+  answer = { ...report(50, 35, 1), free: orcaUsed(680) };
   await page.click('#usage-panel [data-refresh]');
   await page.waitForTimeout(400);
   await page.click('#usage-panel [data-scope="all"]');
   await page.waitForTimeout(150);
   const nearTotal = await read();
   check('the total at 85% warns on the Overview', /is-close/.test(nearTotal.headTone) && /85%/.test(nearTotal.head), nearTotal.head);
-  check('  and above the composer, in the same figure', nearTotal.banner === true && /85%/.test(nearTotal.said), nearTotal.said);
-  check('  with no key named in either', !/Key \d/.test(nearTotal.head) && !/Key \d/.test(nearTotal.said), `${nearTotal.head} / ${nearTotal.said}`);
+  check('  with no key named', !/Key \d/.test(nearTotal.head), nearTotal.head);
+  check('  while the composer stays quiet: OpenRouter, the provider in use, is not near its limit', nearTotal.banner === false, nearTotal.said);
 
-  answer = report(50, 50, null);
+  answer = { ...report(50, 50, null), free: orcaUsed(800) };
   await page.click('#usage-panel [data-refresh]');
   await page.waitForTimeout(400);
   const out = await read();

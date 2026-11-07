@@ -224,7 +224,7 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 31: chats.context_parts — the gauge's last breakdown of the window.
   // 34: skills.files — what a skill carries beside its instructions.
   // 35: feedback.message_id / issue / answer — feedback on one answer.
-  const STAMPED = { version: 38, fingerprint: '9e63e77b7b17c589' };
+  const STAMPED = { version: 39, fingerprint: 'f42d5a4c3f1a2b08' };
 
   check(
     'the recorded version matches the code',

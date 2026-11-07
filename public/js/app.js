@@ -37,6 +37,8 @@ import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
 import { createUsagePanel } from './usage-panel.js';
 import { createThemes } from './themes-panel.js';
+import { createThemePicker } from './theme-picker.js';
+import { latestOnly } from './latest.js';
 import { createRanking } from './ranking-panel.js';
 import { createMascot, MASCOT_STATES } from './mascot.js';
 import { createUsageAlert } from './usage-alert.js';
@@ -213,8 +215,11 @@ const screenPanel = createScreen();
 const onboarding = createOnboarding({
   providers: () => state.boot?.providers || {},
   isFree: () => attachments.isFree(),
-  onOpenKeys: () => openSettings('providers'),
-  onPickModel: () => browser.open(state.model),
+  recommended: () => state.boot?.recommended || null,
+  suggestion: () => state.boot?.suggestion || null,
+  currentModel: () => state.model,
+  addKey: (provider, key) => takeKey(provider, key),
+  useModel: (id) => chooseModel(id),
   onTryPrompt: (text) => setComposerText(text),
   // The five levels as the menu beside Send names and describes them.
   policies: () => POLICIES.map((id) => ({ id, label: POLICY_LABEL(id), hint: POLICY_HINT(id) })),
@@ -527,6 +532,7 @@ function setRevealed(input, revealed) {
 function showGate() {
   $('gate').hidden = false;
   $('app').hidden = true;
+  themesPanel.sleep();
 
   // With no users yet, creating the first account is the obvious default — but
   // it is only a default. Signing in stays one click away, because this screen
@@ -756,6 +762,8 @@ async function start() {
   renderTopbar();
   paintLegal();
   mascot.setPref(state.boot.prefs.mascot);
+  // Signed in, so the scene may come up: nothing is drawn behind the sign-in page.
+  themesPanel.boot();
   themesPanel.sync();
   // A limit nearly used is said before the next message, not after it fails.
   usageAlert.refresh({ soon: true });
@@ -1496,7 +1504,7 @@ function chatGone(id) {
     run.queue.length = 0;
     run.abort.abort();
   }
-  if (run || state.chats?.find((c) => c.id === id)?.running) api.stopChat(id).catch(() => {});
+  if (run || state.chats?.find((c) => c.id === id)?.running) tellServerStop(id);
   if (id === state.chatId) startBlankChat(null, { stayOnPage: true });
 }
 
@@ -3375,6 +3383,7 @@ $('composer').addEventListener('submit', async (event) => {
     // The shelf this was begun from travels with the first message only.
     const intent = state.composeMode;
     setComposeMode(null);
+    await stopHasLanded(chatId);
     const { message } = await api.sendMessage(chatId, text, ids, intent, skills);
     reached = true;
     if (message?.id) node.dataset.messageId = message.id;
@@ -3537,6 +3546,7 @@ async function deliver(item, { interrupting = false, run = null, chatId = null }
   else $('messages').append(node);
   if (!run || onScreen(run)) scrollToEnd();
   try {
+    await stopHasLanded(target);
     const { message } = await api.sendMessage(target, item.text, item.ids, undefined, item.skills);
     // Stamped after the fact: the id only exists once the server has it, and
     // without it the bubble has nothing to edit.
@@ -3765,7 +3775,7 @@ const MAX_RESUMES = 25;
  * it is not answering a question, it is catching up — and everything below, the
  * resume loop included, behaves exactly as it does for a turn started here.
  */
-async function stream(decision, answers, { rejoin = null, chatId: target = null } = {}) {
+async function stream(decision, answers, { rejoin = null, chatId: target = null, handoff = false } = {}) {
   // Named by the caller where it can have changed since the caller began.
   const chatId = target || state.chatId;
   if (!chatId) return;
@@ -3817,7 +3827,7 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     for (let resume = 0; resume <= MAX_RESUMES; resume += 1) {
       // A decision and an answer both belong to the batch that was paused, so
       // neither is resent on a reconnect — the server already has them.
-      const outcome = await streamOnce(run, resume === 0 ? decision : undefined, resume === 0 ? answers : undefined);
+      const outcome = await streamOnce(run, resume === 0 ? decision : undefined, resume === 0 ? answers : undefined, resume === 0 && handoff);
       ended = outcome;
 
       // A clean finish, a question for the user, or a deliberate stop.
@@ -3837,7 +3847,9 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     if (err.code === 'already_running') {
       // Refused because another tab holds the lease — which is the lock doing
       // its job. Rather than sitting silent, watch that tab's run and redraw it
-      // here. See mirror.js and `mirrorRun`.
+      // here. See mirror.js and `mirrorRun`. It is that tab's run from here: not this
+      // one's to stop by changing model.
+      run.following = true;
       await mirrorRun(run);
     } else if (err.name !== 'AbortError' && onScreen(run)) {
       toast(err.message || t('status.streamFailed'), 'error');
@@ -3855,8 +3867,20 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     usageAlert.refresh({ soon: true });
     setStatus(null, run);
     if (onScreen(run)) setRunning(false);
-    // Drop the trailing empty block created by the last `message` event.
-    if (run.turn && !run.turn.node.querySelector('.prose, .block, .plan')) run.turn.node.remove();
+    /*
+     * A turn stopped gets no `done`, so everything `done` would have settled is
+     * settled here: the reasoning card stops saying it is thinking, the steps fold,
+     * the whale goes back to resting (owner, 2026-11-06).
+     */
+    run.turn?.finishThinking();
+    if (run.abort.signal.aborted) {
+      run.turn?.setRoute(run.route);
+      run.turn?.finish(new Date());
+      if (onScreen(run)) mascot.show('idle');
+    }
+    // Drop the trailing empty block created by the last `message` event. Reasoning
+    // is something it said: a turn stopped mid-thought keeps what it had thought.
+    if (run.turn && !run.turn.node.querySelector('.prose, .block, .plan, .think')) run.turn.node.remove();
     run.turn = null;
     /*
      * A call that started and never answered — the turn failed, was stopped,
@@ -3906,6 +3930,11 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
     if (run.queue.length) {
       leftover.set(chatId, run.queue);
       await flushLeftover(chatId);
+    } else if (run.handoff) {
+      // The model was changed while it was writing: the new one carries on. Whatever
+      // the person typed meanwhile went first, above, and the new model answers that.
+      await stopHasLanded(chatId);
+      void stream(undefined, undefined, { chatId, handoff: true });
     }
   }
 }
@@ -3914,7 +3943,7 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null 
  * One request against the agent endpoint.
  * @returns 'done' · 'waiting' (approval needed) · 'cut' (connection dropped mid-run)
  */
-async function streamOnce(run, decision, answers) {
+async function streamOnce(run, decision, answers, handoff = false) {
   let outcome = 'cut';
   // Every handler below is scoped to `run`, not to whatever is on screen: this
   // stream keeps arriving after the person has navigated to another
@@ -3933,9 +3962,11 @@ async function streamOnce(run, decision, answers) {
     drafts.clear();
   };
 
-  await runAgent({
+  try {
+    await runAgent({
       chatId: run.chatId,
       model: state.model,
+      handoff: handoff || undefined,
       decision,
       // The calls the prompt named. Only sent with a decision, because only a
       // decision is about a specific batch. See `approvalFor`.
@@ -4219,8 +4250,10 @@ async function streamOnce(run, decision, answers) {
         },
       },
     });
-
-  clearDrafts();
+  } finally {
+    // However this ended: a stop arrives here as a thrown abort, and a draft left behind is a spinner for a call that will never run.
+    clearDrafts();
+  }
   return run.abort.signal.aborted ? 'done' : outcome;
 }
 
@@ -4292,18 +4325,55 @@ function nextBlock(run) {
  * answering into a page nobody is watching. So the server is told outright, and
  * it takes the run's lease away.
  *
- * Told after the abort rather than before it, so the button feels instant; and
- * the failure is swallowed, because a stop that reports an error while having
- * visibly stopped is worse than one that quietly did the belt-and-braces half.
+ * Told first, so the lease has gone by the time the socket closes and the server
+ * reads the close as a stop rather than as somebody leaving; the abort is in the
+ * same tick, so the button still feels instant. The failure is swallowed, because a
+ * stop that reports an error while having visibly stopped is worse than one that
+ * quietly did the belt-and-braces half.
  */
+function stopRun(run) {
+  tellServerStop(run.chatId);
+  run.abort.abort();
+}
+
+/** Stops on their way to the server, by conversation. */
+const stopsOnTheWay = new Map();
+
+function tellServerStop(chatId) {
+  const told = api.stopChat(chatId).catch(() => {}).finally(() => {
+    if (stopsOnTheWay.get(chatId) === told) stopsOnTheWay.delete(chatId);
+  });
+  stopsOnTheWay.set(chatId, told);
+}
+
+/**
+ * Wait for a stop to arrive before what follows it. The server holds the next question
+ * back only once it knows about the stop: overtaken by a cold instance, the question
+ * would land ahead of the stopped reply, and a stop arriving after a new run had started
+ * would end that one. Not for long: a stop that never arrives should not hold up the box.
+ */
+const stopHasLanded = (chatId) => {
+  const told = stopsOnTheWay.get(chatId);
+  return told ? Promise.race([told, new Promise((resolve) => setTimeout(resolve, 3000))]) : null;
+};
+
 $('stop').addEventListener('click', () => {
   // The conversation on screen, not "the run": stop is a button in front of one
   // transcript, and with work possible in several at once it must never reach
   // into a conversation the person is not looking at.
   const run = runHere();
-  if (!run) return;
-  run.abort.abort();
-  api.stopChat(run.chatId).catch(() => {});
+  if (run) stopRun(run);
+  /*
+   * On screen as running, and this tab has no hold of it yet: reopened mid-turn and
+   * still asking whether another tab is narrating it, or a turn the cloud is
+   * finishing. The button used to do nothing here. It is the server's lease either way.
+   */
+  else if (state.chatId && runningHere) {
+    tellServerStop(state.chatId);
+    setRunning(false);
+    setStatus(null);
+    mascot.show('idle');
+  } else return;
   toast(t('composer.stopped'));
 });
 
@@ -4674,6 +4744,8 @@ function openShortcuts() {
 async function signOut() {
   await api.logout();
   forgetLocalDrafts();
+  // The next person at this browser starts from the plain look.
+  themesPanel.reset();
   location.reload();
 }
 
@@ -4682,6 +4754,8 @@ const usageAlert = createUsageAlert($('usage-alert'), {
   load: () => api.usageLimits(),
   providers: () => state.boot?.providers || {},
   openUsage: () => openSettings('usage'),
+  // The warning above the box is about the model that will answer the next message.
+  modelProvider: () => (state.model === 'auto' ? 'openrouter' : String(state.model || '').split('/')[0] || null),
   openKeys: () => openSettings('providers'),
   user: () => state.boot?.user?.id,
   changed: (until) => {
@@ -4698,20 +4772,29 @@ const usageAlert = createUsageAlert($('usage-alert'), {
 }
 /** The whale on the writing box, and the look behind the app (owner, 2026-11-04). */
 const mascot = createMascot({ host: /** @type {HTMLElement} */ ($('composer').querySelector('.composer__box')) });
+/** A press on a whale saves only the last of a run of presses. */
+const mascotSaver = latestOnly((value) => api.savePrefs({ mascot: value }), { failed: (err) => toast(err.message, 'error') });
+
 const themesPanel = createThemes({
   page: $('themes-page'),
   admin: $('admin-themes'),
   toast,
-  // Off a scene, back to whatever this person chose for light and dark.
-  restoreMode: () => applyTheme(storedTheme()),
   mascot: () => mascot.pref(),
   setMascot: (value) => {
     mascot.setPref(value);
-    api.savePrefs({ mascot: value }).catch((err) => toast(err.message, 'error'));
+    void mascotSaver.push(value);
   },
   mascotStates: MASCOT_STATES,
 });
 const rankingPanel = createRanking({ host: $('ranking-page'), toast, savePrefs: (patch) => api.savePrefs(patch) });
+
+createThemePicker({
+  input: /** @type {HTMLTextAreaElement} */ ($('input')),
+  host: $('theme-picker'),
+  themes: themesPanel,
+  toast,
+  clear: () => setComposerText(''),
+});
 
 const usagePanel = createUsagePanel($('usage-panel'), {
   load: () => api.usageReport(),
@@ -4808,6 +4891,9 @@ document.addEventListener('keydown', (event) => {
 
 // Whatever was connected or added in there shows in the side panel's Context.
 $('settings').addEventListener('close', () => {
+  // Nothing on a page nobody can see should keep drawing.
+  themesPanel.leave();
+  rankingPanel.leave();
   rail.forgetAccount();
   renderRail();
   // A Connect pressed on a suggestion card leads in here; leaving says whether it took.
@@ -5370,6 +5456,28 @@ $('policy-chip').addEventListener('click', () => {
 });
 
 /**
+ * One saver for the dial however many times its menu is opened: a new one each time
+ * could send two saves at once, and they could cross on the way.
+ */
+let effortStored = null;
+let effortRepaint = () => {};
+const effortSaver = latestOnly((value) => api.savePrefs({ effort: value }), {
+  landed: (_prefs, value) => {
+    effortStored = value;
+  },
+  saved: (prefs, value) => {
+    state.boot.prefs = { ...prefs, effort: value };
+    effortRepaint();
+    toast(t('effort.set', { level: effortLabel(value) }));
+  },
+  failed: (err) => {
+    state.boot.prefs = { ...state.boot.prefs, effort: effortStored };
+    effortRepaint();
+    toast(err.message, 'error');
+  },
+});
+
+/**
  * The effort dial, at the foot of the mode menu.
  *
  * Five steps, drawn as five dots rather than a row of words: it is a scale, and
@@ -5417,16 +5525,19 @@ function effortRow() {
       t(`effort.hint.${current}`) + (state.modelReasons === false ? ` ${t('effort.noReasoning')}` : '');
   };
 
-  const choose = async (value, label, focus = false) => {
+  /*
+   * The dial moves on the press, and only the last of a run of presses is saved
+   * (owner, 2026-11-06): it used to wait for each answer, so three quick presses
+   * walked through all three, one after another, long after the hand had moved on.
+   */
+  if (!effortSaver.busy()) effortStored = state.boot.prefs.effort;
+  effortRepaint = paint;
+  const choose = (value, focus = false) => {
     if (state.boot.prefs.effort === value) return;
-    try {
-      state.boot.prefs = await api.savePrefs({ effort: value });
-      paint();
-      if (focus) /** @type {HTMLElement | undefined} */ (dots.children[EFFORT_IDS.indexOf(value)])?.focus();
-      toast(t('effort.set', { level: label }));
-    } catch (err) {
-      toast(err.message, 'error');
-    }
+    state.boot.prefs = { ...state.boot.prefs, effort: value };
+    paint();
+    if (focus) /** @type {HTMLElement | undefined} */ (dots.children[EFFORT_IDS.indexOf(value)])?.focus();
+    void effortSaver.push(value);
   };
 
   for (const [value, label] of efforts()) {
@@ -5438,7 +5549,7 @@ function effortRow() {
     dot.title = label;
     dot.addEventListener('click', (event) => {
       event.stopPropagation();
-      choose(value, label);
+      choose(value);
     });
     dots.append(dot);
   }
@@ -5451,8 +5562,7 @@ function effortRow() {
     event.stopPropagation();
     const at = Math.max(0, EFFORT_IDS.indexOf(state.boot.prefs.effort));
     const next = jump ?? Math.max(0, Math.min(EFFORT_IDS.length - 1, at + step));
-    const [value, label] = efforts()[next];
-    choose(value, label, true);
+    choose(efforts()[next][0], true);
   });
 
   top.append(name, dots);
@@ -5545,6 +5655,7 @@ function selectTab(asked) {
   if (name === 'theme') themesPanel.load();
   else themesPanel.leave();
   if (name === 'ranking') rankingPanel.load();
+  else rankingPanel.leave();
   // Reaching an MCP server takes a moment, so it is asked when looked at.
   if (name === 'extensions') {
     loadMcp();
@@ -5781,11 +5892,7 @@ function fillSettings() {
       }
       button.disabled = true;
       try {
-        const before = state.model;
-        const result = await api.intakeKey(provider, value);
-        state.boot.providers = result.providers;
-        if (result.providerMeta) state.boot.providerMeta = result.providerMeta;
-        state.boot.suggestion = result.suggestion;
+        const result = await takeKey(provider, value);
         input.value = '';
         // Step 2 of the guide says whether a key exists. It is open behind this
         // sheet, so telling somebody to paste a key they have just pasted would
@@ -5796,16 +5903,7 @@ function fillSettings() {
         if (saved.kind === 'service') toast(t('keys.wasConnector', { service: CONNECTOR_BY_ID.get(saved.id)?.name || saved.id }), 'ok', { ms: 9000 });
         else if (saved.moved) toast(t('keys.movedTo', { from: nameOf(saved.from), to: nameOf(saved.id) }), 'ok', { ms: 9000 });
         else toast(t('keys.savedFor', { provider: nameOf(saved.id) }));
-        // An account that never chose a model is on the suggestion from now on.
-        if (result.suggestion?.inUse && result.suggestion.id !== before) {
-          state.boot.prefs.defaultModel = result.suggestion.id;
-          state.model = result.suggestion.id;
-          renderTopbar();
-          refreshModelFacts();
-        }
         fillSettings();
-        // A new key can be what lifts a limit: the line above the composer hears now.
-        usageAlert.refresh({ soon: true });
         if (saved.kind === 'provider') {
           const card = document.getElementById(`pcard-${saved.id}`);
           card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -6558,17 +6656,58 @@ $('logout').addEventListener('click', signOut);
 const browser = createModelBrowser({
   // The administrators' suggestions, marked and shown first (owner, 2026-11-02).
   recommended: () => state.boot?.recommended || null,
-  onPick: async (modelId) => {
+  onPick: (modelId) => chooseModel(modelId),
+});
+
+/**
+ * A key pasted, here or in the guide, taken where it belongs: what it changes for the
+ * account, the model suggested for its keys included.
+ *
+ * @param {string} provider  the box it was pasted in @param {string} value
+ */
+async function takeKey(provider, value) {
+  const before = state.model;
+  const result = await api.intakeKey(provider, value);
+  state.boot.providers = result.providers;
+  if (result.providerMeta) state.boot.providerMeta = result.providerMeta;
+  state.boot.suggestion = result.suggestion;
+  if (result.recommended) state.boot.recommended = result.recommended;
+  // An account that never chose a model is on the suggestion from now on.
+  if (result.suggestion?.inUse && result.suggestion.id !== before) {
+    state.boot.prefs.defaultModel = result.suggestion.id;
+    state.model = result.suggestion.id;
+    renderTopbar();
+    refreshModelFacts();
+  }
+  // A new key can be what lifts a limit: the line above the composer hears now.
+  usageAlert.refresh({ soon: true });
+  return result;
+}
+
+/** The account's model, from whichever place offered it. */
+async function chooseModel(modelId) {
     // Repaint first: the press should feel immediate, and this is a preference
     // rather than something that can be refused halfway.
     const previous = state.model;
     state.model = modelId;
     renderTopbar();
     refreshModelFacts();
+    /*
+     * Changed while the last one is writing (owner, 2026-11-06): it stops being paid
+     * for now, and the new one carries on from where it stopped once that is safely
+     * written. See `stream`. A run this tab only watches is another tab's to hand over.
+     */
+    const writing = previous !== modelId ? runHere() : null;
+    const handing = !!writing && !writing.following;
+    if (handing) {
+      writing.handoff = true;
+      stopRun(writing);
+    }
 
     try {
       state.boot.prefs = await api.savePrefs({ defaultModel: modelId });
-      toast(t('model.switched', { model: modelId.split('/').pop() }));
+      toast(t(handing ? 'model.handoff' : 'model.switched', { model: modelId.split('/').pop() }));
+      usageAlert.refresh({ soon: true });
     } catch (err) {
       // Put it back rather than leaving the chip claiming something that was
       // never stored — that is exactly the disagreement this change removes.
@@ -6577,8 +6716,7 @@ const browser = createModelBrowser({
       refreshModelFacts();
       toast(err.message, 'error');
     }
-  },
-});
+}
 
 /**
  * The account's model has gone, and the server has moved it to Auto.
@@ -7019,15 +7157,12 @@ function storedTheme() {
 // Applied at import time, before the app renders, so a light-theme user never
 // sees a dark flash on the way in.
 applyTheme(storedTheme());
-themesPanel.boot();
 
 // Three faces, one lit, as Claude draws the choice; the arrows move between them as in any radio group.
 $('theme').addEventListener('click', (event) => {
   const btn = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-theme-choice]'));
   if (!btn) return;
   applyTheme(btn.dataset.themeChoice);
-  // A scene decides light or dark while it is up; this choice is for when it is not.
-  themesPanel.reassert();
   paintThemeChoice(btn.dataset.themeChoice);
 });
 $('theme').addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
