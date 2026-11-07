@@ -1702,9 +1702,9 @@ export function createPgStore(connectionString) {
      *   close can arrive late or not at all, and the model keeps answering into
      *   a page nobody is reading.
      *
-     *   So `stopChatRun` takes the lease away, and this reports the theft. The
-     *   run finds out on its next heartbeat and stops for a fact rather than by
-     *   inference.
+     *   So `stopChatRun` takes the lease away. A run reads who holds it every two
+     *   seconds (`watchLease` in liveRuns.js, by `chatRunHolder`) and stops for a
+     *   fact rather than by inference; this only keeps the lease from expiring.
      */
     /**
      * @param seq  which holding of the lease is asking. Omit only from a caller
@@ -2941,13 +2941,14 @@ export function createPgStore(connectionString) {
      * One statement, numbered, so a limit holds however many people arrive in the
      * same moment: two reading the same highest number both ask for the next one,
      * and the primary key gives it to one. The other reads again and asks for the
-     * one after, so nobody who came within the limit is turned away by the race.
-     * One person's second try finds what they already hold.
+     * one after. Every failed try means someone else got a place, so trying as many
+     * times as there are places means nobody within the limit is turned away by the
+     * race. One person's second try finds what they already hold.
      *
      * @returns {Promise<number|null>} their place, or null when none is left
      */
     async claimEventPlace(event, userId, places) {
-      for (let attempt = 0; attempt < 8; attempt += 1) {
+      for (let attempt = 0; attempt <= places; attempt += 1) {
         const claimed = await q(
           `INSERT INTO event_claims (event, slot, user_id)
            SELECT $1, COALESCE(MAX(slot), 0) + 1, $2 FROM event_claims WHERE event = $1
@@ -2964,7 +2965,24 @@ export function createPgStore(connectionString) {
       }
       return null;
     },
-    /** How many of an event's places have gone. Numbered from one, so a deleted account's place is not offered again. */
+    /** The place this person holds in an event, or null. */
+    async eventPlaceOf(event, userId) {
+      const rows = await q('SELECT slot FROM event_claims WHERE event = $1 AND user_id = $2', [event, userId]);
+      return rows.length ? Number(rows[0].slot) : null;
+    },
+    /** Every event place this person holds, for their export. */
+    async exportEventPlaces(userId) {
+      return q('SELECT event, slot, claimed_at FROM event_claims WHERE user_id = $1 ORDER BY claimed_at', [userId]);
+    },
+    /** What providers answered this person, for their export: counts, and nothing that was said. */
+    async exportOutcomes(userId) {
+      return q('SELECT hour, provider, model, status, calls FROM provider_outcomes WHERE user_id = $1 ORDER BY hour', [userId]);
+    },
+    /**
+     * How many of an event's places have gone, by the highest number given. A deleted
+     * account's place comes back only if it was the last one given; the limit holds
+     * either way, since its theme went with it.
+     */
     async eventPlacesTaken(event) {
       const rows = await q('SELECT COALESCE(MAX(slot), 0)::int AS taken FROM event_claims WHERE event = $1', [event]);
       return Number(rows[0]?.taken || 0);
@@ -3025,7 +3043,7 @@ export function createPgStore(connectionString) {
     async boardPeople(ids) {
       if (!ids.length) return [];
       return q(
-        `SELECT u.id, u.username, u.name, s.value AS prefs
+        `SELECT u.id, u.username, u.name, u.email, s.value AS prefs
            FROM users u LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
           WHERE u.id = ANY($1)`,
         [ids],

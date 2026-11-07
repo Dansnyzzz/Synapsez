@@ -27,15 +27,17 @@ const topYear = (year) => ({ kind: 'top_year', quarter: null, year });
 
 /**
  * The fireworks (owner, 2026-11-06): whoever uses this many tokens between the first
- * and the seventh of January 2027, Vietnam's time, while there are places left. An
- * evening or two of real work on a free model, and more than a person would stumble
- * into; a place goes to whoever gets there first.
+ * and the seventh of January 2027, Vietnam's time, while there are places left. At
+ * about 30,000 tokens a request (measured on an empty conversation with the full tool
+ * catalogue) that is some seventy requests, ten a day: real use through the week, and
+ * within the free tier's 50 a day. A place goes to whoever gets there first, which is
+ * why the end of a turn looks as well as the page (`afterTurn`).
  */
 export const NEW_YEAR_EVENT = Object.freeze({
   id: 'new-year-2027',
   from: '2027-01-01T00:00:00+07:00',
   to: '2027-01-08T00:00:00+07:00',
-  tokens: 500_000,
+  tokens: 2_000_000,
   places: 100,
 });
 
@@ -300,6 +302,20 @@ export async function settleClosed({ store = getStore(), now = new Date() } = {}
 }
 
 /**
+ * What the boards call somebody: the name they go by, never what they sign in with.
+ * A username or an email's first half on a public list is half of a login, and is what
+ * a name is by default when none was given (auth.js), so those read as "A member".
+ *
+ * @param {{ name?: string|null, username?: string|null, email?: string|null } | undefined} person
+ */
+function publicName(person) {
+  const name = String(person?.name || '').trim();
+  const same = name.toLowerCase();
+  if (!name || same === String(person?.username || '').toLowerCase() || same === String(person?.email || '').split('@')[0].toLowerCase()) return null;
+  return name;
+}
+
+/**
  * An event's place, if this person has earned one and there is one left. Worked out
  * from what they used inside the event's dates, so nothing has to watch the week.
  *
@@ -307,7 +323,11 @@ export async function settleClosed({ store = getStore(), now = new Date() } = {}
  * @returns {Promise<boolean>} whether they hold a place now
  */
 async function claimEvent(user, event, store, now) {
-  if (isAdmin(user) || now < new Date(event.from) || now >= new Date(event.to)) return false;
+  if (isAdmin(user) || now < new Date(event.from)) return false;
+  // A place taken is theirs whenever they next look, even if the grant that should have
+  // followed it was cut short and the week has since ended.
+  if ((await store.eventPlaceOf(event.id, user.id)) !== null) return true;
+  if (now >= new Date(event.to)) return false;
   const used = await store.usageTokensBetween(user.id, new Date(event.from), new Date(event.to));
   if (used < event.tokens) return false;
   return (await store.claimEventPlace(event.id, user.id, event.places)) !== null;
@@ -360,6 +380,18 @@ async function syncEarned(user, store, now = new Date()) {
     heldThemes: changed ? await store.listUserThemes(user.id) : heldThemes,
     heldTitles: changed ? await store.listUserTitles(user.id) : heldTitles,
   };
+}
+
+/**
+ * The end of a turn, during an event's week: a person who gets there with the page
+ * open, and looks only after the week is over, got there all the same. Costs nothing
+ * on any other day of the year.
+ *
+ * @param {Account} user @param {{ store?: any, now?: Date }} [options]
+ */
+export async function afterTurn(user, { store = getStore(), now = new Date() } = {}) {
+  const running = THEMES.some((theme) => theme.event && now >= new Date(theme.event.from) && now < new Date(theme.event.to));
+  if (running) await syncEarned(user, store, now);
 }
 
 const iso = (value) => (value ? new Date(value).toISOString() : null);
@@ -513,7 +545,7 @@ export async function ranking(user, { scope = 'quarter', key, store = getStore()
     const shown = person?.prefs?.rankAnonymous !== true;
     return {
       rank: r.rank,
-      name: shown ? person?.username || person?.name || null : null,
+      name: shown ? publicName(person) : null,
       title: titleInfo(person?.prefs?.equippedTitle),
       value: r.value,
       isMe: r.id === user.id,
@@ -583,8 +615,13 @@ export async function takeTheme(id, userId, { store = getStore() } = {}) {
 
 /** What someone's account holds, for the copy of their data they can download. */
 export async function holdingsOf(userId, store = getStore()) {
-  const [themes, titles] = await Promise.all([store.listUserThemes(userId), store.listUserTitles(userId)]);
-  return { themes, titles };
+  const [themes, titles, places, answers] = await Promise.all([
+    store.listUserThemes(userId),
+    store.listUserTitles(userId),
+    store.exportEventPlaces(userId),
+    store.exportOutcomes(userId),
+  ]);
+  return { themes, titles, places, answers };
 }
 
 export const __testing = {

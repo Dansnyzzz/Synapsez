@@ -75,6 +75,7 @@ import { usageReport } from './usageReport.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { mountFeedbackRoutes } from './routes/feedback.js';
 import { mountThemeRoutes } from './routes/themes.js';
+import { afterTurn } from './themes.js';
 import { freeTierReport } from './freeTier.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -2180,12 +2181,11 @@ export function createApp() {
   /**
    * Stop whatever is running in this conversation.
    *
-   * The browser already aborts its own fetch, which closes the socket and ends
-   * the run through `res.on('close')`. This exists because that path is not
-   * guaranteed: a proxy that buffers, or a host that holds the connection open
-   * after the client has gone, can delay the close indefinitely — and a stop
-   * that only *usually* stops is not a stop. It is also the only way to end a
-   * run started by a tab that has since been closed.
+   * The browser aborts its own fetch as well, but a closed socket alone ends nothing:
+   * `res.on('close')` only looks at the lease at once, because closing a laptop must
+   * not end the work. This takes the lease away, which is what ends a run, on this
+   * instance at once and on any other within two seconds (liveRuns.js). It is also the
+   * only way to end a run started by a tab that has since been closed.
    *
    * The lease is taken first, so the run knows why it is being aborted: on this
    * instance that abort closes the provider's socket before this answers; on
@@ -2396,6 +2396,7 @@ export function createApp() {
         await store.releaseChatRun(req.user.id, chatId, runId, runSeq).catch(() => {});
         // Whatever this run had is written, so whatever was waiting on it may go.
         if (controller.signal.reason !== 'superseded') await store.clearRunStop(req.user.id, chatId).catch(() => {});
+        await afterTurn(req.user).catch((err) => log.error('event not looked at after a turn', err));
         if (!res.writableEnded) res.end();
       }
     }),

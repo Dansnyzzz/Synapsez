@@ -138,7 +138,8 @@ section('the drawing and the rules name the same themes');
 }
 
 const store = await initStore();
-const make = (id, role = 'user') => store.createUser({ id, email: `${id}@example.com`, name: id[0].toUpperCase() + id.slice(1), username: id, passwordHash: 'x', role });
+// The name is not the username or the email's first half: those never reach a board.
+const make = (id, role = 'user') => store.createUser({ id, email: `${id}.mail@example.com`, name: id, username: `${id}-login`, passwordHash: 'x', role });
 const owner = await make('owner', 'admin');
 const alice = await make('alice');
 const bob = await make('bob');
@@ -179,6 +180,13 @@ section('this quarter’s boards');
   await setPrefs(bob.id, { rankAnonymous: true });
   const hidden = await ranking(alice);
   check('someone who asked is shown without a name', hidden.tokens[0].name === null && hidden.tokens[0].value === 2000);
+  // What a person signs in with is half of a login.
+  const aliceFigure = hidden.tokens.find((r) => r.name === 'alice').value;
+  await store.updateUser(alice.id, { name: 'Alice-Login' });
+  check('a name that is the username is not shown', (await ranking(bob)).tokens.find((r) => r.value === aliceFigure)?.name === null);
+  await store.updateUser(alice.id, { name: 'alice.mail' });
+  check('nor one that is the first half of the email', (await ranking(bob)).tokens.find((r) => r.value === aliceFigure)?.name === null);
+  await store.updateUser(alice.id, { name: 'alice' });
   check('and they can still see it is them', (await ranking(bob)).tokens[0].isMe === true);
   check('their preference is reported back', (await ranking(bob)).me.anonymous === true);
   await setPrefs(bob.id, { rankAnonymous: false });
@@ -343,6 +351,8 @@ section('the fireworks: a week, a number of tokens, a hundred places');
   const at = (when) => ({ now: when, store: counted });
   const row = async (user, when) => (await listThemes(user, at(when))).themes.find((t) => t.id === 'new-year-fireworks');
   const inWeek = async (user, tokens) => week.set(user.id, (week.get(user.id) || 0) + tokens);
+  // The lifetime section above pruned every row; this needs one of its own.
+  await spend(dave, 1234, 0);
   check('what a week adds up to is read from the usage in it', (await store.usageTokensBetween(dave.id, new Date(Date.now() - 60_000 * 60 * 24 * 365), new Date(Date.now() + 60_000))) > 0 && (await store.usageTokensBetween(dave.id, new Date('2020-01-01'), new Date('2020-02-01'))) === 0);
   check('nothing is owed before it starts', !(await row(zoe, before)).owned && (await row(zoe, before)).needs?.event?.state === 'soon');
   const asked = (await row(zoe, during)).needs?.event;
@@ -361,6 +371,17 @@ section('the fireworks: a week, a number of tokens, a hundred places');
   check('an administrator holds it and takes no place', admin.themes.find((t) => t.id === 'new-year-fireworks')?.owned && (await store.eventPlacesTaken(event.id)) === 1);
   await takeTheme('new-year-fireworks', zoe.id);
   check('one an administrator took back is not earned again', !(await row(zoe, during)).owned);
+  // The place was taken, and the grant after it was cut short.
+  const cut = await make('cut');
+  await counted.claimEventPlace(event.id, cut.id, event.places);
+  check('a place taken is honoured whenever they next look, even after the week', (await row(cut, after)).owned === true);
+  // The end of a turn looks too, so getting there with the page open counts.
+  const worker = await make('worker');
+  await inWeek(worker, event.tokens);
+  await themes.afterTurn(worker, at(after));
+  check('after the week the end of a turn gives nothing', (await store.eventPlaceOf(event.id, worker.id)) === null);
+  await themes.afterTurn(worker, at(during));
+  check('during it, the end of a turn is enough, with the page never looked at', (await store.eventPlaceOf(event.id, worker.id)) !== null);
 
   const racing = await Promise.all(Array.from({ length: 30 }, (_, i) => make(`racer${i}`)));
   const places = await Promise.all(racing.map((user) => store.claimEventPlace('race', user.id, 5)));
