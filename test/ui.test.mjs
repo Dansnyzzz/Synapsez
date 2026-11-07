@@ -545,6 +545,16 @@ section('an account that has not agreed to the documents as they are now is aske
  */
 section('Usage, devices, feedback and what is new — from the account menu');
 {
+  // The warning above the box goes by the provider of the model in use (owner, 2026-11-06).
+  const usagePerson = await (await import('../server/store/index.js')).getStore().getUserByEmail('ui@test.local');
+  const { setPrefs: setUsagePrefs, getPrefs: getUsagePrefs } = await import('../server/settings.js');
+  const modelBefore = (await getUsagePrefs(usagePerson.id)).defaultModel;
+  await setUsagePrefs(usagePerson.id, { defaultModel: 'auto' });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await page.waitForTimeout(900);
+  // A new model's announcement can come up on the way back in; it is not what is on trial.
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => /** @type {HTMLDialogElement} */ (d).close()));
   const now = Date.now();
   const report = {
     generatedAt: new Date(now).toISOString(),
@@ -759,6 +769,11 @@ section('Usage, devices, feedback and what is new — from the account menu');
   check("View changelog opens on the newest version — the app's own — with what it brought", whatsNew.version === pkg.version && whatsNew.sections >= 1, JSON.stringify(whatsNew));
   check('  and its number opens the list of versions to pick from', listed >= 1, `${listed}`);
   await page.evaluate(() => document.getElementById('changelog').close());
+  await setUsagePrefs(usagePerson.id, { defaultModel: modelBefore });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await page.waitForTimeout(900);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => /** @type {HTMLDialogElement} */ (d).close()));
 }
 
 section('the chat window is fixed, only the transcript scrolls');
@@ -2866,44 +2881,32 @@ section('the getting-started guide');
   const noKey = await page.evaluate(() => ({
     step: document.getElementById('onb-step').textContent.trim(),
     todo: !!document.querySelector('#onb-body .onb__state.is-todo'),
-    prompts: !!document.getElementById('onb-keys'),
+    prompts: !!document.querySelector('[data-key-box]') && !!document.querySelector('[data-key-get]'),
   }));
   check('back reaches step 2', /2/.test(noKey.step), noKey.step);
   check('step 2 says there is no key yet', noKey.todo === true);
-  check('and offers the way to add one', noKey.prompts === true);
+  check('and offers the way to add one, right there', noKey.prompts === true);
 
-  // Follow that button, save a key, and come back to the guide still open behind.
-  await page.click('#onb-keys');
-  await page.waitForTimeout(600);
-  check('it opens the key settings', await page.isVisible('#provider-list'));
-  // Anthropic's and OpenAI's own keys are no longer offered to an account that
-  // holds none — their models come through the routers (owner, 2026-10-25).
-  const offered = await page.$$eval('#provider-list [data-save-key]', (els) => els.map((e) => e.getAttribute('data-save-key')));
-  check('the key list offers Google, OpenRouter and OrcaRouter, and not Anthropic or OpenAI', offered.join() === 'google,openrouter,orcarouter', offered.join());
-  await page.fill('[data-key="openrouter"]', 'sk-or-v1-ui-test-key');
-  await page.click('[data-save-key="openrouter"]');
-  await page.waitForTimeout(900);
-  // A key added a moment ago was "in 0 min", and a minute later "overdue" — a
-  // schedule's countdown, in English on every screen (2026-10-20).
-  const added = await page.evaluate(() => document.querySelector('#provider-list .keyrow__when')?.textContent.trim() || '');
-  check('the key just saved says it was added just now, in the interface\'s language', /^(just now|vừa xong)$/.test(added), added);
-  await page.evaluate(() => document.getElementById('settings').close());
-  await page.waitForTimeout(500);
+  // A key is pasted in the guide itself.
+  await page.fill('[data-key-box]', 'sk-or-v1-ui-test-key');
+  await page.click('[data-key-add]');
+  await page.waitForFunction(() => document.querySelector('#onb-body .onb__state.is-done'), null, { timeout: 8000 });
 
   const withKey = await page.evaluate(() => ({
     open: !!document.getElementById('onboarding')?.open,
     step: document.getElementById('onb-step').textContent.trim(),
     done: !!document.querySelector('#onb-body .onb__state.is-done'),
-    prompts: !!document.getElementById('onb-keys'),
+    more: !!document.querySelector('[data-key-box]'),
   }));
-  check('the guide is still open behind the sheet', withKey.open === true);
+  check('the guide stays open', withKey.open === true);
   check('still on step 2', /2/.test(withKey.step), withKey.step);
   check('and it now sees the key that was just saved', withKey.done === true);
-  check('so it stops asking for one', withKey.prompts === false);
+  check('with the box still there for another', withKey.more === true);
 
   // Step 6 puts a sentence in the composer — not sent — and closes. The button
-  // that opened the settings is gone now, so focus is on the page body: the
+  // that was pressed is gone now, so focus is on the page body: the
   // arrows have to work from there too (they went nowhere, 2026-10-20).
+  await page.evaluate(() => document.activeElement?.blur?.());
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
@@ -2919,6 +2922,21 @@ section('the getting-started guide');
   }));
   check('pressing one closes the guide', handed.closed === true);
   check('and puts the question in the composer', handed.typed.length > 0, handed.typed);
+
+  // Anthropic's and OpenAI's own keys are no longer offered to an account that
+  // holds none — their models come through the routers (owner, 2026-10-25).
+  // By the account menu, as a person goes: it is what draws the list afresh.
+  await openSettings();
+  await page.click('#tab-providers');
+  await page.waitForTimeout(400);
+  const offered = await page.$$eval('#provider-list [data-save-key]', (els) => els.map((e) => e.getAttribute('data-save-key')));
+  check('the key list offers Google, OpenRouter and OrcaRouter, and not Anthropic or OpenAI', offered.join() === 'google,openrouter,orcarouter', offered.join());
+  // A key added a moment ago was "in 0 min", and a minute later "overdue" — a
+  // schedule's countdown, in English on every screen (2026-10-20).
+  const added = await page.evaluate(() => document.querySelector('#provider-list .keyrow__when')?.textContent.trim() || '');
+  check('the key just saved says it was added just now, in the interface\'s language', /^(just now|vừa xong)$/.test(added), added);
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.waitForTimeout(200);
 
   // Step 5's levels are the ones the button beside Send offers — all of them, by the same names.
   await page.click('#policy-chip');

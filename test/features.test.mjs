@@ -2311,6 +2311,15 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   check('  nothing known yet gets the benefit of the doubt', (await rec.suggestionFor(held({ orcarouter: [{ paid: null, freeTier: null }] })))?.id === 'orcarouter/lab/free-only-here-free');
   check('  neither choice runnable: no suggestion', (await rec.suggestionFor(held({ google: [{ paid: null }] }))) === null);
 
+  // The guide's second free model is the one a turn moves to when the first stops answering (owner, 2026-11-06).
+  const pair = { free: 'orcarouter/lab/free-only-here-free', freeSecond: 'openrouter/nvidia/nemotron:free' };
+  const bothHeld = held({ orcarouter: [{ paid: null, freeTier: null }], openrouter: [{ paid: false }] });
+  check('when the first free model fails, the turn moves to the second', (await rec.freeFallbackFor(bothHeld, pair.free, pair)) === pair.freeSecond);
+  check('  when it was on the second, to the first', (await rec.freeFallbackFor(bothHeld, pair.freeSecond, pair)) === pair.free);
+  check('  on anything else, the first choice', (await rec.freeFallbackFor(bothHeld, 'openrouter/lab/other:free', pair)) === pair.free);
+  check('  with no key for the other one, nothing to move to', (await rec.freeFallbackFor(held({ orcarouter: [{ paid: null, freeTier: null }] }), pair.free, pair)) === null);
+  check('  with no second named, nothing to move to', (await rec.freeFallbackFor(bothHeld, pair.free, { free: pair.free })) === null);
+
   await rec.setRecommended({ free: 'auto', paid: 'orcarouter/anthropic/claude-best' });
   const payingBoth = held({ openrouter: [{ paid: true }], orcarouter: [{ paid: true }] });
   check('with both paying, a paid model goes through OpenRouter', (await rec.suggestionFor(payingBoth))?.id === 'openrouter/anthropic/claude-best', JSON.stringify(await rec.suggestionFor(payingBoth)));
