@@ -184,7 +184,8 @@ export async function suggestionFor(status, recommended = null) {
     const id = await pickRoute(choice.id, choice.kind, status, paying);
     if (!id) continue;
     const about = await freeness(id);
-    if (about.known) return { id, kind: choice.kind, label: about.label, funded };
+    // Chosen as free when an administrator chose it; the library may know better now.
+    if (about.known && about.free === (choice.kind === 'free')) return { id, kind: choice.kind, label: about.label, funded };
   }
   return null;
 }
@@ -205,7 +206,10 @@ export async function freeFallbackFor(status, currentId, recommended = null) {
   for (const id of [rec.free, rec.freeSecond]) {
     if (!id) continue;
     const route = await pickRoute(id, 'free', status, new Set());
-    if (route && route !== currentId) return route;
+    if (!route || route === currentId) continue;
+    // Free when an administrator chose it, and prices change: looked at again here.
+    const about = await freeness(route);
+    if (about.known && about.free) return route;
   }
   return null;
 }

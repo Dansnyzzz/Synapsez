@@ -431,7 +431,7 @@ const ROUNDS = 3;
  *       · {type:'done', stopReason, toolCalls, usage, raw?}
  */
 async function* streamAny(opts) {
-  const { streamOne: injected, sleep, googleData: _googleData, deadline: _deadline, onRoute, ...rest } = opts;
+  const { streamOne: injected, sleep, googleData: _googleData, deadline: _deadline, onRoute, sharedKeyAllowed, ...rest } = opts;
   const entry = opts.entry;
   const provider = entry.provider;
   const label = PROVIDERS[provider]?.label || provider;
@@ -534,6 +534,13 @@ async function* streamAny(opts) {
     for (let position = 0; position < keys.length; position += 1) {
       const { key, index, shared } = keys[position];
       if (gaveUp.has(key)) continue;
+      // An account's own keys are outside the monthly ceiling and the deployment's is
+      // not: a dead key of one's own must not be the way round it.
+      if (shared && sharedKeyAllowed && !(await sharedKeyAllowed())) {
+        gaveUp.add(key);
+        refused = 'the deployment key is over this account\'s monthly limit';
+        continue;
+      }
       const which = shared ? 'the deployment key' : `key ${index + 1}`;
       // The first key gets the full patience; the others one try each, above.
       const tries = gaveUp.size ? 1 : UPSTREAM_TRIES;
@@ -682,7 +689,9 @@ async function* streamAny(opts) {
           break;
         }
 
-        refused = `${which} was refused: ${failure.message}`;
+        // The deployment's key is not this account's business: what its provider said
+        // about it (a balance, a project number) stays here.
+        refused = shared ? `${which} was refused` : `${which} was refused: ${failure.message}`;
 
         if (kind === 'RATE_LIMITED') {
           markKeyLimited(userId, provider, index, Date.now() + (retryAfterMs ?? MAX_WAIT_MS), { free: freeModel });

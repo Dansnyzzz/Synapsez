@@ -619,14 +619,15 @@ const withoutBareThoughts = (messages) => messages.filter((m) => !(m.role === 'a
 const newId = () => crypto.randomUUID();
 
 /**
- * About what a request cut short spent: what it was sent, and what had come back,
- * at the usual four characters a token.
+ * About what a request cut short spent: what it was sent, and what had come back from
+ * this request alone, at the usual four characters a token. An estimate at the full
+ * input price: on a conversation the provider had cached, the real bill is lower.
  *
- * @param {{ text?: string, thinking?: string }} assistant @param {number} input
+ * @param {{ text?: string, thinking?: string, drafted?: number }} part @param {number} input
  */
-export const stoppedUsage = (assistant, input) => ({
+export const stoppedUsage = (part, input) => ({
   input: Math.max(0, Math.round(input) || 0),
-  output: Math.ceil((String(assistant.text || '').length + String(assistant.thinking || '').length) / 4),
+  output: Math.ceil((String(part.text || '').length + String(part.thinking || '').length + (Number(part.drafted) || 0)) / 4),
 });
 
 /**
@@ -1980,8 +1981,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
   /** Set once the account has been moved to Auto mid-turn, so it is tried once. */
   let movedToAuto = false;
-  /** Set once this turn has left a failing model for Auto — see the `upstream` catch. */
-  let switchedThisTurn = false;
+  /** How many times this turn has left a failing free model: to the second, then to Auto. See the `upstream` catch. */
+  let movedThisTurn = 0;
+  /** A change of model carries on a stopped reply; whether there is one is looked at once. */
+  let handoffToCheck = handoff;
   for (let step = 0; step < prefs.maxSteps; step += 1) {
     if (signal?.aborted) {
       emit('done', { stopReason: 'aborted' });
@@ -2074,6 +2077,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     let continuedReply = false;
     /** What was written before the request being read, when there were several. */
     let writtenBefore = '';
+    /** The same for its reasoning. */
+    let thoughtBefore = '';
+    /** Whether the request being read has produced anything, which a notice about a key is not. */
+    let answered = false;
+    /** How many characters of a tool call's arguments it had written. */
+    let drafted = 0;
 
     /**
      * Say when the provider has not started answering yet.
@@ -2125,6 +2134,19 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * see them to fetch them — it reads `message.attachments`, so attaching
        * them afterwards meant asking for images nobody had loaded.
        */
+      /*
+       * Asked to carry on a reply that had in fact finished: the tab had not heard yet
+       * when the model was changed. There is nothing to carry on, and asking would pay
+       * for the new model to write more after a complete answer.
+       */
+      if (handoffToCheck) {
+        handoffToCheck = false;
+        const last = messages[messages.length - 1];
+        if (last?.role === 'assistant' && !last.stopped && !last.toolCalls?.length) {
+          emit('done', { stopReason: 'end_turn' });
+          return;
+        }
+      }
       // Where the plan stands rides on the tool results — see progress.js.
       const tracked = withProgressNotes(
         unattended
@@ -2202,6 +2224,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           tools: buildTools(),
           effort,
           signal,
+          // Own keys all refused, the deployment's next: its monthly ceiling applies from there.
+          sharedKeyAllowed: usingSharedKey ? undefined : async () => (await checkQuota(user, { usingSharedKey: true })).allowed,
           googleData,
           deadline,
           // Kept with the message: which provider, what kind of promise, how many of each
@@ -2216,6 +2240,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           // silence before the provider says its first word, not the silence
           // before it says something the interface happens to draw.
           started = true;
+          // What is booked if it is stopped goes by something else: whether it answered.
+          if (ev.type === 'text' || ev.type === 'thinking' || ev.type === 'tool_call_start' || ev.type === 'tool_call_progress') answered = true;
+          if (ev.type === 'tool_call_progress') drafted = Number(ev.chars) || drafted;
           if (carryOn !== null && ev.type === 'retry') {
             // A key gave out on this part. The parts before it are still good, so
             // only this one starts again, and the screen is cut back to match.
@@ -2304,6 +2331,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         // has been booked, and a part ending with no word must not be booked again.
         continuedReply = true;
         writtenBefore = written;
+        thoughtBefore = assistant.thinking;
+        answered = false;
+        drafted = 0;
         done = null;
         await readPart(
           [...outgoing, ...(written.trim() ? [{ id: `${assistant.id}-so-far`, role: 'assistant', text: written }] : []), { id: `${assistant.id}-carry-on`, role: 'user', text: asked }],
@@ -2335,9 +2365,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
          * Except when this run was superseded. A reconnection that took the
          * lease is already streaming its own reply to the same question, so
          * this fragment would land in the transcript beside the live answer.
-         * `app.js` puts the reason on the signal when the heartbeat loses the
-         * lease.
+         * `liveRuns.js` puts the reason on the signal when the run loses the lease.
          */
+        // Only this request's: earlier parts of a long reply were booked when they ended.
+        const unbooked = { text: assistant.text.slice(writtenBefore.length), thinking: assistant.thinking.slice(thoughtBefore.length), drafted };
         if ((assistant.text.trim() || assistant.thinking.trim()) && signal?.reason !== 'superseded') {
           assistant.model = entry.id;
           assistant.toolCalls = [];
@@ -2350,11 +2381,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
          * The provider's bill for a stream cut short never arrives: its figures come
          * at the end. Words already read were still generated, so an estimate goes on
          * the books rather than nothing (owner, 2026-11-06). Nothing having come back
-         * books nothing: what a provider charges for a request it never answered
-         * cannot be known from here, and zero is the likelier truth.
+         * books nothing, a notice about a refused key included: what a provider charges
+         * for a request it never answered cannot be known from here, and zero is the
+         * likelier truth. A provider that answered took no more than its window.
          */
-        if (started) {
-          const usage = stoppedUsage(assistant, stepInput);
+        if (answered) {
+          const usage = stoppedUsage(unbooked, Math.min(stepInput, entry.context || Infinity));
           await recordUsage(userId, { chatId, model: entry.id, usage, costUsd: priceTurn(entry, usage)?.usd || 0, role: 'turn' }).catch((e) =>
             log.error('usage not recorded', e, { role: 'turn', model: entry.id }));
         }
@@ -2409,9 +2441,10 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        *
        * A free model's one provider having a bad hour stopped the owner's
        * morning workflow at step 2 (2026-10-19). The second of the two free models
-       * the administrators suggest takes over (owner, 2026-11-06), and with neither,
-       * Auto, OpenRouter's own router across the free models. Once, and for this
-       * turn only: the account keeps its model, and is told which one answered.
+       * the administrators suggest takes over (owner, 2026-11-06), and if there is
+       * none or it fails too, Auto, OpenRouter's own router across the free models.
+       * For this turn only: the account keeps its model, and is told which one
+       * answered. Never to a model that is not free: it would start billing.
        * Not when the model already is Auto (there is nowhere further to go), and
        * only for a library model, whose account already holds the key Auto runs on.
        *
@@ -2421,13 +2454,13 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
        * and incognito was a promise; a bad hour at the provider changes neither.
        */
       if (
-        (err?.upstream || err?.code === 'rate_limited') && !switchedThisTurn && !assistant.text && isLibraryModel(entry) && !isAuto(entry.id) &&
+        (err?.upstream || err?.code === 'rate_limited') && movedThisTurn < 2 && !assistant.text && isLibraryModel(entry) && !isAuto(entry.id) &&
         isFreeEntry(entry) && !chat?.incognito
       ) {
-        const second = await freeFallbackFor(await providerStatus(userId), entry.id).catch(() => null);
+        const second = movedThisTurn === 0 ? await freeFallbackFor(await providerStatus(userId), entry.id).catch(() => null) : null;
         const auto = second && !isAuto(second) ? await resolveModelId(second) : await pickAutoModel(userId);
-        if (auto && auto.id !== entry.id) {
-          switchedThisTurn = true;
+        if (auto && auto.id !== entry.id && isFreeEntry(auto)) {
+          movedThisTurn += 1;
           const from = entry?.label || entry.id;
           entry = auto;
           emit('status', { message: `${from} is not answering right now, so this reply comes from ${auto.label || auto.id}. Your chosen model is unchanged.` });

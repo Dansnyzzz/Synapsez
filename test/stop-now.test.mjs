@@ -45,14 +45,41 @@ const until = async (test, ms = 8000) => {
  * `closedAt` is when its socket closed before it had finished: the moment money stops.
  */
 const requests = [];
+const cutOff = new Set();
 const provider = http.createServer((req, res) => {
   let raw = '';
   req.on('data', (chunk) => (raw += chunk));
   req.on('end', () => {
     const body = JSON.parse(raw || '{}');
-    const request = { model: body.model, messages: body.messages, words: 0, closedAt: 0, finished: false };
+    const auth = String(req.headers.authorization || '');
+    const request = { model: body.model, messages: body.messages, auth, words: 0, closedAt: 0, finished: false };
     requests.push(request);
+    // A key its provider will not have.
+    if (/refuse-key/.test(auth)) {
+      request.finished = true;
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Incorrect API key provided: can only afford 1141' } }));
+      return;
+    }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
+    // Takes the request and says nothing, for as long as anyone waits.
+    if (/silent/.test(String(body.model))) {
+      res.write(': waiting\n\n');
+      res.on('close', () => {
+        if (!request.finished) request.closedAt = Date.now();
+      });
+      return;
+    }
+    // Runs into its output limit the first time, a long way in, and is slow the second.
+    if (/cut-long/.test(String(body.model)) && !cutOff.has(body.model)) {
+      cutOff.add(body.model);
+      request.finished = true;
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'x'.repeat(4000) } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }], usage: { prompt_tokens: 100, completion_tokens: 1000 } })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
     const say = (delta) => res.write(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`);
     const onlyThinks = /only-think/.test(String(body.model));
     const quick = /quick/.test(String(body.model));
@@ -87,7 +114,7 @@ const { initStore } = await import('../server/store/index.js');
 const store = await initStore();
 const { hashPassword } = await import('../server/crypto.js');
 const { createApp } = await import('../server/app.js');
-const { setApiKey, setPrefs } = await import('../server/settings.js');
+const { setApiKey, addApiKey, setPrefs } = await import('../server/settings.js');
 
 const password = 'a-sufficiently-long-password';
 await store.createUser({ id: 'u-stop', email: 'stop@example.com', name: 'Stop', passwordHash: await hashPassword(password), role: 'user' });
@@ -107,11 +134,11 @@ const call = async (method, url, body, who = cookie) => {
 };
 
 /** Start a turn, reading the stream until asked to walk away. */
-function startRun(chatId, body = {}) {
+function startRun(chatId, body = {}, who = cookie) {
   const abort = new AbortController();
   const events = [];
   const finished = (async () => {
-    const res = await fetch(`${base}/api/chats/${chatId}/run`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(body), signal: abort.signal });
+    const res = await fetch(`${base}/api/chats/${chatId}/run`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: who }, body: JSON.stringify(body), signal: abort.signal });
     if (!res.ok) {
       events.push({ refused: res.status });
       return;
@@ -134,9 +161,9 @@ function startRun(chatId, body = {}) {
   return { abort, events, finished };
 }
 
-const newChat = async (text = 'Write me something long') => {
-  const { chat } = (await call('POST', '/api/chats', { model: 'openai/slow' })).json;
-  await call('POST', `/api/chats/${chat.id}/messages`, { text });
+const newChat = async (text = 'Write me something long', who = cookie) => {
+  const { chat } = (await call('POST', '/api/chats', { model: 'openai/slow' }, who)).json;
+  await call('POST', `/api/chats/${chat.id}/messages`, { text }, who);
   return chat.id;
 };
 const words = (events) => events.filter((e) => e.name === 'text').length;
@@ -253,6 +280,103 @@ section('a thought with no words is not sent to the next model as an empty reply
   check('no empty assistant turn reaches the provider', !blank.length, JSON.stringify(seen.messages?.map((m) => m.role)));
   check('and the question is still the last thing it was asked', seen.messages?.at(-1)?.role === 'user');
   await second.finished;
+}
+
+section('what a stop books: only what this request spent');
+{
+  const { stoppedUsage } = await import('../server/agent.js');
+  const only = stoppedUsage({ text: 'abcdefgh', thinking: 'abcd', drafted: 4 }, 100);
+  check('an estimate of what came back, and what it was sent', only.output === 4 && only.input === 100, JSON.stringify(only));
+}
+
+section('a stop books what that request cost, and no more');
+{
+  // A key refused says something, and nothing has been answered.
+  await store.createUser({ id: 'u-silent', email: 'silent@example.com', name: 'Silent', passwordHash: await hashPassword(password), role: 'user' });
+  await setApiKey('u-silent', 'openai', 'sk-refuse-key-1');
+  await addApiKey('u-silent', 'openai', 'sk-second-key-2');
+  await setPrefs('u-silent', { policy: 'auto', qualityGate: false });
+  const who = await login('silent@example.com');
+  const chatId = await newChat('Are you there?', who);
+  const run = startRun(chatId, { model: 'openai/silent-one' }, who);
+  const refused = await until(() => run.events.some((e) => e.name === 'status' && /refused/.test(e.data?.message || '')));
+  check('the first key was refused, out loud', refused, JSON.stringify(run.events.slice(0, 4)));
+  await until(() => requests.at(-1)?.auth.includes('second-key'));
+  await call('POST', `/api/chats/${chatId}/stop`, {}, who);
+  run.abort.abort();
+  await run.finished;
+  await sleep(200);
+  check('a stop with nothing answered books nothing', (await store.usageThisMonth('u-silent')).tokens === 0, JSON.stringify(await store.usageThisMonth('u-silent')));
+
+  // A long reply: the first part ended and was booked; the second was stopped.
+  await store.createUser({ id: 'u-long', email: 'long@example.com', name: 'Long', passwordHash: await hashPassword(password), role: 'user' });
+  await setApiKey('u-long', 'openai', 'sk-long-key');
+  await setPrefs('u-long', { policy: 'auto', qualityGate: false });
+  const long = await login('long@example.com');
+  const longChat = await newChat('Write me something very long', long);
+  const longRun = startRun(longChat, { model: 'openai/cut-long-1' }, long);
+  await until(() => words(longRun.events) >= 4);
+  const sent = longRun.events.find((e) => e.name === 'context')?.data;
+  await call('POST', `/api/chats/${longChat}/stop`, {}, long);
+  longRun.abort.abort();
+  await longRun.finished;
+  await sleep(200);
+  const { tokens } = await store.usageThisMonth('u-long');
+  const firstPart = 1100;
+  const asked = Number(sent?.breakdown?.used ?? sent?.used) || 0;
+  check('the part that ended is not booked a second time when the next is stopped', asked > 0 && tokens >= firstPart + asked && tokens - firstPart - asked < 300, JSON.stringify({ tokens, asked }));
+}
+
+section('changing model on a reply that had already finished');
+{
+  const chatId = await newChat('Say something short');
+  const first = startRun(chatId, { model: 'openai/quick-done' });
+  await first.finished;
+  const before = requests.length;
+  const second = startRun(chatId, { model: 'openai/quick-next', handoff: true });
+  await second.finished;
+  check('the new model is not asked anything', requests.length === before, `${requests.length - before} extra`);
+  check('the turn ends, with nothing added', second.events.some((e) => e.name === 'done') && (await stored(chatId)).filter((m) => m.role === 'assistant').length === 1);
+}
+
+section('a dead key of your own is no way past the deployment key\'s ceiling');
+{
+  process.env.OPENAI_API_KEY = 'sk-deployment-key';
+  await store.createUser({ id: 'u-over', email: 'over@example.com', name: 'Over', passwordHash: await hashPassword(password), role: 'user' });
+  await store.updateUser('u-over', { monthlyTokenLimit: 10 });
+  await store.recordUsage('u-over', { id: 'over-1', chatId: null, model: 'm', inputTokens: 5000, outputTokens: 0, cacheReadTokens: 0, costUsd: 0, role: 'turn' });
+  await setApiKey('u-over', 'openai', 'sk-refuse-key-3');
+  await setPrefs('u-over', { policy: 'auto', qualityGate: false });
+  const over = await login('over@example.com');
+  const chatId = await newChat('One more', over);
+  const before = requests.length;
+  const run = startRun(chatId, { model: 'openai/quick-over' }, over);
+  await run.finished;
+  const reached = requests.slice(before).map((r) => r.auth);
+  check('over the ceiling, the deployment key is not used', reached.length > 0 && !reached.some((a) => a.includes('deployment')), JSON.stringify(reached.map((a) => a.slice(-12))));
+  check('it says the key was refused', run.events.some((e) => e.name === 'error' && /refused/.test(e.data?.message || '')), JSON.stringify(run.events.filter((e) => e.name === 'error')));
+
+  await store.createUser({ id: 'u-under', email: 'under@example.com', name: 'Under', passwordHash: await hashPassword(password), role: 'user' });
+  await store.updateUser('u-under', { monthlyTokenLimit: 1_000_000 });
+  await setApiKey('u-under', 'openai', 'sk-refuse-key-4');
+  await setPrefs('u-under', { policy: 'auto', qualityGate: false });
+  const under = await login('under@example.com');
+  const underChat = await newChat('One more', under);
+  const start = requests.length;
+  const underRun = startRun(underChat, { model: 'openai/quick-under' }, under);
+  await underRun.finished;
+  check('under it, the deployment key still answers', requests.slice(start).some((r) => r.auth.includes('deployment')) && underRun.events.some((e) => e.name === 'done'));
+
+  // What a provider says about the deployment's key is not this account's to read.
+  process.env.OPENAI_API_KEY = 'sk-refuse-key-deployment';
+  await store.createUser({ id: 'u-plain', email: 'plain@example.com', name: 'Plain', passwordHash: await hashPassword(password), role: 'user' });
+  await setPrefs('u-plain', { policy: 'auto', qualityGate: false });
+  const plain = await login('plain@example.com');
+  const plainRun = startRun(await newChat('Hello', plain), { model: 'openai/quick-plain' }, plain);
+  await plainRun.finished;
+  const told = JSON.stringify(plainRun.events.filter((e) => e.name === 'error'));
+  check('the deployment key refused: it says so, and not what the provider said about it', /refused/.test(told) && !/afford|1141/.test(told), told);
+  delete process.env.OPENAI_API_KEY;
 }
 
 section('a run that has already finished, or someone else\'s, is not stopped');
