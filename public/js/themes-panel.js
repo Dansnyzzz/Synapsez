@@ -151,7 +151,7 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
    * wanted, one at a time, so answers cannot cross and land on an older choice.
    */
   const saver = latestOnly((id) => api.selectTheme(id), {
-    saved(_answer, id) {
+    landed(_answer, id) {
       confirmed = id;
     },
     failed(err) {
@@ -168,16 +168,17 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
   /** Ask the server what this account holds, and follow it, unless a choice is on its way there. */
   async function sync() {
     try {
+      const asked = saver.asked();
       const answer = await api.themes();
       themes = answer.themes;
       progress = answer.progress || null;
-      if (!saver.busy() && answer.selected !== selected) {
+      if (saver.sure(asked) && answer.selected !== selected) {
         selected = answer.selected;
         confirmed = selected;
         chosen = selected;
         store(selected);
         apply(selected);
-      } else if (!saver.busy()) confirmed = answer.selected;
+      } else if (saver.sure(asked)) confirmed = answer.selected;
       if (drawn) draw();
     } catch {
       /* the look stays as it was: a page behind a failed request should not lose its colours */
@@ -332,8 +333,12 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     });
   }
 
+  /** Which visit to the page this is: an answer to an earlier one has nothing to draw on. */
+  let visit = 0;
+
   /** Settings → Theme, as it is opened. */
   async function load() {
+    const here = (visit += 1);
     ensureSkeleton();
     paintMascots();
     const grid = page.querySelector('.themes__grid');
@@ -341,10 +346,11 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     // The page as last known, at once; what the server says follows.
     if (themes.length) draw();
     try {
+      const asked = saver.asked();
       const answer = await api.themes();
       themes = answer.themes;
       progress = answer.progress || null;
-      if (!saver.busy()) {
+      if (saver.sure(asked)) {
         if (answer.selected !== selected) {
           selected = answer.selected;
           store(selected);
@@ -353,7 +359,8 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
         }
         confirmed = answer.selected;
       }
-      draw();
+      // Left while it was on its way: drawing now would start a scene nothing would stop.
+      if (here === visit) draw();
     } catch (err) {
       if (grid && !themes.length) grid.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
     }
@@ -361,6 +368,7 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
 
   /** Leaving the page: nothing on it should keep drawing. */
   function leave() {
+    visit += 1;
     preview?.();
     preview = null;
     stopTile();
@@ -485,10 +493,11 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     wear,
     /** What the `/theme` box offers: the list as the server last said, asked again. */
     async list() {
+      const asked = saver.asked();
       const answer = await api.themes();
       themes = answer.themes;
       progress = answer.progress || null;
-      if (!saver.busy() && answer.selected !== selected) {
+      if (saver.sure(asked) && answer.selected !== selected) {
         selected = answer.selected;
         confirmed = selected;
         chosen = selected;

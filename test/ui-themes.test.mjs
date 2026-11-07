@@ -156,6 +156,8 @@ section('a theme is applied, and the app stays readable over it');
     const box = await p.evaluate((css) => {
       const node = [...document.querySelectorAll(css)].find((n) => n.getClientRects().length && n.textContent.trim());
       if (!node) return null;
+      // The pane may have scrolled to the tile just pressed.
+      node.scrollIntoView({ block: 'nearest' });
       const r = node.getBoundingClientRect();
       return { x: r.x, y: r.y, width: r.width, height: r.height, color: getComputedStyle(node).color };
     }, selector);
@@ -466,8 +468,8 @@ section('the scene stops drawing when the tab is hidden');
 
 section('the boards');
 {
-  await store.createUser({ id: 'u-board-a', email: 'a@test.local', name: 'Anna', username: 'anna', passwordHash: 'x', role: 'user' });
-  await store.createUser({ id: 'u-board-b', email: 'b@test.local', name: 'Binh', username: 'binh', passwordHash: 'x', role: 'user' });
+  await store.createUser({ id: 'u-board-a', email: 'a@test.local', name: 'Anna Tran', username: 'anna', passwordHash: 'x', role: 'user' });
+  await store.createUser({ id: 'u-board-b', email: 'b@test.local', name: 'Binh Le', username: 'binh', passwordHash: 'x', role: 'user' });
   await store.recordUsage('u-board-a', { id: 'e1', chatId: null, model: 'm', inputTokens: 5000, outputTokens: 0, costUsd: 1.5, role: 'turn' });
   await store.recordUsage('u-board-b', { id: 'e2', chatId: null, model: 'm', inputTokens: 9000, outputTokens: 0, costUsd: 0.5, role: 'turn' });
   await store.recordUsage(memberRow.id, { id: 'e3', chatId: null, model: 'm', inputTokens: 100, outputTokens: 0, costUsd: 0, role: 'turn' });
@@ -484,8 +486,8 @@ section('the boards');
     me: !!document.querySelector('.ranking__row.is-me'),
     place: document.querySelector('.ranking__me').textContent,
   }));
-  check('tokens are in order', seen.boards[0][0].startsWith('binh') && seen.boards[0][1].startsWith('anna'), JSON.stringify(seen.boards[0]));
-  check('spending is in order', seen.boards[1][0].startsWith('anna'), JSON.stringify(seen.boards[1]));
+  check('tokens are in order', seen.boards[0][0].startsWith('Binh') && seen.boards[0][1].startsWith('Anna'), JSON.stringify(seen.boards[0]));
+  check('spending is in order', seen.boards[1][0].startsWith('Anna'), JSON.stringify(seen.boards[1]));
   check('administrators are not on them', !/theme\.owner/.test(seen.text));
   check('no email on the page', !/@test\.local/.test(seen.text));
   check('my own row is marked', seen.me);
@@ -605,7 +607,7 @@ section('/theme in the box');
   check('with every theme in the row', seen.tiles === THEMES.length, String(seen.tiles));
   check('starting from the one in use', seen.lit === seen.current, JSON.stringify(seen));
   check('and only one row of pictures, nothing moving', await member.evaluate(() => !document.querySelector('.tpick__tile canvas')));
-  const other = await member.evaluate(() => document.querySelector('.tpick__tile:not(.is-current):not(.is-locked)').dataset.id);
+  const other = await member.evaluate(() => document.querySelector('.tpick__tile:not(.is-current):not([data-id="default"])').dataset.id);
   await member.hover(`.tpick__tile[data-id="${other}"]`);
   await member.waitForSelector(`.tpick__tile[data-id="${other}"] .scene-live`);
   check('a tile under the pointer plays', true);

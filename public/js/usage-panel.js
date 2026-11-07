@@ -64,7 +64,7 @@ export function keyLabel(index, providers, { inline = false, provider = 'openrou
  * A limit by name, as a sentence uses it: "today's free requests on OpenRouter".
  * The key is named only when there are several, where it tells them apart.
  *
- * @param {{ kind: string, index?: number, provider?: string }} limit
+ * @param {{ kind: string, index?: number, provider?: string, providers?: any[] }} limit
  * @param {any} providers  the account's provider status, for the keys' hints
  * @param {number} keys  how many own keys that provider has
  */

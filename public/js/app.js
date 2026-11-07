@@ -1504,7 +1504,7 @@ function chatGone(id) {
     run.queue.length = 0;
     run.abort.abort();
   }
-  if (run || state.chats?.find((c) => c.id === id)?.running) api.stopChat(id).catch(() => {});
+  if (run || state.chats?.find((c) => c.id === id)?.running) tellServerStop(id);
   if (id === state.chatId) startBlankChat(null, { stayOnPage: true });
 }
 
@@ -3383,6 +3383,7 @@ $('composer').addEventListener('submit', async (event) => {
     // The shelf this was begun from travels with the first message only.
     const intent = state.composeMode;
     setComposeMode(null);
+    await stopHasLanded(chatId);
     const { message } = await api.sendMessage(chatId, text, ids, intent, skills);
     reached = true;
     if (message?.id) node.dataset.messageId = message.id;
@@ -3545,6 +3546,7 @@ async function deliver(item, { interrupting = false, run = null, chatId = null }
   else $('messages').append(node);
   if (!run || onScreen(run)) scrollToEnd();
   try {
+    await stopHasLanded(target);
     const { message } = await api.sendMessage(target, item.text, item.ids, undefined, item.skills);
     // Stamped after the fact: the id only exists once the server has it, and
     // without it the bubble has nothing to edit.
@@ -3845,7 +3847,9 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null,
     if (err.code === 'already_running') {
       // Refused because another tab holds the lease — which is the lock doing
       // its job. Rather than sitting silent, watch that tab's run and redraw it
-      // here. See mirror.js and `mirrorRun`.
+      // here. See mirror.js and `mirrorRun`. It is that tab's run from here: not this
+      // one's to stop by changing model.
+      run.following = true;
       await mirrorRun(run);
     } else if (err.name !== 'AbortError' && onScreen(run)) {
       toast(err.message || t('status.streamFailed'), 'error');
@@ -3929,6 +3933,7 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null,
     } else if (run.handoff) {
       // The model was changed while it was writing: the new one carries on. Whatever
       // the person typed meanwhile went first, above, and the new model answers that.
+      await stopHasLanded(chatId);
       void stream(undefined, undefined, { chatId, handoff: true });
     }
   }
@@ -4327,9 +4332,30 @@ function nextBlock(run) {
  * quietly did the belt-and-braces half.
  */
 function stopRun(run) {
-  api.stopChat(run.chatId).catch(() => {});
+  tellServerStop(run.chatId);
   run.abort.abort();
 }
+
+/** Stops on their way to the server, by conversation. */
+const stopsOnTheWay = new Map();
+
+function tellServerStop(chatId) {
+  const told = api.stopChat(chatId).catch(() => {}).finally(() => {
+    if (stopsOnTheWay.get(chatId) === told) stopsOnTheWay.delete(chatId);
+  });
+  stopsOnTheWay.set(chatId, told);
+}
+
+/**
+ * Wait for a stop to arrive before what follows it. The server holds the next question
+ * back only once it knows about the stop: overtaken by a cold instance, the question
+ * would land ahead of the stopped reply, and a stop arriving after a new run had started
+ * would end that one. Not for long: a stop that never arrives should not hold up the box.
+ */
+const stopHasLanded = (chatId) => {
+  const told = stopsOnTheWay.get(chatId);
+  return told ? Promise.race([told, new Promise((resolve) => setTimeout(resolve, 3000))]) : null;
+};
 
 $('stop').addEventListener('click', () => {
   // The conversation on screen, not "the run": stop is a button in front of one
@@ -4343,7 +4369,7 @@ $('stop').addEventListener('click', () => {
    * finishing. The button used to do nothing here. It is the server's lease either way.
    */
   else if (state.chatId && runningHere) {
-    api.stopChat(state.chatId).catch(() => {});
+    tellServerStop(state.chatId);
     setRunning(false);
     setStatus(null);
     mascot.show('idle');
@@ -4753,7 +4779,6 @@ const themesPanel = createThemes({
   page: $('themes-page'),
   admin: $('admin-themes'),
   toast,
-  // Off a scene, back to whatever this person chose for light and dark.
   mascot: () => mascot.pref(),
   setMascot: (value) => {
     mascot.setPref(value);
@@ -5431,6 +5456,28 @@ $('policy-chip').addEventListener('click', () => {
 });
 
 /**
+ * One saver for the dial however many times its menu is opened: a new one each time
+ * could send two saves at once, and they could cross on the way.
+ */
+let effortStored = null;
+let effortRepaint = () => {};
+const effortSaver = latestOnly((value) => api.savePrefs({ effort: value }), {
+  landed: (_prefs, value) => {
+    effortStored = value;
+  },
+  saved: (prefs, value) => {
+    state.boot.prefs = { ...prefs, effort: value };
+    effortRepaint();
+    toast(t('effort.set', { level: effortLabel(value) }));
+  },
+  failed: (err) => {
+    state.boot.prefs = { ...state.boot.prefs, effort: effortStored };
+    effortRepaint();
+    toast(err.message, 'error');
+  },
+});
+
+/**
  * The effort dial, at the foot of the mode menu.
  *
  * Five steps, drawn as five dots rather than a row of words: it is a scale, and
@@ -5483,26 +5530,14 @@ function effortRow() {
    * (owner, 2026-11-06): it used to wait for each answer, so three quick presses
    * walked through all three, one after another, long after the hand had moved on.
    */
-  const saver = latestOnly((value) => api.savePrefs({ effort: value }), {
-    saved: (prefs, value) => {
-      saved = value;
-      state.boot.prefs = { ...prefs, effort: value };
-      paint();
-      toast(t('effort.set', { level: effortLabel(value) }));
-    },
-    failed: (err) => {
-      state.boot.prefs = { ...state.boot.prefs, effort: saved };
-      paint();
-      toast(err.message, 'error');
-    },
-  });
-  let saved = state.boot.prefs.effort;
+  if (!effortSaver.busy()) effortStored = state.boot.prefs.effort;
+  effortRepaint = paint;
   const choose = (value, focus = false) => {
     if (state.boot.prefs.effort === value) return;
     state.boot.prefs = { ...state.boot.prefs, effort: value };
     paint();
     if (focus) /** @type {HTMLElement | undefined} */ (dots.children[EFFORT_IDS.indexOf(value)])?.focus();
-    void saver.push(value);
+    void effortSaver.push(value);
   };
 
   for (const [value, label] of efforts()) {

@@ -13,12 +13,16 @@
  *
  * @template T, A
  * @param {(value: T) => Promise<A>} save
- * @param {{ saved?: (answer: A, value: T) => void, failed?: (err: any, value: T) => void }} [hooks]
+ * `landed` hears every save that was stored, newest or not: if the next one fails, the
+ * screen goes back to the last that landed, not to where it was before either.
+ *
+ * @param {{ landed?: (answer: A, value: T) => void, saved?: (answer: A, value: T) => void, failed?: (err: any, value: T) => void }} [hooks]
  */
-export function latestOnly(save, { saved, failed } = {}) {
+export function latestOnly(save, { landed, saved, failed } = {}) {
   /** @type {{ value: T } | null} */
   let waiting = null;
   let flying = false;
+  let presses = 0;
 
   async function pump() {
     if (flying) return;
@@ -29,6 +33,7 @@ export function latestOnly(save, { saved, failed } = {}) {
         waiting = null;
         try {
           const answer = await save(value);
+          landed?.(answer, value);
           if (!waiting) saved?.(answer, value);
         } catch (err) {
           if (!waiting) failed?.(err, value);
@@ -42,10 +47,19 @@ export function latestOnly(save, { saved, failed } = {}) {
   return {
     /** The person has chosen this. @param {T} value */
     push(value) {
+      presses += 1;
       waiting = { value };
       return pump();
     },
-    /** Whether a choice has yet to be stored: what the server says meanwhile is out of date. */
+    /** Whether a choice has yet to be stored. */
     busy: () => flying || !!waiting,
+    /** Taken before asking the server anything, for `sure`. */
+    asked: () => presses,
+    /**
+     * Whether what the server said can be believed: nothing waiting to be stored, and no
+     * press since the question was asked, whose answer may have been read before it landed.
+     * @param {number} asked
+     */
+    sure: (asked) => asked === presses && !flying && !waiting,
   };
 }

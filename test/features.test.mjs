@@ -2682,5 +2682,48 @@ section('your data: the lists and deletions behind Privacy → Manage (owner, 20
   }
 }
 
+section('the last press wins');
+{
+  const { latestOnly } = await import('../public/js/latest.js');
+  /** A save that waits to be told how it ends. */
+  const saves = [];
+  const said = [];
+  const saver = latestOnly((value) => new Promise((resolve, reject) => saves.push({ value, resolve, reject })), {
+    landed: (_answer, value) => said.push(`landed ${value}`),
+    saved: (_answer, value) => said.push(`saved ${value}`),
+    failed: (_err, value) => said.push(`failed ${value}`),
+  });
+  const before = saver.asked();
+  void saver.push('a');
+  void saver.push('b');
+  void saver.push('c');
+  check('one save at a time', saves.length === 1 && saves[0].value === 'a');
+  check('a read begun before a press is not believed', saver.sure(before) === false);
+  saves[0].resolve('ok');
+  await new Promise((r) => setTimeout(r));
+  check('what is in between is never sent', saves.length === 2 && saves[1].value === 'c');
+  check('a save that landed is heard, though it is no longer the newest', said.join() === 'landed a', said.join());
+  saves[1].reject(new Error('no'));
+  await new Promise((r) => setTimeout(r));
+  check('the newest failing is reported', said.join() === 'landed a,failed c', said.join());
+  check('a read begun before the press is still not believed', saver.sure(before) === false);
+  check('a read begun now is', saver.sure(saver.asked()) === true);
+}
+
+section('what Google counts');
+{
+  const { pacificDay, readGeminiQuota } = await import('../server/providerOutcomes.js');
+  const at = (when) => {
+    const { from, to } = pacificDay(new Date(when));
+    return [from.toISOString(), to.toISOString()].join();
+  };
+  check('an ordinary winter day', at('2027-01-10T20:00:00Z') === '2027-01-10T08:00:00.000Z,2027-01-11T08:00:00.000Z', at('2027-01-10T20:00:00Z'));
+  check('the day the clocks go on: 23 hours', at('2027-03-14T20:00:00Z') === '2027-03-14T08:00:00.000Z,2027-03-15T07:00:00.000Z', at('2027-03-14T20:00:00Z'));
+  check('the day they go back: 25 hours', at('2026-11-01T20:00:00Z') === '2026-11-01T07:00:00.000Z,2026-11-02T08:00:00.000Z', at('2026-11-01T20:00:00Z'));
+  const refusal = (quotaId) => ({ status: 429, message: JSON.stringify({ violations: [{ quotaId, quotaValue: '250' }] }) });
+  check('a daily ceiling on requests is read', readGeminiQuota(refusal('GenerateRequestsPerDayPerProjectPerModel-FreeTier'))?.perDay === 250);
+  check('one on tokens is not taken for it', readGeminiQuota(refusal('GenerateContentInputTokensPerDay-FreeTier'))?.perDay === null);
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

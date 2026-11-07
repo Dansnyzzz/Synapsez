@@ -22,6 +22,7 @@ const modules = new Map();
 const worlds = new Map();
 /** @type {Set<any>} every mount that is moving */
 const playing = new Set();
+/** @type {ReturnType<typeof setTimeout> | 0} */
 let timer = 0;
 let lastTick = 0;
 let framesDrawn = 0;
@@ -79,7 +80,13 @@ function tick() {
     // A scene slower than the fastest one on screen draws at its own pace.
     if (mount.owed >= 1 / mount.fps - 0.002) {
       mount.owed = 0;
-      mount.paint(mount.clock);
+      // One broken scene stops being played; the backdrop and every other one carry on.
+      try {
+        mount.paint(mount.clock);
+      } catch (err) {
+        playing.delete(mount);
+        console.error('scene stopped', err);
+      }
     }
   }
   wake();

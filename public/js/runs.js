@@ -79,6 +79,14 @@ export function createRuns({ currentChatId, newStage = () => document.createElem
       lastStopNote: null,
       /** This run started the compaction bar and has not yet ended it. */
       compacting: false,
+      /** What stops it: given by whoever starts it. */
+      abort: null,
+      /** Which provider and promise this reply is going through, once the server says. */
+      route: null,
+      /** Another tab's run, only being watched here: not this tab's to stop by changing model. */
+      following: false,
+      /** The model was changed while it was writing: the new one carries on when this has stopped. */
+      handoff: false,
       ...fields,
     };
     byChat.set(chatId, run);

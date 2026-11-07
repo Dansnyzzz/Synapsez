@@ -163,7 +163,7 @@ export function createRanking({ host, toast, savePrefs }) {
   }
 
   const saver = latestOnly((id) => api.equipTitle(id || null), {
-    saved: (answer) => {
+    landed: (answer) => {
       worn = answer.equipped ?? null;
     },
     failed: (err) => {
@@ -214,18 +214,26 @@ export function createRanking({ host, toast, savePrefs }) {
     }
   }
 
+  /** Which visit to the page this is: an answer to an earlier one has nothing to draw on. */
+  let visit = 0;
+
   async function load() {
+    const here = (visit += 1);
     ensureSkeleton();
     const boards = loadBoards();
     try {
+      const asked = saver.asked();
       const answer = await api.titles();
-      // A save still on its way knows better than an answer sent before it landed.
-      if (titles && saver.busy()) answer.equipped = titles.equipped;
+      // A save since this was asked knows better than an answer that may have been read before it landed.
+      if (titles && !saver.sure(asked)) answer.equipped = titles.equipped;
       else worn = answer.equipped ?? null;
       titles = answer;
       if (looking === null) looking = titles.equipped || '';
-      paintTitles();
-      paintDetail(titles.titles.find((row) => row.id === looking) || null);
+      // Left while it was on its way: drawing now would start a creature nothing would stop.
+      if (here === visit) {
+        paintTitles();
+        paintDetail(titles.titles.find((row) => row.id === looking) || null);
+      }
     } catch (err) {
       toast(err.message, 'error');
     }

@@ -59,6 +59,10 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
   let held = false;
   /** @type {HTMLElement | null} */
   let host = null;
+  /** What was refused last time, back in the box when it is drawn again. */
+  let keepInBox = '';
+  /** Chosen rather than only pointed at: taking the pointer away does not set it going again. */
+  let chosenStep = false;
   /** The last paste's outcome, one line a key, until the next. */
   let lines = [];
   let busy = false;
@@ -139,10 +143,8 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
       }
     }
     busy = false;
-    // Whatever was refused stays in the box to be looked at; what went in does not.
-    const refused = lines.some((line) => !line.ok);
-    const box = /** @type {HTMLTextAreaElement | null} */ (host?.querySelector('[data-key-box]'));
-    if (box && !refused) box.value = '';
+    // Whatever was refused stays in the box to be looked at, past the redraw; what went in does not.
+    keepInBox = keys.filter((_key, i) => !lines[i].ok).join('\n');
     onSaved();
   }
 
@@ -180,6 +182,8 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
         <div class="onbk__do"><button type="button" class="btn" data-key-add>${escapeHtml(t('onb.keys.add'))}</button></div>
         <div data-key-outcome>${outcomeHtml()}</div>
       </div>`;
+    // Put back as a value, never in the markup: a key does not belong in an attribute or the page's HTML.
+    /** @type {HTMLTextAreaElement} */ (host.querySelector('[data-key-box]')).value = keepInBox;
     paintStep();
     schedule();
   }
@@ -193,6 +197,8 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
         picked = card.dataset.keyProvider;
         at = 0;
         held = false;
+        chosenStep = false;
+        keepInBox = '';
         lines = [];
         paint();
         return;
@@ -201,6 +207,7 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
       if (step) {
         at = Number(step.dataset.keyStep);
         held = true;
+        chosenStep = true;
         stop();
         paintStep();
         return;
@@ -209,6 +216,7 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
         // Off to the provider's page: the step they are now on is the one to read when they come back.
         at = 1;
         held = true;
+        chosenStep = true;
         stop();
         paintStep();
         return;
@@ -223,8 +231,8 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
       paintStep();
     });
     const hold = (on) => {
-      held = on;
-      if (on) stop();
+      held = on || chosenStep;
+      if (held) stop();
       else schedule();
     };
     host.addEventListener('pointerenter', () => hold(true));

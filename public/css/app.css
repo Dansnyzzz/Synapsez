@@ -11740,7 +11740,7 @@ html[data-scene][data-theme='light'] {
 html[data-scene] body { background: var(--bg); }
 /* The picture shows in the margins; words get a soft-edged pane as wide as the reading
    column, and the top bar, which sits in those margins, gets one of its own. */
-html[data-scene] .main { background: linear-gradient(90deg, transparent calc(50% - 480px), var(--scene-column) calc(50% - 410px), var(--scene-column) calc(50% + 410px), transparent calc(50% + 480px)); }
+html[data-scene] .main { background: linear-gradient(90deg, transparent calc(50% - 620px), var(--scene-column) calc(50% - 410px), var(--scene-column) calc(50% + 410px), transparent calc(50% + 620px)); }
 html[data-scene] .sidebar, html[data-scene] .detail, html[data-scene] .topbar { background: var(--scene-side); }
 /* Signed out, nothing of a theme shows: the gate covers the whole window, and with no canvas under it. */
 html[data-scene] .gate { background: var(--bg); }
