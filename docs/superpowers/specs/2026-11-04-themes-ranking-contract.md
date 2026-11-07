@@ -28,7 +28,7 @@ A theme's "ui mode" below is what it was painted for: the interface's light or d
 | `rainy-cafe` | a café in the rain | dark | `achievement` | $10 spent |
 | `golden-harbor` | a harbour at sunset | light | `achievement` | $100 spent |
 | `crystal-palace` | a cavern of crystal | dark | `achievement` | $1,000 spent |
-| `new-year-fireworks` | fireworks over a river | dark | `exclusive_event` | 500,000 tokens from 1 to 7 January 2027, first 100 people |
+| `new-year-fireworks` | fireworks over a river | dark | `exclusive_event` | 2,000,000 tokens from 1 to 7 January 2027, first 100 people |
 | `aurora-peak` | aurora over snowy peaks | dark | `exclusive_event` | given by an administrator |
 | `snow-village` | Christmas snow village | dark | `top_quarter` Q4/2026 | top 3 of that quarter, either board |
 | `tet-spring` | Lunar New Year of the Goat | light | `top_quarter` Q1/2027 | top 3 of that quarter, either board |

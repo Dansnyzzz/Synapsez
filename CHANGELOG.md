@@ -12,9 +12,13 @@
 
 **Themes** (schema 39, `public/js/scenes/`, `scene-worker.js`, `theme-picker.js`). Each scene is its own module and runs in a worker, so choosing one never waits for it to be painted; a tile is a picture made ahead of time (`npm run scenes:stills`). Twelve new scenes. A theme no longer decides light or dark. `/theme` in the box. The last press wins, on themes, titles, the whale and the effort dial (`latest.js`), and two preferences saved together both land.
 
-**Boards** run by quarter, show ten and reward three. Every title has a creature (`public/js/scenes/pets.js`) and a panel beside the list saying what earns it. The fireworks go to the first 100 who use 500,000 tokens from 1 to 7 January 2027 (`event_claims`).
+**Boards** run by quarter, show ten and reward three. Every title has a creature (`public/js/scenes/pets.js`) and a panel beside the list saying what earns it. The fireworks go to the first 100 who use 2,000,000 tokens from 1 to 7 January 2027 (`event_claims`).
 
 **The guide** gets a key and picks a model in place (`public/js/onboarding-keys.js`).
+
+**From the review of this round.** A stop books only what that request spent, and nothing if nothing answered. A free model's fallback is checked to be free when it is used. A dead key of one's own is no longer a way past the deployment key's monthly ceiling, and what a provider says about the deployment's key stays on the server. A change of model on a reply that had finished asks nothing. Boards show a chosen name, never a username or an email's first half.
+
+**Older scenes**: firefly grove, deep sea, moon night and aurora peak were redrawn; the lagoon's water lines were softened.
 
 **Calculate** takes a label beside a figure instead of refusing the whole list.
 

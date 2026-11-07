@@ -6,14 +6,14 @@
       "new": {
         "vi": [
           "12 theme mới: mỗi quý tới hết 2027 và mỗi năm 2026, 2027 có theme riêng, thêm theme cho 1 tỷ token và các mốc chi tiêu.",
-          "Theme “Pháo hoa năm mới”: dành cho 100 người đầu tiên dùng đủ 500.000 token trong tuần 1 đến 7/1/2027.",
+          "Theme “Pháo hoa năm mới”: dành cho 100 người đầu tiên dùng đủ 2.000.000 token trong tuần 1 đến 7/1/2027.",
           "Gõ /theme trong ô nhập để đổi theme ngay: rê chuột để xem chuyển động, Enter để dùng, Esc để đóng.",
           "Mỗi danh hiệu có một linh vật chuyển động riêng, danh hiệu càng khó linh vật càng nhiều hiệu ứng. Danh hiệu chưa có vẫn bấm xem được, kèm điều kiện đạt.",
           "Trang Mức sử dụng có thêm Google Gemini và OrcaRouter: đỉnh RPM/TPM, lỗi theo mã, tỉ lệ thành công, ví và số liệu 30 ngày."
         ],
         "en": [
           "12 new themes: one for each quarter to the end of 2027 and for each of 2026 and 2027, plus a billion tokens and the spending marks.",
-          "“New Year Fireworks”: for the first 100 people to use 500,000 tokens between 1 and 7 January 2027.",
+          "“New Year Fireworks”: for the first 100 people to use 2,000,000 tokens between 1 and 7 January 2027.",
           "Type /theme in the box to change theme on the spot: hover to see it move, Enter to use it, Esc to close.",
           "Every title has a moving creature of its own, more elaborate the harder it is to earn. A title you do not hold can still be pressed to see it and what earns it.",
           "The Usage page gains Google Gemini and OrcaRouter: busiest minute against the limits, errors by status, success rate, wallet and the last 30 days."
@@ -25,6 +25,8 @@
           "Tổng quan Mức sử dụng gộp lượt miễn phí của mọi nhà cung cấp thành một dòng, hạn mức chi cũng vậy. Rê chuột vào cột ngày để xem ngày đó.",
           "Hướng dẫn đầu vào: chọn nhà cung cấp, làm từng bước tới khi dán được nhiều key ngay trong hướng dẫn, rồi chọn trong các model gợi ý.",
           "Sáng hay tối giờ chỉ theo cài đặt Giao diện của bạn, theme nào cũng vậy.",
+          "Bảng xếp hạng chỉ hiện tên bạn dùng: tên trùng tên đăng nhập hoặc email sẽ hiện “Một thành viên”. Đổi tên trong Cài đặt để hiện tên của bạn.",
+          "Vẽ lại bốn theme cũ: đom đóm, biển sâu, đêm trăng và cực quang.",
           "Cá voi to hơn, và theme được vẽ ở luồng riêng nên không còn làm đứng trang."
         ],
         "en": [
@@ -32,6 +34,8 @@
           "The Usage overview adds every provider’s free requests into one line, and spending limits into another. Hover a day’s column to see that day.",
           "The getting-started guide: choose a provider, follow it step by step to pasting as many keys as you have, right in the guide, then choose among the suggested models.",
           "Light or dark now follows only your Appearance setting, whichever theme is up.",
+          "Boards show the name you go by: one that matches a sign-in name or an email reads “A member”. Change your name in Settings to show it.",
+          "Four older themes were redrawn: firefly grove, deep sea, moon night and aurora.",
           "A bigger whale, and themes are painted on their own thread, so they no longer hold up the page."
         ]
       },
