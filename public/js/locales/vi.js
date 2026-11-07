@@ -1650,6 +1650,7 @@ export const vi = {
   'usage.name.freeAll': 'lượt model miễn phí hôm nay',
   'usage.name.capAll': 'hạn mức chi',
   'usage.geminiNoLimit': 'Gemini: {used} lượt hôm nay. Google không cho biết giới hạn qua API, nên phần này chưa cộng vào thanh trên cho tới khi Google báo.',
+  'usage.geminiNoLimitHere': '{used} lượt hôm nay. Google không cho biết giới hạn qua API, nên chưa vẽ được thanh cho tới khi Google báo.',
   'usage.nothingThisDay': 'Hôm đó chưa có yêu cầu nào.',
   'usage.gemini.limitsTitle': 'Giới hạn theo model',
   'usage.gemini.limitsHint': 'Giới hạn tính theo project, không theo khoá. RPM và TPM là phút cao nhất Synapsez đếm được trong 28 ngày, cạnh giới hạn gói miễn phí khi đã biết. Con số chính xác của project nằm ở AI Studio.',

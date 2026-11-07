@@ -165,7 +165,7 @@ export function createUsagePanel(host, deps) {
     // Google says what its ceiling is only when it refuses for it, so until then there is a count and no bar.
     const geminiFree = view.report.free?.google;
     if (geminiFree && !(geminiFree.limit > 0) && (scope === 'all' || scope === 'google')) {
-      out.push(`<p class="usage__note">${escapeHtml(t('usage.geminiNoLimit', { used: count(geminiFree.used || 0) }))}</p>`);
+      out.push(`<p class="usage__note">${escapeHtml(t(scope === 'all' ? 'usage.geminiNoLimit' : 'usage.geminiNoLimitHere', { used: count(geminiFree.used || 0) }))}</p>`);
     }
     const orcaFree = view.report.free?.orcarouter;
     if (orcaFree && (scope === 'all' || scope === 'orcarouter')) {

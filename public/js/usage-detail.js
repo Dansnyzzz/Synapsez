@@ -36,6 +36,9 @@ const against = (used, limit, h) => (limit ? `${h.count(used)} / ${h.count(limit
 /** How big a number is, in words a person reads at a glance: 16.1M. */
 const short = (n) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(n) || 0);
 
+/** A share of requests, where a fraction of a percent is the whole story. */
+const rate = (n) => `${(Math.max(0, Number(n) || 0) * 100).toFixed(1)}%`;
+
 const statusName = (status) => {
   const key = `usage.status.${status}`;
   const said = t(key);
@@ -137,12 +140,12 @@ export function orcaDetail(report, h) {
         tile(t('usage.orca.requests'), h.count(metrics.requests ?? 0)),
         tile(t('usage.orca.latency'), seconds(metrics.avgLatencyMs)),
         tile(t('usage.orca.p99'), seconds(metrics.p99Ms)),
-        tile(t('usage.orca.errors'), h.pct(metrics.errorRate ?? 0)),
+        tile(t('usage.orca.errors'), rate(metrics.errorRate)),
       ].join('')
     : '';
   const models = metrics?.models?.length
     ? `<div class="usage__tablebox"><table class="usage__models"><thead><tr><th scope="col">${escapeHtml(t('usage.detail.model'))}</th><th scope="col">${escapeHtml(t('usage.detail.calls'))}</th><th scope="col">${escapeHtml(t('usage.orca.tokens'))}</th><th scope="col">${escapeHtml(t('usage.orca.spend'))}</th><th scope="col">${escapeHtml(t('usage.orca.p50'))}</th><th scope="col">${escapeHtml(t('usage.orca.p95'))}</th><th scope="col">${escapeHtml(t('usage.orca.errors'))}</th></tr></thead><tbody>${metrics.models
-        .map((row) => `<tr><td>${escapeHtml(h.modelShort(row.model))}</td><td>${h.count(row.requests ?? 0)}</td><td>${escapeHtml(short(row.tokens))}</td><td>${h.money(row.spend ?? 0)}</td><td>${seconds(row.p50)}</td><td>${seconds(row.p95)}</td><td>${h.pct(row.errorRate ?? 0)}</td></tr>`)
+        .map((row) => `<tr><td>${escapeHtml(h.modelShort(row.model))}</td><td>${h.count(row.requests ?? 0)}</td><td>${escapeHtml(short(row.tokens))}</td><td>${h.money(row.spend ?? 0)}</td><td>${seconds(row.p50)}</td><td>${seconds(row.p95)}</td><td>${rate(row.errorRate)}</td></tr>`)
         .join('')}</tbody></table></div>`
     : '';
   const counted = report.detail?.orcarouter;

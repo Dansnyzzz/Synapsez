@@ -114,12 +114,24 @@ section('a title says what it is');
 
 section('the drawing and the rules name the same themes');
 {
-  const scenes = path.resolve('public/js/scenes.js');
-  if (fs.existsSync(scenes)) {
-    const source = fs.readFileSync(scenes, 'utf8');
-    const missing = themes.THEMES.filter((t) => t.id !== 'default' && !new RegExp(`^\\s*('${t.id}'|${t.id})[:,]`, 'm').test(source)).map((t) => t.id);
-    check('every theme has a scene', !missing.length, missing.join());
-  }
+  const source = fs.readFileSync('public/js/scenes/catalog.js', 'utf8');
+  const painted = themes.THEMES.filter((t) => t.id !== 'default');
+  const uncatalogued = painted.filter((t) => !new RegExp(`^\\s*('${t.id}'|${t.id})[:,]`, 'm').test(source)).map((t) => t.id);
+  check('every theme is in the catalogue', !uncatalogued.length, uncatalogued.join());
+  const unpainted = painted.filter((t) => !fs.existsSync(`public/js/scenes/${t.id}.js`)).map((t) => t.id);
+  check('and has a scene', !unpainted.length, unpainted.join());
+  const noStill = painted.filter((t) => !fs.existsSync(`public/assets/scenes/${t.id}.webp`)).map((t) => t.id);
+  check('and a picture for its tile (npm run scenes:stills)', !noStill.length, noStill.join());
+  const big = painted.filter((t) => fs.existsSync(`public/assets/scenes/${t.id}.webp`) && fs.statSync(`public/assets/scenes/${t.id}.webp`).size > 60 * 1024).map((t) => t.id);
+  check('small enough for a page of them to load quickly', !big.length, big.join());
+  const sources = painted.filter((t) => fs.existsSync(`public/js/scenes/${t.id}.js`)).map((t) => [t.id, fs.readFileSync(`public/js/scenes/${t.id}.js`, 'utf8')]);
+  const pagely = sources.filter(([, code]) => /\b(?:window|document)\./.test(code.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''))).map(([id]) => id);
+  check('and it can be drawn in the worker: no page in it', !pagely.length, pagely.join());
+  const pets = fs.readFileSync('public/js/ranking-panel.js', 'utf8');
+  const creatures = [...new Set([...pets.matchAll(/'(pet-[a-z-]+)'/g)].map((m) => m[1]))];
+  const petCode = fs.readFileSync('public/js/scenes/pets.js', 'utf8');
+  check('every title has a creature, in the catalogue and drawn', creatures.length === 11 && creatures.every((id) => source.includes(`'${id}'`) && petCode.includes(`'${id}'`)), creatures.join());
+  check('a different one for each', new Set(creatures).size === 11);
   const locale = fs.readFileSync('public/js/locales/vi.js', 'utf8');
   const unnamed = themes.THEMES.filter((t) => !locale.includes(t.id)).map((t) => t.id);
   check('and every theme has words', !unnamed.length, unnamed.join());

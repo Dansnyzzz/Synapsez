@@ -2526,6 +2526,43 @@ section("the + menu's choices stay on the account that made them");
 }
 
 // ── Settings → Privacy → Your data (owner, 2026-11-01) ──────────────
+section('what a provider answered, and an event place, stay on the account they belong to');
+{
+  const erin = await store.createUser({ id: 'u-out-erin', email: 'erin.out@example.com', name: 'Erin', passwordHash: 'x', role: 'user' });
+  const fay = await store.createUser({ id: 'u-out-fay', email: 'fay.out@example.com', name: 'Fay', passwordHash: 'x', role: 'user' });
+  await store.recordOutcome(erin.id, { provider: 'google', model: 'google/x', status: 404 });
+  await store.recordOutcome(erin.id, { provider: 'google', model: 'google/x', status: 404 });
+  await store.recordUsage(erin.id, { id: 'out-1', chatId: null, model: 'google/x', inputTokens: 10, outputTokens: 1, costUsd: 0, role: 'turn' });
+  const mine = await store.providerDetail(erin.id, 'google');
+  check('an account sees its own failures, counted by status', mine.errors.length === 1 && mine.errors[0].calls === 2 && mine.errors[0].status === 404, JSON.stringify(mine.errors));
+  check('and its own requests, with the busiest minute', mine.models[0]?.calls === 1 && mine.models[0]?.peakRpm === 1 && mine.models[0]?.peakTpm === 10, JSON.stringify(mine.models));
+  const theirs = await store.providerDetail(fay.id, 'google');
+  check('another account sees none of it', !theirs.errors.length && !theirs.models.length && !theirs.daily.length, JSON.stringify(theirs));
+  check('one place is one person\'s', (await store.claimEventPlace('iso', erin.id, 1)) === 1 && (await store.claimEventPlace('iso', fay.id, 1)) === null);
+  check('a place asked for again is the same place', (await store.claimEventPlace('iso', erin.id, 1)) === 1);
+  await store.deleteUser(erin.id);
+  check('an account deleted takes what it was answered with it', (await driver.query("SELECT COUNT(*)::int AS n FROM provider_outcomes WHERE user_id = 'u-out-erin'"))[0].n === 0);
+  check('and its place', (await driver.query("SELECT COUNT(*)::int AS n FROM event_claims WHERE user_id = 'u-out-erin'"))[0].n === 0);
+}
+
+section('a stop being finished with belongs to the conversation it was pressed in');
+{
+  const gil = await store.createUser({ id: 'u-stop-gil', email: 'gil@example.com', name: 'Gil', passwordHash: 'x', role: 'user' });
+  const hal = await store.createUser({ id: 'u-stop-hal', email: 'hal@example.com', name: 'Hal', passwordHash: 'x', role: 'user' });
+  await store.createChat(gil.id, { id: 'c-stop-gil', title: 'x', model: 'm' });
+  await store.claimChatRun(gil.id, 'c-stop-gil', 'run-1');
+  check('another account cannot stop it', (await store.stopChatRun(hal.id, 'c-stop-gil')) === false);
+  check('nor read who holds it', (await store.chatRunHolder(hal.id, 'c-stop-gil')) === null);
+  await store.clearRunStop(hal.id, 'c-stop-gil');
+  check('its holder is still its holder', (await store.chatRunHolder(gil.id, 'c-stop-gil'))?.run_lock_by === 'run-1');
+  check('its owner can', (await store.stopChatRun(gil.id, 'c-stop-gil')) === true);
+  check('which says a stop is being finished with', !!(await store.chatRunHolder(gil.id, 'c-stop-gil'))?.run_stop_at);
+  await store.clearRunStop(hal.id, 'c-stop-gil');
+  check('and nobody else can say it is over', !!(await store.chatRunHolder(gil.id, 'c-stop-gil'))?.run_stop_at);
+  await store.clearRunStop(gil.id, 'c-stop-gil');
+  check('until the run itself does', !(await store.chatRunHolder(gil.id, 'c-stop-gil'))?.run_stop_at);
+}
+
 section('your data: each list is the account\'s own, shared apart from the rest');
 {
   // Accounts of its own: by here the suite has deleted Alice's.
