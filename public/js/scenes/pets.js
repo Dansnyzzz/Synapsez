@@ -421,7 +421,7 @@ const cosmicWhale = {
       dot(ctx, cx - 39, cy - 9, 2, '#120a33');
     }
     // Two planets on one tilted orbit, passing behind and in front.
-    for (const [speed, phaseAt, r, hue, ring] of [[0.5, 0, 6, '#ffb36b', true], [0.32, 2.4, 4, '#74d6ff', false]]) {
+    for (const [speed, phaseAt, r, hue, ring] of /** @type {[number, number, number, string, boolean][]} */ ([[0.5, 0, 6, '#ffb36b', true], [0.32, 2.4, 4, '#74d6ff', false]])) {
       const a = t * speed + phaseAt;
       const px = cx - 6 + Math.cos(a) * 84;
       const py = cy + Math.sin(a) * 26;
@@ -640,7 +640,7 @@ const goldWhale = {
     ctx.globalCompositeOperation = 'source-over';
     glow(ctx, cx, cy, 104, 'rgba(255,190,70,0.42)', 0.6 + swell * 0.4);
     // Two rings of light: the half behind was drawn dimmer, so it reads as going round.
-    for (const [rx, ry, tilt, speed, colour] of [[86, 22, -0.22, 0.9, '#ffe48a'], [78, 18, 0.2, -0.7, '#ffc24d']]) {
+    for (const [rx, ry, tilt, speed, colour] of /** @type {[number, number, number, number, string][]} */ ([[86, 22, -0.22, 0.9, '#ffe48a'], [78, 18, 0.2, -0.7, '#ffc24d']])) {
       ctx.strokeStyle = colour;
       ctx.lineWidth = 1.4;
       ctx.globalAlpha = 0.6;
@@ -683,7 +683,7 @@ const goldWhale = {
     ctx.fill();
     ctx.fillStyle = '#9a5f0d';
     ctx.fillRect(Math.round(hx - 16), Math.round(hy + 5), 32, 3);
-    for (const [gx, gy, colour] of [[-18, -8, '#ff5d8f'], [0, -13, '#7fd8ff'], [18, -8, '#7dffb0']]) {
+    for (const [gx, gy, colour] of /** @type {[number, number, string][]} */ ([[-18, -8, '#ff5d8f'], [0, -13, '#7fd8ff'], [18, -8, '#7dffb0']])) {
       dot(ctx, hx + gx - 1, hy + gy - 1, 3, colour);
       glow(ctx, hx + gx, hy + gy, 7, 'rgba(255,255,255,0.9)', 0.4 + 0.4 * Math.sin(t * 3 + gx));
     }

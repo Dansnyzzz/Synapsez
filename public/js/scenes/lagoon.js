@@ -107,9 +107,9 @@ const lagoon = {
   },
   draw(ctx, t, s) {
     ctx.drawImage(s.water, 0, 0);
-    ctx.globalAlpha = 0.42;
-    slide(ctx, s.netA, along(t, 3, 480));
     ctx.globalAlpha = 0.3;
+    slide(ctx, s.netA, along(t, 3, 480));
+    ctx.globalAlpha = 0.2;
     slide(ctx, s.netB, -along(t, 2, 480));
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#ffffff';

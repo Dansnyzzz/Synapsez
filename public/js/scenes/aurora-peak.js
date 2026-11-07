@@ -1,6 +1,13 @@
-import { W, H, clamp, mix, smooth, wave, seeded, ramp, newCanvas, Art, noise1, noise2, fbm1, ridged, starField, drawStars, ridge, fir } from './art.js';
+import { W, H, clamp, mix, smooth, wave, seeded, rgba, ramp, bayer, newCanvas, Art, noise1, noise2, fbm1, ridged, starField, drawStars, ridge, fir } from './art.js';
 
-/** Curtains of light over snow: one of the few things in the sky that moves by itself. */
+/** Where the frozen lake meets the far shore, and how far down it reaches. */
+const SHORE = 204;
+const LAKE = 46;
+
+/**
+ * Curtains of light over snow and a frozen lake that holds them, one cabin awake at
+ * the near side: one of the few things in the sky that moves by itself.
+ */
 const auroraPeak = {
   build() {
     const rand = seeded(6601);
@@ -69,11 +76,59 @@ const auroraPeak = {
     const PINE = ramp('#06101a', '#0a1824', '#0f2230', '#16303d');
     for (let i = 0; i < 44; i += 1) {
       const x = Math.floor(rand() * W);
+      if (x > 124 && x < 180) continue;
       fir(ground, x, Math.round(groundH(x)) + 3 + Math.floor(rand() * 18), 14 + rand() * 24, PINE, rand);
+    }
+    // A cabin, the one warm thing in all this.
+    const cabinX = 150;
+    const cabinY = Math.round(groundH(cabinX)) + 5;
+    ground.rect(cabinX - 12, cabinY - 11, 25, 12, rgba('#1b1a24'));
+    for (let y = cabinY - 11; y < cabinY; y += 2) ground.rect(cabinX - 12, y, 25, 1, rgba('#262430'));
+    for (let k = 0; k < 10; k += 1) ground.rect(cabinX - 15 + k, cabinY - 11 - k, 31 - k * 2, 1, rgba(k < 2 ? '#a8bed1' : '#dfeaf3'));
+    ground.rect(cabinX + 6, cabinY - 22, 3, 7, rgba('#14131b'));
+    ground.rect(cabinX - 8, cabinY - 8, 4, 4, rgba('#ffd27f'));
+    ground.rect(cabinX + 3, cabinY - 8, 4, 4, rgba('#ffc465'));
+    ground.rect(cabinX - 2, cabinY - 9, 3, 9, rgba('#0f0e15'));
+    // The lake's own marks: wind-scoured streaks, seen at a low angle.
+    const ice = new Art(W, LAKE);
+    const scour = noise2(6604, 64);
+    const ICE = [rgba('#0b1a2c'), rgba('#c9e4ee')];
+    for (let y = 0; y < LAKE; y += 1) {
+      for (let x = 0; x < W; x += 1) {
+        const v = (scour(x / 38, y * 0.9) - 0.5) * 2.6;
+        if (Math.abs(v) > 0.38 + bayer(x, y) * 0.9) ice.put(x, y, ICE[v > 0 ? 1 : 0]);
+      }
+    }
+    const shore = new Art(W, 26);
+    const SHOREWOOD = ramp('#050c16', '#07121e', '#0a1826', '#0e2130');
+    for (let i = 0; i < 150; i += 1) {
+      const x = Math.floor(rand() * W);
+      fir(shore, x, 26, 7 + rand() * 13, SHOREWOOD, rand);
+    }
+    shore.rect(0, 25, W, 1, SHOREWOOD[0]);
+    const horizon = newCanvas(1, 90);
+    {
+      const g = horizon.getContext('2d');
+      const grad = g.createLinearGradient(0, 0, 0, 90);
+      grad.addColorStop(0, 'rgba(90,255,180,0)');
+      grad.addColorStop(0.66, 'rgba(90,255,180,0.34)');
+      grad.addColorStop(1, 'rgba(70,200,190,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 1, 90);
+    }
+    const warm = newCanvas(48, 48);
+    {
+      const g = warm.getContext('2d');
+      const grad = g.createRadialGradient(24, 24, 0, 24, 24, 24);
+      grad.addColorStop(0, 'rgba(255,190,110,0.5)');
+      grad.addColorStop(0.3, 'rgba(255,160,80,0.18)');
+      grad.addColorStop(1, 'rgba(255,140,60,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 48, 48);
     }
     const flakes = [];
     for (let i = 0; i < 80; i += 1) flakes.push({ x: rand() * W, y: rand() * H, v: 5 + rand() * 11, sway: 3 + rand() * 7, phase: rand(), big: rand() < 0.15 });
-    return { sky: sky.canvas(), green, violet, far: far.canvas(), near: near.canvas(), ground: ground.canvas(), stars: starField(rand, 150, 150), flakes, noise: noiseA };
+    return { sky: sky.canvas(), green, violet, far: far.canvas(), near: near.canvas(), ground: ground.canvas(), ice: ice.canvas(), shore: shore.canvas(), horizon, warm, cabin: [cabinX, cabinY], stars: starField(rand, 150, 150), flakes, noise: noiseA };
   },
   draw(ctx, t, s) {
     ctx.drawImage(s.sky, 0, 0);
@@ -91,11 +146,49 @@ const auroraPeak = {
       }
       ctx.globalAlpha = 1;
     };
-    band(s.violet, 92, 110, 7, 3.3, 0.62);
-    band(s.green, 112, 104, 10, 0.7, 0.9);
+    band(s.violet, 100, 110, 7, 3.3, 0.62);
+    band(s.green, 126, 112, 10, 0.7, 0.92);
+    const breath = 0.8 + 0.2 * wave(t, 8, 0.7);
+    // What the curtains throw on the air low down, and on the snow of the peaks.
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = breath;
+    ctx.drawImage(s.horizon, 0, 0, 1, 90, 0, 60, W, 134);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
     ctx.drawImage(s.far, 0, H - 190);
     ctx.drawImage(s.near, 0, H - 150);
-    ctx.drawImage(s.ground, 0, H - 70);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.3 * breath;
+    ctx.drawImage(s.horizon, 0, 0, 1, 90, 0, 104, W, 110);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    // The lake holds everything above it, squeezed flat by the low angle.
+    ctx.save();
+    ctx.translate(0, SHORE);
+    ctx.scale(1, -1);
+    ctx.drawImage(ctx.canvas, 0, 40, W, SHORE - 40, 0, -LAKE, W, LAKE);
+    ctx.restore();
+    ctx.fillStyle = 'rgba(8,22,40,0.34)';
+    ctx.fillRect(0, SHORE, W, LAKE);
+    ctx.globalAlpha = 0.34;
+    ctx.drawImage(s.ice, 0, SHORE);
+    ctx.globalAlpha = 1;
+    ctx.drawImage(s.shore, 0, SHORE - 25);
+    ctx.drawImage(s.ground, 0, H - 58);
+    // The cabin's windows and the snow they light; its smoke going straight up in the cold.
+    const [cx, cy] = s.cabin;
+    const flicker = 0.82 + 0.1 * wave(t, 2.3) + 0.08 * wave(t, 0.9, 0.3);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = flicker;
+    ctx.drawImage(s.warm, cx - 24, cy + H - 58 - 28);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#c6d0dc';
+    for (let k = 0; k < 16; k += 1) {
+      const rise = (t * 2 + k * 3.1) % 50;
+      ctx.globalAlpha = 0.34 * (1 - rise / 50);
+      ctx.fillRect(Math.round(cx + 7 + Math.sin(rise / 7) * rise * 0.14), Math.round(cy + H - 58 - 23 - rise), rise > 24 ? 2 : 1, rise > 24 ? 2 : 1);
+    }
+    ctx.globalAlpha = 1;
     ctx.fillStyle = 'rgba(240,248,255,0.85)';
     for (const f of s.flakes) {
       const y = (f.y + t * f.v) % H;
