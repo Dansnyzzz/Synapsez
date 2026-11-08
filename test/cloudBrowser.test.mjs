@@ -349,6 +349,11 @@ section('the start script installs once per build and then runs the service');
   check('pins its dependencies', script.includes('playwright-core@1.63.0') && script.includes('@sparticuz/chromium@153.0.0') && script.includes('ws@8.21.1'));
   check('writes the Python kernel beside the service', script.includes('"$SYNZ_KERNEL" | base64 -d > kernel.py'));
   check('the build changes when the kernel does — a new kernel reinstalls', cb.__testing.service().build.length === 16 && fs.readFileSync(new URL('../server/cloudBrowser/kernel.py', import.meta.url), 'utf8').includes('def main'));
+  // Owner, 2026-11-08: the Python session fetched Chromium again on every new machine.
+  const service = fs.readFileSync(new URL('../server/cloudBrowser/service.mjs', import.meta.url), 'utf8');
+  const baked = /const BROWSERS = '([^']+)'/.exec(fs.readFileSync(new URL('../scripts/e2b-template.mjs', import.meta.url), 'utf8'))?.[1];
+  check('the Python session looks for browsers where the template put them', !!baked && service.includes(`const TEMPLATE_BROWSERS = '${baked}'`) && /env\.PLAYWRIGHT_BROWSERS_PATH = TEMPLATE_BROWSERS/.test(service), baked);
+  check('  unless the account has fetched its own', /!fs\.existsSync\(path\.join\(env\.HOME, '\.cache', 'ms-playwright'\)\)/.test(service));
 
   const root = cb.startScript('abc123', { root: true });
   check('as root: refuses to go on when it is not root', /if \[ "\$\(id -u\)" != 0 \]; then echo "not root" >&2; exit 3; fi/.test(root));
