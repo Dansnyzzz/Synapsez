@@ -1433,7 +1433,7 @@ Laid out as Claude's (2026-11-01): **Filter by** the plugin a skill comes with o
 
 Administrators with the `themes` permission choose each theme's badge and give or take a theme, under Settings → People. Which theme a period's prize is follows the badge: one naming that period wins, otherwise the one marked for any period.
 
-The whale on the writing box follows what the assistant is doing, or holds one state, or is off; the choice is on the Theme page. Its art comes from Nwflower/dsh-claude-style under MIT (`public/assets/mascot/NOTICE.txt`).
+The whale on the writing box follows what the assistant is doing, or holds one state, or is off; the choice is on the Theme page. Wearing a title puts that title's creature there instead, drawn in pixels with the same eight states (`public/js/mascots/`; the minnow, the electric ray and the golden whale so far, the whale standing in for the rest). The whale's art is by calmly-eating-bugs, taken from Nwflower/dsh-claude-style, where it ships by the artist's permission to that plugin; Synapsez holds no licence of its own for it (`public/assets/mascot/NOTICE.txt`).
 
 ---
 
