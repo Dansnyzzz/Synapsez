@@ -107,6 +107,35 @@ export function watchLease({ store, userId, chatId, runId, seq, controller, watc
 }
 
 /**
+ * Stop a run with nobody watching once its own row says it was stopped.
+ *
+ * A scheduled task or a workflow step holds no conversation lease for
+ * `watchLease` to read: its record is the task or run row. Stop on this
+ * instance aborts it at once through `abortHere`; on another instance this
+ * read is what hears of it, within `everyMs`. A read that fails says nothing,
+ * and the run carries on.
+ *
+ * @param {() => Promise<boolean>} stillWanted  false once the row says stopped
+ * @param {AbortController} controller
+ * @returns {() => void} call it when the run ends
+ */
+export function watchStopped(stillWanted, controller, everyMs = STOP_WATCH_MS) {
+  const timer = setInterval(async () => {
+    if (controller.signal.aborted) return;
+    let wanted = true;
+    try {
+      wanted = await stillWanted();
+    } catch (err) {
+      log.error('could not read whether a run was stopped', err);
+      return;
+    }
+    if (!wanted && !controller.signal.aborted) controller.abort('stopped');
+  }, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
+/**
  * Wait until a stopped run has written what it had, so what comes next lands after it.
  *
  * @param {any} store @param {string} userId @param {string} chatId

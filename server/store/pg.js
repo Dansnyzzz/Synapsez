@@ -3930,6 +3930,30 @@ export function createPgStore(connectionString) {
       }
     },
 
+    /**
+     * The person stops a task that is running (the Bot page's Stop).
+     *
+     * Scoped to the account and to a task still marked `running`. The schedule is
+     * set on from now as `finishTask` would: a claim pushed `next_run_at` an hour
+     * on as its lease, and an invocation that died never writes the real one, so
+     * a stopped daily task would otherwise run again an hour later. A one-off with
+     * no next run retires, as it would have after running.
+     *
+     * @returns the task as stopped, or null when it was not running
+     */
+    async stopTaskRun(userId, id, { status, nextRunAt = null, retire = true }) {
+      const rows = await q(
+        `UPDATE scheduled_tasks
+            SET run_state = NULL, lease_until = NULL, last_status = $3,
+                next_run_at = COALESCE($4::timestamptz, next_run_at),
+                enabled = CASE WHEN $4::timestamptz IS NULL AND $5 THEN FALSE ELSE enabled END
+          WHERE user_id = $1 AND id = $2 AND run_state = 'running'
+      RETURNING *`,
+        [userId, id, status, nextRunAt, Boolean(retire)],
+      );
+      return rows[0] ?? null;
+    },
+
     // ── workflows ───────────────────────────────────────────────────
     async listWorkflows(userId) {
       return q('SELECT * FROM workflows WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
@@ -3970,8 +3994,8 @@ export function createPgStore(connectionString) {
     },
     async createWorkflow(userId, wf) {
       const rows = await q(
-        `INSERT INTO workflows (id, user_id, title, steps, model, cron, tz, next_run_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        `INSERT INTO workflows (id, user_id, title, steps, model, cron, tz, next_run_at, policy, project_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [
           wf.id,
           userId,
@@ -3981,6 +4005,10 @@ export function createPgStore(connectionString) {
           wf.cron ?? null,
           wf.tz ?? null,
           wf.nextRunAt ?? null,
+          // Schema 40: what a run may do unwatched, and the project it answers
+          // from. Null is the account's default and no project, as for a task.
+          wf.policy ?? null,
+          wf.projectId ?? null,
         ],
       );
       return rows[0];
@@ -4005,6 +4033,8 @@ export function createPgStore(connectionString) {
       if (patch.nextRunAt !== undefined) put('next_run_at', patch.nextRunAt);
       if (patch.endsOn !== undefined) put('ends_on', patch.endsOn);
       if (patch.enabled !== undefined) put('enabled', patch.enabled);
+      if (patch.policy !== undefined) put('policy', patch.policy);
+      if (patch.projectId !== undefined) put('project_id', patch.projectId);
       if (!sets.length) {
         // Nothing asked for. Return the row unchanged rather than building an
         // `UPDATE ... SET` with no assignments, which is a syntax error.
@@ -4135,8 +4165,15 @@ export function createPgStore(connectionString) {
       );
       return rows[0] ?? null;
     },
-    /** Write back position and per-step state, keeping the lease as given. */
-    async saveWorkflowRun(id, { status, steps, cursor, chatId, leaseUntil, finished }) {
+    /**
+     * Write back position and per-step state, keeping the lease as given.
+     *
+     * @param whileRunning  only if the run is still going. The invocation working
+     *   a run writes this way, so a stop pressed in the meantime (`stopWorkflowRun`)
+     *   stays the last word instead of being overwritten by the step that was
+     *   stopped. Null when the run is no longer running.
+     */
+    async saveWorkflowRun(id, { status, steps, cursor, chatId, leaseUntil, finished, whileRunning = false }) {
       const rows = await q(
         `UPDATE workflow_runs
             SET status      = COALESCE($2, status),
@@ -4145,7 +4182,7 @@ export function createPgStore(connectionString) {
                 chat_id     = COALESCE($5, chat_id),
                 lease_until = $6,
                 finished_at = CASE WHEN $7 THEN NOW() ELSE finished_at END
-          WHERE id = $1 RETURNING *`,
+          WHERE id = $1 AND ($8::boolean IS NOT TRUE OR status = 'running') RETURNING *`,
         [
           id,
           status ?? null,
@@ -4154,7 +4191,28 @@ export function createPgStore(connectionString) {
           chatId ?? null,
           leaseUntil ?? null,
           Boolean(finished),
+          Boolean(whileRunning),
         ],
+      );
+      return rows[0] ?? null;
+    },
+    /**
+     * The person stops a run that is going (the Bot page's Stop).
+     *
+     * Scoped to the account, and only a run still `running`: one that finished a
+     * moment ago keeps what it finished as. The lease goes with it, so no
+     * invocation picks the run up again, and the one working it hears of the stop
+     * by reading the status (`watchStopped` in liveRuns.js).
+     *
+     * @param steps  the step states with the one that was running marked stopped
+     */
+    async stopWorkflowRun(userId, id, steps) {
+      const rows = await q(
+        `UPDATE workflow_runs
+            SET status = 'cancelled', steps = $3::jsonb, lease_until = NULL, finished_at = NOW()
+          WHERE user_id = $1 AND id = $2 AND status = 'running'
+      RETURNING *`,
+        [userId, id, toJson(steps)],
       );
       return rows[0] ?? null;
     },
