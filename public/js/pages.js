@@ -1302,6 +1302,8 @@ export function createPages({
     sortPill.hidden = true;
     newButton.hidden = true;
     $('page-search-open').hidden = true;
+    // A list still loading is not drawn over this page.
+    loadTurn += 1;
     // One task on its own page is not one of the Bot page's tabs.
     botTabs.hidden = true;
     notice.hidden = true;
