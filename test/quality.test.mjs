@@ -4,7 +4,7 @@
  *
  *   node test/quality.test.mjs
  */
-import { addressKey, evidenceOf, unsourcedLinks, applyEdits, unlink, checkAnswer, textsIn } from '../server/qualityGate.js';
+import { addressKey, evidenceOf, unsourcedLinks, applyEdits, unlink, checkAnswer, textsIn, settleMarks } from '../server/qualityGate.js';
 
 let failures = 0;
 const section = (n) => console.log(`\n\x1b[1m${n}\x1b[0m`);
@@ -73,6 +73,19 @@ section('the repair can only touch the flagged sentences');
   const chatty = applyEdits(answer, 'Sure! Here is the fix…', flagged, evidence);
   check('  and a reply that is not JSON changes nothing', chatty === null || (chatty.applied === 0 && chatty.text === answer), JSON.stringify(chatty));
   check('the fall-back keeps the words and drops the link', unlink(answer, flagged) === 'Đúng: [SBV](https://sbv.gov.vn/lai-suat).\nSai: phân tích.', unlink(answer, flagged));
+}
+
+section('a source named "unverified" beside its own page, which was read, is said once');
+{
+  // Screenshot 12, owner 2026-11-08.
+  const both = 'Thông tư mới thay thế bản cũ ([Công báo Chính phủ] (unverified) — văn bản: [Báo cáo](https://tuoitre.vn/bao-cao-456.htm)). Nếu không thì sai.';
+  const settled = settleMarks(both, evidence);
+  check('the name and its mark go, the read link stays', settled === 'Thông tư mới thay thế bản cũ (văn bản: [Báo cáo](https://tuoitre.vn/bao-cao-456.htm)). Nếu không thì sai.', settled);
+  const alone = 'Thông tư mới thay thế bản cũ ([Công báo Chính phủ] (chưa kiểm chứng)). Câu khác có [Báo cáo](https://tuoitre.vn/bao-cao-456.htm).';
+  const kept = settleMarks(alone, evidence);
+  check('  with no read link in that sentence, the mark stays, without the empty brackets', kept === 'Thông tư mới thay thế bản cũ (Công báo Chính phủ (chưa kiểm chứng)). Câu khác có [Báo cáo](https://tuoitre.vn/bao-cao-456.htm).', kept);
+  const figure = 'Lãi suất 7,5% (unverified) theo [Báo cáo](https://tuoitre.vn/bao-cao-456.htm).';
+  check('  a figure\'s mark is never touched', settleMarks(figure, evidence) === figure);
 }
 
 section('the gate end to end');

@@ -319,6 +319,45 @@ export function unlink(answer, flagged) {
     .join('\n');
 }
 
+/** A source's name written as a link that went nowhere, then marked by the repair. */
+const MARKED_NAME = /\[([^\]\n]+)\](?!\()\s*\((?:unverified|chưa kiểm chứng)\)/giu;
+
+/**
+ * A source named "(unverified)" in the same sentence as a link the conversation
+ * read is two answers at once (owner, 2026-11-08, screenshot 12: "([Công báo Chính
+ * phủ] (unverified) — văn bản: <the gazette's own link>"). The repair kept the name
+ * and then cited the page after all; the name and its mark go. Where no read link is
+ * near, the name stays with its mark, without the brackets that only meant "a link
+ * goes here". A figure's mark is not a name in brackets and is never touched.
+ *
+ * @param {string} answer
+ * @param {{ keys: Set<string>, hosts: Set<string> }} evidence
+ */
+export function settleMarks(answer, evidence) {
+  if (!MARKED_NAME.test(answer)) return answer;
+  MARKED_NAME.lastIndex = 0;
+  return answer
+    .split('\n')
+    .map((line) => {
+      if (!line.match(MARKED_NAME)) return line;
+      const sentenceAt = (index) => {
+        const before = line.slice(0, index);
+        const start = Math.max(before.search(/[.!?](?=\s)(?!.*[.!?]\s)/su) + 1, 0);
+        const rest = line.slice(index).search(/[.!?](?=\s|$)/u);
+        return line.slice(start, rest < 0 ? line.length : index + rest + 1);
+      };
+      const cited = (sentence) =>
+        (sentence.replace(CODE_SPAN, ' ').match(URL_RE) || []).some((raw) => accountedFor(trimEnd(raw, TRAILING), evidence));
+      const settled = line.replace(MARKED_NAME, (whole, name, at) => (cited(sentenceAt(at)) ? '' : `${name} ${whole.match(/\((?:unverified|chưa kiểm chứng)\)/iu)[0]}`));
+      return settled
+        .replace(/\(\s*[—–-]\s*/gu, '(')
+        .replace(/\(\s*\)/g, '')
+        .replace(/ {2,}/g, ' ')
+        .replace(/ +([,.;:)])/g, '$1');
+    })
+    .join('\n');
+}
+
 /** What the gate says it did, in the account's language. */
 export function gateNote({ fixed, removed }, language = 'en') {
   const vi = language === 'vi';
@@ -413,6 +452,7 @@ export async function checkAnswer({ answer: written, messages, sources = [], mor
   }
   const left = stillFlagged(text);
   if (left.length) text = unlink(text, left);
+  text = settleMarks(text, evidence);
   const removed = left.length + dropped;
   const note = gateNote({ fixed, removed }, language);
   return { text: note ? `${text.trimEnd()}\n\n${note}` : text, changed: true, flagged, fixed, removed };

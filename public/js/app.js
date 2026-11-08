@@ -28,7 +28,7 @@ import { createViewer } from './viewer.js';
 import { shouldAutoPreview } from './autopreview.js';
 import { createPages } from './pages.js';
 import { createProjectPage } from './project-page.js';
-import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES } from './i18n.js';
+import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES, localeTag } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
 import { humanSize, localMoment, localTimes } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
@@ -4648,7 +4648,7 @@ function renderUsage({ input, output, cost, priced, estimated, cacheRead }) {
     $('composer-meta').textContent = '';
     return;
   }
-  const tokens = t('usage.tokens').replace('{n}', (input + output).toLocaleString());
+  const tokens = t('usage.tokens').replace('{n}', (input + output).toLocaleString(localeTag()));
   // "~$" only when the figure is our own arithmetic. When the provider invoiced
   // the turn — OpenRouter and OrcaRouter both do — the number is exact and the
   // tilde would be understating what we actually know.
@@ -6544,11 +6544,11 @@ async function loadAdmin() {
       .map((u) => {
         const tags = [
           t('admin.chatCount', { n: u.chat_count }),
-          t('admin.tokensThisMonth', { n: Number(u.tokens_this_month || 0).toLocaleString() }),
+          t('admin.tokensThisMonth', { n: Number(u.tokens_this_month || 0).toLocaleString(localeTag()) }),
           u.has_worker ? t('admin.workerPaired') : null,
           u.email_verified_at ? null : t('admin.unconfirmed'),
           u.suspended_at ? t('admin.suspended') : null,
-          u.monthly_token_limit ? t('admin.limit', { n: Number(u.monthly_token_limit).toLocaleString() }) : null,
+          u.monthly_token_limit ? t('admin.limit', { n: Number(u.monthly_token_limit).toLocaleString(localeTag()) }) : null,
         ].filter(Boolean);
 
         const self = u.id === state.boot.user.id;

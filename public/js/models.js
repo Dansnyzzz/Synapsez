@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { t, currentLanguage } from './i18n.js';
+import { t, currentLanguage, localeTag } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { toast, revealInStrip } from './render.js';
 import { parseQuery, familyLabel } from './search.js';
@@ -194,8 +194,8 @@ export function createModelBrowser({ onPick, recommended = () => null }) {
     }
     statusLabel.textContent = status.total
       ? t('models.libraryStatus', {
-          total: status.total.toLocaleString(),
-          free: status.free.toLocaleString(),
+          total: status.total.toLocaleString(localeTag()),
+          free: status.free.toLocaleString(localeTag()),
           when: relative(status.refreshedAt),
         })
       : t('models.empty');
@@ -419,7 +419,7 @@ export function createModelBrowser({ onPick, recommended = () => null }) {
     btn.textContent = t('models.refreshing');
     try {
       const status = await api.refreshModels();
-      toast(t('models.libraryUpdated', { total: status.total.toLocaleString() }));
+      toast(t('models.libraryUpdated', { total: status.total.toLocaleString(localeTag()) }));
       await load();
     } catch (err) {
       toast(err.message, 'error');

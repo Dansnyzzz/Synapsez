@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { t } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { openMenu } from './menu.js';
 // `repeatsAs` is imported rather than copied: one description of what a cron
@@ -46,7 +46,7 @@ const ago = (value) => {
   if (seconds < 2592000) return n('when.days', Math.round(seconds / 86400));
   // Past a month the date is more use than the distance to it. `undefined` as
   // the locale means the browser's, which is the right answer for a date.
-  return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return new Date(then).toLocaleDateString(localeTag(), { month: 'short', day: 'numeric' });
 };
 
 
@@ -1200,7 +1200,7 @@ export function createPages({
   /** When a row runs next, in its own zone, or that it only runs when pressed. */
   const nextText = (row) =>
     row.next_run_at
-      ? new Date(row.next_run_at).toLocaleString(undefined, {
+      ? new Date(row.next_run_at).toLocaleString(localeTag(), {
           weekday: 'short',
           day: 'numeric',
           month: 'short',

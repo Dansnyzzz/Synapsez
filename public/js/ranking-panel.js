@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { t } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 import { latestOnly } from './latest.js';
 import { escapeHtml } from './markdown.js';
 import { playInFrame } from './scenes.js';
@@ -54,8 +54,8 @@ function periodText(scope, key) {
   return `${quarter}/${year}`;
 }
 
-const tokens = (n) => Number(n || 0).toLocaleString();
-const dollars = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const tokens = (n) => Number(n || 0).toLocaleString(localeTag());
+const dollars = (n) => `$${Number(n || 0).toLocaleString(localeTag(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /**
  * @param {{ host: HTMLElement, toast: (text: string, kind?: string) => void, savePrefs: (patch: any) => Promise<any> }} deps
@@ -98,7 +98,7 @@ export function createRanking({ host, toast, savePrefs }) {
         <label class="ranking__pick"><span class="sr-only">${escapeHtml(t('ranking.period'))}</span>
           <select class="sselect" data-period>${board.keys.map((k) => `<option value="${escapeHtml(k)}"${k === board.key ? ' selected' : ''}>${escapeHtml(periodText(board.scope, k))}</option>`).join('')}</select>
         </label>
-        <p class="ranking__closes">${escapeHtml(board.settled ? t('ranking.settled') : t('ranking.closes', { when: new Date(board.closes).toLocaleString() }))}</p>
+        <p class="ranking__closes">${escapeHtml(board.settled ? t('ranking.settled') : t('ranking.closes', { when: new Date(board.closes).toLocaleString(localeTag()) }))}</p>
       </div>
       <div class="ranking__boards">
         ${boardHtml('tokens', board.tokens, tokens)}
@@ -110,7 +110,7 @@ export function createRanking({ host, toast, savePrefs }) {
 
   /** What earns a title, and how far along this account is. */
   function conditionOf(title) {
-    if (title.owned) return title.earnedAt ? t('ranking.pet.earned', { when: new Date(title.earnedAt).toLocaleDateString() }) : '';
+    if (title.owned) return title.earnedAt ? t('ranking.pet.earned', { when: new Date(title.earnedAt).toLocaleDateString(localeTag()) }) : '';
     const ask = title.needs;
     if (ask?.tokens) return `${t('ranking.pet.needsTokens', { n: tokens(ask.tokens) })} ${t('ranking.pet.soFarTokens', { n: tokens(titles?.progress?.tokens) })}`;
     if (ask?.spend) return `${t('ranking.pet.needsSpend', { n: dollars(ask.spend) })} ${t('ranking.pet.soFarSpend', { n: dollars(titles?.progress?.spend) })}`;

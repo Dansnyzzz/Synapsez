@@ -2250,7 +2250,7 @@ textarea {
   text-align: left;
   font-size: 13.5px;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, transform 0.15s, box-shadow 0.15s, background 0.15s;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 /* No blur available — Firefox with the pref off, older WebKit. A transparent
    wash over a busy sky is unreadable without one, so those get the pane. */
@@ -2262,7 +2262,9 @@ textarea {
   border-color: var(--accent);
   background: linear-gradient(180deg, var(--glass-hi), transparent 46%), var(--tint-2);
   color: var(--text);
-  transform: translateY(-2px);
+  /* No lift: a blurred pane that moves over a moving scene was redrawn every frame of
+     the scene, and its square backdrop showed as a grey box blinking behind the card
+     (owner, 2026-11-08, screenshot 5). The ring and the glow say "this one" alone. */
   /* The neon: a tight ring of the accent, then its glow. */
   box-shadow: 0 0 0 1px var(--accent-dim), 0 0 22px -4px var(--accent-glow), 0 10px 26px -14px var(--accent-glow);
   outline: none;
@@ -11797,11 +11799,20 @@ html[data-scene] .gate { background: var(--bg); }
 /* `/theme` in the box: the themes in a row above it (theme-picker.js). */
 .tpick { position: absolute; left: 50%; bottom: calc(100% - 6px); z-index: 6; width: min(780px, calc(100% - 28px)); transform: translateX(-50%); padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass-solid, var(--bg-elev)); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); }
 .tpick[hidden] { display: none; }
+
+/* What the checks said about an answer: a note from the app, under it, not part of it. */
+.qc-notes { margin-top: 10px; display: grid; gap: 2px; user-select: none; -webkit-user-select: none; }
+.qc-note { margin: 0; color: var(--text-faint); font-size: 12.5px; font-style: italic; }
 .tpick__head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
 .tpick__chip { padding: 2px 8px; border-radius: 6px; background: var(--tint-2); font-family: var(--mono, monospace); font-size: 12px; }
 .tpick__title { color: var(--text); font-weight: 600; }
 .tpick__keys { margin-left: auto; color: var(--text-faint); font-size: 12px; white-space: nowrap; }
-.tpick__row { display: flex; gap: 10px; overflow-x: auto; padding: 3px 3px 6px; scrollbar-width: thin; }
+/* The track is the box behind it; only the thumb shows (owner, 2026-11-08). */
+.tpick__row { display: flex; gap: 10px; overflow-x: auto; padding: 3px 3px 6px; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 32%, transparent) transparent; }
+.tpick__row::-webkit-scrollbar { height: 8px; background: transparent; }
+.tpick__row::-webkit-scrollbar-track { background: transparent; }
+.tpick__row::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 32%, transparent); border-radius: 99px; }
+.tpick__row::-webkit-scrollbar-button { display: none; }
 .tpick__tile { flex: 0 0 112px; display: grid; gap: 5px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .tpick__frame { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); }
 .tpick__tile[aria-selected='true'] .tpick__frame, .tpick__tile:hover .tpick__frame { box-shadow: 0 0 0 2px var(--accent); }

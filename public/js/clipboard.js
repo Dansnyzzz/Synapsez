@@ -55,7 +55,26 @@ export const forWord = (html) =>
  * things to press, and a document made of pressed things is not what anybody
  * meant to carry off.
  */
-export const CHROME_SELECTOR = 'button, .copy-btn, .msg__actions, .step__shot, .steps__thumbs, .step__picture';
+export const CHROME_SELECTOR = 'button, .copy-btn, .msg__actions, .step__shot, .steps__thumbs, .step__picture, .qc-notes';
+
+/**
+ * A citation chip as words a document can hold (owner, 2026-11-08, screenshot 13). Its
+ * site logos are pictures from this app that Google Docs cannot fetch, so they pasted as
+ * grey boxes, and its hidden card spilled the host and the address beside the name. The
+ * name and the address say the same thing: "Cục Xây dựng chính sách: https://…".
+ *
+ * @param {{ title: string, url?: string }[]} items
+ * @returns {{ text: string, url?: string }[]} the pieces, an address to be made a link
+ */
+export function citePieces(items) {
+  const pieces = [];
+  items.forEach((item, i) => {
+    if (i) pieces.push({ text: '; ' });
+    if (item.url) pieces.push({ text: `${item.title || item.url}: ` }, { text: item.url, url: item.url });
+    else pieces.push({ text: item.title });
+  });
+  return pieces;
+}
 
 /**
  * Attributes that describe how this app draws something, not what it means.
@@ -85,6 +104,29 @@ export function cleanHtml(node) {
   const clone = /** @type {Element} */ (node.cloneNode(true));
 
   for (const junk of clone.querySelectorAll(CHROME_SELECTOR)) junk.remove();
+
+  for (const cite of clone.querySelectorAll('.cite')) {
+    const items = [...cite.querySelectorAll('.cite-item')].map((item) => ({
+      title: (item.querySelector('.cite-item__title') || item).textContent.trim(),
+      url: item.getAttribute('href') || '',
+    }));
+    // Already inside brackets the answer wrote, it needs none of its own.
+    const wrapped = /\(\s*$/.test(cite.previousSibling?.textContent || '') || /^\s*\)/.test(cite.nextSibling?.textContent || '');
+    const holder = document.createElement('span');
+    if (!wrapped) holder.append('(');
+    for (const piece of citePieces(items)) {
+      if (!piece.url) {
+        holder.append(piece.text);
+        continue;
+      }
+      const link = document.createElement('a');
+      link.setAttribute('href', piece.url);
+      link.textContent = piece.text;
+      holder.append(link);
+    }
+    if (!wrapped) holder.append(')');
+    cite.replaceWith(holder);
+  }
 
   /**
    * A formula, as the source that produced it.

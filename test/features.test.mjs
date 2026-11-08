@@ -2682,6 +2682,30 @@ section('your data: the lists and deletions behind Privacy → Manage (owner, 20
   }
 }
 
+section('a date or a number is written in the app\'s language, never the browser\'s');
+{
+  // "Bạn đạt được ngày 11/5/2026" on a Vietnamese page was the fifth of November, written the American way (owner, 2026-11-08).
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('../public/js', import.meta.url));
+  const bare = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (p.endsWith('.js')) {
+        const text = fs.readFileSync(p, 'utf8');
+        for (const m of text.matchAll(/\.toLocale(?:Date|Time)?String\((?:\)|undefined|\[\])/g)) bare.push(`${path.basename(p)}:${text.slice(0, m.index).split('\n').length}`);
+      }
+    }
+  };
+  walk(root);
+  check('no toLocaleString without the app\'s locale', bare.length === 0, bare.join(' '));
+  const i18nSource = fs.readFileSync(new URL('../public/js/i18n.js', import.meta.url), 'utf8');
+  check('  the language names the locale', /localeTag = \(\) => \(current === 'vi' \? 'vi-VN' : 'en-US'\)/.test(i18nSource));
+  check('  and in Vietnamese the day comes first', new Date('2026-11-05T12:00:00Z').toLocaleDateString('vi-VN') === '5/11/2026', new Date('2026-11-05T12:00:00Z').toLocaleDateString('vi-VN'));
+}
+
 section('the last press wins');
 {
   const { latestOnly } = await import('../public/js/latest.js');

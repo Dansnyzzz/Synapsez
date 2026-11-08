@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { t } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 import { latestOnly } from './latest.js';
 import { escapeHtml } from './markdown.js';
 import { SCENES, mountScene, playInFrame, sceneStill } from './scenes.js';
@@ -42,15 +42,15 @@ export function badgeText(badge) {
   }
 }
 
-const number = (n) => Number(n || 0).toLocaleString();
-const dollars = (n) => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+const number = (n) => Number(n || 0).toLocaleString(localeTag());
+const dollars = (n) => `$${Number(n || 0).toLocaleString(localeTag(), { maximumFractionDigits: 2 })}`;
 
 /** How a theme is held, or how it could be. */
 export function themeStanding(theme, progress = null) {
   if (theme.id === 'default') return t('theme.standing.default');
   if (theme.owned) {
     if (!theme.grantedAt) return '';
-    const when = new Date(theme.grantedAt).toLocaleDateString();
+    const when = new Date(theme.grantedAt).toLocaleDateString(localeTag());
     return theme.grant && theme.grant.kind !== theme.badge.kind ? t('theme.standing.since', { when, why: badgeText(theme.grant) }) : t('theme.standing.sinceOnly', { when });
   }
   const ask = theme.needs;
@@ -59,7 +59,7 @@ export function themeStanding(theme, progress = null) {
   if (ask?.event) {
     const event = ask.event;
     if (event.state === 'over') return t('theme.standing.eventOver');
-    const asks = t('theme.standing.eventAsks', { from: new Date(event.from).toLocaleDateString(), to: new Date(new Date(event.to).getTime() - 1).toLocaleDateString(), n: number(event.tokens), places: number(event.places) });
+    const asks = t('theme.standing.eventAsks', { from: new Date(event.from).toLocaleDateString(localeTag()), to: new Date(new Date(event.to).getTime() - 1).toLocaleDateString(localeTag()), n: number(event.tokens), places: number(event.places) });
     return event.state === 'running' ? `${asks} ${t('theme.standing.eventNow', { used: number(event.used), left: number(event.left) })}` : asks;
   }
   const { kind, quarter, year } = theme.badge;
@@ -406,7 +406,7 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     if (!list) return;
     const { holders } = await api.themeHolders(id);
     list.innerHTML = holders.length
-      ? holders.map((h) => `<li><span>${escapeHtml(h.name || `${t('ranking.member')} ${h.id.slice(0, 6)}`)}</span><span class="muted">${escapeHtml(new Date(h.grantedAt).toLocaleDateString())}</span><button class="btn btn--ghost btn--small" type="button" data-take="${escapeHtml(h.id)}">${escapeHtml(t('theme.admin.take'))}</button></li>`).join('')
+      ? holders.map((h) => `<li><span>${escapeHtml(h.name || `${t('ranking.member')} ${h.id.slice(0, 6)}`)}</span><span class="muted">${escapeHtml(new Date(h.grantedAt).toLocaleDateString(localeTag()))}</span><button class="btn btn--ghost btn--small" type="button" data-take="${escapeHtml(h.id)}">${escapeHtml(t('theme.admin.take'))}</button></li>`).join('')
       : `<li class="muted">${escapeHtml(t('theme.admin.nobody'))}</li>`;
   }
 
@@ -477,6 +477,14 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     /** The look stored in this browser, painted before anything asks the server. */
     boot() {
       if (selected !== 'default' && !layer) apply(selected);
+      // Asked once the page has settled, so `/theme` opens at once the first time too.
+      const warm = () => api.themes().then((answer) => {
+        if (themes.length) return;
+        themes = answer.themes;
+        progress = answer.progress || null;
+      }).catch(() => {});
+      if ('requestIdleCallback' in window) window.requestIdleCallback(warm, { timeout: 4000 });
+      else setTimeout(warm, 1500);
     },
     /** Signed out: nothing of a theme shows on the sign-in page, and nothing is drawn under it. */
     sleep() {
@@ -491,6 +499,8 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     leave,
     loadAdmin,
     wear,
+    /** The list as last known, to show before asking again; null before the first answer. */
+    known: () => (themes.length ? { themes, selected, progress } : null),
     /** What the `/theme` box offers: the list as the server last said, asked again. */
     async list() {
       const asked = saver.asked();
