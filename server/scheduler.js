@@ -49,9 +49,10 @@ export const UNATTENDED_POLICIES = new Set(['ask', 'guarded', 'auto']);
  * The agent loop, replaceable by a test that has to see what a run was given or
  * hold one open long enough to stop it (test/workflow.test.mjs). Nothing else sets it.
  */
+/** @type {(options: Record<string, any>) => Promise<unknown>} */
 let agentLoop = runAgent;
 export const __agent = {
-  /** @param {Function | null} fn */
+  /** @param {((options: Record<string, any>) => Promise<unknown>) | null} fn */
   use(fn) {
     agentLoop = fn || runAgent;
   },

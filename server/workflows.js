@@ -83,6 +83,8 @@ export function resumeNote(attempt = 1) {
  * The agent loop, replaceable by a test that has to see what a step was given
  * or hold one open long enough to stop it (test/workflow.test.mjs). Nothing
  * else sets it.
+ *
+ * @type {(options: Record<string, any>) => Promise<unknown>}
  */
 let agentLoop = runAgent;
 
@@ -742,7 +744,7 @@ export function withLastRun(row, say = (error) => error) {
 export const __testing = {
   runStep,
   freshState,
-  /** @param {Function | null} fn  stand in for the agent loop; null puts the real one back */
+  /** @param {((options: Record<string, any>) => Promise<unknown>) | null} fn  stand in for the agent loop; null puts the real one back */
   useAgent(fn) {
     agentLoop = fn || runAgent;
   },
