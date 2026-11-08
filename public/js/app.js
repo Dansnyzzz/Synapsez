@@ -4121,6 +4121,21 @@ async function streamOnce(run, decision, answers, handoff = false) {
         data_route: (route) => {
           run.route = route;
         },
+        // Earned in this turn (owner, 2026-11-08): the server has put it on; the page follows and says so.
+        earned: (newly) => {
+          const title = newly?.worn?.equippedTitle || null;
+          const theme = newly?.worn?.sceneTheme || null;
+          if (title) {
+            state.boot.prefs = { ...state.boot.prefs, equippedTitle: title };
+            window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: title }));
+          }
+          if (theme) void themesPanel.sync();
+          const titleName = title ? t(`ranking.title.${title}`) : '';
+          const themeName = theme ? t(`theme.${theme}.name`) : '';
+          if (title && theme) toast(t('earned.both', { title: titleName, theme: themeName }));
+          else if (title) toast(t('earned.title', { name: titleName }));
+          else if (theme) toast(t('earned.theme', { name: themeName }));
+        },
         // What a running command prints, as it prints it.
         tool_progress: ({ id, text }) => {
           run.toolHandles.get(id)?.progress?.(text);

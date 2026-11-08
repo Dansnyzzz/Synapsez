@@ -34,7 +34,9 @@ const { createCanvas, loadImage } = await import('@napi-rs/canvas');
 const { initStore, getStore } = await import('../server/store/index.js');
 await initStore();
 const { createApp } = await import('../server/app.js');
-const { THEMES } = await import('../server/themes.js');
+const { THEMES, appearsAt } = await import('../server/themes.js');
+/** The themes a member sees today: one not out yet is for administrators only (owner, 2026-11-08). */
+const OUT_NOW = THEMES.filter((theme) => !appearsAt(theme, theme.badge) || appearsAt(theme, theme.badge) <= new Date());
 const PORT = 5198;
 const server = (await createApp()).listen(PORT);
 await new Promise((r) => server.once('listening', r));
@@ -124,6 +126,36 @@ const canvasPrint = async (selector, p = page) => {
   if (!node) return null;
   return (await node.screenshot()).toString('base64');
 };
+/**
+ * Turn the Theme page to the one holding a tile (owner, 2026-11-08: twelve to a page,
+ * with an arrow either side), from wherever it is.
+ */
+const reveal = async (id, p = page) => {
+  const sel = `.themes__tile[data-theme-id="${id}"]`;
+  for (let i = 0; i < 6 && !(await p.$(sel)); i += 1) {
+    const back = await p.$('[data-turn="-1"]:not([hidden])');
+    if (back) await back.click();
+    else break;
+  }
+  for (let i = 0; i < 6 && !(await p.$(sel)); i += 1) {
+    const next = await p.$('[data-turn="1"]:not([hidden])');
+    if (!next) break;
+    await next.click();
+  }
+};
+/** Every tile id across the pages, the page left on the first. */
+const allTiles = async (p = page) => {
+  const seen = [];
+  while (await p.$('[data-turn="-1"]:not([hidden])')) await p.click('[data-turn="-1"]');
+  for (;;) {
+    seen.push(...(await p.evaluate(() => [...document.querySelectorAll('.themes__tile')].map((tile) => tile.dataset.themeId))));
+    const next = await p.$('[data-turn="1"]:not([hidden])');
+    if (!next) break;
+    await next.click();
+  }
+  while (await p.$('[data-turn="-1"]:not([hidden])')) await p.click('[data-turn="-1"]');
+  return seen;
+};
 /** The fade-in of a scene's first frame, waited out. */
 const SCENE_IN_MS = 700;
 
@@ -137,8 +169,19 @@ section('the account menu and the page');
   await page.waitForSelector('#settings[open]');
   await page.waitForFunction(() => document.querySelectorAll('.themes__tile').length > 0);
   await page.waitForTimeout(1500);
-  const tiles = await page.evaluate(() => [...document.querySelectorAll('.themes__tile')].map((tile) => tile.dataset.themeId));
-  check('every theme has a tile', tiles.length === THEMES.length, tiles.join());
+  const firstPage = await page.evaluate(() => document.querySelectorAll('.themes__tile').length);
+  check('a page holds twelve', firstPage === 12, String(firstPage));
+  check('  the first page has only the arrow on the right', !!(await page.$('[data-turn="1"]:not([hidden])')) && !(await page.$('[data-turn="-1"]:not([hidden])')));
+  const tiles = await allTiles();
+  check('every theme has a tile, across the pages', tiles.length === THEMES.length && new Set(tiles).size === THEMES.length, tiles.join());
+  await page.click('[data-turn="1"]');
+  check('  the last page has only the arrow on the left', !!(await page.$('[data-turn="-1"]:not([hidden])')) && !(await page.$('[data-turn="1"]:not([hidden])')));
+  await page.click('[data-turn="-1"]');
+  check('the order sits beside the title', !!(await page.$('#panel-theme .themes__titlebar [data-theme-sort]')));
+  await page.selectOption('[data-theme-sort]', 'kind');
+  const byKind = await page.evaluate(() => [...document.querySelectorAll('.themes__tile')].slice(0, 3).map((tile) => tile.dataset.themeId));
+  check('  by kind: the default, then the events', byKind[0] === 'default' && ['new-year-fireworks', 'aurora-peak'].includes(byKind[1]), byKind.join());
+  await page.selectOption('[data-theme-sort]', 'got-new');
   check('the name is under each', await page.evaluate(() => [...document.querySelectorAll('.themes__tile')].every((tile) => tile.querySelector('.themes__name').textContent.trim())));
   check('an administrator holds them all: nothing is locked', !(await page.$('.themes__tile.is-locked')));
   const detail = await page.evaluate(() => document.querySelector('.themes__detail')?.textContent || '');
@@ -191,7 +234,7 @@ section('a theme is applied, and the app stays readable over it');
   };
 
   for (const { id } of THEMES.filter((theme) => theme.id !== 'default')) {
-    await page.click(`.themes__tile[data-theme-id="${id}"]`);
+    await reveal(id, page); await page.click(`.themes__tile[data-theme-id="${id}"]`);
     await page.waitForTimeout(SCENE_IN_MS);
     const applied = await page.evaluate(() => document.documentElement.dataset.scene);
     check(`${id} applies at once`, applied === id, String(applied));
@@ -233,23 +276,23 @@ section('a theme is applied, and the app stays readable over it');
 
 section('the theme survives a reload, and the person keeps their light or dark');
 {
-  await page.click('.themes__tile[data-theme-id="lagoon"]');
+  await reveal('lagoon', page); await page.click('.themes__tile[data-theme-id="lagoon"]');
   await page.waitForTimeout(300);
   const stored = await page.evaluate(() => localStorage.getItem('ai-remote:theme'));
   check('wearing a light scene writes nothing over the person’s light or dark', stored === null, String(stored));
   // White or black is the person's setting, whichever picture is up (owner, 2026-11-06).
   const panes = async () => page.evaluate(() => ({ theme: document.documentElement.dataset.theme || null, column: getComputedStyle(document.documentElement).getPropertyValue('--scene-column').trim() }));
   await page.evaluate(() => document.querySelector('[data-theme-choice="dark"]').click());
-  await page.click('.themes__tile[data-theme-id="lagoon"]');
+  await reveal('lagoon', page); await page.click('.themes__tile[data-theme-id="lagoon"]');
   const darkOverLight = await panes();
   check('a scene painted light leaves a dark setting dark', darkOverLight.theme === 'dark' && darkOverLight.column.startsWith('rgba(11'), JSON.stringify(darkOverLight));
   await page.evaluate(() => document.querySelector('[data-theme-choice="light"]').click());
-  await page.click('.themes__tile[data-theme-id="deep-sea"]');
+  await reveal('deep-sea', page); await page.click('.themes__tile[data-theme-id="deep-sea"]');
   await page.waitForTimeout(100);
   const lightOverDark = await panes();
   check('a scene painted dark leaves a light setting light', lightOverDark.theme === 'light' && lightOverDark.column.startsWith('rgba(250'), JSON.stringify(lightOverDark));
   await page.evaluate(() => document.querySelector('[data-theme-choice="dark"]').click());
-  await page.click('.themes__tile[data-theme-id="lagoon"]');
+  await reveal('lagoon', page); await page.click('.themes__tile[data-theme-id="lagoon"]');
 
   // The last press is the one that counts, however the answers come back.
   await page.waitForTimeout(400);
@@ -275,7 +318,7 @@ section('the theme survives a reload, and the person keeps their light or dark')
   check('and only one scene is left behind the app', held.canvases === 1, JSON.stringify(held));
   await page.unroute('**/api/themes/selected');
   check('the server has the last one too', (await store.getUserSetting(owner.id, 'prefs')).sceneTheme === 'cloud-drift');
-  await page.click('.themes__tile[data-theme-id="lagoon"]');
+  await reveal('lagoon', page); await page.click('.themes__tile[data-theme-id="lagoon"]');
   await page.waitForTimeout(400);
   await reload();
   check('it is still on after a reload', await page.evaluate(() => document.documentElement.dataset.scene) === 'lagoon');
@@ -283,7 +326,7 @@ section('the theme survives a reload, and the person keeps their light or dark')
   await openSettings('theme');
   await page.waitForFunction(() => document.querySelectorAll('.themes__tile').length > 0);
   await page.waitForTimeout(800);
-  await page.click('.themes__tile[data-theme-id="default"]');
+  await reveal('default', page); await page.click('.themes__tile[data-theme-id="default"]');
   await page.waitForTimeout(250);
   const off = await page.evaluate(() => ({ scene: document.documentElement.dataset.scene || null, layer: !!document.getElementById('scene-layer') }));
   check('the default takes the scene away', off.scene === null && off.layer === false, JSON.stringify(off));
@@ -312,7 +355,7 @@ await reload(member);
   check('a locked tile carries a padlock', await member.evaluate(() => !!document.querySelector('.themes__tile.is-locked .themes__lock svg')));
 
   // Hover: the theme under the pointer plays; the one in use never does.
-  await member.click('.themes__tile[data-theme-id="moon-night"]');
+  await reveal('moon-night', member); await member.click('.themes__tile[data-theme-id="moon-night"]');
   await member.waitForTimeout(400);
   const hover = '.themes__tile[data-theme-id="deep-sea"] .themes__frame';
   check('a tile is a picture made ahead of time', await member.evaluate(() => {
@@ -320,7 +363,7 @@ await reload(member);
     return all.length > 0 && all.every((img) => /\/assets\/scenes\/.+\.webp$/.test(img.getAttribute('src')));
   }));
   check('and a page of them moves nothing', await member.evaluate(() => !document.querySelector('.themes__tile canvas')));
-  await member.hover('.themes__tile[data-theme-id="deep-sea"]');
+  await reveal('deep-sea', member); await member.hover('.themes__tile[data-theme-id="deep-sea"]');
   await member.waitForSelector('.themes__tile[data-theme-id="deep-sea"] .scene-live.is-in');
   const moving = await canvasPrint(hover, member);
   await member.waitForTimeout(450);
@@ -329,19 +372,19 @@ await reload(member);
   await member.mouse.move(5, 5);
   await member.waitForTimeout(200);
   check('and goes back to its picture when the pointer leaves', !(await member.$('.themes__tile canvas')));
-  await member.hover('.themes__tile[data-theme-id="moon-night"]');
+  await reveal('moon-night', member); await member.hover('.themes__tile[data-theme-id="moon-night"]');
   await member.waitForTimeout(450);
   check('the theme in use stays still on its tile', !(await member.$('.themes__tile[data-theme-id="moon-night"] canvas')));
 
   // Keyboard, too.
-  await member.focus('.themes__tile[data-theme-id="lagoon"]');
+  await reveal('lagoon', member); await member.focus('.themes__tile[data-theme-id="lagoon"]');
   await member.waitForSelector('.themes__tile[data-theme-id="lagoon"] .scene-live');
   check('a tile reached by keyboard plays as well', true);
   await member.evaluate(() => document.activeElement.blur());
   await member.mouse.move(5, 5);
 
   // A locked theme is looked at, and never worn.
-  await member.click('.themes__tile[data-theme-id="rose-street"]');
+  await reveal('rose-street', member); await member.click('.themes__tile[data-theme-id="rose-street"]');
   await member.waitForTimeout(450);
   await shot('page-locked', member);
   const locked = await member.evaluate(() => ({
@@ -349,14 +392,14 @@ await reload(member);
     lock: !!document.querySelector('.themes__stage .themes__lock svg'),
     dim: getComputedStyle(document.querySelector('.themes__stage img')).opacity,
     badge: document.querySelector('.themes__badge').textContent,
-    standing: document.querySelector('.themes__standing').textContent,
+    standing: document.querySelector('.themes__detail .facts')?.textContent || '',
     chosen: !!document.querySelector('.themes__tile[data-theme-id="rose-street"].is-chosen'),
   }));
   check('pressing a locked theme does not put it on', locked.scene === 'moon-night', String(locked.scene));
   check('its panel carries a padlock', locked.lock);
   check('dimmed', Number(locked.dim) < 1, locked.dim);
   check('with its badge', /Top/i.test(locked.badge), locked.badge);
-  check('and what earns it', /top 3/i.test(locked.standing), locked.standing);
+  check('and what earns it, and how many may have it, in the owner\'s shape', /Condition: finish in the top 3/i.test(locked.standing) && /Quantity:/.test(locked.standing), locked.standing);
   check('and the tile is framed as the one being looked at', locked.chosen);
   const stage = '.themes__stage';
   await member.waitForSelector('.themes__stage .scene-live.is-in');
@@ -433,7 +476,7 @@ section('asking for less motion');
   await openSettings('theme', still);
   await still.waitForFunction(() => document.querySelectorAll('.themes__tile').length > 1);
   await still.waitForTimeout(1200);
-  await still.click('.themes__tile[data-theme-id="lagoon"]');
+  await reveal('lagoon', still); await still.click('.themes__tile[data-theme-id="lagoon"]');
   await still.waitForSelector('#scene-layer canvas.is-in');
   await still.waitForTimeout(400);
   await still.evaluate(() => document.getElementById('settings').close());
@@ -518,11 +561,11 @@ section('the boards');
   const lookedAt = await member.evaluate(() => ({
     worn: document.querySelector('[data-title="newcomer"]').classList.contains('is-on'),
     locked: !!document.querySelector('.ranking__stage.is-locked'),
-    says: document.querySelector('.ranking__detail .themes__standing')?.textContent || '',
+    says: document.querySelector('.ranking__detail .facts')?.textContent || '',
     creature: !!document.querySelector('.ranking__detail canvas'),
   }));
   check('it can be looked at, and what is worn stays on', lookedAt.worn && lookedAt.locked && lookedAt.creature, JSON.stringify(lookedAt));
-  check('it says what earns it, and how far along I am', /1,000,000,000|1\.000\.000\.000/.test(lookedAt.says) && /used/i.test(lookedAt.says), lookedAt.says);
+  check('it says what earns it, and how far along I am', /1,000,000,000|1\.000\.000\.000/.test(lookedAt.says) && /you have used/i.test(lookedAt.says) && /Quantity: \d+ people hold it/.test(lookedAt.says), lookedAt.says);
   check('and nothing is saved', saves.length === sent);
   await shot('title-locked', member);
   await member.click('[data-title="spend-1000"]');
@@ -604,7 +647,7 @@ section('/theme in the box');
     current: document.querySelector('.tpick__tile.is-current')?.dataset.id,
   }));
   check('it opens as the word is typed, and says what the keys do', seen.chip === '/theme' && /esc/i.test(seen.keys), JSON.stringify(seen));
-  check('with every theme in the row', seen.tiles === THEMES.length, String(seen.tiles));
+  check('with every theme that is out in the row', seen.tiles === OUT_NOW.length, `${seen.tiles} of ${OUT_NOW.length}`);
   check('starting from the one in use', seen.lit === seen.current, JSON.stringify(seen));
   check('and only one row of pictures, nothing moving', await member.evaluate(() => !document.querySelector('.tpick__tile canvas')));
   const other = await member.evaluate(() => document.querySelector('.tpick__tile:not(.is-current):not([data-id="default"])').dataset.id);

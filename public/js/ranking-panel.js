@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { t, localeTag } from './i18n.js';
+import { titleFacts, factsHtml, gotLine } from './reward-facts.js';
 import { latestOnly } from './latest.js';
 import { escapeHtml } from './markdown.js';
 import { playInFrame } from './scenes.js';
@@ -108,16 +109,6 @@ export function createRanking({ host, toast, savePrefs }) {
       <label class="ranking__anon"><input type="checkbox" data-anon${board.me.anonymous ? ' checked' : ''} /> <span>${escapeHtml(t('ranking.anonymous'))}</span></label>`}`;
   }
 
-  /** What earns a title, and how far along this account is. */
-  function conditionOf(title) {
-    if (title.owned) return title.earnedAt ? t('ranking.pet.earned', { when: new Date(title.earnedAt).toLocaleDateString(localeTag()) }) : '';
-    const ask = title.needs;
-    if (ask?.tokens) return `${t('ranking.pet.needsTokens', { n: tokens(ask.tokens) })} ${t('ranking.pet.soFarTokens', { n: tokens(titles?.progress?.tokens) })}`;
-    if (ask?.spend) return `${t('ranking.pet.needsSpend', { n: dollars(ask.spend) })} ${t('ranking.pet.soFarSpend', { n: dollars(titles?.progress?.spend) })}`;
-    if (ask?.rank) return t('ranking.pet.needsRank', { rank: ask.rank });
-    return '';
-  }
-
   function paintDetail(title) {
     const box = host.querySelector('.ranking__detail');
     if (!box) return;
@@ -130,11 +121,13 @@ export function createRanking({ host, toast, savePrefs }) {
         <p class="themes__desc">${escapeHtml(t('ranking.noTitleDesc'))}</p>`;
       return;
     }
-    const said = conditionOf(title);
+    // The owner's shape: the creature, what earns it and how many have it, then the day it was got.
+    const said = title.owned ? gotLine(title.earnedAt, 'title') : '';
     box.innerHTML = `<div class="ranking__stage${title.owned ? '' : ' is-locked'}">${title.owned ? '' : `<span class="themes__lock">${LOCK}</span>`}</div>
       <h4 class="themes__title">${escapeHtml(titleText(title))}</h4>
       <p class="ranking__petname">${escapeHtml(t(`ranking.pet.${creature}.name`))}</p>
       <p class="themes__desc">${escapeHtml(t(`ranking.pet.${creature}.desc`))}</p>
+      ${factsHtml(titleFacts(title, titles?.progress))}
       ${said ? `<p class="themes__standing">${escapeHtml(said)}</p>` : ''}`;
     stopCreature = playInFrame(/** @type {HTMLElement} */ (box.querySelector('.ranking__stage')), creature);
   }

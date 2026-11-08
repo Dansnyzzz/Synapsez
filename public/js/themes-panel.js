@@ -3,6 +3,38 @@ import { t, localeTag } from './i18n.js';
 import { latestOnly } from './latest.js';
 import { escapeHtml } from './markdown.js';
 import { SCENES, mountScene, playInFrame, sceneStill } from './scenes.js';
+import { themeFacts, factsHtml, gotLine } from './reward-facts.js';
+
+/** A page of the collection: three rows of four on a wide screen (owner, 2026-11-08). */
+const PER_PAGE = 12;
+/** How the collection can be put in order; the first is how it comes. */
+const SORTS = ['got-new', 'got-old', 'out-new', 'out-old', 'kind'];
+/** The kinds in the order the owner listed them: the default, events, the boards' prizes, achievements. */
+const KIND_ORDER = { none: 0, exclusive_event: 1, top_quarter: 2, top_year: 2, achievement: 3 };
+const SORT_KEY = 'synapsez.themes.sort';
+
+/**
+ * The themes in the chosen order. A date nobody has (a theme not held, or always out)
+ * goes last, whichever way the dates run, so what has one is what is being ordered.
+ *
+ * @param {any[]} list @param {string} by
+ */
+export function sortThemes(list, by) {
+  const time = (iso) => (iso ? new Date(iso).getTime() : null);
+  const on = (key, newest) => (a, b) => {
+    const x = time(a[key]);
+    const y = time(b[key]);
+    if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1;
+    return newest ? y - x : x - y;
+  };
+  const out = [...list];
+  if (by === 'got-old') out.sort(on('grantedAt', false));
+  else if (by === 'out-new') out.sort(on('released', true));
+  else if (by === 'out-old') out.sort(on('released', false));
+  else if (by === 'kind') out.sort((a, b) => (KIND_ORDER[a.badge?.kind] ?? 9) - (KIND_ORDER[b.badge?.kind] ?? 9) || on('released', false)(a, b));
+  else out.sort(on('grantedAt', true));
+  return out;
+}
 
 /**
  * Themes (owner, 2026-11-04): the scene behind the app, the page that chooses it,
@@ -55,7 +87,7 @@ export function themeStanding(theme, progress = null) {
   }
   const ask = theme.needs;
   if (ask?.tokens) return `${t('theme.standing.needsTokens', { n: number(ask.tokens) })}${progress ? ` ${t('theme.standing.soFarTokens', { n: number(progress.tokens) })}` : ''}`;
-  if (ask?.spend) return `${t('theme.standing.needsSpend', { n: dollars(ask.spend) })}${progress ? ` ${t('theme.standing.soFarSpend', { n: dollars(progress.spend) })}` : ''}`;
+  if (ask?.deposit) return `${t('theme.standing.needsSpend', { n: dollars(ask.deposit) })}${progress ? ` ${t('theme.standing.soFarSpend', { n: dollars(progress.deposited) })}` : ''}`;
   if (ask?.event) {
     const event = ask.event;
     if (event.state === 'over') return t('theme.standing.eventOver');
@@ -200,11 +232,14 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     preview?.();
     preview = null;
     const isDefault = theme.id === 'default';
-    const said = themeStanding(theme, progress);
+    // The owner's shape: the scene, what it asks and how many have it, then when it was got.
+    const got = !isDefault && theme.owned ? gotLine(theme.grantedAt, 'theme') : '';
+    const said = isDefault ? themeStanding(theme, progress) : got;
     host.innerHTML = `<div class="themes__stage${theme.owned ? '' : ' is-locked'}">${isDefault ? '<span class="themes__plain" aria-hidden="true"></span>' : `<img class="themes__still" src="${sceneStill(theme.id)}" alt="" decoding="async" />`}${theme.owned ? '' : `<span class="themes__lock themes__lock--big">${LOCK}</span>`}</div>
       <h4 class="themes__title">${escapeHtml(t(`theme.${theme.id}.name`))}</h4>
       <p class="themes__badge" data-kind="${escapeHtml(theme.badge.kind)}">${escapeHtml(badgeText(theme.badge))}</p>
       <p class="themes__desc">${escapeHtml(t(`theme.${theme.id}.desc`))}</p>
+      ${factsHtml(themeFacts(theme, progress))}
       ${said ? `<p class="themes__standing">${escapeHtml(said)}</p>` : ''}`;
     const stage = host.querySelector('.themes__stage');
     if (!isDefault && stage) preview = playInFrame(/** @type {HTMLElement} */ (stage), theme.id);
@@ -215,13 +250,44 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     playing = null;
   }
 
+  let sortBy = (() => {
+    try {
+      const kept = localStorage.getItem(SORT_KEY);
+      return SORTS.includes(kept) ? kept : SORTS[0];
+    } catch {
+      return SORTS[0];
+    }
+  })();
+  let pageAt = 0;
+
   function draw() {
     drawn = true;
     stopTile();
     const grid = page.querySelector('.themes__grid');
     if (!grid) return;
-    grid.innerHTML = themes.map(tileHtml).join('');
-    paintPreview(themes.find((theme) => theme.id === chosen) || themes[0]);
+    const ordered = sortThemes(themes, sortBy);
+    const pages = Math.max(1, Math.ceil(ordered.length / PER_PAGE));
+    pageAt = Math.min(Math.max(0, pageAt), pages - 1);
+    grid.innerHTML = ordered.slice(pageAt * PER_PAGE, (pageAt + 1) * PER_PAGE).map(tileHtml).join('');
+    // The first page has only the arrow on the right, the last only the one on the left.
+    const prev = /** @type {HTMLButtonElement|null} */ (page.querySelector('[data-turn="-1"]'));
+    const next = /** @type {HTMLButtonElement|null} */ (page.querySelector('[data-turn="1"]'));
+    if (prev) prev.hidden = pageAt === 0;
+    if (next) next.hidden = pageAt >= pages - 1;
+    const count = page.querySelector('.themes__pages');
+    if (count) count.textContent = pages > 1 ? t('theme.page.of', { at: pageAt + 1, of: pages }) : '';
+    const sort = /** @type {HTMLSelectElement|null} */ (page.closest('.panel')?.querySelector('[data-theme-sort]'));
+    if (sort && sort.value !== sortBy) sort.value = sortBy;
+    paintPreview(themes.find((theme) => theme.id === chosen) || ordered[pageAt * PER_PAGE]);
+  }
+
+  /** @param {number} step */
+  function turn(step) {
+    pageAt += step;
+    draw();
+    // The press took the arrow away on an end page: focus the first tile, not nothing.
+    const arrow = /** @type {HTMLElement|null} */ (page.querySelector(`[data-turn="${step}"]`));
+    if (arrow?.hidden) /** @type {HTMLElement|null} */ (page.querySelector('.themes__tile'))?.focus();
   }
 
   function markChoice() {
@@ -279,9 +345,16 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
   /** The page in the Settings sheet. Its skeleton is drawn once; what is on it, each time it is opened. */
   function ensureSkeleton() {
     if (page.querySelector('.themes')) return;
+    const arrow = (dir) =>
+      `<button type="button" class="themes__turn" data-turn="${dir}" aria-label="${escapeHtml(t(dir < 0 ? 'theme.page.prev' : 'theme.page.next'))}"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${dir < 0 ? 'M15 6l-6 6 6 6' : 'M9 6l6 6-6 6'}"/></svg></button>`;
     page.innerHTML = `<div class="themes">
         <div class="themes__left">
-          <div class="themes__grid" role="group" aria-label="${escapeHtml(t('settings.tab.theme'))}"></div>
+          <div class="themes__pager">
+            ${arrow(-1)}
+            <div class="themes__grid" role="group" aria-label="${escapeHtml(t('settings.tab.theme'))}"></div>
+            ${arrow(1)}
+          </div>
+          <p class="themes__pages" aria-live="polite"></p>
           <h4 class="themes__sub">${escapeHtml(t('mascot.title'))}</h4>
           <p class="themes__hint">${escapeHtml(t('mascot.hint'))}</p>
           <div class="themes__mascots" role="radiogroup" aria-label="${escapeHtml(t('mascot.title'))}"></div>
@@ -306,8 +379,36 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     page.addEventListener('mouseout', (event) => play(event, false));
     page.addEventListener('focusin', (event) => play(event, true));
     page.addEventListener('focusout', (event) => play(event, false));
+    // The order sits beside the page's title, as the owner drew it.
+    const heading = page.closest('.panel')?.querySelector('.settings__title');
+    if (heading && !heading.parentElement?.classList.contains('themes__titlebar')) {
+      const bar = document.createElement('div');
+      bar.className = 'themes__titlebar';
+      heading.replaceWith(bar);
+      const label = document.createElement('label');
+      label.className = 'themes__sort';
+      label.innerHTML = `<span class="sr-only">${escapeHtml(t('theme.sort.label'))}</span><select data-theme-sort>${SORTS.map((key) => `<option value="${key}"${key === sortBy ? ' selected' : ''}>${escapeHtml(t(`theme.sort.${key}`))}</option>`).join('')}</select>`;
+      bar.append(heading, label);
+      label.querySelector('select')?.addEventListener('change', (event) => {
+        const value = /** @type {HTMLSelectElement} */ (event.target).value;
+        if (!SORTS.includes(value)) return;
+        sortBy = value;
+        pageAt = 0;
+        try {
+          localStorage.setItem(SORT_KEY, value);
+        } catch {
+          /* a remembered order is a convenience */
+        }
+        draw();
+      });
+    }
     page.addEventListener('click', (event) => {
       const target = /** @type {HTMLElement} */ (event.target);
+      const turner = /** @type {HTMLElement|null} */ (target.closest('[data-turn]'));
+      if (turner) {
+        turn(Number(turner.dataset.turn));
+        return;
+      }
       const tile = /** @type {HTMLElement|null} */ (target.closest('.themes__tile'));
       if (tile) {
         choose(tile.dataset.themeId);
