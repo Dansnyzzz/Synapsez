@@ -1,33 +1,16 @@
 /**
- * Settings → Privacy → How your data travels (owner, 2026-11-05).
+ * Settings → Privacy → Where your data goes (owner, 2026-11-05; cut to two parts 2026-11-08).
  *
- * The whole of what "data cloaking" and "chain-of-thought monitoring" mean and what is done
- * about them here, on one page, in the words of docs/research/2026-11-04-data-cloaking-cot-monitorability.md.
- * The figures and the provider table come from the server, because a test holds those to
- * what was measured and read (`MEASURED`, `PROVIDER_POLICIES`). Nothing here is the person's
- * except their three choices, so it can be read at any time and costs one request.
+ * The person's own three choices, and what the mask catches: measured when the page is
+ * opened, by the shield that is running (server/deidentifyQuality.js), with what it hid in
+ * this account's own conversations over thirty days beside it, counted, never shown.
  *
  * Built from nodes and `textContent`: a sentence with `<EMAIL_…>` in it is words, not markup.
  */
 import { api } from './api.js';
 import { t, currentLanguage } from './i18n.js';
 
-/** The eight things the word is used for, in the order of how much they matter here. */
-const MEANINGS = ['placeholders', 'zdr', 'stealth', 'reasoning', 'tee', 'image', 'poison', 'seo'];
 const NOT_CAUGHT = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'];
-const WILL_NOT = ['n1', 'n2', 'n3', 'n4', 'n5', 'n6'];
-const HERE = ['h1', 'h2', 'h3', 'h4', 'h5'];
-const STEPS = ['s1', 's2', 's3', 's4', 's5'];
-
-/** What the research found, each beside where it can be read. */
-const FINDINGS = [
-  { id: 'f1', source: 'https://arxiv.org/abs/2503.11926', label: 'OpenAI, arXiv 2503.11926' },
-  { id: 'f2', source: 'https://arxiv.org/abs/2503.11926', label: 'OpenAI, arXiv 2503.11926' },
-  { id: 'f3', source: 'https://arxiv.org/abs/2505.05410', label: 'Anthropic, arXiv 2505.05410' },
-  { id: 'f4', source: 'https://arxiv.org/abs/2512.18311', label: 'OpenAI, arXiv 2512.18311' },
-  { id: 'f5', source: 'https://arxiv.org/abs/2603.05706', label: 'arXiv 2603.05706' },
-  { id: 'f6', source: 'https://arxiv.org/abs/2507.11473', label: 'arXiv 2507.11473' },
-];
 
 /** A tag with a class and, optionally, its words. */
 function h(tag, className, text) {
@@ -35,14 +18,6 @@ function h(tag, className, text) {
   if (className) node.className = className;
   if (text != null && text !== '') node.textContent = String(text);
   return node;
-}
-
-function link(url, words) {
-  const a = h('a', 'cloak__link', words);
-  a.href = url;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  return a;
 }
 
 /** A table that scrolls inside its own box on a phone rather than widening the page. */
@@ -81,9 +56,9 @@ const list = (tag, ids, prefix) => {
 
 const percent = (share) => `${Math.round(share * 100)}%`;
 
-/** "6 Nov 2026", as this interface writes dates. */
-const dated = (iso) =>
-  new Date(`${iso}T00:00:00Z`).toLocaleDateString(currentLanguage() === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+/** "14:32, 8/11/2026": when it was measured, on the person's own clock. */
+const measuredAt = (iso) =>
+  new Date(iso).toLocaleString(currentLanguage() === 'vi' ? 'vi-VN' : 'en-US', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'numeric', year: 'numeric' });
 
 /**
  * @param {object} deps
@@ -115,68 +90,25 @@ export function createCloakPage({ state }) {
     return node;
   }
 
-  function meanings() {
-    const node = section('cloak.meanings.title');
-    node.append(
-      h('p', '', t('cloak.meanings.lede')),
-      table(
-        [t('cloak.col.meaning'), t('cloak.col.how'), t('cloak.col.here')],
-        MEANINGS.map((id) => [t(`cloak.m.${id}.name`), t(`cloak.m.${id}.how`), t(`cloak.m.${id}.here`)]),
-      ),
-    );
-    return node;
-  }
-
-  function hiding(masking) {
-    const node = section('cloak.mask.title');
-    node.append(list('ol', STEPS, 'cloak.mask'));
-    node.append(h('h5', 'cloak__sub', t('cloak.measure.title')));
-    node.append(h('p', '', t('cloak.measure.lede', { samples: masking.samples, clean: masking.clean, date: dated(masking.date) })));
+  function hiding(masking, mine) {
+    const node = section('cloak.measure.title');
+    node.append(h('p', '', t('cloak.measure.live', { samples: masking.samples, clean: masking.clean, when: measuredAt(masking.measuredAt) })));
     node.append(
       table(
         [t('cloak.col.kind'), t('cloak.col.caught'), t('cloak.col.right'), t('cloak.col.samples')],
         Object.entries(masking.kinds).map(([kind, f]) => [t(`route.kind.${kind}`), percent(f.recall), percent(f.precision), f.samples]),
       ),
     );
-    node.append(h('h5', 'cloak__sub', t('cloak.miss.title')), list('ul', NOT_CAUGHT, 'cloak.miss'));
-    return node;
-  }
-
-  function travels(data) {
-    const node = section('cloak.policy.title');
-    node.append(h('p', '', t('cloak.policy.lede', { date: dated(data.checked) })));
-    node.append(
-      table(
-        [t('cloak.col.provider'), t('cloak.col.says'), t('cloak.col.source')],
-        data.policies.map((p) => [t(`cloak.provider.${p.provider}`), t(`cloak.policy.${p.provider}`), link(p.source, t('cloak.read'))]),
-      ),
-    );
-    return node;
-  }
-
-  function reasoning() {
-    const node = section('cloak.cot.title');
-    node.append(h('p', '', t('cloak.cot.lede')));
-    const findings = h('ul', 'cloak__list');
-    for (const { id, source, label } of FINDINGS) {
-      const item = h('li', '', `${t(`cloak.cot.${id}`)} `);
-      item.append(link(source, label));
-      findings.append(item);
+    // What was really hidden for this account: counts, because there is no answer key to score real text against.
+    node.append(h('h5', 'cloak__sub', t('cloak.mine.title')));
+    const counted = Object.entries(mine?.kinds || {});
+    if (counted.length) {
+      node.append(table([t('cloak.col.kind'), t('cloak.col.hidden')], counted.map(([kind, n]) => [t(`route.kind.${kind}`), n])));
+      node.append(h('p', 'cloak__note', t('cloak.mine.note')));
+    } else {
+      node.append(h('p', 'cloak__note', t(state.boot?.prefs?.maskPersonal === true ? 'cloak.mine.none' : 'cloak.mine.off')));
     }
-    node.append(findings);
-    node.append(h('h5', 'cloak__sub', t('cloak.here.title')), list('ul', HERE, 'cloak.here'));
-    return node;
-  }
-
-  function monitor() {
-    const node = section('cloak.monitor.title');
-    node.append(h('p', '', t('cloak.monitor.how')), h('p', '', t('cloak.monitor.limits')));
-    return node;
-  }
-
-  function refusals() {
-    const node = section('cloak.not.title');
-    node.append(list('ul', WILL_NOT, 'cloak.not'));
+    node.append(h('h5', 'cloak__sub', t('cloak.miss.title')), list('ul', NOT_CAUGHT, 'cloak.miss'));
     return node;
   }
 
@@ -193,14 +125,8 @@ export function createCloakPage({ state }) {
     }
     page.replaceChildren(
       h('h3', 'settings__title', t('cloak.title')),
-      h('p', 'settings__lede', t('cloak.lede')),
       settingsNow(),
-      meanings(),
-      hiding(data.masking),
-      travels(data),
-      reasoning(),
-      monitor(),
-      refusals(),
+      hiding(data.masking, data.mine),
     );
   }
 

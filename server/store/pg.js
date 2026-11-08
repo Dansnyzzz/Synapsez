@@ -3037,6 +3037,24 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT COUNT(*)::int AS n FROM event_mail WHERE sent_at >= $1', [since]);
       return Number(rows[0]?.n || 0);
     },
+    /**
+     * How many of each kind of personal detail were hidden from providers in this
+     * account's conversations since a moment: counts only, as each reply keeps them
+     * (`route.masked`), never a value.
+     */
+    async maskedCounts(userId, since) {
+      const rows = await q(
+        `SELECT kind, SUM(n)::int AS n FROM (
+           SELECT e.key AS kind, CASE WHEN e.value ~ '^[0-9]+$' THEN e.value::int ELSE 0 END AS n
+             FROM messages m
+             JOIN chats c ON c.id = m.chat_id
+             CROSS JOIN LATERAL jsonb_each_text(CASE WHEN jsonb_typeof(m.content->'route'->'masked') = 'object' THEN m.content->'route'->'masked' ELSE '{}'::jsonb END) AS e
+            WHERE c.user_id = $1 AND m.role = 'assistant' AND m.created_at >= $2) counted
+         GROUP BY kind ORDER BY kind`,
+        [userId, since],
+      );
+      return Object.fromEntries(rows.filter((r) => /^[A-Z]{2,12}$/.test(r.kind) && Number(r.n) > 0).map((r) => [r.kind, Number(r.n)]));
+    },
     /** One top-up, once: the same id twice is the same payment. */
     async recordTopUp(userId, { id, amountUsd, source, reference = null }) {
       await q('INSERT INTO top_ups (id, user_id, amount_usd, source, reference) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING', [id, userId, amountUsd, source, reference]);

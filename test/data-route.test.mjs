@@ -30,7 +30,8 @@ const { setPrefs, setApiKey } = await import('../server/settings.js');
 const { streamCompletion, PROVIDERS } = await import('../server/providers/index.js');
 const { routeFor, tierFor, isStealthModel, thinkingKind, stealthRefusal, policyTable, PROVIDER_POLICIES, POLICIES_CHECKED } = await import('../server/dataRoute.js');
 const { heldByMonitor, parseVerdict, worthChecking, monitorPrompt, COULD_NOT_CHECK, __testing: monitorParts } = await import('../server/actionMonitor.js');
-const { MEASURED } = await import('../server/deidentifyQuality.js');
+const { currentMasking } = await import('../server/deidentifyQuality.js');
+const MEASURED = currentMasking();
 
 const makeUser = (id) => store.createUser({ id, email: `${id}@example.com`, name: id, passwordHash: 'x', role: 'user' });
 const stealth = { id: 'openrouter/stealth/crouton-alpha', provider: 'openrouter', model: 'stealth/crouton-alpha', label: 'Crouton Alpha' };
@@ -472,14 +473,11 @@ section('a copy of a Drive file is still a Drive file');
 
 section('the overview has what it says');
 {
-  check('measured on the day it says', /^\d{4}-\d{2}-\d{2}$/.test(MEASURED.date));
+  check('measured when asked, and says when', !Number.isNaN(Date.parse(MEASURED.measuredAt)));
   const en = fs.readFileSync(new URL('../public/js/locales/en.js', import.meta.url), 'utf8');
   const vi = fs.readFileSync(new URL('../public/js/locales/vi.js', import.meta.url), 'utf8');
   for (const kind of Object.keys(MEASURED.kinds)) {
     check(`${kind} has a name in both languages`, en.includes(`'route.kind.${kind}'`) && vi.includes(`'route.kind.${kind}'`));
-  }
-  for (const { provider } of policyTable().policies) {
-    check(`${provider} has its words in both languages`, en.includes(`'cloak.policy.${provider}'`) && vi.includes(`'cloak.policy.${provider}'`));
   }
   for (const tier of ['zero_retention', 'no_training', 'by_endpoint', 'may_train', 'unknown', 'stealth']) {
     check(`the ${tier} promise is said in both languages`, en.includes(`'route.tier.${tier}'`) && vi.includes(`'route.tier.${tier}'`));

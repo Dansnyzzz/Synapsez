@@ -9,7 +9,7 @@ import { redactSecrets } from '../redact.js';
 import { audit } from '../audit.js';
 import { policyTable } from '../dataRoute.js';
 import { forgetMachine } from '../sandbox.js';
-import { MEASURED } from '../deidentifyQuality.js';
+import { currentMasking } from '../deidentifyQuality.js';
 import { log } from '../util/trace.js';
 import { MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage, stampNote } from '../memory.js';
 import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.js';
@@ -199,12 +199,15 @@ export function mountAccountRoutes(api, admin, { wrap }) {
   );
 
   // ── the security record ─────────────────────────────────────────────
-  // What the Settings page says about masking and providers: the same to everybody, and held to the facts by tests.
+  // What the Settings page says about masking: measured now, by the shield that is running
+  // (owner, 2026-11-08), and what was hidden in this account's own conversations, counted.
   api.get(
     '/privacy/overview',
-    wrap(async (_req, res) => {
-      res.setHeader('Cache-Control', 'private, max-age=3600');
-      res.json({ ...policyTable(), masking: MEASURED });
+    wrap(async (req, res) => {
+      const { problems: _problems, ...masking } = currentMasking();
+      const since = new Date(Date.now() - 30 * 86_400_000);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({ ...policyTable(), masking, mine: { since: since.toISOString(), kinds: await getStore().maskedCounts(req.user.id, since) } });
     }),
   );
 
