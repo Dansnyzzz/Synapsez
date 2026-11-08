@@ -65,8 +65,7 @@ export function bulb(p, cx, cy, frame) {
   if (straight) p.dots([[cx, cy - 7], [cx - 7, cy - 1], [cx + 7, cy - 1]], A.white);
 }
 
-/** Lines of code on the screen, as [indent, length, colour]. Read in turn so the screen scrolls. */
-/** @type {[number, number, string][]} */
+/** Lines of code on the screen, as [indent, length, colour]. Read in turn so the screen scrolls. @type {[number, number, string][]} */
 const CODE = [
   [0, 6, A.violet],
   [2, 7, A.green],
@@ -194,8 +193,7 @@ export function star(p, x, y, size) {
   p.px(x, y, A.white);
 }
 
-/** Pieces of confetti, as [column, frame it starts falling, colour index, sway]. */
-/** @type {[number, number, number, number][]} */
+/** Pieces of confetti, as [column, frame it starts falling, colour index, sway]. @type {[number, number, number, number][]} */
 const PIECES = [
   [4, 0, 0, 1], [12, 3, 1, -1], [20, 1, 2, 1], [29, 5, 3, -1], [37, 2, 4, 1], [45, 6, 5, -1],
   [53, 1, 0, 1], [60, 4, 6, -1], [8, 12, 2, -1], [17, 15, 4, 1], [26, 11, 5, -1], [34, 16, 1, 1],
@@ -298,8 +296,7 @@ export function progress(p, x, y, w, filled, colour) {
   if (filled > 0) p.rect(x, y, Math.min(w, filled), 2, colour);
 }
 
-/** Where the baton points, by beat: up and to the left, then up. */
-/** @type {[number, number][][]} */
+/** Where the baton points, by beat: up and to the left, then up. @type {[number, number][][]} */
 const SWINGS = [
   [[-1, -1], [-2, -2], [-3, -3], [-4, -4], [-5, -5]],
   [[-1, -1], [-1, -2], [-2, -3], [-2, -4], [-3, -5], [-3, -6]],

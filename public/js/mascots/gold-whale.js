@@ -23,8 +23,7 @@ const palette = Object.freeze({
 const FLOOR = 58;
 /** The tail's lift by beat: still, up, still, down. */
 const WAG = [0, -1, 0, 1];
-/** Where its sparkles are, and when each is brightest: [x, y, phase]. */
-/** @type {[number, number, number][]} */
+/** Where its sparkles are, and when each is brightest: [x, y, phase]. @type {[number, number, number][]} */
 const SPARKLES = [[61, 52, 0], [47, 28, 5], [58, 24, 10], [18, 42, 15]];
 const TWINKLE = [0, 1, 2, 2, 1, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1];
 

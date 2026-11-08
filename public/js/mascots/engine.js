@@ -260,8 +260,7 @@ function scene(p, creature, pose, { back, front } = {}) {
   front?.(a, rest);
 }
 
-/** Where the minis stand when the big one conducts, and the bar over each. */
-/** @type {Point[]} */
+/** Where the minis stand when the big one conducts, and the bar over each. @type {Point[]} */
 const PLAYERS = [[9, 23], [24, 18], [39, 23]];
 const BARS = [ACCENTS.cyan, ACCENTS.yellow, ACCENTS.violet];
 const PACE = [0.25, 0.4, 0.6];
