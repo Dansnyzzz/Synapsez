@@ -485,6 +485,15 @@ section('asking for less motion');
   await still.waitForTimeout(450);
   check('the scene is a still picture', !!a && a === (await canvasPrint('#scene-layer canvas', still)));
   check('no whale: a GIF cannot be held on one frame', !(await still.$('.composer__box .mascot')));
+  // A title's creature can be held on one frame, so it stays, still (owner, 2026-11-08).
+  await store.setUserSetting(row.id, 'prefs', { ...(await store.getUserSetting(row.id, 'prefs')), equippedTitle: 'spend-1000' });
+  await reload(still);
+  await still.waitForSelector('.composer__box canvas.mascot[data-creature="gold-whale"]');
+  const held = await canvasPrint('.composer__box .mascot', still);
+  await still.waitForTimeout(450);
+  check('a worn title’s creature stays, holding still', !!held && held === (await canvasPrint('.composer__box .mascot', still)));
+  check('  and nothing ticks for it', !(await still.evaluate(async () => (await import('/js/mascots/stage.js')).stageStats())).running);
+  await shot('creature-still', still);
   await quiet.close();
 }
 
@@ -549,7 +558,9 @@ section('the boards');
   await member.click('[data-title="newcomer"]');
   check('a title can be worn, and shows at once', await member.evaluate(() => document.querySelector('[data-title="newcomer"]').classList.contains('is-on')));
   check('its creature is in the panel beside the list', await member.evaluate(() => !!document.querySelector('.ranking__detail .ranking__stage canvas') && !!document.querySelector('.ranking__detail .themes__title').textContent.trim()));
-  await member.waitForSelector('.ranking__stage canvas.is-in');
+  // A scene's canvas is `.is-in` once its first frame is up; a pixel creature's says which frame it is on.
+  await member.waitForSelector('.ranking__stage canvas:is(.is-in, .pixel-creature[data-frame])');
+  check('drawn in pixels, as it stands on the writing box', await member.evaluate(() => !!document.querySelector('.ranking__stage .pixel-creature') && !document.querySelector('.ranking__stage .scene-live')));
   const creature = await canvasPrint('.ranking__stage', member);
   await member.waitForTimeout(450);
   check('and it moves', creature !== (await canvasPrint('.ranking__stage', member)));
@@ -563,8 +574,10 @@ section('the boards');
     locked: !!document.querySelector('.ranking__stage.is-locked'),
     says: document.querySelector('.ranking__detail .facts')?.textContent || '',
     creature: !!document.querySelector('.ranking__detail canvas'),
+    pixel: !!document.querySelector('.ranking__detail .pixel-creature'),
   }));
   check('it can be looked at, and what is worn stays on', lookedAt.worn && lookedAt.locked && lookedAt.creature, JSON.stringify(lookedAt));
+  check('one whose pixel creature is not drawn yet shows its scene', !lookedAt.pixel, JSON.stringify(lookedAt));
   check('it says what earns it, and how far along I am', /1,000,000,000|1\.000\.000\.000/.test(lookedAt.says) && /you have used/i.test(lookedAt.says) && /Quantity: \d+ people hold it/.test(lookedAt.says), lookedAt.says);
   check('and nothing is saved', saves.length === sent);
   await shot('title-locked', member);
@@ -586,6 +599,65 @@ section('the boards');
   await member.waitForFunction(() => document.querySelector('[data-scope="year"]')?.getAttribute('aria-checked') === 'true');
   check('the year has a board too', !!(await member.$('.ranking__row')));
   await member.evaluate(() => document.getElementById('settings').close());
+}
+
+section('the worn title’s creature on the writing box');
+{
+  // Worn, a title's creature stands where the whale stood (owner, 2026-11-08).
+  await member.waitForSelector('.composer__box canvas.mascot[data-creature="minnow"]');
+  const pet = await member.evaluate(() => {
+    const c = /** @type {HTMLCanvasElement} */ (document.querySelector('.composer__box .mascot'));
+    const r = c.getBoundingClientRect();
+    const box = document.querySelector('.composer__box').getBoundingClientRect();
+    return { count: document.querySelectorAll('.composer__box .mascot').length, state: c.dataset.state, width: r.width, pixels: c.width, ratio: window.devicePixelRatio, right: box.right - r.right, above: box.top - r.bottom, pointer: getComputedStyle(c).pointerEvents, hidden: c.getAttribute('aria-hidden') };
+  });
+  check('it takes the whale’s place, and only one stands there', pet.count === 1 && pet.state === 'idle', JSON.stringify(pet));
+  check('  in whole pixels, at about the whale’s size', pet.pixels % 64 === 0 && Math.abs(pet.width * pet.ratio - pet.pixels) < 0.5 && pet.width >= 120 && pet.width <= 136, JSON.stringify(pet));
+  check('  on the box’s top edge at its right, out of the way', pet.right >= 0 && pet.right < 80 && pet.above < 2 && pet.above > -30 && pet.pointer === 'none' && pet.hidden === 'true', JSON.stringify(pet));
+  const before = await canvasPrint('.composer__box .mascot', member);
+  await member.waitForTimeout(450);
+  check('  and it moves', before !== (await canvasPrint('.composer__box .mascot', member)));
+  await shot('creature-on-box', member);
+
+  await openSettings('theme', member);
+  await member.waitForSelector('[data-mascot="happy"] .themes__pet-art canvas');
+  const tiles = await member.evaluate(() => ({ canvases: document.querySelectorAll('.themes__mascots canvas').length, gifs: document.querySelectorAll('.themes__mascots img').length, hint: document.querySelector('[data-mascot-hint]').textContent }));
+  check('the Theme page’s mascot tiles show it, one state each', tiles.canvases === 8 && tiles.gifs === 0, JSON.stringify(tiles));
+  check('  and say whose it is', /Minnow/.test(tiles.hint), tiles.hint);
+  await shot('page-mascots-creature', member);
+
+  // One clock for all of them, stopped when nobody can see it, and when it is off.
+  const clock = () => member.evaluate(async () => (await import('/js/mascots/stage.js')).stageStats());
+  check('it runs while they move', (await clock()).running);
+  const hidden = await member.evaluate(async () => {
+    const { stageStats } = await import('/js/mascots/stage.js');
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await new Promise((r) => setTimeout(r, 250));
+    const stats = stageStats();
+    delete document.hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+    return stats;
+  });
+  check('  a hidden tab stops it', !hidden.running, JSON.stringify(hidden));
+  await member.click('[data-mascot="off"]');
+  await member.evaluate(() => document.getElementById('settings').close());
+  await member.waitForTimeout(250);
+  const off = await clock();
+  check('  with the mascot off and the page closed, nothing is moving', off.moving === 0 && !off.running && !(await member.$('.composer__box .mascot')), JSON.stringify(off));
+  await openSettings('theme', member);
+  await member.waitForSelector('[data-mascot="auto"]');
+  await member.click('[data-mascot="auto"]');
+  await member.evaluate(() => document.getElementById('settings').close());
+  await member.waitForSelector('.composer__box canvas.mascot[data-creature="minnow"]');
+  check('  and back on automatic it stands there again', true);
+
+  // Wearing none brings the whale back.
+  await member.evaluate(() => window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: null })));
+  await member.waitForSelector('.composer__box img.mascot');
+  check('wearing no title brings the whale back', !(await member.$('.composer__box canvas.mascot')));
+  await member.evaluate(() => window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: 'newcomer' })));
+  await member.waitForSelector('.composer__box canvas.mascot[data-creature="minnow"]');
 }
 
 section('administering themes');
