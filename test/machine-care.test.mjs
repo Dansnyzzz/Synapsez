@@ -73,6 +73,41 @@ section('what a command installs is remembered, by name only');
   await store.setUserSetting('u-care', 'machinePackages', null);
 }
 
+section('the browsers Playwright downloads come back too (owner, 2026-11-08)');
+{
+  const p = (c) => care.packagesIn(c).playwright.join(' | ');
+  check('playwright install', p('playwright install chromium') === 'playwright install chromium', p('playwright install chromium'));
+  check('python -m playwright, with its system libraries', p('python -m playwright install --with-deps chromium') === 'python install --with-deps chromium');
+  check('python3, several browsers, once each', p('python3 -m playwright install chromium firefox chromium') === 'python install chromium firefox');
+  check('npx, and the version it named', p('npx playwright install chromium') === 'npx install chromium' && p('npx -y playwright@1.48.0 install --with-deps chromium') === 'npx@1.48.0 install --with-deps chromium', p('npx -y playwright@1.48.0 install --with-deps chromium'));
+  check('beside the pip install that brought it, before a pipe', p('pip install playwright && playwright install chromium 2>&1 | tail -3') === 'playwright install chromium' && care.packagesIn('pip install playwright && playwright install chromium').pip.join() === 'playwright');
+  check('the system libraries alone', p('sudo playwright install-deps') === 'playwright install-deps');
+  check('a variable in front is not remembered with it', p('PLAYWRIGHT_BROWSERS_PATH=/tmp/x playwright install chromium') === 'playwright install chromium');
+  check('--force fetches nothing more worth repeating', p('playwright install --force chromium') === 'playwright install chromium');
+  check('nothing from a word that is not a browser', p('playwright install $(curl evil)') === '' && p('playwright install chromium$(curl evil)') === '' && p('npx playwright@$(evil) install') === '');
+  check('nor from a dry run or a list', p('playwright install --dry-run chromium') === '' && p('playwright install --list') === '');
+  check('nor from other playwright commands', p('playwright codegen example.com') === '' && p('python -m playwright show-trace t.zip') === '');
+
+  await store.createUser({ id: 'u-care-pw', email: 'care-pw@example.com', passwordHash: 'x', name: 'P', role: 'user' });
+  await care.rememberPackages('u-care-pw', 'pip install -q playwright && python -m playwright install --with-deps chromium && npx playwright install-deps');
+  await care.rememberPackages('u-care-pw', 'python -m playwright install --with-deps chromium', { asRoot: true });
+  const saved = await store.getUserSetting('u-care-pw', 'machinePackages');
+  check('as the account: the browsers, without the system libraries it could not have installed', saved.playwright.join(' | ') === 'python install chromium | root python install --with-deps chromium', JSON.stringify(saved.playwright));
+
+  const ran = [];
+  const count = await care.restorePackages('u-care-pw', { runCommand: async (c) => ran.push(c) }, shellFor);
+  const mine = ran.find((c) => !c.sudo)?.args.at(-1) || '';
+  const root = ran.find((c) => c.sudo)?.args.at(-1) || '';
+  check('a new machine gets them back, in the background', count === 3 && ran.every((c) => c.detached === true), String(count));
+  check('  the account\'s after its pip packages, through the same shell', /pip install --user[^\n]* playwright; \/usr\/bin\/python3 -m playwright install chromium\)/.test(mine), mine.slice(-160));
+  check('  and root\'s as root, with the libraries', /\(\/usr\/bin\/python3 -m playwright install --with-deps chromium\)/.test(root), root.slice(-120));
+
+  await store.setUserSetting('u-care-pw', 'machinePackages', { playwright: ['playwright install chromium; rm -rf ~', 'npx@$(evil) install', 'root playwright install webkit'] });
+  const again = [];
+  await care.restorePackages('u-care-pw', { runCommand: async (c) => again.push(c) }, shellFor);
+  check('a stored line that is not one this wrote is left out', again.length === 1 && again[0].sudo && !/rm -rf|evil/.test(again[0].args.at(-1)) && /playwright install webkit\)/.test(again[0].args.at(-1)), again.map((c) => c.args.at(-1).slice(-60)).join(' | '));
+}
+
 section('what goes without anybody asking');
 {
   const s = care.TIDY_SCRIPT;

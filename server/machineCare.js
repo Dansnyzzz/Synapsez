@@ -21,6 +21,68 @@ const APT_INSTALL = /^(?:sudo\s+)?(?:\w+=\S+\s+)*apt(?:-get)?\s+(?:-\S+\s+)*inst
 const NPM_INSTALL = /^(?:sudo\s+)?npm\s+(?:install|i|add)\s+(.+)$/;
 
 /**
+ * Browsers Playwright downloads (owner, 2026-11-08: "Playwright cache was lost when the
+ * machine changed"). Not a package: they go to a folder of their own, ~/.cache/ms-playwright
+ * unless PLAYWRIGHT_BROWSERS_PATH says otherwise, which a move leaves behind (e2b.js packs
+ * the home without .cache) and a new machine never had. So the install itself is
+ * remembered, by launcher and browser names, and run again.
+ */
+const PLAYWRIGHT_BROWSERS = [
+  'chromium', 'chromium-headless-shell', 'chromium-tip-of-tree', 'chrome', 'chrome-beta', 'chrome-dev', 'chrome-canary',
+  'msedge', 'msedge-beta', 'msedge-dev', 'msedge-canary', 'firefox', 'firefox-beta', 'webkit', 'ffmpeg',
+];
+const PLAYWRIGHT_FLAGS = ['--with-deps', '--only-shell', '--no-shell'];
+const PLAYWRIGHT_VERSION = '[A-Za-z0-9][A-Za-z0-9.-]*';
+const PLAYWRIGHT_INSTALL = new RegExp(
+  `^(?:sudo\\s+)?(?:\\w+=\\S+\\s+)*(?:(?:/usr/bin/)?python3?\\s+-m\\s+(playwright)|npx\\s+(?:(?:-y|--yes)\\s+)?(playwright(?:@${PLAYWRIGHT_VERSION})?)|(playwright))` +
+    '\\s+(install-deps|install)(?=\\s|$)(.*)$',
+);
+/** A remembered line, as written by `playwrightLine` and nothing else: checked again when read. */
+const PLAYWRIGHT_LINE = new RegExp(
+  `^(?:root )?(?:python|playwright|npx(?:@${PLAYWRIGHT_VERSION})?) (?:install|install-deps)` +
+    `(?: (?:${PLAYWRIGHT_FLAGS.join('|')}))*(?: (?:${PLAYWRIGHT_BROWSERS.join('|')}))*$`,
+);
+
+/**
+ * One Playwright install, as the line to remember: launcher, what it installs, browser
+ * names. Nothing it does not know: a word that is not a browser's name keeps the whole
+ * line out, rather than replaying "install everything" in its place.
+ *
+ * @param {string} part
+ * @returns {string|null}
+ */
+function playwrightLine(part) {
+  const match = PLAYWRIGHT_INSTALL.exec(part);
+  if (!match) return null;
+  const [, viaPython, viaNpx, , action, tail] = match;
+  const flags = [];
+  const browsers = [];
+  for (const word of String(tail).trim().split(/\s+/).filter(Boolean)) {
+    // Asked what it would do, or for help: nothing was installed.
+    if (/^(?:--dry-run|--list|-h|--help)$/.test(word)) return null;
+    if (PLAYWRIGHT_FLAGS.includes(word)) {
+      if (!flags.includes(word)) flags.push(word);
+    } else if (word.startsWith('-')) {
+      // --force and the like: a replay is about having the browser, not fetching it again.
+      continue;
+    } else if (PLAYWRIGHT_BROWSERS.includes(word)) {
+      if (!browsers.includes(word)) browsers.push(word);
+    } else {
+      return null;
+    }
+  }
+  const launcher = viaPython ? 'python' : viaNpx ? `npx${viaNpx.slice('playwright'.length)}` : 'playwright';
+  return [launcher, action, ...flags, ...browsers].join(' ');
+}
+
+/** A remembered Playwright line as the command that runs it again. @param {string} line */
+function playwrightCommand(line) {
+  const [launcher, ...rest] = line.split(' ');
+  const program = launcher === 'python' ? '/usr/bin/python3 -m playwright' : launcher === 'playwright' ? 'playwright' : `npx --yes playwright${launcher.slice(3)}`;
+  return `${program} ${rest.join(' ')}`;
+}
+
+/**
  * The packages one command line installs, by what installs them.
  *
  * Only plain names: a name is what gets replayed later without anybody looking,
@@ -28,14 +90,24 @@ const NPM_INSTALL = /^(?:sudo\s+)?npm\s+(?:install|i|add)\s+(.+)$/;
  * else, are left out rather than remembered.
  *
  * @param {string} command
- * @returns {{ pip: string[], apt: string[], npm: string[] }}
+ * @returns {{ pip: string[], apt: string[], npm: string[], playwright: string[] }}
  */
 export function packagesIn(command) {
-  const found = { pip: /** @type {string[]} */ ([]), apt: /** @type {string[]} */ ([]), npm: /** @type {string[]} */ ([]) };
+  const found = {
+    pip: /** @type {string[]} */ ([]),
+    apt: /** @type {string[]} */ ([]),
+    npm: /** @type {string[]} */ ([]),
+    playwright: /** @type {string[]} */ ([]),
+  };
   // Cut at a pipe and at a redirect too: what follows them is another program, or a file.
   for (const raw of String(command || '').split(/&&|\|\||;|\n|\|/)) {
     const part = raw.trim().replace(/^!/, '').replace(/\s*\d?[<>].*$/, '');
     const words = (text) => text.trim().split(/\s+/).filter(Boolean);
+    const browsers = playwrightLine(part);
+    if (browsers) {
+      found.playwright.push(browsers);
+      continue;
+    }
     let match = PIP_INSTALL.exec(part);
     if (match) {
       for (const word of words(match[1])) {
@@ -61,7 +133,12 @@ export function packagesIn(command) {
 async function readPackages(userId) {
   const saved = await getStore().getUserSetting(userId, SETTING).catch(() => null);
   const list = (values, pattern) => (Array.isArray(values) ? values.filter((v) => typeof v === 'string' && pattern.test(v)) : []);
-  return { pip: list(saved?.pip, PIP_NAME), apt: list(saved?.apt, APT_NAME), npm: list(saved?.npm, NPM_NAME) };
+  return {
+    pip: list(saved?.pip, PIP_NAME),
+    apt: list(saved?.apt, APT_NAME),
+    npm: list(saved?.npm, NPM_NAME),
+    playwright: list(saved?.playwright, PLAYWRIGHT_LINE),
+  };
 }
 
 /**
@@ -70,6 +147,8 @@ async function readPackages(userId) {
  *
  * System packages only from a command that ran as root, the one way they really install:
  * they go back as root on the next machine, and `apt-get install x; true` exits 0 without it.
+ * A Playwright install goes back as whoever ran it, and its system libraries
+ * (`--with-deps`, `install-deps`) only as root, for the same reason.
  *
  * @param {string} userId
  * @param {string} command
@@ -78,10 +157,13 @@ async function readPackages(userId) {
 export async function rememberPackages(userId, command, { asRoot = false } = {}) {
   const found = packagesIn(command);
   if (!asRoot) found.apt = [];
-  if (!found.pip.length && !found.apt.length && !found.npm.length) return;
+  found.playwright = asRoot
+    ? found.playwright.map((line) => `root ${line}`)
+    : found.playwright.filter((line) => !/^\S+ install-deps/.test(line)).map((line) => line.replace(/ --with-deps/g, ''));
+  if (!found.pip.length && !found.apt.length && !found.npm.length && !found.playwright.length) return;
   const known = await readPackages(userId);
   let changed = false;
-  for (const kind of /** @type {('pip'|'apt'|'npm')[]} */ (['pip', 'apt', 'npm'])) {
+  for (const kind of /** @type {('pip'|'apt'|'npm'|'playwright')[]} */ (['pip', 'apt', 'npm', 'playwright'])) {
     for (const name of found[kind]) {
       if (known[kind].includes(name) || known[kind].length >= MAX_PER_KIND) continue;
       known[kind].push(name);
@@ -100,21 +182,31 @@ export async function rememberPackages(userId, command, { asRoot = false } = {})
  * @param {string} userId
  * @param {any} machine
  * @param {(command: string, env?: Record<string, string>, options?: any) => any} shellFor
+ * Browsers last, after the pip and npm packages: the Playwright that fetches them may
+ * be one of those. Through the same shell as the command that first ran them, so they
+ * land where that command's did; on the template (scripts/e2b-template.mjs) Chromium
+ * is already in /opt/ms-playwright, and the line finds it there and has nothing to do.
+ *
  * @returns {Promise<number>} how many packages are being put back
  */
 export async function restorePackages(userId, machine, shellFor) {
-  const { pip, apt, npm } = await readPackages(userId);
+  const { pip, apt, npm, playwright } = await readPackages(userId);
   const steps = [];
   // One at a time: a name that no longer exists must not take the others with it.
   for (const name of pip) steps.push(`/usr/bin/python3 -m pip install --user --break-system-packages -q ${name}`);
   for (const name of npm) steps.push(`npm install -g --no-audit --no-fund --loglevel=error ${name}`);
+  for (const line of playwright) if (!line.startsWith('root ')) steps.push(playwrightCommand(line));
+  const rootSteps = [
+    ...(apt.length ? ['apt-get update -q', ...apt.map((name) => `apt-get install -y -q --no-install-recommends ${name}`)] : []),
+    ...playwright.filter((line) => line.startsWith('root ')).map((line) => playwrightCommand(line.slice('root '.length))),
+  ];
   try {
     if (steps.length) {
       await machine.runCommand({ ...shellFor(`(${steps.join('; ')}) > /tmp/synz-restore.log 2>&1`, {}, { userBin: true }), detached: true });
     }
-    if (apt.length) {
+    if (rootSteps.length) {
       await machine.runCommand({
-        ...shellFor(`(apt-get update -q; ${apt.map((name) => `apt-get install -y -q --no-install-recommends ${name}`).join('; ')}) > /tmp/synz-restore-root.log 2>&1`, {}, { root: true }),
+        ...shellFor(`(${rootSteps.join('; ')}) > /tmp/synz-restore-root.log 2>&1`, {}, { root: true }),
         sudo: true,
         detached: true,
       });
@@ -123,7 +215,7 @@ export async function restorePackages(userId, machine, shellFor) {
     log.warn('cloud computer: packages not restored', { error: String(err?.message || err).slice(0, 160) });
     return 0;
   }
-  return pip.length + npm.length + apt.length;
+  return pip.length + npm.length + apt.length + playwright.length;
 }
 
 /**
