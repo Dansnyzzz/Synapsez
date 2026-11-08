@@ -11798,15 +11798,26 @@ html[data-scene] .gate { background: var(--bg); }
 .themes__pet:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .themes__pet.is-chosen { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .themes__pet-art { display: grid; place-items: center; height: 44px; }
-.themes__pet-art img { display: block; max-height: 44px; max-width: 72px; image-rendering: pixelated; }
+.themes__pet-art img { display: block; max-height: 44px; max-width: 72px; image-rendering: auto; }
+/* A title's creature on each tile: one screen pixel per grid pixel, or two on a dense screen (mascots/stage.js). */
+.themes__pet-art--pixel { height: 64px; }
+.themes__pet-art canvas { display: block; }
 
 /* The whale stands on the box's top edge, at the right, and takes no room. */
 /* About one and a half times the box's own height across the whale, the size the owner
    pointed at (2026-11-06). The picture has room around the animal, so the frame is
    larger than what is seen; a state with something above it needs that room. */
-.mascot { position: absolute; right: 14px; bottom: calc(100% - 22px); z-index: 1; height: 128px; width: auto; image-rendering: pixelated; pointer-events: none; user-select: none; }
+/* The whale's pictures are 260 pixels drawn at 128: pixelated at a scale that is not whole
+   drops rows, so it is smoothed instead (2026-11-08). */
+.mascot { position: absolute; right: 14px; bottom: calc(100% - 22px); z-index: 1; height: 128px; width: auto; image-rendering: auto; pointer-events: none; user-select: none; }
 @media (max-width: 720px) { .mascot { height: 96px; right: 8px; bottom: calc(100% - 16px); } }
 @media (max-width: 420px) { .mascot { height: 72px; right: 4px; bottom: calc(100% - 12px); } }
+/* A title's creature (owner, 2026-11-08): mascots/stage.js sizes the canvas near
+   --mascot-size, at a whole number of screen pixels per grid pixel, so it stays sharp
+   at any zoom. Its feet are five grid rows above the canvas's foot. */
+.mascot--pixel { --mascot-size: 128px; height: auto; bottom: calc(100% - var(--mascot-size) * 0.16); }
+@media (max-width: 720px) { .mascot--pixel { --mascot-size: 96px; } }
+@media (max-width: 420px) { .mascot--pixel { --mascot-size: 72px; } }
 
 /* `/theme` in the box: the themes in a row above it (theme-picker.js). */
 .tpick { position: absolute; left: 50%; bottom: calc(100% - 6px); z-index: 6; width: min(780px, calc(100% - 28px)); transform: translateX(-50%); padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass-solid, var(--bg-elev)); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); }
@@ -11871,7 +11882,8 @@ html[data-scene] .gate { background: var(--bg); }
 .ranking__stage.is-locked canvas { opacity: 0.6; filter: saturate(0.75); }
 .ranking__stage .themes__lock { z-index: 1; width: 44px; height: 44px; }
 .ranking__stage--none { display: grid; place-items: center; }
-.ranking__stage--none img { width: 60%; image-rendering: pixelated; }
+.ranking__stage--none img { width: 60%; image-rendering: auto; }
+.ranking__stage .pixel-creature { position: absolute; }
 .ranking__petname { margin: 0; color: var(--text-dim); font-size: 13px; font-weight: 600; }
 @media (max-width: 900px) { .ranking__titles { grid-template-columns: minmax(0, 1fr); } .ranking__detail { position: static; max-width: 320px; } }
 .ranking__title { min-height: 34px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }

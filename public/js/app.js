@@ -762,6 +762,7 @@ async function start() {
   renderTopbar();
   paintLegal();
   mascot.setPref(state.boot.prefs.mascot);
+  void mascot.setCreature(state.boot.prefs.equippedTitle);
   // Signed in, so the scene may come up: nothing is drawn behind the sign-in page.
   themesPanel.boot();
   themesPanel.sync();
@@ -4790,6 +4791,12 @@ const usageAlert = createUsageAlert($('usage-alert'), {
 const mascot = createMascot({ host: /** @type {HTMLElement} */ ($('composer').querySelector('.composer__box')) });
 /** A press on a whale saves only the last of a run of presses. */
 const mascotSaver = latestOnly((value) => api.savePrefs({ mascot: value }), { failed: (err) => toast(err.message, 'error') });
+// The title worn, saved on the Ranking page or earned in a turn: its creature takes the whale's place (owner, 2026-11-08).
+window.addEventListener('synapsez:title', (event) => {
+  const id = /** @type {CustomEvent} */ (event).detail || null;
+  if (state.boot) state.boot.prefs = { ...state.boot.prefs, equippedTitle: id };
+  void mascot.setCreature(id);
+});
 
 const themesPanel = createThemes({
   page: $('themes-page'),
@@ -4801,6 +4808,7 @@ const themesPanel = createThemes({
     void mascotSaver.push(value);
   },
   mascotStates: MASCOT_STATES,
+  creature: () => mascot.creature(),
 });
 const rankingPanel = createRanking({ host: $('ranking-page'), toast, savePrefs: (patch) => api.savePrefs(patch) });
 

@@ -2578,6 +2578,7 @@ export const vi = {
   'admins.power.themes.hint': 'Đổi huy hiệu của theme, trao và thu hồi theme.',
   'mascot.title': 'Linh vật',
   'mascot.hint': 'Chú cá voi đứng trên khung nhập. "Tự động" đổi theo việc trợ lý đang làm.',
+  'mascot.hintCreature': '{name}, linh vật của danh hiệu bạn đang đeo, đứng trên khung nhập. "Tự động" đổi theo việc trợ lý đang làm.',
   'mascot.auto': 'Tự động',
   'mascot.off': 'Tắt',
   'mascot.idle': 'Nghỉ',

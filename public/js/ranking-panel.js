@@ -3,6 +3,7 @@ import { t, localeTag } from './i18n.js';
 import { titleFacts, factsHtml, gotLine } from './reward-facts.js';
 import { latestOnly } from './latest.js';
 import { escapeHtml } from './markdown.js';
+import { showCreature } from './mascots/index.js';
 import { playInFrame } from './scenes.js';
 import { LOCK } from './themes-panel.js';
 
@@ -129,7 +130,16 @@ export function createRanking({ host, toast, savePrefs }) {
       <p class="themes__desc">${escapeHtml(t(`ranking.pet.${creature}.desc`))}</p>
       ${factsHtml(titleFacts(title, titles?.progress))}
       ${said ? `<p class="themes__standing">${escapeHtml(said)}</p>` : ''}`;
-    stopCreature = playInFrame(/** @type {HTMLElement} */ (box.querySelector('.ranking__stage')), creature);
+    const stage = /** @type {HTMLElement} */ (box.querySelector('.ranking__stage'));
+    // The one that stands on the writing box, in pixels, where it is drawn (owner, 2026-11-08).
+    const still = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    stopCreature = showCreature(stage, title.id, { still }) || playInFrame(stage, creature);
+  }
+
+  /** The server agrees what is worn: the creature on the writing box follows (app.js). */
+  function wearing(id) {
+    worn = id ?? null;
+    window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: worn }));
   }
 
   function chipHtml(title) {
@@ -156,9 +166,7 @@ export function createRanking({ host, toast, savePrefs }) {
   }
 
   const saver = latestOnly((id) => api.equipTitle(id || null), {
-    landed: (answer) => {
-      worn = answer.equipped ?? null;
-    },
+    landed: (answer) => wearing(answer.equipped),
     failed: (err) => {
       titles.equipped = worn;
       markTitles();
@@ -219,7 +227,7 @@ export function createRanking({ host, toast, savePrefs }) {
       const answer = await api.titles();
       // A save since this was asked knows better than an answer that may have been read before it landed.
       if (titles && !saver.sure(asked)) answer.equipped = titles.equipped;
-      else worn = answer.equipped ?? null;
+      else wearing(answer.equipped);
       titles = answer;
       if (looking === null) looking = titles.equipped || '';
       // Left while it was on its way: drawing now would start a creature nothing would stop.

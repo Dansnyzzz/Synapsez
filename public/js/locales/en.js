@@ -2592,6 +2592,7 @@ export const en = {
   'admins.power.themes.hint': "Change a theme's badge, and give and take back themes.",
   'mascot.title': 'Mascot',
   'mascot.hint': 'The whale on the writing box. Automatic follows what the assistant is doing.',
+  'mascot.hintCreature': '{name}, the creature of the title you wear, on the writing box. Automatic follows what the assistant is doing.',
   'mascot.auto': 'Automatic',
   'mascot.off': 'Off',
   'mascot.idle': 'Idle',

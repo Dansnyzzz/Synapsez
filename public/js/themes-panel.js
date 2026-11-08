@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { t, localeTag } from './i18n.js';
 import { latestOnly } from './latest.js';
 import { escapeHtml } from './markdown.js';
+import { showStates } from './mascots/index.js';
 import { SCENES, mountScene, playInFrame, sceneStill } from './scenes.js';
 import { themeFacts, factsHtml, gotLine } from './reward-facts.js';
 
@@ -103,9 +104,10 @@ export function themeStanding(theme, progress = null) {
 
 /**
  * @param {{ page: HTMLElement, admin: HTMLElement, toast: (text: string, kind?: string) => void,
- *   mascot: () => string, setMascot: (value: string) => void, mascotStates: string[] }} deps
+ *   mascot: () => string, setMascot: (value: string) => void, mascotStates: string[],
+ *   creature?: () => any }} deps  `creature`: the worn title's creature on the writing box, or null for the whale
  */
-export function createThemes({ page, admin, toast, mascot, setMascot, mascotStates }) {
+export function createThemes({ page, admin, toast, mascot, setMascot, mascotStates, creature = () => null }) {
   /** @type {Theme[]} */
   let themes = [];
   /** @type {{ tokens: number, spend: number } | null} */
@@ -118,6 +120,8 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
   /** What is moving on a tile under the pointer, and what takes it away. */
   let playing = null;
   let preview = null;
+  /** What takes the creatures off the mascot tiles. */
+  let stopPets = null;
   let layer = null;
   /** The scene behind the app, and the one coming up to replace it. */
   let backdrop = null;
@@ -332,14 +336,23 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
   function paintMascots() {
     const host = page.querySelector('.themes__mascots');
     if (!host) return;
+    stopPets?.();
+    stopPets = null;
     const current = mascot();
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    // The worn title's creature, if it is drawn (owner, 2026-11-08): it can hold still, so it shows either way.
+    const worn = creature();
     host.innerHTML = ['auto', 'off', ...mascotStates]
       .map((value) => {
-        const art = value === 'auto' || value === 'off' || still ? '' : `<img src="/assets/mascot/${value}.gif" alt="" loading="lazy" decoding="async" />`;
-        return `<button class="themes__pet${value === current ? ' is-chosen' : ''}" type="button" role="radio" aria-checked="${value === current}" data-mascot="${value}"><span class="themes__pet-art">${art}</span><span>${escapeHtml(t(`mascot.${value}`))}</span></button>`;
+        const art = worn || value === 'auto' || value === 'off' || still ? '' : `<img src="/assets/mascot/${value}.gif" alt="" loading="lazy" decoding="async" />`;
+        return `<button class="themes__pet${value === current ? ' is-chosen' : ''}" type="button" role="radio" aria-checked="${value === current}" data-mascot="${value}"><span class="themes__pet-art${worn ? ' themes__pet-art--pixel' : ''}">${art}</span><span>${escapeHtml(t(`mascot.${value}`))}</span></button>`;
       })
       .join('');
+    const hint = page.querySelector('[data-mascot-hint]');
+    if (hint) hint.textContent = worn ? t('mascot.hintCreature', { name: t(`ranking.pet.${worn.pet}.name`) }) : t('mascot.hint');
+    if (!worn) return;
+    const boxes = mascotStates.map((value) => /** @type {[string, HTMLElement]} */ ([value, host.querySelector(`[data-mascot="${value}"] .themes__pet-art`)]));
+    stopPets = showStates(boxes, worn, { still });
   }
 
   /** The page in the Settings sheet. Its skeleton is drawn once; what is on it, each time it is opened. */
@@ -356,7 +369,7 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
           </div>
           <p class="themes__pages" aria-live="polite"></p>
           <h4 class="themes__sub">${escapeHtml(t('mascot.title'))}</h4>
-          <p class="themes__hint">${escapeHtml(t('mascot.hint'))}</p>
+          <p class="themes__hint" data-mascot-hint>${escapeHtml(t('mascot.hint'))}</p>
           <div class="themes__mascots" role="radiogroup" aria-label="${escapeHtml(t('mascot.title'))}"></div>
         </div>
         <aside class="themes__detail" aria-live="polite"></aside>
@@ -472,6 +485,8 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
     visit += 1;
     preview?.();
     preview = null;
+    stopPets?.();
+    stopPets = null;
     stopTile();
     drawn = false;
   }
