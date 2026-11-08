@@ -9,6 +9,7 @@ import { clientError } from './util/clientError.js';
 import { isComplete } from './providers/stop.js';
 import { validZone, partsIn, instantOf } from './util/zone.js';
 import { expireMachineUploads } from './sandbox.js';
+import { sweepEventMail } from './eventMail.js';
 import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public/js/schedule-grammar.js';
 
 /**
@@ -724,6 +725,8 @@ export async function sweep() {
     // whole month of them before every single turn.
     store.pruneUsageEvents(),
     store.pruneOutcomes(),
+    // An event's theme came out: tell whoever has not been told, a batch or two a sweep (owner, 2026-11-08).
+    sweepEventMail({ store }),
     // A task whose invocation was killed mid-run is stopped for a person rather
     // than left to re-claim itself every hour for ever.
     store.reapStalledTasks(),

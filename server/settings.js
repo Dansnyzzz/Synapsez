@@ -13,6 +13,8 @@ export const MASCOTS = ['auto', 'off', 'idle', 'thinking', 'typing', 'conducting
 export const DEFAULT_PREFS = {
   mascot: 'auto',
   rankAnonymous: false,
+  /** An email when an event's theme comes out (owner, 2026-11-08); off in Settings → General. */
+  eventMail: true,
   defaultModel: 'anthropic/claude-opus-5',
   effort: 'high',
   /**
@@ -345,7 +347,7 @@ export async function setPrefs(userId, patch) {
     throw new Error(`"${patch.language}" is not a language this interface has. Use one of: ${[...LANGUAGES].join(', ')}.`);
   }
   if ('onboarded' in patch) next.onboarded = !!patch.onboarded;
-  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'actionMonitor', 'connectorSearch', 'qualityGate', 'figureCheck', 'rankAnonymous']) if (flag in patch) next[flag] = !!patch[flag];
+  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'actionMonitor', 'connectorSearch', 'qualityGate', 'figureCheck', 'rankAnonymous', 'eventMail']) if (flag in patch) next[flag] = !!patch[flag];
   if ('mascot' in patch && !MASCOTS.includes(patch.mascot)) throw new Error(`The mascot is one of: ${MASCOTS.join(', ')}.`);
   if ('retentionDays' in patch) {
     const days = Number(patch.retentionDays);

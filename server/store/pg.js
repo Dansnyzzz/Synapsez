@@ -3013,6 +3013,30 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT COUNT(*)::int AS n FROM (SELECT user_id FROM top_ups GROUP BY user_id HAVING SUM(amount_usd) >= $1) held', [atLeast]);
       return Number(rows[0]?.n || 0);
     },
+    /**
+     * Who has not been told about an event by email: every account with an address
+     * that is not suspended, with its preferences (the opt-out and the language).
+     */
+    async eventMailRecipients(event) {
+      return q(
+        `SELECT u.id, u.email, s.value AS prefs
+           FROM users u
+           LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
+          WHERE u.email IS NOT NULL AND u.email <> '' AND u.suspended_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM event_mail m WHERE m.event = $1 AND m.user_id = u.id)
+          ORDER BY u.created_at`,
+        [event],
+      );
+    },
+    async markEventMail(event, userIds) {
+      if (!userIds.length) return;
+      await q('INSERT INTO event_mail (event, user_id) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING', [event, userIds]);
+    },
+    /** How many event emails went since a moment, against the day's sending limit. */
+    async eventMailSentSince(since) {
+      const rows = await q('SELECT COUNT(*)::int AS n FROM event_mail WHERE sent_at >= $1', [since]);
+      return Number(rows[0]?.n || 0);
+    },
     /** One top-up, once: the same id twice is the same payment. */
     async recordTopUp(userId, { id, amountUsd, source, reference = null }) {
       await q('INSERT INTO top_ups (id, user_id, amount_usd, source, reference) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING', [id, userId, amountUsd, source, reference]);

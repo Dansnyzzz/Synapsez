@@ -103,10 +103,6 @@ const TITLE_BY_ID = new Map(TITLES.map((t) => [t.id, t]));
 const isAdmin = (user) => user?.role === 'admin';
 
 /**
- * Usage before this does not count: nobody was competing, and nobody should wake up
- * with a prize for it. The first board is the rest of the last quarter of 2026.
- */
-/**
  * The periods turn at midnight in Vietnam (owner, 2026-11-08: "00h00, 1/1/2027"), which
  * keeps no summer time, so a fixed offset is exact. A theme for a period appears at the
  * same moment the period's boards start.
@@ -117,6 +113,10 @@ const local = (when) => new Date(when.getTime() + PERIOD_OFFSET_MS);
 /** Midnight in Vietnam on the first of a month. */
 const monthStart = (year, month) => new Date(Date.UTC(year, month, 1) - PERIOD_OFFSET_MS);
 
+/**
+ * Usage before this does not count: nobody was competing, and nobody should wake up
+ * with a prize for it. The first board is the rest of the last quarter of 2026.
+ */
 export const RANKING_STARTS = monthStart(2026, 10);
 
 /** How far back the period picker reaches. */
@@ -344,13 +344,6 @@ function publicName(person) {
 }
 
 /**
- * An event's place, if this person has earned one and there is one left. Worked out
- * from what they used inside the event's dates, so nothing has to watch the week.
- *
- * @param {Account} user @param {typeof NEW_YEAR_EVENT} event @param {any} store @param {Date} now
- * @returns {Promise<boolean>} whether they hold a place now
- */
-/**
  * When a theme comes out, for the person who has not got it: an event's three days
  * before it starts, a period's own at its first midnight (owner, 2026-11-08: Q2 is not
  * shown in Q1), the rest on the day they were drawn. Null means it has always been out.
@@ -374,6 +367,13 @@ const earnedBy = (thing, life, deposited) => (thing.tokens ? life.tokens >= thin
  */
 const stillHeld = (thing, row, deposited) => !(thing?.spend && (!row || row.grant_kind === undefined || row.grant_kind === 'achievement') && deposited < thing.spend);
 
+/**
+ * An event's place, if this person has earned one and there is one left. Worked out
+ * from what they used inside the event's dates, so nothing has to watch the week.
+ *
+ * @param {Account} user @param {typeof NEW_YEAR_EVENT} event @param {any} store @param {Date} now
+ * @returns {Promise<boolean>} whether they hold a place now
+ */
 async function claimEvent(user, event, store, now) {
   if (isAdmin(user) || now < new Date(event.from)) return false;
   // A place taken is theirs whenever they next look, even if the grant that should have
@@ -470,6 +470,12 @@ export async function afterTurn(user, { store = getStore(), now = new Date() } =
 }
 
 const iso = (value) => (value ? new Date(value).toISOString() : null);
+
+/** How many of an event's places are left, for an email that is nobody's in particular. */
+export async function eventStandingFor(event, store, now = new Date()) {
+  const taken = await store.eventPlacesTaken(event.id);
+  return { left: Math.max(0, event.places - taken), state: now < new Date(event.from) ? 'soon' : now < new Date(event.to) ? 'running' : 'over' };
+}
 
 /**
  * What an event asks and how it stands, for the page that says so.

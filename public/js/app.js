@@ -780,6 +780,7 @@ async function start() {
   await refreshChats();
   afterGoogleSignIn();
   openConnectorFromLink();
+  openSettingsFromLink();
   // Never fatal: a sidebar section that could not load is a missing list, not
   // a broken app, and throwing here would take the conversations with it.
   await refreshTasks().catch(() => {});
@@ -5957,6 +5958,7 @@ function fillSettings() {
   /** @type {HTMLInputElement} */ ($('connector-search')).checked = prefs.connectorSearch !== false;
   /** @type {HTMLInputElement} */ ($('quality-gate')).checked = prefs.qualityGate !== false;
   /** @type {HTMLInputElement} */ ($('figure-check')).checked = prefs.figureCheck === true;
+  /** @type {HTMLInputElement} */ ($('event-mail')).checked = prefs.eventMail !== false;
   $('system-prompt').value = prefs.systemPrompt || '';
   // Per-browser, not per-account — so it is read back from storage, not prefs.
   paintThemeChoice(storedTheme());
@@ -6234,6 +6236,17 @@ function afterGoogleSignIn() {
   // Back on the page of the product just connected, as Claude returns to it.
   const one = String(products || '').split(',').filter(Boolean);
   if (outcome === 'connected' && one.length === 1) customize.showConnectorPage(`google:${one[0]}`).catch(() => {});
+}
+
+/**
+ * A Settings page by link, from an email: `#settings/<tab>` (owner, 2026-11-08: the event email's
+ * "turn them off here"). Only a tab this page has; the address is left clean.
+ */
+function openSettingsFromLink() {
+  const tab = /^#settings\/([a-z-]{1,30})$/.exec(location.hash)?.[1];
+  if (!tab || !document.getElementById(`tab-${tab}`)) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  openSettings(tab);
 }
 
 /**
@@ -6774,6 +6787,7 @@ const SAVED_ON_CHANGE = {
   'connector-search': { status: 'capabilities-status', patch: (on) => ({ connectorSearch: !!on }), back: (p) => p.connectorSearch !== false },
   'quality-gate': { status: 'capabilities-status', patch: (on) => ({ qualityGate: !!on }), back: (p) => p.qualityGate !== false },
   'figure-check': { status: 'capabilities-status', patch: (on) => ({ figureCheck: !!on }), back: (p) => p.figureCheck === true },
+  'event-mail': { status: 'general-status', patch: (on) => ({ eventMail: !!on }), back: (p) => p.eventMail !== false },
   'system-prompt': { status: 'behaviour-status', patch: (v) => ({ systemPrompt: v }), back: (p) => p.systemPrompt || '' },
 };
 for (const [id, rule] of Object.entries(SAVED_ON_CHANGE)) {

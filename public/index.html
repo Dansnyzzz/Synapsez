@@ -1505,6 +1505,17 @@
               </div>
             </div>
 
+            <h3 class="settings__title" data-i18n="settings.emails">Emails</h3>
+            <!-- An email when an event's theme comes out (server/eventMail.js; owner, 2026-11-08). -->
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="event-mail" data-i18n="settings.eventMail">Themes and events</label>
+                <p class="srow__desc" data-i18n="settings.eventMailHint">An email when a new event theme comes out: what it asks and how many places there are.</p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="event-mail" /></div>
+            </div>
+            <p class="settings__status" id="general-status" role="status" aria-live="polite"></p>
+
             <h3 class="settings__title" data-i18n="settings.help">Help</h3>
             <div class="srow">
               <div class="srow__text">

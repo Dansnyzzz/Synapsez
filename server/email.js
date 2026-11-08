@@ -142,7 +142,7 @@ export const __testing = {
 
 const asList = (value) => (Array.isArray(value) ? value : value ? [value] : []);
 
-async function sendViaResend({ to, subject, html, text, replyTo, from, logo }) {
+async function sendViaResend({ to, bcc, subject, html, text, replyTo, from, logo }) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -152,6 +152,7 @@ async function sendViaResend({ to, subject, html, text, replyTo, from, logo }) {
     body: JSON.stringify({
       from,
       to: asList(to),
+      ...(asList(bcc).length ? { bcc: asList(bcc) } : {}),
       subject,
       html,
       text,
@@ -177,10 +178,15 @@ async function sendViaResend({ to, subject, html, text, replyTo, from, logo }) {
  * @param {string} [mail.html]
  * @param {string} [mail.replyTo]         where a reply should go — the person the
  *                                        mail was sent for, not the shared mailbox
+ * @param {string[]} [mail.bcc]        addresses no other recipient sees; with no `to`,
+ *                                        the mail goes to the deployment's own mailbox
+ * @param {'smtp'} [mail.prefer]         Gmail or SMTP when it is set up, Resend or not
+ *                                        (owner, 2026-11-08: event emails go through Gmail)
  */
-export async function sendEmail({ to, subject, html, text, replyTo }) {
-  const backend = emailBackend();
+export async function sendEmail({ to, bcc = [], subject, html, text, replyTo, prefer }) {
+  const backend = prefer === 'smtp' && smtpSettings() ? 'smtp' : emailBackend();
   const from = fromHeader();
+  if (!asList(to).length && asList(bcc).length) to = senderMailbox().address;
   try {
     /*
      * What the provider actually said, kept and returned.
@@ -196,11 +202,12 @@ export async function sendEmail({ to, subject, html, text, replyTo }) {
     // Without the file the image would show as broken, so it is left out.
     const logo = logoAttachment(html);
     if (html && !logo) html = html.replace(/<img src="cid:brand-logo@mail"[^>]*>/g, '');
-    if (backend === 'resend') receipt = await sendViaResend({ to, subject, html, text, replyTo, from, logo });
+    if (backend === 'resend') receipt = await sendViaResend({ to, bcc, subject, html, text, replyTo, from, logo });
     else if (backend === 'smtp') {
       const info = await smtpTransport().sendMail({
         from,
         to: asList(to),
+        ...(asList(bcc).length ? { bcc: asList(bcc) } : {}),
         subject,
         html,
         text,
