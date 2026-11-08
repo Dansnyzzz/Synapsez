@@ -1124,3 +1124,29 @@ CREATE TABLE IF NOT EXISTS provider_outcomes (
   PRIMARY KEY (user_id, hour, provider, model, status)
 );
 CREATE INDEX IF NOT EXISTS provider_outcomes_hour_idx ON provider_outcomes (hour);
+
+-- 40 (owner, 2026-11-08).
+-- A workflow takes the same permissions and project a scheduled task does (the Bot
+-- page); nothing on an existing row changes: NULL is the account's default.
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS policy TEXT;
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS project_id TEXT;
+-- Money put into this workspace (the top-up itself comes later). The sponsor titles
+-- and their themes count this, not what was spent at a provider.
+CREATE TABLE IF NOT EXISTS top_ups (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount_usd DOUBLE PRECISION NOT NULL CHECK (amount_usd > 0),
+  source     TEXT NOT NULL,
+  reference  TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS top_ups_user_idx ON top_ups (user_id);
+-- Who has been told about an event's theme by email: once each, so a send cut short
+-- on a serverless timeout goes on from where it stopped the next time.
+CREATE TABLE IF NOT EXISTS event_mail (
+  event   TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ok      BOOLEAN NOT NULL DEFAULT TRUE,
+  PRIMARY KEY (event, user_id)
+);

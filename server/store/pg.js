@@ -242,8 +242,10 @@ export function splitStatements(sql) {
  *      .quarter, user_themes.grant_quarter — the boards run by quarter, and a
  *      month's prize becomes its quarter's; event_claims — an event's limited
  *      places; provider_outcomes — what each provider answered, by status
+ *  40  workflows.policy / project_id — the Bot page; top_ups — money put in, which
+ *      the sponsor titles count; event_mail — who was told about an event
  */
-export const SCHEMA_VERSION = 39;
+export const SCHEMA_VERSION = 40;
 
 /**
  * How long a run lease may go untouched before another run may take it.
