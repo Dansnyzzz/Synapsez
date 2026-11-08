@@ -2995,6 +2995,28 @@ export function createPgStore(connectionString) {
     async themeHolderCounts() {
       return q('SELECT theme_id, COUNT(*)::int AS holders FROM user_themes WHERE revoked_at IS NULL GROUP BY theme_id');
     },
+    /** How many accounts hold each title, an award counted under its place (`rank-1`…). */
+    async titleHolderCounts() {
+      return q(
+        `SELECT CASE WHEN title_id LIKE 'award:%' THEN 'rank-' || split_part(title_id, ':', 5) ELSE title_id END AS title_id,
+                COUNT(DISTINCT user_id)::int AS holders
+           FROM user_titles GROUP BY 1`,
+      );
+    },
+    /** Money this account has put into the workspace, in dollars (owner, 2026-11-08). */
+    async topUpTotal(userId) {
+      const rows = await q('SELECT COALESCE(SUM(amount_usd), 0) AS total FROM top_ups WHERE user_id = $1', [userId]);
+      return Number(rows[0]?.total || 0);
+    },
+    /** How many accounts have put in at least this much. */
+    async topUpHolders(atLeast) {
+      const rows = await q('SELECT COUNT(*)::int AS n FROM (SELECT user_id FROM top_ups GROUP BY user_id HAVING SUM(amount_usd) >= $1) held', [atLeast]);
+      return Number(rows[0]?.n || 0);
+    },
+    /** One top-up, once: the same id twice is the same payment. */
+    async recordTopUp(userId, { id, amountUsd, source, reference = null }) {
+      await q('INSERT INTO top_ups (id, user_id, amount_usd, source, reference) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING', [id, userId, amountUsd, source, reference]);
+    },
     async listThemeBadges() {
       return q('SELECT theme_id, kind, quarter, year FROM theme_badges');
     },

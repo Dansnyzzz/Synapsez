@@ -2396,7 +2396,12 @@ export function createApp() {
         await store.releaseChatRun(req.user.id, chatId, runId, runSeq).catch(() => {});
         // Whatever this run had is written, so whatever was waiting on it may go.
         if (controller.signal.reason !== 'superseded') await store.clearRunStop(req.user.id, chatId).catch(() => {});
-        await afterTurn(req.user).catch((err) => log.error('event not looked at after a turn', err));
+        // Earned in this turn: said on the stream while it is open, so the page wears it at once (owner, 2026-11-08).
+        const earned = await afterTurn(req.user).catch((err) => {
+          log.error('earned things not looked at after a turn', err);
+          return null;
+        });
+        if (earned && !res.writableEnded) emit('earned', earned);
         if (!res.writableEnded) res.end();
       }
     }),

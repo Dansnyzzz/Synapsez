@@ -41,6 +41,21 @@ export const NEW_YEAR_EVENT = Object.freeze({
   places: 100,
 });
 
+/** The aurora (owner, 2026-11-08): Christmas week to the last night of the year, on the fireworks' terms. */
+export const AURORA_EVENT = Object.freeze({
+  id: 'aurora-2026',
+  from: '2026-12-24T00:00:00+07:00',
+  to: '2027-01-01T00:00:00+07:00',
+  tokens: 2_000_000,
+  places: 100,
+});
+
+/** An event's theme is shown this long before it starts (owner, 2026-11-08), and its email goes then. */
+export const EVENT_LEAD_MS = 3 * 24 * 3_600_000;
+
+/** When a theme first came out, for those with no date of their own (the sort "newest first"). */
+const RELEASED = { first: '2026-11-04T00:00:00+07:00', second: '2026-11-07T00:00:00+07:00' };
+
 /**
  * Display order among locked themes. `tokens` or `spend`: what earns an achievement
  * theme, if that is its badge, each landing on a title of the same size (`TITLES`).
@@ -49,17 +64,17 @@ export const NEW_YEAR_EVENT = Object.freeze({
  */
 export const THEMES = Object.freeze([
   { id: 'default', badge: blank('none') },
-  { id: 'cloud-drift', badge: blank('achievement'), tokens: 100_000 },
-  { id: 'moon-night', badge: blank('achievement'), tokens: 1_000_000 },
-  { id: 'lagoon', badge: blank('achievement'), tokens: 10_000_000 },
-  { id: 'firefly-grove', badge: blank('achievement'), tokens: 50_000_000 },
-  { id: 'deep-sea', badge: blank('achievement'), tokens: 100_000_000 },
-  { id: 'nebula-voyage', badge: blank('achievement'), tokens: 1_000_000_000 },
-  { id: 'rainy-cafe', badge: blank('achievement'), spend: 10 },
-  { id: 'golden-harbor', badge: blank('achievement'), spend: 100 },
-  { id: 'crystal-palace', badge: blank('achievement'), spend: 1_000 },
+  { id: 'cloud-drift', badge: blank('achievement'), tokens: 100_000, released: RELEASED.first },
+  { id: 'moon-night', badge: blank('achievement'), tokens: 1_000_000, released: RELEASED.first },
+  { id: 'lagoon', badge: blank('achievement'), tokens: 10_000_000, released: RELEASED.first },
+  { id: 'firefly-grove', badge: blank('achievement'), tokens: 50_000_000, released: RELEASED.first },
+  { id: 'deep-sea', badge: blank('achievement'), tokens: 100_000_000, released: RELEASED.first },
+  { id: 'nebula-voyage', badge: blank('achievement'), tokens: 1_000_000_000, released: RELEASED.second },
+  { id: 'rainy-cafe', badge: blank('achievement'), spend: 10, released: RELEASED.second },
+  { id: 'golden-harbor', badge: blank('achievement'), spend: 100, released: RELEASED.second },
+  { id: 'crystal-palace', badge: blank('achievement'), spend: 1_000, released: RELEASED.second },
   { id: 'new-year-fireworks', badge: blank('exclusive_event'), event: NEW_YEAR_EVENT },
-  { id: 'aurora-peak', badge: blank('exclusive_event') },
+  { id: 'aurora-peak', badge: blank('exclusive_event'), event: AURORA_EVENT },
   { id: 'snow-village', badge: topOf(2026, 4) },
   { id: 'tet-spring', badge: topOf(2027, 1) },
   { id: 'phoenix-summer', badge: topOf(2027, 2) },
@@ -67,8 +82,8 @@ export const THEMES = Object.freeze([
   { id: 'maple-river', badge: topOf(2027, 4) },
   { id: 'golden-horse', badge: topYear(2026) },
   { id: 'goat-terrace', badge: topYear(2027) },
-  { id: 'sakura-crossing', badge: blank('top_quarter') },
-  { id: 'rose-street', badge: blank('top_year') },
+  { id: 'sakura-crossing', badge: blank('top_quarter'), released: RELEASED.first },
+  { id: 'rose-street', badge: blank('top_year'), released: RELEASED.first },
 ]);
 const THEME_BY_ID = new Map(THEMES.map((t) => [t.id, t]));
 
@@ -91,7 +106,18 @@ const isAdmin = (user) => user?.role === 'admin';
  * Usage before this does not count: nobody was competing, and nobody should wake up
  * with a prize for it. The first board is the rest of the last quarter of 2026.
  */
-export const RANKING_STARTS = new Date(Date.UTC(2026, 10, 1));
+/**
+ * The periods turn at midnight in Vietnam (owner, 2026-11-08: "00h00, 1/1/2027"), which
+ * keeps no summer time, so a fixed offset is exact. A theme for a period appears at the
+ * same moment the period's boards start.
+ */
+export const PERIOD_OFFSET_MS = 7 * 3_600_000;
+/** The calendar as Vietnam reads it, through the UTC getters. @param {Date} when */
+const local = (when) => new Date(when.getTime() + PERIOD_OFFSET_MS);
+/** Midnight in Vietnam on the first of a month. */
+const monthStart = (year, month) => new Date(Date.UTC(year, month, 1) - PERIOD_OFFSET_MS);
+
+export const RANKING_STARTS = monthStart(2026, 10);
 
 /** How far back the period picker reaches. */
 const MAX_PERIODS = 24;
@@ -99,13 +125,15 @@ const MAX_PERIODS = 24;
 export const SCOPES = ['quarter', 'year'];
 
 /** @param {Date} when */
-const quarterOf = (when) => Math.floor(when.getUTCMonth() / 3) + 1;
+const quarterOf = (when) => Math.floor(local(when).getUTCMonth() / 3) + 1;
+/** @param {Date} when */
+const yearOf = (when) => local(when).getUTCFullYear();
 
 /** @param {'quarter'|'year'} scope @param {Date} [when] */
-export const periodKey = (scope, when = new Date()) => (scope === 'year' ? String(when.getUTCFullYear()) : `${when.getUTCFullYear()}-Q${quarterOf(when)}`);
+export const periodKey = (scope, when = new Date()) => (scope === 'year' ? String(yearOf(when)) : `${yearOf(when)}-Q${quarterOf(when)}`);
 
 /**
- * When a period starts and ends, UTC, from when ranking began at the earliest. Null
+ * When a period starts and ends (midnight in Vietnam), from when ranking began at the earliest. Null
  * for anything that is not one.
  *
  * @param {string} scope @param {string} key
@@ -116,8 +144,8 @@ export function periodRange(scope, key) {
   const year = Number(match[1]);
   if (year < 2000 || year > 2200) return null;
   const firstMonth = scope === 'year' ? 0 : (Number(match[2]) - 1) * 3;
-  const from = new Date(Date.UTC(year, firstMonth, 1));
-  const to = scope === 'year' ? new Date(Date.UTC(year + 1, 0, 1)) : new Date(Date.UTC(year, firstMonth + 3, 1));
+  const from = monthStart(year, firstMonth);
+  const to = scope === 'year' ? monthStart(year + 1, 0) : monthStart(year, firstMonth + 3);
   return { from: from < RANKING_STARTS ? RANKING_STARTS : from, to };
 }
 
@@ -130,10 +158,10 @@ export function periodRange(scope, key) {
 export function closedPeriods(now = new Date()) {
   /** @type {{ scope: 'quarter'|'year', key: string }[]} */
   const out = [];
-  const start = RANKING_STARTS.getUTCFullYear() * 4 + quarterOf(RANKING_STARTS) - 1;
-  const current = now.getUTCFullYear() * 4 + quarterOf(now) - 1;
+  const start = yearOf(RANKING_STARTS) * 4 + quarterOf(RANKING_STARTS) - 1;
+  const current = yearOf(now) * 4 + quarterOf(now) - 1;
   for (let at = start; at < current; at += 1) out.push({ scope: 'quarter', key: `${Math.floor(at / 4)}-Q${(at % 4) + 1}` });
-  for (let year = RANKING_STARTS.getUTCFullYear(); year < now.getUTCFullYear(); year += 1) out.push({ scope: 'year', key: String(year) });
+  for (let year = yearOf(RANKING_STARTS); year < yearOf(now); year += 1) out.push({ scope: 'year', key: String(year) });
   return out;
 }
 
@@ -322,6 +350,30 @@ function publicName(person) {
  * @param {Account} user @param {typeof NEW_YEAR_EVENT} event @param {any} store @param {Date} now
  * @returns {Promise<boolean>} whether they hold a place now
  */
+/**
+ * When a theme comes out, for the person who has not got it: an event's three days
+ * before it starts, a period's own at its first midnight (owner, 2026-11-08: Q2 is not
+ * shown in Q1), the rest on the day they were drawn. Null means it has always been out.
+ *
+ * @param {any} theme @param {Badge} badge
+ * @returns {Date|null}
+ */
+export function appearsAt(theme, badge) {
+  if (theme.event) return new Date(new Date(theme.event.from).getTime() - EVENT_LEAD_MS);
+  if (badge.kind === 'top_quarter' && badge.year && badge.quarter) return monthStart(badge.year, (badge.quarter - 1) * 3);
+  if (badge.kind === 'top_year' && badge.year) return monthStart(badge.year, 0);
+  return theme.released ? new Date(theme.released) : null;
+}
+
+/** The sponsor titles and their themes count money put in here, not spent at a provider (owner, 2026-11-08). */
+const earnedBy = (thing, life, deposited) => (thing.tokens ? life.tokens >= thing.tokens : thing.spend ? deposited >= thing.spend : !thing.event);
+
+/**
+ * Whether a held row still counts: a sponsor title or theme given for spending at a
+ * provider, before the rule was money put in, waits for a top-up. Kept, not deleted.
+ */
+const stillHeld = (thing, row, deposited) => !(thing?.spend && (!row || row.grant_kind === undefined || row.grant_kind === 'achievement') && deposited < thing.spend);
+
 async function claimEvent(user, event, store, now) {
   if (isAdmin(user) || now < new Date(event.from)) return false;
   // A place taken is theirs whenever they next look, even if the grant that should have
@@ -343,15 +395,16 @@ async function claimEvent(user, event, store, now) {
  * @param {Date} [now]
  */
 async function syncEarned(user, store, now = new Date()) {
-  const life = await store.lifetimeUsage(user.id);
-  const spent = withMarkup(life.cost);
+  const [life, deposited] = await Promise.all([store.lifetimeUsage(user.id), store.topUpTotal ? store.topUpTotal(user.id) : 0]);
   const heldTitles = await store.listUserTitles(user.id);
   const titles = new Set(heldTitles.map((row) => row.title_id));
   let changed = false;
+  /** What this look gave, newest-hardest last: worn at once (owner, 2026-11-08). */
+  const newly = { titles: /** @type {string[]} */ ([]), themes: /** @type {string[]} */ ([]) };
   for (const title of TITLES) {
-    const earned = title.tokens ? life.tokens >= title.tokens : title.spend ? spent >= title.spend : true;
-    if (earned && !titles.has(title.id)) {
+    if (earnedBy({ ...title, event: null }, life, deposited) && !titles.has(title.id)) {
       await store.grantTitle(user.id, title.id);
+      newly.titles.push(title.id);
       changed = true;
     }
   }
@@ -365,22 +418,34 @@ async function syncEarned(user, store, now = new Date()) {
     if (theme.event) {
       if (await claimEvent(user, theme.event, store, now)) {
         await store.grantTheme(user.id, theme.id, blank('exclusive_event'));
+        newly.themes.push(theme.id);
         changed = true;
       }
       continue;
     }
-    const earned = theme.tokens ? life.tokens >= theme.tokens : theme.spend ? spent >= theme.spend : false;
-    if (!earned || badges.get(theme.id)?.kind !== 'achievement') continue;
+    if (!earnedBy(theme, life, deposited) || badges.get(theme.id)?.kind !== 'achievement') continue;
     await store.grantTheme(user.id, theme.id, blank('achievement'));
+    newly.themes.push(theme.id);
     changed = true;
   }
+  // The newest thing earned is put on, a newcomer's first title excepted (it is everybody's).
+  const wear = {};
+  const title = newly.titles.filter((id) => id !== 'newcomer').at(-1);
+  if (title) wear.equippedTitle = title;
+  if (newly.themes.length) wear.sceneTheme = newly.themes.at(-1);
+  if (Object.keys(wear).length) await setPrefs(user.id, wear).catch((err) => log.error('earned, not worn', err));
   return {
     badges,
-    progress: { tokens: life.tokens, spend: spent },
+    newly: { ...newly, worn: wear },
+    progress: { tokens: life.tokens, spend: withMarkup(life.cost), deposited },
     heldThemes: changed ? await store.listUserThemes(user.id) : heldThemes,
     heldTitles: changed ? await store.listUserTitles(user.id) : heldTitles,
   };
 }
+
+/** Each account's next mark, so the end of a turn asks the database once and gives only on crossing it. */
+const nextMark = new Map();
+const MARKS = [...new Set([...TITLES, ...THEMES].map((t) => t.tokens).filter(Boolean))].sort((a, b) => a - b);
 
 /**
  * The end of a turn, during an event's week: a person who gets there with the page
@@ -391,7 +456,17 @@ async function syncEarned(user, store, now = new Date()) {
  */
 export async function afterTurn(user, { store = getStore(), now = new Date() } = {}) {
   const running = THEMES.some((theme) => theme.event && now >= new Date(theme.event.from) && now < new Date(theme.event.to));
-  if (running) await syncEarned(user, store, now);
+  if (!running) {
+    // Anything earned by usage is earned at the end of a turn, not at the next page load
+    // (owner, 2026-11-08): one sum a turn, and the rest only when a mark is crossed.
+    const { tokens } = await store.lifetimeUsage(user.id);
+    const mark = nextMark.get(user.id);
+    nextMark.set(user.id, MARKS.find((m) => m > tokens) ?? Infinity);
+    if (nextMark.size > 5000) nextMark.delete(nextMark.keys().next().value);
+    if (mark !== undefined && tokens < mark) return null;
+  }
+  const { newly } = await syncEarned(user, store, now);
+  return newly.titles.length || newly.themes.length ? newly : null;
 }
 
 const iso = (value) => (value ? new Date(value).toISOString() : null);
@@ -421,22 +496,31 @@ export async function listThemes(user, { store = getStore(), now = new Date() } 
   const { badges, heldThemes, progress } = await syncEarned(user, store, now);
   const held = new Map(heldThemes.map((row) => [row.theme_id, row]));
   const admin = isAdmin(user);
+  const holders = new Map((await store.themeHolderCounts()).map((row) => [row.theme_id, Number(row.holders)]));
   const rows = await Promise.all(
     THEMES.map(async (theme) => {
       const row = held.get(theme.id);
-      const owned = admin || theme.id === 'default' || !!row;
       const badge = badges.get(theme.id) || theme.badge;
+      const out = appearsAt(theme, badge);
+      // Not out yet: an administrator sees the whole collection ahead of time, nobody else does (owner, 2026-11-08).
+      if (!admin && !row && out && out > now) return null;
+      const owned = admin || theme.id === 'default' || (!!row && stillHeld(theme, row, progress.deposited));
       const earns = !owned && badge.kind === 'achievement';
       return {
         id: theme.id,
         badge,
         owned,
-        grantedAt: theme.id === 'default' ? iso(user.created_at) : iso(row?.granted_at),
+        released: out ? out.toISOString() : null,
+        holders: theme.spend ? await store.topUpHolders(theme.spend) : holders.get(theme.id) || 0,
+        grantedAt: theme.id === 'default' ? iso(user.created_at) : owned ? iso(row?.granted_at) : null,
         grant: row ? { kind: row.grant_kind, quarter: row.grant_quarter ?? null, year: row.grant_year ?? null } : null,
-        needs: earns && theme.tokens ? { tokens: theme.tokens } : earns && theme.spend ? { spend: theme.spend } : !owned && theme.event ? { event: await eventStanding(user, theme.event, store, now) } : null,
+        // What earns it, said whether or not it is held: the page describes every theme the same way.
+        asks: theme.tokens ? { tokens: theme.tokens } : theme.spend ? { deposit: theme.spend } : null,
+        event: theme.event ? await eventStanding(user, theme.event, store, now) : null,
+        needs: earns && theme.tokens ? { tokens: theme.tokens } : earns && theme.spend ? { deposit: theme.spend } : !owned && theme.event ? { event: await eventStanding(user, theme.event, store, now) } : null,
       };
     }),
-  );
+  ).then((all) => all.filter(Boolean));
   const time = (row) => (row.grantedAt ? new Date(row.grantedAt).getTime() : 0);
   // Stable: an administrator's blanket access stays in catalogue order.
   const themes = [...rows.filter((r) => r.owned).sort((a, b) => time(b) - time(a)), ...rows.filter((r) => !r.owned)];
@@ -455,7 +539,10 @@ const refuse = (status, message) => Object.assign(new Error(message), { status }
  */
 async function holdsTheme(user, id, store) {
   if (id === 'default' || isAdmin(user)) return true;
-  return (await store.listUserThemes(user.id)).some((row) => row.theme_id === id);
+  const row = (await store.listUserThemes(user.id)).find((held) => held.theme_id === id);
+  if (!row) return false;
+  const theme = THEME_BY_ID.get(id);
+  return !theme?.spend || stillHeld(theme, row, await store.topUpTotal(user.id));
 }
 
 /** @param {Account} user @param {string} id */
@@ -475,9 +562,23 @@ export async function listTitles(user, { store = getStore() } = {}) {
   await settleClosed({ store });
   const { heldTitles, progress } = await syncEarned(user, store);
   const admin = isAdmin(user);
+  const counts = new Map((await store.titleHolderCounts()).map((row) => [row.title_id, Number(row.holders)]));
+  /** How many hold it, the sponsors' counted from top-ups like the titles themselves. */
+  const holdersOf = async (title) => {
+    const entry = TITLE_BY_ID.get(title.id);
+    if (entry?.spend) return store.topUpHolders(entry.spend);
+    return counts.get(title.kind === 'award' || title.kind === 'rank' ? `rank-${title.rank}` : title.id) || 0;
+  };
+  /** What a title asks, said whether or not it is held. */
+  const asksOf = (title) => {
+    const entry = TITLE_BY_ID.get(title.id);
+    if (title.kind === 'award' || title.kind === 'rank') return { rank: title.rank };
+    return entry?.tokens ? { tokens: entry.tokens } : entry?.spend ? { deposit: entry.spend } : null;
+  };
   const held = heldTitles
     .map((row) => ({ ...titleInfo(row.title_id), owned: true, earnedAt: iso(row.earned_at), needs: null }))
-    .filter((t) => t.id)
+    // A sponsor title given for spending at a provider waits for a top-up (owner, 2026-11-08).
+    .filter((t) => t.id && (admin || stillHeld(TITLE_BY_ID.get(t.id), {}, progress.deposited)))
     .sort((a, b) => new Date(b.earnedAt || 0).getTime() - new Date(a.earnedAt || 0).getTime());
   const heldIds = new Set(held.map((t) => t.id));
   const rest = TITLES.filter((t) => !heldIds.has(t.id)).map((t) => ({
@@ -485,11 +586,15 @@ export async function listTitles(user, { store = getStore() } = {}) {
     kind: 'catalog',
     owned: admin,
     earnedAt: null,
-    needs: admin ? null : t.tokens ? { tokens: t.tokens } : t.spend ? { spend: t.spend } : null,
+    needs: admin ? null : t.tokens ? { tokens: t.tokens } : t.spend ? { deposit: t.spend } : null,
   }));
   // Each place's title, to be looked at: the real ones name a board and a period, and only exist once won.
   const won = new Set(held.filter((t) => t.kind === 'award').map((t) => t.rank));
   const places = [1, 2, 3].filter((rank) => !won.has(rank)).map((rank) => ({ id: `rank-${rank}`, kind: 'rank', rank, owned: false, earnedAt: null, needs: { rank } }));
+  for (const title of [...held, ...rest, ...places]) {
+    title.asks = asksOf(title);
+    title.holders = await holdersOf(title);
+  }
   const prefs = await getPrefs(user.id);
   const titles = [...held, ...rest, ...places];
   const equipped = titles.some((t) => t.id === prefs.equippedTitle && t.owned) ? prefs.equippedTitle : null;
@@ -505,7 +610,8 @@ export async function equipTitle(user, id, { store = getStore() } = {}) {
   // Only what the save needs, like a theme's: a press does not wait on the whole page.
   const title = titleInfo(id);
   if (!title) throw refuse(400, 'There is no such title.');
-  const held = (await store.listUserTitles(user.id)).some((row) => row.title_id === id);
+  const entry = TITLE_BY_ID.get(id);
+  const held = (await store.listUserTitles(user.id)).some((row) => row.title_id === id) && (!entry?.spend || stillHeld(entry, {}, await store.topUpTotal(user.id)));
   if (!held && !(isAdmin(user) && title.kind === 'catalog')) throw refuse(403, 'You have not earned that title yet.');
   await setPrefs(user.id, { equippedTitle: id });
   return { equipped: id };
