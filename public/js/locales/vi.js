@@ -1398,7 +1398,6 @@ export const vi = {
   'route.kind.IP': "địa chỉ IP",
   'route.kind.SECRET': "khoá hoặc mật khẩu",
   'think.summary': "Bản tóm tắt do nhà cung cấp viết, không phải toàn bộ suy nghĩ của model.",
-  'think.modelText': "Đoạn suy luận do model gửi về. Có thể bỏ sót điều thật sự chi phối nó.",
   'models.hearsAudio': "nghe được âm thanh",
   'models.watchesVideo': "xem được video",
   'models.stealth': "giấu tên: có thể giữ dữ liệu",

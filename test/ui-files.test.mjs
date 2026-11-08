@@ -383,7 +383,8 @@ section('a reply says where it went');
   check('with hiding off, it says the words went as written', /Hiding is off/.test(second), second);
 
   const think = await page.evaluate(() => [...document.querySelectorAll('#messages .think__note')].map((n) => n.textContent));
-  check('reasoning says whose words it is', /summary the provider wrote/.test(think[0] || '') && /as the model sent it/.test(think[1] || ''), think.join(' | '));
+  // A provider's summary says so; the model's own reasoning carries no line under it (owner, 2026-11-08).
+  check('a provider's summary says whose words it is, and the model's own reasoning has no note', think.length === 1 && /summary the provider wrote/.test(think[0] || ''), think.join(' | '));
   const hiddenFolded = await page.evaluate(() => {
     const note = document.querySelector('#messages .think__note');
     return getComputedStyle(note).display;

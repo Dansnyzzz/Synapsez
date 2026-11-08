@@ -1412,7 +1412,6 @@ export const en = {
   'route.kind.IP': "IP address",
   'route.kind.SECRET': "key or password",
   'think.summary': "A summary the provider wrote, not the model's full reasoning.",
-  'think.modelText': "Reasoning text as the model sent it. It may leave out what really moved it.",
   'models.hearsAudio': "hears audio",
   'models.watchesVideo': "watches video",
   'models.stealth': "unannounced: may keep data",
