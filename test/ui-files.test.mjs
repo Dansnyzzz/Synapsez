@@ -384,7 +384,7 @@ section('a reply says where it went');
 
   const think = await page.evaluate(() => [...document.querySelectorAll('#messages .think__note')].map((n) => n.textContent));
   // A provider's summary says so; the model's own reasoning carries no line under it (owner, 2026-11-08).
-  check('a provider's summary says whose words it is, and the model's own reasoning has no note', think.length === 1 && /summary the provider wrote/.test(think[0] || ''), think.join(' | '));
+  check('a provider\'s summary says whose words it is, and the model\'s own reasoning has no note', think.length === 1 && /summary the provider wrote/.test(think[0] || ''), think.join(' | '));
   const hiddenFolded = await page.evaluate(() => {
     const note = document.querySelector('#messages .think__note');
     return getComputedStyle(note).display;
