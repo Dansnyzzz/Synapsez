@@ -17,6 +17,7 @@ import { log } from './util/trace.js';
 /**
  * @typedef {{ kind: string, quarter: number|null, year: number|null }} Badge
  * @typedef {{ id: string, role?: string, created_at?: any }} Account
+ * @typedef {{ id: string, from: string, to: string, tokens: number, places: number }} ThemeEvent  an event a theme is the prize of
  */
 
 export const BADGE_KINDS = ['none', 'exclusive_event', 'achievement', 'top_quarter', 'top_year'];
@@ -371,7 +372,7 @@ const stillHeld = (thing, row, deposited) => !(thing?.spend && (!row || row.gran
  * An event's place, if this person has earned one and there is one left. Worked out
  * from what they used inside the event's dates, so nothing has to watch the week.
  *
- * @param {Account} user @param {typeof NEW_YEAR_EVENT} event @param {any} store @param {Date} now
+ * @param {Account} user @param {ThemeEvent} event @param {any} store @param {Date} now
  * @returns {Promise<boolean>} whether they hold a place now
  */
 async function claimEvent(user, event, store, now) {
@@ -480,7 +481,7 @@ export async function eventStandingFor(event, store, now = new Date()) {
 /**
  * What an event asks and how it stands, for the page that says so.
  *
- * @param {Account} user @param {typeof NEW_YEAR_EVENT} event @param {any} store @param {Date} now
+ * @param {Account} user @param {ThemeEvent} event @param {any} store @param {Date} now
  */
 async function eventStanding(user, event, store, now) {
   const running = now >= new Date(event.from) && now < new Date(event.to);
