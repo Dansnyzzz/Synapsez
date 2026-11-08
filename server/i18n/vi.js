@@ -1109,6 +1109,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   // Share links.
   'Only something the assistant made can be shared by link. Uploaded files stay private.':
     'Chỉ những gì trợ lý tạo ra mới chia sẻ được bằng link. Tệp tải lên luôn được giữ riêng tư.',
+  '{0} stays on the cloud computer, being too large to keep in the conversation, so it cannot have a public link. It downloads from its card.':
+    '{0} vẫn nằm trên máy tính đám mây vì quá lớn để giữ trong cuộc trò chuyện, nên không có link công khai. Hãy tải xuống từ thẻ của tệp.',
   'Give the `file_id` of a file you made — create_file returns it.': 'Hãy đưa `file_id` của tệp đã tạo — create_file trả về giá trị này.',
   'There is no file {0} made in this account.': 'Không có tệp {0} nào được tạo trong tài khoản này.',
   'That picture is too large to read for text. Crop it to the part that matters, or send a smaller copy.':

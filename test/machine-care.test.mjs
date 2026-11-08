@@ -248,6 +248,68 @@ section('handing a file over');
   e2b.__testing.useSdk(null);
 }
 
+/*
+ * An archive, the whole way (owner, 2026-11-08: a model said the chat "does not allow
+ * downloading a .zip"). Through the real adapter, the real file and share routes, and
+ * the link a visitor opens.
+ */
+section('a zip, handed over, downloaded and shared');
+{
+  const express = (await import('express')).default;
+  const { mountFileRoutes } = await import('../server/routes/files.js');
+  const { mountShareRoutes, mountPublicShare } = await import('../server/routes/share.js');
+  const wrap = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const app = express();
+  app.use(express.json());
+  const api = express.Router();
+  api.use((req, _res, next) => {
+    req.user = { id: 'u-care' };
+    next();
+  });
+  mountFileRoutes(api, { wrap, body: (req) => req.body || {} });
+  mountShareRoutes(api, { wrap });
+  app.use('/api', api);
+  mountPublicShare(app, { wrap });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const { state, sdk } = fakeMachineSdk();
+  e2b.__testing.useSdk(sdk);
+  const context = { userId: 'u-care', chatId: null };
+  const { writeZip } = await import('../server/office/zip.js');
+  const bytes = writeZip([{ name: 'site/index.html', data: '<p>hi</p>' }, { name: 'site/app.js', data: 'x()' }]);
+  state.files['/home/user/out/site.zip'] = bytes;
+  const handed = await runInSandbox({ command: 'cd out && zip -r site.zip site', download: 'out/site.zip' }, context);
+  check('the zip is handed over as a file of its own', handed.file?.name === 'site.zip' && handed.file?.mime === 'application/zip' && !handed.isError, JSON.stringify(handed.file));
+  check('  and the model is told it can share it', /publish_file with that id/.test(handed.content));
+
+  const got = await fetch(`${base}/api/attachments/${handed.file.id}?download=1`);
+  const body = Buffer.from(await got.arrayBuffer());
+  check('it downloads, byte for byte', got.status === 200 && body.equals(bytes), `${got.status} ${body.length}/${bytes.length}`);
+  check('  as a download named for it', /^attachment; filename="site\.zip"/.test(got.headers.get('content-disposition') || ''), got.headers.get('content-disposition'));
+
+  const shared = await fetch(`${base}/api/attachments/${handed.file.id}/share`, { method: 'POST' }).then((r) => r.json());
+  const visitor = await fetch(`${base}${shared.path}`);
+  const seen = Buffer.from(await visitor.arrayBuffer());
+  check('a public link to it opens without signing in, and is the same zip', visitor.status === 200 && seen.equals(bytes) && /^attachment/.test(visitor.headers.get('content-disposition') || ''), `${visitor.status} ${shared.path}`);
+
+  // Past what the conversation keeps: it stays on the machine, and is never promised a link it cannot have.
+  state.files['/home/user/out/data.tar.gz'] = 'x';
+  state.sizes['/home/user/out/data.tar.gz'] = 60 * 1024 * 1024;
+  const big = await runInSandbox({ download: 'out/data.tar.gz' }, context);
+  check('a large archive is handed over too, left on the computer', big.file?.kind === 'binary' && /stays on the cloud computer at out\/data\.tar\.gz/.test(big.content), big.content.slice(0, 220));
+  check('  and the model is not told to publish it', !/publish_file/.test(big.content) && /cannot have a public link/.test(big.content));
+  const fetched = await fetch(`${base}/api/attachments/${big.file.id}`, { redirect: 'manual' });
+  check('  its download goes straight to the computer', fetched.status === 302 && /signature=/.test(fetched.headers.get('location') || ''), `${fetched.status} ${fetched.headers.get('location')}`);
+  const refused = await fetch(`${base}/api/attachments/${big.file.id}/share`, { method: 'POST' });
+  const said = (await refused.json()).error || '';
+  check('  asked for a link, it says why not, not that it was an upload', refused.status === 400 && /data\.tar\.gz stays on the cloud computer/.test(said) && !/Uploaded/.test(said), said);
+
+  e2b.__testing.useSdk(null);
+  server.close();
+}
+
 section('what the model is told');
 {
   check('how exit codes read', /memory/.test(exitMeaning(137)) && /time limit/.test(exitMeaning(124)) && exitMeaning(1) === '');
