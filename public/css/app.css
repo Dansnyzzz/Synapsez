@@ -7886,6 +7886,11 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 .botpill--overdue { color: var(--danger); }
 .botpill--done { color: var(--ok); }
 
+/* A paused workflow dims its steps, not the words that say it is paused: a
+   whole row at 62% took the pill under 4.5:1. */
+.wf--off.botrow { opacity: 1; }
+.wf--off.botrow .wf__steps { opacity: 0.62; }
+
 .botrow__more { flex: none; font-size: 18px; }
 .task__act--stop { border-color: var(--danger); color: var(--danger); }
 .task__act:disabled { opacity: 0.6; cursor: default; }
