@@ -70,6 +70,15 @@ const provider = http.createServer((req, res) => {
       });
       return;
     }
+    // Stops at its output limit every time, on a request as large as a whole turn on the deployment's key may be.
+    if (/cut-huge/.test(String(body.model))) {
+      request.finished = true;
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'x'.repeat(400) } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }], usage: { prompt_tokens: 2_100_000, completion_tokens: 1000 } })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
     // Answers at once the first time, most of what it was sent read from its cache; slowly after.
     if (/cached-then-slow/.test(String(body.model)) && !cutOff.has(body.model)) {
       cutOff.add(body.model);
@@ -408,6 +417,25 @@ section('a dead key of your own is no way past the deployment key\'s ceiling');
   const underRun = startRun(underChat, { model: 'openai/quick-under' }, under);
   await underRun.finished;
   check('under it, the deployment key still answers', requests.slice(start).some((r) => r.auth.includes('deployment')) && underRun.events.some((e) => e.name === 'done'));
+
+  // Owner, 2026-11-08: the monthly ceiling applied from the moment the deployment's key did, the per-turn limit did not.
+  delete process.env.MAX_TURN_TOKENS;
+  await store.createUser({ id: 'u-huge', email: 'huge@example.com', name: 'Huge', passwordHash: await hashPassword(password), role: 'user' });
+  await store.updateUser('u-huge', { monthlyTokenLimit: 100_000_000 });
+  await setApiKey('u-huge', 'openai', 'sk-refuse-key-5');
+  await setPrefs('u-huge', { policy: 'auto', qualityGate: false });
+  const huge = await login('huge@example.com');
+  const hugeFrom = requests.length;
+  await startRun(await newChat('Write it all', huge), { model: 'openai/cut-huge-1' }, huge).finished;
+  const onDeployment = requests.slice(hugeFrom).filter((r) => r.auth.includes('deployment'));
+  check('the deployment key\'s per-turn limit holds from the moment it is used', onDeployment.length === 1, `${onDeployment.length} requests on it`);
+  await store.createUser({ id: 'u-own-huge', email: 'own-huge@example.com', name: 'Own', passwordHash: await hashPassword(password), role: 'user' });
+  await setApiKey('u-own-huge', 'openai', 'sk-own-huge-key');
+  await setPrefs('u-own-huge', { policy: 'auto', qualityGate: false });
+  const own = await login('own-huge@example.com');
+  const ownFrom = requests.length;
+  await startRun(await newChat('Write it all', own), { model: 'openai/cut-huge-2' }, own).finished;
+  check('  and not on the account\'s own key, which has none', requests.slice(ownFrom).filter((r) => /own-huge/.test(r.auth)).length > 1);
 
   // What a provider says about the deployment's key is not this account's to read.
   process.env.OPENAI_API_KEY = 'sk-refuse-key-deployment';

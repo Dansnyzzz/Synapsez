@@ -1606,6 +1606,18 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   const quota = await checkQuota(user, { usingSharedKey });
   // Per turn, alongside the monthly quota above. See `turnTokenLimit`.
   let turnLimit = turnTokenLimit({ usingSharedKey });
+  /**
+   * Whether this turn has spent the deployment's key: its own keys refused, the
+   * request went to the deployment's. Its per-turn limit holds from then to the end of
+   * the turn, a later model change included — it had stayed the own-key one (none)
+   * while the deployment paid (owner, 2026-11-08).
+   */
+  let spentSharedKey = false;
+  const onSharedKey = () => {
+    spentSharedKey = true;
+    usingSharedKey = true;
+    turnLimit = turnTokenLimit({ usingSharedKey: true });
+  };
   let turnTokens = 0;
   if (!quota.allowed) {
     emit('error', { message: quota.reason, code: 'quota_exceeded' });
@@ -2249,6 +2261,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           signal,
           // Own keys all refused, the deployment's next: its monthly ceiling applies from there.
           sharedKeyAllowed: usingSharedKey ? undefined : async () => (await checkQuota(user, { usingSharedKey: true })).allowed,
+          // ...and its per-turn limit from the moment it is used.
+          onSharedKey: usingSharedKey ? undefined : onSharedKey,
           googleData,
           deadline,
           // Kept with the message: which provider, what kind of promise, how many of each
@@ -2449,7 +2463,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           emit('model_switched', { from, to: AUTO_ID });
           // The shared key's limits, if Auto runs on it and the old model did not.
           usingSharedKey = await usesSharedKey(userId, entry.provider);
-          turnLimit = turnTokenLimit({ usingSharedKey });
+          turnLimit = turnTokenLimit({ usingSharedKey: usingSharedKey || spentSharedKey });
           const allowed = await checkQuota(user, { usingSharedKey });
           if (!allowed.allowed) {
             emit('error', { message: allowed.reason, code: 'quota_exceeded' });
@@ -2490,7 +2504,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           entry = auto;
           emit('status', { message: `${from} is not answering right now, so this reply comes from ${auto.label || auto.id}. Your chosen model is unchanged.` });
           usingSharedKey = await usesSharedKey(userId, entry.provider);
-          turnLimit = turnTokenLimit({ usingSharedKey });
+          turnLimit = turnTokenLimit({ usingSharedKey: usingSharedKey || spentSharedKey });
           const allowed = await checkQuota(user, { usingSharedKey });
           if (!allowed.allowed) {
             emit('error', { message: allowed.reason, code: 'quota_exceeded' });
