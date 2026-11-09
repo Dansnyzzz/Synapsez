@@ -4425,6 +4425,16 @@ section('the Bot page: one rail item, two tabs');
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(process.env.BOT_SHOTS, 'bot-workflows.png') });
   }
+  // Leaving the Bot page closes what was open beside it: left open, it hid a conversation's
+  // cloud browser screen, which the rail could not show beside it (2026-11-09).
+  await page.click('#open-archive');
+  await page.waitForTimeout(700);
+  const left = await page.evaluate(() => ({
+    pane: !document.getElementById('taskpane').hidden,
+    borrowed: document.getElementById('app').classList.contains('is-taskpane'),
+    hash: location.hash,
+  }));
+  check('leaving the Bot page closes the workflow open beside it', !left.pane && !left.borrowed && !/^#bot/.test(left.hash), JSON.stringify(left));
 
   // Delete under ⋯ takes a second press, within three seconds.
   await openBotTab('scheduled');

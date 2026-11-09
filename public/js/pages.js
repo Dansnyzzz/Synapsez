@@ -2076,6 +2076,20 @@ export function createPages({
 
   $('taskpane-close').addEventListener('click', closeTaskPane);
 
+  /**
+   * Leaving the Bot page closes the workflow or task open beside its list. The rail holds
+   * one thing at a time, and left open it hid what the next page or conversation put
+   * there: a conversation's cloud browser screen did not show at all (2026-11-09). The
+   * page is hidden first, so closing it does not write the Bot page's address back.
+   */
+  function leaveBotPane() {
+    if ($('taskpane').hidden) return;
+    const wasHidden = page.hidden;
+    page.hidden = true;
+    closeTaskPane();
+    page.hidden = wasHidden;
+  }
+
   /** What a task's permission setting means, in the words the form used. */
   function policyAs(policy) {
     if (policy === 'auto') return t('taskForm.policySkip');
@@ -2097,6 +2111,7 @@ export function createPages({
     // A shelf may have left something running — a poll, a timer. Switching
     // between shelves has to end it, or it outlives the page it belongs to.
     if (showing && showing !== which) views[showing]?.onHide?.();
+    if (isBotTab(showing) && !isBotTab(which)) leaveBotPane();
     // The Bot tab being left keeps its search and order for when it is back.
     if (isBotTab(showing)) botMemory[showing] = { query, order };
     showing = which;
@@ -2149,6 +2164,7 @@ export function createPages({
     /** Back to the conversation. */
     hide() {
       if (showing) views[showing]?.onHide?.();
+      if (isBotTab(showing)) leaveBotPane();
       if (isBotTab(showing)) botMemory[showing] = { query, order };
       showing = null;
       page.hidden = true;
