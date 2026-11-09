@@ -219,31 +219,188 @@ export async function restorePackages(userId, machine, shellFor) {
 }
 
 /**
- * What goes without anybody asking: caches that come back by themselves, and the
- * account's own scraps in /tmp once nothing has touched them for a while. Nothing
- * under the working folder a person could have meant to keep. The last line says
- * how full the disk is.
+ * A disk that looks after itself (owner, 2026-11-08: "auto detect, adaptive, real-time").
+ *
+ * How full it is is read after every command, which costs one `df`. The tidy itself
+ * runs when it is due, or at once when the disk has gone into a fuller tier than the
+ * last tidy was for:
+ *
+ *   below 70%   caches that come back by themselves, `__pycache__`, core dumps, the
+ *               account's own scraps in /tmp after twenty minutes, uploads/ after a month;
+ *   70–85%      also the rest of ~/.cache and ~/.npm and a project's build caches
+ *               (node_modules/.cache, .next/cache, .parcel-cache), a file once nothing has
+ *               read or written it for a day; logs over 10 MB cut to their last megabyte;
+ *               incoming/ copies after a day, downloads/ after a week;
+ *   above 85%   also those caches whatever their age, and large files in /tmp; then the
+ *               largest things left in the home folder go to the model, which decides.
+ *
+ * Nothing else in the working folder is touched: what a person or the model made stays.
+ * Never Playwright's or Puppeteer's browsers, which nothing fetches again by itself.
+ * Only the account's own files (`-user`), on the home's own disk (`-xdev`), no link
+ * followed: `find` follows none, a cache folder that is itself a link is left alone, and
+ * `-delete` is never beside a folder that is skipped, since it turns the skipping off.
  */
-export const TIDY_SCRIPT = [
-  'cd "$HOME" 2>/dev/null || exit 0',
-  'rm -rf .cache/pip .cache/uv .npm/_cacache .npm/_logs .pytest_cache 2>/dev/null',
-  "find . -type d \\( -name __pycache__ -o -name .ipynb_checkpoints -o -name .pytest_cache \\) -not -path './.local/*' -prune -exec rm -rf {} + 2>/dev/null",
-  "find . -maxdepth 3 -type f \\( -name 'core' -o -name 'core.[0-9]*' \\) -delete 2>/dev/null",
-  "find /tmp -mindepth 1 -maxdepth 1 -user \"$(id -un)\" -mmin +20 ! -name 'synz*' ! -name '.*' -exec rm -rf {} + 2>/dev/null",
-  // What was sent straight here and left a month. Its row says the file is gone, in those words.
-  'find uploads -type f -mtime +30 -delete 2>/dev/null; find uploads -mindepth 1 -type d -empty -delete 2>/dev/null',
-  "df -P \"$HOME\" 2>/dev/null | awk 'NR==2 { print $5 }'",
-].join('\n');
-
+export const DISK_TIERS = { more: 70, most: 85 };
 const TIDY_EVERY_MS = 5 * 60_000;
 /** The disk past which the model is told, so it can put away what it no longer needs. */
 const DISK_WARN_PERCENT = 80;
-/** @type {Map<string, number>} */
-const lastTidied = new Map();
+/** Neither read nor written for a day. */
+const DAY_OLD = '-mmin +1440 -amin +1440';
+/** Browsers in ~/.cache: kept at every tier. */
+const KEPT_CACHES = '-path ./.cache/ms-playwright -o -path ./.cache/puppeteer';
+/** How full the home's disk is, in percent: what every command costs. */
+const DISK_CHECK = `df -Pk "$HOME" 2>/dev/null | awk 'NR==2 { sub(/%/, "", $5); print $5 }'`;
 
 /**
- * Tidy this account's machine if it has not been for a while, the machine being
- * awake anyway. Never fails the command it follows.
+ * How hard to tidy at this fullness.
+ *
+ * @param {number} percent
+ * @returns {1|2|3}
+ */
+export function tidyTier(percent) {
+  const full = Number(percent);
+  if (!Number.isFinite(full)) return 1;
+  return full > DISK_TIERS.most ? 3 : full >= DISK_TIERS.more ? 2 : 1;
+}
+
+/**
+ * Whether to tidy after this command, and how hard: when it is due, or when the disk is
+ * in a fuller tier than the last tidy was for. A disk that has gone down a tier has less
+ * to do, which can wait until it is due.
+ *
+ * @param {{ percent: number, last?: { tier?: number, tidiedAt?: number } | null, now?: number }} state
+ * @returns {{ tier: 1|2|3, run: boolean }}
+ */
+export function tidyPlan({ percent, last = null, now = Date.now() }) {
+  const tier = tidyTier(percent);
+  const since = Number(last?.tidiedAt) || 0;
+  return { tier, run: !since || now - since >= TIDY_EVERY_MS || tier > (Number(last?.tier) || 0) };
+}
+
+/**
+ * The tidy for one tier, as a script run as the account. Its last lines say how full the
+ * disk was before and after (`synz-disk`, percent and kilobytes used, twice), and at the
+ * top tier what is largest (`synz-big`, kilobytes, a tab, the path).
+ *
+ * @param {number} tier
+ * @param {{ tmp?: string }} [options]  `tmp`: a test points it at a folder of its own
+ */
+export function tidyScript(tier, { tmp = '/tmp' } = {}) {
+  const level = Math.min(3, Math.max(1, Math.round(Number(tier)) || 1));
+  // Above 85% the caches go whatever their age.
+  const age = level >= 3 ? '' : ` ${DAY_OLD}`;
+  const scraps = quoted(tmp);
+  const lines = [
+    // An empty or root HOME would leave this wherever it started.
+    '[ -n "$HOME" ] && [ "$HOME" != / ] && cd -- "$HOME" 2>/dev/null || exit 0',
+    'me="$(id -un 2>/dev/null)"; [ -n "$me" ] || exit 0',
+    `disk() { df -Pk . 2>/dev/null | awk 'NR==2 { sub(/%/, "", $5); print $5, $3 }'; }`,
+    'before="$(disk)"',
+    '[ -d .cache ] && [ ! -L .cache ] && rm -rf -- .cache/pip .cache/uv 2>/dev/null',
+    '[ -d .npm ] && [ ! -L .npm ] && rm -rf -- .npm/_cacache .npm/_logs 2>/dev/null',
+    'rm -rf -- .pytest_cache 2>/dev/null',
+    `find . -xdev \\( -path ./.local -o ${KEPT_CACHES} \\) -prune -o -type d \\( -name __pycache__ -o -name .ipynb_checkpoints -o -name .pytest_cache \\) -user "$me" -prune -exec rm -rf -- {} + 2>/dev/null`,
+    `find . -maxdepth 3 -xdev \\( -path ./.local -o ${KEPT_CACHES} \\) -prune -o -type f \\( -name core -o -name 'core.[0-9]*' \\) -user "$me" -exec rm -f -- {} + 2>/dev/null`,
+    `find ${scraps} -xdev -mindepth 1 -maxdepth 1 -user "$me" -mmin +20 ! -name 'synz*' ! -name '.*' -exec rm -rf -- {} + 2>/dev/null`,
+    // What was sent straight here and left a month. Its row says the file is gone, in those words.
+    'find uploads -xdev -type f -user "$me" -mtime +30 -delete 2>/dev/null; find uploads -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null',
+  ];
+  if (level >= 2) {
+    lines.push(
+      `[ -d .cache ] && [ ! -L .cache ] && find ./.cache -xdev -mindepth 1 \\( ${KEPT_CACHES} \\) -prune -o -type f -user "$me"${age} -exec rm -f -- {} + 2>/dev/null`,
+      `[ -d .npm ] && [ ! -L .npm ] && find ./.npm -xdev -mindepth 1 -type f -user "$me"${age} -exec rm -f -- {} + 2>/dev/null`,
+      `find . -xdev \\( -path ./.local -o -path ./.cache -o -path ./.npm \\) -prune -o -type f \\( -path '*/node_modules/.cache/*' -o -path '*/.next/cache/*' -o -path '*/.parcel-cache/*' \\) -user "$me"${age} -exec rm -f -- {} + 2>/dev/null`,
+      // Its last megabyte kept, in place: a program still writing to it frees the space as well.
+      `find . -maxdepth 4 -xdev \\( -path ./.local -o -path ./.cache -o -path ./.npm -o -name node_modules -o -name .git \\) -prune -o -type f \\( -name '*.log' -o -name '*.log.[0-9]*' -o -name nohup.out \\) -size +10M -user "$me" ` +
+        `-exec sh -c 'for f do t="$(mktemp)" || continue; tail -c 1048576 -- "$f" > "$t" && cat -- "$t" > "$f"; rm -f -- "$t"; done' sh {} + 2>/dev/null`,
+      // Copies of the conversation's files, which `bring` puts back, and what the cloud browser downloaded.
+      `find incoming -xdev -type f -user "$me" ${DAY_OLD} -delete 2>/dev/null; find incoming -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null`,
+      'find downloads -xdev -type f -user "$me" -mmin +10080 -amin +10080 -delete 2>/dev/null; find downloads -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null',
+    );
+  }
+  if (level >= 3) {
+    // Not one still being written: deleting it would free nothing until it closed, and lose it.
+    lines.push(`find ${scraps} -xdev -mindepth 1 -type f -size +20M -user "$me" -mmin +5 ! -path ${quoted(`${tmp}/synz*`)} ! -path ${quoted(`${tmp}/.*`)} -delete 2>/dev/null`);
+  }
+  lines.push('echo "synz-disk $before $(disk)"');
+  if (level >= 3) {
+    // Folders two deep and files over 10 MB, largest first.
+    lines.push(`{ du -xk -d 2 . 2>/dev/null | awk -F '\\t' '$2 != "."'; find . -xdev -type f -size +10M -user "$me" -printf '%k\\t%p\\n' 2>/dev/null; } | sort -rn | head -10 | sed 's/^/synz-big /'`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * What a tidy said: how full the disk was before and after, how much it freed, and at the
+ * top tier what is largest. Null when it said nothing readable.
+ *
+ * @param {string} out
+ * @returns {{ before: number, after: number, freed: number, biggest: { bytes: number, path: string }[] } | null}
+ */
+export function readTidy(out) {
+  const lines = String(out || '').split('\n').map((line) => line.replace(/\r$/, ''));
+  const said = /^synz-disk (\d+) (\d+) (\d+) (\d+)\s*$/.exec(lines.find((line) => line.startsWith('synz-disk ')) || '');
+  if (!said) return null;
+  const [before, usedBefore, after, usedAfter] = said.slice(1).map(Number);
+  const biggest = [];
+  for (const line of lines) {
+    const big = /^synz-big (\d+)\t(.+)$/.exec(line);
+    if (big && biggest.length < 10) biggest.push({ bytes: Number(big[1]) * 1024, path: big[2].replace(/^\.\//, '').slice(0, 160) });
+  }
+  // Something else may have written meanwhile: never less than nothing.
+  return { before, after, freed: Math.max(0, usedBefore - usedAfter) * 1024, biggest };
+}
+
+const sized = (bytes) =>
+  bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : bytes >= 1024 ** 2 ? `${Math.round(bytes / 1024 ** 2)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+/**
+ * A sentence for the model when the disk is still getting full after a tidy, else nothing.
+ *
+ * @param {{ after: number, freed: number, biggest: { bytes: number, path: string }[] }} result
+ */
+function diskNote({ after, freed, biggest }) {
+  if (after < DISK_WARN_PERCENT) return '';
+  const tidied = freed ? ` after tidying freed ${sized(freed)}` : '';
+  const largest = biggest.length ? ` The largest things in its home folder: ${biggest.map((b) => `${b.path} ${sized(b.bytes)}`).join(', ')}.` : '';
+  return `The cloud computer's disk is ${after}% full${tidied}: delete what is no longer needed, and ask the user before deleting their own files.${largest}`;
+}
+
+const DISK_SETTING = 'machineDisk';
+/** Long enough to hold "today" wherever the person is. */
+const FREED_FOR_MS = 48 * 60 * 60_000;
+const FREED_KEPT = 300;
+/**
+ * What each account's disk last said, and when it was last tidied: the plan's memory on
+ * this instance. The store keeps the same for the Settings page and for other instances.
+ * @type {Map<string, { percent: number, checkedAt: number, tier: number, tidiedAt: number, freed: number[][] }>}
+ */
+const disks = new Map();
+
+/** A stored record as numbers, whatever the row holds. @param {any} saved */
+function diskRecordOf(saved) {
+  const number = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+  const freed = Array.isArray(saved?.freed)
+    ? saved.freed.filter((entry) => Array.isArray(entry) && entry.length === 2 && entry.every((v) => Number.isFinite(v) && v >= 0))
+    : [];
+  return { percent: number(saved?.percent), checkedAt: number(saved?.checkedAt), tier: number(saved?.tier), tidiedAt: number(saved?.tidiedAt), freed: freed.slice(-FREED_KEPT) };
+}
+
+/** @param {string} userId */
+async function diskRecord(userId) {
+  let record = disks.get(userId);
+  if (!record) {
+    record = diskRecordOf(await getStore().getUserSetting(userId, DISK_SETTING).catch(() => null));
+    disks.set(userId, record);
+    if (disks.size > 2000) disks.delete(disks.keys().next().value);
+  }
+  return record;
+}
+
+/**
+ * After a command: look at how full the disk is, and tidy as hard as that says when it
+ * is due or a tier has been crossed. The machine is awake anyway. Never fails the
+ * command it follows.
  *
  * @param {string} userId
  * @param {any} machine
@@ -252,16 +409,50 @@ const lastTidied = new Map();
  * @returns {Promise<string>} a sentence for the model when the disk is getting full, else nothing
  */
 export async function tidyIfDue(userId, machine, shellFor, { signal, now = Date.now() } = {}) {
-  if (now - (lastTidied.get(userId) || 0) < TIDY_EVERY_MS) return '';
-  lastTidied.set(userId, now);
-  if (lastTidied.size > 2000) lastTidied.delete(lastTidied.keys().next().value);
   try {
-    const done = await machine.runCommand({ ...shellFor(TIDY_SCRIPT, {}, { userBin: true }), timeoutMs: 20_000, signal });
-    const percent = parseInt(String(await done.stdout()).trim(), 10);
-    return percent >= DISK_WARN_PERCENT ? `The cloud computer's disk is ${percent}% full: delete what is no longer needed.` : '';
+    const record = await diskRecord(userId);
+    const checked = await machine.runCommand({ ...shellFor(DISK_CHECK, {}, { userBin: true }), timeoutMs: 10_000, signal });
+    const percent = parseInt(String(await checked.stdout()).trim(), 10);
+    if (!Number.isFinite(percent)) return '';
+    record.percent = percent;
+    record.checkedAt = now;
+    const plan = tidyPlan({ percent, last: record, now });
+    if (!plan.run) return '';
+    // Before it runs: one that fails is not tried again after every command.
+    record.tidiedAt = now;
+    record.tier = plan.tier;
+    const done = await machine.runCommand({ ...shellFor(tidyScript(plan.tier), {}, { userBin: true }), timeoutMs: plan.tier > 1 ? 45_000 : 20_000, signal });
+    const result = readTidy(await done.stdout());
+    if (result) {
+      record.percent = result.after;
+      record.freed = [...record.freed.filter(([at]) => now - at < FREED_FOR_MS), ...(result.freed > 0 ? [[now, result.freed]] : [])].slice(-FREED_KEPT);
+    }
+    await getStore().setUserSetting(userId, DISK_SETTING, record).catch(() => {});
+    return result ? diskNote(result) : '';
   } catch {
     return '';
   }
+}
+
+/**
+ * How full this account's disk was when last looked at, and what tidying freed over the
+ * last two days, for the Settings page to sum by the person's own "today". This
+ * instance's reading when it is newer than the stored one; nothing before a command has run.
+ *
+ * @param {string} userId
+ * @param {{ now?: number }} [options]
+ * @returns {Promise<{ percent: number, checkedAt: number, freed: { at: number, bytes: number }[] } | null>}
+ */
+export async function diskSummary(userId, { now = Date.now() } = {}) {
+  const saved = diskRecordOf(await getStore().getUserSetting(userId, DISK_SETTING).catch(() => null));
+  const here = disks.get(userId);
+  const record = here && here.checkedAt >= saved.checkedAt ? here : saved;
+  if (!record.checkedAt) return null;
+  return {
+    percent: record.percent,
+    checkedAt: record.checkedAt,
+    freed: record.freed.filter(([at]) => now - at < FREED_FOR_MS).map(([at, bytes]) => ({ at, bytes })),
+  };
 }
 
 const SPECIAL_KEY = /^(?:C-[a-z]|M-[a-z]|Enter|Tab|BTab|Escape|Up|Down|Left|Right|BSpace|DC|PageUp|PageDown|Home|End|Space|F(?:[1-9]|1[0-2]))$/;
@@ -315,8 +506,8 @@ export function terminalScript(terminal) {
 }
 
 export const __testing = {
-  /** Tidy on the next call, whenever the last one was. */
+  /** Nothing remembered about any disk: the next call starts afresh. */
   reset() {
-    lastTidied.clear();
+    disks.clear();
   },
 };

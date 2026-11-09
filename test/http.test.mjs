@@ -143,6 +143,7 @@ section('routes that need a session');
     ['GET', '/api/tasks'],
     ['GET', '/api/connectors'],
     ['GET', '/api/devices/status'],
+    ['GET', '/api/cloud-computer/disk'],
     ['GET', '/api/admin/users'],
   ]) {
     const res = await anon.call(method, url);
@@ -902,6 +903,16 @@ section('login throttling');
 }
 
 // ── chats stay with their owner over HTTP too ───────────────────────
+section('the cloud computer\'s disk is the account\'s own to read');
+{
+  const me = (await alice.call('GET', '/api/session')).json?.user;
+  await store.setUserSetting(me.id, 'machineDisk', { percent: 34, checkedAt: Date.now(), tier: 1, tidiedAt: Date.now(), freed: [[Date.now(), 1024]] });
+  const hers = await alice.call('GET', '/api/cloud-computer/disk');
+  check('its owner reads how full it is', hers.status === 200 && hers.json?.disk?.percent === 34 && hers.json.disk.freed?.[0]?.bytes === 1024, JSON.stringify(hers.json));
+  const his = await bob.call('GET', '/api/cloud-computer/disk');
+  check('  another account reads nothing of it', his.status === 200 && his.json?.disk === null, JSON.stringify(his.json));
+}
+
 section('cross-account access through the API');
 {
   const mine = await alice.call('GET', '/api/chats');

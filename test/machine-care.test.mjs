@@ -6,6 +6,7 @@
  *   node test/machine-care.test.mjs
  */
 import { PGlite } from '@electric-sql/pglite';
+import { spawnSync } from 'node:child_process';
 
 let failures = 0;
 const section = (n) => console.log(`\n\x1b[1m${n}\x1b[0m`);
@@ -110,23 +111,174 @@ section('the browsers Playwright downloads come back too (owner, 2026-11-08)');
 
 section('what goes without anybody asking');
 {
-  const s = care.TIDY_SCRIPT;
+  const s = care.tidyScript(1);
   check('caches that come back by themselves', /\.cache\/pip/.test(s) && /_cacache/.test(s) && /__pycache__/.test(s));
-  check('  not what is installed', /-not -path '\.\/\.local\/\*'/.test(s));
-  check('  scraps in /tmp, only the account\'s, only old ones', /find \/tmp [^\n]*-user [^\n]*-mmin \+20/.test(s));
+  check('  not what is installed', /\( -path \.\/\.local -o [^\n]*\) -prune -o -type d/.test(s));
+  check('  scraps in /tmp, only the account\'s, only old ones', /find '\/tmp' [^\n]*-user [^\n]*-mmin \+20/.test(s));
   check('  and never the app\'s own', /! -name 'synz\*'/.test(s));
   check('  nothing in the working folder but those', !/rm -rf \*|rm -rf \.$/m.test(s));
-  check('and it says how full the disk is', /df -P/.test(s));
+  check('and it says how full the disk is, before and after', /df -Pk/.test(s) && /echo "synz-disk \$before \$\(disk\)"/.test(s));
+}
+
+section('a disk that looks after itself (owner, 2026-11-08)');
+{
+  const tier = care.tidyTier;
+  check('below 70%: the light tidy', tier(0) === 1 && tier(69.9) === 1);
+  check('70% to 85%: more', tier(70) === 2 && tier(85) === 2);
+  check('above 85%: everything that comes back by itself', tier(85.1) === 3 && tier(100) === 3);
+  check('a reading that is not a number tidies lightly', tier(NaN) === 1 && tier(undefined) === 1);
+
+  const plan = care.tidyPlan;
+  const at = 10_000_000;
+  check('the first time, it runs', plan({ percent: 40, last: null, now: at }).run === true);
+  check('  not again for five minutes in the same tier', plan({ percent: 40, last: { tier: 1, tidiedAt: at }, now: at + 60_000 }).run === false);
+  check('  at once when a fuller tier is reached', plan({ percent: 72, last: { tier: 1, tidiedAt: at }, now: at + 60_000 }).run === true && plan({ percent: 90, last: { tier: 2, tidiedAt: at }, now: at + 1 }).tier === 3);
+  check('  not for going down a tier', plan({ percent: 50, last: { tier: 3, tidiedAt: at }, now: at + 60_000 }).run === false);
+  check('  and again when due', plan({ percent: 50, last: { tier: 3, tidiedAt: at }, now: at + 5 * 60_000 }).run === true);
+
+  const scripts = [1, 2, 3].map((n) => care.tidyScript(n));
+  check('more at each tier, and the largest things only at the top', !/incoming/.test(scripts[0]) && /incoming/.test(scripts[1]) && !/synz-big/.test(scripts[1]) && /synz-big/.test(scripts[2]));
+  check('70–85%: caches once untouched for a day, above 85% whatever their age', /find \.\/\.cache [^\n]*-mmin \+1440 -amin \+1440/.test(scripts[1]) && /find \.\/\.cache [^\n]*-user "\$me" -exec rm/.test(scripts[2]));
+
+  /*
+   * What may go, read off the scripts themselves: every deleting line starts from a
+   * place this owns, and one that walks the working folder names what it is after.
+   */
+  const deleting = (line) => /-delete|-exec rm|rm -rf? --/.test(line);
+  const starts = new Set(['.', './.cache', './.npm', 'incoming', 'downloads', 'uploads', "'/tmp'"]);
+  const named = /-name __pycache__|-name core|node_modules\/\.cache|-name '\*\.log'/;
+  const RM_TARGETS = new Set(['.cache/pip .cache/uv', '.npm/_cacache .npm/_logs', '.pytest_cache', '{}', '"$t"']);
+  const problems = [];
+  for (const [i, script] of scripts.entries()) {
+    for (const line of script.split('\n').filter(deleting)) {
+      for (const [, target] of line.matchAll(/rm -r?f -- (.+?)(?= 2>| \+|;|$)/g)) if (!RM_TARGETS.has(target)) problems.push(`tier ${i + 1}: rm ${target}`);
+      for (const [, start] of line.matchAll(/find (\S+)/g)) {
+        if (!starts.has(start)) problems.push(`tier ${i + 1}: find ${start}`);
+        if (start === '.' && !named.test(line)) problems.push(`tier ${i + 1}: walks the working folder for nothing in particular`);
+      }
+      if (/\bfind /.test(line) && !(/-user "\$me"/.test(line) && /-xdev/.test(line))) problems.push(`tier ${i + 1}: not only the account's, or past its disk: ${line.slice(0, 60)}`);
+      // `-delete` turns `-prune` off: a skipped folder would be walked into and emptied.
+      if (/-delete/.test(line) && /-prune/.test(line)) problems.push(`tier ${i + 1}: -delete beside -prune`);
+    }
+  }
+  check('never anything of the working folder\'s own: only caches, copies, logs and scraps it names', !problems.length, problems.join(' | '));
+  check('Playwright\'s browsers are skipped wherever ~/.cache is walked', scripts.every((script) => script.split('\n').filter((line) => /find \.\/\.cache|find \. /.test(line) && deleting(line)).every((line) => /-path \.\/\.cache\/ms-playwright[^\n]*-prune|-path \.\/\.cache -o[^\n]*-prune/.test(line))));
+  check('  and named nowhere else', scripts.every((script) => (script.match(/ms-playwright/g) || []).length === (script.match(/-path \.\/\.cache\/ms-playwright/g) || []).length));
+  check('no rm -rf on a variable', scripts.every((script) => !/rm -rf? -- "?\$(?!t")/.test(script)));
+
+  const shell = spawnSync('bash', ['--noprofile', '--norc', '-c', 'find --version 2>/dev/null | head -1'], { encoding: 'utf8' });
+  if (shell.error || shell.status !== 0) {
+    console.log('  (no bash here: the scripts were read, not run)');
+  } else {
+    for (const [i, script] of scripts.entries()) {
+      const parsed = spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' });
+      check(`tier ${i + 1} is well-formed bash`, parsed.status === 0, parsed.stderr.trim());
+    }
+    const linted = spawnSync('shellcheck', ['--version'], { encoding: 'utf8' });
+    if (!linted.error && linted.status === 0) {
+      for (const [i, script] of scripts.entries()) {
+        const out = spawnSync('shellcheck', ['-s', 'bash', '-S', 'warning', '-'], { input: script, encoding: 'utf8' });
+        check(`tier ${i + 1} has no shellcheck warnings`, out.status === 0, out.stdout.slice(0, 400));
+      }
+    } else console.log('  (shellcheck is not installed here)');
+
+    if (/GNU findutils/.test(shell.stdout)) await tidyForReal();
+    else console.log('  (not GNU find: the scripts were checked, not run)');
+  }
+
+  // The plan as a command runs it, through the adapter's runCommand.
+  care.__testing.reset();
+  await store.createUser({ id: 'u-disk', email: 'disk@example.com', passwordHash: 'x', name: 'D', role: 'user' });
+  const fake = (replies) => ({
+    lines: /** @type {string[]} */ ([]),
+    async runCommand(c) {
+      const line = c.args.at(-1);
+      this.lines.push(line);
+      return { stdout: async () => (/synz-disk/.test(line) ? replies.tidy : replies.df) };
+    },
+  });
+  const t0 = 50_000_000;
+  const roomy = fake({ df: '44\n', tidy: 'synz-disk 44 1000 43 900\n' });
+  check('a roomy disk: tidied lightly, nothing said', (await care.tidyIfDue('u-disk', roomy, shellFor, { now: t0 })) === '' && roomy.lines.length === 2 && !/incoming/.test(roomy.lines[1]));
+  await care.tidyIfDue('u-disk', roomy, shellFor, { now: t0 + 60_000 });
+  check('  the next command only looks', roomy.lines.length === 3 && /df -Pk "\$HOME"/.test(roomy.lines[2]) && !/synz-disk/.test(roomy.lines[2]));
+  const filling = fake({ df: '76\n', tidy: 'synz-disk 76 7600000 74 7400000\n' });
+  check('past 70%, a fuller tidy at once', (await care.tidyIfDue('u-disk', filling, shellFor, { now: t0 + 90_000 })) === '' && /incoming/.test(filling.lines[1] || ''));
+  const full = fake({ df: '91\n', tidy: 'synz-disk 91 9100000 88 8100000\nsynz-big 2097152\t./data\nsynz-big 1048576\t./data/raw.parquet\n' });
+  const said = await care.tidyIfDue('u-disk', full, shellFor, { now: t0 + 120_000 });
+  check('past 85%: everything, and the model is told what is left', /88% full after tidying freed 977 MB/.test(said) && /data 2\.0 GB, data\/raw\.parquet 1\.0 GB/.test(said) && /synz-big/.test(full.lines[1] || ''), said);
+  check('a machine that will not answer fails nothing', (await care.tidyIfDue('u-disk', { runCommand: async () => { throw new Error('no'); } }, shellFor, { now: t0 + 10 * 60_000 })) === '');
 
   care.__testing.reset();
-  const machine = (out) => ({ calls: 0, async runCommand() { this.calls += 1; return { stdout: async () => out }; } });
-  const m = machine('44%\n');
-  check('nothing to say on a roomy disk', (await care.tidyIfDue('t1', m, shellFor, { now: 1_000_000 })) === '');
-  check('  and not again for a while', (await care.tidyIfDue('t1', m, shellFor, { now: 1_000_001 })) === '' && m.calls === 1);
-  await care.tidyIfDue('t1', m, shellFor, { now: 1_000_000 + 6 * 60_000 });
-  check('  then again', m.calls === 2);
-  check('a full disk is said', /91% full/.test(await care.tidyIfDue('t2', machine('91%'), shellFor)));
-  check('a machine that will not answer fails nothing', (await care.tidyIfDue('t3', { runCommand: async () => { throw new Error('no'); } }, shellFor)) === '');
+  const summary = await care.diskSummary('u-disk', { now: t0 + 130_000 });
+  const freed = (summary?.freed || []).reduce((sum, f) => sum + f.bytes, 0);
+  check('what it found is kept for the Settings page, on any instance', summary?.percent === 88 && freed === (100 + 200_000 + 1_000_000) * 1024, JSON.stringify(summary));
+  check('  and nothing for an account whose computer has not run anything', (await care.diskSummary('u-care-2')) === null);
+  check('the reading of a tidy', JSON.stringify(care.readTidy('noise\nsynz-disk 90 100 80 60\r\nsynz-big 10\t./a b')) === JSON.stringify({ before: 90, after: 80, freed: 40 * 1024, biggest: [{ bytes: 10 * 1024, path: 'a b' }] }) && care.readTidy('nothing') === null);
+}
+
+/**
+ * The scripts run, against a home and a /tmp made for it, by the bash on this machine:
+ * what goes goes, and what is a person's stays. Never against the real /tmp.
+ */
+async function tidyForReal() {
+  const bash = (script, ...args) => spawnSync('bash', ['--noprofile', '--norc', '-c', script, 'bash', ...args], { encoding: 'utf8', env: { ...process.env, MSYS: 'winsymlinks:nativestrict' } });
+  const setup = [
+    'set -e',
+    'root="$(mktemp -d)"; h="$root/home"; t="$root/tmp"; o="$root/outside"',
+    'mkdir -p "$h" "$t/job" "$o/__pycache__"; cd "$h"',
+    'ago() { local s; s="$(( $(date +%s) - $1 * 60 ))"; shift; touch -m -d "@$s" "$@"; touch -a -d "@$s" "$@"; }',
+    'put() { mkdir -p "$(dirname "$1")"; printf x > "$1"; }',
+    'for f in report.docx data.csv project/src/main.py notes/todo.txt logs/small.log project/node_modules/left-pad/index.js; do put "$f"; ago 4320 "$f"; done',
+    'put .cache/pip/w; put .npm/_cacache/x; put .cache/huggingface/fresh.bin',
+    'for f in .cache/huggingface/old.bin .cache/ms-playwright/chromium-1/chrome .cache/ms-playwright/__pycache__/k.pyc .cache/puppeteer/chrome/c .npm/_npx/a/p.json project/node_modules/.cache/b.json; do put "$f"; ago 4320 "$f"; done',
+    'put work/__pycache__/m.pyc; put .local/lib/__pycache__/k.pyc',
+    'put incoming/brought.xlsx; ago 2880 incoming/brought.xlsx; put incoming/fresh.xlsx',
+    'put downloads/week.pdf; ago 12000 downloads/week.pdf; put downloads/day.pdf; ago 2880 downloads/day.pdf',
+    'put uploads/abcd1234/old.mp4; ago 50000 uploads/abcd1234/old.mp4; put uploads/ef012345/new.mp4',
+    'head -c 11534336 /dev/zero > logs/app.log; printf "TAIL-MARK" >> logs/app.log',
+    'printf x > "$t/scrap.txt"; ago 60 "$t/scrap.txt"; printf x > "$t/fresh.txt"; printf x > "$t/synz-restore.log"; ago 60 "$t/synz-restore.log"',
+    'head -c 26214400 /dev/zero > "$t/job/big.bin"; ago 60 "$t/job/big.bin"; printf x > "$t/job/small.txt"; ago 60 "$t/job/small.txt"',
+    'head -c 26214400 /dev/zero > "$t/synz-move-x.tgz"; ago 60 "$t/synz-move-x.tgz"',
+    // A link out of the home, with something under it that a tidy would take in the home.
+    'ln -s "$o" elsewhere 2>/dev/null || true; printf x > "$o/__pycache__/x.pyc"',
+    'printf %s "$root"',
+  ].join('\n');
+  const left = (root) => new Set(bash('cd "$1" && find . \\( -type f -o -type l \\) | sed "s|^\\./||" | sort', root).stdout.split('\n').filter(Boolean));
+  const clean = (root) => /\/tmp\.[A-Za-z0-9]+$/.test(root) && bash('rm -rf -- "$1"', root);
+  const run = (n, root) => bash(`HOME="$1/home"; export HOME\n${care.tidyScript(n, { tmp: `${root}/tmp` })}`, root);
+  const made = () => {
+    const out = bash(setup);
+    return out.status === 0 ? out.stdout.trim() : (console.log(`  (the fixture could not be made: ${out.stderr.trim().slice(0, 200)})`), '');
+  };
+  const people = ['home/report.docx', 'home/data.csv', 'home/project/src/main.py', 'home/notes/todo.txt', 'home/logs/small.log', 'home/project/node_modules/left-pad/index.js'];
+  const browsers = ['home/.cache/ms-playwright/chromium-1/chrome', 'home/.cache/ms-playwright/__pycache__/k.pyc', 'home/.cache/puppeteer/chrome/c'];
+  const has = (set, list) => list.filter((p) => !set.has(p));
+
+  for (const n of [1, 2, 3]) {
+    const root = made();
+    if (!root) return;
+    const done = run(n, root);
+    const after = left(root);
+    const gone = (p) => !after.has(p);
+    check(`tier ${n}, run: what is a person's stays`, !has(after, people).length, has(after, people).join(', '));
+    check(`  Playwright's and Puppeteer's browsers stay`, !has(after, browsers).length, has(after, browsers).join(', '));
+    check('  what is installed stays, and nothing through a link out of the home', after.has('home/.local/lib/__pycache__/k.pyc') && after.has('outside/__pycache__/x.pyc'));
+    check('  the light tidy: pip and npm caches, __pycache__, old scraps in /tmp, month-old uploads', ['home/.cache/pip/w', 'home/.npm/_cacache/x', 'home/work/__pycache__/m.pyc', 'tmp/scrap.txt', 'home/uploads/abcd1234/old.mp4'].every(gone) && after.has('tmp/fresh.txt') && after.has('tmp/synz-restore.log') && after.has('home/uploads/ef012345/new.mp4'));
+    if (n === 1) check('  and nothing more', ['home/.cache/huggingface/old.bin', 'home/incoming/brought.xlsx', 'home/downloads/week.pdf', 'tmp/job/big.bin'].every((p) => after.has(p)));
+    if (n >= 2) {
+      check('  70–85%: old caches, old copies, week-old downloads', ['home/.cache/huggingface/old.bin', 'home/.npm/_npx/a/p.json', 'home/project/node_modules/.cache/b.json', 'home/incoming/brought.xlsx', 'home/downloads/week.pdf'].every(gone));
+      check('    but not what was used today, or brought in today', after.has('home/incoming/fresh.xlsx') && after.has('home/downloads/day.pdf') && (n === 3 || after.has('home/.cache/huggingface/fresh.bin')));
+      const log = bash('stat -c %s "$1/home/logs/app.log"; tail -c 9 "$1/home/logs/app.log"', root).stdout;
+      check('    a log over 10 MB keeps its last megabyte', /^1048576\nTAIL-MARK$/.test(log.trim()), JSON.stringify(log));
+    }
+    if (n === 3) {
+      check('  above 85%: every cache, and large files in /tmp, but never the app\'s', gone('home/.cache/huggingface/fresh.bin') && gone('tmp/job/big.bin') && after.has('tmp/job/small.txt') && after.has('tmp/synz-move-x.tgz'));
+      const read = care.readTidy(done.stdout);
+      check('  it says how full the disk was before and after, and what is largest', !!read && read.before >= 0 && read.after >= 0 && read.biggest.length > 0, done.stdout.slice(-300));
+    }
+    clean(root);
+  }
 }
 
 section('a terminal that stays open between calls');

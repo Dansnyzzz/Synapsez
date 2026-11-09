@@ -116,6 +116,7 @@ import { translateErrors, translateEvent, languageOf, translateMessage } from '.
 import { approximateLocation } from './whereabouts.js';
 import { e2bConfigured } from './e2b.js';
 import { forgetMachine } from './sandbox.js';
+import { diskSummary } from './machineCare.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1531,6 +1532,19 @@ export function createApp() {
     wrap(async (req, res) => {
       res.set('Cache-Control', 'no-store');
       res.json(await cloudBrowserState(req.user.id, { driving: req.query?.driving === '1' }));
+    }),
+  );
+
+  /**
+   * The cloud computer's disk, for Settings → System (owner, 2026-11-08): how full it was
+   * when a command last ran, and what tidying freed (machineCare.js). From what was stored:
+   * asking never wakes the machine. The account's own, from its session.
+   */
+  api.get(
+    '/cloud-computer/disk',
+    wrap(async (req, res) => {
+      res.set('Cache-Control', 'no-store');
+      res.json({ disk: await diskSummary(req.user.id) });
     }),
   );
 
