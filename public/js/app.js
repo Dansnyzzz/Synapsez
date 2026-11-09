@@ -6141,6 +6141,26 @@ function paintSystem() {
     .then((version) => ($('app-version').textContent = version ? `v${version}` : ''))
     .catch(() => {});
   paintPluginSwitches();
+  paintDisk();
+}
+
+/**
+ * Under "Computer use": how full the cloud computer's disk is, and what tidying freed
+ * today, in the person's own day (owner, 2026-11-08). Nothing before it has run anything.
+ */
+async function paintDisk() {
+  const line = $('system-disk');
+  try {
+    const { disk } = await api.cloudDisk();
+    if (!disk) return void (line.hidden = true);
+    const midnight = new Date().setHours(0, 0, 0, 0);
+    const freed = (disk.freed || []).filter((f) => f.at >= midnight).reduce((sum, f) => sum + f.bytes, 0);
+    const size = freed >= 1024 ** 3 ? `${(freed / 1024 ** 3).toLocaleString(localeTag(), { maximumFractionDigits: 1 })} GB` : humanSize(freed);
+    line.textContent = [t('settings.diskUsed', { percent: disk.percent }), freed > 0 ? t('settings.diskFreed', { size }) : ''].filter(Boolean).join(' · ');
+    line.hidden = false;
+  } catch {
+    line.hidden = true;
+  }
 }
 $('system-changelog').addEventListener('click', () => {
   $('settings').close();

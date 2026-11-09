@@ -118,6 +118,8 @@ export const api = {
   usageReport: () => request('GET', '/api/usage/report'),
   /** The same without the hours: what the warning above the composer needs. */
   usageLimits: () => request('GET', '/api/usage/report?part=limits'),
+  /** Settings → System: how full the cloud computer's disk is, and what tidying freed. */
+  cloudDisk: () => request('GET', '/api/cloud-computer/disk'),
   /** Where the account is signed in, and signing one device out. */
   sessions: () => request('GET', '/api/account/sessions'),
   signOutDevice: (id) => request('DELETE', `/api/account/sessions/${encodeURIComponent(id)}`),
