@@ -111,10 +111,15 @@ to start.
 ## Accounts
 
 **Signing up is an email and a password.** Nothing else — no invite code, no shared secret to
-remember. A code appears exactly once in an account's life: **six digits emailed** to prove the
-address is a real inbox rather than a throwaway, and only when a mail provider is configured at all.
+remember. A code appears once at the start: **six digits emailed** to confirm the address before the
+account is used (`EMAIL_CONFIRMATION`, on whenever a mail provider is configured). An address never
+confirmed is held for a day and then free, and its real owner can claim it at once with *Forgot
+password*. Event emails go only to confirmed addresses.
 
-After that it is email and password, forever.
+After that it is email and password, forever. A browser that signed in with the right password is
+remembered for the account (an HttpOnly signed note, never a session), so strangers guessing from
+many addresses cannot lock the owner out: the account-wide ceiling does not apply to it, the
+per-address ones still do.
 
 Registration is open by default. Set `ALLOW_SIGNUP=false` on a public deployment once the people you
 want are in, and the door closes behind you — the very first account can always be created, or the
@@ -639,10 +644,11 @@ not there, the model can install, and what an account installs is put back on a 
 - **It tidies up.** Caches and leftovers go every few minutes while the machine is awake, a file handed
   to the chat leaves the machine, and the model is told when the disk passes 80%. The tidy has three
   tiers by how full the disk is (below 70%, 70–85%, above): caches that fill themselves again go an
-  entry at a time and never through a link, only real (ELF) core dumps go, and what the cloud browser
-  downloaded and large files in `/tmp` are listed with the largest things, never deleted. A file too
-  large for the conversation stays on the machine, moved out of `/tmp` or `incoming/` to `~/handed/`
-  first so its card keeps working (`tidyScript`, `keptAside`).
+  entry at a time and never through a link, only real (ELF) core dumps go, what the cloud browser
+  downloaded goes after a week untouched — never a file a card points at (`SYNZ_KEEP`) — and large
+  files in `/tmp` are listed with the largest things, never deleted for their size. A file too large
+  for the conversation stays on the machine, moved out of `/tmp`, `incoming/` or `downloads/` to
+  `~/handed/` first so its card keeps working (`tidyScript`, `keptAside`).
 - **What sandbox_run does beyond a command**: `terminal` keeps a REPL or an installer open between calls,
   `expose_port` gives a public address, `checkpoint` saves and restores (three at most), output streams
   to the row while it runs, and an exit code is explained. A file it was asked to deliver and could not
@@ -1432,7 +1438,7 @@ Laid out as Claude's (2026-11-01): **Filter by** the plugin a skill comes with o
 
 ## Themes, the boards and titles
 
-**Settings → Theme**: twenty animated scenes behind the whole app, painted by code in a worker (`public/js/scenes/`), plus the plain look. A tile is a picture made ahead of time (`npm run scenes:stills`) and plays while the pointer is on it; the theme in use keeps still there, since it is already moving behind everything. A locked theme can be looked at and says what earns it, but does not apply. Scenes are still pictures for anyone asking for less motion, stop when the tab is hidden, and never change your light or dark. `/theme` in the writing box offers the same row without opening Settings.
+**Settings → Theme**: twenty animated scenes behind the whole app, painted by code in a worker (the engine in `public/js/scenes/`, each theme's own scene, still and GIF in `server/scenes/`), plus the plain look. A theme's files are served by `server/sceneAssets.js` at their old addresses: everybody's once the theme is out (cached by the CDN for a day), an administrator's or its holder's before that, a 404 to anyone else, so nobody can open next month's event early. A tile is a picture made ahead of time (`npm run scenes:stills`) and plays while the pointer is on it; the theme in use keeps still there, since it is already moving behind everything. A locked theme can be looked at and says what earns it, but does not apply. Scenes are still pictures for anyone asking for less motion, stop when the tab is hidden, and never change your light or dark. `/theme` in the writing box offers the same row without opening Settings.
 
 **Settings → Ranking**: the top ten by tokens and by spending for each UTC quarter and year. When a period closes, the first three get its prize theme and a title. Administrators are not ranked, and hold every theme. A board shows an account name and a title; a switch shows "A member" instead. Usage counts from 2026-11-01; a closed board stays as it was given out. Each title has a creature of its own, shown with what earns it beside the list.
 
@@ -2342,6 +2348,11 @@ removable and makes a model misread), checking every step (it doubles the cost f
 The research behind this is `docs/research/2026-11-04-data-cloaking-cot-monitorability.md`.
 
 ## Security
+
+**Keeping visitors on the real site**: HSTS for two years with preload, a strict CSP, and a live
+check of DNSSEC, CAA, the preload list and the sender's SPF/DMARC in Settings → System → *Address
+safety* (`npm run domain:check`). What only the owner can do — DNSSEC needs a domain of your own:
+[docs/domain-security.md](docs/domain-security.md).
 
 Anyone who can log in as you can run commands on your computer whenever your worker is running. Treat
 your password like an SSH key.
