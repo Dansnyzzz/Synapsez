@@ -12,9 +12,9 @@
 
 **Privacy page** keeps the settings now and the mask's catch rate, measured live (`currentMasking`), with this account's own hidden counts.
 
-**Cloud computer** (`server/machineCare.js`). A tidy in three tiers by how full the disk is, never the person's files; the result in Settings → System (`GET /api/cloud-computer/disk`). Playwright browser installs are replayed on a new machine, and the Python session finds the template's Chromium.
+**Cloud computer** (`server/machineCare.js`). A tidy in three tiers by how full the disk is, never the person's files; the result in Settings → System (`GET /api/cloud-computer/disk`). Caches that fill themselves again go an entry at a time, never through a link; only real core dumps go; what the browser downloaded and large files in `/tmp` are listed, not deleted, and a file too large for the conversation is moved out of `/tmp` to `handed/` first, so its card keeps working. Playwright browser installs are replayed on a new machine (as root from `/`, never through npx), and the Python session finds the template's Chromium.
 
-**Fixed.** Dates in the app's language everywhere (and a test that holds it); /theme at once; the checks' notes not copied; citations that paste; a repaired citation not also marked unverified; the reasoning note; the login limit per account and address; a stop's estimate with its cached share; the turn limit on the deployment key.
+**Fixed.** Dates in the app's language everywhere (and a test that holds it); /theme at once; the checks' notes not copied; citations that paste; a repaired citation not also marked unverified; the reasoning note; the login limit per account and address; a stop's estimate with its cached share; the turn limit on the deployment key. From the security review: a reset email and a reset are limited per address on an account, the account from everywhere at 20 and 50; an IPv6 caller is its /64; a check note the model wrote itself is dropped; a file name with a line break stays one line in what the model reads; this account's hidden counts are kept half a minute. Leaving the Bot page closes the workflow or task open beside it, which had hidden a conversation's cloud browser screen.
 
 ## 2026-11-07 — A stop that stops; themes for every quarter; one line for all your free requests
 

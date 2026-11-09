@@ -637,7 +637,12 @@ not there, the model can install, and what an account installs is put back on a 
 - **Older machines move themselves.** Memory is fixed when a machine is made, so one from an older
   template gets its home copied to a new machine, as the account and all or nothing (`moveMachine`).
 - **It tidies up.** Caches and leftovers go every few minutes while the machine is awake, a file handed
-  to the chat leaves the machine, and the model is told when the disk passes 80%.
+  to the chat leaves the machine, and the model is told when the disk passes 80%. The tidy has three
+  tiers by how full the disk is (below 70%, 70–85%, above): caches that fill themselves again go an
+  entry at a time and never through a link, only real (ELF) core dumps go, and what the cloud browser
+  downloaded and large files in `/tmp` are listed with the largest things, never deleted. A file too
+  large for the conversation stays on the machine, moved out of `/tmp` or `incoming/` to `~/handed/`
+  first so its card keeps working (`tidyScript`, `keptAside`).
 - **What sandbox_run does beyond a command**: `terminal` keeps a REPL or an installer open between calls,
   `expose_port` gives a public address, `checkpoint` saves and restores (three at most), output streams
   to the row while it runs, and an exit code is explained. A file it was asked to deliver and could not
