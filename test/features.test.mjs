@@ -999,6 +999,8 @@ section('every setting the server and worker read is in the README (CODE-047)');
     'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
     'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_KEY_FILE', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY', 'SYNZ_MCP_KEY_FILE', 'SYNZ_WORKDIR', 'SYNZ_RUN_UID',
     'SYNZ_RUN_GID', 'SYNZ_RUN_HOME', 'SYNZ_PYTHON', 'SYNZ_KERNEL_PATH', 'SYNZ_TRACKERS', 'HOME', 'PATH', 'TMPDIR',
+    // Set by the cloud browser service for the Python session: where the template's browsers are.
+    'PLAYWRIGHT_BROWSERS_PATH',
   ]);
   const read = new Map();
   const walk = (dir) => {
