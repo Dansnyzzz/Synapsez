@@ -28,6 +28,7 @@ export const PLACE_CREATURES = Object.freeze({ 1: 'koi-dragon', 2: 'silver-marli
 /** The creatures drawn so far, and where each is. */
 const DRAWN = Object.freeze({
   minnow: () => import('./minnow.js'),
+  jellyfish: () => import('./jellyfish.js'),
   'electric-ray': () => import('./electric-ray.js'),
   'gold-whale': () => import('./gold-whale.js'),
 });

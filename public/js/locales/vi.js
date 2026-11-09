@@ -2506,7 +2506,7 @@ export const vi = {
   'ranking.pet.pet-minnow.name': 'Cá con',
   'ranking.pet.pet-minnow.desc': 'Mới xuống nước, còn nhỏ xíu, thở ra từng bong bóng. Ai cũng bắt đầu từ đây.',
   'ranking.pet.pet-jelly.name': 'Sứa đèn',
-  'ranking.pet.pet-jelly.desc': 'Thân trong suốt sáng theo nhịp thở, những tua mềm kéo dài phía sau.',
+  'ranking.pet.pet-jelly.desc': 'Chiếc chuông tím nhạt trong veo, ngọn đèn nhỏ trên đỉnh sáng lên theo từng nhịp, tua hồng xoăn buông bên dưới.',
   'ranking.pet.pet-manta.name': 'Cá đuối điện',
   'ranking.pet.pet-manta.desc': 'Sải cánh lướt chậm, tia điện chạy dọc mép cánh mỗi khi đập.',
   'ranking.pet.pet-seadragon.name': 'Rồng biển',

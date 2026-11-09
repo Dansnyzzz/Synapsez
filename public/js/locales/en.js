@@ -2520,7 +2520,7 @@ export const en = {
   'ranking.pet.pet-minnow.name': 'Minnow',
   'ranking.pet.pet-minnow.desc': 'Just in the water, very small, blowing one bubble at a time. Everyone starts here.',
   'ranking.pet.pet-jelly.name': 'Lantern jelly',
-  'ranking.pet.pet-jelly.desc': 'A clear bell that glows with each breath, soft threads trailing behind.',
+  'ranking.pet.pet-jelly.desc': 'A clear lilac bell with a small lantern in its crown that brightens at each pulse, frilled pink arms trailing below.',
   'ranking.pet.pet-manta.name': 'Electric ray',
   'ranking.pet.pet-manta.desc': 'A slow sweep of wings, with sparks running along their edges at each beat.',
   'ranking.pet.pet-seadragon.name': 'Sea dragon',
