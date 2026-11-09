@@ -23,10 +23,12 @@ import {
   disableTotp,
   refreshSession,
   endSession,
+  confirmAccount,
+  resendConfirmation,
 } from './auth.js';
 import { limit as rateLimit, forgive, consume as consumeLimit } from './ratelimit.js';
 import { publicUrlFor } from './util/net.js';
-import { emailBackend } from './email.js';
+import { emailBackend, senderAddress } from './email.js';
 import { summary as usageSummary, limitFor } from './usage.js';
 import { getPrefs, setPrefs, setApiKey, addApiKey, removeApiKey, providerStatus, DEFAULT_PREFS } from './settings.js';
 import { MODEL_GONE, settleAccountModel } from './modelRetirement.js';
@@ -76,7 +78,9 @@ import { usageReport } from './usageReport.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { mountFeedbackRoutes } from './routes/feedback.js';
 import { mountThemeRoutes } from './routes/themes.js';
-import { afterTurn } from './themes.js';
+import { mountSceneAssets } from './sceneAssets.js';
+import { checkDomain } from './domainCheck.js';
+import { afterTurn, titleShown } from './themes.js';
 import { freeTierReport } from './freeTier.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -448,7 +452,7 @@ export function createApp() {
         await audit(req, user.id, 'sign_in');
         res.json({ user: publicUser(user) });
       } catch (err) {
-        res.status(err.status || 400).json({ error: clientError(err), code: err.code });
+        res.status(err.status || 400).json({ error: clientError(err), code: err.code, ...(err.code === 'email_unconfirmed' ? { email: err.email } : {}) });
       }
     }),
   );
@@ -561,7 +565,7 @@ export function createApp() {
     rateLimit('register'),
     wrap(async (req, res) => {
       try {
-        const user = await registerUser(body(req), req, res);
+        const { user, confirm } = await registerUser(body(req), req, res);
         // What the person ticked — the privacy notice, and since 2026-10-26 the
         // terms and the usage policy — by version, in their security record
         // (LAW-001): consent has to be shown, not assumed. The form insists on
@@ -569,12 +573,43 @@ export function createApp() {
         // is asked by the banner once it signs in (`/api/consent`).
         const agreed = agreement(body(req));
         if (Object.keys(agreed).length) await audit(req, user.id, 'consent_given', agreed);
+        // Waiting for its email to be confirmed: no session yet, and the page asks for the code.
+        if (confirm) return res.status(202).json({ confirm: true, email: user.email, emailBackend: emailBackend() });
         res.status(201).json({ user: publicUser(user), emailBackend: emailBackend() });
       } catch (err) {
         // A closed deployment is a 403, not a bad request — the client can tell
         // "you may not" from "you got that wrong" and say something useful.
         res.status(err.status || 400).json({ error: clientError(err) });
       }
+    }),
+  );
+
+  /*
+   * A new account's email, confirmed by the code typed or the link opened (owner,
+   * 2026-11-09). Limited per address and per account like a sign-in: six digits for
+   * half an hour, so a script gets a few dozen of a million guesses.
+   */
+  app.post(
+    '/api/register/confirm',
+    rateLimit('confirm', (req) => (req.body?.token ? '' : accountKey(req.body?.email))),
+    wrap(async (req, res) => {
+      try {
+        const user = await confirmAccount({ email: req.body?.email, code: req.body?.code, token: req.body?.token }, req, res);
+        await audit(req, user.id, 'email_confirmed');
+        res.json({ user: publicUser(user) });
+      } catch (err) {
+        res.status(err.status || 400).json({ error: clientError(err) });
+      }
+    }),
+  );
+
+  // Another code, said the same whether or not the address waits for one.
+  app.post(
+    '/api/register/resend',
+    rateLimit('confirm-send', (req) => accountKey(req.body?.email)),
+    wrap(async (req, res) => {
+      await resendConfirmation(req.body?.email, req);
+      res.json({ ok: true });
     }),
   );
 
@@ -879,6 +914,8 @@ export function createApp() {
       // A model that has gone since the last visit is replaced by Auto before the
       // chip is drawn, and `prefs.modelNotice` says so once — see modelRetirement.js.
       const prefs = await settleAccountModel(req.user.id, await getPrefs(req.user.id));
+      // A sponsor's title with no money behind it is not drawn, even before the next sync clears it.
+      if (prefs.equippedTitle) prefs.equippedTitle = await titleShown(req.user.id, prefs.equippedTitle);
 
       /**
        * Remember which clock this person keeps.
@@ -2426,6 +2463,24 @@ export function createApp() {
   // ── admin ───────────────────────────────────────────────────────────
   // The router itself, and its guard, are created above mountAccountRoutes.
 
+  /*
+   * Whether this site's address is safe from spoofing, checked live (owner, 2026-11-09):
+   * DNSSEC, HTTPS and HSTS, the preload list, CAA, and the sending address's email
+   * protection. Public facts about this deployment's own address, so any administrator
+   * may ask; kept a minute, so pressing it again does not hammer the resolvers.
+   */
+  let domainSeen = null;
+  admin.get(
+    '/domain',
+    wrap(async (req, res) => {
+      if (!domainSeen || Date.now() - domainSeen.at > 60_000) {
+        domainSeen = { at: Date.now(), value: checkDomain({ url: process.env.PUBLIC_URL || publicUrlFor(req), mailFrom: emailBackend() === 'console' ? '' : senderAddress() }) };
+      }
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json(await domainSeen.value);
+    }),
+  );
+
   // The models suggested to everyone (recommend.js), with the library to choose them from.
   admin.get(
     '/recommended',
@@ -2615,6 +2670,9 @@ export function createApp() {
   });
   app.use('/api', api);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+
+  // A theme's own files, out of public/ so one not out yet is nobody's but an administrator's.
+  mountSceneAssets(app, { wrap });
 
   // ── static frontend ─────────────────────────────────────────────────
   /**

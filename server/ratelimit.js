@@ -1,4 +1,5 @@
 import { getStore } from './store/index.js';
+import { knownDevice } from './auth.js';
 // Every level redacts its fields before emitting, which matters here: a store
 // failure's message can carry a connection string.
 import { log } from './util/trace.js';
@@ -24,8 +25,16 @@ export const LIMITS = {
    * from everywhere. Keyed by the account alone at ten, anyone who knew somebody's email
    * could lock them out from anywhere (owner, 2026-11-08); a spread-out guess still stops.
    */
-  login: { limit: 10, windowMs: 15 * 60_000, accountLimit: 100 },
+  login: { limit: 10, windowMs: 15 * 60_000, accountLimit: 100, knownDevices: true },
   register: { limit: 5, windowMs: 60 * 60_000 },
+  /*
+   * A sign-up's confirmation code (owner, 2026-11-09): ten tries for one account from
+   * one address, thirty for the account from everywhere, in fifteen minutes. A code is
+   * six digits and lives half an hour, so a script gets about sixty of a million.
+   * Sending one again: five an hour per address and account, twenty for the account.
+   */
+  confirm: { limit: 10, windowMs: 15 * 60_000, accountLimit: 30 },
+  'confirm-send': { limit: 5, windowMs: 60 * 60_000, accountLimit: 20 },
   /*
    * Five reset emails an hour for one account from one address, and twenty for the account
    * from everywhere; keyed by the account alone at five, anybody who knew a person's email
@@ -33,7 +42,7 @@ export const LIMITS = {
    * still keeps their mailbox from being flooded. A reset is the same: what is guessed is a
    * long random token, so the ceiling is for a script, not for the owner's own link.
    */
-  forgot: { limit: 5, windowMs: 60 * 60_000, accountLimit: 20 },
+  forgot: { limit: 5, windowMs: 60 * 60_000, accountLimit: 20, knownDevices: true },
   reset: { limit: 10, windowMs: 60 * 60_000, accountLimit: 50 },
   totp: { limit: 10, windowMs: 15 * 60_000 },
   connect: { limit: 20, windowMs: 60 * 60_000 },
@@ -191,10 +200,12 @@ function bucketsFor(req, action, extra) {
   const second = String(extra ?? '').trim().toLowerCase().slice(0, 120);
   if (!second) return buckets;
   if (rule.accountLimit) {
-    buckets.push(
-      { bucket: `${action}:pair:${second}|${address}`, limit: rule.limit },
-      { bucket: `${action}:id:${second}`, limit: rule.accountLimit, accountWide: true },
-    );
+    buckets.push({ bucket: `${action}:pair:${second}|${address}`, limit: rule.limit });
+    // A browser that has signed in to this account before is not stopped by what strangers
+    // did elsewhere: the owner cannot be locked out from their own (auth.js `knownDevice`).
+    if (!(rule.knownDevices && knownDevice(req, second))) {
+      buckets.push({ bucket: `${action}:id:${second}`, limit: rule.accountLimit, accountWide: true });
+    }
   } else {
     buckets.push({ bucket: `${action}:id:${second}`, limit: rule.limit });
   }

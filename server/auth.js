@@ -15,19 +15,29 @@ import {
   encryptSecret,
   decryptSecret,
 } from './crypto.js';
-import { sendEmail, resetEmail, publicUrl } from './email.js';
+import { sendEmail, resetEmail, confirmEmail, publicUrl, emailBackend } from './email.js';
 import { getPrefs } from './settings.js';
 import { networkOf, agentOf } from './audit.js';
 
 const COOKIE = 'ai_remote_session';
 const MAX_AGE_SEC = 30 * 24 * 60 * 60;
+/** The accounts this browser has signed in to with the right password (`knownDevice`). */
+const DEVICE_COOKIE = 'synz_known';
+const DEVICE_MAX_AGE_SEC = 365 * 24 * 60 * 60;
+/** How many accounts one browser is remembered for. */
+const DEVICE_ACCOUNTS = 5;
 
 const RESET_TTL_MS = 60 * 60 * 1000;
+/** How long a sign-up's confirmation code works. */
+const CONFIRM_TTL_MS = 30 * 60 * 1000;
+/** How long an address waits for its confirmation before another sign-up may take it. */
+const UNCONFIRMED_HOLD_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Everyone signs in with their own email and password, and that is the whole of
- * it: no invite code, no confirmation step, no shared secret to remember. An
- * emailed code appears in exactly one place — resetting a forgotten password.
+ * Everyone signs in with their own email and password: no invite code, no shared
+ * secret to remember. An emailed code appears in two places — confirming a new
+ * account's email (since 2026-11-09, wherever mail can be sent) and resetting a
+ * forgotten password.
  *
  * Sessions are stateless HMAC-signed cookies: on Vercel each request may hit a
  * different instance, so there is nowhere to keep session state.
@@ -96,7 +106,7 @@ export function parseCookies(header = '') {
  * row cannot be written the cookie carries none and works as cookies always
  * did — a sign-in is not refused for the sake of a list.
  */
-async function issue(req, res, user, remember = true, sid = null) {
+async function issue(req, res, user, remember = true, sid = null, { known = false } = {}) {
   const exp = Math.floor(Date.now() / 1000) + MAX_AGE_SEC;
   const epoch = Number(user.session_epoch) || 1;
   let id = sid;
@@ -123,17 +133,52 @@ async function issue(req, res, user, remember = true, sid = null) {
     ...(id ? { sid: id } : {}),
   });
   const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
-  res.setHeader(
-    'Set-Cookie',
-    [
-      `${COOKIE}=${cookie}`,
-      'Path=/',
-      ...(remember ? [`Max-Age=${MAX_AGE_SEC}`] : []),
-      'HttpOnly',
-      'SameSite=Lax',
-      ...(secure ? ['Secure'] : []),
-    ].join('; '),
-  );
+  const session = [
+    `${COOKIE}=${cookie}`,
+    'Path=/',
+    ...(remember ? [`Max-Age=${MAX_AGE_SEC}`] : []),
+    'HttpOnly',
+    'SameSite=Lax',
+    ...(secure ? ['Secure'] : []),
+  ].join('; ');
+  // A sign-in with the right password marks this browser as known to the account (`knownDevice`),
+  // only where the person asked to be remembered: on a borrowed computer it keeps nothing past
+  // the session. A refreshed or adopted session is not a sign-in and marks nothing.
+  res.setHeader('Set-Cookie', known && remember ? [session, deviceCookie(req, user.id)] : session);
+}
+
+/**
+ * Whether this browser has signed in to the account a rate limit is counting for.
+ *
+ * An account's everywhere-ceiling stops a guess spread across many addresses; on its
+ * own it also let a stranger with a dozen addresses lock the owner out for fifteen
+ * minutes at a time (security review, 2026-11-09). A browser that once signed in to
+ * that account with the right password carries a signed note saying so, and the
+ * account-wide ceiling does not apply to it; the ceilings per address still do. The
+ * note is HttpOnly and signed with the session secret, names accounts only by id,
+ * and is never a session: it carries no `uid`.
+ *
+ * @param {any} req @param {string} accountKey  `user:<id>`, as the limiter counts it
+ */
+export function knownDevice(req, accountKey) {
+  const id = /^user:(.+)$/.exec(String(accountKey || ''))?.[1];
+  if (!id) return false;
+  return knownAccounts(req).includes(id);
+}
+
+/** The account ids this browser's note names, or none. @param {any} req @returns {string[]} */
+function knownAccounts(req) {
+  const value = parseCookies(req?.headers?.cookie || '')[DEVICE_COOKIE];
+  const note = value ? verify(value) : null;
+  return note?.p === 'device' && Array.isArray(note.k) ? note.k.filter((k) => typeof k === 'string').slice(0, DEVICE_ACCOUNTS) : [];
+}
+
+/** The note naming this account first, the others after it. @param {any} req @param {string} userId */
+function deviceCookie(req, userId) {
+  const accounts = [userId, ...knownAccounts(req).filter((k) => k !== userId)].slice(0, DEVICE_ACCOUNTS);
+  const note = sign({ p: 'device', k: accounts, exp: Math.floor(Date.now() / 1000) + DEVICE_MAX_AGE_SEC });
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  return [`${DEVICE_COOKIE}=${note}`, 'Path=/', `Max-Age=${DEVICE_MAX_AGE_SEC}`, 'HttpOnly', 'SameSite=Lax', ...(secure ? ['Secure'] : [])].join('; ');
 }
 
 export function clearSession(res) {
@@ -193,23 +238,83 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * code to type and a link to click; either works, and using one burns the other.
  * Only digests are stored, so a database dump cannot be replayed as a login.
  *
- * Password reset is the only thing that uses this now — there is no signup
- * confirmation step to get through.
+ * A password reset uses it, and since 2026-11-09 so does confirming a new
+ * account's email (`kind: 'confirm'`).
+ *
+ * @param {{ user: any, req: any, kind?: 'reset' | 'confirm' }} options
  */
-async function issueLink({ user, req }) {
+async function issueLink({ user, req, kind = 'reset' }) {
   const token = randomToken(32);
   const code = numericCode(6);
+  const confirming = kind === 'confirm';
 
   await getStore().createAuthToken({
     tokenHash: sha256(token),
     codeHash: sha256(code),
     userId: user.id,
-    kind: 'reset',
-    expiresAt: new Date(Date.now() + RESET_TTL_MS).toISOString(),
+    kind,
+    expiresAt: new Date(Date.now() + (confirming ? CONFIRM_TTL_MS : RESET_TTL_MS)).toISOString(),
   });
 
-  const link = `${publicUrl(req)}/?reset=${encodeURIComponent(token)}`;
-  return sendEmail({ to: user.email, ...resetEmail(link, code, await mailLanguage(user, req)) });
+  const link = `${publicUrl(req)}/?${confirming ? 'confirm' : 'reset'}=${encodeURIComponent(token)}`;
+  const language = await mailLanguage(user, req);
+  return sendEmail({ to: user.email, ...(confirming ? confirmEmail(link, code, language) : resetEmail(link, code, language)) });
+}
+
+/**
+ * Whether a new account confirms its email before it can be used (owner,
+ * 2026-11-09). Until then an address was only checked for its shape, so an
+ * account could be made in anybody's name and the event emails went to whoever
+ * was typed. `EMAIL_CONFIRMATION` is `on` or `off`; unset, it is on whenever
+ * this deployment can actually send mail — with no mail set up, a code nobody
+ * can receive would lock every new account out.
+ */
+export function confirmationRequired() {
+  const set = String(process.env.EMAIL_CONFIRMATION ?? '').trim().toLowerCase();
+  if (/^(1|on|true|yes)$/.test(set)) return true;
+  if (/^(0|off|false|no)$/.test(set)) return false;
+  return emailBackend() !== 'console';
+}
+
+/** An error the sign-in page answers with the code box. @param {string} email */
+const unconfirmed = (email) =>
+  Object.assign(new Error('Confirm your email first: enter the 6-digit code we sent to it.'), { status: 403, code: 'email_unconfirmed', email });
+
+/**
+ * A fresh confirmation code for an account still waiting for one. Answers the same
+ * whether or not the address has such an account, so it says nothing about who
+ * signed up.
+ *
+ * @param {unknown} identifier  the email or the username
+ */
+export async function resendConfirmation(identifier, req) {
+  const user = await findUserByIdentifier(identifier);
+  if (user && !user.email_verified_at && !user.suspended_at) await issueLink({ user, req, kind: 'confirm' });
+  return { ok: true };
+}
+
+/**
+ * Confirm an account's email by the code typed or the link opened, and sign it in.
+ * The code is scoped to the account, so six digits only have to be unguessable for
+ * that one account within half an hour; the route limits the tries.
+ *
+ * @param {{ email?: unknown, code?: unknown, token?: unknown }} input
+ */
+export async function confirmAccount({ email, code, token }, req, res) {
+  const store = getStore();
+  let userId = null;
+  if (token) {
+    userId = await store.consumeAuthToken(sha256(String(token)), 'confirm');
+  } else if (code && email) {
+    const user = await findUserByIdentifier(email);
+    if (user) userId = await store.consumeAuthCode(user.id, sha256(String(code).replace(/\D/g, '')), 'confirm');
+  }
+  if (!userId) throw Object.assign(new Error('That code is not right, or it has expired. Ask for a new one.'), { status: 400 });
+  await store.markEmailVerified(userId);
+  const user = await store.getUserById(userId);
+  if (!user || user.suspended_at) throw Object.assign(new Error('This account has been suspended.'), { status: 403 });
+  await issue(req, res, user, true, null, { known: true });
+  return user;
 }
 
 /**
@@ -369,7 +474,17 @@ export async function registerUser({ email, password, name, username }, req, res
   if (!isFirstUser && !signupOpen()) {
     throw Object.assign(new Error('Registration is closed on this deployment.'), { status: 403 });
   }
-  if (await store.getUserByEmail(normalised)) throw new Error('That email is already registered.');
+  const existing = await store.getUserByEmail(normalised);
+  if (existing) {
+    /*
+     * An address never confirmed is held for a day, then free: somebody who typed
+     * another person's email cannot keep them from signing up, and that person can
+     * claim it at once anyway with "Forgot password", which proves the inbox.
+     */
+    const stale = !existing.email_verified_at && confirmationRequired() && Date.now() - new Date(existing.created_at).getTime() > UNCONFIRMED_HOLD_MS;
+    if (!stale) throw new Error('That email is already registered.');
+    await store.deleteUser(existing.id);
+  }
   if (handle && (await store.getUserByUsername(handle))) {
     throw Object.assign(new Error('That username is taken.'), { status: 409 });
   }
@@ -389,16 +504,20 @@ export async function registerUser({ email, password, name, username }, req, res
     throw err;
   }
 
-  // No confirmation step. The address is checked for shape here and for
-  // deliverability wherever accounts are handed out; sending a code and then
-  // holding the account hostage until someone finds it only ever punished the
-  // people who did nothing wrong. The column stays so a password reset can
-  // still record that an inbox was proven.
+  /*
+   * Confirmed by a code sent to the address before the account is used (owner,
+   * 2026-11-09), wherever mail can be sent. No session until then: the account
+   * exists, holds the address, and does nothing.
+   */
+  if (confirmationRequired()) {
+    await issueLink({ user, req, kind: 'confirm' });
+    return { user: await store.getUserById(user.id), confirm: true };
+  }
   await store.markEmailVerified(user.id);
 
   const fresh = await store.getUserById(user.id);
-  await issue(req, res, fresh);
-  return fresh;
+  await issue(req, res, fresh, true, null, { known: true });
+  return { user: fresh, confirm: false };
 }
 
 /**
@@ -435,12 +554,17 @@ export async function loginUser({ email, password, code, remember }, req, res) {
     }
   }
 
-  // An unconfirmed account may sign in — it just cannot do anything yet. That
-  // is friendlier than a dead end: the app shows the code box straight away.
+  // An account whose email is not confirmed is sent a fresh code and asked for it,
+  // with no session: the sign-in page shows the code box at once (owner, 2026-11-09).
+  // Accounts made before confirmation existed were marked confirmed then, and stay so.
+  if (!user.email_verified_at && confirmationRequired()) {
+    await issueLink({ user, req, kind: 'confirm' });
+    throw unconfirmed(user.email);
+  }
   await store.touchUser(user.id);
   // Anything but an explicit "no" keeps the old thirty-day behaviour, so API
   // callers and older clients that never send the flag are unaffected.
-  await issue(req, res, user, remember !== false);
+  await issue(req, res, user, remember !== false, null, { known: true });
   return user;
 }
 

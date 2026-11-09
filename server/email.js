@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import nodemailer from 'nodemailer';
 import { log } from './util/trace.js';
-import { resetMessage, RESET_WORDS, LOGO_CID } from './mailTemplate.js';
+import { resetMessage, confirmMessage, RESET_WORDS, CONFIRM_WORDS, LOGO_CID } from './mailTemplate.js';
 
 /** The logo emails embed. Under server/, so a Vercel function bundles it. */
 const LOGO_FILE = new URL('./assets/email-logo.png', import.meta.url);
@@ -67,6 +67,9 @@ function smtpSettings() {
   }
   return null;
 }
+
+/** The address mail is sent from, for the address-safety check (server/domainCheck.js). */
+export const senderAddress = () => senderMailbox().address;
 
 /** The mailbox mail is sent from: EMAIL_FROM, else the SMTP login, else Resend's test sender. */
 function senderMailbox() {
@@ -255,6 +258,20 @@ export async function sendEmail({ to, bcc = [], subject, html, text, replyTo, pr
     log.error(`email via ${backend} failed`, err, { backend });
     return { ok: false, backend, error: err.message };
   }
+}
+
+/**
+ * The code that confirms a new account's email (owner, 2026-11-09): the same card as a
+ * reset, in the words of a welcome.
+ */
+export function confirmEmail(link, code, language = 'en') {
+  const lang = language === 'vi' ? 'vi' : 'en';
+  const words = CONFIRM_WORDS[lang];
+  return {
+    subject: words.subject(code, senderName()),
+    html: confirmMessage({ brand: senderName(), code, link, language: lang }),
+    text: words.text(code, senderName(), link),
+  };
 }
 
 /** Absolute base URL for links in emails. */

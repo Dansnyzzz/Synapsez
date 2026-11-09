@@ -125,6 +125,12 @@
           <input id="gate-totp" class="gate__input" type="text" inputmode="numeric" placeholder="Authenticator code" autocomplete="one-time-code" hidden data-i18n-title="gate.totp" aria-label="Authenticator code" data-i18n-placeholder="gate.ph.totp" />
         </div>
 
+        <!-- Confirming a new account's email with the code sent to it (2026-11-09). -->
+        <div id="gate-confirm" hidden>
+          <input id="gate-confirmcode" class="gate__input" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code" data-i18n-title="gate.confirmcode" aria-label="The 6-digit code from your email" data-i18n-placeholder="gate.ph.resetcode" />
+          <button class="gate__switch" type="button" id="gate-resend" data-i18n="gate.resend">Send a new code</button>
+        </div>
+
         <!-- Choosing a new password, from either an emailed link or a code. -->
         <div id="gate-newpass" hidden>
           <input id="gate-resetcode" class="gate__input" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code" data-i18n-title="gate.resetcode" aria-label="The 6-digit code from your email" data-i18n-placeholder="gate.ph.resetcode" />
@@ -1965,6 +1971,19 @@
                 <p class="srow__desc" id="system-disk" hidden></p>
               </div>
               <div class="srow__control"><input type="checkbox" class="switch" id="system-computer" data-plugin-switch="cloud_computer" /></div>
+            </div>
+
+            <!-- Administrators: whether this site's address is safe from spoofing, checked live (2026-11-09). -->
+            <div id="system-domain" hidden>
+              <h3 class="settings__title" data-i18n="domain.title">Address safety</h3>
+              <div class="srow">
+                <div class="srow__text">
+                  <span class="srow__label" data-i18n="domain.label">Is this site's address safe from spoofing?</span>
+                  <p class="srow__desc" data-i18n="domain.hint">Checked live: signed DNS answers (DNSSEC), HTTPS that browsers insist on (HSTS and the preload list), who may issue certificates for it (CAA), and how well the address it sends email from is protected.</p>
+                </div>
+                <div class="srow__control"><button class="btn btn--small" id="domain-check" type="button" data-i18n="domain.check">Check now</button></div>
+              </div>
+              <ul class="domain-checks" id="domain-checks" aria-live="polite"></ul>
             </div>
           </section>
 

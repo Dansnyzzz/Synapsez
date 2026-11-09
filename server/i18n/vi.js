@@ -263,6 +263,14 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'Set SESSION_SECRET — refusing to sign a Google sign-in without one.':
     'Hãy đặt SESSION_SECRET — máy chủ từ chối ký lượt đăng nhập Google khi thiếu nó.',
   'Use a password of at least 10 characters.': 'Hãy dùng mật khẩu ít nhất 10 ký tự.',
+  'Confirm your email first: enter the 6-digit code we sent to it.':
+    'Hãy xác nhận email trước: nhập mã 6 số chúng tôi đã gửi tới email đó.',
+  'That code is not right, or it has expired. Ask for a new one.':
+    'Mã không đúng hoặc đã hết hạn. Hãy yêu cầu mã mới.',
+  'resolvers unreachable':
+    'không hỏi được máy chủ DNS',
+  'PUBLIC_URL is not set':
+    'Chưa đặt PUBLIC_URL',
   'That reset code or link is invalid, already used, or expired.':
     'Mã hoặc liên kết đặt lại mật khẩu không hợp lệ, đã được dùng, hoặc đã hết hạn.',
   'Your current password is not correct.': 'Mật khẩu hiện tại không đúng.',

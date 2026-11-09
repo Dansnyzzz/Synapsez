@@ -369,7 +369,7 @@ const suggestions = () => [
 
 /* ── boot ──────────────────────────────────────────────────────── */
 
-/** 'signin' | 'signup' | 'forgot' | 'reset' */
+/** 'signin' | 'signup' | 'forgot' | 'reset' | 'confirm' */
 let gateMode = 'signin';
 let session = null;
 let resetToken = null;
@@ -403,6 +403,18 @@ async function boot() {
   startInsights(session.insights);
   const insightsNote = document.getElementById('insights-note');
   if (insightsNote) insightsNote.hidden = !session.insights;
+
+  // The link in a sign-up's confirmation email: confirmed and signed in, or told why not.
+  const confirmToken = takeUrlToken('confirm');
+  if (confirmToken) {
+    try {
+      await api.confirmEmail({ token: confirmToken });
+      session = await api.session();
+    } catch (err) {
+      gateMode = 'confirm';
+      queueMicrotask(() => fail(err.message || t('gate.error.generic')));
+    }
+  }
 
   resetToken = takeUrlToken('reset');
   if (resetToken) {
@@ -546,7 +558,8 @@ function showGate() {
 
   renderGateMode();
   // A remembered address means the only thing left to type is the password.
-  if (gateMode === 'reset') $('gate-resetcode').focus();
+  if (gateMode === 'confirm') $('gate-confirmcode').focus();
+  else if (gateMode === 'reset') $('gate-resetcode').focus();
   else if (remembered && gateMode === 'signin') $('gate-password').focus();
   else $('gate-email').focus();
 }
@@ -559,8 +572,11 @@ function renderGateMode() {
   const signup = gateMode === 'signup';
   const forgot = gateMode === 'forgot';
   const reset = gateMode === 'reset';
+  const confirm = gateMode === 'confirm';
 
-  $('gate-sub').textContent = reset
+  $('gate-sub').textContent = confirm
+    ? t('gate.sub.confirm')
+    : reset
     ? t('gate.sub.reset')
     : forgot
       ? t('gate.sub.forgot')
@@ -574,6 +590,7 @@ function renderGateMode() {
   // Following the emailed link fills the token in instead, so the code box hides.
   $('gate-accounts').hidden = false;
   $('gate-newpass').hidden = !reset;
+  $('gate-confirm').hidden = !confirm;
   $('gate-resetcode').hidden = !!resetToken;
   $('gate-username').hidden = !signup;
   $('gate-email').hidden = false;
@@ -588,8 +605,8 @@ function renderGateMode() {
   identity.placeholder = signup ? 'you@example.com' : t('gate.ph.identifier');
   identity.setAttribute('aria-label', signup ? t('gate.email') : t('gate.identifier'));
   identity.title = signup ? t('gate.email') : t('gate.identifier');
-  $('gate-password-field').hidden = forgot || reset;
-  $('gate-totp').hidden = !needsTotp || signup || forgot || reset;
+  $('gate-password-field').hidden = forgot || reset || confirm;
+  $('gate-totp').hidden = !needsTotp || signup || forgot || reset || confirm;
   $('gate-password').autocomplete = signup ? 'new-password' : 'current-password';
 
   // Only sign-in offers to be remembered. Signing up already leaves you signed
@@ -603,7 +620,9 @@ function renderGateMode() {
   setRevealed($('gate-password'), false);
   setRevealed($('gate-newpassword'), false);
 
-  $('gate-submit').textContent = reset
+  $('gate-submit').textContent = confirm
+    ? t('gate.submit.confirm')
+    : reset
     ? t('gate.submit.reset')
     : forgot
       ? t('gate.submit.forgot')
@@ -616,10 +635,10 @@ function renderGateMode() {
   // The one exception is a deployment that has closed registration — offering
   // a sign-up that will be refused is worse than not offering it.
   const canSignUp = session.signupOpen !== false || session.needsSetup;
-  $('gate-switch').hidden = reset || (!signup && !forgot && !canSignUp);
+  $('gate-switch').hidden = reset || (!signup && !forgot && !confirm && !canSignUp);
   $('gate-switch').textContent =
-    signup || forgot ? t('gate.switch.toSignin') : t('gate.switch.toSignup');
-  $('gate-forgot').hidden = signup || forgot || reset;
+    signup || forgot || confirm ? t('gate.switch.toSignin') : t('gate.switch.toSignup');
+  $('gate-forgot').hidden = signup || forgot || reset || confirm;
 }
 
 function setGateMode(mode) {
@@ -650,6 +669,30 @@ $('gate-switch').addEventListener('click', async () => {
 
 $('gate-forgot').addEventListener('click', () => setGateMode('forgot'));
 
+/** The code box, with what was sent and where. @param {string} [email] */
+function askForConfirmation(email) {
+  if (email) /** @type {HTMLInputElement} */ ($('gate-email')).value = email;
+  /** @type {HTMLInputElement} */ ($('gate-confirmcode')).value = '';
+  setGateMode('confirm');
+  note(t('gate.note.confirmSent', { email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim() }));
+  $('gate-confirmcode').focus();
+}
+
+// Another code, said the same whether or not the address waits for one.
+$('gate-resend').addEventListener('click', async () => {
+  const button = /** @type {HTMLButtonElement} */ ($('gate-resend'));
+  button.disabled = true;
+  $('gate-error').hidden = true;
+  try {
+    await api.resendConfirmation(/** @type {HTMLInputElement} */ ($('gate-email')).value.trim());
+    note(t('gate.note.confirmResent'));
+  } catch (err) {
+    fail(err.message || t('gate.error.generic'));
+  } finally {
+    button.disabled = false;
+  }
+});
+
 // What Synapsez is, under the form: one press away rather than a paragraph
 // filling the card (owner, 2026-10-26) — and still on the home page Google reads.
 $('gate-what').addEventListener('click', () => {
@@ -666,7 +709,13 @@ $('gate-form').addEventListener('submit', async (event) => {
   submit.disabled = true;
 
   try {
-    if (gateMode === 'forgot') {
+    if (gateMode === 'confirm') {
+      await api.confirmEmail({
+        email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim(),
+        code: /** @type {HTMLInputElement} */ ($('gate-confirmcode')).value.trim(),
+      });
+      session = await api.session();
+    } else if (gateMode === 'forgot') {
       await api.forgotPassword($('gate-email').value.trim());
       setGateMode('reset');
       // Deliberately identical whether or not the address exists.
@@ -715,6 +764,11 @@ $('gate-form').addEventListener('submit', async (event) => {
       if (result.emailBackend === 'console') {
         toast(t('gate.note.noMail'));
       }
+      // The account waits for its email to be confirmed: the code box, not the app.
+      if (result.confirm) {
+        askForConfirmation(result.email);
+        return;
+      }
     } else {
       const email = $('gate-email').value.trim();
       const remember = $('gate-remember').checked;
@@ -731,8 +785,12 @@ $('gate-form').addEventListener('submit', async (event) => {
     $('gate').hidden = true;
     await start();
   } catch (err) {
-    // A second factor is a step, not a failure — reveal the box and keep going.
-    if (err.code === 'totp_required') {
+    // An account whose email is not confirmed yet: a fresh code went out, so ask for it.
+    if (err.code === 'email_unconfirmed') {
+      needsTotp = false;
+      askForConfirmation(err.email);
+      fail(err.message);
+    } else if (err.code === 'totp_required') {
       needsTotp = true;
       renderGateMode();
       $('gate-totp').value = '';
@@ -6169,7 +6227,64 @@ function paintSystem() {
     .catch(() => {});
   paintPluginSwitches();
   paintDisk();
+  $('system-domain').hidden = state.boot?.user?.role !== 'admin';
 }
+
+/**
+ * Whether this site's address is safe from spoofing (owner, 2026-11-09), as the server
+ * measured it just now: each check with its verdict, and what to do where it falls short.
+ * Built from the server's facts with textContent only.
+ */
+async function paintDomainChecks() {
+  const list = $('domain-checks');
+  const button = /** @type {HTMLButtonElement} */ ($('domain-check'));
+  button.disabled = true;
+  list.replaceChildren(Object.assign(document.createElement('li'), { className: 'domain-checks__busy', textContent: t('domain.checking') }));
+  try {
+    const result = await api.domainCheck();
+    const rows = (result.checks || []).map((check) => {
+      const facts = check.facts || {};
+      const words = {
+        ...facts,
+        issuers: Array.isArray(facts.issuers) ? facts.issuers.join(', ') : '',
+        validatedBy: Array.isArray(facts.validatedBy) ? facts.validatedBy.join(', ') : '',
+        days: Math.round((Number(facts.maxAge) || 0) / 86_400),
+        zone: facts.unsignedZone || result.host || '',
+        dmarc: facts.dmarc || t('domain.none'),
+        spf: facts.spf ? t('domain.yes') : t('domain.no'),
+      };
+      const row = document.createElement('li');
+      row.className = `domain-checks__row is-${check.verdict}`;
+      const mark = document.createElement('span');
+      mark.className = 'domain-checks__mark';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.textContent = check.verdict === 'ok' ? '✓' : check.verdict === 'warn' ? '!' : check.verdict === 'fail' ? '✕' : '?';
+      const body = document.createElement('div');
+      const said = document.createElement('p');
+      said.className = 'domain-checks__said';
+      said.textContent = `${t(`domain.verdict.${check.verdict}`)}: ${t(`domain.${check.id}.${check.verdict}`, words)}`;
+      body.append(said);
+      if (check.verdict !== 'ok') {
+        const fixKey = check.id === 'dnssec' && facts.platform ? 'domain.dnssec.fixPlatform' : `domain.${check.id}.fix`;
+        const fix = document.createElement('p');
+        fix.className = 'domain-checks__fix';
+        fix.textContent = t(fixKey, words);
+        body.append(fix);
+      }
+      row.append(mark, body);
+      return row;
+    });
+    const when = document.createElement('li');
+    when.className = 'domain-checks__when';
+    when.textContent = t('domain.checkedAt', { host: result.host || '', when: new Date(result.checkedAt).toLocaleString(localeTag()) });
+    list.replaceChildren(...rows, when);
+  } catch (err) {
+    list.replaceChildren(Object.assign(document.createElement('li'), { className: 'domain-checks__busy', textContent: err.message || t('domain.failed') }));
+  } finally {
+    button.disabled = false;
+  }
+}
+$('domain-check').addEventListener('click', () => void paintDomainChecks());
 
 /**
  * Under "Computer use": how full the cloud computer's disk is, and what tidying freed

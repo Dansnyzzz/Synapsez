@@ -12036,3 +12036,14 @@ html[data-scene] .gate { background: var(--bg); }
 .cloak__table th { text-align: left; font-weight: 600; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .cloak__table td { vertical-align: top; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); color: var(--text-dim); }
 .cloak__table td:first-child { color: var(--text); }
+
+/* ── Settings → System: whether the site's address is safe from spoofing (2026-11-09) ── */
+.domain-checks { list-style: none; margin: 4px 0 8px; padding: 0; display: grid; gap: 10px; }
+.domain-checks__row { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start; }
+.domain-checks__mark { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--panel-2, rgba(255, 255, 255, 0.06)); color: var(--text-dim); }
+.domain-checks__row.is-ok .domain-checks__mark { color: var(--ok); }
+.domain-checks__row.is-warn .domain-checks__mark { color: var(--warn, #e0b341); }
+.domain-checks__row.is-fail .domain-checks__mark { color: var(--danger, #ef6b6b); }
+.domain-checks__said { margin: 2px 0 0; color: var(--text); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.domain-checks__fix { margin: 4px 0 0; color: var(--text-dim); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.domain-checks__busy, .domain-checks__when { color: var(--text-dim); font-size: 13px; }

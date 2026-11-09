@@ -151,7 +151,11 @@ section('a disk that looks after itself (owner, 2026-11-08)');
   // Read off the line, as Windows makes no links for the run below to try (security review, 2026-11-09).
   check('  nor through a cache, or a folder holding one, that is a link', [1, 2].every((i) => (regrow(scripts[i]) || '').includes('[ ! -L "$d" ] && [ ! -L "${d%%/*}" ] && [ ! -L "${d%/*}" ]')));
   check('  a core dump only when it is one, and never among what was sent or brought', scripts.every((script) => /-path \.\/uploads -o -path \.\/incoming -o -path \.\/downloads[^\n]*-name core[^\n]*\\177ELF/.test(script)));
-  check('  nothing the browser downloaded, and no large file in /tmp, is deleted', scripts.every((script) => !/find downloads[^\n]*(-delete|rm )/.test(script) && !/-size \+20M/.test(script)));
+  check('  no large file in /tmp is deleted for being large', scripts.every((script) => !/-size \+20M/.test(script)));
+  // Owner, 2026-11-09: left alone, the downloads filled the disk; a file a card points at is never one of them.
+  const downloadsLine = (script) => script.split('\n').find((line) => line.startsWith('[ -d downloads ]')) || '';
+  check('  what the browser downloaded goes from 70%, a week untouched, never a file a card points at', !downloadsLine(scripts[0]) && /-mmin \+10080 -amin \+10080/.test(downloadsLine(scripts[1])) && /grep -Fxq -e "\$f" -e "\$PWD\/\$f"[^|]*\|\| rm -f -- "\$f"/.test(downloadsLine(scripts[1])) && /SYNZ_KEEP/.test(downloadsLine(scripts[2])));
+  check('  the list of those goes as a value, one path a line, nothing with a break in it', care.keptPaths(['./downloads/a.zip', '~/handed/b', '/home/user/downloads/c d.pdf', 'x\ny', '']) === 'downloads/a.zip\nhanded/b\n/home/user/downloads/c d.pdf');
 
   /*
    * What may go, read off the scripts themselves: every deleting line starts from a
@@ -160,7 +164,8 @@ section('a disk that looks after itself (owner, 2026-11-08)');
   const deleting = (line) => /-delete|-exec rm|rm -rf? --/.test(line);
   const starts = new Set(['.', '"$d"', 'incoming', 'downloads', 'uploads', "'/tmp'"]);
   const named = /-name __pycache__|-name core|node_modules\/\.cache|-name nohup\.out/;
-  const RM_TARGETS = new Set(['.cache/pip .cache/uv', '.npm/_cacache .npm/_logs', '.pytest_cache', '{}', '"$t"']);
+  // `"$f"`: a file `find downloads` listed, kept when a card points at it (2026-11-09).
+  const RM_TARGETS = new Set(['.cache/pip .cache/uv', '.npm/_cacache .npm/_logs', '.pytest_cache', '{}', '"$t"', '"$f"']);
   const problems = [];
   for (const [i, script] of scripts.entries()) {
     for (const line of script.split('\n').filter(deleting)) {
@@ -249,6 +254,8 @@ async function tidyForReal() {
     'put work/__pycache__/m.pyc; put .local/lib/__pycache__/k.pyc',
     'put incoming/brought.xlsx; ago 2880 incoming/brought.xlsx; put incoming/fresh.xlsx',
     'put downloads/week.pdf; ago 12000 downloads/week.pdf; put downloads/day.pdf; ago 2880 downloads/day.pdf',
+    // Files cards point at: one by a relative path, one by an absolute one, one with a space.
+    'put downloads/kept.zip; ago 12000 downloads/kept.zip; put "downloads/kept too.pdf"; ago 12000 "downloads/kept too.pdf"',
     'put uploads/abcd1234/old.mp4; ago 50000 uploads/abcd1234/old.mp4; put uploads/ef012345/new.mp4',
     'head -c 11534336 /dev/zero > logs/app.log; printf "TAIL-MARK" >> logs/app.log',
     'head -c 11534336 /dev/zero > nohup.out; printf "TAIL-MARK" >> nohup.out',
@@ -265,12 +272,12 @@ async function tidyForReal() {
   ].join('\n');
   const left = (root) => new Set(bash('cd "$1" && find . \\( -type f -o -type l \\) | sed "s|^\\./||" | sort', root).stdout.split('\n').filter(Boolean));
   const clean = (root) => /\/tmp\.[A-Za-z0-9]+$/.test(root) && bash('rm -rf -- "$1"', root);
-  const run = (n, root) => bash(`HOME="$1/home"; export HOME\n${care.tidyScript(n, { tmp: `${root}/tmp` })}`, root);
+  const run = (n, root) => bash(`HOME="$1/home"; export HOME; SYNZ_KEEP="$2"; export SYNZ_KEEP\n${care.tidyScript(n, { tmp: `${root}/tmp` })}`, root, care.keptPaths(['./downloads/kept.zip', `${root}/home/downloads/kept too.pdf`]));
   const made = () => {
     const out = bash(setup);
     return out.status === 0 ? out.stdout.trim() : (console.log(`  (the fixture could not be made: ${out.stderr.trim().slice(0, 200)})`), '');
   };
-  const people = ['home/report.docx', 'home/data.csv', 'home/project/src/main.py', 'home/notes/todo.txt', 'home/logs/small.log', 'home/project/node_modules/left-pad/index.js', 'home/.cache/huggingface/token', 'home/.cache/pypoetry/virtualenvs/env/lib/x.py', 'home/work/core', 'home/downloads/core', 'home/downloads/week.pdf', 'home/downloads/day.pdf'];
+  const people = ['home/report.docx', 'home/data.csv', 'home/project/src/main.py', 'home/notes/todo.txt', 'home/logs/small.log', 'home/project/node_modules/left-pad/index.js', 'home/.cache/huggingface/token', 'home/.cache/pypoetry/virtualenvs/env/lib/x.py', 'home/work/core', 'home/downloads/core', 'home/downloads/day.pdf', 'home/downloads/kept.zip', 'home/downloads/kept too.pdf'];
   const browsers = ['home/.cache/ms-playwright/chromium-1/chrome', 'home/.cache/ms-playwright/__pycache__/k.pyc', 'home/.cache/puppeteer/chrome/c'];
   const has = (set, list) => list.filter((p) => !set.has(p));
 
@@ -287,7 +294,8 @@ async function tidyForReal() {
     check('  the light tidy: pip and npm caches, __pycache__, old scraps in /tmp, month-old uploads', ['home/.cache/pip/w', 'home/.npm/_cacache/x', 'home/work/__pycache__/m.pyc', 'tmp/scrap.txt', 'home/uploads/abcd1234/old.mp4'].every(gone) && after.has('tmp/fresh.txt') && after.has('tmp/synz-restore.log') && after.has('home/uploads/ef012345/new.mp4'));
     if (n === 1) check('  and nothing more', ['home/.cache/huggingface/hub/old/blob', 'home/incoming/brought.xlsx', 'home/downloads/week.pdf', 'tmp/job/big.bin'].every((p) => after.has(p)));
     if (n >= 2) {
-      check('  70–85%: old caches, old copies', ['home/.cache/huggingface/hub/old/blob', 'home/.npm/_npx/a/p.json', 'home/project/node_modules/.cache/b.json', 'home/incoming/brought.xlsx'].every(gone));
+      check('  70–85%: old caches, old copies', ['home/.cache/huggingface/hub/old/blob', 'home/.npm/_npx/a/p.json', 'home/project/node_modules/.cache/b.json', 'home/incoming/brought.xlsx', 'home/downloads/week.pdf'].every(gone));
+      check('    but never a download a card points at, however it is named', after.has('home/downloads/kept.zip') && after.has('home/downloads/kept too.pdf'));
       check('    but not what was used today, or brought in today', after.has('home/incoming/fresh.xlsx') && (n === 3 || after.has('home/.cache/huggingface/hub/fresh/blob')));
       const log = bash('stat -c %s "$1/home/nohup.out"; tail -c 9 "$1/home/nohup.out"', root).stdout;
       check('    nohup.out over 10 MB keeps its last megabyte', /^1048576\nTAIL-MARK$/.test(log.trim()), JSON.stringify(log));
@@ -297,7 +305,7 @@ async function tidyForReal() {
     if (n === 3) {
       check('  above 85%: every cache, but never the app\'s files', gone('home/.cache/huggingface/hub/fresh/blob') && after.has('tmp/job/small.txt') && after.has('tmp/synz-move-x.tgz'));
       // A file a conversation's card points at can be either (security review, 2026-11-09): listed, not deleted.
-      check('    a large file in /tmp and what the browser downloaded stay, and the largest is listed', after.has('tmp/job/big.bin') && after.has('home/downloads/week.pdf'));
+      check('    a large file in /tmp stays, listed with the largest', after.has('tmp/job/big.bin'));
       const read = care.readTidy(done.stdout);
       check('  it says how full the disk was before and after, and what is largest', !!read && read.before >= 0 && read.after >= 0 && read.biggest.length > 0, done.stdout.slice(-300));
     }
@@ -450,6 +458,13 @@ section('handing a file over');
   state.moveTo = 'not a path';
   const odd = await runInSandbox({ download: 'incoming/out.zip' }, context);
   check('  one in incoming/ is moved too, and anything but a path printed back is not believed', !!odd.file && (await store.getAttachment('u-care', odd.file.id)).source === 'incoming/out.zip', JSON.stringify(odd.file));
+  // What the browser downloaded is tidied after a week since 2026-11-09, so a large one handed over moves too.
+  state.files['/home/user/downloads/report.zip'] = 'x';
+  state.sizes['/home/user/downloads/report.zip'] = 40 * 1024 * 1024;
+  state.moveTo = '/home/user/handed/report.zip';
+  state.calls.length = 0;
+  const downloaded = await runInSandbox({ download: 'downloads/report.zip' }, context);
+  check('  and one the browser downloaded', (await store.getAttachment('u-care', downloaded.file.id)).source === '/home/user/handed/report.zip' && state.calls.some((c) => String(c.cmd).includes('mv -n --') && c.opts?.envs?.SYNZ_FILE === 'downloads/report.zip'));
   state.moveTo = '';
 
   state.calls.length = 0;

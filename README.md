@@ -1929,6 +1929,7 @@ step, with the optional certificate and how to bring data over from another data
 | `EVENT_MAIL_BATCH`, `EVENT_MAIL_DAILY` | optional | The email announcing an event's theme (server/eventMail.js) goes in batches, every address in Bcc: how many a message (default 50, at most 90) and how many a day (default 400), under Gmail's own limits. It goes through Gmail when Gmail is set up, Resend or not. |
 | `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` | optional | Lets accounts connect Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts. See [docs/google.md](docs/google.md). |
 | `GEMINI_API_KEY` | optional | Real Google results in web search (Gemini grounding). An account's own Google key works too. |
+| `EMAIL_CONFIRMATION` | optional | Whether a new account confirms its email with a 6-digit code before it is used: `on` or `off`. Unset, it is on whenever mail can be sent (Gmail, SMTP or Resend) and off when it cannot, since a code nobody can receive would lock every new account out. Accounts made before 2026-11-09 were marked confirmed and stay so. |
 | `EMAIL_FROM` | optional | The From name and address, e.g. `Elite Business <you@gmail.com>`. The name also heads every email. Defaults to the Gmail/SMTP login. |
 | `EMAIL_REPLY_TO` | optional | Where replies to the assistant's emails go, e.g. `support@yourcompany.com`. Unset, they come back to the sending mailbox. |
 | `ALLOW_SIGNUP` | optional | Open by default. `false` closes registration; the first account is always allowed. |
@@ -1943,7 +1944,7 @@ step, with the optional certificate and how to bring data over from another data
 | `PROVIDER_REQUEST_BUDGET_MS` | optional | How long one call to a model may take, every key and retry together (default `240000`, under the 300 s a Vercel function lives). Waits and first-word timeouts are cut to what is left, and a stumble's Retry-After is waited a minute at most, so a provider that will not answer ends the turn with a reason rather than a cut-off stream. This budget starts again with each call, so a turn also has a deadline, 270 s after it began on this function, that bounds what a call waits for — a stumble's retry, a rate-limited key's rest, the wait for a first word — on the turn's steps and when it folds the conversation. It does not cut a reply that is already streaming, and a call still gets 20 s to start (the least worth trying), so a long turn can outlive the function; a turn cut off that way is picked up again (`server/resume.js`) rather than ended early.
 | `EXA_FREE_MILLS`, `TAVILY_FREE_CREDITS`, `BRAVE_FREE_REQUESTS`, `GOOGLE_FREE_DAILY`, `STACKEXCHANGE_FREE_DAILY` | optional | Each service's ceiling, if its free tier is not the default one: Exa in thousandths of a dollar a month (9500), Tavily credits a month (950), Brave requests a month (950), Google grounded searches a day on the deployment's Gemini key (450), Stack Exchange requests a day (280, or 9500 with a key). |
 | `ANTHROPIC_API_KEY` etc. | **usually leave blank** | A shared fallback every account without its own key spends against. See the warning above. |
-| `PUBLIC_URL` | recommended | Your deployment URL. Used to build links in emails; without it they are guessed from the request. |
+| `PUBLIC_URL` | recommended | Your deployment URL. Used to build links in emails (without it they are guessed from the request), and the address Settings → System → Address safety and `npm run domain:check` check. |
 | `INSIGHTS` | optional | `off` stops the app loading Vercel Web Analytics and Speed Insights. On by default on Vercel only — see below. |
 | `SPEED_INSIGHTS_SAMPLE_RATE` | optional | Share of page loads whose speed is sent, `0`–`1` (default `1`). Lower it if Speed Insights nears its free allowance. |
 
@@ -1975,7 +1976,7 @@ assuming a fresh one, and that the serverless-only branches behave.
 | `DATA_DIR` | Local runs only: where the in-process Postgres keeps its files. Default `data/`. |
 | `PORT` | Local runs only: the port the app listens on. Default `5173`. |
 | `MAX_TURN_TOKENS` | Tokens one turn may spend before it stops: 2,000,000 by default on a shared key, no limit on an account's own key. `0` turns the limit off. |
-| `PRICE_MARKUP` | The markup shown on top of provider prices, as a fraction — `0.1` (ten percent) by default. A value outside 0–1 is ignored. Stored costs stay the provider's own. |
+| `PRICE_MARKUP` | A share shown on top of provider prices, as a fraction — none by default (`0`): every price is the provider's own; `0.1` would add ten percent. A value outside 0–1 is ignored. Stored costs stay the provider's own. |
 | `STREAM_STALL_FIRST_MS` / `STREAM_STALL_MS` | How long a reply may stay silent before it counts as stalled: before its first token (default `150000`) and between tokens (default `90000`). |
 | `IMAGE_MODEL` | The model `generate_image` uses. Default `gemini-3.1-flash-image`. |
 | `GOOGLE_SEARCH_MODEL` | The Gemini model behind grounded web search. Default `gemini-2.5-flash`. `GOOGLE_API_KEY` is read when `GEMINI_API_KEY` is not set. |

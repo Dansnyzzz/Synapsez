@@ -2639,6 +2639,15 @@ export function createPgStore(connectionString) {
         databaseBytes: n(row.database_bytes),
       };
     },
+    /** Where this account's files too large for the conversation are kept on its machine, newest first. */
+    async machineFilePaths(userId, limit = 500) {
+      const rows = await q(
+        `SELECT source FROM attachments WHERE user_id = $1 AND origin = 'machine' AND source IS NOT NULL
+       ORDER BY created_at DESC LIMIT $2`,
+        [userId, limit],
+      );
+      return rows.map((row) => row.source);
+    },
     /** Files sent straight to a machine, a month on: `expireMachineUploads` takes the row and the bytes together. */
     async expiredMachineUploads(days = 30, limit = 20) {
       return q(
@@ -3015,15 +3024,16 @@ export function createPgStore(connectionString) {
       return Number(rows[0]?.n || 0);
     },
     /**
-     * Who has not been told about an event by email: every account with an address
-     * that is not suspended, with its preferences (the opt-out and the language).
+     * Who has not been told about an event by email: every account with a confirmed
+     * address that is not suspended, with its preferences (the opt-out and the
+     * language). An address nobody confirmed may be anybody's (owner, 2026-11-09).
      */
     async eventMailRecipients(event) {
       return q(
         `SELECT u.id, u.email, s.value AS prefs
            FROM users u
            LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
-          WHERE u.email IS NOT NULL AND u.email <> '' AND u.suspended_at IS NULL
+          WHERE u.email IS NOT NULL AND u.email <> '' AND u.suspended_at IS NULL AND u.email_verified_at IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM event_mail m WHERE m.event = $1 AND m.user_id = u.id
                               AND (m.ok OR m.sent_at > NOW() - INTERVAL '1 hour'))
           ORDER BY u.created_at`,

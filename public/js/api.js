@@ -50,10 +50,12 @@ async function request(method, path, body, options = {}) {
   }
 
   if (!res.ok) {
-    const err = new Error(json.error || messageFor(res.status, unparsed));
+    const err = /** @type {Error & { code?: string, status?: number, email?: string }} */ (new Error(json.error || messageFor(res.status, unparsed)));
     // Callers branch on this — e.g. 'totp_required' is a step, not a failure.
     err.code = json.code;
     err.status = res.status;
+    // The address a sign-in's "confirm your email" names, so the code box can show it.
+    if (typeof json.email === 'string') err.email = json.email;
     throw err;
   }
   if (unparsed) {
@@ -97,6 +99,9 @@ export const api = {
   session: () => request('GET', '/api/session'),
   login: (credentials) => request('POST', '/api/login', credentials),
   register: (details) => request('POST', '/api/register', details),
+  /** A new account's email, by the code typed (`email`, `code`) or the link opened (`token`). */
+  confirmEmail: (payload) => request('POST', '/api/register/confirm', payload),
+  resendConfirmation: (email) => request('POST', '/api/register/resend', { email }),
   logout: () => request('POST', '/api/logout'),
   /** Agreeing to the documents as they are now — `versions` as bootstrap's `consent.current` says them. */
   agree: (versions) => request('POST', '/api/consent', versions),
@@ -126,6 +131,8 @@ export const api = {
   /** Give feedback, and an administrator's view of what was sent. */
   feedback: (body) => request('POST', '/api/feedback', body),
   adminFeedback: () => request('GET', '/api/admin/feedback'),
+  /** Whether this site's address is safe from spoofing, checked live (server/domainCheck.js). */
+  domainCheck: () => request('GET', '/api/admin/domain'),
   // Feedback on one answer, from the thumb beside its copy button (owner, 2026-11-02).
   answerFeedback: (body) => request('POST', '/api/feedback/answer', body),
   // The deployment's free allowances this period (server/freeTier.js).

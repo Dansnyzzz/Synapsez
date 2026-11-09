@@ -3,7 +3,7 @@
  * email (owner, 2026-11-08). Drawn the way the stills are (scripts/scene-stills.mjs),
  * a few seconds of the scene, its end faded into its start so the loop has no seam.
  *
- *   npm run scenes:gifs                    every event theme, into public/assets/scenes/
+ *   npm run scenes:gifs                    every event theme, into server/scenes/assets/
  *   node scripts/scene-gifs.mjs --only aurora-peak --seconds 4 --fps 12 --width 480
  */
 /* global window, document */
@@ -16,6 +16,14 @@ import { encodeGif } from './gif-encode.mjs';
 import { THEMES } from '../server/themes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
+/** Each theme's own files live under server/ since 2026-11-09 (server/sceneAssets.js), at the same addresses. */
+const themes = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../server/scenes');
+/** Where a path is served from: a theme's file under server/scenes, anything else under public. @param {string} pathname */
+const fileFor = (pathname) => {
+  const own = /^\/(js|assets)\/scenes\/([a-z0-9-]+\.(?:js|webp|gif))$/.exec(pathname);
+  const there = own ? path.join(themes, own[1], own[2]) : null;
+  return there && fs.existsSync(there) ? there : path.join(root, pathname);
+};
 const args = process.argv.slice(2);
 const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
 const only = option('--only')?.split(',') || null;
@@ -34,8 +42,8 @@ const server = http.createServer((req, res) => {
     res.end('<!doctype html><title>scenes</title><body style="margin:0;background:#000"></body>');
     return;
   }
-  const file = path.join(root, url.pathname);
-  if (!file.startsWith(root) || !fs.existsSync(file)) {
+  const file = fileFor(url.pathname);
+  if (!(file.startsWith(root) || file.startsWith(themes)) || !fs.existsSync(file)) {
     res.writeHead(404);
     res.end();
     return;
@@ -99,7 +107,7 @@ for (const id of wanted) {
     return mixed;
   });
   const gif = encodeGif({ width, height, frames: loop, delayMs: 1000 / fps });
-  const file = path.join(root, 'assets/scenes', `${id}.gif`);
+  const file = path.join(themes, 'assets', `${id}.gif`);
   fs.writeFileSync(file, gif);
   console.log(id, `${Math.round(gif.length / 1024)} KB`, `${Date.now() - started} ms`);
 }

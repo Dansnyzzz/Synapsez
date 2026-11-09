@@ -121,13 +121,13 @@ section('the drawing and the rules name the same themes');
   const painted = themes.THEMES.filter((t) => t.id !== 'default');
   const uncatalogued = painted.filter((t) => !new RegExp(`^\\s*('${t.id}'|${t.id})[:,]`, 'm').test(source)).map((t) => t.id);
   check('every theme is in the catalogue', !uncatalogued.length, uncatalogued.join());
-  const unpainted = painted.filter((t) => !fs.existsSync(`public/js/scenes/${t.id}.js`)).map((t) => t.id);
+  const unpainted = painted.filter((t) => !fs.existsSync(`server/scenes/js/${t.id}.js`)).map((t) => t.id);
   check('and has a scene', !unpainted.length, unpainted.join());
-  const noStill = painted.filter((t) => !fs.existsSync(`public/assets/scenes/${t.id}.webp`)).map((t) => t.id);
+  const noStill = painted.filter((t) => !fs.existsSync(`server/scenes/assets/${t.id}.webp`)).map((t) => t.id);
   check('and a picture for its tile (npm run scenes:stills)', !noStill.length, noStill.join());
-  const big = painted.filter((t) => fs.existsSync(`public/assets/scenes/${t.id}.webp`) && fs.statSync(`public/assets/scenes/${t.id}.webp`).size > 60 * 1024).map((t) => t.id);
+  const big = painted.filter((t) => fs.existsSync(`server/scenes/assets/${t.id}.webp`) && fs.statSync(`server/scenes/assets/${t.id}.webp`).size > 60 * 1024).map((t) => t.id);
   check('small enough for a page of them to load quickly', !big.length, big.join());
-  const sources = painted.filter((t) => fs.existsSync(`public/js/scenes/${t.id}.js`)).map((t) => [t.id, fs.readFileSync(`public/js/scenes/${t.id}.js`, 'utf8')]);
+  const sources = painted.filter((t) => fs.existsSync(`server/scenes/js/${t.id}.js`)).map((t) => [t.id, fs.readFileSync(`server/scenes/js/${t.id}.js`, 'utf8')]);
   const pagely = sources.filter(([, code]) => /\b(?:window|document)\./.test(code.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''))).map(([id]) => id);
   check('and it can be drawn in the worker: no page in it', !pagely.length, pagely.join());
   const pets = fs.readFileSync('public/js/ranking-panel.js', 'utf8');
@@ -361,6 +361,11 @@ section('the sponsor titles count money put in, not spent at a provider (owner, 
   check('  it says how many hold it', page.titles.find((t) => t.id === 'spend-10')?.holders === 1 && page.titles.find((t) => t.id === 'spend-10')?.asks?.deposit === 10);
   const worn = await listThemes(payer);
   check('  and its theme comes with it, and is put on', worn.themes.find((t) => t.id === 'rainy-cafe')?.owned === true && worn.selected === 'rainy-cafe');
+  // The page opens drawing only what the money is behind (review, 2026-11-09: a stale sponsor's creature showed until a reload).
+  const stale = await make('stale-sponsor');
+  check('a sponsor title with nothing put in is not drawn when the page opens', (await themes.titleShown(stale.id, 'spend-10')) === null);
+  check('  one with the money behind it is', (await themes.titleShown(payer.id, 'spend-10')) === 'spend-10');
+  check('  and a usage title is whatever it is', (await themes.titleShown(stale.id, 'tokens-1m')) === 'tokens-1m' && (await themes.titleShown(stale.id, null)) === null);
 }
 
 section('found by the review, 2026-11-09');
@@ -533,6 +538,41 @@ section('over HTTP');
   check('and no administrators: they hold them all', !people.json?.people?.some((p) => p.id === 'u-boss'));
   check('someone without the permission gets neither', (await call(me, 'GET', '/api/admin/themes/people')).status === 403 && (await call(me, 'GET', '/api/admin/themes/lagoon/holders')).status === 403);
   check('and be taken back', (await call(boss2, 'DELETE', '/api/admin/themes/lagoon/holders/u-http')).status === 200);
+
+  /*
+   * A theme's own files are nobody's before it is out but an administrator's or its
+   * holder's (security review, 2026-11-09): the aurora's picture could be opened a month early.
+   */
+  const fetchFile = async (cookie, url) => {
+    const res = await fetch(`${base}${url}`, { headers: cookie ? { Cookie: cookie } : {} });
+    return { status: res.status, cache: res.headers.get('cache-control') || '', type: res.headers.get('content-type') || '' };
+  };
+  const out = await fetchFile('', '/assets/scenes/cloud-drift.webp');
+  check('a theme that is out: its still is everybody\'s, cached by the CDN', out.status === 200 && /public/.test(out.cache) && /s-maxage/.test(out.cache) && /image\/webp/.test(out.type), JSON.stringify(out));
+  const outModule = await fetchFile('', '/js/scenes/cloud-drift.js');
+  check('  and so is its scene', outModule.status === 200 && /javascript/.test(outModule.type));
+  check('the engine and the shared art are still plain files', (await fetchFile('', '/js/scenes/engine.js')).status === 200 && (await fetchFile('', '/js/scenes/art.js')).status === 200);
+  check('a name that is no theme\'s finds nothing', (await fetchFile('', '/assets/scenes/nope.webp')).status === 404);
+  const coming = themes.THEMES.find((t) => t.id !== 'default' && (themes.appearsAt(t, t.badge)?.getTime() ?? 0) > Date.now() + 86_400_000);
+  if (coming) {
+    const hidden = await fetchFile(me, `/assets/scenes/${coming.id}.webp`);
+    check(`a theme not out yet (${coming.id}): nobody else may load it, and nothing is cached`, hidden.status === 404 && /no-store/.test(hidden.cache), JSON.stringify(hidden));
+    check('  not its scene either', (await fetchFile('', `/js/scenes/${coming.id}.js`)).status === 404);
+    const ahead = await fetchFile(boss2, `/assets/scenes/${coming.id}.webp`);
+    check('  an administrator sees it ahead of time, never cached for others', ahead.status === 200 && /private/.test(ahead.cache) && /no-store/.test(ahead.cache), JSON.stringify(ahead));
+  }
+  // The rule itself, at moments of its own.
+  const anon = { user: async () => null };
+  const aurora = themes.THEMES.find((t) => t.id === 'aurora-peak');
+  const before = new Date(themes.appearsAt(aurora, aurora.badge).getTime() - 60_000);
+  const after = new Date(themes.appearsAt(aurora, aurora.badge).getTime() + 60_000);
+  check('the aurora\'s files: nobody\'s a minute before it shows', (await themes.themeAssetAccess('aurora-peak', { ...anon, now: before })) === 'none');
+  check('  everybody\'s a minute after', (await themes.themeAssetAccess('aurora-peak', { ...anon, now: after })) === 'public');
+  check('  an administrator\'s before', (await themes.themeAssetAccess('aurora-peak', { user: async () => ({ id: 'x', role: 'admin' }), now: before })) === 'private');
+  await store.grantTheme('u-http', 'aurora-peak', { kind: 'exclusive_event', byHand: true });
+  check('  and whoever was given it', (await themes.themeAssetAccess('aurora-peak', { user: async () => ({ id: 'u-http', role: 'user' }), now: before })) === 'private');
+  await store.revokeTheme('u-http', 'aurora-peak');
+  check('  and not a theme\'s at all: the shared files', (await themes.themeAssetAccess('engine')) === null && (await themes.themeAssetAccess('default')) === null);
   await new Promise((r) => server.close(r));
 }
 

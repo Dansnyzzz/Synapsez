@@ -351,7 +351,7 @@ section('news comes in the tier the person uses');
   check('somebody on a free model hears of a new free one, whoever made it', forFree?.id === 'openrouter/small-lab/fresh:free', forFree?.id);
   const forPaid = await pendingAnnouncement(reader, { tier: 'paid' });
   check('somebody paying hears of the paid release', forPaid?.id === 'openrouter/openai/fresh-paid', forPaid?.id);
-  check('  priced as charged, with the service share on top', forPaid?.price?.in === 2.2 && forPaid?.price?.out === 8.8, JSON.stringify(forPaid?.price));
+  check("  priced as the provider prices it, nothing added (owner, 2026-11-09)", forPaid?.price?.in === 2 && forPaid?.price?.out === 8, JSON.stringify(forPaid?.price));
   // The ending one is newest by release in the list but is never recommended.
   check('a model already going away is never the news', forFree?.id !== 'openrouter/qwen/fresh-but-ending:free');
   // Somebody free is never shown the paid release, and the other way round.
@@ -359,18 +359,19 @@ section('news comes in the tier the person uses');
   check('a model somebody is on is not news to them', (await pendingAnnouncement(reader, { tier: 'free', current: 'openrouter/small-lab/fresh:free' })) === null);
 }
 
-section('every price shown carries the service share');
+// Owner, 2026-11-09: the providers' own prices, with nothing added (it was ten percent).
+section("every price shown is the provider's own");
 {
   const { withMarkup, markedPrice, PRICE_MARKUP } = await import('../server/pricing.js');
-  check('ten percent by default', PRICE_MARKUP === 0.1);
-  check('on input and output alike', JSON.stringify(markedPrice({ in: 1.25, out: 4.25 })) === JSON.stringify({ in: 1.375, out: 4.675 }));
+  check('nothing added by default', PRICE_MARKUP === 0);
+  check('on input and output alike', JSON.stringify(markedPrice({ in: 1.25, out: 4.25 })) === JSON.stringify({ in: 1.25, out: 4.25 }));
   check('free stays free', withMarkup(0) === 0);
   check('unknown stays unknown', withMarkup(null) === null);
-  check('no floating-point dust', withMarkup(0.045) === 0.0495, String(withMarkup(0.045)));
+  check('no floating-point dust', withMarkup(0.045) === 0.045, String(withMarkup(0.045)));
   const { browse } = await import('../server/models.js');
   const shown = await browse({ limit: 500 });
   const paid = shown.models.find((m) => m.id === 'openrouter/openai/fresh-paid');
-  check('the picker shows the charged rate', paid?.price?.in === 2.2, JSON.stringify(paid?.price));
+  check("the picker shows the provider's rate", paid?.price?.in === 2, JSON.stringify(paid?.price));
   check('  built-in models too', shown.builtin.every((m) => !m.price || m.price.in >= 0));
 }
 
