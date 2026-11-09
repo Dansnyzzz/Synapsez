@@ -225,7 +225,7 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 34: skills.files — what a skill carries beside its instructions.
   // 35: feedback.message_id / issue / answer — feedback on one answer.
   // 40: workflows.policy/project_id, top_ups, event_mail.
-  const STAMPED = { version: 40, fingerprint: '309a042ab7e643d7' };
+  const STAMPED = { version: 40, fingerprint: '5e6f7efa8676b5db' };
 
   check(
     'the recorded version matches the code',

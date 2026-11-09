@@ -1141,6 +1141,9 @@ CREATE TABLE IF NOT EXISTS top_ups (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS top_ups_user_idx ON top_ups (user_id);
+-- A theme an administrator gave by hand, which the sponsor rule never mistakes for one
+-- given for spending at a provider. Existing rows were given by usage.
+ALTER TABLE user_themes ADD COLUMN IF NOT EXISTS by_hand BOOLEAN NOT NULL DEFAULT FALSE;
 -- Who has been told about an event's theme by email: once each, so a send cut short
 -- on a serverless timeout goes on from where it stopped the next time.
 CREATE TABLE IF NOT EXISTS event_mail (

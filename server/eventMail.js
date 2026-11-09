@@ -1,6 +1,6 @@
 import { appearsAt, eventStandingFor, THEMES } from './themes.js';
 import { layoutEmail, escapeHtml } from './mailTemplate.js';
-import { sendEmail, senderName, publicUrl } from './email.js';
+import { sendEmail, senderName, publicUrl, emailBackend } from './email.js';
 import { getStore } from './store/index.js';
 import { log } from './util/trace.js';
 import { vi as VI } from '../public/js/locales/vi.js';
@@ -116,14 +116,17 @@ export function eventsToAnnounce(now = new Date()) {
  * Tell whoever is left about every event that is out. Never throws: a sweep has other
  * work, and whoever was not told is told next time.
  *
- * @param {{ now?: Date, store?: any, send?: typeof sendEmail, baseUrl?: string }} [options]
+ * @param {{ now?: Date, store?: any, send?: typeof sendEmail, baseUrl?: string, backend?: string }} [options]
+ *   `backend`: how mail goes out; with none set up (`console`) nothing is claimed or sent
  * @returns {Promise<{ sent: number, batches: number }>}
  */
-export async function sweepEventMail({ now = new Date(), store = getStore(), send = sendEmail, baseUrl = publicUrl(null) } = {}) {
+export async function sweepEventMail({ now = new Date(), store = getStore(), send = sendEmail, baseUrl = publicUrl(null), backend = emailBackend() } = {}) {
   const due = eventsToAnnounce(now);
   let sent = 0;
   let batches = 0;
-  if (!due.length) return { sent, batches };
+  // With no mail set up nothing goes, and nobody is marked as told: the email waits for a
+  // provider instead of being lost for everyone (review, 2026-11-09).
+  if (!due.length || backend === 'console') return { sent, batches };
   try {
     let allowance = PER_DAY() - (await store.eventMailSentSince(new Date(now.getTime() - 24 * 3_600_000)));
     for (const theme of due) {
@@ -132,19 +135,25 @@ export async function sweepEventMail({ now = new Date(), store = getStore(), sen
       const byLanguage = new Map();
       for (const person of people) {
         if (person.prefs?.eventMail === false) continue;
-        const lang = person.prefs?.language === 'vi' ? 'vi' : 'en';
+        // A Vietnamese clock with no language chosen yet reads Vietnamese, as the search does.
+        const lang = person.prefs?.language === 'vi' || (!person.prefs?.language && /^Asia\/(Ho_Chi_Minh|Saigon)$/.test(String(person.prefs?.timezone || ''))) ? 'vi' : 'en';
         if (!byLanguage.has(lang)) byLanguage.set(lang, []);
         byLanguage.get(lang).push(person);
       }
       const standing = await eventStandingFor(theme.event, store, now);
       for (const [lang, group] of byLanguage) {
         for (let i = 0; i < group.length && allowance > 0 && batches < PER_SWEEP; i += BATCH()) {
-          const batch = group.slice(i, i + Math.min(BATCH(), allowance));
+          const offered = group.slice(i, i + Math.min(BATCH(), allowance));
+          // Claimed before it is sent: two sweeps at once each get whom the other did not.
+          const mine = new Set(await store.claimEventMail(theme.event.id, offered.map((p) => p.id)));
+          const batch = offered.filter((p) => mine.has(p.id));
+          if (!batch.length) continue;
           const mail = eventEmail({ themeId: theme.id, event: { ...theme.event, ...standing }, language: lang, baseUrl });
           // To the sender, everyone else in Bcc: nobody sees another person's address.
-          const result = await send({ to: null, bcc: batch.map((p) => p.email), ...mail, prefer: 'smtp' });
+          const result = await send({ to: null, bcc: batch.map((p) => p.email), ...mail, prefer: 'smtp' }).catch(() => null);
           batches += 1;
           if (!result?.ok) {
+            await store.releaseEventMail(theme.event.id, batch.map((p) => p.id));
             log.warn('event email batch not sent', { event: theme.event.id, size: batch.length });
             return { sent, batches };
           }

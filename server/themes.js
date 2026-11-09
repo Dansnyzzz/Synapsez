@@ -359,14 +359,24 @@ export function appearsAt(theme, badge) {
   return theme.released ? new Date(theme.released) : null;
 }
 
-/** The sponsor titles and their themes count money put in here, not spent at a provider (owner, 2026-11-08). */
-const earnedBy = (thing, life, deposited) => (thing.tokens ? life.tokens >= thing.tokens : thing.spend ? deposited >= thing.spend : !thing.event);
+/**
+ * The sponsor titles and their themes count money put in here, not spent at a provider (owner,
+ * 2026-11-08). A title with no mark is everybody's (newcomer); a theme with none is earned by
+ * nothing, so an administrator making a prize an achievement does not hand it to everyone.
+ */
+const earnedBy = (thing, life, deposited, { title = false } = {}) => (thing.tokens ? life.tokens >= thing.tokens : thing.spend ? deposited >= thing.spend : title);
+
+/** A worn title as the boards show it: a sponsor's only with the money behind it. */
+function wornTitle(id, deposited) {
+  const entry = TITLE_BY_ID.get(id);
+  return entry?.spend && deposited < entry.spend ? null : titleInfo(id);
+}
 
 /**
  * Whether a held row still counts: a sponsor title or theme given for spending at a
  * provider, before the rule was money put in, waits for a top-up. Kept, not deleted.
  */
-const stillHeld = (thing, row, deposited) => !(thing?.spend && (!row || row.grant_kind === undefined || row.grant_kind === 'achievement') && deposited < thing.spend);
+const stillHeld = (thing, row, deposited) => !(thing?.spend && deposited < thing.spend && (!row?.grant_kind || (row.grant_kind === 'achievement' && !row.by_hand)));
 
 /**
  * An event's place, if this person has earned one and there is one left. Worked out
@@ -403,7 +413,7 @@ async function syncEarned(user, store, now = new Date()) {
   /** What this look gave, newest-hardest last: worn at once (owner, 2026-11-08). */
   const newly = { titles: /** @type {string[]} */ ([]), themes: /** @type {string[]} */ ([]) };
   for (const title of TITLES) {
-    if (earnedBy({ ...title, event: null }, life, deposited) && !titles.has(title.id)) {
+    if (earnedBy(title, life, deposited, { title: true }) && !titles.has(title.id)) {
       await store.grantTitle(user.id, title.id);
       newly.titles.push(title.id);
       changed = true;
@@ -431,6 +441,8 @@ async function syncEarned(user, store, now = new Date()) {
   }
   // The newest thing earned is put on, a newcomer's first title excepted (it is everybody's).
   const wear = {};
+  const worn = TITLE_BY_ID.get((await getPrefs(user.id)).equippedTitle);
+  if (worn?.spend && deposited < worn.spend) wear.equippedTitle = null;
   const title = newly.titles.filter((id) => id !== 'newcomer').at(-1);
   if (title) wear.equippedTitle = title;
   if (newly.themes.length) wear.sceneTheme = newly.themes.at(-1);
@@ -462,9 +474,11 @@ export async function afterTurn(user, { store = getStore(), now = new Date() } =
     // (owner, 2026-11-08): one sum a turn, and the rest only when a mark is crossed.
     const { tokens } = await store.lifetimeUsage(user.id);
     const mark = nextMark.get(user.id);
+    if (mark !== undefined && tokens < mark) return null;
+    const { newly } = await syncEarned(user, store, now);
     nextMark.set(user.id, MARKS.find((m) => m > tokens) ?? Infinity);
     if (nextMark.size > 5000) nextMark.delete(nextMark.keys().next().value);
-    if (mark !== undefined && tokens < mark) return null;
+    return newly.titles.length || newly.themes.length ? newly : null;
   }
   const { newly } = await syncEarned(user, store, now);
   return newly.titles.length || newly.themes.length ? newly : null;
@@ -659,7 +673,7 @@ export async function ranking(user, { scope = 'quarter', key, store = getStore()
     return {
       rank: r.rank,
       name: shown ? publicName(person) : null,
-      title: titleInfo(person?.prefs?.equippedTitle),
+      title: wornTitle(person?.prefs?.equippedTitle, Number(person?.deposited) || 0),
       value: r.value,
       isMe: r.id === user.id,
     };
@@ -717,7 +731,7 @@ export async function giveTheme(id, userId, { store = getStore() } = {}) {
   const target = await store.getUserById(String(userId || ''));
   if (!target) throw refuse(404, 'There is no such account.');
   const badge = (await themeBadges(store)).get(id);
-  await store.grantTheme(target.id, id, badge.kind === 'none' ? blank('exclusive_event') : badge);
+  await store.grantTheme(target.id, id, { ...(badge.kind === 'none' ? blank('exclusive_event') : badge), byHand: true });
 }
 
 /** An administrator taking one back. Whoever wore it falls back to the default on their next look. */

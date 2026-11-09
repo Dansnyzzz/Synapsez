@@ -243,7 +243,8 @@ export function splitStatements(sql) {
  *      month's prize becomes its quarter's; event_claims — an event's limited
  *      places; provider_outcomes — what each provider answered, by status
  *  40  workflows.policy / project_id — the Bot page; top_ups — money put in, which
- *      the sponsor titles count; event_mail — who was told about an event
+ *      the sponsor titles count; event_mail — who was told about an event;
+ *      user_themes.by_hand — a theme an administrator gave
  */
 export const SCHEMA_VERSION = 40;
 
@@ -2912,7 +2913,7 @@ export function createPgStore(connectionString) {
       return { tokens: Number(rows[0]?.tokens || 0), cost: Number(rows[0]?.cost || 0) };
     },
     async listUserThemes(userId) {
-      return q('SELECT theme_id, grant_kind, grant_quarter, grant_year, granted_at FROM user_themes WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+      return q('SELECT theme_id, grant_kind, grant_quarter, grant_year, granted_at, by_hand FROM user_themes WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
     },
     /** The themes an administrator took back from this account, which usage must not earn again. */
     async listRevokedThemes(userId) {
@@ -2921,11 +2922,11 @@ export function createPgStore(connectionString) {
     /** Given again, it counts as newly received, and says the latest reason. */
     async grantTheme(userId, themeId, grant) {
       await q(
-        `INSERT INTO user_themes (user_id, theme_id, grant_kind, grant_quarter, grant_year)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO user_themes (user_id, theme_id, grant_kind, grant_quarter, grant_year, by_hand)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (user_id, theme_id) DO UPDATE
-           SET grant_kind = EXCLUDED.grant_kind, grant_quarter = EXCLUDED.grant_quarter, grant_year = EXCLUDED.grant_year, granted_at = NOW(), revoked_at = NULL`,
-        [userId, themeId, grant.kind, grant.quarter ?? null, grant.year ?? null],
+           SET grant_kind = EXCLUDED.grant_kind, grant_quarter = EXCLUDED.grant_quarter, grant_year = EXCLUDED.grant_year, by_hand = EXCLUDED.by_hand, granted_at = NOW(), revoked_at = NULL`,
+        [userId, themeId, grant.kind, grant.quarter ?? null, grant.year ?? null, grant.byHand === true],
       );
     },
     /** What an account used between two moments, for an event that asks for it. */
@@ -2998,7 +2999,7 @@ export function createPgStore(connectionString) {
     /** How many accounts hold each title, an award counted under its place (`rank-1`…). */
     async titleHolderCounts() {
       return q(
-        `SELECT CASE WHEN title_id LIKE 'award:%' THEN 'rank-' || split_part(title_id, ':', 5) ELSE title_id END AS title_id,
+        `SELECT CASE WHEN title_id LIKE 'top:%' OR title_id LIKE 'award:%' THEN 'rank-' || split_part(title_id, ':', 5) ELSE title_id END AS title_id,
                 COUNT(DISTINCT user_id)::int AS holders
            FROM user_titles GROUP BY 1`,
       );
@@ -3023,14 +3024,39 @@ export function createPgStore(connectionString) {
            FROM users u
            LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
           WHERE u.email IS NOT NULL AND u.email <> '' AND u.suspended_at IS NULL
-            AND NOT EXISTS (SELECT 1 FROM event_mail m WHERE m.event = $1 AND m.user_id = u.id)
+            AND NOT EXISTS (SELECT 1 FROM event_mail m WHERE m.event = $1 AND m.user_id = u.id
+                              AND (m.ok OR m.sent_at > NOW() - INTERVAL '1 hour'))
           ORDER BY u.created_at`,
         [event],
       );
     },
+    /**
+     * Claim these people for one send: the ids this caller got, none another sweep holds.
+     * A claim left by a send that died is taken back after an hour.
+     */
+    async claimEventMail(event, userIds) {
+      if (!userIds.length) return [];
+      const rows = await q(
+        `INSERT INTO event_mail (event, user_id, ok) SELECT $1, unnest($2::text[]), FALSE
+           ON CONFLICT (event, user_id) DO UPDATE SET sent_at = NOW()
+             WHERE event_mail.ok = FALSE AND event_mail.sent_at < NOW() - INTERVAL '1 hour'
+         RETURNING user_id`,
+        [event, userIds],
+      );
+      return rows.map((r) => r.user_id);
+    },
+    /** A send the provider refused: those people are free to be claimed again. */
+    async releaseEventMail(event, userIds) {
+      if (!userIds.length) return;
+      await q('DELETE FROM event_mail WHERE event = $1 AND user_id = ANY($2::text[]) AND ok = FALSE', [event, userIds]);
+    },
     async markEventMail(event, userIds) {
       if (!userIds.length) return;
-      await q('INSERT INTO event_mail (event, user_id) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING', [event, userIds]);
+      await q(
+        `INSERT INTO event_mail (event, user_id, ok, sent_at) SELECT $1, unnest($2::text[]), TRUE, NOW()
+           ON CONFLICT (event, user_id) DO UPDATE SET ok = TRUE, sent_at = NOW()`,
+        [event, userIds],
+      );
     },
     /** How many event emails went since a moment, against the day's sending limit. */
     async eventMailSentSince(since) {
@@ -3109,7 +3135,8 @@ export function createPgStore(connectionString) {
     async boardPeople(ids) {
       if (!ids.length) return [];
       return q(
-        `SELECT u.id, u.username, u.name, u.email, s.value AS prefs
+        `SELECT u.id, u.username, u.name, u.email, s.value AS prefs,
+                COALESCE((SELECT SUM(amount_usd) FROM top_ups t WHERE t.user_id = u.id), 0) AS deposited
            FROM users u LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
           WHERE u.id = ANY($1)`,
         [ids],

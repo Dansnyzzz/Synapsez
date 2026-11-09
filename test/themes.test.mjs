@@ -363,6 +363,27 @@ section('the sponsor titles count money put in, not spent at a provider (owner, 
   check('  and its theme comes with it, and is put on', worn.themes.find((t) => t.id === 'rainy-cafe')?.owned === true && worn.selected === 'rainy-cafe');
 }
 
+section('found by the review, 2026-11-09');
+{
+  const plain = await make('plain');
+  await setThemeBadge('snow-village', { kind: 'achievement' }, owner.id);
+  const page = await listThemes(plain);
+  check('an administrator making a prize an achievement does not hand it to everyone', !page.themes.find((t) => t.id === 'snow-village')?.owned && (await getPrefs(plain.id)).sceneTheme !== 'snow-village');
+  await setThemeBadge('snow-village', { kind: 'top_quarter', quarter: 4, year: 2026 }, owner.id);
+  await giveTheme('rainy-cafe', plain.id);
+  check('a sponsor theme given by hand is held', (await listThemes(plain)).themes.find((t) => t.id === 'rainy-cafe')?.owned === true);
+  const sponsor = await make('sponsor');
+  await store.grantTitle(sponsor.id, 'spend-10');
+  await setPrefs(sponsor.id, { equippedTitle: 'spend-10' });
+  await spend(sponsor, 50_000_000, 0);
+  const board = await ranking(alice);
+  check('the boards do not show a sponsor title without the money behind it', board.tokens.find((r) => r.name === 'sponsor')?.title === null, JSON.stringify(board.tokens.find((r) => r.name === 'sponsor')));
+  await listTitles(sponsor);
+  check('  and it is taken off the person, so the box agrees', (await getPrefs(sponsor.id)).equippedTitle !== 'spend-10');
+  await store.grantTitle(plain.id, 'top:tokens:quarter:2026-Q4:1');
+  check('a board prize is counted under its place', (await store.titleHolderCounts()).some((r) => r.title_id === 'rank-1' && r.holders >= 1));
+}
+
 section('earned at the end of a turn, and put on');
 {
   const quick = await make('quick');

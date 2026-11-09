@@ -162,7 +162,7 @@ function score(text, expected) {
 }
 
 /** Same characters whichever way they were written, and the spaces do not matter. */
-const same = (a, b) => a.normalize('NFC').replace(/s+/g, ' ').trim() === b.normalize('NFC').replace(/s+/g, ' ').trim();
+const same = (a, b) => a.normalize('NFC').replace(/\s+/g, ' ').trim() === b.normalize('NFC').replace(/\s+/g, ' ').trim();
 const rounded = (n) => Math.round(n * 1000) / 1000;
 
 /**
