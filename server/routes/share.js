@@ -119,6 +119,10 @@ export async function shareFile(userId, id) {
   const store = getStore();
   const file = await store.getAttachment(userId, id);
   if (!file) return { status: 404, error: 'Not found' };
+  // Too large for the conversation, so its bytes are on the cloud computer, not here.
+  if (file.origin === 'machine') {
+    return { status: 400, error: `${file.name} stays on the cloud computer, being too large to keep in the conversation, so it cannot have a public link. It downloads from its card.` };
+  }
   if (file.origin !== 'generated') {
     return { status: 400, error: 'Only something the assistant made can be shared by link. Uploaded files stay private.' };
   }

@@ -703,12 +703,21 @@ export function figuresNote(pictures) {
   return `Showed the user ${pictures.length === 1 ? 'the figure' : `${pictures.length} figures`} in the conversation: ${pictures.map((p) => `${p.name} (id ${p.id})`).join(', ')}.`;
 }
 
-/** @param {string} name @param {string} id @param {{ removed?: boolean, atPath?: string }} [options] */
+/**
+ * A file left on the machine has no public link: one would wake the account's computer,
+ * on its credit, for whoever holds the address. It used to be told publish_file would
+ * make one, was refused as "uploaded", and told the owner a zip could not be handed
+ * over at all (owner, 2026-11-08).
+ *
+ * @param {string} name @param {string} id @param {{ removed?: boolean, atPath?: string }} [options]
+ */
 export function handedNote(name, id, { removed = false, atPath = '' } = {}) {
   return (
-    `Handed ${name} to the user — it is in the conversation to open and download. Its id is ${id}; publish_file with that id makes a link to share.` +
-    (removed ? " It has been taken off the cloud computer, being in the conversation now: `bring` puts it back if it is needed." : '') +
-    (atPath ? ` It stays on the cloud computer at ${atPath}, being too large to keep in the conversation: its link works as long as it stays there.` : '')
+    `Handed ${name} to the user — it is in the conversation to open and download. Its id is ${id}` +
+    (atPath
+      ? `. It stays on the cloud computer at ${atPath}, being too large to keep in the conversation: its download works as long as it stays there, and it cannot have a public link.`
+      : '; publish_file with that id makes a link to share.') +
+    (removed ? " It has been taken off the cloud computer, being in the conversation now: `bring` puts it back if it is needed." : '')
   );
 }
 

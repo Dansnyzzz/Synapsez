@@ -116,7 +116,7 @@ const { e2bScratch, __testing } = await import('../server/e2b.js');
 const { shellFor, ROOT_NODE_DIR, ROOT_BROWSER_PORT } = await import('../server/sandbox.js');
 const { startScript } = await import('../server/cloudBrowser/index.js');
 const { TEMPLATE_NAME } = await import('../server/e2b.js');
-const { TIDY_SCRIPT, terminalScript, packagesIn } = await import('../server/machineCare.js');
+const { tidyScript, readTidy, terminalScript, packagesIn } = await import('../server/machineCare.js');
 const template = String(process.env.E2B_TEMPLATE || '').trim() || TEMPLATE_NAME;
 const machines = [];
 const started = Date.now();
@@ -385,8 +385,10 @@ with sync_playwright() as p:
     section('room behind the memory');
     const swap = await run('fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; free -m | tail -1', { root: true });
     console.log(`    swap: ${swap.out || swap.err.slice(-160)}`);
-    const tidied = await run(TIDY_SCRIPT, { timeoutMs: 30_000 });
-    check('tidying says how full the disk is', /^\d+%$/.test(tidied.out), tidied.out);
+    // The fullest tier, which does the most: on a probe machine there is nothing of anybody's to lose.
+    const tidied = await run(tidyScript(3), { timeoutMs: 60_000 });
+    const read = readTidy(tidied.out);
+    check('tidying says how full the disk was before and after, and what is largest', !!read && read.biggest.length > 0, tidied.out.slice(-300));
   }
 
   if (process.argv.includes('--browser')) {

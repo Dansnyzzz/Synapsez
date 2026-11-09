@@ -620,15 +620,36 @@ const newId = () => crypto.randomUUID();
 
 /**
  * About what a request cut short spent: what it was sent, and what had come back from
- * this request alone, at the usual four characters a token. An estimate at the full
- * input price: on a conversation the provider had cached, the real bill is lower.
+ * this request alone, at the usual four characters a token.
+ *
+ * Of what it was sent, the part the provider most likely read from its cache is booked
+ * as a cache read, and priced as one (catalog.js `estimateCost`, at the model's own
+ * cache rate where the catalogue has one) — it was all at the full input price, which
+ * on a cached conversation is up to ten times the bill (owner, 2026-11-08). How much is
+ * judged from this conversation's last real figures for the same model, on the low side:
+ * their share of the prompt, and never more than was read then, since what was added
+ * after is new to the cache. With nothing to go by, all of it is full price.
  *
  * @param {{ text?: string, thinking?: string, drafted?: number }} part @param {number} input
+ * @param {{ input?: number, cacheRead?: number } | null} [last]  the provider's own figures for the request before
  */
-export const stoppedUsage = (part, input) => ({
-  input: Math.max(0, Math.round(input) || 0),
-  output: Math.ceil((String(part.text || '').length + String(part.thinking || '').length + (Number(part.drafted) || 0)) / 4),
-});
+export const stoppedUsage = (part, input, last = null) => {
+  const sent = Math.max(0, Math.round(input) || 0);
+  const usage = { input: sent, output: Math.ceil((String(part.text || '').length + String(part.thinking || '').length + (Number(part.drafted) || 0)) / 4) };
+  const before = Number(last?.input) || 0;
+  const read = Math.min(Number(last?.cacheRead) || 0, before);
+  if (!(sent > 0 && before > 0 && read > 0)) return usage;
+  return { ...usage, cacheRead: Math.min(read, Math.floor((sent * read) / before)) };
+};
+
+/** The newest real figures in a conversation, with the model they were for. @param {any[]} messages */
+const lastCallIn = (messages) => {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i];
+    if (m?.role === 'assistant' && Number(m.usage?.input) > 0) return { model: m.model, usage: m.usage };
+  }
+  return null;
+};
 
 /**
  * How long the provider may say nothing before the interface says so.
@@ -1585,6 +1606,18 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   const quota = await checkQuota(user, { usingSharedKey });
   // Per turn, alongside the monthly quota above. See `turnTokenLimit`.
   let turnLimit = turnTokenLimit({ usingSharedKey });
+  /**
+   * Whether this turn has spent the deployment's key: its own keys refused, the
+   * request went to the deployment's. Its per-turn limit holds from then to the end of
+   * the turn, a later model change included — it had stayed the own-key one (none)
+   * while the deployment paid (owner, 2026-11-08).
+   */
+  let spentSharedKey = false;
+  const onSharedKey = () => {
+    spentSharedKey = true;
+    usingSharedKey = true;
+    turnLimit = turnTokenLimit({ usingSharedKey: true });
+  };
   let turnTokens = 0;
   if (!quota.allowed) {
     emit('error', { message: quota.reason, code: 'quota_exceeded' });
@@ -1825,6 +1858,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   const totals = { input: 0, output: 0, cost: 0, cacheRead: 0, estimated: false };
   /** About what the request being made was sent, for a reply stopped before its figures came. */
   let stepInput = 0;
+  /** The provider's last figures for this conversation, for how much of a stopped request was cached. */
+  let lastCall = lastCallIn(messages);
 
   // ── Resume: the previous run ended with tool calls still outstanding ──
   // Either it stopped for approval, or the connection was cut mid-run.
@@ -2226,6 +2261,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           signal,
           // Own keys all refused, the deployment's next: its monthly ceiling applies from there.
           sharedKeyAllowed: usingSharedKey ? undefined : async () => (await checkQuota(user, { usingSharedKey: true })).allowed,
+          // ...and its per-turn limit from the moment it is used.
+          onSharedKey: usingSharedKey ? undefined : onSharedKey,
           googleData,
           deadline,
           // Kept with the message: which provider, what kind of promise, how many of each
@@ -2311,6 +2348,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         if (turnLimit && turnTokens + tokens >= turnLimit) break;
         if (Number(deadline) - Date.now() < MIN_CONTINUATION_MS) break;
         if (done.usage) {
+          lastCall = { model: entry.id, usage: done.usage };
           totals.input += done.usage.input || 0;
           totals.output += done.usage.output || 0;
           totals.cacheRead += done.usage.cacheRead || 0;
@@ -2386,7 +2424,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
          * likelier truth. A provider that answered took no more than its window.
          */
         if (answered) {
-          const usage = stoppedUsage(unbooked, Math.min(stepInput, entry.context || Infinity));
+          // Another model's cache is not this one's.
+          const usage = stoppedUsage(unbooked, Math.min(stepInput, entry.context || Infinity), lastCall?.model === entry.id ? lastCall.usage : null);
           await recordUsage(userId, { chatId, model: entry.id, usage, costUsd: priceTurn(entry, usage)?.usd || 0, role: 'turn' }).catch((e) =>
             log.error('usage not recorded', e, { role: 'turn', model: entry.id }));
         }
@@ -2424,7 +2463,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           emit('model_switched', { from, to: AUTO_ID });
           // The shared key's limits, if Auto runs on it and the old model did not.
           usingSharedKey = await usesSharedKey(userId, entry.provider);
-          turnLimit = turnTokenLimit({ usingSharedKey });
+          turnLimit = turnTokenLimit({ usingSharedKey: usingSharedKey || spentSharedKey });
           const allowed = await checkQuota(user, { usingSharedKey });
           if (!allowed.allowed) {
             emit('error', { message: allowed.reason, code: 'quota_exceeded' });
@@ -2465,7 +2504,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           entry = auto;
           emit('status', { message: `${from} is not answering right now, so this reply comes from ${auto.label || auto.id}. Your chosen model is unchanged.` });
           usingSharedKey = await usesSharedKey(userId, entry.provider);
-          turnLimit = turnTokenLimit({ usingSharedKey });
+          turnLimit = turnTokenLimit({ usingSharedKey: usingSharedKey || spentSharedKey });
           const allowed = await checkQuota(user, { usingSharedKey });
           if (!allowed.allowed) {
             emit('error', { message: allowed.reason, code: 'quota_exceeded' });
@@ -2551,6 +2590,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     }
     if (done?.usage) {
       assistant.usage = done.usage;
+      lastCall = { model: entry.id, usage: done.usage };
       totals.input += done.usage.input || 0;
       totals.output += done.usage.output || 0;
       totals.cacheRead += done.usage.cacheRead || 0;

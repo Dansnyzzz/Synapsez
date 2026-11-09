@@ -2697,6 +2697,8 @@ export const vi = {
   'settings.cloudBrowserHint': 'Một trình duyệt trên máy tính đám mây của trợ lý — nó mở trang, bấm và điền, bạn xem nó làm. Không bao giờ là trình duyệt của bạn.',
   'settings.computerUse': 'Dùng máy tính',
   'settings.cloudComputer': 'Cho trợ lý dùng máy tính',
+  'settings.diskUsed': 'Ổ đĩa: đã dùng {percent}%',
+  'settings.diskFreed': 'hôm nay đã tự động dọn {size}',
   'settings.cloudComputerHint': 'Máy tính riêng của nó trên đám mây: chạy code, tạo tệp và cài những gì cần. Không bao giờ là máy tính của bạn.',
   'settings.extensionsLede': 'Công cụ từ bên ngoài Synapsez — Figma, Jira, một cơ sở dữ liệu — qua máy chủ MCP. Mọi công cụ từ đó đều hỏi trước khi chạy.',
   'settings.browseExtensions': 'Duyệt tiện ích',

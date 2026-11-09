@@ -19,7 +19,12 @@ import { log } from './util/trace.js';
 
 /** Per-action budgets. Tight enough to matter, loose enough to survive a bad day. */
 export const LIMITS = {
-  login: { limit: 10, windowMs: 15 * 60_000 },
+  /*
+   * Ten wrong passwords for one account from one address, and a hundred for the account
+   * from everywhere. Keyed by the account alone at ten, anyone who knew somebody's email
+   * could lock them out from anywhere (owner, 2026-11-08); a spread-out guess still stops.
+   */
+  login: { limit: 10, windowMs: 15 * 60_000, accountLimit: 100 },
   register: { limit: 5, windowMs: 60 * 60_000 },
   forgot: { limit: 5, windowMs: 60 * 60_000 },
   reset: { limit: 10, windowMs: 60 * 60_000 },
@@ -85,7 +90,7 @@ export async function consume(req, action, extra = '') {
 
   const buckets = bucketsFor(req, action, extra);
 
-  for (const bucket of buckets) {
+  for (const { bucket, limit: ceiling } of buckets) {
     /**
      * A failure to count must never be a failure to serve: an unreachable
      * counter table should slow nobody down. That part is deliberate and stays.
@@ -97,7 +102,7 @@ export async function consume(req, action, extra = '') {
      * afterwards there was no way to tell it had happened at all, which is the
      * difference between a deliberate trade-off and an invisible one.
      */
-    const outcome = await store.hitRateLimit(bucket, rule.limit, rule.windowMs).catch((err) => {
+    const outcome = await store.hitRateLimit(bucket, ceiling, rule.windowMs).catch((err) => {
       log.warn('rate limit not counted — failing open', {
         action,
         err: err?.name,
@@ -120,21 +125,49 @@ export async function consume(req, action, extra = '') {
   return null;
 }
 
-/** Forget the tally for this attempt — called on success. */
+/**
+ * Forget the tally for this attempt — called on success.
+ *
+ * An account-wide ceiling is not cleared: it holds what strangers tried from elsewhere,
+ * and the owner signing in must not hand them a fresh hundred. This attempt alone is
+ * taken back, so it counts wrong passwords only. Every attempt is still counted first,
+ * in one upsert, so guesses sent at once cannot slip past a check made before counting.
+ */
 export async function forgive(req, action, extra = '') {
   const store = getStore();
   if (typeof store.clearRateLimit !== 'function') return;
-  await Promise.all(bucketsFor(req, action, extra).map((b) => store.clearRateLimit(b).catch(() => {})));
+  const rule = LIMITS[action];
+  await Promise.all(
+    bucketsFor(req, action, extra).map(({ bucket, accountWide }) => {
+      if (!accountWide) return store.clearRateLimit(bucket).catch(() => {});
+      if (typeof store.addToCounter !== 'function') return null;
+      return store.addToCounter(bucket, -1, Date.now() + (rule?.windowMs || 0)).catch(() => {});
+    }),
+  );
 }
 
 /**
  * The caller's address, and the second dimension in one spelling (SEC-058):
  * trimmed and lower-cased, so " Dana@x " and "dana@x" are the same ceiling.
+ * With an `accountLimit`, the second dimension is that address's alone, and the
+ * looser ceiling is the account's from everywhere.
+ *
+ * @returns {{ bucket: string, limit: number, accountWide?: boolean }[]}
  */
 function bucketsFor(req, action, extra) {
-  const buckets = [`${action}:ip:${clientKey(req)}`];
+  const rule = LIMITS[action] || { limit: 0 };
+  const address = clientKey(req);
+  const buckets = [{ bucket: `${action}:ip:${address}`, limit: rule.limit }];
   const second = String(extra ?? '').trim().toLowerCase().slice(0, 120);
-  if (second) buckets.push(`${action}:id:${second}`);
+  if (!second) return buckets;
+  if (rule.accountLimit) {
+    buckets.push(
+      { bucket: `${action}:pair:${second}|${address}`, limit: rule.limit },
+      { bucket: `${action}:id:${second}`, limit: rule.accountLimit, accountWide: true },
+    );
+  } else {
+    buckets.push({ bucket: `${action}:id:${second}`, limit: rule.limit });
+  }
   return buckets;
 }
 

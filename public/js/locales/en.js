@@ -2711,6 +2711,8 @@ export const en = {
   'settings.cloudBrowserHint': 'A browser on the assistant\'s cloud computer — it opens pages, clicks and fills them in, and you watch it work. Never your own browser.',
   'settings.computerUse': 'Computer use',
   'settings.cloudComputer': 'Let the assistant use a computer',
+  'settings.diskUsed': 'Disk: {percent}% used',
+  'settings.diskFreed': '{size} freed automatically today',
   'settings.cloudComputerHint': 'Its own computer in the cloud: it runs code there, makes files and installs what it needs. Never your own computer.',
   'settings.extensionsLede': 'Tools from outside Synapsez — Figma, Jira, a database — through MCP servers. Every tool from one asks before it runs.',
   'settings.browseExtensions': 'Browse extensions',
