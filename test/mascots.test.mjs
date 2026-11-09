@@ -130,7 +130,10 @@ section('every title the server can give has a creature, or the whale');
   const drawn = ids.filter((id, i) => loaded[i]);
   check('the drawn ones load, and the rest stand in as the whale', drawn.every((id, i) => registry.isDrawn(registry.creatureFor(id))) && ids.every((id, i) => !!loaded[i] === registry.isDrawn(registry.creatureFor(id))));
   check('newcomer, ten million tokens and a thousand spent are drawn', (await registry.loadCreature('newcomer'))?.id === 'minnow' && (await registry.loadCreature('tokens-10m'))?.id === 'electric-ray' && (await registry.loadCreature('spend-1000'))?.id === 'gold-whale');
-  check('one not drawn yet is the whale', (await registry.loadCreature('tokens-1m')) === null && (await registry.loadCreature(null)) === null);
+  check('a million, a hundred million and a billion tokens, and ten spent, are drawn', (await registry.loadCreature('tokens-1m'))?.id === 'jellyfish' && (await registry.loadCreature('tokens-100m'))?.id === 'sea-dragon' && (await registry.loadCreature('tokens-1b'))?.id === 'cosmic-whale' && (await registry.loadCreature('spend-10'))?.id === 'seahorse');
+  // Whichever title is still waiting for its creature, if any is: the set shrinks as they are drawn.
+  const waiting = ids.find((id) => !registry.isDrawn(registry.creatureFor(id)));
+  check('one not drawn yet is the whale', (waiting === undefined || (await registry.loadCreature(waiting)) === null) && (await registry.loadCreature(null)) === null, waiting || 'every title is drawn');
 }
 
 console.log(failures === 0 ? '\n\x1b[32mThe title creatures hold.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
