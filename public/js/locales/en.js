@@ -2526,7 +2526,7 @@ export const en = {
   'ranking.pet.pet-seadragon.name': 'Leafy sea dragon',
   'ranking.pet.pet-seadragon.desc': 'A long olive-gold body hung with lobed leaves, a thin snout and a curled tail, a light running along its leaves from head to tail.',
   'ranking.pet.pet-cosmic-whale.name': 'Cosmic whale',
-  'ranking.pet.pet-cosmic-whale.desc': 'A galaxy for a body. It comes apart into a constellation and gathers again, with planets circling through the nebula.',
+  'ranking.pet.pet-cosmic-whale.desc': 'A long whale holding a night sky: stars twinkling in it, a small galaxy glowing, a crescent moon for a tail and a ringed planet circling it.',
   'ranking.pet.pet-seahorse.name': 'Bronze seahorse',
   'ranking.pet.pet-seahorse.desc': 'Upright in polished bronze, a ringed belly and a curled tail, with a small coin spinning beside it.',
   'ranking.pet.pet-jade-turtle.name': 'Jade turtle',
