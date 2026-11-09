@@ -2524,7 +2524,7 @@ export const vi = {
   'ranking.pet.pet-silver-marlin.name': 'Cá kiếm bạc',
   'ranking.pet.pet-silver-marlin.desc': 'Lướt nhanh như mũi tên, ánh bạc quét dọc thân và vây buồm dựng cao. Dành cho hạng nhì.',
   'ranking.pet.pet-koi-dragon.name': 'Cá chép hoá rồng',
-  'ranking.pet.pet-koi-dragon.desc': 'Vảy vàng cuộn sóng rồi hoá rồng giữa quầng lửa, rồi lại về làm cá chép. Chỉ dành cho hạng nhất.',
+  'ranking.pet.pet-koi-dragon.desc': 'Chỉ dành cho hạng nhất: cá chép đỏ đang hoá rồng, sừng và râu vàng, sóng vàng lướt dọc vảy, viên ngọc rực lửa lơ lửng bên trên.',
   'theme.lockedName': '{name} (chưa mở khoá)',
   'theme.badge.none': 'Mặc định',
   'theme.badge.event': 'Sự kiện độc quyền',
