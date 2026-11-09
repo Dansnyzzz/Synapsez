@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { LIMITS as FILE_LIMITS, classify, mimeFor, saveChangedFile, saveGenerated, saveMachineFile } from './attachments.js';
+import { LIMITS as FILE_LIMITS, classify, mimeFor, oneLine, saveChangedFile, saveGenerated, saveMachineFile } from './attachments.js';
 import { getStore } from './store/index.js';
 import { exhaust } from './freeTier.js';
 import { e2bConfigured, e2bExistingMachine, e2bForgetAccount, e2bMachineFor, e2bScratch, e2bUnavailable } from './e2b.js';
@@ -713,9 +713,9 @@ export function figuresNote(pictures) {
  */
 export function handedNote(name, id, { removed = false, atPath = '' } = {}) {
   return (
-    `Handed ${name} to the user — it is in the conversation to open and download. Its id is ${id}` +
+    `Handed ${oneLine(name)} to the user — it is in the conversation to open and download. Its id is ${id}` +
     (atPath
-      ? `. It stays on the cloud computer at ${atPath}, being too large to keep in the conversation: its download works as long as it stays there, and it cannot have a public link.`
+      ? `. It stays on the cloud computer at ${oneLine(atPath)}, being too large to keep in the conversation: its download works as long as it stays there, and it cannot have a public link.`
       : '; publish_file with that id makes a link to share.') +
     (removed ? " It has been taken off the cloud computer, being in the conversation now: `bring` puts it back if it is needed." : '')
   );
@@ -751,8 +751,9 @@ async function handOver(machine, { path, keep = false, replaces = null, userId, 
   if (size === null) return { failed: true, note: await missingFileNote(machine, path, signal) };
   if (size !== undefined && size > FILE_LIMITS.maxBytes) {
     if (!machine.downloadUrl) return { failed: true, note: `${path} is ${Math.round(size / 1024 / 1024)} MB, too large to keep in the conversation, and this computer cannot give a link to it. Make it smaller or split it.` };
-    const saved = await saveMachineFile(userId, { name, mime, bytes: size, path, chatId });
-    return { file: { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes }, note: handedNote(name, saved.id, { atPath: path }) };
+    const where = await keptAside(machine, path, signal);
+    const saved = await saveMachineFile(userId, { name, mime, bytes: size, path: where, chatId });
+    return { file: { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes }, note: handedNote(name, saved.id, { atPath: where }) };
   }
   const buffer = await machine.readFileToBuffer({ path, signal });
   if (!buffer) return { failed: true, note: await missingFileNote(machine, path, signal) };
@@ -780,6 +781,32 @@ async function handOver(machine, { path, keep = false, replaces = null, userId, 
     removed = gone?.exitCode === 0;
   }
   return { file: { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes }, note: handedNote(name, saved.id, { removed }) };
+}
+
+/**
+ * Folders the disk tidy clears by itself: `/tmp` after twenty minutes, and the copies
+ * `bring` puts in `incoming/` after a day.
+ */
+const CLEARED = /^(?:\/tmp\/|(?:\.\/|~\/|\/home\/[^/]+\/)?incoming\/)/;
+
+/**
+ * Where a file too large for the conversation is kept. Its card downloads it from the
+ * machine for as long as it is there, so one in a folder the tidy clears is moved first
+ * to `handed/` in the home, under a name of its own if that one is taken; otherwise the
+ * card would point at nothing twenty minutes on (security review, 2026-11-09). The path
+ * goes as a value, never as a command. A move that fails leaves it where it was.
+ *
+ * @param {any} machine @param {string} path @param {AbortSignal} [signal]
+ */
+export async function keptAside(machine, path, signal) {
+  if (!CLEARED.test(path) || !machine.runCommand) return path;
+  const script =
+    'mkdir -p -- "$HOME/handed" && n="$(basename -- "$SYNZ_FILE")" && t="$HOME/handed/$n" && ' +
+    '{ [ ! -e "$t" ] || t="$HOME/handed/$(date +%s)-$n"; } && mv -n -- "$SYNZ_FILE" "$t" && [ -e "$t" ] && printf "%s" "$t"';
+  const moved = await machine.runCommand({ ...shellFor(script, { SYNZ_FILE: path }, { userBin: true }), timeoutMs: 30_000, signal }).catch(() => null);
+  if (moved?.exitCode !== 0) return path;
+  const to = String(await moved.stdout()).trim().split('\n').pop() || '';
+  return to.startsWith('/') && !/[\r\n]/.test(to) ? to : path;
 }
 
 /** The file was not made, and what is in the folder it was expected in, which is usually why. */

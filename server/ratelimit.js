@@ -26,8 +26,15 @@ export const LIMITS = {
    */
   login: { limit: 10, windowMs: 15 * 60_000, accountLimit: 100 },
   register: { limit: 5, windowMs: 60 * 60_000 },
-  forgot: { limit: 5, windowMs: 60 * 60_000 },
-  reset: { limit: 10, windowMs: 60 * 60_000 },
+  /*
+   * Five reset emails an hour for one account from one address, and twenty for the account
+   * from everywhere; keyed by the account alone at five, anybody who knew a person's email
+   * could keep them from resetting their password (security review, 2026-11-09). Twenty
+   * still keeps their mailbox from being flooded. A reset is the same: what is guessed is a
+   * long random token, so the ceiling is for a script, not for the owner's own link.
+   */
+  forgot: { limit: 5, windowMs: 60 * 60_000, accountLimit: 20 },
+  reset: { limit: 10, windowMs: 60 * 60_000, accountLimit: 50 },
   totp: { limit: 10, windowMs: 15 * 60_000 },
   connect: { limit: 20, windowMs: 60 * 60_000 },
   // Pairing is unauthenticated on the worker's side, so it needs a ceiling of
@@ -69,8 +76,31 @@ export const LIMITS = {
  */
 function clientKey(req) {
   const platform = req.headers['x-vercel-forwarded-for'] || req.headers['x-real-ip'];
-  if (typeof platform === 'string' && platform.trim()) return platform.trim().split(',')[0].trim();
-  return req.ip || req.socket?.remoteAddress || 'unknown';
+  if (typeof platform === 'string' && platform.trim()) return addressGroup(platform.trim().split(',')[0].trim());
+  return addressGroup(req.ip || req.socket?.remoteAddress || 'unknown');
+}
+
+/**
+ * An address as one caller. An IPv4 address is itself, and so is one written as IPv6
+ * (`::ffff:1.2.3.4`). An IPv6 address is its /64: a single home or server is given a
+ * whole /64, so counted address by address one machine had more addresses than any
+ * ceiling (security review, 2026-11-09).
+ *
+ * @param {string} raw
+ */
+export function addressGroup(raw) {
+  const ip = String(raw || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  const mapped = /^(?:0*:)*:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(ip) || /^::(\d{1,3}(?:\.\d{1,3}){3})$/.exec(ip);
+  if (mapped) return mapped[1];
+  if (!ip.includes(':') || !/^[0-9a-f:.]+$/.test(ip)) return ip || 'unknown';
+  // An IPv4 tail is the last two groups, which a /64 never reaches.
+  const head = ip.replace(/:\d{1,3}(?:\.\d{1,3}){3}$/, ':0:0');
+  const [left, right = ''] = head.split('::');
+  const a = left ? left.split(':') : [];
+  const b = head.includes('::') && right ? right.split(':') : [];
+  const groups = head.includes('::') ? [...a, ...Array(Math.max(0, 8 - a.length - b.length)).fill('0'), ...b] : a;
+  if (groups.length !== 8) return ip;
+  return `${groups.slice(0, 4).map((g) => (parseInt(g, 16) || 0).toString(16)).join(':')}::/64`;
 }
 
 /**

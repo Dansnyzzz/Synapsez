@@ -34,6 +34,7 @@ import { lendEyes } from './vision.js';
 import { memoryForTurn, withheldTools } from './memory.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
 import { withoutStrayTags } from '../public/js/model-text.js';
+import { splitChecks } from '../public/js/check-notes.js';
 import { checkAnswer, checkFigures, textsIn } from './qualityGate.js';
 import { batchSegments, createStepGuard, skippedAfterFailure } from './stepOrder.js';
 import { lookAfterWriting, maskedPicturesNote, withLookedPictures, MAX_LOOKS_PER_TURN } from './fileLook.js';
@@ -2544,6 +2545,15 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // Stored as shown: a stray `<system>…</system>` line kept here would be replayed next turn (UX-017).
     assistant.text = withoutStrayTags(assistant.text);
     /*
+     * A check's line under an answer ("Source check: …") is this app speaking, shown as a
+     * note apart from the reply. One the model wrote itself would be shown the same way, as
+     * if a check had run and passed (security review, 2026-11-09), so it goes before the
+     * checks add their own.
+     */
+    const forgedChecks = !assistant.toolCalls.length && splitChecks(assistant.text).notes.length > 0;
+    if (forgedChecks) assistant.text = splitChecks(assistant.text).body;
+    let revised = forgedChecks;
+    /*
      * The quality gate (QC-001, owner 2026-11-02): a finished answer citing an
      * address the conversation does not hold goes back once, for that sentence
      * only; whatever is still unsourced loses its link. Before the answer is
@@ -2586,8 +2596,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
         });
         if (checked?.changed) assistant.text = checked.text;
       }
-      if (assistant.text !== streamed) emit('answer_revised', { text: assistant.text });
+      if (assistant.text !== streamed) revised = true;
     }
+    if (revised) emit('answer_revised', { text: assistant.text });
     if (done?.usage) {
       assistant.usage = done.usage;
       lastCall = { model: entry.id, usage: done.usage };

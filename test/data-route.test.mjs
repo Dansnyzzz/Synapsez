@@ -484,6 +484,28 @@ section('the overview has what it says');
   }
   const page = fs.readFileSync(new URL('../public/js/cloak.js', import.meta.url), 'utf8');
   check('nothing on the page is built as markup', !/innerHTML/.test(page));
+
+  // The count reads thirty days of replies: kept a short while per account, asked once (security review, 2026-11-09).
+  const { maskedRecently } = await import('../server/routes/account.js');
+  const real = store.maskedCounts;
+  let asked = 0;
+  store.maskedCounts = async () => ((asked += 1), { EMAIL: 2 });
+  const t = Date.now();
+  const [a, b] = await Promise.all([maskedRecently('u-mask', t), maskedRecently('u-mask', t + 5)]);
+  const again = await maskedRecently('u-mask', t + 10_000);
+  check('the masked count is asked once however often the page opens', asked === 1 && a?.kinds?.EMAIL === 2 && b === a && again === a, `${asked}`);
+  await maskedRecently('u-mask', t + 31_000);
+  check('  and again once it is half a minute old', asked === 2);
+  await maskedRecently('u-other', t);
+  check('  each account its own', asked === 3);
+  store.maskedCounts = async () => {
+    throw new Error('down');
+  };
+  const failed = await maskedRecently('u-down', t);
+  store.maskedCounts = async () => ({ PHONE: 1 });
+  const retried = await maskedRecently('u-down', t + 1);
+  check('  a failed count is null and not kept', failed === null && retried?.kinds?.PHONE === 1);
+  store.maskedCounts = real;
   const claims = `${en}\n${vi}`;
   check('nowhere does it claim to catch everything', !/100%|every personal|tất cả thông tin cá nhân|mọi thông tin cá nhân\b(?! \. )/i.test(claims.split('\n').filter((l) => /'cloak\.m|'cloak\.mask|'memory\.maskPersonal/.test(l)).join('\n')));
 }

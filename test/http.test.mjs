@@ -1251,6 +1251,30 @@ section('a username to sign in with, or the email');
   await alice.call('PATCH', '/api/account', { username: 'alice' });
   const forgot = await jar().call('POST', '/api/password/forgot', { email: 'dana_t' }, at('10.20.0.3'));
   check('a forgotten password can be asked for by username too', forgot.status === 200 && forgot.json?.ok === true, `${forgot.status}`);
+
+  /*
+   * Security review, 2026-11-09: five reset emails an hour per account, from anywhere,
+   * let anybody who knew an email keep its owner from resetting. Five now stop one address
+   * on one account; the account from everywhere stops at twenty.
+   */
+  const asks = [];
+  for (let i = 0; i < 6; i += 1) asks.push((await jar().call('POST', '/api/password/forgot', { email: 'dana@example.com' }, at('10.50.0.1'))).status);
+  check('five reset emails asked from one address stop that address', asks.slice(0, 5).every((s) => s === 200) && asks[5] === 429, asks.join(','));
+  const ownersAsk = await jar().call('POST', '/api/password/forgot', { email: 'dana@example.com' }, at('10.50.0.2'));
+  check('  and do not stop the owner asking from their own', ownersAsk.status === 200, `${ownersAsk.status}`);
+  const danaId = (await store.getUserByEmail('dana@example.com')).id;
+  const everywhere = `forgot:id:user:${danaId}`;
+  await store.addToCounter(everywhere, 20 - (await store.readCounter(everywhere)), Date.now() + 60 * 60_000);
+  const flood = await jar().call('POST', '/api/password/forgot', { email: 'dana@example.com' }, at('10.50.0.3'));
+  check('  twenty from everywhere stop the account, so a mailbox is not flooded', flood.status === 429, `${flood.status}`);
+  await store.clearRateLimit(everywhere);
+
+  // One machine on IPv6 has a whole /64: counted address by address it had more than any ceiling.
+  const v6 = [];
+  for (let i = 0; i < 6; i += 1) v6.push((await jar().call('POST', '/api/password/forgot', { email: 'nobody@example.com' }, at(`2001:db8:5:6::${(i + 1).toString(16)}`))).status);
+  check('addresses in one IPv6 /64 are one caller', v6.slice(0, 5).every((s) => s === 200) && v6[5] === 429, v6.join(','));
+  const next64 = await jar().call('POST', '/api/password/forgot', { email: 'nobody@example.com' }, at('2001:db8:5:7::1'));
+  check('  and the next /64 is another', next64.status === 200, `${next64.status}`);
 }
 
 // ── signing out ─────────────────────────────────────────────────────

@@ -16,6 +16,33 @@ import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.j
 import { clientError } from '../util/clientError.js';
 
 /**
+ * What was hidden in an account's conversations over thirty days, counted. The count reads
+ * every reply of those days, so it is kept a short while per account, and asked once however
+ * many times the page is opened meanwhile: opening it again and again would otherwise read
+ * them all each time (security review, 2026-11-09). Null when it could not be counted.
+ */
+const MASKED_FOR_MS = 30_000;
+/** @type {Map<string, { at: number, value: Promise<{ since: string, kinds: Record<string, number> } | null> }>} */
+const maskedSeen = new Map();
+export function maskedRecently(userId, now = Date.now()) {
+  const kept = maskedSeen.get(userId);
+  if (kept && now - kept.at < MASKED_FOR_MS) return kept.value;
+  if (maskedSeen.size > 500) for (const [id, entry] of maskedSeen) if (now - entry.at >= MASKED_FOR_MS) maskedSeen.delete(id);
+  const since = new Date(now - 30 * 86_400_000);
+  const entry = { at: now, value: /** @type {Promise<any>} */ (Promise.resolve(null)) };
+  entry.value = getStore()
+    .maskedCounts(userId, since)
+    .then((kinds) => ({ since: since.toISOString(), kinds }))
+    .catch(() => {
+      // A failure is not kept: the next opening asks again.
+      if (maskedSeen.get(userId) === entry) maskedSeen.delete(userId);
+      return null;
+    });
+  maskedSeen.set(userId, entry);
+  return entry.value;
+}
+
+/**
  * The account's own data: what is remembered, what happened, and the right to
  * take all of it away — export, import, delete.
  *
@@ -205,9 +232,9 @@ export function mountAccountRoutes(api, admin, { wrap }) {
     '/privacy/overview',
     wrap(async (req, res) => {
       const { problems: _problems, ...masking } = currentMasking();
-      const since = new Date(Date.now() - 30 * 86_400_000);
       res.setHeader('Cache-Control', 'private, no-store');
-      res.json({ ...policyTable(), masking, mine: { since: since.toISOString(), kinds: await getStore().maskedCounts(req.user.id, since) } });
+      const mine = await maskedRecently(req.user.id);
+      res.json({ ...policyTable(), masking, mine });
     }),
   );
 

@@ -75,9 +75,20 @@ function playwrightLine(part) {
   return [launcher, action, ...flags, ...browsers].join(' ');
 }
 
-/** A remembered Playwright line as the command that runs it again. @param {string} line */
-function playwrightCommand(line) {
+/**
+ * A remembered Playwright line as the command that runs it again.
+ *
+ * As root, never npx and never from the home: npx reads the project around the folder it
+ * starts in, and the home is the account's, so a package.json or node_modules there would
+ * decide what root runs (security review, 2026-11-09). Root runs the system's own
+ * Playwright from `/`, Python isolated (`-I`: no user site, no environment, no folder on the
+ * path), whatever launcher the line was first run with.
+ *
+ * @param {string} line @param {{ root?: boolean }} [options]
+ */
+function playwrightCommand(line, { root = false } = {}) {
   const [launcher, ...rest] = line.split(' ');
+  if (root) return `cd / && /usr/bin/python3 -I -m playwright ${rest.join(' ')}`;
   const program = launcher === 'python' ? '/usr/bin/python3 -m playwright' : launcher === 'playwright' ? 'playwright' : `npx --yes playwright${launcher.slice(3)}`;
   return `${program} ${rest.join(' ')}`;
 }
@@ -198,7 +209,7 @@ export async function restorePackages(userId, machine, shellFor) {
   for (const line of playwright) if (!line.startsWith('root ')) steps.push(playwrightCommand(line));
   const rootSteps = [
     ...(apt.length ? ['apt-get update -q', ...apt.map((name) => `apt-get install -y -q --no-install-recommends ${name}`)] : []),
-    ...playwright.filter((line) => line.startsWith('root ')).map((line) => playwrightCommand(line.slice('root '.length))),
+    ...playwright.filter((line) => line.startsWith('root ')).map((line) => playwrightCommand(line.slice('root '.length), { root: true })),
   ];
   try {
     if (steps.length) {
@@ -248,6 +259,14 @@ const DISK_WARN_PERCENT = 80;
 const DAY_OLD = '-mmin +1440 -amin +1440';
 /** Browsers in ~/.cache: kept at every tier. */
 const KEPT_CACHES = '-path ./.cache/ms-playwright -o -path ./.cache/puppeteer';
+/**
+ * Caches that fill themselves again when wanted: whole entries in them go by age at tier 2 and
+ * at any age at tier 3. Named, not everything under ~/.cache: that also holds a Hugging Face
+ * login (huggingface/token), Poetry's virtual environments and pre-commit's hooks.
+ */
+const REGROWING_CACHES = ['.cache/huggingface/hub', '.cache/huggingface/datasets', '.cache/torch/hub', '.cache/matplotlib', '.cache/node-gyp', '.cache/go-build', '.cache/yarn', '.cache/pip', '.cache/uv', '.npm/_npx', '.npm/_cacache']
+  .map((path) => `'${path}'`)
+  .join(' ');
 /** How full the home's disk is, in percent: what every command costs. */
 const DISK_CHECK = `df -Pk "$HOME" 2>/dev/null | awk 'NR==2 { sub(/%/, "", $5); print $5 }'`;
 
@@ -289,6 +308,9 @@ export function tidyScript(tier, { tmp = '/tmp' } = {}) {
   const level = Math.min(3, Math.max(1, Math.round(Number(tier)) || 1));
   // Above 85% the caches go whatever their age.
   const age = level >= 3 ? '' : ` ${DAY_OLD}`;
+  // A whole cache entry by when it last changed: walking a folder, this tidy's own first lines
+  // included, reads it and so moves its access time, which would keep every entry young.
+  const entryAge = level >= 3 ? '' : ' -mmin +1440';
   const scraps = quoted(tmp);
   const lines = [
     // An empty or root HOME would leave this wherever it started.
@@ -300,27 +322,29 @@ export function tidyScript(tier, { tmp = '/tmp' } = {}) {
     '[ -d .npm ] && [ ! -L .npm ] && rm -rf -- .npm/_cacache .npm/_logs 2>/dev/null',
     'rm -rf -- .pytest_cache 2>/dev/null',
     `find . -xdev \\( -path ./.local -o ${KEPT_CACHES} \\) -prune -o -type d \\( -name __pycache__ -o -name .ipynb_checkpoints -o -name .pytest_cache \\) -user "$me" -prune -exec rm -rf -- {} + 2>/dev/null`,
-    `find . -maxdepth 3 -xdev \\( -path ./.local -o ${KEPT_CACHES} \\) -prune -o -type f \\( -name core -o -name 'core.[0-9]*' \\) -user "$me" -exec rm -f -- {} + 2>/dev/null`,
+    // Only real core dumps, which are ELF files, and never among what was sent or brought here (security review, 2026-11-09).
+    `find . -maxdepth 3 -xdev \\( -path ./.local -o -path ./uploads -o -path ./incoming -o -path ./downloads -o ${KEPT_CACHES} \\) -prune -o -type f \\( -name core -o -name 'core.[0-9]*' \\) -user "$me" -exec sh -c 'for f do [ "$(head -c 4 -- "$f" 2>/dev/null)" = "$(printf '"'"'\\177ELF'"'"')" ] && rm -f -- "$f"; done' sh {} + 2>/dev/null`,
     `find ${scraps} -xdev -mindepth 1 -maxdepth 1 -user "$me" -mmin +20 ! -name 'synz*' ! -name '.*' -exec rm -rf -- {} + 2>/dev/null`,
     // What was sent straight here and left a month. Its row says the file is gone, in those words.
     'find uploads -xdev -type f -user "$me" -mtime +30 -delete 2>/dev/null; find uploads -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null',
   ];
   if (level >= 2) {
     lines.push(
-      `[ -d .cache ] && [ ! -L .cache ] && find ./.cache -xdev -mindepth 1 \\( ${KEPT_CACHES} \\) -prune -o -type f -user "$me"${age} -exec rm -f -- {} + 2>/dev/null`,
-      `[ -d .npm ] && [ ! -L .npm ] && find ./.npm -xdev -mindepth 1 -type f -user "$me"${age} -exec rm -f -- {} + 2>/dev/null`,
+      // Caches that fill themselves again, an entry at a time and whole: a file pulled out of one
+      // broke npx and Poetry, and took a Hugging Face login with it (review, 2026-11-09).
+      `for d in ${REGROWING_CACHES}; do [ -d "$d" ] && [ ! -L "$d" ] && [ ! -L "\${d%%/*}" ] && [ ! -L "\${d%/*}" ] && find "$d" -xdev -mindepth 1 -maxdepth 1 -user "$me"${entryAge} -exec rm -rf -- {} + 2>/dev/null; done`,
       `find . -xdev \\( -path ./.local -o -path ./.cache -o -path ./.npm \\) -prune -o -type f \\( -path '*/node_modules/.cache/*' -o -path '*/.next/cache/*' -o -path '*/.parcel-cache/*' \\) -user "$me"${age} -exec rm -f -- {} + 2>/dev/null`,
-      // Its last megabyte kept, in place: a program still writing to it frees the space as well.
-      `find . -maxdepth 4 -xdev \\( -path ./.local -o -path ./.cache -o -path ./.npm -o -name node_modules -o -name .git \\) -prune -o -type f \\( -name '*.log' -o -name '*.log.[0-9]*' -o -name nohup.out \\) -size +10M -user "$me" ` +
-        `-exec sh -c 'for f do t="$(mktemp)" || continue; tail -c 1048576 -- "$f" > "$t" && cat -- "$t" > "$f"; rm -f -- "$t"; done' sh {} + 2>/dev/null`,
+      // Logs this machine's own helpers write, trimmed to their last megabyte in place; a log of the
+      // person's own, anywhere in their folders, is theirs (review, 2026-11-09).
+      `find . -maxdepth 1 -xdev -type f -name nohup.out -size +10M -user "$me" -exec sh -c 'for f do t="$(mktemp)" || continue; tail -c 1048576 -- "$f" > "$t" && cat -- "$t" > "$f"; rm -f -- "$t"; done' sh {} + 2>/dev/null`,
+      `find ${scraps} -maxdepth 1 -xdev -type f -name 'synz-*.log' -size +10M -user "$me" -exec sh -c 'for f do t="$(mktemp)" || continue; tail -c 1048576 -- "$f" > "$t" && cat -- "$t" > "$f"; rm -f -- "$t"; done' sh {} + 2>/dev/null`,
       // Copies of the conversation's files, which `bring` puts back, and what the cloud browser downloaded.
       `find incoming -xdev -type f -user "$me" ${DAY_OLD} -delete 2>/dev/null; find incoming -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null`,
-      'find downloads -xdev -type f -user "$me" -mmin +10080 -amin +10080 -delete 2>/dev/null; find downloads -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null',
     );
   }
   if (level >= 3) {
     // Not one still being written: deleting it would free nothing until it closed, and lose it.
-    lines.push(`find ${scraps} -xdev -mindepth 1 -type f -size +20M -user "$me" -mmin +5 ! -path ${quoted(`${tmp}/synz*`)} ! -path ${quoted(`${tmp}/.*`)} -delete 2>/dev/null`);
+    // Large files in /tmp are listed with the largest things, not deleted: one can be a file a conversation still points at.
   }
   lines.push('echo "synz-disk $before $(disk)"');
   if (level >= 3) {
