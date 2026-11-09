@@ -1196,14 +1196,40 @@ section('a username to sign in with, or the email');
    * and "dana.tran" were each a fresh ten tries at the same account. From
    * addresses that change every time, only the per-account ceiling stands.
    */
+  const account = `login:id:user:${made.json?.user?.id}`;
+  const counted = () => store.readCounter(account);
+  const tries = (email, pw, ip) => jar().call('POST', '/api/login', { email, password: pw }, at(ip));
   const names = ['dana@example.com', ' DANA@example.com ', 'dana.tran', 'Dana.Tran\t', 'dana@example.com  '];
-  let throttledAt = 0;
-  for (let i = 0; i < 16 && !throttledAt; i += 1) {
-    const tried = await jar().call('POST', '/api/login', { email: names[i % names.length], password: `guess-${i}` }, at(`10.30.0.${i + 1}`));
-    if (tried.status === 429) throttledAt = i + 1;
-  }
-  check('one account is one ceiling, however it is named and from wherever (SEC-058)', throttledAt > 0 && throttledAt <= 11, `throttled at attempt ${throttledAt || 'never'}`);
-  await store.clearRateLimit?.(`login:id:user:${made.json?.user?.id}`);
+  const start = await counted();
+  for (const [i, name] of names.entries()) await tries(name, `guess-${i}`, `10.30.0.${i + 1}`);
+  check('one account is one ceiling, however it is named and from wherever (SEC-058)', (await counted()) - start === names.length, `${(await counted()) - start}`);
+
+  /*
+   * Owner, 2026-11-08: that ceiling was ten, so anybody who knew a person's email could
+   * lock them out from anywhere. Ten now stop one address on one account; the account
+   * from everywhere stops at a hundred.
+   */
+  const strangers = [];
+  for (let i = 0; i < 11; i += 1) strangers.push((await tries('dana@example.com', `stranger-${i}`, '10.31.0.1')).status);
+  check('ten wrong passwords from one address stop that address', strangers.slice(0, 10).every((s) => s === 401) && strangers[10] === 429, strangers.join(','));
+  for (let i = 0; i < 10; i += 1) await tries('dana.tran', `elsewhere-${i}`, `10.32.0.${i + 1}`);
+  const before = await counted();
+  const owner = await tries('dana@example.com', password, '10.20.0.9');
+  check('  a stranger\'s twenty, from other addresses, do not stop the owner from their own', owner.status === 200, `${owner.status} ${owner.json?.error || ''}`);
+  check('  and the owner signing in does not wipe what the strangers tried', (await counted()) === before, `${before} → ${await counted()}`);
+  const typo = await tries('dana@example.com', 'a-typo', '10.20.0.9');
+  check('  nor is a wrong password of the owner\'s own a lockout', typo.status === 401, `${typo.status}`);
+
+  const missing = [];
+  for (let i = 0; i < 11; i += 1) missing.push(await tries('nobody.at.all', `guess-${i}`, '10.31.0.2'));
+  check('an account that does not exist is answered the same way', missing.map((r) => r.status).join() === strangers.join() && missing[10].json?.code === 'rate_limited' && missing[0].json?.error === wrong.json?.error);
+
+  // A hundred, from everywhere: brought to the edge rather than walked there, each try being a password check.
+  await store.addToCounter(account, 99 - (await counted()), Date.now() + 15 * 60_000);
+  const last = await tries('dana.tran', 'guess-100', '10.33.0.1');
+  const over = await tries('dana.tran', 'guess-101', '10.33.0.2');
+  check('the account-wide ceiling still holds against a spread-out guess', last.status === 401 && over.status === 429 && over.json?.code === 'rate_limited', `${last.status} ${over.status}`);
+  await store.clearRateLimit?.(account);
 
   const renamed = await dana.call('PATCH', '/api/account', { name: 'Dana', username: 'dana_t' });
   check('a username can be changed in the account settings', renamed.status === 200 && renamed.json?.user?.username === 'dana_t', JSON.stringify(renamed.json));

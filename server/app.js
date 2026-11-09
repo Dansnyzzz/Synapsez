@@ -419,10 +419,10 @@ export function createApp() {
     return account ? `user:${account.id}` : named;
   };
 
-  // Throttled on two axes at once — the caller's address and the email being
-  // tried — so one person grinding one account cannot lock out an office behind
-  // the same address, and a botnet spread across addresses still hits the
-  // per-account ceiling.
+  // Throttled three ways at once (ratelimit.js `LIMITS.login`): the caller's address,
+  // that address on this account, and the account from everywhere at a looser ceiling
+  // — so a stranger's guesses lock out only the stranger's address, and a botnet spread
+  // across addresses still hits the per-account ceiling.
   app.post(
     '/api/login',
     rateLimit('login', (req) => accountKey(req.body?.email)),
