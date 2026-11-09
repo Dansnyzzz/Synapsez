@@ -2528,7 +2528,7 @@ export const en = {
   'ranking.pet.pet-cosmic-whale.name': 'Cosmic whale',
   'ranking.pet.pet-cosmic-whale.desc': 'A galaxy for a body. It comes apart into a constellation and gathers again, with planets circling through the nebula.',
   'ranking.pet.pet-seahorse.name': 'Bronze seahorse',
-  'ranking.pet.pet-seahorse.desc': 'Polished bronze, a curled tail, and a small coin spinning overhead.',
+  'ranking.pet.pet-seahorse.desc': 'Upright in polished bronze, a ringed belly and a curled tail, with a small coin spinning beside it.',
   'ranking.pet.pet-jade-turtle.name': 'Jade turtle',
   'ranking.pet.pet-jade-turtle.desc': 'Each plate of its jade shell lights up in turn, with small crystals circling it.',
   'ranking.pet.pet-gold-whale.name': 'Golden whale',

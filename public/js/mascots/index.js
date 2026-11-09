@@ -30,6 +30,7 @@ const DRAWN = Object.freeze({
   minnow: () => import('./minnow.js'),
   jellyfish: () => import('./jellyfish.js'),
   'electric-ray': () => import('./electric-ray.js'),
+  seahorse: () => import('./seahorse.js'),
   'gold-whale': () => import('./gold-whale.js'),
 });
 

@@ -2514,7 +2514,7 @@ export const vi = {
   'ranking.pet.pet-cosmic-whale.name': 'Cá voi vũ trụ',
   'ranking.pet.pet-cosmic-whale.desc': 'Thân chứa cả một thiên hà. Tan thành chòm sao rồi tụ lại, hành tinh bay quanh giữa tinh vân.',
   'ranking.pet.pet-seahorse.name': 'Cá ngựa đồng',
-  'ranking.pet.pet-seahorse.desc': 'Thân đồng bóng, đuôi cuộn, một đồng xu nhỏ xoay lấp lánh trên đầu.',
+  'ranking.pet.pet-seahorse.desc': 'Thân đồng bóng đứng thẳng, bụng có ngấn, đuôi cuộn tròn, một đồng xu nhỏ xoay bên cạnh.',
   'ranking.pet.pet-jade-turtle.name': 'Rùa ngọc',
   'ranking.pet.pet-jade-turtle.desc': 'Từng ô mai ngọc lần lượt sáng lên, những tinh thể nhỏ bay quanh theo vòng.',
   'ranking.pet.pet-gold-whale.name': 'Cá voi hoàng kim',
