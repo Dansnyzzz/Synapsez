@@ -2522,7 +2522,7 @@ export const vi = {
   'ranking.pet.pet-bronze-dolphin.name': 'Cá heo đồng',
   'ranking.pet.pet-bronze-dolphin.desc': 'Nhảy lên khỏi mặt nước theo vòng cung, bọt nước bắn tung. Dành cho hạng ba.',
   'ranking.pet.pet-silver-marlin.name': 'Cá kiếm bạc',
-  'ranking.pet.pet-silver-marlin.desc': 'Lướt nhanh như mũi tên, ánh bạc quét dọc thân và vây buồm dựng cao. Dành cho hạng nhì.',
+  'ranking.pet.pet-silver-marlin.desc': 'Dành cho hạng nhì: cá kiếm bạc thon gọn, mũi kiếm dài hướng lên, vây buồm cao có gân, đuôi lưỡi liềm và ánh bạc lướt dọc thân.',
   'ranking.pet.pet-koi-dragon.name': 'Cá chép hoá rồng',
   'ranking.pet.pet-koi-dragon.desc': 'Chỉ dành cho hạng nhất: cá chép đỏ đang hoá rồng, sừng và râu vàng, sóng vàng lướt dọc vảy, viên ngọc rực lửa lơ lửng bên trên.',
   'theme.lockedName': '{name} (chưa mở khoá)',

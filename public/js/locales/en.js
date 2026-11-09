@@ -2536,7 +2536,7 @@ export const en = {
   'ranking.pet.pet-bronze-dolphin.name': 'Bronze dolphin',
   'ranking.pet.pet-bronze-dolphin.desc': 'Leaping from the water in an arc, spray flying. For third place.',
   'ranking.pet.pet-silver-marlin.name': 'Silver marlin',
-  'ranking.pet.pet-silver-marlin.desc': 'Fast as an arrow, silver light sweeping along it, its sail raised. For second place.',
+  'ranking.pet.pet-silver-marlin.desc': 'For second place: a sleek silver marlin with a long raised bill, a tall ribbed sail and a crescent tail, a light sweeping along its side.',
   'ranking.pet.pet-koi-dragon.name': 'Koi dragon',
   'ranking.pet.pet-koi-dragon.desc': 'For first place only: a red koi halfway to a dragon, with gold horns and whiskers, a wave of gold rolling over its scales and a pearl in flame above it.',
   'theme.lockedName': '{name} (locked)',
