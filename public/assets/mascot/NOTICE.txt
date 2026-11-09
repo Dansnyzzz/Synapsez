@@ -1,26 +1,31 @@
-The whale GIFs in this folder come from https://github.com/Nwflower/dsh-claude-style
-(docs/gifs), under the MIT licence below.
+The whale pictures in this folder
+=================================
 
-Whale art: Deepy theme pack by calmly-eating-bugs (@wp3171216237), via Nwflower/dsh-claude-style
+idle.gif, thinking.gif, typing.gif, conducting.gif, notification.gif, error.gif,
+happy.gif and sleeping.gif: "Deepy", the pixel whale.
 
-MIT License
+Artist: calmly-eating-bugs (@wp3171216237, https://github.com/wp3171216237), from the
+Deepy whale theme pack they drew.
 
-Copyright (c) 2026 Nwflower
+Taken from: https://github.com/Nwflower/dsh-claude-style (docs/gifs).
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Licence: Synapsez holds none for these pictures. That project's code is under the MIT
+licence, but its README says the whale's frames "ship with the plugin by the author's
+permission": a permission the artist gave to that plugin, not a licence that passes on
+to anyone who copies the files. An earlier version of this notice said the pictures
+came under the MIT licence; that was wrong, and is corrected here (2026-11-08).
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+All rights in the whale art stay with the artist. The owner of Synapsez says the artist
+has allowed Synapsez to use these pictures (2026-11-09), and is asking for that
+permission in writing; until it is in hand, it is recorded here as the owner's word,
+not as a written licence.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+
+The title creatures
+===================
+
+The creatures worn with a title (public/js/mascots/: the minnow, the electric ray, the
+golden whale and those that follow) are original to Synapsez, drawn in code for it in
+November 2026. They share the general style of pixel mascots like the one above (flat
+colours, a one-pixel outline) but no pixel, shape, prop or frame was copied from these
+pictures.

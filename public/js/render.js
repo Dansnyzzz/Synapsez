@@ -9,6 +9,7 @@ import { mediaTools, svgToPng, fileNameFrom, imageUrlToPng } from './media.js';
 import { webRowHtml, titleFromContent } from './webrows.js';
 import { parseResults, searchFailure } from './rail.js';
 import { rememberSearch, rememberPage, auditCitations } from './cite.js';
+import { splitChecks } from './check-notes.js';
 import { normalisePlan, planItemHtml, planChange } from './plan.js';
 import { canonicalInput, TITLED } from './tool-aliases.js';
 import { registerPictures, pictureThumb, pictureUrl, openGallery } from './gallery.js';
@@ -2229,9 +2230,12 @@ export function assistantMessage() {
   /** The reply as drawn and as copied: without a model's stray control tags (UX-017). */
   const paintProse = () => {
     if (!prose) return;
-    const shown = withoutStrayTags(rawText);
+    // The checks' own lines are a note under the reply, and are not what is copied.
+    const { body: shown, notes } = splitChecks(withoutStrayTags(rawText));
     RAW.set(wrap, shown);
-    prose.innerHTML = renderMarkdown(shown);
+    prose.innerHTML =
+      renderMarkdown(shown) +
+      (notes.length ? `<div class="qc-notes" role="note">${notes.map((note) => `<p class="qc-note">${escapeHtml(note)}</p>`).join('')}</div>` : '');
   };
   /**
    * Redrawing a saved turn rather than watching one. A step drawn now did not
@@ -3342,11 +3346,11 @@ export function assistantMessage() {
           body.append(thinkingBlock);
         }
       }
-      // Whose words these are, said where they are read: a provider's summary is not the
-      // model's reasoning, and neither is an explanation to rely on.
-      if (kind && !thinkingBody.querySelector('.think__note')) {
+      // A provider's summary is not the model's reasoning, and says so where it is read.
+      // The model's own text needs no such line (owner, 2026-11-08: it only repeated itself).
+      if (kind === 'summary' && !thinkingBody.querySelector('.think__note')) {
         const note = el('p', 'think__note');
-        note.textContent = t(kind === 'summary' ? 'think.summary' : 'think.modelText');
+        note.textContent = t('think.summary');
         thinkingBody.append(note);
       }
       thinkingDone = false;

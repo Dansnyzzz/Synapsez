@@ -160,7 +160,7 @@ One not held is dimmed, and can be pressed to look.
 
 ## Mascot
 
-`public/assets/mascot/<state>.gif`, MIT from `Nwflower/dsh-claude-style`, art credited to calmly-eating-bugs
+`public/assets/mascot/<state>.gif`, from `Nwflower/dsh-claude-style`, art by calmly-eating-bugs used with the artist's permission (not MIT: see the notice beside them)
 (`public/assets/mascot/NOTICE.txt` carries both). Standing on the composer's top edge at its right, in both composers, never
 catching a press, never covering text. `auto` follows the run: idle, thinking, typing (reply or tool), conducting
 (sub-agents), notification (waiting on the person), error, happy (just finished, a few seconds), sleeping (idle two minutes).

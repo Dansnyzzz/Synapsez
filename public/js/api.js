@@ -118,6 +118,8 @@ export const api = {
   usageReport: () => request('GET', '/api/usage/report'),
   /** The same without the hours: what the warning above the composer needs. */
   usageLimits: () => request('GET', '/api/usage/report?part=limits'),
+  /** Settings → System: how full the cloud computer's disk is, and what tidying freed. */
+  cloudDisk: () => request('GET', '/api/cloud-computer/disk'),
   /** Where the account is signed in, and signing one device out. */
   sessions: () => request('GET', '/api/account/sessions'),
   signOutDevice: (id) => request('DELETE', `/api/account/sessions/${encodeURIComponent(id)}`),
@@ -204,6 +206,11 @@ export const api = {
   // Held open while steps run — the response is what keeps a serverless instance
   // alive long enough to finish one honestly.
   runWorkflow: (id) => request('POST', `/api/workflows/${id}/run`),
+  // The Bot page (server/routes/bot.js): Stop for a run in progress, either kind,
+  // and the counts its tabs and the rail's badge show.
+  stopWorkflow: (id) => request('POST', `/api/workflows/${encodeURIComponent(id)}/stop`),
+  stopTask: (id) => request('POST', `/api/tasks/${encodeURIComponent(id)}/stop`),
+  botSummary: () => request('GET', '/api/bot/summary'),
 
   connectors: () => request('GET', '/api/connectors'),
   // Skills: upload (scan first, keep when asked) and the Create a skill draft (owner, 2026-11-01).

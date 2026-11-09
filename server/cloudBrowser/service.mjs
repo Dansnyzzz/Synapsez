@@ -1100,12 +1100,21 @@ const KERNEL_IDLE_MS = 30 * 60 * 1000;
  * (their library path, the platform flags) is the account's business.
  */
 const KERNEL_ENV = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TERM', 'USER', 'LOGNAME'];
+/**
+ * Where the template keeps Playwright's Chromium (scripts/e2b-template.mjs). A command
+ * learns it from /etc/profile.d; this session, started from no profile, did not, so
+ * Playwright here looked in ~/.cache/ms-playwright, found nothing, and was installed
+ * again on every new machine (owner, 2026-11-08). An account that has fetched browsers
+ * of its own there keeps using them.
+ */
+const TEMPLATE_BROWSERS = '/opt/ms-playwright';
 function kernelEnv() {
   const env = { MPLBACKEND: 'Agg', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' };
   for (const name of KERNEL_ENV) if (process.env[name] !== undefined) env[name] = process.env[name];
   env.PATH ||= '/usr/local/bin:/usr/bin:/bin';
   env.HOME = RUN_HOME || process.env.HOME || WORKDIR;
   if (RUN_HOME) env.PATH = `${env.PATH}:${RUN_HOME}/.local/bin`;
+  if (fs.existsSync(TEMPLATE_BROWSERS) && !fs.existsSync(path.join(env.HOME, '.cache', 'ms-playwright'))) env.PLAYWRIGHT_BROWSERS_PATH = TEMPLATE_BROWSERS;
   // The service's own temporary folder is root's; the account's session uses the ordinary one.
   env.TMPDIR = asRoot() ? '/tmp' : process.env.TMPDIR || '/tmp';
   return env;

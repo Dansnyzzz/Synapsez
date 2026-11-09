@@ -50,6 +50,9 @@ const warned = new Set();
 
 export const currentLanguage = () => current;
 
+/** What a date or a number is written in: the app's language, never the browser's (owner, 2026-11-08: 11/5/2026 on a Vietnamese page). */
+export const localeTag = () => (current === 'vi' ? 'vi-VN' : 'en-US');
+
 /** The dictionary for a language, for callers that want to check a key exists. */
 export const has = (key) => Object.prototype.hasOwnProperty.call(LOCALES[current] || {}, key);
 

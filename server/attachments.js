@@ -905,6 +905,21 @@ export function toParts(message, loaded, { vision = true, documents = true, seen
 }
 
 /**
+ * A name or path as one line of what the model reads. One with a line break in it, which a
+ * file on the machine or in a zip can have, wrote lines of its own into the note, that read
+ * as if this app had said them (security review, 2026-11-09): such a one is quoted, its
+ * breaks escaped, and an ordinary one is left as it is.
+ *
+ * @param {unknown} text
+ */
+export const oneLine = (text) => {
+  const s = String(text ?? '');
+  // JSON escapes the breaks below U+0020 and leaves U+2028 and U+2029 as they are, which read as breaks too.
+  // eslint-disable-next-line no-control-regex -- the control characters are what is looked for
+  return /[\u0000-\u001f\u007f\u2028\u2029]/.test(s) ? JSON.stringify(s).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029') : s;
+};
+
+/**
  * A file sent to a model that cannot take it as it is. Not "I cannot read that":
  * with a cloud computer there is nearly always a way, and the model has to know it
  * can ask for one. A zip gets its list, which costs nothing and answers most questions.
@@ -914,7 +929,7 @@ export function toParts(message, loaded, { vision = true, documents = true, seen
 function unreadFileNote(file) {
   const size = humanSize(Number(file.bytes) || 0);
   if (file.origin === 'machine') {
-    return `[The file "${file.name}" (${size}) is on the cloud computer at ${file.source}. sandbox_run can open it there.]`;
+    return `[The file "${oneLine(file.name)}" (${size}) is on the cloud computer at ${oneLine(file.source)}. sandbox_run can open it there.]`;
   }
   const what = file.kind === 'audio' ? 'a sound file' : file.kind === 'video' ? 'a video' : 'a file';
   const listed = zipListing(file);
@@ -931,7 +946,7 @@ function zipListing(file) {
   if (!/\.zip$/i.test(String(file.name)) || !file.data) return '';
   try {
     const zip = openZip(Buffer.from(file.data, 'base64'));
-    const names = [...zip.names].filter((name) => !name.endsWith('/'));
+    const names = [...zip.names].filter((name) => !name.endsWith('/')).map(oneLine);
     return `${names.slice(0, ZIP_LIST_MAX).join('\n')}${names.length > ZIP_LIST_MAX ? `\n… and ${names.length - ZIP_LIST_MAX} more` : ''}`;
   } catch {
     return '';

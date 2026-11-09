@@ -6,6 +6,7 @@ import { nextRunOf, scheduledRunNote } from './scheduler.js';
 import { redactSecrets } from './redact.js';
 import { clientError } from './util/clientError.js';
 import { TOOLS_BY_NAME } from './tools/definitions.js';
+import { abortHere, holdRun, watchStopped } from './liveRuns.js';
 
 /**
  * Work with several steps that depend on each other, run unattended.
@@ -56,6 +57,36 @@ export const LEASE_MS = 10 * 60_000;
 
 /** How many times a step cut off by the time limit is picked up again before it waits for a person. */
 export const MAX_RESUMES = 3;
+
+/**
+ * What a step picked up again after an interruption is told (owner, 2026-11-08).
+ *
+ * `advanceRun` lets a step carry on only when nothing it was doing can have
+ * changed anything — but the model is not told it is carrying on. It reads its
+ * instruction with half the work already done under it, and the natural reading
+ * of that is to start the step over: search again, write the file again. So it
+ * is told to look first and do only what is left. For this request only, like
+ * the run note it rides with; nothing is stored.
+ *
+ * @param {number} attempt  which pick-up this is, from 1
+ */
+export function resumeNote(attempt = 1) {
+  return (
+    `(This step was interrupted before it finished and is being picked up again — attempt ${attempt} of ${MAX_RESUMES}. ` +
+    'Before doing anything, read what this step already did above: the tool calls that came back and what they returned. ' +
+    'Do not repeat anything that is already done, above all nothing that sends, posts, writes, pays for or deletes something. ' +
+    'Carry on from where it stopped; if you cannot tell whether something already happened, say so instead of doing it again.)'
+  );
+}
+
+/**
+ * The agent loop, replaceable by a test that has to see what a step was given
+ * or hold one open long enough to stop it (test/workflow.test.mjs). Nothing
+ * else sets it.
+ *
+ * @type {(options: Record<string, any>) => Promise<unknown>}
+ */
+let agentLoop = runAgent;
 
 /**
  * The change-making calls of the current step that were cut off before their
@@ -121,7 +152,7 @@ const freshState = (steps) =>
  * nobody is here to approve, so the honest answer is that the run needs a
  * person — not that it failed, and certainly not that it finished.
  */
-async function runStep({ user, chatId, modelId, instruction, resume = false, runNote = null }) {
+async function runStep({ user, chatId, runId = null, modelId, instruction, resume = false, runNote = null, policy = null }) {
   const store = getStore();
 
   if (!resume) {
@@ -146,14 +177,30 @@ async function runStep({ user, chatId, modelId, instruction, resume = false, run
   let stopReason = '';
   let awaitingApproval = false;
 
+  /**
+   * Stop reaches the step where it stands: on this instance through `abortHere`,
+   * keyed by the conversation it writes into (so the conversation's own stop
+   * button ends it too), and from another instance by the run row no longer
+   * saying `running` — the Bot page's Stop, or the workflow being deleted.
+   */
+  const controller = new AbortController();
+  const letGo = holdRun(user.id, chatId, controller);
+  const unwatch = runId
+    ? watchStopped(async () => (await store.getWorkflowRun(user.id, runId))?.status === 'running', controller)
+    : () => {};
+
   try {
-    await runAgent({
+    await agentLoop({
       userId: user.id,
       user,
       chatId,
       modelId,
+      // What the step may do unwatched: the workflow's own choice where it made
+      // one, the account's default otherwise — the same rule as a task's.
+      policy,
       unattended: true,
       runNote,
+      signal: controller.signal,
       emit(event, data) {
         if (event === 'error') error = clean(clientError(data?.message || 'failed'), 400);
         // A question stops a step exactly as an approval does: nobody is there.
@@ -166,8 +213,13 @@ async function runStep({ user, chatId, modelId, instruction, resume = false, run
     });
   } catch (err) {
     error = clean(clientError(err), 400);
+  } finally {
+    unwatch();
+    letGo();
   }
 
+  // Stopped by the person: not a failure, and nothing to explain.
+  if (controller.signal.aborted) return { status: 'stopped', summary, error: '' };
   if (error) return { status: 'failed', summary, error };
   if (awaitingApproval) {
     return {
@@ -186,6 +238,18 @@ async function runStep({ user, chatId, modelId, instruction, resume = false, run
     };
   }
   return { status: 'done', summary, error: '' };
+}
+
+/**
+ * The project a workflow's runs answer from, if it is still there.
+ *
+ * The id is checked when it is set (routes/workflows.js), but a project can be
+ * deleted afterwards and nothing clears the id; a conversation pointed at a
+ * project that is gone would answer from nothing while looking filed.
+ */
+async function projectOf(userId, workflow) {
+  if (!workflow?.project_id) return null;
+  return (await getStore().getProject(userId, workflow.project_id)) ? workflow.project_id : null;
 }
 
 /**
@@ -208,8 +272,16 @@ export async function startRun(userId, workflow, { chatTitle } = {}) {
    * the conversation the last one wrote into, and only a workflow that has
    * never run — or whose conversation was deleted — gets a new one.
    */
+  const projectId = await projectOf(userId, workflow);
   const [previous] = await store.listWorkflowRuns(userId, workflow.id, 1);
-  const reuse = previous?.chat_id && (await store.getChat(userId, previous.chat_id)) ? previous.chat_id : null;
+  const before = previous?.chat_id ? await store.getChat(userId, previous.chat_id) : null;
+  /*
+   * …in the project it is filed under. A conversation belongs to its project for
+   * good (store `createChat`), so a workflow moved to another project — or out
+   * of one — starts a new conversation there rather than answering from the old
+   * project's instructions and sources.
+   */
+  const reuse = before && (before.project_id || null) === projectId ? before.id : null;
 
   /*
    * A new day's run starts from the beginning whatever became of the last one.
@@ -231,6 +303,9 @@ export async function startRun(userId, workflow, { chatTitle } = {}) {
       id: chatId,
       title: chatTitle || workflow.title,
       model: prefs.defaultModel,
+      // A workflow filed under a project runs inside it, as a task does: its
+      // instructions and sources are what the steps answer from.
+      projectId,
     });
   }
 
@@ -257,9 +332,21 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
   const user = await store.getUserById(run.user_id);
   const workflow = user ? await store.getWorkflow(run.user_id, run.workflow_id) : null;
 
+  /**
+   * Every write from here on is made only while the run is still going.
+   *
+   * The person can press Stop at any moment (`stopWorkflow`), and the step
+   * that was stopped then comes back here and would otherwise write its own
+   * ending over theirs — a run they stopped reading as failed, or carried on.
+   * A write that finds the run stopped changes nothing, and the run as it now
+   * stands is what is returned.
+   */
+  const write = async (patch) =>
+    (await store.saveWorkflowRun(run.id, { ...patch, whileRunning: true })) || store.getWorkflowRun(run.user_id, run.id);
+
   if (!user || !workflow) {
     // The account or the definition went away between the claim and now.
-    return store.saveWorkflowRun(run.id, {
+    return write({
       status: 'cancelled',
       leaseUntil: null,
       finished: true,
@@ -310,7 +397,7 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
             : 'This step was interrupted while running. It is not repeated automatically, because ' +
               'there is no way to tell whether what it does had already happened.',
       };
-      return store.saveWorkflowRun(run.id, {
+      return write({
         status: 'needs_attention',
         steps: state,
         leaseUntil: null,
@@ -320,6 +407,9 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
     state[orphan] = { ...state[orphan], status: 'pending', attempts };
     resuming = true;
   }
+  // The project's instructions and sources come with the conversation (see
+  // `startRun`); this is what the step may do with nobody watching.
+  const policy = workflow.policy || null;
 
   let cursor = Number(run.cursor) || 0;
   /**
@@ -348,7 +438,12 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
    */
   if (run.chat_id && !(await store.getChat(user.id, run.chat_id))) {
     const prefs = await getPrefs(user.id);
-    await store.createChat(user.id, { id: run.chat_id, title: workflow.title, model: prefs.defaultModel });
+    await store.createChat(user.id, {
+      id: run.chat_id,
+      title: workflow.title,
+      model: prefs.defaultModel,
+      projectId: await projectOf(user.id, workflow),
+    });
     const earlier = state
       .slice(0, cursor)
       .map((s, i) => (s.summary ? `Step ${i + 1}: ${s.summary}` : ''))
@@ -366,11 +461,13 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
     // Checked before starting, never during: an agent turn cannot be stopped
     // half way, so the honest thing is not to begin one we cannot afford.
     if (Date.now() >= deadline) {
-      return store.saveWorkflowRun(run.id, { steps: state, cursor, leaseUntil: null });
+      return write({ steps: state, cursor, leaseUntil: null });
     }
 
     state[cursor] = { ...state[cursor], status: 'running', started_at: nowIso() };
-    await store.saveWorkflowRun(run.id, { steps: state, cursor, leaseUntil: leaseUntil() });
+    // Stopped between two steps: the next one is not begun.
+    const marked = await write({ steps: state, cursor, leaseUntil: leaseUntil() });
+    if (marked?.status !== 'running') return marked;
 
     /**
      * Hold the lease for as long as the step actually takes.
@@ -390,21 +487,26 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
      * `unref` so a pending tick can never be the thing keeping the process alive.
      */
     const heartbeat = setInterval(() => {
-      store.saveWorkflowRun(run.id, { leaseUntil: leaseUntil() }).catch(() => {});
+      // Not for a run that was stopped: its lease is gone on purpose.
+      store.saveWorkflowRun(run.id, { leaseUntil: leaseUntil(), whileRunning: true }).catch(() => {});
     }, 60_000);
     heartbeat.unref?.();
 
+    const runNote = scheduledRunNote({ title: workflow.title, timeZone: zone, step: cursor + 1, steps: definition.length });
     let outcome;
     try {
       outcome = await runStep({
         user,
         chatId: run.chat_id,
+        runId: run.id,
         modelId,
+        policy,
         instruction: definition[cursor].instruction,
         // A step cut off last time carries on in its own transcript; its
-        // instruction is already there and is not sent a second time.
+        // instruction is already there and is not sent a second time — and
+        // it is told to look at what it already did before doing anything.
         resume: resuming,
-        runNote: scheduledRunNote({ title: workflow.title, timeZone: zone, step: cursor + 1, steps: definition.length }),
+        runNote: resuming ? `${runNote}\n\n${resumeNote(Number(state[cursor].attempts) || 1)}` : runNote,
       });
     } finally {
       clearInterval(heartbeat);
@@ -420,8 +522,10 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
     };
 
     if (outcome.status !== 'done') {
-      return store.saveWorkflowRun(run.id, {
-        status: outcome.status === 'needs_attention' ? 'needs_attention' : 'failed',
+      return write({
+        // Stopped from the conversation's own button rather than the Bot page:
+        // the person ended it all the same.
+        status: outcome.status === 'stopped' ? 'cancelled' : outcome.status === 'needs_attention' ? 'needs_attention' : 'failed',
         steps: state,
         cursor,
         leaseUntil: null,
@@ -430,10 +534,11 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
     }
 
     cursor += 1;
-    await store.saveWorkflowRun(run.id, { steps: state, cursor, leaseUntil: leaseUntil() });
+    const moved = await write({ steps: state, cursor, leaseUntil: leaseUntil() });
+    if (moved?.status !== 'running') return moved;
   }
 
-  return store.saveWorkflowRun(run.id, {
+  return write({
     status: 'done',
     steps: state,
     cursor,
@@ -578,4 +683,69 @@ export async function runWorkflowNow(userId, workflowId, { budgetMs = START_BUDG
   return advanceRun(claimed, { deadline: Date.now() + budgetMs });
 }
 
-export const __testing = { runStep, freshState };
+/**
+ * Stop a workflow's run in progress, for the person whose workflow it is.
+ *
+ * Every open run of it, not only the newest: one held by another invocation
+ * can outlive the start of the next (see `startRun`), and Stop means all of
+ * it. The step that was running is marked stopped, the lease goes, and the
+ * live step ends — here at once through `abortHere`, on another instance when
+ * it next reads the run (`watchStopped`), and whatever holds the
+ * conversation's lease is let go the way `POST /chats/:id/stop` does it.
+ *
+ * @returns null when there is no such workflow for this account
+ */
+export async function stopWorkflow(userId, workflowId) {
+  const store = getStore();
+  const workflow = await store.getWorkflow(userId, workflowId);
+  if (!workflow) return null;
+  const stopped = [];
+  for (const open of await store.listWorkflowRuns(userId, workflowId, 5)) {
+    if (open.status !== 'running') continue;
+    const steps = (Array.isArray(open.steps) ? open.steps : []).map((s) =>
+      s?.status === 'running' ? { ...s, status: 'stopped', finished_at: nowIso(), error: '' } : s,
+    );
+    const run = await store.stopWorkflowRun(userId, open.id, steps);
+    if (!run) continue;
+    stopped.push(run);
+    if (run.chat_id) {
+      await store.stopChatRun(userId, run.chat_id).catch(() => false);
+      abortHere(userId, run.chat_id);
+    }
+  }
+  return { stopped: stopped.length > 0, run: stopped[0] || null };
+}
+
+/**
+ * A row of `listWorkflowsWithLastRun` as the page reads it: the workflow, and
+ * its newest run under `lastRun`. Shared by the list and the Bot summary.
+ *
+ * @param {Record<string, any>} row
+ * @param {(error: string) => string} [say]  a stored step error, in the reader's language
+ */
+export function withLastRun(row, say = (error) => error) {
+  const { run_id: runId, run_status, run_steps, run_chat_id, run_cursor, run_started_at, run_finished_at, ...wf } = row;
+  return {
+    ...wf,
+    lastRun: runId
+      ? {
+          id: runId,
+          status: run_status,
+          steps: Array.isArray(run_steps) ? run_steps.map((step) => (step?.error ? { ...step, error: say(step.error) } : step)) : run_steps,
+          chat_id: run_chat_id,
+          cursor: run_cursor,
+          started_at: run_started_at,
+          finished_at: run_finished_at,
+        }
+      : null,
+  };
+}
+
+export const __testing = {
+  runStep,
+  freshState,
+  /** @param {((options: Record<string, any>) => Promise<unknown>) | null} fn  stand in for the agent loop; null puts the real one back */
+  useAgent(fn) {
+    agentLoop = fn || runAgent;
+  },
+};

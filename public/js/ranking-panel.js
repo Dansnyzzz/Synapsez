@@ -1,7 +1,9 @@
 import { api } from './api.js';
-import { t } from './i18n.js';
+import { t, localeTag } from './i18n.js';
+import { titleFacts, factsHtml, gotLine } from './reward-facts.js';
 import { latestOnly } from './latest.js';
 import { escapeHtml } from './markdown.js';
+import { showCreature } from './mascots/index.js';
 import { playInFrame } from './scenes.js';
 import { LOCK } from './themes-panel.js';
 
@@ -54,8 +56,8 @@ function periodText(scope, key) {
   return `${quarter}/${year}`;
 }
 
-const tokens = (n) => Number(n || 0).toLocaleString();
-const dollars = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const tokens = (n) => Number(n || 0).toLocaleString(localeTag());
+const dollars = (n) => `$${Number(n || 0).toLocaleString(localeTag(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /**
  * @param {{ host: HTMLElement, toast: (text: string, kind?: string) => void, savePrefs: (patch: any) => Promise<any> }} deps
@@ -98,7 +100,7 @@ export function createRanking({ host, toast, savePrefs }) {
         <label class="ranking__pick"><span class="sr-only">${escapeHtml(t('ranking.period'))}</span>
           <select class="sselect" data-period>${board.keys.map((k) => `<option value="${escapeHtml(k)}"${k === board.key ? ' selected' : ''}>${escapeHtml(periodText(board.scope, k))}</option>`).join('')}</select>
         </label>
-        <p class="ranking__closes">${escapeHtml(board.settled ? t('ranking.settled') : t('ranking.closes', { when: new Date(board.closes).toLocaleString() }))}</p>
+        <p class="ranking__closes">${escapeHtml(board.settled ? t('ranking.settled') : t('ranking.closes', { when: new Date(board.closes).toLocaleString(localeTag()) }))}</p>
       </div>
       <div class="ranking__boards">
         ${boardHtml('tokens', board.tokens, tokens)}
@@ -106,16 +108,6 @@ export function createRanking({ host, toast, savePrefs }) {
       </div>
       ${board.me.excluded ? '' : `<p class="ranking__me">${escapeHtml(placeLine(board.me))}</p>
       <label class="ranking__anon"><input type="checkbox" data-anon${board.me.anonymous ? ' checked' : ''} /> <span>${escapeHtml(t('ranking.anonymous'))}</span></label>`}`;
-  }
-
-  /** What earns a title, and how far along this account is. */
-  function conditionOf(title) {
-    if (title.owned) return title.earnedAt ? t('ranking.pet.earned', { when: new Date(title.earnedAt).toLocaleDateString() }) : '';
-    const ask = title.needs;
-    if (ask?.tokens) return `${t('ranking.pet.needsTokens', { n: tokens(ask.tokens) })} ${t('ranking.pet.soFarTokens', { n: tokens(titles?.progress?.tokens) })}`;
-    if (ask?.spend) return `${t('ranking.pet.needsSpend', { n: dollars(ask.spend) })} ${t('ranking.pet.soFarSpend', { n: dollars(titles?.progress?.spend) })}`;
-    if (ask?.rank) return t('ranking.pet.needsRank', { rank: ask.rank });
-    return '';
   }
 
   function paintDetail(title) {
@@ -130,13 +122,24 @@ export function createRanking({ host, toast, savePrefs }) {
         <p class="themes__desc">${escapeHtml(t('ranking.noTitleDesc'))}</p>`;
       return;
     }
-    const said = conditionOf(title);
+    // The owner's shape: the creature, what earns it and how many have it, then the day it was got.
+    const said = title.owned ? gotLine(title.earnedAt, 'title') : '';
     box.innerHTML = `<div class="ranking__stage${title.owned ? '' : ' is-locked'}">${title.owned ? '' : `<span class="themes__lock">${LOCK}</span>`}</div>
       <h4 class="themes__title">${escapeHtml(titleText(title))}</h4>
       <p class="ranking__petname">${escapeHtml(t(`ranking.pet.${creature}.name`))}</p>
       <p class="themes__desc">${escapeHtml(t(`ranking.pet.${creature}.desc`))}</p>
+      ${factsHtml(titleFacts(title, titles?.progress))}
       ${said ? `<p class="themes__standing">${escapeHtml(said)}</p>` : ''}`;
-    stopCreature = playInFrame(/** @type {HTMLElement} */ (box.querySelector('.ranking__stage')), creature);
+    const stage = /** @type {HTMLElement} */ (box.querySelector('.ranking__stage'));
+    // The one that stands on the writing box, in pixels, where it is drawn (owner, 2026-11-08).
+    const still = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    stopCreature = showCreature(stage, title.id, { still }) || playInFrame(stage, creature);
+  }
+
+  /** The server agrees what is worn: the creature on the writing box follows (app.js). */
+  function wearing(id) {
+    worn = id ?? null;
+    window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: worn }));
   }
 
   function chipHtml(title) {
@@ -163,9 +166,7 @@ export function createRanking({ host, toast, savePrefs }) {
   }
 
   const saver = latestOnly((id) => api.equipTitle(id || null), {
-    landed: (answer) => {
-      worn = answer.equipped ?? null;
-    },
+    landed: (answer) => wearing(answer.equipped),
     failed: (err) => {
       titles.equipped = worn;
       markTitles();
@@ -226,7 +227,7 @@ export function createRanking({ host, toast, savePrefs }) {
       const answer = await api.titles();
       // A save since this was asked knows better than an answer that may have been read before it landed.
       if (titles && !saver.sure(asked)) answer.equipped = titles.equipped;
-      else worn = answer.equipped ?? null;
+      else wearing(answer.equipped);
       titles = answer;
       if (looking === null) looking = titles.equipped || '';
       // Left while it was on its way: drawing now would start a creature nothing would stop.

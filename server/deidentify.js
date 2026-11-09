@@ -26,7 +26,7 @@
  * and a person's name after a label or a title, or a Vietnamese full name of three
  * words or more starting with a common family name. How often each is really
  * caught is measured, not claimed: test/deidentify-corpus.test.mjs, whose figures
- * the Settings page shows (`MEASURED`). A PDF goes as its text while this is on,
+ * the Settings page measures (`currentMasking`). A PDF goes as its text while this is on,
  * and sound and video do not go at all. A foreign name in the middle of a sentence
  * with no title, a Vietnamese name of two words, a picture, or anything identifying
  * by context is not caught — that needs a local language model this deployment does

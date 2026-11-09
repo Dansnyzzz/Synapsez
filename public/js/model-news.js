@@ -9,7 +9,7 @@
 import { api } from './api.js';
 import { escapeHtml } from './markdown.js';
 import { toast } from './render.js';
-import { t } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -49,7 +49,7 @@ export function createModelNews({ state, renderTopbar, refreshModelFacts }) {
       [
         t('news.released'),
         model.releasedAt
-          ? new Date(model.releasedAt).toLocaleDateString(undefined, {
+          ? new Date(model.releasedAt).toLocaleDateString(localeTag(), {
               year: 'numeric',
               month: 'long',
               day: 'numeric',

@@ -143,6 +143,7 @@ section('routes that need a session');
     ['GET', '/api/tasks'],
     ['GET', '/api/connectors'],
     ['GET', '/api/devices/status'],
+    ['GET', '/api/cloud-computer/disk'],
     ['GET', '/api/admin/users'],
   ]) {
     const res = await anon.call(method, url);
@@ -902,6 +903,16 @@ section('login throttling');
 }
 
 // ── chats stay with their owner over HTTP too ───────────────────────
+section('the cloud computer\'s disk is the account\'s own to read');
+{
+  const me = (await alice.call('GET', '/api/session')).json?.user;
+  await store.setUserSetting(me.id, 'machineDisk', { percent: 34, checkedAt: Date.now(), tier: 1, tidiedAt: Date.now(), freed: [[Date.now(), 1024]] });
+  const hers = await alice.call('GET', '/api/cloud-computer/disk');
+  check('its owner reads how full it is', hers.status === 200 && hers.json?.disk?.percent === 34 && hers.json.disk.freed?.[0]?.bytes === 1024, JSON.stringify(hers.json));
+  const his = await bob.call('GET', '/api/cloud-computer/disk');
+  check('  another account reads nothing of it', his.status === 200 && his.json?.disk === null, JSON.stringify(his.json));
+}
+
 section('cross-account access through the API');
 {
   const mine = await alice.call('GET', '/api/chats');
@@ -1185,14 +1196,40 @@ section('a username to sign in with, or the email');
    * and "dana.tran" were each a fresh ten tries at the same account. From
    * addresses that change every time, only the per-account ceiling stands.
    */
+  const account = `login:id:user:${made.json?.user?.id}`;
+  const counted = () => store.readCounter(account);
+  const tries = (email, pw, ip) => jar().call('POST', '/api/login', { email, password: pw }, at(ip));
   const names = ['dana@example.com', ' DANA@example.com ', 'dana.tran', 'Dana.Tran\t', 'dana@example.com  '];
-  let throttledAt = 0;
-  for (let i = 0; i < 16 && !throttledAt; i += 1) {
-    const tried = await jar().call('POST', '/api/login', { email: names[i % names.length], password: `guess-${i}` }, at(`10.30.0.${i + 1}`));
-    if (tried.status === 429) throttledAt = i + 1;
-  }
-  check('one account is one ceiling, however it is named and from wherever (SEC-058)', throttledAt > 0 && throttledAt <= 11, `throttled at attempt ${throttledAt || 'never'}`);
-  await store.clearRateLimit?.(`login:id:user:${made.json?.user?.id}`);
+  const start = await counted();
+  for (const [i, name] of names.entries()) await tries(name, `guess-${i}`, `10.30.0.${i + 1}`);
+  check('one account is one ceiling, however it is named and from wherever (SEC-058)', (await counted()) - start === names.length, `${(await counted()) - start}`);
+
+  /*
+   * Owner, 2026-11-08: that ceiling was ten, so anybody who knew a person's email could
+   * lock them out from anywhere. Ten now stop one address on one account; the account
+   * from everywhere stops at a hundred.
+   */
+  const strangers = [];
+  for (let i = 0; i < 11; i += 1) strangers.push((await tries('dana@example.com', `stranger-${i}`, '10.31.0.1')).status);
+  check('ten wrong passwords from one address stop that address', strangers.slice(0, 10).every((s) => s === 401) && strangers[10] === 429, strangers.join(','));
+  for (let i = 0; i < 10; i += 1) await tries('dana.tran', `elsewhere-${i}`, `10.32.0.${i + 1}`);
+  const before = await counted();
+  const owner = await tries('dana@example.com', password, '10.20.0.9');
+  check('  a stranger\'s twenty, from other addresses, do not stop the owner from their own', owner.status === 200, `${owner.status} ${owner.json?.error || ''}`);
+  check('  and the owner signing in does not wipe what the strangers tried', (await counted()) === before, `${before} → ${await counted()}`);
+  const typo = await tries('dana@example.com', 'a-typo', '10.20.0.9');
+  check('  nor is a wrong password of the owner\'s own a lockout', typo.status === 401, `${typo.status}`);
+
+  const missing = [];
+  for (let i = 0; i < 11; i += 1) missing.push(await tries('nobody.at.all', `guess-${i}`, '10.31.0.2'));
+  check('an account that does not exist is answered the same way', missing.map((r) => r.status).join() === strangers.join() && missing[10].json?.code === 'rate_limited' && missing[0].json?.error === wrong.json?.error);
+
+  // A hundred, from everywhere: brought to the edge rather than walked there, each try being a password check.
+  await store.addToCounter(account, 99 - (await counted()), Date.now() + 15 * 60_000);
+  const last = await tries('dana.tran', 'guess-100', '10.33.0.1');
+  const over = await tries('dana.tran', 'guess-101', '10.33.0.2');
+  check('the account-wide ceiling still holds against a spread-out guess', last.status === 401 && over.status === 429 && over.json?.code === 'rate_limited', `${last.status} ${over.status}`);
+  await store.clearRateLimit?.(account);
 
   const renamed = await dana.call('PATCH', '/api/account', { name: 'Dana', username: 'dana_t' });
   check('a username can be changed in the account settings', renamed.status === 200 && renamed.json?.user?.username === 'dana_t', JSON.stringify(renamed.json));
@@ -1214,6 +1251,30 @@ section('a username to sign in with, or the email');
   await alice.call('PATCH', '/api/account', { username: 'alice' });
   const forgot = await jar().call('POST', '/api/password/forgot', { email: 'dana_t' }, at('10.20.0.3'));
   check('a forgotten password can be asked for by username too', forgot.status === 200 && forgot.json?.ok === true, `${forgot.status}`);
+
+  /*
+   * Security review, 2026-11-09: five reset emails an hour per account, from anywhere,
+   * let anybody who knew an email keep its owner from resetting. Five now stop one address
+   * on one account; the account from everywhere stops at twenty.
+   */
+  const asks = [];
+  for (let i = 0; i < 6; i += 1) asks.push((await jar().call('POST', '/api/password/forgot', { email: 'dana@example.com' }, at('10.50.0.1'))).status);
+  check('five reset emails asked from one address stop that address', asks.slice(0, 5).every((s) => s === 200) && asks[5] === 429, asks.join(','));
+  const ownersAsk = await jar().call('POST', '/api/password/forgot', { email: 'dana@example.com' }, at('10.50.0.2'));
+  check('  and do not stop the owner asking from their own', ownersAsk.status === 200, `${ownersAsk.status}`);
+  const danaId = (await store.getUserByEmail('dana@example.com')).id;
+  const everywhere = `forgot:id:user:${danaId}`;
+  await store.addToCounter(everywhere, 20 - (await store.readCounter(everywhere)), Date.now() + 60 * 60_000);
+  const flood = await jar().call('POST', '/api/password/forgot', { email: 'dana@example.com' }, at('10.50.0.3'));
+  check('  twenty from everywhere stop the account, so a mailbox is not flooded', flood.status === 429, `${flood.status}`);
+  await store.clearRateLimit(everywhere);
+
+  // One machine on IPv6 has a whole /64: counted address by address it had more than any ceiling.
+  const v6 = [];
+  for (let i = 0; i < 6; i += 1) v6.push((await jar().call('POST', '/api/password/forgot', { email: 'nobody@example.com' }, at(`2001:db8:5:6::${(i + 1).toString(16)}`))).status);
+  check('addresses in one IPv6 /64 are one caller', v6.slice(0, 5).every((s) => s === 200) && v6[5] === 429, v6.join(','));
+  const next64 = await jar().call('POST', '/api/password/forgot', { email: 'nobody@example.com' }, at('2001:db8:5:7::1'));
+  check('  and the next /64 is another', next64.status === 200, `${next64.status}`);
 }
 
 // ── signing out ─────────────────────────────────────────────────────

@@ -37,10 +37,13 @@ const { ranking, listThemes, selectTheme, listTitles, equipTitle, settleClosed, 
 
 section('periods');
 {
-  check('a quarter runs from its first month to the next quarter', periodRange('quarter', '2027-Q1')?.from.toISOString() === '2027-01-01T00:00:00.000Z' && periodRange('quarter', '2027-Q1')?.to.toISOString() === '2027-04-01T00:00:00.000Z');
-  check('the last quarter crosses into the next year', periodRange('quarter', '2027-Q4')?.to.toISOString() === '2028-01-01T00:00:00.000Z');
-  check('a year crosses into the next', periodRange('year', '2026')?.to.toISOString() === '2027-01-01T00:00:00.000Z');
-  check('nothing before ranking began counts, in the quarter or the year it began in', periodRange('quarter', '2026-Q4')?.from.toISOString() === '2026-11-01T00:00:00.000Z' && periodRange('year', '2026')?.from.toISOString() === '2026-11-01T00:00:00.000Z');
+  // Midnight in Vietnam, seven hours ahead of UTC (owner, 2026-11-08: "00h00, 1/1/2027").
+  check('a quarter runs from its first midnight in Vietnam to the next quarter\'s', periodRange('quarter', '2027-Q1')?.from.toISOString() === '2026-12-31T17:00:00.000Z' && periodRange('quarter', '2027-Q1')?.to.toISOString() === '2027-03-31T17:00:00.000Z');
+  check('the last quarter crosses into the next year', periodRange('quarter', '2027-Q4')?.to.toISOString() === '2027-12-31T17:00:00.000Z');
+  check('a year crosses into the next', periodRange('year', '2026')?.to.toISOString() === '2026-12-31T17:00:00.000Z');
+  check('nothing before ranking began counts, in the quarter or the year it began in', periodRange('quarter', '2026-Q4')?.from.toISOString() === '2026-10-31T17:00:00.000Z' && periodRange('year', '2026')?.from.toISOString() === '2026-10-31T17:00:00.000Z');
+  check('at half past midnight on the first of January in Vietnam, the old year has closed', closedPeriods(new Date('2026-12-31T17:30:00Z')).map((p) => `${p.scope}:${p.key}`).join() === 'quarter:2026-Q4,year:2026');
+  check('  and half an hour before, it had not', closedPeriods(new Date('2026-12-31T16:30:00Z')).length === 0);
   check('nonsense is no period', periodRange('quarter', '2026-Q5') === null && periodRange('quarter', "x' OR 1=1") === null && periodRange('month', '2026-11') === null);
   check('nothing has closed while ranking is in its first quarter', closedPeriods(new Date('2026-12-20T00:00:00Z')).length === 0);
   const later = closedPeriods(new Date('2027-01-02T00:00:00Z')).map((p) => `${p.scope}:${p.key}`).join();
@@ -198,9 +201,15 @@ section('holding themes');
   const held = page.themes.filter((t) => t.owned).map((t) => t.id);
   check('everyone holds the default', held.join() === 'default', held.join());
   check('it is the one in use', page.selected === 'default');
-  check('locked themes follow', page.themes[0].id === 'default' && page.themes.length === themes.THEMES.length);
+  const out = themes.THEMES.filter((theme) => {
+    const when = themes.appearsAt(theme, theme.badge);
+    return !when || when <= new Date();
+  });
+  check('locked themes follow, only those already out', page.themes[0].id === 'default' && page.themes.length === out.length, `${page.themes.length} of ${out.length}`);
+  check('  a later quarter\'s theme is not shown before its first day (owner, 2026-11-08)', !page.themes.some((t) => t.id === 'phoenix-summer' || t.id === 'goat-terrace'));
   check('a locked achievement says what earns it', page.themes.find((t) => t.id === 'cloud-drift')?.needs?.tokens === 100_000);
-  check('one earned by spending says that', page.themes.find((t) => t.id === 'rainy-cafe')?.needs?.spend === 10);
+  check('one earned by putting money in says that', page.themes.find((t) => t.id === 'rainy-cafe')?.needs?.deposit === 10);
+  check('every theme says what it asks and how many hold it', page.themes.find((t) => t.id === 'cloud-drift')?.asks?.tokens === 100_000 && typeof page.themes.find((t) => t.id === 'cloud-drift')?.holders === 'number');
   check('a prize has no such number', page.themes.find((t) => t.id === 'sakura-crossing')?.needs === null);
   check('the catalogue’s badges show', page.themes.find((t) => t.id === 'rose-street')?.badge.kind === 'top_year');
   check('a theme one does not hold cannot be put on', await refused(selectTheme(alice, 'lagoon'), 403));
@@ -219,6 +228,7 @@ section('holding themes');
   check('a theme taken back falls to the default', fell.selected === 'default');
   const admin = await listThemes(owner);
   check('an administrator holds them all', admin.isAdmin && admin.themes.every((t) => t.owned));
+  check('  and sees every one, whatever its date', admin.themes.length === themes.THEMES.length);
   check('and may wear any', (await selectTheme(owner, 'aurora-peak')).selected === 'aurora-peak');
   check('the default cannot be given or taken', await refused(giveTheme('default', alice.id), 400));
   check('nor can a theme go to nobody', await refused(giveTheme('lagoon', 'no-such-account'), 404));
@@ -319,6 +329,73 @@ section('one period that cannot be settled does not take the pages with it');
   await settleClosed({ store: broken, now: nextQuarter });
   check('and the next read does not pay for it again', tries === 1, String(tries));
   __testing.reset();
+}
+
+section('when a theme comes out');
+{
+  const { appearsAt, AURORA_EVENT, EVENT_LEAD_MS, THEMES } = themes;
+  const of = (id) => THEMES.find((t) => t.id === id);
+  check('an event\'s theme is out three days before the event', appearsAt(of('new-year-fireworks'), of('new-year-fireworks').badge).toISOString() === '2026-12-28T17:00:00.000Z');
+  check('  the aurora is the event from 24 to 31 December (owner, 2026-11-08)', of('aurora-peak').event === AURORA_EVENT && AURORA_EVENT.from === '2026-12-24T00:00:00+07:00' && AURORA_EVENT.to === '2027-01-01T00:00:00+07:00' && EVENT_LEAD_MS === 3 * 86_400_000);
+  check('a quarter\'s theme on its first midnight in Vietnam', appearsAt(of('tet-spring'), of('tet-spring').badge).toISOString() === '2026-12-31T17:00:00.000Z');
+  check('a year\'s too', appearsAt(of('goat-terrace'), of('goat-terrace').badge).toISOString() === '2026-12-31T17:00:00.000Z');
+  check('the standing prizes have their drawing day', !!appearsAt(of('sakura-crossing'), of('sakura-crossing').badge));
+}
+
+section('the sponsor titles count money put in, not spent at a provider (owner, 2026-11-08)');
+{
+  const payer = await make('payer');
+  await spend(payer, 1000, 50);
+  let page = await listTitles(payer);
+  check('fifty dollars spent at a provider earns no sponsor title', !page.titles.find((t) => t.id === 'spend-10')?.owned);
+  check('  nor its theme', !(await listThemes(payer)).themes.find((t) => t.id === 'rainy-cafe')?.owned);
+  await store.grantTitle(payer.id, 'spend-10');
+  page = await listTitles(payer);
+  check('one given before the rule waits for a top-up', !page.titles.find((t) => t.id === 'spend-10')?.owned);
+  check('  and cannot be worn', await refused(equipTitle(payer, 'spend-10'), 403));
+  await store.recordTopUp(payer.id, { id: 'tu-1', amountUsd: 12, source: 'test' });
+  await store.recordTopUp(payer.id, { id: 'tu-1', amountUsd: 12, source: 'test' });
+  check('a payment counted once, however often it is told', (await store.topUpTotal(payer.id)) === 12);
+  page = await listTitles(payer);
+  check('twelve dollars put in earns it', page.titles.find((t) => t.id === 'spend-10')?.owned === true);
+  check('  it says how many hold it', page.titles.find((t) => t.id === 'spend-10')?.holders === 1 && page.titles.find((t) => t.id === 'spend-10')?.asks?.deposit === 10);
+  const worn = await listThemes(payer);
+  check('  and its theme comes with it, and is put on', worn.themes.find((t) => t.id === 'rainy-cafe')?.owned === true && worn.selected === 'rainy-cafe');
+}
+
+section('found by the review, 2026-11-09');
+{
+  const plain = await make('plain');
+  await setThemeBadge('snow-village', { kind: 'achievement' }, owner.id);
+  const page = await listThemes(plain);
+  check('an administrator making a prize an achievement does not hand it to everyone', !page.themes.find((t) => t.id === 'snow-village')?.owned && (await getPrefs(plain.id)).sceneTheme !== 'snow-village');
+  await setThemeBadge('snow-village', { kind: 'top_quarter', quarter: 4, year: 2026 }, owner.id);
+  await giveTheme('rainy-cafe', plain.id);
+  check('a sponsor theme given by hand is held', (await listThemes(plain)).themes.find((t) => t.id === 'rainy-cafe')?.owned === true);
+  const sponsor = await make('sponsor');
+  await store.grantTitle(sponsor.id, 'spend-10');
+  await setPrefs(sponsor.id, { equippedTitle: 'spend-10' });
+  await spend(sponsor, 50_000_000, 0);
+  const board = await ranking(alice);
+  check('the boards do not show a sponsor title without the money behind it', board.tokens.find((r) => r.name === 'sponsor')?.title === null, JSON.stringify(board.tokens.find((r) => r.name === 'sponsor')));
+  await listTitles(sponsor);
+  check('  and it is taken off the person, so the box agrees', (await getPrefs(sponsor.id)).equippedTitle !== 'spend-10');
+  await store.grantTitle(plain.id, 'top:tokens:quarter:2026-Q4:1');
+  check('a board prize is counted under its place', (await store.titleHolderCounts()).some((r) => r.title_id === 'rank-1' && r.holders >= 1));
+}
+
+section('earned at the end of a turn, and put on');
+{
+  const quick = await make('quick');
+  await listTitles(quick);
+  check('a newcomer\'s first title is not put on for them', (await getPrefs(quick.id)).equippedTitle == null);
+  check('nothing new at the end of a quiet turn', (await themes.afterTurn(quick)) === null);
+  await spend(quick, 1_200_000, 0);
+  const newly = await themes.afterTurn(quick);
+  check('crossing a mark in a turn gives what it earns, there and then', newly?.titles.includes('tokens-1m') && newly.themes.includes('moon-night'), JSON.stringify(newly));
+  const prefs = await getPrefs(quick.id);
+  check('  and puts the newest on', prefs.equippedTitle === 'tokens-1m' && prefs.sceneTheme === 'moon-night', JSON.stringify([prefs.equippedTitle, prefs.sceneTheme]));
+  check('  once', (await themes.afterTurn(quick)) === null);
 }
 
 section('a lifetime outlasts the rows it was added from');

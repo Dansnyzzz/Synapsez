@@ -12,7 +12,8 @@
  *
  *   node test/clipboard.test.mjs
  */
-import { forWord, isChromeAttribute, CHROME_SELECTOR } from '../public/js/clipboard.js';
+import { forWord, isChromeAttribute, CHROME_SELECTOR, citePieces } from '../public/js/clipboard.js';
+import { splitChecks } from '../public/js/check-notes.js';
 
 let failures = 0;
 const section = (name) => console.log(`\n\x1b[1m${name}\x1b[0m`);
@@ -36,6 +37,19 @@ section('the wrapper document is what Word and Google Docs need');
   check('no dark background travels with it', !/background:\s*#(0|1|2)/i.test(html));
   check('tables get visible borders', html.includes('border:1px solid #999'));
   check('it is a whole document, not a fragment', html.startsWith('<html>') && html.endsWith('</html>'));
+}
+
+section('a citation pastes as its name and address, the checks\' notes not at all (owner, 2026-11-08)');
+{
+  const pieces = citePieces([{ title: 'Cục Xây dựng chính sách', url: 'https://xaydungchinhsach.chinhphu.vn/huong-dan.htm' }]);
+  check('name, then the address as the link', pieces.map((p) => p.text).join('') === 'Cục Xây dựng chính sách: https://xaydungchinhsach.chinhphu.vn/huong-dan.htm' && pieces[1].url === 'https://xaydungchinhsach.chinhphu.vn/huong-dan.htm');
+  const two = citePieces([{ title: 'A', url: 'https://a.example/' }, { title: 'report.pdf' }]);
+  check('  several, one after another', two.map((p) => p.text).join('') === 'A: https://a.example/; report.pdf', two.map((p) => p.text).join(''));
+  check('  the notes are not copied', CHROME_SELECTOR.includes('.qc-notes'));
+  const split = splitChecks('Câu trả lời.\n\n*Kiểm tra nguồn: đã sửa 1 chỗ trích dẫn.*\n\n*Kiểm tra số liệu: đã đánh dấu 2 số liệu không có trong nguồn đã đọc.*\n');
+  check('the checks\' lines come off the end of an answer', split.body === 'Câu trả lời.' && split.notes.length === 2 && split.notes[0] === 'Kiểm tra nguồn: đã sửa 1 chỗ trích dẫn.', JSON.stringify(split));
+  const inside = splitChecks('*Source check: in the middle.*\n\nThe answer goes on.');
+  check('  only from the end: the same words inside an answer are the answer', inside.notes.length === 0 && inside.body.startsWith('*Source check'));
 }
 
 section('what counts as the app’s chrome rather than the answer');

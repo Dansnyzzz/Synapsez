@@ -10,7 +10,7 @@
 import { api } from './api.js';
 import { escapeHtml } from './markdown.js';
 import { toast } from './render.js';
-import { t } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 import { normaliseImport, batchesOf } from './import-formats.js';
 
 const $ = (id) => document.getElementById(id);
@@ -28,7 +28,7 @@ function when(iso) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   const today = new Date().toDateString() === date.toDateString();
-  return today ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : date.toLocaleString();
+  return today ? date.toLocaleTimeString(localeTag(), { hour: '2-digit', minute: '2-digit' }) : date.toLocaleString(localeTag());
 }
 
 /**

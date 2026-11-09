@@ -27,8 +27,9 @@ import { createScreen } from './screen.js';
 import { createViewer } from './viewer.js';
 import { shouldAutoPreview } from './autopreview.js';
 import { createPages } from './pages.js';
+import { createBotBadge, readBotHash, lastBotTab } from './bot.js';
 import { createProjectPage } from './project-page.js';
-import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES } from './i18n.js';
+import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES, localeTag } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
 import { humanSize, localMoment, localTimes } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
@@ -762,6 +763,7 @@ async function start() {
   renderTopbar();
   paintLegal();
   mascot.setPref(state.boot.prefs.mascot);
+  void mascot.setCreature(state.boot.prefs.equippedTitle);
   // Signed in, so the scene may come up: nothing is drawn behind the sign-in page.
   themesPanel.boot();
   themesPanel.sync();
@@ -780,6 +782,8 @@ async function start() {
   await refreshChats();
   afterGoogleSignIn();
   openConnectorFromLink();
+  openBotFromLink();
+  openSettingsFromLink();
   // Never fatal: a sidebar section that could not load is a missing list, not
   // a broken app, and throwing here would take the conversations with it.
   await refreshTasks().catch(() => {});
@@ -957,11 +961,13 @@ const busyWithList = () => !!document.querySelector('#chat-list .chat-item--edit
  *
  * It was, above the conversations, and a handful of tasks pushed the whole
  * conversation history down off the screen — the list you use every minute
- * displaced by one you check once a week. The Scheduled page (and the pill on
- * the card that set a task up) is where they live. Kept as a no-op so the
- * places that announce "tasks changed" need not know.
+ * displaced by one you check once a week. The Bot page (and the pill on the
+ * card that set a task up) is where they live. What the places that announce
+ * "tasks changed" still move is the count on the rail's Bot item.
  */
-async function refreshTasks() {}
+async function refreshTasks() {
+  await botBadge.refresh();
+}
 
 /**
  * One conversation, as a row.
@@ -1070,6 +1076,8 @@ async function refreshChats({ background = false } = {}) {
   state.projects = projects;
   state.groups = groups;
   scheduleChatRefresh();
+  // A run starting or ending here is the moment the Bot badge may have changed.
+  botBadge.nudge(chats);
 
   const signature = JSON.stringify([
     state.chatId,
@@ -2815,6 +2823,8 @@ const pages = createPages({
   // The sidebar keeps its own short list of scheduled work; a task written
   // anywhere has to reach it.
   onTasksChanged: () => refreshTasks().catch(() => {}),
+  // The Bot page counted what needs the person: the rail says the same.
+  onBotSummary: (summary) => botBadge.paint(summary),
   // Restored or deleted on the Archive shelf: the sidebar list changes with it.
   onChatsChanged: () => refreshChats().catch(() => {}),
   onChatDeleted: (id) => chatGone(id),
@@ -2916,15 +2926,26 @@ $('open-artifacts').addEventListener('click', () => {
   gotoShelf('artifacts');
 });
 
-$('open-scheduled').addEventListener('click', () => {
+/**
+ * Bot: workflows and scheduled tasks, one page with the two as tabs (owner,
+ * 2026-11-08), opened at the tab used last. Its badge counts what needs the
+ * person, refreshed by the moments listed in bot.js — no timer of its own.
+ */
+const botBadge = createBotBadge({ api, button: $('open-bot'), badge: $('bot-badge') });
+$('open-bot').addEventListener('click', () => {
   closeSidebar();
-  gotoShelf('scheduled');
+  gotoShelf(lastBotTab());
 });
 
-$('open-workflows').addEventListener('click', () => {
-  closeSidebar();
-  gotoShelf('workflows');
-});
+/** A `#bot/…` address — a reload on the Bot page, or a link to it — lands there. */
+function openBotFromLink() {
+  const route = readBotHash();
+  if (!route || !state.boot) return;
+  projectPage.hide();
+  onPage(true);
+  pages.showBot(route.tab, route.id).catch((err) => toast(err.message, 'error'));
+}
+window.addEventListener('hashchange', openBotFromLink);
 
 /** Everything archived, with the way back. Opening one reads it; Restore puts it back. */
 $('open-archive').addEventListener('click', () => {
@@ -4121,6 +4142,21 @@ async function streamOnce(run, decision, answers, handoff = false) {
         data_route: (route) => {
           run.route = route;
         },
+        // Earned in this turn (owner, 2026-11-08): the server has put it on; the page follows and says so.
+        earned: (newly) => {
+          const title = newly?.worn?.equippedTitle || null;
+          const theme = newly?.worn?.sceneTheme || null;
+          if (title) {
+            state.boot.prefs = { ...state.boot.prefs, equippedTitle: title };
+            window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: title }));
+          }
+          if (theme) void themesPanel.sync();
+          const titleName = title ? t(`ranking.title.${title}`) : '';
+          const themeName = theme ? t(`theme.${theme}.name`) : '';
+          if (title && theme) toast(t('earned.both', { title: titleName, theme: themeName }));
+          else if (title) toast(t('earned.title', { name: titleName }));
+          else if (theme) toast(t('earned.theme', { name: themeName }));
+        },
         // What a running command prints, as it prints it.
         tool_progress: ({ id, text }) => {
           run.toolHandles.get(id)?.progress?.(text);
@@ -4648,7 +4684,7 @@ function renderUsage({ input, output, cost, priced, estimated, cacheRead }) {
     $('composer-meta').textContent = '';
     return;
   }
-  const tokens = t('usage.tokens').replace('{n}', (input + output).toLocaleString());
+  const tokens = t('usage.tokens').replace('{n}', (input + output).toLocaleString(localeTag()));
   // "~$" only when the figure is our own arithmetic. When the provider invoiced
   // the turn — OpenRouter and OrcaRouter both do — the number is exact and the
   // tilde would be understating what we actually know.
@@ -4774,6 +4810,12 @@ const usageAlert = createUsageAlert($('usage-alert'), {
 const mascot = createMascot({ host: /** @type {HTMLElement} */ ($('composer').querySelector('.composer__box')) });
 /** A press on a whale saves only the last of a run of presses. */
 const mascotSaver = latestOnly((value) => api.savePrefs({ mascot: value }), { failed: (err) => toast(err.message, 'error') });
+// The title worn, saved on the Ranking page or earned in a turn: its creature takes the whale's place (owner, 2026-11-08).
+window.addEventListener('synapsez:title', (event) => {
+  const id = /** @type {CustomEvent} */ (event).detail || null;
+  if (state.boot) state.boot.prefs = { ...state.boot.prefs, equippedTitle: id };
+  void mascot.setCreature(id);
+});
 
 const themesPanel = createThemes({
   page: $('themes-page'),
@@ -4785,6 +4827,7 @@ const themesPanel = createThemes({
     void mascotSaver.push(value);
   },
   mascotStates: MASCOT_STATES,
+  creature: () => mascot.creature(),
 });
 const rankingPanel = createRanking({ host: $('ranking-page'), toast, savePrefs: (patch) => api.savePrefs(patch) });
 
@@ -5942,6 +5985,7 @@ function fillSettings() {
   /** @type {HTMLInputElement} */ ($('connector-search')).checked = prefs.connectorSearch !== false;
   /** @type {HTMLInputElement} */ ($('quality-gate')).checked = prefs.qualityGate !== false;
   /** @type {HTMLInputElement} */ ($('figure-check')).checked = prefs.figureCheck === true;
+  /** @type {HTMLInputElement} */ ($('event-mail')).checked = prefs.eventMail !== false;
   $('system-prompt').value = prefs.systemPrompt || '';
   // Per-browser, not per-account — so it is read back from storage, not prefs.
   paintThemeChoice(storedTheme());
@@ -6124,6 +6168,26 @@ function paintSystem() {
     .then((version) => ($('app-version').textContent = version ? `v${version}` : ''))
     .catch(() => {});
   paintPluginSwitches();
+  paintDisk();
+}
+
+/**
+ * Under "Computer use": how full the cloud computer's disk is, and what tidying freed
+ * today, in the person's own day (owner, 2026-11-08). Nothing before it has run anything.
+ */
+async function paintDisk() {
+  const line = $('system-disk');
+  try {
+    const { disk } = await api.cloudDisk();
+    if (!disk) return void (line.hidden = true);
+    const midnight = new Date().setHours(0, 0, 0, 0);
+    const freed = (disk.freed || []).filter((f) => f.at >= midnight).reduce((sum, f) => sum + f.bytes, 0);
+    const size = freed >= 1024 ** 3 ? `${(freed / 1024 ** 3).toLocaleString(localeTag(), { maximumFractionDigits: 1 })} GB` : humanSize(freed);
+    line.textContent = [t('settings.diskUsed', { percent: disk.percent }), freed > 0 ? t('settings.diskFreed', { size }) : ''].filter(Boolean).join(' · ');
+    line.hidden = false;
+  } catch {
+    line.hidden = true;
+  }
 }
 $('system-changelog').addEventListener('click', () => {
   $('settings').close();
@@ -6219,6 +6283,17 @@ function afterGoogleSignIn() {
   // Back on the page of the product just connected, as Claude returns to it.
   const one = String(products || '').split(',').filter(Boolean);
   if (outcome === 'connected' && one.length === 1) customize.showConnectorPage(`google:${one[0]}`).catch(() => {});
+}
+
+/**
+ * A Settings page by link, from an email: `#settings/<tab>` (owner, 2026-11-08: the event email's
+ * "turn them off here"). Only a tab this page has; the address is left clean.
+ */
+function openSettingsFromLink() {
+  const tab = /^#settings\/([a-z-]{1,30})$/.exec(location.hash)?.[1];
+  if (!tab || !document.getElementById(`tab-${tab}`)) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  openSettings(tab);
 }
 
 /**
@@ -6544,11 +6619,11 @@ async function loadAdmin() {
       .map((u) => {
         const tags = [
           t('admin.chatCount', { n: u.chat_count }),
-          t('admin.tokensThisMonth', { n: Number(u.tokens_this_month || 0).toLocaleString() }),
+          t('admin.tokensThisMonth', { n: Number(u.tokens_this_month || 0).toLocaleString(localeTag()) }),
           u.has_worker ? t('admin.workerPaired') : null,
           u.email_verified_at ? null : t('admin.unconfirmed'),
           u.suspended_at ? t('admin.suspended') : null,
-          u.monthly_token_limit ? t('admin.limit', { n: Number(u.monthly_token_limit).toLocaleString() }) : null,
+          u.monthly_token_limit ? t('admin.limit', { n: Number(u.monthly_token_limit).toLocaleString(localeTag()) }) : null,
         ].filter(Boolean);
 
         const self = u.id === state.boot.user.id;
@@ -6759,6 +6834,7 @@ const SAVED_ON_CHANGE = {
   'connector-search': { status: 'capabilities-status', patch: (on) => ({ connectorSearch: !!on }), back: (p) => p.connectorSearch !== false },
   'quality-gate': { status: 'capabilities-status', patch: (on) => ({ qualityGate: !!on }), back: (p) => p.qualityGate !== false },
   'figure-check': { status: 'capabilities-status', patch: (on) => ({ figureCheck: !!on }), back: (p) => p.figureCheck === true },
+  'event-mail': { status: 'general-status', patch: (on) => ({ eventMail: !!on }), back: (p) => p.eventMail !== false },
   'system-prompt': { status: 'behaviour-status', patch: (v) => ({ systemPrompt: v }), back: (p) => p.systemPrompt || '' },
 };
 for (const [id, rule] of Object.entries(SAVED_ON_CHANGE)) {

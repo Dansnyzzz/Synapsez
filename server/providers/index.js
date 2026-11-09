@@ -431,7 +431,7 @@ const ROUNDS = 3;
  *       · {type:'done', stopReason, toolCalls, usage, raw?}
  */
 async function* streamAny(opts) {
-  const { streamOne: injected, sleep, googleData: _googleData, deadline: _deadline, onRoute, sharedKeyAllowed, ...rest } = opts;
+  const { streamOne: injected, sleep, googleData: _googleData, deadline: _deadline, onRoute, sharedKeyAllowed, onSharedKey, ...rest } = opts;
   const entry = opts.entry;
   const provider = entry.provider;
   const label = PROVIDERS[provider]?.label || provider;
@@ -541,6 +541,8 @@ async function* streamAny(opts) {
         refused = 'the deployment key is over this account\'s monthly limit';
         continue;
       }
+      // From here the deployment pays, and the turn's own limits for that apply (agent.js).
+      if (shared) onSharedKey?.();
       const which = shared ? 'the deployment key' : `key ${index + 1}`;
       // The first key gets the full patience; the others one try each, above.
       const tries = gaveUp.size ? 1 : UPSTREAM_TRIES;

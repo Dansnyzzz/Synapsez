@@ -242,8 +242,11 @@ export function splitStatements(sql) {
  *      .quarter, user_themes.grant_quarter — the boards run by quarter, and a
  *      month's prize becomes its quarter's; event_claims — an event's limited
  *      places; provider_outcomes — what each provider answered, by status
+ *  40  workflows.policy / project_id — the Bot page; top_ups — money put in, which
+ *      the sponsor titles count; event_mail — who was told about an event;
+ *      user_themes.by_hand — a theme an administrator gave
  */
-export const SCHEMA_VERSION = 39;
+export const SCHEMA_VERSION = 40;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -2910,7 +2913,7 @@ export function createPgStore(connectionString) {
       return { tokens: Number(rows[0]?.tokens || 0), cost: Number(rows[0]?.cost || 0) };
     },
     async listUserThemes(userId) {
-      return q('SELECT theme_id, grant_kind, grant_quarter, grant_year, granted_at FROM user_themes WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+      return q('SELECT theme_id, grant_kind, grant_quarter, grant_year, granted_at, by_hand FROM user_themes WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
     },
     /** The themes an administrator took back from this account, which usage must not earn again. */
     async listRevokedThemes(userId) {
@@ -2919,11 +2922,11 @@ export function createPgStore(connectionString) {
     /** Given again, it counts as newly received, and says the latest reason. */
     async grantTheme(userId, themeId, grant) {
       await q(
-        `INSERT INTO user_themes (user_id, theme_id, grant_kind, grant_quarter, grant_year)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO user_themes (user_id, theme_id, grant_kind, grant_quarter, grant_year, by_hand)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (user_id, theme_id) DO UPDATE
-           SET grant_kind = EXCLUDED.grant_kind, grant_quarter = EXCLUDED.grant_quarter, grant_year = EXCLUDED.grant_year, granted_at = NOW(), revoked_at = NULL`,
-        [userId, themeId, grant.kind, grant.quarter ?? null, grant.year ?? null],
+           SET grant_kind = EXCLUDED.grant_kind, grant_quarter = EXCLUDED.grant_quarter, grant_year = EXCLUDED.grant_year, by_hand = EXCLUDED.by_hand, granted_at = NOW(), revoked_at = NULL`,
+        [userId, themeId, grant.kind, grant.quarter ?? null, grant.year ?? null, grant.byHand === true],
       );
     },
     /** What an account used between two moments, for an event that asks for it. */
@@ -2993,6 +2996,95 @@ export function createPgStore(connectionString) {
     async themeHolderCounts() {
       return q('SELECT theme_id, COUNT(*)::int AS holders FROM user_themes WHERE revoked_at IS NULL GROUP BY theme_id');
     },
+    /** How many accounts hold each title, an award counted under its place (`rank-1`…). */
+    async titleHolderCounts() {
+      return q(
+        `SELECT CASE WHEN title_id LIKE 'top:%' OR title_id LIKE 'award:%' THEN 'rank-' || split_part(title_id, ':', 5) ELSE title_id END AS title_id,
+                COUNT(DISTINCT user_id)::int AS holders
+           FROM user_titles GROUP BY 1`,
+      );
+    },
+    /** Money this account has put into the workspace, in dollars (owner, 2026-11-08). */
+    async topUpTotal(userId) {
+      const rows = await q('SELECT COALESCE(SUM(amount_usd), 0) AS total FROM top_ups WHERE user_id = $1', [userId]);
+      return Number(rows[0]?.total || 0);
+    },
+    /** How many accounts have put in at least this much. */
+    async topUpHolders(atLeast) {
+      const rows = await q('SELECT COUNT(*)::int AS n FROM (SELECT user_id FROM top_ups GROUP BY user_id HAVING SUM(amount_usd) >= $1) held', [atLeast]);
+      return Number(rows[0]?.n || 0);
+    },
+    /**
+     * Who has not been told about an event by email: every account with an address
+     * that is not suspended, with its preferences (the opt-out and the language).
+     */
+    async eventMailRecipients(event) {
+      return q(
+        `SELECT u.id, u.email, s.value AS prefs
+           FROM users u
+           LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
+          WHERE u.email IS NOT NULL AND u.email <> '' AND u.suspended_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM event_mail m WHERE m.event = $1 AND m.user_id = u.id
+                              AND (m.ok OR m.sent_at > NOW() - INTERVAL '1 hour'))
+          ORDER BY u.created_at`,
+        [event],
+      );
+    },
+    /**
+     * Claim these people for one send: the ids this caller got, none another sweep holds.
+     * A claim left by a send that died is taken back after an hour.
+     */
+    async claimEventMail(event, userIds) {
+      if (!userIds.length) return [];
+      const rows = await q(
+        `INSERT INTO event_mail (event, user_id, ok) SELECT $1, unnest($2::text[]), FALSE
+           ON CONFLICT (event, user_id) DO UPDATE SET sent_at = NOW()
+             WHERE event_mail.ok = FALSE AND event_mail.sent_at < NOW() - INTERVAL '1 hour'
+         RETURNING user_id`,
+        [event, userIds],
+      );
+      return rows.map((r) => r.user_id);
+    },
+    /** A send the provider refused: those people are free to be claimed again. */
+    async releaseEventMail(event, userIds) {
+      if (!userIds.length) return;
+      await q('DELETE FROM event_mail WHERE event = $1 AND user_id = ANY($2::text[]) AND ok = FALSE', [event, userIds]);
+    },
+    async markEventMail(event, userIds) {
+      if (!userIds.length) return;
+      await q(
+        `INSERT INTO event_mail (event, user_id, ok, sent_at) SELECT $1, unnest($2::text[]), TRUE, NOW()
+           ON CONFLICT (event, user_id) DO UPDATE SET ok = TRUE, sent_at = NOW()`,
+        [event, userIds],
+      );
+    },
+    /** How many event emails went since a moment, against the day's sending limit. */
+    async eventMailSentSince(since) {
+      const rows = await q('SELECT COUNT(*)::int AS n FROM event_mail WHERE sent_at >= $1', [since]);
+      return Number(rows[0]?.n || 0);
+    },
+    /**
+     * How many of each kind of personal detail were hidden from providers in this
+     * account's conversations since a moment: counts only, as each reply keeps them
+     * (`route.masked`), never a value.
+     */
+    async maskedCounts(userId, since) {
+      const rows = await q(
+        `SELECT kind, SUM(n)::int AS n FROM (
+           SELECT e.key AS kind, CASE WHEN e.value ~ '^[0-9]+$' THEN e.value::int ELSE 0 END AS n
+             FROM messages m
+             JOIN chats c ON c.id = m.chat_id
+             CROSS JOIN LATERAL jsonb_each_text(CASE WHEN jsonb_typeof(m.content->'route'->'masked') = 'object' THEN m.content->'route'->'masked' ELSE '{}'::jsonb END) AS e
+            WHERE c.user_id = $1 AND m.role = 'assistant' AND m.created_at >= $2) counted
+         GROUP BY kind ORDER BY kind`,
+        [userId, since],
+      );
+      return Object.fromEntries(rows.filter((r) => /^[A-Z]{2,12}$/.test(r.kind) && Number(r.n) > 0).map((r) => [r.kind, Number(r.n)]));
+    },
+    /** One top-up, once: the same id twice is the same payment. */
+    async recordTopUp(userId, { id, amountUsd, source, reference = null }) {
+      await q('INSERT INTO top_ups (id, user_id, amount_usd, source, reference) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING', [id, userId, amountUsd, source, reference]);
+    },
     async listThemeBadges() {
       return q('SELECT theme_id, kind, quarter, year FROM theme_badges');
     },
@@ -3043,7 +3135,8 @@ export function createPgStore(connectionString) {
     async boardPeople(ids) {
       if (!ids.length) return [];
       return q(
-        `SELECT u.id, u.username, u.name, u.email, s.value AS prefs
+        `SELECT u.id, u.username, u.name, u.email, s.value AS prefs,
+                COALESCE((SELECT SUM(amount_usd) FROM top_ups t WHERE t.user_id = u.id), 0) AS deposited
            FROM users u LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
           WHERE u.id = ANY($1)`,
         [ids],
@@ -3864,6 +3957,30 @@ export function createPgStore(connectionString) {
       }
     },
 
+    /**
+     * The person stops a task that is running (the Bot page's Stop).
+     *
+     * Scoped to the account and to a task still marked `running`. The schedule is
+     * set on from now as `finishTask` would: a claim pushed `next_run_at` an hour
+     * on as its lease, and an invocation that died never writes the real one, so
+     * a stopped daily task would otherwise run again an hour later. A one-off with
+     * no next run retires, as it would have after running.
+     *
+     * @returns the task as stopped, or null when it was not running
+     */
+    async stopTaskRun(userId, id, { status, nextRunAt = null, retire = true }) {
+      const rows = await q(
+        `UPDATE scheduled_tasks
+            SET run_state = NULL, lease_until = NULL, last_status = $3,
+                next_run_at = COALESCE($4::timestamptz, next_run_at),
+                enabled = CASE WHEN $4::timestamptz IS NULL AND $5 THEN FALSE ELSE enabled END
+          WHERE user_id = $1 AND id = $2 AND run_state = 'running'
+      RETURNING *`,
+        [userId, id, status, nextRunAt, Boolean(retire)],
+      );
+      return rows[0] ?? null;
+    },
+
     // ── workflows ───────────────────────────────────────────────────
     async listWorkflows(userId) {
       return q('SELECT * FROM workflows WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
@@ -3904,8 +4021,8 @@ export function createPgStore(connectionString) {
     },
     async createWorkflow(userId, wf) {
       const rows = await q(
-        `INSERT INTO workflows (id, user_id, title, steps, model, cron, tz, next_run_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        `INSERT INTO workflows (id, user_id, title, steps, model, cron, tz, next_run_at, policy, project_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [
           wf.id,
           userId,
@@ -3915,6 +4032,10 @@ export function createPgStore(connectionString) {
           wf.cron ?? null,
           wf.tz ?? null,
           wf.nextRunAt ?? null,
+          // Schema 40: what a run may do unwatched, and the project it answers
+          // from. Null is the account's default and no project, as for a task.
+          wf.policy ?? null,
+          wf.projectId ?? null,
         ],
       );
       return rows[0];
@@ -3939,6 +4060,8 @@ export function createPgStore(connectionString) {
       if (patch.nextRunAt !== undefined) put('next_run_at', patch.nextRunAt);
       if (patch.endsOn !== undefined) put('ends_on', patch.endsOn);
       if (patch.enabled !== undefined) put('enabled', patch.enabled);
+      if (patch.policy !== undefined) put('policy', patch.policy);
+      if (patch.projectId !== undefined) put('project_id', patch.projectId);
       if (!sets.length) {
         // Nothing asked for. Return the row unchanged rather than building an
         // `UPDATE ... SET` with no assignments, which is a syntax error.
@@ -4069,8 +4192,15 @@ export function createPgStore(connectionString) {
       );
       return rows[0] ?? null;
     },
-    /** Write back position and per-step state, keeping the lease as given. */
-    async saveWorkflowRun(id, { status, steps, cursor, chatId, leaseUntil, finished }) {
+    /**
+     * Write back position and per-step state, keeping the lease as given.
+     *
+     * @param whileRunning  only if the run is still going. The invocation working
+     *   a run writes this way, so a stop pressed in the meantime (`stopWorkflowRun`)
+     *   stays the last word instead of being overwritten by the step that was
+     *   stopped. Null when the run is no longer running.
+     */
+    async saveWorkflowRun(id, { status, steps, cursor, chatId, leaseUntil, finished, whileRunning = false }) {
       const rows = await q(
         `UPDATE workflow_runs
             SET status      = COALESCE($2, status),
@@ -4079,7 +4209,7 @@ export function createPgStore(connectionString) {
                 chat_id     = COALESCE($5, chat_id),
                 lease_until = $6,
                 finished_at = CASE WHEN $7 THEN NOW() ELSE finished_at END
-          WHERE id = $1 RETURNING *`,
+          WHERE id = $1 AND ($8::boolean IS NOT TRUE OR status = 'running') RETURNING *`,
         [
           id,
           status ?? null,
@@ -4088,7 +4218,28 @@ export function createPgStore(connectionString) {
           chatId ?? null,
           leaseUntil ?? null,
           Boolean(finished),
+          Boolean(whileRunning),
         ],
+      );
+      return rows[0] ?? null;
+    },
+    /**
+     * The person stops a run that is going (the Bot page's Stop).
+     *
+     * Scoped to the account, and only a run still `running`: one that finished a
+     * moment ago keeps what it finished as. The lease goes with it, so no
+     * invocation picks the run up again, and the one working it hears of the stop
+     * by reading the status (`watchStopped` in liveRuns.js).
+     *
+     * @param steps  the step states with the one that was running marked stopped
+     */
+    async stopWorkflowRun(userId, id, steps) {
+      const rows = await q(
+        `UPDATE workflow_runs
+            SET status = 'cancelled', steps = $3::jsonb, lease_until = NULL, finished_at = NOW()
+          WHERE user_id = $1 AND id = $2 AND status = 'running'
+      RETURNING *`,
+        [userId, id, toJson(steps)],
       );
       return rows[0] ?? null;
     },

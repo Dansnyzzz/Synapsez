@@ -12,7 +12,12 @@ import { escapeHtml } from './markdown.js';
  *
  * Items are `{ label, icon, danger, run }`. A `null` item draws a divider,
  * which is how "Delete" gets separated from the things that are not permanent.
+ * An item with `confirm` (the words it then shows) needs a second press within
+ * `CONFIRM_MS`: the first only arms it, and the menu stays open for the second.
  */
+
+/** How long an armed item waits for its second press. */
+export const CONFIRM_MS = 3000;
 
 let host = null;
 let closer = null;
@@ -112,14 +117,28 @@ export function openMenu(anchor, items, onClose = null) {
             item.danger ? ' class="is-danger"' : ''
           }>${
             item.icon ? `<span class="menu__icon" aria-hidden="true">${item.icon}</span>` : ''
-          }${escapeHtml(item.label)}</button>`,
+          }<span data-say>${escapeHtml(item.label)}</span></button>`,
     )
     .join('');
 
-  for (const button of host.querySelectorAll('[data-pick]')) {
+  for (const button of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-pick]'))) {
+    let armedUntil = 0;
     button.addEventListener('click', (event) => {
       event.stopPropagation();
       const item = items[Number(button.dataset.pick)];
+      if (item.confirm && Date.now() > armedUntil) {
+        // Armed, and said on the item itself, which keeps focus.
+        armedUntil = Date.now() + CONFIRM_MS;
+        const say = /** @type {HTMLElement} */ (button.querySelector('[data-say]'));
+        say.textContent = item.confirm;
+        button.classList.add('is-armed');
+        setTimeout(() => {
+          if (!button.isConnected) return;
+          say.textContent = item.label;
+          button.classList.remove('is-armed');
+        }, CONFIRM_MS);
+        return;
+      }
       closeMenu();
       item.run();
     });

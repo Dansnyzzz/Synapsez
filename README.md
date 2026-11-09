@@ -637,7 +637,12 @@ not there, the model can install, and what an account installs is put back on a 
 - **Older machines move themselves.** Memory is fixed when a machine is made, so one from an older
   template gets its home copied to a new machine, as the account and all or nothing (`moveMachine`).
 - **It tidies up.** Caches and leftovers go every few minutes while the machine is awake, a file handed
-  to the chat leaves the machine, and the model is told when the disk passes 80%.
+  to the chat leaves the machine, and the model is told when the disk passes 80%. The tidy has three
+  tiers by how full the disk is (below 70%, 70–85%, above): caches that fill themselves again go an
+  entry at a time and never through a link, only real (ELF) core dumps go, and what the cloud browser
+  downloaded and large files in `/tmp` are listed with the largest things, never deleted. A file too
+  large for the conversation stays on the machine, moved out of `/tmp` or `incoming/` to `~/handed/`
+  first so its card keeps working (`tidyScript`, `keptAside`).
 - **What sandbox_run does beyond a command**: `terminal` keeps a REPL or an installer open between calls,
   `expose_port` gives a public address, `checkpoint` saves and restores (three at most), output streams
   to the row while it runs, and an exit code is explained. A file it was asked to deliver and could not
@@ -1433,7 +1438,7 @@ Laid out as Claude's (2026-11-01): **Filter by** the plugin a skill comes with o
 
 Administrators with the `themes` permission choose each theme's badge and give or take a theme, under Settings → People. Which theme a period's prize is follows the badge: one naming that period wins, otherwise the one marked for any period.
 
-The whale on the writing box follows what the assistant is doing, or holds one state, or is off; the choice is on the Theme page. Its art comes from Nwflower/dsh-claude-style under MIT (`public/assets/mascot/NOTICE.txt`).
+The whale on the writing box follows what the assistant is doing, or holds one state, or is off; the choice is on the Theme page. Wearing a title puts that title's creature there instead, drawn in pixels with the same eight states (`public/js/mascots/`; the minnow, the electric ray and the golden whale so far, the whale standing in for the rest). The whale's art is by calmly-eating-bugs, taken from Nwflower/dsh-claude-style, where it ships by the artist's permission to that plugin; Synapsez holds no licence of its own for it (`public/assets/mascot/NOTICE.txt`).
 
 ---
 
@@ -1921,6 +1926,7 @@ step, with the optional certificate and how to bring data over from another data
 | `ACCESS_TOKEN` | legacy | One value standing in for both of the above, from before they were separate. Still honoured — the two keys are derived apart from it — but it cannot be rotated in halves, so the server warns at boot. Set `SESSION_SECRET` and `ENCRYPTION_KEY` instead. |
 | `CRON_SECRET` | **yes** | Authenticates the cron endpoints — the scheduler and the model-library refresh. Any long random string. Without it both refuse every call, so scheduled tasks never run. |
 | `GMAIL_USER` + `GMAIL_APP_PASSWORD`, **or** `RESEND_API_KEY`, **or** `SMTP_*` | optional | Sends password-reset codes and the assistant's emails. Without one, reset links go to the server log and `send_email` says it cannot send. |
+| `EVENT_MAIL_BATCH`, `EVENT_MAIL_DAILY` | optional | The email announcing an event's theme (server/eventMail.js) goes in batches, every address in Bcc: how many a message (default 50, at most 90) and how many a day (default 400), under Gmail's own limits. It goes through Gmail when Gmail is set up, Resend or not. |
 | `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` | optional | Lets accounts connect Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts. See [docs/google.md](docs/google.md). |
 | `GEMINI_API_KEY` | optional | Real Google results in web search (Gemini grounding). An account's own Google key works too. |
 | `EMAIL_FROM` | optional | The From name and address, e.g. `Elite Business <you@gmail.com>`. The name also heads every email. Defaults to the Gmail/SMTP login. |

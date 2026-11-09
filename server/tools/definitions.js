@@ -1522,7 +1522,7 @@ export const TOOLS = [
       'Already installed, so do not install them: Python 3.11 (numpy pandas scipy scikit-learn statsmodels sympy matplotlib seaborn plotly openpyxl xlsxwriter python-docx python-pptx fpdf2 reportlab pypdf pdfplumber pillow opencv pydub requests httpx beautifulsoup4 lxml pyyaml markdown jinja2 tabulate tqdm playwright with Chromium), ' +
       'Node, git, ffmpeg, LibreOffice (soffice), poppler (pdftotext, pdftoppm), zip, sqlite3, tmux, jq, ripgrep, Noto and DejaVu fonts, the claude, codex and amp agents (they need the user\'s own key). ' +
       'Anything else: pip install or npm i -g; it is remembered for this account. Too big for its memory (it says how much it has)? Do it in smaller pieces or another tool, or tell the user. ' +
-      'It keeps its files between conversations. Write files with `files`, run with `command`, hand a file of any kind and size to the user with `download`, which takes it off the computer once it is in the conversation. ' +
+      'It keeps its files between conversations. Write files with `files`, run with `command`, hand a file of any kind and size (.zip, .tar.gz, .7z too) to the user with `download`, which takes it off the computer once it is in the conversation. ' +
       'Delete your own scratch files when you finish. Relative paths are in its working folder; what the cloud browser downloads is in downloads/. ' +
       '`python` runs in this conversation\'s live Python session, like a notebook: variables, imports and loaded data stay in memory between calls, ' +
       'so load a file once and keep working on it. ' +

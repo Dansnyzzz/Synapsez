@@ -113,7 +113,8 @@ const BROWSER_GLOBALS = {
 
 export default [
   // public/vendor holds third-party builds copied in by scripts/vendor-*.js.
-  { ignores: ['node_modules/**', 'data/**', '.vercel/**', 'public/vendor/**'] },
+  // An agent's worktree is a whole second copy of the repository, linted where it is.
+  { ignores: ['node_modules/**', 'data/**', '.vercel/**', 'public/vendor/**', '.claude/worktrees/**'] },
 
   js.configs.recommended,
 

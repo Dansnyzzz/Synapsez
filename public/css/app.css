@@ -2250,7 +2250,7 @@ textarea {
   text-align: left;
   font-size: 13.5px;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, transform 0.15s, box-shadow 0.15s, background 0.15s;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 /* No blur available — Firefox with the pref off, older WebKit. A transparent
    wash over a busy sky is unreadable without one, so those get the pane. */
@@ -2262,7 +2262,9 @@ textarea {
   border-color: var(--accent);
   background: linear-gradient(180deg, var(--glass-hi), transparent 46%), var(--tint-2);
   color: var(--text);
-  transform: translateY(-2px);
+  /* No lift: a blurred pane that moves over a moving scene was redrawn every frame of
+     the scene, and its square backdrop showed as a grey box blinking behind the card
+     (owner, 2026-11-08, screenshot 5). The ring and the glow say "this one" alone. */
   /* The neon: a tight ring of the accent, then its glow. */
   box-shadow: 0 0 0 1px var(--accent-dim), 0 0 22px -4px var(--accent-glow), 0 10px 26px -14px var(--accent-glow);
   outline: none;
@@ -7832,6 +7834,74 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   .wf__acts { justify-content: flex-start; }
 }
 
+/* ── the Bot page: workflows and scheduled tasks as two tabs ── */
+/*
+ * Owner, 2026-11-08. The rail's one Bot item carries a count of what needs the
+ * person; the page has a tab switch, a pill of state on every row, and a ⋯ menu.
+ * The pills are words first: the colour only repeats what the word says. Each
+ * colour is the theme's own semantic one, which holds 4.5:1 on both themes.
+ */
+.rail__glyph { position: relative; display: inline-flex; flex: none; }
+.rail__badge {
+  position: absolute;
+  top: -7px;
+  right: -10px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  /* The page colour on the red: dark on the dark theme's light red, light on the light theme's deep one. */
+  background: var(--danger);
+  color: var(--bg);
+  box-shadow: 0 0 0 2px var(--bg);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.page__notice { max-width: 1120px; margin: 0 auto 14px; }
+/* Under the title and level with it, at the shelf's own width. */
+.bot__tabs { display: flex; margin: 4px max(0px, calc((100% - 1120px) / 2)) 18px; }
+.bot__tabs button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
+.bot__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
+
+.botpills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.botpill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.botpill--running { color: var(--info); }
+.botpill--needs { color: var(--warn); }
+.botpill--failed,
+.botpill--overdue { color: var(--danger); }
+.botpill--done { color: var(--ok); }
+
+/* A paused workflow dims its steps, not the words that say it is paused: a
+   whole row at 62% took the pill under 4.5:1. */
+.wf--off.botrow { opacity: 1; }
+.wf--off.botrow .wf__steps { opacity: 0.62; }
+
+.botrow__more { flex: none; font-size: 18px; }
+.task__act--stop { border-color: var(--danger); color: var(--danger); }
+.task__act:disabled { opacity: 0.6; cursor: default; }
+
+/* The side panel's History: when, how it ended, how far it got. */
+h3.spane__label { margin: 14px 0 -2px 4px; font-weight: 400; }
+h3.spane__label:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.spane__history { display: grid; gap: 8px; margin: 0; padding: 0 4px; list-style: none; }
+.spane__run { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-dim); font-size: 12.5px; }
+.spane__runwhen { min-width: 0; overflow-wrap: anywhere; }
+
 /* ── a switch, for the one setting a shelf carries ──────────── */
 
 .switch {
@@ -11749,7 +11819,19 @@ html[data-scene] .gate { background: var(--bg); }
 }
 
 .themes { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 22px; align-items: start; }
-.themes__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px 12px; }
+.themes__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 12px; flex: 1; min-width: 0; }
+/* A page of twelve with an arrow either side, centred on the rows (owner, 2026-11-08). */
+.themes__pager { display: flex; align-items: center; gap: 8px; }
+.themes__turn { flex: 0 0 auto; display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--text); cursor: pointer; }
+.themes__turn:hover { border-color: var(--accent); color: var(--accent); }
+.themes__turn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.themes__turn[hidden] { display: grid; visibility: hidden; }
+.themes__pages { margin: 6px 0 0; min-height: 1em; text-align: center; color: var(--text-faint); font-size: 12px; }
+.themes__titlebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.themes__titlebar .settings__title { margin-bottom: 0; }
+.themes__sort select { font: inherit; }
+.facts { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 3px; color: var(--text-dim); font-size: 13px; }
+@media (max-width: 720px) { .themes__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .themes__turn { width: 30px; height: 30px; } }
 .themes__tile { display: grid; gap: 6px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .themes__frame { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; box-shadow: 0 0 0 1px var(--line); }
 .themes__still { display: block; width: 100%; height: 100%; object-fit: cover; }
@@ -11784,24 +11866,44 @@ html[data-scene] .gate { background: var(--bg); }
 .themes__pet:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .themes__pet.is-chosen { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .themes__pet-art { display: grid; place-items: center; height: 44px; }
-.themes__pet-art img { display: block; max-height: 44px; max-width: 72px; image-rendering: pixelated; }
+.themes__pet-art img { display: block; max-height: 44px; max-width: 72px; image-rendering: auto; }
+/* A title's creature on each tile: one screen pixel per grid pixel, or two on a dense screen (mascots/stage.js). */
+.themes__pet-art--pixel { height: 64px; }
+.themes__pet-art canvas { display: block; }
 
 /* The whale stands on the box's top edge, at the right, and takes no room. */
 /* About one and a half times the box's own height across the whale, the size the owner
    pointed at (2026-11-06). The picture has room around the animal, so the frame is
    larger than what is seen; a state with something above it needs that room. */
-.mascot { position: absolute; right: 14px; bottom: calc(100% - 22px); z-index: 1; height: 128px; width: auto; image-rendering: pixelated; pointer-events: none; user-select: none; }
+/* The whale's pictures are 260 pixels drawn at 128: pixelated at a scale that is not whole
+   drops rows, so it is smoothed instead (2026-11-08). */
+.mascot { position: absolute; right: 14px; bottom: calc(100% - 22px); z-index: 1; height: 128px; width: auto; image-rendering: auto; pointer-events: none; user-select: none; }
 @media (max-width: 720px) { .mascot { height: 96px; right: 8px; bottom: calc(100% - 16px); } }
 @media (max-width: 420px) { .mascot { height: 72px; right: 4px; bottom: calc(100% - 12px); } }
+/* A title's creature (owner, 2026-11-08): mascots/stage.js sizes the canvas near
+   --mascot-size, at a whole number of screen pixels per grid pixel, so it stays sharp
+   at any zoom. Its feet are five grid rows above the canvas's foot. */
+.mascot--pixel { --mascot-size: 128px; height: auto; bottom: calc(100% - var(--mascot-size) * 0.16); }
+@media (max-width: 720px) { .mascot--pixel { --mascot-size: 96px; } }
+@media (max-width: 420px) { .mascot--pixel { --mascot-size: 72px; } }
 
 /* `/theme` in the box: the themes in a row above it (theme-picker.js). */
 .tpick { position: absolute; left: 50%; bottom: calc(100% - 6px); z-index: 6; width: min(780px, calc(100% - 28px)); transform: translateX(-50%); padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass-solid, var(--bg-elev)); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); }
 .tpick[hidden] { display: none; }
+
+/* What the checks said about an answer: a note from the app, under it, not part of it. */
+.qc-notes { margin-top: 10px; display: grid; gap: 2px; user-select: none; -webkit-user-select: none; }
+.qc-note { margin: 0; color: var(--text-faint); font-size: 12.5px; font-style: italic; }
 .tpick__head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
 .tpick__chip { padding: 2px 8px; border-radius: 6px; background: var(--tint-2); font-family: var(--mono, monospace); font-size: 12px; }
 .tpick__title { color: var(--text); font-weight: 600; }
 .tpick__keys { margin-left: auto; color: var(--text-faint); font-size: 12px; white-space: nowrap; }
-.tpick__row { display: flex; gap: 10px; overflow-x: auto; padding: 3px 3px 6px; scrollbar-width: thin; }
+/* The track is the box behind it; only the thumb shows (owner, 2026-11-08). */
+.tpick__row { display: flex; gap: 10px; overflow-x: auto; padding: 3px 3px 6px; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 32%, transparent) transparent; }
+.tpick__row::-webkit-scrollbar { height: 8px; background: transparent; }
+.tpick__row::-webkit-scrollbar-track { background: transparent; }
+.tpick__row::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 32%, transparent); border-radius: 99px; }
+.tpick__row::-webkit-scrollbar-button { display: none; }
 .tpick__tile { flex: 0 0 112px; display: grid; gap: 5px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .tpick__frame { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); }
 .tpick__tile[aria-selected='true'] .tpick__frame, .tpick__tile:hover .tpick__frame { box-shadow: 0 0 0 2px var(--accent); }
@@ -11848,7 +11950,8 @@ html[data-scene] .gate { background: var(--bg); }
 .ranking__stage.is-locked canvas { opacity: 0.6; filter: saturate(0.75); }
 .ranking__stage .themes__lock { z-index: 1; width: 44px; height: 44px; }
 .ranking__stage--none { display: grid; place-items: center; }
-.ranking__stage--none img { width: 60%; image-rendering: pixelated; }
+.ranking__stage--none img { width: 60%; image-rendering: auto; }
+.ranking__stage .pixel-creature { position: absolute; }
 .ranking__petname { margin: 0; color: var(--text-dim); font-size: 13px; font-weight: 600; }
 @media (max-width: 900px) { .ranking__titles { grid-template-columns: minmax(0, 1fr); } .ranking__detail { position: static; max-width: 320px; } }
 .ranking__title { min-height: 34px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }

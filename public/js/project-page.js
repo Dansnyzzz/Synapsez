@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { t, currentLanguage } from './i18n.js';
+import { t, currentLanguage, localeTag } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { openMenu } from './menu.js';
 import { toast } from './render.js';
@@ -75,7 +75,7 @@ const ago = (value) => {
     return seconds < 86400 ? n('when.hours', Math.round(seconds / 3600)) : t('when.yesterday');
   }
   if (seconds < 2592000) return n('when.days', Math.round(seconds / 86400));
-  return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return new Date(then).toLocaleDateString(localeTag(), { month: 'short', day: 'numeric' });
 };
 
 /**

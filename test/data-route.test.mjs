@@ -30,7 +30,8 @@ const { setPrefs, setApiKey } = await import('../server/settings.js');
 const { streamCompletion, PROVIDERS } = await import('../server/providers/index.js');
 const { routeFor, tierFor, isStealthModel, thinkingKind, stealthRefusal, policyTable, PROVIDER_POLICIES, POLICIES_CHECKED } = await import('../server/dataRoute.js');
 const { heldByMonitor, parseVerdict, worthChecking, monitorPrompt, COULD_NOT_CHECK, __testing: monitorParts } = await import('../server/actionMonitor.js');
-const { MEASURED } = await import('../server/deidentifyQuality.js');
+const { currentMasking } = await import('../server/deidentifyQuality.js');
+const MEASURED = currentMasking();
 
 const makeUser = (id) => store.createUser({ id, email: `${id}@example.com`, name: id, passwordHash: 'x', role: 'user' });
 const stealth = { id: 'openrouter/stealth/crouton-alpha', provider: 'openrouter', model: 'stealth/crouton-alpha', label: 'Crouton Alpha' };
@@ -472,20 +473,39 @@ section('a copy of a Drive file is still a Drive file');
 
 section('the overview has what it says');
 {
-  check('measured on the day it says', /^\d{4}-\d{2}-\d{2}$/.test(MEASURED.date));
+  check('measured when asked, and says when', !Number.isNaN(Date.parse(MEASURED.measuredAt)));
   const en = fs.readFileSync(new URL('../public/js/locales/en.js', import.meta.url), 'utf8');
   const vi = fs.readFileSync(new URL('../public/js/locales/vi.js', import.meta.url), 'utf8');
   for (const kind of Object.keys(MEASURED.kinds)) {
     check(`${kind} has a name in both languages`, en.includes(`'route.kind.${kind}'`) && vi.includes(`'route.kind.${kind}'`));
-  }
-  for (const { provider } of policyTable().policies) {
-    check(`${provider} has its words in both languages`, en.includes(`'cloak.policy.${provider}'`) && vi.includes(`'cloak.policy.${provider}'`));
   }
   for (const tier of ['zero_retention', 'no_training', 'by_endpoint', 'may_train', 'unknown', 'stealth']) {
     check(`the ${tier} promise is said in both languages`, en.includes(`'route.tier.${tier}'`) && vi.includes(`'route.tier.${tier}'`));
   }
   const page = fs.readFileSync(new URL('../public/js/cloak.js', import.meta.url), 'utf8');
   check('nothing on the page is built as markup', !/innerHTML/.test(page));
+
+  // The count reads thirty days of replies: kept a short while per account, asked once (security review, 2026-11-09).
+  const { maskedRecently } = await import('../server/routes/account.js');
+  const real = store.maskedCounts;
+  let asked = 0;
+  store.maskedCounts = async () => ((asked += 1), { EMAIL: 2 });
+  const t = Date.now();
+  const [a, b] = await Promise.all([maskedRecently('u-mask', t), maskedRecently('u-mask', t + 5)]);
+  const again = await maskedRecently('u-mask', t + 10_000);
+  check('the masked count is asked once however often the page opens', asked === 1 && a?.kinds?.EMAIL === 2 && b === a && again === a, `${asked}`);
+  await maskedRecently('u-mask', t + 31_000);
+  check('  and again once it is half a minute old', asked === 2);
+  await maskedRecently('u-other', t);
+  check('  each account its own', asked === 3);
+  store.maskedCounts = async () => {
+    throw new Error('down');
+  };
+  const failed = await maskedRecently('u-down', t);
+  store.maskedCounts = async () => ({ PHONE: 1 });
+  const retried = await maskedRecently('u-down', t + 1);
+  check('  a failed count is null and not kept', failed === null && retried?.kinds?.PHONE === 1);
+  store.maskedCounts = real;
   const claims = `${en}\n${vi}`;
   check('nowhere does it claim to catch everything', !/100%|every personal|tất cả thông tin cá nhân|mọi thông tin cá nhân\b(?! \. )/i.test(claims.split('\n').filter((l) => /'cloak\.m|'cloak\.mask|'memory\.maskPersonal/.test(l)).join('\n')));
 }

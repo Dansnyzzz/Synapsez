@@ -1,5 +1,5 @@
 {
-  "total": 275,
+  "total": 273,
   "files": {
     "public/js/api.js": 4,
     "public/js/app.js": 105,
@@ -25,7 +25,6 @@
     "server/providers/index.js": 1,
     "server/providers/openaiCompatible.js": 1,
     "server/research/debate.js": 2,
-    "server/scheduler.js": 1,
     "server/store/index.js": 1,
     "server/store/pg.js": 5,
     "server/subagents.js": 1,
@@ -33,7 +32,7 @@
     "server/tools/chart.js": 1,
     "server/tools/cloud.js": 2,
     "server/usage.js": 1,
-    "server/workflows.js": 3,
+    "server/workflows.js": 2,
     "worker/background.js": 1,
     "worker/browser.js": 8,
     "worker/index.js": 1,

@@ -14,7 +14,11 @@ import { LOCK, themeStanding } from './themes-panel.js';
  * arrows, as on the Settings page; the one in use keeps still, being already behind
  * everything. One not yet held can be looked at the same way, and says what earns it.
  *
- * @param {{ input: HTMLTextAreaElement, host: HTMLElement, themes: { list: () => Promise<any>, wear: (id: string) => void, selected: () => string },
+ * It shows at once, from the list as last known (owner, 2026-11-08: typing the word
+ * waited on the server); what the server says follows, and changes the row only where
+ * it differs.
+ *
+ * @param {{ input: HTMLTextAreaElement, host: HTMLElement, themes: { list: () => Promise<any>, known: () => any, wear: (id: string) => void, selected: () => string },
  *   toast: (text: string, kind?: string) => void, clear: () => void }} deps
  */
 export function createThemePicker({ input, host, themes, toast, clear }) {
@@ -67,12 +71,16 @@ export function createThemePicker({ input, host, themes, toast, clear }) {
     </button>`;
   }
 
-  function paint() {
+  /** @param {string|null} [keep] the tile to keep lit, by id */
+  function paint(keep = null) {
     host.innerHTML = `<div class="tpick__head"><span class="tpick__chip">/theme</span><span class="tpick__title">${escapeHtml(t('theme.picker.title'))}</span><span class="tpick__keys">${escapeHtml(t('theme.picker.keys'))}</span></div>
       <div class="tpick__row" role="listbox" aria-label="${escapeHtml(t('theme.picker.title'))}">${list.map(tileHtml).join('')}</div>`;
-    const here = list.findIndex((theme) => theme.id === themes.selected());
+    const here = list.findIndex((theme) => theme.id === (keep ?? themes.selected()));
     light(here < 0 ? 0 : here, { play: false });
   }
+
+  /** What the row shows, to tell whether a fresh answer changes anything. */
+  const shape = (rows) => rows.map((row) => `${row.id}:${row.owned ? 1 : 0}`).join(',');
 
   function markCurrent() {
     for (const tile of tiles()) tile.classList.toggle('is-current', tile.dataset.id === themes.selected());
@@ -86,16 +94,28 @@ export function createThemePicker({ input, host, themes, toast, clear }) {
     input.setAttribute('aria-controls', host.id);
     asking += 1;
     const mine = asking;
-    host.innerHTML = `<div class="tpick__head"><span class="tpick__chip">/theme</span><span class="tpick__title">${escapeHtml(t('theme.loading'))}</span></div>`;
+    const known = themes.known();
+    if (known?.themes?.length) {
+      list = known.themes;
+      progress = known.progress;
+      paint();
+    } else {
+      host.innerHTML = `<div class="tpick__head"><span class="tpick__chip">/theme</span><span class="tpick__title">${escapeHtml(t('theme.loading'))}</span></div>`;
+    }
     try {
       const answer = await themes.list();
       if (mine !== asking || !open) return;
+      const changed = shape(answer.themes) !== shape(list);
       list = answer.themes;
       progress = answer.progress;
-      paint();
+      if (changed) paint(tiles()[lit]?.dataset.id || null);
     } catch (err) {
-      if (mine === asking) toast(err.message, 'error');
-      hide();
+      if (mine !== asking) return;
+      // Shown from what was known, the row stays: only an empty one is worth closing.
+      if (!list.length) {
+        toast(err.message, 'error');
+        hide();
+      }
     }
   }
 

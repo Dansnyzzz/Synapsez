@@ -383,7 +383,8 @@ section('a reply says where it went');
   check('with hiding off, it says the words went as written', /Hiding is off/.test(second), second);
 
   const think = await page.evaluate(() => [...document.querySelectorAll('#messages .think__note')].map((n) => n.textContent));
-  check('reasoning says whose words it is', /summary the provider wrote/.test(think[0] || '') && /as the model sent it/.test(think[1] || ''), think.join(' | '));
+  // A provider's summary says so; the model's own reasoning carries no line under it (owner, 2026-11-08).
+  check('a provider\'s summary says whose words it is, and the model\'s own reasoning has no note', think.length === 1 && /summary the provider wrote/.test(think[0] || ''), think.join(' | '));
   const hiddenFolded = await page.evaluate(() => {
     const note = document.querySelector('#messages .think__note');
     return getComputedStyle(note).display;
@@ -404,13 +405,13 @@ section('a reply says where it went');
   });
   check('the shield leads to the page that explains it', /How your data travels/.test(page2.text), page2.text.slice(0, 80));
   check('its section stays lit in the list', page2.lit === 'privacy', page2.lit);
-  check('three tables: the meanings, the measured figures, the providers', page2.tables === 3, String(page2.tables));
-  check('the eight meanings', /Confidential computing/.test(page2.text) && /Image cloaking/.test(page2.text) && /Search-engine cloaking/.test(page2.text) && /Data poisoning/.test(page2.text));
-  check('a placeholder shows as words, not as markup', /<EMAIL_3f9a1c2b>/.test(page2.text));
+  // The owner kept two parts (2026-11-08): the settings now, and what the mask catches, measured live.
+  check('two tables: the measured figures, and what was hidden for this account', page2.tables >= 1 && page2.tables <= 2, String(page2.tables));
+  check('the settings as they are now', /Personal details hidden from the provider/.test(page2.text) && /Your settings right now|settings/i.test(page2.text), page2.text.slice(0, 200));
+  check('measured as the page opened, and saying when', /Measured at \d/.test(page2.text), page2.text.slice(0, 400));
   check('the figures are percentages, none of them promising everything overall', /70%/.test(page2.text) && /What it does not catch/.test(page2.text));
-  check('chain-of-thought monitoring, with where it was read', /Chain-of-thought monitoring/.test(page2.text) && page2.links.some((l) => /arxiv\.org\/abs\/2503\.11926/.test(l.href)));
-  check('the providers, each with its source', ['privacy.claude.com', 'developers.openai.com', 'aistudio.google.com', 'openrouter.ai', 'orcarouter.ai'].every((p) => page2.links.some((l) => l.href.includes(p))));
-  check('links do not hand the page over', page2.links.every((l) => /noopener/.test(l.rel)));
+  check('what was hidden in this account\'s own conversations is counted, or it says why not', /In your conversations, the last 30 days/.test(page2.text));
+  check('and nothing else is left on it: no meanings, no research, no providers', !/Confidential computing|Chain-of-thought monitoring|arxiv\.org/.test(page2.text));
   check('nothing makes the page scroll sideways', page2.sideways <= 1, String(page2.sideways));
 
   await page.setViewportSize({ width: 390, height: 800 });

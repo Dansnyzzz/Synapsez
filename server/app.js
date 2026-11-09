@@ -63,6 +63,7 @@ import {
   runTaskNow,
   validZone,
   sweep,
+  UNATTENDED_POLICIES,
 } from './scheduler.js';
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
@@ -111,11 +112,13 @@ import { mountYourDataRoutes } from './routes/yourData.js';
 import { cloudBrowserState, cloudBrowserInput, closeCloudBrowser } from './cloudBrowser/index.js';
 import { EFFORTS, DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
+import { mountBotRoutes } from './routes/bot.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
 import { approximateLocation } from './whereabouts.js';
 import { e2bConfigured } from './e2b.js';
 import { forgetMachine } from './sandbox.js';
+import { diskSummary } from './machineCare.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -328,15 +331,11 @@ export function createApp() {
     !!chat?.run_lock_at && Date.now() - new Date(chat.run_lock_at).getTime() < RUN_LEASE_STALE_MS;
 
   /**
-   * What a scheduled run may do without being asked.
-   *
-   * The same three words the loop already understands, narrowed to the ones a
-   * task can sensibly choose: a run at 3am cannot be asked anything, so `ask`
-   * means "stop at the first risky step" rather than "prompt", and the form
-   * says exactly that. Anything else is ignored and the account default wins,
-   * which is the safe direction to fail in.
+   * What a scheduled run may do without being asked — the list workflows use
+   * too (scheduler.js). For a task anything else is ignored and the account
+   * default wins, which is the safe direction to fail in.
    */
-  const TASK_POLICIES = new Set(['ask', 'guarded', 'auto']);
+  const TASK_POLICIES = UNATTENDED_POLICIES;
 
   /** `req.body` is undefined in Express 5 when no JSON arrived — never assume it. */
   const body = (req) => req.body || {};
@@ -418,10 +417,10 @@ export function createApp() {
     return account ? `user:${account.id}` : named;
   };
 
-  // Throttled on two axes at once — the caller's address and the email being
-  // tried — so one person grinding one account cannot lock out an office behind
-  // the same address, and a botnet spread across addresses still hits the
-  // per-account ceiling.
+  // Throttled three ways at once (ratelimit.js `LIMITS.login`): the caller's address,
+  // that address on this account, and the account from everywhere at a looser ceiling
+  // — so a stranger's guesses lock out only the stranger's address, and a botnet spread
+  // across addresses still hits the per-account ceiling.
   app.post(
     '/api/login',
     rateLimit('login', (req) => accountKey(req.body?.email)),
@@ -1049,6 +1048,7 @@ export function createApp() {
         'figureCheck',
         'mascot',
         'rankAnonymous',
+        'eventMail',
       ];
       const patch = {};
       for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
@@ -1530,6 +1530,19 @@ export function createApp() {
     wrap(async (req, res) => {
       res.set('Cache-Control', 'no-store');
       res.json(await cloudBrowserState(req.user.id, { driving: req.query?.driving === '1' }));
+    }),
+  );
+
+  /**
+   * The cloud computer's disk, for Settings → System (owner, 2026-11-08): how full it was
+   * when a command last ran, and what tidying freed (machineCare.js). From what was stored:
+   * asking never wakes the machine. The account's own, from its session.
+   */
+  api.get(
+    '/cloud-computer/disk',
+    wrap(async (req, res) => {
+      res.set('Cache-Control', 'no-store');
+      res.json({ disk: await diskSummary(req.user.id) });
     }),
   );
 
@@ -2155,6 +2168,8 @@ export function createApp() {
 
   // Lifted into server/routes/workflows.js.
   mountWorkflowRoutes(api, { wrap, body });
+  // The Bot page: what needs the person, and Stop for both kinds.
+  mountBotRoutes(api, { wrap });
   mountConnectorRoutes(api, { wrap });
   mountMcpRoutes(api, { wrap, body });
 
@@ -2396,7 +2411,12 @@ export function createApp() {
         await store.releaseChatRun(req.user.id, chatId, runId, runSeq).catch(() => {});
         // Whatever this run had is written, so whatever was waiting on it may go.
         if (controller.signal.reason !== 'superseded') await store.clearRunStop(req.user.id, chatId).catch(() => {});
-        await afterTurn(req.user).catch((err) => log.error('event not looked at after a turn', err));
+        // Earned in this turn: said on the stream while it is open, so the page wears it at once (owner, 2026-11-08).
+        const earned = await afterTurn(req.user).catch((err) => {
+          log.error('earned things not looked at after a turn', err);
+          return null;
+        });
+        if (earned && !res.writableEnded) emit('earned', earned);
         if (!res.writableEnded) res.end();
       }
     }),
