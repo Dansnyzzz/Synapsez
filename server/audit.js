@@ -23,6 +23,8 @@ export const AUDIT_KINDS = [
   'key_added', 'key_removed', 'data_exported', 'data_imported', 'memory_cleared', 'chat_shared',
   'chat_unshared', 'settings_privacy', 'account_deleted_user', 'consent_given', 'session_revoked',
   'admin_changed', 'admin_removed', 'owner_transferred',
+  // A skill put on Discover or taken off by its author, and an administrator hiding one (41).
+  'skill_shared', 'skill_unshared', 'admin_skill_hidden', 'admin_skill_shown',
 ];
 
 /** The network a request came from, never the address itself. */

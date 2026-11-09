@@ -245,8 +245,10 @@ export function splitStatements(sql) {
  *  40  workflows.policy / project_id — the Bot page; top_ups — money put in, which
  *      the sponsor titles count; event_mail — who was told about an event;
  *      user_themes.by_hand — a theme an administrator gave
+ *  41  skills.shared_at / hidden_at / scan, skill_adds — a skill shared to Discover,
+ *      an administrator's hiding of it, and the people who added it by reference
  */
-export const SCHEMA_VERSION = 40;
+export const SCHEMA_VERSION = 41;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -3424,24 +3426,172 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT * FROM skills WHERE user_id = $1 AND id = $2', [userId, id]);
       return rows[0] ?? null;
     },
+    async getSkillByName(userId, name) {
+      const rows = await q('SELECT * FROM skills WHERE user_id = $1 AND lower(name) = lower($2)', [userId, name]);
+      return rows[0] ?? null;
+    },
     /**
      * Upsert by name, so teaching the same thing twice refines it rather than
      * duplicating it. `files` (34) is replaced only when given: the assistant's
      * `skill_write` refines the words and leaves the files a person added.
+     *
+     * `sharing` (41): 'on' puts it on Discover (keeping the moment it first went
+     * there), 'off' takes it off, 'keep' leaves it — unless `scanOk` is false, when
+     * a skill that turned out shared is taken off rather than shared unscanned. The
+     * caller has refused an edit the scan flags on a skill it knew was shared; this
+     * covers one shared by another tab in between. `scan` is kept with the skill.
      */
-    async saveSkill(userId, { id, name, description, instructions, files }) {
+    async saveSkill(userId, { id, name, description, instructions, files, sharing = 'keep', scan = null }) {
       const rows = await q(
-        `INSERT INTO skills (id, user_id, name, description, instructions, files)
-         VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '[]'::jsonb))
+        `INSERT INTO skills (id, user_id, name, description, instructions, files, shared_at, scan)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '[]'::jsonb), CASE WHEN $7::text = 'on' THEN NOW() END, $8::jsonb)
          ON CONFLICT (user_id, lower(name)) DO UPDATE SET
            description = EXCLUDED.description,
            instructions = EXCLUDED.instructions,
            files = COALESCE($6::jsonb, skills.files),
+           shared_at = CASE $7::text
+             WHEN 'on' THEN COALESCE(skills.shared_at, NOW())
+             WHEN 'off' THEN NULL
+             ELSE CASE WHEN $9::boolean THEN skills.shared_at END
+           END,
+           scan = COALESCE($8::jsonb, skills.scan),
            updated_at = NOW()
       RETURNING *`,
-        [id, userId, name, description, instructions, Array.isArray(files) ? toJson(files) : null],
+        [id, userId, name, description, instructions, Array.isArray(files) ? toJson(files) : null, sharing, scan ? toJson(scan) : null, scan ? scan.ok !== false : true],
       );
       return rows[0];
+    },
+
+    // ── shared skills (41) ──────────────────────────────────────────
+    //
+    // A skill's author shares it; anyone may then read it and add it, by
+    // reference. Every write is still the author's own (user_id = $1) or the
+    // adder's own row in skill_adds; another account reads a shared skill only
+    // here, and only while it is shared, not hidden and its author not suspended.
+
+    /**
+     * On Discover or off it, the author's choice. Sharing is a compare-and-set
+     * on the words that were scanned: an edit landing between the scan and this
+     * finds nothing to update, and the caller says so rather than sharing
+     * something unscanned.
+     */
+    async setSkillShared(userId, id, { shared, scan = null, scanned = null }) {
+      if (!shared) {
+        const rows = await q('UPDATE skills SET shared_at = NULL WHERE user_id = $1 AND id = $2 RETURNING *', [userId, id]);
+        return rows[0] ?? null;
+      }
+      const rows = await q(
+        `UPDATE skills SET shared_at = COALESCE(shared_at, NOW()), scan = $3::jsonb
+          WHERE user_id = $1 AND id = $2
+            AND description = $4 AND instructions = $5 AND files = $6::jsonb
+        RETURNING *`,
+        [userId, id, toJson(scan), scanned?.description ?? '', scanned?.instructions ?? '', toJson(Array.isArray(scanned?.files) ? scanned.files : [])],
+      );
+      return rows[0] ?? null;
+    },
+    /** What the scan said when sharing was refused — kept with the skill, which stays as it was. */
+    async noteSkillScan(userId, id, scan) {
+      await q('UPDATE skills SET scan = $3::jsonb WHERE user_id = $1 AND id = $2', [userId, id, toJson(scan)]);
+    },
+    /**
+     * Discover: every shared skill, newest made first. Names and descriptions,
+     * never the instructions — those are read through `getSharedSkill`. A
+     * moderator (`includeHidden`) also sees what was taken off, to put it back.
+     */
+    async listSharedSkills(viewerId, { includeHidden = false } = {}) {
+      return q(
+        `SELECT s.id, s.user_id, s.name, s.description, s.created_at, s.updated_at, s.hidden_at,
+                u.suspended_at IS NOT NULL AS author_suspended,
+                s.user_id = $1 AS mine, (a.user_id IS NOT NULL) AS added
+           FROM skills s
+           JOIN users u ON u.id = s.user_id
+           LEFT JOIN skill_adds a ON a.skill_id = s.id AND a.user_id = $1
+          WHERE s.shared_at IS NOT NULL
+            AND ($2::boolean OR (s.hidden_at IS NULL AND u.suspended_at IS NULL))
+          ORDER BY s.created_at DESC, s.id
+          LIMIT 300`,
+        [viewerId, includeHidden],
+      );
+    },
+    /** One shared skill, whole, for whoever reads or uses it — or null when it is not shared now. */
+    async getSharedSkill(viewerId, id, { includeHidden = false } = {}) {
+      const rows = await q(
+        `SELECT s.id, s.user_id, s.name, s.description, s.instructions, s.files, s.created_at, s.updated_at, s.hidden_at,
+                u.suspended_at IS NOT NULL AS author_suspended,
+                s.user_id = $1 AS mine,
+                EXISTS (SELECT 1 FROM skill_adds a WHERE a.skill_id = s.id AND a.user_id = $1) AS added
+           FROM skills s
+           JOIN users u ON u.id = s.user_id
+          WHERE s.id = $2 AND s.shared_at IS NOT NULL
+            AND ($3::boolean OR (s.hidden_at IS NULL AND u.suspended_at IS NULL))`,
+        [viewerId, id, includeHidden],
+      );
+      return rows[0] ?? null;
+    },
+    async countAddedSkills(userId) {
+      const rows = await q('SELECT COUNT(*)::int AS n FROM skill_adds WHERE user_id = $1', [userId]);
+      return rows[0]?.n ?? 0;
+    },
+    /** Add somebody else's shared skill — a reference to it, with the name it had. Null when it cannot be added. */
+    async addSharedSkill(userId, id) {
+      const rows = await q(
+        `INSERT INTO skill_adds (user_id, skill_id, name)
+         SELECT $1, s.id, s.name
+           FROM skills s
+           JOIN users u ON u.id = s.user_id
+          WHERE s.id = $2 AND s.user_id <> $1 AND s.shared_at IS NOT NULL
+            AND s.hidden_at IS NULL AND u.suspended_at IS NULL
+         ON CONFLICT (user_id, skill_id) DO UPDATE SET name = EXCLUDED.name
+         RETURNING *`,
+        [userId, id],
+      );
+      return rows[0] ?? null;
+    },
+    async removeAddedSkill(userId, id) {
+      const rows = await q('DELETE FROM skill_adds WHERE user_id = $1 AND skill_id = $2 RETURNING skill_id', [userId, id]);
+      return rows.length > 0;
+    },
+    /**
+     * What this account added, each with whether it can still be used: 'ok', or
+     * why not — 'unshared', 'hidden' (an administrator, or its author suspended),
+     * 'deleted'. Only an 'ok' one carries the author's current words; the rest
+     * keep the name they had when added, so the person can be told what went.
+     */
+    async listAddedSkills(userId) {
+      return q(
+        `SELECT a.skill_id, a.name AS added_name, a.added_at, v.status,
+                CASE WHEN v.status = 'ok' THEN s.name END AS name,
+                CASE WHEN v.status = 'ok' THEN s.description END AS description,
+                CASE WHEN v.status = 'ok' THEN s.updated_at END AS updated_at,
+                CASE WHEN v.status = 'ok' THEN s.user_id END AS author_id
+           FROM skill_adds a
+           LEFT JOIN skills s ON s.id = a.skill_id
+           LEFT JOIN users u ON u.id = s.user_id
+           CROSS JOIN LATERAL (
+             SELECT CASE
+               WHEN s.id IS NULL THEN 'deleted'
+               WHEN s.shared_at IS NULL THEN 'unshared'
+               WHEN s.hidden_at IS NOT NULL OR u.suspended_at IS NOT NULL THEN 'hidden'
+               ELSE 'ok'
+             END AS status
+           ) v
+          WHERE a.user_id = $1
+          ORDER BY a.added_at, a.skill_id`,
+        [userId],
+      );
+    },
+    /**
+     * An administrator takes a shared skill off Discover, or puts it back. The one
+     * call here not scoped to an account: the route allows administrators only.
+     */
+    async hideSharedSkill(id, hidden) {
+      const rows = await q(
+        `UPDATE skills SET hidden_at = CASE WHEN $2::boolean THEN COALESCE(hidden_at, NOW()) END
+          WHERE id = $1 AND shared_at IS NOT NULL
+        RETURNING id, user_id, name, hidden_at`,
+        [id, hidden],
+      );
+      return rows[0] ?? null;
     },
     async setSkillEnabled(userId, id, enabled) {
       const rows = await q(

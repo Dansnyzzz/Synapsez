@@ -1,6 +1,5 @@
 import { openZip, looksLikeZip } from './office/zip.js';
 import { redactSecrets } from './redact.js';
-import { MAX_SKILL_FILES } from './skills.js';
 
 /**
  * Upload a skill — Settings → Skills → Add → Upload skill (owner, 2026-11-01,
@@ -16,6 +15,15 @@ import { MAX_SKILL_FILES } from './skills.js';
  * warnings — a real skill may need to post to a webhook — and the person
  * decides. Nothing in a skill is ever run here: a script it carries is text.
  */
+
+/**
+ * What a skill may carry beside its instructions (schema 34): a few text files
+ * — a template, a reference list, a script kept as text — read with it by
+ * `readSkill` and never run. Small on purpose: whatever is read goes into the
+ * conversation. Defined here, and re-exported by skills.js, so the two files do
+ * not import each other: skills.js scans a skill before it is shared (41).
+ */
+export const MAX_SKILL_FILES = 10;
 
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_FILE_CHARS = 20_000;
@@ -69,22 +77,36 @@ export function frontMatter(text) {
   return { meta, body: source.slice(block[0].length).trim() };
 }
 
+/** The two refusals, worded for what the person was doing — uploading it, or sharing it (41). */
+const REFUSED = {
+  upload: {
+    key: (where) => `${where} holds what looks like a key, token or password. Take it out, then upload again.`,
+    hidden: (where) => `${where} has invisible characters, which can hide instructions. Remove them, then upload again.`,
+  },
+  share: {
+    key: (where) => `${where} holds what looks like a key, token or password. Take it out, then share it again.`,
+    hidden: (where) => `${where} has invisible characters, which can hide instructions. Remove them, then share it again.`,
+  },
+};
+
 /**
  * What a skill would say to the model, checked: `block` refuses it, `warn` is
  * shown and left to the person. Every finding names where it was found.
  *
  * @param {{ name: string, description: string, instructions: string, files?: { name: string, content: string }[] }} skill
+ * @param {{ then?: 'upload' | 'share' }} [options]  what a refusal tells the person to do again
  * @returns {{ level: 'block' | 'warn' | 'note', text: string }[]}
  */
-export function scanSkill(skill) {
+export function scanSkill(skill, { then = 'upload' } = {}) {
+  const say = REFUSED[then] || REFUSED.upload;
   const parts = [
     ['SKILL.md', `${skill.name}\n${skill.description}\n${skill.instructions}`],
     ...(skill.files || []).map((f) => [f.name, f.content]),
   ];
   const findings = [];
   for (const [where, text] of parts) {
-    if (redactSecrets(text).found.length) findings.push({ level: 'block', text: `${where} holds what looks like a key, token or password. Take it out, then upload again.` });
-    if (INVISIBLE.test(text)) findings.push({ level: 'block', text: `${where} has invisible characters, which can hide instructions. Remove them, then upload again.` });
+    if (redactSecrets(text).found.length) findings.push({ level: 'block', text: say.key(where) });
+    if (INVISIBLE.test(text)) findings.push({ level: 'block', text: say.hidden(where) });
     if (OVERRIDE.test(text)) findings.push({ level: 'warn', text: `${where} tells the assistant to set aside its other instructions.` });
     const sends = SENDS.exec(text);
     if (sends) {

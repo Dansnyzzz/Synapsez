@@ -39,7 +39,7 @@ import { publish, subscribe, poll, forget as forgetScreen } from './screenHub.js
 import { keyProviderMeta, CATALOG } from './providers/catalog.js';
 import { intakeKey } from './keyIntake.js';
 import { getRecommended, setRecommended, suggestionFor, recommendedWithLabels } from './recommend.js';
-import { isOwner, permissionsOf, cleanPermissions, mayActOn, requirePermission, requireOwner } from './adminRoles.js';
+import { isOwner, permissionsOf, cleanPermissions, mayActOn, requirePermission, requireOwner, can } from './adminRoles.js';
 import {
   browse,
   refreshLibrary,
@@ -51,7 +51,16 @@ import {
 import { TOOLS } from './tools/definitions.js';
 import { executeTool } from './tools/execute.js';
 import { runAgent } from './agent.js';
-import { saveSkill, builtinSkillCards } from './skills.js';
+import {
+  writeSkill,
+  setSkillSharing,
+  builtinSkillCards,
+  addedSkillCards,
+  discoverSkills,
+  sharedSkill,
+  addSharedSkill,
+  SHARE_BY_DEFAULT,
+} from './skills.js';
 import { readSkillUpload } from './skillUpload.js';
 import { addSource, shelfCapacity } from './projects.js';
 import {
@@ -1863,19 +1872,84 @@ export function createApp() {
   api.get(
     '/skills',
     wrap(async (req, res) => {
-      // The built-ins too, for the + menu — names and when to use them only.
-      res.json({ skills: await getStore().listSkills(req.user.id), builtin: builtinSkillCards() });
+      const skills = await getStore().listSkills(req.user.id);
+      // The built-ins too, for the + menu — names and when to use them only. And
+      // the shared skills this account added (41), each saying whether it still is.
+      res.json({ skills, added: await addedSkillCards(req.user.id, skills), builtin: builtinSkillCards(), shareByDefault: SHARE_BY_DEFAULT });
     }),
   );
+
+  /**
+   * A refusal the skills module said in words — sharing the scan refused (422,
+   * with what it found, in the reader's language), a skill gone (404) — or the
+   * usual 400 for a skill that is not well formed.
+   */
+  const skillRefusal = (req, res, err) =>
+    res.status(err?.status || 400).json({
+      error: clientError(err),
+      ...(Array.isArray(err?.findings) ? { findings: err.findings.map((f) => ({ level: f.level, text: translateMessage(f.text, languageOf(req)) })) } : {}),
+    });
+
+  /** Going on Discover, or coming off it, is in the account's security record — like a shared link. */
+  const noteSharing = (req, change) => (change ? audit(req, req.user.id, change === 'on' ? 'skill_shared' : 'skill_unshared') : null);
 
   api.post(
     '/skills',
     wrap(async (req, res) => {
       try {
-        res.status(201).json({ skill: await saveSkill(req.user.id, req.body || {}) });
+        const { skill, change } = await writeSkill(req.user.id, body(req));
+        await noteSharing(req, change);
+        res.status(201).json({ skill });
       } catch (err) {
-        res.status(400).json({ error: clientError(err) });
+        skillRefusal(req, res, err);
       }
+    }),
+  );
+
+  /**
+   * Discover (owner, 2026-11-09): the skills shared on this site, newest made
+   * first, by their authors' public names. Anyone signed in may look; an
+   * administrator who manages people also sees what was taken off, to put it back.
+   */
+  api.get(
+    '/skills/shared',
+    wrap(async (req, res) => {
+      const moderator = can(req.user, 'users');
+      res.json({ skills: await discoverSkills(req.user, { moderator }), moderator });
+    }),
+  );
+
+  /** One shared skill whole, to read before adding it. Only while it is shared — 404 otherwise, for anyone. */
+  api.get(
+    '/skills/shared/:id',
+    wrap(async (req, res) => {
+      const skill = await sharedSkill(req.user, req.params.id, { moderator: can(req.user, 'users') });
+      if (!skill) return res.status(404).json({ error: 'That skill is not shared any more.' });
+      res.json({ skill });
+    }),
+  );
+
+  /** Add a shared skill to this account — a reference, so its author's edits reach it. */
+  api.put(
+    '/skills/added/:id',
+    wrap(async (req, res) => {
+      try {
+        await addSharedSkill(req.user.id, req.params.id);
+        const added = (await addedSkillCards(req.user.id)).find((a) => a.id === req.params.id) || null;
+        res.status(201).json({ added });
+      } catch (err) {
+        skillRefusal(req, res, err);
+      }
+    }),
+  );
+
+  api.delete(
+    '/skills/added/:id',
+    wrap(async (req, res) => {
+      if (!(await getStore().removeAddedSkill(req.user.id, req.params.id))) {
+        return res.status(404).json({ error: 'That skill is not one you added.' });
+      }
+      res.json({ ok: true });
     }),
   );
 
@@ -1899,7 +1973,10 @@ export function createApp() {
         let error = read.error || null;
         if (req.body?.save && read.skill && !read.findings.some((f) => f.level === 'block')) {
           try {
-            saved = (await saveSkill(req.user.id, read.skill)).name;
+            // Replacing a shared skill passes the sharing scan too, or is refused (41).
+            const written = await writeSkill(req.user.id, read.skill);
+            await noteSharing(req, written.change);
+            saved = written.skill.name;
           } catch (err) {
             // A save the store refused, said plainly — not a driver's words (CODE-077).
             error = clientError(err);
@@ -1950,11 +2027,32 @@ export function createApp() {
     }),
   );
 
+  /**
+   * Switch one of the account's own skills on or off (`enabled`), or put it on
+   * Discover or take it off (`shared`, scanned first). Each only when it is sent:
+   * a body without `enabled` used to switch the skill off.
+   */
   api.patch(
     '/skills/:id',
     wrap(async (req, res) => {
-      const skill = await getStore().setSkillEnabled(req.user.id, req.params.id, !!req.body?.enabled);
-      if (!skill) return res.status(404).json({ error: 'Skill not found' });
+      const patch = body(req);
+      if (!('enabled' in patch) && !('shared' in patch)) return res.status(400).json({ error: 'Say what to change: enabled or shared.' });
+      let skill = null;
+      if ('shared' in patch) {
+        try {
+          const result = await setSkillSharing(req.user.id, req.params.id, !!patch.shared);
+          if (!result) return res.status(404).json({ error: 'Skill not found' });
+          await noteSharing(req, result.change);
+          skill = result.skill;
+        } catch (err) {
+          if (!err?.status) throw err;
+          return skillRefusal(req, res, err);
+        }
+      }
+      if ('enabled' in patch) {
+        skill = await getStore().setSkillEnabled(req.user.id, req.params.id, !!patch.enabled);
+        if (!skill) return res.status(404).json({ error: 'Skill not found' });
+      }
       res.json({ skill });
     }),
   );
@@ -2598,6 +2696,25 @@ export function createApp() {
       await forgetMachine(req.params.id);
       await getStore().deleteUser(req.params.id);
       res.json({ ok: true });
+    }),
+  );
+
+  /**
+   * Take a shared skill off Discover, or put it back (owner, 2026-11-09) — under
+   * Manage people, the permission that already covers what people do here. It is
+   * gone at once for everyone who added it, who are told it was taken off; its
+   * author keeps it, and sees that it was. In the administrator's security record.
+   */
+  admin.patch(
+    '/skills/:id',
+    requirePermission('users'),
+    wrap(async (req, res) => {
+      const { hidden } = body(req);
+      if (typeof hidden !== 'boolean') return res.status(400).json({ error: 'Say whether to hide it: hidden true or false.' });
+      const row = await getStore().hideSharedSkill(req.params.id, hidden);
+      if (!row) return res.status(404).json({ error: 'No shared skill has that id.' });
+      await audit(req, req.user.id, hidden ? 'admin_skill_hidden' : 'admin_skill_shown', { skill: row.id, author: row.user_id });
+      res.json({ ok: true, hidden: !!row.hidden_at });
     }),
   );
 

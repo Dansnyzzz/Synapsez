@@ -1153,3 +1153,25 @@ CREATE TABLE IF NOT EXISTS event_mail (
   ok      BOOLEAN NOT NULL DEFAULT TRUE,
   PRIMARY KEY (event, user_id)
 );
+
+-- 41: skills people share with each other (owner, 2026-11-09; server/skills.js).
+-- `shared_at`: when its author put it on Discover, NULL while it is theirs alone —
+-- every existing skill stays private. `hidden_at`: an administrator took it off
+-- Discover; sharing it again does not bring it back, only an administrator does.
+-- `scan`: what the safety scan found when it was last shared or edited while shared.
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS scan JSONB;
+CREATE INDEX IF NOT EXISTS skills_shared_idx ON skills (created_at DESC) WHERE shared_at IS NOT NULL;
+-- A shared skill somebody added: a reference, never a copy, so the author's edit
+-- reaches them the next time it is used. No foreign key to `skills` on purpose: when
+-- the author deletes it the row stays, with the name it had, so the person who added
+-- it is told it went rather than finding a gap. Their own account's going takes it.
+CREATE TABLE IF NOT EXISTS skill_adds (
+  user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  skill_id TEXT NOT NULL,
+  name     TEXT NOT NULL,
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS skill_adds_skill_idx ON skill_adds (skill_id);
