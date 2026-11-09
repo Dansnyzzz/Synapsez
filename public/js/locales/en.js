@@ -2534,7 +2534,7 @@ export const en = {
   'ranking.pet.pet-gold-whale.name': 'Golden whale',
   'ranking.pet.pet-gold-whale.desc': 'Solid gold catching every band of light, a crown, turning rings of light and a rain of gold that never stops.',
   'ranking.pet.pet-bronze-dolphin.name': 'Bronze dolphin',
-  'ranking.pet.pet-bronze-dolphin.desc': 'Leaping from the water in an arc, spray flying. For third place.',
+  'ranking.pet.pet-bronze-dolphin.desc': 'For third place: a bronze dolphin with a round brow and a short beak, a curved dorsal fin and its flukes held up, a light running along its back.',
   'ranking.pet.pet-silver-marlin.name': 'Silver marlin',
   'ranking.pet.pet-silver-marlin.desc': 'For second place: a sleek silver marlin with a long raised bill, a tall ribbed sail and a crescent tail, a light sweeping along its side.',
   'ranking.pet.pet-koi-dragon.name': 'Koi dragon',

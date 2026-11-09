@@ -33,6 +33,7 @@ const DRAWN = Object.freeze({
   'jade-turtle': () => import('./jade-turtle.js'),
   'koi-dragon': () => import('./koi-dragon.js'),
   'silver-marlin': () => import('./silver-marlin.js'),
+  'bronze-dolphin': () => import('./bronze-dolphin.js'),
 });
 
 /**

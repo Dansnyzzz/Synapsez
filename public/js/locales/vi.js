@@ -2520,7 +2520,7 @@ export const vi = {
   'ranking.pet.pet-gold-whale.name': 'Cá voi hoàng kim',
   'ranking.pet.pet-gold-whale.desc': 'Vàng ròng phản chiếu từng dải sáng, vương miện, vòng sáng xoay và mưa vàng không ngớt.',
   'ranking.pet.pet-bronze-dolphin.name': 'Cá heo đồng',
-  'ranking.pet.pet-bronze-dolphin.desc': 'Nhảy lên khỏi mặt nước theo vòng cung, bọt nước bắn tung. Dành cho hạng ba.',
+  'ranking.pet.pet-bronze-dolphin.desc': 'Dành cho hạng ba: cá heo đúc đồng, trán tròn mõm ngắn, vây lưng cong, đuôi vểnh lên và ánh sáng chạy dọc lưng.',
   'ranking.pet.pet-silver-marlin.name': 'Cá kiếm bạc',
   'ranking.pet.pet-silver-marlin.desc': 'Dành cho hạng nhì: cá kiếm bạc thon gọn, mũi kiếm dài hướng lên, vây buồm cao có gân, đuôi lưỡi liềm và ánh bạc lướt dọc thân.',
   'ranking.pet.pet-koi-dragon.name': 'Cá chép hoá rồng',
