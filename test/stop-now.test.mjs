@@ -70,6 +70,16 @@ const provider = http.createServer((req, res) => {
       });
       return;
     }
+    // Answers at once the first time, most of what it was sent read from its cache; slowly after.
+    if (/cached-then-slow/.test(String(body.model)) && !cutOff.has(body.model)) {
+      cutOff.add(body.model);
+      request.finished = true;
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Noted.' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1000, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 900 } } })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
     // Runs into its output limit the first time, a long way in, and is slow the second.
     if (/cut-long/.test(String(body.model)) && !cutOff.has(body.model)) {
       cutOff.add(body.model);
@@ -287,6 +297,38 @@ section('what a stop books: only what this request spent');
   const { stoppedUsage } = await import('../server/agent.js');
   const only = stoppedUsage({ text: 'abcdefgh', thinking: 'abcd', drafted: 4 }, 100);
   check('an estimate of what came back, and what it was sent', only.output === 4 && only.input === 100, JSON.stringify(only));
+
+  // Owner, 2026-11-08: a cached conversation's stop was priced as if nothing were cached.
+  const before = { input: 1000, cacheRead: 900 };
+  check('what the provider had cached last time is booked as read from its cache', stoppedUsage({ text: 'x' }, 1200, before).cacheRead === 900);
+  check('  never more than was read then: what came after is new to the cache', stoppedUsage({ text: 'x' }, 5000, before).cacheRead === 900);
+  check('  a smaller prompt (a fold) keeps only the share', stoppedUsage({ text: 'x' }, 500, before).cacheRead === 450);
+  check('  and nothing to go by is full price, as before', !('cacheRead' in stoppedUsage({ text: 'x' }, 1200, { input: 1000 })) && !('cacheRead' in stoppedUsage({ text: 'x' }, 1200, null)));
+  const { estimateCost } = await import('../server/providers/catalog.js');
+  const entry = { price: { in: 3, out: 15 } };
+  const cached = estimateCost(entry, stoppedUsage({ text: '' }, 1200, before));
+  check('  so it is priced at the cache rate', Math.abs(cached - (300 + 900 * 0.1) / 1e6 * 3) < 1e-12 && cached < estimateCost(entry, stoppedUsage({ text: '' }, 1200)), String(cached));
+}
+
+section('a stop on a cached conversation books its cache reads');
+{
+  await store.createUser({ id: 'u-cache', email: 'cache@example.com', name: 'Cache', passwordHash: await hashPassword(password), role: 'user' });
+  await setApiKey('u-cache', 'openai', 'sk-cache-key');
+  await setPrefs('u-cache', { policy: 'auto', qualityGate: false });
+  const who = await login('cache@example.com');
+  const chatId = await newChat('Remember this', who);
+  await startRun(chatId, { model: 'openai/cached-then-slow-1' }, who).finished;
+  const first = await store.usageThisMonth('u-cache');
+  await call('POST', `/api/chats/${chatId}/messages`, { text: 'Now write something long' }, who);
+  const run = startRun(chatId, { model: 'openai/cached-then-slow-1' }, who);
+  await until(() => words(run.events) >= 3);
+  await call('POST', `/api/chats/${chatId}/stop`, {}, who);
+  run.abort.abort();
+  await run.finished;
+  const booked = await until(async () => (await store.usageThisMonth('u-cache')).calls > first.calls);
+  const after = await store.usageThisMonth('u-cache');
+  check('the first answer said what it read from its cache', first.cacheRead === 900, JSON.stringify(first));
+  check('  and the stopped one is booked with cache reads of its own', booked && after.cacheRead > first.cacheRead && after.cacheRead - first.cacheRead <= 900, JSON.stringify(after));
 }
 
 section('a stop books what that request cost, and no more');
