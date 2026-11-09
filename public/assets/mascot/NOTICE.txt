@@ -15,9 +15,10 @@ permission": a permission the artist gave to that plugin, not a licence that pas
 to anyone who copies the files. An earlier version of this notice said the pictures
 came under the MIT licence; that was wrong, and is corrected here (2026-11-08).
 
-All rights in the whale art stay with the artist. Whether Synapsez asks the artist for
-written permission or replaces these pictures is the owner's decision, still open on
-2026-11-08.
+All rights in the whale art stay with the artist. The owner of Synapsez says the artist
+has allowed Synapsez to use these pictures (2026-11-09), and is asking for that
+permission in writing; until it is in hand, it is recorded here as the owner's word,
+not as a written licence.
 
 
 The title creatures

@@ -48,7 +48,7 @@
 
 **Themes, boards and titles** (schema 37, `server/themes.js`, `public/js/scenes.js`, `themes-panel.js`, `ranking-panel.js`). Eight original animated scenes, painted by code. Top 3 by tokens and by spending for each UTC month and year get a prize theme and a title; administrators are on no board and hold every theme. A board shows an account name and a title, never an email, and anyone can show "A member" instead. A closed board is kept as it was given out. New permission `themes`. Privacy notice `privacy-2026-11-04`, for the boards.
 
-**A whale on the writing box** (`public/js/mascot.js`, art from Nwflower/dsh-claude-style under MIT, credited in `public/assets/mascot/NOTICE.txt`).
+**A whale on the writing box** (`public/js/mascot.js`, art by calmly-eating-bugs from Nwflower/dsh-claude-style, used with the artist's permission and not under MIT as first written here, credited in `public/assets/mascot/NOTICE.txt`).
 
 **New built-in skills**, adapted where the licence allows and rewritten where it does not (`server/skills/THIRD_PARTY_NOTICES.md`): design direction, data visualisation, palettes, design QA, HTML email, natural writing, landing pages, posters, automation; deeper deck, document and PDF craft.
 
