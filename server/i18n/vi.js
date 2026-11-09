@@ -658,6 +658,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
 
   /* ── chuỗi việc ────────────────────────────────────────────────── */
   'Workflow not found': 'Không tìm thấy chuỗi việc',
+  'Pick one of the permissions: ask, guarded or auto.': 'Hãy chọn một trong các quyền: ask, guarded hoặc auto.',
   'A workflow needs at least one step.': 'Chuỗi việc cần ít nhất một bước.',
   'A workflow is capped at 20 steps. Split it, or make a step do more.': 'Chuỗi việc tối đa 20 bước. Hãy tách ra, hoặc gộp nhiều việc vào một bước.',
   'Step {0} has no instruction.': 'Bước {0} chưa có hướng dẫn.',

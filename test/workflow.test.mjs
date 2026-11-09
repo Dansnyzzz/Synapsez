@@ -1059,6 +1059,305 @@ section('a new day starts the workflow over, whatever became of yesterday');
   check('a deleted conversation is replaced by a new one, not a stopped workflow', !!third.chat_id && third.chat_id !== second.chat_id && !!(await store.getChat(aliceId, third.chat_id)));
 }
 
+/* ── the Bot page (owner, 2026-11-08) ───────────────────────────── */
+
+const { __testing: wfTesting, resumeNote } = await import('../server/workflows.js');
+const { __agent: taskAgent, runTaskNow } = await import('../server/scheduler.js');
+const { holdRun } = await import('../server/liveRuns.js');
+const { TASK_STOPPED, taskState, workflowState, sortByState } = await import('../public/js/bot-status.js');
+
+/** A stand-in agent turn that answers at once, and keeps what it was given. */
+const quickAgent = (seen) => async (options) => {
+  seen.push(options);
+  options.emit('message', { message: { role: 'assistant', text: 'Done.' } });
+  options.emit('done', { stopReason: 'end_turn' });
+};
+
+/**
+ * One that runs until it is stopped, the way a long step does — and says when
+ * it started, so a test can press Stop while it is going. Ten seconds at most,
+ * so a stop that never arrives fails the check instead of hanging the suite.
+ */
+function heldAgent() {
+  let begun;
+  const started = new Promise((resolve) => (begun = resolve));
+  const state = { aborted: false, abortedAt: 0 };
+  const fn = async (options) => {
+    begun(options);
+    await new Promise((resolve) => {
+      const done = setTimeout(resolve, 10_000);
+      options.signal?.addEventListener('abort', () => {
+        state.aborted = true;
+        state.abortedAt = Date.now();
+        clearTimeout(done);
+        resolve();
+      }, { once: true });
+    });
+    options.emit('done', { stopReason: state.aborted ? 'aborted' : 'end_turn' });
+  };
+  return { fn, started, state };
+}
+
+const aliceProject = (await alice.call('POST', '/api/projects', { name: 'Filings' })).body?.project;
+const bobProject = (await bob.call('POST', '/api/projects', { name: 'Not yours' })).body?.project;
+
+section('a workflow takes permissions and a project, the way a task does');
+{
+  check('there is a project of each account to file under', !!aliceProject?.id && !!bobProject?.id);
+  const made = await alice.call('POST', '/api/workflows', {
+    title: 'Filed one',
+    steps: ['read the filings', 'summarise them'],
+    policy: 'guarded',
+    projectId: aliceProject.id,
+  });
+  const wf = made.body?.workflow;
+  check('it is created with both', made.status === 201 && wf?.policy === 'guarded' && wf?.project_id === aliceProject.id, JSON.stringify({ s: made.status, p: wf?.policy, j: wf?.project_id }));
+
+  const unknown = await alice.call('POST', '/api/workflows', { title: 'x', steps: ['a'], policy: 'root' });
+  check('a permission nobody knows is refused, not ignored', unknown.status === 400 && /ask, guarded or auto/.test(unknown.body?.error || ''), `${unknown.status} ${unknown.body?.error}`);
+  const foreign = await alice.call('POST', '/api/workflows', { title: 'x', steps: ['a'], projectId: bobProject.id });
+  check("another account's project is a 404", foreign.status === 404, `${foreign.status}`);
+  check('  and nothing was made', !(await alice.call('GET', '/api/workflows')).body?.workflows?.some((w) => w.title === 'x'));
+
+  const auto = await alice.call('PATCH', `/api/workflows/${wf.id}`, { policy: 'auto' });
+  check('the permission can be changed', auto.body?.workflow?.policy === 'auto', auto.body?.workflow?.policy);
+  const reset = await alice.call('PATCH', `/api/workflows/${wf.id}`, { policy: '' });
+  check('  and put back to the account default', reset.status === 200 && reset.body?.workflow?.policy === null, JSON.stringify(reset.body?.workflow?.policy));
+  const badPatch = await alice.call('PATCH', `/api/workflows/${wf.id}`, { policy: 'everything' });
+  check('  but not to a word nobody knows', badPatch.status === 400, `${badPatch.status}`);
+  const steal = await alice.call('PATCH', `/api/workflows/${wf.id}`, { projectId: bobProject.id });
+  check("  nor into another account's project", steal.status === 404, `${steal.status}`);
+  check('  which leaves it where it was', (await store.getWorkflow(aliceId, wf.id)).project_id === aliceProject.id);
+
+  const page = await alice.call('GET', `/api/workflows/${wf.id}`);
+  check('its page names the project', page.body?.project?.name === 'Filings', JSON.stringify(page.body?.project));
+  const bobs = await bob.call('PATCH', `/api/workflows/${wf.id}`, { policy: 'auto' });
+  check("another account cannot change its permissions", bobs.status === 404, `${bobs.status}`);
+
+  const out = await alice.call('PATCH', `/api/workflows/${wf.id}`, { projectId: null });
+  check('it can be taken out of its project', out.status === 200 && out.body?.workflow?.project_id === null);
+}
+
+section('a step runs with its workflow\'s permissions, in its project');
+{
+  const seen = [];
+  wfTesting.useAgent(quickAgent(seen));
+  try {
+    const wf = await store.createWorkflow(aliceId, {
+      id: 'wf-policy',
+      title: 'Guarded and filed',
+      steps: normaliseSteps(['one', 'two']),
+      nextRunAt: null,
+      policy: 'guarded',
+      projectId: aliceProject.id,
+    });
+    const done = await runWorkflowNow(aliceId, wf.id);
+    check('the run finishes with the stand-in agent', done?.status === 'done', done?.status);
+    check('  every step was handed the workflow\'s permission', seen.length === 2 && seen.every((o) => o.policy === 'guarded'), seen.map((o) => o.policy).join(','));
+    check('  and a way to be stopped', seen.every((o) => o.signal && typeof o.signal.aborted === 'boolean'));
+    const chat = await store.getChat(aliceId, done.chat_id);
+    check('  in a conversation filed under its project', chat?.project_id === aliceProject.id, chat?.project_id);
+
+    await store.updateWorkflow(aliceId, wf.id, { policy: null, projectId: null });
+    seen.length = 0;
+    const again = await runWorkflowNow(aliceId, wf.id);
+    check('with no permission of its own the account default is used', seen.length === 2 && seen.every((o) => o.policy === null), seen.map((o) => String(o.policy)).join(','));
+    check('  and taken out of the project it starts a conversation outside it', again.chat_id !== done.chat_id && !(await store.getChat(aliceId, again.chat_id))?.project_id);
+  } finally {
+    wfTesting.useAgent(null);
+  }
+}
+
+section('a resumed step is told to look at what it already did');
+{
+  const seen = [];
+  wfTesting.useAgent(quickAgent(seen));
+  try {
+    const steps = ['research the market', 'write it up'];
+    const wf = await store.createWorkflow(aliceId, { id: 'wf-resume-note', title: 'Resumed', steps: normaliseSteps(steps), nextRunAt: null });
+    const chat = await store.createChat(aliceId, { id: 'c-resume-note', title: 'Resumed' });
+    await store.appendMessage(aliceId, chat.id, { id: 'u-rn1', role: 'user', text: steps[0] });
+    // Cut off while only reading: the step is picked up again rather than parked.
+    await store.appendMessage(aliceId, chat.id, { id: 'a-rn1', role: 'assistant', text: '', toolCalls: [{ id: 'rn-dr', name: 'deep_research', input: { question: 'q' } }] });
+    const run = await store.createWorkflowRun(aliceId, {
+      id: 'run-resume-note',
+      workflowId: wf.id,
+      chatId: chat.id,
+      status: 'running',
+      steps: [{ id: 's1', status: 'running', started_at: new Date().toISOString() }, { id: 's2', status: 'pending' }],
+      cursor: 0,
+    });
+    const after = await advanceRun(run, { deadline: Date.now() + 60_000 });
+    check('the interrupted step carries on and the run finishes', after.status === 'done', after.status);
+    const [resumed, fresh] = seen.map((o) => String(o.runNote || ''));
+    check('the resumed step is told it was interrupted', /interrupted before it finished/.test(resumed), resumed.slice(-200));
+    check('  to read what it already did first', /read what this step already did above/.test(resumed));
+    check('  and not to repeat what is done', /Do not repeat anything that is already done/.test(resumed));
+    check('  counting which attempt this is', resumed.includes(resumeNote(1)), resumed.slice(-120));
+    check('  still with the day and the step it is', /step 1 of 2/.test(resumed));
+    check('the next step, begun fresh, is not told that', !!fresh && !/interrupted before it finished/.test(fresh), fresh.slice(-120));
+    check('  and the instruction was not given a second time', (await store.listMessages(aliceId, chat.id)).filter((m) => m.role === 'user' && m.text === steps[0]).length === 1);
+  } finally {
+    wfTesting.useAgent(null);
+  }
+}
+
+section('Stop ends a workflow run in progress, for its owner only');
+{
+  const held = heldAgent();
+  wfTesting.useAgent(held.fn);
+  try {
+    const wf = await store.createWorkflow(aliceId, { id: 'wf-stop', title: 'Long one', steps: normaliseSteps(['slow step', 'never reached']), nextRunAt: null });
+    const running = runWorkflowNow(aliceId, wf.id);
+    await held.started;
+
+    const nosy = await bob.call('POST', `/api/workflows/${wf.id}/stop`);
+    check("another account's Stop is a 404", nosy.status === 404, `${nosy.status}`);
+    const missing = await alice.call('POST', '/api/workflows/no-such-workflow/stop');
+    check('  and so is a workflow that does not exist', missing.status === 404, `${missing.status}`);
+    check('  and the step is still running after both', !held.state.aborted);
+    const anonymous = await fetch(`${base}/api/workflows/${wf.id}/stop`, { method: 'POST' });
+    check('  signed out reaches nothing', anonymous.status === 401, `${anonymous.status}`);
+
+    const pressed = Date.now();
+    const stop = await alice.call('POST', `/api/workflows/${wf.id}/stop`);
+    check('the owner\'s Stop answers that it stopped', stop.status === 200 && stop.body?.stopped === true, JSON.stringify(stop.body).slice(0, 120));
+    const ended = await running;
+    check('  the live step was stopped where it stood', held.state.aborted && held.state.abortedAt - pressed < 1500, `${held.state.abortedAt - pressed}ms`);
+    check('  the run says cancelled, not failed', ended?.status === 'cancelled', ended?.status);
+    const row = await store.getWorkflowRun(aliceId, ended.id);
+    check('  the step that was running says stopped', row.steps[0].status === 'stopped', row.steps[0].status);
+    check('  the next step never began', row.steps[1].status === 'pending', row.steps[1].status);
+    check('  the lease is gone and the run is finished', row.lease_until === null && !!row.finished_at);
+    check('  so no nudge picks it up again', (await store.claimWorkflowRun({ now: new Date().toISOString(), leaseUntil: new Date(Date.now() + 60_000).toISOString(), userId: aliceId, id: row.id })) === null);
+
+    const twice = await alice.call('POST', `/api/workflows/${wf.id}/stop`);
+    check('a second press is harmless', twice.status === 200 && twice.body?.stopped === false, JSON.stringify(twice.body).slice(0, 80));
+  } finally {
+    wfTesting.useAgent(null);
+  }
+
+  // Stopped on another instance: nothing here is aborted directly, only the row changes.
+  const far = heldAgent();
+  wfTesting.useAgent(far.fn);
+  try {
+    const wf = await store.createWorkflow(aliceId, { id: 'wf-stop-far', title: 'Far', steps: normaliseSteps(['slow step']), nextRunAt: null });
+    const running = runWorkflowNow(aliceId, wf.id);
+    await far.started;
+    const open = await store.openWorkflowRun(aliceId, wf.id);
+    const pressed = Date.now();
+    await store.stopWorkflowRun(aliceId, open.id, open.steps.map((s) => ({ ...s, status: s.status === 'running' ? 'stopped' : s.status })));
+    const ended = await running;
+    check('a stop written by another instance is heard within seconds', far.state.aborted && far.state.abortedAt - pressed < 4000, `${far.state.abortedAt - pressed}ms`);
+    check('  and the run stays as the stop left it', ended?.status === 'cancelled' && ended.steps[0].status === 'stopped', `${ended?.status} ${ended?.steps?.[0]?.status}`);
+  } finally {
+    wfTesting.useAgent(null);
+  }
+}
+
+section('Stop ends a scheduled task that is running, for its owner only');
+{
+  const held = heldAgent();
+  taskAgent.use(held.fn);
+  try {
+    const made = await alice.call('POST', '/api/tasks', { title: 'Slow task', prompt: 'Take your time.', frequency: 'manual' });
+    const task = made.body?.task;
+    const running = runTaskNow(await store.getTask(aliceId, task.id));
+    await held.started;
+    check('the task is marked running while it runs', (await store.getTask(aliceId, task.id)).run_state === 'running');
+
+    const nosy = await bob.call('POST', `/api/tasks/${task.id}/stop`);
+    check("another account's Stop is a 404", nosy.status === 404, `${nosy.status}`);
+    check('  and the run goes on', !held.state.aborted);
+
+    const pressed = Date.now();
+    const stop = await alice.call('POST', `/api/tasks/${task.id}/stop`);
+    check("the owner's Stop answers that it stopped", stop.status === 200 && stop.body?.stopped === true, JSON.stringify(stop.body).slice(0, 120));
+    const result = await running;
+    check('  the live run was stopped where it stood', held.state.aborted && held.state.abortedAt - pressed < 1500, `${held.state.abortedAt - pressed}ms`);
+    check('  and is recorded as stopped by the person, not as a failure', result?.status === TASK_STOPPED, result?.status);
+    const row = await store.getTask(aliceId, task.id);
+    check('  the task is no longer running', row.run_state == null && row.lease_until == null, String(row.run_state));
+    check('  says why', row.last_status === TASK_STOPPED, row.last_status);
+    check('  and a manual task stays on', row.enabled === true);
+    check('  which the page reads as stopped, not failed', taskState(row).run === 'stopped' && !taskState(row).attention);
+
+    // Not running now: its conversation is left alone, somebody may be in it.
+    const bystander = new AbortController();
+    const letGo = holdRun(aliceId, row.last_chat, bystander);
+    const idle = await alice.call('POST', `/api/tasks/${task.id}/stop`);
+    letGo();
+    check('a Stop with nothing running says so', idle.status === 200 && idle.body?.stopped === false);
+    check('  and stops nothing else in that conversation', !bystander.signal.aborted);
+  } finally {
+    taskAgent.use(null);
+  }
+
+  // A daily task stopped from another instance: the row only.
+  const far = heldAgent();
+  taskAgent.use(far.fn);
+  try {
+    const made = await alice.call('POST', '/api/tasks', { title: 'Daily far', prompt: 'Morning report.', frequency: 'daily' });
+    const before = await store.getTask(aliceId, made.body.task.id);
+    const running = runTaskNow(before);
+    await far.started;
+    const pressed = Date.now();
+    await store.stopTaskRun(aliceId, before.id, { status: TASK_STOPPED, nextRunAt: before.next_run_at, retire: true });
+    await running;
+    check('a stop written by another instance is heard within seconds', far.state.aborted && far.state.abortedAt - pressed < 4000, `${far.state.abortedAt - pressed}ms`);
+    const row = await store.getTask(aliceId, before.id);
+    check('  and a daily task keeps its schedule', row.enabled === true && !!row.next_run_at && new Date(row.next_run_at) > new Date(), String(row.next_run_at));
+  } finally {
+    taskAgent.use(null);
+  }
+}
+
+section('the Bot page counts what needs the person');
+{
+  const carol = jar();
+  await carol.call('POST', '/api/register', { name: 'Carol', email: 'carol@workflow.test', password: 'a-long-enough-password' });
+  const carolId = (await store.getUserByEmail('carol@workflow.test')).id;
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+
+  const empty = await carol.call('GET', '/api/bot/summary');
+  check('an account with nothing has nothing to count', empty.status === 200 && empty.body?.attention === 0 && empty.body?.workflows?.count === 0, JSON.stringify(empty.body));
+
+  const failed = await store.createTask(carolId, { id: 'carol-failed', title: 'Failed', prompt: 'x', cron: '08:00', nextRunAt: tomorrow });
+  await store.finishTask(failed.id, { status: 'error: no key', chatId: null, nextRunAt: tomorrow });
+  await store.createTask(carolId, { id: 'carol-late', title: 'Late', prompt: 'x', cron: '08:00', nextRunAt: hourAgo });
+  const seen = await store.createTask(carolId, { id: 'carol-seen', title: 'Seen', prompt: 'x', cron: '08:00', nextRunAt: tomorrow });
+  await store.finishTask(seen.id, { status: 'error: no key', chatId: null, nextRunAt: tomorrow });
+  await store.setTaskEnabled(carolId, seen.id, false);
+  await store.createTask(carolId, { id: 'carol-fine', title: 'Fine', prompt: 'x', cron: '08:00', nextRunAt: tomorrow });
+
+  const waiting = await store.createWorkflow(carolId, { id: 'carol-wf-wait', title: 'Waiting', steps: normaliseSteps(['a']), nextRunAt: null });
+  await store.createWorkflowRun(carolId, { id: 'carol-run-wait', workflowId: waiting.id, status: 'needs_attention', steps: [{ id: 's1', status: 'unknown' }], cursor: 0 });
+  const going = await store.createWorkflow(carolId, { id: 'carol-wf-go', title: 'Going', steps: normaliseSteps(['a', 'b', 'c', 'd']), nextRunAt: null });
+  await store.createWorkflowRun(carolId, { id: 'carol-run-go', workflowId: going.id, status: 'running', steps: [{ id: 's1', status: 'done' }, { id: 's2', status: 'running' }, { id: 's3', status: 'pending' }, { id: 's4', status: 'pending' }], cursor: 1 });
+
+  const sum = await carol.call('GET', '/api/bot/summary');
+  check('the failed task and the overdue one need the person', sum.body?.scheduled?.attention === 2, JSON.stringify(sum.body?.scheduled));
+  check('  a failure somebody has since paused does not nag', sum.body?.scheduled?.count === 4);
+  check('the workflow waiting for a person does, the running one does not', sum.body?.workflows?.attention === 1 && sum.body?.workflows?.running === 1, JSON.stringify(sum.body?.workflows));
+  check('  three in all, for the badge', sum.body?.attention === 3, String(sum.body?.attention));
+  const others = await alice.call('GET', '/api/bot/summary');
+  const alicesOwn = (await alice.call('GET', '/api/tasks')).body?.tasks?.length;
+  check("each account counts only its own", others.status === 200 && others.body?.scheduled?.count === alicesOwn, `${others.body?.scheduled?.count} vs ${alicesOwn}`);
+  check('signed out reaches nothing', (await fetch(`${base}/api/bot/summary`)).status === 401);
+
+  // The rows say the same thing the count does.
+  const list = (await carol.call('GET', '/api/workflows')).body?.workflows || [];
+  const goingRow = list.find((w) => w.id === going.id);
+  const state = workflowState(goingRow);
+  check('a running workflow says which step it is on', state.run === 'running' && state.step === 2 && state.steps === 4, JSON.stringify(state));
+  const tasks = (await carol.call('GET', '/api/tasks')).body?.tasks || [];
+  const order = sortByState(tasks, (task) => taskState(task), (task) => task.title).map((task) => task.title);
+  check('the list puts what needs the person first, then by next run, paused last', order.join(',') === 'Failed,Late,Fine,Seen', order.join(','));
+  check('a task past its time and not running is overdue', taskState(tasks.find((x) => x.title === 'Late')).plan === 'overdue');
+  check('  but not one that is due this very minute', taskState({ enabled: true, cron: '08:00', next_run_at: new Date(Date.now() - 30_000).toISOString() }).plan === 'next');
+}
+
 removeTemp(process.env.DATA_DIR);
 console.log(
   failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll workflow checks passed.\x1b[0m\n',

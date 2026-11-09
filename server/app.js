@@ -63,6 +63,7 @@ import {
   runTaskNow,
   validZone,
   sweep,
+  UNATTENDED_POLICIES,
 } from './scheduler.js';
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
@@ -111,6 +112,7 @@ import { mountYourDataRoutes } from './routes/yourData.js';
 import { cloudBrowserState, cloudBrowserInput, closeCloudBrowser } from './cloudBrowser/index.js';
 import { EFFORTS, DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
+import { mountBotRoutes } from './routes/bot.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
 import { approximateLocation } from './whereabouts.js';
@@ -328,15 +330,11 @@ export function createApp() {
     !!chat?.run_lock_at && Date.now() - new Date(chat.run_lock_at).getTime() < RUN_LEASE_STALE_MS;
 
   /**
-   * What a scheduled run may do without being asked.
-   *
-   * The same three words the loop already understands, narrowed to the ones a
-   * task can sensibly choose: a run at 3am cannot be asked anything, so `ask`
-   * means "stop at the first risky step" rather than "prompt", and the form
-   * says exactly that. Anything else is ignored and the account default wins,
-   * which is the safe direction to fail in.
+   * What a scheduled run may do without being asked — the list workflows use
+   * too (scheduler.js). For a task anything else is ignored and the account
+   * default wins, which is the safe direction to fail in.
    */
-  const TASK_POLICIES = new Set(['ask', 'guarded', 'auto']);
+  const TASK_POLICIES = UNATTENDED_POLICIES;
 
   /** `req.body` is undefined in Express 5 when no JSON arrived — never assume it. */
   const body = (req) => req.body || {};
@@ -2156,6 +2154,8 @@ export function createApp() {
 
   // Lifted into server/routes/workflows.js.
   mountWorkflowRoutes(api, { wrap, body });
+  // The Bot page: what needs the person, and Stop for both kinds.
+  mountBotRoutes(api, { wrap });
   mountConnectorRoutes(api, { wrap });
   mountMcpRoutes(api, { wrap, body });
 

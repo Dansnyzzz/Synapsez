@@ -10,6 +10,9 @@ import { toast, scheduleCard } from './render.js';
 import { humanSize, counted, cronParts } from './format.js';
 import { WEEK, LIMITS } from './schedule-grammar.js';
 import { latestWins } from './serial.js';
+import { taskState, sortByState } from './bot-status.js';
+import { isBotTab, rememberBotTab, setBotHash, clearBotHash, pillsHtml, moreButtonHtml, openRowMenu, paintBotTabs, whenText } from './bot.js';
+import { rovingKeys } from './roving.js';
 
 /** How long the Repeat menu must sit on a choice before it is saved (UX-005). */
 const FREQUENCY_SETTLE_MS = 700;
@@ -112,11 +115,16 @@ export function createPages({
   onChatsChanged = () => {},
   /** One was deleted, which may be the conversation open behind this shelf. */
   onChatDeleted = (_id) => {},
+  /** The Bot page counted what needs the person; the rail's badge shows the same. */
+  onBotSummary = (_summary) => {},
 }) {
   const page = $('page');
   const title = $('page-title');
   const lede = $('page-lede');
   const body = $('page-body');
+  /** The Bot page's two tabs, and the one notice above them (owner, 2026-11-08). */
+  const botTabs = $('bot-tabs');
+  const notice = $('page-notice');
   const search = $('page-search');
   const sortPill = $('page-sort');
   const newButton = $('page-new');
@@ -129,6 +137,19 @@ export function createPages({
   let query = '';
   /** How the current shelf is ordered or filtered. */
   let order = 'updated';
+  /**
+   * Each Bot tab keeps its own search and order while the page is in use, so
+   * going to the other tab and back finds it as it was left.
+   */
+  const botMemory = { workflows: { query: '', order: null }, scheduled: { query: '', order: null } };
+  /** Which shelf is showing, for the one function that shadows the name. */
+  const shelfShown = () => showing;
+  /** The Scheduled tab's one timer while a task runs (see its `wire`); it dies with the tab. */
+  let taskPoll = null;
+  const stopTaskPoll = () => {
+    if (taskPoll) clearTimeout(taskPoll);
+    taskPoll = null;
+  };
 
   const views = {};
 
@@ -237,7 +258,18 @@ export function createPages({
 
   function renderTools() {
     const view = views[showing];
-    title.textContent = view.title;
+    // Both halves of the Bot page carry the page's name; the tab says which half.
+    const bot = isBotTab(showing);
+    title.textContent = bot ? t('bot.title') : view.title;
+    botTabs.hidden = !bot;
+    if (bot) {
+      paintBotTabs(botTabs, lastSummary, showing);
+      body.setAttribute('role', 'tabpanel');
+      body.setAttribute('aria-labelledby', `bot-tab-${showing}`);
+    } else {
+      body.removeAttribute('role');
+      body.removeAttribute('aria-labelledby');
+    }
     newButton.textContent = view.newLabel;
     newButton.classList.toggle('page__new--menu', !!view.newMenu);
     // A shelf that makes nothing — the Archive — has no New button at all.
@@ -263,7 +295,10 @@ export function createPages({
   async function draw() {
     const view = views[showing];
     const shown = query ? items.filter((item) => view.matches(item, query)) : items;
-    body.innerHTML = (view.cloud ? cloudNoticeHtml() : '') + view.render(view.sort ? view.sort(shown, order) : shown);
+    // Said once, above the tabs, rather than inside each of them.
+    notice.innerHTML = view.cloud ? cloudNoticeHtml() : '';
+    notice.hidden = !notice.innerHTML;
+    body.innerHTML = view.render(view.sort ? view.sort(shown, order) : shown);
     view.wire?.(items);
   }
 
@@ -293,15 +328,39 @@ export function createPages({
     </div>`;
   }
 
-  async function load() {
+  /** Counted on every load, so a tab left mid-load is not drawn over the one chosen after it. */
+  let loadTurn = 0;
+  /** The Bot page's last counts, kept so a tab switch does not blank them while it loads. */
+  let lastSummary = null;
+
+  /**
+   * @param {{ quiet?: boolean }} [options]  quiet: a refresh of what is on
+   *   screen, which keeps it there until the new copy is ready instead of
+   *   flashing a spinner every few seconds while something runs
+   */
+  async function load({ quiet = false } = {}) {
     const view = views[showing];
-    body.innerHTML = `<div class="viewer__loading"><span class="spinner"></span> ${escapeHtml(t('common.loading'))}</div>`;
+    const which = showing;
+    const turn = ++loadTurn;
+    if (!quiet) body.innerHTML = `<div class="viewer__loading"><span class="spinner"></span> ${escapeHtml(t('common.loading'))}</div>`;
     try {
-      const [loaded, beat] = await Promise.all([view.load(), view.cloud ? api.heartbeat().catch(() => null) : null]);
+      const [loaded, beat, summary] = await Promise.all([
+        view.load(),
+        view.cloud ? api.heartbeat().catch(() => null) : null,
+        // The other tab's count and whether it holds something for the person.
+        isBotTab(which) ? api.botSummary().catch(() => null) : null,
+      ]);
+      if (turn !== loadTurn || showing !== which) return;
       items = loaded;
       if (view.cloud) heartbeat = beat;
+      if (summary) {
+        lastSummary = summary;
+        paintBotTabs(botTabs, summary, which);
+        onBotSummary(summary);
+      }
       await draw();
     } catch (err) {
+      if (turn !== loadTurn) return;
       body.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
     }
   }
@@ -613,15 +672,21 @@ export function createPages({
     // Runs on a clock: the shelf says whether that clock is ticking in the cloud.
     cloud: true,
     orders: [
+      // What needs the person first, then what is running, then by next run.
+      { id: 'status', get label() { return t('bot.order.status'); } },
       { id: 'next', get label() { return t('pages.order.next'); } },
       { id: 'name', get label() { return t('pages.order.name'); } },
     ],
     load: async () => (await api.tasks()).tasks,
     matches: (task, q) => `${task.title} ${task.prompt || ''}`.toLowerCase().includes(q),
     sort: (list, by) =>
-      [...list].sort((a, b) =>
-        by === 'name' ? a.title.localeCompare(b.title) : new Date(a.next_run_at) - new Date(b.next_run_at),
-      ),
+      by === 'status'
+        ? sortByState(list, (task) => taskState(task), (task) => task.title)
+        : [...list].sort((a, b) =>
+            by === 'name' ? a.title.localeCompare(b.title) : new Date(a.next_run_at) - new Date(b.next_run_at),
+          ),
+    /** A running task is polled while the tab is on screen, the way a workflow is. */
+    onHide: () => stopTaskPoll(),
     newMenu: () => [
       {
         label: t('pages.tasks.describe'),
@@ -647,22 +712,19 @@ export function createPages({
       return (
         local +
         list
-          .map(
-            (task) => `
-        <div class="task${task.enabled ? '' : ' task--off'}">
+          .map((task) => {
+            const now = taskState(task);
+            const id = escapeHtml(task.id);
+            // When it runs next is the pill's to say (the Bot page's "Next: …").
+            return `
+        <div class="task botrow${task.enabled ? '' : ' task--off'}" data-row="${id}">
           <span class="task__dot"></span>
           <div class="task__body">
             <div class="task__name">${escapeHtml(task.title)}</div>
+            ${pillsHtml(now, task.tz)}
             <div class="task__what">${escapeHtml(task.prompt || '')}</div>
             <div class="task__when">
               ${escapeHtml(repeatsAs(task))}
-              ${
-                !task.enabled
-                  ? `· ${escapeHtml(t('pages.tasks.paused'))}`
-                  : task.next_run_at
-                    ? `· ${escapeHtml(t('pages.tasks.next').replace('{when}', ago(task.next_run_at)))}`
-                    : ''
-              }
               ${
                 task.last_status
                   ? `· ${escapeHtml(
@@ -674,19 +736,27 @@ export function createPages({
           </div>
           ${
             task.last_chat
-              ? `<button class="task__act" data-open="${escapeHtml(task.last_chat)}">${escapeHtml(
+              ? `<button class="task__act" type="button" data-open="${escapeHtml(task.last_chat)}">${escapeHtml(
                   t('pages.tasks.openResult'),
                 )}</button>`
               : ''
           }
-          <button class="task__act" data-toggle="${escapeHtml(task.id)}" data-on="${!!task.enabled}">${escapeHtml(
-            task.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'),
-          )}</button>
-          <button class="task__act" data-drop="${escapeHtml(task.id)}">${escapeHtml(t('pages.tasks.remove'))}</button>
-          <button class="icon-btn task__edit" data-edit="${escapeHtml(task.id)}" type="button"
-                  title="${escapeHtml(t('pages.tasks.edit'))}" aria-label="${escapeHtml(t('pages.tasks.edit'))}">✎</button>
-        </div>`,
-          )
+          ${
+            now.run === 'running'
+              ? `<button class="task__act task__act--stop" type="button" data-stop="${id}">${escapeHtml(t('bot.stop'))}</button>`
+              : `<button class="task__act" type="button" data-run="${id}">${escapeHtml(t('pages.tasks.runNow'))}</button>`
+          }
+          ${
+            // A manual task has no pause: it never runs by itself to begin with.
+            !task.enabled || now.plan !== 'manual'
+              ? `<button class="task__act" type="button" data-toggle="${id}" data-on="${!!task.enabled}">${escapeHtml(
+                  task.enabled ? t('pages.tasks.pause') : t('pages.tasks.resume'),
+                )}</button>`
+              : ''
+          }
+          ${moreButtonHtml(task.id, task.title)}
+        </div>`;
+          })
           .join('') +
         // Still offered once there are tasks: having set up one is no reason
         // to stop suggesting the next.
@@ -694,16 +764,43 @@ export function createPages({
       );
     },
     wire: (list = []) => {
+      const again = () => (showing === 'scheduled' ? load({ quiet: true }) : null);
+      // While one runs, the tab looks again every few seconds — only while it is
+      // the thing on screen, one timer at a time (the same rule as workflows.js).
+      stopTaskPoll();
+      if (list.some((task) => taskState(task).run === 'running')) {
+        taskPoll = setTimeout(() => {
+          taskPoll = null;
+          if (showing === 'scheduled' && !page.hidden) {
+            again();
+            onRunStarted();
+          }
+        }, 5000);
+      }
       for (const button of body.querySelectorAll('[data-idea]')) {
         button.addEventListener('click', () => openTaskForm(IDEAS[Number(button.dataset.idea)]));
       }
-      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-edit]'))) {
-        button.addEventListener('click', () => {
-          const task = list.find((x) => x.id === button.dataset.edit);
-          // Edited in the panel beside the list, where every field is changed in
-          // place — the same editor a card in a conversation opens.
-          if (task) showScheduleInPane('task', task.id, { after: load });
-        });
+      // Edit, History and Delete under ⋯. Edited in the panel beside the list,
+      // where every field is changed in place — the editor a card in a
+      // conversation opens.
+      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-more]'))) {
+        const id = button.dataset.more;
+        button.addEventListener('click', () =>
+          openRowMenu(button, {
+            edit: () => showScheduleInPane('task', id, { after: again }),
+            history: () => showScheduleInPane('task', id, { after: again, history: true }),
+            remove: async () => {
+              try {
+                await api.deleteTask(id);
+                toast(t('bot.deleted'));
+                onTasksChanged();
+              } catch (err) {
+                toast(err.message, 'error');
+              }
+              again();
+            },
+          }),
+        );
       }
       for (const button of body.querySelectorAll('[data-open]')) {
         button.addEventListener('click', () => {
@@ -711,16 +808,45 @@ export function createPages({
           openChat(button.dataset.open);
         });
       }
+      // Run now from the row, staying on the page: see the same in workflows.js.
+      for (const button of /** @type {NodeListOf<HTMLButtonElement>} */ (body.querySelectorAll('[data-run]'))) {
+        button.addEventListener('click', () => {
+          button.disabled = true;
+          const running = api.runTask(button.dataset.run);
+          toast(t('bot.started'));
+          const peek = setTimeout(() => {
+            again();
+            onRunStarted();
+          }, 1200);
+          running
+            .catch((err) => {
+              clearTimeout(peek);
+              toast(err.message, 'error');
+            })
+            .finally(() => {
+              again();
+              onTasksChanged();
+            });
+        });
+      }
+      for (const button of /** @type {NodeListOf<HTMLButtonElement>} */ (body.querySelectorAll('[data-stop]'))) {
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try {
+            const { stopped } = await api.stopTask(button.dataset.stop);
+            toast(t(stopped ? 'bot.stopped' : 'bot.notRunning'), stopped ? 'ok' : undefined);
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+          again();
+          onTasksChanged();
+        });
+      }
       for (const button of body.querySelectorAll('[data-toggle]')) {
         button.addEventListener('click', async () => {
           await api.setTaskEnabled(button.dataset.toggle, button.dataset.on !== 'true');
-          load();
-        });
-      }
-      for (const button of body.querySelectorAll('[data-drop]')) {
-        armed(button, t('pages.tasks.removeConfirm'), async () => {
-          await api.deleteTask(button.dataset.drop);
-          load();
+          again();
+          onTasksChanged();
         });
       }
     },
@@ -880,9 +1006,11 @@ export function createPages({
     onLeave,
     onDescribe,
     openForm: (preset) => wfForm.open(preset),
-    openPane: (id) => showScheduleInPane('workflow', id, { after: load }),
+    openPane: (id, options = {}) =>
+      showScheduleInPane('workflow', id, { after: () => (showing === 'workflows' ? load({ quiet: true }) : null), history: !!options.history }),
     // Only while the shelf is on screen: Run now may have moved to the conversation.
-    reload: () => (showing === 'workflows' ? load() : null),
+    // Quiet: the list stays on screen while the new copy is fetched.
+    reload: () => (showing === 'workflows' ? load({ quiet: true }) : null),
     onRunStarted,
   });
   views.workflows.cloud = true;
@@ -1174,6 +1302,14 @@ export function createPages({
     sortPill.hidden = true;
     newButton.hidden = true;
     $('page-search-open').hidden = true;
+    // A list still loading is not drawn over this page.
+    loadTurn += 1;
+    // One task on its own page is not one of the Bot page's tabs.
+    botTabs.hidden = true;
+    notice.hidden = true;
+    body.removeAttribute('role');
+    body.removeAttribute('aria-labelledby');
+    clearBotHash();
 
     drawTask(body, task, project, {
       withEdit: true,
@@ -1223,7 +1359,7 @@ export function createPages({
    * stop at the end of the month. Each control saves on its own, so there is
    * no Save button to forget and nothing lost by closing the rail.
    */
-  function scheduleEditorHtml(kind, row, project) {
+  function scheduleEditorHtml(kind, row, project, extra = {}) {
     const parts = cronParts(row.cron);
     const isTask = kind === 'task';
     const FREQS = ['manual', 'once', 'minutes', 'hourly', 'hours', 'daily', 'weekdays', 'weekly', 'days', 'monthly'];
@@ -1300,23 +1436,35 @@ export function createPages({
             <span>${escapeHtml(t('pane.runsOn'))}</span>
             <span class="spane__value">${state.localOnly ? '🖥' : '☁'} ${escapeHtml(t(state.localOnly ? 'pane.thisComputer' : 'pane.cloud'))}</span>
           </div>
+          <label class="spane__row">
+            <span>${escapeHtml(t('taskForm.permissions'))}</span>
+            <select data-s="policy">
+              ${
+                // A workflow made before it had a setting of its own follows the
+                // account, and says so rather than claiming to be "ask".
+                isTask ? '' : option('', t('taskForm.policyDefault'), !row.policy)
+              }
+              ${option('ask', t('taskForm.policyAsk'), isTask ? (row.policy || 'ask') === 'ask' : row.policy === 'ask')}
+              ${option('guarded', t('taskForm.policyGuarded'), row.policy === 'guarded')}
+              ${option('auto', t('taskForm.policySkip'), row.policy === 'auto')}
+            </select>
+          </label>
           ${
-            isTask
-              ? `<label class="spane__row">
-                   <span>${escapeHtml(t('taskForm.permissions'))}</span>
-                   <select data-s="policy">
-                     ${option('ask', t('taskForm.policyAsk'), (row.policy || 'ask') === 'ask')}
-                     ${option('guarded', t('taskForm.policyGuarded'), row.policy === 'guarded')}
-                     ${option('auto', t('taskForm.policySkip'), row.policy === 'auto')}
+            !isTask
+              ? // Which project the steps answer from: its instructions and sources.
+                `<label class="spane__row">
+                   <span>${escapeHtml(t('proj.one'))}</span>
+                   <select data-s="projectId">
+                     ${option('', t('bot.noProject'), !row.project_id)}
+                     ${(extra.projects || [])
+                       .map((p) => option(p.id, p.name, p.id === row.project_id))
+                       .join('')}
                    </select>
                  </label>`
-              : ''
-          }
-          ${
-            project
-              ? `<div class="spane__row"><span>${escapeHtml(t('proj.one'))}</span>
-                   <button class="taskpage__project" type="button" data-s="project">${escapeHtml(project.name)}</button></div>`
-              : ''
+              : project
+                ? `<div class="spane__row"><span>${escapeHtml(t('proj.one'))}</span>
+                     <button class="taskpage__project" type="button" data-s="project">${escapeHtml(project.name)}</button></div>`
+                : ''
           }
         </div>
 
@@ -1402,24 +1550,80 @@ export function createPages({
         <div class="spane__meta">
           <div><span>${escapeHtml(t('pane.nextRun'))}</span> <strong data-s="next">${escapeHtml(next)}</strong></div>
           ${
-            (isTask ? row.last_status : null)
-              ? `<div><span>${escapeHtml(t('pages.tasks.lastRun'))}</span> ${escapeHtml(String(row.last_status).slice(0, 200))}</div>`
-              : ''
-          }
-          ${
             row.last_chat || row.lastChat
               ? `<button class="taskpage__project" type="button" data-s="chat">${escapeHtml(t('pages.tasks.openResult'))}</button>`
               : ''
           }
           <div class="spane__status" data-s="status" role="status" aria-live="polite"></div>
         </div>
+
+        <h3 class="spane__label" data-s="history" tabindex="-1">${escapeHtml(t('bot.history'))}</h3>
+        ${historyHtml(kind, row, extra.runs || [])}
       </div>`;
+  }
+
+  /**
+   * What became of the last runs: when, how it ended, how far it got, and the
+   * conversation it wrote. A workflow keeps ten; a scheduled task keeps only its
+   * last, and says so rather than looking like a history with nine missing.
+   */
+  function historyHtml(kind, row, runs) {
+    const RUN_PILL = { running: 'running', done: 'done', failed: 'failed', needs_attention: 'needs', cancelled: 'stopped' };
+    const item = ({ status, pill, when, reached, chatId }) => `
+      <li class="spane__run">
+        <span class="botpill botpill--${pill}">${escapeHtml(status)}</span>
+        <span class="spane__runwhen">${escapeHtml(when)}${reached ? ` · ${escapeHtml(reached)}` : ''}</span>
+        ${
+          chatId
+            ? `<button class="taskpage__project" type="button" data-run-chat="${escapeHtml(chatId)}">${escapeHtml(t('bot.historyOpen'))}</button>`
+            : ''
+        }
+      </li>`;
+
+    if (kind === 'workflow') {
+      if (!runs.length) return `<p class="hint">${escapeHtml(t('bot.historyNone'))}</p>`;
+      const total = Array.isArray(row.steps) ? row.steps.length : 0;
+      return `<ol class="spane__history">${runs
+        .map((run) => {
+          const steps = Array.isArray(run.steps) ? run.steps.length : total;
+          const at = Number(run.cursor) || 0;
+          const step = Math.min(run.status === 'done' ? at : at + 1, steps);
+          return item({
+            status: RUN_PILL[run.status] ? t(`wf.run.${run.status}`) : String(run.status || ''),
+            pill: RUN_PILL[run.status] || 'paused',
+            when: whenText(run.started_at, row.tz),
+            reached: steps ? t('bot.historyStep', { step, steps }) : '',
+            chatId: run.chat_id,
+          });
+        })
+        .join('')}</ol>`;
+    }
+
+    if (!row.last_run_at) return `<p class="hint">${escapeHtml(t('bot.historyNone'))}</p>`;
+    const state = taskState(row);
+    const pill = state.run || 'done';
+    const said = { running: 'bot.pill.runningNow', needs: 'bot.pill.needs', failed: 'bot.pill.failed', stopped: 'bot.pill.stopped', done: 'wf.run.done' }[pill];
+    return `<ol class="spane__history">${item({
+      status: t(said),
+      pill,
+      when: whenText(row.last_run_at, row.tz),
+      // The words the run ended with, which say more than a pill can.
+      reached: row.last_status && pill !== 'done' ? String(row.last_status).slice(0, 160) : '',
+      chatId: row.last_chat,
+    })}</ol><p class="hint">${escapeHtml(t('bot.historyLastOnly'))}</p>`;
   }
 
   async function fetchSchedule(kind, id) {
     if (kind === 'workflow') {
-      const { workflow, runs } = await api.workflow(id);
-      return { row: { ...workflow, lastChat: runs?.[0]?.chat_id || null }, project: null };
+      // The account's projects for the Project menu; one the workflow is filed
+      // under but that is archived is still offered, by name, so it is not lost.
+      const [{ workflow, runs, project }, shelf] = await Promise.all([
+        api.workflow(id),
+        api.projects().catch(() => ({ projects: [] })),
+      ]);
+      const projects = shelf.projects || [];
+      if (project && !projects.some((p) => p.id === project.id)) projects.push(project);
+      return { row: { ...workflow, lastChat: runs?.[0]?.chat_id || null }, project, runs: runs || [], projects };
     }
     const { task, project } = await api.task(id);
     return { row: task, project };
@@ -1509,7 +1713,11 @@ export function createPages({
   /** Counted on every open and close, so that only the latest one draws (UX-013). */
   let paneTurn = 0;
 
-  async function showScheduleInPane(kind, id, { after = null } = {}) {
+  /**
+   * @param {{ after?: (() => unknown) | null, history?: boolean }} [options]
+   *   history: open it at its runs — the ⋯ menu's History
+   */
+  async function showScheduleInPane(kind, id, { after = null, history = false } = {}) {
     const turn = ++paneTurn;
     const key = `${kind}:${id}`;
     /**
@@ -1531,12 +1739,13 @@ export function createPages({
     }
     let row;
     let project;
+    let extra = {};
     try {
       // Waited for (UX-012): opening the same schedule again within the pause
       // fetched it before the save had landed, drew the old Repeat, and the next
       // edit there wrote that old value back over the choice just saved.
       await flushSettling(key);
-      ({ row, project } = await fetchSchedule(kind, id));
+      ({ row, project, ...extra } = await fetchSchedule(kind, id));
     } finally {
       if (holding) {
         const left = Math.max(0, (Number(holding.dataset.holds) || 1) - 1);
@@ -1562,12 +1771,21 @@ export function createPages({
     // schedule's settings could be saved into another.
     const view = document.createElement('div');
     view.dataset.schedule = key;
-    view.innerHTML = scheduleEditorHtml(kind, row, project);
+    view.innerHTML = scheduleEditorHtml(kind, row, project, extra);
     $('taskpane-body').replaceChildren(view);
     wireScheduleEditor(view, kind, row, project, { turn, after });
     refreshCards(kind, row);
     pane.hidden = false;
     onPaneOpen();
+    // On the Bot page, the address says which item is open beside its tab.
+    // (`showing` is shadowed in this function by the panel's own view.)
+    const shelf = shelfShown();
+    if (isBotTab(shelf) && !page.hidden && (kind === 'workflow') === (shelf === 'workflows')) setBotHash(shelf, row.id);
+    if (history) {
+      const heading = /** @type {HTMLElement | null} */ (view.querySelector('[data-s="history"]'));
+      heading?.scrollIntoView({ block: 'start' });
+      heading?.focus({ preventScroll: true });
+    }
   }
 
   /**
@@ -1755,6 +1973,14 @@ export function createPages({
       if (prompt && prompt !== row.prompt) save({ prompt });
     });
     q('policy')?.addEventListener('change', () => save({ policy: q('policy').value }));
+    // A workflow's project: checked on the server against this account's own.
+    q('projectId')?.addEventListener('change', () => save({ projectId: q('projectId').value || null }));
+    for (const button of /** @type {NodeListOf<HTMLElement>} */ (root.querySelectorAll('[data-run-chat]'))) {
+      button.addEventListener('click', () => {
+        onLeave();
+        openChat(button.dataset.runChat);
+      });
+    }
     q('steps')?.addEventListener('change', () => {
       const lines = q('steps')
         .value.split('\n')
@@ -1845,6 +2071,7 @@ export function createPages({
     $('taskpane').hidden = true;
     $('taskpane-body').replaceChildren();
     onPaneClose();
+    if (isBotTab(showing) && !page.hidden) setBotHash(showing);
   }
 
   $('taskpane-close').addEventListener('click', closeTaskPane);
@@ -1870,12 +2097,15 @@ export function createPages({
     // A shelf may have left something running — a poll, a timer. Switching
     // between shelves has to end it, or it outlives the page it belongs to.
     if (showing && showing !== which) views[showing]?.onHide?.();
+    // The Bot tab being left keeps its search and order for when it is back.
+    if (isBotTab(showing)) botMemory[showing] = { query, order };
     showing = which;
-    query = '';
-    order = views[which].orders?.[0]?.id || 'all';
-    search.value = '';
-    searchBox.hidden = true;
-    $('page-search-open').hidden = false;
+    const kept = isBotTab(which) ? botMemory[which] : null;
+    const orders = views[which].orders || [];
+    query = kept?.query || '';
+    order = kept?.order && orders.some((o) => o.id === kept.order) ? kept.order : orders[0]?.id || 'all';
+    search.value = query;
+    searchBox.hidden = !query;
     search.placeholder = t('pages.searchNamed', { name: views[which].title.toLowerCase() });
     closeMenus();
 
@@ -1886,10 +2116,27 @@ export function createPages({
 
     // Restored, because `showTask` hides them for a page that has one item.
     newButton.hidden = false;
-    $('page-search-open').hidden = false;
+    $('page-search-open').hidden = !!query;
+    if (isBotTab(which)) {
+      rememberBotTab(which);
+      setBotHash(which);
+    } else {
+      clearBotHash();
+    }
     renderTools();
     await load();
   }
+
+  /**
+   * The Bot page's tabs: a press, or the arrows, Home and End once one has
+   * focus (`rovingKeys` clicks the tab it moves to and keeps focus on it).
+   */
+  botTabs.addEventListener('click', (event) => {
+    const tab = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-bot-tab]'));
+    if (!tab || tab.dataset.botTab === showing) return;
+    showShelf(tab.dataset.botTab);
+  });
+  rovingKeys(botTabs, '[role="tab"]');
 
   return {
     /** Called once at boot so the notice can say where tasks actually run. */
@@ -1902,11 +2149,24 @@ export function createPages({
     /** Back to the conversation. */
     hide() {
       if (showing) views[showing]?.onHide?.();
+      if (isBotTab(showing)) botMemory[showing] = { query, order };
       showing = null;
       page.hidden = true;
       $('thread').hidden = false;
       $('dock').hidden = false;
       closeMenus();
+      clearBotHash();
+    },
+
+    /**
+     * The Bot page at a tab, and an item of it open beside the list — what a
+     * `#bot/…` address asks for (see bot.js `readBotHash`).
+     *
+     * @param {string} tab @param {string | null} [id]
+     */
+    async showBot(tab, id = null) {
+      await showShelf(tab);
+      if (id) await showScheduleInPane(tab === 'workflows' ? 'workflow' : 'task', id, { after: () => (isBotTab(showing) ? load({ quiet: true }) : null) });
     },
 
     showing: () => showing,

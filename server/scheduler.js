@@ -10,7 +10,9 @@ import { isComplete } from './providers/stop.js';
 import { validZone, partsIn, instantOf } from './util/zone.js';
 import { expireMachineUploads } from './sandbox.js';
 import { sweepEventMail } from './eventMail.js';
+import { abortHere, holdRun, watchStopped } from './liveRuns.js';
 import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public/js/schedule-grammar.js';
+import { TASK_STOPPED } from '../public/js/bot-status.js';
 
 /**
  * Work that happens without anyone watching.
@@ -32,6 +34,30 @@ import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public
  */
 
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/**
+ * What a run with nobody watching may do without being asked.
+ *
+ * The same three words the loop already understands, narrowed to the ones an
+ * unattended run can sensibly choose: a run at 3am cannot be asked anything, so
+ * `ask` means "stop at the first risky step" rather than "prompt". One list for
+ * scheduled tasks and workflows (the Bot page), so the two cannot drift.
+ */
+export const UNATTENDED_POLICIES = new Set(['ask', 'guarded', 'auto']);
+
+/**
+ * The agent loop, replaceable by a test that has to see what a run was given or
+ * hold one open long enough to stop it (test/workflow.test.mjs). Nothing else sets it.
+ *
+ * @type {(options: Record<string, any>) => Promise<unknown>}
+ */
+let agentLoop = runAgent;
+export const __agent = {
+  /** @param {((options: Record<string, any>) => Promise<unknown>) | null} fn */
+  use(fn) {
+    agentLoop = fn || runAgent;
+  },
+};
 
 // The zone arithmetic lives in util/zone.js, so the model library can ask
 // "when was six this morning, where this person is" without importing the
@@ -517,6 +543,23 @@ async function runTask(task) {
   let ending = null;
   let waitingForApproval = false;
 
+  /**
+   * Stop reaches this run (the Bot page, or the conversation's own stop button).
+   *
+   * Held under the conversation it writes into, so `abortHere` finds it on this
+   * instance; on another, the task row says it was stopped and `watchStopped`
+   * reads that. Either way the run ends where it stands and is recorded as
+   * stopped by the person, not as a failure. Only their stop, or the task being
+   * deleted, ends it: a lease reaped as stalled (`reapStalledTasks`) is a guess
+   * about a run that may still be working, and is left to finish as before.
+   */
+  const controller = new AbortController();
+  const letGo = holdRun(user.id, chatId, controller);
+  const unwatch = watchStopped(async () => {
+    const row = await store.getTask(user.id, task.id);
+    return !!row && !(row.run_state !== 'running' && row.last_status === TASK_STOPPED);
+  }, controller);
+
   try {
     if (!reuse) {
       await store.createChat(user.id, {
@@ -540,10 +583,11 @@ async function runTask(task) {
 
     // No `emit` consumer here — nobody is watching. The transcript in the
     // database is the output, which is the point: it is waiting when you look.
-    await runAgent({
+    await agentLoop({
       userId: user.id,
       user,
       chatId,
+      signal: controller.signal,
       /**
        * The model the account is on now, not the one it was on when the task
        * was made. `task.model` used to win, so a task made on a free model kept
@@ -572,9 +616,12 @@ async function runTask(task) {
     });
   } catch (err) {
     status = `error: ${clientError(err).slice(0, 200)}`;
+  } finally {
+    unwatch();
+    letGo();
   }
 
-  status = unattendedStatus(status, ending, waitingForApproval);
+  status = controller.signal.aborted ? TASK_STOPPED : unattendedStatus(status, ending, waitingForApproval);
 
   // Only a task that had a schedule can run out of one; a manual task has
   // no next run and stays on.
@@ -610,6 +657,33 @@ export async function runTaskNow(task) {
   const claimed = await getStore().claimTask(task.user_id, task.id, { nextRunAt: nextRunOf(task) });
   if (!claimed) return { taskId: task.id, status: 'busy', chatId: task.last_chat ?? null };
   return runTask(claimed);
+}
+
+/**
+ * Stop a task that is running, for the person whose task it is.
+ *
+ * The row first, so a run on another instance hears of it (`watchStopped`)
+ * and nothing reaps it later as stalled; then the run itself on this instance,
+ * and whatever holds the conversation's lease, the way `POST /chats/:id/stop`
+ * does. Only when it really was running: a task at rest leaves its
+ * conversation alone, somebody may be talking in it.
+ *
+ * @returns null when there is no such task for this account
+ */
+export async function stopTask(userId, taskId) {
+  const store = getStore();
+  const task = await store.getTask(userId, taskId);
+  if (!task) return null;
+  const stopped = await store.stopTaskRun(userId, taskId, {
+    status: TASK_STOPPED,
+    nextRunAt: nextRunOf(task),
+    retire: !!(task.cron || task.next_run_at),
+  });
+  if (stopped && task.last_chat) {
+    await store.stopChatRun(userId, task.last_chat).catch(() => false);
+    abortHere(userId, task.last_chat);
+  }
+  return { stopped: !!stopped, task: stopped || task };
 }
 
 /**

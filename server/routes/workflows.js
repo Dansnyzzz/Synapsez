@@ -1,9 +1,38 @@
-import { parseSchedule, schedulePatch, validZone } from '../scheduler.js';
+import { parseSchedule, schedulePatch, validZone, UNATTENDED_POLICIES } from '../scheduler.js';
 import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
-import { normaliseSteps, runWorkflowNow } from '../workflows.js';
+import { normaliseSteps, runWorkflowNow, withLastRun } from '../workflows.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 import { clientError } from '../util/clientError.js';
+
+/**
+ * What a workflow may do with nobody watching (schema 40). Absent leaves it as
+ * it is; empty or null is the account's default; anything else must be one of
+ * the words the loop knows — refused rather than quietly ignored, because a
+ * permission somebody believes they set and did not is the wrong way to fail.
+ *
+ * @returns {string | null | undefined}
+ */
+function policyFrom(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (!UNATTENDED_POLICIES.has(String(value))) throw new Error('Pick one of the permissions: ask, guarded or auto.');
+  return String(value);
+}
+
+/**
+ * The project a workflow is filed under, checked against the account: an id
+ * from another account must not attach a run to a shelf it does not own.
+ * Absent leaves it; empty or null takes it out of its project.
+ *
+ * @returns {Promise<string | null | undefined | false>} false when it is not this account's
+ */
+async function projectFrom(userId, value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const id = String(value);
+  return (await getStore().getProject(userId, id)) ? id : false;
+}
 
 /**
  * Lifted out of server/app.js — see the note on mountWorkspaceRoutes for why.
@@ -30,27 +59,10 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
       // this page exists to answer, so the last run has to come with the list —
       // and fetching them in a loop is the N+1 CLAUDE.md §7 names by name.
       const rows = await getStore().listWorkflowsWithLastRun(req.user.id);
-      const workflows = rows.map(({ run_id: runId, run_status, run_steps, run_chat_id, run_cursor, run_started_at, run_finished_at, ...wf }) => ({
-        ...wf,
-        lastRun: runId
-          ? {
-              id: runId,
-              status: run_status,
-              // A step's stored error is the server's sentence; say it in the
-              // reader's language, the same as a live one.
-              steps: Array.isArray(run_steps)
-                ? run_steps.map((step) =>
-                    step?.error ? { ...step, error: translateMessage(step.error, languageOf(req)) } : step,
-                  )
-                : run_steps,
-              chat_id: run_chat_id,
-              cursor: run_cursor,
-              started_at: run_started_at,
-              finished_at: run_finished_at,
-            }
-          : null,
-      }));
-      res.json({ workflows });
+      // A step's stored error is the server's sentence; say it in the reader's
+      // language, the same as a live one.
+      const say = (error) => translateMessage(error, languageOf(req));
+      res.json({ workflows: rows.map((row) => withLastRun(row, say)) });
     }),
   );
 
@@ -60,7 +72,14 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
       const store = getStore();
       const workflow = await store.getWorkflow(req.user.id, req.params.id);
       if (!workflow) return res.status(404).json({ error: 'Workflow not found' });
-      res.json({ workflow, runs: await store.listWorkflowRuns(req.user.id, workflow.id, 10) });
+      // The project by name, as a task's page has it: an id tells nobody which shelf.
+      const project = workflow.project_id ? await store.getProject(req.user.id, workflow.project_id) : null;
+      const say = (error) => translateMessage(error, languageOf(req));
+      const runs = (await store.listWorkflowRuns(req.user.id, workflow.id, 10)).map((run) => ({
+        ...run,
+        steps: Array.isArray(run.steps) ? run.steps.map((s) => (s?.error ? { ...s, error: say(s.error) } : s)) : run.steps,
+      }));
+      res.json({ workflow, runs, project: project ? { id: project.id, name: project.name } : null });
     }),
   );
 
@@ -73,6 +92,9 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
         // empty scheduled to run forever.
         const steps = normaliseSteps(req.body?.steps);
         const tz = validZone(req.body?.tz) ? req.body.tz : null;
+        const policy = policyFrom(req.body?.policy) ?? null;
+        const projectId = await projectFrom(req.user.id, req.body?.projectId);
+        if (projectId === false) return res.status(404).json({ error: 'No such project.' });
 
         // A workflow with no schedule is legitimate — it is one you run by hand.
         let cron = null;
@@ -90,6 +112,8 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
           cron,
           tz,
           nextRunAt,
+          policy,
+          projectId: projectId ?? null,
         });
         res.status(201).json({ workflow });
       } catch (err) {
@@ -108,6 +132,11 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
         if (req.body?.enabled !== undefined) patch.enabled = Boolean(req.body.enabled);
         // No `model`: a run uses the account's model at the time (see the create
         // route above), so a stored one would be a setting nothing reads.
+        const policy = policyFrom(req.body?.policy);
+        if (policy !== undefined) patch.policy = policy;
+        const projectId = await projectFrom(req.user.id, req.body?.projectId);
+        if (projectId === false) return res.status(404).json({ error: 'No such project.' });
+        if (projectId !== undefined) patch.projectId = projectId;
 
         if (req.body?.when !== undefined) {
           const tz = validZone(req.body?.tz) ? req.body.tz : null;
@@ -156,6 +185,8 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
    * this whole feature exists to avoid. What does not fit in the budget is left
    * durably at its cursor for the next nudge.
    */
+  // Stopping a run in progress is in routes/bot.js, beside a task's: the Bot
+  // page's one Stop button, kept together so the two behave alike.
   api.post(
     '/workflows/:id/run',
     wrap(async (req, res) => {

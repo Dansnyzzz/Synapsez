@@ -27,6 +27,7 @@ import { createScreen } from './screen.js';
 import { createViewer } from './viewer.js';
 import { shouldAutoPreview } from './autopreview.js';
 import { createPages } from './pages.js';
+import { createBotBadge, readBotHash, lastBotTab } from './bot.js';
 import { createProjectPage } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES, localeTag } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
@@ -781,6 +782,7 @@ async function start() {
   await refreshChats();
   afterGoogleSignIn();
   openConnectorFromLink();
+  openBotFromLink();
   openSettingsFromLink();
   // Never fatal: a sidebar section that could not load is a missing list, not
   // a broken app, and throwing here would take the conversations with it.
@@ -959,11 +961,13 @@ const busyWithList = () => !!document.querySelector('#chat-list .chat-item--edit
  *
  * It was, above the conversations, and a handful of tasks pushed the whole
  * conversation history down off the screen — the list you use every minute
- * displaced by one you check once a week. The Scheduled page (and the pill on
- * the card that set a task up) is where they live. Kept as a no-op so the
- * places that announce "tasks changed" need not know.
+ * displaced by one you check once a week. The Bot page (and the pill on the
+ * card that set a task up) is where they live. What the places that announce
+ * "tasks changed" still move is the count on the rail's Bot item.
  */
-async function refreshTasks() {}
+async function refreshTasks() {
+  await botBadge.refresh();
+}
 
 /**
  * One conversation, as a row.
@@ -1072,6 +1076,8 @@ async function refreshChats({ background = false } = {}) {
   state.projects = projects;
   state.groups = groups;
   scheduleChatRefresh();
+  // A run starting or ending here is the moment the Bot badge may have changed.
+  botBadge.nudge(chats);
 
   const signature = JSON.stringify([
     state.chatId,
@@ -2817,6 +2823,8 @@ const pages = createPages({
   // The sidebar keeps its own short list of scheduled work; a task written
   // anywhere has to reach it.
   onTasksChanged: () => refreshTasks().catch(() => {}),
+  // The Bot page counted what needs the person: the rail says the same.
+  onBotSummary: (summary) => botBadge.paint(summary),
   // Restored or deleted on the Archive shelf: the sidebar list changes with it.
   onChatsChanged: () => refreshChats().catch(() => {}),
   onChatDeleted: (id) => chatGone(id),
@@ -2918,15 +2926,26 @@ $('open-artifacts').addEventListener('click', () => {
   gotoShelf('artifacts');
 });
 
-$('open-scheduled').addEventListener('click', () => {
+/**
+ * Bot: workflows and scheduled tasks, one page with the two as tabs (owner,
+ * 2026-11-08), opened at the tab used last. Its badge counts what needs the
+ * person, refreshed by the moments listed in bot.js — no timer of its own.
+ */
+const botBadge = createBotBadge({ api, button: $('open-bot'), badge: $('bot-badge') });
+$('open-bot').addEventListener('click', () => {
   closeSidebar();
-  gotoShelf('scheduled');
+  gotoShelf(lastBotTab());
 });
 
-$('open-workflows').addEventListener('click', () => {
-  closeSidebar();
-  gotoShelf('workflows');
-});
+/** A `#bot/…` address — a reload on the Bot page, or a link to it — lands there. */
+function openBotFromLink() {
+  const route = readBotHash();
+  if (!route || !state.boot) return;
+  projectPage.hide();
+  onPage(true);
+  pages.showBot(route.tab, route.id).catch((err) => toast(err.message, 'error'));
+}
+window.addEventListener('hashchange', openBotFromLink);
 
 /** Everything archived, with the way back. Opening one reads it; Restore puts it back. */
 $('open-archive').addEventListener('click', () => {

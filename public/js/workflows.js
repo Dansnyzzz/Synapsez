@@ -1,6 +1,8 @@
 import { api } from './api.js';
 import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
+import { workflowState, sortByState } from './bot-status.js';
+import { pillsHtml, moreButtonHtml, openRowMenu } from './bot.js';
 
 /**
  * The Workflows shelf.
@@ -33,6 +35,8 @@ const STEP_MARK = {
   done: '●',
   failed: '✕',
   unknown: '?',
+  // Stopped by the person from the Bot page or the conversation (2026-11-08).
+  stopped: '■',
 };
 
 const stepLook = (status) => ({
@@ -96,8 +100,8 @@ export function workflowsView({
   onLeave,
   onDescribe = /** @type {(starter?: string, mode?: string) => void} */ (() => onLeave()),
   openForm,
-  /** One workflow in the side panel, to change or run. */
-  openPane = /** @type {(id: string) => void} */ (() => {}),
+  /** One workflow in the side panel, to change or run; `history` opens it at its runs. */
+  openPane = /** @type {(id: string, options?: { history?: boolean }) => void} */ (() => {}),
   reload,
   onRunStarted = () => {},
 }) {
@@ -131,11 +135,18 @@ export function workflowsView({
     get orderLabel() {
       return t('pages.sortBy');
     },
-    lede: t('wf.lede'),
-    orders: [
-      { id: 'recent', label: t('wf.order.recent') },
-      { id: 'name', label: t('wf.order.name') },
-    ],
+    // Getters, so a language switch reaches them (see `stepLook`).
+    get lede() {
+      return t('wf.lede');
+    },
+    get orders() {
+      return [
+        // What needs the person first, then what is running, then by next run.
+        { id: 'status', label: t('bot.order.status') },
+        { id: 'recent', label: t('wf.order.recent') },
+        { id: 'name', label: t('wf.order.name') },
+      ];
+    },
 
     load: async () => (await api.workflows()).workflows,
 
@@ -143,9 +154,11 @@ export function workflowsView({
       `${wf.title} ${(wf.steps || []).map((s) => s.instruction).join(' ')}`.toLowerCase().includes(q),
 
     sort: (list, by) =>
-      [...list].sort((a, b) =>
-        by === 'name' ? a.title.localeCompare(b.title) : new Date(b.created_at) - new Date(a.created_at),
-      ),
+      by === 'status'
+        ? sortByState(list, (wf) => workflowState(wf), (wf) => wf.title)
+        : [...list].sort((a, b) =>
+            by === 'name' ? a.title.localeCompare(b.title) : new Date(b.created_at) - new Date(a.created_at),
+          ),
 
     newMenu: () => [
       {
@@ -192,25 +205,35 @@ export function workflowsView({
               ? `<p class="wf__flag">${t('wf.interrupted')}</p>`
               : '';
 
+          const now = workflowState(wf);
+          const id = escapeHtml(wf.id);
           return `
-        <div class="wf${wf.enabled ? '' : ' wf--off'}">
+        <div class="wf botrow${wf.enabled ? '' : ' wf--off'}" data-row="${id}">
           <div class="wf__head">
             <div>
               <div class="wf__name">${escapeHtml(wf.title)}</div>
+              ${pillsHtml(now, wf.tz)}
               <div class="wf__when">
                 ${escapeHtml(wf.cron ? t('wf.everyCron', { cron: wf.cron }) : t('wf.onDemand'))}
-                ${wf.enabled ? '' : ` · ${escapeHtml(t('wf.paused'))}`}
                 ${run ? ` · ${escapeHtml(t('wf.lastRun', { status: runSay(run.status) }))}` : ` · ${escapeHtml(t('wf.neverRun'))}`}
               </div>
             </div>
             <div class="wf__acts">
-              ${run?.chat_id ? `<button class="task__act" data-open="${escapeHtml(run.chat_id)}">${escapeHtml(t('wf.openResult'))}</button>` : ''}
-              <button class="task__act" data-toggle="${escapeHtml(wf.id)}" data-on="${!!wf.enabled}">${
-                wf.enabled ? t('wf.pause') : t('wf.resume')
-              }</button>
-              <button class="task__act" data-drop="${escapeHtml(wf.id)}">${escapeHtml(t('wf.remove'))}</button>
-              <button class="icon-btn task__edit" data-edit="${escapeHtml(wf.id)}" type="button"
-                      title="${escapeHtml(t('wf.edit'))}" aria-label="${escapeHtml(t('wf.edit'))}">✎</button>
+              ${run?.chat_id ? `<button class="task__act" type="button" data-open="${escapeHtml(run.chat_id)}">${escapeHtml(t('wf.openResult'))}</button>` : ''}
+              ${
+                now.run === 'running'
+                  ? `<button class="task__act task__act--stop" type="button" data-stop="${id}">${escapeHtml(t('bot.stop'))}</button>`
+                  : `<button class="task__act" type="button" data-run="${id}">${escapeHtml(t('pages.tasks.runNow'))}</button>`
+              }
+              ${
+                // Nothing to pause on one that only runs when pressed.
+                !wf.enabled || now.plan !== 'manual'
+                  ? `<button class="task__act" type="button" data-toggle="${id}" data-on="${!!wf.enabled}">${escapeHtml(
+                      wf.enabled ? t('wf.pause') : t('wf.resume'),
+                    )}</button>`
+                  : ''
+              }
+              ${moreButtonHtml(wf.id, wf.title)}
             </div>
           </div>
           ${attention}
@@ -223,11 +246,11 @@ export function workflowsView({
       );
     },
 
-    wire: () => {
+    wire: (list = []) => {
       // Re-wiring happens on every render, so the previous timer goes first or
       // they accumulate one per refresh.
       stopPolling();
-      if (body.querySelector('.wf__step--running')) {
+      if (list.some((wf) => workflowState(wf).run === 'running')) {
         poll = setTimeout(() => {
           poll = null;
           // Only if the shelf is still the thing on screen.
@@ -245,10 +268,68 @@ export function workflowsView({
         });
       }
 
-      // Changed in the side panel, where Run now also lives — the same as a
-      // scheduled task, so the two shelves work one way.
-      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-edit]'))) {
-        button.addEventListener('click', () => openPane(button.dataset.edit));
+      // Edit, History and Delete under ⋯; the editor is the side panel, where
+      // every field saves on its own — the same as a scheduled task's.
+      for (const button of /** @type {NodeListOf<HTMLElement>} */ (body.querySelectorAll('[data-more]'))) {
+        const id = button.dataset.more;
+        button.addEventListener('click', () =>
+          openRowMenu(button, {
+            edit: () => openPane(id),
+            history: () => openPane(id, { history: true }),
+            remove: async () => {
+              try {
+                await api.deleteWorkflow(id);
+                toast(t('bot.deleted'));
+              } catch (err) {
+                toast(err.message, 'error');
+              }
+              reload();
+            },
+          }),
+        );
+      }
+
+      /**
+       * Run now, from the row, staying on the page.
+       *
+       * The request is held open for as long as the run takes (that is what
+       * keeps a serverless instance alive), so it is not waited for here: the
+       * list is drawn again a moment later, when the row says Running with a
+       * Stop beside it, and again when the run ends.
+       */
+      for (const button of /** @type {NodeListOf<HTMLButtonElement>} */ (body.querySelectorAll('[data-run]'))) {
+        button.addEventListener('click', () => {
+          button.disabled = true;
+          const running = api.runWorkflow(button.dataset.run);
+          toast(t('bot.started'));
+          const peek = setTimeout(() => {
+            reload();
+            onRunStarted();
+          }, 1200);
+          running
+            .catch((err) => {
+              clearTimeout(peek);
+              toast(err.message, 'error');
+            })
+            .finally(() => {
+              reload();
+              onRunStarted();
+            });
+        });
+      }
+
+      for (const button of /** @type {NodeListOf<HTMLButtonElement>} */ (body.querySelectorAll('[data-stop]'))) {
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try {
+            const { stopped } = await api.stopWorkflow(button.dataset.stop);
+            toast(t(stopped ? 'bot.stopped' : 'bot.notRunning'), stopped ? 'ok' : undefined);
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+          reload();
+          onRunStarted();
+        });
       }
 
       for (const button of body.querySelectorAll('[data-idea]')) {
@@ -258,28 +339,6 @@ export function workflowsView({
       for (const button of body.querySelectorAll('[data-toggle]')) {
         button.addEventListener('click', async () => {
           await api.updateWorkflow(button.dataset.toggle, { enabled: button.dataset.on !== 'true' });
-          reload();
-        });
-      }
-
-      for (const button of body.querySelectorAll('[data-drop]')) {
-        // Two presses, the same as everywhere else on these shelves.
-        let ready = false;
-        const original = button.textContent;
-        button.addEventListener('click', async () => {
-          if (!ready) {
-            ready = true;
-            button.textContent = t('wf.removeConfirm');
-            // The same red confirm a scheduled task's Delete shows.
-            button.classList.add('is-armed');
-            setTimeout(() => {
-              ready = false;
-              button.textContent = original;
-              button.classList.remove('is-armed');
-            }, 4000);
-            return;
-          }
-          await api.deleteWorkflow(button.dataset.drop);
           reload();
         });
       }
