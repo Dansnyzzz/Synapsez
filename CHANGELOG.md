@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-09 — The Bot page, a creature for every title, the aurora week, a disk that tidies itself
+
+**Bot** (`public/js/bot.js`, `public/js/bot-status.js`, `server/routes/bot.js`). Workflows and scheduled tasks are one sidebar item with two tabs, from a study of Fei2411/DS-Bot. Every row says its state in words; the rail counts what needs you; Run now and Stop on the row; a workflow keeps its last ten runs and takes permissions and a project (schema 40); a resumed step is told to check what it already did.
+
+**Title creatures** (`public/js/mascots/`). An engine on a 64×64 grid with shared props drawn by anchors, and eleven creatures drawn for Synapsez (no pixel taken from the whale). The worn title's creature stands on the writing box in all eight states; no title keeps the whale, which now scales smoothly. The whale art is used with its artist's permission, not under MIT as this file once said.
+
+**Themes** (`server/themes.js`, `public/js/themes-panel.js`, `public/js/reward-facts.js`). Periods turn at midnight in Vietnam; a period's theme shows from its first day and an event's three days early, except to administrators. The aurora is an event from 24 to 31 December 2026 (2,000,000 tokens, 100 places). Sponsor titles count `top_ups`. Earned things are given at the end of a turn and put on. Twelve a page, an order, and the owner's shape for what earns each.
+
+**Event emails** (`server/eventMail.js`, `scripts/scene-gifs.mjs`). When an event's theme comes out, everyone who has not turned it off is told: a GIF of the theme, its description, mission and places. Through Gmail, in Bcc batches (`EVENT_MAIL_BATCH`, `EVENT_MAIL_DAILY`); privacy-2026-11-08.
+
+**Privacy page** keeps the settings now and the mask's catch rate, measured live (`currentMasking`), with this account's own hidden counts.
+
+**Cloud computer** (`server/machineCare.js`). A tidy in three tiers by how full the disk is, never the person's files; the result in Settings → System (`GET /api/cloud-computer/disk`). Playwright browser installs are replayed on a new machine, and the Python session finds the template's Chromium.
+
+**Fixed.** Dates in the app's language everywhere (and a test that holds it); /theme at once; the checks' notes not copied; citations that paste; a repaired citation not also marked unverified; the reasoning note; the login limit per account and address; a stop's estimate with its cached share; the turn limit on the deployment key.
+
 ## 2026-11-07 — A stop that stops; themes for every quarter; one line for all your free requests
 
 **Stop** (`server/liveRuns.js`, `public/js/app.js`). The OpenAI SDK ends its stream quietly on an abort, so a stopped reply on OpenRouter or OrcaRouter read as a finished one, and a turn stopped while reasoning vanished. A stop now reads as a stop: what was said or thought is kept and marked, and an estimate of what it spent goes on the books. `/stop` aborts on the same instance at once; on another, a run reads its lease every two seconds rather than fifteen. The next request waits until the stopped run has written what it had (`chats.run_stop_at`), so nothing lands out of order. Measured on OrcaRouter with its free DeepSeek model: stopped after about 130 tokens read of a possible 2,000, it settled 148 (`scripts/usage-probe.mjs --orca-abort`).

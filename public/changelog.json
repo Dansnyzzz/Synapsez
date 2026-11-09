@@ -1,6 +1,60 @@
 {
   "entries": [
     {
+      "version": "1.16.0",
+      "date": "2026-11-09",
+      "new": {
+        "vi": [
+          "Mục Bot: chuỗi việc và việc chạy theo giờ gộp thành một trang hai thẻ, có nhãn trạng thái, số việc cần bạn trên thanh bên, nút Chạy ngay và Dừng, lịch sử lần chạy, quyền và dự án cho chuỗi việc.",
+          "Mỗi danh hiệu có một linh vật điểm ảnh riêng đứng trên khung nhập, đủ 8 trạng thái như cá voi: đeo danh hiệu nào thì linh vật đó hiện.",
+          "Theme sự kiện Cực quang từ 24 đến 31/12/2026, và email báo khi một theme sự kiện mới ra, kèm ảnh động của theme. Tắt ở Cài đặt → Chung → Email.",
+          "Trang Theme: 12 theme một trang với mũi tên hai bên, nút sắp xếp theo ngày ra, ngày nhận hoặc theo loại."
+        ],
+        "en": [
+          "The Bot page: workflows and scheduled tasks on one page with two tabs, status on every row, a count of what needs you in the sidebar, Run now and Stop, run history, and permissions and a project for workflows.",
+          "Every title has its own pixel creature on the writing box, with the same 8 states as the whale: wear a title and its creature shows.",
+          "The Aurora event theme from 24 to 31 December 2026, and an email when a new event theme comes out, with the theme moving at the top. Turn it off in Settings → General → Emails.",
+          "The Theme page: twelve themes a page with an arrow either side, and an order by release date, date received or kind."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Theme và danh hiệu tự trao ngay khi đủ điều kiện sau mỗi lượt chat, và tự được áp dụng. Mô tả ghi rõ điều kiện, số người đang có và ngày bạn nhận.",
+          "Theme top quý và top năm chỉ hiện từ 00:00 ngày đầu kỳ (giờ Việt Nam); theme sự kiện hiện trước 3 ngày. Quản trị viên vẫn thấy hết.",
+          "Danh hiệu Nhà tài trợ nhỏ, Nhà tài trợ lớn, Đại gia và theme đi kèm tính theo tiền nạp vào Synapsez.",
+          "Trang \"Dữ liệu của bạn đi đâu\" chỉ còn cài đặt hiện tại và bảng bộ che bắt được bao nhiêu, đo ngay lúc bạn mở trang, kèm số mục đã che trong hội thoại của bạn.",
+          "Máy tính đám mây tự dọn ổ đĩa theo mức đầy, cho xem dung lượng ở Cài đặt → Hệ thống; trình duyệt Playwright tự cài lại trên máy mới.",
+          "Ghi chú \"Kiểm tra nguồn / số liệu\" thành dòng ghi chú dưới câu trả lời, không bị copy. Copy sang Google Docs ghi trích dẫn thành \"Tên nguồn: link\"."
+        ],
+        "en": [
+          "Themes and titles are given as soon as they are earned, at the end of a turn, and put on. Each says what earns it, how many hold it and the day you got it.",
+          "A quarter's or a year's theme shows from midnight on its first day, Vietnam's time; an event's three days before it starts. Administrators still see them all.",
+          "The sponsor titles and their themes count money put into Synapsez.",
+          "\"Where your data goes\" keeps only your settings and how much the mask catches, measured as you open it, with what was hidden in your own conversations.",
+          "The cloud computer tidies its disk by how full it is and shows it in Settings → System; Playwright browsers come back on a new machine.",
+          "What the source and figure checks say is a note under the answer, never copied. A citation pastes into Google Docs as \"Name: link\"."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Ngày tháng và số theo đúng ngôn ngữ của ứng dụng: \"11/5/2026\" trên trang tiếng Việt thật ra là ngày 5/11.",
+          "/theme mở ngay lập tức; thanh cuộn của nó không còn nền xám.",
+          "Bỏ dòng ghi chú thừa dưới phần suy luận của model.",
+          "Mười lần sai mật khẩu của người lạ không còn khoá tài khoản của bạn.",
+          "Tệp nén .zip lớn để lại trên máy đám mây nói đúng là không tạo link công khai được.",
+          "Ước tính chi phí khi bấm dừng tính cả phần đã cache; giới hạn mỗi lượt áp dụng cả khi chuyển sang key của máy chủ."
+        ],
+        "en": [
+          "Dates and numbers follow the app's language: \"11/5/2026\" on a Vietnamese page was the fifth of November.",
+          "/theme opens at once, and its scrollbar no longer has a grey track.",
+          "The extra note under a model's own reasoning is gone.",
+          "A stranger's ten wrong passwords no longer lock you out.",
+          "A large archive left on the cloud computer says plainly it cannot have a public link.",
+          "A stop's estimate counts the cached share; the per-turn limit applies once the deployment's key is used."
+        ]
+      }
+    },
+    {
       "version": "1.15.0",
       "date": "2026-11-07",
       "new": {
