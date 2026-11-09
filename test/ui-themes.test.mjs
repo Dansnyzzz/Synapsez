@@ -577,7 +577,7 @@ section('the boards');
     pixel: !!document.querySelector('.ranking__detail .pixel-creature'),
   }));
   check('it can be looked at, and what is worn stays on', lookedAt.worn && lookedAt.locked && lookedAt.creature, JSON.stringify(lookedAt));
-  check('one whose pixel creature is not drawn yet shows its scene', !lookedAt.pixel, JSON.stringify(lookedAt));
+  check('a title not yet earned shows its own pixel creature too', lookedAt.pixel, JSON.stringify(lookedAt));
   check('it says what earns it, and how far along I am', /1,000,000,000|1\.000\.000\.000/.test(lookedAt.says) && /you have used/i.test(lookedAt.says) && /Quantity: \d+ people hold it/.test(lookedAt.says), lookedAt.says);
   check('and nothing is saved', saves.length === sent);
   await shot('title-locked', member);
