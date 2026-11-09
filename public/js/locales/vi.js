@@ -2516,7 +2516,7 @@ export const vi = {
   'ranking.pet.pet-seahorse.name': 'Cá ngựa đồng',
   'ranking.pet.pet-seahorse.desc': 'Thân đồng bóng, đuôi cuộn, một đồng xu nhỏ xoay lấp lánh trên đầu.',
   'ranking.pet.pet-jade-turtle.name': 'Rùa ngọc',
-  'ranking.pet.pet-jade-turtle.desc': 'Từng ô mai ngọc lần lượt sáng lên, những tinh thể nhỏ bay quanh theo vòng.',
+  'ranking.pet.pet-jade-turtle.desc': 'Rùa biển tạc từ ngọc bích: từng ô mai lần lượt sáng lên, viền vàng quanh mép mai.',
   'ranking.pet.pet-gold-whale.name': 'Cá voi hoàng kim',
   'ranking.pet.pet-gold-whale.desc': 'Vàng ròng phản chiếu từng dải sáng, vương miện, vòng sáng xoay và mưa vàng không ngớt.',
   'ranking.pet.pet-bronze-dolphin.name': 'Cá heo đồng',

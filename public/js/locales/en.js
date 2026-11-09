@@ -2530,7 +2530,7 @@ export const en = {
   'ranking.pet.pet-seahorse.name': 'Bronze seahorse',
   'ranking.pet.pet-seahorse.desc': 'Polished bronze, a curled tail, and a small coin spinning overhead.',
   'ranking.pet.pet-jade-turtle.name': 'Jade turtle',
-  'ranking.pet.pet-jade-turtle.desc': 'Each plate of its jade shell lights up in turn, with small crystals circling it.',
+  'ranking.pet.pet-jade-turtle.desc': 'A sea turtle carved from jade: the plates of its shell light up one after another, inside a rim of gold.',
   'ranking.pet.pet-gold-whale.name': 'Golden whale',
   'ranking.pet.pet-gold-whale.desc': 'Solid gold catching every band of light, a crown, turning rings of light and a rain of gold that never stops.',
   'ranking.pet.pet-bronze-dolphin.name': 'Bronze dolphin',
