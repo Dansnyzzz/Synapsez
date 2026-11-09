@@ -1,9 +1,9 @@
 /**
  * What a scheduled task or a workflow is doing, said once.
  *
- * The Bot page draws a pill from this on every row, sorts by it, and the rail
+ * The Automations page draws a pill from this on every row, sorts by it, and the rail
  * counts what needs the person from it. The server's summary for that count
- * (`GET /api/bot/summary`) imports this same file, so the badge and the rows
+ * (`GET /api/automations/summary`) imports this same file, so the badge and the rows
  * cannot disagree about what "needs you" means. Pure: no DOM, no strings a
  * person reads — the words are the page's, in the person's language.
  *
@@ -25,7 +25,7 @@ export const OVERDUE_GRACE_MS = 2 * 60_000;
 /**
  * @typedef {'running' | 'needs' | 'failed' | 'stopped' | null} RunState
  * @typedef {'overdue' | 'paused' | 'manual' | 'next'} PlanState
- * @typedef {{ run: RunState, plan: PlanState, step: number, steps: number, next: string | null, attention: boolean, rank: number }} BotState
+ * @typedef {{ run: RunState, plan: PlanState, step: number, steps: number, next: string | null, attention: boolean, rank: number }} AutoState
  */
 
 const time = (value) => {
@@ -64,7 +64,7 @@ function finish(run, plan, extra) {
 
 /**
  * @param {{ enabled?: boolean, cron?: string | null, next_run_at?: string | null, run_state?: string | null, last_status?: string | null }} task
- * @returns {BotState}
+ * @returns {AutoState}
  */
 export function taskState(task, now = Date.now()) {
   const said = String(task.last_status || '');
@@ -81,7 +81,7 @@ export function taskState(task, now = Date.now()) {
 /**
  * @param {{ enabled?: boolean, cron?: string | null, next_run_at?: string | null, steps?: unknown[],
  *   lastRun?: { status?: string, cursor?: number, steps?: Array<{ status?: string }> } | null }} workflow
- * @returns {BotState}
+ * @returns {AutoState}
  */
 export function workflowState(workflow, now = Date.now()) {
   const last = workflow.lastRun || null;
@@ -106,7 +106,7 @@ export function workflowState(workflow, now = Date.now()) {
  *
  * @template T
  * @param {T[]} list
- * @param {(row: T) => BotState} stateOf
+ * @param {(row: T) => AutoState} stateOf
  * @param {(row: T) => string} nameOf
  */
 export function sortByState(list, stateOf, nameOf) {
@@ -125,7 +125,7 @@ export function sortByState(list, stateOf, nameOf) {
  *
  * @template T
  * @param {T[]} list
- * @param {(row: T) => BotState} stateOf
+ * @param {(row: T) => AutoState} stateOf
  */
 export function tally(list, stateOf) {
   let attention = 0;

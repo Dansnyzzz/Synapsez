@@ -112,7 +112,7 @@ import { mountYourDataRoutes } from './routes/yourData.js';
 import { cloudBrowserState, cloudBrowserInput, closeCloudBrowser } from './cloudBrowser/index.js';
 import { EFFORTS, DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
-import { mountBotRoutes } from './routes/bot.js';
+import { mountAutomationRoutes } from './routes/automations.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
 import { approximateLocation } from './whereabouts.js';
@@ -2168,8 +2168,8 @@ export function createApp() {
 
   // Lifted into server/routes/workflows.js.
   mountWorkflowRoutes(api, { wrap, body });
-  // The Bot page: what needs the person, and Stop for both kinds.
-  mountBotRoutes(api, { wrap });
+  // The Automations page: what needs the person, and Stop for both kinds.
+  mountAutomationRoutes(api, { wrap });
   mountConnectorRoutes(api, { wrap });
   mountMcpRoutes(api, { wrap, body });
 

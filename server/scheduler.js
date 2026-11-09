@@ -12,7 +12,7 @@ import { expireMachineUploads } from './sandbox.js';
 import { sweepEventMail } from './eventMail.js';
 import { abortHere, holdRun, watchStopped } from './liveRuns.js';
 import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public/js/schedule-grammar.js';
-import { TASK_STOPPED } from '../public/js/bot-status.js';
+import { TASK_STOPPED } from '../public/js/automation-status.js';
 
 /**
  * Work that happens without anyone watching.
@@ -41,7 +41,7 @@ const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
  * The same three words the loop already understands, narrowed to the ones an
  * unattended run can sensibly choose: a run at 3am cannot be asked anything, so
  * `ask` means "stop at the first risky step" rather than "prompt". One list for
- * scheduled tasks and workflows (the Bot page), so the two cannot drift.
+ * scheduled tasks and workflows (the Automations page), so the two cannot drift.
  */
 export const UNATTENDED_POLICIES = new Set(['ask', 'guarded', 'auto']);
 
@@ -544,7 +544,7 @@ async function runTask(task) {
   let waitingForApproval = false;
 
   /**
-   * Stop reaches this run (the Bot page, or the conversation's own stop button).
+   * Stop reaches this run (the Automations page, or the conversation's own stop button).
    *
    * Held under the conversation it writes into, so `abortHere` finds it on this
    * instance; on another, the task row says it was stopped and `watchStopped`

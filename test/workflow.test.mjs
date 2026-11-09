@@ -1059,12 +1059,12 @@ section('a new day starts the workflow over, whatever became of yesterday');
   check('a deleted conversation is replaced by a new one, not a stopped workflow', !!third.chat_id && third.chat_id !== second.chat_id && !!(await store.getChat(aliceId, third.chat_id)));
 }
 
-/* ── the Bot page (owner, 2026-11-08) ───────────────────────────── */
+/* ── the Automations page (owner, 2026-11-08) ───────────────────────────── */
 
 const { __testing: wfTesting, resumeNote } = await import('../server/workflows.js');
 const { __agent: taskAgent, runTaskNow } = await import('../server/scheduler.js');
 const { holdRun } = await import('../server/liveRuns.js');
-const { TASK_STOPPED, taskState, workflowState, sortByState } = await import('../public/js/bot-status.js');
+const { TASK_STOPPED, taskState, workflowState, sortByState } = await import('../public/js/automation-status.js');
 
 /** A stand-in agent turn that answers at once, and keeps what it was given. */
 const quickAgent = (seen) => async (options) => {
@@ -1312,7 +1312,7 @@ section('Stop ends a scheduled task that is running, for its owner only');
   }
 }
 
-section('the Bot page counts what needs the person');
+section('the Automations page counts what needs the person');
 {
   const carol = jar();
   await carol.call('POST', '/api/register', { name: 'Carol', email: 'carol@workflow.test', password: 'a-long-enough-password' });
@@ -1320,7 +1320,7 @@ section('the Bot page counts what needs the person');
   const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
   const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
 
-  const empty = await carol.call('GET', '/api/bot/summary');
+  const empty = await carol.call('GET', '/api/automations/summary');
   check('an account with nothing has nothing to count', empty.status === 200 && empty.body?.attention === 0 && empty.body?.workflows?.count === 0, JSON.stringify(empty.body));
 
   const failed = await store.createTask(carolId, { id: 'carol-failed', title: 'Failed', prompt: 'x', cron: '08:00', nextRunAt: tomorrow });
@@ -1336,15 +1336,15 @@ section('the Bot page counts what needs the person');
   const going = await store.createWorkflow(carolId, { id: 'carol-wf-go', title: 'Going', steps: normaliseSteps(['a', 'b', 'c', 'd']), nextRunAt: null });
   await store.createWorkflowRun(carolId, { id: 'carol-run-go', workflowId: going.id, status: 'running', steps: [{ id: 's1', status: 'done' }, { id: 's2', status: 'running' }, { id: 's3', status: 'pending' }, { id: 's4', status: 'pending' }], cursor: 1 });
 
-  const sum = await carol.call('GET', '/api/bot/summary');
+  const sum = await carol.call('GET', '/api/automations/summary');
   check('the failed task and the overdue one need the person', sum.body?.scheduled?.attention === 2, JSON.stringify(sum.body?.scheduled));
   check('  a failure somebody has since paused does not nag', sum.body?.scheduled?.count === 4);
   check('the workflow waiting for a person does, the running one does not', sum.body?.workflows?.attention === 1 && sum.body?.workflows?.running === 1, JSON.stringify(sum.body?.workflows));
   check('  three in all, for the badge', sum.body?.attention === 3, String(sum.body?.attention));
-  const others = await alice.call('GET', '/api/bot/summary');
+  const others = await alice.call('GET', '/api/automations/summary');
   const alicesOwn = (await alice.call('GET', '/api/tasks')).body?.tasks?.length;
   check("each account counts only its own", others.status === 200 && others.body?.scheduled?.count === alicesOwn, `${others.body?.scheduled?.count} vs ${alicesOwn}`);
-  check('signed out reaches nothing', (await fetch(`${base}/api/bot/summary`)).status === 401);
+  check('signed out reaches nothing', (await fetch(`${base}/api/automations/summary`)).status === 401);
 
   // The rows say the same thing the count does.
   const list = (await carol.call('GET', '/api/workflows')).body?.workflows || [];

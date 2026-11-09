@@ -7834,9 +7834,9 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   .wf__acts { justify-content: flex-start; }
 }
 
-/* ── the Bot page: workflows and scheduled tasks as two tabs ── */
+/* ── the Automations page: workflows and scheduled tasks as two tabs ── */
 /*
- * Owner, 2026-11-08. The rail's one Bot item carries a count of what needs the
+ * Owner, 2026-11-08. The rail's one Automations item carries a count of what needs the
  * person; the page has a tab switch, a pill of state on every row, and a ⋯ menu.
  * The pills are words first: the colour only repeats what the word says. Each
  * colour is the theme's own semantic one, which holds 4.5:1 on both themes.
@@ -7862,12 +7862,12 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
 
 .page__notice { max-width: 1120px; margin: 0 auto 14px; }
 /* Under the title and level with it, at the shelf's own width. */
-.bot__tabs { display: flex; margin: 4px max(0px, calc((100% - 1120px) / 2)) 18px; }
-.bot__tabs button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
-.bot__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
+.auto__tabs { display: flex; margin: 4px max(0px, calc((100% - 1120px) / 2)) 18px; }
+.auto__tabs button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
+.auto__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
 
-.botpills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.botpill {
+.autopills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.autopill {
   display: inline-flex;
   align-items: center;
   padding: 1px 9px;
@@ -7880,18 +7880,18 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
   line-height: 1.6;
   white-space: nowrap;
 }
-.botpill--running { color: var(--info); }
-.botpill--needs { color: var(--warn); }
-.botpill--failed,
-.botpill--overdue { color: var(--danger); }
-.botpill--done { color: var(--ok); }
+.autopill--running { color: var(--info); }
+.autopill--needs { color: var(--warn); }
+.autopill--failed,
+.autopill--overdue { color: var(--danger); }
+.autopill--done { color: var(--ok); }
 
 /* A paused workflow dims its steps, not the words that say it is paused: a
    whole row at 62% took the pill under 4.5:1. */
-.wf--off.botrow { opacity: 1; }
-.wf--off.botrow .wf__steps { opacity: 0.62; }
+.wf--off.autorow { opacity: 1; }
+.wf--off.autorow .wf__steps { opacity: 0.62; }
 
-.botrow__more { flex: none; font-size: 18px; }
+.autorow__more { flex: none; font-size: 18px; }
 .task__act--stop { border-color: var(--danger); color: var(--danger); }
 .task__act:disabled { opacity: 0.6; cursor: default; }
 
