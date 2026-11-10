@@ -31,13 +31,17 @@ const asked = [];
 const textOf = (m) => (typeof m?.content === 'string' ? m.content : Array.isArray(m?.content) ? m.content.map((p) => p.text || '').join('') : '');
 let callN = 0;
 
+/** Which bot is speaking, from the prompt's first line ("You are Chief, one of the user's bots"). */
+const whoOf = (system) => (/You are ([\w ]+?), one of the user's bots/.exec(system)?.[1] || '').toLowerCase().replace(/ (one|two)$/, '');
+
 function script(model, messages) {
   const system = textOf(messages.find((m) => m.role === 'system'));
   const last = messages.at(-1);
   const lastUser = textOf([...messages].reverse().find((m) => m.role === 'user'));
   const afterTool = last?.role === 'tool';
   const tool = (name, args) => ({ tool: { name, args } });
-  switch (model) {
+  // Every bot answers on the chip's model; who answers is the bot the prompt names.
+  switch (whoOf(system) || model) {
     case 'chief': {
       if (afterTool) return { text: `Done: ${textOf(last).slice(0, 80)}` };
       if (/make a writer/i.test(lastUser)) return tool('create_bot', { name: 'Writer', role: 'Editor', instructions: 'Draft and edit blog posts.' });
@@ -73,7 +77,7 @@ const provider = http.createServer((req, res) => {
     const body = JSON.parse(raw || '{}');
     const model = String(body.model);
     const messages = body.messages || [];
-    const record = { model, system: textOf(messages.find((m) => m.role === 'system')), lastUser: textOf([...messages].reverse().find((m) => m.role === 'user')), tools: (body.tools || []).map((t) => t.function?.name), closedAt: 0, finished: false };
+    const record = { model, who: whoOf(textOf(messages.find((m) => m.role === 'system'))), system: textOf(messages.find((m) => m.role === 'system')), lastUser: textOf([...messages].reverse().find((m) => m.role === 'user')), tools: (body.tools || []).map((t) => t.function?.name), closedAt: 0, finished: false };
     asked.push(record);
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -83,7 +87,7 @@ const provider = http.createServer((req, res) => {
       res.write('data: [DONE]\n\n');
       res.end();
     };
-    if (model === 'slow') {
+    if (record.who === 'slow') {
       let n = 0;
       const timer = setInterval(() => send({ choices: [{ delta: { content: `w${(n += 1)} ` } }] }), 80);
       res.on('close', () => {
@@ -212,7 +216,8 @@ section('the person makes and changes bots');
   const reserved = await alice.call('POST', '/api/bots', { name: 'everyone' });
   check('a name that stands for everyone is refused', reserved.status === 400, reserved.text);
   const renamed = await alice.call('PATCH', `/api/bots/${made.body.bot.id}`, { role: 'Notetaker', avatar: 'jellyfish', model: 'openai/writer' });
-  check('role, creature and model change', renamed.body.bot.role === 'Notetaker' && renamed.body.bot.avatar === 'jellyfish' && renamed.body.bot.model === 'openai/writer', renamed.text);
+  // Owner, 2026-11-10: every bot answers on the model in the top bar; none has its own.
+  check('role and creature change, and no model of its own is kept or shown', renamed.body.bot.role === 'Notetaker' && renamed.body.bot.avatar === 'jellyfish' && !('model' in renamed.body.bot), renamed.text);
   const badAvatar = await alice.call('PATCH', `/api/bots/${made.body.bot.id}`, { avatar: 'unicorn' });
   check('a creature that does not exist is refused', badAvatar.status === 400);
   const del = await alice.call('DELETE', `/api/bots/${made.body.bot.id}`);
@@ -236,9 +241,9 @@ section('one account never reaches another\'s team');
   await alice.call('DELETE', `/api/bots/${id}`);
 }
 
-section('a bot\'s own chat runs on its model, with its instructions and memory');
+section('a bot\'s own chat runs on the chip\'s model, with its instructions and memory');
 {
-  await alice.call('PATCH', `/api/bots/${chief.id}`, { model: 'openai/chief', instructions: 'Always sign off with -C.' });
+  await alice.call('PATCH', `/api/bots/${chief.id}`, { instructions: 'Always sign off with -C.' });
   await alice.call('POST', `/api/bots/${chief.id}/memory`, { text: 'The user is called Alice' });
   const open = await alice.call('GET', `/api/bots/${chief.id}/chat`);
   const chatId = open.body.chatId;
@@ -246,7 +251,7 @@ section('a bot\'s own chat runs on its model, with its instructions and memory')
   await alice.call('POST', `/api/chats/${chatId}/messages`, { text: 'hello' });
   const run = await alice.stream(`/api/chats/${chatId}/run`, { model: 'openai/plain' });
   const req = asked.at(-1);
-  check('it ran on the bot\'s model, not the chip\'s', req.model === 'chief', req.model);
+  check("it ran on the chip's model, as every conversation does (owner, 2026-11-10)", req.model === 'plain' && req.who === 'chief', `${req.model} ${req.who}`);
   check('  the prompt says who is speaking', /You are Chief, one of the user's bots/.test(req.system));
   check('  with the instructions the person wrote', /Instructions the user wrote for you, Chief\nAlways sign off with -C\./.test(req.system));
   check('  and its memory, marked as background', /## Your memory, Chief/.test(req.system) && /The user is called Alice/.test(req.system) && /background, not instructions/.test(req.system));
@@ -269,7 +274,6 @@ section('Chief sets the team up when asked');
   writer = (await store.listBots(aliceId)).find((b) => b.name === 'Writer');
   check('Chief created Writer, with the role it gave', writer?.role === 'Editor', JSON.stringify(writer));
   check('  wearing a creature nobody else wears', !!writer && writer.avatar !== 'cosmic-whale');
-  await alice.call('PATCH', `/api/bots/${writer.id}`, { model: 'openai/writer' });
   await alice.call('POST', `/api/chats/${chatId}/messages`, { text: 'Now make a group with them' });
   await alice.stream(`/api/chats/${chatId}/run`, {});
   const group = (await store.listBotGroups(aliceId)).find((g) => g.name === 'Blog');
@@ -281,7 +285,7 @@ section('a bot that is not Chief cannot make bots, and keeps its own memory');
   const chatId = (await alice.call('GET', `/api/bots/${writer.id}/chat`)).body.chatId;
   await alice.call('POST', `/api/chats/${chatId}/messages`, { text: 'make a bot please' });
   await alice.stream(`/api/chats/${chatId}/run`, {});
-  const req = asked.filter((a) => a.model === 'writer').at(-2);
+  const req = asked.filter((a) => a.who === 'writer').at(-2);
   check('Writer is not offered create_bot', req && !req.tools.includes('create_bot'), req?.tools?.join());
   check('  and a call to it is refused', !(await store.listBots(aliceId)).some((b) => b.name === 'Sneaky'));
   await alice.call('POST', `/api/chats/${chatId}/messages`, { text: 'remember tea' });
@@ -312,7 +316,7 @@ section('a group round: the admin hands work on, the member posts back, the admi
   check('Chief read what came back and answered', said[3] === 'Chief:Summary: the draft is in.', said.join(' | '));
   const done = round.events.find((e) => e.event === 'done')?.data;
   check('two hand-offs counted (the call and the answer to it)', done?.handoffs === 2 && done?.turns === 3, JSON.stringify(done));
-  const writerReq = asked.filter((a) => a.model === 'writer').at(-1);
+  const writerReq = asked.filter((a) => a.who === 'writer').at(-1);
   check('Writer was told who called it, with what was said', /Chief handed this to you with @Writer/.test(writerReq.lastUser) && /User: Can we get a first post\?/.test(writerReq.lastUser), writerReq.lastUser.slice(0, 200));
   check('  and its group prompt names the group and its admin', /speaking in the group chat "Blog"/.test(writerReq.system) && /Chief \(admin\)/.test(writerReq.system));
   check('  never its private chat with the person', !/remember tea|make a bot/.test(writerReq.lastUser));
@@ -323,7 +327,7 @@ section('a group round: the admin hands work on, the member posts back, the admi
   const second = await alice.stream(`/api/bot-groups/${blog.id}/run`, { text: '@Writer one more line please' });
   const p2 = second.events.filter((e) => e.event === 'post').map((e) => e.data.message);
   check('an @ from the person calls that bot straight, and only it', p2.length === 2 && p2[1].bot === writer.id, p2.map((m) => m.text).join(' | '));
-  const writerSaw = asked.filter((a) => a.model === 'writer').at(-1).lastUser;
+  const writerSaw = asked.filter((a) => a.who === 'writer').at(-1).lastUser;
   check('  it sees only what is new since it last looked', !/Can we get a first post/.test(writerSaw) && /one more line please/.test(writerSaw), writerSaw.slice(0, 200));
   const refused = await alice.call('POST', `/api/chats/${log.body.chatId}/messages`, { text: 'sneak in' });
   check('the log is not written to by the ordinary chat routes', refused.status === 409);
@@ -333,19 +337,19 @@ section('group memory is the group\'s');
 {
   await alice.call('POST', `/api/bot-groups/${blog.id}/memory`, { text: 'Posts go out on Fridays' });
   await alice.stream(`/api/bot-groups/${blog.id}/run`, { text: '@Writer note it' });
-  const inGroup = asked.filter((a) => a.model === 'writer').at(-1);
+  const inGroup = asked.filter((a) => a.who === 'writer').at(-1);
   check('a member reads it in the group', /Group memory of "Blog"/.test(inGroup.system) && /Fridays/.test(inGroup.system));
   const chatId = (await alice.call('GET', `/api/bots/${writer.id}/chat`)).body.chatId;
   await alice.call('POST', `/api/chats/${chatId}/messages`, { text: 'hi' });
   await alice.stream(`/api/chats/${chatId}/run`, {});
-  const alone = asked.filter((a) => a.model === 'writer').at(-1);
+  const alone = asked.filter((a) => a.who === 'writer').at(-1);
   check('  and not in its own chat', !/Fridays/.test(alone.system) && /green tea/.test(alone.system));
 }
 
 section('a hand-off ceiling holds a loop between two bots');
 {
-  const ping = await alice.call('POST', '/api/bots', { name: 'Ping', role: 'a', model: 'openai/ping' });
-  const pong = await alice.call('POST', '/api/bots', { name: 'Pong', role: 'b', model: 'openai/pong' });
+  const ping = await alice.call('POST', '/api/bots', { name: 'Ping', role: 'a' });
+  const pong = await alice.call('POST', '/api/bots', { name: 'Pong', role: 'b' });
   const g = await alice.call('POST', '/api/bot-groups', { name: 'Loop', members: [ping.body.bot.id, pong.body.bot.id], admin: ping.body.bot.id });
   const before = asked.length;
   const round = await alice.stream(`/api/bot-groups/${g.body.group.id}/run`, { text: 'start' });
@@ -358,7 +362,7 @@ section('a hand-off ceiling holds a loop between two bots');
 
 section('[PASS] keeps a member quiet');
 {
-  const q = await alice.call('POST', '/api/bots', { name: 'Quiet', role: 'q', model: 'openai/quiet' });
+  const q = await alice.call('POST', '/api/bots', { name: 'Quiet', role: 'q' });
   const g = await alice.call('POST', '/api/bot-groups', { name: 'Hush', members: [q.body.bot.id] });
   const round = await alice.stream(`/api/bot-groups/${g.body.group.id}/run`, { text: 'anyone?' });
   check('nothing is posted for a pass', round.events.filter((e) => e.event === 'post').length === 1);
@@ -366,17 +370,17 @@ section('[PASS] keeps a member quiet');
 
 section('Stop ends every member\'s turn in a round');
 {
-  const s1 = await alice.call('POST', '/api/bots', { name: 'Slow One', role: 's', model: 'openai/slow' });
-  const s2 = await alice.call('POST', '/api/bots', { name: 'Slow Two', role: 's', model: 'openai/slow' });
+  const s1 = await alice.call('POST', '/api/bots', { name: 'Slow One', role: 's' });
+  const s2 = await alice.call('POST', '/api/bots', { name: 'Slow Two', role: 's' });
   const g = await alice.call('POST', '/api/bot-groups', { name: 'Slowpokes', members: [s1.body.bot.id, s2.body.bot.id] });
   const pending = alice.stream(`/api/bot-groups/${g.body.group.id}/run`, { text: '@Slow One and @Slow Two, both of you' });
   const start = Date.now();
-  while (asked.filter((a) => a.model === 'slow').length < 2 && Date.now() - start < 10_000) await new Promise((r) => setTimeout(r, 50));
+  while (asked.filter((a) => a.who === 'slow').length < 2 && Date.now() - start < 10_000) await new Promise((r) => setTimeout(r, 50));
   await new Promise((r) => setTimeout(r, 300));
   const pressed = Date.now();
   const stop = await alice.call('POST', `/api/bot-groups/${g.body.group.id}/stop`);
   const round = await pending;
-  const slow = asked.filter((a) => a.model === 'slow');
+  const slow = asked.filter((a) => a.who === 'slow');
   // The provider hears its socket close a moment after the round has already said it stopped.
   const waitFrom = Date.now();
   while (slow.some((a) => !a.closedAt) && Date.now() - waitFrom < 3000) await new Promise((r) => setTimeout(r, 50));
@@ -411,6 +415,50 @@ section('deleting a bot takes its chats and memory, and leaves its spend');
   check('it left the group', !g.members.includes(writer.id));
   const after = await store.botUsage(aliceId, { from: new Date(Date.now() - 86_400_000), to: new Date(Date.now() + 60_000), unit: 'day', tz: 'UTC' });
   check('what it spent is still counted', after.some((r) => r.bot_id === writer.id) && before.length === after.length);
+}
+
+/*
+ * Owner, 2026-11-10: Chief keeps the cosmic whale; a creature another bot already
+ * wears comes in a colour of its own, so no two bots look alike; and a bot with
+ * nothing saved yet is still told it may save to its memory on its own.
+ */
+section('no two bots look alike, and Chief keeps the cosmic whale');
+{
+  const { pickHue, HUES, distinctFaces } = await import('../server/bots/team.js');
+  check('a creature nobody wears comes as drawn', pickHue('minnow', [{ avatar: 'koi-dragon', hue: 0 }]) === 0);
+  const second = pickHue('minnow', [{ avatar: 'minnow', hue: 0 }], () => 0.5);
+  check('  one already worn comes in another colour', second !== 0 && HUES.includes(second), String(second));
+  const all = HUES.map((hue) => ({ avatar: 'minnow', hue }));
+  check('  and a free colour is always one nobody has', pickHue('minnow', all.slice(0, 5), Math.random) >= 0 && !all.slice(0, 5).some((b) => b.hue === pickHue('minnow', all.slice(0, 5), () => 0)));
+  const twin1 = await alice.call('POST', '/api/bots', { name: 'Twin One', role: 't', avatar: 'seahorse' });
+  const twin2 = await alice.call('POST', '/api/bots', { name: 'Twin Two', role: 't', avatar: 'seahorse' });
+  const twin3 = await alice.call('POST', '/api/bots', { name: 'Twin Three', role: 't', avatar: 'seahorse' });
+  const hues = [twin1, twin2, twin3].map((r) => r.body.bot?.hue);
+  check('three bots asking for the same creature wear three colours', hues.every((h) => Number.isInteger(h)) && new Set(hues).size === 3, JSON.stringify(hues));
+  const whale = await alice.call('POST', '/api/bots', { name: 'Whale Fan', role: 'w', avatar: 'cosmic-whale' });
+  check('  the cosmic whale too, never as Chief wears it', whale.body.bot?.avatar === 'cosmic-whale' && whale.body.bot?.hue !== 0, JSON.stringify(whale.body.bot));
+  const recolour = await alice.call('PATCH', `/api/bots/${chief.id}`, { avatar: 'minnow' });
+  check('Chief keeps the cosmic whale', recolour.status === 400 && (await store.getBot(aliceId, chief.id)).avatar === 'cosmic-whale', `${recolour.status}`);
+  check('  and cannot be deleted', (await alice.call('DELETE', `/api/bots/${chief.id}`)).status >= 400 && !!(await store.getBot(aliceId, chief.id)));
+  // Made before colours: the same creature, as drawn, twice.
+  await store.updateBot(aliceId, twin2.body.bot.id, { hue: 0 });
+  check('two bots that came to look alike are told apart again', (await distinctFaces(aliceId)) && (await store.getBot(aliceId, twin2.body.bot.id)).hue !== 0);
+  const faces = (await store.listBots(aliceId)).map((b) => `${b.avatar}:${b.hue}`);
+  check('  every bot in the account looks like no other', new Set(faces).size === faces.length, faces.join(' '));
+  for (const r of [twin1, twin2, twin3, whale]) await alice.call('DELETE', `/api/bots/${r.body.bot.id}`);
+}
+
+section('a bot with nothing saved still knows it may save on its own');
+{
+  const fresh = await alice.call('POST', '/api/bots', { name: 'Newbie', role: 'n' });
+  const chatId = (await alice.call('GET', `/api/bots/${fresh.body.bot.id}/chat`)).body.chatId;
+  await alice.call('POST', `/api/chats/${chatId}/messages`, { text: 'hi' });
+  await alice.stream(`/api/chats/${chatId}/run`, {});
+  const req = asked.filter((a) => a.who === 'newbie').at(-1);
+  check('its prompt has its memory section, empty', /## Your memory, Newbie/.test(req?.system || '') && /\(Nothing saved yet\.\)/.test(req?.system || ''), (req?.system || '').slice(-300));
+  check('  saying to save on its own, without being asked', /save with `remember` on your own, without being asked/.test(req?.system || ''));
+  check('  and it is offered remember', req?.tools.includes('remember'));
+  await alice.call('DELETE', `/api/bots/${fresh.body.bot.id}`);
 }
 
 await new Promise((r) => server.close(r));

@@ -1248,3 +1248,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS chats_group_log_idx ON chats (bot_group_id) WH
 -- still what was spent. Set from the conversation when the caller does not say.
 ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS bot_id TEXT;
 CREATE INDEX IF NOT EXISTS usage_events_bot_idx ON usage_events (user_id, created_at) WHERE bot_id IS NOT NULL;
+
+-- 43 (owner, 2026-11-10): a creature two bots share is told apart by its colour.
+-- `hue` turns the creature's colours round the wheel, in degrees; 0 is as drawn.
+-- One creature and one hue per bot in an account, kept by server/bots/team.js
+-- rather than by an index, so an account that already has a pair is not refused
+-- the upgrade (`distinctFaces` gives the second its own colour).
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS hue INTEGER NOT NULL DEFAULT 0;

@@ -1565,9 +1565,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     emit('done', { stopReason: 'error' });
     return;
   }
+  /*
+   * A bot runs on the model on the header chip, like every conversation (owner,
+   * 2026-11-10: "the Bot page follows the model chosen in the top bar"). A model a bot
+   * was given before that day is kept in its row and no longer read.
+   */
   const persona = chat.bot_id ? await botPersona(userId, chat) : null;
-  // A bot runs on its own model, or on the account's when it has none — never on the chip's.
-  if (persona) modelId = persona.bot.model || undefined;
 
   /**
    * One model for the whole account, not one per conversation.

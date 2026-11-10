@@ -249,8 +249,9 @@ export function splitStatements(sql) {
  *      an administrator's hiding of it, and the people who added it by reference
  *  42  bots, bot_groups, bot_group_members, bot_memory; chats.bot_id / bot_group_id;
  *      usage_events.bot_id — the Bot page
+ *  43  bots.hue — a creature two bots share, told apart by its colour
  */
-export const SCHEMA_VERSION = 42;
+export const SCHEMA_VERSION = 43;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -4446,11 +4447,11 @@ export function createPgStore(connectionString) {
      */
     async createBot(userId, bot) {
       const rows = await q(
-        `INSERT INTO bots (id, user_id, name, role, avatar, model, instructions, is_main)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO bots (id, user_id, name, role, avatar, model, instructions, is_main, hue)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT DO NOTHING
          RETURNING *`,
-        [bot.id, userId, bot.name, bot.role || '', bot.avatar || 'minnow', bot.model || null, bot.instructions || '', !!bot.isMain],
+        [bot.id, userId, bot.name, bot.role || '', bot.avatar || 'minnow', bot.model || null, bot.instructions || '', !!bot.isMain, Number(bot.hue) || 0],
       );
       return rows[0] ?? null;
     },
@@ -4469,7 +4470,7 @@ export function createPgStore(connectionString) {
      * in words.
      */
     async updateBot(userId, id, patch) {
-      const allowed = { name: 'name', role: 'role', avatar: 'avatar', model: 'model', instructions: 'instructions' };
+      const allowed = { name: 'name', role: 'role', avatar: 'avatar', model: 'model', instructions: 'instructions', hue: 'hue' };
       const sets = [];
       const params = [userId, String(id ?? '')];
       for (const [key, column] of Object.entries(allowed)) {

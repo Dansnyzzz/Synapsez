@@ -6,7 +6,7 @@ import { validZone } from '../util/zone.js';
 import { abortHere, holdRun, settledAfterStop, watchLease } from '../liveRuns.js';
 import { log } from '../util/trace.js';
 import { clientError } from '../util/clientError.js';
-import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, ensureChief, updateBot, updateGroup } from '../bots/team.js';
+import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, ensureChief, updateBot, updateGroup } from '../bots/team.js';
 import { listMemory, remember } from '../bots/memory.js';
 import { runGroupRound } from '../bots/rounds.js';
 
@@ -47,6 +47,8 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const store = getStore();
       const prefs = await getPrefs(req.user.id).catch(() => ({}));
       await ensureChief(req.user.id, prefs);
+      // Bots made before schema 43 could look alike: the second gets a colour of its own.
+      await distinctFaces(req.user.id).catch((err) => log.warn('bot faces not told apart', { err: err?.message }));
       const [bots, groups, previews] = await Promise.all([store.listBots(req.user.id), store.listBotGroups(req.user.id), store.botPreviews(req.user.id)]);
       const last = (key, id) => previews.find((p) => p[key] === id) || null;
       const preview = (p) => (p && p.text ? { text: String(p.text).slice(0, 160), role: p.role, bot: p.author || null, at: p.updated_at } : null);
@@ -82,7 +84,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     wrap(async (req, res) => {
       const b = req.body || {};
       try {
-        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar, model: b.model });
+        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar });
         res.json({ bot: botView(bot) });
       } catch (err) {
         fail(res, err);
@@ -254,7 +256,9 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
         if (!res.writableEnded) void lease.check();
       });
       try {
-        const result = await runGroupRound({ user: req.user, groupId: group.id, text, emit, signal: controller.signal, origin: origin(req) });
+        // The model on the header chip, as every turn sends it; none is the account's own.
+        const model = typeof req.body?.model === 'string' && /^[\w./:@-]{1,200}$/.test(req.body.model) ? req.body.model : undefined;
+        const result = await runGroupRound({ user: req.user, groupId: group.id, text, emit, signal: controller.signal, origin: origin(req), model });
         emit('done', result);
       } catch (err) {
         log.error('group round failed', err);

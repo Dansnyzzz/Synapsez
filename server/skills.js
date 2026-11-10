@@ -39,13 +39,13 @@ const FILE_NAME = /^(?!.*\.\.)[\p{L}\p{N} ._()\-/]{1,120}$/u;
 /**
  * Whether a skill is shared to Discover unless its author says otherwise.
  *
- * Off (owner, 2026-11-09): a skill can hold private details, so sharing is the
- * author's choice, skill by skill. Set it to true and every *new* skill goes to
- * Discover as it is saved — the editor's switch starts on, and the scan still
- * keeps back what it flags (such a skill is saved, unshared). Skills that exist
- * already are not changed by it.
+ * On (owner, 2026-11-10: "every new skill shares itself"; it was off the day before):
+ * every *new* skill goes to Discover as it is saved, whoever writes it — the editor,
+ * an upload or the assistant's `skill_write` — and its author can turn it off,
+ * skill by skill. The scan still keeps back what it flags: such a skill is saved,
+ * unshared. Skills that exist already are not changed by it.
  */
-export const SHARE_BY_DEFAULT = false;
+export const SHARE_BY_DEFAULT = true;
 
 /** How many shared skills one account may add. Each is a line in the menu of every turn. */
 export const MAX_ADDED_SKILLS = 20;

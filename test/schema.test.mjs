@@ -228,7 +228,8 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 41: skills.shared_at/hidden_at/scan, skill_adds — skills shared to Discover.
   // 42: bots, bot_groups, bot_group_members, bot_memory, chats.bot_id/.bot_group_id,
   // usage_events.bot_id — the Bot page.
-  const STAMPED = { version: 42, fingerprint: 'a87fdd61356c62f7' };
+  // 43: bots.hue — a creature two bots share, told apart by its colour.
+  const STAMPED = { version: 43, fingerprint: '481d424b25099f86' };
 
   check(
     'the recorded version matches the code',

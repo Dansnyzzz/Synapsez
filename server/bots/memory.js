@@ -76,7 +76,9 @@ export async function forget(userId, scope, match) {
  * @param {{ text: string, created_at?: any }[]} rows @param {string} heading @param {string} about
  */
 export function memorySection(rows, heading, about) {
-  if (!rows?.length) return '';
+  // Said even when empty: a bot with nothing saved yet still has to know it can save
+  // (owner, 2026-11-10: a new bot never wrote its first entry, never having been told).
+  if (!rows?.length) return [heading, about, '(Nothing saved yet.)'].join('\n');
   const lines = [];
   let used = 0;
   for (const row of [...rows].reverse()) {

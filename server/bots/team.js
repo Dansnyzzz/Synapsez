@@ -99,7 +99,50 @@ export function cleanModel(model) {
 export function pickCreature(asked, taken = []) {
   if (isCreature(asked)) return String(asked);
   const used = new Set(taken);
-  return CREATURES.find((id) => !used.has(id) && id !== CHIEF_AVATAR) || CREATURES[(taken.length + 1) % CREATURES.length];
+  return CREATURES.find((id) => !used.has(id) && id !== CHIEF_AVATAR) || CREATURES[Math.floor(Math.random() * CREATURES.length)];
+}
+
+/** The colours a creature can come in: as drawn, then eleven turns of the wheel. */
+export const HUES = Object.freeze([0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]);
+
+/**
+ * The colour for a creature a bot is to wear (owner, 2026-11-10): as drawn when no other
+ * bot of the account wears it, otherwise one picked at random from those no bot wearing
+ * it has, so no two bots in an account look alike. Chief keeps the cosmic whale as drawn.
+ *
+ * @param {string} creature @param {{ avatar: string, hue?: number }[]} others  the account's other bots
+ * @param {() => number} [random]
+ */
+export function pickHue(creature, others, random = Math.random) {
+  const taken = new Set(others.filter((b) => b.avatar === creature).map((b) => Number(b.hue) || 0));
+  if (!taken.has(0)) return 0;
+  const free = HUES.filter((h) => !taken.has(h));
+  if (!free.length) return 0;
+  return free[Math.floor(random() * free.length)];
+}
+
+/**
+ * Give any bot that looks like another of the account's (the same creature in the same
+ * colour) a colour of its own. Bots made before schema 43 could share one; Chief is
+ * never the one recoloured. Returns whether anything changed.
+ *
+ * @param {string} userId
+ */
+export async function distinctFaces(userId) {
+  const store = getStore();
+  const bots = await store.listBots(userId);
+  const seen = [];
+  let changed = false;
+  for (const bot of [...bots].sort((a, b) => Number(!!b.is_main) - Number(!!a.is_main))) {
+    const clash = seen.some((o) => o.avatar === bot.avatar && (Number(o.hue) || 0) === (Number(bot.hue) || 0));
+    if (clash) {
+      const hue = pickHue(bot.avatar, seen);
+      await store.updateBot(userId, bot.id, { hue });
+      seen.push({ ...bot, hue });
+      changed = true;
+    } else seen.push(bot);
+  }
+  return changed;
 }
 
 /**
@@ -138,7 +181,8 @@ export async function createBot(userId, input) {
   if (bots.length >= LIMITS.bots) throw new BotError(`An account keeps at most ${LIMITS.bots} bots. Delete one first.`, 409, 'too_many');
   if (bots.some((b) => b.name.toLowerCase() === name.toLowerCase())) throw new BotError(`There is already a bot called ${name}.`, 409, 'name_taken');
   const avatar = pickCreature(input.avatar, bots.map((b) => b.avatar));
-  const bot = await store.createBot(userId, { id: crypto.randomUUID(), name, role, instructions, avatar, model });
+  const hue = pickHue(avatar, bots);
+  const bot = await store.createBot(userId, { id: crypto.randomUUID(), name, role, instructions, avatar, model, hue });
   if (!bot) throw new BotError(`There is already a bot called ${name}.`, 409, 'name_taken');
   return bot;
 }
@@ -159,6 +203,13 @@ export async function updateBot(userId, id, input) {
   if (input.avatar !== undefined) {
     if (!isCreature(input.avatar)) throw new BotError('That is not one of the creatures.', 400, 'bad_avatar');
     patch.avatar = String(input.avatar);
+    const current = await store.getBot(userId, id);
+    // Chief keeps the cosmic whale (owner, 2026-11-10).
+    if (current?.is_main) throw new BotError('Chief keeps the cosmic whale.', 400, 'chief_avatar');
+    if (current && current.avatar !== patch.avatar) {
+      const others = (await store.listBots(userId)).filter((b) => b.id !== id);
+      patch.hue = pickHue(patch.avatar, others);
+    }
   }
   if (patch.name) {
     const other = await store.getBotByName(userId, patch.name);
@@ -242,7 +293,7 @@ export function botView(row) {
     name: row.name,
     role: row.role,
     avatar: row.avatar,
-    model: row.model || null,
+    hue: Number(row.hue) || 0,
     instructions: row.instructions,
     main: !!row.is_main,
     createdAt: row.created_at,
