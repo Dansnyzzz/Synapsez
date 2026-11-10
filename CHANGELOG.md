@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-10 — The Bot page as the team changes (1.19.0)
+
+**Saved is shown** (`public/js/bots-settings.js` `mergeTeam`). Bot settings put what the server answered in place, on the page behind too, instead of waiting while the page read the whole team and the open conversation again (three requests in a row, now one); the Save button stays pressed until the answer, so two presses make one bot; a line says what was made, saved or deleted, by name.
+
+**As Chief works**: each team step (create_bot, update_group…) reads the team again the moment it lands, so a bot appears in the list while the turn goes on; the step wears the face of whom it made. A group says in its own log what changed in it — made, a bot that joined or left, a new name, a new admin, a member renamed or deleted (`server/bots/team.js` `sayInGroup`) — a small line in the middle with the faces, which the members read too; the list's preview skips them.
+
+**In a group's box `@Name` is bold** in that bot's colour (`syncMentions`: a layer under the box, the letters exactly where the caret thinks). The left side is a light pane over the theme. The welcome cards in a bot's chat are a still wash rather than live glass, which flashed pale behind the lower two while typing on a GPU. Coming back to the Bot page draws it at once from the last read; a bot's chat is asked for by its id alone (`?light=1`) and remembered.
+
+**Fixed**: saving Chief in Bot settings was refused ("Chief keeps the cosmic whale") because the form sends the creature it wears; the other creatures are now greyed out for Chief.
+
 ## 2026-11-10 — A tab on the sign-in page goes in when another tab signs in (1.18.1)
 
 Signed in in another tab of the same browser — the confirmation link in the email, most often — a tab still on the sign-in page goes straight into the app, without a reload and without anything typed again (`public/js/app.js` `enterIfSignedInElsewhere`). The tab that signed in says so through `localStorage` (`synapsez:signed-in-at`, a time and nothing else); a sign-in no tab announced is found when the waiting tab is looked at again, with one `GET /api/session`.

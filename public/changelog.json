@@ -1,6 +1,42 @@
 {
   "entries": [
     {
+      "version": "1.19.0",
+      "date": "2026-11-10",
+      "new": {
+        "vi": [
+          "Khi Chief tạo bot hay nhóm, mỗi cái hiện ngay trong danh sách lúc vừa tạo xong, kèm linh vật ở bước tạo.",
+          "Nhóm chat tự báo mọi thay đổi ngay trong nhóm: đã tạo, bot vào hoặc rời nhóm, đổi tên, đổi quản trị.",
+          "Gõ @tên bot trong nhóm thì tên in đậm theo màu của bot đó."
+        ],
+        "en": [
+          "When Chief makes a bot or a group, each shows in the list the moment it is made, its step wearing its face.",
+          "A group chat says everything that changes in it, in the chat: made, a bot joining or leaving, a new name, a new admin.",
+          "@Name in a group's box is bold, in that bot's colour."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Lưu, tạo hay xoá trong Cài đặt Bot hiện ngay và có thông báo nhỏ; bấm Lưu hai lần không tạo trùng.",
+          "Cột bên trái của mục Bot nhẹ và trong hơn, nhìn thấy theme phía sau."
+        ],
+        "en": [
+          "Saving, making or deleting in Bot settings shows at once, with a line saying so; pressing Save twice makes nothing twice.",
+          "The Bot page's left side is a lighter pane, the theme showing through."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Lưu Chief trong Cài đặt Bot bị từ chối dù không đổi linh vật.",
+          "Các ô gợi ý trong chat của bot không còn nhấp nháy trắng khi gõ."
+        ],
+        "en": [
+          "Saving Chief in Bot settings was refused although its creature had not changed.",
+          "The welcome cards in a bot's chat no longer flash pale while you type."
+        ]
+      }
+    },
+    {
       "version": "1.18.1",
       "date": "2026-11-10",
       "improved": {
