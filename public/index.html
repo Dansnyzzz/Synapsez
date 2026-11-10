@@ -1056,6 +1056,8 @@
         <h2 id="skc-title" data-i18n="skills.createTitle">Create a skill</h2>
         <button class="icon-btn" type="button" id="skc-close" aria-label="Close" data-i18n-aria-label="action.close">✕</button>
       </div>
+      <!-- Reading somebody else's shared skill: whose it is, and that it is read-only. -->
+      <p class="skc__by" id="skc-by" hidden></p>
       <label class="skc__label" for="skc-name" data-i18n="skills.skillName">Skill name</label>
       <input id="skc-name" class="skc__input" type="text" maxlength="60" autocomplete="off" placeholder="Weekly status report" data-i18n-placeholder="skills.namePlaceholder2" />
       <p class="skc__saved" id="skc-saved" hidden></p>
@@ -1077,6 +1079,16 @@
             <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v6a1.5 1.5 0 0 0 1.5 1.5H7" /></svg>
           </button>
         </div>
+      </div>
+      <!-- Share to Discover (owner, 2026-11-09): off unless the author turns it on,
+           since a skill can hold private details. A shared one is scanned first. -->
+      <div class="srow skc__share" id="skc-share-row">
+        <div class="srow__text">
+          <label class="srow__label" for="skc-shared" data-i18n="skills.shareToDiscover">Share to Discover</label>
+          <p class="srow__desc" id="skc-shared-hint" data-i18n="skills.shareHint">Everyone on this site will be able to read this skill and use it with their assistant. Keep anything private out of it — a safety scan checks it first.</p>
+          <p class="srow__desc skc__share-note" id="skc-share-note" hidden></p>
+        </div>
+        <div class="srow__control"><input type="checkbox" class="switch" id="skc-shared" aria-describedby="skc-shared-hint skc-share-note" /></div>
       </div>
       <p class="settings__status skc__status" id="skc-status" role="status" aria-live="polite"></p>
       <div class="skc__foot">

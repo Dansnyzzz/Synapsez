@@ -216,6 +216,21 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     '{0} chứa thứ trông như khoá, token hoặc mật khẩu. Hãy bỏ nó ra rồi tải lên lại.',
   '{0} has invisible characters, which can hide instructions. Remove them, then upload again.':
     '{0} có ký tự vô hình, thứ có thể giấu chỉ dẫn. Hãy xoá chúng rồi tải lên lại.',
+  '{0} holds what looks like a key, token or password. Take it out, then share it again.':
+    '{0} chứa thứ trông như khoá, token hoặc mật khẩu. Hãy bỏ nó ra rồi chia sẻ lại.',
+  '{0} has invisible characters, which can hide instructions. Remove them, then share it again.':
+    '{0} có ký tự vô hình, thứ có thể giấu chỉ dẫn. Hãy xoá chúng rồi chia sẻ lại.',
+  "A shared skill is followed by other people's assistants, and the safety scan found something in this one they should not be given. Change it, or stop sharing it.":
+    'Kỹ năng được chia sẻ sẽ được trợ lý của người khác làm theo, và bản quét an toàn đã tìm thấy trong kỹ năng này thứ không nên đưa cho họ. Hãy sửa lại, hoặc ngừng chia sẻ.',
+  'That skill changed while it was being shared. Try again.': 'Kỹ năng đó vừa thay đổi trong lúc đang được chia sẻ. Hãy thử lại.',
+  'That skill is not shared any more.': 'Kỹ năng đó không còn được chia sẻ nữa.',
+  'That skill is yours already.': 'Kỹ năng đó vốn đã là của bạn.',
+  'You have added {0} shared skills, as many as one account can. Remove one to add another.':
+    'Bạn đã thêm {0} kỹ năng được chia sẻ, mức tối đa cho một tài khoản. Hãy gỡ một kỹ năng để thêm kỹ năng khác.',
+  'That skill is not one you added.': 'Kỹ năng đó không nằm trong số kỹ năng bạn đã thêm.',
+  'Say what to change: enabled or shared.': 'Hãy nói cần đổi gì: enabled hoặc shared.',
+  'Say whether to hide it: hidden true or false.': 'Hãy nói có ẩn hay không: hidden là true hoặc false.',
+  'No shared skill has that id.': 'Không có kỹ năng được chia sẻ nào có id đó.',
   '{0} tells the assistant to set aside its other instructions.': '{0} bảo trợ lý gác lại các chỉ dẫn khác của nó.',
   '{0} tells the assistant to send something to {1}.': '{0} bảo trợ lý gửi thứ gì đó tới {1}.',
   'Scripts are kept as text and never run here: {0}.': 'Script được giữ dưới dạng chữ và không bao giờ chạy ở đây: {0}.',

@@ -3729,6 +3729,153 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
   await getStore().deleteSkill(me.id, (await getStore().listSkills(me.id)).find((s) => s.name === 'ui-weekly-status')?.id || '');
 }
 
+section('Skills people share: Discover newest first, Add by reference, edits arriving live, the share switch, moderation (owner, 2026-11-09)');
+{
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  const { getStore } = await import('../server/store/index.js');
+  const { writeSkill } = await import('../server/skills.js');
+  const store = getStore();
+  const me = await store.getUserByEmail('ui@test.local');
+  await store.createUser({ id: 'u-ui-sharer', email: 'sharer@test.local', name: 'Lan Tran', passwordHash: 'x', role: 'user' });
+  const older = (await writeSkill('u-ui-sharer', { name: 'ui-shared-older', description: 'An older shared skill.', instructions: 'Older steps.', shared: true })).skill;
+  await page.waitForTimeout(30);
+  const newer = (await writeSkill('u-ui-sharer', { name: 'ui-shared-newer', description: 'A newer shared skill.', instructions: 'Newer steps.', shared: true })).skill;
+  await writeSkill('u-ui-sharer', { name: 'ui-private', description: 'Not shared.', instructions: 'Private steps.' });
+  const rowText = (name) =>
+    page.evaluate((wanted) => [...document.querySelectorAll('#skill-list .crow')].map((r) => r.textContent.replace(/\s+/g, ' ').trim()).find((text) => text.includes(wanted)) || '', name);
+  // What a poll would bring: the page asks again when it is looked at.
+  const lookAgain = async () => {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.waitForTimeout(900);
+  };
+
+  await openSettings();
+  await page.click('#tab-skills');
+  await page.waitForTimeout(800);
+  const yours = await page.evaluate(() => document.getElementById('skill-list')?.textContent || '');
+  check("Yours no longer lists Synapsez's own skills", !/Writing a Word document|Building a spreadsheet/.test(yours), yours.slice(0, 160));
+  await page.click('#panel-skills [data-cust-view="discover"]');
+  await page.waitForTimeout(300);
+  const discover = await page.evaluate(() => ({
+    names: [...document.querySelectorAll('#skill-discover .ccard[data-view] .cname')].map((n) => n.textContent),
+    by: [...document.querySelectorAll('#skill-discover .ccard[data-view] .ccard__by')].map((n) => n.textContent),
+    text: document.getElementById('skill-discover')?.textContent || '',
+  }));
+  check('Discover lists what people here share, newest made first', discover.names.slice(0, 2).join() === 'ui-shared-newer,ui-shared-older', JSON.stringify(discover.names));
+  check('  not the built-in ones, nor a skill nobody shared', !/Writing a Word document|ui-private/.test(discover.text), discover.text.slice(0, 160));
+  check("  each by its author's public name, never an email", discover.by.some((b) => /Lan Tran/.test(b)) && !/@/.test(discover.text), JSON.stringify(discover.by));
+
+  await page.click(`#skill-discover [data-add="${older.id}"]`);
+  await page.waitForTimeout(900);
+  const added = await page.evaluate((id) => ({
+    state: !!document.querySelector(`#skill-discover [data-view="${id}"] .ccard__add.is-added`),
+    focus: !!document.activeElement?.classList.contains('cname') && !!document.activeElement.closest(`[data-view="${id}"]`),
+  }), older.id);
+  check('+ adds it: the card says Added, and focus stays on that card', added.state && added.focus, JSON.stringify(added));
+  check('  a reference on the account, not a copy', (await store.listAddedSkills(me.id)).some((a) => a.skill_id === older.id) && !(await store.listSkills(me.id)).some((s) => s.name === 'ui-shared-older'));
+  await page.click('#panel-skills [data-cust-view="yours"]');
+  await page.waitForTimeout(200);
+  const row = await rowText('ui-shared-older');
+  check('  Yours lists it, added, with its author', /Lan Tran/.test(row) && /An older shared skill/.test(row), row);
+
+  await writeSkill('u-ui-sharer', { name: 'ui-shared-older', description: 'Edited by its author.', instructions: 'Older steps, edited.' });
+  await lookAgain();
+  const edited = await rowText('ui-shared-older');
+  check("the author's edit reaches the page without a reload", /Edited by its author/.test(edited), edited);
+  await store.setSkillShared('u-ui-sharer', older.id, { shared: false });
+  await lookAgain();
+  const gone = await page.evaluate(() => {
+    const rowEl = [...document.querySelectorAll('#skill-list .crow')].find((r) => r.textContent.includes('ui-shared-older'));
+    return rowEl?.querySelector('.crow__warn')?.textContent || '';
+  });
+  check('  taken back by its author, the row says why instead of vanishing', /(stopped sharing|ngừng chia sẻ)/.test(gone), gone);
+
+  // Create a skill: the switch, off, saying who will read it; the scan refuses a key.
+  await page.click('#skill-add-open');
+  await page.locator('#settings .cmenu .cmenu__item').nth(1).click();
+  await page.waitForTimeout(700);
+  const sw = await page.evaluate(() => ({
+    off: !(/** @type {HTMLInputElement} */ (document.getElementById('skc-shared')).checked),
+    label: document.querySelector('label[for="skc-shared"]')?.textContent || '',
+    hint: document.getElementById('skc-shared-hint')?.textContent || '',
+  }));
+  check('Create a skill has Share to Discover, off, saying everyone here can read and use it', sw.off && /(Share to Discover|Chia sẻ lên Khám phá)/.test(sw.label) && /(Everyone on this site|Mọi người trên trang này)/.test(sw.hint), JSON.stringify(sw));
+  await page.fill('#skc-name', 'ui-shared-mine');
+  await page.fill('#skc-desc', 'When testing sharing.');
+  await page.fill('#skc-text', `Sign with sk-ant-api03-${'B'.repeat(90)} first.`);
+  await page.check('#skc-shared');
+  await page.click('#skc-create');
+  await page.waitForTimeout(700);
+  const refused = await page.evaluate(() => ({
+    open: /** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).open,
+    status: document.getElementById('skc-status')?.textContent || '',
+  }));
+  check('  switched on, a skill the safety scan flags is refused, saying what it found', refused.open && /(share it again|chia sẻ lại)/.test(refused.status), refused.status);
+  check('  and nothing was saved', !(await store.getSkillByName(me.id, 'ui-shared-mine')));
+  await page.fill('#skc-text', 'Step one, with nothing secret in it.');
+  await page.click('#skc-create');
+  await page.waitForTimeout(900);
+  const mine = await store.getSkillByName(me.id, 'ui-shared-mine');
+  check('  clean, it is saved and shared', !!mine?.shared_at, JSON.stringify(mine?.scan || null));
+  const mineRow = await rowText('ui-shared-mine');
+  check('  and Yours marks it shared', /(Shared|Đã chia sẻ)/.test(mineRow), mineRow);
+
+  // Discover: one's own is not offered to add; an administrator can take one off.
+  await page.click('#panel-skills [data-cust-view="discover"]');
+  await page.waitForTimeout(300);
+  check('Discover shows your own shared skill as yours, with nothing to add', await page.evaluate((id) => !!document.querySelector(`#skill-discover [data-view="${id}"] .ccard__add.is-added`) && !document.querySelector(`#skill-discover [data-add="${id}"]`), mine.id));
+  await page.click(`#skill-discover [data-mod="${newer.id}"]`);
+  await page.waitForTimeout(900);
+  check('an administrator takes a shared skill off Discover from its card', !(await store.listSharedSkills('u-ui-sharer')).some((s) => s.id === newer.id));
+  const put = await page.evaluate((id) => document.querySelector(`#skill-discover [data-mod="${id}"]`)?.textContent || '', newer.id);
+  check('  the card says so, and offers to put it back', /(Put back|Đưa lại)/.test(put), put);
+  await page.click(`#skill-discover [data-mod="${newer.id}"]`);
+  await page.waitForTimeout(900);
+  check('  put back, it is on Discover again', (await store.listSharedSkills('u-ui-sharer')).some((s) => s.id === newer.id));
+
+  // A card opens the skill to read, read-only, before adding it.
+  await page.click(`#skill-discover [data-view="${newer.id}"] .cname`);
+  await page.waitForTimeout(700);
+  const viewed = await page.evaluate(() => ({
+    open: /** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).open,
+    readOnly: /** @type {HTMLTextAreaElement} */ (document.getElementById('skc-text')).readOnly,
+    text: /** @type {HTMLTextAreaElement} */ (document.getElementById('skc-text')).value,
+    by: document.getElementById('skc-by')?.textContent || '',
+    add: !document.getElementById('skc-create')?.hidden,
+    share: !document.getElementById('skc-share-row')?.hidden,
+  }));
+  check('a card opens the whole skill, read-only, saying whose it is, with Add', viewed.open && viewed.readOnly && viewed.text === 'Newer steps.' && /Lan Tran/.test(viewed.by) && viewed.add && !viewed.share, JSON.stringify(viewed));
+  await page.click('#skc-create');
+  await page.waitForTimeout(900);
+  check('  Add there adds it', (await store.listAddedSkills(me.id)).some((a) => a.skill_id === newer.id));
+
+  // Synapsez's own come back when the filter asks for them.
+  await page.click('#panel-skills [data-cust-view="yours"]');
+  await page.click('#skills-filter');
+  await page.waitForTimeout(250);
+  await page.locator('#settings .cmenu .cmenu__item--sub').nth(1).hover();
+  await page.waitForTimeout(300);
+  const createdBy = await page.evaluate(() => [...document.querySelectorAll('#settings .cmenu--sub .cmenu__item')].map((n) => n.textContent?.trim()));
+  await page.locator('#settings .cmenu--sub .cmenu__item').nth(3).click();
+  await page.waitForTimeout(300);
+  const builtIns = await page.evaluate(() => document.getElementById('skill-list')?.textContent || '');
+  check('Created by › All, You, Others, Synapsez — and Synapsez brings the built-in ones back', createdBy.length === 4 && /Writing a Word document/.test(builtIns), JSON.stringify(createdBy));
+  await page.click('#skills-filter');
+  await page.locator('#settings .cmenu .cmenu__item--sub').nth(1).hover();
+  await page.waitForTimeout(300);
+  await page.locator('#settings .cmenu--sub .cmenu__item').first().click();
+  await page.waitForTimeout(200);
+
+  await store.deleteSkill(me.id, mine.id);
+  for (const id of [older.id, newer.id]) await store.removeAddedSkill(me.id, id);
+  await store.deleteUser('u-ui-sharer');
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+}
+
 section('the Settings tabs no longer include Computers');
 {
   await page.evaluate(() => {
@@ -10336,7 +10483,12 @@ section('the + opens a menu of files, skills, connectors and plugins');
   const json = (body) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/api/skills', (route) =>
     route.request().method() === 'GET'
-      ? route.fulfill(json({ skills: [{ id: 's-1', name: 'Weekly report', description: 'When a weekly report is asked for.', enabled: true }, { id: 's-2', name: 'Switched off', description: 'Off.', enabled: false }], builtin: [{ id: 'builtin:docx', name: 'Writing a Word document', description: 'Word.', builtin: true }] }))
+      ? route.fulfill(json({
+          skills: [{ id: 's-1', name: 'Weekly report', description: 'When a weekly report is asked for.', enabled: true }, { id: 's-2', name: 'Switched off', description: 'Off.', enabled: false }],
+          builtin: [{ id: 'builtin:docx', name: 'Writing a Word document', description: 'Word.', builtin: true }],
+          // Shared skills added from Discover (2026-11-09): one still shared, one its author took back.
+          added: [{ id: 'sh-1', status: 'ok', name: 'Team brief', knownAs: 'Team brief', description: 'Shared.' }, { id: 'sh-2', status: 'unshared', name: 'Taken back', knownAs: null, description: null }],
+        }))
       : route.continue(),
   );
   await page.route('**/api/connectors', (route) =>
@@ -10420,6 +10572,7 @@ section('the + opens a menu of files, skills, connectors and plugins');
   const skills = await panel(1);
   check('hovering Skills opens them beside it — the built-in ones and your own that are on', skills && skills.rows.some((r) => r.label === 'Writing a Word document') && skills.rows.some((r) => r.label === 'Weekly report') && !skills.rows.some((r) => r.label === 'Switched off'), JSON.stringify(skills?.rows.map((r) => r.label)));
   check('  with a way to manage them and to make one', skills && skills.rows.length >= 4, JSON.stringify(skills?.rows.map((r) => r.label)));
+  check('  and the shared ones added from Discover, while they are still shared', skills && skills.rows.some((r) => r.label === 'Team brief') && !skills.rows.some((r) => r.label === 'Taken back'), JSON.stringify(skills?.rows.map((r) => r.label)));
   await rowOf(1, 'Weekly report').click();
   await page.waitForTimeout(300);
   const chips = await page.evaluate(() => ({

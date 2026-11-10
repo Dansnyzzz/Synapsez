@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { t, currentLanguage } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { toast } from './render.js';
 import { PLUGINS } from './plugins.js';
@@ -9,8 +9,16 @@ import { CONNECTORS, CONNECTOR_BY_ID, CATEGORIES, relatedTo } from './connector-
  * Settings → Customize: Skills, Connectors and Plugins, after Claude's (owner,
  * 2026-10-31). Each has "Yours" — what this account has, as a list with a ⋯ menu
  * per row — and "Discover" — what else Synapsez offers, as cards with a +. Only
- * what the app really has: the built-in skills, the services it can connect,
- * the families of built-in tools. No catalogue, and no install counts.
+ * what the app really has: the services it can connect, the families of
+ * built-in tools. No catalogue, and no install counts.
+ *
+ * Skills' Discover is what people on this site share (owner, 2026-11-09):
+ * newest made first, each by its author's public name, added by reference so an
+ * author's edit reaches everyone who added it. Synapsez's own skills are not
+ * listed in either view unless a filter asks for them — they still do their
+ * work, and the + menu still offers them. While the page is open it asks again
+ * every little while and when it is looked at, so what others share or change
+ * arrives without a reload.
  *
  * Every name drawn here may be somebody's own text, so all of it is escaped.
  *
@@ -25,6 +33,7 @@ import { CONNECTORS, CONNECTOR_BY_ID, CATEGORIES, relatedTo } from './connector-
  *   onPlugins?: () => void,
  *   selectTab: (tab: string) => void,
  *   editSkill: (skill: any) => void,
+ *   viewSkill: (skill: any, view: { author: string | null, onAdd?: () => Promise<void> }) => void,
  *   createWithClaude: () => void,
  * }} Deps
  */
@@ -56,7 +65,7 @@ const PLUGIN_TEXT = {
 
 const day = (iso) => {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(currentLanguage() === 'vi' ? 'vi-VN' : 'en-US', { day: 'numeric', month: 'short' });
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(localeTag(), { day: 'numeric', month: 'short' });
 };
 
 /** Each open menu's opener — for a sub-menu, the button that opened the menu it is in. */
@@ -191,13 +200,13 @@ export function openMenu(button, items, { beside = null, root = null } = {}) {
   return menu;
 }
 
-/** One row of a "Yours" list. */
-const listRow = ({ key, icon, name, tag = '', by, desc, meta = '', more = true, search }) =>
+/** One row of a "Yours" list. `warn` is a sentence that says something went — shown in full, not cut. */
+const listRow = ({ key, icon, name, tag = '', by, desc, warn = '', meta = '', more = true, search }) =>
   `<div class="crow cust-item" data-search="${escapeHtml(search.toLowerCase())}">
     <span class="crow__icon">${icon}</span>
     <div class="crow__text">
       <p class="crow__name">${escapeHtml(name)}${tag ? ` <span class="crow__tag">${escapeHtml(tag)}</span>` : ''}</p>
-      <p class="crow__desc">${escapeHtml(by)}${desc ? ` · ${escapeHtml(desc)}` : ''}</p>
+      ${warn ? `<p class="crow__desc crow__desc--wrap crow__warn">${escapeHtml(warn)}</p>` : `<p class="crow__desc">${escapeHtml(by)}${desc ? ` · ${escapeHtml(desc)}` : ''}</p>`}
     </div>
     <span class="crow__meta">${escapeHtml(meta)}</span>
     ${more ? `<button class="icon-btn crow__more" type="button" data-more="${escapeHtml(key)}" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(t('settings.moreFor', { name }))}">${ICON.more}</button>` : '<span class="crow__more"></span>'}
@@ -272,66 +281,174 @@ export function createCustomize(deps) {
       /* the view holds for this visit */
     }
   };
-  let skillData = { skills: [], builtin: [] };
+  /** What Yours shows: the account's own, the shared ones it added, and the built-ins a filter can bring back. */
+  let skillData = { skills: [], added: [], builtin: [], shareByDefault: false };
+  /** What Discover shows: every shared skill on the site, newest made first. */
+  let sharedData = { skills: [], moderator: false };
+  /** The two answers as last drawn, so a poll that brings nothing new draws nothing. */
+  let drawnSkills = '';
   const pluginName = (id) => (id && PLUGIN_TEXT[id] ? t(PLUGIN_TEXT[id][0]) : '');
+  const authorOf = (author) => (author ? t('skills.byName', { name: author }) : t('skills.byMember'));
+  /** Why an added skill no longer works, said where it was. */
+  const GONE = { unshared: 'skills.goneUnshared', hidden: 'skills.goneHidden', deleted: 'skills.goneDeleted' };
 
   async function loadSkills() {
-    skillData = await api.skills();
+    const [mine, shared] = await Promise.all([api.skills(), api.sharedSkills().catch(() => sharedData)]);
+    show(mine, shared);
+  }
+
+  function show(mine, shared) {
+    skillData = { added: [], builtin: [], ...mine };
+    sharedData = shared;
+    drawnSkills = JSON.stringify([mine, shared]);
     drawSkills();
     drawDiscover();
   }
 
+  /**
+   * Keeping up while the page is open (owner, 2026-11-09): what somebody shares,
+   * edits or takes back here reaches this page without a reload — asked again
+   * every twenty seconds while Skills is on screen, and the moment the page is
+   * looked at again. Drawn only when something changed, never under an open
+   * menu, and with focus put back on the control that had it.
+   */
+  const SKILLS_EVERY_MS = 20_000;
+  let polling = false;
+  const skillsOnScreen = () => document.visibilityState === 'visible' && !!document.getElementById('panel-skills')?.offsetParent;
+  async function refreshSkills() {
+    if (polling || !skillsOnScreen()) return;
+    polling = true;
+    try {
+      const [mine, shared] = await Promise.all([api.skills(), api.sharedSkills()]);
+      if (JSON.stringify([mine, shared]) === drawnSkills) return;
+      // A ⋯ menu open over the page would be left pointing at rows that are gone.
+      if (document.querySelector('#settings .cmenu')) return;
+      const focused = /** @type {HTMLElement | null} */ (document.activeElement);
+      const host = focused?.closest?.('#skill-list, #skill-discover');
+      const holder = /** @type {HTMLElement | null} */ (host ? focused?.closest('[data-more], [data-add], [data-mod], [data-view]') : null);
+      const mark = holder ? ['more', 'add', 'mod', 'view'].find((k) => holder.dataset[k] != null) : null;
+      const value = mark ? String(holder?.dataset[mark]) : '';
+      show(mine, shared);
+      if (host && mark) refocus(host, mark, value);
+    } catch {
+      /* the next turn asks again */
+    } finally {
+      polling = false;
+    }
+  }
+  setInterval(refreshSkills, SKILLS_EVERY_MS);
+  document.addEventListener('visibilitychange', refreshSkills);
+  window.addEventListener('focus', refreshSkills);
+
+  /** Focus back on the control redrawn in place of the one that had it — a card's name, for a card. */
+  function refocus(host, mark, value) {
+    const again = /** @type {HTMLElement[]} */ ([...host.querySelectorAll(`[data-${mark}]`)]).find((el) => el.dataset[mark] === value);
+    /** @type {HTMLElement | null} */ (mark === 'view' ? again?.querySelector('.cname') : again)?.focus();
+  }
+
+  /** Read somebody's shared skill whole, with Add when it can be added. */
+  async function viewShared(id) {
+    const { skill } = await api.sharedSkill(id);
+    deps.viewSkill(skill, {
+      author: skill.author,
+      onAdd: skill.mine || skill.added ? undefined : () => addShared(skill.id, skill.name),
+    });
+  }
+
+  async function addShared(id, name) {
+    const { added } = await api.addSharedSkill(id);
+    toast(t('skills.addedNamed', { name: added?.knownAs || name }), 'ok');
+    await loadSkills();
+  }
+
+  /**
+   * Yours: what this account made, and what it added from Discover. Synapsez's
+   * own are not listed unless the filter asks for them (Created by → Synapsez, or
+   * a plugin) — they are always at work, and the + menu offers them.
+   */
   function drawSkills() {
-    const { skills = [], builtin = [] } = skillData;
-    const theirs = builtin.map((s) => ({ ...s, mine: false }));
-    const mine = skills.map((s) => ({ ...s, mine: true, plugin: null }));
-    const keep = (s) => (view.by === 'all' || (view.by === 'you') === s.mine) && (view.plugin === 'all' || s.plugin === view.plugin);
+    const { skills = [], builtin = [], added = [] } = skillData;
+    const theirs = view.by === 'synapsez' || view.plugin !== 'all' ? builtin.map((s) => ({ ...s, kind: 'synapsez' })) : [];
+    const mine = skills.map((s) => ({ ...s, kind: 'you', plugin: null }));
+    const others = added.map((s) => ({ ...s, kind: 'others', plugin: null, updated_at: s.updatedAt || s.addedAt }));
+    const keep = (s) => (view.by === 'all' || view.by === s.kind) && (view.plugin === 'all' || s.plugin === view.plugin);
     const order = (a, b) => {
       if (view.sort === 'name') return a.name.localeCompare(b.name);
       if (view.sort === 'plugin') return pluginName(a.plugin).localeCompare(pluginName(b.plugin)) || a.name.localeCompare(b.name);
       return String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || ''));
     };
+    const ownTag = (s) => [s.enabled ? '' : t('settings.off'), s.hidden_at && s.shared_at ? t('skills.tagHidden') : s.shared_at ? t('skills.tagShared') : ''].filter(Boolean).join(' · ');
     const row = (s) =>
       listRow({
         key: s.id,
         icon: ICON.skill,
-        name: s.name,
-        tag: s.mine ? (s.enabled ? '' : t('settings.off')) : pluginName(s.plugin),
-        by: s.mine ? t('settings.byYou') : t('settings.fromSynapsez'),
-        desc: s.description,
-        meta: s.mine ? day(s.updated_at || s.created_at) : '',
-        search: `${s.name} ${s.description} ${pluginName(s.plugin)}`,
+        name: s.kind === 'others' ? s.knownAs || s.name : s.name,
+        tag: s.kind === 'you' ? ownTag(s) : s.kind === 'others' ? t('skills.tagAdded') : pluginName(s.plugin),
+        by: s.kind === 'you' ? t('settings.byYou') : s.kind === 'others' ? authorOf(s.author) : t('settings.fromSynapsez'),
+        desc: s.description || '',
+        warn: s.kind === 'others' && s.status !== 'ok' ? t(GONE[s.status] || 'skills.goneUnshared') : '',
+        meta: s.kind === 'synapsez' ? '' : day(s.updated_at || s.created_at),
+        search: `${s.name} ${s.description || ''} ${pluginName(s.plugin)} ${s.author || ''}`,
       });
     const shownTheirs = theirs.filter(keep).sort(order);
     const shownMine = mine.filter(keep).sort(order);
+    const shownOthers = others.filter(keep).sort(order);
     const list = document.getElementById('skill-list');
+    const ownPart = view.plugin === 'all' && (view.by === 'all' || view.by === 'you');
+    const addedPart = view.plugin === 'all' && (view.by === 'others' || (view.by === 'all' && others.length > 0));
     list.innerHTML =
       (shownTheirs.length ? group(t('settings.fromSynapsez'), shownTheirs.length) + shownTheirs.map(row).join('') : '') +
-      (view.by !== 'synapsez' && view.plugin === 'all' ? group(t('settings.madeByYou'), shownMine.length) + (shownMine.map(row).join('') || empty(t(mine.length ? 'skills.noneMatch' : 'skills.empty'))) : '');
+      (ownPart ? group(t('settings.madeByYou'), shownMine.length) + (shownMine.map(row).join('') || empty(t(mine.length ? 'skills.noneMatch' : 'skills.empty'))) : '') +
+      (addedPart ? group(t('skills.addedFromDiscover'), shownOthers.length) + (shownOthers.map(row).join('') || empty(t(others.length ? 'skills.noneMatch' : 'skills.noneAdded'))) : '');
     for (const btn of /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('[data-more]'))) {
       btn.addEventListener('click', () => {
-        const own = skills.find((s) => s.id === btn.dataset.more);
-        const built = builtin.find((s) => s.id === btn.dataset.more);
-        const name = (own || built)?.name;
-        const items = [{ label: t('settings.useInMessage'), run: () => useSkill(name) }];
+        const id = btn.dataset.more;
+        const own = skills.find((s) => s.id === id);
+        const took = added.find((s) => s.id === id);
+        const built = builtin.find((s) => s.id === id);
+        /** @type {MenuItem[]} */
+        const items = [];
         if (own) {
+          items.push({ label: t('settings.useInMessage'), run: () => useSkill(own.name) });
           items.push({ label: t('skills.edit'), run: () => deps.editSkill(own) });
+          // Sharing says what it means before it happens; stopping says who loses it.
+          items.push(
+            own.shared_at
+              ? { label: t('skills.stopSharing'), confirm: t('skills.stopSharingConfirm'), run: () => setShared(own, false) }
+              : { label: t('skills.shareToDiscover'), confirm: t('skills.shareConfirm'), run: () => setShared(own, true) },
+          );
           items.push({
             label: own.enabled ? t('settings.turnOff') : t('settings.turnOn'),
             run: async () => {
               await api.setSkillEnabled(own.id, !own.enabled);
-              loadSkills();
+              await loadSkills();
             },
           });
           items.push({
             label: t('action.delete'),
             danger: true,
-            confirm: t('action.reallyRemove'),
+            confirm: t(own.shared_at ? 'skills.reallyDeleteShared' : 'action.reallyRemove'),
             run: async () => {
               await api.deleteSkill(own.id);
-              loadSkills();
+              await loadSkills();
             },
           });
+        } else if (took) {
+          if (took.status === 'ok') {
+            items.push({ label: t('settings.useInMessage'), run: () => useSkill(took.knownAs || took.name) });
+            items.push({ label: t('skills.view'), run: () => viewShared(took.id) });
+          }
+          items.push({
+            label: t('skills.removeAdded'),
+            danger: took.status === 'ok',
+            run: async () => {
+              await api.removeAddedSkill(took.id);
+              toast(t('skills.removedNamed', { name: took.name }), 'ok');
+              await loadSkills();
+            },
+          });
+        } else if (built) {
+          items.push({ label: t('settings.useInMessage'), run: () => useSkill(built.name) });
         }
         openMenu(btn, items);
       });
@@ -339,22 +456,83 @@ export function createCustomize(deps) {
     refilter('panel-skills');
   }
 
-  function drawDiscover() {
-    const { builtin = [] } = skillData;
-    const discover = document.getElementById('skill-discover');
-    discover.innerHTML = `<div class="cgrid">${
-      builtin.map((s) => card({ key: s.id, icon: ICON.skill, name: s.name, desc: s.description, by: t('settings.fromSynapsez'), search: `${s.name} ${s.description}` })).join('') +
-      card({ key: '__new', icon: ICON.add, name: t('plus.newSkill'), desc: t('settings.newSkillHint'), by: t('settings.byYou'), search: t('plus.newSkill') })
-    }</div>`;
-    for (const btn of /** @type {NodeListOf<HTMLElement>} */ (discover.querySelectorAll('[data-add]'))) {
-      btn.addEventListener('click', () => {
-        if (btn.dataset.add === '__new') return showSkillForm();
-        const s = builtin.find((x) => x.id === btn.dataset.add);
-        if (s) useSkill(s.name);
-      });
+  /** Share one of the account's own, or stop — a refusal from the safety scan said with what it found. */
+  async function setShared(own, shared) {
+    try {
+      await api.setSkillShared(own.id, shared);
+      toast(t(shared ? 'skills.sharedNamed' : 'skills.unsharedNamed', { name: own.name }), 'ok');
+    } catch (err) {
+      const found = Array.isArray(err.findings) ? err.findings.map((f) => f.text).join(' ') : '';
+      toast(found ? `${err.message} ${found}` : err.message, 'error', { ms: 12000 });
     }
+    await loadSkills();
+  }
+
+  /** One shared skill's card: open it to read, + to add, ✓ once added; a moderator can take it off or put it back. */
+  function sharedCard(s, moderator) {
+    const action = s.mine
+      ? `<span class="ccard__add is-added" role="img" aria-label="${escapeHtml(t('skills.yoursNamed', { name: s.name }))}" title="${escapeHtml(t('skills.yours'))}">${ICON.check}</span>`
+      : s.added
+        ? `<span class="ccard__add is-added" role="img" aria-label="${escapeHtml(t('skills.addedNamedState', { name: s.name }))}" title="${escapeHtml(t('skills.added'))}">${ICON.check}</span>`
+        : `<button class="ccard__add" type="button" data-add="${escapeHtml(s.id)}" aria-label="${escapeHtml(t('settings.addThing', { name: s.name }))}" title="${escapeHtml(t('settings.addThing', { name: s.name }))}">${ICON.add}</button>`;
+    const by = s.mine ? t('settings.byYou') : authorOf(s.author);
+    const hiddenTag = moderator && (s.hidden || s.authorSuspended) ? ` <span class="crow__tag">${escapeHtml(t(s.hidden ? 'skills.tagHidden' : 'skills.tagSuspended'))}</span>` : '';
+    const mod = moderator && !s.authorSuspended ? `<button class="ccard__mod" type="button" data-mod="${escapeHtml(s.id)}">${escapeHtml(t(s.hidden ? 'skills.showOnDiscover' : 'skills.hideFromDiscover'))}</button>` : '';
+    return `<div class="ccard ccard--open cust-item" data-view="${escapeHtml(s.id)}" data-search="${escapeHtml(`${s.name} ${s.description} ${s.author || ''}`.toLowerCase())}">
+      <span class="ccard__icon">${ICON.skill}</span>
+      <div class="ccard__text">
+        <p class="ccard__name"><button class="cname" type="button">${escapeHtml(s.name)}</button>${hiddenTag}</p>
+        <p class="ccard__desc">${escapeHtml(s.description)}</p>
+        <p class="ccard__by">${escapeHtml(by)} · ${escapeHtml(day(s.createdAt))}</p>
+        ${mod}
+      </div>
+      ${action}
+    </div>`;
+  }
+
+  /**
+   * Discover: the skills people on this site share, newest made first (owner,
+   * 2026-11-09), then a card to make one. Synapsez's own are not here.
+   */
+  function drawDiscover() {
+    const { skills: shared = [], moderator = false } = sharedData;
+    const discover = document.getElementById('skill-discover');
+    discover.innerHTML =
+      (shared.length ? '' : empty(t('skills.discoverEmpty'))) +
+      `<div class="cgrid">${shared.map((s) => sharedCard(s, moderator)).join('')}${card({ key: '__new', icon: ICON.add, name: t('plus.newSkill'), desc: t('settings.newSkillHint'), by: t('settings.byYou'), search: t('plus.newSkill') })}</div>`;
     refilter('panel-skills');
   }
+
+  /** Every press in Discover: add, moderate, make one, or open a card to read it — one listener, whatever was drawn. */
+  document.getElementById('skill-discover').addEventListener('click', async (event) => {
+    const el = /** @type {HTMLElement} */ (event.target);
+    try {
+      const add = /** @type {HTMLElement | null} */ (el.closest('[data-add]'));
+      if (add) {
+        if (add.dataset.add === '__new') return showSkillForm();
+        const id = String(add.dataset.add);
+        /** @type {HTMLButtonElement} */ (add).disabled = true;
+        await addShared(id, sharedData.skills.find((s) => s.id === id)?.name || '');
+        // The + is now a ✓ that cannot hold focus: the card's name takes it. (Not
+        // `event.currentTarget`, which is null once the handler has awaited.)
+        return refocus(/** @type {HTMLElement} */ (document.getElementById('skill-discover')), 'view', id);
+      }
+      const mod = /** @type {HTMLElement | null} */ (el.closest('[data-mod]'));
+      if (mod) {
+        const s = sharedData.skills.find((x) => x.id === mod.dataset.mod);
+        if (!s) return;
+        await api.hideSharedSkill(s.id, !s.hidden);
+        toast(t(s.hidden ? 'skills.shownAgain' : 'skills.hiddenDone', { name: s.name }), 'ok');
+        return await loadSkills();
+      }
+      // The whole card opens it under a pointer; from the keyboard, the name — a real button.
+      const open = /** @type {HTMLElement | null} */ (el.closest('[data-view]'));
+      if (open && (!el.closest('a, button, input') || el.closest('.cname'))) await viewShared(String(open.dataset.view));
+    } catch (err) {
+      toast(err.message, 'error');
+      await loadSkills().catch(() => {});
+    }
+  });
 
   /** Filter by → Plugin › and Created by ›, each a choice of one, the current one ticked. */
   document.getElementById('skills-filter').addEventListener('click', (event) => {
@@ -376,9 +554,11 @@ export function createCustomize(deps) {
       },
       {
         label: t('skills.createdBy'),
+        // All is yours and what you added; Synapsez brings its own back into the list.
         sub: () => [
           { label: t('skills.all'), checked: view.by === 'all', run: choose('by', 'all') },
           { label: t('skills.byYou'), checked: view.by === 'you', run: choose('by', 'you') },
+          { label: t('skills.byOthers'), checked: view.by === 'others', run: choose('by', 'others') },
           { label: 'Synapsez', checked: view.by === 'synapsez', run: choose('by', 'synapsez') },
         ],
       },
@@ -904,5 +1084,5 @@ export function createCustomize(deps) {
     refilter('panel-plugins');
   }
 
-  return { loadSkills, loadConnectors, showConnector, showConnectorPage, paintPlugins, setPlugin, showSkillForm };
+  return { loadSkills, loadConnectors, showConnector, showConnectorPage, paintPlugins, setPlugin, showSkillForm, shareByDefault: () => skillData.shareByDefault === true };
 }

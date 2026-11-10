@@ -367,10 +367,11 @@ export async function settleClosed({ store = getStore(), now = new Date() } = {}
  * What the boards call somebody: the name they go by, never what they sign in with.
  * A username or an email's first half on a public list is half of a login, and is what
  * a name is by default when none was given (auth.js), so those read as "A member".
+ * Shared skills name their author by the same rule (skills.js, 41).
  *
  * @param {{ name?: string|null, username?: string|null, email?: string|null } | undefined} person
  */
-function publicName(person) {
+export function publicName(person) {
   const name = String(person?.name || '').trim();
   const same = name.toLowerCase();
   if (!name || same === String(person?.username || '').toLowerCase() || same === String(person?.email || '').split('@')[0].toLowerCase()) return null;

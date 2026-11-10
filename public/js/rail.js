@@ -48,7 +48,11 @@ export function createRail({ api, openFile, openSettings, openPane }) {
     const [connectors, skills, mcp] = await Promise.allSettled([api.connectors(), api.skills(), api.mcpServers()]);
     account = {
       connectors: connectors.status === 'fulfilled' ? (connectors.value.connectors || []).filter((c) => c.connected) : [],
-      skills: skills.status === 'fulfilled' ? skills.value.skills || [] : [],
+      // Shared skills added from Discover are read under the name the assistant knows them by.
+      skills:
+        skills.status === 'fulfilled'
+          ? [...(skills.value.skills || []), ...(skills.value.added || []).filter((s) => s.status === 'ok' && s.knownAs).map((s) => ({ ...s, name: s.knownAs }))]
+          : [],
       mcp: mcp.status === 'fulfilled' ? (mcp.value.servers || []).filter((s) => s.enabled) : [],
     };
     return account;

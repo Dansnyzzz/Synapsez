@@ -50,12 +50,14 @@ async function request(method, path, body, options = {}) {
   }
 
   if (!res.ok) {
-    const err = /** @type {Error & { code?: string, status?: number, email?: string }} */ (new Error(json.error || messageFor(res.status, unparsed)));
+    const err = /** @type {Error & { code?: string, status?: number, email?: string, findings?: any[] }} */ (new Error(json.error || messageFor(res.status, unparsed)));
     // Callers branch on this — e.g. 'totp_required' is a step, not a failure.
     err.code = json.code;
     err.status = res.status;
     // The address a sign-in's "confirm your email" names, so the code box can show it.
     if (typeof json.email === 'string') err.email = json.email;
+    // What a safety scan found, when that is why it was refused (a shared skill).
+    if (Array.isArray(json.findings)) err.findings = json.findings;
     throw err;
   }
   if (unparsed) {
@@ -172,6 +174,13 @@ export const api = {
   saveSkill: (skill) => request('POST', '/api/skills', skill),
   setSkillEnabled: (id, enabled) => request('PATCH', `/api/skills/${id}`, { enabled }),
   deleteSkill: (id) => request('DELETE', `/api/skills/${id}`),
+  // Skills shared to Discover (schema 41): sharing one's own, adding by reference, moderating.
+  setSkillShared: (id, shared) => request('PATCH', `/api/skills/${encodeURIComponent(id)}`, { shared }),
+  sharedSkills: () => request('GET', '/api/skills/shared'),
+  sharedSkill: (id) => request('GET', `/api/skills/shared/${encodeURIComponent(id)}`),
+  addSharedSkill: (id) => request('PUT', `/api/skills/added/${encodeURIComponent(id)}`),
+  removeAddedSkill: (id) => request('DELETE', `/api/skills/added/${encodeURIComponent(id)}`),
+  hideSharedSkill: (id, hidden) => request('PATCH', `/api/admin/skills/${encodeURIComponent(id)}`, { hidden }),
 
   // A conversation shared by link, and carrying one on (server/routes/chatShare.js).
   shareChat: (id) => request('POST', `/api/chats/${encodeURIComponent(id)}/share`),
