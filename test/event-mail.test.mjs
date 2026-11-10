@@ -54,6 +54,7 @@ section('sending: in Bcc, by language, once each, and the opt-out holds');
 {
   const make = async (id, language, extra = {}) => {
     await store.createUser({ id, email: `${id}@example.com`, name: id, passwordHash: 'x', role: 'user' });
+    await store.markEmailVerified(id);
     await setPrefs(id, { language, ...extra });
   };
   await make('va', 'vi');
@@ -90,6 +91,16 @@ section('sending: in Bcc, by language, once each, and the opt-out holds');
   sent.length = 0;
   await sweepEventMail({ now: when, store, send: flaky, baseUrl: 'https://synapsez.example', backend: 'smtp' });
   check('a batch the provider refused is sent again next time', sent.length === 1 && sent[0].bcc.join() === 'late@example.com', JSON.stringify(sent.map((m) => m.bcc)));
+
+  // An address nobody confirmed may be anybody's (owner, 2026-11-09).
+  await store.createUser({ id: 'typed', email: 'typed@example.com', name: 'typed', passwordHash: 'x', role: 'user' });
+  sent.length = 0;
+  await sweepEventMail({ now: when, store, send, baseUrl: 'https://synapsez.example', backend: 'smtp' });
+  check('an address that was never confirmed is not written to', !sent.flatMap((m) => m.bcc).includes('typed@example.com'), JSON.stringify(sent.map((m) => m.bcc)));
+  await store.markEmailVerified('typed');
+  sent.length = 0;
+  await sweepEventMail({ now: when, store, send, baseUrl: 'https://synapsez.example', backend: 'smtp' });
+  check('  and is, once it is', sent.flatMap((m) => m.bcc).includes('typed@example.com'));
 }
 
 section('no provider, no send, and nobody marked as told (review, 2026-11-09)');
@@ -106,6 +117,7 @@ section('two sweeps at once send each person once (review, 2026-11-09)');
 {
   for (const id of ['c1', 'c2', 'c3']) {
     await store.createUser({ id, email: `${id}@example.com`, name: id, passwordHash: 'x', role: 'user' });
+    await store.markEmailVerified(id);
   }
   const sent = [];
   const slow = async (m) => {
@@ -122,6 +134,7 @@ section('two sweeps at once send each person once (review, 2026-11-09)');
 section('a Vietnamese clock reads Vietnamese before a language is chosen');
 {
   await store.createUser({ id: 'clock', email: 'clock@example.com', name: 'clock', passwordHash: 'x', role: 'user' });
+  await store.markEmailVerified('clock');
   await setPrefs('clock', { timezone: 'Asia/Ho_Chi_Minh' });
   const got = [];
   await sweepEventMail({ now: new Date('2026-12-30T10:00:00+07:00'), store, send: async (m) => (got.push(m), { ok: true }), baseUrl: 'https://synapsez.example', backend: 'smtp' });

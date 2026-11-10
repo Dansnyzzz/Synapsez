@@ -10,6 +10,14 @@
     {
       "source": "/api/(.*)",
       "destination": "/api/index.js"
+    },
+    {
+      "source": "/assets/scenes/:file",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/js/scenes/:file",
+      "destination": "/api/index.js"
     }
   ],
   "crons": [
@@ -52,7 +60,7 @@
         },
         {
           "key": "Strict-Transport-Security",
-          "value": "max-age=15552000; includeSubDomains"
+          "value": "max-age=63072000; includeSubDomains; preload"
         }
       ]
     }

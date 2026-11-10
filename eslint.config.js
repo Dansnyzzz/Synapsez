@@ -140,7 +140,8 @@ export default [
   },
 
   {
-    files: ['public/**/*.js'],
+    // A theme's scene module is browser code, kept under server/ so it is served only once out.
+    files: ['public/**/*.js', 'server/scenes/js/**/*.js'],
     languageOptions: { globals: { ...BROWSER_GLOBALS, ...SCENE_GLOBALS } },
   },
 

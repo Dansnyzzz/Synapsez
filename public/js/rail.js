@@ -1,10 +1,15 @@
 import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { webRowHtml } from './webrows.js';
+import { isPastedName } from './pasted.js';
 
 /**
- * Below the plan in the side panel: what this conversation made, and what it
- * is working from.
+ * Below the plan in the side panel: what this conversation was given, what it
+ * made, and what it is working from.
+ *
+ * **Used in this session** — one row per message that brought files, after
+ * Claude's (owner, 2026-11-09): "Uploads", the first file's name and "+N" for
+ * the rest. A press opens that message's files in the uploads window.
  *
  * **Outputs** — every file the assistant produced here, newest first; a press
  * opens it in the viewer, the same as its card in the transcript.
@@ -18,13 +23,13 @@ import { webRowHtml } from './webrows.js';
  * Its own module because app.js is five thousand lines and this is a
  * self-contained view with one way in (`render`) and clicks as the way out.
  *
- * @param {{ api: any, openFile: (file: {id: string, name?: string}) => void, openSettings: (tab: string) => void, openPane: (title: string, html: string) => void }} wiring
+ * @param {{ api: any, openFile: (file: {id: string, name?: string}) => void, openSettings: (tab: string) => void, openPane: (title: string, html: string) => void, openUploads?: (files: any[], returnTo: () => HTMLElement | null) => void }} wiring
  */
-export function createRail({ api, openFile, openSettings, openPane }) {
+export function createRail({ api, openFile, openSettings, openPane, openUploads = () => {} }) {
   const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
   /** Folded or open, per section, for the session. */
-  const folded = { outputs: false, context: false };
+  const folded = { uploads: false, outputs: false, context: false };
 
   /** Account-wide lists change rarely; fetched once and refreshed on demand. */
   let account = null;
@@ -39,6 +44,7 @@ export function createRail({ api, openFile, openSettings, openPane }) {
     globe: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
     tool: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4Z"/></svg>',
     plug: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0Z"/><path d="M12 17v4"/></svg>',
+    clip: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m20.5 11.5-8.3 8.3a5.2 5.2 0 0 1-7.4-7.4l8.6-8.6a3.5 3.5 0 0 1 4.9 4.9l-8.6 8.6a1.7 1.7 0 0 1-2.5-2.5l7.9-7.9"/></svg>',
   };
 
   const isImage = (file) => /^image\//.test(file.mime || '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name || '');
@@ -48,7 +54,11 @@ export function createRail({ api, openFile, openSettings, openPane }) {
     const [connectors, skills, mcp] = await Promise.allSettled([api.connectors(), api.skills(), api.mcpServers()]);
     account = {
       connectors: connectors.status === 'fulfilled' ? (connectors.value.connectors || []).filter((c) => c.connected) : [],
-      skills: skills.status === 'fulfilled' ? skills.value.skills || [] : [],
+      // Shared skills added from Discover are read under the name the assistant knows them by.
+      skills:
+        skills.status === 'fulfilled'
+          ? [...(skills.value.skills || []), ...(skills.value.added || []).filter((s) => s.status === 'ok' && s.knownAs).map((s) => ({ ...s, name: s.knownAs }))]
+          : [],
       mcp: mcp.status === 'fulfilled' ? (mcp.value.servers || []).filter((s) => s.enabled) : [],
     };
     return account;
@@ -88,11 +98,27 @@ export function createRail({ api, openFile, openSettings, openPane }) {
        <span class="railrow__name">${escapeHtml(label)}</span>${extra}
      </button>`;
 
+  /**
+   * One message's files: a paperclip, "Uploads", the first file's name cut to fit
+   * and "+N" for the rest — Claude's row (owner, 2026-11-09, screenshot 2).
+   */
+  const uploadRow = (group, index) => {
+    const names = group.files.map((f) => String(f.name || ''));
+    const more = names.length - 1;
+    return `<button class="railrow railrow--uploads" type="button" data-uploads="${index}" aria-haspopup="dialog"
+       aria-label="${escapeHtml(t('rail.uploadsOpen', { names: names.join(', ') }))}" title="${escapeHtml(names.join('\n'))}">
+       <span class="railrow__clip" aria-hidden="true">${icon.clip}</span>
+       <span class="railrow__label">${escapeHtml(t('rail.uploads'))}</span>
+       <span class="railrow__first">${escapeHtml(names[0])}</span>${more > 0 ? `<span class="railrow__more">+${more}</span>` : ''}
+     </button>`;
+  };
+
   let renders = 0;
 
   /**
-   * Draw both sections for the conversation on screen.
-   * @param {{ files?: any[], project?: {id: string} | null, transcript?: any[], liveTools?: any[] }} state
+   * Draw the sections for the conversation on screen.
+   * @param {{ files?: any[], project?: {id: string} | null, transcript?: any[], liveTools?: any[], sentUploads?: any[] }} state
+   *   `sentUploads`: files this tab sent that the transcript does not hold yet
    */
   async function render(state) {
     const host = $('rail-extra');
@@ -105,6 +131,11 @@ export function createRail({ api, openFile, openSettings, openPane }) {
     if (mine !== renders) return;
 
     let html = '';
+    // What the person brought, above what was made from it.
+    const uploads = uploadGroups(state.transcript || [], state.sentUploads || []);
+    if (uploads.length) {
+      html += section('uploads', t('rail.used'), 0, uploads.map(uploadRow).join(''));
+    }
     if (files.length) {
       html += section(
         'outputs',
@@ -200,6 +231,16 @@ export function createRail({ api, openFile, openSettings, openPane }) {
     for (const button of host.querySelectorAll('[data-settings]')) {
       button.addEventListener('click', () => openSettings(/** @type {HTMLElement} */ (button).dataset.settings));
     }
+    for (const button of host.querySelectorAll('[data-uploads]')) {
+      button.addEventListener('click', () => {
+        const index = /** @type {HTMLElement} */ (button).dataset.uploads;
+        const group = uploads[Number(index)];
+        // Focus goes back to this row on close — looked up again then, since the
+        // panel redraws as the run goes on. Rows are in conversation order, so a
+        // message sent meanwhile is added after it and the number still names it.
+        if (group) openUploads(group.files, () => /** @type {HTMLElement | null} */ (document.querySelector(`#rail-extra [data-uploads="${index}"]`)));
+      });
+    }
     for (const button of host.querySelectorAll('[data-tool]')) {
       button.addEventListener('click', () => showTool(/** @type {HTMLElement} */ (button).dataset.tool, log));
     }
@@ -263,6 +304,39 @@ export function createRail({ api, openFile, openSettings, openPane }) {
     /** A project's sources if they have been read, or null when not (yet) known. */
     knownSources: (projectId) => (projectId ? sources.get(projectId) ?? null : []),
   };
+}
+
+/* ── what the person brought ─────────────────────────────────────────── */
+
+/** A file somebody attached — not a long paste, which is their own words in a card. */
+const isUpload = (file) => !!file?.id && !(isPastedName(file.name) && !/^image\//i.test(String(file.mime || '')));
+
+/**
+ * The files each message brought, one group per message, in the order they were sent.
+ *
+ * From the stored transcript, plus what this tab has sent since it was read
+ * (`sent`, `{ messageId, files }`), which the transcript only holds after a
+ * reload. A sent message the transcript already has is not counted twice.
+ *
+ * @param {any[]} messages
+ * @param {{ messageId?: string | null, files?: any[] }[]} [sent]
+ * @returns {{ messageId: string | null, files: any[] }[]}
+ */
+function uploadGroups(messages, sent = []) {
+  const groups = [];
+  const stored = new Set();
+  for (const m of messages || []) {
+    if (m?.role !== 'user') continue;
+    if (m.id) stored.add(m.id);
+    const files = (m.attachments || []).filter(isUpload);
+    if (files.length) groups.push({ messageId: m.id || null, files });
+  }
+  for (const group of sent || []) {
+    if (group?.messageId && stored.has(group.messageId)) continue;
+    const files = (group?.files || []).filter(isUpload);
+    if (files.length) groups.push({ messageId: group.messageId || null, files });
+  }
+  return groups;
 }
 
 /* ── what the tools did, read from the transcript ───────────────────── */

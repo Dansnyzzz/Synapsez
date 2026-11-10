@@ -23,10 +23,12 @@ import {
   disableTotp,
   refreshSession,
   endSession,
+  confirmAccount,
+  resendConfirmation,
 } from './auth.js';
 import { limit as rateLimit, forgive, consume as consumeLimit } from './ratelimit.js';
 import { publicUrlFor } from './util/net.js';
-import { emailBackend } from './email.js';
+import { emailBackend, senderAddress } from './email.js';
 import { summary as usageSummary, limitFor } from './usage.js';
 import { getPrefs, setPrefs, setApiKey, addApiKey, removeApiKey, providerStatus, DEFAULT_PREFS } from './settings.js';
 import { MODEL_GONE, settleAccountModel } from './modelRetirement.js';
@@ -39,7 +41,7 @@ import { publish, subscribe, poll, forget as forgetScreen } from './screenHub.js
 import { keyProviderMeta, CATALOG } from './providers/catalog.js';
 import { intakeKey } from './keyIntake.js';
 import { getRecommended, setRecommended, suggestionFor, recommendedWithLabels } from './recommend.js';
-import { isOwner, permissionsOf, cleanPermissions, mayActOn, requirePermission, requireOwner } from './adminRoles.js';
+import { isOwner, permissionsOf, cleanPermissions, mayActOn, requirePermission, requireOwner, can } from './adminRoles.js';
 import {
   browse,
   refreshLibrary,
@@ -51,7 +53,16 @@ import {
 import { TOOLS } from './tools/definitions.js';
 import { executeTool } from './tools/execute.js';
 import { runAgent } from './agent.js';
-import { saveSkill, builtinSkillCards } from './skills.js';
+import {
+  writeSkill,
+  setSkillSharing,
+  builtinSkillCards,
+  addedSkillCards,
+  discoverSkills,
+  sharedSkill,
+  addSharedSkill,
+  SHARE_BY_DEFAULT,
+} from './skills.js';
 import { readSkillUpload } from './skillUpload.js';
 import { addSource, shelfCapacity } from './projects.js';
 import {
@@ -76,7 +87,9 @@ import { usageReport } from './usageReport.js';
 import { mountAccountRoutes } from './routes/account.js';
 import { mountFeedbackRoutes } from './routes/feedback.js';
 import { mountThemeRoutes } from './routes/themes.js';
-import { afterTurn } from './themes.js';
+import { mountSceneAssets } from './sceneAssets.js';
+import { checkDomain } from './domainCheck.js';
+import { afterTurn, titleShown } from './themes.js';
 import { freeTierReport } from './freeTier.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -112,7 +125,8 @@ import { mountYourDataRoutes } from './routes/yourData.js';
 import { cloudBrowserState, cloudBrowserInput, closeCloudBrowser } from './cloudBrowser/index.js';
 import { EFFORTS, DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
-import { mountBotRoutes } from './routes/bot.js';
+import { mountAutomationRoutes } from './routes/automations.js';
+import { mountBotRoutes } from './routes/bots.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
 import { approximateLocation } from './whereabouts.js';
@@ -448,7 +462,7 @@ export function createApp() {
         await audit(req, user.id, 'sign_in');
         res.json({ user: publicUser(user) });
       } catch (err) {
-        res.status(err.status || 400).json({ error: clientError(err), code: err.code });
+        res.status(err.status || 400).json({ error: clientError(err), code: err.code, ...(err.code === 'email_unconfirmed' ? { email: err.email } : {}) });
       }
     }),
   );
@@ -561,7 +575,7 @@ export function createApp() {
     rateLimit('register'),
     wrap(async (req, res) => {
       try {
-        const user = await registerUser(body(req), req, res);
+        const { user, confirm } = await registerUser(body(req), req, res);
         // What the person ticked — the privacy notice, and since 2026-10-26 the
         // terms and the usage policy — by version, in their security record
         // (LAW-001): consent has to be shown, not assumed. The form insists on
@@ -569,12 +583,43 @@ export function createApp() {
         // is asked by the banner once it signs in (`/api/consent`).
         const agreed = agreement(body(req));
         if (Object.keys(agreed).length) await audit(req, user.id, 'consent_given', agreed);
+        // Waiting for its email to be confirmed: no session yet, and the page asks for the code.
+        if (confirm) return res.status(202).json({ confirm: true, email: user.email, emailBackend: emailBackend() });
         res.status(201).json({ user: publicUser(user), emailBackend: emailBackend() });
       } catch (err) {
         // A closed deployment is a 403, not a bad request — the client can tell
         // "you may not" from "you got that wrong" and say something useful.
         res.status(err.status || 400).json({ error: clientError(err) });
       }
+    }),
+  );
+
+  /*
+   * A new account's email, confirmed by the code typed or the link opened (owner,
+   * 2026-11-09). Limited per address and per account like a sign-in: six digits for
+   * half an hour, so a script gets a few dozen of a million guesses.
+   */
+  app.post(
+    '/api/register/confirm',
+    rateLimit('confirm', (req) => (req.body?.token ? '' : accountKey(req.body?.email))),
+    wrap(async (req, res) => {
+      try {
+        const user = await confirmAccount({ email: req.body?.email, code: req.body?.code, token: req.body?.token }, req, res);
+        await audit(req, user.id, 'email_confirmed');
+        res.json({ user: publicUser(user) });
+      } catch (err) {
+        res.status(err.status || 400).json({ error: clientError(err) });
+      }
+    }),
+  );
+
+  // Another code, said the same whether or not the address waits for one.
+  app.post(
+    '/api/register/resend',
+    rateLimit('confirm-send', (req) => accountKey(req.body?.email)),
+    wrap(async (req, res) => {
+      await resendConfirmation(req.body?.email, req);
+      res.json({ ok: true });
     }),
   );
 
@@ -879,6 +924,8 @@ export function createApp() {
       // A model that has gone since the last visit is replaced by Auto before the
       // chip is drawn, and `prefs.modelNotice` says so once — see modelRetirement.js.
       const prefs = await settleAccountModel(req.user.id, await getPrefs(req.user.id));
+      // A sponsor's title with no money behind it is not drawn, even before the next sync clears it.
+      if (prefs.equippedTitle) prefs.equippedTitle = await titleShown(req.user.id, prefs.equippedTitle);
 
       /**
        * Remember which clock this person keeps.
@@ -1863,19 +1910,84 @@ export function createApp() {
   api.get(
     '/skills',
     wrap(async (req, res) => {
-      // The built-ins too, for the + menu — names and when to use them only.
-      res.json({ skills: await getStore().listSkills(req.user.id), builtin: builtinSkillCards() });
+      const skills = await getStore().listSkills(req.user.id);
+      // The built-ins too, for the + menu — names and when to use them only. And
+      // the shared skills this account added (41), each saying whether it still is.
+      res.json({ skills, added: await addedSkillCards(req.user.id, skills), builtin: builtinSkillCards(), shareByDefault: SHARE_BY_DEFAULT });
     }),
   );
+
+  /**
+   * A refusal the skills module said in words — sharing the scan refused (422,
+   * with what it found, in the reader's language), a skill gone (404) — or the
+   * usual 400 for a skill that is not well formed.
+   */
+  const skillRefusal = (req, res, err) =>
+    res.status(err?.status || 400).json({
+      error: clientError(err),
+      ...(Array.isArray(err?.findings) ? { findings: err.findings.map((f) => ({ level: f.level, text: translateMessage(f.text, languageOf(req)) })) } : {}),
+    });
+
+  /** Going on Discover, or coming off it, is in the account's security record — like a shared link. */
+  const noteSharing = (req, change) => (change ? audit(req, req.user.id, change === 'on' ? 'skill_shared' : 'skill_unshared') : null);
 
   api.post(
     '/skills',
     wrap(async (req, res) => {
       try {
-        res.status(201).json({ skill: await saveSkill(req.user.id, req.body || {}) });
+        const { skill, change } = await writeSkill(req.user.id, body(req));
+        await noteSharing(req, change);
+        res.status(201).json({ skill });
       } catch (err) {
-        res.status(400).json({ error: clientError(err) });
+        skillRefusal(req, res, err);
       }
+    }),
+  );
+
+  /**
+   * Discover (owner, 2026-11-09): the skills shared on this site, newest made
+   * first, by their authors' public names. Anyone signed in may look; an
+   * administrator who manages people also sees what was taken off, to put it back.
+   */
+  api.get(
+    '/skills/shared',
+    wrap(async (req, res) => {
+      const moderator = can(req.user, 'users');
+      res.json({ skills: await discoverSkills(req.user, { moderator }), moderator });
+    }),
+  );
+
+  /** One shared skill whole, to read before adding it. Only while it is shared — 404 otherwise, for anyone. */
+  api.get(
+    '/skills/shared/:id',
+    wrap(async (req, res) => {
+      const skill = await sharedSkill(req.user, req.params.id, { moderator: can(req.user, 'users') });
+      if (!skill) return res.status(404).json({ error: 'That skill is not shared any more.' });
+      res.json({ skill });
+    }),
+  );
+
+  /** Add a shared skill to this account — a reference, so its author's edits reach it. */
+  api.put(
+    '/skills/added/:id',
+    wrap(async (req, res) => {
+      try {
+        await addSharedSkill(req.user.id, req.params.id);
+        const added = (await addedSkillCards(req.user.id)).find((a) => a.id === req.params.id) || null;
+        res.status(201).json({ added });
+      } catch (err) {
+        skillRefusal(req, res, err);
+      }
+    }),
+  );
+
+  api.delete(
+    '/skills/added/:id',
+    wrap(async (req, res) => {
+      if (!(await getStore().removeAddedSkill(req.user.id, req.params.id))) {
+        return res.status(404).json({ error: 'That skill is not one you added.' });
+      }
+      res.json({ ok: true });
     }),
   );
 
@@ -1899,7 +2011,10 @@ export function createApp() {
         let error = read.error || null;
         if (req.body?.save && read.skill && !read.findings.some((f) => f.level === 'block')) {
           try {
-            saved = (await saveSkill(req.user.id, read.skill)).name;
+            // Replacing a shared skill passes the sharing scan too, or is refused (41).
+            const written = await writeSkill(req.user.id, read.skill);
+            await noteSharing(req, written.change);
+            saved = written.skill.name;
           } catch (err) {
             // A save the store refused, said plainly — not a driver's words (CODE-077).
             error = clientError(err);
@@ -1950,11 +2065,32 @@ export function createApp() {
     }),
   );
 
+  /**
+   * Switch one of the account's own skills on or off (`enabled`), or put it on
+   * Discover or take it off (`shared`, scanned first). Each only when it is sent:
+   * a body without `enabled` used to switch the skill off.
+   */
   api.patch(
     '/skills/:id',
     wrap(async (req, res) => {
-      const skill = await getStore().setSkillEnabled(req.user.id, req.params.id, !!req.body?.enabled);
-      if (!skill) return res.status(404).json({ error: 'Skill not found' });
+      const patch = body(req);
+      if (!('enabled' in patch) && !('shared' in patch)) return res.status(400).json({ error: 'Say what to change: enabled or shared.' });
+      let skill = null;
+      if ('shared' in patch) {
+        try {
+          const result = await setSkillSharing(req.user.id, req.params.id, !!patch.shared);
+          if (!result) return res.status(404).json({ error: 'Skill not found' });
+          await noteSharing(req, result.change);
+          skill = result.skill;
+        } catch (err) {
+          if (!err?.status) throw err;
+          return skillRefusal(req, res, err);
+        }
+      }
+      if ('enabled' in patch) {
+        skill = await getStore().setSkillEnabled(req.user.id, req.params.id, !!patch.enabled);
+        if (!skill) return res.status(404).json({ error: 'Skill not found' });
+      }
       res.json({ skill });
     }),
   );
@@ -2168,8 +2304,10 @@ export function createApp() {
 
   // Lifted into server/routes/workflows.js.
   mountWorkflowRoutes(api, { wrap, body });
-  // The Bot page: what needs the person, and Stop for both kinds.
-  mountBotRoutes(api, { wrap });
+  // The Automations page: what needs the person, and Stop for both kinds.
+  mountAutomationRoutes(api, { wrap });
+  // The Bot page: bots, group chats and their rounds, memory, usage by bot (routes/bots.js).
+  mountBotRoutes(api, { wrap, origin: (req) => rememberOrigin(req) });
   mountConnectorRoutes(api, { wrap });
   mountMcpRoutes(api, { wrap, body });
 
@@ -2229,8 +2367,13 @@ export function createApp() {
       // Checked before the lock, so somebody else's conversation reads as
       // missing rather than as busy — "already running" would be a small,
       // needless confirmation that it exists.
-      if (!(await store.getChat(req.user.id, chatId))) {
+      const target = await store.getChat(req.user.id, chatId);
+      if (!target) {
         return res.status(404).json({ error: 'Chat not found' });
+      }
+      // A group's conversations run only in its round (routes/bots.js), which posts what each member says.
+      if (target.bot_group_id) {
+        return res.status(409).json({ error: 'Send this in the group chat on the Bot page.', code: 'group_chat' });
       }
 
       // A stop a moment ago: what that run had goes in the transcript before this reads it.
@@ -2426,6 +2569,24 @@ export function createApp() {
   // ── admin ───────────────────────────────────────────────────────────
   // The router itself, and its guard, are created above mountAccountRoutes.
 
+  /*
+   * Whether this site's address is safe from spoofing, checked live (owner, 2026-11-09):
+   * DNSSEC, HTTPS and HSTS, the preload list, CAA, and the sending address's email
+   * protection. Public facts about this deployment's own address, so any administrator
+   * may ask; kept a minute, so pressing it again does not hammer the resolvers.
+   */
+  let domainSeen = null;
+  admin.get(
+    '/domain',
+    wrap(async (req, res) => {
+      if (!domainSeen || Date.now() - domainSeen.at > 60_000) {
+        domainSeen = { at: Date.now(), value: checkDomain({ url: process.env.PUBLIC_URL || publicUrlFor(req), mailFrom: emailBackend() === 'console' ? '' : senderAddress() }) };
+      }
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json(await domainSeen.value);
+    }),
+  );
+
   // The models suggested to everyone (recommend.js), with the library to choose them from.
   admin.get(
     '/recommended',
@@ -2601,6 +2762,25 @@ export function createApp() {
     }),
   );
 
+  /**
+   * Take a shared skill off Discover, or put it back (owner, 2026-11-09) — under
+   * Manage people, the permission that already covers what people do here. It is
+   * gone at once for everyone who added it, who are told it was taken off; its
+   * author keeps it, and sees that it was. In the administrator's security record.
+   */
+  admin.patch(
+    '/skills/:id',
+    requirePermission('users'),
+    wrap(async (req, res) => {
+      const { hidden } = body(req);
+      if (typeof hidden !== 'boolean') return res.status(400).json({ error: 'Say whether to hide it: hidden true or false.' });
+      const row = await getStore().hideSharedSkill(req.params.id, hidden);
+      if (!row) return res.status(404).json({ error: 'No shared skill has that id.' });
+      await audit(req, req.user.id, hidden ? 'admin_skill_hidden' : 'admin_skill_shown', { skill: row.id, author: row.user_id });
+      res.json({ ok: true, hidden: !!row.hidden_at });
+    }),
+  );
+
   mountThemeRoutes({ api, admin, wrap, audit });
   api.use('/admin', admin);
   /*
@@ -2615,6 +2795,9 @@ export function createApp() {
   });
   app.use('/api', api);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+
+  // A theme's own files, out of public/ so one not out yet is nobody's but an administrator's.
+  mountSceneAssets(app, { wrap });
 
   // ── static frontend ─────────────────────────────────────────────────
   /**

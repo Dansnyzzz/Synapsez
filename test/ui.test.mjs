@@ -111,21 +111,21 @@ const openSettings = async () => {
 };
 
 /**
- * The Bot page at one of its tabs (owner, 2026-11-08): workflows and scheduled
+ * The Automations page at one of its tabs (owner, 2026-11-08): workflows and scheduled
  * tasks were two rail items, and are now one with the two as tabs.
  */
-const openBotTab = async (tab) => {
-  await page.click('#open-bot');
+const openAutoTab = async (tab) => {
+  await page.click('#open-automations');
   await page.waitForTimeout(400);
-  await page.click(`#bot-tabs [data-bot-tab="${tab}"]`);
+  await page.click(`#auto-tabs [data-auto-tab="${tab}"]`);
   await page.waitForTimeout(800);
 };
 
-/** A row's ⋯ menu on the Bot page, and one of its items by position: 0 Edit, 1 History, 3 Delete. */
+/** A row's ⋯ menu on the Automations page, and one of its items by position: 0 Edit, 1 History, 3 Delete. */
 const pickFromRowMenu = async (rowText, item) => {
   await page.evaluate((text) => {
-    const row = [...document.querySelectorAll('#page-body .botrow')].find((r) => r.textContent.includes(text));
-    /** @type {HTMLElement | null | undefined} */ (row?.querySelector('.botrow__more'))?.click();
+    const row = [...document.querySelectorAll('#page-body .autorow')].find((r) => r.textContent.includes(text));
+    /** @type {HTMLElement | null | undefined} */ (row?.querySelector('.autorow__more'))?.click();
   }, rowText);
   await page.waitForTimeout(300);
   await page.click(`.cardmenu [data-pick="${item}"]`);
@@ -3729,6 +3729,153 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
   await getStore().deleteSkill(me.id, (await getStore().listSkills(me.id)).find((s) => s.name === 'ui-weekly-status')?.id || '');
 }
 
+section('Skills people share: Discover newest first, Add by reference, edits arriving live, the share switch, moderation (owner, 2026-11-09)');
+{
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+  const { getStore } = await import('../server/store/index.js');
+  const { writeSkill } = await import('../server/skills.js');
+  const store = getStore();
+  const me = await store.getUserByEmail('ui@test.local');
+  await store.createUser({ id: 'u-ui-sharer', email: 'sharer@test.local', name: 'Lan Tran', passwordHash: 'x', role: 'user' });
+  const older = (await writeSkill('u-ui-sharer', { name: 'ui-shared-older', description: 'An older shared skill.', instructions: 'Older steps.', shared: true })).skill;
+  await page.waitForTimeout(30);
+  const newer = (await writeSkill('u-ui-sharer', { name: 'ui-shared-newer', description: 'A newer shared skill.', instructions: 'Newer steps.', shared: true })).skill;
+  await writeSkill('u-ui-sharer', { name: 'ui-private', description: 'Not shared.', instructions: 'Private steps.' });
+  const rowText = (name) =>
+    page.evaluate((wanted) => [...document.querySelectorAll('#skill-list .crow')].map((r) => r.textContent.replace(/\s+/g, ' ').trim()).find((text) => text.includes(wanted)) || '', name);
+  // What a poll would bring: the page asks again when it is looked at.
+  const lookAgain = async () => {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.waitForTimeout(900);
+  };
+
+  await openSettings();
+  await page.click('#tab-skills');
+  await page.waitForTimeout(800);
+  const yours = await page.evaluate(() => document.getElementById('skill-list')?.textContent || '');
+  check("Yours no longer lists Synapsez's own skills", !/Writing a Word document|Building a spreadsheet/.test(yours), yours.slice(0, 160));
+  await page.click('#panel-skills [data-cust-view="discover"]');
+  await page.waitForTimeout(300);
+  const discover = await page.evaluate(() => ({
+    names: [...document.querySelectorAll('#skill-discover .ccard[data-view] .cname')].map((n) => n.textContent),
+    by: [...document.querySelectorAll('#skill-discover .ccard[data-view] .ccard__by')].map((n) => n.textContent),
+    text: document.getElementById('skill-discover')?.textContent || '',
+  }));
+  check('Discover lists what people here share, newest made first', discover.names.slice(0, 2).join() === 'ui-shared-newer,ui-shared-older', JSON.stringify(discover.names));
+  check('  not the built-in ones, nor a skill nobody shared', !/Writing a Word document|ui-private/.test(discover.text), discover.text.slice(0, 160));
+  check("  each by its author's public name, never an email", discover.by.some((b) => /Lan Tran/.test(b)) && !/@/.test(discover.text), JSON.stringify(discover.by));
+
+  await page.click(`#skill-discover [data-add="${older.id}"]`);
+  await page.waitForTimeout(900);
+  const added = await page.evaluate((id) => ({
+    state: !!document.querySelector(`#skill-discover [data-view="${id}"] .ccard__add.is-added`),
+    focus: !!document.activeElement?.classList.contains('cname') && !!document.activeElement.closest(`[data-view="${id}"]`),
+  }), older.id);
+  check('+ adds it: the card says Added, and focus stays on that card', added.state && added.focus, JSON.stringify(added));
+  check('  a reference on the account, not a copy', (await store.listAddedSkills(me.id)).some((a) => a.skill_id === older.id) && !(await store.listSkills(me.id)).some((s) => s.name === 'ui-shared-older'));
+  await page.click('#panel-skills [data-cust-view="yours"]');
+  await page.waitForTimeout(200);
+  const row = await rowText('ui-shared-older');
+  check('  Yours lists it, added, with its author', /Lan Tran/.test(row) && /An older shared skill/.test(row), row);
+
+  await writeSkill('u-ui-sharer', { name: 'ui-shared-older', description: 'Edited by its author.', instructions: 'Older steps, edited.' });
+  await lookAgain();
+  const edited = await rowText('ui-shared-older');
+  check("the author's edit reaches the page without a reload", /Edited by its author/.test(edited), edited);
+  await store.setSkillShared('u-ui-sharer', older.id, { shared: false });
+  await lookAgain();
+  const gone = await page.evaluate(() => {
+    const rowEl = [...document.querySelectorAll('#skill-list .crow')].find((r) => r.textContent.includes('ui-shared-older'));
+    return rowEl?.querySelector('.crow__warn')?.textContent || '';
+  });
+  check('  taken back by its author, the row says why instead of vanishing', /(stopped sharing|ngừng chia sẻ)/.test(gone), gone);
+
+  // Create a skill: the switch, off, saying who will read it; the scan refuses a key.
+  await page.click('#skill-add-open');
+  await page.locator('#settings .cmenu .cmenu__item').nth(1).click();
+  await page.waitForTimeout(700);
+  const sw = await page.evaluate(() => ({
+    off: !(/** @type {HTMLInputElement} */ (document.getElementById('skc-shared')).checked),
+    label: document.querySelector('label[for="skc-shared"]')?.textContent || '',
+    hint: document.getElementById('skc-shared-hint')?.textContent || '',
+  }));
+  check('Create a skill has Share to Discover, off, saying everyone here can read and use it', sw.off && /(Share to Discover|Chia sẻ lên Khám phá)/.test(sw.label) && /(Everyone on this site|Mọi người trên trang này)/.test(sw.hint), JSON.stringify(sw));
+  await page.fill('#skc-name', 'ui-shared-mine');
+  await page.fill('#skc-desc', 'When testing sharing.');
+  await page.fill('#skc-text', `Sign with sk-ant-api03-${'B'.repeat(90)} first.`);
+  await page.check('#skc-shared');
+  await page.click('#skc-create');
+  await page.waitForTimeout(700);
+  const refused = await page.evaluate(() => ({
+    open: /** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).open,
+    status: document.getElementById('skc-status')?.textContent || '',
+  }));
+  check('  switched on, a skill the safety scan flags is refused, saying what it found', refused.open && /(share it again|chia sẻ lại)/.test(refused.status), refused.status);
+  check('  and nothing was saved', !(await store.getSkillByName(me.id, 'ui-shared-mine')));
+  await page.fill('#skc-text', 'Step one, with nothing secret in it.');
+  await page.click('#skc-create');
+  await page.waitForTimeout(900);
+  const mine = await store.getSkillByName(me.id, 'ui-shared-mine');
+  check('  clean, it is saved and shared', !!mine?.shared_at, JSON.stringify(mine?.scan || null));
+  const mineRow = await rowText('ui-shared-mine');
+  check('  and Yours marks it shared', /(Shared|Đã chia sẻ)/.test(mineRow), mineRow);
+
+  // Discover: one's own is not offered to add; an administrator can take one off.
+  await page.click('#panel-skills [data-cust-view="discover"]');
+  await page.waitForTimeout(300);
+  check('Discover shows your own shared skill as yours, with nothing to add', await page.evaluate((id) => !!document.querySelector(`#skill-discover [data-view="${id}"] .ccard__add.is-added`) && !document.querySelector(`#skill-discover [data-add="${id}"]`), mine.id));
+  await page.click(`#skill-discover [data-mod="${newer.id}"]`);
+  await page.waitForTimeout(900);
+  check('an administrator takes a shared skill off Discover from its card', !(await store.listSharedSkills('u-ui-sharer')).some((s) => s.id === newer.id));
+  const put = await page.evaluate((id) => document.querySelector(`#skill-discover [data-mod="${id}"]`)?.textContent || '', newer.id);
+  check('  the card says so, and offers to put it back', /(Put back|Đưa lại)/.test(put), put);
+  await page.click(`#skill-discover [data-mod="${newer.id}"]`);
+  await page.waitForTimeout(900);
+  check('  put back, it is on Discover again', (await store.listSharedSkills('u-ui-sharer')).some((s) => s.id === newer.id));
+
+  // A card opens the skill to read, read-only, before adding it.
+  await page.click(`#skill-discover [data-view="${newer.id}"] .cname`);
+  await page.waitForTimeout(700);
+  const viewed = await page.evaluate(() => ({
+    open: /** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).open,
+    readOnly: /** @type {HTMLTextAreaElement} */ (document.getElementById('skc-text')).readOnly,
+    text: /** @type {HTMLTextAreaElement} */ (document.getElementById('skc-text')).value,
+    by: document.getElementById('skc-by')?.textContent || '',
+    add: !document.getElementById('skc-create')?.hidden,
+    share: !document.getElementById('skc-share-row')?.hidden,
+  }));
+  check('a card opens the whole skill, read-only, saying whose it is, with Add', viewed.open && viewed.readOnly && viewed.text === 'Newer steps.' && /Lan Tran/.test(viewed.by) && viewed.add && !viewed.share, JSON.stringify(viewed));
+  await page.click('#skc-create');
+  await page.waitForTimeout(900);
+  check('  Add there adds it', (await store.listAddedSkills(me.id)).some((a) => a.skill_id === newer.id));
+
+  // Synapsez's own come back when the filter asks for them.
+  await page.click('#panel-skills [data-cust-view="yours"]');
+  await page.click('#skills-filter');
+  await page.waitForTimeout(250);
+  await page.locator('#settings .cmenu .cmenu__item--sub').nth(1).hover();
+  await page.waitForTimeout(300);
+  const createdBy = await page.evaluate(() => [...document.querySelectorAll('#settings .cmenu--sub .cmenu__item')].map((n) => n.textContent?.trim()));
+  await page.locator('#settings .cmenu--sub .cmenu__item').nth(3).click();
+  await page.waitForTimeout(300);
+  const builtIns = await page.evaluate(() => document.getElementById('skill-list')?.textContent || '');
+  check('Created by › All, You, Others, Synapsez — and Synapsez brings the built-in ones back', createdBy.length === 4 && /Writing a Word document/.test(builtIns), JSON.stringify(createdBy));
+  await page.click('#skills-filter');
+  await page.locator('#settings .cmenu .cmenu__item--sub').nth(1).hover();
+  await page.waitForTimeout(300);
+  await page.locator('#settings .cmenu--sub .cmenu__item').first().click();
+  await page.waitForTimeout(200);
+
+  await store.deleteSkill(me.id, mine.id);
+  for (const id of [older.id, newer.id]) await store.removeAddedSkill(me.id, id);
+  await store.deleteUser('u-ui-sharer');
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  });
+}
+
 section('the Settings tabs no longer include Computers');
 {
   await page.evaluate(() => {
@@ -4063,17 +4210,17 @@ section('the shelves');
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
   });
 
-  // Workflows and Scheduled are the Bot page's two tabs (owner, 2026-11-08).
+  // Workflows and Scheduled are the Automations page's two tabs (owner, 2026-11-08).
   for (const [rail, title, action, tab] of [
     ['#open-projects', 'Projects', 'New project'],
     ['#open-artifacts', 'Artifacts', 'New artifact'],
-    ['#open-bot', 'Bot', 'New workflow', 'workflows'],
-    ['#open-bot', 'Bot', 'New task', 'scheduled'],
+    ['#open-automations', 'Automations', 'New workflow', 'workflows'],
+    ['#open-automations', 'Automations', 'New task', 'scheduled'],
   ]) {
     await page.click(rail);
     if (tab) {
       await page.waitForTimeout(400);
-      await page.click(`#bot-tabs [data-bot-tab="${tab}"]`);
+      await page.click(`#auto-tabs [data-auto-tab="${tab}"]`);
     }
     await page.waitForTimeout(700);
 
@@ -4177,7 +4324,7 @@ section('the shelves');
       body: JSON.stringify({ title: 'Pencil check', prompt: 'Say hello.', frequency: 'manual' }),
     }),
   );
-  await openBotTab('scheduled');
+  await openAutoTab('scheduled');
   // Start with the side area closed: that is where one close used to take two.
   const sideWasOpen = await page.evaluate(() => {
     const open = document.getElementById('app').classList.contains('is-detail');
@@ -4245,7 +4392,7 @@ section('a workflow shows the state of every step');
   });
   check('a workflow can be created', made.status === 201, `${made.status}`);
 
-  await openBotTab('workflows');
+  await openAutoTab('workflows');
 
   const shelf = await page.evaluate(() => {
     const card = document.querySelector('.wf');
@@ -4299,27 +4446,29 @@ section('a workflow shows the state of every step');
   await page.click('#taskpane-close');
 }
 
-section('the Bot page: one rail item, two tabs');
+section('the Automations page: one rail item, two tabs');
 {
   /*
    * Workflows and scheduled tasks were two rail items and two shelves (owner,
-   * 2026-11-08). One item, "Bot", where Workflows was; a page with the two as
+   * 2026-11-08). One item where Workflows was — "Bot" for a day, "Automations"
+   * since 2026-11-09, when a Bot became a thing of its own; a page with the two as
    * tabs, which switch by click and by keyboard, which the address remembers,
    * and a pill of state on every row. The badge counts what needs the person.
    */
   const rail = await page.evaluate(() => {
     const items = [...document.querySelectorAll('.rail__item')].map((b) => b.id);
     return {
-      bot: items.indexOf('open-bot'),
+      bot: items.indexOf('open-automations'),
       artifacts: items.indexOf('open-artifacts'),
       archive: items.indexOf('open-archive'),
       old: !!document.getElementById('open-workflows') || !!document.getElementById('open-scheduled'),
-      label: document.querySelector('#open-bot .rail__label')?.textContent.trim(),
+      label: document.querySelector('#open-automations .rail__label')?.textContent.trim(),
     };
   });
-  check('one Bot item in the rail', rail.bot >= 0 && !rail.old, JSON.stringify(rail));
-  check('  where Workflows was, between Artifacts and Archive', rail.bot === rail.artifacts + 1 && rail.archive === rail.bot + 1, JSON.stringify(rail));
-  check('  called Bot', rail.label === 'Bot', rail.label);
+  check('one Automations item in the rail', rail.bot >= 0 && !rail.old, JSON.stringify(rail));
+  // The Bot page's own item stands between it and Archive since 2026-11-09 (test/ui-bots.test.mjs).
+  check('  where Workflows was, after Artifacts, with Bot then Archive after it', rail.bot === rail.artifacts + 1 && rail.archive === rail.bot + 2, JSON.stringify(rail));
+  check('  called Automations', rail.label === 'Automations', rail.label);
 
   // Something for each pill to say. A task whose last run failed, and one that
   // is past its time with nothing running it: both need the person.
@@ -4330,102 +4479,105 @@ section('the Bot page: one rail item, two tabs');
   const failed = await store.createTask(me.id, { id: 'ui-bot-failed', title: 'Bot failed one', prompt: 'x', cron: '08:00', nextRunAt: tomorrow });
   await store.finishTask(failed.id, { status: 'error: no key for this provider', chatId: null, nextRunAt: tomorrow });
   await store.createTask(me.id, { id: 'ui-bot-late', title: 'Bot late one', prompt: 'x', cron: '08:00', nextRunAt: new Date(Date.now() - 3_600_000).toISOString() });
-  const summary = await (await page.request.get(`http://127.0.0.1:${PORT}/api/bot/summary`)).json();
+  const summary = await (await page.request.get(`http://127.0.0.1:${PORT}/api/automations/summary`)).json();
 
-  await openBotTab('workflows');
+  await openAutoTab('workflows');
   const tabs = await page.evaluate(() => {
-    const list = document.getElementById('bot-tabs');
+    const list = document.getElementById('auto-tabs');
     const all = [...list.querySelectorAll('[role="tab"]')];
     return {
       shown: !list.hidden && list.getAttribute('role') === 'tablist',
       count: all.length,
-      selected: all.filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => t.dataset.botTab),
+      selected: all.filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => t.dataset.autoTab),
       labels: all.map((t) => t.textContent.replace(/\s+/g, ' ').trim()),
-      dot: !/** @type {HTMLElement} */ (list.querySelector('[data-bot-tab="scheduled"] .bot__dot')).hidden,
+      dot: !/** @type {HTMLElement} */ (list.querySelector('[data-auto-tab="scheduled"] .auto__dot')).hidden,
       title: document.getElementById('page-title').textContent.trim(),
       panel: document.getElementById('page-body').getAttribute('role'),
       hash: location.hash,
     };
   });
-  check('the page is titled Bot, with a tab list under it', tabs.title === 'Bot' && tabs.shown && tabs.count === 2, JSON.stringify(tabs));
+  check('the page is titled Automations, with a tab list under it', tabs.title === 'Automations' && tabs.shown && tabs.count === 2, JSON.stringify(tabs));
   check('  Workflows first, and selected', tabs.selected.join() === 'workflows', tabs.selected.join());
   check('  each label carries its count', /^Workflows · \d+/.test(tabs.labels[0]) && /^Scheduled · \d+/.test(tabs.labels[1]), tabs.labels.join(' | '));
   check('  a dot on the tab holding something that needs you, said in words too', tabs.dot && /need/.test(tabs.labels[1]), tabs.labels[1]);
   check('  the list is the selected tab\'s panel', tabs.panel === 'tabpanel');
-  check('  and the address says where', tabs.hash === '#bot/workflows', tabs.hash);
+  check('  and the address says where', tabs.hash === '#automations/workflows', tabs.hash);
 
   const pill = await page.evaluate(() => {
-    const row = [...document.querySelectorAll('#page-body .botrow')].find((r) => r.textContent.includes('Monday sales pack'));
-    return [...(row?.querySelectorAll('.botpill') || [])].map((p) => p.textContent.trim());
+    const row = [...document.querySelectorAll('#page-body .autorow')].find((r) => r.textContent.includes('Monday sales pack'));
+    return [...(row?.querySelectorAll('.autopill') || [])].map((p) => p.textContent.trim());
   });
   check('a workflow run by hand says Manual on its row, in words', pill.includes('Manual'), pill.join(','));
 
   // By keyboard: the arrows move along the tabs and choose as they go.
-  await page.focus('#bot-tab-workflows');
+  await page.focus('#auto-tab-workflows');
   await page.keyboard.press('ArrowRight');
   await page.waitForTimeout(900);
   const keyed = await page.evaluate(() => ({
-    selected: document.querySelector('#bot-tabs [aria-selected="true"]')?.dataset.botTab,
+    selected: document.querySelector('#auto-tabs [aria-selected="true"]')?.dataset.autoTab,
     focused: document.activeElement?.id,
     visible: document.activeElement?.matches(':focus-visible'),
     outline: getComputedStyle(document.activeElement).outlineStyle,
     hash: location.hash,
-    rows: [...document.querySelectorAll('#page-body .botrow .task__name')].map((n) => n.textContent.trim()),
-    pills: [...document.querySelectorAll('#page-body .botrow')].map((r) => [r.querySelector('.task__name')?.textContent.trim(), [...r.querySelectorAll('.botpill')].map((p) => p.textContent.trim()).join('/')]),
+    rows: [...document.querySelectorAll('#page-body .autorow .task__name')].map((n) => n.textContent.trim()),
+    pills: [...document.querySelectorAll('#page-body .autorow')].map((r) => [r.querySelector('.task__name')?.textContent.trim(), [...r.querySelectorAll('.autopill')].map((p) => p.textContent.trim()).join('/')]),
   }));
   check('ArrowRight chooses Scheduled', keyed.selected === 'scheduled', String(keyed.selected));
-  check('  and keeps focus on it, visibly', keyed.focused === 'bot-tab-scheduled' && keyed.visible && keyed.outline !== 'none', JSON.stringify({ f: keyed.focused, v: keyed.visible, o: keyed.outline }));
-  check('  the address follows', keyed.hash === '#bot/scheduled', keyed.hash);
+  check('  and keeps focus on it, visibly', keyed.focused === 'auto-tab-scheduled' && keyed.visible && keyed.outline !== 'none', JSON.stringify({ f: keyed.focused, v: keyed.visible, o: keyed.outline }));
+  check('  the address follows', keyed.hash === '#automations/scheduled', keyed.hash);
   check('what needs you is listed first', keyed.rows[0] === 'Bot failed one' && keyed.rows[1] === 'Bot late one', keyed.rows.slice(0, 3).join(', '));
   const pillsOf = Object.fromEntries(keyed.pills);
   check('  a failed task says Failed, and when it runs next', /^Failed\/Next: /.test(pillsOf['Bot failed one'] || ''), pillsOf['Bot failed one']);
   check('  one past its time says Overdue', pillsOf['Bot late one'] === 'Overdue', pillsOf['Bot late one']);
   await page.keyboard.press('Home');
   await page.waitForTimeout(700);
-  const home = await page.evaluate(() => document.querySelector('#bot-tabs [aria-selected="true"]')?.dataset.botTab);
+  const home = await page.evaluate(() => document.querySelector('#auto-tabs [aria-selected="true"]')?.dataset.autoTab);
   await page.keyboard.press('End');
   await page.waitForTimeout(900);
-  const end = await page.evaluate(() => document.querySelector('#bot-tabs [aria-selected="true"]')?.dataset.botTab);
+  const end = await page.evaluate(() => document.querySelector('#auto-tabs [aria-selected="true"]')?.dataset.autoTab);
   check('Home and End go to either end', home === 'workflows' && end === 'scheduled', `${home} / ${end}`);
 
   // The badge: what failed, waits for the person, or is overdue.
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   await page.waitForTimeout(900);
   const badge = await page.evaluate(() => {
-    const b = document.getElementById('bot-badge');
-    return { shown: !b.hidden, text: b.textContent.trim(), label: b.getAttribute('aria-label'), button: document.getElementById('open-bot').getAttribute('aria-label') };
+    const b = document.getElementById('auto-badge');
+    return { shown: !b.hidden, text: b.textContent.trim(), label: b.getAttribute('aria-label'), button: document.getElementById('open-automations').getAttribute('aria-label') };
   });
   check('the rail badge counts what needs you', badge.shown && badge.text === String(summary.attention) && summary.attention >= 2, JSON.stringify({ badge, attention: summary.attention }));
-  check('  with words for a screen reader', /need/.test(badge.label || '') && /^Bot — /.test(badge.button || ''), `${badge.label} / ${badge.button}`);
+  check('  with words for a screen reader', /need/.test(badge.label || '') && /^Automations — /.test(badge.button || ''), `${badge.label} / ${badge.button}`);
 
   if (process.env.BOT_SHOTS) await page.screenshot({ path: path.join(process.env.BOT_SHOTS, 'bot-scheduled.png') });
 
   // A reload lands on the same tab; a link names an item, which opens beside it.
   await page.reload();
-  await page.waitForSelector('#bot-tabs:not([hidden])', { timeout: 15_000 }).catch(() => {});
+  await page.waitForSelector('#auto-tabs:not([hidden])', { timeout: 15_000 }).catch(() => {});
   await page.waitForTimeout(900);
   const reloaded = await page.evaluate(() => ({
     page: !document.getElementById('page').hidden,
-    selected: document.querySelector('#bot-tabs [aria-selected="true"]')?.dataset.botTab,
+    selected: document.querySelector('#auto-tabs [aria-selected="true"]')?.dataset.autoTab,
     hash: location.hash,
   }));
   check('a reload comes back to the same tab', reloaded.page && reloaded.selected === 'scheduled', JSON.stringify(reloaded));
   const wfId = (await (await page.request.get(`http://127.0.0.1:${PORT}/api/workflows`)).json()).workflows.find((w) => w.title === 'Monday sales pack')?.id;
+  // A link from when the page was "Bot" (2026-11-08): it still lands on the same tab and item.
   await page.goto(`http://127.0.0.1:${PORT}/#bot/workflows/${wfId}`);
   await page.waitForSelector('#taskpane:not([hidden])', { timeout: 15_000 }).catch(() => {});
   await page.waitForTimeout(700);
   const linked = await page.evaluate(() => ({
-    selected: document.querySelector('#bot-tabs [aria-selected="true"]')?.dataset.botTab,
+    selected: document.querySelector('#auto-tabs [aria-selected="true"]')?.dataset.autoTab,
     pane: !document.getElementById('taskpane').hidden,
     title: document.getElementById('taskpane-title').textContent.trim(),
+    hash: location.hash,
   }));
-  check('a link to one workflow opens its tab with it beside the list', linked.selected === 'workflows' && linked.pane && linked.title === 'Monday sales pack', JSON.stringify(linked));
+  check('an old #bot/workflows link opens its tab with the workflow beside the list', linked.selected === 'workflows' && linked.pane && linked.title === 'Monday sales pack', JSON.stringify(linked));
+  check('  and the address says Automations now', linked.hash === `#automations/workflows/${wfId}`, linked.hash);
   if (process.env.BOT_SHOTS) {
     await page.click('#taskpane-close');
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(process.env.BOT_SHOTS, 'bot-workflows.png') });
   }
-  // Leaving the Bot page closes what was open beside it: left open, it hid a conversation's
+  // Leaving the Automations page closes what was open beside it: left open, it hid a conversation's
   // cloud browser screen, which the rail could not show beside it (2026-11-09).
   await page.click('#open-archive');
   await page.waitForTimeout(700);
@@ -4434,10 +4586,10 @@ section('the Bot page: one rail item, two tabs');
     borrowed: document.getElementById('app').classList.contains('is-taskpane'),
     hash: location.hash,
   }));
-  check('leaving the Bot page closes the workflow open beside it', !left.pane && !left.borrowed && !/^#bot/.test(left.hash), JSON.stringify(left));
+  check('leaving the Automations page closes the workflow open beside it', !left.pane && !left.borrowed && !/^#(bot|automations)\//.test(left.hash), JSON.stringify(left));
 
   // Delete under ⋯ takes a second press, within three seconds.
-  await openBotTab('scheduled');
+  await openAutoTab('scheduled');
   await pickFromRowMenu('Bot late one', 3);
   await page.waitForTimeout(300);
   const armed = await page.evaluate(() => ({
@@ -4447,14 +4599,14 @@ section('the Bot page: one rail item, two tabs');
   check('the first press on Delete only asks', armed.open && /again/.test(armed.says || ''), JSON.stringify(armed));
   await page.click('.cardmenu [data-pick="3"]');
   await page.waitForTimeout(900);
-  const gone = await page.evaluate(() => ![...document.querySelectorAll('#page-body .botrow')].some((r) => r.textContent.includes('Bot late one')));
+  const gone = await page.evaluate(() => ![...document.querySelectorAll('#page-body .autorow')].some((r) => r.textContent.includes('Bot late one')));
   check('  and the second deletes it', gone);
 
   // Left as found: off the page, and without the failed task's count.
   await store.deleteTask(me.id, failed.id);
   await page.click('#new-chat');
   await page.waitForTimeout(500);
-  check('leaving the page takes it off the address', await page.evaluate(() => !location.hash.startsWith('#bot')));
+  check('leaving the page takes it off the address', await page.evaluate(() => !/^#(bot|automations)\//.test(location.hash)));
 }
 
 section('a shelf is searched from one field, not two');
@@ -9615,7 +9767,7 @@ section('"describe it to the assistant" starts a new conversation');
   // Something open first, so going back to it would be visible.
   await page.click('.chat-item').catch(() => {});
   await page.waitForTimeout(800);
-  await openBotTab('scheduled');
+  await openAutoTab('scheduled');
   const ring = await page.evaluate(() => {
     const r = document.querySelector('.blank__ring');
     return r ? getComputedStyle(r).backgroundColor : null;
@@ -10336,7 +10488,12 @@ section('the + opens a menu of files, skills, connectors and plugins');
   const json = (body) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/api/skills', (route) =>
     route.request().method() === 'GET'
-      ? route.fulfill(json({ skills: [{ id: 's-1', name: 'Weekly report', description: 'When a weekly report is asked for.', enabled: true }, { id: 's-2', name: 'Switched off', description: 'Off.', enabled: false }], builtin: [{ id: 'builtin:docx', name: 'Writing a Word document', description: 'Word.', builtin: true }] }))
+      ? route.fulfill(json({
+          skills: [{ id: 's-1', name: 'Weekly report', description: 'When a weekly report is asked for.', enabled: true }, { id: 's-2', name: 'Switched off', description: 'Off.', enabled: false }],
+          builtin: [{ id: 'builtin:docx', name: 'Writing a Word document', description: 'Word.', builtin: true }],
+          // Shared skills added from Discover (2026-11-09): one still shared, one its author took back.
+          added: [{ id: 'sh-1', status: 'ok', name: 'Team brief', knownAs: 'Team brief', description: 'Shared.' }, { id: 'sh-2', status: 'unshared', name: 'Taken back', knownAs: null, description: null }],
+        }))
       : route.continue(),
   );
   await page.route('**/api/connectors', (route) =>
@@ -10420,6 +10577,7 @@ section('the + opens a menu of files, skills, connectors and plugins');
   const skills = await panel(1);
   check('hovering Skills opens them beside it — the built-in ones and your own that are on', skills && skills.rows.some((r) => r.label === 'Writing a Word document') && skills.rows.some((r) => r.label === 'Weekly report') && !skills.rows.some((r) => r.label === 'Switched off'), JSON.stringify(skills?.rows.map((r) => r.label)));
   check('  with a way to manage them and to make one', skills && skills.rows.length >= 4, JSON.stringify(skills?.rows.map((r) => r.label)));
+  check('  and the shared ones added from Discover, while they are still shared', skills && skills.rows.some((r) => r.label === 'Team brief') && !skills.rows.some((r) => r.label === 'Taken back'), JSON.stringify(skills?.rows.map((r) => r.label)));
   await rowOf(1, 'Weekly report').click();
   await page.waitForTimeout(300);
   const chips = await page.evaluate(() => ({

@@ -31,7 +31,9 @@ import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { validZone } from './util/zone.js';
 import { sandboxConfigured } from './sandbox.js';
 import { lendEyes } from './vision.js';
-import { memoryForTurn, withheldTools } from './memory.js';
+import { memoryForTurn, withheldTools, MEMORY_WRITE_TOOLS } from './memory.js';
+import { botPersona } from './bots/prompt.js';
+import { botTools } from './bots/tools.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
 import { withoutStrayTags } from '../public/js/model-text.js';
 import { splitChecks } from '../public/js/check-notes.js';
@@ -114,11 +116,13 @@ export function promptVersion() {
  *   recall?: boolean,
  *   incognito?: boolean,
  *   connectorSearch?: boolean,
+ *   bot?: { intro?: string, section?: string } | null,
  * }} options
  */
-export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills, connectors, project, mcpServers, timezone, memory, recall, incognito, connectorSearch }) {
+export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills, connectors, project, mcpServers, timezone, memory, recall, incognito, connectorSearch, bot = null }) {
   const lines = [
-    'You are Synapsez — an agentic assistant the user drives from their phone, tablet, or laptop.',
+    // A bot's conversation says who is speaking (server/bots/prompt.js); everything else is the same assistant.
+    bot?.intro || 'You are Synapsez — an agentic assistant the user drives from their phone, tablet, or laptop.',
     'Work autonomously: use your tools to find things out rather than asking the user to look them up.',
     '',
     '## Environment',
@@ -421,6 +425,14 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
   lines.push('', UNTRUSTED_RULE);
 
   if (extra?.trim()) lines.push('', '## User instructions', extra.trim());
+
+  /*
+   * A bot's role, its team's rules, the instructions the person wrote for it, and its
+   * memory (server/bots/prompt.js) — after the person's own instructions, which still
+   * hold for every bot, and after the untrusted-content rule, so a memory entry is
+   * read in its light. Stable across the conversation, so the cached prefix holds.
+   */
+  if (bot?.section?.trim()) lines.push('', bot.section.trim());
 
   /**
    * What the assistant remembers, after the person's own instructions and
@@ -905,7 +917,10 @@ export function outboundRefusal(call, policy, sent) {
 }
 
 /** The memory tools that write — what a page would use to plant a standing instruction. */
-const MEMORY_WRITES = new Set(['memory_write', 'memory_append', 'memory_edit']);
+// `remember` is a bot's own memory (server/bots/tools.js): planted the same way, so held the same way.
+// So are a bot's instructions, which every later turn of that bot follows as the person's own words:
+// Chief making or changing a bot after reading a page asks first.
+const MEMORY_WRITES = new Set(['memory_write', 'memory_append', 'memory_edit', 'remember', 'create_bot', 'update_bot']);
 
 /** Why such a write asks, said in the approval prompt (HAR-005). */
 export const READ_OUTSIDE_REASON =
@@ -1528,16 +1543,31 @@ const TURN_BUDGET_MS = 270_000;
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion }) {
+export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).
-  const deadline = Date.now() + TURN_BUDGET_MS;
+  // A group round runs several turns in one function's life, and hands each the time that is left (bots/rounds.js).
+  const deadline = Math.min(Date.now() + TURN_BUDGET_MS, deadlineAt);
   const prefs = await getPrefs(userId);
   /** Personal details masked before the provider sees them (PRV-003): files go as their text. */
   const masking = prefs.maskPersonal === true;
 
   const chat = await store.getChat(userId, chatId);
   if (!chat) throw new Error('Chat not found.');
+
+  /*
+   * A bot's conversation (the Bot page, schema 42): its own model, its role and
+   * instructions and memory in the prompt, and its tools. A group's log is not a
+   * conversation anybody runs — its members answer from their own (bots/rounds.js).
+   */
+  if (chat.bot_group_id && !chat.bot_id) {
+    emit('error', { message: "This is a group chat's log. Send your message in the group on the Bot page.", code: 'group_log' });
+    emit('done', { stopReason: 'error' });
+    return;
+  }
+  const persona = chat.bot_id ? await botPersona(userId, chat) : null;
+  // A bot runs on its own model, or on the account's when it has none — never on the chip's.
+  if (persona) modelId = persona.bot.model || undefined;
 
   /**
    * One model for the whole account, not one per conversation.
@@ -1666,7 +1696,17 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   let mcp = mcpAtStart;
   // What this conversation may not be given — see `withheldTools`. Recomputed
   // when the person pauses something mid-turn (PRV-021, `refreshConnections`).
-  let withhold = withheldTools({ chat, prefs });
+  // A bot keeps its own memory (`remember`); the account's notes it reads, as the team's background, and does not write.
+  const withheldHere = () => {
+    const out = withheldTools({ chat, prefs });
+    if (persona) for (const name of MEMORY_WRITE_TOOLS) out.add(name);
+    // The Bot page draws no question cards yet: a bot asks in words (an Allow / Deny card it does draw).
+    if (persona) out.add('ask_options');
+    return out;
+  };
+  let withhold = withheldHere();
+  /** A bot's own tools — the team and its memory; Chief's also make bots and groups (server/bots/tools.js). */
+  const ownTools = persona && !chat.incognito ? botTools(persona.bot) : [];
   const pausesOf = (p) => JSON.stringify([p.connectorsOff || [], p.pluginsOff || [], p.memory !== false, p.chatSearch !== false, p.connectorSearch !== false]);
   let pausesSeen = pausesOf(prefs);
   const workerOnline = worker.online;
@@ -1695,6 +1735,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     project: project?.briefing,
     timezone: prefs.timezone,
     memory,
+    bot: persona,
     recall: !withhold.has('search_chats'),
     incognito: !!chat.incognito,
     // Nobody is there to press Connect on a scheduled run.
@@ -1725,7 +1766,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     if (paused) {
       Object.assign(prefs, pauses);
       pausesSeen = pausesOf(pauses);
-      withhold = withheldTools({ chat, prefs });
+      withhold = withheldHere();
     }
     const [nextMcp, nextConnectors] = await Promise.all([
       mcpTools(userId).catch(() => ({ tools: [], servers: [], failed: true })),
@@ -1793,7 +1834,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // The cloud computer, only where this deployment can start one.
     hosted: hostCapabilities(),
     // Tools from outside this repository, already in the same shape.
-    extra: mcp.tools,
+    extra: [...mcp.tools, ...ownTools],
     withhold,
     // "Tools already loaded" in the + menu: nothing held back behind load_tools —
     // except on a run nobody is watching, which preloads nothing on purpose
@@ -1845,7 +1886,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           .map(([provider]) => provider),
         context: 0,
         hosted: hostCapabilities(),
-        extra: mcp.tools,
+        extra: [...mcp.tools, ...ownTools],
         withhold,
       }).map((t) => t.name),
     );

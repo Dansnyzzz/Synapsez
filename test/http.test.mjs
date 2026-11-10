@@ -1229,6 +1229,29 @@ section('a username to sign in with, or the email');
   const last = await tries('dana.tran', 'guess-100', '10.33.0.1');
   const over = await tries('dana.tran', 'guess-101', '10.33.0.2');
   check('the account-wide ceiling still holds against a spread-out guess', last.status === 401 && over.status === 429 && over.json?.code === 'rate_limited', `${last.status} ${over.status}`);
+
+  /*
+   * Security review, 2026-11-09: a dozen addresses could still lock the owner out for
+   * fifteen minutes. A browser that once signed in to the account with the right
+   * password is remembered, and the account-wide ceiling does not stop it.
+   */
+  const devices = (res) => (res.headers.getSetCookie?.() || []).find((c) => c.startsWith('synz_known=')) || '';
+  await store.clearRateLimit?.(account);
+  const own = await jar().call('POST', '/api/login', { email: 'dana@example.com', password, remember: true }, { headers: { 'x-real-ip': '10.34.0.1' } });
+  const note = devices(own).split(';')[0];
+  check('signing in with the right password remembers this browser, HttpOnly', own.status === 200 && /^synz_known=[^;]+$/.test(note) && /HttpOnly/i.test(devices(own)), `${own.status} ${devices(own).slice(0, 80)}`);
+  const borrowed = await jar().call('POST', '/api/login', { email: 'dana@example.com', password, remember: false }, { headers: { 'x-real-ip': '10.34.0.2' } });
+  check('  but not when it was asked not to remember', borrowed.status === 200 && devices(borrowed) === '', `${borrowed.status}`);
+  await store.addToCounter(account, 101 - (await counted()), Date.now() + 15 * 60_000);
+  const locked = await tries('dana.tran', 'guess-102', '10.34.0.3');
+  const known = await jar().call('POST', '/api/login', { email: 'dana@example.com', password }, { headers: { 'x-real-ip': '10.34.0.4', Cookie: note } });
+  check('  so with the account at its ceiling, a stranger is stopped and the owner\'s browser is not', locked.status === 429 && known.status === 200, `${locked.status} ${known.status}`);
+  const forged = await jar().call('POST', '/api/login', { email: 'dana@example.com', password }, { headers: { 'x-real-ip': '10.34.0.5', Cookie: `${note.slice(0, -3)}abc` } });
+  check('  and a note that was tampered with counts for nothing', forged.status === 429, `${forged.status}`);
+  const other = await jar().call('POST', '/api/login', { email: 'alice@example.com', password: 'nope-not-it' }, { headers: { 'x-real-ip': '10.34.0.6', Cookie: note } });
+  check('  nor does it reach another account', other.status === 401 || other.status === 429, `${other.status}`);
+  const sessionFromNote = await jar().call('GET', '/api/bootstrap', null, { headers: { Cookie: `ai_remote_session=${note.slice('synz_known='.length)}` } });
+  check('  and it is never a session', sessionFromNote.status === 401, `${sessionFromNote.status}`);
   await store.clearRateLimit?.(account);
 
   const renamed = await dana.call('PATCH', '/api/account', { name: 'Dana', username: 'dana_t' });
@@ -1275,6 +1298,78 @@ section('a username to sign in with, or the email');
   check('addresses in one IPv6 /64 are one caller', v6.slice(0, 5).every((s) => s === 200) && v6[5] === 429, v6.join(','));
   const next64 = await jar().call('POST', '/api/password/forgot', { email: 'nobody@example.com' }, at('2001:db8:5:7::1'));
   check('  and the next /64 is another', next64.status === 200, `${next64.status}`);
+}
+
+/*
+ * Owner, 2026-11-09: a new account confirms its email with a code before it is used.
+ * On by default wherever mail can be sent; this suite has none, so it is switched on.
+ */
+section('a new account confirms its email with a code');
+{
+  const at = (ip) => ({ headers: { 'x-real-ip': ip } });
+  const password = 'a-long-enough-password';
+  const before = process.env.EMAIL_CONFIRMATION;
+  process.env.EMAIL_CONFIRMATION = 'on';
+  // The console mail backend prints the subject, which carries the code.
+  const printed = [];
+  const realLog = console.log;
+  console.log = (...args) => {
+    printed.push(args.join(' '));
+    if (!/email \(no provider|to: {6}|subject:|confirmation code|─────/.test(String(args[0]))) realLog(...args);
+  };
+  const lastCode = () => {
+    const line = [...printed].reverse().find((l) => /is your \S+ confirmation code/.test(l));
+    return /(\d{6}) is your/.exec(line || '')?.[1] || '';
+  };
+  try {
+    const gwen = jar();
+    const made = await gwen.call('POST', '/api/register', { email: 'gwen@example.com', password, username: 'gwen.h' }, at('10.60.0.1'));
+    check('signing up asks for the code instead of signing in', made.status === 202 && made.json?.confirm === true && made.json?.email === 'gwen@example.com', `${made.status} ${JSON.stringify(made.json)}`);
+    check('  and gives no session yet', (await gwen.call('GET', '/api/bootstrap')).status === 401);
+    const code = lastCode();
+    check('  a 6-digit code went to the address', /^\d{6}$/.test(code), code);
+    const signin = await jar().call('POST', '/api/login', { email: 'gwen@example.com', password }, at('10.60.0.2'));
+    check('signing in before confirming is refused with the code box, and a fresh code', signin.status === 403 && signin.json?.code === 'email_unconfirmed' && signin.json?.email === 'gwen@example.com' && lastCode() !== '' , `${signin.status} ${signin.json?.code}`);
+    const fresh = lastCode();
+    const old = await gwen.call('POST', '/api/register/confirm', { email: 'gwen@example.com', code }, at('10.60.0.1'));
+    check('  which retires the first code', old.status === 400 || code === fresh, `${old.status}`);
+    const wrong = await gwen.call('POST', '/api/register/confirm', { email: 'gwen@example.com', code: fresh === '000000' ? '111111' : '000000' }, at('10.60.0.1'));
+    check('a wrong code is refused', wrong.status === 400, `${wrong.status}`);
+    const ok = await gwen.call('POST', '/api/register/confirm', { email: 'gwen@example.com', code: fresh }, at('10.60.0.1'));
+    check('the right code confirms and signs in', ok.status === 200 && ok.json?.user?.email === 'gwen@example.com' && (await gwen.call('GET', '/api/bootstrap')).status === 200, `${ok.status} ${ok.json?.error || ''}`);
+    check('  once only', (await jar().call('POST', '/api/register/confirm', { email: 'gwen@example.com', code: fresh }, at('10.60.0.3'))).status === 400);
+    const later = await jar().call('POST', '/api/login', { email: 'gwen@example.com', password }, at('10.60.0.4'));
+    check('  and signing in then works as before', later.status === 200, `${later.status}`);
+    const gwenRow = await store.getUserByEmail('gwen@example.com');
+    check('  the security record says the email was confirmed', (await store.listAudit(gwenRow.id, 20)).some((e) => e.kind === 'email_confirmed'));
+
+    // Somebody else's address, typed by a stranger: held a day, then free, and the inbox can claim it at once.
+    const stranger = await jar().call('POST', '/api/register', { email: 'hal@example.com', password, username: 'not.hal' }, at('10.60.0.5'));
+    check('a stranger can start an account in another person\'s name', stranger.status === 202);
+    const again = await jar().call('POST', '/api/register', { email: 'hal@example.com', password: 'another-long-password', username: 'real.hal' }, at('10.60.0.6'));
+    check('  which holds the address for a day', again.status === 400, `${again.status}`);
+    // A day on, by the server's clock.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 25 * 3600_000;
+    let claimed;
+    try {
+      claimed = await jar().call('POST', '/api/register', { email: 'hal@example.com', password: 'another-long-password', username: 'real.hal' }, at('10.60.0.9'));
+    } finally {
+      Date.now = realNow;
+    }
+    check("  and after a day the real owner can sign up, the stranger's account gone", claimed.status === 202 && (await store.getUserByUsername('not.hal')) === null && !!(await store.getUserByUsername('real.hal')), `${claimed.status} ${claimed.json?.error || ''}`);
+    const resent = await jar().call('POST', '/api/register/resend', { email: 'nobody-at-all@example.com' }, at('10.60.0.7'));
+    check('asking for a new code says the same whether or not the address waits', resent.status === 200 && resent.json?.ok === true);
+
+    // Six digits for half an hour: the tries are limited per address and account.
+    const tries = [];
+    for (let i = 0; i < 11; i += 1) tries.push((await jar().call('POST', '/api/register/confirm', { email: 'hal@example.com', code: String(100000 + i) }, at('10.60.0.8'))).status);
+    check('ten wrong codes from one address stop that address', tries.slice(0, 10).every((s) => s === 400) && tries[10] === 429, tries.join(','));
+  } finally {
+    console.log = realLog;
+    if (before === undefined) delete process.env.EMAIL_CONFIRMATION;
+    else process.env.EMAIL_CONFIRMATION = before;
+  }
 }
 
 // ── signing out ─────────────────────────────────────────────────────

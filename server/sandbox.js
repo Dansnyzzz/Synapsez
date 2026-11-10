@@ -784,10 +784,11 @@ async function handOver(machine, { path, keep = false, replaces = null, userId, 
 }
 
 /**
- * Folders the disk tidy clears by itself: `/tmp` after twenty minutes, and the copies
- * `bring` puts in `incoming/` after a day.
+ * Folders the disk tidy clears by itself: `/tmp` after twenty minutes, the copies
+ * `bring` puts in `incoming/` after a day, and what the cloud browser downloaded
+ * after a week.
  */
-const CLEARED = /^(?:\/tmp\/|(?:\.\/|~\/|\/home\/[^/]+\/)?incoming\/)/;
+const CLEARED = /^(?:\/tmp\/|(?:\.\/|~\/|\/home\/[^/]+\/)?(?:incoming|downloads)\/)/;
 
 /**
  * Where a file too large for the conversation is kept. Its card downloads it from the

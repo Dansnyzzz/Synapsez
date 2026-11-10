@@ -252,6 +252,39 @@ export function rewardThemes(badges, scope, key) {
   return (exact.length ? exact : carrying.filter(([, b]) => b.year === null)).map(([id]) => id);
 }
 
+/** The badges, read at most once a minute for the scene files (`themeAssetAccess`), which come twenty at a time. */
+const BADGES_MS = 60_000;
+/** @type {{ at: number, value: Promise<Map<string, any>> } | null} */
+let badgesSeen = null;
+
+/**
+ * Who may load a theme's own files (server/sceneAssets.js): `'public'` once the theme is
+ * out, `'private'` before that for an administrator or someone who holds it, `'none'`
+ * for anybody else, and `null` when the name is no theme's at all. The person is asked
+ * for only when the theme is not out, so the files everybody loads cost no session read.
+ *
+ * @param {string} themeId
+ * @param {{ user?: () => Promise<any>, store?: any, now?: Date }} [options]
+ * @returns {Promise<'public' | 'private' | 'none' | null>}
+ */
+export async function themeAssetAccess(themeId, { user = async () => null, store = getStore(), now = new Date() } = {}) {
+  const theme = THEME_BY_ID.get(themeId);
+  if (!theme || theme.id === 'default') return null;
+  if (!badgesSeen || Date.now() - badgesSeen.at > BADGES_MS) {
+    const value = themeBadges(store);
+    badgesSeen = { at: Date.now(), value };
+    value.catch(() => (badgesSeen = null));
+  }
+  const badge = (await badgesSeen.value.catch(() => new Map())).get(themeId) || theme.badge;
+  const out = appearsAt(theme, badge);
+  if (!out || out <= now) return 'public';
+  const person = await user();
+  if (!person) return 'none';
+  if (isAdmin(person)) return 'private';
+  const held = await store.listUserThemes(person.id).catch(() => []);
+  return held.some((row) => row.theme_id === themeId) ? 'private' : 'none';
+}
+
 /** Each theme's badge: an administrator's choice over the catalogue's. */
 export async function themeBadges(store = getStore()) {
   const stored = new Map((await store.listThemeBadges()).map((row) => [row.theme_id, row]));
@@ -334,10 +367,11 @@ export async function settleClosed({ store = getStore(), now = new Date() } = {}
  * What the boards call somebody: the name they go by, never what they sign in with.
  * A username or an email's first half on a public list is half of a login, and is what
  * a name is by default when none was given (auth.js), so those read as "A member".
+ * Shared skills name their author by the same rule (skills.js, 41).
  *
  * @param {{ name?: string|null, username?: string|null, email?: string|null } | undefined} person
  */
-function publicName(person) {
+export function publicName(person) {
   const name = String(person?.name || '').trim();
   const same = name.toLowerCase();
   if (!name || same === String(person?.username || '').toLowerCase() || same === String(person?.email || '').split('@')[0].toLowerCase()) return null;
@@ -365,6 +399,21 @@ export function appearsAt(theme, badge) {
  * nothing, so an administrator making a prize an achievement does not hand it to everyone.
  */
 const earnedBy = (thing, life, deposited, { title = false } = {}) => (thing.tokens ? life.tokens >= thing.tokens : thing.spend ? deposited >= thing.spend : title);
+
+/**
+ * The worn title as the page shows it when it opens: a sponsor's only with the money behind
+ * it. The stored choice is cleared at the next sync (`syncEarned`); until this, the page drew
+ * the sponsor's creature until the next reload (review, 2026-11-09).
+ *
+ * @param {string} userId @param {string | null | undefined} id
+ */
+export async function titleShown(userId, id, { store = getStore() } = {}) {
+  const entry = TITLE_BY_ID.get(String(id ?? ''));
+  if (!entry) return id ?? null;
+  if (!entry.spend) return entry.id;
+  const deposited = Number(await store.topUpTotal(userId).catch(() => 0)) || 0;
+  return deposited >= entry.spend ? entry.id : null;
+}
 
 /** A worn title as the boards show it: a sponsor's only with the money behind it. */
 function wornTitle(id, deposited) {
@@ -722,6 +771,8 @@ export async function setThemeBadge(id, body, by, { store = getStore() } = {}) {
   const badge = cleanBadge(body);
   if (id === 'default' && badge.kind !== 'none') throw refuse(400, 'The default theme carries no badge: everybody has it.');
   await store.setThemeBadge(id, badge, by);
+  // A badge decides when a theme is out, and so who may load its files.
+  badgesSeen = null;
   return { badge };
 }
 
@@ -756,5 +807,6 @@ export const __testing = {
     rowsCache.clear();
     settledThrough = null;
     settleFailedAt = 0;
+    badgesSeen = null;
   },
 };

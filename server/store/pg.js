@@ -245,8 +245,12 @@ export function splitStatements(sql) {
  *  40  workflows.policy / project_id — the Bot page; top_ups — money put in, which
  *      the sponsor titles count; event_mail — who was told about an event;
  *      user_themes.by_hand — a theme an administrator gave
+ *  41  skills.shared_at / hidden_at / scan, skill_adds — a skill shared to Discover,
+ *      an administrator's hiding of it, and the people who added it by reference
+ *  42  bots, bot_groups, bot_group_members, bot_memory; chats.bot_id / bot_group_id;
+ *      usage_events.bot_id — the Bot page
  */
-export const SCHEMA_VERSION = 40;
+export const SCHEMA_VERSION = 42;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -688,10 +692,17 @@ export function createPgStore(connectionString) {
 
     // ── usage ───────────────────────────────────────────────────────
     async recordUsage(userId, event) {
+      /*
+       * `bot_id`: which bot spent it (schema 42). Read from the conversation when
+       * the caller does not say, so every call made in a bot's chat or its turn in
+       * a group — compaction, sub-agents and research included — is booked to that
+       * bot without each of them having to know it is one.
+       */
       await q(
         `INSERT INTO usage_events
-           (id, user_id, chat_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, role)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+           (id, user_id, chat_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, role, bot_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                 COALESCE($10::text, (SELECT c.bot_id FROM chats c WHERE c.id = $3 AND c.user_id = $2)))`,
         [
           event.id,
           userId,
@@ -702,6 +713,7 @@ export function createPgStore(connectionString) {
           event.costUsd || 0,
           event.cacheReadTokens || 0,
           event.role || 'turn',
+          event.botId ?? null,
         ],
       );
     },
@@ -1007,6 +1019,8 @@ export function createPgStore(connectionString) {
           WHERE c.user_id = $1 AND c.archived_at IS NULL
             -- An incognito conversation is never history, so never listed.
             AND NOT c.incognito
+            -- A bot's or a group's conversation lives on the Bot page (schema 42).
+            AND c.bot_id IS NULL AND c.bot_group_id IS NULL
             AND (m.message_count > 0 OR l.chat_id IS NOT NULL)
           ORDER BY c.pinned DESC, c.updated_at DESC
           LIMIT 200`,
@@ -1098,7 +1112,7 @@ export function createPgStore(connectionString) {
                   WHERE m.chat_id = c.id AND m.content::text ILIKE $2 ESCAPE '\\'
                   ORDER BY m.seq LIMIT 1) AS snippet
            FROM chats c
-          WHERE c.user_id = $1 AND NOT c.incognito
+          WHERE c.user_id = $1 AND NOT c.incognito AND c.bot_id IS NULL AND c.bot_group_id IS NULL
             AND (c.title ILIKE $2 ESCAPE '\\'
                  OR EXISTS (SELECT 1 FROM messages m
                              WHERE m.chat_id = c.id AND m.content::text ILIKE $2 ESCAPE '\\'))
@@ -1150,7 +1164,7 @@ export function createPgStore(connectionString) {
              FROM chats c
              JOIN messages m ON m.chat_id = c.id
             WHERE c.user_id = $1
-              AND NOT c.incognito
+              AND NOT c.incognito AND c.bot_id IS NULL AND c.bot_group_id IS NULL
               AND c.project_id IS NOT DISTINCT FROM $2::text
               AND c.id <> $3
               AND m.role IN ('user', 'assistant')
@@ -1175,7 +1189,7 @@ export function createPgStore(connectionString) {
                   WHERE m.chat_id = c.id AND m.role = 'user' ORDER BY m.seq LIMIT 1) AS opening
            FROM chats c
           WHERE c.user_id = $1
-            AND NOT c.incognito
+            AND NOT c.incognito AND c.bot_id IS NULL AND c.bot_group_id IS NULL
             AND c.project_id IS NOT DISTINCT FROM $2::text
             AND c.id <> $3
             AND EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = c.id)
@@ -1778,7 +1792,7 @@ export function createPgStore(connectionString) {
     async listCutOffRuns({ staleMs = RUN_LEASE_STALE_MS, withinMs = 6 * 3600_000, limit = 3 } = {}) {
       return q(
         `SELECT id, user_id, run_lock_by, run_lock_at FROM chats
-          WHERE run_lock_by IS NOT NULL
+          WHERE run_lock_by IS NOT NULL AND bot_group_id IS NULL
             AND run_lock_at <= NOW() - ($1 || ' milliseconds')::interval
             AND run_lock_at > NOW() - ($2 || ' milliseconds')::interval
           ORDER BY run_lock_at
@@ -2639,6 +2653,15 @@ export function createPgStore(connectionString) {
         databaseBytes: n(row.database_bytes),
       };
     },
+    /** Where this account's files too large for the conversation are kept on its machine, newest first. */
+    async machineFilePaths(userId, limit = 500) {
+      const rows = await q(
+        `SELECT source FROM attachments WHERE user_id = $1 AND origin = 'machine' AND source IS NOT NULL
+       ORDER BY created_at DESC LIMIT $2`,
+        [userId, limit],
+      );
+      return rows.map((row) => row.source);
+    },
     /** Files sent straight to a machine, a month on: `expireMachineUploads` takes the row and the bytes together. */
     async expiredMachineUploads(days = 30, limit = 20) {
       return q(
@@ -3015,15 +3038,16 @@ export function createPgStore(connectionString) {
       return Number(rows[0]?.n || 0);
     },
     /**
-     * Who has not been told about an event by email: every account with an address
-     * that is not suspended, with its preferences (the opt-out and the language).
+     * Who has not been told about an event by email: every account with a confirmed
+     * address that is not suspended, with its preferences (the opt-out and the
+     * language). An address nobody confirmed may be anybody's (owner, 2026-11-09).
      */
     async eventMailRecipients(event) {
       return q(
         `SELECT u.id, u.email, s.value AS prefs
            FROM users u
            LEFT JOIN user_settings s ON s.user_id = u.id AND s.key = 'prefs'
-          WHERE u.email IS NOT NULL AND u.email <> '' AND u.suspended_at IS NULL
+          WHERE u.email IS NOT NULL AND u.email <> '' AND u.suspended_at IS NULL AND u.email_verified_at IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM event_mail m WHERE m.event = $1 AND m.user_id = u.id
                               AND (m.ok OR m.sent_at > NOW() - INTERVAL '1 hour'))
           ORDER BY u.created_at`,
@@ -3424,24 +3448,172 @@ export function createPgStore(connectionString) {
       const rows = await q('SELECT * FROM skills WHERE user_id = $1 AND id = $2', [userId, id]);
       return rows[0] ?? null;
     },
+    async getSkillByName(userId, name) {
+      const rows = await q('SELECT * FROM skills WHERE user_id = $1 AND lower(name) = lower($2)', [userId, name]);
+      return rows[0] ?? null;
+    },
     /**
      * Upsert by name, so teaching the same thing twice refines it rather than
      * duplicating it. `files` (34) is replaced only when given: the assistant's
      * `skill_write` refines the words and leaves the files a person added.
+     *
+     * `sharing` (41): 'on' puts it on Discover (keeping the moment it first went
+     * there), 'off' takes it off, 'keep' leaves it — unless `scanOk` is false, when
+     * a skill that turned out shared is taken off rather than shared unscanned. The
+     * caller has refused an edit the scan flags on a skill it knew was shared; this
+     * covers one shared by another tab in between. `scan` is kept with the skill.
      */
-    async saveSkill(userId, { id, name, description, instructions, files }) {
+    async saveSkill(userId, { id, name, description, instructions, files, sharing = 'keep', scan = null }) {
       const rows = await q(
-        `INSERT INTO skills (id, user_id, name, description, instructions, files)
-         VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '[]'::jsonb))
+        `INSERT INTO skills (id, user_id, name, description, instructions, files, shared_at, scan)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '[]'::jsonb), CASE WHEN $7::text = 'on' THEN NOW() END, $8::jsonb)
          ON CONFLICT (user_id, lower(name)) DO UPDATE SET
            description = EXCLUDED.description,
            instructions = EXCLUDED.instructions,
            files = COALESCE($6::jsonb, skills.files),
+           shared_at = CASE $7::text
+             WHEN 'on' THEN COALESCE(skills.shared_at, NOW())
+             WHEN 'off' THEN NULL
+             ELSE CASE WHEN $9::boolean THEN skills.shared_at END
+           END,
+           scan = COALESCE($8::jsonb, skills.scan),
            updated_at = NOW()
       RETURNING *`,
-        [id, userId, name, description, instructions, Array.isArray(files) ? toJson(files) : null],
+        [id, userId, name, description, instructions, Array.isArray(files) ? toJson(files) : null, sharing, scan ? toJson(scan) : null, scan ? scan.ok !== false : true],
       );
       return rows[0];
+    },
+
+    // ── shared skills (41) ──────────────────────────────────────────
+    //
+    // A skill's author shares it; anyone may then read it and add it, by
+    // reference. Every write is still the author's own (user_id = $1) or the
+    // adder's own row in skill_adds; another account reads a shared skill only
+    // here, and only while it is shared, not hidden and its author not suspended.
+
+    /**
+     * On Discover or off it, the author's choice. Sharing is a compare-and-set
+     * on the words that were scanned: an edit landing between the scan and this
+     * finds nothing to update, and the caller says so rather than sharing
+     * something unscanned.
+     */
+    async setSkillShared(userId, id, { shared, scan = null, scanned = null }) {
+      if (!shared) {
+        const rows = await q('UPDATE skills SET shared_at = NULL WHERE user_id = $1 AND id = $2 RETURNING *', [userId, id]);
+        return rows[0] ?? null;
+      }
+      const rows = await q(
+        `UPDATE skills SET shared_at = COALESCE(shared_at, NOW()), scan = $3::jsonb
+          WHERE user_id = $1 AND id = $2
+            AND description = $4 AND instructions = $5 AND files = $6::jsonb
+        RETURNING *`,
+        [userId, id, toJson(scan), scanned?.description ?? '', scanned?.instructions ?? '', toJson(Array.isArray(scanned?.files) ? scanned.files : [])],
+      );
+      return rows[0] ?? null;
+    },
+    /** What the scan said when sharing was refused — kept with the skill, which stays as it was. */
+    async noteSkillScan(userId, id, scan) {
+      await q('UPDATE skills SET scan = $3::jsonb WHERE user_id = $1 AND id = $2', [userId, id, toJson(scan)]);
+    },
+    /**
+     * Discover: every shared skill, newest made first. Names and descriptions,
+     * never the instructions — those are read through `getSharedSkill`. A
+     * moderator (`includeHidden`) also sees what was taken off, to put it back.
+     */
+    async listSharedSkills(viewerId, { includeHidden = false } = {}) {
+      return q(
+        `SELECT s.id, s.user_id, s.name, s.description, s.created_at, s.updated_at, s.hidden_at,
+                u.suspended_at IS NOT NULL AS author_suspended,
+                s.user_id = $1 AS mine, (a.user_id IS NOT NULL) AS added
+           FROM skills s
+           JOIN users u ON u.id = s.user_id
+           LEFT JOIN skill_adds a ON a.skill_id = s.id AND a.user_id = $1
+          WHERE s.shared_at IS NOT NULL
+            AND ($2::boolean OR (s.hidden_at IS NULL AND u.suspended_at IS NULL))
+          ORDER BY s.created_at DESC, s.id
+          LIMIT 300`,
+        [viewerId, includeHidden],
+      );
+    },
+    /** One shared skill, whole, for whoever reads or uses it — or null when it is not shared now. */
+    async getSharedSkill(viewerId, id, { includeHidden = false } = {}) {
+      const rows = await q(
+        `SELECT s.id, s.user_id, s.name, s.description, s.instructions, s.files, s.created_at, s.updated_at, s.hidden_at,
+                u.suspended_at IS NOT NULL AS author_suspended,
+                s.user_id = $1 AS mine,
+                EXISTS (SELECT 1 FROM skill_adds a WHERE a.skill_id = s.id AND a.user_id = $1) AS added
+           FROM skills s
+           JOIN users u ON u.id = s.user_id
+          WHERE s.id = $2 AND s.shared_at IS NOT NULL
+            AND ($3::boolean OR (s.hidden_at IS NULL AND u.suspended_at IS NULL))`,
+        [viewerId, id, includeHidden],
+      );
+      return rows[0] ?? null;
+    },
+    async countAddedSkills(userId) {
+      const rows = await q('SELECT COUNT(*)::int AS n FROM skill_adds WHERE user_id = $1', [userId]);
+      return rows[0]?.n ?? 0;
+    },
+    /** Add somebody else's shared skill — a reference to it, with the name it had. Null when it cannot be added. */
+    async addSharedSkill(userId, id) {
+      const rows = await q(
+        `INSERT INTO skill_adds (user_id, skill_id, name)
+         SELECT $1, s.id, s.name
+           FROM skills s
+           JOIN users u ON u.id = s.user_id
+          WHERE s.id = $2 AND s.user_id <> $1 AND s.shared_at IS NOT NULL
+            AND s.hidden_at IS NULL AND u.suspended_at IS NULL
+         ON CONFLICT (user_id, skill_id) DO UPDATE SET name = EXCLUDED.name
+         RETURNING *`,
+        [userId, id],
+      );
+      return rows[0] ?? null;
+    },
+    async removeAddedSkill(userId, id) {
+      const rows = await q('DELETE FROM skill_adds WHERE user_id = $1 AND skill_id = $2 RETURNING skill_id', [userId, id]);
+      return rows.length > 0;
+    },
+    /**
+     * What this account added, each with whether it can still be used: 'ok', or
+     * why not — 'unshared', 'hidden' (an administrator, or its author suspended),
+     * 'deleted'. Only an 'ok' one carries the author's current words; the rest
+     * keep the name they had when added, so the person can be told what went.
+     */
+    async listAddedSkills(userId) {
+      return q(
+        `SELECT a.skill_id, a.name AS added_name, a.added_at, v.status,
+                CASE WHEN v.status = 'ok' THEN s.name END AS name,
+                CASE WHEN v.status = 'ok' THEN s.description END AS description,
+                CASE WHEN v.status = 'ok' THEN s.updated_at END AS updated_at,
+                CASE WHEN v.status = 'ok' THEN s.user_id END AS author_id
+           FROM skill_adds a
+           LEFT JOIN skills s ON s.id = a.skill_id
+           LEFT JOIN users u ON u.id = s.user_id
+           CROSS JOIN LATERAL (
+             SELECT CASE
+               WHEN s.id IS NULL THEN 'deleted'
+               WHEN s.shared_at IS NULL THEN 'unshared'
+               WHEN s.hidden_at IS NOT NULL OR u.suspended_at IS NOT NULL THEN 'hidden'
+               ELSE 'ok'
+             END AS status
+           ) v
+          WHERE a.user_id = $1
+          ORDER BY a.added_at, a.skill_id`,
+        [userId],
+      );
+    },
+    /**
+     * An administrator takes a shared skill off Discover, or puts it back. The one
+     * call here not scoped to an account: the route allows administrators only.
+     */
+    async hideSharedSkill(id, hidden) {
+      const rows = await q(
+        `UPDATE skills SET hidden_at = CASE WHEN $2::boolean THEN COALESCE(hidden_at, NOW()) END
+          WHERE id = $1 AND shared_at IS NOT NULL
+        RETURNING id, user_id, name, hidden_at`,
+        [id, hidden],
+      );
+      return rows[0] ?? null;
     },
     async setSkillEnabled(userId, id, enabled) {
       const rows = await q(
@@ -4242,6 +4414,270 @@ export function createPgStore(connectionString) {
         [userId, id, toJson(steps)],
       );
       return rows[0] ?? null;
+    },
+
+    // ── bots (the Bot page, schema 42) ──────────────────────────────
+    /*
+     * Every statement here names the account, and every id that arrives from
+     * a request only narrows a query that is already scoped to it: another
+     * account's bot, group or memory entry is not there, rather than refused.
+     * Writes that join two rows (a member to a group, an entry to a bot) check
+     * in the same statement that both are this account's.
+     */
+    async listBots(userId) {
+      return q('SELECT * FROM bots WHERE user_id = $1 ORDER BY is_main DESC, created_at, id', [userId]);
+    },
+    async getBot(userId, id) {
+      const rows = await q('SELECT * FROM bots WHERE user_id = $1 AND id = $2', [userId, String(id ?? '')]);
+      return rows[0] ?? null;
+    },
+    async getBotByName(userId, name) {
+      const rows = await q('SELECT * FROM bots WHERE user_id = $1 AND lower(name) = lower($2)', [userId, String(name ?? '').trim()]);
+      return rows[0] ?? null;
+    },
+    async countBots(userId) {
+      const rows = await q('SELECT COUNT(*)::int AS n FROM bots WHERE user_id = $1', [userId]);
+      return Number(rows[0]?.n || 0);
+    },
+    /**
+     * A new bot, or null when its name (or, for a main bot, the main place) is
+     * already taken in this account — the unique indexes decide, so two tabs
+     * creating the same name at once make one.
+     */
+    async createBot(userId, bot) {
+      const rows = await q(
+        `INSERT INTO bots (id, user_id, name, role, avatar, model, instructions, is_main)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        [bot.id, userId, bot.name, bot.role || '', bot.avatar || 'minnow', bot.model || null, bot.instructions || '', !!bot.isMain],
+      );
+      return rows[0] ?? null;
+    },
+    /** The account's main bot, made with `bot` if it has none yet. */
+    async ensureMainBot(userId, bot) {
+      const have = await q('SELECT * FROM bots WHERE user_id = $1 AND is_main', [userId]);
+      if (have[0]) return have[0];
+      await this.createBot(userId, { ...bot, isMain: true });
+      const rows = await q('SELECT * FROM bots WHERE user_id = $1 AND is_main', [userId]);
+      return rows[0] ?? null;
+    },
+    /**
+     * Change one bot. The allow-list is the boundary: whatever else the patch
+     * carries — `user_id`, `is_main` — never reaches the UPDATE. A name another
+     * bot of the account has throws the unique violation, which the caller says
+     * in words.
+     */
+    async updateBot(userId, id, patch) {
+      const allowed = { name: 'name', role: 'role', avatar: 'avatar', model: 'model', instructions: 'instructions' };
+      const sets = [];
+      const params = [userId, String(id ?? '')];
+      for (const [key, column] of Object.entries(allowed)) {
+        if (patch[key] === undefined) continue;
+        params.push(patch[key]);
+        sets.push(`${column} = $${params.length}`);
+      }
+      if (!sets.length) return this.getBot(userId, id);
+      const rows = await q(`UPDATE bots SET ${sets.join(', ')}, updated_at = NOW() WHERE user_id = $1 AND id = $2 RETURNING *`, params);
+      return rows[0] ?? null;
+    },
+    /** Never the main bot: Chief can be changed, not deleted. Its chats, memory and memberships go with it. */
+    async deleteBot(userId, id) {
+      const rows = await q('DELETE FROM bots WHERE user_id = $1 AND id = $2 AND NOT is_main RETURNING id', [userId, String(id ?? '')]);
+      return rows.length > 0;
+    },
+
+    async listBotGroups(userId) {
+      return q(
+        `SELECT g.*, COALESCE(json_agg(m.bot_id ORDER BY m.added_at, m.bot_id) FILTER (WHERE m.bot_id IS NOT NULL), '[]'::json) AS members
+           FROM bot_groups g
+           LEFT JOIN bot_group_members m ON m.group_id = g.id
+          WHERE g.user_id = $1
+          GROUP BY g.id
+          ORDER BY g.created_at, g.id`,
+        [userId],
+      );
+    },
+    async getBotGroup(userId, id) {
+      const rows = await q(
+        `SELECT g.*, COALESCE(json_agg(m.bot_id ORDER BY m.added_at, m.bot_id) FILTER (WHERE m.bot_id IS NOT NULL), '[]'::json) AS members,
+                COALESCE(json_object_agg(m.bot_id, m.seen_seq) FILTER (WHERE m.bot_id IS NOT NULL), '{}'::json) AS seen
+           FROM bot_groups g
+           LEFT JOIN bot_group_members m ON m.group_id = g.id
+          WHERE g.user_id = $1 AND g.id = $2
+          GROUP BY g.id`,
+        [userId, String(id ?? '')],
+      );
+      return rows[0] ?? null;
+    },
+    /**
+     * A new group with its members, or null when the name is taken. Only this
+     * account's bots join it, whatever ids were asked for; an admin that is not
+     * one of them is not set.
+     */
+    async createBotGroup(userId, { id, name, adminBotId = null, members = [] }) {
+      const rows = await q(
+        `INSERT INTO bot_groups (id, user_id, name, admin_bot_id)
+         SELECT $1, $2, $3, (SELECT b.id FROM bots b WHERE b.user_id = $2 AND b.id = $4)
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
+        [id, userId, name, adminBotId],
+      );
+      if (!rows.length) return null;
+      await this.setBotGroupMembers(userId, id, members);
+      return this.getBotGroup(userId, id);
+    },
+    async updateBotGroup(userId, id, patch) {
+      const sets = [];
+      const params = [userId, String(id ?? '')];
+      if (patch.name !== undefined) {
+        params.push(patch.name);
+        sets.push(`name = $${params.length}`);
+      }
+      if (patch.adminBotId !== undefined) {
+        params.push(patch.adminBotId);
+        sets.push(`admin_bot_id = (SELECT b.id FROM bots b WHERE b.user_id = $1 AND b.id = $${params.length})`);
+      }
+      if (sets.length) {
+        const rows = await q(`UPDATE bot_groups SET ${sets.join(', ')}, updated_at = NOW() WHERE user_id = $1 AND id = $2 RETURNING id`, params);
+        if (!rows.length) return null;
+      }
+      if (Array.isArray(patch.members)) await this.setBotGroupMembers(userId, id, patch.members);
+      return this.getBotGroup(userId, id);
+    },
+    /** The group's members become exactly these of the account's bots; those who stay keep where they had read to. */
+    async setBotGroupMembers(userId, groupId, botIds) {
+      const ids = JSON.stringify([...new Set((botIds || []).map(String))]);
+      await q(
+        `DELETE FROM bot_group_members m
+          USING bot_groups g
+          WHERE m.group_id = g.id AND g.user_id = $1 AND g.id = $2
+            AND NOT (m.bot_id IN (SELECT jsonb_array_elements_text($3::jsonb)))`,
+        [userId, String(groupId ?? ''), ids],
+      );
+      await q(
+        `INSERT INTO bot_group_members (group_id, bot_id)
+         SELECT g.id, b.id
+           FROM bot_groups g
+           JOIN bots b ON b.user_id = g.user_id
+          WHERE g.user_id = $1 AND g.id = $2
+            AND b.id IN (SELECT jsonb_array_elements_text($3::jsonb))
+         ON CONFLICT DO NOTHING`,
+        [userId, String(groupId ?? ''), ids],
+      );
+    },
+    async deleteBotGroup(userId, id) {
+      const rows = await q('DELETE FROM bot_groups WHERE user_id = $1 AND id = $2 RETURNING id', [userId, String(id ?? '')]);
+      return rows.length > 0;
+    },
+    /** How far into the group's log a member has read; only ever forward. */
+    async markGroupSeen(userId, groupId, botId, seq) {
+      await q(
+        `UPDATE bot_group_members m SET seen_seq = GREATEST(m.seen_seq, $4::bigint)
+           FROM bot_groups g
+          WHERE m.group_id = g.id AND g.user_id = $1 AND g.id = $2 AND m.bot_id = $3`,
+        [userId, String(groupId), String(botId), String(Math.trunc(Number(seq) || 0))],
+      );
+    },
+
+    /** A bot's memory (`botId`) or a group's (`groupId`), oldest first. */
+    async listBotMemory(userId, { botId = null, groupId = null }) {
+      if (botId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND bot_id = $2 ORDER BY created_at, id', [userId, String(botId)]);
+      if (groupId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND group_id = $2 ORDER BY created_at, id', [userId, String(groupId)]);
+      return [];
+    },
+    /** One entry, written only under a bot or group of this account; null when there is none such. */
+    async addBotMemory(userId, { id, botId = null, groupId = null, text, source = 'bot' }) {
+      const rows = await q(
+        `INSERT INTO bot_memory (id, user_id, bot_id, group_id, text, source)
+         SELECT $1, $2, $3, $4, $5, $6
+          WHERE ($3::text IS NOT NULL AND $4::text IS NULL AND EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $3))
+             OR ($4::text IS NOT NULL AND $3::text IS NULL AND EXISTS (SELECT 1 FROM bot_groups WHERE user_id = $2 AND id = $4))
+         RETURNING *`,
+        [id, userId, botId, groupId, text, source],
+      );
+      return rows[0] ?? null;
+    },
+    async deleteBotMemory(userId, id, { botId = null, groupId = null } = {}) {
+      const rows = await q(
+        `DELETE FROM bot_memory
+          WHERE user_id = $1 AND id = $2
+            AND ($3::text IS NULL OR bot_id = $3) AND ($4::text IS NULL OR group_id = $4)
+          RETURNING id`,
+        [userId, String(id ?? ''), botId, groupId],
+      );
+      return rows.length > 0;
+    },
+
+    /**
+     * The conversation a bot or group keeps, made the first time it is asked
+     * for: a bot's own chat (`botId`), a group's log (`groupId`), or a member's
+     * context in a group (both). Made only when the bot and the group are this
+     * account's; null otherwise. Two tabs asking at once get the same one — the
+     * partial unique indexes refuse the second insert.
+     */
+    async botChat(userId, { botId = null, groupId = null, title = 'Bot' }) {
+      const find = () =>
+        q(
+          `SELECT * FROM chats
+            WHERE user_id = $1 AND bot_id IS NOT DISTINCT FROM $2::text AND bot_group_id IS NOT DISTINCT FROM $3::text
+            ORDER BY created_at LIMIT 1`,
+          [userId, botId, groupId],
+        );
+      const have = await find();
+      if (have[0]) return have[0];
+      if (!botId && !groupId) return null;
+      await q(
+        `INSERT INTO chats (id, user_id, title, bot_id, bot_group_id)
+         SELECT $1, $2, $3, $4, $5
+          WHERE ($4::text IS NULL OR EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $4))
+            AND ($5::text IS NULL OR EXISTS (SELECT 1 FROM bot_groups WHERE user_id = $2 AND id = $5))
+         ON CONFLICT DO NOTHING`,
+        [crypto.randomUUID(), userId, String(title).slice(0, 120), botId, groupId],
+      );
+      return (await find())[0] ?? null;
+    },
+    /**
+     * The last thing said in each bot's own chat and each group, for the list on
+     * the left: one row a conversation, the newest message with words in it.
+     */
+    async botPreviews(userId) {
+      return q(
+        `SELECT c.id AS chat_id, c.bot_id, c.bot_group_id, c.updated_at, c.run_lock_at,
+                last.role, last.content->>'text' AS text, last.content->>'bot' AS author
+           FROM chats c
+           LEFT JOIN LATERAL (
+                SELECT m.role, m.content FROM messages m
+                 WHERE m.chat_id = c.id AND m.role IN ('user', 'assistant')
+                   AND COALESCE(m.content->>'text', '') <> ''
+                 ORDER BY m.seq DESC LIMIT 1
+           ) last ON TRUE
+          WHERE c.user_id = $1
+            AND ((c.bot_id IS NOT NULL AND c.bot_group_id IS NULL) OR (c.bot_id IS NULL AND c.bot_group_id IS NOT NULL))`,
+        [userId],
+      );
+    },
+    /**
+     * What the account's bots spent, by bucket, bot and model, between two
+     * instants — the Bot settings' Usage page. Buckets are cut in the person's
+     * own zone (`tz`, already checked against the zone database by the route).
+     */
+    async botUsage(userId, { from, to, unit = 'day', tz = 'UTC' }) {
+      const step = ['hour', 'day', 'week', 'month'].includes(unit) ? unit : 'day';
+      return q(
+        `SELECT to_char(date_trunc('${step}', created_at AT TIME ZONE $4), 'YYYY-MM-DD"T"HH24:00') AS bucket,
+                bot_id, model,
+                SUM(input_tokens)::bigint      AS input_tokens,
+                SUM(output_tokens)::bigint     AS output_tokens,
+                SUM(cache_read_tokens)::bigint AS cache_read_tokens,
+                SUM(cost_usd)                  AS cost,
+                COUNT(*)::int                  AS calls
+           FROM usage_events
+          WHERE user_id = $1 AND bot_id IS NOT NULL AND created_at >= $2::timestamptz AND created_at < $3::timestamptz
+          GROUP BY 1, 2, 3
+          ORDER BY 1`,
+        [userId, new Date(from).toISOString(), new Date(to).toISOString(), tz],
+      );
     },
 
     // ── connectors ──────────────────────────────────────────────────

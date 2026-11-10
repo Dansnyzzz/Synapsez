@@ -225,7 +225,10 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 34: skills.files — what a skill carries beside its instructions.
   // 35: feedback.message_id / issue / answer — feedback on one answer.
   // 40: workflows.policy/project_id, top_ups, event_mail.
-  const STAMPED = { version: 40, fingerprint: '5e6f7efa8676b5db' };
+  // 41: skills.shared_at/hidden_at/scan, skill_adds — skills shared to Discover.
+  // 42: bots, bot_groups, bot_group_members, bot_memory, chats.bot_id/.bot_group_id,
+  // usage_events.bot_id — the Bot page.
+  const STAMPED = { version: 42, fingerprint: 'a87fdd61356c62f7' };
 
   check(
     'the recorded version matches the code',
@@ -278,6 +281,23 @@ section('a step screenshot leaves the Files shelf (schema 30)');
   const left = (await driver.query(`SELECT id FROM attachments WHERE user_id = 'u-step'`)).map((r) => r.id);
   check('an orphaned step screenshot older than a month is swept', !left.includes('shot-old'), left.join(','));
   check('  a newer one and a file somebody made are not', left.includes('shot-recent') && left.includes('picture'), left.join(','));
+}
+
+section('shared skills reach a database from 40, and every skill there stays private (schema 41)');
+{
+  const store = createPgStore(driver);
+  await store.init();
+  await store.createUser({ id: 'u-share', email: 'share@example.com', name: 'Share', passwordHash: 'x', role: 'user' });
+  await store.saveSkill('u-share', { id: 'sk-old', name: 'Old skill', description: 'd', instructions: 'i' });
+  // As a database that had not reached 41 yet.
+  await driver.query('DROP TABLE IF EXISTS skill_adds');
+  for (const column of ['shared_at', 'hidden_at', 'scan']) await driver.query(`ALTER TABLE skills DROP COLUMN IF EXISTS ${column}`);
+  await driver.query(`UPDATE settings SET value = '40'::jsonb WHERE key = 'schema_version'`);
+  check('they really are gone first', !(await tableExists('skill_adds')) && !(await columnExists('skills', 'shared_at')), 'otherwise this proves nothing');
+  await createPgStore(driver).init();
+  check('opening it adds what sharing needs', (await tableExists('skill_adds')) && (await columnExists('skills', 'shared_at')) && (await columnExists('skills', 'hidden_at')) && (await columnExists('skills', 'scan')));
+  const old = (await driver.query(`SELECT shared_at, hidden_at FROM skills WHERE id = 'sk-old'`))[0];
+  check('  and a skill made before it is not shared by the upgrade', old && old.shared_at === null && old.hidden_at === null, JSON.stringify(old));
 }
 
 section('and the stamp is what decides');

@@ -1,6 +1,6 @@
 {
   "name": "ai-remote",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "private": true,
   "type": "module",
   "description": "Synapsez — a self-hosted, multi-provider agentic AI workspace you can drive from any device.",
@@ -18,6 +18,7 @@
     "db:copy": "node scripts/copy-database.js",
     "onboarding:record": "node scripts/record-onboarding.mjs",
     "scenes:gifs": "node scripts/scene-gifs.mjs --width 400 --fps 10 --seconds 3",
+    "domain:check": "node scripts/domain-check.mjs",
     "scenes:stills": "node scripts/scene-stills.mjs",
     "test:database": "node test/database.test.mjs",
     "lint": "eslint .",
@@ -28,7 +29,7 @@
     "storage": "node scripts/storage.js",
     "reset-password": "node scripts/reset-password.js",
     "make-admin": "node scripts/make-admin.js",
-    "test": "node test/i18n.test.mjs && node test/server-i18n.test.mjs && node test/mcp.test.mjs && node test/schema.test.mjs && node test/database.test.mjs && node test/stop.test.mjs && node test/stop-now.test.mjs && node test/event-mail.test.mjs && node test/fallback.test.mjs && node test/fallback-live.test.mjs && node test/orcarouter.test.mjs && node test/autopick.test.mjs && node test/research.test.mjs && node test/chart.test.mjs && node test/features.test.mjs && node test/cloudBrowser.test.mjs && node test/e2b.test.mjs && node test/calc.test.mjs && node test/world.test.mjs && node test/library.test.mjs && node test/google.test.mjs && node test/toolbudget.test.mjs && node test/extract.test.mjs && node test/webfetch.test.mjs && node test/favicon.test.mjs && node test/steps.test.mjs && node test/step-order.test.mjs && node test/themes.test.mjs && node test/mascots.test.mjs &&node test/builtin-skills.test.mjs && node test/office-look.test.mjs && node test/machine-care.test.mjs && node test/edit-in-place.test.mjs && node test/lookups.test.mjs && node test/data-route.test.mjs && node test/deidentify-corpus.test.mjs && node test/office-view.test.mjs && node test/isolation.test.mjs && node test/null-character.test.mjs && node test/live-runs.test.mjs && node test/agent.test.mjs && node test/quality.test.mjs && node test/http.test.mjs && node test/devices.test.mjs && node test/attachments.test.mjs && node test/clipboard.test.mjs && node test/markdown.test.mjs && node test/markdown-math.test.mjs && node test/email.test.mjs && node test/mail-template.test.mjs && node test/autopreview.test.mjs && node test/office.test.mjs && node test/office-images.test.mjs && node test/search.test.mjs && node test/workspace.test.mjs && node test/projects.test.mjs && node test/memory.test.mjs && node test/egress.test.mjs && node test/workflow.test.mjs && node test/system.test.mjs && node test/rag.test.mjs && node test/launcher.test.mjs && node test/desktop.test.mjs && node test/deploy.test.mjs",
+    "test": "node test/i18n.test.mjs && node test/server-i18n.test.mjs && node test/mcp.test.mjs && node test/schema.test.mjs && node test/database.test.mjs && node test/stop.test.mjs && node test/stop-now.test.mjs && node test/event-mail.test.mjs && node test/domain-check.test.mjs && node test/fallback.test.mjs && node test/fallback-live.test.mjs && node test/orcarouter.test.mjs && node test/autopick.test.mjs && node test/research.test.mjs && node test/chart.test.mjs && node test/features.test.mjs && node test/cloudBrowser.test.mjs && node test/e2b.test.mjs && node test/calc.test.mjs && node test/world.test.mjs && node test/library.test.mjs && node test/google.test.mjs && node test/toolbudget.test.mjs && node test/extract.test.mjs && node test/webfetch.test.mjs && node test/favicon.test.mjs && node test/steps.test.mjs && node test/plan-window.test.mjs && node test/step-order.test.mjs && node test/themes.test.mjs && node test/mascots.test.mjs && node test/builtin-skills.test.mjs && node test/shared-skills.test.mjs && node test/office-look.test.mjs && node test/machine-care.test.mjs && node test/edit-in-place.test.mjs && node test/lookups.test.mjs && node test/data-route.test.mjs && node test/deidentify-corpus.test.mjs && node test/office-view.test.mjs && node test/isolation.test.mjs && node test/null-character.test.mjs && node test/live-runs.test.mjs && node test/agent.test.mjs && node test/quality.test.mjs && node test/http.test.mjs && node test/devices.test.mjs && node test/attachments.test.mjs && node test/clipboard.test.mjs && node test/markdown.test.mjs && node test/markdown-math.test.mjs && node test/email.test.mjs && node test/mail-template.test.mjs && node test/autopreview.test.mjs && node test/office.test.mjs && node test/office-images.test.mjs && node test/search.test.mjs && node test/workspace.test.mjs && node test/projects.test.mjs && node test/memory.test.mjs && node test/egress.test.mjs && node test/workflow.test.mjs && node test/bots.test.mjs && node test/system.test.mjs && node test/rag.test.mjs && node test/launcher.test.mjs && node test/desktop.test.mjs && node test/deploy.test.mjs",
     "test:mail-template": "node test/mail-template.test.mjs",
     "test:live-runs": "node test/live-runs.test.mjs",
     "test:null-character": "node test/null-character.test.mjs",
@@ -44,10 +45,12 @@
     "test:chart": "node test/chart.test.mjs",
     "test:features": "node test/features.test.mjs",
     "test:step-order": "node test/step-order.test.mjs",
+    "test:plan-window": "node test/plan-window.test.mjs",
     "test:stop-now": "node test/stop-now.test.mjs",
     "test:themes": "node test/themes.test.mjs",
     "test:mascots": "node test/mascots.test.mjs",
     "test:builtin-skills": "node test/builtin-skills.test.mjs",
+    "test:shared-skills": "node test/shared-skills.test.mjs",
     "test:office-look": "node test/office-look.test.mjs",
     "test:machine-care": "node test/machine-care.test.mjs",
     "test:edit-in-place": "node test/edit-in-place.test.mjs",
@@ -68,15 +71,17 @@
     "test:http": "node test/http.test.mjs",
     "test:devices": "node test/devices.test.mjs",
     "test:deploy": "node test/deploy.test.mjs",
-    "test:ui": "node test/ui.test.mjs && node test/ui-chat.test.mjs && node test/ui-round.test.mjs && node test/ui-themes.test.mjs && node test/ui-stop.test.mjs && node test/ui-usage-guide.test.mjs && node test/ui-files.test.mjs",
+    "test:ui": "node test/ui.test.mjs && node test/ui-chat.test.mjs && node test/ui-round.test.mjs && node test/ui-themes.test.mjs && node test/ui-stop.test.mjs && node test/ui-usage-guide.test.mjs && node test/ui-files.test.mjs && node test/ui-bots.test.mjs",
     "test:ui-chat": "node test/ui-chat.test.mjs",
     "test:ui-stop": "node test/ui-stop.test.mjs",
+    "test:ui-bots": "node test/ui-bots.test.mjs",
     "test:ui-usage-guide": "node test/ui-usage-guide.test.mjs",
     "test:attachments": "node test/attachments.test.mjs",
     "test:projects": "node test/projects.test.mjs",
     "test:memory": "node test/memory.test.mjs",
     "test:egress": "node test/egress.test.mjs",
     "test:workflow": "node test/workflow.test.mjs",
+    "test:bots": "node test/bots.test.mjs",
     "test:sandbox": "node test/sandbox.test.mjs",
     "test:e2b": "node test/e2b.test.mjs",
     "e2b:probe": "node scripts/e2b-probe.mjs",
@@ -146,7 +151,11 @@
     "ws": "^8.21.1"
   },
   "overrides": {
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "test-exclude": {
+      "glob": "^14.0.3",
+      "minimatch": "^11.0.4"
+    }
   },
   "allowScripts": {
     "@google/genai": false,

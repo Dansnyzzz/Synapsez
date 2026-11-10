@@ -991,16 +991,64 @@ export const RESET_WORDS = {
   },
 };
 
+/** What the sign-up confirmation says (owner, 2026-11-09). */
+export const CONFIRM_WORDS = {
+  en: {
+    subject: (code, brand) => `${code} is your ${brand} confirmation code`,
+    title: 'Confirm your email',
+    intro: 'Type this code into the sign-up page to finish making your account. It is good for 30 minutes and works once.',
+    yourCode: 'Your code',
+    orLink: 'Or open the link instead:',
+    button: 'Confirm my email',
+    paste: 'If the button does not work, paste this into your browser:',
+    notYou: 'If you did not sign up, ignore this message: without the code, no account is made in your name.',
+    text: (code, brand, link) =>
+      `Your ${brand} confirmation code is ${code}\n\nIt expires in 30 minutes and can only be used once. You can also open this link:\n${link}\n\n` +
+      'If you did not sign up, ignore this message: without the code, no account is made in your name.',
+  },
+  vi: {
+    subject: (code, brand) => `${code} là mã xác nhận ${brand} của bạn`,
+    title: 'Xác nhận email',
+    intro: 'Nhập mã này vào trang đăng ký để hoàn tất tạo tài khoản. Mã có hiệu lực trong 30 phút và chỉ dùng được một lần.',
+    yourCode: 'Mã của bạn',
+    orLink: 'Hoặc mở liên kết:',
+    button: 'Xác nhận email',
+    paste: 'Nếu nút không hoạt động, hãy dán địa chỉ này vào trình duyệt:',
+    notYou: 'Nếu bạn không đăng ký, hãy bỏ qua email này: không có mã thì không tài khoản nào được tạo bằng tên bạn.',
+    text: (code, brand, link) =>
+      `Mã xác nhận ${brand} của bạn là ${code}\n\nMã hết hạn sau 30 phút và chỉ dùng được một lần. Bạn cũng có thể mở liên kết:\n${link}\n\n` +
+      'Nếu bạn không đăng ký, hãy bỏ qua email này: không có mã thì không tài khoản nào được tạo bằng tên bạn.',
+  },
+};
+
+/**
+ * The sign-up confirmation: the reset's card, in its own words.
+ *
+ * @param {{ brand: string, code: string, link: string, language?: string }} options
+ */
+export function confirmMessage(options) {
+  return codeMessage({ ...options, words: CONFIRM_WORDS });
+}
+
 /**
  * The password-reset message: a security card, the code large and first, then
  * a button, then the raw link for a client that will not show buttons.
  *
  * @param {{ brand: string, code: string, link: string, language?: string }} options
  */
-export function resetMessage({ brand, code, link, language = 'en' }) {
+export function resetMessage(options) {
+  return codeMessage({ ...options, words: RESET_WORDS });
+}
+
+/**
+ * A code to type, large and first, then a button and the raw link.
+ *
+ * @param {{ brand: string, code: string, link: string, language?: string, words: typeof RESET_WORDS }} options
+ */
+function codeMessage({ brand, code, link, language = 'en', words }) {
   const theme = KINDS.security;
   const lang = language === 'vi' ? 'vi' : 'en';
-  const w = RESET_WORDS[lang];
+  const w = words[lang];
   const content =
     `<p style="${P}">${escapeHtml(w.intro)}</p>` +
     `<table class="sx-facts" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px;background:${theme.soft};border-radius:12px"><tr>` +

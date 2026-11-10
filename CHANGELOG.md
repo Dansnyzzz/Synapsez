@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-10 — A real Bot page, skills people share, Progress as a line, a confirmed email, the address checked
+
+**Progress** (`public/js/plan-window.js`, `public/js/uploads-view.js`, `public/js/rail.js`). A line down the Progress list instead of a blue band; while it runs, the current step, the two before it and what is still to come, the rest behind "N earlier steps"; once finished, the last two with the tick; "Step x of y". **Used in this session** sits above Outputs, a row per message that brought files, and opens an Uploaded files window with the list on the left and the preview on the right (pictures, PDFs, workbooks with their sheets).
+
+**Skills people share** (`server/skills.js`, `public/js/customize.js`; schema 41). A skill can be shared to Discover, skill by skill (off by default), after a safety scan that runs again on every edit. Discover lists shared skills newest first, under the author's public name; adding one keeps a reference, so the author's edit reaches everyone who added it, and an un-shared or deleted one says why. Administrators can take one off Discover. Synapsez's own skills are no longer listed, and still work.
+
+**Sign-up confirms the email** (`server/auth.js`). A 6-digit code (or the link) before the account is used, wherever mail can be sent (`EMAIL_CONFIRMATION`); an address never confirmed is held a day. Event emails go only to confirmed addresses. A browser that signed in with the right password is remembered, so strangers guessing from many addresses cannot lock its owner out of signing in or resetting.
+
+**Theme files** (`server/sceneAssets.js`, `server/scenes/`). Each theme's scene, still and GIF is served from the server: everybody's once out, an administrator's or holder's before, a 404 to anyone else.
+
+**Address safety** (`server/domainCheck.js`; Settings → System; `npm run domain:check`; `docs/domain-security.md`). DNSSEC, HTTPS, HSTS, the preload list, CAA and the sender's SPF/DMARC, checked live. HSTS is two years with preload.
+
+**Prices** are the providers' own, nothing added (`PRICE_MARKUP` defaults to 0).
+
+**Fixed.** The cloud browser's downloads are tidied again after a week, never one a card points at; a sponsor title with no money behind it is not drawn when the page opens; an administrator's theme badge, gift and take-back reach their security record; `glob` and `minimatch` under `c8` patched (`npm audit`: 0). Privacy notice privacy-2026-11-10.
+
+
+**Automations** (`public/js/automations.js`, `public/js/automation-status.js`, `server/routes/automations.js`). The Workflows + Scheduled page that was called Bot for a day is Automations (Tự động hoá), under the alarm clock. Addresses are `#automations/<tab>[/<id>]`; old `#bot/workflows…` and `#bot/scheduled…` links land on the same tab and item. The summary route is `/api/automations/summary`. Nothing else changed.
+
+**Bot** (`public/js/bots.js`, `bots-settings.js`, `bots-usage.js`, `bot-mentions.js`, `bot-avatar.js`; `server/bots/`; `server/routes/bots.js`), modelled on DS Bot's design (NOTICE). Every account gets Chief, Chief of Staff; asked, it creates bots and group chats with its own tools. A bot runs on its own model with its role, your instructions and its memory in the prompt (memory as background, never orders), and keeps its memory with `remember` / `forget`. Group chats: the admin answers a message that calls nobody; `@Name` (with a picker) calls a bot straight; a bot's `@Name` hands work on, the member works in its own context for that group and posts back, and the asker answers what came back. Six hand-offs per message at most; one Stop stops every member. Group memory is the group's. Details panel (model, instructions, memory, usage) and Bot settings (Bots, Group chats, Usage by time, bot and model; links to Connectors, Automations and Feedback). Schema 42: `bots`, `bot_groups`, `bot_group_members`, `bot_memory`, `chats.bot_id` / `bot_group_id`, `usage_events.bot_id`.
+
 ## 2026-11-09 — The Bot page, a creature for every title, the aurora week, a disk that tidies itself
 
 **Bot** (`public/js/bot.js`, `public/js/bot-status.js`, `server/routes/bot.js`). Workflows and scheduled tasks are one sidebar item with two tabs, from a study of Fei2411/DS-Bot. Every row says its state in words; the rail counts what needs you; Run now and Stop on the row; a workflow keeps its last ten runs and takes permissions and a project (schema 40); a resumed step is told to check what it already did.

@@ -27,12 +27,15 @@ import { createScreen } from './screen.js';
 import { createViewer } from './viewer.js';
 import { shouldAutoPreview } from './autopreview.js';
 import { createPages } from './pages.js';
-import { createBotBadge, readBotHash, lastBotTab } from './bot.js';
+import { createAutoBadge, readAutoHash, lastAutoTab } from './automations.js';
+import { createBotPage, readBotsHash } from './bots.js';
 import { createProjectPage } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES, localeTag } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
 import { humanSize, localMoment, localTimes } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
+import { planWindow, samePlan } from './plan-window.js';
+import { createUploadsView } from './uploads-view.js';
 import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
@@ -99,15 +102,19 @@ const viewer = createViewer({
   },
 });
 
+/** One message's files, in a window of their own. See uploads-view.js. */
+const uploadsView = createUploadsView();
+
 /**
- * What this conversation made and what it is working from, under the plan in
- * the side panel. See rail.js.
+ * What this conversation was given, what it made and what it is working from,
+ * under the plan in the side panel. See rail.js.
  */
 const rail = createRail({
   api,
   openFile: (file) => viewer.open(file),
   openSettings: (tab) => openSettings(tab),
   openPane: (title, html) => openToolPane(title, html),
+  openUploads: (files, returnTo) => uploadsView.open(files, returnTo),
 });
 
 /**
@@ -369,7 +376,7 @@ const suggestions = () => [
 
 /* ── boot ──────────────────────────────────────────────────────── */
 
-/** 'signin' | 'signup' | 'forgot' | 'reset' */
+/** 'signin' | 'signup' | 'forgot' | 'reset' | 'confirm' */
 let gateMode = 'signin';
 let session = null;
 let resetToken = null;
@@ -403,6 +410,18 @@ async function boot() {
   startInsights(session.insights);
   const insightsNote = document.getElementById('insights-note');
   if (insightsNote) insightsNote.hidden = !session.insights;
+
+  // The link in a sign-up's confirmation email: confirmed and signed in, or told why not.
+  const confirmToken = takeUrlToken('confirm');
+  if (confirmToken) {
+    try {
+      await api.confirmEmail({ token: confirmToken });
+      session = await api.session();
+    } catch (err) {
+      gateMode = 'confirm';
+      queueMicrotask(() => fail(err.message || t('gate.error.generic')));
+    }
+  }
 
   resetToken = takeUrlToken('reset');
   if (resetToken) {
@@ -546,7 +565,8 @@ function showGate() {
 
   renderGateMode();
   // A remembered address means the only thing left to type is the password.
-  if (gateMode === 'reset') $('gate-resetcode').focus();
+  if (gateMode === 'confirm') $('gate-confirmcode').focus();
+  else if (gateMode === 'reset') $('gate-resetcode').focus();
   else if (remembered && gateMode === 'signin') $('gate-password').focus();
   else $('gate-email').focus();
 }
@@ -559,8 +579,11 @@ function renderGateMode() {
   const signup = gateMode === 'signup';
   const forgot = gateMode === 'forgot';
   const reset = gateMode === 'reset';
+  const confirm = gateMode === 'confirm';
 
-  $('gate-sub').textContent = reset
+  $('gate-sub').textContent = confirm
+    ? t('gate.sub.confirm')
+    : reset
     ? t('gate.sub.reset')
     : forgot
       ? t('gate.sub.forgot')
@@ -574,6 +597,7 @@ function renderGateMode() {
   // Following the emailed link fills the token in instead, so the code box hides.
   $('gate-accounts').hidden = false;
   $('gate-newpass').hidden = !reset;
+  $('gate-confirm').hidden = !confirm;
   $('gate-resetcode').hidden = !!resetToken;
   $('gate-username').hidden = !signup;
   $('gate-email').hidden = false;
@@ -588,8 +612,8 @@ function renderGateMode() {
   identity.placeholder = signup ? 'you@example.com' : t('gate.ph.identifier');
   identity.setAttribute('aria-label', signup ? t('gate.email') : t('gate.identifier'));
   identity.title = signup ? t('gate.email') : t('gate.identifier');
-  $('gate-password-field').hidden = forgot || reset;
-  $('gate-totp').hidden = !needsTotp || signup || forgot || reset;
+  $('gate-password-field').hidden = forgot || reset || confirm;
+  $('gate-totp').hidden = !needsTotp || signup || forgot || reset || confirm;
   $('gate-password').autocomplete = signup ? 'new-password' : 'current-password';
 
   // Only sign-in offers to be remembered. Signing up already leaves you signed
@@ -603,7 +627,9 @@ function renderGateMode() {
   setRevealed($('gate-password'), false);
   setRevealed($('gate-newpassword'), false);
 
-  $('gate-submit').textContent = reset
+  $('gate-submit').textContent = confirm
+    ? t('gate.submit.confirm')
+    : reset
     ? t('gate.submit.reset')
     : forgot
       ? t('gate.submit.forgot')
@@ -616,10 +642,10 @@ function renderGateMode() {
   // The one exception is a deployment that has closed registration — offering
   // a sign-up that will be refused is worse than not offering it.
   const canSignUp = session.signupOpen !== false || session.needsSetup;
-  $('gate-switch').hidden = reset || (!signup && !forgot && !canSignUp);
+  $('gate-switch').hidden = reset || (!signup && !forgot && !confirm && !canSignUp);
   $('gate-switch').textContent =
-    signup || forgot ? t('gate.switch.toSignin') : t('gate.switch.toSignup');
-  $('gate-forgot').hidden = signup || forgot || reset;
+    signup || forgot || confirm ? t('gate.switch.toSignin') : t('gate.switch.toSignup');
+  $('gate-forgot').hidden = signup || forgot || reset || confirm;
 }
 
 function setGateMode(mode) {
@@ -650,6 +676,30 @@ $('gate-switch').addEventListener('click', async () => {
 
 $('gate-forgot').addEventListener('click', () => setGateMode('forgot'));
 
+/** The code box, with what was sent and where. @param {string} [email] */
+function askForConfirmation(email) {
+  if (email) /** @type {HTMLInputElement} */ ($('gate-email')).value = email;
+  /** @type {HTMLInputElement} */ ($('gate-confirmcode')).value = '';
+  setGateMode('confirm');
+  note(t('gate.note.confirmSent', { email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim() }));
+  $('gate-confirmcode').focus();
+}
+
+// Another code, said the same whether or not the address waits for one.
+$('gate-resend').addEventListener('click', async () => {
+  const button = /** @type {HTMLButtonElement} */ ($('gate-resend'));
+  button.disabled = true;
+  $('gate-error').hidden = true;
+  try {
+    await api.resendConfirmation(/** @type {HTMLInputElement} */ ($('gate-email')).value.trim());
+    note(t('gate.note.confirmResent'));
+  } catch (err) {
+    fail(err.message || t('gate.error.generic'));
+  } finally {
+    button.disabled = false;
+  }
+});
+
 // What Synapsez is, under the form: one press away rather than a paragraph
 // filling the card (owner, 2026-10-26) — and still on the home page Google reads.
 $('gate-what').addEventListener('click', () => {
@@ -666,7 +716,13 @@ $('gate-form').addEventListener('submit', async (event) => {
   submit.disabled = true;
 
   try {
-    if (gateMode === 'forgot') {
+    if (gateMode === 'confirm') {
+      await api.confirmEmail({
+        email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim(),
+        code: /** @type {HTMLInputElement} */ ($('gate-confirmcode')).value.trim(),
+      });
+      session = await api.session();
+    } else if (gateMode === 'forgot') {
       await api.forgotPassword($('gate-email').value.trim());
       setGateMode('reset');
       // Deliberately identical whether or not the address exists.
@@ -715,6 +771,11 @@ $('gate-form').addEventListener('submit', async (event) => {
       if (result.emailBackend === 'console') {
         toast(t('gate.note.noMail'));
       }
+      // The account waits for its email to be confirmed: the code box, not the app.
+      if (result.confirm) {
+        askForConfirmation(result.email);
+        return;
+      }
     } else {
       const email = $('gate-email').value.trim();
       const remember = $('gate-remember').checked;
@@ -731,8 +792,12 @@ $('gate-form').addEventListener('submit', async (event) => {
     $('gate').hidden = true;
     await start();
   } catch (err) {
-    // A second factor is a step, not a failure — reveal the box and keep going.
-    if (err.code === 'totp_required') {
+    // An account whose email is not confirmed yet: a fresh code went out, so ask for it.
+    if (err.code === 'email_unconfirmed') {
+      needsTotp = false;
+      askForConfirmation(err.email);
+      fail(err.message);
+    } else if (err.code === 'totp_required') {
       needsTotp = true;
       renderGateMode();
       $('gate-totp').value = '';
@@ -782,7 +847,8 @@ async function start() {
   await refreshChats();
   afterGoogleSignIn();
   openConnectorFromLink();
-  openBotFromLink();
+  openAutoFromLink();
+  openBotsFromLink();
   openSettingsFromLink();
   // Never fatal: a sidebar section that could not load is a missing list, not
   // a broken app, and throwing here would take the conversations with it.
@@ -961,12 +1027,12 @@ const busyWithList = () => !!document.querySelector('#chat-list .chat-item--edit
  *
  * It was, above the conversations, and a handful of tasks pushed the whole
  * conversation history down off the screen — the list you use every minute
- * displaced by one you check once a week. The Bot page (and the pill on the
+ * displaced by one you check once a week. The Automations page (and the pill on the
  * card that set a task up) is where they live. What the places that announce
- * "tasks changed" still move is the count on the rail's Bot item.
+ * "tasks changed" still move is the count on the rail's Automations item.
  */
 async function refreshTasks() {
-  await botBadge.refresh();
+  await autoBadge.refresh();
 }
 
 /**
@@ -1076,8 +1142,8 @@ async function refreshChats({ background = false } = {}) {
   state.projects = projects;
   state.groups = groups;
   scheduleChatRefresh();
-  // A run starting or ending here is the moment the Bot badge may have changed.
-  botBadge.nudge(chats);
+  // A run starting or ending here is the moment the Automations badge may have changed.
+  autoBadge.nudge(chats);
 
   const signature = JSON.stringify([
     state.chatId,
@@ -1953,6 +2019,7 @@ function startRename(chat, titleButton) {
  */
 function leavePages() {
   projectPage.hide();
+  botPage.hide();
   pages.hide();
   onPage(false);
 }
@@ -1960,6 +2027,7 @@ function leavePages() {
 /** The reverse: a shelf or a project page takes the conversation's place. */
 function gotoShelf(which) {
   projectPage.hide();
+  botPage.hide();
   pages.show(which);
   onPage(true);
 }
@@ -2181,6 +2249,7 @@ function clearConversationView() {
   state.liveTools = [];
   state.sentFiles = [];
   state.sentTexts = [];
+  state.sentUploads = [];
   closeToolPane();
   renderContext(null);
   renderFilesChip();
@@ -2192,7 +2261,7 @@ function clearConversationView() {
   // The composer may still be showing the last one's queue.
   renderQueue();
   renderUsage({ input: 0, output: 0, cost: 0, priced: false });
-  renderProgress([]);
+  renderProgress([], { fresh: true });
   resetDetailAutoOpen();
   $('messages').innerHTML = '';
   $('status-host').innerHTML = '';
@@ -2313,6 +2382,7 @@ async function openChat(id, { restoring = false } = {}) {
   state.liveTools = [];
   state.sentFiles = [];
   state.sentTexts = [];
+  state.sentUploads = [];
   closeToolPane();
   renderFilesChip();
   renderRail();
@@ -2427,7 +2497,7 @@ async function openChat(id, { restoring = false } = {}) {
     .reverse()
     .flatMap((m) => m.toolCalls || [])
     .find((c) => c.name === 'update_plan');
-  renderProgress(lastPlan?.input?.steps || []);
+  renderProgress(lastPlan?.input?.steps || [], { fresh: true });
   renderContext(context);
   // The token line describes the turn that just ran, and no turn has run in
   // this conversation yet — the previous chat's number is not this one's.
@@ -2687,6 +2757,23 @@ function settleAttachments(node, previews, ids) {
   }
 }
 
+/**
+ * The files a message just took, for "Used in this session" in the side panel —
+ * the transcript it is drawn from only holds them after a reload. Only for the
+ * conversation on screen: the panel is about that one.
+ *
+ * @param {string} chatId  where the message went
+ * @param {string | undefined} messageId  so the stored copy is not counted twice
+ * @param {{ name: string, mime?: string }[]} previews  in the same order as `ids`
+ * @param {string[]} ids
+ */
+function noteUploads(chatId, messageId, previews, ids) {
+  if (!ids.length || state.chatId !== chatId) return;
+  const files = ids.map((id, i) => ({ id, name: previews[i]?.name || '', mime: previews[i]?.mime || '' }));
+  state.sentUploads = [...(state.sentUploads || []), { messageId: messageId || null, files }];
+  renderRail();
+}
+
 function noteFile(file) {
   if (!file?.id) return;
   state.files = [file, ...(state.files || []).filter((other) => other.id !== file.id)];
@@ -2823,8 +2910,8 @@ const pages = createPages({
   // The sidebar keeps its own short list of scheduled work; a task written
   // anywhere has to reach it.
   onTasksChanged: () => refreshTasks().catch(() => {}),
-  // The Bot page counted what needs the person: the rail says the same.
-  onBotSummary: (summary) => botBadge.paint(summary),
+  // The Automations page counted what needs the person: the rail says the same.
+  onAutoSummary: (summary) => autoBadge.paint(summary),
   // Restored or deleted on the Archive shelf: the sidebar list changes with it.
   onChatsChanged: () => refreshChats().catch(() => {}),
   onChatDeleted: (id) => chatGone(id),
@@ -2843,6 +2930,7 @@ const pages = createPages({
   // The same moves as `gotoShelf`, for the rail's way onto the workflow form.
   onShowPage: () => {
     projectPage.hide();
+    botPage.hide();
     onPage(true);
   },
 });
@@ -2873,6 +2961,7 @@ const projectPage = createProjectPage({
   draftReady: () => staged.some((f) => f.id),
   // The page is on screen: what is already picked is drawn above its box.
   onShow: () => {
+    botPage.hide();
     renderStaged();
     renderSkillChips();
   },
@@ -2927,25 +3016,56 @@ $('open-artifacts').addEventListener('click', () => {
 });
 
 /**
- * Bot: workflows and scheduled tasks, one page with the two as tabs (owner,
+ * Automations: workflows and scheduled tasks, one page with the two as tabs (owner,
  * 2026-11-08), opened at the tab used last. Its badge counts what needs the
- * person, refreshed by the moments listed in bot.js — no timer of its own.
+ * person, refreshed by the moments listed in automations.js — no timer of its own.
  */
-const botBadge = createBotBadge({ api, button: $('open-bot'), badge: $('bot-badge') });
-$('open-bot').addEventListener('click', () => {
+const autoBadge = createAutoBadge({ api, button: $('open-automations'), badge: $('auto-badge') });
+$('open-automations').addEventListener('click', () => {
   closeSidebar();
-  gotoShelf(lastBotTab());
+  gotoShelf(lastAutoTab());
 });
 
-/** A `#bot/…` address — a reload on the Bot page, or a link to it — lands there. */
-function openBotFromLink() {
-  const route = readBotHash();
+/** An `#automations/…` address (or an old `#bot/workflows…` one) — a reload on the Automations page, or a link to it — lands there. */
+function openAutoFromLink() {
+  const route = readAutoHash();
   if (!route || !state.boot) return;
   projectPage.hide();
+  botPage.hide();
   onPage(true);
-  pages.showBot(route.tab, route.id).catch((err) => toast(err.message, 'error'));
+  pages.showAutomations(route.tab, route.id).catch((err) => toast(err.message, 'error'));
 }
-window.addEventListener('hashchange', openBotFromLink);
+window.addEventListener('hashchange', openAutoFromLink);
+
+/**
+ * Bot: the person's team of bots, led by Chief, and their group chats (bots.js, owner
+ * 2026-11-09). A page of its own in the conversation's place, like a project's.
+ */
+const botPage = createBotPage({
+  toast,
+  openSettings: (tab) => openSettings(tab),
+  openFeedback: () => feedback.open(),
+  openAutomations: (tab) => gotoShelf(tab),
+  onShow: () => {
+    projectPage.hide();
+    pages.hide();
+    $('thread').hidden = true;
+    $('dock').hidden = true;
+    onPage(true);
+  },
+});
+$('open-bots').addEventListener('click', () => {
+  closeSidebar();
+  botPage.show().catch((err) => toast(err.message, 'error'));
+});
+
+/** A `#bot`, `#bot/b/<bot>` or `#bot/g/<group>` address lands on the Bot page there. */
+function openBotsFromLink() {
+  const route = readBotsHash();
+  if (!route || !state.boot) return;
+  botPage.show(route.id ? route : null).catch((err) => toast(err.message, 'error'));
+}
+window.addEventListener('hashchange', openBotsFromLink);
 
 /** Everything archived, with the way back. Opening one reads it; Restore puts it back. */
 $('open-archive').addEventListener('click', () => {
@@ -3266,6 +3386,10 @@ function beginEdit(message, text) {
     } catch {
       if (here()) state.transcript = (state.transcript || []).slice(0, Math.max(0, state.transcript.findIndex((m) => m.id === id) + 1));
     }
+    // The files this tab sent are in what was just read. If the read failed,
+    // some may have gone with the turns the edit took away, and listing a gone
+    // turn's files is worse than missing a row until the next reload.
+    if (here()) state.sentUploads = [];
     if (here()) renderRail();
 
     await stream(undefined, undefined, { chatId });
@@ -3408,6 +3532,7 @@ $('composer').addEventListener('submit', async (event) => {
     const { message } = await api.sendMessage(chatId, text, ids, intent, skills);
     reached = true;
     if (message?.id) node.dataset.messageId = message.id;
+    noteUploads(chatId, message?.id, sending, ids);
     settleAttachments(node, sending, ids);
     await refreshChats();
     if (here()) $('chat-title').textContent = state.chats.find((c) => c.id === chatId)?.title || t('chat.untitled');
@@ -3572,6 +3697,7 @@ async function deliver(item, { interrupting = false, run = null, chatId = null }
     // Stamped after the fact: the id only exists once the server has it, and
     // without it the bubble has nothing to edit.
     if (message?.id) node.dataset.messageId = message.id;
+    noteUploads(target, message?.id, item.files || [], item.ids || []);
     settleAttachments(node, item.files || [], item.ids || []);
     if (interrupting && (!run || onScreen(run))) toast(t('status.queued'));
     return true;
@@ -4966,6 +5092,10 @@ async function changeLanguage(language) {
   // `applyI18n` also put the jump button's idle label back, which is wrong
   // while an answer is coming; this says the one that applies.
   paintJump();
+  // The plan's "Step 2 of 7" and its fold button, and the side panel's
+  // sections, are built from script too.
+  paintProgress();
+  renderRail();
   /**
    * And the sidebar, whose headings are built from script too.
    *
@@ -6116,6 +6246,8 @@ const customize = createCustomize({
   onPlugins: () => paintPluginSwitches(),
   selectTab: (tab) => selectTab(tab),
   editSkill: (skill) => skillEditor.open(skill),
+  // Somebody else's shared skill, read-only, with Add when it can be added (owner, 2026-11-09).
+  viewSkill: (skill, view) => skillEditor.open(skill, { view }),
   /**
    * Skills → Add → Create with Claude (owner, 2026-11-01): a new conversation
    * with the request written and skill-creator picked — sent when they press
@@ -6130,7 +6262,12 @@ const customize = createCustomize({
     plusDeps.pickSkill('skill-creator');
   },
 });
-const skillEditor = createSkillEditor({ onSaved: () => customize.loadSkills().catch(() => {}), owner: () => state.boot?.user?.id });
+const skillEditor = createSkillEditor({
+  onSaved: () => customize.loadSkills().catch(() => {}),
+  owner: () => state.boot?.user?.id,
+  // Where Share to Discover starts for a new skill: the server's SHARE_BY_DEFAULT, as /api/skills last said it.
+  shareByDefault: () => customize.shareByDefault(),
+});
 
 /**
  * The theme as Claude draws it: three faces — the system's, light, dark — one
@@ -6169,7 +6306,64 @@ function paintSystem() {
     .catch(() => {});
   paintPluginSwitches();
   paintDisk();
+  $('system-domain').hidden = state.boot?.user?.role !== 'admin';
 }
+
+/**
+ * Whether this site's address is safe from spoofing (owner, 2026-11-09), as the server
+ * measured it just now: each check with its verdict, and what to do where it falls short.
+ * Built from the server's facts with textContent only.
+ */
+async function paintDomainChecks() {
+  const list = $('domain-checks');
+  const button = /** @type {HTMLButtonElement} */ ($('domain-check'));
+  button.disabled = true;
+  list.replaceChildren(Object.assign(document.createElement('li'), { className: 'domain-checks__busy', textContent: t('domain.checking') }));
+  try {
+    const result = await api.domainCheck();
+    const rows = (result.checks || []).map((check) => {
+      const facts = check.facts || {};
+      const words = {
+        ...facts,
+        issuers: Array.isArray(facts.issuers) ? facts.issuers.join(', ') : '',
+        validatedBy: Array.isArray(facts.validatedBy) ? facts.validatedBy.join(', ') : '',
+        days: Math.round((Number(facts.maxAge) || 0) / 86_400),
+        zone: facts.unsignedZone || result.host || '',
+        dmarc: facts.dmarc || t('domain.none'),
+        spf: facts.spf ? t('domain.yes') : t('domain.no'),
+      };
+      const row = document.createElement('li');
+      row.className = `domain-checks__row is-${check.verdict}`;
+      const mark = document.createElement('span');
+      mark.className = 'domain-checks__mark';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.textContent = check.verdict === 'ok' ? '✓' : check.verdict === 'warn' ? '!' : check.verdict === 'fail' ? '✕' : '?';
+      const body = document.createElement('div');
+      const said = document.createElement('p');
+      said.className = 'domain-checks__said';
+      said.textContent = `${t(`domain.verdict.${check.verdict}`)}: ${t(`domain.${check.id}.${check.verdict}`, words)}`;
+      body.append(said);
+      if (check.verdict !== 'ok') {
+        const fixKey = check.id === 'dnssec' && facts.platform ? 'domain.dnssec.fixPlatform' : `domain.${check.id}.fix`;
+        const fix = document.createElement('p');
+        fix.className = 'domain-checks__fix';
+        fix.textContent = t(fixKey, words);
+        body.append(fix);
+      }
+      row.append(mark, body);
+      return row;
+    });
+    const when = document.createElement('li');
+    when.className = 'domain-checks__when';
+    when.textContent = t('domain.checkedAt', { host: result.host || '', when: new Date(result.checkedAt).toLocaleString(localeTag()) });
+    list.replaceChildren(...rows, when);
+  } catch (err) {
+    list.replaceChildren(Object.assign(document.createElement('li'), { className: 'domain-checks__busy', textContent: err.message || t('domain.failed') }));
+  } finally {
+    button.disabled = false;
+  }
+}
+$('domain-check').addEventListener('click', () => void paintDomainChecks());
 
 /**
  * Under "Computer use": how full the cloud computer's disk is, and what tidying freed
@@ -7626,37 +7820,33 @@ function resetDetailAutoOpen() {
   detailShownForRun = false;
 }
 
+/** The plan on screen, normalised — kept so the fold button can redraw it. */
+let progressItems = [];
+/** The person pressed "N earlier steps": every step shows until they fold it again. */
+let progressOpen = false;
+
 /**
  * Show the plan beside the conversation as it is worked through.
  *
  * The same steps still appear inline in the transcript, because that is the
  * record of what happened; this is the live view of where things stand, which
  * is a different question and wants to stay put rather than scroll away.
+ *
+ * @param {any} steps
+ * @param {{ fresh?: boolean }} [options]  `fresh`: another conversation's plan,
+ *   which starts folded whatever the last one was doing.
  */
-function renderProgress(steps) {
-  const list = $('progress-steps');
+function renderProgress(steps, { fresh = false } = {}) {
   // Normalised here as well as on the server: after a reload the steps come
   // from the call's raw arguments, and a model that marked four steps in
   // progress drew four highlighted rows where the live view had shown one.
   const items = normalisePlan(steps);
+  // Opened earlier steps stay open while the same plan ticks over; a new plan starts folded.
+  if (fresh || !samePlan(progressItems, items)) progressOpen = false;
+  progressItems = items;
 
   $('progress-empty').hidden = items.length > 0;
-
-  // This rail rewrites itself as the work moves and said nothing to a screen
-  // reader. Announced politely so the current step is read when it changes
-  // without cutting across whatever is already being spoken.
-  list.setAttribute('aria-live', 'polite');
-
-  // The step being worked on carries its detail, so the rail says what "Read
-  // chapter 2" actually involves; the rest keep it for the tooltip.
-  list.innerHTML = items.map((s) => planItemHtml(s, { withDetail: s.status === 'in_progress' })).join('');
-
-  const done = items.filter((s) => s.status === 'done').length;
-  // Was `${done} of ${items.length}`, which put an English "of" in the middle of
-  // a Vietnamese interface. The separator belongs to the language, not the code.
-  $('progress-count').textContent = items.length
-    ? t('chat.planCount', { done, total: items.length })
-    : '';
+  paintProgress();
 
   // A plan is the assistant saying "this will take a while" — worth showing
   // without being asked, but only the first time, so closing it stays closed.
@@ -7665,6 +7855,49 @@ function renderProgress(steps) {
     setDetail(true);
   }
 }
+
+const FOLD_CHEVRON =
+  '<svg class="pfold__chev" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>';
+
+/**
+ * Draw the plan as Claude's panel does (owner, 2026-11-09): a line down the marks
+ * so it is plain where the run is, the step it is on, the two before it and what
+ * is still to come; earlier steps behind "N earlier steps". Which steps show is
+ * plan-window.js's to decide.
+ */
+function paintProgress() {
+  const items = progressItems;
+  const list = $('progress-steps');
+  const view = planWindow(items, progressOpen);
+
+  // This rail rewrites itself as the work moves and said nothing to a screen
+  // reader. Announced politely so the current step is read when it changes
+  // without cutting across whatever is already being spoken.
+  list.setAttribute('aria-live', 'polite');
+
+  // The step being worked on carries its detail, so the rail says what "Read
+  // chapter 2" actually involves; the rest keep it for the tooltip.
+  list.innerHTML = items
+    .slice(view.start)
+    .map((s) => planItemHtml(s, { withDetail: s.status === 'in_progress' }))
+    .join('');
+
+  const fold = $('progress-fold');
+  fold.hidden = !view.earlier;
+  fold.setAttribute('aria-expanded', String(progressOpen));
+  fold.innerHTML = progressOpen
+    ? `<span>${escapeHtml(t('progress.hideEarlier'))}</span>${FOLD_CHEVRON}`
+    : `<span>${escapeHtml(t(view.earlier === 1 ? 'progress.earlierOne' : 'progress.earlier', { n: view.earlier }))}</span>`;
+
+  // "Step 2 of 7": where the run is, as Claude says it. Was "1/7" — the steps
+  // done, which read as the step being worked on and was one behind it.
+  $('progress-count').textContent = items.length ? t('progress.stepOf', { step: view.current + 1, total: items.length }) : '';
+}
+
+$('progress-fold').addEventListener('click', () => {
+  progressOpen = !progressOpen;
+  paintProgress();
+});
 
 function openSidebar() {
   $('app').classList.add('is-open');

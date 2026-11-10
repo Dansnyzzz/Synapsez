@@ -6,7 +6,7 @@
  * the catalogue, so a new or redrawn scene without one fails rather than showing a
  * blank tile.
  *
- *   npm run scenes:stills                 every scene, into public/assets/scenes/
+ *   npm run scenes:stills                 every scene, into server/scenes/assets/
  *   node scripts/scene-stills.mjs --look <folder> [--only id,id] [--at 3,9,27] [--size 1280x720]
  *        full-size frames to look at, drawn the way the app shows them
  */
@@ -18,6 +18,14 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
+/** Each theme's own files live under server/ since 2026-11-09 (server/sceneAssets.js), at the same addresses. */
+const themes = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../server/scenes');
+/** Where a path is served from: a theme's file under server/scenes, anything else under public. @param {string} pathname */
+const fileFor = (pathname) => {
+  const own = /^\/(js|assets)\/scenes\/([a-z0-9-]+\.(?:js|webp|gif))$/.exec(pathname);
+  const there = own ? path.join(themes, own[1], own[2]) : null;
+  return there && fs.existsSync(there) ? there : path.join(root, pathname);
+};
 const args = process.argv.slice(2);
 const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
 const look = option('--look');
@@ -33,8 +41,8 @@ const server = http.createServer((req, res) => {
     res.end('<!doctype html><title>scenes</title><body style="margin:0;background:#000"></body>');
     return;
   }
-  const file = path.join(root, url.pathname);
-  if (!file.startsWith(root) || !fs.existsSync(file)) {
+  const file = fileFor(url.pathname);
+  if (!(file.startsWith(root) || file.startsWith(themes)) || !fs.existsSync(file)) {
     res.writeHead(404);
     res.end();
     return;
@@ -53,7 +61,7 @@ await page.goto(base);
 
 const ids = await page.evaluate(async () => Object.keys((await import('/js/scenes/catalog.js')).CATALOG));
 const wanted = ids.filter((id) => (only ? only.includes(id) : !id.startsWith('pet-')));
-const out = look ? path.resolve(look) : path.join(root, 'assets/scenes');
+const out = look ? path.resolve(look) : path.join(themes, 'assets');
 fs.mkdirSync(out, { recursive: true });
 
 /** One moment of one scene, on the page's own thread, returned as bytes. */

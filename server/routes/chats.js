@@ -325,6 +325,8 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       const chatId = req.params.id;
       const chat = await store.getChat(req.user.id, chatId);
       if (!chat) return res.status(404).json({ error: 'Chat not found' });
+      // A group's conversations are written by its round (routes/bots.js), never straight.
+      if (chat.bot_group_id) return res.status(409).json({ error: 'Send this in the group chat on the Bot page.', code: 'group_chat' });
 
       const text = String(req.body?.text || '').trim();
 

@@ -1,25 +1,25 @@
 /**
- * What this service charges on top of the provider's price.
+ * What this service adds on top of the provider's price: nothing, by default.
  *
- * The app is an intermediary: every price a person is shown — the per-million
- * rate in the picker, the "new model" notice, the cost of a turn, the month on
- * the usage page — is the provider's price plus this share, on input and output
- * alike. One number in one place, so no screen can show the bare provider rate
- * while another shows the marked-up one.
+ * Every price a person is shown — the per-million rate in the picker, the "new
+ * model" notice, the cost of a turn, the month on the usage page — is the
+ * provider's own price, as the provider sets it (owner, 2026-11-09; it was ten
+ * percent more until then). One number in one place still, so that if a share
+ * is ever added again no screen can show one rate while another shows the other.
  *
  * What is *stored* stays the provider's figure (`usage_events.cost_usd`,
  * `shared_models.price_in`). The markup is applied where a price is shown, so
  * changing it re-prices history consistently instead of mixing two rates in one
  * table, and so the audit trail keeps what was actually paid upstream.
  *
- * `PRICE_MARKUP` overrides it — a fraction, 0.1 for ten percent. A value that
- * is not a sane fraction is ignored rather than trusted: a typo of `10` would
+ * `PRICE_MARKUP` sets one — a fraction, 0.1 for ten percent. A value that is
+ * not a sane fraction is ignored rather than trusted: a typo of `10` would
  * otherwise show every price at eleven times what it is.
  */
 export const PRICE_MARKUP = (() => {
   const raw = process.env.PRICE_MARKUP;
   const n = raw == null || raw === '' ? NaN : Number(raw);
-  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 0.1;
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 0;
 })();
 
 /** A USD figure as shown to a person. Free stays free; unknown stays unknown. */

@@ -338,8 +338,16 @@ export function tidyScript(tier, { tmp = '/tmp' } = {}) {
       // person's own, anywhere in their folders, is theirs (review, 2026-11-09).
       `find . -maxdepth 1 -xdev -type f -name nohup.out -size +10M -user "$me" -exec sh -c 'for f do t="$(mktemp)" || continue; tail -c 1048576 -- "$f" > "$t" && cat -- "$t" > "$f"; rm -f -- "$t"; done' sh {} + 2>/dev/null`,
       `find ${scraps} -maxdepth 1 -xdev -type f -name 'synz-*.log' -size +10M -user "$me" -exec sh -c 'for f do t="$(mktemp)" || continue; tail -c 1048576 -- "$f" > "$t" && cat -- "$t" > "$f"; rm -f -- "$t"; done' sh {} + 2>/dev/null`,
-      // Copies of the conversation's files, which `bring` puts back, and what the cloud browser downloaded.
+      // Copies of the conversation's files, which `bring` puts back.
       `find incoming -xdev -type f -user "$me" ${DAY_OLD} -delete 2>/dev/null; find incoming -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null`,
+      /*
+       * What the cloud browser downloaded, untouched for a week — but never a file a card in a
+       * conversation points at: `SYNZ_KEEP` lists those, one path a line, as the rows say them
+       * (owner, 2026-11-09: left alone, downloads filled the disk). A file handed over from here
+       * is moved to handed/ first since that day (sandbox.js `keptAside`), so the list is for
+       * the ones handed over before.
+       */
+      `[ -d downloads ] && [ ! -L downloads ] && find downloads -xdev -type f -user "$me" -mmin +10080 -amin +10080 -print0 2>/dev/null | while IFS= read -r -d '' f; do printf '%s\\n' "\${SYNZ_KEEP-}" | grep -Fxq -e "$f" -e "$PWD/$f" -e "./$f" || rm -f -- "$f"; done; [ -d downloads ] && [ ! -L downloads ] && find downloads -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null`,
     );
   }
   if (level >= 3) {
@@ -422,6 +430,26 @@ async function diskRecord(userId) {
 }
 
 /**
+ * The paths cards point at, one a line, as the tidy compares them: a relative one without
+ * its `./` or `~/`, an absolute one as it is. None with a line break (it would be two
+ * lines), and no more than fits an environment variable comfortably.
+ *
+ * @param {string[]} paths
+ */
+export function keptPaths(paths) {
+  const lines = [];
+  let size = 0;
+  for (const raw of paths) {
+    const value = String(raw || '').replace(/^(?:\.\/|~\/)+/, '');
+    if (!value || /[\r\n\0]/.test(value)) continue;
+    if (size + value.length + 1 > 60_000) break;
+    lines.push(value);
+    size += value.length + 1;
+  }
+  return lines.join('\n');
+}
+
+/**
  * After a command: look at how full the disk is, and tidy as hard as that says when it
  * is due or a tier has been crossed. The machine is awake anyway. Never fails the
  * command it follows.
@@ -445,7 +473,9 @@ export async function tidyIfDue(userId, machine, shellFor, { signal, now = Date.
     // Before it runs: one that fails is not tried again after every command.
     record.tidiedAt = now;
     record.tier = plan.tier;
-    const done = await machine.runCommand({ ...shellFor(tidyScript(plan.tier), {}, { userBin: true }), timeoutMs: plan.tier > 1 ? 45_000 : 20_000, signal });
+    // The files cards point at, which a tidy never deletes, as a value and never inside the script.
+    const keep = plan.tier > 1 ? keptPaths(await getStore().machineFilePaths(userId).catch(() => [])) : '';
+    const done = await machine.runCommand({ ...shellFor(tidyScript(plan.tier), keep ? { SYNZ_KEEP: keep } : {}, { userBin: true }), timeoutMs: plan.tier > 1 ? 45_000 : 20_000, signal });
     const result = readTidy(await done.stdout());
     if (result) {
       record.percent = result.after;

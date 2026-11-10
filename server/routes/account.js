@@ -588,12 +588,16 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
   // are in it — a server's headers and environment, which hold its secrets, are
   // not. Left out, and said so in the README: usage figures, sign-in sessions and
   // the account's activity log, each shown in Settings, and keys and tokens.
+  // Whether each skill is shared, and the shared skills added (41): those are
+  // references to somebody else's, so by the name each had, not their words.
+  const added = (await store.listAddedSkills?.(userId)) || [];
   await write(
     `{"format":"synapsez-export","version":1,"exportedAt":${JSON.stringify(new Date().toISOString())},` +
       `"account":${JSON.stringify({ name: user.name, username: user.username ?? null, email: user.email, createdAt: user.created_at })},` +
       `"prefs":${JSON.stringify(prefs)},` +
       `"memory":${JSON.stringify(memory)},` +
-      `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, files: Array.isArray(s.files) ? s.files : [] })))},` +
+      `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, shared: !!s.shared_at, files: Array.isArray(s.files) ? s.files : [] })))},` +
+      `"addedSkills":${JSON.stringify(added.map((a) => ({ name: a.status === 'ok' ? a.name : a.added_name, addedAt: a.added_at, status: a.status })))},` +
       `"skillDraft":${JSON.stringify(skillDraft || null)},` +
       `"artifactData":${JSON.stringify(artifactData || {})},` +
       // The themes and titles the account holds, and since when (server/themes.js).

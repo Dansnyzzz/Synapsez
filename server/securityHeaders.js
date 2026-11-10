@@ -49,4 +49,13 @@ export const SECURITY_HEADERS = {
   'Permissions-Policy': 'geolocation=(), microphone=(), camera=(), interest-cohort=()',
 };
 
-export const HSTS = 'max-age=15552000; includeSubDomains';
+/**
+ * Two years, every subdomain, and eligible for the browsers' preload list (owner,
+ * 2026-11-09: the site's visitors must always reach the real one). Over HTTPS only, a
+ * browser that has seen it never again tries the address in the clear, so a spoofed
+ * DNS answer or a café's hijacking proxy has no plain-text page to hand back, and a
+ * certificate it cannot get for this name stops it. `preload` lets the owner submit a
+ * custom domain at hstspreload.org — a step that is slow to undo, so it is theirs; a
+ * `.app` address such as synapsez.vercel.app is preloaded by its top-level domain already.
+ */
+export const HSTS = 'max-age=63072000; includeSubDomains; preload';

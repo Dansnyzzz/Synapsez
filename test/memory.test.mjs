@@ -576,7 +576,8 @@ section('usage: what each provider reports, and what Synapsez counted');
   // CODE-066: the page's month line, for one provider, was summed from fifteen days of hours.
   const byProvider = route.body?.monthByProvider || {};
   check("the month, by provider, as the server counts it — not summed from the hours (CODE-066)",
-    byProvider.openrouter?.calls === 1 && byProvider.google?.calls === 1 && byProvider.google.cost > 0.001 && byProvider.google.cost < 0.0012 && !byProvider.orcarouter,
+    // The provider's own $0.001, nothing added (owner, 2026-11-09; it was ten percent more).
+    byProvider.openrouter?.calls === 1 && byProvider.google?.calls === 1 && Math.abs(byProvider.google.cost - 0.001) < 1e-9 && !byProvider.orcarouter,
     JSON.stringify(byProvider));
 
   // Live figures: asked of the account's own keys, never of the deployment's.

@@ -1153,3 +1153,98 @@ CREATE TABLE IF NOT EXISTS event_mail (
   ok      BOOLEAN NOT NULL DEFAULT TRUE,
   PRIMARY KEY (event, user_id)
 );
+
+-- 41: skills people share with each other (owner, 2026-11-09; server/skills.js).
+-- `shared_at`: when its author put it on Discover, NULL while it is theirs alone —
+-- every existing skill stays private. `hidden_at`: an administrator took it off
+-- Discover; sharing it again does not bring it back, only an administrator does.
+-- `scan`: what the safety scan found when it was last shared or edited while shared.
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ;
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS scan JSONB;
+CREATE INDEX IF NOT EXISTS skills_shared_idx ON skills (created_at DESC) WHERE shared_at IS NOT NULL;
+-- A shared skill somebody added: a reference, never a copy, so the author's edit
+-- reaches them the next time it is used. No foreign key to `skills` on purpose: when
+-- the author deletes it the row stays, with the name it had, so the person who added
+-- it is told it went rather than finding a gap. Their own account's going takes it.
+CREATE TABLE IF NOT EXISTS skill_adds (
+  user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  skill_id TEXT NOT NULL,
+  name     TEXT NOT NULL,
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS skill_adds_skill_idx ON skill_adds (skill_id);
+
+-- 42 (owner, 2026-11-09).
+-- Bots: long-lived helpers an account keeps, each with a name, a role, a creature
+-- (public/js/mascots/), a model of its own and instructions the person wrote. One is
+-- the account's main bot, Chief, made the first time the Bot page opens; the partial
+-- unique index is what stops two tabs opening it at once from making two. A name is
+-- unique in the account, whatever its case, because "@Name" has to call one bot.
+-- `model` NULL is the account's own model.
+CREATE TABLE IF NOT EXISTS bots (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  role         TEXT NOT NULL DEFAULT '',
+  avatar       TEXT NOT NULL DEFAULT 'minnow',
+  model        TEXT,
+  instructions TEXT NOT NULL DEFAULT '',
+  is_main      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS bots_user_idx ON bots (user_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS bots_user_name_idx ON bots (user_id, lower(name));
+CREATE UNIQUE INDEX IF NOT EXISTS bots_one_main_idx ON bots (user_id) WHERE is_main;
+-- A group chat: the person and some of their bots. The admin answers a message that
+-- calls nobody, and hands work on with @mentions; a deleted admin leaves the group
+-- answering by its first member.
+CREATE TABLE IF NOT EXISTS bot_groups (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  admin_bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS bot_groups_user_idx ON bot_groups (user_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS bot_groups_user_name_idx ON bot_groups (user_id, lower(name));
+-- Who is in a group, and how far into the group's log each member has read: a turn
+-- shows a member only what was said since it last looked.
+CREATE TABLE IF NOT EXISTS bot_group_members (
+  group_id TEXT NOT NULL REFERENCES bot_groups(id) ON DELETE CASCADE,
+  bot_id   TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  seen_seq BIGINT NOT NULL DEFAULT -1,
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (group_id, bot_id)
+);
+CREATE INDEX IF NOT EXISTS bot_group_members_bot_idx ON bot_group_members (bot_id);
+-- What a bot remembers across its conversations, or what a group remembers for its
+-- members there: one short entry a row. Exactly one of the two owners is set. Text the
+-- person or the bot wrote, read back into a prompt as data, never as instructions.
+CREATE TABLE IF NOT EXISTS bot_memory (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  bot_id     TEXT REFERENCES bots(id) ON DELETE CASCADE,
+  group_id   TEXT REFERENCES bot_groups(id) ON DELETE CASCADE,
+  text       TEXT NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'bot',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK ((bot_id IS NULL) <> (group_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS bot_memory_bot_idx ON bot_memory (bot_id, created_at) WHERE bot_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS bot_memory_group_idx ON bot_memory (group_id, created_at) WHERE group_id IS NOT NULL;
+-- A conversation that belongs to a bot or a group, kept out of the conversation list:
+-- a bot's own chat (bot_id), a group's log that the person reads (bot_group_id), and
+-- each member's own context in a group (both), so a member never reads its private
+-- chat there. One of each, which the two partial unique indexes hold.
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE;
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS bot_group_id TEXT REFERENCES bot_groups(id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS chats_bot_room_idx ON chats (bot_id, COALESCE(bot_group_id, '')) WHERE bot_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS chats_group_log_idx ON chats (bot_group_id) WHERE bot_id IS NULL AND bot_group_id IS NOT NULL;
+-- Which bot spent a call, for usage by bot. No foreign key: a deleted bot's spend is
+-- still what was spent. Set from the conversation when the caller does not say.
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS bot_id TEXT;
+CREATE INDEX IF NOT EXISTS usage_events_bot_idx ON usage_events (user_id, created_at) WHERE bot_id IS NOT NULL;

@@ -508,6 +508,9 @@ export async function memoryForTurn(userId, chat, prefs, options = {}) {
 /** Every tool that reads or writes notes. */
 export const MEMORY_TOOLS = ['memory_write', 'memory_append', 'memory_edit', 'memory_delete', 'memory_read', 'memory_search'];
 
+/** The ones that change a note: a bot's conversation is not given these (it keeps its own memory, server/bots/memory.js). */
+export const MEMORY_WRITE_TOOLS = ['memory_write', 'memory_append', 'memory_edit', 'memory_delete'];
+
 /**
  * Tools this conversation must not be offered, given where it is and what the
  * account chose — one answer for the main loop and the sub-agents alike.

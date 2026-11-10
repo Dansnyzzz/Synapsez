@@ -27,8 +27,10 @@ delete process.env.POSTGRES_URL;
 delete process.env.VERCEL;
 
 const realLog = console.log;
+/** What the console mail backend printed, for the code a sign-up is sent. */
+const mailed = [];
 console.log = (...args) => {
-  if (typeof args[0] === 'string' && /confirmation code|─────/.test(args[0])) return;
+  if (typeof args[0] === 'string' && /email \(no provider|^ {2}(to|subject):|confirmation code|─────/.test(args[0])) return void mailed.push(args.join(' '));
   realLog(...args);
 };
 
@@ -850,6 +852,52 @@ section('model suggestions: two free, one paid, each saying which router');
   const saved = await getRecommended();
   check('both are saved', saved.free === 'orcarouter/deepseek/deepseek-v4.1-flash-free' && saved.freeSecond === 'openrouter/nvidia/nemotron:free', JSON.stringify(saved));
   await closeDialogs();
+}
+
+/*
+ * Owner, 2026-11-09: a new account confirms its email with the code sent to it before it
+ * is used. This suite sends no real mail, so confirmation is switched on for this part.
+ */
+section('signing up asks for the code sent to the email, then lets you in');
+{
+  process.env.EMAIL_CONFIRMATION = 'on';
+  const guest = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  guest.on('pageerror', (err) => pageErrors.push(err.message));
+  await guest.route('**/api/models/news*', (route) => route.fulfill({ contentType: 'application/json', body: '{"model":null}' }));
+  await guest.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  // Accounts exist, so the page opens on signing in: one press over to signing up.
+  await guest.waitForSelector('#gate-switch:not([hidden])');
+  if (await guest.isHidden('#gate-username')) await guest.click('#gate-switch');
+  await guest.waitForSelector('#gate-username');
+  await guest.fill('#gate-username', 'confirm.me');
+  await guest.fill('#gate-email', 'confirm.me@test.local');
+  await guest.fill('#gate-password', 'a-long-enough-password');
+  await guest.check('#gate-consent');
+  await guest.click('#gate-submit');
+  await guest.waitForSelector('#gate-confirm:not([hidden])', { timeout: 10_000 }).catch(() => {});
+  const asked = await guest.evaluate(() => ({
+    box: !document.getElementById('gate-confirm').hidden,
+    app: !document.getElementById('app').hidden,
+    password: !document.getElementById('gate-password-field').hidden,
+    note: document.getElementById('gate-note').textContent,
+    focused: document.activeElement?.id,
+  }));
+  check('the code box, not the app', asked.box && !asked.app && !asked.password, JSON.stringify(asked));
+  check('  saying where the code went, with the focus in the box', /confirm\.me@test\.local/.test(asked.note) && asked.focused === 'gate-confirmcode', JSON.stringify(asked));
+  const subject = /(\d{6}) is your \S+ confirmation code/;
+  const code = (subject.exec([...mailed].reverse().find((l) => subject.test(l)) || '') || [])[1] || '';
+  await guest.fill('#gate-confirmcode', code === '000000' ? '111111' : '000000');
+  await guest.click('#gate-submit');
+  await guest.waitForTimeout(600);
+  const wrong = await guest.evaluate(() => ({ error: document.getElementById('gate-error').textContent, hidden: document.getElementById('gate-error').hidden, app: !document.getElementById('app').hidden }));
+  check('a wrong code says so and stays on the box', !wrong.hidden && /code/i.test(wrong.error) && !wrong.app, JSON.stringify(wrong));
+  await guest.fill('#gate-confirmcode', code);
+  await guest.click('#gate-submit');
+  await guest.waitForSelector('#model-chip', { timeout: 15_000 }).catch(() => {});
+  const inside = await guest.evaluate(() => ({ gate: !document.getElementById('gate').hidden, app: !document.getElementById('app').hidden }));
+  check('the right code lets you in', /^\d{6}$/.test(code) && !inside.gate && inside.app, `${code} ${JSON.stringify(inside)}`);
+  await guest.close();
+  delete process.env.EMAIL_CONFIRMATION;
 }
 
 check('no script error on any of it', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));

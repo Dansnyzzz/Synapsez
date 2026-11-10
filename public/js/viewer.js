@@ -173,6 +173,315 @@ function splitCsvLine(line) {
   return cells;
 }
 
+/* ── each kind of file, drawn ─────────────────────────────────────────
+ *
+ * Module-level, and given everything they need, so the panel below and the
+ * uploads window (`mountPreview`, for uploads-view.js) draw a file the same
+ * way. A second drawing of the same file would sooner or later disagree.
+ */
+
+/** Where a file's own bytes are served: a picture, a PDF, a recording. */
+const bytesUrlOf = (file) =>
+  `/api/attachments/${encodeURIComponent(file.id)}?v=${encodeURIComponent(file.version || '')}`;
+
+function renderSheets(sheets, sheetIndex) {
+  if (!sheets.length) return `<p class="viewer__empty">${escapeHtml(t('viewer.noSheets'))}</p>`;
+  const sheet = sheets[Math.min(sheetIndex, sheets.length - 1)];
+  const columns = Math.max(sheet.columns || 0, 1);
+
+  const head =
+    '<tr><th class="grid__corner"></th>' +
+    Array.from({ length: columns }, (_, i) => `<th>${columnLabel(i)}</th>`).join('') +
+    '</tr>';
+
+  const rows = sheet.rows
+    .map((row, r) => {
+      const cells = Array.from({ length: columns }, (_, c) => {
+        const cell = row[c];
+        if (!cell) return '<td></td>';
+        const numeric = cell.t === 'n' || cell.t === 'd';
+        const title = cell.f ? ` title="=${escapeHtml(cell.f)}"` : '';
+        return `<td class="${numeric ? 'is-number' : ''}"${title}>${escapeHtml(cell.v)}</td>`;
+      }).join('');
+      return `<tr><th class="grid__rownum">${r + 1}</th>${cells}</tr>`;
+    })
+    .join('');
+
+  return (
+    `<div class="grid-wrap"><table class="grid"><thead>${head}</thead><tbody>${rows}</tbody></table></div>` +
+    (sheet.truncated
+      ? `<p class="viewer__note">${escapeHtml(t('viewer.sheetTruncated'))}</p>`
+      : '')
+  );
+}
+
+/** The plain table's sheets, as the buttons that switch between them. */
+const sheetTabsMarkup = (sheets, sheetIndex) =>
+  sheets
+    .map(
+      (sheet, i) =>
+        `<button class="sheet-tab${i === sheetIndex ? ' is-active' : ''}" type="button" data-sheet="${i}">${escapeHtml(
+          sheet.name,
+        )}</button>`,
+    )
+    .join('');
+
+/**
+ * A deck as it looks: each slide as a picture, its pictures, colours and layout
+ * included, loaded as it comes near the screen. What is on it in words stays under
+ * it for whoever cannot see the picture, and for the speaker's notes; a slide this
+ * server could not draw shows those words instead (`data-slide`, below).
+ *
+ * @param {any} file
+ * @param {any[]} slides
+ * @param {any} preview
+ * @param {{ revision?: number|null, bar?: string }} [options]  `bar`: the LibreOffice
+ *   line above it, which only the panel offers.
+ */
+function renderSlidePictures(file, slides, preview, { revision = null, bar = '' } = {}) {
+  const ratio = preview.slideWidth && preview.slideHeight ? `${preview.slideWidth} / ${preview.slideHeight}` : '16 / 9';
+  const rev = revision !== null ? `&rev=${encodeURIComponent(revision)}` : '';
+  return `${bar}<div class="slides slides--drawn">${slides
+    .map((slide) => {
+      const words = [slide.title, ...(slide.bullets || []).map((b) => b.text)].filter(Boolean).join('. ');
+      return (
+        `<article class="slide slide--drawn" data-slide="${slide.index}"><div class="slide__no">${slide.index}</div>` +
+        `<img class="slide__picture" loading="lazy" style="aspect-ratio: ${ratio}" alt="${escapeHtml(words)}" ` +
+        `src="/api/attachments/${encodeURIComponent(file.id)}/page/${slide.index}?v=${encodeURIComponent(file.version || '')}${rev}">` +
+        (slide.notes
+          ? `<div class="slide__notes"><span>${escapeHtml(t('viewer.notes'))}</span>${escapeHtml(slide.notes).replace(/\n/g, '<br>')}</div>`
+          : '') +
+        '</article>'
+      );
+    })
+    .join('')}</div>`;
+}
+
+function renderSlides(slides) {
+  if (!slides.length) return `<p class="viewer__empty">${escapeHtml(t('viewer.noSlides'))}</p>`;
+  return `<div class="slides">${slides
+    .map((slide) => {
+      const bullets = (slide.bullets || [])
+        .map(
+          (bullet) =>
+            `<li class="lvl-${Math.min(Number(bullet.level) || 0, 4)}">${escapeHtml(bullet.text)}</li>`,
+        )
+        .join('');
+      const tables = (slide.tables || [])
+        .map(
+          (table) =>
+            `<table class="slide__table">${table.rows
+              .map(
+                (row, i) =>
+                  `<tr>${row
+                    .map((cell) => {
+                      const tag = i === 0 ? 'th' : 'td';
+                      return `<${tag}>${escapeHtml(cell.runs.map((run) => run.text).join(''))}</${tag}>`;
+                    })
+                    .join('')}</tr>`,
+              )
+              .join('')}</table>`,
+        )
+        .join('');
+
+      return (
+        `<article class="slide"><div class="slide__no">${slide.index}</div>` +
+        (slide.title ? `<h3>${escapeHtml(slide.title)}</h3>` : '') +
+        (bullets ? `<ul>${bullets}</ul>` : '') +
+        tables +
+        (slide.notes
+          ? `<div class="slide__notes"><span>${escapeHtml(t('viewer.notes'))}</span>${escapeHtml(slide.notes).replace(/\n/g, '<br>')}</div>`
+          : '') +
+        '</article>'
+      );
+    })
+    .join('')}</div>`;
+}
+
+function renderText(preview) {
+  const format = String(preview.format || '').toLowerCase();
+  if (format === 'md' || format === 'markdown') {
+    return `<div class="doc prose">${renderMarkdown(preview.text)}</div>`;
+  }
+  if (format === 'csv' || format === 'tsv') {
+    const lines = preview.text.split(/\r?\n/).filter((line) => line.length);
+    const rows = lines.map((line) => (format === 'csv' ? splitCsvLine(line) : line.split('\t')));
+    const width = Math.max(...rows.map((row) => row.length), 1);
+    return (
+      `<div class="grid-wrap"><table class="grid"><tbody>${rows
+        .map(
+          (row, r) =>
+            `<tr><th class="grid__rownum">${r + 1}</th>` +
+            Array.from({ length: width }, (_, c) => `<td>${escapeHtml(row[c] ?? '')}</td>`).join('') +
+            '</tr>',
+        )
+        .join('')}</tbody></table></div>`
+    );
+  }
+  // Everything else is shown as what it is. An .html file is deliberately not
+  // rendered: it would be a page from a stranger running inside this session.
+  return `<pre class="viewer__code">${escapeHtml(preview.text)}</pre>${
+    format === 'html' ? `<p class="viewer__note">${escapeHtml(t('viewer.asSource'))}</p>` : ''
+  }`;
+}
+
+/**
+ * A file drawn as what it is: a page, a workbook, a deck, a picture, a PDF.
+ *
+ * @param {any} file  the stored file, as `api.filePreview` describes it
+ * @param {any} preview  the server's reading of it
+ * @param {{ sheetIndex?: number, plainSheets?: boolean, plainSlides?: boolean, revision?: number|null, bar?: string }} [options]
+ *   `plainSheets` / `plainSlides`: this server could not draw it as it looks, so
+ *   the words; `revision`: an old version is on screen; `bar`: the LibreOffice
+ *   line, which only the panel offers.
+ */
+function kindMarkup(file, preview, { sheetIndex = 0, plainSheets = false, plainSlides = false, revision = null, bar = '' } = {}) {
+  switch (preview.kind) {
+    case 'document':
+      /**
+       * The one branch here that does not escape, because it cannot: this is
+       * already markup, converted from a .docx by server/office/blocks.js.
+       *
+       * That makes it the only place in this file relying on an invariant
+       * held somewhere else — and the document may have arrived from a
+       * stranger. The escaping over there is correct: `runsToHtml` escapes
+       * every run, links are restricted to http, https, mailto and #, and
+       * `img src` and `alt` are escaped too.
+       *
+       * It is now also *tested* over there — office.test.mjs feeds a hostile
+       * document through `blocksToHtml` and asserts no script tag, no event
+       * handler on any rendered tag, no javascript: href, and no tag broken
+       * open by a quote in the data. Before that, this line depended on a
+       * promise nothing checked, which is the kind of coupling a refactor
+       * breaks silently.
+       */
+      return `${bar}<div class="doc">${preview.html}</div>`;
+    case 'sheets':
+      // The workbook as it looks; `wireKind` mounts it. Falls back to this table.
+      if (preview.format === 'xlsx' && !plainSheets) return '<div class="xlv-host"></div>';
+      return renderSheets(preview.sheets || [], sheetIndex);
+    case 'slides':
+      return plainSlides || !(preview.slides || []).length
+        ? renderSlides(preview.slides || [])
+        : renderSlidePictures(file, preview.slides, preview, { revision, bar });
+    case 'audio':
+      return `<div class="viewer__media"><audio controls preload="metadata" src="${bytesUrlOf(file)}" aria-label="${escapeHtml(file.name)}"></audio></div>`;
+    case 'video':
+      return `<div class="viewer__media"><video controls preload="metadata" src="${bytesUrlOf(file)}" aria-label="${escapeHtml(file.name)}"></video></div>`;
+    case 'binary':
+      return (
+        `<p class="viewer__empty">${escapeHtml(preview.onMachine ? t('viewer.onMachine') : t('viewer.noPreview'))}</p>` +
+        (preview.text ? `<pre class="viewer__code">${escapeHtml(preview.text)}</pre>` : '')
+      );
+    case 'pdf':
+      // `title` rather than a label: the frame is the document, and a screen
+      // reader announcing "iframe" and nothing else is no use.
+      return `<iframe class="viewer__frame" src="${bytesUrlOf(file)}" title="${escapeHtml(file.name)}"></iframe>`;
+    case 'image':
+      return `<div class="viewer__image"><img src="${bytesUrlOf(file)}" alt="${escapeHtml(file.name)}" /></div>`;
+    case 'text':
+      return renderText(preview);
+    case 'unreadable':
+      return (
+        `<p class="viewer__empty">${escapeHtml(preview.message || t('viewer.unreadable'))}</p>` +
+        `<p class="viewer__note">${escapeHtml(t('viewer.intact'))}</p>`
+      );
+    default:
+      return `<p class="viewer__empty">${escapeHtml(t('viewer.noPreview'))}</p>`;
+  }
+}
+
+/**
+ * What cannot be drawn from a string of markup: the workbook, and a slide with no
+ * picture. Called after `kindMarkup`'s markup is on the page, in `body`.
+ *
+ * @param {HTMLElement} body
+ * @param {any} file
+ * @param {{ revision?: number|null, onPlainSheets: () => void, onPlainSlides: () => void }} options
+ *   `onPlainSheets`: this server cannot read the workbook that way, so draw the
+ *   plain table; `onPlainSlides`: one slide could not be drawn, so none can.
+ * @returns {{ destroy: () => void } | null}  the workbook view, while one is mounted
+ */
+function wireKind(body, file, { revision = null, onPlainSheets, onPlainSlides }) {
+  const host = /** @type {HTMLElement | null} */ (body.querySelector('.xlv-host'));
+  const workbook = host
+    ? mountWorkbook(host, {
+        fileId: file.id,
+        revision,
+        version: file.version || file.bytes || '',
+        onUnavailable: onPlainSheets,
+      })
+    : null;
+  for (const picture of body.querySelectorAll('.slide__picture')) {
+    picture.addEventListener('error', onPlainSlides, { once: true });
+  }
+  return workbook;
+}
+
+/**
+ * A file's preview, drawn into `host` with nothing around it: the panel's own
+ * drawing of each kind, for a window that only shows files — the uploads window
+ * (uploads-view.js). Read-only: no tabs, versions, editing or LibreOffice line.
+ *
+ * @param {HTMLElement} host
+ * @param {{ file: any, preview: any }} current  what `api.filePreview` answered
+ * @returns {{ destroy: () => void }}
+ */
+export function mountPreview(host, current) {
+  const { file, preview } = current;
+  let sheetIndex = 0;
+  let plainSheets = false;
+  let plainSlides = false;
+  /** @type {{ destroy: () => void } | null} */
+  let workbook = null;
+  // A workbook that gives up after this was taken down must not draw over whatever came next.
+  let alive = true;
+
+  function draw() {
+    if (!alive) return;
+    workbook?.destroy();
+    const markup = kindMarkup(file, preview, { sheetIndex, plainSheets, plainSlides });
+    const sheets = preview.kind === 'sheets' ? preview.sheets || [] : [];
+    // The workbook view has its sheets along its bottom; the plain table needs them here.
+    const tabs =
+      sheets.length > 1 && !markup.includes('xlv-host')
+        ? `<div class="viewer__sheets">${sheetTabsMarkup(sheets, sheetIndex)}</div>`
+        : '';
+    host.innerHTML = markup + tabs;
+    host.scrollTop = 0;
+    workbook = wireKind(host, file, {
+      onPlainSheets: () => {
+        plainSheets = true;
+        draw();
+      },
+      onPlainSlides: () => {
+        if (plainSlides) return;
+        plainSlides = true;
+        draw();
+      },
+    });
+  }
+
+  const onClick = (event) => {
+    const button = /** @type {HTMLElement | null} */ (event.target.closest?.('[data-sheet]'));
+    if (!button || !host.contains(button)) return;
+    sheetIndex = Number(button.dataset.sheet) || 0;
+    draw();
+  };
+  host.addEventListener('click', onClick);
+  draw();
+
+  return {
+    destroy() {
+      alive = false;
+      host.removeEventListener('click', onClick);
+      workbook?.destroy();
+      workbook = null;
+      host.innerHTML = '';
+    },
+  };
+}
+
 /**
  * @param onChange called when a file is edited from in here, so whatever is
  *   listing files can refresh rather than showing yesterday's size.
@@ -229,37 +538,6 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
 
   /* ── drawing ──────────────────────────────────────────────────── */
 
-  function renderSheets(sheets) {
-    if (!sheets.length) return `<p class="viewer__empty">${escapeHtml(t('viewer.noSheets'))}</p>`;
-    const sheet = sheets[Math.min(sheetIndex, sheets.length - 1)];
-    const columns = Math.max(sheet.columns || 0, 1);
-
-    const head =
-      '<tr><th class="grid__corner"></th>' +
-      Array.from({ length: columns }, (_, i) => `<th>${columnLabel(i)}</th>`).join('') +
-      '</tr>';
-
-    const rows = sheet.rows
-      .map((row, r) => {
-        const cells = Array.from({ length: columns }, (_, c) => {
-          const cell = row[c];
-          if (!cell) return '<td></td>';
-          const numeric = cell.t === 'n' || cell.t === 'd';
-          const title = cell.f ? ` title="=${escapeHtml(cell.f)}"` : '';
-          return `<td class="${numeric ? 'is-number' : ''}"${title}>${escapeHtml(cell.v)}</td>`;
-        }).join('');
-        return `<tr><th class="grid__rownum">${r + 1}</th>${cells}</tr>`;
-      })
-      .join('');
-
-    return (
-      `<div class="grid-wrap"><table class="grid"><thead>${head}</thead><tbody>${rows}</tbody></table></div>` +
-      (sheet.truncated
-        ? `<p class="viewer__note">${escapeHtml(t('viewer.sheetTruncated'))}</p>`
-        : '')
-    );
-  }
-
   /**
    * LibreOffice's drawing of the file, one press away (owner, 2026-11-05). Not done for
    * every file opened: our own takes a tenth of a second and has matched PowerPoint on
@@ -272,99 +550,6 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
       : rendered
         ? `<div class="viewer__alt"><span class="viewer__alt-note">${escapeHtml(t('viewer.lo.showing'))}</span><button type="button" data-office-back>${escapeHtml(t('viewer.lo.back'))}</button></div>`
         : `<div class="viewer__alt"><button type="button" data-office-render>${escapeHtml(t('viewer.lo.ask'))}</button></div>`;
-
-  /**
-   * A deck as it looks: each slide as a picture, its pictures, colours and layout
-   * included, loaded as it comes near the screen. What is on it in words stays under
-   * it for whoever cannot see the picture, and for the speaker's notes; a slide this
-   * server could not draw shows those words instead (`data-slide`, below).
-   */
-  function renderSlidePictures(slides, preview) {
-    const ratio = preview.slideWidth && preview.slideHeight ? `${preview.slideWidth} / ${preview.slideHeight}` : '16 / 9';
-    const revision = showingRevision !== null ? `&rev=${encodeURIComponent(showingRevision)}` : '';
-    return `${renderedBar()}<div class="slides slides--drawn">${slides
-      .map((slide) => {
-        const words = [slide.title, ...(slide.bullets || []).map((b) => b.text)].filter(Boolean).join('. ');
-        return (
-          `<article class="slide slide--drawn" data-slide="${slide.index}"><div class="slide__no">${slide.index}</div>` +
-          `<img class="slide__picture" loading="lazy" style="aspect-ratio: ${ratio}" alt="${escapeHtml(words)}" ` +
-          `src="/api/attachments/${encodeURIComponent(current.file.id)}/page/${slide.index}?v=${encodeURIComponent(current.file.version || '')}${revision}">` +
-          (slide.notes
-            ? `<div class="slide__notes"><span>${escapeHtml(t('viewer.notes'))}</span>${escapeHtml(slide.notes).replace(/\n/g, '<br>')}</div>`
-            : '') +
-          '</article>'
-        );
-      })
-      .join('')}</div>`;
-  }
-
-  function renderSlides(slides) {
-    if (!slides.length) return `<p class="viewer__empty">${escapeHtml(t('viewer.noSlides'))}</p>`;
-    return `<div class="slides">${slides
-      .map((slide) => {
-        const bullets = (slide.bullets || [])
-          .map(
-            (bullet) =>
-              `<li class="lvl-${Math.min(Number(bullet.level) || 0, 4)}">${escapeHtml(bullet.text)}</li>`,
-          )
-          .join('');
-        const tables = (slide.tables || [])
-          .map(
-            (table) =>
-              `<table class="slide__table">${table.rows
-                .map(
-                  (row, i) =>
-                    `<tr>${row
-                      .map((cell) => {
-                        const tag = i === 0 ? 'th' : 'td';
-                        return `<${tag}>${escapeHtml(cell.runs.map((run) => run.text).join(''))}</${tag}>`;
-                      })
-                      .join('')}</tr>`,
-                )
-                .join('')}</table>`,
-          )
-          .join('');
-
-        return (
-          `<article class="slide"><div class="slide__no">${slide.index}</div>` +
-          (slide.title ? `<h3>${escapeHtml(slide.title)}</h3>` : '') +
-          (bullets ? `<ul>${bullets}</ul>` : '') +
-          tables +
-          (slide.notes
-            ? `<div class="slide__notes"><span>${escapeHtml(t('viewer.notes'))}</span>${escapeHtml(slide.notes).replace(/\n/g, '<br>')}</div>`
-            : '') +
-          '</article>'
-        );
-      })
-      .join('')}</div>`;
-  }
-
-  function renderText(preview) {
-    const format = String(preview.format || '').toLowerCase();
-    if (format === 'md' || format === 'markdown') {
-      return `<div class="doc prose">${renderMarkdown(preview.text)}</div>`;
-    }
-    if (format === 'csv' || format === 'tsv') {
-      const lines = preview.text.split(/\r?\n/).filter((line) => line.length);
-      const rows = lines.map((line) => (format === 'csv' ? splitCsvLine(line) : line.split('\t')));
-      const width = Math.max(...rows.map((row) => row.length), 1);
-      return (
-        `<div class="grid-wrap"><table class="grid"><tbody>${rows
-          .map(
-            (row, r) =>
-              `<tr><th class="grid__rownum">${r + 1}</th>` +
-              Array.from({ length: width }, (_, c) => `<td>${escapeHtml(row[c] ?? '')}</td>`).join('') +
-              '</tr>',
-          )
-          .join('')}</tbody></table></div>`
-      );
-    }
-    // Everything else is shown as what it is. An .html file is deliberately not
-    // rendered: it would be a page from a stranger running inside this session.
-    return `<pre class="viewer__code">${escapeHtml(preview.text)}</pre>${
-      format === 'html' ? `<p class="viewer__note">${escapeHtml(t('viewer.asSource'))}</p>` : ''
-    }`;
-  }
 
   /** A page the assistant wrote, which is the one kind of file that can be run. */
   const runnable = () =>
@@ -431,57 +616,7 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
       return `${renderedBar()}<iframe class="viewer__frame" src="/api/attachments/${encodeURIComponent(rendered.id)}" title="${escapeHtml(rendered.name)}"></iframe>`;
     }
 
-    switch (preview.kind) {
-      case 'document':
-        /**
-         * The one branch here that does not escape, because it cannot: this is
-         * already markup, converted from a .docx by server/office/blocks.js.
-         *
-         * That makes it the only place in this file relying on an invariant
-         * held somewhere else — and the document may have arrived from a
-         * stranger. The escaping over there is correct: `runsToHtml` escapes
-         * every run, links are restricted to http, https, mailto and #, and
-         * `img src` and `alt` are escaped too.
-         *
-         * It is now also *tested* over there — office.test.mjs feeds a hostile
-         * document through `blocksToHtml` and asserts no script tag, no event
-         * handler on any rendered tag, no javascript: href, and no tag broken
-         * open by a quote in the data. Before that, this line depended on a
-         * promise nothing checked, which is the kind of coupling a refactor
-         * breaks silently.
-         */
-        return `${renderedBar()}<div class="doc">${preview.html}</div>`;
-      case 'sheets':
-        // The workbook as it looks; `afterDraw` mounts it. Falls back to this table.
-        if (preview.format === 'xlsx' && !plainSheets) return '<div class="xlv-host" id="xlv-host"></div>';
-        return renderSheets(preview.sheets || []);
-      case 'slides':
-        return plainSlides || !(preview.slides || []).length ? renderSlides(preview.slides || []) : renderSlidePictures(preview.slides, preview);
-      case 'audio':
-        return `<div class="viewer__media"><audio controls preload="metadata" src="${bytesUrl()}" aria-label="${escapeHtml(file.name)}"></audio></div>`;
-      case 'video':
-        return `<div class="viewer__media"><video controls preload="metadata" src="${bytesUrl()}" aria-label="${escapeHtml(file.name)}"></video></div>`;
-      case 'binary':
-        return (
-          `<p class="viewer__empty">${escapeHtml(preview.onMachine ? t('viewer.onMachine') : t('viewer.noPreview'))}</p>` +
-          (preview.text ? `<pre class="viewer__code">${escapeHtml(preview.text)}</pre>` : '')
-        );
-      case 'pdf':
-        // `title` rather than a label: the frame is the document, and a screen
-        // reader announcing "iframe" and nothing else is no use.
-        return `<iframe class="viewer__frame" src="${bytesUrl()}" title="${escapeHtml(file.name)}"></iframe>`;
-      case 'image':
-        return `<div class="viewer__image"><img src="${bytesUrl()}" alt="${escapeHtml(file.name)}" /></div>`;
-      case 'text':
-        return renderText(preview);
-      case 'unreadable':
-        return (
-          `<p class="viewer__empty">${escapeHtml(preview.message || t('viewer.unreadable'))}</p>` +
-          `<p class="viewer__note">${escapeHtml(t('viewer.intact'))}</p>`
-        );
-      default:
-        return `<p class="viewer__empty">${escapeHtml(t('viewer.noPreview'))}</p>`;
-    }
+    return kindMarkup(file, preview, { sheetIndex, plainSheets, plainSlides, revision: showingRevision, bar: renderedBar() });
   }
 
   /**
@@ -492,8 +627,7 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
    * file and says which one it is. Showing the live bytes under an old version
    * number silently would be the worst of the three options.
    */
-  const bytesUrl = () =>
-    `/api/attachments/${encodeURIComponent(current.file.id)}?v=${encodeURIComponent(current.file.version || '')}`;
+  const bytesUrl = () => bytesUrlOf(current.file);
 
   function renderTabs() {
     const { file, preview } = current;
@@ -535,17 +669,10 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
     const strip = $('viewer-sheets');
     const sheets = current?.preview?.kind === 'sheets' ? current.preview.sheets || [] : [];
     // The workbook view has its own, along its bottom.
-    strip.hidden = sheets.length < 2 || tab !== 'preview' || !!$('xlv-host');
+    strip.hidden = sheets.length < 2 || tab !== 'preview' || !!bodyNode.querySelector('.xlv-host');
     if (strip.hidden) return;
 
-    strip.innerHTML = sheets
-      .map(
-        (sheet, i) =>
-          `<button class="sheet-tab${i === sheetIndex ? ' is-active' : ''}" type="button" data-sheet="${i}">${escapeHtml(
-            sheet.name,
-          )}</button>`,
-      )
-      .join('');
+    strip.innerHTML = sheetTabsMarkup(sheets, sheetIndex);
   }
 
   /**
@@ -606,31 +733,20 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
 
   /** What cannot be drawn from a string of markup: the workbook, and a slide with no picture. */
   function afterDraw() {
-    const host = $('xlv-host');
-    if (host) {
-      workbookView = mountWorkbook(host, {
-        fileId: current.file.id,
-        revision: showingRevision,
-        version: current.file.version || current.file.bytes || '',
-        // This server cannot read it that way: the plain table, which it can.
-        onUnavailable: () => {
-          plainSheets = true;
-          draw();
-        },
-      });
-    }
-    // One slide this server cannot draw says this server cannot draw any.
-    for (const picture of bodyNode.querySelectorAll('.slide__picture')) {
-      picture.addEventListener(
-        'error',
-        () => {
-          if (plainSlides) return;
-          plainSlides = true;
-          draw();
-        },
-        { once: true },
-      );
-    }
+    workbookView = wireKind(bodyNode, current.file, {
+      revision: showingRevision,
+      // This server cannot read it that way: the plain table, which it can.
+      onPlainSheets: () => {
+        plainSheets = true;
+        draw();
+      },
+      // One slide this server cannot draw says this server cannot draw any.
+      onPlainSlides: () => {
+        if (plainSlides) return;
+        plainSlides = true;
+        draw();
+      },
+    });
   }
 
   /* ── what the one button does ─────────────────────────────────── */

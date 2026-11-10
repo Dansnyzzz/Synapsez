@@ -186,11 +186,20 @@ function rootItems(deps) {
   ];
 }
 
-/** Built-in skills first, then the account's own that are switched on. */
+/**
+ * Built-in skills first, then the account's own that are switched on, then the
+ * shared ones it added that are still shared — by the name the assistant knows
+ * each by. The built-ins stay here though Settings no longer lists them: this is
+ * where one is picked for a message.
+ */
 async function skillItems(deps) {
-  const { skills = [], builtin = [] } = await api.skills();
+  const { skills = [], builtin = [], added = [] } = await api.skills();
   const picked = new Set(deps.picked());
-  const list = [...builtin, ...skills.filter((s) => s.enabled)];
+  const list = [
+    ...builtin,
+    ...skills.filter((s) => s.enabled),
+    ...added.filter((s) => s.status === 'ok' && s.knownAs).map((s) => ({ name: s.knownAs, description: s.description })),
+  ];
   return [
     ...list.map((s) => ({
       label: s.name,

@@ -181,7 +181,7 @@ async function runStep({ user, chatId, runId = null, modelId, instruction, resum
    * Stop reaches the step where it stands: on this instance through `abortHere`,
    * keyed by the conversation it writes into (so the conversation's own stop
    * button ends it too), and from another instance by the run row no longer
-   * saying `running` — the Bot page's Stop, or the workflow being deleted.
+   * saying `running` — the Automations page's Stop, or the workflow being deleted.
    */
   const controller = new AbortController();
   const letGo = holdRun(user.id, chatId, controller);
@@ -523,7 +523,7 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
 
     if (outcome.status !== 'done') {
       return write({
-        // Stopped from the conversation's own button rather than the Bot page:
+        // Stopped from the conversation's own button rather than the Automations page:
         // the person ended it all the same.
         status: outcome.status === 'stopped' ? 'cancelled' : outcome.status === 'needs_attention' ? 'needs_attention' : 'failed',
         steps: state,
@@ -718,7 +718,7 @@ export async function stopWorkflow(userId, workflowId) {
 
 /**
  * A row of `listWorkflowsWithLastRun` as the page reads it: the workflow, and
- * its newest run under `lastRun`. Shared by the list and the Bot summary.
+ * its newest run under `lastRun`. Shared by the list and the Automations summary.
  *
  * @param {Record<string, any>} row
  * @param {(error: string) => string} [say]  a stored step error, in the reader's language
