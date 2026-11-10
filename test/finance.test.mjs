@@ -10,8 +10,6 @@
  *
  *   node test/finance.test.mjs
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 
 process.env.ENCRYPTION_KEY ||= 'finance-test-encryption-key';
@@ -61,6 +59,41 @@ section('finance_cache: one row per key, shared by every account (schema 45)');
   check('the sweep deletes what expired over a day ago and what was kept past 400 days', swept === 2 && !left.includes('old|expired|x|') && !left.includes('old|forever|x|'), `${swept} · ${left.join(', ')}`);
   check('  and leaves what expired a minute ago, and a bar kept for good', left.includes('kbs|quote|FPT|') && left.includes('vndirect|bars|FPT|2026-09-18'), left.join(', '));
   await memory.query('DELETE FROM finance_cache');
+}
+
+/* ── pooled ceilings: minutes and hours ───────────────────────────── */
+
+const tiers = await import('../server/freeTier.js');
+
+section('free tiers count by the minute and the hour too');
+{
+  const at = new Date('2026-11-10T08:15:42Z');
+  const minute = tiers.periodOf('minute', at);
+  check('a minute, in UTC, and when it ends', minute.key === '2026-11-10T08:15' && minute.ends.toISOString() === '2026-11-10T08:16:00.000Z', JSON.stringify(minute));
+  const hour = tiers.periodOf('hour', at);
+  check('an hour', hour.key === '2026-11-10T08' && hour.ends.toISOString() === '2026-11-10T09:00:00.000Z', JSON.stringify(hour));
+  const late = tiers.periodOf('minute', new Date('2026-12-31T23:59:30Z'));
+  check('  the last minute of a year ends at the next one', late.key === '2026-12-31T23:59' && late.ends.toISOString() === '2027-01-01T00:00:00.000Z', JSON.stringify(late));
+  check('a day and a month are as they were', tiers.periodOf('day', at).key === '2026-11-10' && tiers.periodOf('month', at).key === '2026-11' && tiers.periodOf('month', at).ends.toISOString() === '2026-12-01T00:00:00.000Z');
+
+  for (const name of ['coingecko', 'coingecko_minute', 'yahoo', 'vndirect', 'kbs', 'vietcap', 'sec', 'fred']) {
+    check(`${name} has a pooled ceiling`, tiers.FREE_SERVICES.includes(name));
+  }
+  const gecko = await tiers.allowance('coingecko');
+  check("CoinGecko's month is under its 10,000 credits", gecko.limit === 9_500 && gecko.left <= 9_500, JSON.stringify(gecko));
+  process.env.COINGECKO_FREE_MONTHLY = '120';
+  check('  and can be set', (await tiers.allowance('coingecko')).limit === 120);
+  delete process.env.COINGECKO_FREE_MONTHLY;
+  check('its minute is 90, under the Demo plan\'s 100', (await tiers.allowance('coingecko_minute')).limit === 90);
+  check('FRED by the minute, SEC and the brokers by the day', (await tiers.allowance('fred')).limit === 100 && (await tiers.allowance('sec')).limit === 20_000 && (await tiers.allowance('kbs')).limit === 3_000 && (await tiers.allowance('yahoo')).limit === 5_000);
+
+  process.env.FRED_FREE_MINUTE = '2';
+  const took = [await tiers.take('fred', 1), await tiers.take('fred', 1), await tiers.take('fred', 1)];
+  check('a minute\'s ceiling reached says no to the next call', took.join() === 'true,true,false', took.join());
+  delete process.env.FRED_FREE_MINUTE;
+  const report = await tiers.freeTierReport();
+  const row = report.services.find((s) => s.service === 'coingecko_minute');
+  check("the administrators' view lists them, each with its period", row?.per === 'minute' && report.services.some((s) => s.service === 'vndirect' && s.per === 'day'), JSON.stringify(row));
 }
 
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
