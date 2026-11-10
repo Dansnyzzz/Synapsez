@@ -486,6 +486,8 @@ section('asking for less motion');
   check('the scene is a still picture', !!a && a === (await canvasPrint('#scene-layer canvas', still)));
   check('no whale: a GIF cannot be held on one frame', !(await still.$('.composer__box .mascot')));
   // A title's creature can be held on one frame, so it stays, still (owner, 2026-11-08).
+  // A sponsor's title is drawn only with the money behind it (2026-11-09), so it is put in first.
+  await store.recordTopUp(row.id, { id: 'tu-still', amountUsd: 1000, source: 'test' });
   await store.setUserSetting(row.id, 'prefs', { ...(await store.getUserSetting(row.id, 'prefs')), equippedTitle: 'spend-1000' });
   await reload(still);
   await still.waitForSelector('.composer__box canvas.mascot[data-creature="gold-whale"]');
