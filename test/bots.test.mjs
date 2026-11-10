@@ -323,7 +323,8 @@ section('a group round: the admin hands work on, the member posts back, the admi
   const own = (await alice.call('GET', `/api/bots/${writer.id}/chat`)).body.messages;
   check('the group\'s work does not land in Writer\'s own chat', !own.some((m) => /Draft ready/.test(m.text || '')));
   const log = await alice.call('GET', `/api/bot-groups/${blog.id}/chat`);
-  check('the group\'s log keeps the four lines', log.body.messages.length === 4, String(log.body.messages.length));
+  // Its making first, said in its own log (owner, 2026-11-10), then the four lines of the round.
+  check('the group\'s log keeps its making and the four lines', log.body.messages.length === 5 && log.body.messages[0].notice === 'made', log.body.messages.map((m) => m.notice || m.role).join());
   const second = await alice.stream(`/api/bot-groups/${blog.id}/run`, { text: '@Writer one more line please' });
   const p2 = second.events.filter((e) => e.event === 'post').map((e) => e.data.message);
   check('an @ from the person calls that bot straight, and only it', p2.length === 2 && p2[1].bot === writer.id, p2.map((m) => m.text).join(' | '));
@@ -440,6 +441,9 @@ section('no two bots look alike, and Chief keeps the cosmic whale');
   const recolour = await alice.call('PATCH', `/api/bots/${chief.id}`, { avatar: 'minnow' });
   check('Chief keeps the cosmic whale', recolour.status === 400 && (await store.getBot(aliceId, chief.id)).avatar === 'cosmic-whale', `${recolour.status}`);
   check('  and cannot be deleted', (await alice.call('DELETE', `/api/bots/${chief.id}`)).status >= 400 && !!(await store.getBot(aliceId, chief.id)));
+  // The settings form sends the creature it wears with every save: that is no change of face.
+  const resaved = await alice.call('PATCH', `/api/bots/${chief.id}`, { role: 'Chief of Staff', avatar: 'cosmic-whale' });
+  check('  yet saving Chief with the whale it wears goes through', resaved.status === 200 && resaved.body.bot?.avatar === 'cosmic-whale', `${resaved.status} ${JSON.stringify(resaved.body).slice(0, 120)}`);
   // Made before colours: the same creature, as drawn, twice.
   await store.updateBot(aliceId, twin2.body.bot.id, { hue: 0 });
   check('two bots that came to look alike are told apart again', (await distinctFaces(aliceId)) && (await store.getBot(aliceId, twin2.body.bot.id)).hue !== 0);
@@ -504,6 +508,39 @@ section('a bot with nothing saved still knows it may save on its own');
   check('  saying to save on its own, without being asked', /save with `remember` on your own, without being asked/.test(req?.system || ''));
   check('  and it is offered remember', req?.tools.includes('remember'));
   await alice.call('DELETE', `/api/bots/${fresh.body.bot.id}`);
+}
+
+/*
+ * Owner, 2026-11-10: a group says in its own log everything that changes in it — made, a bot
+ * added or taken out, a new name, a new admin, a member renamed or deleted — as a notice the
+ * page draws in the middle, and the members read too.
+ */
+section('a group says in its own log what changed in it');
+{
+  const one = (await alice.call('POST', '/api/bots', { name: 'Ana', role: 'a' })).body.bot;
+  const two = (await alice.call('POST', '/api/bots', { name: 'Ben', role: 'b' })).body.bot;
+  const made = (await alice.call('POST', '/api/bot-groups', { name: 'Desk', members: [chief.id, one.id], admin: chief.id })).body.group;
+  const notices = async () => (await alice.call('GET', `/api/bot-groups/${made.id}/chat`)).body.messages.filter((m) => m.notice);
+  let seen = await notices();
+  check('made: who is in it, said once', seen.length === 1 && seen[0].notice === 'made' && seen[0].params.members.join() === [chief.id, one.id].join() && /Group chat made with Chief, Ana; Chief is the admin\./.test(seen[0].text), JSON.stringify(seen));
+  await alice.call('PATCH', `/api/bot-groups/${made.id}`, { name: 'Front Desk', members: [chief.id, two.id], admin: two.id });
+  seen = (await notices()).slice(1);
+  const kinds = seen.map((m) => `${m.notice}:${m.params.name}`);
+  check('a new name, the bot that joined, the one that left, the new admin — a line each', kinds.join() === 'renamed:Front Desk,joined:Ben,left:Ana,admin:Ben', kinds.join());
+  check('  in words the members read too', seen.map((m) => m.text).join(' | ') === 'The group is now called Front Desk. | Ben joined the group. | Ana left the group. | Ben is the admin now.', seen.map((m) => m.text).join(' | '));
+  const before = (await notices()).length;
+  await alice.call('PATCH', `/api/bot-groups/${made.id}`, { name: 'Front Desk', members: [chief.id, two.id], admin: two.id });
+  check('  a save that changes nothing says nothing', (await notices()).length === before);
+  await alice.call('PATCH', `/api/bots/${two.id}`, { name: 'Benny' });
+  const last = (await notices()).at(-1);
+  check('a member renamed is said in its groups', last?.notice === 'botRenamed' && last.params.from === 'Ben' && last.params.name === 'Benny', JSON.stringify(last));
+  await alice.call('DELETE', `/api/bots/${two.id}`);
+  const tail = (await notices()).slice(-2).map((m) => `${m.notice}:${m.params.name}`);
+  check('a member deleted is said there, with who answers now when it was the admin', tail.join() === 'deleted:Benny,admin:Chief', tail.join());
+  const team = (await alice.call('GET', '/api/bots')).body;
+  check('  and the list shows the last thing said, never a notice', !(team.groups.find((g) => g.id === made.id)?.last), JSON.stringify(team.groups.find((g) => g.id === made.id)?.last));
+  await alice.call('DELETE', `/api/bot-groups/${made.id}`);
+  await alice.call('DELETE', `/api/bots/${one.id}`);
 }
 
 await new Promise((r) => server.close(r));

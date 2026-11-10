@@ -4675,6 +4675,8 @@ export function createPgStore(connectionString) {
                 SELECT m.role, m.content FROM messages m
                  WHERE m.chat_id = c.id AND m.role IN ('user', 'assistant')
                    AND COALESCE(m.content->>'text', '') <> ''
+                   -- A group's notice ("Writer joined the group.") is not its last message (2026-11-10).
+                   AND m.content->>'notice' IS NULL
                  ORDER BY m.seq DESC LIMIT 1
            ) last ON TRUE
           WHERE c.user_id = $1

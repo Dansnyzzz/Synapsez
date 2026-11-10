@@ -204,8 +204,8 @@ export async function updateBot(userId, id, input) {
     if (!isCreature(input.avatar)) throw new BotError('That is not one of the creatures.', 400, 'bad_avatar');
     patch.avatar = String(input.avatar);
     const current = await store.getBot(userId, id);
-    // Chief keeps the cosmic whale (owner, 2026-11-10).
-    if (current?.is_main) throw new BotError('Chief keeps the cosmic whale.', 400, 'chief_avatar');
+    // Chief keeps the cosmic whale (owner, 2026-11-10). The form sends the one it wears with every save.
+    if (current?.is_main && current.avatar !== patch.avatar) throw new BotError('Chief keeps the cosmic whale.', 400, 'chief_avatar');
     if (current && current.avatar !== patch.avatar) {
       const others = (await store.listBots(userId)).filter((b) => b.id !== id);
       patch.hue = pickHue(patch.avatar, others);
@@ -215,9 +215,11 @@ export async function updateBot(userId, id, input) {
     const other = await store.getBotByName(userId, patch.name);
     if (other && other.id !== id) throw new BotError(`There is already a bot called ${patch.name}.`, 409, 'name_taken');
   }
+  const before = patch.name ? await store.getBot(userId, id) : null;
   try {
     const bot = await store.updateBot(userId, id, patch);
     if (!bot) throw new BotError('No such bot.', 404, 'not_found');
+    if (before && before.name !== bot.name) await sayRenamed(userId, bot, before.name).catch(() => {});
     return bot;
   } catch (err) {
     if (err?.code === '23505' || /duplicate key|unique/i.test(String(err?.message))) throw new BotError(`There is already a bot called ${patch.name}.`, 409, 'name_taken');
@@ -246,6 +248,8 @@ export async function createGroup(userId, input) {
   const admin = members.includes(String(input.admin || '')) ? String(input.admin) : members[0];
   const group = await store.createBotGroup(userId, { id: crypto.randomUUID(), name, adminBotId: admin, members });
   if (!group) throw new BotError(`There is already a group called ${name}.`, 409, 'name_taken');
+  const nameOf = (botId) => bots.find((b) => b.id === botId)?.name || '';
+  await sayInGroup(userId, group, [['made', { members, admin }, `Group chat made with ${members.map(nameOf).join(', ')}; ${nameOf(admin)} is the admin.`]]).catch(() => {});
   return group;
 }
 
@@ -282,7 +286,44 @@ export async function updateGroup(userId, id, input) {
   } else if (patch.members && !members.includes(group.admin_bot_id)) {
     patch.adminBotId = members[0];
   }
-  return store.updateBotGroup(userId, id, patch);
+  const updated = await store.updateBotGroup(userId, id, patch);
+  if (updated) {
+    const bots = await store.listBots(userId);
+    const nameOf = (botId) => bots.find((b) => b.id === botId)?.name || '';
+    /** @type {[string, Record<string, unknown>, string][]} */
+    const lines = [];
+    if (patch.name && patch.name !== group.name) lines.push(['renamed', { name: patch.name }, `The group is now called ${patch.name}.`]);
+    const had = new Set(group.members || []);
+    const has = new Set(updated.members || members);
+    for (const m of has) if (!had.has(m)) lines.push(['joined', { bot: m, name: nameOf(m) }, `${nameOf(m)} joined the group.`]);
+    for (const m of had) if (!has.has(m)) lines.push(['left', { bot: m, name: nameOf(m) }, `${nameOf(m)} left the group.`]);
+    const admin = adminOf({ ...updated, members: [...has] });
+    if (admin && admin !== adminOf(group)) lines.push(['admin', { bot: admin, name: nameOf(admin) }, `${nameOf(admin)} is the admin now.`]);
+    await sayInGroup(userId, updated, lines).catch(() => {});
+  }
+  return updated;
+}
+
+/**
+ * Delete a bot (never Chief), said in each group it was in, with who answers there now
+ * when it was that group's admin (owner, 2026-11-10).
+ *
+ * @param {string} userId @param {{ id: string, name: string }} bot
+ */
+export async function removeBot(userId, bot) {
+  const store = getStore();
+  const groups = (await store.listBotGroups(userId)).filter((g) => (g.members || []).includes(bot.id));
+  if (!(await store.deleteBot(userId, bot.id))) return false;
+  const bots = await store.listBots(userId);
+  const nameOf = (botId) => bots.find((b) => b.id === botId)?.name || '';
+  for (const g of groups) {
+    const left = (g.members || []).filter((m) => m !== bot.id);
+    /** @type {[string, Record<string, unknown>, string][]} */
+    const lines = [['deleted', { bot: bot.id, name: bot.name }, `${bot.name} was deleted, and left the group.`]];
+    if (adminOf(g) === bot.id && left.length) lines.push(['admin', { bot: left[0], name: nameOf(left[0]) }, `${nameOf(left[0])} is the admin now.`]);
+    await sayInGroup(userId, g, lines).catch(() => {});
+  }
+  return true;
 }
 
 /** What the browser is given of a bot: everything but the account id. @param {any} row */
@@ -316,3 +357,26 @@ export function groupView(row) {
 
 /** Who answers a group's plain message: its admin, or its first member when it has none. @param {any} group */
 export const adminOf = (group) => (group?.admin_bot_id && (group.members || []).includes(group.admin_bot_id) ? group.admin_bot_id : group?.members?.[0] || null);
+
+/**
+ * What changed in a group, said in its own log (owner, 2026-11-10), as DS Bot says
+ * "Created [face] Writer": made, a bot that joined or left, a new name, a new admin. The
+ * words are what the members read of it (rounds.js `lineOf`); the page draws the line from
+ * `notice` and `params`, in the person's language and with the faces.
+ *
+ * @param {string} userId @param {{ id: string, name: string }} group
+ * @param {[string, Record<string, unknown>, string][]} lines  kind, params, words
+ */
+export async function sayInGroup(userId, group, lines) {
+  if (!lines.length) return;
+  const store = getStore();
+  const log = await store.botChat(userId, { groupId: group.id, title: group.name });
+  if (!log) return;
+  for (const [notice, params, text] of lines) await store.appendMessage(userId, log.id, { id: crypto.randomUUID(), role: 'assistant', notice, text, params });
+}
+
+/** A bot's new name, said in every group it is in. @param {string} userId @param {any} bot @param {string} from */
+async function sayRenamed(userId, bot, from) {
+  const groups = (await getStore().listBotGroups(userId)).filter((g) => (g.members || []).includes(bot.id));
+  for (const g of groups) await sayInGroup(userId, g, [['botRenamed', { bot: bot.id, from, name: bot.name }, `${from} is now called ${bot.name}.`]]);
+}

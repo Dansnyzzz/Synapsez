@@ -246,7 +246,9 @@ export const api = {
   createBot: (bot) => request('POST', '/api/bots', bot),
   updateBot: (id, patch) => request('PATCH', `/api/bots/${encodeURIComponent(id)}`, patch),
   deleteBot: (id) => request('DELETE', `/api/bots/${encodeURIComponent(id)}`),
-  botChat: (id, { incognito = false } = {}) => request('GET', `/api/bots/${encodeURIComponent(id)}/chat${incognito ? '?incognito=1' : ''}`),
+  // `light`: the id alone, for the Bot page, whose home chat reads the messages itself.
+  botChat: (id, { incognito = false, light = false } = {}) =>
+    request('GET', `/api/bots/${encodeURIComponent(id)}/chat${incognito ? '?incognito=1' : light ? '?light=1' : ''}`),
   botTasks: (id) => request('GET', `/api/bots/${encodeURIComponent(id)}/tasks`),
   addBotTask: (id, task) => request('POST', `/api/bots/${encodeURIComponent(id)}/tasks`, task),
   /** `kind` is 'bots' or 'bot-groups'. */

@@ -883,8 +883,9 @@ section('the gate holds still: a wrong password, a trip to another tab, a reload
     window.dispatchEvent(new Event('focus'));
   });
   await visitor.waitForTimeout(800);
-  const still = await visitor.evaluate(() => window.__samePage === 1);
-  check('coming back to the tab reloads nothing and asks the server nothing', still && calls.length === 0, JSON.stringify(calls));
+  const still = await visitor.evaluate(() => window.__samePage === 1 && !document.getElementById('gate').hidden);
+  // Only whether this browser signed in elsewhere meanwhile (it has not): still the gate.
+  check('coming back to the tab reloads nothing, asking the server only whether it is signed in now', still && calls.join() === '/api/session', JSON.stringify(calls));
   await visitor.click('#gate-switch');
   await visitor.fill('#gate-username', 'half.done');
   await visitor.fill('#gate-email', 'half.done@test.local');
@@ -902,6 +903,54 @@ section('the gate holds still: a wrong password, a trip to another tab, a reload
   }));
   check('  a reload brings the sign-up back as it was, the password box empty and in focus', back.signup && back.username === 'half.done' && back.email === 'half.done@test.local' && back.password === '' && back.focused === 'gate-password', JSON.stringify(back));
   await visitor.close();
+}
+
+/*
+ * Owner, 2026-11-10: signed in in another tab (the confirmation link, most often), a tab still on
+ * the gate goes straight in — told by that tab at once, or finding out when it is looked at again.
+ */
+section('a tab on the gate goes in when this browser signs in in another');
+{
+  const signInElsewhere = async (other) => {
+    await other.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    await other.waitForSelector('#gate:not([hidden])');
+    if (!(await other.isHidden('#gate-username'))) await other.click('#gate-switch');
+    await other.fill('#gate-email', 'round@test.local');
+    await other.fill('#gate-password', 'a-long-enough-password');
+    await other.click('#gate-submit');
+    await other.waitForSelector('#model-chip', { timeout: 15_000 });
+  };
+  const waiting = async (ctx) => {
+    const tab = await ctx.newPage();
+    tab.on('pageerror', (err) => pageErrors.push(err.message));
+    await tab.route('**/api/models/news*', (route) => route.fulfill({ contentType: 'application/json', body: '{"model":null}' }));
+    await tab.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    await tab.waitForSelector('#gate:not([hidden])');
+    await tab.evaluate(() => (window.__samePage = 1));
+    return tab;
+  };
+  const inside = (tab) => tab.evaluate(() => ({ same: window.__samePage === 1, gate: !document.getElementById('gate').hidden, app: !document.getElementById('app').hidden }));
+
+  // Told at once: the other tab signs in through the page.
+  const told = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const first = await waiting(told);
+  await signInElsewhere(await told.newPage());
+  await first.waitForSelector('#model-chip', { timeout: 10_000 }).catch(() => {});
+  const one = await inside(first);
+  check('signed in in another tab, this one goes in by itself, not reloaded', one.same && !one.gate && one.app, JSON.stringify(one));
+  await told.close();
+
+  // Nobody said: the session came some other way, and coming back to the tab finds it.
+  const quiet = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const second = await waiting(quiet);
+  const signed = await quiet.request.post(`http://127.0.0.1:${PORT}/api/login`, { data: { email: 'round@test.local', password: 'a-long-enough-password' } });
+  await second.waitForTimeout(500);
+  const before = await inside(second);
+  await second.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await second.waitForSelector('#model-chip', { timeout: 10_000 }).catch(() => {});
+  const two = await inside(second);
+  check('  and one nobody told goes in when it is looked at again', signed.ok() && before.gate && two.same && !two.gate && two.app, JSON.stringify({ status: signed.status(), before, two }));
+  await quiet.close();
 }
 
 /*
