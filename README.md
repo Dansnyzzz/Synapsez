@@ -1428,6 +1428,31 @@ Laid out as Claude's (2026-11-01): **Filter by** the plugin a skill comes with o
   `skill-creator` picked: the assistant asks what the skill should do, drafts it, and saves it with
   `skill_write` once you agree.
 
+### Sharing skills (2026-11-09, schema 41)
+
+**Discover** lists the skills people on this site share — every account's, newest made first, each with
+its author's public name (the boards' rule, `server/themes.js` `publicName`; never an email) and a
+short description. Synapsez's own skills (Word, Excel, slides, PDF, small tools, `skill-creator` …) are
+no longer listed in either view — they are always at work, the + menu still offers them, and **Filter
+by → Created by → Synapsez** (or a plugin) brings them back into Yours.
+
+- **Sharing is the author's choice, skill by skill** — the **Share to Discover** switch in the editor
+  (off by default, saying that everyone on this site will be able to read and use it) or the ⋯ menu.
+  `SHARE_BY_DEFAULT` in `server/skills.js` is the one line to flip to share new skills by default.
+- **Scanned.** A shared skill is instructions another person's assistant follows, so the upload scan
+  runs when it is shared and on every edit while it is — and here its warnings (words that set the
+  assistant's instructions aside, or send something to an address) refuse too. The result is kept
+  with the skill (`skills.scan`); an edit it flags is refused whole.
+- **Adding is by reference** (`skill_adds`), never a copy: the assistant reads the author's current
+  version each time, so an edit reaches everyone at once. It is read to the model marked as another
+  person's. One account adds at most 20. The Skills page asks again every 20 seconds while it is open,
+  and when it is looked at, so changes arrive without a reload.
+- **Taken back, it goes for everyone** — un-shared, deleted, hidden by an administrator or its author
+  suspended — and the people who added it see a line saying why, with Remove.
+- **Moderation.** An administrator with *Manage people* can take a shared skill off Discover from its
+  card, and put it back; it is in their security record (`admin_skill_hidden` / `admin_skill_shown`).
+  Sharing and un-sharing are in the author's (`skill_shared` / `skill_unshared`).
+
 ---
 
 ## Themes, the boards and titles
@@ -1692,7 +1717,7 @@ day after their last use.
 Settings → Privacy → **Your data**:
 
 - **Export my data** downloads one JSON file — profile and username, preferences, notes, skills with
-  their files and the skill draft, projects with their source text, scheduled tasks, workflows, the
+  their files and whether each is shared, the shared skills added (by name), the skill draft, projects with their source text, scheduled tasks, workflows, the
   feedback you sent (with any conversation copy), what artifacts' pages saved, deep-research runs, the
   MCP servers you added (without their headers and environment, where their secrets are), and every
   conversation with its messages. Usage figures, sign-in sessions and the account's activity log are
@@ -1724,8 +1749,8 @@ computer** (System, Extensions, Developer), **Customize** (Skills, Connectors, P
 is and does on the left, its switch or choice on the right, saved the moment it changes — there is no
 Save button. Only what Synapsez really does is there: System's browser and computer switches are the
 cloud browser and cloud computer plugins; Extensions are MCP servers, and Developer adds one by hand;
-Customize has **Yours** (a list, with a ⋯ menu per row) and **Discover** (the built-in skills, the
-services not yet connected, the plugins switched off — no catalogue, no install counts). Old section
+Customize has **Yours** (a list, with a ⋯ menu per row) and **Discover** (the skills people here share,
+the services not yet connected, the plugins switched off — no catalogue, no install counts). Old section
 names (`languages`, `behaviour`, `mcp`) still open where their settings went (`public/js/app.js`
 `SETTINGS_MOVED`, `public/js/customize.js`).
 
@@ -2531,6 +2556,7 @@ has a script of its own:
 | | |
 |---|---|
 | `test:isolation` | Real SQL against an in-process Postgres, then deliberate attempts to cross the boundary between two accounts. Also the crypto, the risk classifier, redaction, and the SSRF guards. |
+| `test:shared-skills` | Skills shared to Discover, over the real routes: nothing unshared readable by another account, Discover's order and public names, an author's edit reaching whoever added it, un-sharing and deleting taking it from them with a note, the safety scan refusing, moderation and its record. |
 | `test:agent` | The loop itself, driven with a stubbed provider — sub-agents, transcript re-ordering, approval gating, and the compaction that keeps a long conversation inside the window. It exists because `run_parallel` shipped calling an async generator with `await`, which silently did nothing at all, and no test would have noticed. |
 | `test:http` | The app as something on a port: which routes need a session, which need an admin, that a password change really ends the other sessions, that guessing gets throttled, that a conversation runs in one place. |
 | `test:devices` | Pairing, several computers on one account, moving a working folder from the app, and the new-model announcement. Two pairing endpoints are unauthenticated by necessity, so what an unclaimed pairing *cannot* do is pinned down hard. |
