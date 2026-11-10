@@ -538,6 +538,9 @@ section('over HTTP');
   check('and no administrators: they hold them all', !people.json?.people?.some((p) => p.id === 'u-boss'));
   check('someone without the permission gets neither', (await call(me, 'GET', '/api/admin/themes/people')).status === 403 && (await call(me, 'GET', '/api/admin/themes/lagoon/holders')).status === 403);
   check('and be taken back', (await call(boss2, 'DELETE', '/api/admin/themes/lagoon/holders/u-http')).status === 200);
+  // These were written under kinds the security record did not know, and dropped (2026-11-10).
+  const record = (await store.listAudit('u-boss', 50)).map((e) => e.kind);
+  check("the administrator's own security record keeps giving and taking a theme", record.includes('admin_theme_given') && record.includes('admin_theme_taken'), record.join(','));
 
   /*
    * A theme's own files are nobody's before it is out but an administrator's or its

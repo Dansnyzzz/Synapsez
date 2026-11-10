@@ -25,6 +25,9 @@ export const AUDIT_KINDS = [
   'admin_changed', 'admin_removed', 'owner_transferred', 'email_confirmed',
   // A skill put on Discover or taken off by its author, and an administrator hiding one (41).
   'skill_shared', 'skill_unshared', 'admin_skill_hidden', 'admin_skill_shown',
+  // An administrator setting a theme's badge, giving one or taking one back (written since 1.13.0,
+  // dropped until 2026-11-10 because the kinds were missing here).
+  'admin_theme_badge', 'admin_theme_given', 'admin_theme_taken',
 ];
 
 /** The network a request came from, never the address itself. */
