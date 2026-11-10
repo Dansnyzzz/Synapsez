@@ -1,8 +1,8 @@
 {
-  "total": 271,
+  "total": 269,
   "files": {
     "public/js/api.js": 2,
-    "public/js/app.js": 105,
+    "public/js/app.js": 103,
     "public/js/i18n.js": 1,
     "public/js/models.js": 14,
     "public/js/onboarding.js": 1,

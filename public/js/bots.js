@@ -71,14 +71,11 @@ const timeOf = (iso) => {
  *   openFeedback: () => void,
  *   openAutomations: (tab: string) => void,
  *   onShow?: () => void,
- * }} deps
- */
-/**
- * @param {{ toast: Function, openSettings: Function, openFeedback: Function, openAutomations: Function, onShow?: Function,
  *   home: { input: HTMLTextAreaElement, lend: (slot: HTMLElement, ids: ('thread' | 'dock')[]) => void, giveBack: () => void,
  *     open: (chatId: string, options?: { incognito?: boolean }) => Promise<void>, blank: () => void,
  *     setHook: (hook: any) => void, refreshSend: () => void, incognito: () => boolean, model: () => string | undefined,
- *     setTitle: (text: string) => void, setPlaceholder: (text: string | null) => void } }} deps
+ *     setTitle: (text: string) => void, setPlaceholder: (text: string | null) => void },
+ * }} deps  `home`: the home chat's transcript and box, lent to the Bot page (owner, 2026-11-10)
  */
 export function createBotPage({ toast, openSettings, openFeedback, openAutomations, onShow = () => {}, home }) {
   const page = $('bot-page');

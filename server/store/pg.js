@@ -4623,13 +4623,6 @@ export function createPgStore(connectionString) {
       return rows.length > 0;
     },
 
-    /**
-     * The conversation a bot or group keeps, made the first time it is asked
-     * for: a bot's own chat (`botId`), a group's log (`groupId`), or a member's
-     * context in a group (both). Made only when the bot and the group are this
-     * account's; null otherwise. Two tabs asking at once get the same one — the
-     * partial unique indexes refuse the second insert.
-     */
     /** A new incognito conversation with one of the account's bots, or null when it has no such bot. */
     async incognitoBotChat(userId, botId, title = 'Bot') {
       const rows = await q(
@@ -4640,6 +4633,14 @@ export function createPgStore(connectionString) {
       );
       return rows[0] ?? null;
     },
+
+    /**
+     * The conversation a bot or group keeps, made the first time it is asked
+     * for: a bot's own chat (`botId`), a group's log (`groupId`), or a member's
+     * context in a group (both). Made only when the bot and the group are this
+     * account's; null otherwise. Two tabs asking at once get the same one — the
+     * partial unique indexes refuse the second insert.
+     */
     async botChat(userId, { botId = null, groupId = null, title = 'Bot' }) {
       const find = () =>
         q(

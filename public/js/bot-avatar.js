@@ -103,9 +103,9 @@ export function creatureStill(id) {
  * A face, to be filled in by `paintFaces`. Decoration: the name beside it says who it
  * is, so it is hidden from screen readers.
  *
- * @param {string} creature @param {number} [size] @param {string} [extra]  more classes
+ * @param {string | { avatar?: string, hue?: number } | null | undefined} who  a creature id, or a bot with its hue
+ * @param {number} [size] @param {string} [extra]  more classes
  */
-/** @param {string | { avatar?: string, hue?: number } | null | undefined} who */
 export function faceHtml(who, size = 28, extra = '') {
   const { creature, hue } = faceOf(who);
   const tint = hue ? `;filter:hue-rotate(${hue}deg)` : '';

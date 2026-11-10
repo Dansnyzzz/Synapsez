@@ -2327,16 +2327,12 @@ async function openFailed(id, replacing, restoring) {
 
 /**
  * @param {string} id
- * @param {{ restoring?: boolean }} [options]  `restoring`: going back after another
- *   would not open, so one more failure ends at a blank conversation rather than
- *   going round again.
+ * @param {{ restoring?: boolean, inBot?: boolean }} [options]  `restoring`: going back after
+ *   another would not open, so one more failure ends at a blank conversation rather than
+ *   going round again. `inBot`: a bot's conversation, opened inside the Bot page, which
+ *   stays (owner, 2026-11-10).
  * @returns {Promise<boolean>} whether this conversation is the one that landed:
  *   false when another press overtook it, or it would not open.
- */
-/**
- * @param {string} id
- * @param {{ restoring?: boolean, inBot?: boolean }} [options]  `inBot`: a bot's conversation,
- *   opened inside the Bot page, which stays (owner, 2026-11-10)
  */
 async function openChat(id, { restoring = false, inBot = false } = {}) {
   openingAbort?.abort();
@@ -3510,7 +3506,7 @@ function beginEdit(message, text) {
 
 $('composer').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const input = $('input');
+  const input = /** @type {HTMLTextAreaElement} */ ($('input'));
   const text = input.value.trim();
 
   // Only the ones that finished uploading. A file still in flight — or one that
