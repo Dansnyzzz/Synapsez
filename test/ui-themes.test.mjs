@@ -503,11 +503,17 @@ section('asking for less motion');
   await store.setUserSetting(row.id, 'prefs', { ...(await store.getUserSetting(row.id, 'prefs')), equippedTitle: 'spend-1000' });
   await reload(still);
   await still.waitForSelector('.composer__box canvas.mascot[data-creature="gold-whale"][data-frame]');
-  // Settled first (the page has just loaded, the box may still be finding its size); then held.
+  // The creature's own drawing, and the frame it says it is on — a screenshot of the spot
+  // also caught whatever passed over or behind it (a caret, a toast, the scene).
+  const drawing = () =>
+    still.evaluate(() => {
+      const c = /** @type {HTMLCanvasElement | null} */ (document.querySelector('.composer__box canvas.mascot'));
+      return c ? { pixels: c.toDataURL(), frame: c.dataset.frame, state: c.dataset.state, size: `${c.width}x${c.height}` } : null;
+    });
+  const held = await drawing();
   await still.waitForTimeout(600);
-  const held = await canvasPrint('.composer__box .mascot', still);
-  await still.waitForTimeout(450);
-  check('a worn title’s creature stays, holding still', !!held && held === (await canvasPrint('.composer__box .mascot', still)));
+  const later = await drawing();
+  check('a worn title’s creature stays, holding still', !!held && !!later && held.pixels === later.pixels && held.frame === later.frame, JSON.stringify([held, later].map((d) => d && { ...d, pixels: d.pixels.length })));
   check('  and nothing ticks for it', !(await still.evaluate(async () => (await import('/js/mascots/stage.js')).stageStats())).running);
   await shot('creature-still', still);
   await quiet.close();
