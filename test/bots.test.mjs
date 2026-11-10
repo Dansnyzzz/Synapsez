@@ -546,6 +546,46 @@ section('a group says in its own log what changed in it');
   await alice.call('DELETE', `/api/bots/${one.id}`);
 }
 
+section('a round that waits, joins, carries on and is watched (owner, 2026-11-10)');
+{
+  const ping = (await store.listBots(aliceId)).find((b) => b.name === 'Ping');
+  const pong = (await store.listBots(aliceId)).find((b) => b.name === 'Pong');
+  const loop = (await store.listBotGroups(aliceId)).find((g) => g.name === 'Loop');
+  const waiting = (await store.getBotGroup(aliceId, loop.id)).pending;
+  check('the ceiling left its queue for Continue', waiting?.reason === 'ceiling' && waiting.queue.length > 0, JSON.stringify(waiting));
+  const before = asked.length;
+  const pressed = await alice.stream(`/api/bot-groups/${loop.id}/continue`, {});
+  check('Continue carries it on, with a fresh allowance', pressed.events.find((e) => e.event === 'done')?.data?.handoffs > 0 && asked.length > before, JSON.stringify(pressed.events.find((e) => e.event === 'done')?.data));
+  check("  another account cannot press it", (await bob.call('POST', `/api/bot-groups/${loop.id}/continue`, {})).status === 404);
+  const log = (await alice.call('GET', `/api/bot-groups/${loop.id}/chat`)).body;
+  const since = log.messages.at(-1).seq;
+  const nothing = await alice.call('GET', `/api/bot-groups/${loop.id}/live?since=${since}`);
+  check('live: nothing new after the last line', nothing.status === 200 && nothing.body.messages.length === 0 && nothing.body.running === false, nothing.text.slice(0, 200));
+
+  // Another segment holds the group: what the person writes joins it.
+  const runId = crypto.randomUUID();
+  const seq = await store.claimChatRun(aliceId, log.chatId, runId);
+  const joined = await alice.call('POST', `/api/bot-groups/${loop.id}/run`, { text: '@Pong one more', model: 'openai/plain' });
+  check('writing while the group works is taken, not refused', joined.status === 200 && joined.body.joined === true && joined.body.message.text === '@Pong one more', joined.text.slice(0, 200));
+  const seenLive = await alice.call('GET', `/api/bot-groups/${loop.id}/live?since=${since}`);
+  check('  and shows at once to whoever watches', seenLive.body.running === true && seenLive.body.messages.some((m) => m.text === '@Pong one more'), seenLive.text.slice(0, 300));
+  check('  another account cannot watch it', (await bob.call('GET', `/api/bot-groups/${loop.id}/live?since=0`)).status === 404);
+  await store.releaseChatRun(aliceId, log.chatId, runId, seq);
+
+  const changed = await alice.call('PATCH', `/api/bot-groups/${loop.id}/model`, { model: 'openai/other' });
+  check('the chip changed while a group is open is the group\'s model', changed.status === 200 && (await store.getBotGroup(aliceId, loop.id)).model === 'openai/other');
+  check('  a model id is checked', (await alice.call('PATCH', `/api/bot-groups/${loop.id}/model`, { model: 'not a model; drop' })).status === 400);
+
+  await store.setGroupPending(aliceId, loop.id, { queue: [{ botId: ping.id }], handoffs: 0, segments: 1, reason: 'time', owed: {}, working: [], lastSeq: since, at: new Date().toISOString() });
+  await alice.call('POST', `/api/bot-groups/${loop.id}/stop`);
+  check('Stop lets go of what was waiting too', (await store.getBotGroup(aliceId, loop.id)).pending === null);
+  check('  nothing waiting: Continue says so', (await alice.call('POST', `/api/bot-groups/${loop.id}/continue`, {})).status === 409);
+
+  const internal = await fetch(`${base}/api/internal/bot-rounds/continue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: aliceId, groupId: loop.id }) });
+  check('the internal route for the next segment needs the deployment secret', internal.status === 401 || internal.status === 503, String(internal.status));
+  void pong;
+}
+
 await new Promise((r) => server.close(r));
 provider.closeAllConnections?.();
 provider.close();

@@ -143,6 +143,14 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
 
   const said = String(text ?? '').trim();
   const waiting = group.pending && ['ceiling', 'segments'].includes(group.pending.reason);
+  // A round still working between two segments (or one a killed invocation left): what
+  // the person writes joins it — the queue goes on, and the scan answers their line.
+  const working = group.pending && ['time', 'running'].includes(group.pending.reason);
+  let joining = false;
+  if (!resume && said && working) {
+    resume = true;
+    joining = true;
+  }
   // "Continue" in words takes on what waits; any other message lets it go.
   if (!resume && said && waiting && CONTINUE_WORDS.test(said)) {
     resume = true;
@@ -187,7 +195,8 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
   let ownLine = null;
   if (said) {
     const line = await post({ role: 'user', text: said });
-    ownLine = line?.id || null;
+    // Joining a round, the line is news like any other the person wrote: the scan queues whom it calls.
+    ownLine = joining ? null : line?.id || null;
     // A new round reads the person's lines from its own on: what came before was answered before.
     if (!resume && Number.isFinite(Number(line?.seq))) lastSeq = Number(line.seq);
     if (!resume) {

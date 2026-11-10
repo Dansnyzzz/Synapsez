@@ -78,6 +78,7 @@ import {
 } from './scheduler.js';
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
+import { continueGroup, resumeGroupRounds } from './bots/continue.js';
 import { abortHere, holdRun, settledAfterStop, watchLease } from './liveRuns.js';
 import { redactSecrets } from './redact.js';
 import { clientError, fromTheDatabase, SERVER_TROUBLE } from './util/clientError.js';
@@ -567,8 +568,28 @@ export function createApp() {
     // Conversations whose turn the 300s limit cut off, finished with nobody
     // watching — see server/resume.js.
     const resumed = await resumeCutOffTurns({ budgetMs: remaining() }).catch(() => []);
-    return { ran, workflows, resumed };
+    // Group rounds a killed invocation left, or whose next segment was never asked
+    // for (server/bots/continue.js) — after the turns above, with what time is left.
+    const groups = await resumeGroupRounds({ budgetMs: remaining() }).catch(() => []);
+    return { ran, workflows, resumed, groups };
   }
+
+  /**
+   * The next segment of a group's round, asked for by the segment before it as that
+   * one ran short of time (server/bots/continue.js). The deployment's own secret, as
+   * the heartbeat's; answered at once, the segment held open by `waitUntil`.
+   */
+  app.post(
+    '/api/internal/bot-rounds/continue',
+    requireCron,
+    wrap(async (req, res) => {
+      const userId = String(req.body?.userId || '');
+      const groupId = String(req.body?.groupId || '');
+      if (!/^[\w-]{1,80}$/.test(userId) || !/^[\w-]{1,80}$/.test(groupId)) return res.status(400).json({ error: 'userId and groupId are needed.' });
+      waitUntil(continueGroup({ userId, groupId }).catch((err) => log.error('a group segment failed', err, { groupId })));
+      res.status(202).json({ accepted: true });
+    }),
+  );
 
   app.post(
     '/api/register',

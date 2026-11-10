@@ -387,5 +387,82 @@ section('who is working, while the round runs');
   check('  and is cleared at the end', (await store.getBotGroup(uid, room.id)).pending === null);
 }
 
+section('writing between two segments joins the round, not replaces it');
+{
+  await cleanRoom();
+  const log = await store.botChat(uid, { groupId: room.id, title: room.name });
+  const first = await store.appendMessage(uid, log.id, { id: id(), role: 'user', text: 'Write the post' });
+  await store.setGroupPending(uid, room.id, { queue: [{ botId: writer.id, by: chief.id, report: null }], handoffs: 1, segments: 1, reason: 'time', owed: {}, working: [], lastSeq: first.seq, at: new Date().toISOString() });
+  const agent = fakeAgent({ Writer: 'Draft done.', Quiet: 'Hi!', Chief: 'All set.' });
+  const res = await roundOf({ text: '@Quiet hi', runAgent: agent.run });
+  const said = res.posts.map((m) => m.text);
+  check('the work that was waiting still runs', said.includes('Draft done.') && said.includes('All set.'), said.join(' | '));
+  check('  and the new line is answered in it', said.includes('Hi!'), said.join(' | '));
+}
+
+/* ── Task 3: carrying on in another invocation ─────────────────── */
+
+const { continueGroup, resumeGroupRounds } = await import('../server/bots/continue.js');
+
+section('the next segment runs in a new invocation, holding the group');
+{
+  await cleanRoom();
+  const log = await store.botChat(uid, { groupId: room.id, title: room.name });
+  await store.appendMessage(uid, log.id, { id: id(), role: 'user', text: 'Plan the week' });
+  await store.setGroupPending(uid, room.id, { queue: [{ botId: writer.id, by: chief.id, report: null }], handoffs: 1, segments: 1, reason: 'time', owed: {}, working: [], lastSeq: 0, at: new Date().toISOString() });
+  let heldDuring = null;
+  const agent = fakeAgent({
+    Writer: async () => {
+      heldDuring = (await store.getChat(uid, log.id)).run_lock_by;
+      return 'Monday: draft.';
+    },
+    Chief: 'Planned.',
+  });
+  const done = await continueGroup({ userId: uid, groupId: room.id, runAgent: agent.run, chain: () => {} });
+  check('it ran what was pending', done.status === 'ran' && agent.calls.map((c) => c.name).join() === 'Writer,Chief', JSON.stringify(done));
+  check('  holding the group\'s lease while it worked', !!heldDuring);
+  check('  and let it go after', !(await store.getChat(uid, log.id)).run_lock_by);
+  const busy = await store.claimChatRun(uid, log.id, id());
+  await store.setGroupPending(uid, room.id, { queue: [{ botId: writer.id }], handoffs: 0, segments: 1, reason: 'time', owed: {}, working: [], lastSeq: 0, at: new Date().toISOString() });
+  const second = await continueGroup({ userId: uid, groupId: room.id, runAgent: agent.run, chain: () => {}, claimWaitMs: 50 });
+  check('a group another segment holds is left to it', second.status === 'busy', JSON.stringify(second));
+  await store.releaseChatRun(uid, log.id, (await store.getChat(uid, log.id)).run_lock_by, busy);
+  await store.setGroupPending(uid, room.id, null);
+  check('nothing pending: nothing runs', (await continueGroup({ userId: uid, groupId: room.id, runAgent: agent.run })).status === 'nothing');
+}
+
+section('the next segment is asked for after this one lets the group go');
+{
+  await cleanRoom();
+  const order = [];
+  const agent = fakeAgent({ Chief: ({ prompt }) => (/What you handed on/.test(prompt) ? 'ok' : { wait: 200, then: '@Writer go' }), Writer: 'done' });
+  const log = await store.botChat(uid, { groupId: room.id, title: room.name });
+  await store.appendMessage(uid, log.id, { id: id(), role: 'user', text: 'start' });
+  await store.setGroupPending(uid, room.id, { queue: [{ botId: chief.id, by: null, report: null, person: 'admin' }], handoffs: 0, segments: 1, reason: 'time', owed: {}, working: [], lastSeq: 0, at: new Date().toISOString() });
+  await continueGroup({
+    userId: uid,
+    groupId: room.id,
+    runAgent: agent.run,
+    budgetMs: 300,
+    floorMs: 250,
+    chain: async () => order.push(['chain', (await store.getChat(uid, log.id)).run_lock_by]),
+  });
+  check('asked for once, with the lease already free', order.length === 1 && order[0][1] == null, JSON.stringify(order));
+}
+
+section('the heartbeat picks up a round a killed invocation left');
+{
+  await cleanRoom();
+  const log = await store.botChat(uid, { groupId: room.id, title: room.name });
+  await store.appendMessage(uid, log.id, { id: id(), role: 'user', text: 'go on' });
+  await store.setGroupPending(uid, room.id, { queue: [{ botId: writer.id, by: null, report: null, person: 'named' }], handoffs: 0, segments: 2, reason: 'running', owed: {}, working: [], lastSeq: 0, at: new Date().toISOString() });
+  // A lease taken and never renewed: the mark of a killed invocation.
+  await store.claimChatRun(uid, log.id, id());
+  const agent = fakeAgent({ Writer: 'Back on it.' });
+  const ran = await resumeGroupRounds({ budgetMs: 200_000, runAgent: agent.run, staleMs: 0, chain: () => {} });
+  check('it carries on the round', ran.some((r) => r.groupId === room.id && r.status === 'ran') && agent.calls.length === 1, JSON.stringify(ran));
+  check('  and the group has nothing left pending', (await store.getBotGroup(uid, room.id)).pending === null);
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll bot core checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);
