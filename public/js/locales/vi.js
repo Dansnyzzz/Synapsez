@@ -518,6 +518,7 @@ export const vi = {
   'mirror.watching': 'Đang chạy ở tab khác — đang theo dõi…',
   /* Trợ lý đang làm gì, ở dòng ngay trên khung soạn. */
   'status.thinking': 'Đang suy nghĩ…',
+  'status.planCheck': "Đang lập kế hoạch…",
   'status.progressCheck': 'Đang cập nhật tiến độ kế hoạch…',
   'composer.modeWorkflow': 'Đang nhờ trợ lý tạo chuỗi việc — sẽ lưu vào mục Chuỗi việc',
   'composer.modeSchedule': 'Đang nhờ trợ lý tạo việc chạy theo giờ — sẽ lưu vào mục Chạy theo giờ',

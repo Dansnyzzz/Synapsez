@@ -194,6 +194,7 @@ export const en = {
   'mirror.watching': 'Running in another tab — watching…',
   /* What the assistant is doing, in the line above the composer. */
   'status.thinking': 'Thinking…',
+  'status.planCheck': "Making the plan…",
   'status.progressCheck': 'Bringing the plan up to date…',
   'composer.modeWorkflow': 'Asking the assistant to set up a workflow — saved under Workflows',
   'composer.modeSchedule': 'Asking the assistant to set up a scheduled task — saved under Scheduled',

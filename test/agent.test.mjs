@@ -1382,6 +1382,58 @@ section('read-only and plan mode hold even for a tool nobody offered');
 }
 
 /*
+ * Owner, 2026-11-10: in Plan mode the model answered the question instead, and made a
+ * plan only when told "make a plan". Plan mode now always ends with a plan: sent back
+ * once to write it, never a loop, and never asked to mark pending steps done.
+ */
+section('every mode does what it says (audit, 2026-11-10)');
+{
+  const { needsApproval, policyRefusal } = await import('../server/agent.js');
+  const { availableTools } = await import('../server/tools/definitions.js');
+  const read = { id: 'r', name: 'read_file', input: { path: 'a.md' } };
+  const write = { id: 'w', name: 'write_file', input: { path: 'a.md', content: 'x' } };
+  const del = { id: 'd', name: 'delete_file', input: { path: 'dir', recursive: true } };
+  const asks = (policy) => needsApproval([read, write, del], policy).map((c) => c.id).join('');
+  check('guarded: reading and ordinary changes run, a destructive one asks', asks('guarded') === 'd', asks('guarded'));
+  check('ask: every change asks, reading does not', asks('ask') === 'wd', asks('ask'));
+  check('auto: nothing asks', asks('auto') === '');
+  for (const policy of ['plan', 'readonly']) {
+    const offered = availableTools({ workerOnline: true, desktopOnline: true, context: 200_000, policy }).map((t) => t.name);
+    check(`${policy}: nothing that changes things is offered, and a call to one is refused`, !offered.includes('write_file') && !offered.includes('delete_file') && policyRefusal(write, policy)?.isError === true);
+  }
+  check('  plan mode offers update_plan; the working modes offer the changing tools', availableTools({ workerOnline: true, desktopOnline: true, context: 200_000, policy: 'plan' }).some((t) => t.name === 'update_plan') && availableTools({ workerOnline: true, desktopOnline: true, context: 200_000, policy: 'guarded' }).some((t) => t.name === 'write_file'));
+
+  const modeUser = await store.createUser({ id: 'u-modes', email: 'modes@example.com', name: 'Modes', passwordHash: 'x', role: 'user' });
+  const planned = { id: 'p', name: 'update_plan', input: { steps: [{ title: 'Look at what is there', status: 'in_progress' }, { title: 'Compare the options', status: 'pending' }, { title: 'Write it up', status: 'pending' }] } };
+  const runIn = async (id, policy, turns) => {
+    await store.createChat(modeUser.id, { id, title: id });
+    await store.appendMessage(modeUser.id, id, { id: `u-${id}`, role: 'user', text: 'How should I price my web app?' });
+    const scripted = scriptedProvider(turns);
+    const events = [];
+    const requests = [];
+    const stream = async function* (opts) {
+      requests.push({ system: opts.system, tools: (opts.tools || []).map((t) => t.name), last: opts.messages?.at(-1) });
+      yield* scripted.stream(opts);
+    };
+    await runAgent({ userId: modeUser.id, user: modeUser, chatId: id, policy, emit: (type, payload) => events.push({ type, payload }), stream });
+    return { events, requests, calls: scripted.seen.calls };
+  };
+
+  const skipped = await runIn('c-mode-plan', 'plan', [{ text: 'Charge 199k a month.' }, { toolCalls: [planned] }, { text: 'Here is the plan; switch to Auto to carry it out.' }]);
+  check('plan mode: an answer with no plan is sent back to write one', skipped.calls === 3 && skipped.events.some((e) => e.type === 'plan' && e.payload?.steps?.length === 3), `${skipped.calls} calls`);
+  check('  told so by the app, in a note the user did not write', /Plan gate, from the app/.test(JSON.stringify(skipped.requests[1]?.last || '')), JSON.stringify(skipped.requests[1]?.last || '').slice(0, 160));
+  check('  the prompt says to plan first, without being asked', /Your first action in every turn is `update_plan`/.test(skipped.requests[0]?.system || '') && /In Plan mode every request gets a plan/.test(skipped.requests[0]?.system || ''));
+  check('  and says that it is checking the plan', skipped.events.some((e) => e.type === 'status' && e.payload?.phase === 'plan_check'));
+
+  const prompt = await runIn('c-mode-plan2', 'plan', [{ toolCalls: [planned] }, { text: 'Plan ready.' }]);
+  check('plan mode: a plan made at once is not sent back, nor asked to mark its pending steps done', prompt.calls === 2, `${prompt.calls} calls`);
+  const stubborn = await runIn('c-mode-plan3', 'plan', [{ text: 'No.' }, { text: 'Still no.' }]);
+  check('  sent back once only: a model that will not plan cannot loop', stubborn.calls === 2, `${stubborn.calls} calls`);
+  const guarded = await runIn('c-mode-guarded', 'guarded', [{ text: 'Charge 199k a month.' }]);
+  check('guarded: a question is answered, with no plan asked for', guarded.calls === 1 && /Do not plan when the reply is the answer/.test(guarded.requests[0]?.system || ''));
+}
+
+/*
  * Unprompted messages to other people have a ceiling per turn.
  *
  * Under `auto` nothing asks before `send_email`, so a page carrying an

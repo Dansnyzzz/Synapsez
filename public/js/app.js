@@ -4182,6 +4182,9 @@ async function streamOnce(run, decision, answers, handoff = false) {
           } else if (phase === 'progress_check') {
             // The progress gate sent the model back to bring the plan up to date.
             setStatus(t('status.progressCheck'), run);
+          } else if (phase === 'plan_check') {
+            // Plan mode sent the model back to write the plan it was asked for.
+            setStatus(t('status.planCheck'), run);
           } else if (phase === 'continuing') {
             // The output limit cut the reply off; the same message carries on.
             setStatus(t('status.continuing'), run);
