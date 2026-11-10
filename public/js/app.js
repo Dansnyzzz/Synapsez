@@ -3202,9 +3202,14 @@ async function openBotChat(chatId, { incognito = false } = {}) {
     state.incognitoChat = null;
   }
   if (incognito) state.incognitoChat = chatId;
-  await openChat(chatId, { inBot: true });
+  const landed = await openChat(chatId, { inBot: true });
   renderIncognito();
+  return landed;
 }
+
+/** The steps that change the team: the Bot page reads it again as each one lands (owner, 2026-11-10). */
+const TEAM_STEPS = new Set(['create_bot', 'update_bot', 'create_group', 'update_group']);
+const teamCalls = new Set();
 
 /**
  * Bot: the person's team of bots, led by Chief, and their group chats (bots.js, owner
@@ -4458,6 +4463,7 @@ async function streamOnce(run, decision, answers, handoff = false) {
             return;
           }
           run.toolHandles.set(call.id, run.turn.startTool(call));
+          if (TEAM_STEPS.has(call.name)) teamCalls.add(call.id);
           if (onScreen(run)) {
             state.liveTools = [...(state.liveTools || []), { id: call.id, name: call.name, input: call.input || {}, content: '', asked: state.lastAsked || '', turn: 100000 + (state.liveTurn || 0) }];
           }
@@ -4503,6 +4509,7 @@ async function streamOnce(run, decision, answers, handoff = false) {
         tool_result: (result) => {
           run.toolHandles.get(result.toolCallId)?.complete(result);
           run.toolHandles.delete(result.toolCallId);
+          if (teamCalls.delete(result.toolCallId) && !result.isError) botPage.teamChanged();
           if (onScreen(run)) {
             const live = (state.liveTools || []).find((c) => c.id === result.toolCallId);
             if (live) {

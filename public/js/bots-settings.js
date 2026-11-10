@@ -11,9 +11,13 @@ import { mountUsage } from './bots-usage.js';
  * Connectors (Settings), Scheduled tasks (the Automations page) and Feedback.
  *
  * One dialog, made the first time it opens. A bot's form takes a name, a role, a
- * creature, a model and the instructions the person writes for it; a group's takes a
+ * creature and the instructions the person writes for it; a group's takes a
  * name, members and an admin. The server checks everything again; this only saves
  * the person a round trip for the plain mistakes.
+ *
+ * What is saved shows the moment the server says so (owner, 2026-11-10): one request,
+ * its answer put in place here and on the Bot page behind, a line saying what happened —
+ * rather than waiting while the page read the whole team and its conversation again.
  */
 
 /** @type {HTMLDialogElement | null} */
@@ -29,12 +33,44 @@ const NAV = [
 ];
 
 /**
+ * A change to the team, made and answered: `item` saved (a bot or a group, as the server
+ * returned it), or `removed` (its id).
+ *
+ * @typedef {{ kind: 'bot' | 'group', item?: any, removed?: string }} TeamChange
+ */
+
+/**
+ * The team with one change in it, as the server now has it. A new one is the newest in the
+ * list; an edited one keeps its place and its last message; a deleted bot leaves its groups.
+ *
+ * @template {{ bots: any[], groups: any[] }} T
+ * @param {T} team @param {TeamChange} change
+ * @returns {T}
+ */
+export function mergeTeam(team, change) {
+  const key = change.kind === 'group' ? 'groups' : 'bots';
+  const list = team[key] || [];
+  if (change.removed) {
+    const next = { ...team, [key]: list.filter((x) => x.id !== change.removed) };
+    if (change.kind === 'bot') next.groups = (team.groups || []).map((g) => (g.members?.includes(change.removed) ? { ...g, members: g.members.filter((m) => m !== change.removed) } : g));
+    return next;
+  }
+  const old = list.find((x) => x.id === change.item.id);
+  const item = { ...old, ...change.item, at: old?.at || new Date().toISOString() };
+  return { ...team, [key]: old ? list.map((x) => (x.id === item.id ? item : x)) : [...list, item] };
+}
+
+/** What a change says, in a line: made, saved or deleted, by name. @param {TeamChange} change @param {boolean} made @param {string} name */
+export const changeLine = (change, made, name) =>
+  t(`bots.toast.${change.kind}${change.removed ? 'Deleted' : made ? 'Created' : 'Saved'}`, { name });
+
+/**
  * @param {{
  *   team: any, page: string, id: string | null,
  *   toast: (text: string, kind?: string) => void,
- *   onChanged: () => Promise<void>,
+ *   onChanged: (change: TeamChange) => Promise<any>,
  *   openSettings: (tab?: string) => void, openFeedback: () => void, openAutomations: (tab: string) => void,
- * }} deps
+ * }} deps  `onChanged` puts the change on the Bot page at once and answers with the team read again, or null
  */
 export function openBotSettings(deps) {
   let { team } = deps;
@@ -56,17 +92,44 @@ export function openBotSettings(deps) {
     </div>`;
   const main = /** @type {HTMLElement} */ (d.querySelector('[data-main]'));
   const botOf = (id) => team.bots.find((b) => b.id === id) || null;
+  /** The page and the one picked on it, so a fresh read redraws the right list. */
+  let current = { page: 'bots', id: /** @type {string | null} */ (null) };
 
-  const refresh = async () => {
-    await deps.onChanged();
-    team = await api.bots();
-  };
+  /**
+   * A change the server answered: in place here and on the Bot page at once, said in a
+   * line. The page reads the team again behind it (ids, colours, the last message), and
+   * the list here takes that read — the form being typed in is left as it is.
+   *
+   * @param {TeamChange} change @param {boolean} made
+   */
+  function changed(change, made) {
+    const name = change.item?.name || (change.kind === 'group' ? team.groups : team.bots).find((x) => x.id === change.removed)?.name || '';
+    team = mergeTeam(team, change);
+    deps.toast(changeLine(change, made, name), 'ok');
+    deps
+      .onChanged(change)
+      .then((fresh) => {
+        if (!fresh || !d.open) return;
+        team = fresh;
+        drawRows();
+      })
+      .catch(() => {});
+  }
+
+  /** A button that waits for the server: pressed once, it stays down until the answer. @param {HTMLButtonElement | null} button @param {boolean} on */
+  function busy(button, on) {
+    if (!button) return;
+    button.disabled = on;
+    button.setAttribute('aria-busy', String(on));
+    button.classList.toggle('is-busy', on);
+  }
 
   function select(page, id = null) {
     for (const b of d.querySelectorAll('[data-nav]')) b.setAttribute('aria-current', String(/** @type {HTMLElement} */ (b).dataset.nav === page));
     if (page === 'bots') return drawBots(id);
     if (page === 'groups') return drawGroups(id);
     if (page === 'usage') {
+      current = { page, id: null };
       main.innerHTML = `<h3 class="botset__h">${escapeHtml(t('bots.set.usage'))}</h3><div data-usage></div>`;
       return mountUsage(/** @type {HTMLElement} */ (main.querySelector('[data-usage]')), { team });
     }
@@ -75,15 +138,31 @@ export function openBotSettings(deps) {
 
   /* ── bots ─────────────────────────────────────────────────────── */
 
+  const botRows = (selected) =>
+    team.bots
+      .map((b) => `<li><button type="button" class="botset__row${b.id === selected ? ' is-on' : ''}" data-bot="${escapeHtml(b.id)}">${faceHtml(b, 28)}<span><span class="botset__name">${escapeHtml(b.name)}</span>${b.main ? ` <span class="bottag">${escapeHtml(t('bots.mainTag'))}</span>` : ''}<span class="botset__sub">${escapeHtml(b.role || '')}</span></span></button></li>`)
+      .join('');
+
+  const groupRows = (selected) =>
+    team.groups
+      .map((g) => `<li><button type="button" class="botset__row${g.id === selected ? ' is-on' : ''}" data-group="${escapeHtml(g.id)}"><span class="botfaces">${g.members.slice(0, 3).map((m) => faceHtml(botOf(m) || '', 20)).join('')}</span><span><span class="botset__name">${escapeHtml(g.name)}</span><span class="botset__sub">${escapeHtml(g.members.map((m) => botOf(m)?.name).filter(Boolean).join(', '))}</span></span></button></li>`)
+      .join('') || `<li class="hint">${escapeHtml(t('bots.g.none'))}</li>`;
+
+  /** The list alone, drawn again from the team as last read: what is being typed stays. */
+  function drawRows() {
+    const rows = main.querySelector('.botset__list');
+    if (!rows || (current.page !== 'bots' && current.page !== 'groups')) return;
+    rows.innerHTML = current.page === 'bots' ? botRows(current.id) : groupRows(current.id);
+    paintFaces(rows);
+  }
+
   function drawBots(id) {
     const bot = id && id !== 'new' ? botOf(id) : null;
-    const rows = team.bots
-      .map((b) => `<li><button type="button" class="botset__row${b.id === bot?.id ? ' is-on' : ''}" data-bot="${escapeHtml(b.id)}">${faceHtml(b, 28)}<span><span class="botset__name">${escapeHtml(b.name)}</span>${b.main ? ` <span class="bottag">${escapeHtml(t('bots.mainTag'))}</span>` : ''}<span class="botset__sub">${escapeHtml(b.role || '')}</span></span></button></li>`)
-      .join('');
+    current = { page: 'bots', id: bot?.id || null };
     const editing = id === 'new' || bot;
     const avatar = bot?.avatar || CREATURE_IDS.find((c) => !team.bots.some((b) => b.avatar === c)) || CREATURE_IDS[0];
     main.innerHTML = `<header class="botset__head"><h3 class="botset__h">${escapeHtml(t('bots.set.bots'))}</h3><button class="btn btn--small" type="button" data-new-bot>${escapeHtml(t('bots.newBot'))}</button></header>
-      <ul class="botset__list">${rows}</ul>
+      <ul class="botset__list">${botRows(bot?.id)}</ul>
       ${
         editing
           ? `<form class="botform" data-bot-form novalidate>
@@ -91,7 +170,7 @@ export function openBotSettings(deps) {
         <label class="field"><span>${escapeHtml(t('bots.f.name'))}</span><input name="name" maxlength="40" required value="${escapeHtml(bot?.name || '')}" /></label>
         <label class="field"><span>${escapeHtml(t('bots.f.role'))}</span><input name="role" maxlength="40" value="${escapeHtml(bot?.role || '')}" /></label>
         <fieldset class="botform__creatures"><legend>${escapeHtml(t('bots.f.creature'))}</legend>
-          ${CREATURE_IDS.map((c) => `<label class="botform__creature" title="${escapeHtml(creatureName(c))}"><input type="radio" name="avatar" value="${escapeHtml(c)}" ${c === avatar ? 'checked' : ''} />${faceHtml(c, 40)}<span class="sr-only">${escapeHtml(creatureName(c))}</span></label>`).join('')}
+          ${CREATURE_IDS.map((c) => `<label class="botform__creature" title="${escapeHtml(creatureName(c))}"><input type="radio" name="avatar" value="${escapeHtml(c)}" ${c === avatar ? 'checked' : ''} ${bot?.main && c !== avatar ? 'disabled' : ''} />${faceHtml(c, 40)}<span class="sr-only">${escapeHtml(creatureName(c))}</span></label>`).join('')}
         </fieldset>
         <p class="hint botform__note">${escapeHtml(t('bots.f.modelNote'))}</p>
         <label class="field"><span>${escapeHtml(t('bots.f.instructions'))}</span><textarea name="instructions" rows="6" maxlength="4000">${escapeHtml(bot?.instructions || '')}</textarea><small class="hint">${escapeHtml(t('bots.f.instructionsHint'))}</small></label>
@@ -108,6 +187,9 @@ export function openBotSettings(deps) {
     const form = /** @type {HTMLFormElement | null} */ (main.querySelector('[data-bot-form]'));
     form?.addEventListener('submit', async (event) => {
       event.preventDefault();
+      const save = /** @type {HTMLButtonElement} */ (form.querySelector('button[type="submit"]'));
+      // A second press while the first is on its way would make the bot twice.
+      if (save.disabled) return;
       const data = new FormData(form);
       const error = /** @type {HTMLElement} */ (form.querySelector('[data-error]'));
       const problem = nameProblem(data.get('name'));
@@ -115,14 +197,16 @@ export function openBotSettings(deps) {
         error.textContent = t(problem);
         return;
       }
+      error.textContent = '';
       const body = { name: data.get('name'), role: data.get('role'), avatar: data.get('avatar'), instructions: data.get('instructions') };
+      busy(save, true);
       try {
         const saved = bot ? await api.updateBot(bot.id, body) : await api.createBot(body);
-        await refresh();
-        deps.toast(t('bots.saved'));
+        changed({ kind: 'bot', item: saved.bot }, !bot);
         drawBots(saved.bot.id);
       } catch (err) {
         error.textContent = err.message;
+        busy(save, false);
       }
     });
   }
@@ -131,13 +215,11 @@ export function openBotSettings(deps) {
 
   function drawGroups(id) {
     const group = id && id !== 'new' ? team.groups.find((g) => g.id === id) : null;
-    const rows = team.groups
-      .map((g) => `<li><button type="button" class="botset__row${g.id === group?.id ? ' is-on' : ''}" data-group="${escapeHtml(g.id)}"><span class="botfaces">${g.members.slice(0, 3).map((m) => faceHtml(botOf(m)?.avatar || '', 20)).join('')}</span><span><span class="botset__name">${escapeHtml(g.name)}</span><span class="botset__sub">${escapeHtml(g.members.map((m) => botOf(m)?.name).filter(Boolean).join(', '))}</span></span></button></li>`)
-      .join('');
+    current = { page: 'groups', id: group?.id || null };
     const editing = id === 'new' || group;
     const members = new Set(group?.members || []);
     main.innerHTML = `<header class="botset__head"><h3 class="botset__h">${escapeHtml(t('bots.set.groups'))}</h3><button class="btn btn--small" type="button" data-new-group>${escapeHtml(t('bots.newGroup'))}</button></header>
-      <ul class="botset__list">${rows || `<li class="hint">${escapeHtml(t('bots.g.none'))}</li>`}</ul>
+      <ul class="botset__list">${groupRows(group?.id)}</ul>
       ${
         editing
           ? `<form class="botform" data-group-form novalidate>
@@ -159,6 +241,8 @@ export function openBotSettings(deps) {
     const form = /** @type {HTMLFormElement | null} */ (main.querySelector('[data-group-form]'));
     form?.addEventListener('submit', async (event) => {
       event.preventDefault();
+      const save = /** @type {HTMLButtonElement} */ (form.querySelector('button[type="submit"]'));
+      if (save.disabled) return;
       const data = new FormData(form);
       const error = /** @type {HTMLElement} */ (form.querySelector('[data-error]'));
       const picked = data.getAll('members').map(String);
@@ -166,14 +250,16 @@ export function openBotSettings(deps) {
       if (!String(data.get('name') || '').trim()) return void (error.textContent = t('bots.g.needName'));
       if (!picked.length) return void (error.textContent = t('bots.g.needMembers'));
       if (!picked.includes(admin)) return void (error.textContent = t('bots.g.adminMember'));
+      error.textContent = '';
       const body = { name: data.get('name'), members: picked, admin };
+      busy(save, true);
       try {
         const saved = group ? await api.updateGroup(group.id, body) : await api.createGroup(body);
-        await refresh();
-        deps.toast(t('bots.saved'));
+        changed({ kind: 'group', item: saved.group }, !group);
         drawGroups(saved.group.id);
       } catch (err) {
         error.textContent = err.message;
+        busy(save, false);
       }
     });
   }
@@ -182,18 +268,33 @@ export function openBotSettings(deps) {
 
   /** Delete takes a second press within three seconds, on the button itself. */
   const armed = (button, run) => {
+    if (button.disabled) return undefined;
     if (button.dataset.armed === '1') return run();
     button.dataset.armed = '1';
     const was = button.textContent;
     button.textContent = t('bots.f.deleteConfirm');
     setTimeout(() => {
-      if (button.isConnected) {
+      if (button.isConnected && !button.disabled) {
         button.dataset.armed = '';
         button.textContent = was;
       }
     }, 3000);
     return undefined;
   };
+
+  /** @param {HTMLButtonElement} button @param {'bot' | 'group'} kind @param {string} id */
+  async function remove(button, kind, id) {
+    busy(button, true);
+    try {
+      await (kind === 'bot' ? api.deleteBot(id) : api.deleteGroup(id));
+      changed({ kind, removed: id }, false);
+      if (kind === 'bot') drawBots(null);
+      else drawGroups(null);
+    } catch (err) {
+      busy(button, false);
+      deps.toast(err.message, 'error');
+    }
+  }
 
   d.onclick = async (event) => {
     const target = /** @type {HTMLElement} */ (event.target);
@@ -212,30 +313,10 @@ export function openBotSettings(deps) {
     if (g) return drawGroups(g.dataset.group || null);
     if (target.closest('[data-new-bot]')) return drawBots('new');
     if (target.closest('[data-new-group]')) return drawGroups('new');
-    const delBot = /** @type {HTMLElement | null} */ (target.closest('[data-delete-bot]'));
-    if (delBot)
-      return armed(delBot, async () => {
-        try {
-          await api.deleteBot(delBot.dataset.deleteBot);
-          await refresh();
-          deps.toast(t('bots.deleted'));
-          drawBots(null);
-        } catch (err) {
-          deps.toast(err.message, 'error');
-        }
-      });
-    const delGroup = /** @type {HTMLElement | null} */ (target.closest('[data-delete-group]'));
-    if (delGroup)
-      return armed(delGroup, async () => {
-        try {
-          await api.deleteGroup(delGroup.dataset.deleteGroup);
-          await refresh();
-          deps.toast(t('bots.deleted'));
-          drawGroups(null);
-        } catch (err) {
-          deps.toast(err.message, 'error');
-        }
-      });
+    const delBot = /** @type {HTMLButtonElement | null} */ (target.closest('[data-delete-bot]'));
+    if (delBot) return armed(delBot, () => remove(delBot, 'bot', String(delBot.dataset.deleteBot)));
+    const delGroup = /** @type {HTMLButtonElement | null} */ (target.closest('[data-delete-group]'));
+    if (delGroup) return armed(delGroup, () => remove(delGroup, 'group', String(delGroup.dataset.deleteGroup)));
     return undefined;
   };
 

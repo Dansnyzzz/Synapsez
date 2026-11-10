@@ -6,7 +6,7 @@ import { validZone } from '../util/zone.js';
 import { abortHere, holdRun, settledAfterStop, watchLease } from '../liveRuns.js';
 import { log } from '../util/trace.js';
 import { clientError } from '../util/clientError.js';
-import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, ensureChief, updateBot, updateGroup } from '../bots/team.js';
+import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, ensureChief, removeBot, updateBot, updateGroup } from '../bots/team.js';
 import { listMemory, remember } from '../bots/memory.js';
 import { runGroupRound } from '../bots/rounds.js';
 import { parseSchedule } from '../scheduler.js';
@@ -101,7 +101,8 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const bot = await store.getBot(req.user.id, req.params.id);
       if (!bot) return res.status(404).json({ error: 'No such bot.' });
       if (bot.is_main) return res.status(409).json({ error: 'Chief runs the team, so it can be changed but not deleted.', code: 'main_bot' });
-      await store.deleteBot(req.user.id, bot.id);
+      // Said in each group it was in (team.js removeBot).
+      await removeBot(req.user.id, bot);
       res.json({ ok: true });
     }),
   );
@@ -159,6 +160,8 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       }
       const chat = await store.botChat(req.user.id, { botId: bot.id, title: bot.name });
       if (!chat) return res.status(404).json({ error: 'No such bot.' });
+      // `?light=1`: the id alone — the Bot page's home chat reads the messages itself (2026-11-10).
+      if (req.query.light === '1') return res.json({ chatId: chat.id, running: running(chat) });
       res.json({ chatId: chat.id, running: running(chat), messages: await store.listMessages(req.user.id, chat.id) });
     }),
   );

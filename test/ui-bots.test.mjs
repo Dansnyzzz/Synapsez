@@ -44,7 +44,7 @@ function script(who, messages) {
   const last = messages.at(-1);
   const lastUser = textOf([...messages].reverse().find((m) => m.role === 'user'));
   if (who === 'chief') {
-    if (last?.role === 'tool') return { text: 'Done. It is ready.' };
+    if (last?.role === 'tool') return /make a writer/i.test(lastUser) ? { slowThink: true, text: 'Done. It is ready.' } : { text: 'Done. It is ready.' };
     if (/make a writer/i.test(lastUser)) return { think: 'The user wants a writer; I will create one.', tool: { name: 'create_bot', args: { name: 'Writer', role: 'Editor', instructions: 'Draft blog posts.', creature: 'seahorse' } } };
     if (/make a group/i.test(lastUser)) return { tool: { name: 'create_group', args: { name: 'Blog', members: ['Writer'] } } };
     if (/\[Group chat/.test(lastUser)) return /What you handed on is back/.test(lastUser) ? { text: 'Summary: the draft is in.' } : { text: '@Writer please draft the first post.' };
@@ -169,6 +169,21 @@ const sendText = async (text) => {
   await page.press('#input', 'Enter');
 };
 const idle = () => page.waitForFunction(() => document.getElementById('stop')?.hidden !== false, null, { timeout: 20_000 }).catch(() => {});
+// Every line that pops up, kept to be read later (owner, 2026-11-10: a line for what is made or deleted).
+await page.evaluate(() => {
+  window.__toasts = [];
+  const keep = new MutationObserver((list) => {
+    for (const m of list) for (const n of m.addedNodes) if (n.nodeType === 1) window.__toasts.push(n.textContent);
+  });
+  for (const id of ['toasts', 'toasts-alert']) keep.observe(document.getElementById(id), { childList: true });
+});
+const toasted = () => page.evaluate(() => window.__toasts || []);
+/** The alpha of a computed colour: rgba(), or color(srgb … / a), or 1. */
+const alphaOf = (css) => Number((/\/\s*([\d.]+)\s*\)$/.exec(css) || /rgba\([^)]*,\s*([\d.]+)\)$/.exec(css) || [])[1] ?? 1);
+const chatAsks = [];
+page.on('request', (r) => {
+  if (/\/api\/bots\/[^/]+\/chat/.test(r.url())) chatAsks.push(r.url());
+});
 const me = await store.getUserByEmail('bots@test.local');
 
 section('the rail: Automations under the clock, and Bot beside it');
@@ -254,7 +269,18 @@ section('what is written shows at once, and thinking streams as it comes');
 section('asked, Chief makes a bot and a group');
 {
   await sendText('Please make a writer for my blog');
+  // In the list while Chief is still at work, not once the whole turn is over.
+  const early = await page
+    .waitForFunction(() => [...document.querySelectorAll('.botrow__name')].some((n) => n.textContent.trim() === 'Writer') && document.getElementById('stop')?.hidden === false, null, { timeout: 8000 })
+    .then(() => true, () => false);
+  check('the bot Chief makes is in the list the moment it is made, while the turn goes on', early);
   await idle();
+  await page.waitForFunction(() => !!document.querySelector('#messages .stepface[data-filled] .botface'), null, { timeout: 5000 }).catch(() => {});
+  const stepFace = await page.evaluate(() => {
+    const slot = document.querySelector('#messages .stepface[data-filled]');
+    return { name: slot?.dataset.faceName, creature: slot?.querySelector('.botface')?.dataset.creature, before: slot?.nextElementSibling?.textContent.trim() };
+  });
+  check('  and its step wears its face, left of its name', stepFace.name === 'Writer' && stepFace.creature === 'seahorse' && stepFace.before === 'Writer', JSON.stringify(stepFace));
   await page.waitForFunction(() => [...document.querySelectorAll('.botrow__name')].some((n) => n.textContent.trim() === 'Writer'), null, { timeout: 10_000 }).catch(() => {});
   const seen = await page.evaluate(() => ({
     step: /Created a bot/.test(document.getElementById('messages')?.textContent || ''),
@@ -262,11 +288,15 @@ section('asked, Chief makes a bot and a group');
   }));
   check('making a bot reads as a step, in words', seen.step, JSON.stringify(seen));
   check('Writer is in the list on the left', seen.rows.includes('Writer'), seen.rows.join());
+  await page.waitForFunction(() => (window.__toasts || []).includes('Created the bot Writer.'), null, { timeout: 5000 }).catch(() => {});
+  check('  and a line says it was made', (await toasted()).includes('Created the bot Writer.'), JSON.stringify(await toasted()));
   await sendText('Now make a group with Writer');
   await idle();
   await page.waitForFunction(() => [...document.querySelectorAll('.botrow__name')].some((n) => n.textContent.trim() === 'Blog'), null, { timeout: 10_000 }).catch(() => {});
   const group = await page.evaluate(() => [...document.querySelectorAll('.botrow__name')].map((n) => n.textContent.trim()));
   check('the group is in the list', group.includes('Blog'), group.join());
+  await page.waitForFunction(() => (window.__toasts || []).includes('Created the group chat Blog.'), null, { timeout: 5000 }).catch(() => {});
+  check('  and a line says so', (await toasted()).includes('Created the group chat Blog.'), JSON.stringify(await toasted()));
   if (process.env.BOT_SHOTS) await page.screenshot({ path: path.join(process.env.BOT_SHOTS, 'bots-chief.png') });
 }
 
@@ -289,11 +319,35 @@ section('a group chat: the same box, @ offers the members, the admin hands on, t
   await page.press('#input', 'Enter');
   const filled = await page.inputValue('#input');
   check('  Enter picks it, and sends nothing', filled === 'Hi @Writer ', JSON.stringify(filled));
+  // The name that will call Writer, bold in its colour, over the box's own letters (owner, 2026-11-10).
+  await page.waitForTimeout(60);
+  const bold = await page.evaluate(() => {
+    const box = /** @type {HTMLTextAreaElement} */ (document.getElementById('input'));
+    const lay = /** @type {HTMLElement | null} */ (document.querySelector('.mentionlay'));
+    const at = /** @type {HTMLElement | null} */ (lay?.querySelector('.mentionlay__at'));
+    const a = getComputedStyle(box);
+    const b = lay ? getComputedStyle(lay) : null;
+    const boxAt = box.getBoundingClientRect();
+    const layAt = lay?.getBoundingClientRect();
+    return {
+      on: box.classList.contains('has-mentions'),
+      clear: a.color,
+      words: lay?.textContent?.replace('\u200b', ''),
+      value: box.value,
+      name: at?.textContent,
+      stroke: at ? parseFloat(getComputedStyle(at).getPropertyValue('-webkit-text-stroke-width')) : 0,
+      same: !!b && a.fontSize === b.fontSize && a.lineHeight === b.lineHeight && a.fontFamily === b.fontFamily && a.paddingTop === b.paddingTop && a.paddingLeft === b.paddingLeft,
+      off: layAt ? Math.max(Math.abs(layAt.left - boxAt.left - box.clientLeft), Math.abs(layAt.top - boxAt.top - box.clientTop), Math.abs(layAt.width - box.clientWidth)) : 99,
+    };
+  });
+  check('  the name that will call Writer is bold in the box, in its colour', bold.on && bold.name === '@Writer' && bold.stroke > 0 && /rgba\(0, 0, 0, 0\)|transparent/.test(bold.clear), JSON.stringify(bold));
+  check('    drawn in the box\'s own type, exactly over its letters', bold.same && bold.words === bold.value && bold.off < 1, JSON.stringify(bold));
   await page.fill('#input', 'Can we get a first post?');
   const pressed = Date.now();
   await page.press('#input', 'Enter');
   await page.waitForFunction(() => /Can we get a first post/.test(document.querySelector('#bot-page [data-log]')?.textContent || ''), null, { timeout: 3000 }).catch(() => {});
   check('what was written is in the group at once', Date.now() - pressed < 1500 && /Can we get a first post/.test(await logText()), `${Date.now() - pressed} ms`);
+  check('  a box with no name in it is as it was, nothing laid under it', await page.evaluate(() => !document.querySelector('.mentionlay') && !document.getElementById('input').classList.contains('has-mentions')));
   await idle();
   await page.waitForFunction(() => document.querySelectorAll('#bot-page .botmsg--member').length >= 3, null, { timeout: 15_000 }).catch(() => {});
   const seen = await page.evaluate(() =>
@@ -390,6 +444,76 @@ section('Bot settings: Bots, Group chats, Usage; a creature in use comes in anot
   await page.click('#bot-settings [data-bot-form] button[type="submit"]');
   await page.waitForTimeout(600);
   check('  saving changes it', (await store.listBots(me.id)).find((b) => b.name === 'Writer')?.role === 'Senior editor');
+  check('  and a line says it was saved', (await toasted()).includes('Saved Writer.'), JSON.stringify(await toasted()));
+
+  // The team read made slow on purpose: what is saved or deleted still shows the moment its
+  // own request answers, on the page and in the dialog (owner, 2026-11-10).
+  await page.route('**/api/bots', async (route) => {
+    if (route.request().method() === 'GET') await new Promise((r) => setTimeout(r, 2500));
+    await route.continue();
+  });
+  const rowShows = (name, where) => page.waitForFunction(([n, w]) => [...document.querySelectorAll(w)].some((x) => x.textContent.trim() === n), [name, where], { timeout: 6000 }).then(() => true, () => false);
+  await page.click('#bot-settings [data-nav="bots"]');
+  await page.click('#bot-settings [data-new-bot]');
+  await page.fill('#bot-settings input[name="name"]', 'Editor');
+  let began = Date.now();
+  // Twice, fast: one bot, not two.
+  await page.evaluate(() => {
+    const save = /** @type {HTMLButtonElement} */ (document.querySelector('#bot-settings [data-bot-form] button[type="submit"]'));
+    save.click();
+    save.click();
+  });
+  const onPage = await rowShows('Editor', '.botrow__name');
+  const madeIn = Date.now() - began;
+  const inDialog = await page.evaluate(() => [...document.querySelectorAll('#bot-settings .botset__name')].some((n) => n.textContent.trim() === 'Editor'));
+  check('a new bot is on the page and in the dialog the moment it is saved, not after the team is read', onPage && inDialog && madeIn < 1500, `${madeIn} ms`);
+  check('  saved twice in a hurry, it is made once', (await store.listBots(me.id)).filter((b) => b.name === 'Editor').length === 1);
+  check('  and a line says it was made', (await toasted()).includes('Created the bot Editor.'), JSON.stringify(await toasted()));
+  await page.click('#bot-settings [data-delete-bot]');
+  began = Date.now();
+  await page.click('#bot-settings [data-delete-bot]');
+  const gone = await page.waitForFunction(() => ![...document.querySelectorAll('.botrow__name')].some((n) => n.textContent.trim() === 'Editor'), null, { timeout: 6000 }).then(() => true, () => false);
+  const goneIn = Date.now() - began;
+  check('deleted, it leaves the page at once', gone && goneIn < 1500, `${goneIn} ms`);
+  check('  and a line says it was deleted', (await toasted()).includes('Deleted the bot Editor.'), JSON.stringify(await toasted()));
+  await page.click('#bot-settings [data-nav="groups"]');
+  await page.click('#bot-settings [data-new-group]');
+  await page.fill('#bot-settings input[name="name"]', 'Desk');
+  await page.check(`#bot-settings input[name="members"][value="${chiefId}"]`);
+  began = Date.now();
+  await page.click('#bot-settings [data-group-form] button[type="submit"]');
+  const groupShows = await rowShows('Desk', '.botrow__name');
+  const groupIn = Date.now() - began;
+  check('a new group chat is on the page at once too', groupShows && groupIn < 1500, `${groupIn} ms`);
+  check('  and a line says it was made', (await toasted()).includes('Created the group chat Desk.'), JSON.stringify(await toasted()));
+  // Opened behind the dialog, the group says in the middle of its log what happens to it.
+  await page.evaluate(() => /** @type {HTMLDialogElement} */ (document.getElementById('bot-settings')).close());
+  await page.click('.botrow:has-text("Desk")');
+  await page.waitForFunction(() => /Desk/.test(document.querySelector('.botchat__pill')?.textContent || ''));
+  await page.waitForFunction(() => /Group chat made with/.test(document.querySelector('#bot-page [data-log]')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  const madeLine = await page.evaluate(() => {
+    const n = [...document.querySelectorAll('#bot-page .botnotice')].find((x) => /Group chat made with/.test(x.textContent || ''));
+    return { text: n?.textContent.trim(), faces: n?.querySelectorAll('.botface').length, align: n ? getComputedStyle(n).textAlign : '' };
+  });
+  check('the group says it was made, and with whom, each by face, in the middle', madeLine.text === 'Group chat made with Chief.' && madeLine.faces === 1 && madeLine.align === 'center', JSON.stringify(madeLine));
+  await page.click('#bot-page [data-act="settings"]');
+  await page.waitForSelector('#bot-settings[open]');
+  await page.click('#bot-settings [data-nav="groups"]');
+  await page.click('#bot-settings [data-group] >> text=Desk');
+  const writerId = (await store.listBots(me.id)).find((b) => b.name === 'Writer').id;
+  await page.check(`#bot-settings input[name="members"][value="${writerId}"]`);
+  began = Date.now();
+  await page.click('#bot-settings [data-group-form] button[type="submit"]');
+  const joined = await page
+    .waitForFunction(() => [...document.querySelectorAll('#bot-page .botnotice')].some((n) => n.textContent.trim() === 'Writer joined the group.' && n.querySelector('.botface')), null, { timeout: 5000 })
+    .then(() => true, () => false);
+  const joinedIn = Date.now() - began;
+  check('  a bot added in settings is said in the open group at once, by face', joined && joinedIn < 1500, `${joinedIn} ms`);
+  await page.click('#bot-settings [data-delete-group]');
+  await page.click('#bot-settings [data-delete-group]');
+  await page.waitForFunction(() => (window.__toasts || []).includes('Deleted the group chat Desk.'), null, { timeout: 5000 }).catch(() => {});
+  check('  deleted, a line says so', (await toasted()).includes('Deleted the group chat Desk.') && !(await store.listBotGroups(me.id)).some((g) => g.name === 'Desk'), JSON.stringify(await toasted()));
+  await page.unroute('**/api/bots');
   await page.click('#bot-settings [data-nav="usage"]');
   await page.waitForSelector('#bot-settings .botuse__tiles', { timeout: 8000 }).catch(() => {});
   const usage = await page.evaluate(() => ({
@@ -414,6 +538,27 @@ section('Bot settings: Bots, Group chats, Usage; a creature in use comes in anot
   await page.waitForFunction(() => document.querySelectorAll('.botrow').length >= 4, null, { timeout: 8000 }).catch(() => {});
   const tints = await page.evaluate(() => [...document.querySelectorAll('.botrow')].filter((r) => /Writer|Twin|Triplet/.test(r.textContent || '')).map((r) => r.querySelector('.botface')?.style.filter || 'none'));
   check('three bots wearing the seahorse wear it in three colours', tints.length === 3 && new Set(tints).size === 3, tints.join(' | '));
+}
+
+section('the left side is a light pane over the theme; a bot opened again is not asked for twice');
+{
+  const shade = await page.evaluate(() => ({
+    list: getComputedStyle(document.querySelector('.botlist')).backgroundColor,
+    open: getComputedStyle(document.querySelector('.botrow.is-open, .botchief.is-open')).backgroundColor,
+  }));
+  check('the list is a thin wash, and the one open a light one, not a grey slab', alphaOf(shade.list) <= 0.3 && alphaOf(shade.open) <= 0.15, JSON.stringify(shade));
+  const writerId = (await store.listBots(me.id)).find((b) => b.name === 'Writer').id;
+  await page.click('.botrow:has-text("Writer")');
+  await page.waitForFunction(() => /Writer/.test(document.querySelector('.botchat__pill')?.textContent || ''));
+  await page.click('.botchief');
+  await page.waitForFunction(() => /Chief/.test(document.querySelector('.botchat__pill')?.textContent || ''));
+  const before = chatAsks.filter((u) => u.includes(writerId)).length;
+  await page.click('.botrow:has-text("Writer")');
+  await page.waitForFunction(() => /Writer/.test(document.querySelector('.botchat__pill')?.textContent || ''));
+  await page.waitForTimeout(300);
+  const asks = chatAsks.filter((u) => u.includes(writerId));
+  check("a bot's chat is asked for by its id alone, without its messages", asks.length > 0 && asks.every((u) => /[?&]light=1/.test(u)), asks.join(' '));
+  check('  and opening it again goes straight to it', asks.length === before, `${before} then ${asks.length}`);
 }
 
 section("Stop ends every member's turn");

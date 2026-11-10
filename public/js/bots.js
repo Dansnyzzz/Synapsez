@@ -4,7 +4,7 @@ import { escapeHtml, renderMarkdown } from './markdown.js';
 import { counted } from './format.js';
 import { faceHtml, paintFaces, inkOf } from './bot-avatar.js';
 import { mentionSpans, atQuery } from './bot-mentions.js';
-import { openBotSettings } from './bots-settings.js';
+import { openBotSettings, mergeTeam, changeLine } from './bots-settings.js';
 import { compactCount } from './bots-usage.js';
 
 /**
@@ -72,7 +72,7 @@ const timeOf = (iso) => {
  *   openAutomations: (tab: string) => void,
  *   onShow?: () => void,
  *   home: { input: HTMLTextAreaElement, lend: (slot: HTMLElement, ids: ('thread' | 'dock')[]) => void, giveBack: () => void,
- *     open: (chatId: string, options?: { incognito?: boolean }) => Promise<void>, blank: () => void,
+ *     open: (chatId: string, options?: { incognito?: boolean }) => Promise<boolean>, blank: () => void,
  *     setHook: (hook: any) => void, refreshSend: () => void, incognito: () => boolean, model: () => string | undefined,
  *     setTitle: (text: string) => void, setPlaceholder: (text: string | null) => void },
  * }} deps  `home`: the home chat's transcript and box, lent to the Bot page (owner, 2026-11-10)
@@ -95,6 +95,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   const working = new Map();
   let shown = false;
   let picker = /** @type {{ start: number, items: any[], index: number } | null} */ (null);
+  /** Each bot's own conversation once known, so opening it again goes straight to the home chat. */
+  const chatIds = new Map();
 
   page.innerHTML = `
     <aside class="botlist" aria-label="${escapeHtml(t('bots.list'))}">
@@ -258,12 +260,26 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     return parts.join('') || (bot ? '' : '');
   }
 
+  /**
+   * A group's notice — made, joined, left, a new name, a new admin, stopped — a small line in
+   * the middle, each bot it names by its face (owner, 2026-11-10, after DS Bot).
+   */
+  function noticeHtml(message) {
+    const p = message.params || {};
+    const SLOT = '\u0001';
+    const named = (bot, fallback) => `<span class="botnotice__who">${bot ? faceHtml(bot, 18) : ''}${escapeHtml(bot?.name || fallback || t('bots.deletedBot'))}</span>`;
+    const fill = (key, params, html) => escapeHtml(t(key, params)).split(SLOT).join(html);
+    let html;
+    if (message.notice === 'made') html = fill('bots.notice.made', { names: SLOT }, (p.members || []).map(botOf).filter(Boolean).map((b) => named(b)).join(', '));
+    else if (message.notice === 'renamed') html = escapeHtml(t('bots.notice.renamed', { name: p.name || '' }));
+    else if (message.notice === 'botRenamed') html = fill('bots.notice.botRenamed', { from: p.from || '', name: SLOT }, named(botOf(p.bot), p.name));
+    else html = fill(`bots.notice.${message.notice}`, { name: SLOT, n: p.n ?? '' }, named(botOf(p.bot), p.name));
+    return `<p class="botnotice">${html}</p>`;
+  }
+
   /** One line of a group's log. */
   function groupHtml(message, group) {
-    if (message.notice) {
-      const name = botOf(message.params?.bot)?.name || t('bots.deletedBot');
-      return `<p class="botnotice">${escapeHtml(t(`bots.notice.${message.notice}`, { name, n: message.params?.n ?? '' }))}</p>`;
-    }
+    if (message.notice) return noticeHtml(message);
     if (message.role === 'user') return `<div class="botmsg botmsg--user"><div class="botmsg__bubble">${escapeHtml(message.text || '')}</div></div>`;
     const bot = botOf(message.bot);
     const admin = adminOf(group) === message.bot;
@@ -436,10 +452,67 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
 
   /* ── loading and opening ─────────────────────────────────────── */
 
-  async function loadTeam() {
+  /** @param {{ announce?: boolean }} [options]  `announce`: say what was made or deleted since the last read */
+  async function loadTeam({ announce = false } = {}) {
+    const before = team;
     team = await api.bots();
+    if (announce && before) announceChanges(before, team);
     renderList();
+    fillStepFaces();
     return team;
+  }
+
+  /**
+   * The team read again because a step changed it — Chief's create_bot, an update_group in
+   * a round — while the turn goes on (owner, 2026-11-10: each one shows as it is made, not
+   * all at the end). Reads come one at a time, so two bots made at once are each said once;
+   * a step that lands while one is on its way asks for one more after it.
+   */
+  let teamReading = /** @type {Promise<void> | null} */ (null);
+  let readAgain = false;
+  function readTeamNow() {
+    if (teamReading) {
+      readAgain = true;
+      return teamReading;
+    }
+    teamReading = loadTeam({ announce: true })
+      .then(() => renderHead(), () => {})
+      .finally(() => {
+        teamReading = null;
+        if (readAgain) {
+          readAgain = false;
+          readTeamNow();
+        }
+      });
+    return teamReading;
+  }
+
+  /** Each team step in the home transcript wears the face of whom it made or changed (render.js `stepface`). */
+  function fillStepFaces() {
+    if (!team) return;
+    for (const slot of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.stepface:not([data-filled])'))) {
+      const name = String(slot.dataset.faceName || '').toLowerCase();
+      const group = slot.dataset.faceKind === 'group';
+      const it = (group ? team.groups : team.bots).find((x) => x.name.toLowerCase() === name);
+      if (!it) continue;
+      slot.dataset.filled = '1';
+      slot.innerHTML = group ? groupFaces(it) : faceHtml(it, 18);
+      paintFaces(slot);
+    }
+  }
+
+  /**
+   * What a turn made or deleted — Chief's create_bot, a group made in a chat — said in a
+   * line each, as Bot settings says its own (owner, 2026-11-10).
+   */
+  function announceChanges(before, after) {
+    for (const kind of /** @type {('bot' | 'group')[]} */ (['bot', 'group'])) {
+      const key = kind === 'group' ? 'groups' : 'bots';
+      const had = new Set(before[key].map((x) => x.id));
+      const has = new Set(after[key].map((x) => x.id));
+      for (const x of after[key]) if (!had.has(x.id)) toast(changeLine({ kind, item: x }, true, x.name), 'ok');
+      for (const x of before[key]) if (!has.has(x.id)) toast(changeLine({ kind, removed: x.id }, false, x.name), 'ok');
+    }
   }
 
   async function loadChat() {
@@ -452,11 +525,21 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       renderLog();
       return;
     }
-    // A bot's own chat (or, with incognito on, one that is not kept), in the home chat.
-    const data = await api.botChat(open.id, { incognito: home.incognito() });
+    // A bot's own chat (or, with incognito on, one that is not kept), in the home chat. Its id
+    // is asked for once; the home chat reads the messages, so they are not sent here as well.
+    const incognito = home.incognito();
+    const known = incognito ? null : chatIds.get(asked.id);
+    const data = known ? { chatId: known, incognito: false } : await api.botChat(asked.id, { incognito, light: true });
     if (open !== asked) return;
+    if (!incognito) chatIds.set(asked.id, data.chatId);
     chat = { chatId: data.chatId, messages: [] };
-    await home.open(data.chatId, { incognito: !!data.incognito });
+    const landed = await home.open(data.chatId, { incognito: !!data.incognito });
+    fillStepFaces();
+    // A remembered id that no longer opens is asked for again, once.
+    if (!landed && known && open === asked) {
+      chatIds.delete(asked.id);
+      await loadChat();
+    }
   }
 
   /** What the borrowed box does while a group chat is open. */
@@ -499,6 +582,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       home.setHook(null);
       home.lend(homeSlot, ['thread', 'dock']);
     }
+    syncMentions();
     renderList();
     renderHead();
     renderSend();
@@ -515,11 +599,14 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   async function sendGroup(text) {
     if (!open || open.kind !== 'group' || run) return;
     closePicker();
+    syncMentions();
     const target = open;
     const controller = new AbortController();
     run = { controller, kind: 'group', id: target.id, chatId: chat?.chatId };
     renderSend();
     const here = () => open && open.kind === target.kind && open.id === target.id;
+    /** Members whose turn used a team tool: the team is read when each is done. */
+    const touched = new Set();
     const mine = { role: 'user', text, createdAt: new Date().toISOString() };
     if (chat) {
       chat.messages.push(mine);
@@ -559,10 +646,13 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
           } else if (event === 'member_tool') {
             const w = working.get(data.bot);
             if (w) w.tool = data.name;
+            if (TEAM_EVENTS.has(data.name)) touched.add(data.bot);
             renderWorking();
           } else if (event === 'member_end') {
             working.delete(data.bot);
             renderWorking();
+            // What it made or changed shows now, and the group's own notices with it.
+            if (touched.delete(data.bot)) readTeamNow().then(() => (here() ? loadChat() : undefined)).catch(() => {});
           } else if (event === 'error') toast(data.message || t('bots.failed'), 'error');
         },
       });
@@ -573,7 +663,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       working.clear();
       renderWorking();
       renderSend();
-      await loadTeam().catch(() => {});
+      await readTeamNow();
       if (here()) await loadChat().catch(() => {});
       if (detailsOpen && here()) renderDetails();
     }
@@ -593,6 +683,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   /* ── the @ picker ─────────────────────────────────────────────── */
 
   function closePicker() {
+    // Typing outside a group asks this at every key: shut is left as it is.
+    if (!picker && pickerBox.hidden) return;
     picker = null;
     pickerBox.hidden = true;
     pickerBox.innerHTML = '';
@@ -626,13 +718,89 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     const end = picker.start + bot.name.length + 2;
     input.setSelectionRange(end, end);
     closePicker();
+    syncMentions();
     input.focus();
+  }
+
+  /* ── "@Name" bold in the box (owner, 2026-11-10) ───────────────── */
+
+  /**
+   * A textarea cannot bold a word, so in a group a layer under the box draws the same
+   * text with each "@Name" that will call a member marked in that bot's colour; the box's
+   * own letters go clear above it, its caret, selection and spelling marks still its own.
+   * Laid out with the box's font, padding and width, and scrolled with it, so the two do
+   * not drift. Only in a group: anywhere else "@" calls nobody, and the box is as it was.
+   */
+  const lay = document.createElement('div');
+  lay.className = 'mentionlay';
+  lay.setAttribute('aria-hidden', 'true');
+  let laid = '';
+  let watching = 0;
+
+  function syncMentions() {
+    const group = inGroup() ? groupOf(open?.id) : null;
+    const text = input.value;
+    const spans = group ? mentionSpans(text, membersOf(group)) : [];
+    if (!spans.length) {
+      if (laid || lay.isConnected) {
+        laid = '';
+        input.classList.remove('has-mentions');
+        lay.remove();
+      }
+      return;
+    }
+    if (!lay.isConnected) input.before(lay);
+    input.classList.add('has-mentions');
+    const style = getComputedStyle(input);
+    Object.assign(lay.style, {
+      top: `${input.offsetTop + input.clientTop}px`,
+      left: `${input.offsetLeft + input.clientLeft}px`,
+      width: `${input.clientWidth}px`,
+      height: `${input.clientHeight}px`,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+      fontStyle: style.fontStyle,
+      lineHeight: style.lineHeight,
+      letterSpacing: style.letterSpacing,
+      wordSpacing: style.wordSpacing,
+      padding: style.padding,
+      textAlign: style.textAlign,
+    });
+    let html = '';
+    let at = 0;
+    for (const span of spans) {
+      html += `${escapeHtml(text.slice(at, span.start))}<span class="mentionlay__at" style="--ink:${inkOf(/** @type {any} */ (span.bot))}">${escapeHtml(text.slice(span.start, span.end))}</span>`;
+      at = span.end;
+    }
+    // The zero-width space keeps a last empty line its height, as the box gives it one.
+    lay.innerHTML = `${html}${escapeHtml(text.slice(at))}\u200b`;
+    laid = text;
+    lay.scrollTop = input.scrollTop;
+    // The box is also filled, emptied and sized from script, which says nothing: a look each
+    // frame keeps the layer true while it shows, and stops when it goes.
+    if (!watching) {
+      const look = () => {
+        if (!laid) return void (watching = 0);
+        if (input.value !== laid || lay.offsetHeight !== input.clientHeight) syncMentions();
+        else lay.scrollTop = input.scrollTop;
+        watching = laid ? requestAnimationFrame(look) : 0;
+      };
+      watching = requestAnimationFrame(look);
+    }
   }
 
   /* ── wiring ──────────────────────────────────────────────────── */
 
   const inGroup = () => shown && open?.kind === 'group';
-  input.addEventListener('input', () => (inGroup() ? updatePicker() : closePicker()));
+  input.addEventListener('input', () => {
+    if (inGroup()) updatePicker();
+    else closePicker();
+    syncMentions();
+  });
+  input.addEventListener('scroll', () => {
+    if (laid) lay.scrollTop = input.scrollTop;
+  });
   // Caught before the box's own keys, so Enter picks a name rather than sending.
   input.closest('form')?.addEventListener('keydown', (event) => {
     if (event.target !== input || !inGroup()) return;
@@ -673,12 +841,40 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     newMenu.hidden = true;
     page.querySelector('[data-act="new"]')?.setAttribute('aria-expanded', 'false');
   };
-  const refreshAll = async () => {
-    await loadTeam();
-    // Where the page was: on a phone, a change made in settings does not swap the list for the conversation.
-    if (open) await openSubject(open.kind, open.id, { focus: false, chatting: page.classList.contains('is-chatting') || !matchMedia('(max-width: 760px)').matches });
-  };
-  const settingsDeps = () => ({ team, toast, onChanged: refreshAll, openSettings, openFeedback, openAutomations });
+  /**
+   * A change made in Bot settings, on this page the moment the server answered it (owner,
+   * 2026-11-10): the list and the heading drawn from it at once, the conversation on screen
+   * left as it is — it used to be read again, with the whole team, before the dialog said
+   * anything. The team is read once more behind it, for what only the server knows, and
+   * that read is the answer the dialog takes.
+   *
+   * @param {import('./bots-settings.js').TeamChange} change
+   */
+  async function applyChange(change) {
+    if (!team) return null;
+    team = mergeTeam(team, change);
+    if (change.removed) chatIds.delete(change.removed);
+    renderList();
+    if (open && !subject()) {
+      // What was open is gone: Chief, where the page was (on a phone the list stays the list).
+      const lead = chief();
+      if (lead) await openSubject('bot', lead.id, { focus: false, chatting: page.classList.contains('is-chatting') || !matchMedia('(max-width: 760px)').matches });
+    } else if (open) {
+      renderHead();
+      // The open group's log, read again for what the change said in it (team.js sayInGroup).
+      if (open.kind === 'group') loadChat().catch(() => renderLog());
+      if (detailsOpen) renderDetails();
+      syncMentions();
+    }
+    try {
+      await loadTeam();
+      renderHead();
+      return team;
+    } catch {
+      return null;
+    }
+  }
+  const settingsDeps = () => ({ team, toast, onChanged: applyChange, openSettings, openFeedback, openAutomations });
 
   page.addEventListener('click', async (event) => {
     const target = /** @type {HTMLElement} */ (event.target);
@@ -802,7 +998,13 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       page.hidden = false;
       onShow();
       try {
-        await loadTeam();
+        // Seen before: drawn at once from what was last read, and read again behind it —
+        // unless the address names one that read does not have.
+        const known = !route || (route.kind === 'group' ? groupOf(route.id) : botOf(route.id));
+        if (team && known) {
+          renderList();
+          loadTeam().then(() => renderHead(), () => {});
+        } else await loadTeam();
         const r = route || (open ? { kind: open.kind, id: open.id } : null);
         const narrow = matchMedia('(max-width: 760px)').matches;
         await openSubject(r?.kind || 'bot', r?.id || chief()?.id, { focus: !route, chatting: !!route || !narrow });
@@ -815,6 +1017,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       shown = false;
       page.hidden = true;
       closePicker();
+      syncMentions();
       home.giveBack();
       clearHash();
     },
@@ -825,7 +1028,11 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     },
     /** A turn ended somewhere: the list shows what was said last, if it was a bot's chat. */
     turnEnded(chatId) {
-      if (shown && chat?.chatId === chatId) loadTeam().catch(() => {});
+      if (shown && chat?.chatId === chatId) readTeamNow();
+    },
+    /** A step of the turn on screen made or changed a bot or a group: shown now, not at the end. */
+    teamChanged() {
+      if (shown) readTeamNow();
     },
   };
 }

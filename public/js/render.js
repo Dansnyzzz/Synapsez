@@ -470,6 +470,18 @@ const tailPath = (raw, max = 52) => {
 const seconds = (n) => t('step.seconds').replace('{n}', String(Number(n) || 0));
 const count = (n) => counted(Number(n) || 0, 'steps.count');
 
+/** The team steps, and whose face each wears beside the name it gives (filled in by the Bot page). */
+const TEAM_FACES = { create_bot: 'bot', update_bot: 'bot', create_group: 'group', update_group: 'group' };
+
+/** An empty place for that face, by kind and name: "Created [face] Writer" (owner, 2026-11-10). @param {string} kind @param {string} name */
+function faceSlot(kind, name) {
+  const face = el('span', 'stepface');
+  face.dataset.faceKind = kind;
+  face.dataset.faceName = name;
+  face.setAttribute('aria-hidden', 'true');
+  return face;
+}
+
 /**
  * What to show beside the verb, per tool.
  *
@@ -2869,6 +2881,8 @@ export function assistantMessage() {
     // The whole of the model's words for it, when the line cuts them short.
     verbNode.title = verb;
     label.append(verbNode);
+    // "Created [face] Writer": the face of whom a team step made or changed (owner, 2026-11-10).
+    if (TEAM_FACES[call.name] && detail) label.append(faceSlot(TEAM_FACES[call.name], detail));
     if (detail) {
       const what = detailNode('step__detail', detail, href);
       if (said.path) what.title = said.path;
@@ -3631,8 +3645,12 @@ export function assistantMessage() {
        * node for the argument, because when the argument is an address it is
        * an anchor with a listener on it and `innerHTML` cannot carry either.
        */
+      const faceKind = TEAM_FACES[call.name];
       const paintHead = (mark, trailing = '') => {
+        // A team step's face, once the Bot page has filled it in, stays through the repaint.
+        const face = summary.querySelector('.stepface[data-filled]');
         summary.innerHTML = `${mark}<span class="tool__name">${escapeHtml(verb)}</span>`;
+        if (faceKind && detail) summary.append(face || faceSlot(faceKind, detail));
         if (detail) summary.append(detailNode('tool__arg', detail, href));
         if (trailing) summary.insertAdjacentHTML('beforeend', trailing);
       };
