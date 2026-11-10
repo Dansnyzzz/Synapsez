@@ -209,9 +209,10 @@ function filesSection(files) {
  *
  * @param {string} userId
  * @param {{ name: string }[]} own  the account's switched-on skills
+ * @param {any[] | null} [rows]  `listAddedSkills` already read, to not read it twice
  */
-async function addedInUse(userId, own) {
-  const added = await getStore().listAddedSkills(userId);
+async function addedInUse(userId, own, rows = null) {
+  const added = rows || (await getStore().listAddedSkills(userId));
   const taken = new Set(own.map((s) => s.name.toLowerCase()));
   const usable = [];
   for (const row of added) {
@@ -387,7 +388,8 @@ async function authorNames(ids) {
 export async function addedSkillCards(userId, own) {
   const store = getStore();
   const rows = await store.listAddedSkills(userId);
-  const usable = new Map((await addedInUse(userId, (own || (await store.listSkills(userId, true))).filter((s) => s.enabled !== false))).map((s) => [s.skill_id, s.knownAs]));
+  const enabled = (own || (await store.listSkills(userId, true))).filter((s) => s.enabled !== false);
+  const usable = new Map((await addedInUse(userId, enabled, rows)).map((s) => [s.skill_id, s.knownAs]));
   const names = await authorNames(rows.map((r) => r.author_id));
   return rows.map((r) => ({
     id: r.skill_id,
