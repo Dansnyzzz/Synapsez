@@ -301,6 +301,22 @@
             <span class="rail__label" data-i18n="nav.automations">Automations</span>
           </button>
 
+          <!-- Bots: long-lived helpers with a name, a role, a creature and a memory
+               of their own, led by Chief, who sets the team up when asked; group
+               chats where an admin hands work on with @mentions (bots.js, owner
+               2026-11-09). The robot the merged Workflows + Scheduled item wore for
+               a day, which belongs here. -->
+          <button class="rail__item" id="open-bots" type="button" title="Bot" data-i18n-title="nav.bot">
+            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3.5" y="6.5" width="13" height="10" rx="3.2" />
+              <path d="M10 6.5V3.9M2 10.6v2.6M18 10.6v2.6M8 14.2h4" />
+              <circle cx="10" cy="3" r="1" />
+              <circle cx="7.6" cy="11" r="0.9" fill="currentColor" stroke="none" />
+              <circle cx="12.4" cy="11" r="0.9" fill="currentColor" stroke="none" />
+            </svg>
+            <span class="rail__label" data-i18n="nav.bot">Bot</span>
+          </button>
+
           <!-- Everything put away with Archive, and the way back. It took the
                Workspace slot: the cloud machine and the sandbox do the work a
                paired computer used to, so a local folder browser had nothing
@@ -447,6 +463,11 @@
           <p class="page__lede" id="page-lede" hidden></p>
           <div class="page__body" id="page-body"></div>
         </section>
+
+        <!-- ── The Bot page ──────────────────────────────────────────────
+             The person's bots and group chats on the left, the open one in the
+             middle, its details on the right (bots.js draws all of it). -->
+        <section class="botpage" id="bot-page" hidden></section>
 
         <!-- ── One project, opened ────────────────────────────────────────
              Its own page rather than a row on the shelf, because a project is

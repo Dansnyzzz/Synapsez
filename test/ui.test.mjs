@@ -4319,7 +4319,8 @@ section('the Automations page: one rail item, two tabs');
     };
   });
   check('one Automations item in the rail', rail.bot >= 0 && !rail.old, JSON.stringify(rail));
-  check('  where Workflows was, between Artifacts and Archive', rail.bot === rail.artifacts + 1 && rail.archive === rail.bot + 1, JSON.stringify(rail));
+  // The Bot page's own item stands between it and Archive since 2026-11-09 (test/ui-bots.test.mjs).
+  check('  where Workflows was, after Artifacts, with Bot then Archive after it', rail.bot === rail.artifacts + 1 && rail.archive === rail.bot + 2, JSON.stringify(rail));
   check('  called Automations', rail.label === 'Automations', rail.label);
 
   // Something for each pill to say. A task whose last run failed, and one that

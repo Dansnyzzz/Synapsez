@@ -28,6 +28,7 @@ import { createViewer } from './viewer.js';
 import { shouldAutoPreview } from './autopreview.js';
 import { createPages } from './pages.js';
 import { createAutoBadge, readAutoHash, lastAutoTab } from './automations.js';
+import { createBotPage, readBotsHash } from './bots.js';
 import { createProjectPage } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES, localeTag } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
@@ -783,6 +784,7 @@ async function start() {
   afterGoogleSignIn();
   openConnectorFromLink();
   openAutoFromLink();
+  openBotsFromLink();
   openSettingsFromLink();
   // Never fatal: a sidebar section that could not load is a missing list, not
   // a broken app, and throwing here would take the conversations with it.
@@ -1953,6 +1955,7 @@ function startRename(chat, titleButton) {
  */
 function leavePages() {
   projectPage.hide();
+  botPage.hide();
   pages.hide();
   onPage(false);
 }
@@ -1960,6 +1963,7 @@ function leavePages() {
 /** The reverse: a shelf or a project page takes the conversation's place. */
 function gotoShelf(which) {
   projectPage.hide();
+  botPage.hide();
   pages.show(which);
   onPage(true);
 }
@@ -2843,6 +2847,7 @@ const pages = createPages({
   // The same moves as `gotoShelf`, for the rail's way onto the workflow form.
   onShowPage: () => {
     projectPage.hide();
+    botPage.hide();
     onPage(true);
   },
 });
@@ -2873,6 +2878,7 @@ const projectPage = createProjectPage({
   draftReady: () => staged.some((f) => f.id),
   // The page is on screen: what is already picked is drawn above its box.
   onShow: () => {
+    botPage.hide();
     renderStaged();
     renderSkillChips();
   },
@@ -2942,10 +2948,41 @@ function openAutoFromLink() {
   const route = readAutoHash();
   if (!route || !state.boot) return;
   projectPage.hide();
+  botPage.hide();
   onPage(true);
   pages.showAutomations(route.tab, route.id).catch((err) => toast(err.message, 'error'));
 }
 window.addEventListener('hashchange', openAutoFromLink);
+
+/**
+ * Bot: the person's team of bots, led by Chief, and their group chats (bots.js, owner
+ * 2026-11-09). A page of its own in the conversation's place, like a project's.
+ */
+const botPage = createBotPage({
+  toast,
+  openSettings: (tab) => openSettings(tab),
+  openFeedback: () => feedback.open(),
+  openAutomations: (tab) => gotoShelf(tab),
+  onShow: () => {
+    projectPage.hide();
+    pages.hide();
+    $('thread').hidden = true;
+    $('dock').hidden = true;
+    onPage(true);
+  },
+});
+$('open-bots').addEventListener('click', () => {
+  closeSidebar();
+  botPage.show().catch((err) => toast(err.message, 'error'));
+});
+
+/** A `#bot`, `#bot/b/<bot>` or `#bot/g/<group>` address lands on the Bot page there. */
+function openBotsFromLink() {
+  const route = readBotsHash();
+  if (!route || !state.boot) return;
+  botPage.show(route.id ? route : null).catch((err) => toast(err.message, 'error'));
+}
+window.addEventListener('hashchange', openBotsFromLink);
 
 /** Everything archived, with the way back. Opening one reads it; Restore puts it back. */
 $('open-archive').addEventListener('click', () => {

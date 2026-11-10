@@ -73,6 +73,17 @@ export async function loadCreature(titleId) {
   return (await DRAWN[id]()).default;
 }
 
+/**
+ * A creature by its own id, loaded — a bot's face on the Bot page (bot-avatar.js).
+ * Null for an id that is not drawn.
+ *
+ * @param {string} creatureId @returns {Promise<import('./engine.js').Creature|null>}
+ */
+export async function loadCreatureById(creatureId) {
+  if (!isDrawn(creatureId)) return null;
+  return (await DRAWN[creatureId]()).default;
+}
+
 /** A canvas for a creature, put on the page at once so the space is never empty while it loads. */
 function canvasIn(box) {
   const canvas = document.createElement('canvas');
