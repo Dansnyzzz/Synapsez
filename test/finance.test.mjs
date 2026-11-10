@@ -433,5 +433,43 @@ section('7b vndirect.js: thousand ₫ in, ₫ out; raw and adjusted side by side
   check('ratios: only market cap (51003), the one item whose meaning is known', r.items.length === 1 && r.items[0].key === 'marketCap' && r.items[0].value === 96_172_110_048_000);
 }
 
+const kbs = await import('../server/finance/sources/kbs.js');
+
+section('7c kbs.js: numbers that arrive as strings, statements in thousand ₫');
+{
+  await fresh();
+  const fetchImpl = serve([
+    ['/index/VNINDEX/data_day', 'kbs-index-day.json'],
+    ['/stocks/FPT/data_day', 'kbs-day.json'],
+    ['/stocks/FPT/data_5P', 'kbs-intraday.json'],
+    ['finance-info', 'kbs-finance.json'],
+    ['stockinfo/profile', 'kbs-profile.json'],
+    ['stockinfo/news', []],
+  ]);
+  const now = new Date('2026-11-10T08:00:00Z');
+  const ctx = { fetchImpl, now };
+  const index = await kbs.history('VNINDEX', { from: '2026-11-02', to: '2026-11-10' }, ctx);
+  const last = index.bars.at(-1);
+  check('the newest row\'s string numbers ("1719.23") are numbers', last.o === 1719.23 && last.c === 1743.07 && typeof last.v === 'number' && last.v === 876_999_156, JSON.stringify(last));
+  check('  an index is in points, dated (KBS\'s 07:00 is a date only)', index.unit === 'points' && last.t === '2026-11-10');
+  const q = await kbs.quote('FPT', { ...ctx, board: 'HOSE' });
+  check('a quote: the last bar, its reference the previous close on HOSE', q.price === 50_900 && q.reference === 51_000 && Math.abs(q.changePct - -0.196) < 0.01, JSON.stringify({ ...q, series: undefined }));
+  check('  with the band worked out (and said to be)', q.ceiling === 54_500 && q.floor === 47_450 && q.bandComputed === true);
+  const upcom = await kbs.quote('FPT', { ...ctx, board: 'UPCOM' });
+  check('  on UPCoM no reference is guessed — it is yesterday\'s average, which KBS does not give', upcom.reference === undefined && upcom.changePct === undefined);
+  const asked = fetchImpl.calls.find((c) => c.url.includes('/stocks/FPT/data_day'))?.url || '';
+  check('  dates asked as KBS spells them', /sdate=31-10-2026&edate=10-11-2026/.test(asked), asked);
+  const bars = await kbs.intraday('FPT', '5m', ctx);
+  check('intraday: a row of strings and no `va` is read like the rest', bars.bars.length === 3 && bars.bars.at(-1).c === 50_900 && bars.bars.at(-1).v === 120_500, JSON.stringify(bars.bars.at(-1)));
+  const income = await kbs.statements('FPT', 'income', 'year', ctx);
+  check('statements: thousand ₫ multiplied to ₫ (net revenue 2025 ≈ 70.1 trillion)', income.lines.find((l) => l.code === '2216')?.values[0] === 70_112_825_101_000 && income.unit === 'VND', JSON.stringify(income.lines.find((l) => l.code === '2216')));
+  check('  each period audited or not, consolidated or not, and when published', income.periods[0].audited === 'audited' && income.periods[0].consolidated === true && income.periods[0].published === '2026-03-20' && income.periods[0].label === '2025', JSON.stringify(income.periods[0]));
+  check('  labels from KBS\'s own names, in both languages', income.lines[0].label_vi.startsWith('1. Doanh thu') && income.lines[0].label_en === '1. Revenue');
+  const p = await kbs.profile('FPT', ctx);
+  check('profile: the exchange and par value, the summary as plain text', p.exchange === 'HOSE' && p.parValue === 10_000 && !/<p>/.test(p.summary) && p.summary.length <= 401, p.summary.slice(0, 60));
+  const none = await refusal(kbs.news('FPT', ctx));
+  check('news it cannot read is a SourceError, so the chain moves on', none instanceof http.SourceError);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
