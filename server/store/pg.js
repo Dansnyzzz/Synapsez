@@ -250,7 +250,7 @@ export function splitStatements(sql) {
  *  42  bots, bot_groups, bot_group_members, bot_memory; chats.bot_id / bot_group_id;
  *      usage_events.bot_id — the Bot page
  *  43  bots.hue — a creature two bots share, told apart by its colour;
- *      scheduled_tasks.bot_id — a bot's own scheduled tasks
+ *      scheduled_tasks.bot_id — a bot's own scheduled tasks; incognito chats with a bot
  */
 export const SCHEMA_VERSION = 43;
 
@@ -4630,11 +4630,21 @@ export function createPgStore(connectionString) {
      * account's; null otherwise. Two tabs asking at once get the same one — the
      * partial unique indexes refuse the second insert.
      */
+    /** A new incognito conversation with one of the account's bots, or null when it has no such bot. */
+    async incognitoBotChat(userId, botId, title = 'Bot') {
+      const rows = await q(
+        `INSERT INTO chats (id, user_id, title, bot_id, incognito)
+         SELECT $1, $2, $3, $4, TRUE WHERE EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $4)
+         RETURNING *`,
+        [crypto.randomUUID(), userId, String(title).slice(0, 120), String(botId ?? '')],
+      );
+      return rows[0] ?? null;
+    },
     async botChat(userId, { botId = null, groupId = null, title = 'Bot' }) {
       const find = () =>
         q(
           `SELECT * FROM chats
-            WHERE user_id = $1 AND bot_id IS NOT DISTINCT FROM $2::text AND bot_group_id IS NOT DISTINCT FROM $3::text
+            WHERE user_id = $1 AND bot_id IS NOT DISTINCT FROM $2::text AND bot_group_id IS NOT DISTINCT FROM $3::text AND NOT incognito
             ORDER BY created_at LIMIT 1`,
           [userId, botId, groupId],
         );

@@ -1260,3 +1260,9 @@ ALTER TABLE bots ADD COLUMN IF NOT EXISTS hue INTEGER NOT NULL DEFAULT 0;
 -- account's own, as every task was before. They go with the bot.
 ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS scheduled_bot_idx ON scheduled_tasks (user_id, bot_id) WHERE bot_id IS NOT NULL;
+-- An incognito conversation with a bot (owner, 2026-11-10: incognito in the top bar
+-- holds on the Bot page too): one more chat with the bot, kept out of everything and
+-- thrown away when left, beside its own chat — so the one-chat-per-bot rule leaves
+-- incognito ones out.
+DROP INDEX IF EXISTS chats_bot_room_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS chats_bot_room_idx ON chats (bot_id, COALESCE(bot_group_id, '')) WHERE bot_id IS NOT NULL AND NOT incognito;

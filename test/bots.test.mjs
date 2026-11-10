@@ -477,6 +477,22 @@ section("a bot's scheduled tasks are its own");
   check('its tasks go with the bot', (await store.listTasks(aliceId, { every: true })).every((t) => t.bot_id !== id));
 }
 
+// Owner, 2026-11-10: incognito in the top bar holds with a bot too.
+section('an incognito conversation with a bot keeps nothing');
+{
+  const own = (await alice.call('GET', `/api/bots/${chief.id}/chat`)).body.chatId;
+  const secret = await alice.call('GET', `/api/bots/${chief.id}/chat?incognito=1`);
+  check('incognito gives a conversation of its own, not the bot\'s chat', secret.status === 200 && secret.body.incognito === true && secret.body.chatId !== own && secret.body.messages.length === 0, secret.text.slice(0, 120));
+  const again = await alice.call('GET', `/api/bots/${chief.id}/chat?incognito=1`);
+  check('  a new one each time', again.body.chatId !== secret.body.chatId);
+  check('  and the bot\'s own chat is still the one it was', (await alice.call('GET', `/api/bots/${chief.id}/chat`)).body.chatId === own);
+  await alice.call('POST', `/api/chats/${secret.body.chatId}/messages`, { text: 'hello' });
+  await alice.stream(`/api/chats/${secret.body.chatId}/run`, {});
+  const req = asked.filter((a) => a.who === 'chief').at(-1);
+  check('  its memory is neither read nor offered to save', /This conversation is incognito/.test(req?.system || '') && !/The user is called Alice/.test(req?.system || '') && !req?.tools.includes('remember'), (req?.tools || []).filter((n) => /remember|bot/.test(n)).join());
+  check('  and it is kept out of the conversation list', !((await alice.call('GET', '/api/chats')).body?.chats || []).some((c) => c.id === secret.body.chatId));
+}
+
 section('a bot with nothing saved still knows it may save on its own');
 {
   const fresh = await alice.call('POST', '/api/bots', { name: 'Newbie', role: 'n' });

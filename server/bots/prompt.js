@@ -49,7 +49,7 @@ const MEMORY_ABOUT_GROUP =
  * The persona for a conversation that belongs to a bot, or null for any other.
  *
  * @param {string} userId
- * @param {{ bot_id?: string | null, bot_group_id?: string | null }} chat
+ * @param {{ bot_id?: string | null, bot_group_id?: string | null, incognito?: boolean }} chat
  * @returns {Promise<{ bot: any, group: any | null, intro: string, section: string } | null>}
  */
 export async function botPersona(userId, chat) {
@@ -59,8 +59,8 @@ export async function botPersona(userId, chat) {
   if (!bot) return null;
   const group = chat.bot_group_id ? await store.getBotGroup(userId, chat.bot_group_id) : null;
   const [own, shared, members] = await Promise.all([
-    store.listBotMemory(userId, { botId: bot.id }),
-    group ? store.listBotMemory(userId, { groupId: group.id }) : [],
+    chat.incognito ? [] : store.listBotMemory(userId, { botId: bot.id }),
+    group && !chat.incognito ? store.listBotMemory(userId, { groupId: group.id }) : [],
     group ? store.listBots(userId) : [],
   ]);
   const role = bot.role ? ` Your role: ${bot.role}.` : '';
@@ -81,7 +81,11 @@ export async function botPersona(userId, chat) {
       ].join('\n'),
     );
   }
-  parts.push(memorySection(own, `## Your memory, ${bot.name}`, MEMORY_ABOUT_BOT));
-  if (group) parts.push(memorySection(shared, `## Group memory of "${group.name}"`, MEMORY_ABOUT_GROUP));
+  // Incognito: nothing remembered is read, and nothing can be saved (its memory tools are withheld).
+  if (chat.incognito) parts.push(`## This conversation is incognito\nThe user chose not to have it kept. Your memory is not read here, and you cannot save to it; say so if they ask you to remember something.`);
+  else {
+    parts.push(memorySection(own, `## Your memory, ${bot.name}`, MEMORY_ABOUT_BOT));
+    if (group) parts.push(memorySection(shared, `## Group memory of "${group.name}"`, MEMORY_ABOUT_GROUP));
+  }
   return { bot, group, intro, section: parts.filter(Boolean).join('\n\n') };
 }

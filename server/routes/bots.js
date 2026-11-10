@@ -151,6 +151,12 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const store = getStore();
       const bot = await store.getBot(req.user.id, req.params.id);
       if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      // Incognito (the top bar's switch): a fresh conversation, not kept, its memory neither read nor written.
+      if (req.query.incognito === '1') {
+        const fresh = await store.incognitoBotChat(req.user.id, bot.id, bot.name);
+        if (!fresh) return res.status(404).json({ error: 'No such bot.' });
+        return res.json({ chatId: fresh.id, running: false, messages: [], incognito: true });
+      }
       const chat = await store.botChat(req.user.id, { botId: bot.id, title: bot.name });
       if (!chat) return res.status(404).json({ error: 'No such bot.' });
       res.json({ chatId: chat.id, running: running(chat), messages: await store.listMessages(req.user.id, chat.id) });

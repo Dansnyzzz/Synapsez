@@ -234,7 +234,9 @@ export const api = {
   createBot: (bot) => request('POST', '/api/bots', bot),
   updateBot: (id, patch) => request('PATCH', `/api/bots/${encodeURIComponent(id)}`, patch),
   deleteBot: (id) => request('DELETE', `/api/bots/${encodeURIComponent(id)}`),
-  botChat: (id) => request('GET', `/api/bots/${encodeURIComponent(id)}/chat`),
+  botChat: (id, { incognito = false } = {}) => request('GET', `/api/bots/${encodeURIComponent(id)}/chat${incognito ? '?incognito=1' : ''}`),
+  botTasks: (id) => request('GET', `/api/bots/${encodeURIComponent(id)}/tasks`),
+  addBotTask: (id, task) => request('POST', `/api/bots/${encodeURIComponent(id)}/tasks`, task),
   /** `kind` is 'bots' or 'bot-groups'. */
   botMemory: (kind, id) => request('GET', `/api/${kind}/${encodeURIComponent(id)}/memory`),
   addBotMemory: (kind, id, text) => request('POST', `/api/${kind}/${encodeURIComponent(id)}/memory`, { text }),
