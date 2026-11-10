@@ -2183,6 +2183,7 @@ export const vi = {
   'skills.stopSharingConfirm': 'Ngừng chia sẻ — kỹ năng sẽ mất với mọi người đã thêm nó',
   'skills.sharedNamed': '"{name}" đã có trên Khám phá. Mọi người trên trang này đọc và dùng được.',
   'skills.unsharedNamed': '"{name}" không còn được chia sẻ.',
+  'skills.savedHeldBack': "Đã lưu {name} nhưng giữ riêng tư: bản quét an toàn thấy có thứ không nên đưa cho người khác. Mở kỹ năng để xem, sửa lại rồi chia sẻ.",
   'skills.savedShared': 'Đã lưu "{name}" và chia sẻ lên Khám phá.',
   'skills.reallyDeleteShared': 'Xoá — kỹ năng sẽ mất với mọi người đã thêm nó',
   'skills.tagShared': 'Đã chia sẻ',

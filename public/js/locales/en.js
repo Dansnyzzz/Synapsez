@@ -2197,6 +2197,7 @@ export const en = {
   'skills.stopSharingConfirm': 'Stop sharing — it goes for everyone who added it',
   'skills.sharedNamed': '"{name}" is on Discover. Everyone on this site can read and use it.',
   'skills.unsharedNamed': '"{name}" is no longer shared.',
+  'skills.savedHeldBack': "Saved {name}, kept private: the safety scan found something other people should not be given. Open it to see what, and change it to share it.",
   'skills.savedShared': 'Saved "{name}" and shared it to Discover.',
   'skills.reallyDeleteShared': 'Delete — it goes for everyone who added it',
   'skills.tagShared': 'Shared',

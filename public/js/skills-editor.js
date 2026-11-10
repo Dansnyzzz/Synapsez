@@ -357,7 +357,9 @@ export function createSkillEditor({ onSaved, owner, shareByDefault = () => false
       const { skill } = await api.saveSkill({ name: nameBox.value, description: descBox.value, instructions: docs[0].content, files: docs.slice(1), ...shared });
       if (!editing) await forgetDraft();
       close();
-      toast(t(skill.shared_at ? 'skills.savedShared' : 'skills.savedNamed', { name: skill.name }), 'ok');
+      // The switch was on and it is not shared: the safety scan kept it back (sharing is on by default, 2026-11-10).
+      const heldBack = !skill.shared_at && shareBox.checked;
+      toast(t(skill.shared_at ? 'skills.savedShared' : heldBack ? 'skills.savedHeldBack' : 'skills.savedNamed', { name: skill.name }), heldBack ? 'info' : 'ok');
       onSaved(skill);
     } catch (err) {
       // Sharing the scan refused: what it found, each in its own words.

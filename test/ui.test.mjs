@@ -3792,19 +3792,20 @@ section('Skills people share: Discover newest first, Add by reference, edits arr
   });
   check('  taken back by its author, the row says why instead of vanishing', /(stopped sharing|ngừng chia sẻ)/.test(gone), gone);
 
-  // Create a skill: the switch, off, saying who will read it; the scan refuses a key.
+  // Create a skill: the switch, on by default since 2026-11-10, saying who will read it; the scan refuses a key.
   await page.click('#skill-add-open');
   await page.locator('#settings .cmenu .cmenu__item').nth(1).click();
   await page.waitForTimeout(700);
   const sw = await page.evaluate(() => ({
-    off: !(/** @type {HTMLInputElement} */ (document.getElementById('skc-shared')).checked),
+    on: /** @type {HTMLInputElement} */ (document.getElementById('skc-shared')).checked,
     label: document.querySelector('label[for="skc-shared"]')?.textContent || '',
     hint: document.getElementById('skc-shared-hint')?.textContent || '',
   }));
-  check('Create a skill has Share to Discover, off, saying everyone here can read and use it', sw.off && /(Share to Discover|Chia sẻ lên Khám phá)/.test(sw.label) && /(Everyone on this site|Mọi người trên trang này)/.test(sw.hint), JSON.stringify(sw));
+  check('Create a skill has Share to Discover, on by default, saying everyone here can read and use it', sw.on && /(Share to Discover|Chia sẻ lên Khám phá)/.test(sw.label) && /(Everyone on this site|Mọi người trên trang này)/.test(sw.hint), JSON.stringify(sw));
   await page.fill('#skc-name', 'ui-shared-mine');
   await page.fill('#skc-desc', 'When testing sharing.');
   await page.fill('#skc-text', `Sign with sk-ant-api03-${'B'.repeat(90)} first.`);
+  await page.uncheck('#skc-shared');
   await page.check('#skc-shared');
   await page.click('#skc-create');
   await page.waitForTimeout(700);
