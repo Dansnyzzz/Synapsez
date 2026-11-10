@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-10 — A tab on the sign-in page goes in when another tab signs in (1.18.1)
+
+Signed in in another tab of the same browser — the confirmation link in the email, most often — a tab still on the sign-in page goes straight into the app, without a reload and without anything typed again (`public/js/app.js` `enterIfSignedInElsewhere`). The tab that signed in says so through `localStorage` (`synapsez:signed-in-at`, a time and nothing else); a sign-in no tab announced is found when the waiting tab is looked at again, with one `GET /api/session`.
+
 ## 2026-11-10 — The Bot page on the home chat, a plan in Plan mode, skills that share themselves
 
 **A bot's chat is the home chat** (`public/js/bots.js`, `app.js` `lendHome`). The transcript and the box are moved into the Bot page: a message shows at once, reasoning streams as it comes, files go with a message, the modes, the model chip and incognito hold, and the theme shows through. A group borrows the box, with @ in it. Every bot answers on the top bar's model; a bot with nothing saved is told it may save to its memory on its own; a bot's own scheduled tasks are listed and run with it, never on Automations; incognito gives a conversation with a bot that keeps nothing. A creature another bot wears comes in a colour of its own (`bots.hue`); Chief keeps the cosmic whale. Schema 43.

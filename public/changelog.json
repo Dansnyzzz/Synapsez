@@ -1,6 +1,18 @@
 {
   "entries": [
     {
+      "version": "1.18.1",
+      "date": "2026-11-10",
+      "improved": {
+        "vi": [
+          "Đăng nhập ở một tab (ví dụ bấm link xác nhận trong email) thì tab còn đang ở trang đăng nhập tự vào luôn, không tải lại và không phải nhập lại."
+        ],
+        "en": [
+          "Sign in in one tab (the confirmation link in the email, say) and a tab still on the sign-in page goes straight in, without a reload or typing it all again."
+        ]
+      }
+    },
+    {
       "version": "1.18.0",
       "date": "2026-11-10",
       "new": {

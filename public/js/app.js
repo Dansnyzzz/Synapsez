@@ -726,6 +726,40 @@ function setGateMode(mode) {
 $('gate-form').addEventListener('input', saveGateDraft);
 $('gate-form').addEventListener('change', saveGateDraft);
 
+/**
+ * Signed in in another tab — the confirmation link in the email, most often — while this one
+ * waits on the gate: it goes straight in, with no reload and nothing typed again (owner,
+ * 2026-11-10). That tab says so the moment it is in (`start` writes SIGNED_IN_AT, which
+ * fires `storage` here); coming back to this tab asks the server once, for a sign-in no
+ * tab announced. Only while the gate is up; otherwise nothing is asked.
+ */
+const SIGNED_IN_AT = 'synapsez:signed-in-at';
+let lookingElsewhere = false;
+
+async function enterIfSignedInElsewhere() {
+  if ($('gate').hidden || lookingElsewhere) return;
+  lookingElsewhere = true;
+  try {
+    const now = await api.session();
+    // A press of Sign in may have got there first.
+    if (!now.authed || $('gate').hidden) return;
+    session = now;
+    $('gate').hidden = true;
+    await start();
+  } catch {
+    /* offline, or the server restarting: the gate stays as it was */
+  } finally {
+    lookingElsewhere = false;
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') enterIfSignedInElsewhere();
+});
+window.addEventListener('storage', (event) => {
+  if (event.key === SIGNED_IN_AT && event.newValue) enterIfSignedInElsewhere();
+});
+
 $('gate-switch').addEventListener('click', async () => {
   const goingToSignIn = gateMode !== 'signin';
   setGateMode(goingToSignIn ? 'signin' : 'signup');
@@ -888,6 +922,12 @@ async function start() {
   // Signed in from here on: a 401 now means the session ended (api.js).
   markSignedIn(true);
   forgetGateDraft();
+  // Another tab of this browser still on the gate comes in too (enterIfSignedInElsewhere).
+  try {
+    localStorage.setItem(SIGNED_IN_AT, String(Date.now()));
+  } catch {
+    /* a private window: that tab finds out when it is looked at again */
+  }
   $('app').hidden = false;
   state.boot = await api.bootstrap();
 
