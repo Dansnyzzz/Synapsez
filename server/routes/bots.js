@@ -6,9 +6,10 @@ import { validZone } from '../util/zone.js';
 import { abortHere, holdRun, settledAfterStop, watchLease } from '../liveRuns.js';
 import { log } from '../util/trace.js';
 import { clientError } from '../util/clientError.js';
-import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, ensureChief, updateBot, updateGroup } from '../bots/team.js';
+import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, ensureChief, updateBot, updateGroup } from '../bots/team.js';
 import { listMemory, remember } from '../bots/memory.js';
 import { runGroupRound } from '../bots/rounds.js';
+import { parseSchedule } from '../scheduler.js';
 
 /**
  * The Bot page's routes (owner, 2026-11-09): the team, each bot's and group's
@@ -47,6 +48,8 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const store = getStore();
       const prefs = await getPrefs(req.user.id).catch(() => ({}));
       await ensureChief(req.user.id, prefs);
+      // Bots made before schema 43 could look alike: the second gets a colour of its own.
+      await distinctFaces(req.user.id).catch((err) => log.warn('bot faces not told apart', { err: err?.message }));
       const [bots, groups, previews] = await Promise.all([store.listBots(req.user.id), store.listBotGroups(req.user.id), store.botPreviews(req.user.id)]);
       const last = (key, id) => previews.find((p) => p[key] === id) || null;
       const preview = (p) => (p && p.text ? { text: String(p.text).slice(0, 160), role: p.role, bot: p.author || null, at: p.updated_at } : null);
@@ -82,7 +85,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     wrap(async (req, res) => {
       const b = req.body || {};
       try {
-        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar, model: b.model });
+        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar });
         res.json({ bot: botView(bot) });
       } catch (err) {
         fail(res, err);
@@ -103,6 +106,44 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     }),
   );
 
+  /*
+   * A bot's own scheduled tasks (owner, 2026-11-10): made here or by the bot in its
+   * chat, run in its chat as it, and listed only here — Automations keeps the
+   * account's own. Pausing, running and deleting one go through /tasks/:id as any.
+   */
+  api.get(
+    '/bots/:id/tasks',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const bot = await store.getBot(req.user.id, req.params.id);
+      if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      res.json({ tasks: await store.listTasks(req.user.id, { botId: bot.id }) });
+    }),
+  );
+  api.post(
+    '/bots/:id/tasks',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const bot = await store.getBot(req.user.id, req.params.id);
+      if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      const title = String(req.body?.title ?? '').trim().slice(0, 120);
+      const prompt = String(req.body?.prompt ?? '').trim();
+      if (!title || !prompt) return res.status(400).json({ error: 'A scheduled task needs a name and what to do.' });
+      if (prompt.length > 8000) return res.status(400).json({ error: 'That is too long for a scheduled task.' });
+      const prefs = await getPrefs(req.user.id).catch(() => ({}));
+      const tz = validZone(req.body?.tz) ? req.body.tz : validZone(prefs.timezone) ? prefs.timezone : null;
+      let when;
+      try {
+        when = parseSchedule(req.body?.when, { once: req.body?.repeat === false, tz });
+      } catch (err) {
+        return res.status(400).json({ error: clientError(err) });
+      }
+      const task = await store.createTask(req.user.id, { id: crypto.randomUUID(), title, prompt, model: null, cron: when.cron, nextRunAt: when.nextRunAt, tz, botId: bot.id });
+      if (!task) return res.status(404).json({ error: 'No such bot.' });
+      res.status(201).json({ task });
+    }),
+  );
+
   /** A bot's own chat: its id, made the first time, and what is in it. */
   api.get(
     '/bots/:id/chat',
@@ -110,6 +151,12 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const store = getStore();
       const bot = await store.getBot(req.user.id, req.params.id);
       if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      // Incognito (the top bar's switch): a fresh conversation, not kept, its memory neither read nor written.
+      if (req.query.incognito === '1') {
+        const fresh = await store.incognitoBotChat(req.user.id, bot.id, bot.name);
+        if (!fresh) return res.status(404).json({ error: 'No such bot.' });
+        return res.json({ chatId: fresh.id, running: false, messages: [], incognito: true });
+      }
       const chat = await store.botChat(req.user.id, { botId: bot.id, title: bot.name });
       if (!chat) return res.status(404).json({ error: 'No such bot.' });
       res.json({ chatId: chat.id, running: running(chat), messages: await store.listMessages(req.user.id, chat.id) });
@@ -254,7 +301,9 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
         if (!res.writableEnded) void lease.check();
       });
       try {
-        const result = await runGroupRound({ user: req.user, groupId: group.id, text, emit, signal: controller.signal, origin: origin(req) });
+        // The model on the header chip, as every turn sends it; none is the account's own.
+        const model = typeof req.body?.model === 'string' && /^[\w./:@-]{1,200}$/.test(req.body.model) ? req.body.model : undefined;
+        const result = await runGroupRound({ user: req.user, groupId: group.id, text, emit, signal: controller.signal, origin: origin(req), model });
         emit('done', result);
       } catch (err) {
         log.error('group round failed', err);

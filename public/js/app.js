@@ -1,4 +1,4 @@
-import { api, runAgent } from './api.js';
+import { api, runAgent, markSignedIn } from './api.js';
 import { startInsights } from './insights.js';
 import { follow, answerOwnership, someoneElseIsRunning } from './mirror.js';
 import { createRuns } from './runs.js';
@@ -378,6 +378,14 @@ const suggestions = () => [
 
 /** 'signin' | 'signup' | 'forgot' | 'reset' | 'confirm' */
 let gateMode = 'signin';
+/** While a group chat on the Bot page holds the box: what Send and Stop do there (bots.js). */
+let composerHook = /** @type {{ send: (text: string) => Promise<void>, stop: () => void, busy: () => boolean } | null} */ (null);
+/** The box's placeholder while the Bot page holds it ("Message Chief"), or null for its own. */
+let placeholderFor = /** @type {string | null} */ (null);
+/** Whether the Bot page is on screen; the page itself answers once it exists. */
+let botsShowing = () => false;
+/** Told when a turn in a conversation ends: the Bot page's list shows what was said last. */
+let onTurnEnded = (/** @type {string} */ _chatId) => {};
 let session = null;
 let resetToken = null;
 /** Set once the server says this account has two-factor turned on. */
@@ -518,6 +526,48 @@ function rememberEmail(email) {
 }
 
 /**
+ * What was typed on the gate, kept in this browser for half an hour (owner, 2026-11-10):
+ * a reload, a tab closed by mistake or a trip to the inbox for the code no longer costs
+ * the person what they had written, nor the step they were on. Saved as it is typed.
+ * Never a password or a code — only the boxes anybody looking at the screen could read —
+ * and gone once they are in (`start`). Half an hour is how long a confirmation code lasts.
+ */
+const GATE_DRAFT = 'synapsez:gate-draft';
+const GATE_DRAFT_MS = 30 * 60_000;
+const GATE_FIELDS = ['gate-username', 'gate-email'];
+const GATE_MODES = ['signin', 'signup', 'forgot', 'reset', 'confirm'];
+
+function readGateDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(GATE_DRAFT) || 'null');
+    if (draft && typeof draft === 'object' && Date.now() - Number(draft.at) < GATE_DRAFT_MS) return draft;
+    localStorage.removeItem(GATE_DRAFT);
+  } catch {
+    /* a private window, or something else wrote there: nothing to bring back */
+  }
+  return null;
+}
+
+function saveGateDraft() {
+  if ($('gate').hidden) return;
+  const fields = Object.fromEntries(GATE_FIELDS.map((id) => [id, /** @type {HTMLInputElement} */ ($(id)).value]));
+  try {
+    if (gateMode === 'signin' && !Object.values(fields).some(Boolean)) localStorage.removeItem(GATE_DRAFT);
+    else localStorage.setItem(GATE_DRAFT, JSON.stringify({ at: Date.now(), mode: gateMode, fields, remember: /** @type {HTMLInputElement} */ ($('gate-remember')).checked }));
+  } catch {
+    /* see above */
+  }
+}
+
+function forgetGateDraft() {
+  try {
+    localStorage.removeItem(GATE_DRAFT);
+  } catch {
+    /* see above */
+  }
+}
+
+/**
  * Typing a long password blind is how people end up locked out of their own
  * account, so every password box gets an eye. It is a per-field toggle rather
  * than one switch for the form: revealing the box you are typing in should not
@@ -554,21 +604,38 @@ function showGate() {
   $('app').hidden = true;
   themesPanel.sleep();
 
+  // The step a reload interrupted comes back, unless a link in the address chose one.
+  const draft = readGateDraft();
+  if (draft && gateMode === 'signin' && GATE_MODES.includes(draft.mode)) gateMode = draft.mode;
   // With no users yet, creating the first account is the obvious default — but
   // it is only a default. Signing in stays one click away, because this screen
   // is also what someone sees if their session simply expired.
   if (session.needsSetup && gateMode === 'signin') gateMode = 'signup';
+  // A sign-up the deployment has closed since is not offered back.
+  if (gateMode === 'signup' && session.signupOpen === false && !session.needsSetup) gateMode = 'signin';
 
   const remembered = rememberedEmail();
   $('gate-email').value = remembered;
   $('gate-remember').checked = !!remembered;
+  if (draft) {
+    for (const id of GATE_FIELDS) {
+      const value = draft.fields?.[id];
+      if (typeof value === 'string' && value) /** @type {HTMLInputElement} */ ($(id)).value = value.slice(0, 320);
+    }
+    if (typeof draft.remember === 'boolean') /** @type {HTMLInputElement} */ ($('gate-remember')).checked = draft.remember;
+  }
 
   renderGateMode();
-  // A remembered address means the only thing left to type is the password.
+  if (draft && gateMode === 'confirm') note(t('gate.note.confirmSent', { email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim() }));
+  // The first box still empty: after a remembered address, the password.
   if (gateMode === 'confirm') $('gate-confirmcode').focus();
   else if (gateMode === 'reset') $('gate-resetcode').focus();
-  else if (remembered && gateMode === 'signin') $('gate-password').focus();
-  else $('gate-email').focus();
+  else {
+    const empty = ['gate-username', 'gate-email', 'gate-password']
+      .map((id) => /** @type {HTMLInputElement} */ ($(id)))
+      .find((box) => !box.hidden && !box.closest('[hidden]') && !box.value);
+    (empty || $('gate-email')).focus();
+  }
 }
 
 function renderGateMode() {
@@ -653,7 +720,11 @@ function setGateMode(mode) {
   $('gate-error').hidden = true;
   $('gate-note').hidden = true;
   renderGateMode();
+  saveGateDraft();
 }
+
+$('gate-form').addEventListener('input', saveGateDraft);
+$('gate-form').addEventListener('change', saveGateDraft);
 
 $('gate-switch').addEventListener('click', async () => {
   const goingToSignIn = gateMode !== 'signin';
@@ -814,6 +885,9 @@ $('gate-form').addEventListener('submit', async (event) => {
 });
 
 async function start() {
+  // Signed in from here on: a 401 now means the session ended (api.js).
+  markSignedIn(true);
+  forgetGateDraft();
   $('app').hidden = false;
   state.boot = await api.bootstrap();
 
@@ -2319,13 +2393,14 @@ async function openFailed(id, replacing, restoring) {
 
 /**
  * @param {string} id
- * @param {{ restoring?: boolean }} [options]  `restoring`: going back after another
- *   would not open, so one more failure ends at a blank conversation rather than
- *   going round again.
+ * @param {{ restoring?: boolean, inBot?: boolean }} [options]  `restoring`: going back after
+ *   another would not open, so one more failure ends at a blank conversation rather than
+ *   going round again. `inBot`: a bot's conversation, opened inside the Bot page, which
+ *   stays (owner, 2026-11-10).
  * @returns {Promise<boolean>} whether this conversation is the one that landed:
  *   false when another press overtook it, or it would not open.
  */
-async function openChat(id, { restoring = false } = {}) {
+async function openChat(id, { restoring = false, inBot = false } = {}) {
   openingAbort?.abort();
   const abort = new AbortController();
   openingAbort = abort;
@@ -2345,7 +2420,7 @@ async function openChat(id, { restoring = false } = {}) {
   // A conversation replaces whichever shelf was on screen — one it was pressed
   // from, that is. Going back after a failure was nobody's press, and a shelf open
   // by then was opened after it.
-  if (!restoring) {
+  if (!restoring && !inBot) {
     closeSidebar();
     leavePages();
   }
@@ -2656,12 +2731,14 @@ state.incognitoChat = null;
 function renderIncognito() {
   const inside = !!state.incognitoChat && state.chatId === state.incognitoChat;
   const blank = !state.chatId && !state.pendingProject;
-  const on = inside || (blank && state.incognito);
+  // On the Bot page the switch stays: it turns incognito on and off with the bot (owner, 2026-11-10).
+  const withBots = botsShowing();
+  const on = inside || ((blank || withBots) && state.incognito);
   const toggle = /** @type {HTMLButtonElement} */ ($('incognito-toggle'));
-  toggle.hidden = !(blank || inside);
+  toggle.hidden = !(blank || inside || withBots);
   toggle.setAttribute('aria-pressed', String(on));
   // Fixed once it exists: a conversation cannot be made to have been kept.
-  toggle.disabled = inside;
+  toggle.disabled = inside && !withBots;
   $('incognito-banner').hidden = !on;
   document.body.classList.toggle('is-incognito', on);
 }
@@ -2677,10 +2754,13 @@ function leaveIncognito(nextId = null) {
 }
 
 $('incognito-toggle').addEventListener('click', () => {
-  if (state.chatId) return;
+  const withBots = botsShowing();
+  if (state.chatId && !withBots) return;
   state.incognito = !state.incognito;
   renderIncognito();
   toast(t(state.incognito ? 'incognito.on' : 'incognito.off'));
+  // The bot on screen opens again, incognito or in its own chat.
+  if (withBots) botPage.incognitoChanged().catch((err) => toast(err.message, 'error'));
   $('input').focus();
 });
 
@@ -3037,12 +3117,86 @@ function openAutoFromLink() {
 }
 window.addEventListener('hashchange', openAutoFromLink);
 
+/*
+ * The Bot page borrows the home chat (owner, 2026-11-10: "the Bot page's chat should be as
+ * smooth as the home chat, the same box, the same background"). A bot's own conversation
+ * is this transcript and this box, moved into the page's middle column: thinking and text
+ * stream as they do here, files go with a message, the modes, the model chip and incognito
+ * all hold. A group chat borrows the box alone. Each moved element leaves a mark where it
+ * lives, and goes back there when the page closes.
+ */
+const lentHome = new Map();
+/** @param {HTMLElement} slot @param {('thread' | 'dock')[]} ids */
+function lendHome(slot, ids) {
+  for (const id of /** @type {const} */ (['thread', 'dock'])) {
+    const el = $(id);
+    if (ids.includes(id)) {
+      if (!lentHome.has(id)) {
+        const mark = document.createComment(`${id} lives here`);
+        el.before(mark);
+        lentHome.set(id, mark);
+      }
+      slot.append(el);
+      el.hidden = false;
+    } else if (lentHome.has(id)) {
+      lentHome.get(id).replaceWith(el);
+      lentHome.delete(id);
+      el.hidden = true;
+    }
+  }
+}
+function giveHomeBack() {
+  for (const [id, mark] of lentHome) mark.replaceWith($(id));
+  lentHome.clear();
+  composerHook = null;
+  placeholderFor = null;
+  // A bot's incognito conversation is thrown away with the page, as any incognito one is when left.
+  if (state.incognitoChat && state.chatId === state.incognitoChat) leaveIncognito();
+  refreshSendState();
+  fitPlaceholder();
+}
+/** A bot's conversation, opened in the borrowed transcript. @param {string} chatId @param {{ incognito?: boolean }} [options] */
+async function openBotChat(chatId, { incognito = false } = {}) {
+  if (state.incognitoChat && state.incognitoChat !== chatId) {
+    api.discardChat(state.incognitoChat);
+    state.incognitoChat = null;
+  }
+  if (incognito) state.incognitoChat = chatId;
+  await openChat(chatId, { inBot: true });
+  renderIncognito();
+}
+
 /**
  * Bot: the person's team of bots, led by Chief, and their group chats (bots.js, owner
  * 2026-11-09). A page of its own in the conversation's place, like a project's.
  */
 const botPage = createBotPage({
   toast,
+  home: {
+    input: /** @type {HTMLTextAreaElement} */ ($('input')),
+    lend: lendHome,
+    giveBack: giveHomeBack,
+    open: openBotChat,
+    // A group chat on screen: no conversation of the home chat's is open, and incognito stays as it was set.
+    blank: () => {
+      const keep = state.incognito;
+      startBlankChat(null, { stayOnPage: true });
+      state.incognito = keep;
+      renderIncognito();
+    },
+    setHook: (hook) => {
+      composerHook = hook;
+      refreshSendState();
+    },
+    refreshSend: () => refreshSendState(),
+    incognito: () => !!state.incognito,
+    model: () => state.model || undefined,
+    setTitle: (text) => ($('chat-title').textContent = text),
+    setPlaceholder: (text) => {
+      placeholderFor = text || null;
+      fitPlaceholder();
+    },
+  },
   openSettings: (tab) => openSettings(tab),
   openFeedback: () => feedback.open(),
   openAutomations: (tab) => gotoShelf(tab),
@@ -3054,6 +3208,9 @@ const botPage = createBotPage({
     onPage(true);
   },
 });
+botsShowing = () => botPage.showing();
+onTurnEnded = (chatId) => botPage.turnEnded(chatId);
+
 $('open-bots').addEventListener('click', () => {
   closeSidebar();
   botPage.show().catch((err) => toast(err.message, 'error'));
@@ -3415,13 +3572,25 @@ function beginEdit(message, text) {
 
 $('composer').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const input = $('input');
+  const input = /** @type {HTMLTextAreaElement} */ ($('input'));
   const text = input.value.trim();
 
   // Only the ones that finished uploading. A file still in flight — or one that
   // failed — must not be silently dropped from a message that claims to have it.
   const ready = staged.filter((f) => f.id);
   if (!text && !ready.length) return;
+  // A group chat on the Bot page has the box: what is sent goes to the group (bots.js).
+  if (composerHook) {
+    if (ready.length) {
+      toast(t('bots.groupNoFiles'));
+      return;
+    }
+    input.value = '';
+    autosize(input);
+    refreshSendState();
+    composerHook.send(text).catch((err) => toast(err.message || t('bots.failed'), 'error'));
+    return;
+  }
   // The conversation on screen is still arriving, and `state.chatId` already names
   // it. Sending now would be a question nobody can see the context of; what was
   // typed stays in the box.
@@ -4060,6 +4229,7 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null,
     // it. Leaves a panel the user opened, or is driving, alone.
     if (onScreen(run)) screenPanel.restIfIdle();
     await refreshChats();
+    onTurnEnded(run.chatId);
 
     /**
      * The stage stays where it is.
@@ -4182,6 +4352,9 @@ async function streamOnce(run, decision, answers, handoff = false) {
           } else if (phase === 'progress_check') {
             // The progress gate sent the model back to bring the plan up to date.
             setStatus(t('status.progressCheck'), run);
+          } else if (phase === 'plan_check') {
+            // Plan mode sent the model back to write the plan it was asked for.
+            setStatus(t('status.planCheck'), run);
           } else if (phase === 'continuing') {
             // The output limit cut the reply off; the same message carries on.
             setStatus(t('status.continuing'), run);
@@ -4520,6 +4693,11 @@ const stopHasLanded = (chatId) => {
 };
 
 $('stop').addEventListener('click', () => {
+  // A group chat on the Bot page answering: Stop stops every member.
+  if (composerHook?.busy()) {
+    composerHook.stop();
+    return;
+  }
   // The conversation on screen, not "the run": stop is a button in front of one
   // transcript, and with work possible in several at once it must never reach
   // into a conversation the person is not looking at.
@@ -7505,7 +7683,7 @@ function autosize(node) {
  */
 const placeholderRuler = document.createElement('canvas').getContext('2d');
 function fitPlaceholder(running = !!runHere()) {
-  const full = running ? t('composer.placeholderRunning') : t('composer.placeholder');
+  const full = placeholderFor || (running ? t('composer.placeholderRunning') : t('composer.placeholder'));
   let chosen = full;
   if (placeholderRuler && input.clientWidth) {
     const style = getComputedStyle(input);
@@ -7570,7 +7748,7 @@ function sendBlockedUntil() {
  */
 function refreshSendState() {
   const ready = input.value.trim().length > 0 || staged.some((f) => f.id);
-  const running = !!runHere();
+  const running = !!runHere() || !!composerHook?.busy();
   const blocked = sendBlockedUntil();
 
   // Empty and working: the button in that corner is stop. Anything else: send.

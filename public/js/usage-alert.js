@@ -129,8 +129,9 @@ export function createUsageAlert(host, deps) {
     else if (el.hasAttribute('data-alert-keys')) deps.openKeys();
   });
 
+  // Signed in only: on the gate there is nobody's usage to ask about (owner, 2026-11-10).
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') refresh();
+    if (document.visibilityState === 'visible' && deps.user()) refresh();
   });
 
   /** Held back while a question or an approval sits above the composer (UX-020); drawn again after. */

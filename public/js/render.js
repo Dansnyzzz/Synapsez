@@ -369,6 +369,15 @@ const STEP_VERBS = {
   list_tasks: 'step.list_tasks',
   cancel_task: 'step.cancel_task',
 
+  /* ── a bot's own tools (the Bot page) ── */
+  list_bots: 'step.list_bots',
+  create_bot: 'step.create_bot',
+  update_bot: 'step.update_bot',
+  create_group: 'step.create_group',
+  update_group: 'step.update_group',
+  remember: 'step.remember',
+  forget: 'step.forget',
+
   /* ── the shelf of sources ── */
   search_docs: 'step.search_docs',
   list_indexed: 'step.list_indexed',
@@ -571,6 +580,14 @@ const STEP_DETAILS = {
   workflow_write: (i) => clip(i.title || i.id || i.action || ''),
   workflow_status: (i) => clip(i.id, 24),
   cancel_task: (i) => clip(i.id, 24),
+
+  /* a bot's own tools */
+  create_bot: (i) => clip(i.name, 40),
+  update_bot: (i) => clip(i.bot || i.name || '', 40),
+  create_group: (i) => clip(i.name, 40),
+  update_group: (i) => clip(i.group || i.name || '', 40),
+  remember: (i) => clip(i.text, 60),
+  forget: (i) => clip(i.id || i.text || '', 40),
 
   /* the shelf of sources */
   search_docs: (i) => clip(i.query),
@@ -3314,7 +3331,7 @@ export function assistantMessage() {
         const head = el(
           'button',
           'think__head',
-          `${MARK_PENDING} <span class="think__title">${escapeHtml(t('status.thinking'))}</span><span class="think__chev" aria-hidden="true">›</span>`,
+          `${MARK_PENDING} <span class="think__title">${escapeHtml(t('status.thinking'))}</span><span class="think__chev" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" focusable="false"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`,
         );
         head.type = 'button';
         head.setAttribute('aria-expanded', 'false');

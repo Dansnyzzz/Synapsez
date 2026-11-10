@@ -34,7 +34,6 @@ const NAV = [
  *   toast: (text: string, kind?: string) => void,
  *   onChanged: () => Promise<void>,
  *   openSettings: (tab?: string) => void, openFeedback: () => void, openAutomations: (tab: string) => void,
- *   models: () => Promise<any[]>,
  * }} deps
  */
 export function openBotSettings(deps) {
@@ -79,7 +78,7 @@ export function openBotSettings(deps) {
   function drawBots(id) {
     const bot = id && id !== 'new' ? botOf(id) : null;
     const rows = team.bots
-      .map((b) => `<li><button type="button" class="botset__row${b.id === bot?.id ? ' is-on' : ''}" data-bot="${escapeHtml(b.id)}">${faceHtml(b.avatar, 28)}<span><span class="botset__name">${escapeHtml(b.name)}</span>${b.main ? ` <span class="bottag">${escapeHtml(t('bots.mainTag'))}</span>` : ''}<span class="botset__sub">${escapeHtml(b.role || '')}</span></span></button></li>`)
+      .map((b) => `<li><button type="button" class="botset__row${b.id === bot?.id ? ' is-on' : ''}" data-bot="${escapeHtml(b.id)}">${faceHtml(b, 28)}<span><span class="botset__name">${escapeHtml(b.name)}</span>${b.main ? ` <span class="bottag">${escapeHtml(t('bots.mainTag'))}</span>` : ''}<span class="botset__sub">${escapeHtml(b.role || '')}</span></span></button></li>`)
       .join('');
     const editing = id === 'new' || bot;
     const avatar = bot?.avatar || CREATURE_IDS.find((c) => !team.bots.some((b) => b.avatar === c)) || CREATURE_IDS[0];
@@ -94,7 +93,7 @@ export function openBotSettings(deps) {
         <fieldset class="botform__creatures"><legend>${escapeHtml(t('bots.f.creature'))}</legend>
           ${CREATURE_IDS.map((c) => `<label class="botform__creature" title="${escapeHtml(creatureName(c))}"><input type="radio" name="avatar" value="${escapeHtml(c)}" ${c === avatar ? 'checked' : ''} />${faceHtml(c, 40)}<span class="sr-only">${escapeHtml(creatureName(c))}</span></label>`).join('')}
         </fieldset>
-        <label class="field"><span>${escapeHtml(t('bots.model'))}</span><select name="model" data-models><option value="">${escapeHtml(t('bots.modelAccount'))}</option>${bot?.model ? `<option value="${escapeHtml(bot.model)}" selected>${escapeHtml(bot.model)}</option>` : ''}</select></label>
+        <p class="hint botform__note">${escapeHtml(t('bots.f.modelNote'))}</p>
         <label class="field"><span>${escapeHtml(t('bots.f.instructions'))}</span><textarea name="instructions" rows="6" maxlength="4000">${escapeHtml(bot?.instructions || '')}</textarea><small class="hint">${escapeHtml(t('bots.f.instructionsHint'))}</small></label>
         <p class="botform__error" role="alert" data-error></p>
         <div class="botform__acts">
@@ -105,22 +104,6 @@ export function openBotSettings(deps) {
           : `<p class="hint">${escapeHtml(t('bots.f.pick'))}</p>`
       }`;
     paintFaces(main);
-    const select = /** @type {HTMLSelectElement | null} */ (main.querySelector('[data-models]'));
-    if (select) {
-      deps
-        .models()
-        .then((models) => {
-          for (const m of models) {
-            if (!m?.id || m.id === bot?.model) continue;
-            const option = document.createElement('option');
-            option.value = m.id;
-            option.textContent = m.label ? `${m.label}${m.provider ? ` · ${m.provider}` : ''}` : m.id;
-            select.append(option);
-          }
-          select.value = bot?.model || '';
-        })
-        .catch(() => {});
-    }
     /** @type {HTMLInputElement | null} */ (main.querySelector('input[name="name"]'))?.focus();
     const form = /** @type {HTMLFormElement | null} */ (main.querySelector('[data-bot-form]'));
     form?.addEventListener('submit', async (event) => {
@@ -132,7 +115,7 @@ export function openBotSettings(deps) {
         error.textContent = t(problem);
         return;
       }
-      const body = { name: data.get('name'), role: data.get('role'), avatar: data.get('avatar'), model: data.get('model') || null, instructions: data.get('instructions') };
+      const body = { name: data.get('name'), role: data.get('role'), avatar: data.get('avatar'), instructions: data.get('instructions') };
       try {
         const saved = bot ? await api.updateBot(bot.id, body) : await api.createBot(body);
         await refresh();
@@ -161,7 +144,7 @@ export function openBotSettings(deps) {
         <h4 class="botset__h4">${escapeHtml(group ? group.name : t('bots.newGroup'))}</h4>
         <label class="field"><span>${escapeHtml(t('bots.g.name'))}</span><input name="name" maxlength="60" required value="${escapeHtml(group?.name || '')}" /></label>
         <fieldset class="botform__members"><legend>${escapeHtml(t('bots.members'))}</legend>
-          ${team.bots.map((b) => `<label class="botform__member">${`<input type="checkbox" name="members" value="${escapeHtml(b.id)}" ${members.has(b.id) ? 'checked' : ''} />`}${faceHtml(b.avatar, 22)}<span>${escapeHtml(b.name)}</span></label>`).join('')}
+          ${team.bots.map((b) => `<label class="botform__member">${`<input type="checkbox" name="members" value="${escapeHtml(b.id)}" ${members.has(b.id) ? 'checked' : ''} />`}${faceHtml(b, 22)}<span>${escapeHtml(b.name)}</span></label>`).join('')}
         </fieldset>
         <label class="field"><span>${escapeHtml(t('bots.g.admin'))}</span><select name="admin">${team.bots.map((b) => `<option value="${escapeHtml(b.id)}" ${b.id === (group?.admin || team.bots.find((x) => x.main)?.id) ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}</select><small class="hint">${escapeHtml(t('bots.g.adminHint'))}</small></label>
         <p class="botform__error" role="alert" data-error></p>

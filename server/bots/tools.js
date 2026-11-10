@@ -24,7 +24,7 @@ const NAME = { type: 'string', description: "A bot's exact name, as list_bots sh
 const DEFS = {
   list_bots: {
     readOnly: true,
-    description: "List the user's bots (name, role, creature, model, whether it is the main bot) and the group chats with their members and admin.",
+    description: "List the user's bots (name, role, creature, whether it is the main bot) and the group chats with their members and admin.",
     parameters: { type: 'object', properties: {} },
   },
   create_bot: {
@@ -37,13 +37,12 @@ const DEFS = {
         role: { type: 'string', description: `Its role in a few words (at most ${LIMITS.role} characters), e.g. "Editor"` },
         instructions: { type: 'string', description: 'What this bot is responsible for and how it should work, written to it' },
         creature: { type: 'string', enum: CREATURES, description: 'Which creature it wears; leave out to give it one nobody wears yet' },
-        model: { type: 'string', description: "A model id, only when the user names one; otherwise it runs on the account's model" },
       },
       required: ['name', 'role', 'instructions'],
     },
   },
   update_bot: {
-    description: "Change a bot's name, role, creature, model or instructions when the user asks. Leave out `bot` to change yourself; only the main bot changes other bots.",
+    description: "Change a bot's name, role, creature or instructions when the user asks. Leave out `bot` to change yourself; only the main bot changes other bots. Every bot answers on the model the user picked in the app's top bar.",
     parameters: {
       type: 'object',
       properties: {
@@ -52,7 +51,6 @@ const DEFS = {
         role: { type: 'string', description: 'New role' },
         instructions: { type: 'string', description: 'Replacement instructions (the whole text)' },
         creature: { type: 'string', enum: CREATURES, description: 'Another creature' },
-        model: { type: 'string', description: "A model id; an empty string returns it to the account's model" },
       },
     },
   },
@@ -151,14 +149,14 @@ export async function runBotTool({ userId, chatId, name, input = {} }) {
       case 'list_bots': {
         const groups = await store.listBotGroups(userId);
         const nameOf = new Map(bots.map((b) => [b.id, b.name]));
-        const lines = bots.map((b) => `- ${b.name}${b.is_main ? ' (main bot)' : ''}${b.role ? ` — ${b.role}` : ''}; creature ${b.avatar}; model ${b.model || "the account's"}${b.id === self.id ? ' — you' : ''}`);
+        const lines = bots.map((b) => `- ${b.name}${b.is_main ? ' (main bot)' : ''}${b.role ? ` — ${b.role}` : ''}; creature ${b.avatar}${b.id === self.id ? ' — you' : ''}`);
         // A bot sees the groups it is in; Chief sees every one (DS Bot's rule).
         const seen = groups.filter((g) => self.is_main || (g.members || []).includes(self.id));
         const glines = seen.map((g) => `- ${g.name}: ${(g.members || []).map((id) => `${nameOf.get(id) || '?'}${id === adminOf(g) ? ' (admin)' : ''}`).join(', ')}`);
         return { isError: false, content: [`Bots (${bots.length} of at most ${LIMITS.bots}):`, ...lines, '', glines.length ? 'Group chats:' : 'No group chats you are in.', ...glines].join('\n') };
       }
       case 'create_bot': {
-        const bot = await createBot(userId, { name: input.name, role: input.role, instructions: input.instructions, avatar: input.creature, model: input.model });
+        const bot = await createBot(userId, { name: input.name, role: input.role, instructions: input.instructions, avatar: input.creature });
         return { isError: false, content: `Created ${bot.name} (${bot.role || 'no role'}), wearing the ${bot.avatar}. It is on the Bot page now.` };
       }
       case 'update_bot': {
@@ -170,7 +168,6 @@ export async function runBotTool({ userId, chatId, name, input = {} }) {
           role: input.role,
           instructions: input.instructions,
           avatar: input.creature,
-          model: input.model === '' ? null : input.model,
         });
         return { isError: false, content: `Updated ${bot.name}. A change takes effect from its next message.` };
       }

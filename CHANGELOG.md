@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-10 — The Bot page on the home chat, a plan in Plan mode, skills that share themselves
+
+**A bot's chat is the home chat** (`public/js/bots.js`, `app.js` `lendHome`). The transcript and the box are moved into the Bot page: a message shows at once, reasoning streams as it comes, files go with a message, the modes, the model chip and incognito hold, and the theme shows through. A group borrows the box, with @ in it. Every bot answers on the top bar's model; a bot with nothing saved is told it may save to its memory on its own; a bot's own scheduled tasks are listed and run with it, never on Automations; incognito gives a conversation with a bot that keeps nothing. A creature another bot wears comes in a colour of its own (`bots.hue`); Chief keeps the cosmic whale. Schema 43.
+
+**Plan mode makes a plan** without being asked: the prompt says so, and a turn about to end without one is sent back once. Every mode is audited by a test.
+
+**Every new skill shares itself** to Discover unless its author keeps it back or the scan flags it.
+
+**The reasoning block** opens and closes smoothly, its chevron drawn and centred.
+
+**The sign-in and sign-up page holds still** (`public/js/api.js` `markSignedIn`). Every 401 reloaded the page, so a wrong password wiped the form without saying why, an account asking for its second-factor code could not get past it, and coming back to the tab (the usage warning asked the server) reloaded it under the person typing — the code box of a sign-up included. A 401 reloads only a page that was signed in. What is typed on the gate (the email or username, the step) is kept in this browser for 30 minutes and comes back after a reload; never a password or a code.
+
+Privacy notice privacy-2026-11-10-2.
+
 ## 2026-11-10 — A real Bot page, skills people share, Progress as a line, a confirmed email, the address checked
 
 **Progress** (`public/js/plan-window.js`, `public/js/uploads-view.js`, `public/js/rail.js`). A line down the Progress list instead of a blue band; while it runs, the current step, the two before it and what is still to come, the rest behind "N earlier steps"; once finished, the last two with the tick; "Step x of y". **Used in this session** sits above Outputs, a row per message that brought files, and opens an Uploaded files window with the list on the left and the preview on the right (pictures, PDFs, workbooks with their sheets).

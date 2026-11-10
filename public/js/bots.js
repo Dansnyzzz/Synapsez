@@ -1,4 +1,4 @@
-import { api, runGroup, runBotChat } from './api.js';
+import { api, runGroup } from './api.js';
 import { t, localeTag } from './i18n.js';
 import { escapeHtml, renderMarkdown } from './markdown.js';
 import { counted } from './format.js';
@@ -16,10 +16,13 @@ import { compactCount } from './bots-usage.js';
  * the right, its details — model, instructions, memory, usage. Bot settings is a
  * dialog of its own (bots-settings.js).
  *
- * A bot's own chat is an ordinary conversation of this app, run by the same agent
- * loop (`/chats/:id/run`); a group's round is one streamed request of its own
- * (`/bot-groups/:id/run`). Both are stopped with one press, which for a group stops
- * every member that is working.
+ * A bot's own chat is an ordinary conversation of this app, and since 2026-11-10 it is
+ * shown and written in the home chat itself (`home`, from app.js): the transcript and
+ * the box are moved into the middle column, so thinking and text stream as they do
+ * there, files go with a message, and the modes, the model chip and incognito hold
+ * (owner: "as smooth as the home chat, the same box"). A group's round is one streamed
+ * request of its own (`/bot-groups/:id/run`), drawn here, written in the same borrowed
+ * box; one Stop stops every member that is working.
  *
  * Every name, message and memory entry drawn here was written by a person or a model:
  * it goes through `escapeHtml`, or through `renderMarkdown`, which escapes first.
@@ -68,9 +71,13 @@ const timeOf = (iso) => {
  *   openFeedback: () => void,
  *   openAutomations: (tab: string) => void,
  *   onShow?: () => void,
- * }} deps
+ *   home: { input: HTMLTextAreaElement, lend: (slot: HTMLElement, ids: ('thread' | 'dock')[]) => void, giveBack: () => void,
+ *     open: (chatId: string, options?: { incognito?: boolean }) => Promise<void>, blank: () => void,
+ *     setHook: (hook: any) => void, refreshSend: () => void, incognito: () => boolean, model: () => string | undefined,
+ *     setTitle: (text: string) => void, setPlaceholder: (text: string | null) => void },
+ * }} deps  `home`: the home chat's transcript and box, lent to the Bot page (owner, 2026-11-10)
  */
-export function createBotPage({ toast, openSettings, openFeedback, openAutomations, onShow = () => {} }) {
+export function createBotPage({ toast, openSettings, openFeedback, openAutomations, onShow = () => {}, home }) {
   const page = $('bot-page');
   /** @type {{ bots: any[], groups: any[], creatures: string[], limits: any } | null} */
   let team = null;
@@ -114,13 +121,10 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       </header>
       <div class="botchat__log scroll-quiet" role="log" aria-live="polite" aria-relevant="additions" data-log></div>
       <div class="botchat__working" data-working aria-live="polite"></div>
-      <form class="botchat__composer" data-composer>
-        <div class="botchat__box">
-          <div class="atpick" role="listbox" aria-label="${escapeHtml(t('bots.pickerLabel'))}" data-picker hidden></div>
-          <textarea class="botchat__input" rows="1" data-input aria-label="" aria-autocomplete="list" aria-expanded="false"></textarea>
-          <button class="btn btn--primary botchat__send" type="submit" data-send>${escapeHtml(t('bots.send'))}</button>
-        </div>
-      </form>
+      <!-- The home chat's transcript and box are lent here (app.js lendHome). -->
+      <div class="botchat__home" data-home>
+        <div class="atpick" role="listbox" aria-label="${escapeHtml(t('bots.pickerLabel'))}" data-picker hidden></div>
+      </div>
     </section>
     <aside class="botdetails scroll-quiet" data-details hidden></aside>`;
 
@@ -128,8 +132,9 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   const chiefBox = /** @type {HTMLElement} */ (page.querySelector('[data-chief]'));
   const log = /** @type {HTMLElement} */ (page.querySelector('[data-log]'));
   const pill = /** @type {HTMLButtonElement} */ (page.querySelector('[data-act="details"]'));
-  const input = /** @type {HTMLTextAreaElement} */ (page.querySelector('[data-input]'));
-  const send = /** @type {HTMLButtonElement} */ (page.querySelector('[data-send]'));
+  // The home chat's own box, lent to this page while it shows (app.js).
+  const input = home.input;
+  const homeSlot = /** @type {HTMLElement} */ (page.querySelector('[data-home]'));
   const pickerBox = /** @type {HTMLElement} */ (page.querySelector('[data-picker]'));
   const details = /** @type {HTMLElement} */ (page.querySelector('[data-details]'));
   const workingBox = /** @type {HTMLElement} */ (page.querySelector('[data-working]'));
@@ -153,7 +158,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
 
   function groupFaces(group) {
     const faces = membersOf(group).slice(0, 3);
-    return `<span class="botfaces" aria-hidden="true">${faces.map((b) => faceHtml(b.avatar, 20)).join('')}</span>`;
+    return `<span class="botfaces" aria-hidden="true">${faces.map((b) => faceHtml(b, 20)).join('')}</span>`;
   }
 
   function renderList() {
@@ -161,7 +166,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     const lead = chief();
     chiefBox.innerHTML = lead
       ? `<button class="botchief${open?.kind === 'bot' && open.id === lead.id ? ' is-open' : ''}" type="button" data-open="bot:${escapeHtml(lead.id)}" aria-current="${open?.id === lead.id ? 'true' : 'false'}">
-           ${faceHtml(lead.avatar, 64, 'botchief__face')}
+           ${faceHtml(lead, 64, 'botchief__face')}
            <span class="botchief__star" aria-hidden="true">★</span>
            <span class="botchief__name">${escapeHtml(lead.name)}</span>
            <span class="botchief__role">${escapeHtml(lead.role || t('bots.mainTag'))}</span>
@@ -177,7 +182,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         const isOpen = open?.kind === kind && open.id === item.id;
         const preview = previewOf(item, kind === 'group');
         return `<li><button class="botrow${isOpen ? ' is-open' : ''}" type="button" data-open="${kind}:${escapeHtml(item.id)}" aria-current="${isOpen ? 'true' : 'false'}">
-          ${kind === 'group' ? groupFaces(item) : faceHtml(item.avatar, 36)}
+          ${kind === 'group' ? groupFaces(item) : faceHtml(item, 36)}
           <span class="botrow__text"><span class="botrow__name">${escapeHtml(item.name)}</span>${preview ? `<span class="botrow__last">${escapeHtml(preview)}</span>` : ''}</span>
           ${item.running ? `<span class="botdot" role="img" aria-label="${escapeHtml(t('bots.running'))}"></span>` : ''}
         </button></li>`;
@@ -211,8 +216,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         frag.append(text.slice(at, span.start));
         const mark = document.createElement('span');
         mark.className = 'botmention';
-        mark.style.setProperty('--ink', inkOf(span.bot.avatar));
-        mark.innerHTML = `${faceHtml(span.bot.avatar, 16)}${escapeHtml(text.slice(span.start, span.end))}`;
+        mark.style.setProperty('--ink', inkOf(span.bot));
+        mark.innerHTML = `${faceHtml(span.bot, 16)}${escapeHtml(text.slice(span.start, span.end))}`;
         frag.append(mark);
         at = span.end;
       }
@@ -227,7 +232,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     const input = call.input || {};
     if (call.name === 'create_bot') {
       const bot = team?.bots.find((b) => b.name.toLowerCase() === String(input.name || '').toLowerCase());
-      return `<p class="botevent">${escapeHtml(t('bots.created'))} ${bot ? faceHtml(bot.avatar, 18) : ''}<span>${escapeHtml(String(input.name || ''))}</span></p>`;
+      return `<p class="botevent">${escapeHtml(t('bots.created'))} ${bot ? faceHtml(bot, 18) : ''}<span>${escapeHtml(String(input.name || ''))}</span></p>`;
     }
     if (call.name === 'create_group') {
       const group = team?.groups.find((g) => g.name.toLowerCase() === String(input.name || '').toLowerCase());
@@ -262,9 +267,9 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     if (message.role === 'user') return `<div class="botmsg botmsg--user"><div class="botmsg__bubble">${escapeHtml(message.text || '')}</div></div>`;
     const bot = botOf(message.bot);
     const admin = adminOf(group) === message.bot;
-    const ink = inkOf(bot?.avatar);
+    const ink = inkOf(bot);
     return `<div class="botmsg botmsg--member" style="--ink:${ink}">
-      ${faceHtml(bot?.avatar || '', 28, 'botmsg__face')}
+      ${faceHtml(bot || '', 28, 'botmsg__face')}
       <div class="botmsg__body">
         <p class="botmsg__who"><span class="botmsg__name">${escapeHtml(bot?.name || t('bots.deletedBot'))}</span>${admin ? `<span class="bottag">${escapeHtml(t('bots.admin'))}</span>` : ''}</p>
         <div class="botmsg__bubble prose" data-md>${renderMarkdown(message.text || '')}</div>
@@ -306,28 +311,27 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       pill.innerHTML = '';
       return;
     }
-    const face = open?.kind === 'group' ? groupFaces(it) : faceHtml(it.avatar, 24);
+    const face = open?.kind === 'group' ? groupFaces(it) : faceHtml(it, 24);
     pill.innerHTML = `${face}<span class="botchat__name">${escapeHtml(it.name)}</span><span class="botchat__chev" aria-hidden="true">${detailsOpen ? '→' : '←'}</span>`;
     pill.setAttribute('aria-expanded', String(detailsOpen));
     pill.setAttribute('aria-label', t('bots.detailsOpen', { name: it.name }));
-    input.placeholder = t('bots.message', { name: it.name });
-    input.setAttribute('aria-label', t('bots.message', { name: it.name }));
+    home.setPlaceholder(t('bots.message', { name: it.name }));
+    home.setTitle(it.name);
     paintFaces(pill);
   }
 
+  /** Send or Stop in the borrowed box: the home chat decides, asking `groupHook.busy`. */
   function renderSend() {
-    const busy = !!run && run.kind === open?.kind && run.id === open?.id;
-    send.textContent = busy ? t('bots.stop') : t('bots.send');
-    send.classList.toggle('is-stop', busy);
-    send.type = busy ? 'button' : 'submit';
+    home.refreshSend();
   }
 
   function renderWorking() {
     const rows = [...working.entries()].map(([id, state]) => {
       const bot = botOf(id);
       if (!bot) return '';
-      const doing = state.tool ? t('bots.using', { name: bot.name, tool: state.tool }) : t('bots.working', { name: bot.name });
-      return `<div class="botworking" style="--ink:${inkOf(bot.avatar)}">${faceHtml(bot.avatar, 20)}<span class="botworking__who">${escapeHtml(doing)}</span>${state.text ? `<span class="botworking__text">${escapeHtml(state.text.slice(-160))}</span>` : ''}</div>`;
+      const doing = state.tool ? t('bots.using', { name: bot.name, tool: state.tool }) : state.thinking && !state.text ? t('bots.thinkingLive') : t('bots.working', { name: bot.name });
+      // A ring while it works, never a row of dots (owner, 2026-11-10).
+      return `<div class="botworking" style="--ink:${inkOf(bot)}"><span class="spinner" aria-hidden="true"></span>${faceHtml(bot, 20)}<span class="botworking__who">${escapeHtml(doing)}</span>${state.text ? `<span class="botworking__text">${escapeHtml(state.text.slice(-160))}</span>` : ''}</div>`;
     });
     workingBox.innerHTML = rows.join('');
     paintFaces(workingBox);
@@ -359,15 +363,16 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     const turn = ++detailsTurn;
     details.innerHTML = `<header class="botdetails__head"><button class="icon-btn" type="button" data-act="close-details" aria-label="${escapeHtml(t('action.close'))}" title="${escapeHtml(t('action.close'))}">✕</button></header>
       <div class="botdetails__who">
-        ${isGroup ? groupFaces(it) : faceHtml(it.avatar, 88, 'botdetails__face')}
+        ${isGroup ? groupFaces(it) : faceHtml(it, 88, 'botdetails__face')}
         <h2 class="botdetails__name">${escapeHtml(it.name)}</h2>
         ${!isGroup && it.role ? `<p class="botdetails__role">${escapeHtml(it.role)}</p>` : ''}
       </div>
-      <div data-body><p class="hint">…</p></div>`;
+      <div data-body><p class="botloading" role="status"><span class="spinner" aria-hidden="true"></span><span class="sr-only">${escapeHtml(t('bots.loading'))}</span></p></div>`;
     paintFaces(details);
-    const [memory, usage] = await Promise.all([
+    const [memory, usage, tasks] = await Promise.all([
       api.botMemory(kind, it.id).catch(() => ({ entries: [] })),
       usageLine(isGroup ? it.members : [it.id]).catch(() => []),
+      isGroup ? { tasks: [] } : api.botTasks(it.id).catch(() => ({ tasks: [] })),
     ]);
     if (turn !== detailsTurn) return;
     const body = /** @type {HTMLElement} */ (details.querySelector('[data-body]'));
@@ -376,11 +381,10 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       const admin = adminOf(it);
       parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.members'))}</h3>
         ${run?.kind === 'group' && run.id === it.id ? `<button class="btn btn--small botsec__stop" type="button" data-act="stop">${escapeHtml(t('bots.stopAll'))}</button>` : ''}
-        <ul class="botmembers">${membersOf(it).map((b) => `<li style="--ink:${inkOf(b.avatar)}">${faceHtml(b.avatar, 22)}<span>${escapeHtml(b.name)}</span>${b.id === admin ? `<span class="bottag">${escapeHtml(t('bots.admin'))}</span>` : ''}</li>`).join('')}</ul>
+        <ul class="botmembers">${membersOf(it).map((b) => `<li style="--ink:${inkOf(b)}">${faceHtml(b, 22)}<span>${escapeHtml(b.name)}</span>${b.id === admin ? `<span class="bottag">${escapeHtml(t('bots.admin'))}</span>` : ''}</li>`).join('')}</ul>
         <button class="botlink" type="button" data-act="edit-group">${escapeHtml(t('bots.groupSettings'))} ›</button></section>`);
     } else {
-      parts.push(`<section class="botsec"><h3 class="botsec__label"><label for="bot-model-pick">${escapeHtml(t('bots.model'))}</label></h3>
-        <select class="botselect" id="bot-model-pick" data-model><option value="">${escapeHtml(t('bots.modelAccount'))}</option>${it.model ? `<option value="${escapeHtml(it.model)}" selected>${escapeHtml(it.model)}</option>` : ''}</select></section>`);
+      // No model of its own: every bot answers on the model in the top bar (owner, 2026-11-10).
       parts.push(`<button class="botlink botlink--center" type="button" data-act="edit-bot">${escapeHtml(t(it.instructions ? 'bots.instructionsEdit' : 'bots.instructionsAdd'))}</button>`);
     }
     const entries = memory.entries || [];
@@ -394,10 +398,31 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       })
       .join('');
     parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.usage'))}</h3>${usage.some((u) => u.tokens) ? `<ul class="botusage">${usageRows}</ul>` : `<p class="hint">${escapeHtml(t('bots.usageNone'))}</p>`}</section>`);
-    parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.scheduled'))}</h3><button class="botlink" type="button" data-act="automations">${escapeHtml(t('bots.scheduledNote'))} ›</button></section>`);
+    // A bot's own scheduled tasks, here and only here (owner, 2026-11-10).
+    if (!isGroup) parts.push(tasksHtml(tasks.tasks || []));
     body.innerHTML = parts.join('');
     paintFaces(body);
-    if (!isGroup) fillModels(/** @type {HTMLSelectElement} */ (body.querySelector('[data-model]')), it.model);
+  }
+
+  let taskFormOpen = false;
+  /** @param {any[]} tasks */
+  function tasksHtml(tasks) {
+    const when = (task) => (task.enabled === false ? t('bots.taskPaused') : task.next_run_at ? t('bots.taskNext', { when: new Date(task.next_run_at).toLocaleString(localeTag(), { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) }) : '');
+    const rows = tasks
+      .map((task) => `<li class="bottask"><span class="bottask__text"><span class="bottask__name">${escapeHtml(task.title)}</span><span class="bottask__when">${escapeHtml(when(task))}</span></span>
+        <button class="btn btn--small" type="button" data-task-toggle="${escapeHtml(task.id)}" data-enabled="${task.enabled === false ? '0' : '1'}">${escapeHtml(t(task.enabled === false ? 'bots.taskResume' : 'bots.taskPause'))}</button>
+        <button class="btn btn--small" type="button" data-task-delete="${escapeHtml(task.id)}">${escapeHtml(t('bots.taskDelete'))}</button></li>`)
+      .join('');
+    return `<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.scheduled'))}</h3>
+      ${tasks.length ? `<ul class="bottasks">${rows}</ul>` : `<p class="hint">${escapeHtml(t('bots.tasksNone'))}</p>`}
+      ${taskFormOpen
+        ? `<form class="bottask__form" data-task-add>
+            <input type="text" maxlength="120" required data-task-title aria-label="${escapeHtml(t('bots.taskName'))}" placeholder="${escapeHtml(t('bots.taskName'))}" />
+            <textarea rows="2" maxlength="8000" required data-task-prompt aria-label="${escapeHtml(t('bots.taskPrompt'))}" placeholder="${escapeHtml(t('bots.taskPrompt'))}"></textarea>
+            <input type="text" maxlength="60" required data-task-when aria-label="${escapeHtml(t('bots.taskWhen'))}" placeholder="${escapeHtml(t('bots.taskWhen'))}" />
+            <button class="btn btn--primary btn--small" type="submit">${escapeHtml(t('bots.taskSave'))}</button>
+          </form>`
+        : `<button class="botlink" type="button" data-act="task-add">${escapeHtml(t('bots.taskAdd'))} ›</button>`}</section>`;
   }
 
   function memoryHtml(entries) {
@@ -407,28 +432,6 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         <input type="text" maxlength="300" data-memory-text aria-label="${escapeHtml(t('bots.memoryAdd'))}" placeholder="${escapeHtml(t('bots.memoryPlaceholder'))}" />
         <button class="btn btn--small" type="submit">${escapeHtml(t('bots.memoryAdd'))}</button>
       </form></div>`;
-  }
-
-  /** The models a bot can run on: the account's, then the ones this account can reach. */
-  let modelList = null;
-  async function fillModels(select, current) {
-    if (!select) return;
-    try {
-      modelList ||= api.models({}).then((data) => [...(data.builtin || []), ...(data.models || [])].slice(0, 300));
-      const models = await modelList;
-      const seen = new Set(['', ...(current ? [current] : [])]);
-      for (const m of models) {
-        if (!m?.id || seen.has(m.id)) continue;
-        seen.add(m.id);
-        const option = document.createElement('option');
-        option.value = m.id;
-        option.textContent = m.label ? `${m.label}${m.provider ? ` · ${m.provider}` : ''}` : m.id;
-        select.append(option);
-      }
-      select.value = current || '';
-    } catch {
-      /* the list is a convenience; the bot keeps its model */
-    }
   }
 
   /* ── loading and opening ─────────────────────────────────────── */
@@ -442,11 +445,26 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   async function loadChat() {
     if (!open) return;
     const asked = open;
-    const data = open.kind === 'group' ? await api.groupChat(open.id) : await api.botChat(open.id);
+    if (open.kind === 'group') {
+      const data = await api.groupChat(open.id);
+      if (open !== asked) return;
+      chat = { chatId: data.chatId, messages: data.messages || [] };
+      renderLog();
+      return;
+    }
+    // A bot's own chat (or, with incognito on, one that is not kept), in the home chat.
+    const data = await api.botChat(open.id, { incognito: home.incognito() });
     if (open !== asked) return;
-    chat = { chatId: data.chatId, messages: data.messages || [] };
-    renderLog();
+    chat = { chatId: data.chatId, messages: [] };
+    await home.open(data.chatId, { incognito: !!data.incognito });
   }
+
+  /** What the borrowed box does while a group chat is open. */
+  const groupHook = {
+    send: (text) => sendGroup(text),
+    stop: () => void stopRun(),
+    busy: () => !!run && run.kind === 'group',
+  };
 
   /** @param {'bot' | 'group'} kind @param {string} id @param {{ focus?: boolean, chatting?: boolean }} [options] */
   async function openSubject(kind, id, { focus = true, chatting = true } = {}) {
@@ -468,10 +486,24 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     page.classList.toggle('is-chatting', chatting);
     if (!chatting) detailsOpen = false;
     setHash(open);
+    // A bot's chat is the home chat's own transcript and box; a group borrows the box alone.
+    const isGroup = open.kind === 'group';
+    page.classList.toggle('is-group', isGroup);
+    log.hidden = !isGroup;
+    workingBox.hidden = !isGroup;
+    if (isGroup) {
+      if (changed) home.blank();
+      home.lend(homeSlot, ['dock']);
+      home.setHook(groupHook);
+    } else {
+      home.setHook(null);
+      home.lend(homeSlot, ['thread', 'dock']);
+    }
     renderList();
     renderHead();
     renderSend();
     await loadChat();
+    renderHead();
     // Always: closed, it hides itself; open, it reads the newly opened one.
     renderDetails();
     if (focus && matchMedia('(min-width: 760px)').matches) input.focus();
@@ -479,59 +511,61 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
 
   /* ── sending and stopping ─────────────────────────────────────── */
 
-  async function sendMessage() {
-    const text = input.value.trim();
-    if (!text || !open || run) return;
+  /** Write in the open group and follow its round. What was written shows at once. */
+  async function sendGroup(text) {
+    if (!open || open.kind !== 'group' || run) return;
     closePicker();
-    input.value = '';
-    autosize();
     const target = open;
     const controller = new AbortController();
-    run = { controller, kind: target.kind, id: target.id };
+    run = { controller, kind: 'group', id: target.id, chatId: chat?.chatId };
     renderSend();
     const here = () => open && open.kind === target.kind && open.id === target.id;
+    const mine = { role: 'user', text, createdAt: new Date().toISOString() };
+    if (chat) {
+      chat.messages.push(mine);
+      renderLog();
+    }
     try {
-      if (target.kind === 'group') {
-        run.chatId = chat?.chatId;
-        await runGroup({
-          groupId: target.id,
-          text,
-          runId: crypto.randomUUID(),
-          signal: controller.signal,
-          onEvent: (event, data) => {
-            if (!here()) return;
-            if (event === 'post' && chat) {
-              chat.messages.push(data.message);
-              if (data.message.bot) working.delete(data.message.bot);
-              renderLog();
-              renderWorking();
-            } else if (event === 'member_start') {
-              working.set(data.bot, { text: '', tool: '' });
-              renderWorking();
-            } else if (event === 'member_text') {
-              const w = working.get(data.bot);
-              if (w) w.text += data.delta;
-              renderWorking();
-            } else if (event === 'member_tool') {
-              const w = working.get(data.bot);
-              if (w) w.tool = data.name;
-              renderWorking();
-            } else if (event === 'member_end') {
-              working.delete(data.bot);
-              renderWorking();
-            } else if (event === 'error') toast(data.message || t('bots.failed'), 'error');
-          },
-        });
-      } else {
-        const chatId = chat?.chatId || (await api.botChat(target.id)).chatId;
-        run.chatId = chatId;
-        await api.sendMessage(chatId, text);
-        if (here() && chat) {
-          chat.messages.push({ role: 'user', text, createdAt: new Date().toISOString() });
-          renderLog();
-        }
-        await runSolo(chatId, controller, here);
-      }
+      await runGroup({
+        groupId: target.id,
+        text,
+        runId: crypto.randomUUID(),
+        model: home.model(),
+        signal: controller.signal,
+        onEvent: (event, data) => {
+          if (!here()) return;
+          if (event === 'post' && chat) {
+            // The person's own line is on screen already: the stored one takes its place.
+            const at = data.message.role === 'user' ? chat.messages.indexOf(mine) : -1;
+            if (at >= 0) chat.messages[at] = data.message;
+            else chat.messages.push(data.message);
+            if (data.message.bot) working.delete(data.message.bot);
+            renderLog();
+            renderWorking();
+          } else if (event === 'member_start') {
+            working.set(data.bot, { text: '', tool: '', thinking: true });
+            renderWorking();
+          } else if (event === 'member_thinking') {
+            const w = working.get(data.bot);
+            if (w) w.thinking = true;
+            renderWorking();
+          } else if (event === 'member_text') {
+            const w = working.get(data.bot);
+            if (w) {
+              w.text += data.delta;
+              w.thinking = false;
+            }
+            renderWorking();
+          } else if (event === 'member_tool') {
+            const w = working.get(data.bot);
+            if (w) w.tool = data.name;
+            renderWorking();
+          } else if (event === 'member_end') {
+            working.delete(data.bot);
+            renderWorking();
+          } else if (event === 'error') toast(data.message || t('bots.failed'), 'error');
+        },
+      });
     } catch (err) {
       if (!controller.signal.aborted) toast(err.message || t('bots.failed'), 'error');
     } finally {
@@ -545,76 +579,11 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     }
   }
 
-  /** A bot's own chat, run; a step that needs the person's yes asks here, and goes on with the answer. */
-  async function runSolo(chatId, controller, here, decision = undefined) {
-    let live = null;
-    let asking = null;
-    await runBotChat({
-      chatId,
-      runId: crypto.randomUUID(),
-      signal: controller.signal,
-      decision,
-      onEvent: (event, data) => {
-        if (!here()) return;
-        if (event === 'thinking') {
-          live ||= addLive();
-          live.thinking = true;
-          paintLive(live);
-        } else if (event === 'text') {
-          live ||= addLive();
-          live.text += data.delta || '';
-          live.thinking = false;
-          paintLive(live);
-        } else if (event === 'tool_call') {
-          live ||= addLive();
-          live.tool = data.name;
-          paintLive(live);
-        } else if (event === 'approval_required') {
-          asking = data.toolCalls || [];
-        } else if (event === 'error') toast(data.message || t('bots.failed'), 'error');
-      },
-    });
-    if (asking?.length && here() && !controller.signal.aborted) {
-      const answer = await askYes(asking);
-      await loadChat().catch(() => {});
-      await runSolo(chatId, controller, here, { decision: answer, decisionFor: asking.map((c) => c.id) });
-    }
-  }
-
-  function addLive() {
-    const node = document.createElement('div');
-    node.className = 'botlive';
-    log.append(node);
-    return { node, text: '', tool: '', thinking: false };
-  }
-  function paintLive(live) {
-    live.node.innerHTML = `${live.thinking ? `<p class="botthinking">${escapeHtml(t('bots.thinking'))}</p>` : ''}${live.tool && !live.text ? `<p class="botstep">${escapeHtml(t('bots.used', { tool: live.tool }))}</p>` : ''}${live.text ? `<div class="botmsg botmsg--bot"><div class="botmsg__bubble">${escapeHtml(live.text)}</div></div>` : ''}`;
-    log.scrollTop = log.scrollHeight;
-  }
-
-  /** A card under the conversation: what the bot wants to do, and Allow or Deny. */
-  function askYes(calls) {
-    return new Promise((resolve) => {
-      const it = subject();
-      const card = document.createElement('div');
-      card.className = 'botask';
-      card.setAttribute('role', 'group');
-      card.innerHTML = `<p>${escapeHtml(t('bots.approval', { name: it?.name || '', what: calls.map((c) => c.name).join(', ') }))}</p>
-        <div class="botask__acts"><button class="btn btn--primary btn--small" type="button" data-yes>${escapeHtml(t('bots.allow'))}</button><button class="btn btn--small" type="button" data-no>${escapeHtml(t('bots.deny'))}</button></div>`;
-      log.append(card);
-      log.scrollTop = log.scrollHeight;
-      card.querySelector('[data-yes]')?.addEventListener('click', () => resolve('allow'));
-      card.querySelector('[data-no]')?.addEventListener('click', () => resolve('deny'));
-      /** @type {HTMLElement} */ (card.querySelector('[data-yes]')).focus();
-    });
-  }
-
   async function stopRun() {
     if (!run) return;
     const current = run;
     try {
-      if (current.kind === 'group') await api.stopGroup(current.id);
-      else if (current.chatId) await api.stopChat(current.chatId);
+      await api.stopGroup(current.id);
     } catch {
       /* hanging up below still ends what this tab shows */
     }
@@ -641,7 +610,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     const index = picker && picker.start === at.start ? Math.min(picker.index, items.length - 1) : 0;
     picker = { start: at.start, items, index };
     pickerBox.innerHTML = items
-      .map((b, i) => `<div class="atpick__item${i === index ? ' is-on' : ''}" role="option" id="atpick-${i}" aria-selected="${i === index}" data-pick="${i}" style="--ink:${inkOf(b.avatar)}">${faceHtml(b.avatar, 22)}<span class="atpick__name">${escapeHtml(b.name)}</span>${b.role ? `<span class="atpick__role">${escapeHtml(b.role)}</span>` : ''}</div>`)
+      .map((b, i) => `<div class="atpick__item${i === index ? ' is-on' : ''}" role="option" id="atpick-${i}" aria-selected="${i === index}" data-pick="${i}" style="--ink:${inkOf(b)}">${faceHtml(b, 22)}<span class="atpick__name">${escapeHtml(b.name)}</span>${b.role ? `<span class="atpick__role">${escapeHtml(b.role)}</span>` : ''}</div>`)
       .join('');
     pickerBox.hidden = false;
     input.setAttribute('aria-expanded', 'true');
@@ -660,21 +629,17 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     input.focus();
   }
 
-  function autosize() {
-    input.style.height = 'auto';
-    input.style.height = `${Math.min(input.scrollHeight, 200)}px`;
-  }
-
   /* ── wiring ──────────────────────────────────────────────────── */
 
-  input.addEventListener('input', () => {
-    autosize();
-    updatePicker();
-  });
-  input.addEventListener('keydown', (event) => {
+  const inGroup = () => shown && open?.kind === 'group';
+  input.addEventListener('input', () => (inGroup() ? updatePicker() : closePicker()));
+  // Caught before the box's own keys, so Enter picks a name rather than sending.
+  input.closest('form')?.addEventListener('keydown', (event) => {
+    if (event.target !== input || !inGroup()) return;
     if (picker) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
+        event.stopPropagation();
         picker.index = (picker.index + (event.key === 'ArrowDown' ? 1 : picker.items.length - 1)) % picker.items.length;
         const keep = picker.index;
         updatePicker();
@@ -683,38 +648,25 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       }
       if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault();
+        event.stopPropagation();
         pick(picker.index);
         return;
       }
       if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopPropagation();
         closePicker();
         return;
       }
     }
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault();
-      sendMessage();
-    }
-  });
-  input.addEventListener('click', updatePicker);
+  }, true);
+  input.addEventListener('click', () => (inGroup() ? updatePicker() : undefined));
   input.addEventListener('blur', () => setTimeout(closePicker, 150));
   pickerBox.addEventListener('mousedown', (event) => {
     const item = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-pick]'));
     if (!item) return;
     event.preventDefault();
     pick(Number(item.dataset.pick));
-  });
-
-  page.querySelector('[data-composer]')?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    sendMessage();
-  });
-  send.addEventListener('click', (event) => {
-    if (send.classList.contains('is-stop')) {
-      event.preventDefault();
-      stopRun();
-    }
   });
 
   const closeNewMenu = () => {
@@ -726,7 +678,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     // Where the page was: on a phone, a change made in settings does not swap the list for the conversation.
     if (open) await openSubject(open.kind, open.id, { focus: false, chatting: page.classList.contains('is-chatting') || !matchMedia('(max-width: 760px)').matches });
   };
-  const settingsDeps = () => ({ team, toast, onChanged: refreshAll, openSettings, openFeedback, openAutomations, models: () => (modelList ||= api.models({}).then((data) => [...(data.builtin || []), ...(data.models || [])].slice(0, 300))) });
+  const settingsDeps = () => ({ team, toast, onChanged: refreshAll, openSettings, openFeedback, openAutomations });
 
   page.addEventListener('click', async (event) => {
     const target = /** @type {HTMLElement} */ (event.target);
@@ -734,6 +686,18 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     if (opener) {
       const [kind, id] = String(opener.dataset.open).split(':');
       openSubject(/** @type {'bot' | 'group'} */ (kind), id);
+      return;
+    }
+    const taskToggle = /** @type {HTMLElement | null} */ (target.closest('[data-task-toggle]'));
+    if (taskToggle) {
+      await api.setTaskEnabled(taskToggle.dataset.taskToggle, taskToggle.dataset.enabled !== '1').catch((err) => toast(err.message, 'error'));
+      renderDetails();
+      return;
+    }
+    const taskDelete = /** @type {HTMLElement | null} */ (target.closest('[data-task-delete]'));
+    if (taskDelete) {
+      await api.deleteTask(taskDelete.dataset.taskDelete).catch((err) => toast(err.message, 'error'));
+      renderDetails();
       return;
     }
     const forgetBtn = /** @type {HTMLElement | null} */ (target.closest('[data-forget]'));
@@ -780,6 +744,10 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     } else if (act === 'memory') {
       memoryOpen = !memoryOpen;
       renderDetails();
+    } else if (act === 'task-add') {
+      taskFormOpen = true;
+      await renderDetails();
+      /** @type {HTMLInputElement | null} */ (details.querySelector('[data-task-title]'))?.focus();
     } else if (act === 'stop') stopRun();
     else if (act === 'automations') openAutomations('scheduled');
     else if (act === 'back') {
@@ -794,6 +762,18 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
 
   page.addEventListener('submit', async (event) => {
     const form = /** @type {HTMLElement} */ (event.target);
+    if (form.matches('[data-task-add]') && open?.kind === 'bot') {
+      event.preventDefault();
+      const value = (sel) => /** @type {HTMLInputElement} */ (form.querySelector(sel)).value.trim();
+      try {
+        await api.addBotTask(open.id, { title: value('[data-task-title]'), prompt: value('[data-task-prompt]'), when: value('[data-task-when]'), tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+        taskFormOpen = false;
+        await renderDetails();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      return;
+    }
     if (!form.matches('[data-memory-add]')) return;
     event.preventDefault();
     const field = /** @type {HTMLInputElement} */ (form.querySelector('[data-memory-text]'));
@@ -803,18 +783,6 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       await api.addBotMemory(open.kind === 'group' ? 'bot-groups' : 'bots', open.id, text);
       await renderDetails();
       /** @type {HTMLInputElement | null} */ (details.querySelector('[data-memory-text]'))?.focus();
-    } catch (err) {
-      toast(err.message, 'error');
-    }
-  });
-
-  page.addEventListener('change', async (event) => {
-    const select = /** @type {HTMLSelectElement} */ (event.target);
-    if (!select.matches('[data-model]') || open?.kind !== 'bot') return;
-    try {
-      await api.updateBot(open.id, { model: select.value || null });
-      await loadTeam();
-      toast(t('bots.saved'));
     } catch (err) {
       toast(err.message, 'error');
     }
@@ -847,8 +815,17 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       shown = false;
       page.hidden = true;
       closePicker();
+      home.giveBack();
       clearHash();
     },
     showing: () => shown,
+    /** The top bar's incognito switch changed: the bot on screen opens again, kept or not. */
+    async incognitoChanged() {
+      if (shown && open?.kind === 'bot') await loadChat();
+    },
+    /** A turn ended somewhere: the list shows what was said last, if it was a bot's chat. */
+    turnEnded(chatId) {
+      if (shown && chat?.chatId === chatId) loadTeam().catch(() => {});
+    },
   };
 }

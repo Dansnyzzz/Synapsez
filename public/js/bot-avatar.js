@@ -29,7 +29,40 @@ export const CREATURE_INK = Object.freeze({
   'bronze-dolphin': '#cc8640',
 });
 
-export const inkOf = (creature) => CREATURE_INK[creature] || '#9aa8b5';
+/**
+ * A bot as its face is drawn: a creature id alone, or a bot ({ avatar, hue }). `hue` turns
+ * the creature's colours round the wheel, so two bots sharing a creature are told apart
+ * (owner, 2026-11-10); 0 is as drawn.
+ *
+ * @param {string | { avatar?: string, hue?: number } | null | undefined} who
+ */
+const faceOf = (who) => (who && typeof who === 'object' ? { creature: String(who.avatar || ''), hue: Number(who.hue) || 0 } : { creature: String(who || ''), hue: 0 });
+
+/** A colour turned round the wheel by `deg`. @param {string} hex @param {number} deg */
+function turned(hex, deg) {
+  if (!deg) return hex;
+  const n = parseInt(hex.slice(1), 16);
+  let [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  let h = 0;
+  const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = (h * 60 + deg + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * sat;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return `#${[r, g, b].map((v) => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** A bot's colour for its name and its @mentions. @param {string | { avatar?: string, hue?: number } | null | undefined} who */
+export const inkOf = (who) => {
+  const { creature, hue } = faceOf(who);
+  return turned(CREATURE_INK[creature] || '#9aa8b5', hue);
+};
 export const CREATURE_IDS = DRAWN_IDS;
 
 /** The Ranking page's pets name the same animals; three were named before the creatures were. */
@@ -70,10 +103,13 @@ export function creatureStill(id) {
  * A face, to be filled in by `paintFaces`. Decoration: the name beside it says who it
  * is, so it is hidden from screen readers.
  *
- * @param {string} creature @param {number} [size] @param {string} [extra]  more classes
+ * @param {string | { avatar?: string, hue?: number } | null | undefined} who  a creature id, or a bot with its hue
+ * @param {number} [size] @param {string} [extra]  more classes
  */
-export function faceHtml(creature, size = 28, extra = '') {
-  return `<span class="botface ${extra}" data-creature="${escapeHtml(creature || '')}" style="--face:${Number(size) || 28}px" aria-hidden="true"></span>`;
+export function faceHtml(who, size = 28, extra = '') {
+  const { creature, hue } = faceOf(who);
+  const tint = hue ? `;filter:hue-rotate(${hue}deg)` : '';
+  return `<span class="botface ${extra}" data-creature="${escapeHtml(creature)}" style="--face:${Number(size) || 28}px${tint}" aria-hidden="true"></span>`;
 }
 
 /** Fill every face placeholder under `root` with its creature. @param {ParentNode} root */

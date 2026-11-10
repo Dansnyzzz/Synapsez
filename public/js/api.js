@@ -3,6 +3,18 @@ import { narrate } from './mirror.js';
 import { t, currentLanguage } from './i18n.js';
 
 /**
+ * Whether this page is signed in (app.js `start`). Only then does a 401 mean the session
+ * ended, and reloading drops back to the gate. On the gate a 401 is an answer — a wrong
+ * password, a code asked for — and a reload there wiped what was being typed and never
+ * said why; coming back to the tab did the same (owner, 2026-11-10).
+ */
+let signedIn = false;
+/** @param {boolean} on */
+export const markSignedIn = (on) => {
+  signedIn = !!on;
+};
+
+/**
  * @param {string} method
  * @param {string} path
  * @param {any} [body]
@@ -19,8 +31,8 @@ async function request(method, path, body, options = {}) {
   });
 
   // The session cookie is gone or the access code changed. Reloading drops us
-  // back to the gate, which is the only useful thing to do here.
-  if (res.status === 401) {
+  // back to the gate, which is the only useful thing to do here — once signed in.
+  if (res.status === 401 && signedIn) {
     location.reload();
     throw new Error(t('session.expired'));
   }
@@ -234,7 +246,9 @@ export const api = {
   createBot: (bot) => request('POST', '/api/bots', bot),
   updateBot: (id, patch) => request('PATCH', `/api/bots/${encodeURIComponent(id)}`, patch),
   deleteBot: (id) => request('DELETE', `/api/bots/${encodeURIComponent(id)}`),
-  botChat: (id) => request('GET', `/api/bots/${encodeURIComponent(id)}/chat`),
+  botChat: (id, { incognito = false } = {}) => request('GET', `/api/bots/${encodeURIComponent(id)}/chat${incognito ? '?incognito=1' : ''}`),
+  botTasks: (id) => request('GET', `/api/bots/${encodeURIComponent(id)}/tasks`),
+  addBotTask: (id, task) => request('POST', `/api/bots/${encodeURIComponent(id)}/tasks`, task),
   /** `kind` is 'bots' or 'bot-groups'. */
   botMemory: (kind, id) => request('GET', `/api/${kind}/${encodeURIComponent(id)}/memory`),
   addBotMemory: (kind, id, text) => request('POST', `/api/${kind}/${encodeURIComponent(id)}/memory`, { text }),
@@ -495,7 +509,7 @@ export async function localDeviceId() {
  * @param {Response} res @param {(event: string, data: any) => void} onEvent
  */
 export async function readEvents(res, onEvent) {
-  if (res.status === 401) {
+  if (res.status === 401 && signedIn) {
     location.reload();
     throw new Error(t('session.expired'));
   }
@@ -533,11 +547,12 @@ export async function readEvents(res, onEvent) {
 }
 
 /** Write in a group chat and follow its round (server/routes/bots.js). */
-export async function runGroup({ groupId, text, runId, signal, onEvent }) {
+export async function runGroup({ groupId, text, runId, model = undefined, signal, onEvent }) {
   const res = await fetch(`/api/bot-groups/${encodeURIComponent(groupId)}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Language': currentLanguage() },
-    body: JSON.stringify({ text, runId }),
+    // `model`: the header chip's, which every member answers on (owner, 2026-11-10).
+    body: JSON.stringify({ text, runId, ...(model ? { model } : {}) }),
     signal,
   });
   await readEvents(res, onEvent);
@@ -568,7 +583,7 @@ export async function runAgent({ chatId, model, handoff, decision, decisionFor, 
     signal,
   });
 
-  if (res.status === 401) {
+  if (res.status === 401 && signedIn) {
     location.reload();
     throw new Error(t('session.expired'));
   }

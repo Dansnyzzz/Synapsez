@@ -15,7 +15,7 @@ import { heldByMonitor } from './actionMonitor.js';
 import { UNTRUSTED_RULE } from './tools/untrusted.js';
 import { executeTool } from './tools/execute.js';
 import { normalisePlan, PLAN_MIN_STEPS } from './tools/cloud.js';
-import { withProgressNotes, unfinishedThisTurn, progressGateNote } from './progress.js';
+import { withProgressNotes, unfinishedThisTurn, progressGateNote, plannedThisTurn, planModeGateNote } from './progress.js';
 import { workerStatus } from './localTools.js';
 import { skillMenu, skillNotes } from './skills.js';
 import { connectorSummary } from './connectors.js';
@@ -341,7 +341,9 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
      * it" is not something a model can act on.
      */
     '- **Plan when the work is a job, not an answer**: three or more steps you can name up front, of different kinds — read, then change, then check; several files; several sites. Call `update_plan` first and keep it moving; the user watches it fill in while they wait.',
-    '- **Do not plan when the reply is the answer**: a question, a lookup, one edit, something already in front of you. A checklist there is furniture they must read first, and short work is finished faster than it is planned.',
+    policy === 'plan'
+      ? '- **In Plan mode every request gets a plan**, a question or a lookup included: that is what the user switched the mode on for.'
+      : '- **Do not plan when the reply is the answer**: a question, a lookup, one edit, something already in front of you. A checklist there is furniture they must read first, and short work is finished faster than it is planned.',
     '- Steps are outcomes in their language, three to eight of them — "Rebuild the calibrated model", not "call run_command". Fifteen means you are listing keystrokes.',
     '- Exactly one step `in_progress`, moved as you finish each. Still showing step 1 while you are on step 4 is worse than no plan, because they read it to find out where you are. If the work turns out different, resend the list with what actually applies and say what changed.',
     '- Read before you write. Never edit a file you have not read in this conversation.',
@@ -393,10 +395,10 @@ export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills,
     // reads the missing tools as a failure and apologises for what it cannot
     // do, instead of doing the thing the mode exists for.
     lines.push(
-      'The user has asked for a plan, not the work. The tools that change anything are not available to you in this mode — that is deliberate, not a fault to report or work around.',
-      'Investigate properly first: read the files, run the read-only commands, find out how things actually are rather than guessing.',
-      'Then hand back a plan — what you would change, in which files, in what order, and anything you found that makes the request harder than it sounds.',
-      'Use `update_plan` for the steps so the user can watch it take shape. Do not ask for permission to proceed; they will switch modes when they want the work done.',
+      'The user switched on **Plan mode**: every request in it — a question, research, a document, a trip, code — is answered with a plan, never with the answer or the work itself. The tools that change anything are not available to you in this mode — that is deliberate, not a fault to report or work around.',
+      'Your first action in every turn is `update_plan` with three to eight steps that would accomplish what they asked, in their language, the first `in_progress` and the rest `pending`. Do this without being asked; the user should never have to say "make a plan".',
+      'Then look into it as far as the read-only tools allow — read the files, search, run the read-only commands — and send `update_plan` again if what you found changes the steps.',
+      'End with a short reply: what each step will do, what you found that makes it harder than it sounds, and that they can switch to a working mode (Auto, for one) to have it carried out. Do not ask for permission to proceed.',
     );
   } else if (policy === 'ask') {
     lines.push(
@@ -1565,9 +1567,12 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     emit('done', { stopReason: 'error' });
     return;
   }
+  /*
+   * A bot runs on the model on the header chip, like every conversation (owner,
+   * 2026-11-10: "the Bot page follows the model chosen in the top bar"). A model a bot
+   * was given before that day is kept in its row and no longer read.
+   */
   const persona = chat.bot_id ? await botPersona(userId, chat) : null;
-  // A bot runs on its own model, or on the account's when it has none — never on the chip's.
-  if (persona) modelId = persona.bot.model || undefined;
 
   /**
    * One model for the whole account, not one per conversation.
@@ -2040,6 +2045,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   /** The progress gate's note for the next request, and whether it has fired this turn. */
   let progressGate = null;
   let progressGated = false;
+  /** Plan mode's gate: sent back once to write the plan it was asked for. */
+  let planGated = false;
   /**
    * The pictures that go with the gate's note, when what is owed is a look at a file.
    * @type {{ id: string, name: string, kind: string }[]}
@@ -2746,7 +2753,18 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
           continue;
         }
       }
-      if (!progressGated && !stop.message && step + 1 < prefs.maxSteps) {
+      /*
+       * Plan mode makes a plan (owner, 2026-11-10: the model answered instead, and
+       * planned only when told to). Sent back once to write it; never a loop.
+       */
+      if (policy === 'plan' && !planGated && !stop.message && step + 1 < prefs.maxSteps && !signal?.aborted && !plannedThisTurn(messages)) {
+        planGated = true;
+        progressGate = planModeGateNote();
+        emit('status', { phase: 'plan_check' });
+        continue;
+      }
+      // Not in Plan mode, where every step is still to do by design.
+      if (!progressGated && policy !== 'plan' && !stop.message && step + 1 < prefs.maxSteps) {
         const behind = unfinishedThisTurn(messages);
         if (behind) {
           progressGated = true;

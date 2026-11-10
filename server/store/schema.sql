@@ -1248,3 +1248,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS chats_group_log_idx ON chats (bot_group_id) WH
 -- still what was spent. Set from the conversation when the caller does not say.
 ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS bot_id TEXT;
 CREATE INDEX IF NOT EXISTS usage_events_bot_idx ON usage_events (user_id, created_at) WHERE bot_id IS NOT NULL;
+
+-- 43 (owner, 2026-11-10): a creature two bots share is told apart by its colour.
+-- `hue` turns the creature's colours round the wheel, in degrees; 0 is as drawn.
+-- One creature and one hue per bot in an account, kept by server/bots/team.js
+-- rather than by an index, so an account that already has a pair is not refused
+-- the upgrade (`distinctFaces` gives the second its own colour).
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS hue INTEGER NOT NULL DEFAULT 0;
+-- A bot's own scheduled tasks (owner, 2026-11-10): made in its chat, run in its chat
+-- as that bot, listed only on the Bot page and never on Automations. NULL is the
+-- account's own, as every task was before. They go with the bot.
+ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS scheduled_bot_idx ON scheduled_tasks (user_id, bot_id) WHERE bot_id IS NOT NULL;
+-- An incognito conversation with a bot (owner, 2026-11-10: incognito in the top bar
+-- holds on the Bot page too): one more chat with the bot, kept out of everything and
+-- thrown away when left, beside its own chat — so the one-chat-per-bot rule leaves
+-- incognito ones out.
+DROP INDEX IF EXISTS chats_bot_room_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS chats_bot_room_idx ON chats (bot_id, COALESCE(bot_group_id, '')) WHERE bot_id IS NOT NULL AND NOT incognito;

@@ -249,8 +249,10 @@ export function splitStatements(sql) {
  *      an administrator's hiding of it, and the people who added it by reference
  *  42  bots, bot_groups, bot_group_members, bot_memory; chats.bot_id / bot_group_id;
  *      usage_events.bot_id — the Bot page
+ *  43  bots.hue — a creature two bots share, told apart by its colour;
+ *      scheduled_tasks.bot_id — a bot's own scheduled tasks; incognito chats with a bot
  */
-export const SCHEMA_VERSION = 42;
+export const SCHEMA_VERSION = 43;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -3904,13 +3906,24 @@ export function createPgStore(connectionString) {
     },
 
     // ── scheduled tasks ─────────────────────────────────────────────
-    async listTasks(userId) {
-      return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 ORDER BY next_run_at', [userId]);
+    /**
+     * The account's scheduled tasks: its own (Automations), or with `botId` one bot's
+     * (the Bot page), or with `every` all of them (the data export). A bot's tasks are
+     * never in the account's list (owner, 2026-11-10).
+     *
+     * @param {string} userId @param {{ botId?: string | null, every?: boolean }} [scope]
+     */
+    async listTasks(userId, { botId = null, every = false } = {}) {
+      if (every) return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 ORDER BY next_run_at', [userId]);
+      if (botId) return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND bot_id = $2 ORDER BY next_run_at', [userId, String(botId)]);
+      return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND bot_id IS NULL ORDER BY next_run_at', [userId]);
     },
     async createTask(userId, task) {
       const rows = await q(
-        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz, project_id, policy)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz, project_id, policy, bot_id)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+          WHERE $11::text IS NULL OR EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $11)
+         RETURNING *`,
         [
           task.id,
           userId,
@@ -3924,6 +3937,7 @@ export function createPgStore(connectionString) {
           task.tz ?? null,
           task.projectId ?? null,
           task.policy ?? null,
+          task.botId || null,
         ],
       );
       return rows[0];
@@ -4446,11 +4460,11 @@ export function createPgStore(connectionString) {
      */
     async createBot(userId, bot) {
       const rows = await q(
-        `INSERT INTO bots (id, user_id, name, role, avatar, model, instructions, is_main)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO bots (id, user_id, name, role, avatar, model, instructions, is_main, hue)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT DO NOTHING
          RETURNING *`,
-        [bot.id, userId, bot.name, bot.role || '', bot.avatar || 'minnow', bot.model || null, bot.instructions || '', !!bot.isMain],
+        [bot.id, userId, bot.name, bot.role || '', bot.avatar || 'minnow', bot.model || null, bot.instructions || '', !!bot.isMain, Number(bot.hue) || 0],
       );
       return rows[0] ?? null;
     },
@@ -4469,7 +4483,7 @@ export function createPgStore(connectionString) {
      * in words.
      */
     async updateBot(userId, id, patch) {
-      const allowed = { name: 'name', role: 'role', avatar: 'avatar', model: 'model', instructions: 'instructions' };
+      const allowed = { name: 'name', role: 'role', avatar: 'avatar', model: 'model', instructions: 'instructions', hue: 'hue' };
       const sets = [];
       const params = [userId, String(id ?? '')];
       for (const [key, column] of Object.entries(allowed)) {
@@ -4609,6 +4623,17 @@ export function createPgStore(connectionString) {
       return rows.length > 0;
     },
 
+    /** A new incognito conversation with one of the account's bots, or null when it has no such bot. */
+    async incognitoBotChat(userId, botId, title = 'Bot') {
+      const rows = await q(
+        `INSERT INTO chats (id, user_id, title, bot_id, incognito)
+         SELECT $1, $2, $3, $4, TRUE WHERE EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $4)
+         RETURNING *`,
+        [crypto.randomUUID(), userId, String(title).slice(0, 120), String(botId ?? '')],
+      );
+      return rows[0] ?? null;
+    },
+
     /**
      * The conversation a bot or group keeps, made the first time it is asked
      * for: a bot's own chat (`botId`), a group's log (`groupId`), or a member's
@@ -4620,7 +4645,7 @@ export function createPgStore(connectionString) {
       const find = () =>
         q(
           `SELECT * FROM chats
-            WHERE user_id = $1 AND bot_id IS NOT DISTINCT FROM $2::text AND bot_group_id IS NOT DISTINCT FROM $3::text
+            WHERE user_id = $1 AND bot_id IS NOT DISTINCT FROM $2::text AND bot_group_id IS NOT DISTINCT FROM $3::text AND NOT incognito
             ORDER BY created_at LIMIT 1`,
           [userId, botId, groupId],
         );

@@ -10,7 +10,7 @@
  * …"), held to these by test/features: change a page, change its version here.
  */
 export const LEGAL = Object.freeze({
-  notice: 'privacy-2026-11-10',
+  notice: 'privacy-2026-11-10-2',
   terms: 'terms-2026-11-03',
   usage: 'usage-2026-10-26',
 });
@@ -30,7 +30,8 @@ export function agreement(body) {
   const kept = {};
   for (const [key, prefix] of Object.entries(SHAPE)) {
     const value = typeof given[key] === 'string' ? given[key].slice(0, 40) : '';
-    if (new RegExp(`^${prefix}-\\d{4}-\\d{2}-\\d{2}$`).test(value)) kept[key] = value;
+    // A date, and a revision when one day needed two (privacy-2026-11-10-2).
+    if (new RegExp(`^${prefix}-\\d{4}-\\d{2}-\\d{2}(?:-\\d{1,2})?$`).test(value)) kept[key] = value;
   }
   return kept;
 }

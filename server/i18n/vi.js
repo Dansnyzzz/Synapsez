@@ -286,6 +286,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'không hỏi được máy chủ DNS',
   'PUBLIC_URL is not set':
     'Chưa đặt PUBLIC_URL',
+  'Chief keeps the cosmic whale.':
+    'Chief luôn là cá voi vũ trụ.',
+  'A scheduled task needs a name and what to do.':
+    'Việc theo lịch cần có tên và việc cần làm.',
+  'That is too long for a scheduled task.':
+    'Nội dung này quá dài cho một việc theo lịch.',
   'That reset code or link is invalid, already used, or expired.':
     'Mã hoặc liên kết đặt lại mật khẩu không hợp lệ, đã được dùng, hoặc đã hết hạn.',
   'Your current password is not correct.': 'Mật khẩu hiện tại không đúng.',

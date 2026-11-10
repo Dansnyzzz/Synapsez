@@ -88,10 +88,11 @@ export function roundPrompt({ group, self, lines, why, together = [], nameOf }) 
  *   deadlineAt?: number,
  *   runAgent?: typeof realRunAgent,
  *   origin?: string | null,
- * }} options
+ *   model?: string,
+ * }} options  `model`: the header chip's, which every member answers on
  * @returns {Promise<{ stopReason: string, turns: number, handoffs: number }>}
  */
-export async function runGroupRound({ user, groupId, text, emit, signal, deadlineAt = Date.now() + ROUND_BUDGET_MS, runAgent = realRunAgent, origin = null }) {
+export async function runGroupRound({ user, groupId, text, emit, signal, deadlineAt = Date.now() + ROUND_BUDGET_MS, runAgent = realRunAgent, origin = null, model = undefined }) {
   const store = getStore();
   const userId = user.id;
   const group = await store.getBotGroup(userId, groupId);
@@ -150,8 +151,8 @@ export async function runGroupRound({ user, groupId, text, emit, signal, deadlin
         userId,
         user,
         chatId: chat.id,
-        // The bot's own model, read by the loop from the bot (server/agent.js); nothing decided or answered yet.
-        modelId: undefined,
+        // The header chip's model, the same for every member (owner, 2026-11-10); nothing decided or answered yet.
+        modelId: model,
         decision: undefined,
         decisionFor: undefined,
         answers: undefined,

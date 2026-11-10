@@ -90,6 +90,31 @@ export function unfinishedThisTurn(messages) {
   return null;
 }
 
+/**
+ * Whether this turn wrote a plan the panel draws (`update_plan` with at least
+ * `PLAN_MIN_STEPS` steps since the person last spoke). Plan mode asks for one.
+ */
+export function plannedThisTurn(messages) {
+  const lastUser = messages.findLastIndex((m) => m.role === 'user');
+  for (let i = messages.length - 1; i > lastUser; i -= 1) {
+    const calls = messages[i].role === 'assistant' ? messages[i].toolCalls || [] : [];
+    if (calls.some((c) => c.name === 'update_plan' && normalisePlan(c.input?.steps).length >= PLAN_MIN_STEPS)) return true;
+  }
+  return false;
+}
+
+/**
+ * What the model is told when, in Plan mode, it tries to finish without a plan
+ * (owner, 2026-11-10: it answered instead, and planned only when told "make a plan").
+ */
+export function planModeGateNote() {
+  return (
+    '(Plan gate, from the app — not the user. This conversation is in Plan mode: the user asked for a plan, not for the answer or the work. ' +
+    'You were about to finish without one. Call update_plan now with three to eight steps that would accomplish what they asked — whatever it is: research, writing, a document, analysis or code — the first in_progress, the rest pending. ' +
+    'Then reply in a few lines: what each step will do and what you found while looking, and that they can switch to a working mode (Auto, for one) to have it carried out. Do not do the work itself.)'
+  );
+}
+
 /** What the model is told when it tries to finish with the plan behind. */
 export function progressGateNote({ open, total }) {
   return (

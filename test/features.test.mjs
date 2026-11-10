@@ -958,7 +958,7 @@ section('the privacy notice a new account agrees to is the one it can read (LAW-
   // told them by /api/session and sends them back with the tick (2026-10-26).
   const { LEGAL, agreement, agreedToCurrent } = await import('../server/legal.js');
   const version = LEGAL.notice;
-  check('the page names the version the sign-up form sends', /^privacy-\d{4}-\d{2}-\d{2}$/.test(version) && notice.includes(`Phiên bản ${version}`) && notice.includes(`Version ${version}`), version);
+  check('the page names the version the sign-up form sends', /^privacy-\d{4}-\d{2}-\d{2}(?:-\d{1,2})?$/.test(version) && notice.includes(`Phiên bản ${version}`) && notice.includes(`Version ${version}`), version);
   // The database moved from Neon to Supabase on 2026-10-19 (docs/database.md).
   check('  naming the database the deployment actually uses', /<strong>Supabase<\/strong>/.test(notice) && /Supabase holds the database/.test(notice), version);
   check('  and saying an agreement is kept while the account is', /bản ghi đồng ý/i.test(notice) && /record of what you agreed to/i.test(notice));
