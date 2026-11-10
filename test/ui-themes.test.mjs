@@ -127,6 +127,18 @@ const canvasPrint = async (selector, p = page) => {
   return (await node.screenshot()).toString('base64');
 };
 /**
+ * Whether what is drawn under `selector` changes within `ms`: looked at again and again, so
+ * a busy machine that is slow to the next frame is not taken for a creature standing still.
+ */
+const movesWithin = async (selector, p = page, ms = 2000) => {
+  const first = await canvasPrint(selector, p);
+  for (const end = Date.now() + ms; Date.now() < end; ) {
+    await p.waitForTimeout(150);
+    if ((await canvasPrint(selector, p)) !== first) return true;
+  }
+  return false;
+};
+/**
  * Turn the Theme page to the one holding a tile (owner, 2026-11-08: twelve to a page,
  * with an arrow either side), from wherever it is.
  */
@@ -490,7 +502,9 @@ section('asking for less motion');
   await store.recordTopUp(row.id, { id: 'tu-still', amountUsd: 1000, source: 'test' });
   await store.setUserSetting(row.id, 'prefs', { ...(await store.getUserSetting(row.id, 'prefs')), equippedTitle: 'spend-1000' });
   await reload(still);
-  await still.waitForSelector('.composer__box canvas.mascot[data-creature="gold-whale"]');
+  await still.waitForSelector('.composer__box canvas.mascot[data-creature="gold-whale"][data-frame]');
+  // Settled first (the page has just loaded, the box may still be finding its size); then held.
+  await still.waitForTimeout(600);
   const held = await canvasPrint('.composer__box .mascot', still);
   await still.waitForTimeout(450);
   check('a worn title’s creature stays, holding still', !!held && held === (await canvasPrint('.composer__box .mascot', still)));
@@ -563,9 +577,7 @@ section('the boards');
   // A scene's canvas is `.is-in` once its first frame is up; a pixel creature's says which frame it is on.
   await member.waitForSelector('.ranking__stage canvas:is(.is-in, .pixel-creature[data-frame])');
   check('drawn in pixels, as it stands on the writing box', await member.evaluate(() => !!document.querySelector('.ranking__stage .pixel-creature') && !document.querySelector('.ranking__stage .scene-live')));
-  const creature = await canvasPrint('.ranking__stage', member);
-  await member.waitForTimeout(450);
-  check('and it moves', creature !== (await canvasPrint('.ranking__stage', member)));
+  check('and it moves', await movesWithin('.ranking__stage', member));
   await shot('title-newcomer', member);
   // One not held is looked at, dimmed, and not worn.
   check('a title not yet earned is dimmed', await member.evaluate(() => getComputedStyle(document.querySelector('[data-title="tokens-1b"]')).opacity < 1));
@@ -616,9 +628,7 @@ section('the worn title’s creature on the writing box');
   check('it takes the whale’s place, and only one stands there', pet.count === 1 && pet.state === 'idle', JSON.stringify(pet));
   check('  in whole pixels, at about the whale’s size', pet.pixels % 64 === 0 && Math.abs(pet.width * pet.ratio - pet.pixels) < 0.5 && pet.width >= 120 && pet.width <= 136, JSON.stringify(pet));
   check('  on the box’s top edge at its right, out of the way', pet.right >= 0 && pet.right < 80 && pet.above < 2 && pet.above > -30 && pet.pointer === 'none' && pet.hidden === 'true', JSON.stringify(pet));
-  const before = await canvasPrint('.composer__box .mascot', member);
-  await member.waitForTimeout(450);
-  check('  and it moves', before !== (await canvasPrint('.composer__box .mascot', member)));
+  check('  and it moves', await movesWithin('.composer__box .mascot', member));
   await shot('creature-on-box', member);
 
   await openSettings('theme', member);

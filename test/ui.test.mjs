@@ -3742,7 +3742,8 @@ section('Skills people share: Discover newest first, Add by reference, edits arr
   const older = (await writeSkill('u-ui-sharer', { name: 'ui-shared-older', description: 'An older shared skill.', instructions: 'Older steps.', shared: true })).skill;
   await page.waitForTimeout(30);
   const newer = (await writeSkill('u-ui-sharer', { name: 'ui-shared-newer', description: 'A newer shared skill.', instructions: 'Newer steps.', shared: true })).skill;
-  await writeSkill('u-ui-sharer', { name: 'ui-private', description: 'Not shared.', instructions: 'Private steps.' });
+  // Kept back by its author: new skills share themselves by default since 2026-11-10.
+  await writeSkill('u-ui-sharer', { name: 'ui-private', description: 'Not shared.', instructions: 'Private steps.', shared: false });
   const rowText = (name) =>
     page.evaluate((wanted) => [...document.querySelectorAll('#skill-list .crow')].map((r) => r.textContent.replace(/\s+/g, ' ').trim()).find((text) => text.includes(wanted)) || '', name);
   // What a poll would bring: the page asks again when it is looked at.
@@ -7470,8 +7471,14 @@ section('the reasoning card: a window on the newest lines, or the whole of it');
       expanded: head.getAttribute('aria-expanded'),
     };
     head.click();
-    const open = { full: body.clientHeight >= body.scrollHeight - 1, expanded: head.getAttribute('aria-expanded') };
+    // It glides open where the browser can size to the content (owner, 2026-11-10): just after
+    // the press it is still on its way; a moment later it is all there.
+    const glides = window.CSS.supports('height', 'calc-size(auto, size)');
+    const midway = body.clientHeight < body.scrollHeight - 1;
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const open = { full: body.clientHeight >= body.scrollHeight - 1, expanded: head.getAttribute('aria-expanded'), glides, midway };
     head.click();
+    await new Promise((resolve) => setTimeout(resolve, 450));
     turn.finishThinking();
     const done = {
       live: node.classList.contains('is-live'),
@@ -7489,6 +7496,7 @@ section('the reasoning card: a window on the newest lines, or the whole of it');
   check('with the words just arrived glowing', card.folded.glowing);
   check('and says it is folded', card.folded.expanded === 'false');
   check('opened, the whole trace shows', card.open.full && card.open.expanded === 'true', JSON.stringify(card.open));
+  check('  gliding there rather than jumping, where the browser can', !card.open.glides || card.open.midway, JSON.stringify(card.open));
   // No tick on finished reasoning: it says nothing the title does not (owner, 2026-10-25).
   check('finished, it is no longer live and carries no tick', !card.done.live && card.done.tick === undefined, JSON.stringify(card.done));
   check('nothing is left glowing', card.done.glowing === 0);
