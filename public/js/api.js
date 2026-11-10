@@ -260,6 +260,9 @@ export const api = {
   deleteGroup: (id) => request('DELETE', `/api/bot-groups/${encodeURIComponent(id)}`),
   groupChat: (id) => request('GET', `/api/bot-groups/${encodeURIComponent(id)}/chat`),
   stopGroup: (id) => request('POST', `/api/bot-groups/${encodeURIComponent(id)}/stop`),
+  /** What is new in a group after line `since`, who is at work, and whether its round goes on. */
+  groupLive: (id, since) => request('GET', `/api/bot-groups/${encodeURIComponent(id)}/live?since=${encodeURIComponent(String(since))}`),
+  setGroupModel: (id, model) => request('PATCH', `/api/bot-groups/${encodeURIComponent(id)}/model`, { model }),
   botUsage: ({ from, to, unit }) => request('GET', `/api/bots/usage?${new URLSearchParams({ from, to, unit, tz: localZone() })}`),
 
   connectors: () => request('GET', '/api/connectors'),
@@ -549,12 +552,35 @@ export async function readEvents(res, onEvent) {
 }
 
 /** Write in a group chat and follow its round (server/routes/bots.js). */
+/**
+ * Write in a group and follow the round it starts. While another segment holds the
+ * group, the line is taken and answered in that round: no stream comes back, and this
+ * resolves to `{ joined: true, message }` (owner, 2026-11-10).
+ *
+ * @returns {Promise<{ joined: boolean, message?: any }>}
+ */
 export async function runGroup({ groupId, text, runId, model = undefined, signal, onEvent }) {
   const res = await fetch(`/api/bot-groups/${encodeURIComponent(groupId)}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Language': currentLanguage() },
     // `model`: the header chip's, which every member answers on (owner, 2026-11-10).
     body: JSON.stringify({ text, runId, ...(model ? { model } : {}) }),
+    signal,
+  });
+  if (res.ok && /application\/json/.test(res.headers.get('content-type') || '')) {
+    const answer = await res.json();
+    return { joined: !!answer.joined, message: answer.message };
+  }
+  await readEvents(res, onEvent);
+  return { joined: false };
+}
+
+/** Carry on what a group has waiting — the Continue after the ceiling or a long round — and follow it. */
+export async function continueGroup({ groupId, model = undefined, signal, onEvent }) {
+  const res = await fetch(`/api/bot-groups/${encodeURIComponent(groupId)}/continue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Language': currentLanguage() },
+    body: JSON.stringify({ ...(model ? { model } : {}) }),
     signal,
   });
   await readEvents(res, onEvent);

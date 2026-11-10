@@ -61,7 +61,10 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
         }),
         groups: groups.map((g) => {
           const p = last('bot_group_id', g.id);
-          return { ...groupView(g), last: preview(p), at: p?.updated_at || g.updated_at, running: running(p) };
+          // A round between two segments is still running; who is at work names the row's line.
+          const between = !!g.pending && ['time', 'running'].includes(g.pending.reason);
+          const busy = running(p) || between;
+          return { ...groupView(g), last: preview(p), at: p?.updated_at || g.updated_at, running: busy, working: busy ? (g.pending?.working || []).map((w) => w.bot) : [] };
         }),
         creatures: CREATURES,
         limits: { ...LIMITS, handoffs: HANDOFF_CEILING },
@@ -246,7 +249,14 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const group = await store.getBotGroup(req.user.id, req.params.id);
       if (!group) return res.status(404).json({ error: 'No such group chat.' });
       const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
-      res.json({ chatId: chat.id, running: running(chat), messages: await store.listMessages(req.user.id, chat.id) });
+      // Running: a segment holds it now, or it is between two (owner, 2026-11-10); `pending` says what waits.
+      const pending = group.pending || null;
+      res.json({
+        chatId: chat.id,
+        running: running(chat) || (!!pending && ['time', 'running'].includes(pending.reason)),
+        pending: pending ? { reason: pending.reason } : null,
+        messages: await store.listMessages(req.user.id, chat.id),
+      });
     }),
   );
 

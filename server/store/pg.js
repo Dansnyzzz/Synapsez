@@ -4708,9 +4708,16 @@ export function createPgStore(connectionString) {
       );
       return rows[0] ?? null;
     },
-    /** Change an entry's words or its pin, in its own scope only; null when there is no such entry. */
+    /**
+     * Change an entry's words or its pin, in its own scope only; null when there is no such entry.
+     *
+     * @param {string} userId @param {string} id
+     * @param {{ botId?: string | null, groupId?: string | null }} [scope]
+     * @param {{ text?: string, textFolded?: string | null, pinned?: boolean, pinnedBy?: string | null }} [patch]
+     */
     async updateBotMemory(userId, id, { botId = null, groupId = null } = {}, { text, textFolded, pinned, pinnedBy } = {}) {
       const sets = [];
+      /** @type {any[]} */
       const params = [userId, String(id ?? ''), botId, groupId];
       if (text !== undefined) {
         params.push(text);

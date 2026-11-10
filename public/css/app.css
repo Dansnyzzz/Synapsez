@@ -12259,7 +12259,6 @@ html[data-scene] .gate { background: var(--bg); }
 .botface { display: inline-block; flex: none; width: var(--face, 28px); height: var(--face, 28px); background: center / contain no-repeat; image-rendering: pixelated; vertical-align: middle; }
 .botfaces { display: inline-flex; flex: none; align-items: center; }
 .botfaces .botface + .botface { margin-left: -7px; }
-.botdot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--ok); }
 .bottag { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 6px; color: var(--text-dim); font-size: 11.5px; font-weight: 500; vertical-align: 1px; }
 
 /* A light pane over the theme, not a dark slab (owner, 2026-11-10): a thin wash, a hairline of glass. */
@@ -12275,7 +12274,6 @@ html[data-scene] .gate { background: var(--bg); }
 .botchief__star { position: absolute; top: 58px; left: 92px; color: var(--warn); font-size: 16px; }
 .botchief__name { font-weight: 600; }
 .botchief__role { padding: 1px 7px; border: 1px solid var(--line); border-radius: 6px; color: var(--text-dim); font-size: 12px; }
-.botchief .botdot { position: absolute; top: 10px; right: 10px; }
 .botlist__rows { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .botrow { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 7px 9px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .botrow { transition: background 0.15s; }
@@ -12295,39 +12293,32 @@ html[data-scene] .gate { background: var(--bg); }
 .botchat__log { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 10px max(16px, calc((100% - 860px) / 2)) 16px; }
 .botstamp { margin: 14px 0 10px; color: var(--text-faint); font-size: 12.5px; text-align: center; }
 .botempty { max-width: 460px; margin: 18vh auto 0; color: var(--text-dim); text-align: center; line-height: 1.6; }
-.botmsg { display: flex; margin: 8px 0; }
-.botmsg__bubble { max-width: min(680px, 86%); padding: 10px 14px; border-radius: 16px; background: var(--surface-2); color: var(--text); line-height: 1.55; overflow-wrap: anywhere; }
-.botmsg--user { justify-content: flex-end; }
-.botmsg--user .botmsg__bubble { background: var(--accent); color: var(--on-accent); white-space: pre-wrap; }
-.botmsg--member { align-items: flex-end; gap: 8px; }
-.botmsg__body { display: grid; gap: 4px; min-width: 0; max-width: min(680px, 86%); }
-.botmsg__body .botmsg__bubble { max-width: 100%; }
-.botmsg__who { margin: 6px 0 0; font-size: 13px; }
+/*
+ * A group's line in the home chat's own look (owner, 2026-11-10): the classes are the home
+ * chat's (.msg, .msg--user .bubble, .msg--assistant .msg__body, .msg__actions), so a bot's reply
+ * is prose over the theme with no bubble and the person's line is the home bubble. What is
+ * the Bot page's own: the face and name over a bot's reply, and the files it made.
+ */
+.botchat__log .msg { margin-bottom: 18px; padding: 0; }
+.botline__who { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 13.5px; }
+.botline__who .botmsg__face { flex: none; }
+.botline--bot .msg__body { line-height: 1.6; overflow-wrap: anywhere; }
+.botline--bot .msg__body > :first-child { margin-top: 0; }
+.botline--bot .msg__body > :last-child { margin-bottom: 0; }
+.botline__files { display: grid; gap: 8px; width: min(520px, 100%); margin-top: 8px; }
+/* At work: the small ring the working line has, where the dot was, saying so on hover. */
+.botbusy.spinner { flex: none; width: 13px; height: 13px; }
+.botchief .botbusy { position: absolute; top: 10px; right: 10px; }
+.botnotice__go { margin-left: 8px; vertical-align: baseline; }
 .botmsg__name, .botmention, .botworking__who { color: color-mix(in srgb, var(--ink, var(--text)) 70%, var(--text)); font-weight: 600; }
 .botmention { display: inline-flex; align-items: baseline; gap: 2px; }
 .botmention .botface { align-self: center; }
-.botmsg__bubble.prose > :first-child { margin-top: 0; }
-.botmsg__bubble.prose > :last-child { margin-bottom: 0; }
-.botthought { margin: 6px 0; color: var(--text-dim); font-size: 14px; }
-.botthought summary { width: max-content; max-width: 100%; padding: 4px 0; cursor: pointer; list-style: none; }
-.botthought summary::-webkit-details-marker { display: none; }
-.botthought summary::after { content: ' ›'; }
-.botthought[open] summary::after { content: ' ⌄'; }
-.botthought summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-.botthought__text { margin: 4px 0 8px; padding-left: 12px; border-left: 2px solid var(--line); white-space: pre-wrap; font-size: 13.5px; line-height: 1.55; }
-.botevent { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 10px 0; color: var(--text-dim); font-size: 13.5px; }
-.botevent > span:last-child { color: var(--text); }
-.botstep { margin: 4px 0; color: var(--text-faint); font-size: 13px; }
 .botnotice { margin: 10px auto; max-width: 560px; color: var(--text-dim); font-size: 13px; text-align: center; }
 /* A bot a notice names, by its face: "[face] Writer joined the group." (owner, 2026-11-10). */
 .botnotice__who { display: inline-flex; align-items: center; gap: 4px; color: var(--text); font-weight: 500; vertical-align: -3px; }
 /* The face of whom a team step in the transcript made or changed, before its name. */
 .stepface { display: inline-flex; align-items: center; margin: 0 2px 0 4px; vertical-align: -4px; }
 .stepface:empty { display: none; }
-.botthinking { margin: 6px 0; color: var(--text-dim); font-size: 14px; }
-.botask { max-width: 560px; margin: 12px 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
-.botask p { margin: 0 0 10px; }
-.botask__acts { display: flex; gap: 8px; }
 .botchat__working { display: grid; gap: 4px; padding: 0 max(16px, calc((100% - 860px) / 2)); }
 .botchat__working[hidden], .botchat__log[hidden] { display: none; }
 .botworking { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }

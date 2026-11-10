@@ -1961,7 +1961,7 @@ function placeFile(body, file) {
  * Written once rather than twice: what you press to take a message away should
  * not depend on who wrote it, and two copies of the same markup drift.
  */
-function copyButton() {
+export function copyButton() {
   return (
     `<button class="msg__action" type="button" data-act="copy" title="${escapeHtml(t('chat.copy'))}" aria-label="${escapeHtml(t('chat.copy'))}">` +
     '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6">' +

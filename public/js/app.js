@@ -3245,6 +3245,8 @@ const botPage = createBotPage({
   openSettings: (tab) => openSettings(tab),
   openFeedback: () => feedback.open(),
   openAutomations: (tab) => gotoShelf(tab),
+  // A file a bot made in a group opens as one made here does.
+  openFile: (id) => viewer.open({ id }),
   onShow: () => {
     projectPage.hide();
     pages.hide();
@@ -7186,6 +7188,8 @@ async function chooseModel(modelId) {
     state.model = modelId;
     renderTopbar();
     refreshModelFacts();
+    // A group open on the Bot page answers its next batch on it, mid-round too (owner, 2026-11-10).
+    if (previous !== modelId) botPage.modelChanged(modelId);
     /*
      * Changed while the last one is writing (owner, 2026-11-06): it stops being paid
      * for now, and the new one carries on from where it stopped once that is safely

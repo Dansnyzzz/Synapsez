@@ -350,6 +350,7 @@ export function groupView(row) {
     name: row.name,
     admin: row.admin_bot_id || null,
     members: Array.isArray(row.members) ? row.members : [],
+    notice: row.notice || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
