@@ -14,9 +14,15 @@
  * the only way a draft goes without being made into a skill.
  *
  * Text only, in nodes and `value`s — never markup: it is the person's own.
+ *
+ * **Shared skills (owner, 2026-11-09).** A switch under the editor puts the skill
+ * on Discover, off unless the author turns it on (or `shareByDefault` says so);
+ * a refusal from the safety scan is shown with what it found. The same dialog,
+ * read-only, shows somebody else's shared skill before it is added — whose it
+ * is, every word of it, and Add.
  */
 import { api } from './api.js';
-import { t, currentLanguage } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 import { toast } from './render.js';
 
 /**
@@ -41,10 +47,18 @@ export function forgetLocalDrafts() {
 }
 
 /**
- * @param {{ onSaved: (skill: any) => void, owner: () => string | undefined }} deps
- *   `owner`: the signed-in account's id, which this browser's copy belongs to
+ * What a read-only look at a shared skill needs: who wrote it, and — when it can
+ * be added — what Add does.
+ *
+ * @typedef {{ author: string | null, onAdd?: () => Promise<void> }} SkillView
  */
-export function createSkillEditor({ onSaved, owner }) {
+
+/**
+ * @param {{ onSaved: (skill: any) => void, owner: () => string | undefined, shareByDefault?: () => boolean }} deps
+ *   `owner`: the signed-in account's id, which this browser's copy belongs to;
+ *   `shareByDefault`: where the Share switch starts for a new skill (server/skills.js)
+ */
+export function createSkillEditor({ onSaved, owner, shareByDefault = () => false }) {
   /** This account's key, or null when there is no account to tie a copy to. */
   const localKey = () => {
     const id = owner();
@@ -59,12 +73,24 @@ export function createSkillEditor({ onSaved, owner }) {
   const tabs = $('skc-tabs');
   const pill = $('skc-draft');
   const fileInput = /** @type {HTMLInputElement} */ ($('skc-file-input'));
+  const shareRow = $('skc-share-row');
+  const shareBox = /** @type {HTMLInputElement} */ ($('skc-shared'));
+  const shareNote = $('skc-share-note');
+  const byLine = $('skc-by');
 
   /** What is being written: SKILL.md first, then the files, the one on screen at `current`. */
   let docs = [{ name: 'SKILL.md', content: '' }];
   let current = 0;
   /** An existing skill being changed — no draft for that, its saved self is the copy. */
   let editing = null;
+  /** Somebody else's shared skill, being read — nothing in it can be changed. @type {SkillView | null} */
+  let viewing = null;
+  /**
+   * Whether the Share switch was moved. A new skill whose switch was left alone
+   * is sent without a choice, so the server's default decides — the page may not
+   * have heard what that default is when the editor opens from the + menu.
+   */
+  let shareTouched = false;
   let saveTimer = 0;
 
   const draftOf = () => ({
@@ -75,7 +101,7 @@ export function createSkillEditor({ onSaved, owner }) {
     savedAt: new Date().toISOString(),
   });
   const hasContent = () => !!(nameBox.value.trim() || descBox.value.trim() || docs.some((d) => d.content.trim()) || docs.length > 1);
-  const time = (iso) => new Date(iso).toLocaleTimeString(currentLanguage() === 'vi' ? 'vi-VN' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+  const time = (iso) => new Date(iso).toLocaleTimeString(localeTag(), { hour: '2-digit', minute: '2-digit' });
 
   function setPill(key, at) {
     pill.textContent = t(key);
@@ -102,7 +128,7 @@ export function createSkillEditor({ onSaved, owner }) {
       pick.textContent = doc.name;
       pick.addEventListener('click', () => show(i));
       tab.append(pick);
-      if (i > 0) {
+      if (i > 0 && !viewing) {
         const drop = document.createElement('button');
         drop.type = 'button';
         drop.className = 'skedit__untab';
@@ -130,7 +156,8 @@ export function createSkillEditor({ onSaved, owner }) {
 
   function paintSavedAs() {
     const saved = $('skc-saved');
-    const name = nameBox.value.trim();
+    // Somebody else's skill is not saved as anything of this account's.
+    const name = viewing ? '' : nameBox.value.trim();
     saved.hidden = !name;
     saved.textContent = name ? t('skills.savedAs', { name }) : '';
   }
@@ -139,7 +166,7 @@ export function createSkillEditor({ onSaved, owner }) {
 
   function changed() {
     paintSavedAs();
-    if (editing) return;
+    if (editing || viewing) return;
     docs[current].content = text.value;
     const draft = draftOf();
     try {
@@ -226,14 +253,35 @@ export function createSkillEditor({ onSaved, owner }) {
     paintSavedAs();
   }
 
-  /** Open it: a new skill (picking up a draft), or `skill` to change one. */
-  async function open(skill = null) {
-    editing = skill;
-    $('skc-title').textContent = t(skill ? 'skills.editTitle' : 'skills.createTitle');
-    $('skc-create').textContent = t(skill ? 'skills.saveChanges' : 'skills.create');
+  /**
+   * Open it: a new skill (picking up a draft), `skill` to change one — or, with
+   * `view`, somebody else's shared skill to read, and to add when `view.onAdd` is given.
+   *
+   * @param {any} [skill]
+   * @param {{ view?: SkillView | null }} [options]
+   */
+  async function open(skill = null, { view = null } = {}) {
+    viewing = view;
+    editing = view ? null : skill;
+    $('skc-title').textContent = t(view ? 'skills.viewTitle' : skill ? 'skills.editTitle' : 'skills.createTitle');
+    const create = /** @type {HTMLButtonElement} */ ($('skc-create'));
+    create.textContent = t(view ? 'skills.addThis' : skill ? 'skills.saveChanges' : 'skills.create');
+    create.hidden = !!view && !view.onAdd;
+    $('skc-cancel').textContent = t(view ? 'action.close' : 'action.cancel');
     $('skc-status').textContent = '';
     nameBox.readOnly = !!skill;
+    descBox.readOnly = !!view;
+    text.readOnly = !!view;
+    $('skc-add-file').hidden = !!view;
     pill.hidden = !!skill;
+    byLine.hidden = !view;
+    byLine.textContent = view ? (view.author ? t('skills.viewBy', { name: view.author }) : t('skills.viewByMember')) : '';
+    // Where the switch starts: as the skill is, or — for a new one — the deployment's default.
+    shareRow.hidden = !!view;
+    shareBox.checked = view ? false : skill ? !!skill.shared_at : shareByDefault();
+    shareTouched = false;
+    shareNote.hidden = !skill?.hidden_at || !!view;
+    shareNote.textContent = skill?.hidden_at && !view ? t('skills.hiddenNote') : '';
     if (skill) {
       fill({ name: skill.name, description: skill.description, instructions: skill.instructions, files: skill.files || [] });
     } else {
@@ -246,7 +294,7 @@ export function createSkillEditor({ onSaved, owner }) {
       }
     }
     if (!dialog.open) dialog.showModal();
-    (skill ? descBox : nameBox).focus();
+    (view ? text : skill ? descBox : nameBox).focus();
   }
 
   const close = () => {
@@ -257,7 +305,7 @@ export function createSkillEditor({ onSaved, owner }) {
 
   /** Cancel, ✕ or Escape: with something written, ask first. */
   function leave() {
-    if (!editing && hasContent()) {
+    if (!editing && !viewing && hasContent()) {
       confirm.showModal();
       $('skc-keep').focus();
       return;
@@ -285,21 +333,36 @@ export function createSkillEditor({ onSaved, owner }) {
     close();
   });
   pill.addEventListener('click', () => {
-    if (!editing) keepOnAccount();
+    if (!editing && !viewing) keepOnAccount();
   });
 
   $('skc-create').addEventListener('click', async () => {
-    docs[current].content = text.value;
     const button = /** @type {HTMLButtonElement} */ ($('skc-create'));
     button.disabled = true;
+    // Reading somebody else's: the button is Add.
+    if (viewing) {
+      try {
+        await viewing.onAdd?.();
+        close();
+      } catch (err) {
+        $('skc-status').textContent = err.message;
+      } finally {
+        button.disabled = false;
+      }
+      return;
+    }
+    docs[current].content = text.value;
     try {
-      const { skill } = await api.saveSkill({ name: nameBox.value, description: descBox.value, instructions: docs[0].content, files: docs.slice(1) });
+      const shared = editing || shareTouched ? { shared: shareBox.checked } : {};
+      const { skill } = await api.saveSkill({ name: nameBox.value, description: descBox.value, instructions: docs[0].content, files: docs.slice(1), ...shared });
       if (!editing) await forgetDraft();
       close();
-      toast(t('skills.savedNamed', { name: skill.name }), 'ok');
+      toast(t(skill.shared_at ? 'skills.savedShared' : 'skills.savedNamed', { name: skill.name }), 'ok');
       onSaved(skill);
     } catch (err) {
-      $('skc-status').textContent = err.message;
+      // Sharing the scan refused: what it found, each in its own words.
+      const found = Array.isArray(err.findings) ? err.findings.map((f) => f.text).join(' ') : '';
+      $('skc-status').textContent = found ? `${err.message} ${found}` : err.message;
     } finally {
       button.disabled = false;
     }
@@ -308,6 +371,9 @@ export function createSkillEditor({ onSaved, owner }) {
   /* ── typing, files, copying ─────────────────────────────────────── */
 
   for (const box of [nameBox, descBox]) box.addEventListener('input', changed);
+  shareBox.addEventListener('change', () => {
+    shareTouched = true;
+  });
   text.addEventListener('input', () => {
     paintLines();
     changed();
@@ -317,7 +383,7 @@ export function createSkillEditor({ onSaved, owner }) {
   });
   // A tab in the editor indents, as it does in any editor; Escape still leaves.
   text.addEventListener('keydown', (event) => {
-    if (event.key !== 'Tab' || event.shiftKey || event.ctrlKey || event.metaKey) return;
+    if (viewing || event.key !== 'Tab' || event.shiftKey || event.ctrlKey || event.metaKey) return;
     event.preventDefault();
     const { selectionStart: from, selectionEnd: to, value } = text;
     text.value = `${value.slice(0, from)}  ${value.slice(to)}`;

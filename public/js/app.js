@@ -6116,6 +6116,8 @@ const customize = createCustomize({
   onPlugins: () => paintPluginSwitches(),
   selectTab: (tab) => selectTab(tab),
   editSkill: (skill) => skillEditor.open(skill),
+  // Somebody else's shared skill, read-only, with Add when it can be added (owner, 2026-11-09).
+  viewSkill: (skill, view) => skillEditor.open(skill, { view }),
   /**
    * Skills → Add → Create with Claude (owner, 2026-11-01): a new conversation
    * with the request written and skill-creator picked — sent when they press
@@ -6130,7 +6132,12 @@ const customize = createCustomize({
     plusDeps.pickSkill('skill-creator');
   },
 });
-const skillEditor = createSkillEditor({ onSaved: () => customize.loadSkills().catch(() => {}), owner: () => state.boot?.user?.id });
+const skillEditor = createSkillEditor({
+  onSaved: () => customize.loadSkills().catch(() => {}),
+  owner: () => state.boot?.user?.id,
+  // Where Share to Discover starts for a new skill: the server's SHARE_BY_DEFAULT, as /api/skills last said it.
+  shareByDefault: () => customize.shareByDefault(),
+});
 
 /**
  * The theme as Claude draws it: three faces — the system's, light, dark — one

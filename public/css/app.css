@@ -11239,6 +11239,12 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .ccard--ext .ccard__by { font-size: 13.5px; }
 .ccard--ext .ccard__add { width: 38px; height: 38px; border-radius: 9px; }
 .ccard__add.is-added { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); cursor: default; }
+/* Why a shared skill somebody added no longer works: said in full, not cut to one line. */
+.crow__desc--wrap { white-space: normal; overflow-wrap: anywhere; }
+/* An administrator's Take off Discover / Put back, on a shared skill's card. */
+.ccard__mod { margin-top: 8px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--text-dim); font: inherit; font-size: 12.5px; cursor: pointer; }
+.ccard__mod:hover { color: var(--text); }
+.ccard__mod:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* A page inside a section: its title, its parts, and labels over fields. */
 .page__title { margin: 0 0 14px; color: var(--text); font-family: inherit; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
@@ -11313,6 +11319,11 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .skedit__copy { position: absolute; top: 12px; right: 12px; opacity: 0; transition: opacity 0.12s; }
 .skedit:hover .skedit__copy, .skedit:focus-within .skedit__copy, .skedit__copy:focus-visible { opacity: 1; }
 .skc__status:empty { display: none; }
+/* Share to Discover, under the editor; whose a shared skill is, under the title (2026-11-09). */
+.skc__share { margin-top: 14px; padding: 12px 0 0; border-bottom: 0; }
+.skc__share-note { color: var(--warn); }
+.skc__by { margin: -4px 0 8px; color: var(--text-dim); font-size: 13.5px; }
+.skedit__text[readonly] { cursor: default; }
 .skc__foot { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
 .skc__spacer { flex: 1 1 auto; }
 .skc__draft { padding: 5px 12px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--text-dim); font: inherit; font-size: 13px; cursor: pointer; }
