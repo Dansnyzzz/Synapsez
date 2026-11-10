@@ -448,6 +448,35 @@ section('no two bots look alike, and Chief keeps the cosmic whale');
   for (const r of [twin1, twin2, twin3, whale]) await alice.call('DELETE', `/api/bots/${r.body.bot.id}`);
 }
 
+/*
+ * Owner, 2026-11-10: a bot's scheduled tasks are its own — made in its chat or on
+ * the Bot page, run in its chat as it, and never listed on Automations.
+ */
+section("a bot's scheduled tasks are its own");
+{
+  const keeper = await alice.call('POST', '/api/bots', { name: 'Keeper', role: 'k' });
+  const id = keeper.body.bot.id;
+  const made = await alice.call('POST', `/api/bots/${id}/tasks`, { title: 'Morning digest', prompt: 'Sum up the news.', when: '07:00' });
+  check('a bot gets a scheduled task of its own from its details', made.status === 201 && made.body.task?.bot_id === id, made.text.slice(0, 160));
+  check('  listed with the bot', (await alice.call('GET', `/api/bots/${id}/tasks`)).body.tasks.some((t) => t.id === made.body.task.id));
+  check('  and not on Automations', !(await alice.call('GET', '/api/tasks')).body.tasks.some((t) => t.id === made.body.task.id) && !((await alice.call('GET', '/api/automations/summary')).body?.tasks || []).some?.((t) => t.id === made.body.task.id));
+  check('  nor in another bot\'s list', !(await alice.call('GET', `/api/bots/${chief.id}/tasks`)).body.tasks.some((t) => t.id === made.body.task.id));
+  check('  a time it cannot read is refused', (await alice.call('POST', `/api/bots/${id}/tasks`, { title: 'x', prompt: 'y', when: 'whenever' })).status === 400);
+  // Made by the bot itself, in its own chat.
+  const { executeTool } = await import('../server/tools/execute.js');
+  const chatId = (await alice.call('GET', `/api/bots/${id}/chat`)).body.chatId;
+  const user = await store.getUserById(aliceId);
+  const told = await executeTool({ user, name: 'schedule_task', input: { title: 'Weekly review', prompt: 'Review the week.', when: 'mon 09:00' }, chatId });
+  const tasks = await store.listTasks(aliceId, { botId: id });
+  check('schedule_task in a bot\'s chat makes that bot\'s task', tasks.some((t) => t.title === 'Weekly review' && t.bot_id === id), told?.content?.slice?.(0, 120) || JSON.stringify(told).slice(0, 120));
+  const { runTaskNow } = await import('../server/scheduler.js');
+  const task = tasks.find((t) => t.title === 'Weekly review');
+  const ran = await runTaskNow(task).catch((err) => ({ error: err.message }));
+  check('  and it runs in the bot\'s own chat, as the bot', ran?.chatId === chatId && asked.at(-1)?.who === 'keeper', JSON.stringify(ran));
+  await alice.call('DELETE', `/api/bots/${id}`);
+  check('its tasks go with the bot', (await store.listTasks(aliceId, { every: true })).every((t) => t.bot_id !== id));
+}
+
 section('a bot with nothing saved still knows it may save on its own');
 {
   const fresh = await alice.call('POST', '/api/bots', { name: 'Newbie', role: 'n' });

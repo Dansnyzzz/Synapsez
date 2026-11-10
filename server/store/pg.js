@@ -249,7 +249,8 @@ export function splitStatements(sql) {
  *      an administrator's hiding of it, and the people who added it by reference
  *  42  bots, bot_groups, bot_group_members, bot_memory; chats.bot_id / bot_group_id;
  *      usage_events.bot_id — the Bot page
- *  43  bots.hue — a creature two bots share, told apart by its colour
+ *  43  bots.hue — a creature two bots share, told apart by its colour;
+ *      scheduled_tasks.bot_id — a bot's own scheduled tasks
  */
 export const SCHEMA_VERSION = 43;
 
@@ -3905,13 +3906,24 @@ export function createPgStore(connectionString) {
     },
 
     // ── scheduled tasks ─────────────────────────────────────────────
-    async listTasks(userId) {
-      return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 ORDER BY next_run_at', [userId]);
+    /**
+     * The account's scheduled tasks: its own (Automations), or with `botId` one bot's
+     * (the Bot page), or with `every` all of them (the data export). A bot's tasks are
+     * never in the account's list (owner, 2026-11-10).
+     *
+     * @param {string} userId @param {{ botId?: string | null, every?: boolean }} [scope]
+     */
+    async listTasks(userId, { botId = null, every = false } = {}) {
+      if (every) return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 ORDER BY next_run_at', [userId]);
+      if (botId) return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND bot_id = $2 ORDER BY next_run_at', [userId, String(botId)]);
+      return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND bot_id IS NULL ORDER BY next_run_at', [userId]);
     },
     async createTask(userId, task) {
       const rows = await q(
-        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz, project_id, policy)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz, project_id, policy, bot_id)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+          WHERE $11::text IS NULL OR EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $11)
+         RETURNING *`,
         [
           task.id,
           userId,
@@ -3925,6 +3937,7 @@ export function createPgStore(connectionString) {
           task.tz ?? null,
           task.projectId ?? null,
           task.policy ?? null,
+          task.botId || null,
         ],
       );
       return rows[0];

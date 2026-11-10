@@ -520,7 +520,16 @@ async function runTask(task) {
    * history reads top to bottom; a task that has never run, or whose
    * conversation was deleted, gets a fresh one.
    */
-  const reuse = task.last_chat && (await store.getChat(user.id, task.last_chat)) ? task.last_chat : null;
+  /*
+   * A bot's task runs in the bot's own chat, as that bot (owner, 2026-11-10): what it
+   * did is in the conversation the person has with it, with its memory and its tools.
+   */
+  const botChat = task.bot_id ? await store.botChat(user.id, { botId: task.bot_id, title: 'Bot' }) : null;
+  if (task.bot_id && !botChat) {
+    await store.finishTask(task.id, { status: 'error: the bot no longer exists', chatId: null, nextRunAt: null });
+    return { taskId: task.id, status: 'orphaned', chatId: null };
+  }
+  const reuse = botChat ? botChat.id : task.last_chat && (await store.getChat(user.id, task.last_chat)) ? task.last_chat : null;
   const chatId = reuse || crypto.randomUUID();
 
   /**

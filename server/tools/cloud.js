@@ -2101,8 +2101,10 @@ const CARD_SHOWN =
  * server's, so it stated a time that was not the one that would fire — which is
  * worse than saying nothing, because it looks like it has been checked.
  */
-async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed }, { userId }) {
+async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed }, { userId, chatId = null }) {
   const store = getStore();
+  // Scheduled from a bot's chat, it is that bot's (owner, 2026-11-10): run as it, listed only on the Bot page.
+  const botId = await botOfChat(userId, chatId);
 
   /*
    * Already set up? Then say so rather than setting it up twice.
@@ -2112,7 +2114,7 @@ async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed 
    * asked, which is why the message above tells it so in those words.
    */
   if (!confirmed) {
-    const clash = findDuplicate(await store.listTasks(userId), title, (task) => task.title);
+    const clash = findDuplicate(await store.listTasks(userId, { botId }), title, (task) => task.title);
     if (clash) {
       const when_ = clash.cron ? `repeats ${clash.cron}` : 'runs once';
       const next = clash.next_run_at ? new Date(clash.next_run_at).toISOString() : 'unknown';
@@ -2146,6 +2148,7 @@ async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed 
     cron,
     nextRunAt,
     tz,
+    botId,
   });
 
   const at = new Date(task.next_run_at).toLocaleString('en-GB', tz ? { timeZone: tz } : undefined);
@@ -2158,8 +2161,9 @@ async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed 
   };
 }
 
-async function listTasksTool(_input, { userId }) {
-  const tasks = await getStore().listTasks(userId);
+async function listTasksTool(_input, { userId, chatId = null }) {
+  // A bot lists its own tasks; any other conversation, the account's.
+  const tasks = await getStore().listTasks(userId, { botId: await botOfChat(userId, chatId) });
   if (!tasks.length) return 'Nothing is scheduled on this account.';
 
   return [
@@ -2180,6 +2184,13 @@ async function listTasksTool(_input, { userId }) {
     '',
     'Pass an id to cancel_task to delete one.',
   ].join('\n');
+}
+
+/** The bot whose chat a tool was called from, or null for any other conversation. */
+async function botOfChat(userId, chatId) {
+  if (!chatId) return null;
+  const chat = await getStore().getChat(userId, chatId).catch(() => null);
+  return chat?.bot_id || null;
 }
 
 async function cancelTaskTool({ id }, { userId }) {

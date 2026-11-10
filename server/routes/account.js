@@ -321,7 +321,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         store.listSkills(userId),
         store.listProjects(userId),
         store.listProjects(userId, { archived: true }),
-        store.listTasks(userId),
+        store.listTasks(userId, { every: true }),
         store.listWorkflows(userId),
         store.exportFeedback(userId),
         store.getUserSetting(userId, 'skillDraft'),
