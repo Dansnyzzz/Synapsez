@@ -10,6 +10,8 @@
 
 **The reasoning block** opens and closes smoothly, its chevron drawn and centred.
 
+**The sign-in and sign-up page holds still** (`public/js/api.js` `markSignedIn`). Every 401 reloaded the page, so a wrong password wiped the form without saying why, an account asking for its second-factor code could not get past it, and coming back to the tab (the usage warning asked the server) reloaded it under the person typing — the code box of a sign-up included. A 401 reloads only a page that was signed in. What is typed on the gate (the email or username, the step) is kept in this browser for 30 minutes and comes back after a reload; never a password or a code.
+
 Privacy notice privacy-2026-11-10-2.
 
 ## 2026-11-10 — A real Bot page, skills people share, Progress as a line, a confirmed email, the address checked

@@ -855,6 +855,56 @@ section('model suggestions: two free, one paid, each saying which router');
 }
 
 /*
+ * Owner, 2026-11-10: the sign-in and sign-up page jumped and reloaded under somebody typing —
+ * every 401 reloaded the page, a wrong password and coming back to the tab among them — and
+ * what was typed should outlive a reload.
+ */
+section('the gate holds still: a wrong password, a trip to another tab, a reload');
+{
+  const visitor = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  visitor.on('pageerror', (err) => pageErrors.push(err.message));
+  const calls = [];
+  visitor.on('request', (r) => {
+    const where = new URL(r.url()).pathname;
+    if (where.startsWith('/api/')) calls.push(where);
+  });
+  await visitor.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await visitor.waitForSelector('#gate:not([hidden])');
+  await visitor.evaluate(() => (window.__samePage = 1));
+  await visitor.fill('#gate-email', 'nobody.here@test.local');
+  await visitor.fill('#gate-password', 'not-the-password');
+  await visitor.click('#gate-submit');
+  await visitor.waitForSelector('#gate-error:not([hidden])', { timeout: 5000 }).catch(() => {});
+  const wrong = await visitor.evaluate(() => ({ same: window.__samePage === 1, error: document.getElementById('gate-error').textContent, email: document.getElementById('gate-email').value }));
+  check('a wrong password says so on the same page, the address still typed', wrong.same && !!wrong.error.trim() && wrong.email === 'nobody.here@test.local', JSON.stringify(wrong));
+  calls.length = 0;
+  await visitor.evaluate(() => {
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+  });
+  await visitor.waitForTimeout(800);
+  const still = await visitor.evaluate(() => window.__samePage === 1);
+  check('coming back to the tab reloads nothing and asks the server nothing', still && calls.length === 0, JSON.stringify(calls));
+  await visitor.click('#gate-switch');
+  await visitor.fill('#gate-username', 'half.done');
+  await visitor.fill('#gate-email', 'half.done@test.local');
+  await visitor.fill('#gate-password', 'never-kept-anywhere');
+  const kept = await visitor.evaluate(() => localStorage.getItem('synapsez:gate-draft') || '');
+  check('what is typed is kept as it is typed, never the password', /half\.done@test\.local/.test(kept) && !/never-kept-anywhere/.test(kept), kept);
+  await visitor.reload({ waitUntil: 'domcontentloaded' });
+  await visitor.waitForSelector('#gate:not([hidden])');
+  const back = await visitor.evaluate(() => ({
+    signup: !document.getElementById('gate-username').hidden,
+    username: document.getElementById('gate-username').value,
+    email: document.getElementById('gate-email').value,
+    password: document.getElementById('gate-password').value,
+    focused: document.activeElement?.id,
+  }));
+  check('  a reload brings the sign-up back as it was, the password box empty and in focus', back.signup && back.username === 'half.done' && back.email === 'half.done@test.local' && back.password === '' && back.focused === 'gate-password', JSON.stringify(back));
+  await visitor.close();
+}
+
+/*
  * Owner, 2026-11-09: a new account confirms its email with the code sent to it before it
  * is used. This suite sends no real mail, so confirmation is switched on for this part.
  */
@@ -884,6 +934,18 @@ section('signing up asks for the code sent to the email, then lets you in');
   }));
   check('the code box, not the app', asked.box && !asked.app && !asked.password, JSON.stringify(asked));
   check('  saying where the code went, with the focus in the box', /confirm\.me@test\.local/.test(asked.note) && asked.focused === 'gate-confirmcode', JSON.stringify(asked));
+  // Off to the inbox and back, or a reload: still the code box, with the address (owner, 2026-11-10).
+  await guest.evaluate(() => (window.__samePage = 1));
+  await guest.evaluate(() => {
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+  });
+  await guest.waitForTimeout(800);
+  check('coming back from the inbox leaves the code box as it was', await guest.evaluate(() => window.__samePage === 1 && !document.getElementById('gate-confirm').hidden));
+  await guest.reload({ waitUntil: 'domcontentloaded' });
+  await guest.waitForSelector('#gate-confirm:not([hidden])', { timeout: 10_000 }).catch(() => {});
+  const again = await guest.evaluate(() => ({ box: !document.getElementById('gate-confirm').hidden, note: document.getElementById('gate-note').textContent, focused: document.activeElement?.id }));
+  check('  and a reload brings it back, saying where the code went', again.box && /confirm\.me@test\.local/.test(again.note) && again.focused === 'gate-confirmcode', JSON.stringify(again));
   const subject = /(\d{6}) is your \S+ confirmation code/;
   const code = (subject.exec([...mailed].reverse().find((l) => subject.test(l)) || '') || [])[1] || '';
   await guest.fill('#gate-confirmcode', code === '000000' ? '111111' : '000000');
@@ -896,6 +958,7 @@ section('signing up asks for the code sent to the email, then lets you in');
   await guest.waitForSelector('#model-chip', { timeout: 15_000 }).catch(() => {});
   const inside = await guest.evaluate(() => ({ gate: !document.getElementById('gate').hidden, app: !document.getElementById('app').hidden }));
   check('the right code lets you in', /^\d{6}$/.test(code) && !inside.gate && inside.app, `${code} ${JSON.stringify(inside)}`);
+  check('  and what was typed on the way is no longer kept', (await guest.evaluate(() => localStorage.getItem('synapsez:gate-draft'))) === null);
   await guest.close();
   delete process.env.EMAIL_CONFIRMATION;
 }

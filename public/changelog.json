@@ -31,10 +31,14 @@
       },
       "fixed": {
         "vi": [
+          "Trang đăng nhập và đăng ký không còn tự tải lại khi bạn gõ sai mật khẩu hay chuyển sang tab khác rồi quay lại; báo sai mật khẩu hiện đúng chỗ.",
+          "Email, tên người dùng và bước đang làm ở trang đăng nhập được giữ lại 30 phút nếu trang tải lại hay lỡ đóng tab (không bao giờ giữ mật khẩu hay mã).",
           "Bot mới không bao giờ tự ghi nhớ được vì chưa được dặn khi bộ nhớ còn trống.",
           "Ô tải ở bảng chi tiết của bot là vòng xoay thay vì dấu \"…\"."
         ],
         "en": [
+          "The sign-in and sign-up page no longer reloads when a password is wrong or when you come back from another tab; a wrong password is said where you typed it.",
+          "The email, username and step you were on at sign-in are kept for 30 minutes through a reload or a tab closed by mistake (never a password or a code).",
           "A new bot never saved to its memory, never having been told it could while it was empty.",
           "The Bot page's details load with a ring rather than a row of dots."
         ]

@@ -1,4 +1,4 @@
-import { api, runAgent } from './api.js';
+import { api, runAgent, markSignedIn } from './api.js';
 import { startInsights } from './insights.js';
 import { follow, answerOwnership, someoneElseIsRunning } from './mirror.js';
 import { createRuns } from './runs.js';
@@ -526,6 +526,48 @@ function rememberEmail(email) {
 }
 
 /**
+ * What was typed on the gate, kept in this browser for half an hour (owner, 2026-11-10):
+ * a reload, a tab closed by mistake or a trip to the inbox for the code no longer costs
+ * the person what they had written, nor the step they were on. Saved as it is typed.
+ * Never a password or a code — only the boxes anybody looking at the screen could read —
+ * and gone once they are in (`start`). Half an hour is how long a confirmation code lasts.
+ */
+const GATE_DRAFT = 'synapsez:gate-draft';
+const GATE_DRAFT_MS = 30 * 60_000;
+const GATE_FIELDS = ['gate-username', 'gate-email'];
+const GATE_MODES = ['signin', 'signup', 'forgot', 'reset', 'confirm'];
+
+function readGateDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(GATE_DRAFT) || 'null');
+    if (draft && typeof draft === 'object' && Date.now() - Number(draft.at) < GATE_DRAFT_MS) return draft;
+    localStorage.removeItem(GATE_DRAFT);
+  } catch {
+    /* a private window, or something else wrote there: nothing to bring back */
+  }
+  return null;
+}
+
+function saveGateDraft() {
+  if ($('gate').hidden) return;
+  const fields = Object.fromEntries(GATE_FIELDS.map((id) => [id, /** @type {HTMLInputElement} */ ($(id)).value]));
+  try {
+    if (gateMode === 'signin' && !Object.values(fields).some(Boolean)) localStorage.removeItem(GATE_DRAFT);
+    else localStorage.setItem(GATE_DRAFT, JSON.stringify({ at: Date.now(), mode: gateMode, fields, remember: /** @type {HTMLInputElement} */ ($('gate-remember')).checked }));
+  } catch {
+    /* see above */
+  }
+}
+
+function forgetGateDraft() {
+  try {
+    localStorage.removeItem(GATE_DRAFT);
+  } catch {
+    /* see above */
+  }
+}
+
+/**
  * Typing a long password blind is how people end up locked out of their own
  * account, so every password box gets an eye. It is a per-field toggle rather
  * than one switch for the form: revealing the box you are typing in should not
@@ -562,21 +604,38 @@ function showGate() {
   $('app').hidden = true;
   themesPanel.sleep();
 
+  // The step a reload interrupted comes back, unless a link in the address chose one.
+  const draft = readGateDraft();
+  if (draft && gateMode === 'signin' && GATE_MODES.includes(draft.mode)) gateMode = draft.mode;
   // With no users yet, creating the first account is the obvious default — but
   // it is only a default. Signing in stays one click away, because this screen
   // is also what someone sees if their session simply expired.
   if (session.needsSetup && gateMode === 'signin') gateMode = 'signup';
+  // A sign-up the deployment has closed since is not offered back.
+  if (gateMode === 'signup' && session.signupOpen === false && !session.needsSetup) gateMode = 'signin';
 
   const remembered = rememberedEmail();
   $('gate-email').value = remembered;
   $('gate-remember').checked = !!remembered;
+  if (draft) {
+    for (const id of GATE_FIELDS) {
+      const value = draft.fields?.[id];
+      if (typeof value === 'string' && value) /** @type {HTMLInputElement} */ ($(id)).value = value.slice(0, 320);
+    }
+    if (typeof draft.remember === 'boolean') /** @type {HTMLInputElement} */ ($('gate-remember')).checked = draft.remember;
+  }
 
   renderGateMode();
-  // A remembered address means the only thing left to type is the password.
+  if (draft && gateMode === 'confirm') note(t('gate.note.confirmSent', { email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim() }));
+  // The first box still empty: after a remembered address, the password.
   if (gateMode === 'confirm') $('gate-confirmcode').focus();
   else if (gateMode === 'reset') $('gate-resetcode').focus();
-  else if (remembered && gateMode === 'signin') $('gate-password').focus();
-  else $('gate-email').focus();
+  else {
+    const empty = ['gate-username', 'gate-email', 'gate-password']
+      .map((id) => /** @type {HTMLInputElement} */ ($(id)))
+      .find((box) => !box.hidden && !box.closest('[hidden]') && !box.value);
+    (empty || $('gate-email')).focus();
+  }
 }
 
 function renderGateMode() {
@@ -661,7 +720,11 @@ function setGateMode(mode) {
   $('gate-error').hidden = true;
   $('gate-note').hidden = true;
   renderGateMode();
+  saveGateDraft();
 }
+
+$('gate-form').addEventListener('input', saveGateDraft);
+$('gate-form').addEventListener('change', saveGateDraft);
 
 $('gate-switch').addEventListener('click', async () => {
   const goingToSignIn = gateMode !== 'signin';
@@ -822,6 +885,9 @@ $('gate-form').addEventListener('submit', async (event) => {
 });
 
 async function start() {
+  // Signed in from here on: a 401 now means the session ended (api.js).
+  markSignedIn(true);
+  forgetGateDraft();
   $('app').hidden = false;
   state.boot = await api.bootstrap();
 

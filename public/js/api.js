@@ -3,6 +3,18 @@ import { narrate } from './mirror.js';
 import { t, currentLanguage } from './i18n.js';
 
 /**
+ * Whether this page is signed in (app.js `start`). Only then does a 401 mean the session
+ * ended, and reloading drops back to the gate. On the gate a 401 is an answer — a wrong
+ * password, a code asked for — and a reload there wiped what was being typed and never
+ * said why; coming back to the tab did the same (owner, 2026-11-10).
+ */
+let signedIn = false;
+/** @param {boolean} on */
+export const markSignedIn = (on) => {
+  signedIn = !!on;
+};
+
+/**
  * @param {string} method
  * @param {string} path
  * @param {any} [body]
@@ -19,8 +31,8 @@ async function request(method, path, body, options = {}) {
   });
 
   // The session cookie is gone or the access code changed. Reloading drops us
-  // back to the gate, which is the only useful thing to do here.
-  if (res.status === 401) {
+  // back to the gate, which is the only useful thing to do here — once signed in.
+  if (res.status === 401 && signedIn) {
     location.reload();
     throw new Error(t('session.expired'));
   }
@@ -497,7 +509,7 @@ export async function localDeviceId() {
  * @param {Response} res @param {(event: string, data: any) => void} onEvent
  */
 export async function readEvents(res, onEvent) {
-  if (res.status === 401) {
+  if (res.status === 401 && signedIn) {
     location.reload();
     throw new Error(t('session.expired'));
   }
@@ -571,7 +583,7 @@ export async function runAgent({ chatId, model, handoff, decision, decisionFor, 
     signal,
   });
 
-  if (res.status === 401) {
+  if (res.status === 401 && signedIn) {
     location.reload();
     throw new Error(t('session.expired'));
   }
