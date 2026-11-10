@@ -10,6 +10,8 @@
  *
  *   node test/finance.test.mjs
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 
 process.env.ENCRYPTION_KEY ||= 'finance-test-encryption-key';
@@ -312,6 +314,91 @@ section('vn.js: the session from the clock in Hanoi');
   check('Saturday is closed', vn.sessionAt('HOSE', at('10:00', '2026-11-14')) === 'closed');
   check('the index names a person uses are the codes the brokers use', vn.vnIndexCode('VN-Index') === 'VNINDEX' && vn.vnIndexCode('hnx') === 'HNXIndex' && vn.vnIndexCode('upcom') === 'HNXUpcomIndex' && vn.vnIndexCode('FPT') === null);
   check('the disclaimer, in both languages', /không phải khuyến nghị đầu tư/.test(vn.VN_LABEL.vi) && /not investment advice/.test(vn.VN_LABEL.en));
+}
+
+/* ── the sources, against their recorded answers ─────────────────── */
+
+const FIXTURES = path.join(import.meta.dirname, 'fixtures', 'finance');
+const fixture = (name) => JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8'));
+/**
+ * A fetch that answers each URL from its recorded answer. `routes` is
+ * `[match, answer]`: a substring or RegExp, and a fixture's file name, a body, a
+ * `{ status, body, headers }`, or a function of the URL giving one of those.
+ */
+function serve(routes) {
+  return fakeFetch((url) => {
+    for (const [match, answer] of routes) {
+      if (typeof match === 'string' ? !url.includes(match) : !match.test(url)) continue;
+      const a = typeof answer === 'function' ? answer(url) : answer;
+      if (typeof a === 'string' && a.endsWith('.json')) return { body: fixture(a) };
+      if (a && typeof a === 'object' && 'status' in a) return a;
+      return { body: a };
+    }
+    return { status: 404, body: { error: `no recording for ${url}` } };
+  });
+}
+const fresh = async () => {
+  http.__resetHttp();
+  cache.__resetCache();
+  await memory.query('DELETE FROM finance_cache');
+};
+
+const yahoo = await import('../server/finance/sources/yahoo.js');
+
+section('7a yahoo.js: chart, statements, crumb');
+{
+  await fresh();
+  const fetchImpl = serve([
+    ['/chart/FPT.VN', 'yahoo-chart-fpt.json'],
+    ['/chart/AAPL', 'yahoo-chart-aapl.json'],
+    ['/chart/VNM.VN', 'yahoo-chart-vnm-dividends.json'],
+    ['/chart/', { status: 404, body: fixture('yahoo-notfound.json') }],
+    ['fundamentals-timeseries', 'yahoo-timeseries.json'],
+    ['fc.yahoo.com', { status: 404, body: 'not here', headers: { 'set-cookie': 'A3=d=AQABBtest&S=AQAAAtest; Expires=Wed, 11 Nov 2027 08:00:00 GMT; Domain=.yahoo.com; Path=/; Secure; HttpOnly' } }],
+    ['getcrumb', { status: 200, body: 'aBcD3fGh1Jk', headers: { 'content-type': 'text/plain' } }],
+    ['quoteSummary', 'yahoo-quotesummary.json'],
+    ['/v7/finance/options', 'yahoo-options.json'],
+    ['/v1/finance/search', 'yahoo-search.json'],
+  ]);
+  const ctx = { fetchImpl };
+  const fpt = await yahoo.quote('FPT', { ...ctx, market: 'vn', board: 'HOSE' });
+  check('FPT on HOSE: its price in ₫, and the exchange\'s own zone', fpt.price === 50_900 && fpt.currency === 'VND' && fpt.unit === 'VND' && fpt.zone === 'Asia/Bangkok' && fpt.symbol === 'FPT.VN', JSON.stringify({ ...fpt, series: undefined }));
+  check('  the change is against yesterday\'s close (51,000), not the close before the range', fpt.previousClose === 51_000 && Math.abs(fpt.changePct - -0.196) < 0.01, `${fpt.previousClose} ${fpt.changePct}`);
+  check('  labelled delayed, with when', fpt.delay === 'delayed' && fpt.asOf.startsWith('2026-11-10'));
+  const aapl = await yahoo.quote('aapl', { ...ctx, market: 'us' });
+  check('AAPL in USD, in New York\'s zone', aapl.price === 350.69 && aapl.currency === 'USD' && aapl.zone === 'America/New_York' && aapl.exchange === 'NasdaqGS');
+  const missing = await refusal(yahoo.quote('ZZZZ', { ...ctx, market: 'us' }));
+  check('Yahoo\'s "Not Found" is a SourceError that says so', missing instanceof http.SourceError && /no ZZZZ/.test(missing.message), missing?.message);
+
+  const before = fetchImpl.calls.length;
+  const shs = await refusal(yahoo.quote('SHS', { ...ctx, market: 'vn', board: 'HNX' }));
+  const vn30 = await refusal(yahoo.quote('VN30', { ...ctx, market: 'vn' }));
+  check('an HNX code is never sent to Yahoo', shs instanceof http.SourceError && /HOSE stocks only/.test(shs.message));
+  check('  nor ^VN30.VN, which does not exist', vn30 instanceof http.SourceError && fetchImpl.calls.length === before && !fetchImpl.calls.some((c) => /VN30|HNX\.VN|SHS/.test(c.url)));
+  check('VN-Index is ^VNINDEX.VN; gold GC=F; a coin X-USD', yahoo.yahooSymbol('VNINDEX', { market: 'vn' }) === '^VNINDEX.VN' && yahoo.yahooSymbol('vàng') === 'GC=F' && yahoo.yahooSymbol('btc', { market: 'crypto' }) === 'BTC-USD');
+
+  const adjusted = await yahoo.history('AAPL', { period: '5d' }, { ...ctx, market: 'us' });
+  check('history: daily bars by the exchange\'s date, oldest first', adjusted.bars.length === 5 && /^\d{4}-\d{2}-\d{2}$/.test(adjusted.bars[0].t) && adjusted.bars[0].t < adjusted.bars[4].t, adjusted.bars.map((b) => b.t).join(','));
+  const vnm = await yahoo.history('VNM', { period: '5d' }, { ...ctx, market: 'vn', board: 'HOSE' });
+  const vnmRaw = await yahoo.history('VNM', { period: '5d', adjusted: false }, { ...ctx, market: 'vn', board: 'HOSE' });
+  check('  adjusted uses adjclose; "raw" from Yahoo is said to be split-adjusted already', vnm.dividendsAdjusted && !vnmRaw.dividendsAdjusted && /split-adjusted/.test(vnmRaw.note), vnmRaw.note);
+  const divs = await yahoo.events('VNM', { ...ctx, market: 'vn', board: 'HOSE' });
+  check('dividends from the chart\'s events, newest first', divs.length === 4 && divs[0].code === 'DIV' && divs[0].valuePerShare === 1_850 && divs[0].date >= divs[1].date, JSON.stringify(divs[0]));
+
+  const income = await yahoo.statements('AAPL', 'income', 'year', { ...ctx, market: 'us' });
+  check('statements from the timeseries: four years, newest first, labelled from Yahoo\'s own type names', income.periods.length === 4 && income.lines[0].label_en === 'Total revenue' && income.lines[0].values[0] === 416_161_000_000 && income.unit === 'USD', JSON.stringify(income.lines[0]));
+
+  const ratios = await yahoo.ratios('AAPL', { ...ctx, market: 'us' });
+  const cookieSent = fetchImpl.calls.find((c) => c.url.includes('quoteSummary'))?.headers?.Cookie;
+  check('the crumb flow: the A3 cookie from fc.yahoo.com, then the crumb, then v10 with both', /^A3=/.test(cookieSent || '') && fetchImpl.calls.some((c) => c.url.includes('quoteSummary') && c.url.includes('crumb=aBcD3fGh1Jk')), cookieSent);
+  check('  P/E, P/B and market cap from quoteSummary', ratios.items.find((i) => i.key === 'pe')?.value > 39 && ratios.items.some((i) => i.key === 'marketCap'), ratios.items.map((i) => i.key).join(','));
+  const crumbs = fetchImpl.calls.filter((c) => c.url.includes('getcrumb')).length;
+  await yahoo.options('AAPL', null, { ...ctx, market: 'us' });
+  check('  and the crumb is fetched once, then kept', fetchImpl.calls.filter((c) => c.url.includes('getcrumb')).length === crumbs && crumbs === 1);
+  const opts = await yahoo.options('AAPL', null, { ...ctx, market: 'us' });
+  check('options: the nearest expiry, strikes around the price', opts.calls.length > 0 && opts.puts.length > 0 && opts.expiry === '2026-11-11', `${opts.expiry} ${opts.calls.length}`);
+  const headlines = await yahoo.news('FPT', { ...ctx, market: 'vn', board: 'HOSE' });
+  check('news: headline, publisher and link only', headlines.length === 1 && headlines[0].url === 'https://example.com/fpt-ai' && !('summary' in headlines[0]));
 }
 
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
