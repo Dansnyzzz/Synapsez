@@ -276,5 +276,43 @@ section('cache.js: how long each kind of answer is kept (spec §4)');
   check('  and an ex-date still to come changes nothing yet', cache.adjustedStillValid(cachedAt, bonus, Date.parse('2026-09-19T03:00:00Z')) === true);
 }
 
+/* ── Vietnamese market rules ──────────────────────────────────────── */
+
+const vn = await import('../server/finance/vn.js');
+
+section('vn.js: price bands, rounded to the tick the way the exchange does (research §5)');
+{
+  const fpt = vn.limits('HOSE', 65_200);
+  check('HOSE reference 65,200 → ceiling 69,700, floor 60,700 (as VNDirect published on 2026-09-21)', fpt.ceiling === 69_700 && fpt.floor === 60_700, JSON.stringify(fpt));
+  const acv = vn.limits('UPCOM', 39_200);
+  check('UPCoM reference 39,200 → 45,000 / 33,400', acv.ceiling === 45_000 && acv.floor === 33_400, JSON.stringify(acv));
+  const split = vn.limits('HOSE', 51_000);
+  check('each limit takes the tick of its own price: 51,000 → 54,500 / 47,450 (VNDirect, 2026-11-10)', split.ceiling === 54_500 && split.floor === 47_450, JSON.stringify(split));
+  const hnx = vn.limits('HNX', 12_000);
+  check('HNX ±10%: 12,000 → 13,200 / 10,800', hnx.ceiling === 13_200 && hnx.floor === 10_800, JSON.stringify(hnx));
+  check('bands: ±7% HOSE, ±10% HNX, ±15% UPCoM', vn.band('HOSE') === 0.07 && vn.band('HNX') === 0.1 && vn.band('UPCOM') === 0.15);
+  check('  and a first trading day: ±20 / 30 / 40%', vn.band('HOSE', { firstDay: true }) === 0.2 && vn.band('HNX', { firstDay: true }) === 0.3 && vn.band('UPCOM', { firstDay: true }) === 0.4);
+  check('ticks: HOSE 10 under 10,000, 50 under 50,000, 100 above', vn.tick('HOSE', 9_990) === 10 && vn.tick('HOSE', 25_000) === 50 && vn.tick('HOSE', 65_200) === 100);
+  check('  HOSE ETFs and covered warrants 10; HNX and UPCoM 100', vn.tick('HOSE', 65_200, { instrument: 'etf' }) === 10 && vn.tick('HOSE', 2_000, { instrument: 'cw' }) === 10 && vn.tick('HNX', 12_000) === 100 && vn.tick('UPCOM', 9_000) === 100);
+  check('change is against the reference, never the previous close (UPCoM ACV: ref 39,200, price 40,000)', Math.abs(vn.changePct(40_000, 39_200) - 2.0408) < 0.001, String(vn.changePct(40_000, 39_200)));
+}
+
+section('vn.js: the session from the clock in Hanoi');
+{
+  const at = (hhmm, day = '2026-11-10') => new Date(`${day}T${hhmm}:00+07:00`);
+  check('HOSE 08:50 is before the open', vn.sessionAt('HOSE', at('08:50')) === 'pre');
+  check('HOSE 09:05 is the opening auction (ATO)', vn.sessionAt('HOSE', at('09:05')) === 'ato');
+  check('HOSE 10:00 continuous', vn.sessionAt('HOSE', at('10:00')) === 'continuous');
+  check('HOSE 11:45 lunch', vn.sessionAt('HOSE', at('11:45')) === 'break');
+  check('HOSE 14:35 the closing auction (ATC)', vn.sessionAt('HOSE', at('14:35')) === 'atc');
+  check('HOSE 14:50 put-through', vn.sessionAt('HOSE', at('14:50')) === 'putthrough');
+  check('HOSE 15:05 closed', vn.sessionAt('HOSE', at('15:05')) === 'closed');
+  check('HNX 09:05 is already continuous (no ATO), 14:50 post-close (PLO)', vn.sessionAt('HNX', at('09:05')) === 'continuous' && vn.sessionAt('HNX', at('14:50')) === 'plo');
+  check('UPCoM 14:40 is still continuous — it trades until 15:00', vn.sessionAt('UPCOM', at('14:40')) === 'continuous');
+  check('Saturday is closed', vn.sessionAt('HOSE', at('10:00', '2026-11-14')) === 'closed');
+  check('the index names a person uses are the codes the brokers use', vn.vnIndexCode('VN-Index') === 'VNINDEX' && vn.vnIndexCode('hnx') === 'HNXIndex' && vn.vnIndexCode('upcom') === 'HNXUpcomIndex' && vn.vnIndexCode('FPT') === null);
+  check('the disclaimer, in both languages', /không phải khuyến nghị đầu tư/.test(vn.VN_LABEL.vi) && /not investment advice/.test(vn.VN_LABEL.en));
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
