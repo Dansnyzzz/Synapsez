@@ -1,0 +1,26 @@
+{
+  "quotes": [
+    {
+      "symbol": "FPT.VN",
+      "exchange": "VSE",
+      "quoteType": "EQUITY",
+      "shortname": "FPT CORPORATION",
+      "longname": "FPT Corporation"
+    },
+    {
+      "symbol": "FPTE",
+      "exchange": "PNK",
+      "quoteType": "EQUITY"
+    }
+  ],
+  "news": [
+    {
+      "uuid": "x1",
+      "title": "FPT signs a new AI partnership",
+      "publisher": "Example Wire",
+      "link": "https://example.com/fpt-ai",
+      "providerPublishTime": 1794200000
+    }
+  ],
+  "_synthetic_news": true
+}

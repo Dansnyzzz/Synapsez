@@ -1,0 +1,106 @@
+{
+  "chart": {
+    "result": [
+      {
+        "meta": {
+          "currency": "VND",
+          "symbol": "FPT.VN",
+          "exchangeName": "VSE",
+          "fullExchangeName": "HOSE",
+          "instrumentType": "EQUITY",
+          "regularMarketTime": 1794296708,
+          "gmtoffset": 25200,
+          "timezone": "ICT",
+          "exchangeTimezoneName": "Asia/Bangkok",
+          "regularMarketPrice": 50900,
+          "regularMarketDayHigh": 52500,
+          "regularMarketDayLow": 50900,
+          "regularMarketVolume": 7354519,
+          "longName": "FPT Corporation",
+          "shortName": "FPT CORPORATION",
+          "chartPreviousClose": 50400,
+          "currentTradingPeriod": {
+            "pre": {
+              "timezone": "ICT",
+              "end": 1794276000,
+              "start": 1794272400,
+              "gmtoffset": 25200
+            },
+            "regular": {
+              "timezone": "ICT",
+              "end": 1794297600,
+              "start": 1794276000,
+              "gmtoffset": 25200
+            },
+            "post": {
+              "timezone": "ICT",
+              "end": 1794304800,
+              "start": 1794297600,
+              "gmtoffset": 25200
+            }
+          }
+        },
+        "timestamp": [
+          1793757600,
+          1793844000,
+          1793930400,
+          1794189600,
+          1794276000
+        ],
+        "indicators": {
+          "quote": [
+            {
+              "open": [
+                50600,
+                54500,
+                51400,
+                51300,
+                51600
+              ],
+              "volume": [
+                12822500,
+                8006200,
+                12162200,
+                5362500,
+                7354519
+              ],
+              "high": [
+                53900,
+                54600,
+                51800,
+                51600,
+                52500
+              ],
+              "low": [
+                50400,
+                52800,
+                50800,
+                50600,
+                50900
+              ],
+              "close": [
+                53900,
+                52900,
+                50800,
+                51000,
+                50900
+              ]
+            }
+          ],
+          "adjclose": [
+            {
+              "adjclose": [
+                53900,
+                52900,
+                50800,
+                51000,
+                50900
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "error": null
+  }
+}

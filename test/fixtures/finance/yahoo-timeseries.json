@@ -1,0 +1,65 @@
+{
+  "timeseries": {
+    "result": [
+      {
+        "meta": {
+          "symbol": [
+            "AAPL"
+          ],
+          "type": [
+            "annualTotalRevenue"
+          ]
+        },
+        "timestamp": [
+          1664496000,
+          1696032000,
+          1727654400,
+          1759190400
+        ],
+        "annualTotalRevenue": [
+          {
+            "dataId": 20100,
+            "asOfDate": "2022-09-30",
+            "periodType": "12M",
+            "currencyCode": "USD",
+            "reportedValue": {
+              "raw": 394328000000,
+              "fmt": "394.33B"
+            }
+          },
+          {
+            "dataId": 20100,
+            "asOfDate": "2023-09-30",
+            "periodType": "12M",
+            "currencyCode": "USD",
+            "reportedValue": {
+              "raw": 383285000000,
+              "fmt": "383.29B"
+            }
+          },
+          {
+            "dataId": 20100,
+            "asOfDate": "2024-09-30",
+            "periodType": "12M",
+            "currencyCode": "USD",
+            "reportedValue": {
+              "raw": 391035000000,
+              "fmt": "391.04B"
+            }
+          },
+          {
+            "dataId": 20100,
+            "asOfDate": "2025-09-30",
+            "periodType": "12M",
+            "currencyCode": "USD",
+            "reportedValue": {
+              "raw": 416161000000,
+              "fmt": "416.16B"
+            }
+          }
+        ]
+      }
+    ],
+    "error": null
+  }
+}

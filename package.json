@@ -87,6 +87,7 @@
     "e2b:probe": "node scripts/e2b-probe.mjs",
     "e2b:template": "node scripts/e2b-template.mjs",
     "orca:probe": "node scripts/orca-probe.mjs",
+    "finance:probe": "node scripts/finance-probe.mjs",
     "test:schema": "node test/schema.test.mjs",
     "test:stop": "node test/stop.test.mjs",
     "test:system": "node test/system.test.mjs",

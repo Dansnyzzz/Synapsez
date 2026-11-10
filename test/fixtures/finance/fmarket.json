@@ -1,0 +1,55 @@
+{
+  "status": 200,
+  "data": {
+    "id": 23,
+    "name": "QUỸ ĐẦU TƯ CỔ PHIẾU TĂNG TRƯỞNG CHIẾN LƯỢC VINACAPITAL",
+    "shortName": "VESAF",
+    "code": "VESAF",
+    "nav": 30733.81,
+    "managementFee": 1.75,
+    "performanceFee": null,
+    "firstIssueAt": 1492448400000,
+    "updateAt": 1731319964012,
+    "owner": {
+      "name": "CÔNG TY CỔ PHẦN QUẢN LÝ QUỸ VINACAPITAL"
+    },
+    "dataFundAssetType": {
+      "name": "Quỹ cổ phiếu"
+    },
+    "productNavChange": {
+      "navToPrevious": -0.72,
+      "navTo1Months": -2.03,
+      "navTo12Months": -10.14,
+      "navTo36Months": 21.52,
+      "annualizedReturn36Months": 6.71,
+      "updateAt": 1794284524781
+    },
+    "productTopHoldingList": [
+      {
+        "stockCode": "MBB",
+        "industry": "Ngân hàng",
+        "netAssetPercent": 6.42
+      },
+      {
+        "stockCode": "HPG",
+        "industry": "Vật liệu xây dựng",
+        "netAssetPercent": 6.36
+      },
+      {
+        "stockCode": "BVH",
+        "industry": "Bảo hiểm",
+        "netAssetPercent": 6.15
+      },
+      {
+        "stockCode": "MWG",
+        "industry": "Bán lẻ",
+        "netAssetPercent": 5.96
+      },
+      {
+        "stockCode": "VCB",
+        "industry": "Ngân hàng",
+        "netAssetPercent": 5.43
+      }
+    ]
+  }
+}
